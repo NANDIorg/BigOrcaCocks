@@ -32,10 +32,12 @@
      блокируется до первого события. `timedOut: true` — просто вызови ещё раз.
 4. По событию:
    - `worker_done` по **рабочей** задаче A → создай задачу ревью:
-     `orca-board task create --title "Ревью: <A.title>" --role reviewer --spec "Проверь ветку orca/<A.id> задачи <A.id>: orca-board review info --task <A.id>, git diff master...orca/<A.id>, прогони pnpm typecheck в своём worktree после git merge --no-commit orca/<A.id> (потом git merge --abort). Критерии: <критерии из спеки A>. Если всё хорошо — orca-board review accept --task <A.id>. Если нет — orca-board review reject --task <A.id> --feedback '<что исправить>'. Затем orca-board done --summary 'принято' или 'отклонено: ...'"`
+     `orca-board task create --title "Ревью: <A.title>" --role reviewer --spec "Проверь ветку orca/<A.id> задачи <A.id>: orca-board review info --task <A.id>, git diff master...orca/<A.id>, прогони pnpm typecheck в своём worktree после git merge --no-commit orca/<A.id> (потом git merge --abort). Критерии: <критерии из спеки A>. Если всё хорошо — orca-board review accept --task <A.id>. Если нет — orca-board review reject --task <A.id> --feedback '<что исправить>'. Затем orca-board done --summary 'принято' или 'отклонено: ...'. Последней командой обязательно вызови orca-board done --summary '...', даже после review accept/reject — без этого твоя задача ревью останется открытой."`
      и сразу `worker start` на неё. Сам `review info/accept/reject` не вызывай.
    - `worker_done` по задаче **ревью** → `orca-board review accept --task <id ревью>` (у неё нечего мержить,
      это просто закрытие). Если ревьюер отклонил, рабочая задача уже в `ready` с замечаниями — `worker start` снова.
+     Если по задаче ревью пришла `escalation` (ревьюер вышел без `done`), а рабочая задача уже в `done` или `ready`, —
+     просто закрой ревью через `orca-board review accept --task <id ревью>`, ревьюера не перезапускай.
    - `question` → ответь, если знаешь: `orca-board question answer --question <id> --answer "..."`.
      Не знаешь — оставь, человек ответит в приложении, придёт `question_answered`.
    - `escalation` → воркер вышел без `done` или молчит. `orca-board worker read --dispatch <id>` (только хвост
