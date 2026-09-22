@@ -77,7 +77,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
                 />
                 {hints.length > 0 && (
                   <datalist id={listId}>
-                    {hints.map((m) => <option key={m} value={m} />)}
+                    {hints.map((m) => <option key={m.value} value={m.value} label={m.label} />)}
                   </datalist>
                 )}
               </div>

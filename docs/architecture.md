@@ -24,8 +24,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
-- `Role { id, title, agent, model? }` — кто выполняет задачу: агент из реестра и модель
-  (пусто — модель агента по умолчанию). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`;
+- `Role { id, title, agent, model?, effort? }` — кто выполняет задачу: агент из реестра, модель
+  и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
+  пустая строка → поле не сохраняется). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`;
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
 - `BoardColumn { id, title, color, kind }`. `kind` — системный (`backlog`, `ready`, `in_progress`,
   `needs_input`, `review`, `done`) либо `custom`. По `kind` store делает автоматические переходы,
@@ -136,9 +137,17 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
-- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, modelHints?, invoke}`. Из него выводятся
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, modelHints?, effortOptions, invoke}`. Из него выводятся
   `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, `modelHints(agent)`
-  (подсказки для datalist в редакторе ролей, не ограничение).
+  (`ModelHint[] = {value, label?}` — подсказки для datalist в редакторе ролей, не ограничение; у claude
+  алиасы `opus`/`sonnet`/`haiku` с подписью + `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`),
+  `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
+- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?})`: модель — флагом агента;
+  `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
+  пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
+- **Дефолты агента** (`agentDefaults` в `src/main/agents.ts`): для codex — `model` и `model_reasoning_effort`
+  из `~/.codex/config.toml` (построчно, только ключи верхнего уровня до первой секции `[..]`; нет файла /
+  ошибка → `{}`), для остальных — нет. Попадают в `AgentInfo.defaults {model?, effort?}`.
   Новый агент — одна запись в массиве, остальное (типы, детект, UI, проверки) подхватывается само.
 - **Детект** (`detectAgents`): ищем `bin` как исполняемый файл в `PATH` процесса плюс стандартных папках
   (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.cargo/bin`, `~/.bun/bin`) —
@@ -151,7 +160,7 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 - **Где проверяется** (`assertAgentUsable`: неизвестный / не установлен / выключен → ошибка с текстом для CLI и UI):
   агент проверяется не сам по себе, а через роль — `pickRole` при `task.create`/`tasks:create`
   и повторная проверка роли задачи при `worker.start` (см. «Роли и колонки»). `pickAgent` удалён.
-- **Сокет `agents.list`** → `[{id, title, installed, enabled, version?}]` в порядке реестра;
+- **Сокет `agents.list`** → `[{id, title, installed, enabled, version?, defaults?}]` в порядке реестра;
   IPC `agents:list(refresh?)` — то же для активного проекта.
 - **Логотипы** (`renderer/src/AgentLogo.tsx`): `<AgentLogo agent size?>` — inline SVG 24×24 с `fill="currentColor"`,
   окрашенный в брендовый цвет из таблицы `COLORS` (claude `#d97757`, codex `#10a37f`, gemini `#4e8df5`,
@@ -229,7 +238,7 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 - **«О проекте»**, разделы:
   - «Агенты» — кто установлен (логотип, название, версия), чекбоксы включения (`enabledAgents`).
   - «Роли» (`RolesEditor.tsx`) — список ролей: id, название, агент (только из реестра),
-    модель (свободный ввод с подсказками `modelHints`). Сохраняется через `projects:setRoles`.
+    модель (свободный ввод с подсказками `modelHints`, `value` + `label`). Сохраняется через `projects:setRoles`.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns`.

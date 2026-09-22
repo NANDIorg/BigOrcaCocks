@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { accessSync, constants, existsSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { AGENTS, AGENT_IDS, getAgent, type AgentInfo, type AgentKind, type AgentSpec, type Role } from '@orca-board/core'
@@ -63,6 +63,41 @@ function readVersion(binPath: string, args: string[]): string | undefined {
   }
 }
 
+type AgentDefaults = NonNullable<AgentInfo['defaults']>
+
+/**
+ * Ключи верхнего уровня TOML-конфига (до первой секции `[..]`) вида `key = "value"`.
+ * Не полноценный TOML: только строки в двойных/одинарных кавычках, комментарии после значения.
+ */
+export function parseTopLevelToml(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (line.startsWith('[')) break
+    const m = /^([A-Za-z0-9_-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(?:#.*)?$/.exec(line)
+    if (m) out[m[1]] = m[2] ?? m[3]
+  }
+  return out
+}
+
+/** Дефолты codex из ~/.codex/config.toml: model и model_reasoning_effort. Нет файла/ошибка — {}. */
+function codexDefaults(): AgentDefaults {
+  try {
+    const cfg = parseTopLevelToml(readFileSync(join(homedir(), '.codex', 'config.toml'), 'utf8'))
+    return {
+      ...(cfg.model ? { model: cfg.model } : {}),
+      ...(cfg.model_reasoning_effort ? { effort: cfg.model_reasoning_effort } : {})
+    }
+  } catch {
+    return {}
+  }
+}
+
+/** Дефолты агента из его собственного конфига; пока известны только у codex. */
+function agentDefaults(id: AgentKind): AgentDefaults | undefined {
+  return id === 'codex' ? codexDefaults() : undefined
+}
+
 let cache: DetectedAgent[] | undefined
 
 /**
@@ -95,7 +130,8 @@ export function agentInfos(enabledAgents: AgentKind[] | undefined, refresh = fal
       title: spec.title,
       installed,
       enabled: installed && (enabledAgents === undefined ? true : enabledAgents.includes(spec.id)),
-      version: d?.version
+      version: d?.version,
+      defaults: agentDefaults(spec.id)
     }
   })
 }

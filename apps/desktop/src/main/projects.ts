@@ -294,8 +294,10 @@ function validateRoles(roles: Role[]): Role[] {
     if (!nonEmpty(r.title)) throw new Error(`роль «${r.id}»: пустое название`)
     if (!isAgentKind(r.agent)) throw new Error(`роль «${r.id}»: неизвестный агент ${String(r.agent)}`)
     if (r.model !== undefined && typeof r.model !== 'string') throw new Error(`роль «${r.id}»: модель должна быть строкой`)
+    if (r.effort !== undefined && typeof r.effort !== 'string') throw new Error(`роль «${r.id}»: effort должен быть строкой`)
     const model = r.model?.trim()
-    return { id: r.id, title: r.title.trim(), agent: r.agent, ...(model ? { model } : {}) }
+    const effort = r.effort?.trim()
+    return { id: r.id, title: r.title.trim(), agent: r.agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
   })
 }
 
