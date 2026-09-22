@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { BoardColumn, GlobalTask } from '@orca-board/core'
 import { Icon } from './icons'
+import { GLOBAL_BOARD_SORT_KEY, SORT_OPTIONS, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
 /** Сводка по подзадачам, которую карточке не вычислить из GlobalTask: вопросы и ревью. */
 export interface GlobalTaskAttention {
@@ -66,6 +67,11 @@ export function GlobalBoard(props: Props): React.JSX.Element {
   const { columns, globals, liveCoordinators, attention, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
+  const [sort, setSort] = useState<BoardSort>(() => readSort(GLOBAL_BOARD_SORT_KEY))
+  const changeSort = (next: BoardSort): void => {
+    setSort(next)
+    writeSort(GLOBAL_BOARD_SORT_KEY, next)
+  }
   const byId = new Map(globals.map((g) => [g.id, g]))
   const boardRef = useRef<HTMLDivElement>(null)
 
@@ -82,9 +88,24 @@ export function GlobalBoard(props: Props): React.JSX.Element {
 
   return (
     <div className="board-wrap">
+      <div className="board-toolbar">
+        <span className="board-sort-label">Сортировка:</span>
+        <div className="segmented" role="group" aria-label="Сортировка карточек">
+          {SORT_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              className={`seg ${sort === o.value ? 'active' : ''}`}
+              onClick={() => changeSort(o.value)}
+            >
+              {o.title}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="g-board" ref={boardRef}>
         {columns.map((column) => {
-          const items = globals.filter((g) => columnOf(g) === column.id)
+          const items = globals.filter((g) => columnOf(g) === column.id).sort((a, b) => compareGlobals(sort, a, b))
           return (
             <section
               key={column.id}
@@ -172,6 +193,11 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         {att && att.review > 0 && <span className="g-chip review">на ревью: {att.review}</span>}
                       </div>
                       <GlobalProgress global={g} />
+                      {column.kind === 'done' && g.closedAt !== undefined ? (
+                        <div className="stamp">Завершено: {formatStamp(g.closedAt)}</div>
+                      ) : sort === 'updated' ? (
+                        <div className="stamp">Обновлено: {formatStamp(g.activityAt)}</div>
+                      ) : null}
                       <div className="g-card-foot">
                         <span title={new Date(g.activityAt).toLocaleString('ru-RU')}>{relativeTime(g.activityAt)}</span>
                         {g.closedAt !== undefined && <span>закрыта</span>}

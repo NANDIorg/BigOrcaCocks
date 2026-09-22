@@ -7,57 +7,7 @@ import {
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { RunBadge, runShortLabel, type RunFilter } from './runs'
-
-/** Порядок карточек внутри колонок. */
-export type BoardSort = 'created' | 'done' | 'updated'
-
-const SORT_KEY = 'orca.board.sort'
-const SORT_OPTIONS: { value: BoardSort; title: string }[] = [
-  { value: 'created', title: 'по созданию' },
-  { value: 'done', title: 'по завершению' },
-  { value: 'updated', title: 'по обновлению' }
-]
-
-function isBoardSort(v: unknown): v is BoardSort {
-  return SORT_OPTIONS.some((o) => o.value === v)
-}
-
-/** Сохранённая сортировка; при любой ошибке localStorage — дефолт. */
-function readSort(): BoardSort {
-  try {
-    const v = localStorage.getItem(SORT_KEY)
-    return isBoardSort(v) ? v : 'created'
-  } catch {
-    return 'created'
-  }
-}
-
-function writeSort(sort: BoardSort): void {
-  try {
-    localStorage.setItem(SORT_KEY, sort)
-  } catch {
-    // localStorage недоступен — сортировка просто не переживёт перезапуск
-  }
-}
-
-/** Компаратор карточек: created — старые сверху; done/updated — свежие сверху, без doneAt — в конец. */
-function compareTasks(sort: BoardSort, a: Task, b: Task): number {
-  switch (sort) {
-    case 'created':
-      return a.createdAt - b.createdAt
-    case 'done':
-      if (a.doneAt !== undefined && b.doneAt !== undefined) return b.doneAt - a.doneAt
-      if (a.doneAt !== undefined) return -1
-      if (b.doneAt !== undefined) return 1
-      return b.updatedAt - a.updatedAt
-    case 'updated':
-      return b.updatedAt - a.updatedAt
-  }
-}
-
-function formatStamp(ts: number): string {
-  return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
+import { BOARD_SORT_KEY, SORT_OPTIONS, compareTasks, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
 interface Props {
   /** Колонки доски в порядке показа; статус задачи — id колонки. */
@@ -119,10 +69,10 @@ export function Board(props: Props): React.JSX.Element {
   const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText = 'Пусто', questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask } = props
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
-  const [sort, setSort] = useState<BoardSort>(readSort)
+  const [sort, setSort] = useState<BoardSort>(() => readSort(BOARD_SORT_KEY))
   const changeSort = (next: BoardSort): void => {
     setSort(next)
-    writeSort(next)
+    writeSort(BOARD_SORT_KEY, next)
   }
   const byId = new Map(props.tasks.map((t) => [t.id, t]))
   const runById = new Map(runs.map((r) => [r.id, r]))
