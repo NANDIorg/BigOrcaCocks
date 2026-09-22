@@ -84,7 +84,7 @@ export function startWorker(
   const dispatchId = newId('disp')
   const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
   const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
-  const inv = spec.invoke(workerSkill, prompt, { permissionMode: ctx.permissionMode, shell: userShell(), model: role.model })
+  const inv = spec.invoke(workerSkill, prompt, { permissionMode: ctx.permissionMode, shell: userShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -125,7 +125,8 @@ export function startCoordinator(
   const inv = (spec ?? getAgent('claude')!).invoke(coordinatorSkill, prompt, {
     permissionMode: ctx.permissionMode,
     shell: userShell(),
-    model: role?.model
+    model: role?.model,
+    effort: role?.effort
   })
   return spawnPty(win, {
     cwd: repoRoot,

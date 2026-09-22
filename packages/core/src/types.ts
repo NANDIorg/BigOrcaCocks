@@ -10,6 +10,8 @@ export interface Role {
   agent: AgentKind
   /** Модель агента; пусто — по умолчанию. */
   model?: string
+  /** Уровень рассуждений агента (см. effortOptions); пусто — по умолчанию. */
+  effort?: string
 }
 
 export const DEFAULT_ROLES: Role[] = [
