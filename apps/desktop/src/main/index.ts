@@ -8,7 +8,7 @@ import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
 import { ProjectManager, type PermissionMode } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
-import type { PtySpawnOptions } from '../shared/ipc'
+import type { PtySpawnOptions, TaskPatch } from '../shared/ipc'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -63,15 +63,49 @@ function resolveProject(projectId?: string): { id: string; root: string; store: 
   return { id: p.id, root: p.root, store: projects.store(p.id) }
 }
 
+/**
+ * Закрыть терминалы воркеров задачи: живые dispatch'и помечаются завершёнными (иначе ptyExited
+ * примет kill за падение), PTY убиваются, renderer получает worker:closed. PTY координатора
+ * не привязан к dispatch и сюда не попадает.
+ */
+function closeTaskWorkers(projectId: string, store: TaskStore, taskId: string): void {
+  const ptyIds = new Set<string>()
+  for (const d of store.closeDispatches(taskId)) ptyIds.add(d.ptyId)
+  // Старые dispatch'и уже закрыты (например, после `orca-board done`), но их PTY может жить до сих пор.
+  for (const d of store.snapshot().dispatches) if (d.taskId === taskId && isAlive(d.ptyId)) ptyIds.add(d.ptyId)
+  for (const ptyId of ptyIds) {
+    if (isAlive(ptyId)) killPty(ptyId)
+    if (win && !win.isDestroyed()) win.webContents.send('worker:closed', { ptyId, taskId, projectId })
+  }
+}
+
+/**
+ * Задача попала в колонку kind=done — её воркерам больше нечего делать. Смотрим не только
+ * незакрытые dispatch'и, но и живые PTY уже закрытых: после `orca-board done` dispatch завершён,
+ * а терминал агента ещё открыт до самого review accept.
+ */
+function closeDoneWorkers(projectId: string, store: TaskStore): void {
+  const doneTasks = new Set<string>()
+  for (const d of store.snapshot().dispatches) {
+    if (d.endedAt && !isAlive(d.ptyId)) continue
+    const task = store.getTask(d.taskId)
+    if (task && store.columnKind(task.status) === 'done') doneTasks.add(task.id)
+  }
+  for (const taskId of doneTasks) closeTaskWorkers(projectId, store, taskId)
+}
+
 function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number): ReturnType<typeof startWorker> {
   if (!win) throw new Error('no window')
   const p = resolveProject(projectId)
   // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
   const task0 = p.store.getTask(taskId)
   if (task0) {
+    if (p.store.columnKind(task0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
     const role = projects.roles(p.id).find((r) => r.id === task0.roleId)
     if (!role) throw new Error(`роль ${task0.roleId} не найдена в проекте`)
     assertAgentUsable(projectAgents(p.id), role.agent)
+    // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
+    closeTaskWorkers(p.id, p.store, taskId)
   }
   const res = startWorker(win, p.store, p.root, ctx(p.id), taskId, cols, rows)
   const task = p.store.getTask(taskId)
@@ -151,6 +185,7 @@ function registerIpc(): void {
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent })
   })
   ipcMain.handle('tasks:move', (_e, id: string, status: string) => projects.activeStore().moveTask(id, status))
+  ipcMain.handle('tasks:update', (_e, id: string, patch: TaskPatch) => projects.activeStore().editTask(id, patch ?? {}))
   ipcMain.handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
   ipcMain.handle('questions:answer', (_e, id: string, answer: string) => projects.activeStore().answer(id, answer))
 
@@ -201,6 +236,8 @@ app.whenReady().then(() => {
   }
   projects.onChange((projectId, store) => {
     if (win && !win.isDestroyed()) win.webContents.send('board:changed', { projectId, snapshot: store.snapshot() })
+    // Любой путь в done (review accept, task move, tasks:move из UI) проходит через commit store — ловим здесь.
+    closeDoneWorkers(projectId, store)
   })
   projects.onEvents(notify)
   registerIpc()

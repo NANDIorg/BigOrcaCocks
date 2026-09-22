@@ -19,6 +19,7 @@ const HELP = `orca-board — управление доской агентов
   task list
   task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]...
   task move --task <id> --status <id колонки из columns list>
+  task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
   worker start --task <id>
   worker read --dispatch <id> [--limit 80]
   check [--wait] [--types worker_done,question,escalation,task_ready] [--timeout-ms 900000]

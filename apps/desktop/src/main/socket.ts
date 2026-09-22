@@ -82,6 +82,15 @@ const handlers: Record<string, Handler> = {
     // Неизвестную колонку отвергает store.moveTask.
     return store.moveTask(id, status)
   },
+  'task.update': (r, _d, store) => {
+    const id = str(r.params.task)
+    if (!id) throw new Error('--task обязателен')
+    const title = str(r.params.title)
+    const spec = str(r.params.spec)
+    if (title === undefined && spec === undefined) throw new Error('укажи --title и/или --spec')
+    // Задачу в работе store отвергает.
+    return store.editTask(id, { title, spec })
+  },
   'task.delete': (r, _d, store) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')

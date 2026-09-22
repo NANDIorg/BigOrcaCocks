@@ -136,6 +136,23 @@ export class TaskStore {
     return task
   }
 
+  /**
+   * Правка названия/описания из UI или CLI. Задачу в работе (kind=in_progress) править нельзя:
+   * воркер уже получил задание в промпт, и правка его не догонит.
+   */
+  editTask(id: string, patch: { title?: string; spec?: string }): Task {
+    const task = this.mustTask(id)
+    if (this.isKind(task, 'in_progress')) throw new Error('задача в работе — сначала дождись воркера или перезапусти её')
+    const next: { title?: string; spec?: string } = {}
+    if (patch.title !== undefined) {
+      const title = patch.title.trim()
+      if (!title) throw new Error('название не может быть пустым')
+      next.title = title
+    }
+    if (patch.spec !== undefined) next.spec = patch.spec
+    return this.updateTask(id, next)
+  }
+
   moveTask(id: string, status: string): Task {
     if (!this.columnKind(status)) throw new Error(`колонки с id «${status}» нет на доске`)
     return this.updateTask(id, { status })
@@ -225,6 +242,21 @@ export class TaskStore {
       changed = true
     }
     if (changed) this.commit()
+  }
+
+  /**
+   * Закрыть живые dispatch'и задачи (перед kill PTY: иначе ptyExited примет kill за падение
+   * и утащит задачу в needs_input). Статус задачи не трогает. Возвращает закрытые dispatch'и.
+   */
+  closeDispatches(taskId: string): Dispatch[] {
+    const closed = [...this.dispatches.values()].filter((d) => d.taskId === taskId && !d.endedAt)
+    if (closed.length === 0) return []
+    for (const d of closed) {
+      d.endedAt = Date.now()
+      d.outcome = 'unknown'
+    }
+    this.commit()
+    return closed
   }
 
   /** Живые dispatch'и (без endedAt). */

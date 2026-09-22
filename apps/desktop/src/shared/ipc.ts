@@ -17,6 +17,19 @@ export interface TerminalOpened {
   role?: 'coordinator' | 'worker'
 }
 
+/** Терминал воркера закрыт приложением: задача попала в done или воркер перезапущен. */
+export interface TerminalClosed {
+  ptyId: string
+  taskId: string
+  projectId: string
+}
+
+/** Правка задачи из UI/CLI: только название и описание. */
+export interface TaskPatch {
+  title?: string
+  spec?: string
+}
+
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
 export const PERMISSION_MODES: Record<PermissionMode, string> = {
@@ -77,6 +90,8 @@ export interface OrcaApi {
     create(input: { title: string; spec?: string; deps?: string[]; roleId?: string }): Promise<Task>
     /** status — id колонки. */
     move(id: string, status: string): Promise<Task>
+    /** Название/описание. Задачу в колонке kind=in_progress править нельзя — ошибка. */
+    update(id: string, patch: TaskPatch): Promise<Task>
     remove(id: string): Promise<void>
   }
   questions: {
@@ -94,6 +109,8 @@ export interface OrcaApi {
     start(taskId: string, cols: number, rows: number): Promise<{ ptyId: string; dispatchId: string }>
     /** Терминал открыт (из UI или через CLI координатора). */
     onOpened(cb: (t: TerminalOpened) => void): () => void
+    /** Терминал воркера закрыт приложением (задача → done, перезапуск воркера). Координатора не касается. */
+    onClosed(cb: (t: TerminalClosed) => void): () => void
   }
   coordinator: {
     start(objective: string, cols: number, rows: number): Promise<string>
