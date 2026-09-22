@@ -274,9 +274,9 @@ export function Board(props: Props): React.JSX.Element {
                           </span>
                         ))}
                         {runningTaskIds.has(task.id) && <span className="chip live">● терминал</span>}
-                        {d?.outcome === 'unknown' && <span className="chip warn">вышел без done</span>}
-                        {d?.outcome === 'failed' && <span className="chip warn">упал</span>}
-                        {d?.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
+                        {kind !== 'done' && d?.outcome === 'unknown' && <span className="chip warn">вышел без done</span>}
+                        {kind !== 'done' && d?.outcome === 'failed' && <span className="chip warn">упал</span>}
+                        {kind !== 'done' && d?.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
                       </div>
                       {column.kind === 'done' && task.doneAt !== undefined ? (
                         <div className="stamp">Завершено: {formatStamp(task.doneAt)}</div>
