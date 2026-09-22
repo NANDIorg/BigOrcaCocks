@@ -17,10 +17,19 @@ export interface TerminalOpened {
   role?: 'coordinator' | 'worker'
 }
 
+export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
+
+export const PERMISSION_MODES: Record<PermissionMode, string> = {
+  auto: 'Авто — Claude сам решает, опасное спросит',
+  bypassPermissions: 'Без подтверждений — полностью автономно',
+  acceptEdits: 'Только правки файлов — остальное спросит в терминале'
+}
+
 export interface Project {
   id: string
   root: string
   name: string
+  permissionMode?: PermissionMode
 }
 
 export interface ReviewInfo {
@@ -41,6 +50,7 @@ export interface OrcaApi {
     add(): Promise<Project | null>
     remove(id: string): Promise<void>
     setActive(id: string): Promise<Project>
+    setPermissionMode(id: string, mode: PermissionMode): Promise<Project>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
   }

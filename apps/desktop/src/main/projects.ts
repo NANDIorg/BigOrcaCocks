@@ -5,10 +5,14 @@ import { createHash } from 'node:crypto'
 import { TaskStore, type OrcaEvent } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
 
+export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
+
 export interface Project {
   id: string
   root: string
   name: string
+  /** Режим разрешений Claude Code для координатора и воркеров. По умолчанию auto. */
+  permissionMode?: PermissionMode
 }
 
 interface ProjectsFile {
@@ -87,6 +91,14 @@ export class ProjectManager {
     this.data.activeId = id
     this.save()
     return project
+  }
+
+  setPermissionMode(id: string, mode: PermissionMode): Project {
+    const p = this.get(id)
+    if (!p) throw new Error(`project not found: ${id}`)
+    p.permissionMode = mode
+    this.save()
+    return p
   }
 
   remove(id: string): void {

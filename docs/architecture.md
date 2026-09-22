@@ -56,6 +56,14 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 События помечаются `consumedBy`, повторно `check` их не отдаёт.
 
+## Разрешения Claude Code
+
+Координатор и воркеры запускаются с `--permission-mode <режим проекта>` и
+`--allowedTools "Bash(orca-board:*)"`. Режим хранится в `Project.permissionMode`
+(вкладка «О проекте»), по умолчанию `auto`: Claude Code сам одобряет обычные действия и
+спрашивает только про опасные. `bypassPermissions` — вообще без вопросов, `acceptEdits` —
+только правки файлов без вопросов, остальной Bash спросит в терминале приложения.
+
 ## Ревью и мерж (`src/main/review.ts`, `src/main/git.ts`)
 
 - `review info`: `git diff --stat base...branch`, `git log base..branch`, плюс незакоммиченное в worktree.

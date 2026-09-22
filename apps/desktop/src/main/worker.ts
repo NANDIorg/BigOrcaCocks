@@ -8,9 +8,12 @@ import coordinatorSkill from '../../../../skills/coordinator.md?raw'
 import { spawnPty } from './pty'
 import { setupCommand } from './git'
 
+export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
+
 export interface WorkerEnvContext {
   socketPath: string
   projectId: string
+  permissionMode: PermissionMode
 }
 
 /** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
@@ -24,14 +27,15 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-function agentInvocation(agent: AgentKind, system: string, prompt: string): { command: string; args: string[] } {
+/** Флаги Claude Code: режим разрешений проекта + orca-board всегда без вопросов. */
+function claudeFlags(mode: PermissionMode): string[] {
+  return ['--permission-mode', mode, '--allowedTools', 'Bash(orca-board:*)']
+}
+
+function agentInvocation(agent: AgentKind, system: string, prompt: string, mode: PermissionMode): { command: string; args: string[] } {
   switch (agent) {
     case 'claude':
-      // orca-board разрешён без подтверждения, правки файлов — тоже; остальной Bash спросит в терминале
-      return {
-        command: 'claude',
-        args: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(orca-board:*)', '--append-system-prompt', system, prompt]
-      }
+      return { command: 'claude', args: [...claudeFlags(mode), '--append-system-prompt', system, prompt] }
     case 'codex':
       return { command: 'codex', args: [`${system}\n\n---\n\n${prompt}`] }
     case 'opencode':
@@ -80,7 +84,7 @@ export function startWorker(
   const dispatchId = newId('disp')
   const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
   const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
-  const inv = agentInvocation(task.agent, workerSkill, prompt)
+  const inv = agentInvocation(task.agent, workerSkill, prompt, ctx.permissionMode)
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -118,7 +122,7 @@ export function startCoordinator(
   return spawnPty(win, {
     cwd: repoRoot,
     command: 'claude',
-    args: ['--allowedTools', 'Bash(orca-board:*)', '--append-system-prompt', coordinatorSkill, prompt],
+    args: [...claudeFlags(ctx.permissionMode), '--append-system-prompt', coordinatorSkill, prompt],
     cols,
     rows,
     env: { ...baseEnv(ctx), ORCA_ROLE: 'coordinator' }

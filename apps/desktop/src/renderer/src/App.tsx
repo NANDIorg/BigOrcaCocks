@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import type { Task, StoreSnapshot } from '@orca-board/core'
-import type { Project } from '../../shared/ipc'
+import { PERMISSION_MODES, type Project, type PermissionMode } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -182,7 +182,26 @@ export function App(): React.JSX.Element {
               onReject={(id, fb) => window.orca.review.reject(id, fb)}
             />
           ) : (
-            <div style={{ padding: '28px 32px', color: 'var(--muted)' }}>
+            <div style={{ padding: '28px 32px', color: 'var(--muted)', maxWidth: 720 }}>
+              <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Разрешения агентов</h3>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24 }}>
+                Как Claude Code (координатор и воркеры) обращается с подтверждениями
+                <select
+                  value={active?.permissionMode ?? 'auto'}
+                  disabled={!active}
+                  onChange={async (e) => {
+                    if (!active) return
+                    await window.orca.projects.setPermissionMode(active.id, e.target.value as PermissionMode)
+                    await refreshProjects()
+                  }}
+                >
+                  {(Object.keys(PERMISSION_MODES) as PermissionMode[]).map((m) => (
+                    <option key={m} value={m}>{PERMISSION_MODES[m]}</option>
+                  ))}
+                </select>
+                <span style={{ fontSize: 12 }}>Команда <code>orca-board</code> разрешена всегда. Действует на новые терминалы.</span>
+              </label>
+              <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>О проекте</h3>
               <p>Репозиторий: <code>{active?.root ?? '—'}</code></p>
               <p>Идентификатор проекта для CLI: <code>{active?.id ?? '—'}</code></p>
               <p>Задач: {tasks.length}. Открытых терминалов: {terminals.length}.</p>

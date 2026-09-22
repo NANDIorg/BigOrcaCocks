@@ -6,7 +6,7 @@ import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive } f
 import { startWorker, startCoordinator, cliBinDir } from './worker'
 import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
-import { ProjectManager } from './projects'
+import { ProjectManager, type PermissionMode } from './projects'
 import type { PtySpawnOptions } from '../shared/ipc'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
@@ -42,8 +42,8 @@ function createWindow(): void {
   }
 }
 
-function ctx(projectId: string): { socketPath: string; projectId: string } {
-  return { socketPath: SOCKET_PATH, projectId }
+function ctx(projectId: string): { socketPath: string; projectId: string; permissionMode: PermissionMode } {
+  return { socketPath: SOCKET_PATH, projectId, permissionMode: projects.get(projectId)?.permissionMode ?? 'auto' }
 }
 
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
@@ -111,6 +111,7 @@ function registerIpc(): void {
   ipcMain.handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   ipcMain.handle('projects:remove', (_e, id: string) => projects.remove(id))
+  ipcMain.handle('projects:setPermissionMode', (_e, id: string, mode: PermissionMode) => projects.setPermissionMode(id, mode))
   ipcMain.handle('projects:add', async () => {
     if (!win) throw new Error('no window')
     const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Выберите git-репозиторий' })

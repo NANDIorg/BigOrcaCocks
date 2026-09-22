@@ -16,6 +16,7 @@ const api: OrcaApi = {
     add: () => ipcRenderer.invoke('projects:add'),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
+    setPermissionMode: (id, mode) => ipcRenderer.invoke('projects:setPermissionMode', id, mode),
     onFocus: (cb) => on('projects:focus', cb)
   },
   board: {
