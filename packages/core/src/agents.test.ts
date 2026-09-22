@@ -1,18 +1,20 @@
-import { describe, expect, it } from 'vitest'
-import { effortOptionsFor, modelLabel, parseCodexModelsCache, type AgentInfo } from './agents'
+// Запуск: node --test (type stripping Node ≥ 22.6). Из tsc исключён — в core нет @types/node.
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { effortOptionsFor, modelLabel, parseCodexModelsCache, type AgentInfo } from './agents.ts'
 
 const cache = (models: unknown[]): string => JSON.stringify({ models })
 
 describe('parseCodexModelsCache', () => {
   it('пустой/битый кэш без дефолта — []', () => {
-    expect(parseCodexModelsCache(undefined)).toEqual([])
-    expect(parseCodexModelsCache('')).toEqual([])
-    expect(parseCodexModelsCache('{не json')).toEqual([])
-    expect(parseCodexModelsCache(cache([]))).toEqual([])
+    assert.deepEqual(parseCodexModelsCache(undefined), [])
+    assert.deepEqual(parseCodexModelsCache(''), [])
+    assert.deepEqual(parseCodexModelsCache('{не json'), [])
+    assert.deepEqual(parseCodexModelsCache(cache([])), [])
   })
 
   it('пустой кэш с дефолтом — только дефолтная модель', () => {
-    expect(parseCodexModelsCache('{не json', 'gpt-x')).toEqual([{ id: 'gpt-x', label: 'gpt-x (по умолчанию)' }])
+    assert.deepEqual(parseCodexModelsCache('{не json', 'gpt-x'), [{ id: 'gpt-x', label: 'gpt-x (по умолчанию)' }])
   })
 
   it('efforts из supported_reasoning_levels; без поля или пустое — без efforts', () => {
@@ -21,7 +23,7 @@ describe('parseCodexModelsCache', () => {
       { slug: 'b', display_name: 'B' },
       { slug: 'c', display_name: 'C', supported_reasoning_levels: [] }
     ])
-    expect(parseCodexModelsCache(text)).toEqual([
+    assert.deepEqual(parseCodexModelsCache(text), [
       { id: 'a', label: 'A', efforts: ['low', 'max'] },
       { id: 'b', label: 'B' },
       { id: 'c', label: 'C' }
@@ -30,8 +32,8 @@ describe('parseCodexModelsCache', () => {
 
   it('дефолтная модель из кэша помечается, не из кэша — добавляется первой', () => {
     const text = cache([{ slug: 'a', display_name: 'A' }, { slug: 'b', display_name: 'B' }])
-    expect(parseCodexModelsCache(text, 'b').map((m) => m.label)).toEqual(['A', 'B (по умолчанию)'])
-    expect(parseCodexModelsCache(text, 'z')).toEqual([
+    assert.deepEqual(parseCodexModelsCache(text, 'b').map((m) => m.label), ['A', 'B (по умолчанию)'])
+    assert.deepEqual(parseCodexModelsCache(text, 'z'), [
       { id: 'z', label: 'z (по умолчанию)' },
       { id: 'a', label: 'A' },
       { id: 'b', label: 'B' }
@@ -40,7 +42,7 @@ describe('parseCodexModelsCache', () => {
 
   it('скрытые модели пропускаются, кроме дефолтной', () => {
     const text = cache([{ slug: 'a', display_name: 'A', visibility: 'hide' }, { slug: 'b', display_name: 'B', visibility: 'hide' }])
-    expect(parseCodexModelsCache(text, 'b')).toEqual([{ id: 'b', label: 'B (по умолчанию)' }])
+    assert.deepEqual(parseCodexModelsCache(text, 'b'), [{ id: 'b', label: 'B (по умолчанию)' }])
   })
 })
 
@@ -51,15 +53,15 @@ describe('effortOptionsFor / modelLabel', () => {
   }
 
   it('efforts модели, иначе общий список агента', () => {
-    expect(effortOptionsFor(info, 'a')).toEqual(['low', 'xhigh'])
-    expect(effortOptionsFor(info, 'b')).toEqual(['low', 'medium', 'high'])
-    expect(effortOptionsFor(info)).toEqual(['low', 'medium', 'high'])
+    assert.deepEqual(effortOptionsFor(info, 'a'), ['low', 'xhigh'])
+    assert.deepEqual(effortOptionsFor(info, 'b'), ['low', 'medium', 'high'])
+    assert.deepEqual(effortOptionsFor(info), ['low', 'medium', 'high'])
   })
 
   it('label по id, неизвестный — сам id', () => {
-    expect(modelLabel(info, 'a')).toBe('A')
-    expect(modelLabel(info, 'zzz')).toBe('zzz')
-    expect(modelLabel(undefined, 'zzz')).toBe('zzz')
-    expect(modelLabel(info, undefined)).toBeUndefined()
+    assert.equal(modelLabel(info, 'a'), 'A')
+    assert.equal(modelLabel(info, 'zzz'), 'zzz')
+    assert.equal(modelLabel(undefined, 'zzz'), 'zzz')
+    assert.equal(modelLabel(info, undefined), undefined)
   })
 })
