@@ -1,9 +1,9 @@
 import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { EVENT_TYPES, type TaskStore, type EventType, type AgentInfo } from '@orca-board/core'
+import { EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
-import { assertAgentUsable, pickAgent } from './agents'
+import { assertAgentUsable, pickRole } from './agents'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -17,6 +17,10 @@ export interface ProjectDeps {
   startCoordinator(objective: string): string
   /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
   agents(): AgentInfo[]
+  /** Роли проекта. */
+  roles(): Role[]
+  /** Колонки доски в порядке показа. */
+  columns(): BoardColumn[]
 }
 
 export interface SocketDeps {
@@ -48,24 +52,35 @@ function num(v: unknown, def: number): number {
   return Number.isFinite(n) ? n : def
 }
 
+/** Роль задачи существует в проекте и её агент можно запускать. */
+function assertRoleUsable(roles: Role[], agents: AgentInfo[], roleId: string): void {
+  const role = roles.find((r) => r.id === roleId)
+  if (!role) throw new Error(`роль ${roleId} не найдена в проекте`)
+  assertAgentUsable(agents, role.agent)
+}
+
 const handlers: Record<string, Handler> = {
   'task.list': (_r, _d, store) => store.listTasks(),
   'task.get': (r, _d, store) => store.getTask(str(r.params.task) ?? '') ?? null,
   'task.create': (r, deps, store) => {
     const title = str(r.params.title)
     if (!title) throw new Error('--title обязателен')
+    if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
+    const role = pickRole(deps.roles(), deps.agents(), str(r.params.role))
     return store.createTask({
       title,
       spec: str(r.params.spec),
       deps: list(r.params.dep ?? r.params.deps),
-      agent: pickAgent(deps.agents(), str(r.params.agent))
+      roleId: role.id,
+      agent: role.agent
     })
   },
   'task.move': (r, _d, store) => {
     const id = str(r.params.task)
     const status = str(r.params.status)
     if (!id || !status) throw new Error('--task и --status обязательны')
-    return store.moveTask(id, status as never)
+    // Неизвестную колонку отвергает store.moveTask.
+    return store.moveTask(id, status)
   },
   'task.delete': (r, _d, store) => {
     const id = str(r.params.task)
@@ -76,9 +91,9 @@ const handlers: Record<string, Handler> = {
   'worker.start': (r, deps, store) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')
-    // Агент задачи могли выключить в проекте после её создания.
+    // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
     const task = store.getTask(id)
-    if (task) assertAgentUsable(deps.agents(), task.agent)
+    if (task) assertRoleUsable(deps.roles(), deps.agents(), task.roleId)
     return deps.startWorker(id)
   },
   'coordinator.start': (r, deps) => {
@@ -142,6 +157,12 @@ const handlers: Record<string, Handler> = {
   },
   'events.list': (_r, _d, store) => store.listEvents(),
   'agents.list': (_r, deps) => deps.agents(),
+  // Роли с признаком, включён ли их агент в проекте: координатору видно, какие роли можно назначать.
+  'roles.list': (_r, deps) => {
+    const enabled = new Set(deps.agents().filter((a) => a.enabled).map((a) => a.id))
+    return deps.roles().map((role) => ({ ...role, agentEnabled: enabled.has(role.agent) }))
+  },
+  'columns.list': (_r, deps) => deps.columns(),
   check: async (r, _d, store) => {
     const types = (list(r.params.types).length ? list(r.params.types) : EVENT_TYPES) as EventType[]
     const consumer = str(r.params.consumer) ?? 'coordinator'

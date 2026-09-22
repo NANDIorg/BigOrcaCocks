@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { AGENTS, AGENT_IDS, DEFAULT_AGENT, getAgent, type AgentInfo, type AgentKind, type AgentSpec } from '@orca-board/core'
+import { AGENTS, AGENT_IDS, getAgent, type AgentInfo, type AgentKind, type AgentSpec, type Role } from '@orca-board/core'
 
 /** Реестр как список общего типа: у элементов union'а опциональные поля вроде versionArgs недоступны. */
 const SPECS: readonly AgentSpec[] = AGENTS
@@ -118,16 +118,20 @@ export function assertAgentUsable(agents: AgentInfo[], id: string): asserts id i
 }
 
 /**
- * Агент для новой задачи: указанный (после проверки) или первый включённый,
- * предпочтительно DEFAULT_AGENT.
+ * Роль для новой задачи: указанная (её агент должен быть usable) или единственная
+ * в проекте. Если ролей несколько и ни одна не указана — ошибка со списком.
  */
-export function pickAgent(agents: AgentInfo[], requested: string | undefined): AgentKind {
+export function pickRole(roles: Role[], agents: AgentInfo[], requested: string | undefined): Role {
+  const ids = roles.map((r) => r.id).join(', ')
   if (requested !== undefined) {
-    assertAgentUsable(agents, requested)
-    return requested
+    const role = roles.find((r) => r.id === requested)
+    if (!role) throw new Error(`роли «${requested}» нет в проекте. Роли: ${ids}`)
+    assertAgentUsable(agents, role.agent)
+    return role
   }
-  const enabled = agents.filter((a) => a.enabled)
-  const chosen = enabled.find((a) => a.id === DEFAULT_AGENT) ?? enabled[0]
-  if (!chosen) throw new Error('нет ни одного включённого агента')
-  return chosen.id
+  if (roles.length === 1) {
+    assertAgentUsable(agents, roles[0].agent)
+    return roles[0]
+  }
+  throw new Error(`--role обязателен. Роли: ${ids}`)
 }

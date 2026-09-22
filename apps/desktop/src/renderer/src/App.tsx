@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { Task, StoreSnapshot, AgentInfo, AgentKind } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, type Task, type StoreSnapshot, type AgentInfo, type AgentKind } from '@orca-board/core'
 import { PERMISSION_MODES, type Project, type PermissionMode } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
@@ -194,6 +194,8 @@ export function App(): React.JSX.Element {
         <div className={`content ${hasTerm ? '' : 'no-term'}`}>
           {tab === 'board' ? (
             <Board
+              columns={active?.columns ?? DEFAULT_COLUMNS}
+              roles={active?.roles ?? DEFAULT_ROLES}
               tasks={tasks}
               questions={snap.questions}
               dispatches={snap.dispatches}
@@ -308,6 +310,7 @@ export function App(): React.JSX.Element {
       {showNew && active && (
         <NewTaskModal
           tasks={tasks}
+          roles={active?.roles ?? DEFAULT_ROLES}
           agents={agents}
           onClose={() => setShowNew(false)}
           onCreate={async (input) => {
