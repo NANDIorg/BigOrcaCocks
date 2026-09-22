@@ -213,17 +213,22 @@ export function startWorker(
   return { ptyId, dispatchId, worktree, branch }
 }
 
+const ATTACHMENTS_DIR = '.orca-attachments'
+
 /**
- * Папка изображений координатора: `<git-dir>/orca-attachments`. Для обычного репозитория это
- * `<repo>/.git/...` — внутри cwd координатора (чтение без лишних разрешений агенту), вне индекса git
- * и не копируется в worktree воркеров (им координатор передаёт абсолютный путь).
+ * Папка изображений координатора: `<repoRoot>/.orca-attachments` — внутри cwd координатора (чтение
+ * без лишних разрешений агенту), в том числе когда repoRoot сам linked worktree. Внутри лежит свой
+ * `.gitignore` с `*`: папка не попадает в `git status`/`git add -A`, а .gitignore репозитория не трогаем.
  */
 function attachmentsRoot(repoRoot: string): string {
+  const root = join(repoRoot, ATTACHMENTS_DIR)
   try {
-    const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: repoRoot, stdio: 'pipe' }).toString().trim()
-    return join(gitDir, 'orca-attachments')
+    mkdirSync(root, { recursive: true })
+    const ignore = join(root, '.gitignore')
+    if (!existsSync(ignore)) writeFileSync(ignore, '*\n')
+    return root
   } catch (e) {
-    throw new Error(`не удалось найти папку .git для изображений координатора: ${(e as Error).message}`)
+    throw new Error(`не удалось создать папку ${ATTACHMENTS_DIR} для изображений координатора: ${(e as Error).message}`)
   }
 }
 
@@ -236,6 +241,7 @@ function pruneAttachments(store: TaskStore, root: string): void {
     return
   }
   for (const id of dirs) {
+    if (id === '.gitignore') continue
     const run = store.getRun(id)
     if (!run?.closedAt || (run.coordinatorPtyId && isAlive(run.coordinatorPtyId))) continue
     try {

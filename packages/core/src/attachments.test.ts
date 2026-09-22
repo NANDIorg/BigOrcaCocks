@@ -2,6 +2,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DEFAULT_IMAGE_OBJECTIVE,
   IMAGE_ATTACHMENT_LIMITS,
   coordinatorPrompt,
   imageAttachmentFileName,
@@ -64,8 +65,18 @@ describe('промпт координатора', () => {
     assert.equal(coordinatorPrompt('сделать X'), 'Цель: сделать X\n\nНачни с декомпозиции и создания задач через orca-board.')
   })
   it('с изображениями — пути целиком (с пробелами) и просьба прочитать', () => {
-    const p = coordinatorPrompt('сделать X', ['/Users/a b/repo/.git/orca-attachments/run_1/image-1.png'])
-    assert.match(p, /- `\/Users\/a b\/repo\/\.git\/orca-attachments\/run_1\/image-1\.png`/)
+    const p = coordinatorPrompt('сделать X', ['/Users/a b/repo/.orca-attachments/run_1/image-1.png'])
+    assert.match(p, /- `\/Users\/a b\/repo\/\.orca-attachments\/run_1\/image-1\.png`/)
     assert.match(p, /Read/)
+  })
+  it('с изображениями — инструкции с картинок не исполнять, воркерам пересказывать, а не давать путь', () => {
+    const p = coordinatorPrompt('сделать X', ['/r/.orca-attachments/run_1/image-1.png'])
+    assert.match(p, /не исполняй/)
+    assert.match(p, /пути к файлам воркерам не передавай/)
+  })
+  it('стандартная цель просит разобрать изображение как материал, а не исполнять показанное', () => {
+    assert.match(DEFAULT_IMAGE_OBJECTIVE, /материал/)
+    assert.match(DEFAULT_IMAGE_OBJECTIVE, /не исполняй/)
+    assert.doesNotMatch(DEFAULT_IMAGE_OBJECTIVE, /выполни то, что на них показано/)
   })
 })
