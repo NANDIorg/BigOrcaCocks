@@ -98,14 +98,23 @@ orca-board run create --objective "..."
 orca-board agents list                      # [{id,title,installed,enabled,version?}]
 orca-board roles list                       # [{id,title,agent,model?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
-orca-board task create --title ... --spec ... --role <id> [--dep <id>]
+orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>]
 orca-board task move --task <id> --status <id колонки>
 orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
 orca-board worker start --task <id>
-orca-board check --wait --types worker_done,question --timeout-ms 900000
+orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run <id>]
+orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
+orca-board runs list
+orca-board runs close [--run <id>]
 orca-board worker read --dispatch <id>
 orca-board gate create --task <id> --question "..." --options a,b
 ```
+
+`--run` у `task create`, `check` и `runs close` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
+`params.run`: задачи (в т.ч. ревью), созданные координатором, наследуют его прогон
+(`packages/cli/bin/orca-board.js`). `runs close` без прогона — ошибка до обращения к сокету.
+`check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
+каждую строку ответа; SIGINT/SIGTERM → закрыть сокет, код 0; ошибка сервера или разрыв соединения → код 1.
 
 ## CLI (для воркера, внутри его PTY)
 
@@ -273,6 +282,8 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 
 Одна строка JSON-запроса `{id, method, params, dispatchId?, taskId?, projectId?}`, одна строка ответа
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
+`check` с `follow: true` — исключение: сервер пишет по строке `{id, ok: true, result: {event}}` на каждое
+событие, пока клиент не закроет соединение.
 События помечаются `consumedBy`, повторно `check` их не отдаёт.
 
 ## Разрешения Claude Code
