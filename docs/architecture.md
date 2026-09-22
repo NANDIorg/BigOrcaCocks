@@ -28,9 +28,12 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `updateTask` его не меняет. Без прогона задача попадает во «Входящие» (`docs/nested-kanban.md`).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
-- `Role { id, title, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
+- `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
-  пустая строка → поле не сохраняется); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`;
+  пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
+  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
+  (с заполненным `description`; пустое назначение системной роли — в т.ч. у ролей, созданных до появления поля, —
+  подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`);
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
 - `BoardColumn { id, title, color, kind }`. `kind` — системный (`backlog`, `ready`, `in_progress`,
   `needs_input`, `review`, `done`) либо `custom`. По `kind` store делает автоматические переходы,
@@ -61,10 +64,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Откуда берётся дефолт**: `projects.json → defaults.roles` / `defaults.columns`; не заданы —
   встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`. При `setDefaults` роли и колонки проходят те же
   `validateRoles` / `validateColumns`, что и у проекта.
-- **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая.
+- **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
 - **Валидация ролей** (`validateRoles`): хотя бы одна роль; непустые уникальные `id`, непустые
   `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются);
-  `systemPrompt` — строка или отсутствует, хранится как введён (без trim), из одних пробелов → удаляется.
+  `description` и `systemPrompt` — строки или отсутствуют, хранятся как введены (без trim), из одних пробелов → удаляются;
+  у системных ролей (id из `DEFAULT_ROLES`) пустое `description` заменяется назначением по умолчанию.
 - **Валидация колонок** (`validateColumns`): хотя бы одна; непустые уникальные `id` и `title`;
   каждый системный `kind` ровно один раз (удалить или продублировать системную колонку нельзя),
   остальные — `custom`; пустой `color` → первый из `COLUMN_COLORS`. Порядок массива = порядок на доске.
@@ -189,7 +193,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 ```
 orca-board coordinator start --objective "..."   # человек; создаёт прогон (см. «Прогоны»)
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
-orca-board roles list                       # [{id,title,agent,model?,effort?,systemPrompt?,agentEnabled}]
+orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>]
 orca-board task move --task <id> --status <id колонки>

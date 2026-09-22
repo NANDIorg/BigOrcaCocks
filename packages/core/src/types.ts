@@ -7,6 +7,11 @@ export type { AgentKind }
 export interface Role {
   id: string
   title: string
+  /**
+   * Назначение роли: чем она занимается и когда её брать. Координатор видит его в `orca-board roles list`
+   * и по нему выбирает `--role` для задач. Пусто — поля нет, координатор выбирает по id и названию.
+   */
+  description?: string
   agent: AgentKind
   /** Модель агента; пусто — по умолчанию. */
   model?: string
@@ -20,13 +25,42 @@ export interface Role {
 }
 
 export const DEFAULT_ROLES: Role[] = [
-  { id: 'coordinator', title: 'Координатор', agent: 'claude' },
-  { id: 'developer', title: 'Программист', agent: 'claude' },
-  { id: 'reviewer', title: 'Ревьюер', agent: 'claude' },
-  { id: 'qa', title: 'QA', agent: 'claude' }
+  {
+    id: 'coordinator', title: 'Координатор', agent: 'claude',
+    description: 'Декомпозирует цель прогона на задачи и управляет воркерами. Задачам не назначается.'
+  },
+  {
+    id: 'developer', title: 'Программист', agent: 'claude',
+    description: 'Пишет и меняет код: фичи, исправления, рефакторинг.'
+  },
+  {
+    id: 'reviewer', title: 'Ревьюер', agent: 'claude',
+    description: 'Проверяет ветку рабочей задачи после worker_done и принимает или отклоняет её.'
+  },
+  {
+    id: 'qa', title: 'QA', agent: 'claude',
+    description: 'Пишет и прогоняет тесты, проверяет поведение.'
+  }
 ]
 
 export const DEFAULT_ROLE_ID = 'developer'
+
+/** Назначение системной роли (id из DEFAULT_ROLES) по умолчанию; у пользовательских ролей его нет. */
+export function defaultRoleDescription(id: string): string | undefined {
+  return DEFAULT_ROLES.find((r) => r.id === id)?.description
+}
+
+/**
+ * Роли с назначением по умолчанию у системных ролей, где оно пустое (роли, созданные до появления поля,
+ * или очищенное поле). Непустое назначение не трогается; возвращает новые объекты.
+ */
+export function withDefaultDescriptions(roles: Role[]): Role[] {
+  return roles.map((r) => {
+    if (r.description?.trim()) return r
+    const description = defaultRoleDescription(r.id)
+    return description ? { ...r, description } : r
+  })
+}
 
 /**
  * Служебная инструкция Orca + системный промпт роли одним текстом. Блок роли идёт после служебной
