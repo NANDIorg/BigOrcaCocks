@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { TaskStore, type OrcaEvent } from '@orca-board/core'
+import { TaskStore, isAgentKind, type OrcaEvent, type AgentKind } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -13,6 +13,8 @@ export interface Project {
   name: string
   /** Режим разрешений Claude Code для координатора и воркеров. По умолчанию auto. */
   permissionMode?: PermissionMode
+  /** Включённые агенты. undefined — все установленные. */
+  enabledAgents?: AgentKind[]
 }
 
 interface ProjectsFile {
@@ -97,6 +99,14 @@ export class ProjectManager {
     const p = this.get(id)
     if (!p) throw new Error(`project not found: ${id}`)
     p.permissionMode = mode
+    this.save()
+    return p
+  }
+
+  setEnabledAgents(id: string, agents: AgentKind[]): Project {
+    const p = this.get(id)
+    if (!p) throw new Error(`project not found: ${id}`)
+    p.enabledAgents = agents.filter((a) => isAgentKind(a))
     this.save()
     return p
   }

@@ -1,12 +1,13 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { STATUS_TITLES, type TaskStore, type OrcaEvent } from '@orca-board/core'
+import { STATUS_TITLES, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive } from './pty'
-import { startWorker, startCoordinator, cliBinDir } from './worker'
+import { startWorker, startCoordinator, workerPath } from './worker'
 import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
 import { ProjectManager, type PermissionMode } from './projects'
+import { agentInfos, assertAgentUsable, pickAgent } from './agents'
 import type { PtySpawnOptions } from '../shared/ipc'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
@@ -46,6 +47,11 @@ function ctx(projectId: string): { socketPath: string; projectId: string; permis
   return { socketPath: SOCKET_PATH, projectId, permissionMode: projects.get(projectId)?.permissionMode ?? 'auto' }
 }
 
+/** Агенты с учётом настроек проекта; refresh — пересканировать PATH. */
+function projectAgents(projectId: string, refresh = false): AgentInfo[] {
+  return agentInfos(projects.get(projectId)?.enabledAgents, refresh)
+}
+
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
   const p = projectId ? projects.get(projectId) : projects.active()
   if (!p) throw new Error(projectId ? `project not found: ${projectId}` : 'нет проектов: добавьте репозиторий')
@@ -55,6 +61,9 @@ function resolveProject(projectId?: string): { id: string; root: string; store: 
 function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number): ReturnType<typeof startWorker> {
   if (!win) throw new Error('no window')
   const p = resolveProject(projectId)
+  // Агент задачи могли выключить в проекте после её создания.
+  const task0 = p.store.getTask(taskId)
+  if (task0) assertAgentUsable(projectAgents(p.id), task0.agent)
   const res = startWorker(win, p.store, p.root, ctx(p.id), taskId, cols, rows)
   const task = p.store.getTask(taskId)
   win.webContents.send('worker:opened', { ptyId: res.ptyId, taskId, projectId: p.id, label: task?.title ?? taskId, role: 'worker' })
@@ -112,6 +121,8 @@ function registerIpc(): void {
   ipcMain.handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   ipcMain.handle('projects:remove', (_e, id: string) => projects.remove(id))
   ipcMain.handle('projects:setPermissionMode', (_e, id: string, mode: PermissionMode) => projects.setPermissionMode(id, mode))
+  ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
+  ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   ipcMain.handle('projects:add', async () => {
     if (!win) throw new Error('no window')
     const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Выберите git-репозиторий' })
@@ -122,7 +133,10 @@ function registerIpc(): void {
   ipcMain.handle('board:get', () =>
     projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [] }
   )
-  ipcMain.handle('tasks:create', (_e, input) => projects.activeStore().createTask(input))
+  ipcMain.handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; agent?: AgentKind }) => {
+    const p = resolveProject()
+    return p.store.createTask({ ...input, agent: pickAgent(projectAgents(p.id), input.agent) })
+  })
   ipcMain.handle('tasks:move', (_e, id: string, status) => projects.activeStore().moveTask(id, status))
   ipcMain.handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
   ipcMain.handle('questions:answer', (_e, id: string, answer: string) => projects.activeStore().answer(id, answer))
@@ -138,7 +152,7 @@ function registerIpc(): void {
         env: {
           ORCA_SOCKET: SOCKET_PATH,
           ...(p ? { ORCA_PROJECT: p.id } : {}),
-          PATH: `${cliBinDir()}:${process.env.PATH ?? ''}`,
+          PATH: workerPath(),
           ...(opts.env ?? {})
         }
       },
@@ -185,7 +199,8 @@ app.whenReady().then(() => {
         startWorker: (taskId) => runWorker(taskId, p.id),
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId) => acceptReview(p.store, p.root, taskId),
-        startCoordinator: (objective) => runCoordinator(objective, p.id)
+        startCoordinator: (objective) => runCoordinator(objective, p.id),
+        agents: () => projectAgents(p.id)
       }
     }
   })

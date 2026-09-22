@@ -1,8 +1,9 @@
 import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { EVENT_TYPES, type TaskStore, type EventType, type AgentKind } from '@orca-board/core'
+import { EVENT_TYPES, type TaskStore, type EventType, type AgentInfo } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
+import { assertAgentUsable, pickAgent } from './agents'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -14,6 +15,8 @@ export interface ProjectDeps {
   review(taskId: string): unknown
   accept(taskId: string): void
   startCoordinator(objective: string): string
+  /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
+  agents(): AgentInfo[]
 }
 
 export interface SocketDeps {
@@ -48,14 +51,14 @@ function num(v: unknown, def: number): number {
 const handlers: Record<string, Handler> = {
   'task.list': (_r, _d, store) => store.listTasks(),
   'task.get': (r, _d, store) => store.getTask(str(r.params.task) ?? '') ?? null,
-  'task.create': (r, _d, store) => {
+  'task.create': (r, deps, store) => {
     const title = str(r.params.title)
     if (!title) throw new Error('--title обязателен')
     return store.createTask({
       title,
       spec: str(r.params.spec),
       deps: list(r.params.dep ?? r.params.deps),
-      agent: str(r.params.agent) as AgentKind | undefined
+      agent: pickAgent(deps.agents(), str(r.params.agent))
     })
   },
   'task.move': (r, _d, store) => {
@@ -70,9 +73,12 @@ const handlers: Record<string, Handler> = {
     store.deleteTask(id)
     return { deleted: id }
   },
-  'worker.start': (r, deps) => {
+  'worker.start': (r, deps, store) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')
+    // Агент задачи могли выключить в проекте после её создания.
+    const task = store.getTask(id)
+    if (task) assertAgentUsable(deps.agents(), task.agent)
     return deps.startWorker(id)
   },
   'coordinator.start': (r, deps) => {
@@ -135,6 +141,7 @@ const handlers: Record<string, Handler> = {
     return store.rejectReview(id, feedback)
   },
   'events.list': (_r, _d, store) => store.listEvents(),
+  'agents.list': (_r, deps) => deps.agents(),
   check: async (r, _d, store) => {
     const types = (list(r.params.types).length ? list(r.params.types) : EVENT_TYPES) as EventType[]
     const consumer = str(r.params.consumer) ?? 'coordinator'
