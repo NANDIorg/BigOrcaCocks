@@ -289,8 +289,14 @@ export class TaskStore {
     return [...this.runs.values()].find((r) => r.inbox)
   }
 
-  /** Закрытый прогон снова открыт: автозакрытие ждёт новой подзадачи в done; карточка из done — в работу. */
+  /**
+   * Закрытый прогон снова открыт: автозакрытие ждёт новой подзадачи в done; карточка из done — в работу.
+   * Непрочитанные run_done прошлого закрытия гасятся, чтобы новый координатор не получил их сразу.
+   */
   private reopenRun(run: Run): void {
+    for (const e of this.events) {
+      if (e.type === 'run_done' && e.payload.runId === run.id && !e.consumedBy) e.consumedBy = 'reopen'
+    }
     run.closedAt = undefined
     run.finishedAt = undefined
     run.reopenedAt = Date.now()
@@ -394,23 +400,39 @@ export class TaskStore {
     if (!this.columnKind(status)) throw new Error(`колонки с id «${status}» нет на доске`)
   }
 
-  /** Закрыть прогон вручную. Идемпотентно: повторный вызов closedAt не меняет. */
+  /**
+   * Закрыть прогон вручную. Карточку из kind=in_progress (туда её ставит сама система) — в done, как при
+   * автозакрытии; ручную расстановку по другим колонкам не трогает. run_done не шлёт.
+   * Идемпотентно: повторный вызов closedAt не меняет.
+   */
   closeRun(id: string): Run {
     const run = this.mustRun(id)
     if (run.closedAt === undefined) {
       run.closedAt = Date.now()
+      if (run.status !== undefined && this.columnKind(run.status) === 'in_progress') run.status = this.columnId('done')
+      run.updatedAt = run.closedAt
       this.commit()
     }
     return run
   }
 
   /**
-   * Координатор закончил работу по прогону (`runs finish`). Только для закрытого прогона: до run_done
-   * координатору ещё есть что делать. Повторный вызов обновляет время — считается последний сигнал.
+   * Координатор закончил работу по прогону (`runs finish`). Для закрытого прогона — просто сигнал.
+   * Незакрытый прогон, в котором все подзадачи уже в kind=done, закрывается здесь же с run_done:
+   * это повторный запуск координатора без новой работы (или новую подзадачу удалили) — автозакрытие
+   * ждёт новой подзадачи в done и само не сработает. У свежего прогона нужна хотя бы одна подзадача.
+   * Иначе ошибка: до run_done координатору ещё есть что делать. Повторный вызов обновляет время.
    */
   finishRun(id: string): Run {
     const run = this.mustRun(id)
-    if (run.closedAt === undefined) throw new Error(`run not closed: ${id} — дождись run_done`)
+    if (run.closedAt === undefined) {
+      const tasks = [...this.tasks.values()].filter((t) => t.runId === run.id)
+      const idle = tasks.every((t) => this.isKind(t, 'done')) && (tasks.length > 0 || run.reopenedAt !== undefined)
+      if (!idle) throw new Error(`run not closed: ${id} — дождись run_done`)
+      // Координатор сам сообщил о конце — ждать этот run_done ему уже не нужно.
+      const done = this.closeDone(run)
+      if (done) done.consumedBy = 'runs finish'
+    }
     run.finishedAt = Date.now()
     this.commit()
     return run
@@ -428,11 +450,20 @@ export class TaskStore {
       if (tasks.length === 0 || !tasks.every((t) => this.isKind(t, 'done'))) continue
       // Переоткрытый прогон: ждём, пока хоть одна подзадача дойдёт до done после переоткрытия (setStatus снимет метку).
       if (run.reopenedAt !== undefined) continue
-      run.closedAt = Date.now()
-      run.status = this.columnId('done')
-      run.updatedAt = run.closedAt
-      this.pushEvent('run_done', { runId: run.id, objective: run.objective })
+      this.closeDone(run)
     }
+  }
+
+  /**
+   * Закрыть прогон как завершённый: карточка в done и событие run_done (его и возвращает).
+   * «Входящим» run_done не шлётся: у них нет координатора, событие некому забрать.
+   */
+  private closeDone(run: Run): OrcaEvent | undefined {
+    run.closedAt = Date.now()
+    run.reopenedAt = undefined
+    run.status = this.columnId('done')
+    run.updatedAt = run.closedAt
+    return run.inbox ? undefined : this.pushEvent('run_done', { runId: run.id, objective: run.objective })
   }
 
   // ---------- dispatches ----------

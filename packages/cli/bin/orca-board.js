@@ -45,7 +45,7 @@ const HELP = `orca-board — управление доской агентов
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
-  runs finish [--run <id>]                координатор закончил работу по завершённому прогону (после run_done и сводки)
+  runs finish [--run <id>]                координатор закончил работу (после run_done и сводки; если все подзадачи в done — закрывает прогон сам)
   question list
   question answer --question <id> --answer "..."
   review info --task <id>                 diff-stat и коммиты ветки задачи

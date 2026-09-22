@@ -291,7 +291,8 @@ export function resumeObjective(store: TaskStore, runId: string): { run: Run; ob
     objective: [
       goal,
       `Повторный запуск: у этой глобальной задачи уже есть подзадачи (orca-board global tasks). Продолжай с ними и не создавай дубли:`,
-      ...lines
+      ...lines,
+      `Если делать больше нечего (всё в done и новых подзадач не нужно) — не жди run_done: напиши сводку и выполни \`orca-board runs finish\`, он сам закроет прогон.`
     ].join('\n')
   }
 }

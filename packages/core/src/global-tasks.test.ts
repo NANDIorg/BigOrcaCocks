@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import { globalTaskTitle, INBOX_TITLE } from './global-tasks.ts'
+import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
 import type { BoardColumn, Task } from './types.ts'
 
 /** Колонки проекта не совпадают с дефолтными id: API не должен их хардкодить. */
@@ -254,11 +255,86 @@ describe('жизненный цикл прогона = глобальной за
     assert.ok(store.getRun(g.id)!.closedAt)
   })
 
-  it('ручное закрытие прогона статус карточки не меняет', () => {
+  it('ручное закрытие: карточка из in_progress — в done, ручная расстановка не меняется, run_done нет', () => {
     const store = newStore()
     const g = store.createGlobalTask({ title: 'G', status: 'human' })
     store.closeRun(g.id)
     assert.equal(store.getGlobalTask(g.id).status, 'human')
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_c', 'claude')
+    store.closeRun(run.id)
+    assert.equal(store.getGlobalTask(run.id).status, 'fin')
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 0)
+  })
+
+  it('повторный запуск без новой работы: runs finish закрывает прогон сам, старый run_done погашен', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'codex')
+    const t = store.createTask({ title: 't', runId: run.id })
+    store.moveTask(t.id, 'fin')
+    // Первый координатор run_done не забрал — новый не должен получить его сразу.
+    store.setRunPty(run.id, 'pty_2', 'codex')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 0, 'устаревший run_done погашен')
+    assert.equal(store.getRun(run.id)!.closedAt, undefined)
+
+    const fin = store.finishRun(run.id)
+    assert.ok(fin.closedAt && fin.finishedAt! >= fin.closedAt)
+    assert.equal(fin.reopenedAt, undefined)
+    assert.equal(store.getGlobalTask(run.id).status, 'fin')
+    const dones = store.listEvents().filter((e) => e.type === 'run_done')
+    assert.equal(dones.length, 2, 'новый run_done для закрытия по runs finish')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 0, 'новый run_done уже потреблён runs finish')
+
+    // Терминал codex-координатора закрывается по сигналу runs finish.
+    const snap = store.snapshot()
+    const toClose = coordinatorsToClose({
+      runs: snap.runs,
+      tasks: snap.tasks,
+      questions: snap.questions,
+      events: snap.events,
+      isDone: (s) => store.columnKind(s) === 'done',
+      lingers: (a) => a === 'codex',
+      lastActivityAt: () => fin.finishedAt!,
+      now: fin.finishedAt! + COORDINATOR_FINISH_GRACE_MS
+    })
+    assert.deepEqual(toClose, [{ runId: run.id, ptyId: 'pty_2' }])
+  })
+
+  it('повторный запуск: новую подзадачу удалили — runs finish всё равно закрывает прогон', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'codex')
+    store.moveTask(store.createTask({ title: 't', runId: run.id }).id, 'fin')
+    store.setRunPty(run.id, 'pty_2', 'codex')
+    const extra = store.createTask({ title: 'лишняя', runId: run.id })
+    assert.throws(() => store.finishRun(run.id), /run not closed/)
+    store.deleteTask(extra.id)
+    assert.ok(store.finishRun(run.id).closedAt)
+  })
+
+  it('повторный запуск с новой подзадачей: run_done после неё, затем runs finish', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'codex')
+    store.moveTask(store.createTask({ title: 't', runId: run.id }).id, 'fin')
+    store.setRunPty(run.id, 'pty_2', 'codex')
+    const t2 = store.createTask({ title: 't2', runId: run.id })
+    assert.throws(() => store.finishRun(run.id), /run not closed/)
+    store.moveTask(t2.id, 'fin')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
+    assert.ok(store.finishRun(run.id).finishedAt)
+  })
+
+  it('свежий прогон без подзадач: runs finish — ошибка; «Входящие» run_done не шлют', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    assert.throws(() => store.finishRun(run.id), /run not closed/)
+    const t = store.createTask({ title: 'во входящие' })
+    store.moveTask(t.id, 'fin')
+    const inbox = store.listGlobalTasks().find((g) => g.inbox)!
+    assert.ok(inbox.closedAt)
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 0)
   })
 })
 

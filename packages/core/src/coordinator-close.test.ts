@@ -134,9 +134,7 @@ describe('coordinatorsToClose', () => {
     assert.deepEqual(coordinatorsToClose(i), coordinatorsToClose(i))
     assert.equal(coordinatorsToClose(i).length, 1)
   })
-})
 
-describe('lingersAfterAnswer', () => {
   it('переоткрытый прогон (повторный координатор): считается последний run_done, а не первый', () => {
     const R2 = FIN + ABANDONED
     // Второй координатор: новый run_done R2, сигнала runs finish ещё нет — рано закрывать по старому run_done.
@@ -146,7 +144,9 @@ describe('lingersAfterAnswer', () => {
     assert.deepEqual(coordinatorsToClose(input({ runs, events, lastActivityAt, now: R2 + GRACE })), [])
     assert.deepEqual(coordinatorsToClose(input({ runs, events, lastActivityAt, now: R2 + ABANDONED })), [{ runId: 'run_a', ptyId: 'pty_run_a' }])
   })
+})
 
+describe('lingersAfterAnswer', () => {
   it('codex после финального ответа не выходит; claude — без флага', () => {
     assert.equal(getAgent('codex')?.lingersAfterAnswer, true)
     assert.equal(getAgent('claude')?.lingersAfterAnswer, undefined)
