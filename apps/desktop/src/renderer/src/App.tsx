@@ -290,7 +290,13 @@ export function App(): React.JSX.Element {
   }
 
   async function startGlobalCoordinator(g: GlobalTask): Promise<void> {
+    if (g.inbox) return
     const projectId = active?.id
+    const livePty = coordinatorPtys.get(g.id)
+    if (livePty) {
+      showTerminal(livePty, projectId)
+      return
+    }
     const note = g.progress.total
       ? `Координатор продолжит работу, учитывая ${g.progress.total} уже созданных подзадач.`
       : 'Координатор разобьёт описание на подзадачи.'
@@ -566,9 +572,13 @@ export function App(): React.JSX.Element {
           <div className="row">
             <h1>{active?.name ?? 'orca-board'}</h1>
             <button className="round-btn" title="Открыть новый терминал" onClick={openShell} disabled={!active}><Icon.terminal /></button>
-            <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active}>
-              <Icon.users /> Координатор
-            </button>
+            {/* Создание через координатора доступно вне глобальной задачи; её координатор — в GlobalTaskView.
+                Контекст задачи сохраняется и при переходе к терминалам. */}
+            {!openGlobal && (
+              <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active} title="Новая глобальная задача через координатора">
+                <Icon.users /> Координатор
+              </button>
+            )}
             {tab === 'board' && openGlobal ? (
               <button className="btn-primary" onClick={() => setShowNew(true)} disabled={!active}>
                 <Icon.plus /> Новая подзадача
