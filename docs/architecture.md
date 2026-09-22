@@ -74,8 +74,32 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 Если worktree только что создан и есть lock-файл, агент запускается через
 `$SHELL -c "<setup>; exec <agent> ..."` — установка идёт в том же терминале, что видит пользователь.
 
+## Проекты (`src/main/projects.ts`)
+
+`ProjectManager` хранит список репозиториев в `userData/projects.json`, доску каждого —
+в `userData/boards/<id>.json` (`id` = sha1 от корня репозитория). `userData` фиксирован:
+`~/Library/Application Support/orca-board`. UI работает с активным проектом; агенты получают
+`ORCA_PROJECT` в env, и CLI кладёт его в запрос, поэтому воркер продолжает писать в свою доску,
+даже если пользователь переключился на другой проект.
+
+## Уведомления
+
+`ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification`
+для `question`, `escalation`, `worker_done`. Клик по уведомлению фокусирует окно и переключает проект.
+
+## Сборка
+
+`electron-builder.yml`: `extraResources` копирует `packages/cli/bin` в `Resources/cli`,
+`cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
+`pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
+
+## Грабли разработки
+
+- `git reset --hard` в скриптах тестирования дважды стёр незакоммиченные правки. Правило:
+  коммит сразу после зелёного typecheck, тесты — только read-only git-командами.
+
 ## Открытые вопросы
 
-- Несколько репозиториев в сайдбаре.
-- Уведомления macOS на `question` / `escalation` / `worker_done`.
-- Упаковка: `electron-builder`, CLI в `resources/cli`.
+- Удалённый запуск по SSH, мобильный просмотр.
+- SQLite вместо JSON, если событий станет много.
+- Подпись и нотаризация .app.
