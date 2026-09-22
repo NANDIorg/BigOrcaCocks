@@ -1,6 +1,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isRecent, matchesQuery, resolveDocLink, RECENT_MS } from './docLinks'
+import { docsApi, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, STALE_APP_MESSAGE } from './docLinks'
+import type { OrcaApi } from '../../shared/ipc'
+
+test('docsApi — старый preload без docs даёт понятную ошибку, а не TypeError', () => {
+  assert.throws(() => docsApi(undefined), { message: STALE_APP_MESSAGE })
+  assert.throws(() => docsApi({} as Partial<OrcaApi>), { message: STALE_APP_MESSAGE })
+  const docs = { list: async () => [] } as unknown as OrcaApi['docs']
+  assert.equal(docsApi({ docs }), docs)
+})
+
+test('isStaleDocsError — старый main без хендлеров docs:*', () => {
+  assert.equal(isStaleDocsError("No handler registered for 'docs:list'"), true)
+  assert.equal(isStaleDocsError('файл вне проекта'), false)
+})
 
 test('resolveDocLink — относительные ссылки от папки текущего документа', () => {
   assert.equal(resolveDocLink('docs/a.md', 'b.md'), 'docs/b.md')

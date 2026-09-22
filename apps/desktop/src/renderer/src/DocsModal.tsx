@@ -4,7 +4,7 @@ import type { DocFile, DocGroup } from '../../shared/ipc'
 import { Markdown } from './Markdown'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
-import { formatSize, isRecent, matchesQuery, resolveDocLink } from './docLinks'
+import { docsApi, formatSize, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, STALE_APP_MESSAGE } from './docLinks'
 
 interface Selected {
   source: string
@@ -12,6 +12,13 @@ interface Selected {
 }
 
 const sameDoc = (a: Selected | null, b: Selected): boolean => a?.source === b.source && a.path === b.path
+
+const docs = (): ReturnType<typeof docsApi> => docsApi(window.orca)
+
+function errorMessage(e: unknown): string {
+  const msg = ipcErrorMessage(e)
+  return isStaleDocsError(msg) ? STALE_APP_MESSAGE : msg
+}
 
 const fmtTime = (ms: number): string =>
   new Date(ms).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -32,7 +39,7 @@ export function DocsModal({ onClose }: { onClose(): void }): React.JSX.Element {
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const next = await window.orca.docs.list()
+      const next = await docs().list()
       setGroups(next)
       setListError(null)
       setNow(Date.now())
@@ -45,18 +52,18 @@ export function DocsModal({ onClose }: { onClose(): void }): React.JSX.Element {
         return first ? { source: first.source, path: first.file.path } : null
       })
     } catch (e) {
-      setListError(ipcErrorMessage(e))
+      setListError(errorMessage(e))
     }
   }, [])
 
   const load = useCallback(async (doc: Selected): Promise<void> => {
     try {
-      const text = await window.orca.docs.read(doc.source, doc.path)
+      const text = await docs().read(doc.source, doc.path)
       setContent(text)
       setDocError(null)
     } catch (e) {
       setContent(null)
-      setDocError(ipcErrorMessage(e))
+      setDocError(errorMessage(e))
     }
   }, [])
 
@@ -111,7 +118,7 @@ export function DocsModal({ onClose }: { onClose(): void }): React.JSX.Element {
     try {
       await action(selected.source, selected.path)
     } catch (e) {
-      setDocError(ipcErrorMessage(e))
+      setDocError(errorMessage(e))
     }
   }
 
@@ -189,10 +196,10 @@ export function DocsModal({ onClose }: { onClose(): void }): React.JSX.Element {
                     <code>{selected.path}</code>
                     {selectedFile && <span className="muted">{fmtTime(selectedFile.mtime)}</span>}
                   </div>
-                  <button className="btn-sm" onClick={() => void run(window.orca.docs.open)} title="Открыть в приложении по умолчанию">
+                  <button className="btn-sm" onClick={() => void run((source, path) => docs().open(source, path))} title="Открыть в приложении по умолчанию">
                     Открыть в системе
                   </button>
-                  <button className="btn-sm" onClick={() => void run(window.orca.docs.reveal)}>Показать в папке</button>
+                  <button className="btn-sm" onClick={() => void run((source, path) => docs().reveal(source, path))}>Показать в папке</button>
                 </div>
                 {docError && <div className="editor-error docs-error">{docError}</div>}
                 {content !== null && (
