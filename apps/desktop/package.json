@@ -10,7 +10,9 @@
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "postinstall": "electron-builder install-app-deps",
     "pack": "electron-vite build && electron-builder --mac --dir && electron-builder install-app-deps",
-    "dist": "electron-vite build && electron-builder --mac && electron-builder install-app-deps"
+    "dist": "electron-vite build && electron-builder --mac && electron-builder install-app-deps",
+    "dist:mac": "electron-vite build && electron-builder --mac && electron-builder install-app-deps",
+    "dist:win": "electron-vite build && electron-builder --win && electron-builder install-app-deps"
   },
   "dependencies": {
     "@orca-board/core": "workspace:*",
