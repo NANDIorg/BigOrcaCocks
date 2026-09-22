@@ -8,6 +8,8 @@ interface Session {
   proc: pty.IPty
   tail: string
   lastOutputAt: number
+  /** Последний ввод из вкладки (человек печатает) — активность для автозакрытия координатора. */
+  lastInputAt?: number
   /** Текущий размер: с ним стартует основная команда после шага before. */
   size: { cols: number; rows: number }
 }
@@ -145,7 +147,10 @@ export function spawnPty(
 }
 
 export function writePty(id: string, data: string): void {
-  sessions.get(id)?.proc.write(data)
+  const s = sessions.get(id)
+  if (!s) return
+  s.lastInputAt = Date.now()
+  s.proc.write(data)
 }
 
 export function resizePty(id: string, cols: number, rows: number): void {
@@ -180,9 +185,10 @@ export function isAlive(id: string): boolean {
   return sessions.has(id)
 }
 
-/** Время последнего вывода PTY; undefined — PTY уже не жив. */
-export function lastOutputAt(id: string): number | undefined {
-  return sessions.get(id)?.lastOutputAt
+/** Время последней активности PTY — вывода или ввода человека; undefined — PTY уже не жив. */
+export function lastActivityAt(id: string): number | undefined {
+  const s = sessions.get(id)
+  return s && Math.max(s.lastOutputAt, s.lastInputAt ?? 0)
 }
 
 export function silentFor(id: string): number {

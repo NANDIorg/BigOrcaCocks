@@ -246,6 +246,18 @@ export class TaskStore {
   }
 
   /**
+   * Координатор закончил работу по прогону (`runs finish`). Только для закрытого прогона: до run_done
+   * координатору ещё есть что делать. Повторный вызов обновляет время — считается последний сигнал.
+   */
+  finishRun(id: string): Run {
+    const run = this.mustRun(id)
+    if (run.closedAt === undefined) throw new Error(`run not closed: ${id} — дождись run_done`)
+    run.finishedAt = Date.now()
+    this.commit()
+    return run
+  }
+
+  /**
    * Прогон с задачами, у которого все задачи в kind=done, закрывается с событием run_done.
    * Вызывается из commit(), поэтому ловит любую смену статуса и удаление задач.
    * Закрытый прогон повторно не закрывается и run_done не шлёт.

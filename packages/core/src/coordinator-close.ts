@@ -10,10 +10,17 @@ import type { OrcaEvent, Question, Run, Task } from './types'
 import type { AgentKind } from './agents'
 
 /**
- * Сколько терминал координатора должен молчать после run_done, чтобы считать, что он дописал
- * сводку и ждёт ввода. Пока агент думает или выполняет команду, TUI обновляет индикатор работы.
+ * Пауза после сигнала координатора `runs finish` (и после последней активности терминала), прежде чем
+ * закрыть его: агент успевает дорисовать финальный ответ. Ввод человека сдвигает отсчёт.
  */
-export const COORDINATOR_IDLE_MS = 45_000
+export const COORDINATOR_FINISH_GRACE_MS = 15_000
+
+/**
+ * Страховка, если координатор не прислал `runs finish`: терминал закрывается только после долгой
+ * тишины (ни вывода, ни ввода) с момента run_done. Тишина ≠ завершение — агент может ждать
+ * подтверждения команды или человек читает ответ, — поэтому порог много больше любой паузы в работе.
+ */
+export const COORDINATOR_ABANDONED_MS = 30 * 60_000
 
 export interface CoordinatorCloseInput {
   runs: Run[]
@@ -24,10 +31,11 @@ export interface CoordinatorCloseInput {
   isDone(status: string): boolean
   /** Агент координатора сам не выходит после финального ответа — его терминал закрывает приложение. */
   lingers(agent: AgentKind | undefined): boolean
-  /** Время последнего вывода PTY; undefined — PTY уже не жив. */
-  lastOutputAt(ptyId: string): number | undefined
+  /** Время последней активности PTY (вывод или ввод человека); undefined — PTY уже не жив. */
+  lastActivityAt(ptyId: string): number | undefined
   now: number
-  idleMs?: number
+  graceMs?: number
+  abandonedMs?: number
 }
 
 export interface CoordinatorToClose {
@@ -38,11 +46,15 @@ export interface CoordinatorToClose {
 /**
  * Терминалы координаторов, которые пора закрыть. Прогон подходит, только если:
  * он закрыт событием run_done (ручное закрытие не в счёт), все его задачи и сейчас в kind=done,
- * по ним нет открытых вопросов, агент координатора из «незакрывающихся», PTY жив и молчит
- * `idleMs` с момента run_done (вывод до run_done не в счёт — сводка пишется после него).
+ * по ним нет открытых вопросов, агент координатора из «незакрывающихся» и PTY жив. Дальше:
+ * - координатор прислал `runs finish` после run_done — закрыть, когда терминал молчит `graceMs`
+ *   с момента сигнала и последней активности;
+ * - сигнала нет — закрыть, только если терминал молчит `abandonedMs` с run_done (страховка).
+ * Активность до run_done не в счёт — сводка пишется после него.
  */
 export function coordinatorsToClose(input: CoordinatorCloseInput): CoordinatorToClose[] {
-  const idleMs = input.idleMs ?? COORDINATOR_IDLE_MS
+  const graceMs = input.graceMs ?? COORDINATOR_FINISH_GRACE_MS
+  const abandonedMs = input.abandonedMs ?? COORDINATOR_ABANDONED_MS
   const out: CoordinatorToClose[] = []
   for (const run of input.runs) {
     const ptyId = run.coordinatorPtyId
@@ -54,9 +66,11 @@ export function coordinatorsToClose(input: CoordinatorCloseInput): CoordinatorTo
     if (tasks.length === 0 || !tasks.every((t) => input.isDone(t.status))) continue
     const ids = new Set(tasks.map((t) => t.id))
     if (input.questions.some((q) => !q.answeredAt && ids.has(q.taskId))) continue
-    const last = input.lastOutputAt(ptyId)
-    if (last === undefined) continue
-    if (input.now - Math.max(last, runDone.createdAt) < idleMs) continue
+    const active = input.lastActivityAt(ptyId)
+    if (active === undefined) continue
+    const finished = run.finishedAt !== undefined && run.finishedAt >= runDone.createdAt ? run.finishedAt : undefined
+    const since = Math.max(active, runDone.createdAt, finished ?? 0)
+    if (input.now - since < (finished !== undefined ? graceMs : abandonedMs)) continue
     out.push({ runId: run.id, ptyId })
   }
   return out

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
-import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastOutputAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
+import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
@@ -218,8 +218,8 @@ function watchStuck(): void {
 
 /**
  * Раз в 5 с: терминал координатора завершённого прогона (run_done), чей агент сам не выходит
- * после финального ответа (Codex), закрывается, когда молчит COORDINATOR_IDLE_MS после run_done —
- * координатор успевает дописать сводку. Решение — в coordinatorsToClose, killPty идемпотентен.
+ * после финального ответа (Codex), закрывается после его сигнала `runs finish` и короткой тишины
+ * (без сигнала — только после долгой тишины). Решение — в coordinatorsToClose, killPty идемпотентен.
  */
 function watchFinishedCoordinators(): void {
   setInterval(() => {
@@ -229,7 +229,7 @@ function watchFinishedCoordinators(): void {
         ...snap,
         isDone: (status) => store.columnKind(status) === 'done',
         lingers: (agent) => (agent ? getAgent(agent)?.lingersAfterAnswer === true : false),
-        lastOutputAt,
+        lastActivityAt,
         now: Date.now()
       })
       for (const { ptyId } of due) killPty(ptyId)

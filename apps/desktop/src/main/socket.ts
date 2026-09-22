@@ -206,6 +206,11 @@ const handlers: Record<string, Handler> = {
     if (!id) throw new Error('--run обязателен')
     return store.closeRun(id)
   },
+  'runs.finish': (r, _d, store) => {
+    const id = str(r.params.run)
+    if (!id) throw new Error('--run обязателен')
+    return store.finishRun(id)
+  },
   check: async (r, _d, store, stream) => {
     const types = (list(r.params.types).length ? list(r.params.types) : EVENT_TYPES) as EventType[]
     // Прогон координатора: его события и отдельный consumer, чтобы прогоны не забирали чужое.
