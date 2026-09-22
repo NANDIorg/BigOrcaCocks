@@ -43,6 +43,22 @@
    приложения работает на Node из Electron.
 5. Добавьте git-репозиторий кнопкой «+» в сайдбаре и нажмите «Координатор».
 
+### Готовая сборка (Windows)
+
+1. Скачайте из [Releases](https://github.com/NANDIorg/BigOrcaCocks/releases) установщик
+   `orca-board-<версия>-x64.exe` (NSIS, можно выбрать папку установки) или portable-вариант
+   `orca-board-<версия>-portable-x64.exe` (запускается без установки).
+2. Сборка не подписана, поэтому при первом запуске SmartScreen покажет «Windows защитила ваш компьютер»:
+   нажмите «Подробнее» → «Выполнить в любом случае».
+3. Нужны на машине: **git** и хотя бы один CLI-агент (**`claude`** и/или `codex` и др.) в PATH.
+   Агенты, поставленные через `npm i -g`, находятся и в `%APPDATA%\npm`, даже если его нет в PATH.
+   Node устанавливать не нужно: CLI `orca-board` внутри приложения — это `orca-board.cmd`,
+   который запускает Node из Electron (`ORCA_NODE`).
+4. Добавьте git-репозиторий кнопкой «+» в сайдбаре и нажмите «Координатор».
+
+Сборка Windows собирается кросс-компиляцией на macOS и на живой Windows не проверялась —
+о проблемах пишите в issues.
+
 ### Из исходников
 
 
@@ -71,7 +87,9 @@ pnpm dev
 
 - **`pnpm --filter @orca-board/desktop run pack`** → `apps/desktop/release/mac-arm64/orca-board.app`
   (без подписи, только macOS arm64).
-- **`pnpm --filter @orca-board/desktop run dist`** → dmg.
+- **`pnpm --filter @orca-board/desktop run dist:mac`** (или `dist`) → dmg arm64 и x64.
+- **`pnpm --filter @orca-board/desktop run dist:win`** → установщик NSIS и portable exe (x64),
+  в `apps/desktop/release/`. Собирается и с macOS.
 - **CLI `orca-board`** кладётся в ресурсы приложения (`Resources/cli`, см. `docs/architecture.md`),
   отдельно ставить его не нужно.
 
@@ -84,7 +102,7 @@ pnpm dev
 | Терминал | xterm.js + node-pty | рендер и PTY |
 | Состояние | SQLite (better-sqlite3) | задачи, события, переживает рестарт |
 | CLI | `orca-board` (Node, тот же пакет) | команды для координатора и воркеров |
-| Связь CLI ↔ app | unix socket + JSON-RPC | CLI внутри PTY говорит с приложением |
+| Связь CLI ↔ app | unix socket (Windows — named pipe) + JSON-RPC | CLI внутри PTY говорит с приложением |
 
 ## Структура (план)
 
@@ -103,7 +121,8 @@ orca-board/
 
 Работает: `pnpm install && pnpm dev`. Доска, задачи, drag-and-drop, терминалы с вкладками,
 старт воркера в git worktree с заданием, CLI `orca-board` через unix-сокет
-(`~/.orca-board/orca.sock`), вопросы воркера с ответом из приложения, явный `done`,
+(`~/.orca-board/orca.sock`; на Windows — именованный канал `\\.\pipe\orca-board`;
+путь переопределяется `ORCA_SOCKET`), вопросы воркера с ответом из приложения, явный `done`,
 `check --wait` для координатора. Ревью на карточке: diff-stat и коммиты ветки, «Слить и закрыть»
 (коммит хвостов, `merge --no-ff`, удаление worktree) или «Доработать» с замечаниями, которые
 попадут в промпт при перезапуске. Детектор тишины: воркер без вывода 10 минут → эскалация

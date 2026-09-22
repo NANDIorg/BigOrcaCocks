@@ -5,7 +5,7 @@
 ```
 Electron main ───── node-pty ───── PTY: claude (координатор)
    │                                   └─ bash: orca-board task-create ...
-   │                                          │ unix socket / JSON-RPC
+   │                                          │ unix socket (win32: named pipe) / JSON-RPC
    ├── JSON (tasks, runs, events) ◄───────────┘
    ├── node-pty ───── PTY: claude (воркер задачи #12, worktree ../wt/task-12)
    ├── node-pty ───── PTY: codex  (воркер задачи #13, worktree ../wt/task-13)
@@ -15,6 +15,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - Все агенты — дочерние процессы приложения. Никакого API: агент логинится сам.
 - CLI `orca-board` — тонкий клиент к сокету приложения. Его вызывают агенты
   через свой Bash. Приложение — единственный владелец состояния.
+- Сокет: `$ORCA_SOCKET`, иначе `~/.orca-board/orca.sock`, на Windows — `\\.\pipe\orca-board`
+  (см. «Кроссплатформенность»).
 
 ## Модель (`packages/core/src/types.ts`)
 
@@ -358,7 +360,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Протокол сокета
 
-Одна строка JSON-запроса `{id, method, params, dispatchId?, taskId?, projectId?}`, одна строка ответа
+Транспорт — `net` Node: unix-сокет или, на Windows, именованный канал; протокол одинаковый. Одна строка JSON-запроса `{id, method, params, dispatchId?, taskId?, projectId?}`, одна строка ответа
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 `check` с `follow: true` — исключение: сервер пишет по строке `{id, ok: true, result: {event}}` на каждое
 событие, пока клиент не закроет соединение (см. «Ожидание событий без токенов»).
@@ -415,14 +417,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Подготовка worktree
 
-Если worktree только что создан и есть lock-файл, агент запускается через
+Если worktree только что создан и есть lock-файл (`setupCommand()` в `git.ts`), агент запускается через
 `$SHELL -c "<setup>; exec <agent> ..."` — установка идёт в том же терминале, что видит пользователь.
+На Windows склейки нет: setup — отдельный шаг `cmd.exe /d /s /c "..."` (`spawnPty({ before })`), после его
+выхода с любым кодом в том же PTY стартует агент.
 
 ## Проекты (`src/main/projects.ts`)
 
 `ProjectManager` хранит список репозиториев в `userData/projects.json` (вместе с `permissionMode`,
 `enabledAgents`, `roles`, `columns`), доску каждого — в `userData/boards/<id>.json`
-(`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board`.
+(`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board` (на Windows — `%APPDATA%\orca-board`).
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
 UI работает с активным проектом; агенты получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
 поэтому воркер продолжает писать в свою доску, даже если пользователь переключился на другой проект.
@@ -452,12 +456,65 @@ UI работает с активным проектом; агенты полу�
 `ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification`
 для `question`, `escalation`, `worker_done` (в подзаголовке — название колонки задачи).
 Клик по уведомлению фокусирует окно и переключает проект.
+На Windows уведомления показываются только при заданном AppUserModelID — `app.setAppUserModelId('orca-board')`
+в `app.whenReady()` (`src/main/index.ts`).
+
+## Кроссплатформенность
+
+Поддерживаются macOS и Windows (x64). Всё платформозависимое — ветки `process.platform === 'win32'`
+в перечисленных местах; на unix поведение не менялось. На живой Windows не проверялось.
+
+| Что | macOS / unix | Windows | Где |
+|---|---|---|---|
+| Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
+| Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
+| Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |
+| Env для PTY | как есть | имена регистронезависимы: `PATH` пишется в существующий `Path` | `mergeEnv()` — `src/main/pty.ts` |
+| PATH пользователя | из `$SHELL -ilc` | `shellPath()` → `null`, берётся PATH процесса | `shellPath()` — `src/main/index.ts` |
+| Разделитель PATH | `:` | `;` — везде `path.delimiter` | `workerPath()` — `src/main/worker.ts`; `extraPathDirs()`, `findBin()` — `src/main/agents.ts` |
+| Доп. папки агентов | `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`… | `%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, `~/.local/bin`… | `extraPathDirs()` — `src/main/agents.ts` |
+| Поиск бинарника | имя как есть | сначала расширения из `PATHEXT` (`claude.cmd`, `codex.exe`), потом имя как есть — рядом с `claude.cmd` npm кладёт sh-скрипт без расширения | `binSuffixes()`, `findBin()` — `src/main/agents.ts` |
+| Версия агента | `execFileSync(bin)` | `.cmd`/`.bat` (`isCmdScript()`) — через `shell: true` | `readVersion()` — `src/main/agents.ts` |
+| Запуск агента | argv напрямую | `win32Launch()`: см. ниже | `src/main/worker.ts` (`startWorker`, `startCoordinator`) |
+| Подготовка worktree | `$SHELL -c "<setup>; exec <agent>"` | отдельный шаг `cmd.exe /d /s /c` перед агентом | `win32Setup()` — `src/main/worker.ts`; `spawnPty({ before })` — `src/main/pty.ts` |
+| CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
+| Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
+| git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
+
+**Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
+`node`/Node из Electron прямо из `Resources/cli` без сборки и без `node_modules`, поэтому импортировать
+`@orca-board/core` (TypeScript) не может. Функция в core — чистая, без node-импортов (её тянет и renderer),
+окружение передаёт вызывающий. Менять обе копии синхронно.
+
+**Запуск агента на Windows** (`win32Launch()`, `src/main/worker.ts`). Промпт и system prompt длинные и
+многострочные, поэтому по возможности идут через argv node-pty (CreateProcess, лимит 32767, переводы строк
+сохраняются), а не через командную строку cmd.exe:
+1. `<bin>.exe` или файл без расширения — напрямую.
+2. npm-шим `<bin>.cmd` — `npmShimTarget()` достаёт из шима путь к точке входа (`%dp0%\...\cli.js` или `.exe`).
+   `.exe` запускается напрямую, JS — через `win32Node()`: `node.exe` рядом с шимом, в сборке — Electron
+   (`process.execPath` + `ELECTRON_RUN_AS_NODE=1`), иначе `node` из PATH.
+3. Шим не распознан — `cmd.exe /d /s /c "<agent> <args>"`. Аргументы экранирует `cmdQuoteArg()` (схема cross-spawn):
+   кавычки по правилам MSVCRT, затем `^` перед метасимволами cmd, для `.cmd`-шима — дважды (он ещё раз
+   разбирает `%*`); переводы строк заменяются пробелом. Строка длиннее `CMD_LINE_LIMIT` (8000) — ошибка
+   запуска, иначе cmd молча обрезал бы её.
+
+**CLI без Node.** В собранном приложении main кладёт в env агентов `ORCA_NODE=process.execPath`
+(`baseEnv()` в `worker.ts` — воркеры и координатор; `pty:spawn` в `index.ts` — терминалы пользователя). `orca-board.cmd` при заданном `ORCA_NODE` ставит
+`ELECTRON_RUN_AS_NODE=1` и запускает им `orca-board.js`, иначе ищет `node` в PATH. Сообщения в `.cmd` —
+латиницей (консоль в OEM-кодировке); `.gitattributes` держит `*.cmd` с CRLF.
 
 ## Сборка
 
 `electron-builder.yml`: `extraResources` копирует `packages/cli/bin` в `Resources/cli`,
 `cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
 `pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
+
+Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac`, dmg arm64 + x64;
+`dist:win` — `electron-builder --win`. Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
+папки) → `orca-board-<версия>-x64.exe` и `portable` x64 → `orca-board-<версия>-portable-x64.exe`
+(отдельный `artifactName`, иначе portable перезаписывал бы установщик). В `Resources/cli` попадают
+обе обёртки CLI — `orca-board` и `orca-board.cmd`. Windows-сборка делается кросс с macOS; тестировать
+на Windows негде, поэтому она не проверена вживую.
 
 Сборка под x64 пересобирает node-pty для Intel прямо в `node_modules`, после чего dev-приложение
 на arm64 падает с `posix_spawnp failed` (spawn-helper не той архитектуры). Поэтому скрипты
