@@ -13,8 +13,9 @@ const HELP = `orca-board — управление доской агентов
   coordinator start --objective "..."     открыть Claude Code-координатора в приложении
 
 Координатор:
+  agents list      известные агенты: установлен ли, включён ли в проекте, версия
   task list
-  task create --title "..." [--spec "..."] [--agent claude|codex|opencode|shell] [--dep <id>]...
+  task create --title "..." [--spec "..."] [--agent <id из agents list>] [--dep <id>]...
   task move --task <id> --status backlog|ready|in_progress|needs_input|review|done
   worker start --task <id>
   worker read --dispatch <id> [--limit 80]
