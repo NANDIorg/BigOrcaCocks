@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   builtinPromptKind,
   coordinatorPrompt,
+  defaultRoleDescription,
   effortOptions,
   effortOptionsFor,
   getAgent,
@@ -30,9 +31,10 @@ interface Props {
   onSave(roles: Role[]): Promise<void>
 }
 
-/** Роль с новыми полями; пустые model/effort/systemPrompt не сохраняем вовсе (undefined — «по умолчанию»). */
+/** Роль с новыми полями; пустые description/model/effort/systemPrompt не сохраняем вовсе (undefined — «по умолчанию»). */
 function withPatch(r: Role, p: Partial<Role>): Role {
   const next: Role = { ...r, ...p }
+  if (!next.description?.trim()) delete next.description
   if (!next.model) delete next.model
   if (!next.effort) delete next.effort
   if (!next.systemPrompt?.trim()) delete next.systemPrompt
@@ -44,7 +46,7 @@ function effortsOf(info: AgentInfo | undefined, agent: string, model: string | u
   return info ? effortOptionsFor(info, model) : effortOptions(agent)
 }
 
-/** Раздел «Роли» («О проекте» и дефолт для новых проектов): название, агент, модель, усилие; сохраняется автоматически. */
+/** Раздел «Роли» («О проекте» и дефолт для новых проектов): название, назначение, агент, модель, усилие; сохраняется автоматически. */
 export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Props): React.JSX.Element {
   const { draft: roles, error, update } = useAutoSave<Role[]>(storageKey, initial, onSave)
   const enabled = agents.filter((a) => a.enabled)
@@ -112,6 +114,15 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
                   onChange={(e) => patch(i, { title: e.target.value }, true)}
                 />
                 <div className="editor-id">{r.id}</div>
+                <textarea
+                  className="role-description"
+                  value={r.description ?? ''}
+                  rows={2}
+                  placeholder={defaultRoleDescription(r.id) ?? 'Назначение: что делает роль и когда её брать'}
+                  aria-label="Назначение роли"
+                  title="По назначению координатор выбирает роль для задач (orca-board roles list)"
+                  onChange={(e) => patch(i, { description: e.target.value }, true)}
+                />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <AgentLogo agent={r.agent} size={18} />
@@ -211,7 +222,10 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
         <button className="btn-sm" onClick={add}>Добавить роль</button>
       </div>
       <p className="editor-hint">
-        Роль задаёт агента, модель и усилие (уровень рассуждений). «Инструкции» показывают встроенную инструкцию Orca,
+        Роль задаёт агента, модель и усилие (уровень рассуждений). «Назначение» видит координатор: по нему он выбирает,
+        какой роли отдать задачу; без назначения он ориентируется только на id и название. У системных ролей
+        (<code>coordinator</code>, <code>developer</code>, <code>reviewer</code>, <code>qa</code>) пустое назначение
+        заменяется назначением по умолчанию. «Инструкции» показывают встроенную инструкцию Orca,
         которую агент роли получает при запуске, и дополнительные инструкции роли — они дописываются после встроенной
         при следующем запуске и не заменяют её. Координатор запускается ролью <code>coordinator</code>; в задачах роль
         выбирается при создании (для CLI — <code>--role &lt;id&gt;</code>).

@@ -3,10 +3,17 @@
  * Глобальная задача — это прогон (`Run`), её подзадачи — задачи с `Task.runId === run.id`.
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
-import type { ColumnKind, Run, Task } from './types'
+import type { BoardColumn, ColumnKind, Run, Task } from './types'
 
 /** Название «Входящих» — служебной глобальной задачи для задач без глобальной. */
 export const INBOX_TITLE = 'Входящие'
+
+/**
+ * Виды колонок глобального канбана. Готовы/Нужен ответ/Ревью (и пользовательские) — этапы подзадач
+ * на локальном канбане; на верхнем уровне их нет.
+ */
+export const GLOBAL_COLUMN_KINDS = ['backlog', 'in_progress', 'done'] as const
+export type GlobalColumnKind = (typeof GLOBAL_COLUMN_KINDS)[number]
 
 /** Длина названия, выведенного из описания. */
 const DERIVED_TITLE_MAX = 80
@@ -70,23 +77,43 @@ export function globalTaskProgress(
   return progress
 }
 
+/** Колонки проекта, которые показывает глобальный канбан (порядок проекта сохраняется). */
+export function globalBoardColumns(columns: readonly BoardColumn[]): BoardColumn[] {
+  return columns.filter((c) => (GLOBAL_COLUMN_KINDS as readonly ColumnKind[]).includes(c.kind))
+}
+
 /**
- * Прогон → карточка. `fallbackStatus` — колонка для прогона без status (снапшот до миграции;
- * store мигрирует при загрузке, так что в живых данных это не встречается).
+ * Куда встаёт глобальная задача из колонки этого вида: ready — ещё не начата (backlog),
+ * needs_input/review/custom — работа идёт (in_progress). Неизвестная колонка — backlog.
  */
-export function toGlobalTask(
-  run: Run,
-  tasks: readonly Task[],
-  columnKind: (status: string) => ColumnKind | undefined,
-  fallbackStatus = 'backlog'
-): GlobalTask {
+export function globalColumnKind(kind: ColumnKind | undefined): GlobalColumnKind {
+  if (kind === 'backlog' || kind === 'in_progress' || kind === 'done') return kind
+  if (kind === 'ready' || kind === undefined) return 'backlog'
+  return 'in_progress'
+}
+
+/**
+ * Статус глобальной задачи → id колонки глобального канбана. Статус из скрытой колонки
+ * (старые данные, ручная правка) сводится к ближайшей видимой — карточка не пропадает с доски.
+ * Колонки нужного вида нет — первая видимая; видимых нет — статус как есть.
+ */
+export function globalTaskStatus(status: string | undefined, columns: readonly BoardColumn[]): string | undefined {
+  const visible = globalBoardColumns(columns)
+  if (status !== undefined && visible.some((c) => c.id === status)) return status
+  const target = globalColumnKind(columns.find((c) => c.id === status)?.kind)
+  return visible.find((c) => c.kind === target)?.id ?? visible[0]?.id ?? status
+}
+
+/** Прогон → карточка. Статус сведён к колонке глобального канбана (globalTaskStatus). */
+export function toGlobalTask(run: Run, tasks: readonly Task[], columns: readonly BoardColumn[]): GlobalTask {
+  const columnKind = (status: string): ColumnKind | undefined => columns.find((c) => c.id === status)?.kind
   const updatedAt = run.updatedAt ?? run.createdAt
   const activityAt = tasks.reduce((max, t) => (t.runId === run.id && t.updatedAt > max ? t.updatedAt : max), updatedAt)
   return {
     id: run.id,
     title: globalTaskTitle(run),
     description: run.objective,
-    status: run.status ?? fallbackStatus,
+    status: globalTaskStatus(run.status, columns) ?? 'backlog',
     inbox: run.inbox === true,
     createdAt: run.createdAt,
     updatedAt,
@@ -100,13 +127,6 @@ export function toGlobalTask(
 }
 
 /** Все карточки в порядке создания. */
-export function toGlobalTasks(
-  runs: readonly Run[],
-  tasks: readonly Task[],
-  columnKind: (status: string) => ColumnKind | undefined,
-  fallbackStatus?: string
-): GlobalTask[] {
-  return [...runs]
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .map((run) => toGlobalTask(run, tasks, columnKind, fallbackStatus))
+export function toGlobalTasks(runs: readonly Run[], tasks: readonly Task[], columns: readonly BoardColumn[]): GlobalTask[] {
+  return [...runs].sort((a, b) => a.createdAt - b.createdAt).map((run) => toGlobalTask(run, tasks, columns))
 }

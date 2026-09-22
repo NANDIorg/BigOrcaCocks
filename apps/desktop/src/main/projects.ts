@@ -3,7 +3,7 @@ import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  TaskStore, isAgentKind, DEFAULT_ROLES, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
+  TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn
 } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
@@ -75,6 +75,9 @@ export class ProjectManager {
       // Старый формат без defaults читается как есть; мусор в defaults — сбрасываем.
       if (data.defaults !== undefined && (typeof data.defaults !== 'object' || data.defaults === null)) delete data.defaults
       if (data.settings !== undefined && (typeof data.settings !== 'object' || data.settings === null || Array.isArray(data.settings))) delete data.settings
+      // Системные роли без назначения (созданы до появления поля) получают назначение по умолчанию.
+      for (const p of data.projects ?? []) if (Array.isArray(p.roles)) p.roles = withDefaultDescriptions(p.roles)
+      if (Array.isArray(data.defaults?.roles)) data.defaults.roles = withDefaultDescriptions(data.defaults.roles)
       return data
     } catch {
       return { projects: [], activeId: null }
@@ -309,28 +312,33 @@ function nonEmpty(v: unknown): v is string {
   return typeof v === 'string' && v.trim() !== ''
 }
 
-/** Роли: непустые уникальные id, непустые названия, известный агент; модель, effort, системный промпт — строки или отсутствуют. */
+/**
+ * Роли: непустые уникальные id, непустые названия, известный агент; назначение, модель, effort, системный промпт —
+ * строки или отсутствуют. Пустое назначение системной роли заменяется назначением по умолчанию.
+ */
 function validateRoles(roles: Role[]): Role[] {
   if (!Array.isArray(roles) || roles.length === 0) throw new Error('нужна хотя бы одна роль')
   const seen = new Set<string>()
-  return roles.map((r, i) => {
+  return withDefaultDescriptions(roles.map((r, i) => {
     if (!nonEmpty(r.id)) throw new Error(`роль №${i + 1}: пустой id`)
     if (seen.has(r.id)) throw new Error(`роль «${r.id}» указана дважды`)
     seen.add(r.id)
     if (!nonEmpty(r.title)) throw new Error(`роль «${r.id}»: пустое название`)
+    if (r.description !== undefined && typeof r.description !== 'string') throw new Error(`роль «${r.id}»: назначение должно быть строкой`)
     if (!isAgentKind(r.agent)) throw new Error(`роль «${r.id}»: неизвестный агент ${String(r.agent)}`)
     if (r.model !== undefined && typeof r.model !== 'string') throw new Error(`роль «${r.id}»: модель должна быть строкой`)
     if (r.effort !== undefined && typeof r.effort !== 'string') throw new Error(`роль «${r.id}»: effort должен быть строкой`)
     if (r.systemPrompt !== undefined && typeof r.systemPrompt !== 'string') throw new Error(`роль «${r.id}»: системный промпт должен быть строкой`)
     const model = r.model?.trim()
     const effort = r.effort?.trim()
-    // Промпт хранится как введён (многострочный, без trim — иначе автосохранение съедало бы ввод); из одних пробелов — поля нет.
+    // Назначение и промпт хранятся как введены (многострочные, без trim — иначе автосохранение съедало бы ввод); из одних пробелов — поля нет.
+    const description = r.description?.trim() ? r.description : undefined
     const systemPrompt = r.systemPrompt?.trim() ? r.systemPrompt : undefined
     return {
-      id: r.id, title: r.title.trim(), agent: r.agent,
+      id: r.id, title: r.title.trim(), ...(description ? { description } : {}), agent: r.agent,
       ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(systemPrompt ? { systemPrompt } : {})
     }
-  })
+  }))
 }
 
 /**

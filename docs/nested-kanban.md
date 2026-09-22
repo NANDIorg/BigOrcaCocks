@@ -4,6 +4,9 @@
 задачи**, внутри каждой — своя доска **подзадач** (обычных `Task`, на которых работают воркеры).
 Обе доски используют **реальные колонки проекта** (`Project.columns`, `columns list`), а не фиксированный
 набор: макет Planning / In Progress / AI Review / Human Review / Done — это просто пример колонок проекта.
+Локальный канбан подзадач показывает все колонки проекта; **глобальный — только колонки `kind` backlog,
+in_progress и done** (`GLOBAL_COLUMN_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`):
+Готовы / Нужен ответ / Ревью (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
 
 ## Модель: глобальная задача = прогон (`Run`)
 
@@ -22,7 +25,7 @@
 |---|---|
 | `objective` | (было) описание глобальной задачи; для координатора — его цель |
 | `title?` | название карточки; нет — первая строка `objective` (≤ 80 символов), у «Входящих» — `Входящие` (`globalTaskTitle`) |
-| `status?` | id колонки проекта, где стоит карточка. После миграции есть всегда |
+| `status?` | id колонки глобального канбана (kind backlog / in_progress / done), где стоит карточка. После миграции есть всегда |
 | `inbox?` | служебная глобальная задача «Входящие» (одна на проект) |
 | `updatedAt?` | последняя правка карточки |
 | `reopenedAt?` | прогон переоткрыт и ещё ни одна подзадача не дошла до done после этого (см. «Жизненный цикл») |
@@ -45,6 +48,10 @@
 ### Миграция (в конструкторе `TaskStore`, `migrateGlobalTasks`)
 
 - Прогон без `status`: `closedAt` есть → колонка `kind=done`, иначе `kind=in_progress`; `updatedAt = createdAt`.
+- Прогон в колонке подзадач сводится к колонке глобального канбана (`globalTaskStatus` / `globalColumnKind`):
+  `ready` → `backlog` (ещё не начата), `needs_input` / `review` / `custom` → `in_progress`, неизвестная колонка → `backlog`.
+  То же сведение делает `toGlobalTask` при каждом чтении — карточка не пропадает, если колонки проекта
+  поменяли на ходу (kind колонки сменился).
 - Задачи без `runId` (или со ссылкой на несуществующий прогон) → во «Входящие» (существующие или новые,
   `createdAt` = самой ранней из них). Статус «Входящих»: все в done → `done` и `closedAt` (без `run_done`),
   иначе `in_progress`.
@@ -58,7 +65,7 @@
 
 | Событие | Что происходит |
 |---|---|
-| Создание (`createGlobalTask`, `createRun`) | `status` = переданная колонка или первая `kind=backlog` |
+| Создание (`createGlobalTask`, `createRun`) | `status` = переданная колонка (только глобального канбана) или первая `kind=backlog` |
 | Координатор запущен на прогоне (`setRunPty`) | закрытый прогон переоткрывается; карточка → `kind=in_progress` |
 | Все подзадачи в `kind=done` (`closeFinishedRuns`) | `closedAt`, событие `run_done` (у «Входящих» — без события: нет координатора), карточка → `kind=done` |
 | `runs finish` на незакрытом прогоне, где все подзадачи в `kind=done` (`finishRun`) | то же закрытие (`closedAt`, `reopenedAt` снят, `run_done` сразу помечен потреблённым) + `finishedAt` |
@@ -135,9 +142,9 @@ interface GlobalTask {
 |---|---|---|---|
 | `list()` | `globalTasks:list` | `GlobalTask[]` в порядке создания (нет проекта → `[]`) | — |
 | `get(id)` | `globalTasks:get` | `GlobalTask` | `run not found` |
-| `create({title?, description?, status?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка |
+| `create({title?, description?, status?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана |
 | `update(id, {title?, description?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название |
-| `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка |
+| `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / review / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |
 | `tasks(id)` | `globalTasks:tasks` | `Task[]` только этой глобальной | `run not found` |
 | `createTask(id, {title, spec?, deps?, roleId?})` | `globalTasks:createTask` | `Task` (`runId = id`) | пустое название; роль (`pickRole`); deps из другой глобальной; `run not found` |
@@ -171,8 +178,9 @@ interface GlobalTask {
 
 ## Что учесть UI
 
-- Колонки обеих досок — `Project.columns` (порядок, `title`, `color`, `kind`); счётчик колонки верхнего
-  уровня — число карточек с `status === column.id`.
+- Колонки внутренней доски — `Project.columns` (порядок, `title`, `color`, `kind`); верхнего уровня —
+  `globalBoardColumns(Project.columns)` (только backlog / in_progress / done). Счётчик колонки верхнего
+  уровня — число карточек с `status === column.id` (`GlobalTask.status` уже сведён к видимой колонке).
 - Карточка: `title`, `description` (кратко), статус, `progress.done/total`, `activityAt`.
 - Внутренняя доска — `tasks(id)` или `snapshot.tasks.filter(t => t.runId === id)`; создание — только
   `createTask(id, …)`; drag подзадач — прежний `tasks.move`, drag карточек — `globalTasks.move`.
@@ -182,7 +190,8 @@ interface GlobalTask {
 
 ## Проверки
 
-- `packages/core/src/global-tasks.test.ts` — CRUD, реальные колонки, прогресс, изоляция, удаление,
+- `packages/core/src/global-tasks.test.ts` — CRUD, реальные колонки, колонки глобального канбана и сведение
+  статусов из скрытых колонок, прогресс, изоляция, удаление,
   lifecycle (run_done, повторный запуск с новой подзадачей и без неё → `runs finish` закрывает прогон
   и терминал, ручное закрытие, «Входящие» без run_done), сохранение и миграция старого снапшота.
 - `packages/core/src/coordinator-close.test.ts` — последний `run_done` переоткрытого прогона.
@@ -194,13 +203,14 @@ interface GlobalTask {
 ## Реализация UI (renderer)
 
 - `GlobalBoard.tsx` — вкладка «Канбан» без открытой задачи: карточки `toGlobalTasks(snapshot.runs, snapshot.tasks, …)`
-  по реальным колонкам проекта (счётчик, цветная верхняя линия), drag — `globalTasks.move`, карточка: название и
+  по колонкам Бэклог / В работе / Сделано проекта (`globalBoardColumns`; счётчик, цветная верхняя линия), drag —
+  `globalTasks.move` (бросить можно только в показанные колонки), карточка: название и
   описание по 2 строки, чип колонки, живой координатор, вопросы/ревью подзадач, прогресс done/total, `activityAt`.
   Кнопки на карточке: запуск координатора (не у «Входящих» и не при живом), правка, удаление (каскадом при подзадачах).
 - `GlobalTaskView.tsx` — экран открытой глобальной задачи: крошки «← Глобальные задачи / название», описание,
   прогресс, «Изменить», «Запустить координатора» / «Координатор работает» (переход к терминалу) и `Board` только
   с `task.runId === id` (прежние действия подзадач: drag `tasks.move`, модалка задачи, запуск воркера, вопросы, ревью).
-- `GlobalTaskModal.tsx` — создание (`globalTasks.create`, колонка на выбор) и правка (`globalTasks.update`, только изменённые поля).
+- `GlobalTaskModal.tsx` — создание (`globalTasks.create`, колонка глобального канбана на выбор) и правка (`globalTasks.update`, только изменённые поля).
   «Новая подзадача» в шапке открыта задачей → `NewTaskModal` с зависимостями только из её подзадач → `globalTasks.createTask`.
 - Открытая глобальная задача — в `ProjectView.globalId` (по проекту, `localStorage` `orca.global.<projectId>`):
   переживает перезагрузку; id, которого нет в снимке активного проекта, показывает общую доску.

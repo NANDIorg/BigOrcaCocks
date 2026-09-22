@@ -285,6 +285,10 @@ button:disabled { opacity: .45; cursor: default; }
 .role-toggle:focus-visible, .role-actions .card-tool:focus-visible, .role-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .role-chevron { display: inline-block; font-size: 11px; color: var(--muted); transition: transform .12s; }
 .role-toggle.open .role-chevron { transform: rotate(90deg); }
+.editor-table .role-description {
+  display: block; width: 100%; min-height: 48px; margin-top: 6px; padding: 6px 10px; resize: vertical;
+  font: inherit; font-size: 12px; line-height: 1.4;
+}
 .role-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .role-toggle:not(:has(.role-dot))::after { content: ''; width: 6px; }
 .editor-table .role-details {
