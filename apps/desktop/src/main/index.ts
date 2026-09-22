@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import { TaskStore } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
 import { spawnPty, writePty, resizePty, killPty, killAll } from './pty'
@@ -35,6 +35,7 @@ function createWindow(): void {
 }
 
 function registerIpc(): void {
+  ipcMain.handle('app:info', () => ({ repoRoot: REPO_ROOT, repoName: basename(REPO_ROOT) }))
   ipcMain.handle('tasks:list', () => store.listTasks())
   ipcMain.handle('tasks:create', (_e, input) => store.createTask(input))
   ipcMain.handle('tasks:move', (_e, id: string, status) => store.moveTask(id, status))

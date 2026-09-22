@@ -11,6 +11,9 @@ export interface PtySpawnOptions {
 
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
 export interface OrcaApi {
+  app: {
+    info(): Promise<{ repoRoot: string; repoName: string }>
+  }
   tasks: {
     list(): Promise<Task[]>
     create(input: { title: string; spec?: string; deps?: string[]; agent?: AgentKind }): Promise<Task>

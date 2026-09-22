@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useState } from 'react'
-import type { AgentKind, Task } from '@orca-board/core'
+import { AGENT_TITLES, type AgentKind, type Task } from '@orca-board/core'
 
 interface Props {
   tasks: Task[]
@@ -20,19 +20,18 @@ export function NewTaskModal({ tasks, onClose, onCreate }: Props): React.JSX.Ele
         <h3>Новая задача</h3>
         <label>
           Название
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Что нужно сделать" />
         </label>
         <label>
-          Спека (промпт для агента)
-          <textarea value={spec} onChange={(e) => setSpec(e.target.value)} />
+          Задание для агента
+          <textarea value={spec} onChange={(e) => setSpec(e.target.value)} placeholder="Подробное описание, критерии готовности" />
         </label>
         <label>
           Агент
           <select value={agent} onChange={(e) => setAgent(e.target.value as AgentKind)}>
-            <option value="claude">claude</option>
-            <option value="codex">codex</option>
-            <option value="opencode">opencode</option>
-            <option value="shell">shell (без агента)</option>
+            {(Object.keys(AGENT_TITLES) as AgentKind[]).map((k) => (
+              <option key={k} value={k}>{AGENT_TITLES[k]}</option>
+            ))}
           </select>
         </label>
         <label>
@@ -43,16 +42,14 @@ export function NewTaskModal({ tasks, onClose, onCreate }: Props): React.JSX.Ele
             onChange={(e) => setDeps([...e.target.selectedOptions].map((o) => o.value))}
           >
             {tasks.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.title}
-              </option>
+              <option key={t.id} value={t.id}>{t.title}</option>
             ))}
           </select>
         </label>
         <div className="row">
-          <button onClick={onClose}>Отмена</button>
+          <button className="btn-text" onClick={onClose}>Отмена</button>
           <button
-            className="primary"
+            className="btn-primary"
             disabled={!title.trim()}
             onClick={() => onCreate({ title: title.trim(), spec, deps, agent })}
           >

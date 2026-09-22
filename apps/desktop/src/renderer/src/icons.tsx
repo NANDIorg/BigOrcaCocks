@@ -1,0 +1,26 @@
+import type React from 'react'
+
+const base = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+
+export const Icon = {
+  menu: (): React.JSX.Element => <svg {...base}><path d="M4 7h16M4 12h16M4 17h16" /></svg>,
+  board: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16M15 4v16" /></svg>,
+  layers: (): React.JSX.Element => <svg {...base}><path d="M12 3l9 5-9 5-9-5 9-5z" /><path d="M3 13l9 5 9-5" /></svg>,
+  users: (): React.JSX.Element => <svg {...base}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-5-6.3" /></svg>,
+  bell: (): React.JSX.Element => <svg {...base}><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z" /><path d="M10 21h4" /></svg>,
+  gear: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>,
+  search: (): React.JSX.Element => <svg {...base}><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>,
+  plus: (): React.JSX.Element => <svg {...base}><path d="M12 5v14M5 12h14" /></svg>,
+  terminal: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9l3 3-3 3M12 15h5" /></svg>,
+  trash: (): React.JSX.Element => <svg {...base}><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg>,
+  edit: (): React.JSX.Element => <svg {...base}><path d="M4 20h4l10-10-4-4L4 16v4z" /><path d="M13 7l4 4" /></svg>,
+  play: (): React.JSX.Element => <svg {...base} width={14} height={14} fill="currentColor" stroke="none"><path d="M7 5v14l12-7z" /></svg>,
+  grip: (): React.JSX.Element => <svg {...base}><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" strokeWidth={3} /></svg>,
+  star: (): React.JSX.Element => <svg {...base}><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" /></svg>,
+  check: (): React.JSX.Element => <svg {...base}><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M8 12l3 3 5-6" /></svg>,
+  spinner: (): React.JSX.Element => <svg {...base}><path d="M12 3a9 9 0 1 0 9 9" /></svg>,
+  question: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.5M12 17h.01" /></svg>,
+  eye: (): React.JSX.Element => <svg {...base}><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>,
+  done: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" /></svg>,
+  close: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 6l12 12M18 6L6 18" /></svg>
+}

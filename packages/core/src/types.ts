@@ -16,15 +16,22 @@ export const TASK_STATUSES: TaskStatus[] = [
 ]
 
 export const STATUS_TITLES: Record<TaskStatus, string> = {
-  backlog: 'Backlog',
-  ready: 'Ready',
-  in_progress: 'In progress',
-  needs_input: 'Needs input',
-  review: 'Review',
-  done: 'Done'
+  backlog: 'Бэклог',
+  ready: 'Готовы',
+  in_progress: 'В работе',
+  needs_input: 'Нужен ответ',
+  review: 'Ревью',
+  done: 'Сделано'
 }
 
 export type AgentKind = 'claude' | 'codex' | 'opencode' | 'shell'
+
+export const AGENT_TITLES: Record<AgentKind, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  shell: 'Оболочка'
+}
 
 export interface Task {
   id: string

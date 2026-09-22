@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { OrcaApi } from '../shared/ipc'
 
 const api: OrcaApi = {
+  app: {
+    info: () => ipcRenderer.invoke('app:info')
+  },
   tasks: {
     list: () => ipcRenderer.invoke('tasks:list'),
     create: (input) => ipcRenderer.invoke('tasks:create', input),
