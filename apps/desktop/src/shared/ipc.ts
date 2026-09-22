@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, BuiltinPrompts } from '@orca-board/core'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -112,6 +112,10 @@ export interface OrcaApi {
   agents: {
     /** Агенты реестра с признаками «установлен»/«включён» для активного проекта. refresh — пересканировать PATH. */
     list(refresh?: boolean): Promise<AgentInfo[]>
+  }
+  prompts: {
+    /** Служебные инструкции Orca (skills/*.md) — тот же текст, что агенты получают при запуске. */
+    builtin(): Promise<BuiltinPrompts>
   }
   board: {
     get(): Promise<StoreSnapshot>
