@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience } from '@orca-board/core'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -64,6 +64,8 @@ export interface SubtaskInput {
   /** Только подзадачи той же глобальной задачи, иначе ошибка. */
   deps?: string[]
   roleId?: string
+  /** Задача-ответ: результат — ответ в markdown, а не код (из UI — всегда для человека). */
+  answerFor?: AnswerAudience
 }
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'

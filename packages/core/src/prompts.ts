@@ -19,10 +19,34 @@ export function builtinPromptKind(roleId: string): BuiltinPromptKind {
   return roleId === COORDINATOR_ROLE_ID ? 'coordinator' : 'worker'
 }
 
-/** Стартовое задание воркера: название, описание и замечания после ревью. */
-export function workerTaskPrompt(task: Pick<Task, 'title' | 'spec' | 'feedback'>): string {
-  const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
-  return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
+/** Кому адресован ответ — для промпта воркера. */
+const ANSWER_READER = { human: 'человек', coordinator: 'координатор' } as const
+
+/**
+ * Стартовое задание воркера: название, описание и замечания после ревью. У задачи-ответа (`answerFor`) —
+ * блок о том, что результат — ответ в markdown, а замечания — уточнение к прошлому ответу (`previousAnswer`).
+ */
+export function workerTaskPrompt(task: Pick<Task, 'title' | 'spec' | 'feedback' | 'answerFor'>, previousAnswer?: string): string {
+  if (!task.answerFor) {
+    const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
+    return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
+  }
+  const parts = [
+    `# Задача: ${task.title}`,
+    '',
+    task.spec || '(описание не задано)',
+    '',
+    '# Результат — ответ, а не код',
+    '',
+    `Это задача-ответ: её результат читает ${ANSWER_READER[task.answerFor]}. Код не меняй и не коммить.`,
+    'Ответ оформи в markdown (заголовки, списки, `путь:строка` на код) в файле вне репозитория и сдай его:',
+    '`orca-board done --summary "<одна строка — суть ответа>" --answer-file <файл.md>`.'
+  ]
+  if (task.feedback) {
+    if (previousAnswer) parts.push('', '# Прошлый ответ', '', previousAnswer)
+    parts.push('', '# Уточнение к прошлому ответу', '', task.feedback, '', 'Дай новый полный ответ с учётом уточнения.')
+  }
+  return parts.join('\n')
 }
 
 /**

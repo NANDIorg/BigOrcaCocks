@@ -4,9 +4,11 @@
 задачи**, внутри каждой — своя доска **подзадач** (обычных `Task`, на которых работают воркеры).
 Обе доски используют **реальные колонки проекта** (`Project.columns`, `columns list`), а не фиксированный
 набор: макет Planning / In Progress / AI Review / Human Review / Done — это просто пример колонок проекта.
-Локальный канбан подзадач показывает все колонки проекта; **глобальный — только колонки `kind` backlog,
-in_progress и done** (`GLOBAL_COLUMN_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`):
-Готовы / Нужен ответ / Ревью (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
+Локальный канбан подзадач показывает все колонки проекта; **глобальный — колонки `kind` backlog,
+in_progress, needs_input и done** (`GLOBAL_BOARD_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`).
+Хранится карточка только в backlog / in_progress / done (`GLOBAL_COLUMN_KINDS`, `globalStoredColumns`);
+needs_input — **вычисляемая** колонка: там карточка, пока подзадачи ждут человека (см. «Ответы и ожидание
+человека»). Готовы / Ревью (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
 
 ## Модель: глобальная задача = прогон (`Run`)
 
@@ -84,6 +86,35 @@ in_progress и done** (`GLOBAL_COLUMN_KINDS`, `globalBoardColumns` в `packages/
 
 `coordinatorsToClose` теперь берёт **последний** `run_done` прогона — прогон мог закрываться несколько раз.
 
+## Ответы и ожидание человека
+
+**Задача-ответ** (`Task.answerFor: 'human' | 'coordinator'`) — подзадача, чей результат не код, а текст:
+«посмотри», «разберись», «предложи». Создаётся `task create --answer-for …` / `global add-task --answer-for …`,
+из UI — выбором «Результат: ответ для меня» (`answerFor: 'human'`).
+- Воркер получает в промпте блок «Результат — ответ, а не код» (`workerTaskPrompt`) и сдаёт
+  `done --summary "..." --answer-file <файл.md>`: CLI читает файл и шлёт текст в `params.answer`.
+  Без ответа `finishDispatch` — ошибка; предел — `MAX_ANSWER_LENGTH` (200 000 символов).
+  Ответ хранится в `Dispatch.answer`, событие `worker_done` несёт `answerFor` и `answer`.
+- `answerFor: 'coordinator'` — координатор читает `answer` из события и сам делает `review accept`.
+  `answerFor: 'human'` — координатор ничего не делает; человек в `TaskModal` видит ответ (markdown) и
+  **принимает** (`review accept`: у задачи-ответа ничего не сливается, worktree и ветка удаляются —
+  `src/main/review.ts`) или **уточняет** (`review reject` + перезапуск воркера; промпт получает прошлый
+  ответ и уточнение).
+- Ревью кода задаче-ответу не нужно: ревьюера координатор не создаёт (`skills/coordinator.md`).
+
+**Вопрос человеку.** Вопрос воркера (`ask`) сначала решает координатор: ответить сам или передать
+человеку `question forward --question <id>` (`Question.forHuman = true`, `store.forwardQuestion`).
+Без координатора — «Входящие», нет `coordinatorPtyId` или уже был `runs finish` — вопрос адресован
+человеку сразу (`questionForHuman`).
+
+**Колонка «Нужен ответ» глобального канбана.** Подзадача ждёт человека (`waitingForHuman`), если это
+задача-ответ для человека в колонке `kind=review` или у неё открыт вопрос, адресованный человеку.
+`toGlobalTask` считает таких подзадач `GlobalTask.waiting`; если их > 0 и карточка не в `kind=done`,
+её `status` — колонка `kind=needs_input` проекта (если такая колонка есть). `Run.status` при этом **не
+меняется**: человек ответил или принял ответ — карточка сама возвращается в свою колонку. Поставить
+карточку в needs_input вручную нельзя (`moveGlobalTask`/`createGlobalTask` — ошибка «заполняется сама»,
+на `GlobalBoard` колонка не принимает drop).
+
 ## Координатор и повторный запуск
 
 - `coordinator start --objective "..."` / IPC `coordinator.start` — как раньше: новый прогон = новая
@@ -117,7 +148,7 @@ interface GlobalTask {
   id: string                 // = Run.id
   title: string              // globalTaskTitle(run)
   description: string        // = Run.objective
-  status: string             // id колонки проекта
+  status: string             // id колонки проекта; needs_input — вычислено из waiting
   inbox: boolean
   createdAt: number
   updatedAt: number          // правка карточки
@@ -126,6 +157,7 @@ interface GlobalTask {
   finishedAt?: number        // координатор прислал runs finish
   coordinatorPtyId?: string  // живость — по реестру терминалов (TerminalInfo.runId)
   coordinatorAgent?: AgentKind
+  waiting: number            // подзадачи, ждущие человека (waitingForHuman)
   progress: {
     total: number            // подзадач
     done: number             // из них в kind=done
@@ -135,8 +167,9 @@ interface GlobalTask {
 }
 ```
 
-Чистые функции для renderer (без IPC): `toGlobalTasks(runs, tasks, columnKind, fallbackStatus?)`,
-`toGlobalTask`, `globalTaskProgress`, `globalTaskTitle`, `INBOX_TITLE` — экспортируются из `@orca-board/core`.
+Чистые функции для renderer (без IPC): `toGlobalTasks(runs, tasks, columns, questions?)`,
+`toGlobalTask`, `globalTaskProgress`, `globalTaskTitle`, `waitingForHuman`, `questionForHuman`, `INBOX_TITLE` —
+экспортируются из `@orca-board/core`. Без `questions` вопросы не учитываются в `waiting`.
 Живой UI может строить карточки из `board:changed` (`snapshot.runs` + `snapshot.tasks`) без лишних запросов.
 
 ### IPC — `window.orca.globalTasks` (активный проект; типы — `apps/desktop/src/shared/ipc.ts`)

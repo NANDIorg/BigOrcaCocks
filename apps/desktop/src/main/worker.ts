@@ -183,7 +183,9 @@ export function startWorker(
   store.updateTask(task.id, { agent: role.agent, worktree, branch })
 
   const dispatchId = newId('disp')
-  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.worker, role), workerTaskPrompt(task), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  // Уточнение к задаче-ответу идёт вместе с прошлым ответом: воркер отвечает заново, а не с нуля.
+  const previousAnswer = store.snapshot().dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
+  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.worker, role), workerTaskPrompt(task, previousAnswer), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null

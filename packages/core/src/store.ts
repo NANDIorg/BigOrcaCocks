@@ -1,11 +1,11 @@
 import type {
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
-  BoardColumn, ColumnKind, SystemColumnKind
+  BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience
 } from './types.ts'
-import { DEFAULT_COLUMNS, DEFAULT_ROLE_ID } from './types.ts'
+import { ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, MAX_ANSWER_LENGTH } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
 import {
-  globalBoardColumns, globalColumnKind, globalTaskStatus, toGlobalTask, toGlobalTasks,
+  globalStoredColumns, globalColumnKind, globalTaskStatus, toGlobalTask, toGlobalTasks,
   type GlobalColumnKind, type GlobalTask
 } from './global-tasks.ts'
 
@@ -168,7 +168,12 @@ export class TaskStore {
     roleId?: string
     agent?: AgentKind
     runId?: string
+    /** Задача-ответ: кто читает ответ. Нет — обычная задача. */
+    answerFor?: AnswerAudience
   }): Task {
+    if (input.answerFor !== undefined && !ANSWER_AUDIENCES.includes(input.answerFor)) {
+      throw new Error(`answerFor: ожидается ${ANSWER_AUDIENCES.join(' или ')}, получено ${String(input.answerFor)}`)
+    }
     const now = Date.now()
     // Подзадача всегда внутри глобальной задачи: без runId — во «Входящие»; чужой/несуществующий — ошибка.
     const run = input.runId !== undefined ? this.mustRun(input.runId) : (this.inbox() ?? this.addRun({ objective: '', inbox: true }))
@@ -184,6 +189,7 @@ export class TaskStore {
       roleId: input.roleId ?? DEFAULT_ROLE_ID,
       agent: input.agent ?? DEFAULT_AGENT,
       runId: run.id,
+      ...(input.answerFor ? { answerFor: input.answerFor } : {}),
       createdAt: now,
       updatedAt: now
     }
@@ -340,11 +346,11 @@ export class TaskStore {
 
   /** Карточки глобальных задач с прогрессом подзадач, в порядке создания. */
   listGlobalTasks(): GlobalTask[] {
-    return toGlobalTasks(this.listRuns(), this.listTasks(), this.columns())
+    return toGlobalTasks(this.listRuns(), this.listTasks(), this.columns(), [...this.questions.values()])
   }
 
   getGlobalTask(id: string): GlobalTask {
-    return toGlobalTask(this.mustRun(id), this.listTasks(), this.columns())
+    return toGlobalTask(this.mustRun(id), this.listTasks(), this.columns(), [...this.questions.values()])
   }
 
   /** Подзадачи глобальной задачи (только её), в порядке создания. Нет такой — ошибка. */
@@ -427,10 +433,16 @@ export class TaskStore {
     if (!this.columnKind(status)) throw new Error(`колонки с id «${status}» нет на доске`)
   }
 
-  /** Глобальная задача встаёт только в колонку глобального канбана (backlog / in_progress / done). */
+  /**
+   * Глобальная задача встаёт только в backlog / in_progress / done. В needs_input карточка попадает
+   * сама, пока подзадачи ждут человека (toGlobalTask), — руками туда нельзя.
+   */
   private assertGlobalColumn(status: string): void {
     this.assertColumn(status)
-    if (!globalBoardColumns(this.columns()).some((c) => c.id === status)) {
+    if (this.columnKind(status) === 'needs_input') {
+      throw new Error(`колонка «${status}» заполняется сама: там глобальные задачи, где подзадачи ждут ответа человека`)
+    }
+    if (!globalStoredColumns(this.columns()).some((c) => c.id === status)) {
       throw new Error(`колонка «${status}» — только для подзадач; глобальная задача: бэклог, в работе или сделано`)
     }
   }
@@ -520,16 +532,31 @@ export class TaskStore {
     return dispatch
   }
 
-  /** Явное завершение воркером через `orca-board done`. */
-  finishDispatch(dispatchId: string, summary: string, files: string[] = []): Dispatch {
+  /**
+   * Явное завершение воркером через `orca-board done`. У задачи-ответа ответ обязателен и уходит
+   * в событие worker_done вместе с `answerFor` — координатор решает по нему, принимать ли ответ сам.
+   */
+  finishDispatch(dispatchId: string, summary: string, files: string[] = [], answer?: string): Dispatch {
     const dispatch = this.mustDispatch(dispatchId)
+    const task = this.mustTask(dispatch.taskId)
+    const text = answer?.trim() ? answer : undefined
+    if (task.answerFor && !text) {
+      throw new Error('задача-ответ: передай ответ — orca-board done --summary "..." --answer-file <файл.md>')
+    }
+    if (text && text.length > MAX_ANSWER_LENGTH) {
+      throw new Error(`ответ длиннее ${MAX_ANSWER_LENGTH} символов — сократи его`)
+    }
     dispatch.endedAt = Date.now()
     dispatch.outcome = 'done'
     dispatch.summary = summary
     dispatch.files = files
-    const task = this.mustTask(dispatch.taskId)
+    if (text) dispatch.answer = text
     this.setStatus(task, this.columnId('review'))
-    this.pushEvent('worker_done', { taskId: task.id, dispatchId, summary, files })
+    this.pushEvent('worker_done', {
+      taskId: task.id, dispatchId, summary, files,
+      ...(task.answerFor ? { answerFor: task.answerFor } : {}),
+      ...(text ? { answer: text } : {})
+    })
     this.commit()
     return dispatch
   }
@@ -625,6 +652,20 @@ export class TaskStore {
     if (!stillOpen && this.isKind(task, 'needs_input')) this.setStatus(task, this.columnId('in_progress'))
     task.updatedAt = Date.now()
     this.pushEvent('question_answered', { taskId: task.id, dispatchId: q.dispatchId, questionId, answer })
+    this.commit()
+    return q
+  }
+
+  /**
+   * Координатор передал вопрос человеку: вопрос остаётся открытым, глобальная задача показывается
+   * в needs_input, пока человек не ответит. Отвеченный вопрос передать нельзя.
+   */
+  forwardQuestion(questionId: string): Question {
+    const q = this.questions.get(questionId)
+    if (!q) throw new Error(`question not found: ${questionId}`)
+    if (q.answeredAt) throw new Error(`на вопрос ${questionId} уже ответили`)
+    q.forHuman = true
+    this.mustTask(q.taskId).updatedAt = Date.now()
     this.commit()
     return q
   }

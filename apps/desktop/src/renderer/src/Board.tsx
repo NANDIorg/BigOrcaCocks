@@ -224,7 +224,12 @@ export function Board(props: Props): React.JSX.Element {
                       </div>
                       <div className="chips">
                         {task.runId && runById.has(task.runId) && <RunBadge run={runById.get(task.runId)!} runs={runs} />}
-                        {task.branch && <span className="chip mono" title={task.branch}>{task.branch}</span>}
+                        {task.answerFor && (
+                          <span className="chip answer" title={task.answerFor === 'human' ? 'Результат — ответ для человека' : 'Результат — ответ для координатора'}>
+                            {task.answerFor === 'human' ? 'ответ' : 'ответ координатору'}
+                          </span>
+                        )}
+                        {task.branch && !task.answerFor && <span className="chip mono" title={task.branch}>{task.branch}</span>}
                         {task.deps.map((dep) => (
                           <span key={dep} className="chip" title={byId.get(dep)?.title}>
                             ← {byId.get(dep)?.title ?? dep}
@@ -245,8 +250,10 @@ export function Board(props: Props): React.JSX.Element {
                       )}
                       {column.kind === 'review' && (
                         <div className="card-brief review-brief">
-                          <span className="brief-text">
-                            {d?.files && d.files.length > 0 ? `Ждёт ревью: ${filesLabel(d.files.length)}` : 'Ждёт ревью'}
+                          <span className="brief-text" title={task.answerFor ? d?.summary : undefined}>
+                            {task.answerFor
+                              ? `Ответ готов${d?.summary ? `: ${d.summary}` : ''}`
+                              : d?.files && d.files.length > 0 ? `Ждёт ревью: ${filesLabel(d.files.length)}` : 'Ждёт ревью'}
                           </span>
                           <button type="button" className="btn-sm" onClick={(e) => { e.stopPropagation(); open(task) }}>
                             Открыть

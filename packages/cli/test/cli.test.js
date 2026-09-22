@@ -3,7 +3,7 @@ import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:net'
 import { execFile } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -52,6 +52,25 @@ describe('orca-board CLI', () => {
     const { req } = await run(['done', '--summary', 's', '--files', 'a.ts'], { ORCA_DISPATCH_ID: 'disp_1' })
     assert.equal(req.method, 'worker.done')
     assert.equal(req.dispatchId, 'disp_1')
+  })
+
+  it('done --answer-file: CLI читает файл и шлёт текст в answer; нет файла — ошибка без запроса', async () => {
+    const file = join(dir, 'answer.md')
+    writeFileSync(file, '# Ответ\n\n- «кавычки» и `код`\n')
+    const { req } = await run(['done', '--summary', 's', '--answer-file', file], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal(req.params.answer, '# Ответ\n\n- «кавычки» и `код`\n')
+    assert.equal('answer-file' in req.params, false)
+    const missing = await run(['done', '--summary', 's', '--answer-file', join(dir, 'nope.md')], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal(missing.req, null)
+    assert.equal(missing.code, 1)
+  })
+
+  it('task create --answer-for и question forward уходят как есть', async () => {
+    const created = await run(['task', 'create', '--title', 't', '--role', 'qa', '--answer-for', 'human'])
+    assert.equal(created.req.params['answer-for'], 'human')
+    const fwd = await run(['question', 'forward', '--question', 'q_1'])
+    assert.equal(fwd.req.method, 'question.forward')
+    assert.equal(fwd.req.params.question, 'q_1')
   })
 
   it('global tasks / add-task / get берут глобальную задачу из ORCA_RUN_ID, явный --global важнее', async () => {

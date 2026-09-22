@@ -15,7 +15,7 @@ interface Props {
   agents: AgentInfo[]
   onClose(): void
   /** Ошибка (reject) показывается в форме, введённое не теряется. */
-  onCreate(input: { title: string; spec: string; deps: string[]; roleId: string }): Promise<void>
+  onCreate(input: { title: string; spec: string; deps: string[]; roleId: string; answerFor?: 'human' }): Promise<void>
 }
 
 export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCreate }: Props): React.JSX.Element {
@@ -29,6 +29,8 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
     () => available.find((r) => r.id === DEFAULT_ROLE_ID)?.id ?? available[0]?.id ?? ''
   )
   const [deps, setDeps] = useState<string[]>([])
+  /** Результат — ответ для человека («посмотри», «предложи»), а не изменения в коде. */
+  const [answer, setAnswer] = useState(false)
   const selectedRole = available.find((r) => r.id === roleId)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -51,7 +53,7 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
     setBusy(true)
     setError(null)
     try {
-      await onCreate({ title: title.trim(), spec, deps, roleId })
+      await onCreate({ title: title.trim(), spec, deps, roleId, ...(answer ? { answerFor: 'human' as const } : {}) })
     } catch (e) {
       setError(ipcErrorMessage(e))
     } finally {
@@ -91,6 +93,13 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
             </select>
           </div>
           {noRoles && <span>Нет ролей с включённым агентом — настройте во вкладке „О проекте“</span>}
+        </label>
+        <label>
+          Результат
+          <select value={answer ? 'answer' : 'code'} onChange={(e) => setAnswer(e.target.value === 'answer')}>
+            <option value="code">Изменения в коде — ревью и слияние ветки</option>
+            <option value="answer">Ответ для меня — посмотреть, разобраться, предложить</option>
+          </select>
         </label>
         {tasks.length > 0 && (
         <label>
