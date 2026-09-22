@@ -45,4 +45,4 @@ orca-board/
 
 ## Статус
 
-Папка создана, кода нет. Следующий шаг — `docs/architecture.md` и скелет monorepo.
+Скелет собран и запускается: `pnpm install && pnpm dev`. Доска, создание задач, drag-and-drop между колонками, терминал, старт воркера в git worktree. CLI и сокет — заглушки.

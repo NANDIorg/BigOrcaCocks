@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "paths": { "@orca-board/core": ["../../packages/core/src/index.ts"] }
+  },
+  "include": ["src/renderer", "src/shared", "src/preload/api.d.ts"]
+}

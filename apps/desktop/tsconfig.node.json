@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "types": ["node", "electron-vite/node"], "paths": { "@orca-board/core": ["../../packages/core/src/index.ts"] } },
+  "include": ["src/main", "src/preload", "src/shared", "electron.vite.config.ts"]
+}
