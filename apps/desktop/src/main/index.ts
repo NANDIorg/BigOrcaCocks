@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electr
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { defaultSocketPath, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
@@ -198,9 +198,9 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
   return startWorker(p.store, p.root, ctx(p.id), taskId, cols, rows)
 }
 
-function runCoordinator(objective: string, projectId?: string, cols?: number, rows?: number): string {
+function runCoordinator(objective: string, projectId?: string, cols?: number, rows?: number, images: ImageAttachment[] = []): string {
   const p = resolveProject(projectId)
-  return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows).ptyId
+  return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows, images).ptyId
 }
 
 /** Раз в минуту: живой воркер без вывода дольше STUCK_MS → эскалация. */
@@ -303,7 +303,13 @@ function registerIpc(): void {
   ipcMain.handle('terminals:list', () => terminalSnapshots())
 
   ipcMain.handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
-  ipcMain.handle('coordinator:start', (_e, objective: string, cols: number, rows: number) => runCoordinator(objective, undefined, cols, rows))
+  ipcMain.handle('coordinator:start', (_e, objective: unknown, cols: number, rows: number, images?: unknown) => {
+    // Данные из renderer не доверенные: изображения проверяются по сигнатуре и лимитам.
+    const valid = validateImageAttachments(images)
+    const text = typeof objective === 'string' ? objective.trim() : ''
+    if (!text && valid.length === 0) throw new Error('цель не задана')
+    return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
+  })
   ipcMain.handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)

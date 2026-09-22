@@ -215,6 +215,28 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 Координатор запускается агентом роли `coordinator` (fallback — `claude` без модели)
 с `skills/coordinator.md` и целью.
 
+### Изображения в цели координатора
+
+Сценарий: в модалке «Запустить координатора» (`renderer/src/CoordinatorModal.tsx`) человек вставляет
+скриншот в поле «Цель» через ⌘V/Ctrl+V — появляется миниатюра с крестиком; вставок может быть несколько,
+текст вставляется как обычно (если в буфере есть и текст, и картинка — вставляются оба). Цель без текста
+допустима: main подставляет `DEFAULT_IMAGE_OBJECTIVE`. Ошибка (формат, размер, запись, запуск) показывается
+в модалке, текст и вложения остаются; пока идёт чтение вставки или запуск, «Запустить» недоступна.
+
+- **Передача**: байты (`Uint8Array`, не base64) уходят 4-м аргументом IPC `coordinator:start(objective, cols, rows, images)`.
+  Main проверяет их `validateImageAttachments` (`packages/core/src/attachments.ts`): массив, PNG/JPEG/GIF/WebP
+  по сигнатуре (MIME из буфера не используется, SVG не принимается), лимиты `IMAGE_ATTACHMENT_LIMITS` —
+  8 шт., 10 МБ каждое, 30 МБ всего. Те же лимиты renderer проверяет при вставке.
+- **Хранение**: `startCoordinator` после `createRun` пишет файлы в `<git-dir>/orca-attachments/<runId>/image-N.<ext>`
+  (`git rev-parse --absolute-git-dir`; для обычного репозитория — внутри cwd координатора, вне индекса git).
+  Имена — только номер и расширение. Ошибка записи/спавна → прогон закрывается, папка удаляется.
+- **Агенту** в промпт (`coordinatorPrompt`) уходят только абсолютные пути в обратных кавычках и просьба
+  прочитать каждое изображение до декомпозиции (и передавать путь воркерам в описании задачи).
+- **Время жизни**: файлы живут, пока прогон открыт или его координатор жив; папки закрытых прогонов с
+  мёртвым координатором удаляются при следующем запуске координатора с изображениями (`pruneAttachments`).
+- **Покрытие**: только UI-форма. `orca-board coordinator start --objective` (сокет `coordinator.start`)
+  изображений не принимает. Миниатюры — `blob:` URL (CSP в `renderer/index.html`: `img-src 'self' blob:`).
+
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
 - **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся

@@ -63,7 +63,7 @@ const api: OrcaApi = {
     start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows)
   },
   coordinator: {
-    start: (objective, cols, rows) => ipcRenderer.invoke('coordinator:start', objective, cols, rows)
+    start: (objective, cols, rows, images) => ipcRenderer.invoke('coordinator:start', objective, cols, rows, images)
   },
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),
