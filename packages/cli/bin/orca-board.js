@@ -90,12 +90,15 @@ sock.on('data', (chunk) => {
   const nl = buf.indexOf('\n')
   if (nl < 0) return
   const res = JSON.parse(buf.slice(0, nl))
+  // Не process.exit сразу после записи: большой вывод в пайп уходит асинхронно и обрезается.
+  const finish = (code) => {
+    sock.destroy()
+    process.exitCode = code
+  }
   if (res.ok) {
-    console.log(JSON.stringify(res.result, null, 2))
-    process.exit(0)
+    process.stdout.write(JSON.stringify(res.result, null, 2) + '\n', () => finish(0))
   } else {
-    console.error(`ошибка: ${res.error}`)
-    process.exit(1)
+    process.stderr.write(`ошибка: ${res.error}\n`, () => finish(1))
   }
 })
 sock.on('error', (e) => {
