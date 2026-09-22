@@ -16,7 +16,7 @@ export interface ProjectDeps {
   store: TaskStore
   startWorker(taskId: string): { ptyId: string; dispatchId: string; worktree: string; branch: string }
   review(taskId: string): unknown
-  accept(taskId: string): void
+  accept(taskId: string, decision?: string): void
   /** Без runId — новый прогон (глобальная задача); с runId — повторный запуск на существующей. */
   startCoordinator(objective: string, runId?: string): string
   /** Удалить глобальную задачу: живой координатор — ошибка, терминалы подзадач закрываются. */
@@ -241,7 +241,7 @@ const handlers: Record<string, Handler> = {
   'review.accept': (r, deps, store) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')
-    deps.accept(id)
+    deps.accept(id, str(r.params.decision))
     return store.getTask(id)
   },
   'review.reject': (r, _d, store) => {

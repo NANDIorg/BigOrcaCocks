@@ -53,7 +53,7 @@ const HELP = `orca-board — управление доской агентов
   question answer --question <id> --answer "..."
   question forward --question <id>        передать вопрос человеку: глобальная задача ждёт его ответа
   review info --task <id>                 diff-stat и коммиты ветки задачи
-  review accept --task <id>               слить в текущую ветку, убрать worktree, задача → done
+  review accept --task <id> [--decision "..."]  слить в текущую ветку, убрать worktree, задача → done
   review reject --task <id> --feedback "..."   задача → ready с замечаниями для перезапуска
   task delete --task <id>
   events list

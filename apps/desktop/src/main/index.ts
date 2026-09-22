@@ -403,9 +403,9 @@ function registerIpc(): void {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)
   })
-  ipcMain.handle('review:accept', (_e, taskId: string) => {
+  ipcMain.handle('review:accept', (_e, taskId: string, decision?: string) => {
     const p = resolveProject()
-    return acceptReview(p.store, p.root, taskId)
+    return acceptReview(p.store, p.root, taskId, decision)
   })
   ipcMain.handle('review:reject', (_e, taskId: string, feedback: string) => projects.activeStore().rejectReview(taskId, feedback))
 }
@@ -436,7 +436,7 @@ app.whenReady().then(() => {
         store: p.store,
         startWorker: (taskId) => runWorker(taskId, p.id),
         review: (taskId) => getReview(p.store, p.root, taskId),
-        accept: (taskId) => acceptReview(p.store, p.root, taskId),
+        accept: (taskId, decision) => acceptReview(p.store, p.root, taskId, decision),
         startCoordinator: (objective, runId) => runCoordinator(objective, p.id, undefined, undefined, [], runId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
         agents: () => projectAgents(p.id),

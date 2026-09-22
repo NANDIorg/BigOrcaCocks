@@ -81,7 +81,7 @@ const api: OrcaApi = {
   },
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),
-    accept: (taskId) => ipcRenderer.invoke('review:accept', taskId),
+    accept: (taskId, decision) => ipcRenderer.invoke('review:accept', taskId, decision),
     reject: (taskId, feedback) => ipcRenderer.invoke('review:reject', taskId, feedback)
   }
 }

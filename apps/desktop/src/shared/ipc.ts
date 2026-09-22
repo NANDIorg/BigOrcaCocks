@@ -218,7 +218,8 @@ export interface OrcaApi {
   }
   review: {
     info(taskId: string): Promise<ReviewInfo>
-    accept(taskId: string): Promise<void>
+    /** `decision` — решение человека по задаче-ответу, уходит координатору в answer_accepted. */
+    accept(taskId: string, decision?: string): Promise<void>
     reject(taskId: string, feedback: string): Promise<void>
   }
 }

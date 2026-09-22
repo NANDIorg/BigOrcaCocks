@@ -58,7 +58,8 @@ export class TaskStore {
       // Старые снапшоты без runs — просто нет прогонов.
       snap.runs?.forEach((r) => this.runs.set(r.id, r))
       this.events = snap.events ?? []
-      if (this.migrateGlobalTasks()) this.persistence?.save(this.snapshot())
+      const migrated = this.migrateGlobalTasks()
+      if (this.migrateHumanAnswers() || migrated) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -94,6 +95,22 @@ export class TaskStore {
       if (allDone) inbox.closedAt ??= Date.now()
       inbox.status = this.columnId(allDone ? 'done' : 'in_progress')
       changed = true
+    }
+    return changed
+  }
+
+  /**
+   * Сданный ответ для человека, застрявший в review (сдан до переноса таких ответов в needs_input или
+   * main-процессом со старым кодом — `electron-vite dev` не пересобирает main без перезапуска), — в needs_input.
+   * Возвращает true, если что-то поменялось.
+   */
+  private migrateHumanAnswers(): boolean {
+    let changed = false
+    for (const task of this.tasks.values()) {
+      if (this.isKind(task, 'review') && this.humanAnswerReady(task)) {
+        task.status = this.columnId('needs_input')
+        changed = true
+      }
     }
     return changed
   }
@@ -619,16 +636,18 @@ export class TaskStore {
    * Приёмка (`review accept`, «Принять» в UI): задача → done, worktree и ветка забыты (git-часть делает main).
    * Ответ для человека (`answerFor: 'human'`) принимает человек — координатор узнаёт об этом из
    * `answer_accepted` (с текстом ответа) и продолжает работу: иначе он ждал бы, пока ему напишут в терминал.
-   * Повторная приёмка задачи в done события не шлёт.
+   * `decision` — что человек решил по ответу («Решение / что делать дальше»): уходит в событие, по нему
+   * координатор заводит задачи. Повторная приёмка задачи в done события не шлёт.
    */
-  acceptTask(taskId: string): Task {
+  acceptTask(taskId: string, decision?: string): Task {
     const task = this.mustTask(taskId)
     if (task.answerFor === 'human' && !this.isKind(task, 'done')) {
       const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
       this.pushEvent('answer_accepted', {
         taskId: task.id, dispatchId: d?.id, answerFor: task.answerFor,
         ...(d?.summary ? { summary: d.summary } : {}),
-        ...(d?.answer ? { answer: d.answer } : {})
+        ...(d?.answer ? { answer: d.answer } : {}),
+        ...(decision?.trim() ? { decision: decision.trim() } : {})
       })
     }
     // Событие — до commit в updateTask: если задача последняя, run_done придёт после answer_accepted.

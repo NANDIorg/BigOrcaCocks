@@ -206,6 +206,22 @@ describe('после ответа человека процесс идёт да�
     assert.deepEqual(coordinatorEvents(store, g.id), [])
   })
 
+  it('решение человека при приёмке уходит в answer_accepted (decision); пустое — поля нет', () => {
+    const { store, g, task, dispatch } = setup('human')
+    store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
+    coordinatorEvents(store, g.id)
+    store.acceptTask(task.id, '  Делаем вариант A, без тёмной темы \n')
+    const [e] = coordinatorEvents(store, g.id)
+    assert.equal(e.type, 'answer_accepted')
+    assert.equal(e.payload.decision, 'Делаем вариант A, без тёмной темы')
+
+    const b = setup('human')
+    b.store.finishDispatch(b.dispatch.id, 'суть', [], 'ответ')
+    coordinatorEvents(b.store, b.g.id)
+    b.store.acceptTask(b.task.id, '   ')
+    assert.equal('decision' in coordinatorEvents(b.store, b.g.id)[0].payload, false)
+  })
+
   it('принятый ответ был последней задачей — answer_accepted приходит раньше run_done', () => {
     const { store, g, task, other, dispatch } = setup('human')
     store.moveTask(other.id, 'done')
@@ -277,5 +293,23 @@ describe('questionAnswerMessage', () => {
 
   it('промпт без ответов на вопросы — без раздела', () => {
     assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: '?' }]), /Ответы на твои вопросы/)
+  })
+})
+
+describe('ответ для человека, застрявший в review', () => {
+  it('при загрузке переезжает в needs_input и снапшот сохраняется; ответ координатору остаётся в review', () => {
+    const { store, g, task, dispatch } = setup('human')
+    store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
+    const coord = store.createTask({ title: 'Для координатора', runId: g.id, answerFor: 'coordinator' })
+    store.finishDispatch(store.startDispatch(coord.id, 'pty_c').id, 'суть', [], 'ответ')
+    const snap = store.snapshot()
+    // Как сдал main со старым кодом: ответ для человека — в review.
+    snap.tasks.find((t) => t.id === task.id)!.status = 'review'
+    let saved = 0
+    const loaded = new TaskStore({ load: () => snap, save: () => void saved++ }, () => DEFAULT_COLUMNS)
+    assert.equal(loaded.getTask(task.id)!.status, 'needs_input')
+    assert.equal(loaded.getTask(coord.id)!.status, 'review')
+    assert.equal(loaded.getGlobalTask(g.id).status, 'needs_input')
+    assert.equal(saved, 1)
   })
 })

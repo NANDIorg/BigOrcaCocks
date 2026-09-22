@@ -117,10 +117,15 @@ needs_input — **вычисляемая** колонка: там карточк
 - `ask` → needs_input (как и раньше), `forwardQuestion` тоже ставит needs_input (кроме done).
   `answer` последнего открытого вопроса возвращает в поток: живой dispatch — in_progress, иначе ready.
   Сданный ответ для человека (`humanAnswerReady`) остаётся в needs_input.
+- При загрузке снапшота такой ответ, застрявший в review, переезжает в needs_input (`migrateHumanAnswers`):
+  `electron-vite dev` не пересобирает main-процесс на лету, и приложение, запущенное до фикса, клало ответ в review.
 **Процесс идёт дальше сам** — после ответа человека координатору ничего писать не нужно:
 - **Принял ответ** (`review accept` → `store.acceptTask`): задача → done и событие
-  `answer_accepted {taskId, dispatchId, answerFor, summary, answer}` в прогон координатора (только для
-  `answerFor: 'human'` и только при первом переходе в done). Если это последняя подзадача — `run_done` приходит
+  `answer_accepted {taskId, dispatchId, answerFor, summary, answer, decision?}` в прогон координатора (только для
+  `answerFor: 'human'` и только при первом переходе в done). `decision` — необязательное поле «Решение / что делать
+  дальше» у «Принять» (`AnswerBlock`, `review accept --decision`): по нему координатор заводит задачи. Коммиты
+  в ветке задачи-ответа при приёмке сливаются, как у рабочей (`acceptReview` в `src/main/review.ts`);
+  незакоммиченные черновики — нет. Конфликт мержа — ошибка, ветка и worktree остаются. Если это последняя подзадача — `run_done` приходит
   следом; координатор сначала решает по ответу (новая подзадача переоткрывает прогон, `run_done` не обрабатывается).
 - **Уточнил**: UI делает `review reject` и сразу `worker start`; воркер сдаёт новый ответ → снова `worker_done`.
 - **Ответил на вопрос** (`store.answer`): `question_answered {taskId, questionId, question, answer, workerLive, status}`.
