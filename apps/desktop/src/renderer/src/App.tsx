@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, toGlobalTasks,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, globalBoardColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type AgentKind, type Role, type GlobalTask
 } from '@orca-board/core'
 import { PERMISSION_MODES, type Project, type PermissionMode, type TerminalInfo } from '../../shared/ipc'
@@ -257,8 +257,9 @@ export function App(): React.JSX.Element {
   // ---------- глобальные задачи (docs/nested-kanban.md) ----------
   const columns = active?.columns ?? DEFAULT_COLUMNS
   const kindById = new Map(columns.map((c) => [c.id, c.kind]))
-  const fallbackStatus = columns.find((c) => c.kind === 'backlog')?.id ?? columns[0]?.id
-  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, (st) => kindById.get(st), fallbackStatus)
+  // Глобальный канбан — только Бэклог / В работе / Сделано; локальный канбан подзадач — все колонки.
+  const globalColumns = globalBoardColumns(columns)
+  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns)
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
   const subtasks = openGlobal ? tasks.filter((t) => t.runId === openGlobal.id) : []
@@ -608,7 +609,7 @@ export function App(): React.JSX.Element {
         <div className="content">
           {tab === 'board' && !openGlobal && (
             <GlobalBoard
-              columns={columns}
+              columns={globalColumns}
               globals={globals}
               liveCoordinators={new Set(coordinatorPtys.keys())}
               attention={attention}
@@ -863,7 +864,7 @@ export function App(): React.JSX.Element {
         <GlobalTaskModal
           key={globalModal.mode === 'edit' ? globalModal.id : 'create'}
           global={editingGlobal}
-          columns={columns}
+          columns={globalColumns}
           onClose={() => setGlobalModal(null)}
           onSave={saveGlobalTask}
         />
