@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES, type Task, type StoreSnapshot, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
-import { PERMISSION_MODES, type Project, type PermissionMode } from '../../shared/ipc'
+import { PERMISSION_MODES, type Project, type PermissionMode, type TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -22,8 +22,16 @@ interface OpenTerminal {
   label: string
   taskId?: string
   projectId?: string
-  role: 'coordinator' | 'worker' | 'shell'
+  role: TerminalInfo['role']
 }
+
+const toOpenTerminal = (t: TerminalInfo): OpenTerminal => ({
+  ptyId: t.ptyId,
+  label: t.label,
+  role: t.role,
+  taskId: t.taskId,
+  projectId: t.projectId
+})
 
 const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [], runs: [] }
 
@@ -86,6 +94,15 @@ export function App(): React.JSX.Element {
   const [views, setViews] = useState<Record<string, ProjectView>>({})
   /** PTY, которые уже завершились (pty:exit); терминал остаётся в списке, пока его не закроют. */
   const [exited, setExited] = useState<Set<string>>(() => new Set())
+  /**
+   * Те же завершившиеся PTY, но синхронно: main шлёт pty:exit раньше terminals:changed, и сверке
+   * списка нужно знать о выходе до перерисовки.
+   */
+  const exitedRef = useRef<Set<string>>(new Set())
+  /** Закрытые пользователем PTY: их вкладка уже убрана, запоздалый terminals:changed не должен её вернуть. */
+  const killedRef = useRef<Set<string>>(new Set())
+  /** Хвост вывода из terminals:list по ptyId — начальное содержимое xterm после перезагрузки окна. */
+  const [tails, setTails] = useState<Record<string, string>>({})
   const [agents, setAgents] = useState<AgentInfo[]>([])
   /** Фильтр доски по прогону, свой у каждого проекта; только в памяти. */
   const [runFilters, setRunFilters] = useState<Record<string, RunFilter>>({})
@@ -153,32 +170,23 @@ export function App(): React.JSX.Element {
         return cur
       })
     })
-    // Терминал открыт (из UI или координатором через CLI). Вкладку не переключаем: при запуске из UI
-    // это делает сам обработчик кнопки (startTask / startCoordinator / openShell), а CLI-запуск не должен
-    // выдёргивать пользователя с доски. Активным становится только если ничего не выбрано.
-    const offOpened = window.orca.worker.onOpened((t) => {
-      setTerminals((prev) =>
-        prev.some((x) => x.ptyId === t.ptyId)
-          ? prev
-          : [...prev, { ptyId: t.ptyId, label: t.label, taskId: t.taskId, projectId: t.projectId, role: t.role ?? 'worker' }]
-      )
-      if (t.projectId) {
-        const pid = t.projectId
-        setViews((prev) =>
-          prev[pid]?.activePty ? prev : { ...prev, [pid]: { tab: prev[pid]?.tab ?? storedTab(pid), activePty: t.ptyId } }
-        )
-      }
+    // Источник правды — реестр PTY в main. Подписка раньше list(), чтобы не пропустить изменения между ними.
+    const offTerminals = window.orca.terminals.onChanged(syncTerminals)
+    window.orca.terminals.list().then((list) => {
+      setTails((prev) => {
+        const next = { ...prev }
+        for (const t of list) if (t.tail) next[t.ptyId] = t.tail
+        return next
+      })
+      syncTerminals(list)
     })
-    // Приложение само закрыло терминал воркера (задача → done, перезапуск): убираем его из списка.
-    const offClosed = window.orca.worker.onClosed(({ ptyId }) => dropTerminal(ptyId))
     const offFocus = window.orca.projects.onFocus(async (projectId) => {
       await window.orca.projects.setActive(projectId)
       await refreshProjects()
     })
     return () => {
       offBoard()
-      offOpened()
-      offClosed()
+      offTerminals()
       offFocus()
     }
   }, [])
@@ -187,7 +195,10 @@ export function App(): React.JSX.Element {
   const ptyKey = terminals.map((t) => t.ptyId).join('\n')
   useEffect(() => {
     const offs = terminals.map((t) =>
-      window.orca.pty.onExit(t.ptyId, () => setExited((prev) => (prev.has(t.ptyId) ? prev : new Set(prev).add(t.ptyId))))
+      window.orca.pty.onExit(t.ptyId, () => {
+        exitedRef.current.add(t.ptyId)
+        setExited((prev) => (prev.has(t.ptyId) ? prev : new Set(prev).add(t.ptyId)))
+      })
     )
     return () => offs.forEach((off) => off())
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -261,7 +272,7 @@ export function App(): React.JSX.Element {
 
   /**
    * Показать вкладку «Терминалы» у проекта, которому принадлежит терминал, и выбрать его.
-   * Проект берётся из списка терминалов, иначе projectId (терминал только что создан и worker:opened
+   * Проект берётся из списка терминалов, иначе projectId (терминал только что создан и terminals:changed
    * ещё не пришёл), иначе активный. Активный проект не переключается — у чужого проекта вкладка и
    * терминал просто запоминаются до перехода на него.
    */
@@ -286,8 +297,10 @@ export function App(): React.JSX.Element {
 
   async function openShell(): Promise<void> {
     const projectId = active?.id
-    const ptyId = await window.orca.pty.spawn({ cols: 120, rows: 30 })
-    setTerminals((prev) => [...prev, { ptyId, label: 'терминал', projectId, role: 'shell' }])
+    const label = 'терминал'
+    const ptyId = await window.orca.pty.spawn({ cols: 120, rows: 30, projectId, label })
+    // terminals:changed мог прийти раньше ответа spawn — тогда запись уже есть.
+    setTerminals((prev) => (prev.some((t) => t.ptyId === ptyId) ? prev : [...prev, { ptyId, label, projectId, role: 'shell' }]))
     showTerminal(ptyId, projectId)
   }
 
@@ -300,35 +313,79 @@ export function App(): React.JSX.Element {
   }
 
   /**
-   * Убрать терминал из списка; если он был активным в своём проекте — выбрать соседний терминал того же проекта.
-   * Только функциональные апдейтеры: worker:closed может прийти пачкой (main закрывает воркеры циклом)
-   * до перерисовки, и обычное состояние/ref в обработчике было бы устаревшим. Повторный вызов
-   * с тем же ptyId — no-op.
+   * Сверить вкладки с реестром main (полный список): новые добавить, пропавшие убрать. Пропавший после
+   * pty:exit остаётся с пометкой «завершился», пока его не закроют. Новый терминал вкладку не переключает:
+   * при запуске из UI это делает обработчик кнопки (startTask / startCoordinator / openShell), а CLI-запуск
+   * не должен выдёргивать пользователя с доски. Активным становится, только если в проекте ничего не выбрано.
    */
-  function dropTerminal(ptyId: string): void {
+  function syncTerminals(list: TerminalInfo[]): void {
+    const listed = new Set(list.map((t) => t.ptyId))
+    // Закрытый пользователем PTY пропал из реестра — помнить его больше не нужно.
+    for (const id of killedRef.current) if (!listed.has(id)) killedRef.current.delete(id)
+    const live = list.filter((t) => !killedRef.current.has(t.ptyId))
+    const liveIds = new Set(live.map((t) => t.ptyId))
+    const keep = (ptyId: string): boolean => liveIds.has(ptyId) || exitedRef.current.has(ptyId)
     setTerminals((prev) => {
-      const idx = prev.findIndex((t) => t.ptyId === ptyId)
-      if (idx < 0) return prev
-      const pid = prev[idx].projectId
-      const next = prev.filter((t) => t.ptyId !== ptyId)
-      if (pid) {
-        const same = prev.filter((t) => t.projectId === pid)
-        const pos = same.findIndex((t) => t.ptyId === ptyId)
-        const rest = same.filter((t) => t.ptyId !== ptyId)
-        const neighbor = (rest[pos] ?? rest[pos - 1])?.ptyId ?? null
-        setViews((v) => (v[pid]?.activePty === ptyId ? { ...v, [pid]: { ...v[pid], activePty: neighbor } } : v))
+      const known = new Set(prev.map((t) => t.ptyId))
+      const added = live.filter((t) => !known.has(t.ptyId)).map(toOpenTerminal)
+      for (const t of added) {
+        if (!t.projectId) continue
+        const pid = t.projectId
+        setViews((v) => (v[pid]?.activePty ? v : { ...v, [pid]: { tab: v[pid]?.tab ?? storedTab(pid), activePty: t.ptyId } }))
       }
+      let next = prev
+      for (const t of prev) if (!keep(t.ptyId)) next = withoutTerminal(next, t.ptyId)
+      return added.length ? [...next, ...added] : next
+    })
+    setTails((prev) => {
+      const gone = Object.keys(prev).filter((id) => !keep(id))
+      if (!gone.length) return prev
+      const next = { ...prev }
+      for (const id of gone) delete next[id]
       return next
     })
+  }
+
+  /**
+   * Список без терминала; если он был активным в своём проекте — выбрать соседний терминал того же проекта.
+   * Вызывается из функциональных апдейтеров: terminals:changed может прийти пачкой до перерисовки,
+   * и обычное состояние/ref в обработчике было бы устаревшим.
+   */
+  function withoutTerminal(prev: OpenTerminal[], ptyId: string): OpenTerminal[] {
+    const idx = prev.findIndex((t) => t.ptyId === ptyId)
+    if (idx < 0) return prev
+    const pid = prev[idx].projectId
+    if (pid) {
+      const same = prev.filter((t) => t.projectId === pid)
+      const pos = same.findIndex((t) => t.ptyId === ptyId)
+      const rest = same.filter((t) => t.ptyId !== ptyId)
+      const neighbor = (rest[pos] ?? rest[pos - 1])?.ptyId ?? null
+      setViews((v) => (v[pid]?.activePty === ptyId ? { ...v, [pid]: { ...v[pid], activePty: neighbor } } : v))
+    }
+    return prev.filter((t) => t.ptyId !== ptyId)
+  }
+
+  /** Убрать терминал, закрытый пользователем, вместе с пометкой «завершился» и хвостом. Повторный вызов — no-op. */
+  function dropTerminal(ptyId: string): void {
+    setTerminals((prev) => withoutTerminal(prev, ptyId))
     setExited((prev) => {
       if (!prev.has(ptyId)) return prev
       const next = new Set(prev)
       next.delete(ptyId)
       return next
     })
+    exitedRef.current.delete(ptyId)
+    setTails((prev) => {
+      if (!(ptyId in prev)) return prev
+      const next = { ...prev }
+      delete next[ptyId]
+      return next
+    })
   }
 
   function closeTerminal(ptyId: string): void {
+    // Убираем сразу: у уже завершившегося PTY kill ничего не изменит и terminals:changed не придёт.
+    killedRef.current.add(ptyId)
     window.orca.pty.kill(ptyId)
     dropTerminal(ptyId)
   }
@@ -572,7 +629,7 @@ export function App(): React.JSX.Element {
               )}
               {terminals.map((t) => (
                 <div key={t.ptyId} className={`term ${t.ptyId === activePty ? '' : 'hidden'}`}>
-                  <Terminal ptyId={t.ptyId} visible={tab === 'terminals' && t.ptyId === activePty} />
+                  <Terminal ptyId={t.ptyId} initialTail={tails[t.ptyId]} visible={tab === 'terminals' && t.ptyId === activePty} />
                 </div>
               ))}
             </div>

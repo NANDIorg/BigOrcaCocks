@@ -60,9 +60,7 @@ const api: OrcaApi = {
     onChanged: (cb) => on('terminals:changed', cb)
   },
   worker: {
-    start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows),
-    onOpened: (cb) => on('worker:opened', cb),
-    onClosed: (cb) => on('worker:closed', cb)
+    start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows)
   },
   coordinator: {
     start: (objective, cols, rows) => ipcRenderer.invoke('coordinator:start', objective, cols, rows)

@@ -38,27 +38,6 @@ export interface AppSettings {
   keepInBackground: boolean
 }
 
-/** @deprecated заменено на terminals.onChanged, удаляется вместе с App.tsx */
-export interface TerminalOpened {
-  ptyId: string
-  taskId?: string
-  projectId?: string
-  label: string
-  role?: 'coordinator' | 'worker'
-  /** Прогон, который открыл этот координатор. */
-  runId?: string
-}
-
-/**
- * Терминал воркера закрыт приложением: задача попала в done или воркер перезапущен.
- * @deprecated заменено на terminals.onChanged, удаляется вместе с App.tsx
- */
-export interface TerminalClosed {
-  ptyId: string
-  taskId: string
-  projectId: string
-}
-
 /** Правка задачи из UI/CLI: только название и описание. */
 export interface TaskPatch {
   title?: string
@@ -173,16 +152,6 @@ export interface OrcaApi {
   }
   worker: {
     start(taskId: string, cols: number, rows: number): Promise<{ ptyId: string; dispatchId: string }>
-    /**
-     * Терминал открыт (из UI или через CLI координатора).
-     * @deprecated заменено на terminals.onChanged, удаляется вместе с App.tsx
-     */
-    onOpened(cb: (t: TerminalOpened) => void): () => void
-    /**
-     * Терминал воркера закрыт приложением (задача → done, перезапуск воркера). Координатора не касается.
-     * @deprecated заменено на terminals.onChanged, удаляется вместе с App.tsx
-     */
-    onClosed(cb: (t: TerminalClosed) => void): () => void
   }
   coordinator: {
     start(objective: string, cols: number, rows: number): Promise<string>
