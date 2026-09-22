@@ -708,7 +708,7 @@ export function App(): React.JSX.Element {
       {showSettings && (
         <SettingsModal agents={agents} onRefreshAgents={() => refreshAgents(true)} onClose={() => setShowSettings(false)} />
       )}
-      {showDocs && active && <DocsModal key={active.id} onClose={() => setShowDocs(false)} />}
+      {showDocs && active && <DocsModal key={active.id} projectName={active.name} tasks={tasks} columns={columns} onClose={() => setShowDocs(false)} />}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}
