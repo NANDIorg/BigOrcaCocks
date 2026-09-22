@@ -1,13 +1,16 @@
 import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
+import {
+  EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent
+} from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, pickRole } from './agents'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
  * одна строка JSON-ответа. `check --wait` и `ask` держат соединение до события.
+ * `check --follow` — стрим: по строке `{id, ok, result: {event}}` на событие, пока клиент не закроет сокет.
  */
 export interface ProjectDeps {
   store: TaskStore
@@ -37,7 +40,23 @@ interface Request {
   projectId?: string
 }
 
-type Handler = (req: Request, deps: ProjectDeps, store: TaskStore) => Promise<unknown> | unknown
+/** Канал ответа для стриминговых команд: пишет строки в сокет и сообщает о его закрытии. */
+interface Stream {
+  /** Отправить одну строку `{id, ok: true, result}`. */
+  emit(result: unknown): void
+  /** Вызвать fn, когда клиент закроет соединение (сразу — если уже закрыто). */
+  onClose(fn: () => void): void
+}
+
+/** Хендлер вернул STREAM — финального ответа не будет, он сам пишет через stream.emit. */
+const STREAM = Symbol('stream')
+
+type Handler = (
+  req: Request,
+  deps: ProjectDeps,
+  store: TaskStore,
+  stream: Stream
+) => Promise<unknown> | unknown
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined
@@ -72,7 +91,9 @@ const handlers: Record<string, Handler> = {
       spec: str(r.params.spec),
       deps: list(r.params.dep ?? r.params.deps),
       roleId: role.id,
-      agent: role.agent
+      agent: role.agent,
+      // CLI подставляет ORCA_RUN_ID в params.run; сервер env не читает.
+      runId: str(r.params.run)
     })
   },
   'task.move': (r, _d, store) => {
@@ -172,13 +193,37 @@ const handlers: Record<string, Handler> = {
     return deps.roles().map((role) => ({ ...role, agentEnabled: enabled.has(role.agent) }))
   },
   'columns.list': (_r, deps) => deps.columns(),
-  check: async (r, _d, store) => {
+  // Прогоны с числом задач и числом задач в kind=done.
+  'runs.list': (_r, _d, store) => {
+    const tasks = store.listTasks()
+    return store.listRuns().map((run) => {
+      const own = tasks.filter((t) => t.runId === run.id)
+      return { ...run, tasks: own.length, done: own.filter((t) => store.columnKind(t.status) === 'done').length }
+    })
+  },
+  'runs.close': (r, _d, store) => {
+    const id = str(r.params.run)
+    if (!id) throw new Error('--run обязателен')
+    return store.closeRun(id)
+  },
+  check: async (r, _d, store, stream) => {
     const types = (list(r.params.types).length ? list(r.params.types) : EVENT_TYPES) as EventType[]
-    const consumer = str(r.params.consumer) ?? 'coordinator'
+    // Прогон координатора: его события и отдельный consumer, чтобы прогоны не забирали чужое.
+    const run = str(r.params.run)
+    const consumer = str(r.params.consumer) ?? run ?? 'coordinator'
+    const consume = (): OrcaEvent[] => store.consumeEvents(types, consumer, run)
+
+    if (r.params.follow === true) {
+      consume().forEach((event) => stream.emit({ event }))
+      const off = store.subscribe(() => consume().forEach((event) => stream.emit({ event })))
+      stream.onClose(off)
+      return STREAM
+    }
+
     const wait = Boolean(r.params.wait)
     const timeoutMs = num(r.params['timeout-ms'] ?? r.params.timeoutMs, 900_000)
 
-    const now = store.consumeEvents(types, consumer)
+    const now = consume()
     if (now.length || !wait) return { events: now, timedOut: false }
 
     return new Promise((resolve) => {
@@ -191,7 +236,7 @@ const handlers: Record<string, Handler> = {
         resolve({ events, timedOut })
       }
       const off = store.subscribe(() => {
-        const hit = store.consumeEvents(types, consumer)
+        const hit = consume()
         if (hit.length) finish(hit, false)
       })
       const timer = setTimeout(() => finish([], true), timeoutMs)
@@ -209,10 +254,20 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       return
     }
     const handler = handlers[req.method]
+    const stream: Stream = {
+      emit: (result) => {
+        if (!sock.destroyed && sock.writable) sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
+      },
+      onClose: (fn) => {
+        if (sock.destroyed) fn()
+        else sock.once('close', fn)
+      }
+    }
     try {
       if (!handler) throw new Error(`неизвестная команда: ${req.method}`)
       const deps = socketDeps.resolve(req.projectId || undefined)
-      const result = await handler({ ...req, params: req.params ?? {} }, deps, deps.store)
+      const result = await handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream)
+      if (result === STREAM) return
       sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
     } catch (e) {
       sock.write(JSON.stringify({ id: req.id, ok: false, error: (e as Error).message }) + '\n')
