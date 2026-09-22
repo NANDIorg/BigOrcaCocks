@@ -6,6 +6,7 @@ import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
+import { TaskModal } from './TaskModal'
 import { RolesEditor } from './RolesEditor'
 import { ColumnsEditor } from './ColumnsEditor'
 import { Icon } from './icons'
@@ -33,11 +34,14 @@ export function App(): React.JSX.Element {
   const [activePty, setActivePty] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [showCoord, setShowCoord] = useState(false)
+  /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('board')
   /** PTY, которые уже завершились (pty:exit); терминал остаётся в списке, пока его не закроют. */
   const [exited, setExited] = useState<Set<string>>(() => new Set())
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
+  const openTask = openTaskId ? tasks.find((t) => t.id === openTaskId) : undefined
 
   async function refreshProjects(): Promise<void> {
     const res = await window.orca.projects.list()
@@ -108,6 +112,7 @@ export function App(): React.JSX.Element {
   async function switchProject(p: Project): Promise<void> {
     await window.orca.projects.setActive(p.id)
     setSelected(undefined)
+    setOpenTaskId(null)
     await refreshProjects()
   }
 
@@ -130,7 +135,7 @@ export function App(): React.JSX.Element {
   /**
    * Открыть терминал задачи: вкладка «Терминалы» + PTY активного dispatch'а
    * (task.dispatchId → dispatch.ptyId). Нет открытого терминала — просто переключить вкладку.
-   * Board кнопки «Терминал» на карточке не имеет; функция для модалки задачи (следующая задача).
+   * Board кнопки «Терминал» на карточке не имеет; вызывается из модалки задачи.
    */
   function openTerminalForTask(taskId: string): void {
     const task = tasks.find((t) => t.id === taskId)
@@ -267,6 +272,7 @@ export function App(): React.JSX.Element {
               selectedId={selected?.id}
               runningTaskIds={runningTaskIds}
               onSelect={selectTask}
+              onOpenTask={(task) => setOpenTaskId(task.id)}
               onMove={(id, status) => window.orca.tasks.move(id, status)}
               onStart={startTask}
               onRemove={(id) => window.orca.tasks.remove(id)}
@@ -403,6 +409,25 @@ export function App(): React.JSX.Element {
             setShowCoord(false)
             showTerminal(ptyId)
           }}
+        />
+      )}
+      {openTask && active && (
+        <TaskModal
+          task={openTask}
+          tasks={tasks}
+          columns={active.columns ?? DEFAULT_COLUMNS}
+          roles={active.roles ?? DEFAULT_ROLES}
+          dispatches={snap.dispatches}
+          questions={snap.questions}
+          running={runningTaskIds.has(openTask.id)}
+          onClose={() => setOpenTaskId(null)}
+          onUpdate={(id, patch) => window.orca.tasks.update(id, patch)}
+          onStart={startTask}
+          onOpenTerminal={openTerminalForTask}
+          onRemove={(id) => window.orca.tasks.remove(id)}
+          onAnswer={(qid, a) => window.orca.questions.answer(qid, a)}
+          onAccept={(id) => window.orca.review.accept(id)}
+          onReject={(id, fb) => window.orca.review.reject(id, fb)}
         />
       )}
       {showNew && active && (
