@@ -91,6 +91,7 @@ orca-board roles list                       # [{id,title,agent,model?,agentEnabl
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board task create --title ... --spec ... --role <id> [--dep <id>]
 orca-board task move --task <id> --status <id колонки>
+orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
 orca-board worker start --task <id>
 orca-board check --wait --types worker_done,question --timeout-ms 900000
 orca-board worker read --dispatch <id>
@@ -181,6 +182,21 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
   ветку репозитория, `git worktree remove --force`, `git branch -D`; задача → колонка `kind=done`
   (`store.columnId('done')`, проставляется `doneAt`). Конфликт → `merge --abort` и ошибка в UI.
 - `review reject --feedback`: задача → колонка `kind=ready`, `task.feedback` добавляется в промпт при следующем старте.
+
+## Редактирование задачи и автозакрытие терминалов (`src/main/index.ts`)
+
+- `store.editTask(id, {title?, spec?})` (core) — единая точка для IPC `tasks:update` и сокета `task.update`:
+  задача в колонке `kind=in_progress` отвергается с ошибкой (воркер уже получил задание в промпт),
+  пустое название — тоже. Внутри — `updateTask`, так что `updatedAt` и `board:changed` идут как обычно.
+- **Автозакрытие**: main в `projects.onChange` (любой `commit` store) вызывает `closeDoneWorkers`:
+  у задач в колонке `kind=done` закрываются dispatch'и (`store.closeDispatches` ставит `endedAt`/`outcome=unknown`
+  незакрытым — иначе `ptyExited` принял бы kill за падение), живые PTY убиваются, renderer получает
+  `worker:closed { ptyId, taskId, projectId }` (`onWorkerClosed` в preload). Ловятся все пути в done:
+  `review accept`, `task move`, `tasks:move` из UI. После `orca-board done` dispatch уже закрыт, а PTY жив —
+  поэтому проверяется и живость PTY у закрытых dispatch'ей.
+- **Перезапуск** (`runWorker`, общий путь для UI и `worker.start`): перед стартом нового PTY старые
+  терминалы задачи закрываются тем же `closeTaskWorkers` с `worker:closed`.
+- PTY координатора не привязан к dispatch и ни в одном сценарии не закрывается.
 
 ## Детектор тишины
 

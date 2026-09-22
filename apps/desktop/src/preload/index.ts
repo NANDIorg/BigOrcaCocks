@@ -32,6 +32,7 @@ const api: OrcaApi = {
   tasks: {
     create: (input) => ipcRenderer.invoke('tasks:create', input),
     move: (id, status) => ipcRenderer.invoke('tasks:move', id, status),
+    update: (id, patch) => ipcRenderer.invoke('tasks:update', id, patch),
     remove: (id) => ipcRenderer.invoke('tasks:remove', id)
   },
   questions: {
@@ -47,7 +48,8 @@ const api: OrcaApi = {
   },
   worker: {
     start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows),
-    onOpened: (cb) => on('worker:opened', cb)
+    onOpened: (cb) => on('worker:opened', cb),
+    onClosed: (cb) => on('worker:closed', cb)
   },
   coordinator: {
     start: (objective, cols, rows) => ipcRenderer.invoke('coordinator:start', objective, cols, rows)
