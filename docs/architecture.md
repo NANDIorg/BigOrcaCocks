@@ -28,9 +28,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `updateTask` его не меняет. Нет — задача создана вне прогона (из UI).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
-- `Role { id, title, agent, model?, effort? }` — кто выполняет задачу: агент из реестра, модель
+- `Role { id, title, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
-  пустая строка → поле не сохраняется). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`;
+  пустая строка → поле не сохраняется); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`;
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
 - `BoardColumn { id, title, color, kind }`. `kind` — системный (`backlog`, `ready`, `in_progress`,
   `needs_input`, `review`, `done`) либо `custom`. По `kind` store делает автоматические переходы,
@@ -61,7 +61,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `validateRoles` / `validateColumns`, что и у проекта.
 - **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая.
 - **Валидация ролей** (`validateRoles`): хотя бы одна роль; непустые уникальные `id`, непустые
-  `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются).
+  `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются);
+  `systemPrompt` — строка или отсутствует, хранится как введён (без trim), из одних пробелов → удаляется.
 - **Валидация колонок** (`validateColumns`): хотя бы одна; непустые уникальные `id` и `title`;
   каждый системный `kind` ровно один раз (удалить или продублировать системную колонку нельзя),
   остальные — `custom`; пустой `color` → первый из `COLUMN_COLORS`. Порядок массива = порядок на доске.
@@ -76,6 +77,16 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет — `claude` без модели.
+- **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
+  при старте воркера и координатора к служебной инструкции Orca (`skills/worker.md` / `coordinator.md`)
+  дописывается блок `# Инструкции роли «<title>»` с текстом роли (trim по краям, внутри — как есть).
+  Служебные инструкции (done, ask, ревью) не заменяются. Берётся текст именно роли задачи (`task.roleId`)
+  или роли `coordinator`; нет поля/пусто — инструкция прежняя. Модель и effort роли передаются как раньше.
+  Канал — тот же, что у служебной инструкции: у `claude` — `--append-system-prompt` (настоящий system prompt),
+  у остальных агентов отдельного system-канала нет — блок попадает в склейку «инструкция --- задание»
+  стартового промпта (см. таблицу в «Агенты»). Текст идёт отдельным элементом argv, без shell-интерполяции
+  (в пути с подготовкой worktree — `sh -c` с `shellQuote`); ограничение Windows-fallback через `cmd.exe`
+  (переводы строк → пробел, лимит длины) касается и его. Применяется при следующем запуске, уже идущие агенты не меняются.
 - **Флаг модели** (`packages/core/src/agents.ts`, `modelFlag`): пустая модель — без флага. Флаги усилия — в «Агенты».
 
   | Агент | Флаг модели |
@@ -152,7 +163,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 ```
 orca-board coordinator start --objective "..."   # человек; создаёт прогон (см. «Прогоны»)
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
-orca-board roles list                       # [{id,title,agent,model?,effort?,agentEnabled}]
+orca-board roles list                       # [{id,title,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>]
 orca-board task move --task <id> --status <id колонки>
@@ -340,7 +351,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     модель — select из `AgentInfo.models` (`id` + `label`, см. «Агенты»; у агента с `models = []` — свободный ввод),
     усилие — select из `efforts` выбранной модели (нет — из списка агента), первая опция «по умолчанию»
     (пусто → `effort` не сохраняется; с `defaults.effort` — «по умолчанию: <effort>»), у агента без effort —
-    задизейбленный прочерк. Смена агента сбрасывает `model` и `effort`. Сохраняется через `projects:setRoles`.
+    задизейбленный прочерк. Смена агента сбрасывает `model` и `effort`. Под строкой роли — многострочное
+    поле «Системный промпт» (сохраняется с задержкой, пустое → поле удаляется; смена агента/модели/усилия его не трогает).
+    Сохраняется через `projects:setRoles`.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns`.
