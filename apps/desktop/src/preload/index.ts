@@ -20,6 +20,9 @@ const api: OrcaApi = {
     setEnabledAgents: (id, agents) => ipcRenderer.invoke('projects:setEnabledAgents', id, agents),
     setRoles: (id, roles) => ipcRenderer.invoke('projects:setRoles', id, roles),
     setColumns: (id, columns) => ipcRenderer.invoke('projects:setColumns', id, columns),
+    getDefaults: () => ipcRenderer.invoke('projects:getDefaults'),
+    setDefaults: (patch) => ipcRenderer.invoke('projects:setDefaults', patch),
+    applyDefaults: (id) => ipcRenderer.invoke('projects:applyDefaults', id),
     onFocus: (cb) => on('projects:focus', cb)
   },
   agents: {

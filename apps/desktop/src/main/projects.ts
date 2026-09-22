@@ -10,6 +10,12 @@ import { jsonPersistence } from './persistence'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
+const PERMISSION_MODES: PermissionMode[] = ['auto', 'bypassPermissions', 'acceptEdits']
+
+function isPermissionMode(v: unknown): v is PermissionMode {
+  return (PERMISSION_MODES as unknown[]).includes(v)
+}
+
 export interface Project {
   id: string
   root: string
@@ -24,9 +30,20 @@ export interface Project {
   columns?: BoardColumn[]
 }
 
+/** Настройки, которые копируются в каждый новый проект. */
+export interface ProjectDefaults {
+  permissionMode: PermissionMode
+  /** undefined — все установленные агенты. */
+  enabledAgents?: AgentKind[]
+  roles: Role[]
+  columns: BoardColumn[]
+}
+
 interface ProjectsFile {
   projects: Project[]
   activeId: string | null
+  /** Глобальный дефолт для новых проектов; незаданные поля — встроенные значения. */
+  defaults?: Partial<ProjectDefaults>
 }
 
 /**
@@ -49,7 +66,10 @@ export class ProjectManager {
   private load(): ProjectsFile {
     if (!existsSync(this.file)) return { projects: [], activeId: null }
     try {
-      return JSON.parse(readFileSync(this.file, 'utf8')) as ProjectsFile
+      const data = JSON.parse(readFileSync(this.file, 'utf8')) as ProjectsFile
+      // Старый формат без defaults читается как есть; мусор в defaults — сбрасываем.
+      if (data.defaults !== undefined && (typeof data.defaults !== 'object' || data.defaults === null)) delete data.defaults
+      return data
     } catch {
       return { projects: [], activeId: null }
     }
@@ -95,11 +115,64 @@ export class ProjectManager {
       return existing
     }
     const id = createHash('sha1').update(root).digest('hex').slice(0, 10)
-    const project: Project = { id, root, name: basename(root) }
+    const d = this.defaults()
+    const project: Project = {
+      id, root, name: basename(root),
+      permissionMode: d.permissionMode,
+      ...(d.enabledAgents ? { enabledAgents: d.enabledAgents } : {}),
+      roles: d.roles,
+      columns: d.columns
+    }
     this.data.projects.push(project)
     this.data.activeId = id
     this.save()
     return project
+  }
+
+  /** Глобальный дефолт; незаданные поля — встроенные значения. Массивы — копии. */
+  defaults(): ProjectDefaults {
+    const d = this.data.defaults ?? {}
+    return {
+      permissionMode: d.permissionMode ?? 'auto',
+      ...(d.enabledAgents ? { enabledAgents: [...d.enabledAgents] } : {}),
+      roles: (d.roles ?? DEFAULT_ROLES).map((r) => ({ ...r })),
+      columns: (d.columns ?? DEFAULT_COLUMNS).map((c) => ({ ...c }))
+    }
+  }
+
+  /**
+   * Смержить патч в дефолт. Роли и колонки проходят ту же валидацию, что у проекта;
+   * enabledAgents: null/undefined в патче с явным ключом — «все установленные».
+   */
+  setDefaults(patch: Partial<ProjectDefaults>): ProjectDefaults {
+    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw new Error('настройки по умолчанию: ожидается объект')
+    const next: Partial<ProjectDefaults> = { ...(this.data.defaults ?? {}) }
+    if (patch.permissionMode !== undefined) {
+      if (!isPermissionMode(patch.permissionMode)) throw new Error(`неизвестный режим разрешений: ${String(patch.permissionMode)}`)
+      next.permissionMode = patch.permissionMode
+    }
+    if ('enabledAgents' in patch) {
+      if (patch.enabledAgents == null) delete next.enabledAgents
+      else if (!Array.isArray(patch.enabledAgents)) throw new Error('enabledAgents должен быть массивом')
+      else next.enabledAgents = patch.enabledAgents.filter((a) => isAgentKind(a))
+    }
+    if (patch.roles !== undefined) next.roles = validateRoles(patch.roles)
+    if (patch.columns !== undefined) next.columns = validateColumns(patch.columns)
+    this.data.defaults = next
+    this.save()
+    return this.defaults()
+  }
+
+  /** Переписать настройки проекта дефолтом. Задачи из исчезнувших колонок уходят в backlog. */
+  applyDefaults(id: string): Project {
+    const p = this.get(id)
+    if (!p) throw new Error(`project not found: ${id}`)
+    const d = this.defaults()
+    p.permissionMode = d.permissionMode
+    if (d.enabledAgents) p.enabledAgents = d.enabledAgents
+    else delete p.enabledAgents
+    this.setRoles(id, d.roles)
+    return this.setColumns(id, d.columns)
   }
 
   setPermissionMode(id: string, mode: PermissionMode): Project {

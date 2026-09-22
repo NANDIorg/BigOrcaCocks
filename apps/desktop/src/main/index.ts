@@ -6,7 +6,7 @@ import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive } f
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
-import { ProjectManager, type PermissionMode } from './projects'
+import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
 import type { PtySpawnOptions, TaskPatch } from '../shared/ipc'
 
@@ -168,6 +168,9 @@ function registerIpc(): void {
   ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   ipcMain.handle('projects:setRoles', (_e, id: string, roles: Role[]) => projects.setRoles(id, roles))
   ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
+  ipcMain.handle('projects:getDefaults', () => projects.defaults())
+  ipcMain.handle('projects:setDefaults', (_e, patch: Partial<ProjectDefaults>) => projects.setDefaults(patch ?? {}))
+  ipcMain.handle('projects:applyDefaults', (_e, id: string) => projects.applyDefaults(id))
   ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   ipcMain.handle('projects:add', async () => {
     if (!win) throw new Error('no window')
