@@ -121,6 +121,11 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 `AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model})` → `{command, args}`
 (`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + замечания ревью.
 
+Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
+`setRunPty(runId, ptyId)`. В env: `ORCA_ROLE=coordinator`, `ORCA_RUN_ID=<runId>` и таймауты Bash-инструмента
+Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (долгое ожидание воркеров).
+Воркерам эти переменные не ставятся.
+
 | Агент | Бинарник | Как передаются инструкция и задание | Флаг модели |
 |---|---|---|---|
 | `claude` | `claude` | инструкция через `--append-system-prompt`, задание — позиционный аргумент; плюс `--permission-mode`, `--allowedTools "Bash(orca-board:*)"` | `--model` |
@@ -259,7 +264,7 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 - `invoke`: `app:info`; `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
-  `board:get`; `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
+  `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)`; `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
   `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `worker:opened`, `worker:closed`,

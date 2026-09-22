@@ -109,15 +109,19 @@ export function startWorker(
   return { ptyId, dispatchId, worktree, branch }
 }
 
-/** Координатор: агент роли coordinator (нет такой роли — claude без модели) в корне репозитория с инструкцией и целью. */
+/**
+ * Координатор: агент роли coordinator (нет такой роли — claude без модели) в корне репозитория с инструкцией и целью.
+ * Каждый запуск — новый прогон (Run): его id уходит координатору в ORCA_RUN_ID.
+ */
 export function startCoordinator(
   win: BrowserWindow,
+  store: TaskStore,
   repoRoot: string,
   ctx: WorkerEnvContext,
   objective: string,
   cols = 120,
   rows = 30
-): string {
+): { ptyId: string; runId: string } {
   const prompt = `Цель: ${objective}\n\nНачни с декомпозиции и создания задач через orca-board.`
   const role = ctx.roles.find((r) => r.id === 'coordinator')
   const spec = role ? getAgent(role.agent) : undefined
@@ -128,12 +132,29 @@ export function startCoordinator(
     model: role?.model,
     effort: role?.effort
   })
-  return spawnPty(win, {
-    cwd: repoRoot,
-    command: inv.command,
-    args: inv.args,
-    cols,
-    rows,
-    env: { ...baseEnv(ctx), ORCA_ROLE: 'coordinator' }
-  })
+  const run = store.createRun(objective)
+  let ptyId: string
+  try {
+    ptyId = spawnPty(win, {
+      cwd: repoRoot,
+      command: inv.command,
+      args: inv.args,
+      cols,
+      rows,
+      env: {
+        ...baseEnv(ctx),
+        ORCA_ROLE: 'coordinator',
+        ORCA_RUN_ID: run.id,
+        // Таймауты Bash-инструмента Claude Code: координатор подолгу ждёт воркеров в check --wait/--follow.
+        BASH_DEFAULT_TIMEOUT_MS: '1800000',
+        BASH_MAX_TIMEOUT_MS: '3600000'
+      }
+    })
+  } catch (e) {
+    // Координатор не запустился — пустой прогон не оставляем висеть открытым.
+    store.closeRun(run.id)
+    throw e
+  }
+  store.setRunPty(run.id, ptyId)
+  return { ptyId, runId: run.id }
 }

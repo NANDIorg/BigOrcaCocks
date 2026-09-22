@@ -32,6 +32,10 @@ const api: OrcaApi = {
     get: () => ipcRenderer.invoke('board:get'),
     onChange: (cb) => on('board:changed', cb)
   },
+  runs: {
+    list: () => ipcRenderer.invoke('runs:list'),
+    close: (id) => ipcRenderer.invoke('runs:close', id)
+  },
   tasks: {
     create: (input) => ipcRenderer.invoke('tasks:create', input),
     move: (id, status) => ipcRenderer.invoke('tasks:move', id, status),

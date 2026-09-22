@@ -116,8 +116,8 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
 function runCoordinator(objective: string, projectId?: string, cols?: number, rows?: number): string {
   if (!win) throw new Error('no window')
   const p = resolveProject(projectId)
-  const ptyId = startCoordinator(win, p.root, ctx(p.id), objective, cols, rows)
-  win.webContents.send('worker:opened', { ptyId, projectId: p.id, label: 'координатор', role: 'coordinator' })
+  const { ptyId, runId } = startCoordinator(win, p.store, p.root, ctx(p.id), objective, cols, rows)
+  win.webContents.send('worker:opened', { ptyId, projectId: p.id, label: 'координатор', role: 'coordinator', runId })
   return ptyId
 }
 
@@ -180,8 +180,10 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('board:get', () =>
-    projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [] }
+    projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [], runs: [] }
   )
+  ipcMain.handle('runs:list', () => (projects.active() ? projects.activeStore().listRuns() : []))
+  ipcMain.handle('runs:close', (_e, runId: string) => projects.activeStore().closeRun(runId))
   ipcMain.handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; roleId?: string }) => {
     const p = resolveProject()
     const role = pickRole(projects.roles(p.id), projectAgents(p.id), input.roleId)
