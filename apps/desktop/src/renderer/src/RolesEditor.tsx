@@ -1,5 +1,5 @@
 import type React from 'react'
-import { modelHints, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
+import { effortOptions, modelHints, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { useAutoSave } from './useAutoSave'
 
@@ -13,14 +13,27 @@ interface Props {
   onSave(roles: Role[]): Promise<void>
 }
 
-/** Раздел «Роли» («О проекте» и дефолт для новых проектов): название, агент, модель; сохраняется автоматически. */
+/** Роль с новыми полями; пустые model/effort не сохраняем вовсе (undefined — «по умолчанию у агента»). */
+function withPatch(r: Role, p: Partial<Role>): Role {
+  const next: Role = { ...r, ...p }
+  if (!next.effort) delete next.effort
+  return next
+}
+
+/** Раздел «Роли» («О проекте» и дефолт для новых проектов): название, агент, модель, усилие; сохраняется автоматически. */
 export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Props): React.JSX.Element {
   const { draft: roles, error, update } = useAutoSave<Role[]>(storageKey, initial, onSave)
   const enabled = agents.filter((a) => a.enabled)
   const canDelete = roles.length > 1
 
   function patch(i: number, p: Partial<Role>, debounce = false): void {
-    update(roles.map((r, j) => (j === i ? { ...r, ...p } : r)), debounce)
+    update(roles.map((r, j) => (j === i ? withPatch(r, p) : r)), debounce)
+  }
+
+  /** Смена агента: effort, которого нет у нового агента, сбрасывается. */
+  function changeAgent(i: number, agent: AgentKind): void {
+    const effort = roles[i].effort
+    patch(i, { agent, effort: effort && effortOptions(agent).includes(effort) ? effort : undefined })
   }
 
   function add(): void {
@@ -35,11 +48,19 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
         <div className="editor-head">Название</div>
         <div className="editor-head">Агент</div>
         <div className="editor-head">Модель</div>
+        <div className="editor-head">Усилие</div>
         <div className="editor-head" />
         {roles.map((r, i) => {
           const current = agents.find((a) => a.id === r.agent)
           const currentOff = current !== undefined && !current.enabled
-          const hints = modelHints(r.agent)
+          const defaults = current?.defaults
+          const baseHints = modelHints(r.agent)
+          // Модель из конфига агента (codex) — первой подсказкой, если её нет в списке.
+          const hints =
+            defaults?.model && !baseHints.some((h) => h.value === defaults.model)
+              ? [{ value: defaults.model, label: 'по умолчанию' }, ...baseHints]
+              : baseHints
+          const efforts = effortOptions(r.agent)
           const listId = `models-${storageKey}-${r.id}`
           return (
             <div key={r.id} className="editor-row">
@@ -57,7 +78,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
                   value={r.agent}
                   className={currentOff ? 'off' : ''}
                   style={{ flex: 1, minWidth: 0 }}
-                  onChange={(e) => patch(i, { agent: e.target.value as AgentKind })}
+                  onChange={(e) => changeAgent(i, e.target.value as AgentKind)}
                 >
                   {enabled.map((a) => (
                     <option key={a.id} value={a.id}>{a.title}</option>
@@ -71,7 +92,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
               <div>
                 <input
                   value={r.model ?? ''}
-                  placeholder="по умолчанию"
+                  placeholder={defaults?.model ? `по умолчанию: ${defaults.model}` : 'по умолчанию агента'}
                   list={hints.length ? listId : undefined}
                   onChange={(e) => patch(i, { model: e.target.value }, true)}
                 />
@@ -79,6 +100,23 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
                   <datalist id={listId}>
                     {hints.map((m) => <option key={m.value} value={m.value} label={m.label} />)}
                   </datalist>
+                )}
+              </div>
+              <div>
+                {efforts.length > 0 ? (
+                  <select value={r.effort ?? ''} onChange={(e) => patch(i, { effort: e.target.value })}>
+                    <option value="">{defaults?.effort ? `по умолчанию: ${defaults.effort}` : 'по умолчанию'}</option>
+                    {efforts.map((e) => (
+                      <option key={e} value={e}>{e}</option>
+                    ))}
+                    {r.effort && !efforts.includes(r.effort) && (
+                      <option value={r.effort} disabled>{r.effort} (не поддерживается)</option>
+                    )}
+                  </select>
+                ) : (
+                  <select value="" disabled title="Агент не поддерживает выбор усилия">
+                    <option value="">—</option>
+                  </select>
                 )}
               </div>
               <button
@@ -98,7 +136,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
         <button className="btn-sm" onClick={add}>Добавить роль</button>
       </div>
       <p className="editor-hint">
-        Роль задаёт агента и модель. Координатор запускается ролью <code>coordinator</code>; в задачах роль
+        Роль задаёт агента, модель и усилие (уровень рассуждений). Координатор запускается ролью <code>coordinator</code>; в задачах роль
         выбирается при создании (для CLI — <code>--role &lt;id&gt;</code>).
       </p>
     </div>
