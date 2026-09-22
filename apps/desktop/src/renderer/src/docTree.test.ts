@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   alsoIn, buildTree, chainLabel, dirAncestors, excerpt, findAll, highlight, longTime, matchPath, plural,
-  readingMinutes, shortTime, slugify, type TreeNode
+  readingMinutes, shortTime, type TreeNode
 } from './docTree'
 import type { DocFile, DocGroup } from '../../shared/ipc'
 
@@ -145,12 +145,4 @@ test('alsoIn — тот же путь в других группах', () => {
   assert.deepEqual(alsoIn(groups, 'project', 'docs/a.md').map((g) => g.source), ['t1'])
   assert.deepEqual(alsoIn(groups, 't1', 'docs/a.md').map((g) => g.source), ['project'])
   assert.deepEqual(alsoIn(groups, 'project', 'b.md'), [])
-})
-
-test('slugify — id заголовков, повторы с номером', () => {
-  const used = new Set<string>()
-  assert.equal(slugify('Роли и колонки', used), 'роли-и-колонки')
-  assert.equal(slugify('Роли и колонки', used), 'роли-и-колонки-2')
-  assert.equal(slugify('  IPC: API!  ', used), 'ipc-api')
-  assert.equal(slugify('!!!', used), 'раздел')
 })

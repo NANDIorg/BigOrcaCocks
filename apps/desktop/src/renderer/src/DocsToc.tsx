@@ -2,16 +2,11 @@ import type React from 'react'
 import type { DocFile } from '../../shared/ipc'
 import { formatSize } from './docLinks'
 import { longTime, readingMinutes } from './docTree'
+import type { DocTocItem } from './docToc'
 import { DocIcon } from './docsIcons'
 
-export interface TocItem {
-  id: string
-  text: string
-  level: 2 | 3
-}
-
 export interface DocsTocProps {
-  items: TocItem[]
+  items: DocTocItem[]
   active: string | null
   /** Доля прочитанного, 0…1. */
   progress: number

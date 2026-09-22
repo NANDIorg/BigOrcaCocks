@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { anchorId, buildDocToc, slugify } from './docToc'
+import { anchorId, buildDocToc, findDocHeading, slugify } from './docToc'
 
 test('slugify — как у GitHub: строчные, без пунктуации, кириллица остаётся', () => {
   assert.equal(slugify('Роли и колонки'), 'роли-и-колонки')
@@ -29,4 +29,15 @@ test('anchorId — #якорь из ссылки в id заголовка, с pe
   assert.equal(anchorId('#процессы'), 'doc-процессы')
   assert.equal(anchorId('#%D0%9F%D1%80%D0%BE%D1%86%D0%B5%D1%81%D1%81%D1%8B'), 'doc-процессы')
   assert.equal(anchorId('#%E0%A4%A'), 'doc-%e0%a4%a')
+})
+
+test('findDocHeading — якорь из ссылки, из другого документа и текстом заголовка ведут к id из buildDocToc', () => {
+  const ids = buildDocToc('## Роли и колонки\n\n## IPC: main ↔ renderer\n').map((t) => t.id)
+  const els = ids.map((id) => ({ id }))
+  const root = { querySelectorAll: () => els } as unknown as ParentNode
+  assert.equal(findDocHeading(root, '#роли-и-колонки'), els[0])
+  assert.equal(findDocHeading(root, 'Роли-и-колонки'), els[0])
+  assert.equal(findDocHeading(root, 'Роли и колонки'), els[0])
+  assert.equal(findDocHeading(root, '#ipc-main--renderer'), els[1])
+  assert.equal(findDocHeading(root, '#нет-такого'), null)
 })
