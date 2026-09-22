@@ -29,6 +29,7 @@ export function App(): React.JSX.Element {
   const [showNew, setShowNew] = useState(false)
   const [showCoord, setShowCoord] = useState(false)
   const [tab, setTab] = useState<'board' | 'info'>('board')
+  const [termVisible, setTermVisible] = useState(true)
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
 
@@ -69,6 +70,7 @@ export function App(): React.JSX.Element {
           : [...prev, { ptyId: t.ptyId, label: t.label, taskId: t.taskId, projectId: t.projectId, color }]
       )
       setActivePty(t.ptyId)
+      setTermVisible(true)
     })
     const offFocus = window.orca.projects.onFocus(async (projectId) => {
       await window.orca.projects.setActive(projectId)
@@ -103,6 +105,7 @@ export function App(): React.JSX.Element {
     const ptyId = await window.orca.pty.spawn({ cols: 120, rows: 30 })
     setTerminals((prev) => [...prev, { ptyId, label: 'терминал', projectId: active?.id, color: 'var(--muted)' }])
     setActivePty(ptyId)
+    setTermVisible(true)
   }
 
   async function startTask(task: Task): Promise<void> {
@@ -125,7 +128,7 @@ export function App(): React.JSX.Element {
     if (t) setActivePty(t.ptyId)
   }
 
-  const hasTerm = terminals.length > 0
+  const hasTerm = terminals.length > 0 && termVisible
 
   return (
     <div className="app">
@@ -165,7 +168,16 @@ export function App(): React.JSX.Element {
         <div className="main-head">
           <div className="row">
             <h1>{active?.name ?? 'orca-board'}</h1>
-            <button className="round-btn" title="Открыть терминал" onClick={openShell} disabled={!active}><Icon.terminal /></button>
+            <button className="round-btn" title="Открыть новый терминал" onClick={openShell} disabled={!active}><Icon.plus /></button>
+            <button
+              className={`round-btn ${hasTerm ? 'on' : ''}`}
+              title={termVisible ? 'Скрыть панель терминалов' : 'Показать панель терминалов'}
+              onClick={() => setTermVisible((v) => !v)}
+              disabled={terminals.length === 0}
+            >
+              <Icon.terminal />
+              {terminals.length > 0 && <span className="badge">{terminals.length}</span>}
+            </button>
             <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active}>
               <Icon.users /> Координатор
             </button>
@@ -196,7 +208,7 @@ export function App(): React.JSX.Element {
               onReject={(id, fb) => window.orca.review.reject(id, fb)}
             />
           ) : (
-            <div style={{ padding: '28px 32px', color: 'var(--muted)', maxWidth: 720 }}>
+            <div className="info">
               <div className="agents-head">
                 <h3>Агенты</h3>
                 <button className="btn-text" onClick={() => void refreshAgents(true)}>Обновить</button>
@@ -247,8 +259,8 @@ export function App(): React.JSX.Element {
             </div>
           )}
 
-          {hasTerm && (
-            <div className="term-panel">
+          {terminals.length > 0 && (
+            <div className={`term-panel ${hasTerm ? '' : 'hidden'}`}>
               <div className="term-tabs">
                 {terminals.map((t) => (
                   <button

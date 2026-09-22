@@ -99,17 +99,23 @@ button { font: inherit; cursor: pointer; }
 }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
-.content { display: grid; grid-template-columns: 1fr auto; min-height: 0; flex: 1; }
-.content.no-term { grid-template-columns: 1fr; }
+.content { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; flex: 1; }
+.content.no-term { grid-template-columns: minmax(0, 1fr); }
+.term-panel.hidden { display: none; }
+.info { padding: 28px 32px; color: var(--muted); max-width: 720px; overflow: auto; min-width: 0; overflow-wrap: anywhere; }
+.info code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.round-btn.on { color: var(--accent); border-color: var(--accent); }
+.round-btn .badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; border-radius: 9px; background: var(--col-progress); color: #fff; font-size: 11px; display: grid; place-items: center; padding: 0 5px; }
+.round-btn { position: relative; }
 
 /* ---------- board ---------- */
 .board { display: flex; gap: 20px; padding: 28px 32px; overflow-x: auto; min-height: 0; }
-.column { flex: 0 0 300px; display: flex; flex-direction: column; min-height: 0; gap: 16px; }
+.column { flex: 0 0 300px; width: 300px; max-width: 300px; min-width: 0; display: flex; flex-direction: column; min-height: 0; gap: 16px; }
 .col-head {
   display: flex; height: 56px; border-radius: 12px; overflow: hidden; color: #fff; font-weight: 600; font-size: 16px;
 }
 .col-head .label { flex: 1; display: flex; align-items: center; gap: 12px; padding: 0 18px; }
-.col-head .count { width: 100px; display: grid; place-items: center; font-weight: 500; font-size: 15px; }
+.col-head .count { width: 64px; display: grid; place-items: center; font-weight: 500; font-size: 15px; }
 .col-body {
   flex: 1; min-height: 120px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;
   background: var(--side); border-radius: var(--radius);
@@ -122,6 +128,7 @@ button { font: inherit; cursor: pointer; }
 
 /* ---------- card ---------- */
 .card {
+  min-width: 0; overflow: hidden;
   background: var(--card); border-radius: 12px; padding: 18px; cursor: grab; user-select: none;
   transition: background .12s, transform .12s;
 }
@@ -184,6 +191,7 @@ button { font: inherit; cursor: pointer; }
 }
 .modal h3 { margin: 0; font-size: 20px; font-weight: 600; }
 .modal label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
+input[type='checkbox'] { width: auto; margin: 0; accent-color: var(--accent); }
 input, textarea, select {
   background: var(--frame); color: var(--text); border: 1px solid transparent; border-radius: 10px;
   padding: 10px 12px; font: inherit; width: 100%; outline: none;

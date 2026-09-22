@@ -111,7 +111,7 @@ export function Board(props: Props): React.JSX.Element {
                 {STATUS_TITLES[status]}
               </div>
               <div className="count" style={{ background: 'rgba(0,0,0,.25)' }}>
-                {items.length}/{tasks.length}
+                {items.length}
               </div>
             </div>
             <div className="col-body">
