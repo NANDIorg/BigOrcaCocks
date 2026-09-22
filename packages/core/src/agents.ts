@@ -25,6 +25,16 @@ export interface ModelHint {
   label?: string
 }
 
+/**
+ * Модель агента для выбора в UI.
+ * `efforts` — уровни рассуждений, допустимые именно для этой модели; нет поля — общий список агента (effortOptions).
+ */
+export interface ModelOption {
+  id: string
+  label: string
+  efforts?: readonly string[]
+}
+
 export interface AgentSpec {
   id: string
   /** Название для UI. */
@@ -33,8 +43,10 @@ export interface AgentSpec {
   bin: string
   /** Аргументы для получения версии (нет — версию не спрашиваем). */
   versionArgs?: string[]
-  /** Подсказки моделей для datalist в UI (не ограничение: можно ввести любую). */
+  /** @deprecated Используй `models`. Подсказки моделей для datalist в UI (не ограничение: можно ввести любую). */
   modelHints?: readonly ModelHint[]
+  /** Фиксированный список моделей агента (не ограничение: можно ввести любую). Нет — список берётся из конфига агента или пуст. */
+  models?: readonly ModelOption[]
   /** Допустимые уровни effort; [] — агент effort не поддерживает. */
   effortOptions: readonly string[]
   /** Как передать системную инструкцию (system) и задание (prompt). */
@@ -64,6 +76,15 @@ export const AGENTS = [
       { value: 'claude-opus-5' },
       { value: 'claude-sonnet-5' },
       { value: 'claude-fable-5-1' }
+    ],
+    models: [
+      { id: 'opus', label: 'Opus (актуальный)' },
+      { id: 'sonnet', label: 'Sonnet (актуальный)' },
+      { id: 'haiku', label: 'Haiku (актуальный)' },
+      { id: 'claude-opus-5', label: 'claude-opus-5' },
+      { id: 'claude-sonnet-5', label: 'claude-sonnet-5' },
+      { id: 'claude-fable-5-1', label: 'claude-fable-5-1' },
+      { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5' }
     ],
     effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'],
     // Режим разрешений проекта + orca-board всегда без вопросов.
@@ -185,8 +206,16 @@ export interface AgentInfo {
   installed: boolean
   enabled: boolean
   version?: string
-  /** Дефолты агента из его конфига (сейчас только codex: ~/.codex/config.toml). */
-  defaults?: { model?: string; effort?: string }
+  /**
+   * Модели агента для выбора в UI: у claude — фиксированный список из реестра, у codex — из ~/.codex/models_cache.json.
+   * [] — списка нет, модель в UI вводится свободным текстом.
+   */
+  models: ModelOption[]
+  /**
+   * Дефолты агента из его конфига (сейчас только codex: ~/.codex/config.toml).
+   * Всегда заполнен: у агента без конфига — {}.
+   */
+  defaults: { model?: string; effort?: string }
 }
 
 export function getAgent(id: string): AgentSpec | undefined {
@@ -205,4 +234,65 @@ export function modelHints(agent: string): readonly ModelHint[] {
 /** Уровни effort агента для UI; у неизвестного агента или без поддержки effort — []. */
 export function effortOptions(agent: string): readonly string[] {
   return getAgent(agent)?.effortOptions ?? []
+}
+
+/** Модели агента для выбора в UI; [] — модель вводится свободным текстом. */
+export function modelOptions(info: AgentInfo): ModelOption[] {
+  return info.models
+}
+
+/** Уровни effort для выбранной модели: её собственные, если заданы, иначе общий список агента. */
+export function effortOptionsFor(info: AgentInfo, model?: string): readonly string[] {
+  const own = model ? info.models.find((m) => m.id === model)?.efforts : undefined
+  return own ?? effortOptions(info.id)
+}
+
+/** Подпись модели по id: label из списка агента, иначе сам id; нет id — undefined. */
+export function modelLabel(info: AgentInfo | undefined, modelId: string | undefined): string | undefined {
+  if (!modelId) return undefined
+  return info?.models.find((m) => m.id === modelId)?.label ?? modelId
+}
+
+/** Сырой элемент ~/.codex/models_cache.json (только нужные поля). */
+interface CodexCacheModel {
+  slug?: unknown
+  display_name?: unknown
+  visibility?: unknown
+  supported_reasoning_levels?: unknown
+}
+
+/**
+ * Список моделей codex из текста ~/.codex/models_cache.json (`{ models: [{ slug, display_name, supported_reasoning_levels }] }`).
+ * Скрытые (`visibility: "hide"`) пропускаются, если это не модель по умолчанию. `defaultModel` (из config.toml)
+ * помечается «(по умолчанию)»; если её нет в кэше — добавляется первой. Битый/пустой текст — только дефолтная модель или [].
+ */
+export function parseCodexModelsCache(text: string | undefined, defaultModel?: string): ModelOption[] {
+  let raw: CodexCacheModel[] = []
+  try {
+    const parsed = text ? (JSON.parse(text) as { models?: unknown }) : undefined
+    if (parsed && Array.isArray(parsed.models)) raw = parsed.models as CodexCacheModel[]
+  } catch {
+    raw = []
+  }
+  const models: ModelOption[] = []
+  for (const m of raw) {
+    if (!m || typeof m.slug !== 'string' || !m.slug) continue
+    const isDefault = m.slug === defaultModel
+    if (m.visibility === 'hide' && !isDefault) continue
+    const name = typeof m.display_name === 'string' && m.display_name ? m.display_name : m.slug
+    const efforts = Array.isArray(m.supported_reasoning_levels)
+      ? m.supported_reasoning_levels
+          .map((l: unknown) => (l as { effort?: unknown })?.effort)
+          .filter((e): e is string => typeof e === 'string' && e.length > 0)
+      : []
+    models.push({
+      id: m.slug,
+      label: isDefault ? `${name} (по умолчанию)` : name,
+      ...(efforts.length ? { efforts } : {})
+    })
+  }
+  if (defaultModel && !models.some((m) => m.id === defaultModel)) {
+    models.unshift({ id: defaultModel, label: `${defaultModel} (по умолчанию)` })
+  }
+  return models
 }
