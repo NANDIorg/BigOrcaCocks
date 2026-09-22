@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import type { AgentInfo, AgentKind } from '@orca-board/core'
-import { PERMISSION_MODES, type PermissionMode, type ProjectDefaults } from '../../shared/ipc'
+import { PERMISSION_MODES, type AppSettings, type PermissionMode, type ProjectDefaults } from '../../shared/ipc'
 import { RolesEditor } from './RolesEditor'
 import { ColumnsEditor } from './ColumnsEditor'
 import { AgentLogo } from './AgentLogo'
@@ -26,9 +26,12 @@ export function DefaultsModal({ agents, onClose }: Props): React.JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [agentsError, setAgentsError] = useState<string | null>(null)
   const [permError, setPermError] = useState<string | null>(null)
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
+  const [appError, setAppError] = useState<string | null>(null)
 
   useEffect(() => {
     window.orca.projects.getDefaults().then(setDefaults, (e) => setLoadError(ipcErrorMessage(e)))
+    window.orca.app.getSettings().then(setAppSettings, (e) => setAppError(ipcErrorMessage(e)))
   }, [])
 
   // Esc закрывает модалку.
@@ -48,6 +51,16 @@ export function DefaultsModal({ agents, onClose }: Props): React.JSX.Element {
     } catch (e) {
       if (!setError) throw e
       setError(ipcErrorMessage(e))
+    }
+  }
+
+  /** Глобальные настройки приложения — сразу в app:setSettings; ошибка — рядом с разделом. */
+  async function saveApp(patch: Partial<AppSettings>): Promise<void> {
+    try {
+      setAppSettings(await window.orca.app.setSettings(patch))
+      setAppError(null)
+    } catch (e) {
+      setAppError(ipcErrorMessage(e))
     }
   }
 
@@ -76,6 +89,20 @@ export function DefaultsModal({ agents, onClose }: Props): React.JSX.Element {
           </button>
         </div>
         <div className="task-modal-body defaults-body">
+          <div>
+            <h3>Приложение</h3>
+            <label className="agent-row">
+              <input
+                type="checkbox"
+                checked={appSettings?.keepInBackground ?? true}
+                disabled={!appSettings}
+                onChange={(e) => void saveApp({ keepInBackground: e.target.checked })}
+              />
+              <span>Работать в фоне при закрытии окна</span>
+            </label>
+            <div className="muted">Окно можно закрыть, агенты продолжат работу; приложение живёт в иконке строки меню / трея</div>
+            {appError && <div className="editor-error">{appError}</div>}
+          </div>
           {loadError && <div className="editor-error">{loadError}</div>}
           {!defaults && !loadError && <div className="muted">Загрузка…</div>}
           {defaults && (

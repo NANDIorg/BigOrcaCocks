@@ -7,23 +7,35 @@ export interface PtySpawnOptions {
   env?: Record<string, string>
   cols: number
   rows: number
+  /** Проект терминала из UI: регистрируется в реестре как role=shell с этим проектом. */
+  projectId?: string
+  /** Подпись вкладки терминала из UI. */
+  label?: string
 }
 
-export interface TerminalOpened {
+export type TerminalRole = 'coordinator' | 'worker' | 'shell'
+
+/** Живой PTY в реестре main (src/main/pty.ts). Источник правды для вкладок «Терминалы». */
+export interface TerminalInfo {
   ptyId: string
+  label: string
+  role: TerminalRole
   taskId?: string
   projectId?: string
-  label: string
-  role?: 'coordinator' | 'worker'
-  /** Прогон, который открыл этот координатор. */
+  /** Прогон, который открыл этого координатора. */
   runId?: string
+  createdAt: number
 }
 
-/** Терминал воркера закрыт приложением: задача попала в done или воркер перезапущен. */
-export interface TerminalClosed {
-  ptyId: string
-  taskId: string
-  projectId: string
+/** Элемент terminals:list: реестр + хвост вывода (последние ~200 строк без ANSI) для восстановления вкладки после перезагрузки окна. */
+export interface TerminalSnapshot extends TerminalInfo {
+  tail: string
+}
+
+/** Глобальные настройки приложения (не проекта). */
+export interface AppSettings {
+  /** Закрытие окна не завершает приложение: PTY живут, иконка в трее. По умолчанию true. */
+  keepInBackground: boolean
 }
 
 /** Правка задачи из UI/CLI: только название и описание. */
@@ -74,6 +86,9 @@ export interface ReviewInfo {
 export interface OrcaApi {
   app: {
     info(): Promise<{ socketPath: string; active: Project | null; projects: Project[] }>
+    getSettings(): Promise<AppSettings>
+    /** Мерж патча в глобальные настройки; возвращает итоговые. */
+    setSettings(patch: Partial<AppSettings>): Promise<AppSettings>
   }
   projects: {
     list(): Promise<{ active: Project | null; projects: Project[] }>
@@ -128,12 +143,15 @@ export interface OrcaApi {
     onData(id: string, cb: (data: string) => void): () => void
     onExit(id: string, cb: (code: number) => void): () => void
   }
+  /** Реестр живых PTY в main — источник правды для вкладок «Терминалы». */
+  terminals: {
+    /** Текущий реестр с хвостами вывода — для восстановления вкладок после перезагрузки окна. */
+    list(): Promise<TerminalSnapshot[]>
+    /** Реестр изменился (открыт/закрыт PTY). Всегда полный список. */
+    onChanged(cb: (list: TerminalInfo[]) => void): () => void
+  }
   worker: {
     start(taskId: string, cols: number, rows: number): Promise<{ ptyId: string; dispatchId: string }>
-    /** Терминал открыт (из UI или через CLI координатора). */
-    onOpened(cb: (t: TerminalOpened) => void): () => void
-    /** Терминал воркера закрыт приложением (задача → done, перезапуск воркера). Координатора не касается. */
-    onClosed(cb: (t: TerminalClosed) => void): () => void
   }
   coordinator: {
     start(objective: string, cols: number, rows: number): Promise<string>

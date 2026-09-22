@@ -6,10 +6,12 @@ import { FitAddon } from '@xterm/addon-fit'
 interface Props {
   ptyId: string
   visible: boolean
+  /** Хвост вывода из terminals:list (без ANSI, строки через \n): чтобы после перезагрузки окна терминал не был пустым. */
+  initialTail?: string
 }
 
 /** xterm.js на один PTY. Скрытый терминал остаётся смонтированным, чтобы не терять историю. */
-export function Terminal({ ptyId, visible }: Props): React.JSX.Element {
+export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const fitRef = useRef<{ term: XTerm; fit: FitAddon } | null>(null)
 
@@ -35,6 +37,8 @@ export function Terminal({ ptyId, visible }: Props): React.JSX.Element {
     }
     doFit()
 
+    // Хвост — до подписки на живой вывод, чтобы они не перемешались. Берётся только при создании xterm.
+    if (initialTail) term.write(initialTail.replace(/\r?\n/g, '\r\n'))
     const offData = window.orca.pty.onData(ptyId, (d) => term.write(d))
     const offExit = window.orca.pty.onExit(ptyId, (code) =>
       term.write(`\r\n\x1b[90m[процесс завершился с кодом ${code}]\x1b[0m\r\n`)
@@ -51,6 +55,8 @@ export function Terminal({ ptyId, visible }: Props): React.JSX.Element {
       term.dispose()
       fitRef.current = null
     }
+    // initialTail нужен только при создании xterm; его смена терминал не пересоздаёт.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ptyId])
 
   useEffect(() => {

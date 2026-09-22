@@ -217,23 +217,29 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
-- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, modelHints?, models?, effortOptions, invoke}`. Из него выводятся
-  `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, `modelHints(agent)`
-  (deprecated: `ModelHint[] = {value, label?}` — подсказки для datalist, заменяются `models`),
-  `models` (`ModelOption[] = {id, label, efforts?}`; у claude фиксированно: `opus`/`sonnet`/`haiku` с подписью
-  «… (актуальный)» + `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`, `claude-haiku-4-5`),
-  `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся
+  `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, статический список моделей
+  (`modelHints(agent)` оставлен deprecated-обёрткой над `models` для старого UI)
+  и `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
+- **Список моделей и effort** (для редактора ролей) — `AgentInfo.models: {id, label, efforts?}[]` плюс
+  `AgentInfo.defaults {model?, effort?}`; источник зависит от агента:
+  - `claude` — фиксированный список в реестре core (`packages/core/src/agents.ts`): алиасы `opus`/`sonnet`/`haiku`
+    с подписью «… (актуальный)» и `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`, `claude-haiku-4-5`;
+    effort — `low`, `medium`, `high`, `xhigh`, `max`.
+  - `codex` — `src/main/agents.ts` читает `~/.codex/models_cache.json`: `models[].slug` → `id`, `display_name` → `label`,
+    `supported_reasoning_levels[].effort` → `efforts` модели (нет их — общий `low`/`medium`/`high`). Дефолты
+    `model`/`model_reasoning_effort` — из `~/.codex/config.toml`, дефолтная модель в списке помечена «(по умолчанию)».
+    Нет кэша — в списке только модель из `config.toml`. Чтение обоих файлов кэшируется на 60 с, `refresh` сбрасывает.
+  - остальные — `models = []`, в UI модель вводится свободным текстом.
 - **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
-- **Модели и дефолты агента** (`agentConfig` в `src/main/agents.ts`) → `AgentInfo.models` и `AgentInfo.defaults {model?, effort?}`
-  (оба заполнены всегда: `[]` / `{}`). codex: `model` и `model_reasoning_effort` из `~/.codex/config.toml` (построчно,
-  только ключи верхнего уровня до первой секции `[..]`), модели — `parseCodexModelsCache` (core) из
-  `~/.codex/models_cache.json`: `{id: slug, label: display_name, efforts: supported_reasoning_levels[].effort}`,
-  `visibility: "hide"` пропускаются, модель из config.toml помечается «(по умолчанию)» и добавляется первой, если её
-  нет в кэше; нет файлов / битый JSON → только модель конфига или `[]`. Чтение кэшируется на 60 с, `refresh` сбрасывает.
-  claude — `models` из реестра, прочие — `[]`. Хелперы UI в core: `modelOptions(info)`, `effortOptionsFor(info, model?)`
-  (efforts модели, иначе `effortOptions` агента), `modelLabel(info, id)` (label или сам id).
+- **Дефолты и модели агента** (`agentConfig` в `src/main/agents.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
+  всегда (`[]` / `{}`). codex: `config.toml` читается построчно, только ключи верхнего уровня до первой секции `[..]`;
+  разбор кэша — чистая `parseCodexModelsCache(text, defaultModel?)` в core (`visibility: "hide"` пропускаются,
+  дефолтная модель не из кэша добавляется первой; битый JSON → только модель конфига или `[]`).
+  Хелперы UI в core: `modelOptions(info)`, `effortOptionsFor(info, model?)` (efforts модели, иначе `effortOptions`
+  агента), `modelLabel(info, id)` (label или сам id).
   Новый агент — одна запись в массиве, остальное (типы, детект, UI, проверки) подхватывается само.
 - **Детект** (`detectAgents`): ищем `bin` как исполняемый файл в `PATH` процесса плюс стандартных папках
   (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.cargo/bin`, `~/.bun/bin`) —
@@ -330,11 +336,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **«О проекте»**, разделы:
   - «Агенты» — кто установлен (логотип, название, версия), чекбоксы включения (`enabledAgents`).
   - «Роли» (`RolesEditor.tsx`) — список ролей: id, название, агент (только из реестра),
-    модель (свободный ввод с подсказками `modelHints`, `value` + `label`; у агента с `defaults.model` (codex) она
-    идёт первой подсказкой и в плейсхолдере «по умолчанию: <model>», иначе «по умолчанию агента»),
-    усилие — select из `effortOptions` агента, первая опция «по умолчанию» (пусто → `effort` не сохраняется;
-    с `defaults.effort` — «по умолчанию: <effort>»), у агента без effort — задизейбленный прочерк; при смене агента
-    `effort`, которого нет в новом списке, сбрасывается. Сохраняется через `projects:setRoles`.
+    модель — select из `AgentInfo.models` (`id` + `label`, см. «Агенты»; у агента с `models = []` — свободный ввод),
+    усилие — select из `efforts` выбранной модели (нет — из списка агента), первая опция «по умолчанию»
+    (пусто → `effort` не сохраняется; с `defaults.effort` — «по умолчанию: <effort>»), у агента без effort —
+    задизейбленный прочерк. Смена агента сбрасывает `model` и `effort`. Сохраняется через `projects:setRoles`.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns`.
@@ -346,8 +351,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     с permissionMode/enabledAgents/roles/columns проекта, `confirm`), «Применить дефолт к этому проекту»
     (`projects:applyDefaults`, `confirm`; после — `refreshProjects` и пересоздание редакторов через `settingsRev`),
     «Редактировать дефолт» — открывает `DefaultsModal`.
-- **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`
-  и id datalist) + начальные `roles`/`columns` + `onSave`. В «О проекте» `storageKey = active.id`, в дефолте — `'defaults'`.
+- **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`. В «О проекте» `storageKey = active.id`, в дефолте — `'defaults'`.
 - **Модалка дефолта** (`DefaultsModal.tsx`): открывается из подвала сайдбара («Настройки по умолчанию») и из «О проекте».
   Грузит `getDefaults()`, показывает агентов (галочка «Все установленные» = `enabledAgents: undefined`), роли, колонки,
   `permissionMode`; каждое изменение — `setDefaults(patch)`, ошибка main — под разделом. В ролях «включён» считается
