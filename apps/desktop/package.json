@@ -8,7 +8,9 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "pack": "electron-vite build && electron-builder --mac --dir",
+    "dist": "electron-vite build && electron-builder --mac"
   },
   "dependencies": {
     "@orca-board/core": "workspace:*",
@@ -28,5 +30,7 @@
     "electron-vite": "^4.0.0",
     "typescript": "^5.6.0",
     "vite": "^7.0.0"
-  }
+  },
+  "description": "Оркестратор CLI-агентов с канбан-доской",
+  "author": "nandi"
 }

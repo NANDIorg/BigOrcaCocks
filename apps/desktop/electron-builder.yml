@@ -1,0 +1,16 @@
+appId: dev.orca-board
+productName: orca-board
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: ../../packages/cli/bin
+    to: cli
+    filter: ['**/*']
+mac:
+  category: public.app-category.developer-tools
+  target: [dir, dmg]
+  identity: null
+npmRebuild: true

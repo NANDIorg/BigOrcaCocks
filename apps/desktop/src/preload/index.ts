@@ -11,6 +11,13 @@ const api: OrcaApi = {
   app: {
     info: () => ipcRenderer.invoke('app:info')
   },
+  projects: {
+    list: () => ipcRenderer.invoke('projects:list'),
+    add: () => ipcRenderer.invoke('projects:add'),
+    remove: (id) => ipcRenderer.invoke('projects:remove', id),
+    setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
+    onFocus: (cb) => on('projects:focus', cb)
+  },
   board: {
     get: () => ipcRenderer.invoke('board:get'),
     onChange: (cb) => on('board:changed', cb)
@@ -34,6 +41,14 @@ const api: OrcaApi = {
   worker: {
     start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows),
     onOpened: (cb) => on('worker:opened', cb)
+  },
+  coordinator: {
+    start: (objective, cols, rows) => ipcRenderer.invoke('coordinator:start', objective, cols, rows)
+  },
+  review: {
+    info: (taskId) => ipcRenderer.invoke('review:info', taskId),
+    accept: (taskId) => ipcRenderer.invoke('review:accept', taskId),
+    reject: (taskId, feedback) => ipcRenderer.invoke('review:reject', taskId, feedback)
   }
 }
 

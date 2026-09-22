@@ -207,3 +207,21 @@ textarea { min-height: 96px; resize: vertical; }
 .q-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .q-free { display: flex; gap: 8px; }
 .q-free input { flex: 1; padding: 6px 10px; }
+
+/* ---------- ревью ---------- */
+.muted { color: var(--muted); font-size: 13px; }
+.review { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; cursor: default; }
+.review-info { display: flex; flex-direction: column; gap: 8px; }
+.review-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.commits { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+.stat {
+  margin: 0; padding: 8px 10px; background: var(--frame); border-radius: 8px; font-size: 11px;
+  font-family: ui-monospace, Menlo, monospace; color: #c9ccd6; max-height: 140px; overflow: auto; white-space: pre-wrap;
+}
+.stat.error { color: #ef6b6b; }
+.reject { display: flex; flex-direction: column; gap: 8px; }
+.reject textarea { min-height: 70px; }
+.review .actions { margin-top: 0; }
+.btn-primary.ghost { background: transparent; border: 1px solid var(--chip); color: var(--text); }
+.btn-primary.ghost:hover { border-color: var(--text); background: transparent; }
+button:disabled { opacity: .45; cursor: default; }

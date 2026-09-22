@@ -12,17 +12,41 @@ export interface PtySpawnOptions {
 export interface TerminalOpened {
   ptyId: string
   taskId?: string
+  projectId?: string
   label: string
+  role?: 'coordinator' | 'worker'
+}
+
+export interface Project {
+  id: string
+  root: string
+  name: string
+}
+
+export interface ReviewInfo {
+  base: string
+  branch: string
+  stat: string
+  commits: string[]
+  dirty: boolean
 }
 
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
 export interface OrcaApi {
   app: {
-    info(): Promise<{ repoRoot: string; repoName: string; socketPath: string }>
+    info(): Promise<{ socketPath: string; active: Project | null; projects: Project[] }>
+  }
+  projects: {
+    list(): Promise<{ active: Project | null; projects: Project[] }>
+    add(): Promise<Project | null>
+    remove(id: string): Promise<void>
+    setActive(id: string): Promise<Project>
+    /** Клик по уведомлению: показать этот проект. */
+    onFocus(cb: (projectId: string) => void): () => void
   }
   board: {
     get(): Promise<StoreSnapshot>
-    onChange(cb: (snapshot: StoreSnapshot) => void): () => void
+    onChange(cb: (p: { projectId: string; snapshot: StoreSnapshot }) => void): () => void
   }
   tasks: {
     create(input: { title: string; spec?: string; deps?: string[]; agent?: AgentKind }): Promise<Task>
@@ -40,10 +64,17 @@ export interface OrcaApi {
     onData(id: string, cb: (data: string) => void): () => void
     onExit(id: string, cb: (code: number) => void): () => void
   }
-  /** Запустить воркера для задачи: worktree + PTY + dispatch. */
   worker: {
     start(taskId: string, cols: number, rows: number): Promise<{ ptyId: string; dispatchId: string }>
-    /** Терминал открыт извне (через CLI координатора). */
+    /** Терминал открыт (из UI или через CLI координатора). */
     onOpened(cb: (t: TerminalOpened) => void): () => void
+  }
+  coordinator: {
+    start(objective: string, cols: number, rows: number): Promise<string>
+  }
+  review: {
+    info(taskId: string): Promise<ReviewInfo>
+    accept(taskId: string): Promise<void>
+    reject(taskId: string, feedback: string): Promise<void>
   }
 }

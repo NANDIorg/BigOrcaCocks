@@ -5,6 +5,7 @@ import {
   type Task, type TaskStatus, type AgentKind, type Question, type Dispatch
 } from '@orca-board/core'
 import { Icon } from './icons'
+import { ReviewBlock } from './ReviewBlock'
 
 interface Props {
   tasks: Task[]
@@ -17,6 +18,8 @@ interface Props {
   onStart(task: Task): void
   onRemove(id: string): void
   onAnswer(questionId: string, answer: string): void
+  onAccept(taskId: string): Promise<void>
+  onReject(taskId: string, feedback: string): Promise<void>
 }
 
 const COLUMN_STYLE: Record<TaskStatus, { color: string; icon: () => React.JSX.Element }> = {
@@ -65,7 +68,7 @@ function QuestionBlock({ q, onAnswer }: { q: Question; onAnswer(id: string, a: s
 }
 
 export function Board(props: Props): React.JSX.Element {
-  const { tasks, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onAnswer } = props
+  const { tasks, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onAnswer, onAccept, onReject } = props
   const [dragOver, setDragOver] = useState<TaskStatus | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const byId = new Map(tasks.map((t) => [t.id, t]))
@@ -114,6 +117,9 @@ export function Board(props: Props): React.JSX.Element {
               {items.map((task) => {
                 const qs = openQ.get(task.id) ?? []
                 const d = lastDispatch.get(task.id)
+                const canStart =
+                  (task.status === 'ready' || task.status === 'backlog' || d?.outcome === 'unknown' || d?.outcome === 'failed') &&
+                  !runningTaskIds.has(task.id)
                 return (
                   <div
                     key={task.id}
@@ -146,12 +152,20 @@ export function Board(props: Props): React.JSX.Element {
                       {runningTaskIds.has(task.id) && <span className="chip live">● терминал</span>}
                       {d?.outcome === 'unknown' && <span className="chip warn">вышел без done</span>}
                       {d?.outcome === 'failed' && <span className="chip warn">упал</span>}
+                      {d?.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
                     </div>
-                    {status === 'review' && d?.summary && <div className="summary">{d.summary}</div>}
+                    {task.feedback && status !== 'review' && <div className="summary">↩ {task.feedback}</div>}
+                    {status === 'review' && (
+                      <ReviewBlock
+                        taskId={task.id}
+                        summary={d?.summary}
+                        onAccept={() => onAccept(task.id)}
+                        onReject={(fb) => onReject(task.id, fb)}
+                      />
+                    )}
                     {qs.map((q) => <QuestionBlock key={q.id} q={q} onAnswer={onAnswer} />)}
                     <div className="actions">
-                      {(task.status === 'ready' || task.status === 'backlog' || d?.outcome === 'unknown' || d?.outcome === 'failed') &&
-                        !runningTaskIds.has(task.id) && (
+                      {canStart && (
                         <button
                           className="btn-sm primary"
                           onClick={(e) => {
@@ -160,11 +174,6 @@ export function Board(props: Props): React.JSX.Element {
                           }}
                         >
                           <Icon.play /> Запустить
-                        </button>
-                      )}
-                      {task.status === 'review' && (
-                        <button className="btn-sm" onClick={(e) => { e.stopPropagation(); onMove(task.id, 'done') }}>
-                          Принять
                         </button>
                       )}
                       <button

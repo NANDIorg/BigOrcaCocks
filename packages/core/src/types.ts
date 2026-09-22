@@ -43,6 +43,8 @@ export interface Task {
   worktree?: string
   branch?: string
   dispatchId?: string
+  /** Замечания после ревью, попадут в промпт при перезапуске. */
+  feedback?: string
   createdAt: number
   updatedAt: number
 }
@@ -58,6 +60,8 @@ export interface Dispatch {
   outcome?: DispatchOutcome
   summary?: string
   files?: string[]
+  /** Уже отправили эскалацию «нет вывода». */
+  stuckNotified?: boolean
 }
 
 export interface Question {

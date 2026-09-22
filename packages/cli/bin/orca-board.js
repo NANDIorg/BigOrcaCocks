@@ -18,13 +18,18 @@ const HELP = `orca-board — управление доской агентов
   check [--wait] [--types worker_done,question,escalation,task_ready] [--timeout-ms 900000]
   question list
   question answer --question <id> --answer "..."
+  review info --task <id>                 diff-stat и коммиты ветки задачи
+  review accept --task <id>               слить в текущую ветку, убрать worktree, задача → done
+  review reject --task <id> --feedback "..."   задача → ready с замечаниями для перезапуска
+  task delete --task <id>
   events list
 
 Воркер (ORCA_DISPATCH_ID уже в окружении):
   done --summary "..." [--files a.ts,b.ts]
   ask --question "..." [--options a,b,c] [--no-wait]     блокируется до ответа
 
-Общее: --json (по умолчанию), --socket <path>. Сокет: $ORCA_SOCKET или ~/.orca-board/orca.sock`
+Общее: --socket <path>, --project <id> (иначе $ORCA_PROJECT или активный проект в приложении).
+Сокет: $ORCA_SOCKET или ~/.orca-board/orca.sock`
 
 const argv = process.argv.slice(2)
 if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
@@ -64,8 +69,10 @@ const request = {
   method,
   params,
   dispatchId: process.env.ORCA_DISPATCH_ID,
-  taskId: process.env.ORCA_TASK_ID
+  taskId: process.env.ORCA_TASK_ID,
+  projectId: params.project ?? process.env.ORCA_PROJECT
 }
+delete params.project
 
 const sock = connect(socketPath)
 let buf = ''

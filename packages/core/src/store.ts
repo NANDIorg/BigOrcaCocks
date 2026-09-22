@@ -168,6 +168,35 @@ export class TaskStore {
     if (changed) this.commit()
   }
 
+  /** Живые dispatch'и (без endedAt). */
+  activeDispatches(): Dispatch[] {
+    return [...this.dispatches.values()].filter((d) => !d.endedAt)
+  }
+
+  /** Воркер молчит слишком долго — одна эскалация на dispatch. */
+  markStuck(dispatchId: string, silentMs: number): void {
+    const d = this.mustDispatch(dispatchId)
+    if (d.stuckNotified || d.endedAt) return
+    d.stuckNotified = true
+    const task = this.mustTask(d.taskId)
+    this.pushEvent('escalation', {
+      taskId: task.id,
+      dispatchId,
+      reason: `нет вывода ${Math.round(silentMs / 60000)} мин`
+    })
+    this.commit()
+  }
+
+  /** Ревью не прошло: задача обратно в ready с замечаниями. */
+  rejectReview(taskId: string, feedback: string): Task {
+    const task = this.mustTask(taskId)
+    task.feedback = feedback
+    task.status = 'ready'
+    task.updatedAt = Date.now()
+    this.commit()
+    return task
+  }
+
   // ---------- questions ----------
 
   ask(input: { taskId: string; dispatchId?: string; question: string; options?: string[] }): Question {

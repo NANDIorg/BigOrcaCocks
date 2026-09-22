@@ -6,6 +6,7 @@ import type { PtySpawnOptions } from '../shared/ipc'
 interface Session {
   proc: pty.IPty
   tail: string
+  lastOutputAt: number
 }
 
 const TAIL_LIMIT = 64 * 1024
@@ -25,10 +26,11 @@ export function spawnPty(
     cwd: opts.cwd ?? process.env.HOME,
     env: { ...process.env, ...(opts.env ?? {}) } as Record<string, string>
   })
-  const session: Session = { proc, tail: '' }
+  const session: Session = { proc, tail: '', lastOutputAt: Date.now() }
   sessions.set(id, session)
   proc.onData((data) => {
     session.tail = (session.tail + data).slice(-TAIL_LIMIT)
+    session.lastOutputAt = Date.now()
     if (!win.isDestroyed()) win.webContents.send(`pty:data:${id}`, data)
   })
   proc.onExit(({ exitCode }) => {
@@ -65,4 +67,9 @@ export function ptyTail(id: string, lines = 80): string {
 
 export function isAlive(id: string): boolean {
   return sessions.has(id)
+}
+
+export function silentFor(id: string): number {
+  const s = sessions.get(id)
+  return s ? Date.now() - s.lastOutputAt : 0
 }
