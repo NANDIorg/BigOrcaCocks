@@ -108,6 +108,13 @@ export interface Run {
   closedAt?: number
   /** PTY координатора прогона. */
   coordinatorPtyId?: string
+  /** Агент координатора: по нему решается, закрывать ли его терминал после run_done. */
+  coordinatorAgent?: AgentKind
+  /**
+   * Координатор сообщил, что закончил работу по завершённому прогону (`orca-board runs finish`
+   * последней командой, после run_done и сводки) — сигнал закрыть его терминал.
+   */
+  finishedAt?: number
 }
 
 // ---------- задачи ----------

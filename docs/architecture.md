@@ -116,7 +116,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Создание**: `coordinator start` (IPC `coordinator:start`, сокет `coordinator.start`) → `startCoordinator`
   → `store.createRun(objective)`, затем `setRunPty` с PTY координатора; `ORCA_RUN_ID` уходит в env
   (см. «Как воркер получает контекст»). Отдельной команды создания прогона нет.
-- **Наследование**: CLI для `task.create`, `check`, `runs.close` подставляет `params.run = $ORCA_RUN_ID`,
+- **Наследование**: CLI для `task.create`, `check`, `runs.close`, `runs.finish` подставляет `params.run = $ORCA_RUN_ID`,
   если `--run` не передан явно (`packages/cli/bin/orca-board.js`, `RUN_METHODS`). Сервер env не читает —
   `task.create` просто пишет `runId: params.run` в задачу. Так задачи координатора, включая задачи ревью,
   попадают в его прогон. Задачи из UI (`tasks:create`) прогона не получают.
@@ -128,6 +128,18 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   задачи и все они в колонке `kind=done`, получает `closedAt` и событие `run_done {runId, objective}`.
   Ловит любой путь в done и удаление задач. Прогон без задач автоматически не закрывается; закрытый —
   повторно не закрывается и `run_done` не шлёт.
+- **Закрытие терминала координатора** (`coordinatorsToClose` в `packages/core/src/coordinator-close.ts`,
+  опрос раз в 5 с — `watchFinishedCoordinators` в `apps/desktop/src/main/index.ts`): интерактивный CLI
+  с `lingersAfterAnswer` в реестре агентов (сейчас Codex) после финальной сводки ждёт ввода и сам не выходит.
+  Тишина терминала ≠ завершение (агент может ждать подтверждения команды, человек — читать ответ), поэтому
+  нужен положительный сигнал: координатор последней командой вызывает `orca-board runs finish`
+  (`store.finishRun` → `Run.finishedAt`; до `run_done` — ошибка). PTY закрывается `killPty` (вкладка уходит
+  по `terminals:changed`), если прогон закрыт именно `run_done`, все задачи прогона и сейчас в `kind=done`,
+  по ним нет открытых вопросов и терминал неактивен `COORDINATOR_FINISH_GRACE_MS` (15 с) после сигнала.
+  Без сигнала — страховка: `COORDINATOR_ABANDONED_MS` (30 мин) неактивности с `run_done`.
+  Активность — вывод PTY и ввод из вкладки (`writePty` → `lastInputAt`; `lastActivityAt` в `pty.ts`),
+  то есть человек, продолжающий диалог, сдвигает закрытие. Агент координатора — `Run.coordinatorAgent`
+  (пишется в `setRunPty`). Ручное закрытие прогона, чужие прогоны и координаторы на claude не затрагиваются.
 - **Ручное закрытие**: `store.closeRun(id)` — идемпотентно, `run_done` не шлёт. Сокет `runs.close {run}`
   (без `run` — ошибка), CLI `runs close [--run <id>]`, IPC `runs:close(id)`.
 - **Список**: сокет `runs.list` → `Run` + `tasks` (число задач прогона) и `done` (из них в `kind=done`);
@@ -173,13 +185,14 @@ orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run 
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
 orca-board runs list                        # [{...Run, tasks, done}]
 orca-board runs close [--run <id>]          # закрыть прогон вручную
+orca-board runs finish [--run <id>]         # координатор закончил работу после run_done (закрыть его терминал)
 orca-board worker read --dispatch <id>
 orca-board gate create --task <id> --question "..." --options a,b
 ```
 
-`--run` у `task create`, `check` и `runs close` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
+`--run` у `task create`, `check`, `runs close` и `runs finish` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
 `params.run`: задачи (в т.ч. ревью), созданные координатором, наследуют его прогон
-(`packages/cli/bin/orca-board.js`). `runs close` без прогона — ошибка до обращения к сокету.
+(`packages/cli/bin/orca-board.js`). `runs close`/`runs finish` без прогона — ошибка до обращения к сокету.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
 каждую строку ответа; SIGINT/SIGTERM → закрыть сокет, код 0; ошибка сервера или разрыв соединения → код 1.
 
@@ -198,7 +211,7 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 (`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + замечания ревью.
 
 Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
-`setRunPty(runId, ptyId)`; если спавн упал, прогон сразу закрывается (`closeRun`), чтобы не висел открытым.
+`setRunPty(runId, ptyId, agent)`; если спавн упал, прогон сразу закрывается (`closeRun`), чтобы не висел открытым.
 В env: `ORCA_ROLE=coordinator`, `ORCA_RUN_ID=<runId>` и таймауты Bash-инструмента
 Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (долгое ожидание воркеров).
 Воркерам эти переменные не ставятся.
@@ -487,6 +500,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `check` | `types?`, `run?`, `consumer?`, `wait?`, `timeout-ms?`, `follow?` | `{events, timedOut}`; с `follow` — поток `{event}` |
 | `runs.list` | — | `[{...Run, tasks, done}]` |
 | `runs.close` | `run` (обязателен) | `Run` |
+| `runs.finish` | `run` (обязателен; прогон должен быть закрыт) | `Run` с `finishedAt` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
 

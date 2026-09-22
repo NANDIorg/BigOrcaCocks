@@ -227,9 +227,10 @@ export class TaskStore {
     return run
   }
 
-  setRunPty(runId: string, ptyId: string): Run {
+  setRunPty(runId: string, ptyId: string, agent?: AgentKind): Run {
     const run = this.mustRun(runId)
     run.coordinatorPtyId = ptyId
+    run.coordinatorAgent = agent
     this.commit()
     return run
   }
@@ -241,6 +242,18 @@ export class TaskStore {
       run.closedAt = Date.now()
       this.commit()
     }
+    return run
+  }
+
+  /**
+   * Координатор закончил работу по прогону (`runs finish`). Только для закрытого прогона: до run_done
+   * координатору ещё есть что делать. Повторный вызов обновляет время — считается последний сигнал.
+   */
+  finishRun(id: string): Run {
+    const run = this.mustRun(id)
+    if (run.closedAt === undefined) throw new Error(`run not closed: ${id} — дождись run_done`)
+    run.finishedAt = Date.now()
+    this.commit()
     return run
   }
 

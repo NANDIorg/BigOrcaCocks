@@ -33,6 +33,7 @@ const HELP = `orca-board — управление доской агентов
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
+  runs finish [--run <id>]                координатор закончил работу по завершённому прогону (после run_done и сводки)
   question list
   question answer --question <id> --answer "..."
   review info --task <id>                 diff-stat и коммиты ветки задачи
@@ -45,7 +46,7 @@ const HELP = `orca-board — управление доской агентов
   done --summary "..." [--files a.ts,b.ts]
   ask --question "..." [--options a,b,c] [--no-wait]     блокируется до ответа
 
-Прогон: --run <id> у task create, check и runs close по умолчанию берётся из $ORCA_RUN_ID —
+Прогон: --run <id> у task create, check, runs close и runs finish по умолчанию берётся из $ORCA_RUN_ID —
 задачи, созданные координатором, наследуют его прогон.
 
 Общее: --socket <path>, --project <id> (иначе $ORCA_PROJECT или активный проект в приложении).
@@ -81,7 +82,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 // Прогон координатора: явный --run важнее $ORCA_RUN_ID.
-const RUN_METHODS = ['task.create', 'check', 'runs.close']
+const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish']
 if (RUN_METHODS.includes(method) && params.run === undefined && process.env.ORCA_RUN_ID) {
   params.run = process.env.ORCA_RUN_ID
 }
@@ -89,7 +90,7 @@ if (params.run === true) {
   console.error('ошибка: --run требует id прогона')
   process.exit(1)
 }
-if (method === 'runs.close' && !params.run) {
+if ((method === 'runs.close' || method === 'runs.finish') && !params.run) {
   console.error('ошибка: не указан прогон — передайте --run <id> или задайте ORCA_RUN_ID')
   process.exit(1)
 }
