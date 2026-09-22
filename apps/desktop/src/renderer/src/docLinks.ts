@@ -1,4 +1,21 @@
-import type { DocFile } from '../../shared/ipc'
+import type { DocFile, OrcaApi } from '../../shared/ipc'
+
+/**
+ * main и preload собираются только при запуске: после обновления кода в `electron-vite dev`
+ * renderer приходит по HMR, а `window.orca` остаётся старым — без `docs` (или без хендлеров в main).
+ */
+export const STALE_APP_MESSAGE = 'Приложение запущено со старой версией main/preload, где ещё нет «Документов». Перезапустите приложение.'
+
+/** `window.orca.docs` или понятная ошибка вместо «Cannot read properties of undefined». */
+export function docsApi(api: Partial<OrcaApi> | undefined): OrcaApi['docs'] {
+  if (!api?.docs) throw new Error(STALE_APP_MESSAGE)
+  return api.docs
+}
+
+/** Preload новый, а main старый — invoke падает с «No handler registered for 'docs:…'». */
+export function isStaleDocsError(message: string): boolean {
+  return /No handler registered for 'docs:/.test(message)
+}
 
 /** «Новый/изменён»: не отслеживается git'ом или менялся за последние сутки. */
 export const RECENT_MS = 24 * 60 * 60 * 1000
