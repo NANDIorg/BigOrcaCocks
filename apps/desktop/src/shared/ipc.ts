@@ -1,4 +1,4 @@
-import type { Task, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn } from '@orca-board/core'
+import type { Task, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run } from '@orca-board/core'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -15,6 +15,8 @@ export interface TerminalOpened {
   projectId?: string
   label: string
   role?: 'coordinator' | 'worker'
+  /** Прогон, который открыл этот координатор. */
+  runId?: string
 }
 
 /** Терминал воркера закрыт приложением: задача попала в done или воркер перезапущен. */
@@ -99,6 +101,12 @@ export interface OrcaApi {
   board: {
     get(): Promise<StoreSnapshot>
     onChange(cb: (p: { projectId: string; snapshot: StoreSnapshot }) => void): () => void
+  }
+  /** Прогоны активного проекта. Изменения приходят в board.onChange (snapshot.runs). */
+  runs: {
+    list(): Promise<Run[]>
+    /** Закрыть прогон вручную (closedAt). */
+    close(id: string): Promise<Run>
   }
   tasks: {
     /** Без roleId — единственная роль проекта, иначе ошибка. */
