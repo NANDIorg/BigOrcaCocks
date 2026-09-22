@@ -333,6 +333,7 @@ function registerIpc(): void {
   )
   ipcMain.handle('globalTasks:tasks', (_e, id: string) => projects.activeStore().listSubtasks(id))
   ipcMain.handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
+    if (!input?.title?.trim()) throw new Error('название подзадачи не может быть пустым')
     const p = resolveProject()
     const role = pickRole(projects.roles(p.id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
