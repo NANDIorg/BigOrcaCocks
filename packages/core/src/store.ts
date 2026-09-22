@@ -1,5 +1,5 @@
 import type {
-  Dispatch, OrcaEvent, Task, TaskStatus, AgentKind, EventType, Question,
+  Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind
 } from './types'
 import { DEFAULT_COLUMNS, DEFAULT_ROLE_ID } from './types'
@@ -10,6 +10,7 @@ export interface StoreSnapshot {
   dispatches: Dispatch[]
   events: OrcaEvent[]
   questions: Question[]
+  runs: Run[]
 }
 
 export interface Persistence {
@@ -33,6 +34,7 @@ export class TaskStore {
   private tasks = new Map<string, Task>()
   private dispatches = new Map<string, Dispatch>()
   private questions = new Map<string, Question>()
+  private runs = new Map<string, Run>()
   private events: OrcaEvent[] = []
   private listeners = new Set<() => void>()
   private readonly columnsFn: () => BoardColumn[]
@@ -46,6 +48,8 @@ export class TaskStore {
       snap.tasks?.forEach((t) => this.tasks.set(t.id, { ...t, roleId: t.roleId ?? DEFAULT_ROLE_ID }))
       snap.dispatches?.forEach((d) => this.dispatches.set(d.id, d))
       snap.questions?.forEach((q) => this.questions.set(q.id, q))
+      // Старые снапшоты без runs — просто нет прогонов.
+      snap.runs?.forEach((r) => this.runs.set(r.id, r))
       this.events = snap.events ?? []
     }
   }
@@ -56,6 +60,7 @@ export class TaskStore {
   }
 
   private commit(): void {
+    this.closeFinishedRuns()
     this.persistence?.save(this.snapshot())
     this.listeners.forEach((fn) => fn())
   }
@@ -65,7 +70,8 @@ export class TaskStore {
       tasks: this.listTasks(),
       dispatches: [...this.dispatches.values()],
       events: [...this.events],
-      questions: [...this.questions.values()]
+      questions: [...this.questions.values()],
+      runs: this.listRuns()
     }
   }
 
@@ -107,7 +113,14 @@ export class TaskStore {
   }
 
   /** Валидность roleId проверяет main (роли живут в проекте), store её не знает. */
-  createTask(input: { title: string; spec?: string; deps?: string[]; roleId?: string; agent?: AgentKind }): Task {
+  createTask(input: {
+    title: string
+    spec?: string
+    deps?: string[]
+    roleId?: string
+    agent?: AgentKind
+    runId?: string
+  }): Task {
     const now = Date.now()
     const task: Task = {
       id: newId('task'),
@@ -117,6 +130,7 @@ export class TaskStore {
       deps: (input.deps ?? []).filter((d) => this.tasks.has(d)),
       roleId: input.roleId ?? DEFAULT_ROLE_ID,
       agent: input.agent ?? DEFAULT_AGENT,
+      runId: input.runId,
       createdAt: now,
       updatedAt: now
     }
@@ -126,9 +140,11 @@ export class TaskStore {
     return task
   }
 
-  updateTask(id: string, patch: Partial<Omit<Task, 'id' | 'createdAt'>>): Task {
+  /** runId задачи неизменен: принадлежность прогону задаётся только при создании. */
+  updateTask(id: string, patch: Partial<Omit<Task, 'id' | 'createdAt' | 'runId'>>): Task {
     const task = this.mustTask(id)
-    const { status, ...rest } = patch
+    const { status, ...rest } = patch as Partial<Task>
+    delete rest.runId
     Object.assign(task, rest, { updatedAt: Date.now() })
     if (status !== undefined) this.setStatus(task, status)
     this.promoteReady()
@@ -191,6 +207,55 @@ export class TaskStore {
         this.setStatus(task, this.columnId('ready'))
         this.pushEvent('task_ready', { taskId: task.id })
       }
+    }
+  }
+
+  // ---------- runs ----------
+
+  listRuns(): Run[] {
+    return [...this.runs.values()].sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  getRun(id: string): Run | undefined {
+    return this.runs.get(id)
+  }
+
+  createRun(objective: string, coordinatorPtyId?: string): Run {
+    const run: Run = { id: newId('run'), objective, createdAt: Date.now(), coordinatorPtyId }
+    this.runs.set(run.id, run)
+    this.commit()
+    return run
+  }
+
+  setRunPty(runId: string, ptyId: string): Run {
+    const run = this.mustRun(runId)
+    run.coordinatorPtyId = ptyId
+    this.commit()
+    return run
+  }
+
+  /** Закрыть прогон вручную. Идемпотентно: повторный вызов closedAt не меняет. */
+  closeRun(id: string): Run {
+    const run = this.mustRun(id)
+    if (run.closedAt === undefined) {
+      run.closedAt = Date.now()
+      this.commit()
+    }
+    return run
+  }
+
+  /**
+   * Прогон с задачами, у которого все задачи в kind=done, закрывается с событием run_done.
+   * Вызывается из commit(), поэтому ловит любую смену статуса и удаление задач.
+   * Закрытый прогон повторно не закрывается и run_done не шлёт.
+   */
+  private closeFinishedRuns(): void {
+    for (const run of this.runs.values()) {
+      if (run.closedAt !== undefined) continue
+      const tasks = [...this.tasks.values()].filter((t) => t.runId === run.id)
+      if (tasks.length === 0 || !tasks.every((t) => this.isKind(t, 'done'))) continue
+      run.closedAt = Date.now()
+      this.pushEvent('run_done', { runId: run.id, objective: run.objective })
     }
   }
 
@@ -347,9 +412,16 @@ export class TaskStore {
     return [...this.events]
   }
 
-  /** Забрать непрочитанные события заданных типов и пометить их прочитанными. */
-  consumeEvents(types: EventType[], consumer: string): OrcaEvent[] {
-    const hit = this.events.filter((e) => !e.consumedBy && types.includes(e.type))
+  /**
+   * Забрать непрочитанные события заданных типов и пометить их прочитанными.
+   * С runId — только события этого прогона: по задаче прогона или payload.runId (run_done).
+   */
+  consumeEvents(types: EventType[], consumer: string, runId?: string): OrcaEvent[] {
+    const inRun = (e: OrcaEvent): boolean =>
+      e.payload.runId === runId || (e.taskId !== undefined && this.tasks.get(e.taskId)?.runId === runId)
+    const hit = this.events.filter(
+      (e) => !e.consumedBy && types.includes(e.type) && (runId === undefined || inRun(e))
+    )
     if (hit.length === 0) return []
     hit.forEach((e) => (e.consumedBy = consumer))
     this.persistence?.save(this.snapshot())
@@ -360,6 +432,12 @@ export class TaskStore {
     const task = this.tasks.get(id)
     if (!task) throw new Error(`task not found: ${id}`)
     return task
+  }
+
+  private mustRun(id: string): Run {
+    const run = this.runs.get(id)
+    if (!run) throw new Error(`run not found: ${id}`)
+    return run
   }
 
   private mustDispatch(id: string): Dispatch {
