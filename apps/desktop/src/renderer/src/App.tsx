@@ -13,6 +13,7 @@ import { DefaultsModal } from './DefaultsModal'
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
+import { RunsSection, type RunFilter } from './runs'
 
 type Tab = 'board' | 'terminals' | 'info'
 
@@ -74,6 +75,8 @@ export function App(): React.JSX.Element {
   /** PTY, которые уже завершились (pty:exit); терминал остаётся в списке, пока его не закроют. */
   const [exited, setExited] = useState<Set<string>>(() => new Set())
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  /** Фильтр доски по прогону, свой у каждого проекта; только в памяти. */
+  const [runFilters, setRunFilters] = useState<Record<string, RunFilter>>({})
   const tasks = snap.tasks
   const openTask = openTaskId ? tasks.find((t) => t.id === openTaskId) : undefined
 
@@ -391,6 +394,9 @@ export function App(): React.JSX.Element {
               columns={active?.columns ?? DEFAULT_COLUMNS}
               roles={active?.roles ?? DEFAULT_ROLES}
               tasks={tasks}
+              runs={snap.runs}
+              runFilter={runFilters[viewKey] ?? 'all'}
+              onRunFilter={(f) => setRunFilters((prev) => ({ ...prev, [viewKey]: f }))}
               questions={snap.questions}
               dispatches={snap.dispatches}
               selectedId={selected?.id}
@@ -451,6 +457,20 @@ export function App(): React.JSX.Element {
                   onSave={async (columns) => {
                     await window.orca.projects.setColumns(active.id, columns)
                     await refreshProjects()
+                  }}
+                />
+              )}
+              {active && (
+                <RunsSection
+                  runs={snap.runs}
+                  tasks={tasks}
+                  columns={active.columns ?? DEFAULT_COLUMNS}
+                  onClose={async (id) => {
+                    try {
+                      await window.orca.runs.close(id)
+                    } catch (e) {
+                      alert(ipcErrorMessage(e))
+                    }
                   }}
                 />
               )}
