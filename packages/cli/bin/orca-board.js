@@ -43,7 +43,7 @@ const HELP = `orca-board — управление доской агентов
   task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
   worker start --task <id>
   worker read --dispatch <id> [--limit 80]
-  check [--wait] [--types worker_done,question,escalation,task_ready] [--timeout-ms 900000] [--run <id>]
+  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done] [--timeout-ms 900000] [--run <id>]
   check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора

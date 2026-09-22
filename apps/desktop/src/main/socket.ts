@@ -51,6 +51,17 @@ interface Stream {
   onClose(fn: () => void): void
 }
 
+/**
+ * Вопросы, чей `orca-board ask` ещё держит соединение: ответ дойдёт воркеру через сокет.
+ * Соединение оборвалось (таймаут инструмента агента) или `--no-wait` — ответ надо вписать в терминал.
+ */
+const askWaiters = new Map<string, number>()
+
+/** Ответ на вопрос дойдёт до воркера через его `ask` (соединение ещё открыто). */
+export function askWaiting(questionId: string): boolean {
+  return (askWaiters.get(questionId) ?? 0) > 0
+}
+
 /** Хендлер вернул STREAM — финального ответа не будет, он сам пишет через stream.emit. */
 const STREAM = Symbol('stream')
 
@@ -183,7 +194,7 @@ const handlers: Record<string, Handler> = {
     // CLI читает --answer-file сам и присылает текст в answer.
     return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer))
   },
-  'worker.ask': async (r, _d, store) => {
+  'worker.ask': async (r, _d, store, stream) => {
     const dispatchId = str(r.params.dispatch) ?? r.dispatchId
     const taskId = str(r.params.task) ?? r.taskId ?? (dispatchId ? store.getDispatch(dispatchId)?.taskId : undefined)
     if (!taskId) throw new Error('нет задачи: укажи --task или запусти из воркера')
@@ -191,6 +202,7 @@ const handlers: Record<string, Handler> = {
     if (!question) throw new Error('--question обязателен')
     const q = store.ask({ taskId, dispatchId, question, options: list(r.params.options) })
     if (r.params.wait === false) return q
+    askWaiters.set(q.id, (askWaiters.get(q.id) ?? 0) + 1)
     return new Promise((resolve) => {
       const off = store.subscribe(() => {
         const cur = store.getQuestion(q.id)
@@ -198,6 +210,14 @@ const handlers: Record<string, Handler> = {
           off()
           resolve(cur)
         }
+      })
+      // Снимаем отметку только при закрытии соединения: слушатель событий в main проверяет её
+      // синхронно в том же commit, что и ответ, — сокет к этому моменту ещё открыт.
+      stream.onClose(() => {
+        off()
+        const n = (askWaiters.get(q.id) ?? 1) - 1
+        if (n > 0) askWaiters.set(q.id, n)
+        else askWaiters.delete(q.id)
       })
     })
   },

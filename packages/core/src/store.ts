@@ -615,6 +615,26 @@ export class TaskStore {
     this.commit()
   }
 
+  /**
+   * Приёмка (`review accept`, «Принять» в UI): задача → done, worktree и ветка забыты (git-часть делает main).
+   * Ответ для человека (`answerFor: 'human'`) принимает человек — координатор узнаёт об этом из
+   * `answer_accepted` (с текстом ответа) и продолжает работу: иначе он ждал бы, пока ему напишут в терминал.
+   * Повторная приёмка задачи в done события не шлёт.
+   */
+  acceptTask(taskId: string): Task {
+    const task = this.mustTask(taskId)
+    if (task.answerFor === 'human' && !this.isKind(task, 'done')) {
+      const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
+      this.pushEvent('answer_accepted', {
+        taskId: task.id, dispatchId: d?.id, answerFor: task.answerFor,
+        ...(d?.summary ? { summary: d.summary } : {}),
+        ...(d?.answer ? { answer: d.answer } : {})
+      })
+    }
+    // Событие — до commit в updateTask: если задача последняя, run_done придёт после answer_accepted.
+    return this.updateTask(taskId, { status: this.columnId('done'), worktree: undefined, branch: undefined })
+  }
+
   /** Ревью не прошло: задача обратно в ready с замечаниями. */
   rejectReview(taskId: string, feedback: string): Task {
     const task = this.mustTask(taskId)
@@ -650,13 +670,18 @@ export class TaskStore {
     q.answeredAt = Date.now()
     const task = this.mustTask(q.taskId)
     const stillOpen = [...this.questions.values()].some((x) => x.taskId === task.id && !x.answeredAt)
+    // Воркер жив — ответ дойдёт до него (ask или терминал), иначе задачу надо перезапустить.
+    const live = task.dispatchId !== undefined && !this.dispatches.get(task.dispatchId)?.endedAt
     if (!stillOpen && this.isKind(task, 'needs_input') && !this.humanAnswerReady(task)) {
       // Обратно в поток: воркер жив — работает дальше, иначе задача ждёт запуска.
-      const live = task.dispatchId !== undefined && !this.dispatches.get(task.dispatchId)?.endedAt
       this.setStatus(task, this.columnId(live ? 'in_progress' : 'ready'))
     }
     task.updatedAt = Date.now()
-    this.pushEvent('question_answered', { taskId: task.id, dispatchId: q.dispatchId, questionId, answer })
+    // workerLive: false и задача в ready — координатору сделать `worker start` (ответ будет в промпте).
+    this.pushEvent('question_answered', {
+      taskId: task.id, dispatchId: q.dispatchId, questionId, question: q.question, answer,
+      workerLive: live, status: task.status
+    })
     this.commit()
     return q
   }

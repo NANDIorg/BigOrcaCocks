@@ -117,6 +117,19 @@ needs_input — **вычисляемая** колонка: там карточк
 - `ask` → needs_input (как и раньше), `forwardQuestion` тоже ставит needs_input (кроме done).
   `answer` последнего открытого вопроса возвращает в поток: живой dispatch — in_progress, иначе ready.
   Сданный ответ для человека (`humanAnswerReady`) остаётся в needs_input.
+**Процесс идёт дальше сам** — после ответа человека координатору ничего писать не нужно:
+- **Принял ответ** (`review accept` → `store.acceptTask`): задача → done и событие
+  `answer_accepted {taskId, dispatchId, answerFor, summary, answer}` в прогон координатора (только для
+  `answerFor: 'human'` и только при первом переходе в done). Если это последняя подзадача — `run_done` приходит
+  следом; координатор сначала решает по ответу (новая подзадача переоткрывает прогон, `run_done` не обрабатывается).
+- **Уточнил**: UI делает `review reject` и сразу `worker start`; воркер сдаёт новый ответ → снова `worker_done`.
+- **Ответил на вопрос** (`store.answer`): `question_answered {taskId, questionId, question, answer, workerLive, status}`.
+  Воркер жив и его `ask` ещё держит соединение — ответ уходит через сокет. `ask` уже оборван (таймаут инструмента
+  агента: человек отвечает дольше) или был `--no-wait` — main вписывает ответ одной строкой в терминал живого
+  воркера (`deliverAnswers` в `src/main/index.ts`, `askWaiting` в `socket.ts`, текст — `questionAnswerMessage`).
+  Воркер не жив (`workerLive: false`, задача в ready) — координатор делает `worker start`; ответы на прошлые
+  вопросы задачи попадают в промпт (`workerTaskPrompt`, раздел «Ответы на твои вопросы»).
+
 `toGlobalTask` считает таких подзадач `GlobalTask.waiting`; если их > 0 и карточка не в `kind=done`,
 её `status` — колонка `kind=needs_input` проекта (если такая колонка есть). `Run.status` при этом **не
 меняется**: человек ответил или принял ответ — карточка сама возвращается в свою колонку. Поставить

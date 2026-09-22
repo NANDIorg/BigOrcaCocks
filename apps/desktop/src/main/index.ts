@@ -2,11 +2,11 @@ import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electr
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, questionAnswerMessage, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
-import { startSocketServer } from './socket'
+import { startSocketServer, askWaiting } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
@@ -261,6 +261,29 @@ function watchFinishedCoordinators(): void {
   }, 5_000)
 }
 
+/** Пауза между текстом и Enter: иначе TUI агента принимает Enter за часть вставки и не отправляет сообщение. */
+const SUBMIT_DELAY_MS = 150
+
+/**
+ * Ответ на вопрос воркера, чей `orca-board ask` уже не ждёт (инструмент агента оборвал команду по
+ * таймауту — человек отвечает дольше; или `--no-wait`), вписывается в терминал живого воркера отдельным
+ * сообщением. Иначе воркер так и стоит, пока человек не напишет ему сам. Ждёт ask — ответ уйдёт через сокет.
+ */
+function deliverAnswers(projectId: string, events: OrcaEvent[]): void {
+  const store = projects.store(projectId)
+  for (const e of events) {
+    if (e.type !== 'question_answered' || !e.dispatchId) continue
+    const questionId = String(e.payload.questionId ?? '')
+    if (askWaiting(questionId)) continue
+    const d = store.getDispatch(e.dispatchId)
+    if (!d || d.endedAt || !isAlive(d.ptyId)) continue
+    const q = store.getQuestion(questionId)
+    if (!q) continue
+    writePty(d.ptyId, questionAnswerMessage(q))
+    setTimeout(() => writePty(d.ptyId, '\r'), SUBMIT_DELAY_MS)
+  }
+}
+
 /** Системные уведомления на события, требующие человека. */
 function notify(projectId: string, events: OrcaEvent[]): void {
   if (!Notification.isSupported()) return
@@ -404,6 +427,7 @@ app.whenReady().then(() => {
     refreshTray()
   })
   projects.onEvents(notify)
+  projects.onEvents(deliverAnswers)
   registerIpc()
   startSocketServer(SOCKET_PATH, {
     resolve: (projectId) => {

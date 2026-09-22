@@ -73,3 +73,18 @@ describe('повторный запуск координатора', () => {
     assert.ok(text.split('\n').some((l) => l.startsWith(COORDINATOR_RESUME_SECTION)))
   })
 })
+
+describe('события после ответа человека в инструкции координатора', () => {
+  const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+
+  it('check подписан на question_answered и answer_accepted во всех вариантах', () => {
+    const checks = skill.split('\n').filter((l) => l.includes('orca-board check'))
+    assert.ok(checks.length >= 2)
+    for (const l of checks) assert.match(l, /question_answered,answer_accepted,run_done/)
+  })
+
+  it('есть что делать по question_answered и answer_accepted', () => {
+    assert.match(skill, /- `question_answered` →[\s\S]*workerLive: false[\s\S]*worker start/)
+    assert.match(skill, /- `answer_accepted` →/)
+  })
+})
