@@ -1,19 +1,21 @@
 import type React from 'react'
-import { DEFAULT_ROLES, modelHints, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
-import type { Project } from '../../shared/ipc'
+import { modelHints, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { useAutoSave } from './useAutoSave'
 
 interface Props {
-  active: Project
+  /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
+  storageKey: string
+  /** Начальные роли (берутся при монтировании и при смене storageKey). */
+  roles: Role[]
   /** Все агенты проекта: в выбор попадают включённые, выключенный текущий — с пометкой. */
   agents: AgentInfo[]
   onSave(roles: Role[]): Promise<void>
 }
 
-/** Раздел «Роли» вкладки «О проекте»: название, агент, модель; сохраняется автоматически. */
-export function RolesEditor({ active, agents, onSave }: Props): React.JSX.Element {
-  const { draft: roles, error, update } = useAutoSave<Role[]>(active.id, active.roles ?? DEFAULT_ROLES, onSave)
+/** Раздел «Роли» («О проекте» и дефолт для новых проектов): название, агент, модель; сохраняется автоматически. */
+export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Props): React.JSX.Element {
+  const { draft: roles, error, update } = useAutoSave<Role[]>(storageKey, initial, onSave)
   const enabled = agents.filter((a) => a.enabled)
   const canDelete = roles.length > 1
 
@@ -38,7 +40,7 @@ export function RolesEditor({ active, agents, onSave }: Props): React.JSX.Elemen
           const current = agents.find((a) => a.id === r.agent)
           const currentOff = current !== undefined && !current.enabled
           const hints = modelHints(r.agent)
-          const listId = `models-${active.id}-${r.id}`
+          const listId = `models-${storageKey}-${r.id}`
           return (
             <div key={r.id} className="editor-row">
               <div>

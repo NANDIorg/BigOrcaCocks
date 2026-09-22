@@ -207,6 +207,16 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns`.
   - «Разрешения агентов» — `permissionMode` проекта (см. «Разрешения Claude Code»).
+  - «Настройки по умолчанию» — «Сохранить настройки этого проекта как дефолт» (`projects:setDefaults`
+    с permissionMode/enabledAgents/roles/columns проекта, `confirm`), «Применить дефолт к этому проекту»
+    (`projects:applyDefaults`, `confirm`; после — `refreshProjects` и пересоздание редакторов через `settingsRev`),
+    «Редактировать дефолт» — открывает `DefaultsModal`.
+- **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`
+  и id datalist) + начальные `roles`/`columns` + `onSave`. В «О проекте» `storageKey = active.id`, в дефолте — `'defaults'`.
+- **Модалка дефолта** (`DefaultsModal.tsx`): открывается из подвала сайдбара («Настройки по умолчанию») и из «О проекте».
+  Грузит `getDefaults()`, показывает агентов (галочка «Все установленные» = `enabledAgents: undefined`), роли, колонки,
+  `permissionMode`; каждое изменение — `setDefaults(patch)`, ошибка main — под разделом. В ролях «включён» считается
+  по дефолту, а не по активному проекту. Закрытие — Esc, фон, крестик.
 
 ## Протокол сокета
 

@@ -1,16 +1,18 @@
 import type React from 'react'
-import { COLUMN_COLORS, DEFAULT_COLUMNS, type BoardColumn } from '@orca-board/core'
-import type { Project } from '../../shared/ipc'
+import { COLUMN_COLORS, type BoardColumn } from '@orca-board/core'
 import { useAutoSave } from './useAutoSave'
 
 interface Props {
-  active: Project
+  /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
+  storageKey: string
+  /** Начальные колонки (берутся при монтировании и при смене storageKey). */
+  columns: BoardColumn[]
   onSave(columns: BoardColumn[]): Promise<void>
 }
 
-/** Раздел «Колонки» вкладки «О проекте»: порядок, название, цвет; сохраняется автоматически. */
-export function ColumnsEditor({ active, onSave }: Props): React.JSX.Element {
-  const { draft: columns, error, update } = useAutoSave<BoardColumn[]>(active.id, active.columns ?? DEFAULT_COLUMNS, onSave)
+/** Раздел «Колонки» («О проекте» и дефолт для новых проектов): порядок, название, цвет; сохраняется автоматически. */
+export function ColumnsEditor({ storageKey, columns: initial, onSave }: Props): React.JSX.Element {
+  const { draft: columns, error, update } = useAutoSave<BoardColumn[]>(storageKey, initial, onSave)
 
   function patch(i: number, p: Partial<BoardColumn>, debounce = false): void {
     update(columns.map((c, j) => (j === i ? { ...c, ...p } : c)), debounce)
