@@ -1,3 +1,6 @@
+import type { AgentKind } from './agents'
+export type { AgentKind }
+
 export type TaskStatus =
   | 'backlog'
   | 'ready'
@@ -22,15 +25,6 @@ export const STATUS_TITLES: Record<TaskStatus, string> = {
   needs_input: 'Нужен ответ',
   review: 'Ревью',
   done: 'Сделано'
-}
-
-export type AgentKind = 'claude' | 'codex' | 'opencode' | 'shell'
-
-export const AGENT_TITLES: Record<AgentKind, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
-  opencode: 'OpenCode',
-  shell: 'Оболочка'
 }
 
 export interface Task {
