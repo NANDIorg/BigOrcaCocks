@@ -13,7 +13,8 @@ import { TaskModal } from './TaskModal'
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
-import { AboutProject, type AboutScope } from './about/AboutProject'
+import { AboutProject } from './about/AboutProject'
+import { SettingsModal } from './settings/SettingsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
@@ -122,8 +123,8 @@ export function App(): React.JSX.Element {
   const [lastGlobal, setLastGlobal] = useState<string | undefined>()
   const [showCoord, setShowCoord] = useState(false)
   const [showProjects, setShowProjects] = useState(storedShowProjects)
-  /** «О проекте» редактирует активный проект или дефолт для новых проектов (шестерёнка в rail). */
-  const [aboutScope, setAboutScope] = useState<AboutScope>('project')
+  /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
+  const [showSettings, setShowSettings] = useState(false)
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -345,12 +346,6 @@ export function App(): React.JSX.Element {
     if (p) await refreshProjects()
   }
 
-  /** Шестерёнка в rail: «О проекте» в режиме «Для новых проектов». */
-  function openDefaults(): void {
-    setAboutScope('defaults')
-    setTab('info')
-  }
-
   function toggleProjects(): void {
     const next = !showProjects
     setShowProjects(next)
@@ -512,9 +507,9 @@ export function App(): React.JSX.Element {
       <aside className="rail">
         <button className={`icon ${showProjects ? 'active' : ''}`} title="Проекты" onClick={toggleProjects}><Icon.folder /></button>
         <button
-          className={`icon ${tab === 'info' && aboutScope === 'defaults' ? 'active' : ''}`}
-          title="Настройки для новых проектов"
-          onClick={openDefaults}
+          className={`icon ${showSettings ? 'active' : ''}`}
+          title="Настройки"
+          onClick={() => setShowSettings(true)}
         >
           <Icon.gear />
         </button>
@@ -628,11 +623,10 @@ export function App(): React.JSX.Element {
               />
             </GlobalTaskView>
           )}
-          {tab === 'info' && (
+          {tab === 'info' && !active && <div className="empty">Нет активного проекта — добавьте git-репозиторий.</div>}
+          {tab === 'info' && active && (
             <AboutProject
               project={active}
-              scope={aboutScope}
-              onScope={setAboutScope}
               agents={agents}
               tasks={tasks}
               runs={snap.runs}
@@ -692,6 +686,9 @@ export function App(): React.JSX.Element {
         </div>
       </main>
 
+      {showSettings && (
+        <SettingsModal agents={agents} onRefreshAgents={() => refreshAgents(true)} onClose={() => setShowSettings(false)} />
+      )}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}

@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useId } from 'react'
 import { PERMISSION_MODES, type PermissionMode } from '../../../shared/ipc'
 import { SectionHead } from './parts'
 
@@ -9,12 +10,13 @@ export function permissionParts(mode: PermissionMode): { title: string; desc: st
 }
 
 /** Раздел «Разрешения агентов»: режим подтверждений Claude Code карточками-радио. */
-export function PermissionsSection({ value, disabled, error, onChange }: {
+export function PermissionsSection({ value, error, onChange }: {
   value: PermissionMode
-  disabled?: boolean
   error: string | null
   onChange(mode: PermissionMode): void
 }): React.JSX.Element {
+  // Уникальное имя группы: раздел бывает открыт сразу во вкладке «О проекте» и в «Настройках».
+  const name = useId()
   return (
     <>
       <SectionHead title="Разрешения агентов" hint="Как Claude Code (координатор и воркеры) обращается с подтверждениями." />
@@ -26,9 +28,8 @@ export function PermissionsSection({ value, disabled, error, onChange }: {
               <b>
                 <input
                   type="radio"
-                  name="permission-mode"
+                  name={name}
                   checked={value === m}
-                  disabled={disabled}
                   onChange={() => onChange(m)}
                 />
                 {title}
