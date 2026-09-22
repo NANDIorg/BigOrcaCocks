@@ -9,7 +9,9 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: OrcaApi = {
   app: {
-    info: () => ipcRenderer.invoke('app:info')
+    info: () => ipcRenderer.invoke('app:info'),
+    getSettings: () => ipcRenderer.invoke('app:getSettings'),
+    setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch)
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
@@ -52,6 +54,10 @@ const api: OrcaApi = {
     kill: (id) => ipcRenderer.send('pty:kill', id),
     onData: (id, cb) => on(`pty:data:${id}`, cb),
     onExit: (id, cb) => on(`pty:exit:${id}`, cb)
+  },
+  terminals: {
+    list: () => ipcRenderer.invoke('terminals:list'),
+    onChanged: (cb) => on('terminals:changed', cb)
   },
   worker: {
     start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows),
