@@ -217,11 +217,19 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
-- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, modelHints?, effortOptions, invoke}`. Из него выводятся
-  `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, `modelHints(agent)`
-  (`ModelHint[] = {value, label?}` — подсказки для datalist в редакторе ролей, не ограничение; у claude
-  алиасы `opus`/`sonnet`/`haiku` с подписью + `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`),
-  `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся
+  `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, статический список моделей
+  и `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
+- **Список моделей и effort** (для редактора ролей) — `AgentInfo.models: {id, label, efforts?}[]` плюс
+  `AgentInfo.defaults {model?, effort?}`; источник зависит от агента:
+  - `claude` — фиксированный список в реестре core (`packages/core/src/agents.ts`): алиасы `opus`/`sonnet`/`haiku`
+    с подписью «… (актуальный)» и `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`, `claude-haiku-4-5`;
+    effort — `low`, `medium`, `high`, `xhigh`, `max`.
+  - `codex` — `src/main/agents.ts` читает `~/.codex/models_cache.json`: `models[].slug` → `id`, `display_name` → `label`,
+    `supported_reasoning_levels[].effort` → `efforts` модели (нет их — общий `low`/`medium`/`high`). Дефолты
+    `model`/`model_reasoning_effort` — из `~/.codex/config.toml`, дефолтная модель в списке помечена «(по умолчанию)».
+    Нет кэша — в списке только модель из `config.toml`. Чтение обоих файлов кэшируется на 60 с, `refresh` сбрасывает.
+  - остальные — `models = []`, в UI модель вводится свободным текстом.
 - **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
@@ -240,7 +248,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Где проверяется** (`assertAgentUsable`: неизвестный / не установлен / выключен → ошибка с текстом для CLI и UI):
   агент проверяется не сам по себе, а через роль — `pickRole` при `task.create`/`tasks:create`
   и повторная проверка роли задачи при `worker.start` (см. «Роли и колонки»). `pickAgent` удалён.
-- **Сокет `agents.list`** → `[{id, title, installed, enabled, version?, defaults?}]` в порядке реестра;
+- **Сокет `agents.list`** → `[{id, title, installed, enabled, version?, models, defaults?}]` в порядке реестра;
   IPC `agents:list(refresh?)` — то же для активного проекта.
 - **Логотипы** (`renderer/src/AgentLogo.tsx`): `<AgentLogo agent size?>` — inline SVG 24×24 с `fill="currentColor"`,
   окрашенный в брендовый цвет из таблицы `COLORS` (claude `#d97757`, codex `#10a37f`, gemini `#4e8df5`,
@@ -324,11 +332,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **«О проекте»**, разделы:
   - «Агенты» — кто установлен (логотип, название, версия), чекбоксы включения (`enabledAgents`).
   - «Роли» (`RolesEditor.tsx`) — список ролей: id, название, агент (только из реестра),
-    модель (свободный ввод с подсказками `modelHints`, `value` + `label`; у агента с `defaults.model` (codex) она
-    идёт первой подсказкой и в плейсхолдере «по умолчанию: <model>», иначе «по умолчанию агента»),
-    усилие — select из `effortOptions` агента, первая опция «по умолчанию» (пусто → `effort` не сохраняется;
-    с `defaults.effort` — «по умолчанию: <effort>»), у агента без effort — задизейбленный прочерк; при смене агента
-    `effort`, которого нет в новом списке, сбрасывается. Сохраняется через `projects:setRoles`.
+    модель — select из `AgentInfo.models` (`id` + `label`, см. «Агенты»; у агента с `models = []` — свободный ввод),
+    усилие — select из `efforts` выбранной модели (нет — из списка агента), первая опция «по умолчанию»
+    (пусто → `effort` не сохраняется; с `defaults.effort` — «по умолчанию: <effort>»), у агента без effort —
+    задизейбленный прочерк. Смена агента сбрасывает `model` и `effort`. Сохраняется через `projects:setRoles`.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns`.
@@ -340,8 +347,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     с permissionMode/enabledAgents/roles/columns проекта, `confirm`), «Применить дефолт к этому проекту»
     (`projects:applyDefaults`, `confirm`; после — `refreshProjects` и пересоздание редакторов через `settingsRev`),
     «Редактировать дефолт» — открывает `DefaultsModal`.
-- **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`
-  и id datalist) + начальные `roles`/`columns` + `onSave`. В «О проекте» `storageKey = active.id`, в дефолте — `'defaults'`.
+- **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`. В «О проекте» `storageKey = active.id`, в дефолте — `'defaults'`.
 - **Модалка дефолта** (`DefaultsModal.tsx`): открывается из подвала сайдбара («Настройки по умолчанию») и из «О проекте».
   Грузит `getDefaults()`, показывает агентов (галочка «Все установленные» = `enabledAgents: undefined`), роли, колонки,
   `permissionMode`; каждое изменение — `setDefaults(patch)`, ошибка main — под разделом. В ролях «включён» считается
