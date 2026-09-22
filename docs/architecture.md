@@ -6,7 +6,7 @@
 Electron main ───── node-pty ───── PTY: claude (координатор)
    │                                   └─ bash: orca-board task-create ...
    │                                          │ unix socket / JSON-RPC
-   ├── SQLite (tasks, events, dispatches) ◄───┘
+   ├── JSON (tasks, runs, events) ◄───────────┘
    ├── node-pty ───── PTY: claude (воркер задачи #12, worktree ../wt/task-12)
    ├── node-pty ───── PTY: codex  (воркер задачи #13, worktree ../wt/task-13)
    └── renderer (React): доска + xterm.js на каждый PTY
@@ -18,10 +18,12 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, deps[], roleId, agent, worktree?, branch?, dispatchId?, feedback?, createdAt, updatedAt, startedAt?, doneAt? }`.
+- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, createdAt, updatedAt, startedAt?, doneAt? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль проекта (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
+  - `runId` — прогон, к которому относится задача (см. «Прогоны»); задаётся только при создании,
+    `updateTask` его не меняет. Нет — задача создана вне прогона (из UI).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
 - `Role { id, title, agent, model?, effort? }` — кто выполняет задачу: агент из реестра, модель
@@ -35,9 +37,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
+- `Run { id, objective, createdAt, closedAt?, coordinatorPtyId? }` — прогон: один запуск координатора
+  со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, stuckNotified? }`
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
-  типы: `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`.
+  типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `run_done`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
   `in_progress` при старте воркера; `review` после `done`; `needs_input` при вопросе или выходе PTY без `done`.
 
@@ -55,7 +59,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `validateRoles` / `validateColumns`, что и у проекта.
 - **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая.
 - **Валидация ролей** (`validateRoles`): хотя бы одна роль; непустые уникальные `id`, непустые
-  `title`; `agent` — известный `AgentKind`; `model` — строка или отсутствует (пустая после trim → удаляется).
+  `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются).
 - **Валидация колонок** (`validateColumns`): хотя бы одна; непустые уникальные `id` и `title`;
   каждый системный `kind` ровно один раз (удалить или продублировать системную колонку нельзя),
   остальные — `custom`; пустой `color` → первый из `COLUMN_COLORS`. Порядок массива = порядок на доске.
@@ -66,11 +70,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   из исчезнувших колонок переводит в колонку `kind=backlog` (`store.reassignColumn(fromId, toId)`),
   чтобы на доске не осталось задач с несуществующим статусом.
 - **Воркер** (`worker.ts`, `startWorker`): роль ищется по `task.roleId` в `ctx.roles` (нет → ошибка),
-  агент — `getAgent(role.agent)`, модель — `role.model` уходит в `invoke(..., { model })`.
+  агент — `getAgent(role.agent)`, модель и усилие — `role.model` / `role.effort` уходят в `invoke(..., { model, effort })`.
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
-- **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью;
+- **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет — `claude` без модели.
-- **Флаг модели** (`packages/core/src/agents.ts`, `modelFlag`): пустая модель — без флага.
+- **Флаг модели** (`packages/core/src/agents.ts`, `modelFlag`): пустая модель — без флага. Флаги усилия — в «Агенты».
 
   | Агент | Флаг модели |
   |---|---|
@@ -91,12 +95,59 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?}` → `store.editTask`
   (без `--title`/`--spec` — ошибка; см. «Редактирование задачи»).
 
+## Прогоны (`packages/core/src/store.ts`, `src/main/worker.ts`, `src/main/socket.ts`)
+
+Прогон (`Run`) отделяет задачи и события одного координатора от других: в проекте может одновременно
+работать несколько координаторов, и каждый должен видеть только свои `worker_done`/`question`.
+
+- **Создание**: `coordinator start` (IPC `coordinator:start`, сокет `coordinator.start`) → `startCoordinator`
+  → `store.createRun(objective)`, затем `setRunPty` с PTY координатора; `ORCA_RUN_ID` уходит в env
+  (см. «Как воркер получает контекст»). Отдельной команды создания прогона нет.
+- **Наследование**: CLI для `task.create`, `check`, `runs.close` подставляет `params.run = $ORCA_RUN_ID`,
+  если `--run` не передан явно (`packages/cli/bin/orca-board.js`, `RUN_METHODS`). Сервер env не читает —
+  `task.create` просто пишет `runId: params.run` в задачу. Так задачи координатора, включая задачи ревью,
+  попадают в его прогон. Задачи из UI (`tasks:create`) прогона не получают.
+- **Фильтр событий** (`store.consumeEvents(types, consumer, runId?)`): с `runId` — только события прогона:
+  по задаче с этим `runId` или с `payload.runId === runId` (так ловится `run_done`). В сокете `check`
+  consumer = `params.consumer ?? runId ?? 'coordinator'`, поэтому прогоны не «съедают» события друг друга
+  (`consumedBy` у события один). Без `runId` — старое поведение: все события, consumer `coordinator`.
+- **Автозакрытие** (`closeFinishedRuns`, вызывается из каждого `commit()`): открытый прогон, у которого есть
+  задачи и все они в колонке `kind=done`, получает `closedAt` и событие `run_done {runId, objective}`.
+  Ловит любой путь в done и удаление задач. Прогон без задач автоматически не закрывается; закрытый —
+  повторно не закрывается и `run_done` не шлёт.
+- **Ручное закрытие**: `store.closeRun(id)` — идемпотентно, `run_done` не шлёт. Сокет `runs.close {run}`
+  (без `run` — ошибка), CLI `runs close [--run <id>]`, IPC `runs:close(id)`.
+- **Список**: сокет `runs.list` → `Run` + `tasks` (число задач прогона) и `done` (из них в `kind=done`);
+  IPC `runs:list` → `Run[]` активного проекта (без счётчиков), изменения приходят в `board:changed`
+  (`snapshot.runs`).
+- **UI**: renderer пока получает прогоны только данными — `snapshot.runs` и `runId` в событии
+  `worker:opened` координатора (`TerminalOpened.runId`); метки прогона на карточке, фильтра доски по прогону
+  и списка прогонов в «О проекте» в коде renderer ещё нет.
+
+## Ожидание событий без токенов
+
+Координатор ждёт воркеров десятки минут; опрос `check` в цикле тратит токены, а обычный вызов Bash
+упирается в таймаут инструмента.
+
+- **`check --follow`** (сокет `check` с `follow: true`): сервер сразу отдаёт накопившиеся события, затем
+  подписывается на store и шлёт по строке `{id, ok: true, result: {event}}` на каждое новое событие того же
+  фильтра (`types`, `run`), пока клиент не закроет сокет (`stream.onClose` снимает подписку). CLI печатает
+  одну JSON-строку события на строку вывода и сам не завершается; SIGINT/SIGTERM → код 0,
+  ошибка/разрыв → код 1. `--follow` важнее `--wait`.
+- **Monitor** (`skills/coordinator.md`, шаг 3): основной путь для Claude Code — инструмент Monitor с командой
+  `orca-board check --follow --types worker_done,question,escalation,task_ready,question_answered,run_done`
+  и `timeout_ms: 1800000`; каждое уведомление монитора = одно событие, после таймаута монитор ставится заново.
+  На `run_done` координатор останавливает монитор, пишет сводку и завершается.
+- **Запасной путь** (нет Monitor или агент не Claude Code): `check --wait ... --timeout-ms 1500000` —
+  блокируется до первого события; `timedOut: true` → вызвать снова. Чтобы такой вызов не обрывался,
+  координатору ставятся `BASH_DEFAULT_TIMEOUT_MS=1800000` / `BASH_MAX_TIMEOUT_MS=3600000` (воркерам — нет).
+
 ## CLI (минимум для координатора)
 
 ```
-orca-board run create --objective "..."
-orca-board agents list                      # [{id,title,installed,enabled,version?}]
-orca-board roles list                       # [{id,title,agent,model?,agentEnabled}]
+orca-board coordinator start --objective "..."   # человек; создаёт прогон (см. «Прогоны»)
+orca-board agents list                      # [{id,title,installed,enabled,version?,defaults?}]
+orca-board roles list                       # [{id,title,agent,model?,effort?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>]
 orca-board task move --task <id> --status <id колонки>
@@ -104,8 +155,8 @@ orca-board task update --task <id> [--title ...] [--spec ...]   # не для з
 orca-board worker start --task <id>
 orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run <id>]
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
-orca-board runs list
-orca-board runs close [--run <id>]
+orca-board runs list                        # [{...Run, tasks, done}]
+orca-board runs close [--run <id>]          # закрыть прогон вручную
 orca-board worker read --dispatch <id>
 orca-board gate create --task <id> --question "..." --options a,b
 ```
@@ -127,18 +178,28 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 
 При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`, `ORCA_PROJECT`,
 а в `PATH` — папка с `orca-board`. Команда запуска берётся из реестра по агенту роли задачи:
-`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model})` → `{command, args}`
+`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort})` → `{command, args}`
 (`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + замечания ревью.
 
 Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
-`setRunPty(runId, ptyId)`. В env: `ORCA_ROLE=coordinator`, `ORCA_RUN_ID=<runId>` и таймауты Bash-инструмента
+`setRunPty(runId, ptyId)`; если спавн упал, прогон сразу закрывается (`closeRun`), чтобы не висел открытым.
+В env: `ORCA_ROLE=coordinator`, `ORCA_RUN_ID=<runId>` и таймауты Bash-инструмента
 Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (долгое ожидание воркеров).
 Воркерам эти переменные не ставятся.
 
+| Переменная | Кому | Значение |
+|---|---|---|
+| `ORCA_SOCKET`, `ORCA_PROJECT` | всем агентам | сокет приложения, id проекта |
+| `ORCA_TASK_ID`, `ORCA_DISPATCH_ID` | воркеру | задача и dispatch |
+| `ORCA_ROLE` | координатору | `coordinator` |
+| `ORCA_RUN_ID` | координатору | id прогона; CLI подставляет его в `--run` |
+| `BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` | координатору | `1800000` / `3600000` (30 / 60 мин) |
+| `ORCA_STUCK_MINUTES` | main-процессу | порог детектора тишины, по умолчанию 10 |
+
 | Агент | Бинарник | Как передаются инструкция и задание | Флаг модели |
 |---|---|---|---|
-| `claude` | `claude` | инструкция через `--append-system-prompt`, задание — позиционный аргумент; плюс `--permission-mode`, `--allowedTools "Bash(orca-board:*)"` | `--model` |
-| `codex`, `cursor` (`cursor-agent`) | по id | склейка `инструкция\n\n---\n\nзадание` одним позиционным аргументом | `-m` / `--model` |
+| `claude` | `claude` | инструкция через `--append-system-prompt`, задание — позиционный аргумент; плюс `--permission-mode`, `--allowedTools "Bash(orca-board:*)"` | `--model`; усилие `--effort` |
+| `codex`, `cursor` (`cursor-agent`) | по id | склейка `инструкция\n\n---\n\nзадание` одним позиционным аргументом | `-m` / `--model`; у codex усилие `-c model_reasoning_effort=<e>` |
 | `amp` | `amp` | та же склейка позиционным аргументом | нет |
 | `opencode` | `opencode` | склейка в `--prompt` | `--model` |
 | `gemini` | `gemini` | склейка в `-i` (интерактив с начальным промптом) | `-m` |
@@ -277,10 +338,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - `invoke`: `app:info`; `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
-  `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)`; `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
+  `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
   `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
-- События main → renderer: `board:changed {projectId, snapshot}`, `worker:opened`, `worker:closed`,
+- События main → renderer: `board:changed {projectId, snapshot}`, `worker:opened` (у координатора — с `runId`), `worker:closed`,
   `projects:focus` (клик по уведомлению), `pty:data:<id>`, `pty:exit:<id>`.
 
 ## Протокол сокета
@@ -288,8 +349,17 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 Одна строка JSON-запроса `{id, method, params, dispatchId?, taskId?, projectId?}`, одна строка ответа
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 `check` с `follow: true` — исключение: сервер пишет по строке `{id, ok: true, result: {event}}` на каждое
-событие, пока клиент не закроет соединение.
-События помечаются `consumedBy`, повторно `check` их не отдаёт.
+событие, пока клиент не закроет соединение (см. «Ожидание событий без токенов»).
+События помечаются `consumedBy` (= `runId` прогона, иначе `coordinator`), повторно `check` их не отдаёт.
+
+| Метод | Параметры | Результат |
+|---|---|---|
+| `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`) |
+| `check` | `types?`, `run?`, `consumer?`, `wait?`, `timeout-ms?`, `follow?` | `{events, timedOut}`; с `follow` — поток `{event}` |
+| `runs.list` | — | `[{...Run, tasks, done}]` |
+| `runs.close` | `run` (обязателен) | `Run` |
+| `agents.list` | — | `[{id, title, installed, enabled, version?, defaults?}]` |
+| `roles.list` | — | `[{...Role, agentEnabled}]` |
 
 ## Разрешения Claude Code
 
