@@ -35,6 +35,11 @@ const AGENT_COLOR: Record<AgentKind, string> = {
   claude: '#d97757',
   codex: '#10a37f',
   opencode: '#8b5cf6',
+  gemini: '#4285f4',
+  cursor: '#e5484d',
+  amp: '#f59e0b',
+  copilot: '#2ea043',
+  goose: '#0ea5e9',
   shell: '#6b6f7c'
 }
 

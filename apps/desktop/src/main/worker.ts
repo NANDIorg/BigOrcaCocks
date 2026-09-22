@@ -42,6 +42,9 @@ function agentInvocation(agent: AgentKind, system: string, prompt: string, mode:
       return { command: 'opencode', args: ['--prompt', `${system}\n\n---\n\n${prompt}`] }
     case 'shell':
       return { command: process.env.SHELL ?? '/bin/zsh', args: [] }
+    default:
+      // Остальные агенты из реестра пока не поддержаны здесь (перевод на getAgent — отдельная задача).
+      throw new Error(`unsupported agent: ${agent}`)
   }
 }
 
