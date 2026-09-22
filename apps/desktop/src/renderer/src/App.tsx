@@ -483,12 +483,13 @@ export function App(): React.JSX.Element {
             />
           )}
           {tab === 'info' && (
+            <div className="info-page">
             <div className="info">
               <div className="agents-head">
                 <h3>Агенты</h3>
                 <button className="btn-text" onClick={() => void refreshAgents(true)}>Обновить</button>
               </div>
-              <div style={{ marginBottom: 8 }}>
+              <div className="agents-list" style={{ marginBottom: 8 }}>
                 {agents.map((a) => (
                   <label key={a.id} className={`agent-row ${a.installed ? '' : 'off'}`}>
                     <input
@@ -586,6 +587,7 @@ export function App(): React.JSX.Element {
               {active && (
                 <button className="btn-ghost" style={{ width: 'auto', padding: '10px 18px' }} onClick={() => removeProject(active)}>Убрать из списка</button>
               )}
+            </div>
             </div>
           )}
 
