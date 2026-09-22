@@ -16,13 +16,25 @@ function defaultSocketPath(opts) {
 const HELP = `orca-board — управление доской агентов
 
 Человек:
-  coordinator start --objective "..."     открыть Claude Code-координатора в приложении
+  coordinator start --objective "..."     открыть Claude Code-координатора в приложении (новая глобальная задача)
+  coordinator start --global <id>         повторный запуск координатора на существующей глобальной задаче
+
+Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
+  global list                             карточки: название, описание, статус-колонка, прогресс подзадач
+  global get [--global <id>]
+  global create [--title "..."] [--description "..."] [--status <id колонки>]
+  global update --global <id> [--title "..."] [--description "..."]
+  global move --global <id> --status <id колонки>    подзадачи не трогает
+  global delete --global <id> [--cascade]  с подзадачами — только --cascade (удаляются вместе с ней)
+  global tasks [--global <id>]            подзадачи только этой глобальной задачи
+  global add-task [--global <id>] --title "..." [--spec "..."] --role <id> [--dep <id>]...
+  global start --global <id>              = coordinator start --global <id>
 
 Координатор:
   agents list      известные агенты: установлен ли, включён ли в проекте, версия
   roles list       роли проекта: id, название, агент, модель, включён ли агент
   columns list     колонки доски: id, название, kind
-  task list
+  task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
   task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]... [--run <id>]
   task move --task <id> --status <id колонки из columns list>
   task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
@@ -33,7 +45,7 @@ const HELP = `orca-board — управление доской агентов
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
-  runs finish [--run <id>]                координатор закончил работу по завершённому прогону (после run_done и сводки)
+  runs finish [--run <id>]                координатор закончил работу (после run_done и сводки; если все подзадачи в done — закрывает прогон сам)
   question list
   question answer --question <id> --answer "..."
   review info --task <id>                 diff-stat и коммиты ветки задачи
@@ -47,7 +59,8 @@ const HELP = `orca-board — управление доской агентов
   ask --question "..." [--options a,b,c] [--no-wait]     блокируется до ответа
 
 Прогон: --run <id> у task create, check, runs close и runs finish по умолчанию берётся из $ORCA_RUN_ID —
-задачи, созданные координатором, наследуют его прогон.
+задачи, созданные координатором, наследуют его прогон (= его глобальную задачу). Так же --global
+у global get, global tasks и global add-task. Задача без прогона попадает во «Входящие».
 
 Общее: --socket <path>, --project <id> (иначе $ORCA_PROJECT или активный проект в приложении).
 Сокет: $ORCA_SOCKET или ~/.orca-board/orca.sock (на Windows — именованный канал \\\\.\\pipe\\orca-board)`
@@ -85,6 +98,15 @@ for (let i = 0; i < argv.length; i++) {
 const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish']
 if (RUN_METHODS.includes(method) && params.run === undefined && process.env.ORCA_RUN_ID) {
   params.run = process.env.ORCA_RUN_ID
+}
+// Глобальная задача координатора = его прогон: те же умолчания для чтения и добавления подзадач.
+const GLOBAL_METHODS = ['global.get', 'global.tasks', 'global.add-task']
+if (GLOBAL_METHODS.includes(method) && params.global === undefined && process.env.ORCA_RUN_ID) {
+  params.global = process.env.ORCA_RUN_ID
+}
+if (params.global === true) {
+  console.error('ошибка: --global требует id глобальной задачи')
+  process.exit(1)
 }
 if (params.run === true) {
   console.error('ошибка: --run требует id прогона')

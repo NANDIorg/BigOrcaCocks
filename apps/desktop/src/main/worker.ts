@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, coordinatorPrompt, workerTaskPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, coordinatorPrompt, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -159,7 +159,11 @@ export function startWorker(
   rows = 30
 ): { ptyId: string; dispatchId: string; worktree: string; branch: string } {
   const task = store.getTask(taskId)
-  if (!task) throw new Error(`task not found: ${taskId}`)
+  if (!task) {
+    // Карточка глобальной задачи — не подзадача: на ней работает координатор, а не воркер.
+    if (store.getRun(taskId)) throw new Error(`${taskId} — глобальная задача, воркер на ней не запускается (координатор: global start)`)
+    throw new Error(`task not found: ${taskId}`)
+  }
   if (store.columnKind(task.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
   const role = ctx.roles.find((r) => r.id === task.roleId)
   if (!role) throw new Error(`роль ${task.roleId} не найдена в проекте`)
@@ -266,8 +270,27 @@ function writeAttachments(root: string, runId: string, images: ImageAttachment[]
 }
 
 /**
+ * Проверка перед повторным запуском координатора на существующей глобальной задаче и его цель:
+ * описание (нет — название) плюс список уже созданных подзадач, чтобы координатор продолжил их, а не
+ * создал заново. Второй живой координатор на одной глобальной задаче — ошибка.
+ */
+export function resumeObjective(store: TaskStore, runId: string): { run: Run; objective: string } {
+  const run = store.getRun(runId)
+  if (!run) throw new Error(`глобальная задача не найдена: ${runId}`)
+  if (run.inbox) throw new Error('«Входящие» — не цель для координатора: создай глобальную задачу')
+  if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
+    throw new Error(`координатор этой глобальной задачи уже работает (терминал ${run.coordinatorPtyId})`)
+  }
+  const goal = run.objective.trim() || globalTaskTitle(run)
+  const title = (status: string): string => store.columns().find((c) => c.id === status)?.title ?? status
+  const tasks = store.listSubtasks(runId).map((t) => ({ id: t.id, title: t.title, status: title(t.status) }))
+  return { run, objective: resumeCoordinatorObjective(goal, tasks) }
+}
+
+/**
  * Координатор: агент роли coordinator (нет такой роли — claude без модели) в корне репозитория с инструкцией и целью.
- * Каждый запуск — новый прогон (Run): его id уходит координатору в ORCA_RUN_ID.
+ * Без `runId` запуск создаёт новый прогон = глобальную задачу; с `runId` — повторный запуск на существующей
+ * (цель — её описание и список подзадач, см. `resumeObjective`). Id прогона уходит координатору в ORCA_RUN_ID.
  * `images` (уже проверенные `validateImageAttachments`) сохраняются файлами на время прогона,
  * в промпт уходят только их пути — содержимое через терминал не передаётся.
  */
@@ -278,16 +301,21 @@ export function startCoordinator(
   objective: string,
   cols = 120,
   rows = 30,
-  images: ImageAttachment[] = []
+  images: ImageAttachment[] = [],
+  runId?: string
 ): { ptyId: string; runId: string } {
   const role = ctx.roles.find((r) => r.id === 'coordinator')
   const spec = role ? getAgent(role.agent) : undefined
   if (role && !spec) throw new Error(`неизвестный агент: ${role.agent}`)
+  const resume = runId !== undefined ? resumeObjective(store, runId) : undefined
+  if (resume) objective = resume.objective
   const root = images.length > 0 ? attachmentsRoot(repoRoot) : undefined
   if (root) pruneAttachments(store, root)
-  const run = store.createRun(objective)
+  const run = resume?.run ?? store.createRun(objective)
   let ptyId: string
   try {
+    // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
+    if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
     const paths = root ? writeAttachments(root, run.id, images) : []
     const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(BUILTIN_PROMPTS.coordinator, role), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
@@ -315,7 +343,8 @@ export function startCoordinator(
     })
   } catch (e) {
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
-    store.closeRun(run.id)
+    // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
+    if (!resume) store.closeRun(run.id)
     if (root) rmSync(join(root, run.id), { recursive: true, force: true })
     throw e
   }

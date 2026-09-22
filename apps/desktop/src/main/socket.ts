@@ -17,7 +17,10 @@ export interface ProjectDeps {
   startWorker(taskId: string): { ptyId: string; dispatchId: string; worktree: string; branch: string }
   review(taskId: string): unknown
   accept(taskId: string): void
-  startCoordinator(objective: string): string
+  /** Без runId — новый прогон (глобальная задача); с runId — повторный запуск на существующей. */
+  startCoordinator(objective: string, runId?: string): string
+  /** Удалить глобальную задачу: живой координатор — ошибка, терминалы подзадач закрываются. */
+  deleteGlobalTask(runId: string, cascade: boolean): { deleted: string; tasks: string[] }
   /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
   agents(): AgentInfo[]
   /** Роли проекта. */
@@ -78,24 +81,53 @@ function assertRoleUsable(roles: Role[], agents: AgentInfo[], roleId: string): v
   assertAgentUsable(agents, role.agent)
 }
 
+/** Подзадача: общая часть task.create и global.add-task. Без runId store кладёт её во «Входящие». */
+function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: string | undefined): unknown {
+  const title = str(r.params.title)
+  if (!title) throw new Error('--title обязателен')
+  if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
+  const role = pickRole(deps.roles(), deps.agents(), str(r.params.role))
+  return store.createTask({
+    title,
+    spec: str(r.params.spec),
+    deps: list(r.params.dep ?? r.params.deps),
+    roleId: role.id,
+    agent: role.agent,
+    runId
+  })
+}
+
+/** Id глобальной задачи (= id прогона) из --global; CLI подставляет $ORCA_RUN_ID для global get/tasks/add-task. */
+function globalId(r: Request): string {
+  const id = str(r.params.global)
+  if (!id) throw new Error('--global обязателен (id глобальной задачи из global list)')
+  return id
+}
+
 const handlers: Record<string, Handler> = {
-  'task.list': (_r, _d, store) => store.listTasks(),
-  'task.get': (r, _d, store) => store.getTask(str(r.params.task) ?? '') ?? null,
-  'task.create': (r, deps, store) => {
-    const title = str(r.params.title)
-    if (!title) throw new Error('--title обязателен')
-    if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
-    const role = pickRole(deps.roles(), deps.agents(), str(r.params.role))
-    return store.createTask({
-      title,
-      spec: str(r.params.spec),
-      deps: list(r.params.dep ?? r.params.deps),
-      roleId: role.id,
-      agent: role.agent,
-      // CLI подставляет ORCA_RUN_ID в params.run; сервер env не читает.
-      runId: str(r.params.run)
-    })
+  'task.list': (r, _d, store) => {
+    // --run — только подзадачи этой глобальной задачи; без него — все задачи проекта, как раньше.
+    const run = str(r.params.run)
+    return run ? store.listSubtasks(run) : store.listTasks()
   },
+  'task.get': (r, _d, store) => store.getTask(str(r.params.task) ?? '') ?? null,
+  // CLI подставляет ORCA_RUN_ID в params.run; сервер env не читает.
+  'task.create': (r, deps, store) => createTask(r, deps, store, str(r.params.run)),
+  'global.list': (_r, _d, store) => store.listGlobalTasks(),
+  'global.get': (r, _d, store) => store.getGlobalTask(globalId(r)),
+  'global.create': (r, _d, store) =>
+    store.createGlobalTask({ title: str(r.params.title), description: str(r.params.description), status: str(r.params.status) }),
+  'global.update': (r, _d, store) =>
+    store.updateGlobalTask(globalId(r), { title: str(r.params.title), description: str(r.params.description) }),
+  'global.move': (r, _d, store) => {
+    const status = str(r.params.status)
+    if (!status) throw new Error('--status обязателен (id колонки из columns list)')
+    return store.moveGlobalTask(globalId(r), status)
+  },
+  'global.delete': (r, deps) => deps.deleteGlobalTask(globalId(r), r.params.cascade === true),
+  'global.tasks': (r, _d, store) => store.listSubtasks(globalId(r)),
+  'global.add-task': (r, deps, store) => createTask(r, deps, store, globalId(r)),
+  'global.start': (r, deps) => ({ ptyId: deps.startCoordinator('', globalId(r)) }),
   'task.move': (r, _d, store) => {
     const id = str(r.params.task)
     const status = str(r.params.status)
@@ -127,6 +159,9 @@ const handlers: Record<string, Handler> = {
     return deps.startWorker(id)
   },
   'coordinator.start': (r, deps) => {
+    // --global — повторный запуск на существующей глобальной задаче (цель — её описание).
+    const run = str(r.params.global)
+    if (run) return { ptyId: deps.startCoordinator('', run) }
     const objective = str(r.params.objective)
     if (!objective) throw new Error('--objective обязателен')
     return { ptyId: deps.startCoordinator(objective) }

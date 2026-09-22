@@ -1,0 +1,79 @@
+// Запуск: node --test test/ (из packages/cli). CLI против фейкового сокета: проверяем, какой запрос он шлёт.
+import { describe, it, before, after } from 'node:test'
+import assert from 'node:assert/strict'
+import { createServer } from 'node:net'
+import { execFile } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'orca-board.js')
+const dir = mkdtempSync(join(tmpdir(), 'orca-cli-'))
+const socket = process.platform === 'win32' ? `\\\\.\\pipe\\orca-cli-test-${process.pid}` : join(dir, 'orca.sock')
+let last
+const server = createServer((sock) => {
+  let buf = ''
+  sock.setEncoding('utf8')
+  sock.on('data', (chunk) => {
+    buf += chunk
+    const nl = buf.indexOf('\n')
+    if (nl < 0) return
+    last = JSON.parse(buf.slice(0, nl))
+    sock.write(JSON.stringify({ id: last.id, ok: true, result: {} }) + '\n')
+  })
+})
+
+/** Запустить CLI и вернуть отправленный запрос (или null, если CLI не дошёл до сокета) и код выхода. */
+function run(args, env = {}) {
+  last = null
+  return new Promise((resolve) => {
+    const childEnv = { ...process.env, ORCA_SOCKET: socket, ...env }
+    for (const k of ['ORCA_RUN_ID', 'ORCA_PROJECT', 'ORCA_DISPATCH_ID', 'ORCA_TASK_ID']) if (!(k in env)) delete childEnv[k]
+    execFile(process.execPath, [CLI, ...args], { env: childEnv }, (err) => resolve({ req: last, code: err ? err.code : 0 }))
+  })
+}
+
+describe('orca-board CLI', () => {
+  before(() => new Promise((r) => server.listen(socket, r)))
+  after(() => {
+    server.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('старый task create наследует прогон из ORCA_RUN_ID', async () => {
+    const { req } = await run(['task', 'create', '--title', 't', '--role', 'developer'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(req.method, 'task.create')
+    assert.equal(req.params.run, 'run_1')
+  })
+
+  it('runs finish и done работают как раньше', async () => {
+    assert.equal((await run(['runs', 'finish'], { ORCA_RUN_ID: 'run_1' })).req.params.run, 'run_1')
+    const { req } = await run(['done', '--summary', 's', '--files', 'a.ts'], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal(req.method, 'worker.done')
+    assert.equal(req.dispatchId, 'disp_1')
+  })
+
+  it('global tasks / add-task / get берут глобальную задачу из ORCA_RUN_ID, явный --global важнее', async () => {
+    const tasks = await run(['global', 'tasks'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(tasks.req.method, 'global.tasks')
+    assert.equal(tasks.req.params.global, 'run_1')
+    const add = await run(['global', 'add-task', '--global', 'run_2', '--title', 't', '--role', 'qa', '--dep', 'a,b'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(add.req.method, 'global.add-task')
+    assert.deepEqual(add.req.params, { global: 'run_2', title: 't', role: 'qa', dep: ['a', 'b'] })
+  })
+
+  it('global list/move/delete не подставляют ORCA_RUN_ID; --cascade — флаг', async () => {
+    assert.deepEqual((await run(['global', 'list'], { ORCA_RUN_ID: 'run_1' })).req.params, {})
+    const del = await run(['global', 'delete', '--global', 'run_2', '--cascade'], { ORCA_RUN_ID: 'run_1' })
+    assert.deepEqual(del.req.params, { global: 'run_2', cascade: true })
+    const move = await run(['global', 'move', '--status', 'wip'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(move.req.params.global, undefined)
+  })
+
+  it('--global без значения — ошибка до сокета', async () => {
+    const { req, code } = await run(['global', 'get', '--global'])
+    assert.equal(req, null)
+    assert.equal(code, 1)
+  })
+})

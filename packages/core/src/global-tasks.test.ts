@@ -1,0 +1,399 @@
+// Запуск: node --test (type stripping Node ≥ 22.6). Из tsc исключён — в core нет @types/node.
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
+import { globalTaskTitle, INBOX_TITLE } from './global-tasks.ts'
+import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
+import type { BoardColumn, Task } from './types.ts'
+
+/** Колонки проекта не совпадают с дефолтными id: API не должен их хардкодить. */
+const COLUMNS: BoardColumn[] = [
+  { id: 'plan', title: 'Planning', color: '#6b6f7c', kind: 'backlog' },
+  { id: 'todo', title: 'Todo', color: '#7b86f5', kind: 'ready' },
+  { id: 'wip', title: 'In Progress', color: '#f08a3a', kind: 'in_progress' },
+  { id: 'ask', title: 'Needs input', color: '#e8b04a', kind: 'needs_input' },
+  { id: 'ai', title: 'AI Review', color: '#b57bee', kind: 'review' },
+  { id: 'human', title: 'Human Review', color: '#5ad1cc', kind: 'custom' },
+  { id: 'fin', title: 'Done', color: '#2ea043', kind: 'done' }
+]
+
+/** Персистентность в памяти: сохраняем JSON, как jsonPersistence в main. */
+function memory(initial?: Partial<StoreSnapshot>): Persistence & { saved: () => StoreSnapshot | undefined; saves: () => number } {
+  let data = initial ? JSON.stringify(initial) : undefined
+  let saves = 0
+  return {
+    load: () => (data ? JSON.parse(data) : null),
+    save: (snap) => {
+      saves += 1
+      data = JSON.stringify(snap)
+    },
+    saved: () => (data ? JSON.parse(data) : undefined),
+    saves: () => saves
+  }
+}
+
+const cols = (): BoardColumn[] => COLUMNS
+const newStore = (p = memory()): TaskStore => new TaskStore(p, cols)
+const statuses = (tasks: Task[]): string[] => tasks.map((t) => t.status)
+
+describe('глобальные задачи: CRUD и колонки проекта', () => {
+  it('создание: статус по умолчанию — колонка kind=backlog проекта, а не «backlog»', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: '  Авторизация  ', description: 'OAuth + сессии' })
+    assert.equal(g.title, 'Авторизация')
+    assert.equal(g.description, 'OAuth + сессии')
+    assert.equal(g.status, 'plan')
+    assert.equal(g.inbox, false)
+    assert.deepEqual(g.progress, { total: 0, done: 0, byStatus: {}, byKind: {} })
+    assert.equal(store.createGlobalTask({ title: 'x', status: 'human' }).status, 'human')
+  })
+
+  it('создание без названия и описания и в неизвестную колонку — ошибка', () => {
+    const store = newStore()
+    assert.throws(() => store.createGlobalTask({ title: ' ', description: ' ' }), /название или описание/)
+    assert.throws(() => store.createGlobalTask({ title: 'x', status: 'backlog' }), /колонки с id «backlog» нет/)
+  })
+
+  it('название без title выводится из первой строки описания', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ description: '\n  Починить логин\nподробности' })
+    assert.equal(g.title, 'Починить логин')
+    assert.equal(globalTaskTitle({ id: 'r', objective: 'a'.repeat(200) }).length, 80)
+    assert.equal(globalTaskTitle({ id: 'r', objective: '', inbox: true }), INBOX_TITLE)
+  })
+
+  it('переименование и описание; пустое название — ошибка', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'A' })
+    assert.equal(store.updateGlobalTask(g.id, { title: 'B', description: 'новое' }).title, 'B')
+    assert.equal(store.getGlobalTask(g.id).description, 'новое')
+    assert.throws(() => store.updateGlobalTask(g.id, { title: '  ' }), /пустым/)
+    assert.throws(() => store.updateGlobalTask(g.id, {}), /укажи/)
+    assert.throws(() => store.updateGlobalTask('run_nope', { title: 'x' }), /run not found/)
+  })
+
+  it('ручное перемещение по реальным колонкам не меняет статусы подзадач и жизненный цикл', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    const a = store.createTask({ title: 'a', runId: g.id })
+    const b = store.createTask({ title: 'b', runId: g.id, deps: [a.id] })
+    const before = statuses(store.listSubtasks(g.id))
+    assert.equal(store.moveGlobalTask(g.id, 'human').status, 'human')
+    assert.equal(store.moveGlobalTask(g.id, 'fin').status, 'fin')
+    assert.deepEqual(statuses(store.listSubtasks(g.id)), before)
+    assert.equal(store.getRun(g.id)!.closedAt, undefined, 'ручной done не закрывает прогон')
+    assert.throws(() => store.moveGlobalTask(g.id, 'done'), /колонки с id «done» нет/)
+    assert.equal(store.getTask(b.id)!.status, 'plan')
+  })
+
+  it('прогресс: total/done и разбивка по колонкам и kind', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    const a = store.createTask({ title: 'a', runId: g.id })
+    const b = store.createTask({ title: 'b', runId: g.id })
+    store.createTask({ title: 'c', runId: g.id, deps: [a.id] })
+    store.moveTask(a.id, 'fin')
+    store.moveTask(b.id, 'ai')
+    const p = store.getGlobalTask(g.id).progress
+    assert.equal(p.total, 3)
+    assert.equal(p.done, 1)
+    assert.deepEqual(p.byStatus, { fin: 1, ai: 1, todo: 1 })
+    assert.deepEqual(p.byKind, { done: 1, review: 1, ready: 1 })
+  })
+
+  it('удаление колонки переносит и глобальные задачи (reassignColumn)', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', status: 'human' })
+    assert.equal(store.reassignColumn('human', 'plan'), 1)
+    assert.equal(store.getGlobalTask(g.id).status, 'plan')
+  })
+})
+
+describe('подзадачи: изоляция', () => {
+  it('подзадачи видны только в своей глобальной задаче', () => {
+    const store = newStore()
+    const g1 = store.createGlobalTask({ title: 'G1' })
+    const g2 = store.createGlobalTask({ title: 'G2' })
+    const a = store.createTask({ title: 'a', runId: g1.id })
+    const b = store.createTask({ title: 'b', runId: g2.id })
+    assert.deepEqual(store.listSubtasks(g1.id).map((t) => t.id), [a.id])
+    assert.deepEqual(store.listSubtasks(g2.id).map((t) => t.id), [b.id])
+    assert.equal(store.getGlobalTask(g1.id).progress.total, 1)
+    assert.throws(() => store.listSubtasks('run_nope'), /run not found/)
+  })
+
+  it('несуществующая глобальная задача и зависимость из чужой — ошибка, задача не создаётся', () => {
+    const store = newStore()
+    const g1 = store.createGlobalTask({ title: 'G1' })
+    const g2 = store.createGlobalTask({ title: 'G2' })
+    const a = store.createTask({ title: 'a', runId: g1.id })
+    assert.throws(() => store.createTask({ title: 'x', runId: 'run_nope' }), /run not found/)
+    assert.throws(() => store.createTask({ title: 'x', runId: g2.id, deps: [a.id] }), /другой глобальной/)
+    assert.equal(store.listTasks().length, 1)
+  })
+
+  it('задача без runId (старый task create / tasks:create) попадает во «Входящие», одни на проект', () => {
+    const store = newStore()
+    const a = store.createTask({ title: 'a' })
+    const b = store.createTask({ title: 'b' })
+    const inbox = store.listGlobalTasks().filter((g) => g.inbox)
+    assert.equal(inbox.length, 1)
+    assert.equal(inbox[0].title, INBOX_TITLE)
+    assert.equal(a.runId, inbox[0].id)
+    assert.equal(b.runId, inbox[0].id)
+  })
+
+  it('updateTask не переносит задачу в другую глобальную', () => {
+    const store = newStore()
+    const g1 = store.createGlobalTask({ title: 'G1' })
+    const g2 = store.createGlobalTask({ title: 'G2' })
+    const a = store.createTask({ title: 'a', runId: g1.id })
+    store.updateTask(a.id, { runId: g2.id } as Partial<Task>)
+    assert.equal(store.getTask(a.id)!.runId, g1.id)
+  })
+})
+
+describe('удаление глобальной задачи', () => {
+  it('с подзадачами без cascade — ошибка, ничего не удалено', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    store.createTask({ title: 'a', runId: g.id })
+    assert.throws(() => store.deleteGlobalTask(g.id), /cascade/)
+    assert.equal(store.listSubtasks(g.id).length, 1)
+  })
+
+  it('cascade удаляет подзадачи и их вопросы; чужие задачи не трогает', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    const other = store.createGlobalTask({ title: 'O' })
+    const a = store.createTask({ title: 'a', runId: g.id })
+    const keep = store.createTask({ title: 'k', runId: other.id })
+    store.ask({ taskId: a.id, question: '?' })
+    const res = store.deleteGlobalTask(g.id, { cascade: true })
+    assert.deepEqual(res, { deleted: g.id, tasks: [a.id] })
+    assert.equal(store.getRun(g.id), undefined)
+    assert.equal(store.getTask(a.id), undefined)
+    assert.equal(store.openQuestions().length, 0)
+    assert.ok(store.getTask(keep.id))
+    assert.ok(store.listTasks().every((t) => t.runId !== undefined && store.getRun(t.runId)), 'сирот нет')
+  })
+
+  it('подзадача с живым воркером — ошибка', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    const a = store.createTask({ title: 'a', runId: g.id })
+    store.startDispatch(a.id, 'pty_1')
+    assert.throws(() => store.deleteGlobalTask(g.id, { cascade: true }), /в работе/)
+    assert.ok(store.getTask(a.id))
+  })
+
+  it('пустая удаляется без cascade', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    store.deleteGlobalTask(g.id)
+    assert.equal(store.listGlobalTasks().length, 0)
+  })
+})
+
+describe('жизненный цикл прогона = глобальной задачи', () => {
+  it('координатор: прогон → in_progress; все подзадачи в done → run_done и карточка в done', () => {
+    const store = newStore()
+    const run = store.createRun('сделать X')
+    assert.equal(store.getGlobalTask(run.id).status, 'plan')
+    store.setRunPty(run.id, 'pty_c', 'claude')
+    assert.equal(store.getGlobalTask(run.id).status, 'wip')
+    assert.equal(store.getGlobalTask(run.id).title, 'сделать X')
+    const t = store.createTask({ title: 't', runId: run.id })
+    const d = store.startDispatch(t.id, 'pty_w')
+    store.finishDispatch(d.id, 'ok')
+    const ev = store.consumeEvents(['worker_done'], run.id, run.id)
+    assert.equal(ev.length, 1, 'worker_done по-прежнему доходит до прогона')
+    store.moveTask(t.id, 'fin')
+    const g = store.getGlobalTask(run.id)
+    assert.ok(g.closedAt)
+    assert.equal(g.status, 'fin')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
+    assert.equal(store.finishRun(run.id).finishedAt !== undefined, true)
+  })
+
+  it('повторный запуск координатора на закрытой глобальной: переоткрыта, run_done не приходит сразу', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'claude')
+    const t = store.createTask({ title: 't', runId: run.id })
+    store.moveTask(t.id, 'fin')
+    store.consumeEvents(['run_done'], run.id, run.id)
+    store.finishRun(run.id)
+
+    store.setRunPty(run.id, 'pty_2', 'claude')
+    const g = store.getGlobalTask(run.id)
+    assert.equal(g.closedAt, undefined)
+    assert.equal(g.finishedAt, undefined)
+    assert.equal(g.status, 'wip')
+    assert.equal(g.coordinatorPtyId, 'pty_2')
+    assert.equal(store.listGlobalTasks().length, 1, 'дубля глобальной задачи нет')
+    store.updateGlobalTask(run.id, { title: 'X2' })
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 0, 'старые done не закрывают заново')
+
+    const t2 = store.createTask({ title: 't2', runId: run.id })
+    store.moveTask(t2.id, 'fin')
+    assert.ok(store.getRun(run.id)!.closedAt)
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
+  })
+
+  it('новая подзадача в закрытой глобальной переоткрывает её и выводит карточку из done', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    const a = store.createTask({ title: 'a', runId: g.id })
+    store.moveTask(a.id, 'fin')
+    assert.ok(store.getRun(g.id)!.closedAt)
+    assert.equal(store.getGlobalTask(g.id).status, 'fin')
+    const b = store.createTask({ title: 'b', runId: g.id })
+    assert.equal(store.getRun(g.id)!.closedAt, undefined)
+    assert.equal(store.getGlobalTask(g.id).status, 'wip')
+    store.moveTask(b.id, 'fin')
+    assert.ok(store.getRun(g.id)!.closedAt)
+  })
+
+  it('ручное закрытие: карточка из in_progress — в done, ручная расстановка не меняется, run_done нет', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', status: 'human' })
+    store.closeRun(g.id)
+    assert.equal(store.getGlobalTask(g.id).status, 'human')
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_c', 'claude')
+    store.closeRun(run.id)
+    assert.equal(store.getGlobalTask(run.id).status, 'fin')
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 0)
+  })
+
+  it('повторный запуск без новой работы: runs finish закрывает прогон сам, старый run_done погашен', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'codex')
+    const t = store.createTask({ title: 't', runId: run.id })
+    store.moveTask(t.id, 'fin')
+    // Первый координатор run_done не забрал — новый не должен получить его сразу.
+    store.setRunPty(run.id, 'pty_2', 'codex')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 0, 'устаревший run_done погашен')
+    assert.equal(store.getRun(run.id)!.closedAt, undefined)
+
+    const fin = store.finishRun(run.id)
+    assert.ok(fin.closedAt && fin.finishedAt! >= fin.closedAt)
+    assert.equal(fin.reopenedAt, undefined)
+    assert.equal(store.getGlobalTask(run.id).status, 'fin')
+    const dones = store.listEvents().filter((e) => e.type === 'run_done')
+    assert.equal(dones.length, 2, 'новый run_done для закрытия по runs finish')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 0, 'новый run_done уже потреблён runs finish')
+
+    // Терминал codex-координатора закрывается по сигналу runs finish.
+    const snap = store.snapshot()
+    const toClose = coordinatorsToClose({
+      runs: snap.runs,
+      tasks: snap.tasks,
+      questions: snap.questions,
+      events: snap.events,
+      isDone: (s) => store.columnKind(s) === 'done',
+      lingers: (a) => a === 'codex',
+      lastActivityAt: () => fin.finishedAt!,
+      now: fin.finishedAt! + COORDINATOR_FINISH_GRACE_MS
+    })
+    assert.deepEqual(toClose, [{ runId: run.id, ptyId: 'pty_2' }])
+  })
+
+  it('повторный запуск: новую подзадачу удалили — runs finish всё равно закрывает прогон', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'codex')
+    store.moveTask(store.createTask({ title: 't', runId: run.id }).id, 'fin')
+    store.setRunPty(run.id, 'pty_2', 'codex')
+    const extra = store.createTask({ title: 'лишняя', runId: run.id })
+    assert.throws(() => store.finishRun(run.id), /run not closed/)
+    store.deleteTask(extra.id)
+    assert.ok(store.finishRun(run.id).closedAt)
+  })
+
+  it('повторный запуск с новой подзадачей: run_done после неё, затем runs finish', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'codex')
+    store.moveTask(store.createTask({ title: 't', runId: run.id }).id, 'fin')
+    store.setRunPty(run.id, 'pty_2', 'codex')
+    const t2 = store.createTask({ title: 't2', runId: run.id })
+    assert.throws(() => store.finishRun(run.id), /run not closed/)
+    store.moveTask(t2.id, 'fin')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
+    assert.ok(store.finishRun(run.id).finishedAt)
+  })
+
+  it('свежий прогон без подзадач: runs finish — ошибка; «Входящие» run_done не шлют', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    assert.throws(() => store.finishRun(run.id), /run not closed/)
+    const t = store.createTask({ title: 'во входящие' })
+    store.moveTask(t.id, 'fin')
+    const inbox = store.listGlobalTasks().find((g) => g.inbox)!
+    assert.ok(inbox.closedAt)
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 0)
+  })
+})
+
+describe('сохранение и миграция', () => {
+  it('глобальные задачи и связь с подзадачами переживают перезапуск', () => {
+    const p = memory()
+    const store = newStore(p)
+    const g = store.createGlobalTask({ title: 'G', description: 'd' })
+    store.moveGlobalTask(g.id, 'human')
+    const a = store.createTask({ title: 'a', runId: g.id })
+    const reloaded = newStore(p)
+    assert.deepEqual(reloaded.getGlobalTask(g.id), store.getGlobalTask(g.id))
+    assert.deepEqual(reloaded.listSubtasks(g.id).map((t) => t.id), [a.id])
+  })
+
+  it('старый снапшот: прогоны получают статус, задачи без прогона — во «Входящие», id стабилен', () => {
+    const T = 1_000
+    const task = (id: string, status: string, runId?: string): Task =>
+      ({ id, title: id, spec: '', status, deps: [], runId, agent: 'claude', createdAt: T, updatedAt: T }) as Task
+    const legacy = {
+      tasks: [task('t_open', 'wip', 'run_open'), task('t_closed', 'fin', 'run_closed'), task('t_ui', 'todo'), task('t_lost', 'plan', 'run_deleted')],
+      runs: [
+        { id: 'run_open', objective: 'идёт', createdAt: T },
+        { id: 'run_closed', objective: 'готово', createdAt: T, closedAt: T + 1 }
+      ],
+      dispatches: [],
+      events: [],
+      questions: []
+    }
+    const p = memory(legacy as Partial<StoreSnapshot>)
+    const store = newStore(p)
+    assert.equal(p.saves(), 1, 'миграция сохранена сразу')
+    assert.equal(store.getGlobalTask('run_open').status, 'wip')
+    assert.equal(store.getGlobalTask('run_closed').status, 'fin')
+    assert.equal(store.getGlobalTask('run_closed').updatedAt, T)
+    const inbox = store.listGlobalTasks().find((g) => g.inbox)!
+    assert.deepEqual(store.listSubtasks(inbox.id).map((t) => t.id), ['t_ui', 't_lost'])
+    assert.equal(store.getTask('t_ui')!.roleId, 'developer')
+    assert.equal(inbox.status, 'wip')
+
+    const again = newStore(p)
+    assert.equal(p.saves(), 1, 'повторная загрузка ничего не мигрирует')
+    assert.equal(again.listGlobalTasks().find((g) => g.inbox)!.id, inbox.id)
+  })
+
+  it('миграция «Входящих» из одних done не шлёт run_done', () => {
+    const T = 1_000
+    const legacy = {
+      tasks: [{ id: 't', title: 't', spec: '', status: 'fin', deps: [], roleId: 'developer', agent: 'claude', createdAt: T, updatedAt: T }],
+      runs: [],
+      dispatches: [],
+      events: [],
+      questions: []
+    }
+    const store = newStore(memory(legacy as Partial<StoreSnapshot>))
+    const inbox = store.listGlobalTasks()[0]
+    assert.ok(inbox.inbox && inbox.closedAt)
+    assert.equal(inbox.status, 'fin')
+    store.createGlobalTask({ title: 'commit' })
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 0)
+  })
+})

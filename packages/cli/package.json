@@ -6,6 +6,7 @@
   "bin": { "orca-board": "./bin/orca-board.js" },
   "scripts": {
     "typecheck": "node --check bin/orca-board.js",
-    "build": "echo skip"
+    "build": "echo skip",
+    "test": "node --test test/cli.test.js"
   }
 }
