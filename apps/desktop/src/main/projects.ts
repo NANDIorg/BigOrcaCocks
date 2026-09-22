@@ -7,6 +7,7 @@ import {
   type OrcaEvent, type AgentKind, type Role, type BoardColumn
 } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
+import type { AppSettings } from '../shared/ipc'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -44,7 +45,11 @@ interface ProjectsFile {
   activeId: string | null
   /** Глобальный дефолт для новых проектов; незаданные поля — встроенные значения. */
   defaults?: Partial<ProjectDefaults>
+  /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
+  settings?: Partial<AppSettings>
 }
+
+export const DEFAULT_APP_SETTINGS: AppSettings = { keepInBackground: true }
 
 /**
  * Список репозиториев и по TaskStore на каждый. Доска хранится в userData/boards/<id>.json.
@@ -69,6 +74,7 @@ export class ProjectManager {
       const data = JSON.parse(readFileSync(this.file, 'utf8')) as ProjectsFile
       // Старый формат без defaults читается как есть; мусор в defaults — сбрасываем.
       if (data.defaults !== undefined && (typeof data.defaults !== 'object' || data.defaults === null)) delete data.defaults
+      if (data.settings !== undefined && (typeof data.settings !== 'object' || data.settings === null || Array.isArray(data.settings))) delete data.settings
       return data
     } catch {
       return { projects: [], activeId: null }
@@ -161,6 +167,26 @@ export class ProjectManager {
     this.data.defaults = next
     this.save()
     return this.defaults()
+  }
+
+  /** Настройки приложения; незаданные и некорректные поля — дефолты. */
+  settings(): AppSettings {
+    const s = this.data.settings ?? {}
+    return {
+      keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground
+    }
+  }
+
+  setSettings(patch: Partial<AppSettings>): AppSettings {
+    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw new Error('настройки приложения: ожидается объект')
+    const next: Partial<AppSettings> = { ...(this.data.settings ?? {}) }
+    if (patch.keepInBackground !== undefined) {
+      if (typeof patch.keepInBackground !== 'boolean') throw new Error('keepInBackground должен быть boolean')
+      next.keepInBackground = patch.keepInBackground
+    }
+    this.data.settings = next
+    this.save()
+    return this.settings()
   }
 
   /** Переписать настройки проекта дефолтом. Задачи из исчезнувших колонок уходят в backlog. */
