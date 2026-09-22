@@ -9,6 +9,7 @@ import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
+import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import type { AppSettings, PtySpawnOptions, TaskPatch } from '../shared/ipc'
 
@@ -277,6 +278,7 @@ function registerIpc(): void {
   ipcMain.handle('projects:getDefaults', () => projects.defaults())
   ipcMain.handle('projects:setDefaults', (_e, patch: Partial<ProjectDefaults>) => projects.setDefaults(patch ?? {}))
   ipcMain.handle('projects:applyDefaults', (_e, id: string) => projects.applyDefaults(id))
+  ipcMain.handle('prompts:builtin', () => BUILTIN_PROMPTS)
   ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   ipcMain.handle('projects:add', async () => {
     if (!win) throw new Error('no window')
