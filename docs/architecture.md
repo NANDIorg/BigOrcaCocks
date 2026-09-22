@@ -120,9 +120,12 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Список**: сокет `runs.list` → `Run` + `tasks` (число задач прогона) и `done` (из них в `kind=done`);
   IPC `runs:list` → `Run[]` активного проекта (без счётчиков), изменения приходят в `board:changed`
   (`snapshot.runs`).
-- **UI**: renderer пока получает прогоны только данными — `snapshot.runs` и `runId` в событии
-  `worker:opened` координатора (`TerminalOpened.runId`); метки прогона на карточке, фильтра доски по прогону
-  и списка прогонов в «О проекте» в коде renderer ещё нет.
+- **UI** (`renderer/src/runs.tsx`: `RunFilter` = `'all' | 'none' | <runId>`, `runShortLabel`, `runColorIndex`,
+  `RunBadge`, `RunsSection`): данные — `snapshot.runs` и `runId` в `worker:opened` координатора
+  (`TerminalOpened.runId`). На карточке задачи с `runId` — метка `RunBadge`; в шапке доски (`Board.tsx`) —
+  select «Прогон» (при `runs.length > 0`), у закрытых прогонов — «(закрыт)»; фильтр хранит `App.tsx`
+  в `runFilters` по `viewKey` (id проекта). В «О проекте» — раздел «Прогоны» (`RunsSection`) с закрытием
+  через `window.orca.runs.close` (IPC `runs:close`). Подробности — «UI: доска и «О проекте»».
 
 ## Ожидание событий без токенов
 
