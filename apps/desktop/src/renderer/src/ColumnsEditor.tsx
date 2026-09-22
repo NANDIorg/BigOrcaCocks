@@ -36,7 +36,6 @@ export function ColumnsEditor({ storageKey, columns: initial, onSave }: Props): 
 
   return (
     <div className="editor">
-      <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Колонки</h3>
       <div className="editor-table columns">
         <div className="editor-head" />
         <div className="editor-head">Название</div>

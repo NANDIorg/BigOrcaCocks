@@ -17,6 +17,7 @@
   --col-input: #e8b04a;
   --col-review: #b57bee;
   --col-done: #5ad1cc;
+  --danger: #ef6b6b;
   --radius: 14px;
 }
 * { box-sizing: border-box; }
@@ -71,11 +72,6 @@ button { font: inherit; cursor: pointer; }
 .sidebar .item .sub { color: var(--muted); font-size: 13px; margin-top: 2px; font-family: ui-monospace, Menlo, monospace; }
 .sidebar .item.active { background: var(--side-2); border-left-color: var(--accent); }
 .sidebar .item:hover:not(.active) { background: rgba(255,255,255,.03); }
-.btn-ghost {
-  width: 100%; padding: 14px; border-radius: 12px; border: 0;
-  background: var(--side-2); color: var(--text); font-weight: 500;
-}
-.btn-ghost:hover { background: var(--card); }
 
 /* ---------- main ---------- */
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -100,15 +96,6 @@ button { font: inherit; cursor: pointer; }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
 .content { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; flex: 1; }
-/* Вкладка «О проекте»: скроллится контейнер вкладки (полоса у правого края окна), а не вложенный .info */
-.info-page { min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
-.info { padding: 28px 32px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
-.info p, .info li { max-width: 80ch; }
-.info .agents-list, .info .editor, .info .editor-table, .info .runs-list { width: 100%; }
-.info code, .info pre, .info .editor-id { overflow-wrap: anywhere; word-break: break-word; }
-.info pre { white-space: pre-wrap; }
-.info .editor-table > *, .info .editor-row > * { min-width: 0; overflow-wrap: anywhere; }
-.info code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 
 /* ---------- board ---------- */
 /* Цепочка высоты: .content (grid, min-height 0) → .board-wrap → .board → .column → .col-body.
@@ -260,12 +247,6 @@ textarea { min-height: 96px; resize: vertical; }
 .btn-primary.ghost:hover { border-color: var(--text); background: transparent; }
 button:disabled { opacity: .45; cursor: default; }
 
-/* Вкладка «О проекте»: список агентов */
-.agents-head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
-.agents-head h3 { margin: 0; color: var(--text); }
-.agent-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; color: var(--text); font-size: 14px; }
-.agent-row.off { color: var(--muted); }
-.agent-row .ver { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
 
 /* Редакторы ролей и колонок */
 .editor { margin-bottom: 24px; }
@@ -498,11 +479,6 @@ button:disabled { opacity: .45; cursor: default; }
 .task-modal-foot .grow { flex: 1; }
 .task-modal-foot .btn-sm { height: 34px; padding: 0 16px; font-size: 13px; }
 
-/* Модалка настроек по умолчанию: .modal label по умолчанию — колонка, строкам агентов нужна строка */
-.defaults-body h3 { font-size: 16px; margin: 0 0 12px; color: var(--text); }
-.modal .agent-row { flex-direction: row; gap: 10px; color: var(--text); font-size: 14px; }
-.modal .agent-row.off { color: var(--muted); }
-.defaults-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 
 /* ---------- глобальные задачи: общая доска ---------- */
 /* Колонки как у Auto Claude: тонкая рамка, цветная верхняя линия, счётчик у заголовка; скроллится тело. */
@@ -632,3 +608,109 @@ button:disabled { opacity: .45; cursor: default; }
 .markdown a { color: var(--accent); }
 .markdown a:not([href]) { color: inherit; text-decoration: underline dotted; }
 .markdown hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+
+/* ---------- вкладка «О проекте» (about/AboutProject.tsx): меню разделов + один раздел ---------- */
+.about-host { container: about / inline-size; min-width: 0; min-height: 0; display: flex; }
+.about { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+.about-nav { border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 0; }
+.about-scope { display: grid; grid-template-columns: 1fr 1fr; background: var(--page); border-radius: 10px; padding: 3px; margin-bottom: 14px; flex-shrink: 0; }
+.about-scope button { background: transparent; border: 0; color: var(--muted); font-size: 12px; padding: 6px 4px; border-radius: 8px; line-height: 1.2; }
+.about-scope button.on { background: var(--side-2); color: var(--text); }
+.about-scope button:not(.on):not(:disabled):hover { color: var(--text); }
+.about-nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 14px 10px 6px; }
+.about-nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; border: 0;
+  border-left: 3px solid transparent; background: transparent; color: var(--muted); text-align: left; flex-shrink: 0;
+}
+.about-nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+.about-nav-item:hover { background: rgba(255,255,255,.03); color: var(--text); }
+.about-nav-item.on { background: var(--side-2); color: var(--text); border-left-color: var(--accent); }
+.about-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.about-nav-label { white-space: nowrap; }
+.about-nav-count { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.about-nav-count.warn { color: var(--col-input); }
+.about-nav-count.live { color: var(--col-progress); }
+/* Скроллится панель раздела (полоса у правого края окна), меню стоит на месте */
+.about-pane { overflow-y: auto; overflow-x: hidden; min-width: 0; min-height: 0; }
+.about-sec { padding: 26px 32px 40px; max-width: 1080px; color: var(--text); overflow-wrap: anywhere; }
+.about-sec code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.about-sec .editor { margin-bottom: 0; }
+.about-sec .editor-table > *, .about-sec .editor-row > * { min-width: 0; overflow-wrap: anywhere; }
+.about-sec .runs-list { margin-bottom: 0; }
+.about-sec .hint { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+.about-banner {
+  background: rgba(123,134,245,.1); border: 1px solid rgba(123,134,245,.35); border-radius: 10px;
+  padding: 10px 14px; font-size: 13px; margin-bottom: 16px;
+}
+
+/* Общий заголовок раздела (about/parts.tsx SectionHead) */
+.sec-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+.sec-head-text { flex: 1; min-width: 240px; }
+.sec-head h2 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+.sec-head p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
+.sec-head .btn-sm svg { width: 14px; height: 14px; }
+
+.about-box { background: var(--side); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px; }
+.about-box h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.about-box.danger-zone { border: 1px solid rgba(239,107,107,.3); background: rgba(239,107,107,.05); }
+.row-act { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.row-act-text { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 2px; }
+.row-act-text b { font-weight: 500; }
+.row-act-text .hint { margin: 0; }
+.danger-zone .btn-sm.danger { color: var(--danger); border-color: rgba(239,107,107,.5); }
+.danger-zone .btn-sm.danger svg { width: 14px; height: 14px; }
+
+/* «Обзор» */
+.about-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.about-stat { background: var(--side); border-radius: 12px; padding: 12px 14px; }
+.about-stat b { display: block; font-size: 22px; font-weight: 600; }
+.about-stat span { font-size: 12px; color: var(--muted); }
+.about-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; margin: 0; }
+.about-kv dt { color: var(--muted); font-size: 13px; }
+.about-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.copy-btn { background: transparent; border: 0; color: var(--muted); font-size: 12px; padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
+.copy-btn:hover:not(:disabled) { color: var(--text); background: var(--frame); }
+
+/* «Агенты»: карточки с переключателем */
+.agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.agent-card { display: flex; align-items: center; gap: 10px; background: var(--side); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.agent-card.off { opacity: .55; }
+.agent-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.agent-card-text b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-card-text span { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+.agent-card.off .agent-card-text b { color: var(--muted); }
+.agents-missing { margin-top: 14px; }
+.agents-missing summary { cursor: pointer; margin-bottom: 10px; }
+.switch { width: 34px; height: 20px; border-radius: 10px; background: var(--chip); position: relative; flex-shrink: 0; border: 0; padding: 0; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 17px; }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* «Разрешения»: режимы карточками-радио */
+.perm-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.perm-card {
+  background: var(--side); border: 1px solid transparent; border-radius: 12px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+}
+.perm-card.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--side)); }
+.perm-card b { display: flex; gap: 8px; align-items: center; font-weight: 500; }
+.perm-card span { font-size: 12px; color: var(--muted); }
+.perm-card input[type='radio'] { width: auto; margin: 0; accent-color: var(--accent); }
+
+/* Узкая вкладка: меню — горизонтальная полоса над разделом */
+@container about (max-width: 900px) {
+  .about { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .about-nav { flex-direction: row; align-items: center; gap: 4px; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 16px; overflow-x: auto; overflow-y: hidden; }
+  .about-nav-group { display: none; }
+  .about-scope { margin: 0 8px 0 0; width: 210px; }
+  .about-nav-item { border-left: 0; padding: 6px 10px; }
+  .about-nav-item svg { display: none; }
+  .about-sec { padding: 20px 20px 32px; }
+  .about-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .perm-cards { grid-template-columns: minmax(0, 1fr); }
+}
+@container about (max-width: 560px) {
+  .about-kv { grid-template-columns: minmax(0, 1fr) auto; }
+  .about-kv dt { grid-column: 1 / -1; margin-top: 4px; }
+}
