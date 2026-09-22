@@ -459,6 +459,10 @@ UI работает с активным проектом; агенты полу�
 `cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
 `pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
 
+Сборка под x64 пересобирает node-pty для Intel прямо в `node_modules`, после чего dev-приложение
+на arm64 падает с `posix_spawnp failed` (spawn-helper не той архитектуры). Поэтому скрипты
+`dist`/`pack` в конце вызывают `electron-builder install-app-deps` — пересборку под текущую машину.
+
 ## Грабли разработки
 
 - `git reset --hard` в скриптах тестирования дважды стёр незакоммиченные правки. Правило:
