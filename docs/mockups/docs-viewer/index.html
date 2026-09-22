@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Редизайн «Документов»</title>
+<style>
+:root { --page: #26282e; --side: #33353d; --card: #3b3e47; --chip: #5b5e68; --text: #ecedf1; --muted: #9ea1ad; --accent: #7b86f5; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.5 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px 16px; }
+main { max-width: 980px; margin: 0 auto; }
+h1 { margin: 0 0 6px; font-size: 26px; font-weight: 600; }
+p.lead { color: var(--muted); margin: 0 0 28px; max-width: 72ch; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+a.card { display: flex; flex-direction: column; gap: 10px; background: var(--side); border: 1px solid transparent; border-radius: 14px; padding: 18px 20px; color: inherit; text-decoration: none; }
+a.card:hover { border-color: var(--chip); background: var(--card); }
+.tag { align-self: flex-start; font-size: 12px; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 1px 10px; }
+.tag.rec { background: var(--accent); color: #fff; }
+a.card b { font-size: 17px; font-weight: 600; }
+a.card span { color: var(--muted); font-size: 13px; }
+pre { margin: 0; font: 11px/1.35 ui-monospace, Menlo, monospace; color: #c9ccd6; background: #2e3037; border-radius: 10px; padding: 10px; overflow-x: auto; }
+h2 { font-size: 16px; margin: 34px 0 10px; }
+ul { color: #c9ccd6; padding-left: 20px; margin: 0; }
+li { margin: 4px 0; }
+code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+</style></head>
+<body><main>
+<h1>Редизайн окна «Документы»</h1>
+<p class="lead">Три концепции просмотра markdown-файлов проекта. Макеты статичные, но переключаемые: в тёмной полосе сверху каждого — состояния (просмотр, поиск, пусто…). Данные — реальные <code>.md</code> этого репозитория и то, что умеет отдать <code>docs:list</code> (путь, размер, mtime, «новый», группы по задачам).</p>
+<div class="grid">
+  <a class="card" href="concept-a.html"><span class="tag rec">A · рекомендую</span><b>Проводник</b>
+<pre>┌────────┬──────────────┬──────┐
+│🔍 ⌘P    │ ‹ › docs/arch│На стр│
+│▾ docs  │              │ Проц.│
+│  arch ●│  # Архитект… │▶Моде.│
+│▸ skills│  ## Модель   │ Прог.│
+│ЗАДАЧИ  │              │      │
+└────────┴──────────────┴──────┘</pre>
+    <span>Дерево папок + документ + оглавление. Эволюция текущего окна: тот же каркас, но структура, навигация и типографика.</span></a>
+  <a class="card" href="concept-b.html"><span class="tag">B</span><b>Читалка + ⌘K</b>
+<pre>┌──────────────────────────────┐
+│ ‹ ›  [🔍 docs/arch.md   ⌘K]  │
+│ ═      # Архитектура         │
+│ ─      текст 72ch…           │
+│ ═      ## Модель             │
+└──────────────────────────────┘</pre>
+    <span>Максимум места под текст, файлы — через палитру, оглавление полосками в поле. Для тех, кто читает, а не ищет.</span></a>
+  <a class="card" href="concept-c.html"><span class="tag">C</span><b>Вкладка проекта</b>
+<pre>┌ Доска  Прогоны  Документы 14 ┐
+├────────┬─────────────────────┤
+│Задачи ▣│ Архитектура   ⋯     │
+│Проект  │  текст     │Содерж. │
+│ docs/  │            │        │
+└────────┴─────────────────────┘</pre>
+    <span>Документы — вкладка рядом с доской, не модалка. Задачи с изменёнными .md сверху, со статусом-цветом доски.</span></a>
+</div>
+<h2>Общее для всех концепций</h2>
+<ul>
+<li>Новая типографика документа: 15–16px, межстрочный 1.7, строка ≤ 76 знаков, отбивки заголовков, «якоря» у h2/h3, код с языком и кнопкой «Копировать», таблица с рамкой, цитата-предупреждение.</li>
+<li>Оглавление из заголовков документа, история «Назад/Вперёд» для переходов по ссылкам, поиск в тексте (<code>⌘F</code>).</li>
+<li>Пустые состояния объясняют, откуда берутся файлы, и дают действие.</li>
+</ul>
+<p class="lead" style="margin-top:24px">Стили — токены из <code>apps/desktop/src/renderer/src/styles.css</code>. Текущее окно — <code>apps/desktop/src/renderer/src/DocsModal.tsx</code>.</p>
+</main></body></html>
