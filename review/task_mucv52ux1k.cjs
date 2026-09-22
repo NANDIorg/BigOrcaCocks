@@ -16,7 +16,7 @@ function buttons(node) {
 }
 const label = node => node.children.filter(x => typeof x === 'string').join('').trim()
 for (const tab of ['board', 'terminals', 'info']) {
-  for (const openGlobal of [undefined, {id:'g1'}]) {
+  for (const openGlobal of [undefined, {id:'g1'}, {id:'inbox', inbox:true}]) {
     const actions = []
     const tree = run(`const tree = (${header}); tree`, {
       React:{createElement:jsx}, Icon:{terminal:'icon',users:'icon',plus:'icon'}, active:{id:'p1'}, tab, openGlobal,
@@ -27,11 +27,33 @@ for (const tab of ['board', 'terminals', 'info']) {
     const create = bs.find(b=>label(b).startsWith('Новая'))
     create.props.onClick()
     console.log(JSON.stringify({tab,global:openGlobal?.id ?? null,button:label(create),action:actions[0]}))
-    if (openGlobal && tab !== 'board') assert.equal(actions[0][0], 'global', 'Regression reproduction changed')
-    else assert.equal(actions[0][0], openGlobal ? 'subtask' : 'global')
+    assert.equal(label(create), openGlobal ? 'Новая подзадача' : 'Новая задача')
+    assert.equal(actions[0][0], openGlobal ? 'subtask' : 'global')
+    if (!openGlobal) {
+      bs.find(b=>label(b)==='Координатор').props.onClick()
+      assert.deepEqual(actions[1], ['coordinator', true])
+    }
   }
 }
 ;(async () => {
+  const modalStart = source.indexOf('{showNew && active && openGlobal && (')
+  const modal = source.slice(modalStart + 1, source.indexOf('{globalModal &&', modalStart)).trimEnd().slice(0, -1)
+  for (const tab of ['board', 'terminals', 'info']) {
+    for (const id of ['g1', 'inbox']) {
+      const calls = []
+      const input = {title:'Review subtask'}
+      const tree = run(`(${modal})`, {
+        React:{createElement:jsx}, NewTaskModal:'NewTaskModal', showNew:true,
+        active:{id:'p1',roles:[]}, openGlobal:{id,title:id}, subtasks:[], agents:[], tab,
+        setShowNew:v=>calls.push(['close',v]),
+        window:{orca:{globalTasks:{createTask:async(...args)=>calls.push(['createTask',...args])}}}
+      })
+      await tree.props.onCreate(input)
+      assert.deepEqual(calls, [['createTask',id,input],['close',false]])
+      console.log(`${tab}/${id}: createTask scoped correctly`)
+    }
+  }
+
   for (const scenario of ['inbox','live','start','cancel']) {
     const calls = []
     const ctx = {active:{id:'p1'},coordinatorPtys:new Map(scenario==='live'?[['g1','pty-live']]:[]),
