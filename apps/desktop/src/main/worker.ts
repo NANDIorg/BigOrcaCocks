@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { join, resolve, delimiter } from 'node:path'
 import { existsSync } from 'node:fs'
 import { app, type BrowserWindow } from 'electron'
-import { newId, type TaskStore, type AgentKind } from '@orca-board/core'
+import { newId, getAgent, type TaskStore } from '@orca-board/core'
 import workerSkill from '../../../../skills/worker.md?raw'
 import coordinatorSkill from '../../../../skills/coordinator.md?raw'
 import { spawnPty } from './pty'
 import { setupCommand } from './git'
+import { extraPathDirs } from './agents'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -27,32 +28,21 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-/** Флаги Claude Code: режим разрешений проекта + orca-board всегда без вопросов. */
-function claudeFlags(mode: PermissionMode): string[] {
-  return ['--permission-mode', mode, '--allowedTools', 'Bash(orca-board:*)']
+/** PATH для терминалов и агентов: bin CLI orca-board, PATH процесса, стандартные папки с агентами. */
+export function workerPath(): string {
+  return [cliBinDir(), ...(process.env.PATH ?? '').split(delimiter).filter(Boolean), ...extraPathDirs()].join(delimiter)
 }
 
-function agentInvocation(agent: AgentKind, system: string, prompt: string, mode: PermissionMode): { command: string; args: string[] } {
-  switch (agent) {
-    case 'claude':
-      return { command: 'claude', args: [...claudeFlags(mode), '--append-system-prompt', system, prompt] }
-    case 'codex':
-      return { command: 'codex', args: [`${system}\n\n---\n\n${prompt}`] }
-    case 'opencode':
-      return { command: 'opencode', args: ['--prompt', `${system}\n\n---\n\n${prompt}`] }
-    case 'shell':
-      return { command: process.env.SHELL ?? '/bin/zsh', args: [] }
-    default:
-      // Остальные агенты из реестра пока не поддержаны здесь (перевод на getAgent — отдельная задача).
-      throw new Error(`unsupported agent: ${agent}`)
-  }
+/** Оболочка пользователя — для агента shell и для установочного шага. */
+function userShell(): string {
+  return process.env.SHELL ?? '/bin/zsh'
 }
 
 function baseEnv(ctx: WorkerEnvContext): Record<string, string> {
   return {
     ORCA_SOCKET: ctx.socketPath,
     ORCA_PROJECT: ctx.projectId,
-    PATH: `${cliBinDir()}:${process.env.PATH ?? ''}`
+    PATH: workerPath()
   }
 }
 
@@ -87,11 +77,13 @@ export function startWorker(
   const dispatchId = newId('disp')
   const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
   const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
-  const inv = agentInvocation(task.agent, workerSkill, prompt, ctx.permissionMode)
+  const spec = getAgent(task.agent)
+  if (!spec) throw new Error(`неизвестный агент: ${task.agent}`)
+  const inv = spec.invoke(workerSkill, prompt, { permissionMode: ctx.permissionMode, shell: userShell() })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
-  const command = setup ? process.env.SHELL ?? '/bin/zsh' : inv.command
+  const command = setup ? userShell() : inv.command
   const args = setup
     ? ['-c', `echo "[orca] ${setup}"; ${setup}; exec ${[inv.command, ...inv.args].map(shellQuote).join(' ')}`]
     : inv.args
@@ -122,10 +114,11 @@ export function startCoordinator(
   rows = 30
 ): string {
   const prompt = `Цель: ${objective}\n\nНачни с декомпозиции и создания задач через orca-board.`
+  const inv = getAgent('claude')!.invoke(coordinatorSkill, prompt, { permissionMode: ctx.permissionMode, shell: userShell() })
   return spawnPty(win, {
     cwd: repoRoot,
-    command: 'claude',
-    args: [...claudeFlags(ctx.permissionMode), '--append-system-prompt', coordinatorSkill, prompt],
+    command: inv.command,
+    args: inv.args,
     cols,
     rows,
     env: { ...baseEnv(ctx), ORCA_ROLE: 'coordinator' }

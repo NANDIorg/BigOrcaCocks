@@ -1,4 +1,4 @@
-import type { Task, TaskStatus, AgentKind, StoreSnapshot } from '@orca-board/core'
+import type { Task, TaskStatus, AgentKind, AgentInfo, StoreSnapshot } from '@orca-board/core'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -30,6 +30,8 @@ export interface Project {
   root: string
   name: string
   permissionMode?: PermissionMode
+  /** Включённые агенты. undefined — все установленные. */
+  enabledAgents?: AgentKind[]
 }
 
 export interface ReviewInfo {
@@ -51,8 +53,13 @@ export interface OrcaApi {
     remove(id: string): Promise<void>
     setActive(id: string): Promise<Project>
     setPermissionMode(id: string, mode: PermissionMode): Promise<Project>
+    setEnabledAgents(id: string, agents: AgentKind[]): Promise<Project>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
+  }
+  agents: {
+    /** Агенты реестра с признаками «установлен»/«включён» для активного проекта. refresh — пересканировать PATH. */
+    list(refresh?: boolean): Promise<AgentInfo[]>
   }
   board: {
     get(): Promise<StoreSnapshot>
