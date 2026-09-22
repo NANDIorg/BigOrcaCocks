@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Документы — концепция A</title>
+<style>
+/* ===== Токены и хром приложения — из apps/desktop/src/renderer/src/styles.css ===== */
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --line: rgba(255,255,255,.06);
+  --text: #ecedf1; --muted: #9ea1ad; --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b; --radius: 14px;
+  --mono: ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: #1c1d22; color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+button { font: inherit; cursor: pointer; color: inherit; }
+svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+svg.i.s { width: 14px; height: 14px; }
+kbd { font: 11px var(--mono); padding: 1px 5px; border-radius: 5px; border: 1px solid var(--chip); color: var(--muted); background: var(--frame); }
+.muted { color: var(--muted); }
+
+/* панель макета (не часть приложения) */
+.mock-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: #15161a; color: var(--muted); font-size: 12px; flex-wrap: wrap; border-bottom: 1px solid #000; flex-shrink: 0; }
+.mock-bar b { color: var(--text); font-weight: 600; }
+.mock-bar a { color: var(--accent); text-decoration: none; }
+.mock-bar .grow { flex: 1; }
+.mock-bar .seg { display: flex; }
+.mock-bar .seg button { background: transparent; border: 1px solid #3a3c44; color: var(--muted); padding: 3px 10px; font-size: 12px; margin-left: -1px; }
+.mock-bar .seg button:first-child { border-radius: 8px 0 0 8px; }
+.mock-bar .seg button:last-child { border-radius: 0 8px 8px 0; }
+.mock-bar .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; }
+
+/* приложение под окном */
+.app { width: 100%; max-width: var(--w, 100%); height: 100%; display: grid; grid-template-columns: 72px 260px minmax(0, 1fr); background: var(--frame); position: relative; transition: max-width .2s; }
+.rail { display: flex; flex-direction: column; align-items: center; padding: 22px 0; gap: 8px; border-right: 1px solid var(--line); }
+.rail .icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; color: var(--muted); }
+.rail .icon.active { color: var(--accent); }
+.rail .grow { flex: 1; }
+.sidebar { display: flex; flex-direction: column; background: var(--side); border-right: 1px solid var(--line); min-width: 0; }
+.sidebar .head { display: flex; align-items: center; gap: 10px; padding: 22px 20px 18px; border-bottom: 1px solid var(--line); }
+.sidebar .head h2 { margin: 0; font-size: 20px; font-weight: 600; flex: 1; }
+.sidebar .item { padding: 14px 20px; border-left: 3px solid transparent; }
+.sidebar .item .name { font-size: 16px; font-weight: 500; }
+.sidebar .item .sub { color: var(--muted); font-size: 13px; margin-top: 2px; font-family: var(--mono); }
+.sidebar .item.active { background: var(--side-2); border-left-color: var(--accent); }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.main-head { padding: 24px 32px 0; border-bottom: 1px solid var(--line); }
+.main-head .row { display: flex; align-items: center; gap: 12px; }
+.main-head h1 { margin: 0; font-size: 26px; font-weight: 600; flex: 1; letter-spacing: -.01em; }
+.tabs { display: flex; gap: 32px; margin-top: 22px; }
+.tab { background: transparent; border: 0; color: var(--muted); font-size: 16px; padding: 0 0 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; display: inline-flex; gap: 8px; align-items: center; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab-badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--chip); color: var(--text); font-size: 11px; line-height: 18px; text-align: center; }
+.board-ghost { flex: 1; display: flex; gap: 20px; padding: 28px 32px; }
+.board-ghost .col { flex: 0 0 300px; background: var(--side); border-radius: var(--radius); }
+
+.chip { border: 1px solid var(--chip); color: #c9ccd6; border-radius: 999px; padding: 2px 10px; font-size: 12px; white-space: nowrap; }
+.chip.new { font-size: 10px; padding: 0 6px; line-height: 16px; border-color: rgba(90,209,204,.5); color: var(--col-done); }
+.chip.mod { font-size: 10px; padding: 0 6px; line-height: 16px; border-color: rgba(232,176,74,.5); color: var(--col-input); }
+.btn-sm { height: 32px; padding: 0 14px; border-radius: 16px; border: 1px solid var(--chip); background: transparent; color: var(--text); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-sm:hover { border-color: var(--text); }
+.btn-sm.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.icon-btn:hover { color: var(--text); background: var(--side-2); }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+/* ===== Новая типографика документа (общая для всех концепций) ===== */
+.doc { font-size: 15px; line-height: 1.7; color: #dfe1e7; max-width: 76ch; overflow-wrap: anywhere; }
+.doc > :first-child { margin-top: 0; }
+.doc h1 { font-size: 28px; line-height: 1.25; font-weight: 650; letter-spacing: -.015em; color: var(--text); margin: 0 0 6px; }
+.doc .lead-meta { color: var(--muted); font-size: 13px; margin: 0 0 28px; display: flex; gap: 14px; flex-wrap: wrap; }
+.doc h2 { font-size: 20px; line-height: 1.3; font-weight: 600; color: var(--text); margin: 40px 0 12px; padding-top: 18px; border-top: 1px solid var(--line); position: relative; scroll-margin-top: 16px; }
+.doc h3 { font-size: 16px; font-weight: 600; color: var(--text); margin: 28px 0 8px; position: relative; scroll-margin-top: 16px; }
+.doc h2 .anchor, .doc h3 .anchor { position: absolute; left: -22px; color: var(--chip); text-decoration: none; opacity: 0; font-weight: 400; }
+.doc h2:hover .anchor, .doc h3:hover .anchor { opacity: 1; }
+.doc p, .doc ul, .doc ol, .doc table, .doc blockquote, .doc .code { margin: 0 0 14px; }
+.doc ul, .doc ol { padding-left: 22px; }
+.doc li { margin: 4px 0; }
+.doc li::marker { color: var(--muted); }
+.doc strong { color: var(--text); font-weight: 600; }
+.doc code { font: 13px var(--mono); padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.07); color: #e6e7ee; }
+.doc a { color: #a3abff; text-decoration: none; border-bottom: 1px solid rgba(123,134,245,.4); }
+.doc a:hover { border-bottom-color: var(--accent); }
+.doc a.doclink::before { content: "↗ "; font-size: 11px; color: var(--muted); }
+.doc a.ext::after { content: " ↗"; font-size: 11px; color: var(--muted); }
+.doc .code { position: relative; border-radius: 10px; background: #202227; border: 1px solid rgba(255,255,255,.05); }
+.doc .code .code-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid rgba(255,255,255,.05); font: 11px var(--mono); color: var(--muted); }
+.doc .code .code-head .grow { flex: 1; }
+.doc .code .code-head button { border: 0; background: transparent; color: var(--muted); font: 11px var(--mono); padding: 3px 8px; border-radius: 6px; }
+.doc .code .code-head button:hover { background: var(--side-2); color: var(--text); }
+.doc pre { margin: 0; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 var(--mono); color: #d7d9e2; }
+.doc pre code { padding: 0; background: none; font-size: inherit; }
+.doc .tok-k { color: #b9bff9; } .doc .tok-s { color: #9fd9a8; } .doc .tok-c { color: #767a87; }
+.doc blockquote { margin-left: 0; padding: 10px 16px; border-left: 3px solid var(--col-input); background: rgba(232,176,74,.06); border-radius: 0 10px 10px 0; color: #d9d4c6; }
+.doc blockquote p { margin: 0; }
+.doc blockquote b { color: var(--col-input); }
+.doc .tbl { overflow-x: auto; margin: 0 0 16px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; }
+.doc table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 0; }
+.doc th, .doc td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid rgba(255,255,255,.06); }
+.doc th { background: rgba(255,255,255,.04); font-weight: 600; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.doc tr:last-child td { border-bottom: 0; }
+.doc tbody tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+.doc ul.tasks { list-style: none; padding-left: 4px; }
+.doc ul.tasks li { display: flex; gap: 10px; align-items: baseline; }
+.doc ul.tasks .cb { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--chip); flex-shrink: 0; transform: translateY(2px); display: grid; place-items: center; font-size: 10px; }
+.doc ul.tasks .cb.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.doc hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
+.doc mark { background: rgba(232,176,74,.28); color: inherit; border-radius: 3px; padding: 0 1px; }
+.doc mark.cur { background: var(--col-input); color: #1c1d22; }
+
+
+/* ===== Концепция ===== */
+
+.dv { width: 100%; max-width: 1480px; height: 100%; background: var(--page); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+.dv-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--line); }
+.dv-head h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
+.dv-head .proj { color: var(--muted); font-weight: 400; }
+.dv-head .grow { flex: 1; }
+.dv-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr) 230px; }
+.dv-grid.no-toc { grid-template-columns: 290px minmax(0, 1fr); }
+
+/* левая колонка — дерево */
+.tree { background: var(--frame); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.tree-search { margin: 12px 12px 8px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; height: 34px; border-radius: 10px; background: var(--side); color: var(--muted); border: 1px solid transparent; }
+.tree-search.focus { border-color: var(--accent); background: var(--side-2); }
+.tree-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); outline: none; font: inherit; font-size: 13px; }
+.tree-tools { display: flex; align-items: center; gap: 4px; padding: 0 12px 6px; font-size: 12px; color: var(--muted); }
+.tree-tools .grow { flex: 1; }
+.seg2 { display: inline-flex; background: var(--side); border-radius: 8px; padding: 2px; }
+.seg2 button { border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 3px 9px; border-radius: 6px; }
+.seg2 button.on { background: var(--card); color: var(--text); }
+.tree-body { flex: 1; overflow-y: auto; padding: 0 6px 16px; font-size: 13px; }
+.grp { display: flex; align-items: center; gap: 6px; padding: 12px 8px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.grp .n { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.row { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 7px; color: #d4d6de; white-space: nowrap; min-width: 0; cursor: pointer; }
+.row:hover { background: rgba(255,255,255,.035); }
+.row .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.row .tm { margin-left: auto; font-size: 11px; color: var(--muted); flex-shrink: 0; padding-left: 6px; }
+.row .chev { transition: transform .15s; color: var(--muted); }
+.row.open .chev { transform: rotate(90deg); }
+.row.dir { color: var(--muted); }
+.row.dir .cnt { margin-left: auto; font-size: 11px; }
+.row.file svg { color: var(--muted); }
+.row.active { background: var(--side-2); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.row.active svg { color: var(--accent); }
+.lvl1 { padding-left: 24px; } .lvl2 { padding-left: 40px; } .lvl3 { padding-left: 56px; }
+.task-row { display: flex; align-items: center; gap: 8px; padding: 8px 8px 4px; font-size: 12.5px; font-weight: 600; min-width: 0; }
+.task-row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-row .st { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--muted); flex-shrink: 0; }
+.hit { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
+.hit:hover { background: rgba(255,255,255,.035); }
+.hit.kb { background: var(--side-2); box-shadow: inset 2px 0 0 var(--accent); }
+.hit .l1 { display: flex; gap: 6px; align-items: center; font-weight: 500; }
+.hit .l2 { font: 11px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit b { color: var(--col-input); font-weight: 600; }
+.tree-foot { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* центр — документ */
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.crumbs { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line); min-height: 48px; }
+.crumbs .path { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
+.crumbs .path span { padding: 2px 6px; border-radius: 6px; }
+.crumbs .path span:hover { background: var(--side-2); color: var(--text); }
+.crumbs .path .cur { color: var(--text); font-weight: 500; }
+.crumbs .path .src { display: inline-flex; align-items: center; gap: 6px; color: #c9ccd6; }
+.crumbs .sep { color: var(--chip); }
+.crumbs .grow { flex: 1; }
+.pane-body { flex: 1; overflow-y: auto; padding: 36px 56px 80px; }
+.pane-body .doc { margin: 0 auto; }
+.task-note { max-width: 76ch; margin: 0 auto 22px; display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 12px; background: rgba(240,138,58,.07); border: 1px solid rgba(240,138,58,.3); font-size: 13px; }
+.task-note .grow { flex: 1; }
+
+/* правая колонка — оглавление */
+.toc { border-left: 1px solid var(--line); padding: 20px 16px; overflow-y: auto; font-size: 13px; }
+.toc h4 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+.toc a { display: block; color: var(--muted); text-decoration: none; padding: 4px 10px; border-left: 2px solid var(--line); line-height: 1.35; }
+.toc a.l3 { padding-left: 22px; font-size: 12.5px; }
+.toc a:hover { color: var(--text); }
+.toc a.on { color: var(--text); border-left-color: var(--accent); }
+.toc .prog { margin-top: 18px; height: 3px; border-radius: 2px; background: var(--side-2); overflow: hidden; }
+.toc .prog i { display: block; height: 100%; width: 34%; background: var(--accent); }
+.toc .meta { margin-top: 18px; display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.toc .meta div { display: flex; gap: 6px; align-items: center; }
+
+/* пустые состояния */
+.start { flex: 1; overflow-y: auto; padding: 56px 56px; }
+.start h2 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+.start .sub { color: var(--muted); margin: 0 0 26px; }
+.start h5 { margin: 26px 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; max-width: 900px; }
+.dcard { background: var(--side); border: 1px solid transparent; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+.dcard:hover { border-color: var(--chip); background: var(--card); }
+.dcard .t { font-weight: 600; display: flex; gap: 6px; align-items: center; }
+.dcard .p { font: 11px var(--mono); color: var(--muted); }
+.dcard .x { font-size: 12.5px; color: #bfc2cc; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dcard .f { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); }
+.blank { flex: 1; display: grid; place-items: center; padding: 40px; }
+.blank .box { max-width: 440px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.blank .ill { width: 72px; height: 72px; border-radius: 20px; background: var(--side); display: grid; place-items: center; color: var(--muted); margin-bottom: 6px; }
+.blank .ill svg { width: 32px; height: 32px; }
+.blank h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.blank p { margin: 0; color: var(--muted); font-size: 13.5px; }
+.blank code { font: 12px var(--mono); background: var(--side); padding: 1px 6px; border-radius: 6px; color: #d4d6de; }
+.blank .acts { display: flex; gap: 8px; margin-top: 8px; }
+.err { max-width: 76ch; margin: 0 auto 20px; padding: 12px 14px; border-radius: 12px; background: rgba(239,107,107,.08); border: 1px solid rgba(239,107,107,.35); display: flex; gap: 10px; align-items: flex-start; font-size: 13px; }
+.err b { color: var(--danger); }
+
+</style></head>
+<body>
+<div class="mock-bar"><a href="index.html">← Все концепции</a><b>A — «Проводник»</b><span>дерево папок · документ · оглавление; окно почти на весь экран</span><span class="grow"></span><span>Состояние:</span><span class="seg"><button data-state="view" class=on>Просмотр</button><button data-state="search">Поиск</button><button data-state="none">Не выбран файл</button><button data-state="nofiles">Нет .md</button><button data-state="error">Битая ссылка</button></span></div>
+<div class="stage">
+<div class="app" id="app"><nav class="rail"><div class="icon"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M15 4v16"/></svg></div><div class="icon active"><svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></div><div class="grow"></div><div class="icon"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></div></nav><aside class="sidebar"><div class="head"><h2>Проекты</h2></div>
+  <div class="item active"><div class="name">orca-board</div><div class="sub">~/project/orca-board</div></div>
+  <div class="item"><div class="name">md-audit-backend</div><div class="sub">~/work/backend</div></div>
+  <div class="item"><div class="name">autotests-new</div><div class="sub">~/work/autotests-new</div></div></aside><main class="main"><div class="main-head"><div class="row"><h1>orca-board</h1></div><div class="tabs"><button class="tab active">Доска</button><button class="tab">Прогоны</button><button class="tab">О проекте</button></div></div><div class="board-ghost"><div class="col"></div><div class="col"></div><div class="col"></div></div></main>
+<div class="modal-backdrop"><div class="dv">
+  <div class="dv-head"><h3><svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>Документы <span class="proj">· orca-board</span></h3><span class="grow"></span><span class="muted" style="font-size:12px"><kbd>⌘P</kbd> файл · <kbd>⌘F</kbd> в тексте</span><button class="icon-btn" title="Обновить"><svg class="i s" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></button><button class="icon-btn" title="Закрыть (Esc)"><svg class="i" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+
+  <!-- обычный просмотр / поиск -->
+  <div class="dv-grid" data-show="view search error">
+    <nav class="tree">
+      <div class="tree-search" data-show="view error"><svg class="i s" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input placeholder="Найти файл…  ⌘P"></div>
+      <div class="tree-search focus" data-show="search"><svg class="i s" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input value="kanban"><button class="icon-btn" style="width:22px;height:22px"><svg class="i" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+      <div class="tree-tools" data-show="view error"><span class="seg2"><button class="on">Папки</button><button>Недавние</button></span><span class="grow"></span><button class="icon-btn" style="width:24px;height:24px" title="Свернуть всё"><svg class="i s" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></button></div>
+      <div class="tree-body" data-show="view error"><div class="grp">Проект<span class="n">11</span></div>
+<div class="row file"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">README.md</span><span class="tm">18.09</span></div>
+<div class="row dir open"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">docs</span><span class="cnt">7</span></div>
+<div class="row dir lvl1"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">investigations</span><span class="cnt">2</span></div>
+<div class="row file lvl1 active"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">architecture.md</span><span class="chip mod">изменён</span><span class="tm">14:32</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">nested-kanban.md</span><span class="chip mod">изменён</span><span class="tm">вчера</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">nested-kanban-qa.md</span><span class="tm">17.09</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">nested-kanban-qa-review.md</span><span class="tm">17.09</span></div>
+<div class="row dir open"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">skills</span><span class="cnt">2</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">coordinator.md</span><span class="tm">15.09</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">worker.md</span><span class="tm">15.09</span></div>
+<div class="row dir"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">review</span><span class="cnt">1</span></div>
+<div class="row dir" title="Цепочка из одной папки схлопнута"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">apps/desktop/…/logos</span><span class="cnt">1</span></div>
+<div class="grp">Задачи в работе<span class="n">3</span></div>
+<div class="task-row" title="orca/task_mud0q7k2"><span class="dot" style="background:var(--col-progress)"></span><span class="t">Уведомления о вопросах в трее</span><span class="st">В работе</span></div>
+<div class="row file lvl1" title="docs/notifications.md"><span style="width:0"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">docs/notifications.md</span><span class="chip new">новый</span><span class="tm">14:50</span></div>
+<div class="row file lvl1" title="docs/architecture.md"><span style="width:0"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">docs/architecture.md</span><span class="chip mod">изменён</span><span class="tm">14:41</span></div>
+<div class="task-row" title="orca/task_mud1xjx18"><span class="dot" style="background:var(--col-review)"></span><span class="t">Редизайн окна «Документы»</span><span class="st">На ревью</span></div>
+<div class="row file lvl1" title="docs/mockups/docs-viewer/README.md"><span style="width:0"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">docs/mockups/docs-viewer/README.md</span><span class="chip new">новый</span><span class="tm">13:10</span></div></div>
+      <div class="tree-body" data-show="search"><div class="grp">Проект<span class="n">3 из 11</span></div>
+<div class="hit kb"><div class="l1"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span>nested-<b>kanban</b>.md</span><span class="chip mod">изменён</span><span class="tm muted" style="margin-left:auto;font-size:11px;font-weight:400">вчера</span></div><div class="l2">docs/</div></div>
+<div class="hit"><div class="l1"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span>nested-<b>kanban</b>-qa.md</span><span class="tm muted" style="margin-left:auto;font-size:11px;font-weight:400">17.09</span></div><div class="l2">docs/</div></div>
+<div class="hit"><div class="l1"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span>nested-<b>kanban</b>-qa-review.md</span><span class="tm muted" style="margin-left:auto;font-size:11px;font-weight:400">17.09</span></div><div class="l2">docs/</div></div>
+<div class="grp">Задачи в работе<span class="n">0</span></div><div class="muted" style="padding:2px 8px;font-size:12px">Нет совпадений</div>
+<div class="grp">В тексте открытого документа</div>
+<div class="hit"><div class="l1" style="font-weight:400"><span>…доска и <b>kanban</b>-колонки…</span></div><div class="l2">architecture.md · «Роли и колонки»</div></div></div>
+      <div class="tree-foot" data-show="search"><span><kbd>↑</kbd><kbd>↓</kbd> выбрать</span><span><kbd>↵</kbd> открыть</span><span><kbd>Esc</kbd> сбросить</span></div>
+    </nav>
+    <section class="pane">
+      <div class="crumbs"><button class="icon-btn" title="Назад (⌘[)"><svg class="i s" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button><button class="icon-btn" title="Вперёд (⌘])" style="opacity:.4"><svg class="i s" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+<div class="path"><span class="src">Проект</span><span class="sep">/</span><span>docs</span><span class="sep">/</span><span class="cur">architecture.md</span></div><span class="grow"></span>
+<button class="icon-btn" title="Оглавление"><svg class="i s" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></button><button class="icon-btn" title="Показать в папке"><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5 12 16l2.5-2.5"/></svg></button><button class="icon-btn" title="Открыть в системе"><svg class="i s" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button></div>
+      <div class="pane-body">
+        <div class="err" data-show="error"><svg class="i" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg><div><b>Файл не найден: docs/old-plan.md</b><br><span class="muted">Ссылка из architecture.md ведёт на удалённый файл. Остались на странице, на которой были.</span></div></div>
+        <div class="task-note" data-show="view"><span class="dot" style="background:var(--col-progress)"></span><span class="grow">Этот файл также изменён в задаче <b>«Уведомления о вопросах в трее»</b></span><button class="btn-sm" style="height:26px;font-size:12px">Открыть версию задачи</button></div>
+        <article class="doc">
+<h1>Архитектура orca-board</h1>
+<div class="lead-meta"><span>docs/architecture.md</span><span>≈ 18 мин чтения</span><span>изменён сегодня в 14:32</span></div>
+<p>Все агенты — дочерние процессы приложения. Никакого API: агент логинится сам. CLI <code>orca-board</code> — тонкий клиент к сокету приложения; его вызывают агенты через свой Bash. Приложение — единственный владелец состояния.</p>
+
+<h2 id="h-proc"><a class="anchor" href="#h-proc">#</a>Процессы</h2>
+<div class="code"><div class="code-head"><span>text</span><span class="grow"></span><button>Копировать</button></div><pre>Electron main ───── node-pty ───── PTY: claude (координатор)
+   │                                   └─ bash: orca-board task-create ...
+   │                                          │ unix socket / JSON-RPC
+   ├── JSON (tasks, runs, events) ◄───────────┘
+   ├── node-pty ───── PTY: claude (воркер задачи #12, worktree ../wt/task-12)
+   └── renderer (React): доска + xterm.js на каждый PTY</pre></div>
+<ul>
+<li>Сокет: <code>$ORCA_SOCKET</code>, иначе <code>~/.orca-board/orca.sock</code>, на Windows — <code>\\.\pipe\orca-board</code>.</li>
+<li>Каждый воркер работает в своём <strong>git worktree</strong> на отдельной ветке <code>orca/&lt;task-id&gt;</code>.</li>
+</ul>
+
+<h2 id="h-model"><a class="anchor" href="#h-model">#</a>Модель</h2>
+<p><code>Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch? }</code></p>
+<ul>
+<li><code>status</code> — <strong>id колонки доски</strong>, не фиксированный enum.</li>
+<li><code>runId</code> — прогон, к которому относится задача. Без прогона задача попадает во «Входящие», подробнее — <a class="doclink" href="#">nested-kanban.md</a>.</li>
+<li><code>startedAt</code> — первый <code>startDispatch</code>; <code>doneAt</code> — момент попадания в колонку <code>kind=done</code>.</li>
+</ul>
+
+<h3 id="h-cols"><a class="anchor" href="#h-cols">#</a>Роли и колонки</h3>
+<div class="tbl"><table>
+<thead><tr><th>Колонка</th><th>kind</th><th>Кто двигает</th></tr></thead>
+<tbody>
+<tr><td>Бэклог</td><td><code>backlog</code></td><td>человек, координатор</td></tr>
+<tr><td>В работе</td><td><code>progress</code></td><td><code>startDispatch</code></td></tr>
+<tr><td>Нужен ввод</td><td><code>input</code></td><td>воркер: <code>orca-board ask</code></td></tr>
+<tr><td>Ревью</td><td><code>review</code></td><td>воркер: <code>orca-board done</code></td></tr>
+<tr><td>Готово</td><td><code>done</code></td><td>координатор после мержа</td></tr>
+</tbody></table></div>
+
+<blockquote><p><b>Важно.</b> Колонка с <code>kind=done</code> обязана быть ровно одна: по ней считается <code>doneAt</code> и снимается бейдж «в работе» в сайдбаре.</p></blockquote>
+
+<h2 id="h-runs"><a class="anchor" href="#h-runs">#</a>Прогоны</h2>
+<p>Глобальная задача = прогон (<code>Run</code>). Координатор создаёт подзадачи через CLI и ждёт событий без трат токенов:</p>
+<div class="code"><div class="code-head"><span>bash</span><span class="grow"></span><button>Копировать</button></div><pre><span class="tok-c"># координатор: завести подзадачу и дождаться результата</span>
+orca-board task-create --title <span class="tok-s">"Фикс CSV-экспорта"</span> --role worker
+orca-board wait --until <span class="tok-s">done</span> --timeout <span class="tok-k">1800</span></pre></div>
+<ol>
+<li>Воркер получает задание в PTY и работает в своём worktree.</li>
+<li>По <code>orca-board done</code> задача уходит в «Ревью», координатор мержит ветку.</li>
+<li>Детектор тишины будит координатора, если воркер в работе молчит дольше порога.</li>
+</ol>
+
+<h2 id="h-ipc"><a class="anchor" href="#h-ipc">#</a>IPC</h2>
+<p>Типы — <code>shared/ipc.ts</code> (<code>OrcaApi</code>), мост — <code>preload/index.ts</code>. Документация Electron: <a class="ext" href="#">contextBridge</a>.</p>
+
+<h2 id="h-open"><a class="anchor" href="#h-open">#</a>Открытые вопросы</h2>
+<ul class="tasks">
+<li><span class="cb on">✓</span><span>Хранить события в JSONL вместо одного JSON</span></li>
+<li><span class="cb"></span><span>Лимит одновременных воркеров на проект</span></li>
+<li><span class="cb"></span><span>Мерж без координатора для задач-ответов</span></li>
+</ul>
+</article>
+      </div>
+    </section>
+    <aside class="toc"><h4>На странице</h4><a href="#h-proc" class="">Процессы</a><a href="#h-model" class=" on">Модель</a><a href="#h-cols" class="l3">Роли и колонки</a><a href="#h-runs" class="">Прогоны</a><a href="#h-ipc" class="">IPC</a><a href="#h-open" class="">Открытые вопросы</a><div class="prog"><i></i></div>
+<div class="meta"><div><svg class="i s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>изменён сегодня в 14:32</div><div><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>38 КБ · ≈ 18 мин</div><div><svg class="i s" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10c0 4-6 3-10 6"/></svg>также правит задача «Уведомления…»</div></div></aside>
+  </div>
+
+  <!-- ничего не выбрано -->
+  <div class="dv-grid no-toc" data-show="none">
+    <nav class="tree"><div class="tree-search"><svg class="i s" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input placeholder="Найти файл…  ⌘P"></div><div class="tree-tools"><span class="seg2"><button class="on">Папки</button><button>Недавние</button></span></div><div class="tree-body"><div class="grp">Проект<span class="n">11</span></div>
+<div class="row file"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">README.md</span><span class="tm">18.09</span></div>
+<div class="row dir open"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">docs</span><span class="cnt">7</span></div>
+<div class="row dir lvl1"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">investigations</span><span class="cnt">2</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">architecture.md</span><span class="chip mod">изменён</span><span class="tm">14:32</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">nested-kanban.md</span><span class="chip mod">изменён</span><span class="tm">вчера</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">nested-kanban-qa.md</span><span class="tm">17.09</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">nested-kanban-qa-review.md</span><span class="tm">17.09</span></div>
+<div class="row dir open"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">skills</span><span class="cnt">2</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">coordinator.md</span><span class="tm">15.09</span></div>
+<div class="row file lvl1"><span style="width:14px"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">worker.md</span><span class="tm">15.09</span></div>
+<div class="row dir"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">review</span><span class="cnt">1</span></div>
+<div class="row dir" title="Цепочка из одной папки схлопнута"><svg class="i s chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="nm">apps/desktop/…/logos</span><span class="cnt">1</span></div>
+<div class="grp">Задачи в работе<span class="n">3</span></div>
+<div class="task-row" title="orca/task_mud0q7k2"><span class="dot" style="background:var(--col-progress)"></span><span class="t">Уведомления о вопросах в трее</span><span class="st">В работе</span></div>
+<div class="row file lvl1" title="docs/notifications.md"><span style="width:0"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">docs/notifications.md</span><span class="chip new">новый</span><span class="tm">14:50</span></div>
+<div class="row file lvl1" title="docs/architecture.md"><span style="width:0"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">docs/architecture.md</span><span class="chip mod">изменён</span><span class="tm">14:41</span></div>
+<div class="task-row" title="orca/task_mud1xjx18"><span class="dot" style="background:var(--col-review)"></span><span class="t">Редизайн окна «Документы»</span><span class="st">На ревью</span></div>
+<div class="row file lvl1" title="docs/mockups/docs-viewer/README.md"><span style="width:0"></span><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span class="nm">docs/mockups/docs-viewer/README.md</span><span class="chip new">новый</span><span class="tm">13:10</span></div></div></nav>
+    <section class="start">
+      <h2>Документы orca-board</h2><p class="sub">11 файлов в проекте, 3 изменены задачами в работе. Выберите файл слева или нажмите <kbd>⌘P</kbd>.</p>
+      <h5>Изменены задачами в работе</h5>
+      <div class="cards">
+        <div class="dcard"><div class="t"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>notifications.md <span class="chip new">новый</span></div><div class="p">docs/</div><div class="x">Уведомления о вопросах воркера: трей, бейдж на иконке, звук…</div><div class="f"><span class="dot" style="background:var(--col-progress)"></span>Уведомления о вопросах в трее · 14:50</div></div>
+        <div class="dcard"><div class="t"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>architecture.md <span class="chip mod">изменён</span></div><div class="p">docs/</div><div class="x">Все агенты — дочерние процессы приложения. Никакого API…</div><div class="f"><span class="dot" style="background:var(--col-progress)"></span>Уведомления о вопросах в трее · 14:41</div></div>
+      </div>
+      <h5>Недавние в проекте</h5>
+      <div class="cards">
+        <div class="dcard"><div class="t"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>architecture.md</div><div class="p">docs/</div><div class="f"><svg class="i s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>сегодня 14:32 · 38 КБ</div></div>
+        <div class="dcard"><div class="t"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>nested-kanban.md</div><div class="p">docs/</div><div class="f"><svg class="i s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>вчера 19:05 · 12 КБ</div></div>
+        <div class="dcard"><div class="t"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>README.md</div><div class="p">/ (корень)</div><div class="f"><svg class="i s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>18.09 · 4 КБ</div></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- в проекте нет .md -->
+  <div class="dv-grid no-toc" data-show="nofiles">
+    <nav class="tree"><div class="tree-search" style="opacity:.5"><svg class="i s" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input placeholder="Найти файл…" disabled></div><div class="tree-body"><div class="grp">Проект<span class="n">0</span></div><div class="grp">Задачи в работе<span class="n">0</span></div></div></nav>
+    <section class="blank"><div class="box"><div class="ill"><svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></div><h2>В проекте пока нет markdown-файлов</h2>
+      <p>Здесь появятся <code>.md</code> из репозитория (кроме игнорируемых git'ом) и файлы, которые пишут воркеры в своих worktree — например, ответы и планы.</p>
+      <div class="acts"><button class="btn-sm"><svg class="i s" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg>Обновить</button><button class="btn-sm"><svg class="i s" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5 12 16l2.5-2.5"/></svg>Открыть папку проекта</button></div></div></section>
+  </div>
+</div></div></div>
+</div>
+
+<script>
+// Переключение состояний макета: у элементов data-show="state1 state2" — видны только в этих состояниях.
+function setState(s) {
+  document.body.dataset.state = s; if (document.getElementById('app')) document.getElementById('app').style.setProperty('--w', s === 'narrow' ? '900px' : '100%'); history.replaceState(null, '', '#' + s);
+  setTimeout(() => { const m = [...document.querySelectorAll('mark.cur')].find(x => x.offsetParent); if (m) m.scrollIntoView({block: 'center'}); });
+  document.querySelectorAll('.mock-bar [data-state]').forEach(b => b.classList.toggle('on', b.dataset.state === s));
+  document.querySelectorAll('[data-show]').forEach(el => {
+    el.style.setProperty('display', el.dataset.show.split(' ').includes(s) ? '' : 'none', 'important');
+    if (el.dataset.show.split(' ').includes(s)) el.removeAttribute('hidden-state');
+  });
+}
+document.querySelectorAll('.mock-bar [data-state]').forEach(b => b.addEventListener('click', () => setState(b.dataset.state)));
+document.querySelectorAll('.mock-bar [data-w]').forEach(b => b.addEventListener('click', () => {
+  document.getElementById('app').style.setProperty('--w', b.dataset.w);
+  b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+}));
+// #состояние в адресе открывает макет сразу в нём (например concept-a.html#search)
+const fromHash = location.hash.slice(1);
+setState(document.querySelector(`.mock-bar [data-state="${fromHash}"]`) ? fromHash : document.querySelector('.mock-bar [data-state].on').dataset.state);
+</script>
+<script>
+document.querySelectorAll('.row.dir').forEach(r => r.addEventListener('click', () => r.classList.toggle('open')));
+document.querySelectorAll('.toc a').forEach(a => a.addEventListener('click', e => { e.preventDefault();
+  a.parentElement.querySelectorAll('a').forEach(x => x.classList.toggle('on', x === a));
+  document.getElementById(a.getAttribute('href').slice(1))?.scrollIntoView({behavior:'smooth'}); }));
+</script>
+</body></html>
