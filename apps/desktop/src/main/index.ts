@@ -2,10 +2,13 @@ import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electr
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, questionAnswerMessage, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
+import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
+import { currentBranch } from './git'
 import { startSocketServer, askWaiting } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
@@ -310,6 +313,27 @@ function notify(projectId: string, events: OrcaEvent[]): void {
   }
 }
 
+/**
+ * Задачи в работе для «Документов»: у задачи есть worktree на диске и она не в колонке kind=done.
+ * После принятия ревью worktree удаляется — документы задачи уже в проекте.
+ */
+function docTasks(store: TaskStore): DocTask[] {
+  return store
+    .snapshot()
+    .tasks.filter((t) => t.worktree && store.columnKind(t.status) !== 'done' && existsSync(t.worktree))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .map((t) => ({ id: t.id, title: t.title, worktree: t.worktree!, branch: t.branch }))
+}
+
+/** Корень источника документов: проект или worktree его задачи в работе. Чужие id — ошибка. */
+function docRoot(source: unknown): string {
+  const p = resolveProject()
+  if (source === PROJECT_SOURCE) return p.root
+  const task = docTasks(p.store).find((t) => t.id === source)
+  if (!task) throw new Error(`задача не в работе или без worktree: ${String(source)}`)
+  return task.worktree
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:getSettings', () => projects.settings())
   ipcMain.handle('app:setSettings', (_e, patch: Partial<AppSettings>) => projects.setSettings(patch ?? {}))
@@ -399,6 +423,17 @@ function registerIpc(): void {
     if (!text && valid.length === 0) throw new Error('цель не задана')
     return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
   })
+  ipcMain.handle('docs:list', () => {
+    if (!projects.active()) return []
+    const p = resolveProject()
+    return listDocGroups(p.root, currentBranch(p.root), docTasks(p.store))
+  })
+  ipcMain.handle('docs:read', (_e, source: unknown, path: unknown) => readDoc(docRoot(source), path))
+  ipcMain.handle('docs:open', async (_e, source: unknown, path: unknown) => {
+    const err = await shell.openPath(resolveDocPath(docRoot(source), path))
+    if (err) throw new Error(err)
+  })
+  ipcMain.handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
   ipcMain.handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)

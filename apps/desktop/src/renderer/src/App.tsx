@@ -15,6 +15,7 @@ import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
 import { AboutProject } from './about/AboutProject'
 import { SettingsModal } from './settings/SettingsModal'
+import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
@@ -125,6 +126,8 @@ export function App(): React.JSX.Element {
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
+  /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
+  const [showDocs, setShowDocs] = useState(false)
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -513,6 +516,9 @@ export function App(): React.JSX.Element {
         >
           <Icon.gear />
         </button>
+        <button className={`icon ${showDocs ? 'active' : ''}`} title="Документы" onClick={() => setShowDocs(true)} disabled={!active}>
+          <Icon.doc />
+        </button>
         <div className="grow" />
         <div className="avatar">🐋</div>
       </aside>
@@ -689,6 +695,7 @@ export function App(): React.JSX.Element {
       {showSettings && (
         <SettingsModal agents={agents} onRefreshAgents={() => refreshAgents(true)} onClose={() => setShowSettings(false)} />
       )}
+      {showDocs && active && <DocsModal key={active.id} onClose={() => setShowDocs(false)} />}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}

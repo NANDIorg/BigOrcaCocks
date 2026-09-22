@@ -79,6 +79,12 @@ const api: OrcaApi = {
   coordinator: {
     start: (objective, cols, rows, images) => ipcRenderer.invoke('coordinator:start', objective, cols, rows, images)
   },
+  docs: {
+    list: () => ipcRenderer.invoke('docs:list'),
+    read: (source, path) => ipcRenderer.invoke('docs:read', source, path),
+    open: (source, path) => ipcRenderer.invoke('docs:open', source, path),
+    reveal: (source, path) => ipcRenderer.invoke('docs:reveal', source, path)
+  },
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),
     accept: (taskId, decision) => ipcRenderer.invoke('review:accept', taskId, decision),

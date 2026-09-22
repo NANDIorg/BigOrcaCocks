@@ -106,6 +106,24 @@ export interface ReviewInfo {
   dirty: boolean
 }
 
+/** Markdown-файл в просмотрщике «Документы». */
+export interface DocFile {
+  /** Относительно корня источника (проекта или worktree задачи), через `/`. */
+  path: string
+  size: number
+  mtime: number
+  /** Не отслеживается git'ом — новый файл. */
+  untracked: boolean
+}
+
+/** Группа документов: проект (`source: 'project'`) или worktree задачи в работе (`source` — id задачи). */
+export interface DocGroup {
+  source: string
+  title: string
+  branch?: string
+  files: DocFile[]
+}
+
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
 export interface OrcaApi {
   app: {
@@ -215,6 +233,16 @@ export interface OrcaApi {
      * Пустая цель допустима только с изображениями (тогда цель — `DEFAULT_IMAGE_OBJECTIVE`).
      */
     start(objective: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
+  }
+  /** .md-файлы активного проекта и worktree его задач в работе. Путь — только относительный, внутри источника. */
+  docs: {
+    list(): Promise<DocGroup[]>
+    /** Содержимое .md (не больше 2 МБ); путь вне источника, симлинк наружу, не-.md — ошибка. */
+    read(source: string, path: string): Promise<string>
+    /** Открыть файл в приложении системы по умолчанию. */
+    open(source: string, path: string): Promise<void>
+    /** Показать файл в Finder/Проводнике. */
+    reveal(source: string, path: string): Promise<void>
   }
   review: {
     info(taskId: string): Promise<ReviewInfo>
