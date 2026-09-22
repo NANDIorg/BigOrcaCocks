@@ -29,7 +29,10 @@ export interface CoordinatorCloseInput {
   events: OrcaEvent[]
   /** Статус (id колонки) относится к kind=done. */
   isDone(status: string): boolean
-  /** Агент координатора сам не выходит после финального ответа — его терминал закрывает приложение. */
+  /**
+   * Агент координатора сам не выходит после финального ответа: без сигнала `runs finish` его терминал
+   * закрывается по страховке `abandonedMs`. С сигналом или при ручном done закрывается любой агент.
+   */
   lingers(agent: AgentKind | undefined): boolean
   /** Время последней активности PTY (вывод или ввод человека); undefined — PTY уже не жив. */
   lastActivityAt(ptyId: string): number | undefined
@@ -44,12 +47,14 @@ export interface CoordinatorToClose {
 }
 
 /**
- * Терминалы координаторов, которые пора закрыть. Прогон подходит, только если:
- * он закрыт событием run_done (ручное закрытие не в счёт), все его задачи и сейчас в kind=done,
- * по ним нет открытых вопросов, агент координатора из «незакрывающихся» и PTY жив. Дальше:
- * - координатор прислал `runs finish` после run_done — закрыть, когда терминал молчит `graceMs`
- *   с момента сигнала и последней активности;
- * - сигнала нет — закрыть, только если терминал молчит `abandonedMs` с run_done (страховка).
+ * Терминалы координаторов, которые пора закрыть. Прогон подходит, только если он закрыт событием
+ * run_done (закрытие `runs close` без события не в счёт) и PTY координатора жив. Дальше два случая:
+ * - run_done `manual` — человек перенёс глобальную задачу в «Сделано»: решение за ним, подзадачи и вопросы
+ *   не проверяются (прогон снова открыт → `closedAt` снят, сюда не попадёт); закрыть для любого агента,
+ *   когда терминал молчит `graceMs` с run_done, сигнала `runs finish` и последней активности;
+ * - автоматический run_done — все задачи и сейчас в kind=done, по ним нет открытых вопросов. Координатор
+ *   прислал `runs finish` после run_done — закрыть для любого агента, когда терминал молчит `graceMs`;
+ *   сигнала нет — только «незакрывающийся» агент (`lingers`) и только после `abandonedMs` тишины (страховка).
  * Активность до run_done не в счёт — сводка пишется после него.
  */
 export function coordinatorsToClose(input: CoordinatorCloseInput): CoordinatorToClose[] {
@@ -58,20 +63,25 @@ export function coordinatorsToClose(input: CoordinatorCloseInput): CoordinatorTo
   const out: CoordinatorToClose[] = []
   for (const run of input.runs) {
     const ptyId = run.coordinatorPtyId
-    if (!ptyId || run.closedAt === undefined || !input.lingers(run.coordinatorAgent)) continue
+    if (!ptyId || run.closedAt === undefined) continue
     // Последний run_done: прогон мог переоткрываться (повторный запуск координатора на глобальной задаче).
     const runDone = input.events.filter((e) => e.type === 'run_done' && e.payload.runId === run.id).pop()
     if (!runDone) continue
-    const tasks = input.tasks.filter((t) => t.runId === run.id)
-    // Прогон «ожил» после run_done (новая задача, задачу вернули из done) — не закрываем.
-    if (tasks.length === 0 || !tasks.every((t) => input.isDone(t.status))) continue
-    const ids = new Set(tasks.map((t) => t.id))
-    if (input.questions.some((q) => !q.answeredAt && ids.has(q.taskId))) continue
+    const manual = runDone.payload.manual === true
+    if (!manual) {
+      const tasks = input.tasks.filter((t) => t.runId === run.id)
+      // Прогон «ожил» после run_done (новая задача, задачу вернули из done) — не закрываем.
+      if (tasks.length === 0 || !tasks.every((t) => input.isDone(t.status))) continue
+      const ids = new Set(tasks.map((t) => t.id))
+      if (input.questions.some((q) => !q.answeredAt && ids.has(q.taskId))) continue
+    }
+    const finished = run.finishedAt !== undefined && run.finishedAt >= runDone.createdAt ? run.finishedAt : undefined
+    const quick = manual || finished !== undefined
+    if (!quick && !input.lingers(run.coordinatorAgent)) continue
     const active = input.lastActivityAt(ptyId)
     if (active === undefined) continue
-    const finished = run.finishedAt !== undefined && run.finishedAt >= runDone.createdAt ? run.finishedAt : undefined
     const since = Math.max(active, runDone.createdAt, finished ?? 0)
-    if (input.now - since < (finished !== undefined ? graceMs : abandonedMs)) continue
+    if (input.now - since < (quick ? graceMs : abandonedMs)) continue
     out.push({ runId: run.id, ptyId })
   }
   return out

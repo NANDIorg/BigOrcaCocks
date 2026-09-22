@@ -142,20 +142,26 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   задачи и все они в колонке `kind=done`, получает `closedAt` и событие `run_done {runId, objective}`.
   Ловит любой путь в done и удаление задач. Прогон без задач автоматически не закрывается; закрытый —
   повторно не закрывается и `run_done` не шлёт.
+- **Ручной done** (`moveGlobalTask` в колонку `kind=done`: IPC `globalTasks:move`, сокет `global.move`): открытый
+  прогон закрывается так же, но событие — `run_done {runId, objective, manual: true}`, подзадачи не трогаются.
+  Повтор — без изменений и без второго события; перенос из done в другую колонку переоткрывает прогон (`reopenRun`).
 - **Закрытие терминала координатора** (`coordinatorsToClose` в `packages/core/src/coordinator-close.ts`,
   опрос раз в 5 с — `watchFinishedCoordinators` в `apps/desktop/src/main/index.ts`): интерактивный CLI
-  с `lingersAfterAnswer` в реестре агентов (сейчас Codex) после финальной сводки ждёт ввода и сам не выходит.
+  координатора (Claude Code и Codex) после финальной сводки ждёт ввода и сам не выходит.
   Тишина терминала ≠ завершение (агент может ждать подтверждения команды, человек — читать ответ), поэтому
   нужен положительный сигнал: координатор последней командой вызывает `orca-board runs finish`
   (`store.finishRun` → `Run.finishedAt`). На незакрытом прогоне — ошибка, кроме переоткрытого повторным
   запуском прогона, где все подзадачи уже в `kind=done`: тогда `finishRun` сам закрывает его (`closedAt`,
   `run_done` сразу потреблён, см. `docs/nested-kanban.md`). PTY закрывается `killPty` (вкладка уходит
-  по `terminals:changed`), если прогон закрыт именно `run_done`, все задачи прогона и сейчас в `kind=done`,
-  по ним нет открытых вопросов и терминал неактивен `COORDINATOR_FINISH_GRACE_MS` (15 с) после сигнала.
-  Без сигнала — страховка: `COORDINATOR_ABANDONED_MS` (30 мин) неактивности с `run_done`.
+  по `terminals:changed`) у любого агента, если прогон закрыт именно `run_done`, все задачи прогона и сейчас
+  в `kind=done`, по ним нет открытых вопросов и терминал неактивен `COORDINATOR_FINISH_GRACE_MS` (15 с) после сигнала.
+  Без сигнала — страховка только для агентов с `lingersAfterAnswer` (Codex): `COORDINATOR_ABANDONED_MS` (30 мин)
+  неактивности с `run_done`. Ручной done (`run_done.payload.manual`) — решение человека: подзадачи и вопросы
+  не проверяются, терминал любого агента закрывается после `COORDINATOR_FINISH_GRACE_MS` тишины с `run_done`
+  (и с сигнала, если он был) — координатор успевает написать сводку и вызвать `runs finish`.
   Активность — вывод PTY и ввод из вкладки (`writePty` → `lastInputAt`; `lastActivityAt` в `pty.ts`),
   то есть человек, продолжающий диалог, сдвигает закрытие. Агент координатора — `Run.coordinatorAgent`
-  (пишется в `setRunPty`). Ручное закрытие прогона, чужие прогоны и координаторы на claude не затрагиваются.
+  (пишется в `setRunPty`). Закрытие через `runs close` (без `run_done`) и чужие прогоны не затрагиваются.
 - **Ручное закрытие**: `store.closeRun(id)` — идемпотентно, `run_done` не шлёт. Сокет `runs.close {run}`
   (без `run` — ошибка), CLI `runs close [--run <id>]`, IPC `runs:close(id)`.
 - **Список**: сокет `runs.list` → `Run` + `tasks` (число задач прогона) и `done` (из них в `kind=done`);
