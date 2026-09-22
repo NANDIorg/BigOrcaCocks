@@ -21,6 +21,33 @@
 - **Завершение — явное.** Воркер обязан вызвать `orca-board done --summary ...`.
   Выход процесса без этого = состояние `unknown`, не `done`.
 
+## Установка
+
+### Требования
+
+- **Node.js 24**
+- **pnpm**
+- **git**
+- **CLI `claude`** (Claude Code) — приложение запускает его как обычный терминал
+  и работает по подписке пользователя, API-ключи ему не нужны (см. шапку).
+
+### Запуск в dev
+
+```
+pnpm install
+pnpm dev
+```
+
+`pnpm dev` — это `pnpm --filter @orca-board/desktop dev`, то есть `electron-vite dev`.
+
+### Сборка .app
+
+- **`pnpm --filter @orca-board/desktop run pack`** → `apps/desktop/release/mac-arm64/orca-board.app`
+  (без подписи, только macOS arm64).
+- **`pnpm --filter @orca-board/desktop run dist`** → dmg.
+- **CLI `orca-board`** кладётся в ресурсы приложения (`Resources/cli`, см. `docs/architecture.md`),
+  отдельно ставить его не нужно.
+
 ## Стек (предложение)
 
 | Слой | Технология | Зачем |
@@ -58,7 +85,6 @@ orca-board/
 
 Несколько проектов: «+» в сайдбаре открывает выбор папки, доска и сокет работают
 на проект (`ORCA_PROJECT` у агентов, `--project` в CLI). Уведомления macOS на вопрос,
-эскалацию и завершение. Сборка: `pnpm --filter @orca-board/desktop run pack` →
-`apps/desktop/release/mac-arm64/orca-board.app` (без подписи), `run dist` — dmg.
+эскалацию и завершение. Сборка `.app`/dmg — см. «Установка».
 
 Проверить CLI руками: открыть «Терминал» в приложении и набрать `orca-board --help`.
