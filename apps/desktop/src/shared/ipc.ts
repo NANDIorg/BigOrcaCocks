@@ -51,6 +51,15 @@ export interface Project {
   columns?: BoardColumn[]
 }
 
+/** Настройки по умолчанию, копируемые в каждый новый проект. */
+export interface ProjectDefaults {
+  permissionMode: PermissionMode
+  /** undefined — все установленные агенты. */
+  enabledAgents?: AgentKind[]
+  roles: Role[]
+  columns: BoardColumn[]
+}
+
 export interface ReviewInfo {
   base: string
   branch: string
@@ -74,6 +83,12 @@ export interface OrcaApi {
     setRoles(id: string, roles: Role[]): Promise<Project>
     /** Задачи из удалённых колонок переезжают в backlog. */
     setColumns(id: string, columns: BoardColumn[]): Promise<Project>
+    /** Глобальный дефолт для новых проектов (незаданное — встроенные значения). */
+    getDefaults(): Promise<ProjectDefaults>
+    /** Мерж патча в дефолт; роли/колонки валидируются, мусор — ошибка. enabledAgents: undefined — «все установленные». */
+    setDefaults(patch: Partial<ProjectDefaults>): Promise<ProjectDefaults>
+    /** Переписать настройки проекта дефолтом; задачи из исчезнувших колонок — в backlog. */
+    applyDefaults(id: string): Promise<Project>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
   }
