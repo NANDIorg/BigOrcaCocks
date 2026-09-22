@@ -2,9 +2,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
-import { globalTaskTitle, INBOX_TITLE } from './global-tasks.ts'
+import { globalBoardColumns, globalColumnKind, globalTaskStatus, globalTaskTitle, INBOX_TITLE, toGlobalTasks } from './global-tasks.ts'
 import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
-import type { BoardColumn, Task } from './types.ts'
+import { DEFAULT_COLUMNS, type BoardColumn, type Run, type Task } from './types.ts'
 
 /** Колонки проекта не совпадают с дефолтными id: API не должен их хардкодить. */
 const COLUMNS: BoardColumn[] = [
@@ -45,13 +45,26 @@ describe('глобальные задачи: CRUD и колонки проект
     assert.equal(g.status, 'plan')
     assert.equal(g.inbox, false)
     assert.deepEqual(g.progress, { total: 0, done: 0, byStatus: {}, byKind: {} })
-    assert.equal(store.createGlobalTask({ title: 'x', status: 'human' }).status, 'human')
+    assert.equal(store.createGlobalTask({ title: 'x', status: 'wip' }).status, 'wip')
   })
 
   it('создание без названия и описания и в неизвестную колонку — ошибка', () => {
     const store = newStore()
     assert.throws(() => store.createGlobalTask({ title: ' ', description: ' ' }), /название или описание/)
     assert.throws(() => store.createGlobalTask({ title: 'x', status: 'backlog' }), /колонки с id «backlog» нет/)
+  })
+
+  it('создание и перемещение в колонку подзадач (ready/needs_input/review/custom) — ошибка', () => {
+    const store = newStore()
+    for (const status of ['todo', 'ask', 'ai', 'human']) {
+      assert.throws(() => store.createGlobalTask({ title: 'x', status }), /только для подзадач/)
+    }
+    const g = store.createGlobalTask({ title: 'G' })
+    for (const status of ['todo', 'ask', 'ai', 'human']) {
+      assert.throws(() => store.moveGlobalTask(g.id, status), /только для подзадач/)
+    }
+    assert.equal(store.getGlobalTask(g.id).status, 'plan')
+    assert.equal(store.listGlobalTasks().length, 1)
   })
 
   it('название без title выводится из первой строки описания', () => {
@@ -78,7 +91,7 @@ describe('глобальные задачи: CRUD и колонки проект
     const a = store.createTask({ title: 'a', runId: g.id })
     const b = store.createTask({ title: 'b', runId: g.id, deps: [a.id] })
     const before = statuses(store.listSubtasks(g.id))
-    assert.equal(store.moveGlobalTask(g.id, 'human').status, 'human')
+    assert.equal(store.moveGlobalTask(g.id, 'wip').status, 'wip')
     assert.equal(store.moveGlobalTask(g.id, 'fin').status, 'fin')
     assert.deepEqual(statuses(store.listSubtasks(g.id)), before)
     assert.equal(store.getRun(g.id)!.closedAt, undefined, 'ручной done не закрывает прогон')
@@ -103,9 +116,77 @@ describe('глобальные задачи: CRUD и колонки проект
 
   it('удаление колонки переносит и глобальные задачи (reassignColumn)', () => {
     const store = newStore()
-    const g = store.createGlobalTask({ title: 'G', status: 'human' })
-    assert.equal(store.reassignColumn('human', 'plan'), 1)
+    const g = store.createGlobalTask({ title: 'G', status: 'wip' })
+    assert.equal(store.reassignColumn('wip', 'plan'), 1)
     assert.equal(store.getGlobalTask(g.id).status, 'plan')
+  })
+})
+
+describe('колонки глобального канбана', () => {
+  it('глобальный канбан — только backlog / in_progress / done в порядке проекта', () => {
+    assert.deepEqual(globalBoardColumns(COLUMNS).map((c) => c.id), ['plan', 'wip', 'fin'])
+    assert.deepEqual(globalBoardColumns(DEFAULT_COLUMNS).map((c) => c.title), ['Бэклог', 'В работе', 'Сделано'])
+    assert.equal(DEFAULT_COLUMNS.length, 6, 'колонки проекта (локальный канбан) не меняются')
+  })
+
+  it('сведение вида: ready → backlog, needs_input/review/custom → in_progress', () => {
+    assert.equal(globalColumnKind('backlog'), 'backlog')
+    assert.equal(globalColumnKind('ready'), 'backlog')
+    assert.equal(globalColumnKind('in_progress'), 'in_progress')
+    assert.equal(globalColumnKind('needs_input'), 'in_progress')
+    assert.equal(globalColumnKind('review'), 'in_progress')
+    assert.equal(globalColumnKind('custom'), 'in_progress')
+    assert.equal(globalColumnKind('done'), 'done')
+    assert.equal(globalColumnKind(undefined), 'backlog')
+  })
+
+  it('статус из скрытой колонки сводится к видимой; видимые — как есть', () => {
+    const cases: [string | undefined, string | undefined][] = [
+      ['plan', 'plan'], ['todo', 'plan'], ['wip', 'wip'], ['ask', 'wip'], ['ai', 'wip'], ['human', 'wip'],
+      ['fin', 'fin'], ['gone', 'plan'], [undefined, 'plan']
+    ]
+    for (const [from, to] of cases) assert.equal(globalTaskStatus(from, COLUMNS), to, String(from))
+    // Нет колонки нужного вида — первая видимая.
+    const noWip = COLUMNS.filter((c) => c.kind !== 'in_progress')
+    assert.equal(globalTaskStatus('ai', noWip), 'plan')
+  })
+
+  it('карточки со статусами ready/needs_input/review не теряются: встают в видимые колонки', () => {
+    const run = (id: string, status: string): Run => ({ id, objective: id, status, createdAt: 1 })
+    const globals = toGlobalTasks([run('r1', 'todo'), run('r2', 'ask'), run('r3', 'ai'), run('r4', 'human')], [], COLUMNS)
+    assert.deepEqual(globals.map((g) => [g.id, g.status]), [['r1', 'plan'], ['r2', 'wip'], ['r3', 'wip'], ['r4', 'wip']])
+    const visible = new Set(globalBoardColumns(COLUMNS).map((c) => c.id))
+    assert.ok(globals.every((g) => visible.has(g.status)))
+  })
+
+  it('загрузка доски: прогоны в скрытых колонках мигрируют и сохраняются; closeRun видит сведённый in_progress', () => {
+    const T = 1_000
+    const snap = {
+      tasks: [],
+      runs: [
+        { id: 'run_ready', objective: 'r', status: 'todo', createdAt: T },
+        { id: 'run_ask', objective: 'a', status: 'ask', createdAt: T + 1 },
+        { id: 'run_review', objective: 'v', status: 'ai', createdAt: T + 2 }
+      ],
+      dispatches: [],
+      events: [],
+      questions: []
+    }
+    const p = memory(snap as Partial<StoreSnapshot>)
+    const store = newStore(p)
+    assert.equal(p.saves(), 1)
+    assert.deepEqual(p.saved()!.runs.map((r) => r.status), ['plan', 'wip', 'wip'])
+    assert.deepEqual(store.listGlobalTasks().map((g) => g.status), ['plan', 'wip', 'wip'])
+    store.closeRun('run_ask')
+    assert.equal(store.getGlobalTask('run_ask').status, 'fin')
+  })
+
+  it('колонку перевели в скрытый kind на ходу — карточка показывается в видимой', () => {
+    let columns = COLUMNS
+    const store = new TaskStore(memory(), () => columns)
+    const g = store.createGlobalTask({ title: 'G', status: 'wip' })
+    columns = COLUMNS.map((c) => (c.id === 'wip' ? { ...c, kind: 'review' as const } : c))
+    assert.equal(store.getGlobalTask(g.id).status, 'plan', 'in_progress-колонки больше нет — первая видимая')
   })
 })
 
@@ -257,9 +338,9 @@ describe('жизненный цикл прогона = глобальной за
 
   it('ручное закрытие: карточка из in_progress — в done, ручная расстановка не меняется, run_done нет', () => {
     const store = newStore()
-    const g = store.createGlobalTask({ title: 'G', status: 'human' })
+    const g = store.createGlobalTask({ title: 'G', status: 'plan' })
     store.closeRun(g.id)
-    assert.equal(store.getGlobalTask(g.id).status, 'human')
+    assert.equal(store.getGlobalTask(g.id).status, 'plan')
     const run = store.createRun('X')
     store.setRunPty(run.id, 'pty_c', 'claude')
     store.closeRun(run.id)
@@ -343,7 +424,7 @@ describe('сохранение и миграция', () => {
     const p = memory()
     const store = newStore(p)
     const g = store.createGlobalTask({ title: 'G', description: 'd' })
-    store.moveGlobalTask(g.id, 'human')
+    store.moveGlobalTask(g.id, 'wip')
     const a = store.createTask({ title: 'a', runId: g.id })
     const reloaded = newStore(p)
     assert.deepEqual(reloaded.getGlobalTask(g.id), store.getGlobalTask(g.id))

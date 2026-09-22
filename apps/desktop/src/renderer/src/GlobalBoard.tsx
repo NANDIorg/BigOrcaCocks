@@ -10,7 +10,7 @@ export interface GlobalTaskAttention {
 }
 
 interface Props {
-  /** Реальные колонки проекта; статус карточки — id колонки. */
+  /** Колонки глобального канбана (globalBoardColumns: backlog / in_progress / done); статус карточки — id колонки. */
   columns: BoardColumn[]
   globals: GlobalTask[]
   /** Глобальные задачи с живым координатором (терминал role=coordinator, runId). */
@@ -61,7 +61,7 @@ export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.El
   )
 }
 
-/** Верхний уровень доски: глобальные задачи по реальным колонкам проекта. */
+/** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Сделано проекта. */
 export function GlobalBoard(props: Props): React.JSX.Element {
   const { columns, globals, liveCoordinators, attention, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
   const [dragOver, setDragOver] = useState<string | null>(null)

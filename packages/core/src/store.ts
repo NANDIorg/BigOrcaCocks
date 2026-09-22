@@ -4,7 +4,10 @@ import type {
 } from './types.ts'
 import { DEFAULT_COLUMNS, DEFAULT_ROLE_ID } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
-import { toGlobalTask, toGlobalTasks, type GlobalTask } from './global-tasks.ts'
+import {
+  globalBoardColumns, globalColumnKind, globalTaskStatus, toGlobalTask, toGlobalTasks,
+  type GlobalColumnKind, type GlobalTask
+} from './global-tasks.ts'
 
 export interface StoreSnapshot {
   tasks: Task[]
@@ -61,17 +64,26 @@ export class TaskStore {
 
   /**
    * Миграция к глобальным задачам (docs/nested-kanban.md): прогон без status получает колонку
-   * (закрыт → done, иначе in_progress), задачи без прогона уходят во «Входящие» — так у каждой
+   * (закрыт → done, иначе in_progress), прогон в колонке подзадач сводится к колонке глобального канбана
+   * (globalTaskStatus), задачи без прогона уходят во «Входящие» — так у каждой
    * задачи есть глобальная. run_done при этом не шлётся: «Входящие» из одних done сразу закрыты.
    * Возвращает true, если что-то поменялось (тогда снапшот сохраняется сразу — id «Входящих» стабилен).
    */
   private migrateGlobalTasks(): boolean {
     let changed = false
     for (const run of this.runs.values()) {
-      if (run.status !== undefined) continue
-      run.status = this.columnId(run.closedAt !== undefined ? 'done' : 'in_progress')
-      run.updatedAt ??= run.createdAt
-      changed = true
+      if (run.status === undefined) {
+        run.status = this.columnId(run.closedAt !== undefined ? 'done' : 'in_progress')
+        run.updatedAt ??= run.createdAt
+        changed = true
+        continue
+      }
+      // Глобальная задача из колонки подзадач (ready/needs_input/review/custom) — в ближайшую колонку глобального канбана.
+      const status = globalTaskStatus(run.status, this.columns())
+      if (status !== undefined && status !== run.status) {
+        run.status = status
+        changed = true
+      }
     }
     const orphans = [...this.tasks.values()].filter((t) => t.runId === undefined || !this.runs.has(t.runId))
     if (orphans.length > 0) {
@@ -285,6 +297,11 @@ export class TaskStore {
     return run
   }
 
+  /** Вид колонки глобального канбана, где стоит прогон (скрытые колонки сведены, см. globalColumnKind). */
+  private globalKind(run: Run): GlobalColumnKind {
+    return globalColumnKind(run.status === undefined ? undefined : this.columnKind(run.status))
+  }
+
   private inbox(): Run | undefined {
     return [...this.runs.values()].find((r) => r.inbox)
   }
@@ -300,7 +317,7 @@ export class TaskStore {
     run.closedAt = undefined
     run.finishedAt = undefined
     run.reopenedAt = Date.now()
-    if (run.status === undefined || this.columnKind(run.status) === 'done') run.status = this.columnId('in_progress')
+    if (run.status === undefined || this.globalKind(run) === 'done') run.status = this.columnId('in_progress')
     run.updatedAt = Date.now()
   }
 
@@ -323,11 +340,11 @@ export class TaskStore {
 
   /** Карточки глобальных задач с прогрессом подзадач, в порядке создания. */
   listGlobalTasks(): GlobalTask[] {
-    return toGlobalTasks(this.listRuns(), this.listTasks(), (s) => this.columnKind(s), this.columnId('backlog'))
+    return toGlobalTasks(this.listRuns(), this.listTasks(), this.columns())
   }
 
   getGlobalTask(id: string): GlobalTask {
-    return toGlobalTask(this.mustRun(id), this.listTasks(), (s) => this.columnKind(s), this.columnId('backlog'))
+    return toGlobalTask(this.mustRun(id), this.listTasks(), this.columns())
   }
 
   /** Подзадачи глобальной задачи (только её), в порядке создания. Нет такой — ошибка. */
@@ -341,7 +358,7 @@ export class TaskStore {
     const title = input.title?.trim() || undefined
     const objective = input.description ?? ''
     if (!title && !objective.trim()) throw new Error('укажи название или описание глобальной задачи')
-    if (input.status !== undefined) this.assertColumn(input.status)
+    if (input.status !== undefined) this.assertGlobalColumn(input.status)
     const run = this.addRun({ objective, ...(title ? { title } : {}), ...(input.status !== undefined ? { status: input.status } : {}) })
     this.commit()
     return this.getGlobalTask(run.id)
@@ -365,7 +382,7 @@ export class TaskStore {
   /** Ручное перемещение карточки по колонкам проекта. Статусы подзадач и жизненный цикл прогона не меняются. */
   moveGlobalTask(id: string, status: string): GlobalTask {
     const run = this.mustRun(id)
-    this.assertColumn(status)
+    this.assertGlobalColumn(status)
     run.status = status
     run.updatedAt = Date.now()
     this.commit()
@@ -400,6 +417,14 @@ export class TaskStore {
     if (!this.columnKind(status)) throw new Error(`колонки с id «${status}» нет на доске`)
   }
 
+  /** Глобальная задача встаёт только в колонку глобального канбана (backlog / in_progress / done). */
+  private assertGlobalColumn(status: string): void {
+    this.assertColumn(status)
+    if (!globalBoardColumns(this.columns()).some((c) => c.id === status)) {
+      throw new Error(`колонка «${status}» — только для подзадач; глобальная задача: бэклог, в работе или сделано`)
+    }
+  }
+
   /**
    * Закрыть прогон вручную. Карточку из kind=in_progress (туда её ставит сама система) — в done, как при
    * автозакрытии; ручную расстановку по другим колонкам не трогает. run_done не шлёт.
@@ -409,7 +434,7 @@ export class TaskStore {
     const run = this.mustRun(id)
     if (run.closedAt === undefined) {
       run.closedAt = Date.now()
-      if (run.status !== undefined && this.columnKind(run.status) === 'in_progress') run.status = this.columnId('done')
+      if (run.status !== undefined && this.globalKind(run) === 'in_progress') run.status = this.columnId('done')
       run.updatedAt = run.closedAt
       this.commit()
     }
