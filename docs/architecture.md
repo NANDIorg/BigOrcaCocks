@@ -151,7 +151,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ```
 orca-board coordinator start --objective "..."   # человек; создаёт прогон (см. «Прогоны»)
-orca-board agents list                      # [{id,title,installed,enabled,version?,defaults?}]
+orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
 orca-board roles list                       # [{id,title,agent,model?,effort?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>]
@@ -217,17 +217,23 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
-- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, modelHints?, effortOptions, invoke}`. Из него выводятся
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, modelHints?, models?, effortOptions, invoke}`. Из него выводятся
   `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, `modelHints(agent)`
-  (`ModelHint[] = {value, label?}` — подсказки для datalist в редакторе ролей, не ограничение; у claude
-  алиасы `opus`/`sonnet`/`haiku` с подписью + `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`),
+  (deprecated: `ModelHint[] = {value, label?}` — подсказки для datalist, заменяются `models`),
+  `models` (`ModelOption[] = {id, label, efforts?}`; у claude фиксированно: `opus`/`sonnet`/`haiku` с подписью
+  «… (актуальный)» + `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`, `claude-haiku-4-5`),
   `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
 - **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
-- **Дефолты агента** (`agentDefaults` в `src/main/agents.ts`): для codex — `model` и `model_reasoning_effort`
-  из `~/.codex/config.toml` (построчно, только ключи верхнего уровня до первой секции `[..]`; нет файла /
-  ошибка → `{}`), для остальных — нет. Попадают в `AgentInfo.defaults {model?, effort?}`.
+- **Модели и дефолты агента** (`agentConfig` в `src/main/agents.ts`) → `AgentInfo.models` и `AgentInfo.defaults {model?, effort?}`
+  (оба заполнены всегда: `[]` / `{}`). codex: `model` и `model_reasoning_effort` из `~/.codex/config.toml` (построчно,
+  только ключи верхнего уровня до первой секции `[..]`), модели — `parseCodexModelsCache` (core) из
+  `~/.codex/models_cache.json`: `{id: slug, label: display_name, efforts: supported_reasoning_levels[].effort}`,
+  `visibility: "hide"` пропускаются, модель из config.toml помечается «(по умолчанию)» и добавляется первой, если её
+  нет в кэше; нет файлов / битый JSON → только модель конфига или `[]`. Чтение кэшируется на 60 с, `refresh` сбрасывает.
+  claude — `models` из реестра, прочие — `[]`. Хелперы UI в core: `modelOptions(info)`, `effortOptionsFor(info, model?)`
+  (efforts модели, иначе `effortOptions` агента), `modelLabel(info, id)` (label или сам id).
   Новый агент — одна запись в массиве, остальное (типы, детект, UI, проверки) подхватывается само.
 - **Детект** (`detectAgents`): ищем `bin` как исполняемый файл в `PATH` процесса плюс стандартных папках
   (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.cargo/bin`, `~/.bun/bin`) —
@@ -240,7 +246,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Где проверяется** (`assertAgentUsable`: неизвестный / не установлен / выключен → ошибка с текстом для CLI и UI):
   агент проверяется не сам по себе, а через роль — `pickRole` при `task.create`/`tasks:create`
   и повторная проверка роли задачи при `worker.start` (см. «Роли и колонки»). `pickAgent` удалён.
-- **Сокет `agents.list`** → `[{id, title, installed, enabled, version?, defaults?}]` в порядке реестра;
+- **Сокет `agents.list`** → `[{id, title, installed, enabled, version?, models, defaults}]` в порядке реестра;
   IPC `agents:list(refresh?)` — то же для активного проекта.
 - **Логотипы** (`renderer/src/AgentLogo.tsx`): `<AgentLogo agent size?>` — inline SVG 24×24 с `fill="currentColor"`,
   окрашенный в брендовый цвет из таблицы `COLORS` (claude `#d97757`, codex `#10a37f`, gemini `#4e8df5`,
@@ -372,7 +378,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `check` | `types?`, `run?`, `consumer?`, `wait?`, `timeout-ms?`, `follow?` | `{events, timedOut}`; с `follow` — поток `{event}` |
 | `runs.list` | — | `[{...Run, tasks, done}]` |
 | `runs.close` | `run` (обязателен) | `Run` |
-| `agents.list` | — | `[{id, title, installed, enabled, version?, defaults?}]` |
+| `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
 
 ## Разрешения Claude Code

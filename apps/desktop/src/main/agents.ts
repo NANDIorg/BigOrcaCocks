@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { AGENTS, AGENT_IDS, getAgent, type AgentInfo, type AgentKind, type AgentSpec, type Role } from '@orca-board/core'
+import { AGENTS, AGENT_IDS, getAgent, parseCodexModelsCache, type AgentInfo, type AgentKind, type AgentSpec, type ModelOption, type Role } from '@orca-board/core'
 
 /** Реестр как список общего типа: у элементов union'а опциональные поля вроде versionArgs недоступны. */
 const SPECS: readonly AgentSpec[] = AGENTS
@@ -94,7 +94,7 @@ function readVersion(binPath: string, args: string[]): string | undefined {
   }
 }
 
-type AgentDefaults = NonNullable<AgentInfo['defaults']>
+type AgentDefaults = AgentInfo['defaults']
 
 /**
  * Ключи верхнего уровня TOML-конфига (до первой секции `[..]`) вида `key = "value"`.
@@ -111,22 +111,47 @@ export function parseTopLevelToml(text: string): Record<string, string> {
   return out
 }
 
-/** Дефолты codex из ~/.codex/config.toml: model и model_reasoning_effort. Нет файла/ошибка — {}. */
-function codexDefaults(): AgentDefaults {
+/** Текст файла из ~/.codex; нет файла/ошибка чтения — undefined. */
+function readCodexFile(name: string): string | undefined {
   try {
-    const cfg = parseTopLevelToml(readFileSync(join(homedir(), '.codex', 'config.toml'), 'utf8'))
-    return {
-      ...(cfg.model ? { model: cfg.model } : {}),
-      ...(cfg.model_reasoning_effort ? { effort: cfg.model_reasoning_effort } : {})
-    }
+    return readFileSync(join(homedir(), '.codex', name), 'utf8')
   } catch {
-    return {}
+    return undefined
   }
 }
 
-/** Дефолты агента из его собственного конфига; пока известны только у codex. */
-function agentDefaults(id: AgentKind): AgentDefaults | undefined {
-  return id === 'codex' ? codexDefaults() : undefined
+/** Дефолты codex из текста config.toml: model и model_reasoning_effort. Нет текста — {}. */
+function codexDefaultsFrom(configText: string | undefined): AgentDefaults {
+  const cfg = configText ? parseTopLevelToml(configText) : {}
+  return {
+    ...(cfg.model ? { model: cfg.model } : {}),
+    ...(cfg.model_reasoning_effort ? { effort: cfg.model_reasoning_effort } : {})
+  }
+}
+
+interface AgentConfig {
+  models: ModelOption[]
+  defaults: AgentDefaults
+}
+
+/** Сколько живёт прочитанный конфиг codex (config.toml + models_cache.json). */
+const CODEX_CONFIG_TTL_MS = 60_000
+let codexConfigCache: { at: number; value: AgentConfig } | undefined
+
+/** Модели и дефолты codex из ~/.codex; кэш на CODEX_CONFIG_TTL_MS, `refresh` перечитывает файлы. */
+function codexConfig(refresh: boolean): AgentConfig {
+  const now = Date.now()
+  if (!refresh && codexConfigCache && now - codexConfigCache.at < CODEX_CONFIG_TTL_MS) return codexConfigCache.value
+  const defaults = codexDefaultsFrom(readCodexFile('config.toml'))
+  const models = parseCodexModelsCache(readCodexFile('models_cache.json'), defaults.model)
+  codexConfigCache = { at: now, value: { models, defaults } }
+  return codexConfigCache.value
+}
+
+/** Модели и дефолты агента: codex — из ~/.codex, остальные — из реестра (models) и без дефолтов. */
+function agentConfig(spec: AgentSpec, refresh: boolean): AgentConfig {
+  if (spec.id === 'codex') return codexConfig(refresh)
+  return { models: [...(spec.models ?? [])], defaults: {} }
 }
 
 let cache: DetectedAgent[] | undefined
@@ -155,6 +180,7 @@ export function agentInfos(enabledAgents: AgentKind[] | undefined, refresh = fal
   const detected = new Map(detectAgents(refresh).map((d) => [d.id, d]))
   return AGENTS.map((spec) => {
     const d = detected.get(spec.id)
+    const { models, defaults } = agentConfig(spec, refresh)
     const installed = d?.installed ?? false
     return {
       id: spec.id,
@@ -162,7 +188,8 @@ export function agentInfos(enabledAgents: AgentKind[] | undefined, refresh = fal
       installed,
       enabled: installed && (enabledAgents === undefined ? true : enabledAgents.includes(spec.id)),
       version: d?.version,
-      defaults: agentDefaults(spec.id)
+      models,
+      defaults
     }
   })
 }
