@@ -1,6 +1,7 @@
 import type React from 'react'
 import { DEFAULT_ROLES, modelHints, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
 import type { Project } from '../../shared/ipc'
+import { AgentLogo } from './AgentLogo'
 import { useAutoSave } from './useAutoSave'
 
 interface Props {
@@ -48,19 +49,23 @@ export function RolesEditor({ active, agents, onSave }: Props): React.JSX.Elemen
                 />
                 <div className="editor-id">{r.id}</div>
               </div>
-              <select
-                value={r.agent}
-                className={currentOff ? 'off' : ''}
-                onChange={(e) => patch(i, { agent: e.target.value as AgentKind })}
-              >
-                {enabled.map((a) => (
-                  <option key={a.id} value={a.id}>{a.title}</option>
-                ))}
-                {currentOff && (
-                  <option value={current.id} disabled>{current.title} (выключен)</option>
-                )}
-                {!current && <option value={r.agent} disabled>{r.agent} (неизвестен)</option>}
-              </select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <AgentLogo agent={r.agent} size={18} />
+                <select
+                  value={r.agent}
+                  className={currentOff ? 'off' : ''}
+                  style={{ flex: 1, minWidth: 0 }}
+                  onChange={(e) => patch(i, { agent: e.target.value as AgentKind })}
+                >
+                  {enabled.map((a) => (
+                    <option key={a.id} value={a.id}>{a.title}</option>
+                  ))}
+                  {currentOff && (
+                    <option value={current.id} disabled>{current.title} (выключен)</option>
+                  )}
+                  {!current && <option value={r.agent} disabled>{r.agent} (неизвестен)</option>}
+                </select>
+              </div>
               <div>
                 <input
                   value={r.model ?? ''}

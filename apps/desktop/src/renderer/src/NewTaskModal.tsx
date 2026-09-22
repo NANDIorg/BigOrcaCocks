@@ -1,6 +1,7 @@
 import type React from 'react'
 import { useState } from 'react'
 import { AGENT_TITLES, DEFAULT_ROLE_ID, type AgentInfo, type Role, type Task } from '@orca-board/core'
+import { AgentLogo } from './AgentLogo'
 
 interface Props {
   tasks: Task[]
@@ -23,6 +24,7 @@ export function NewTaskModal({ tasks, roles, agents, onClose, onCreate }: Props)
     () => available.find((r) => r.id === DEFAULT_ROLE_ID)?.id ?? available[0]?.id ?? ''
   )
   const [deps, setDeps] = useState<string[]>([])
+  const selectedRole = available.find((r) => r.id === roleId)
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -38,13 +40,21 @@ export function NewTaskModal({ tasks, roles, agents, onClose, onCreate }: Props)
         </label>
         <label>
           Роль
-          <select value={roleId} disabled={noRoles} onChange={(e) => setRoleId(e.target.value)}>
-            {available.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.title} · {AGENT_TITLES[r.agent]}{r.model ? ` (${r.model})` : ''}
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {selectedRole && <AgentLogo agent={selectedRole.agent} size={20} />}
+            <select
+              value={roleId}
+              disabled={noRoles}
+              style={{ flex: 1, minWidth: 0 }}
+              onChange={(e) => setRoleId(e.target.value)}
+            >
+              {available.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.title} · {AGENT_TITLES[r.agent]}{r.model ? ` (${r.model})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
           {noRoles && <span>Нет ролей с включённым агентом — настройте во вкладке „О проекте“</span>}
         </label>
         <label>
