@@ -35,6 +35,7 @@ button { font: inherit; cursor: pointer; }
   height: 100%;
   background: var(--frame);
 }
+.app.no-sidebar { grid-template-columns: 72px 1fr; }
 
 /* ---------- icon rail ---------- */
 .rail {
@@ -70,7 +71,6 @@ button { font: inherit; cursor: pointer; }
 .sidebar .item .sub { color: var(--muted); font-size: 13px; margin-top: 2px; font-family: ui-monospace, Menlo, monospace; }
 .sidebar .item.active { background: var(--side-2); border-left-color: var(--accent); }
 .sidebar .item:hover:not(.active) { background: rgba(255,255,255,.03); }
-.sidebar .foot { padding: 18px 20px; }
 .btn-ghost {
   width: 100%; padding: 14px; border-radius: 12px; border: 0;
   background: var(--side-2); color: var(--text); font-weight: 500;
@@ -381,5 +381,4 @@ button:disabled { opacity: .45; cursor: default; }
 .defaults-body h3 { font-size: 16px; margin: 0 0 12px; color: var(--text); }
 .modal .agent-row { flex-direction: row; gap: 10px; color: var(--text); font-size: 14px; }
 .modal .agent-row.off { color: var(--muted); }
-.sidebar .foot { display: flex; flex-direction: column; gap: 8px; }
 .defaults-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }

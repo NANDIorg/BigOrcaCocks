@@ -47,6 +47,17 @@ function storedTab(projectId: string): Tab {
   }
 }
 
+const SHOW_PROJECTS_KEY = 'orca.showProjects'
+
+/** Виден ли сайдбар проектов (по умолчанию да). */
+function storedShowProjects(): boolean {
+  try {
+    return localStorage.getItem(SHOW_PROJECTS_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
 function storeTab(projectId: string, tab: Tab): void {
   if (!projectId) return
   try {
@@ -66,6 +77,7 @@ export function App(): React.JSX.Element {
   const [showNew, setShowNew] = useState(false)
   const [showCoord, setShowCoord] = useState(false)
   const [showDefaults, setShowDefaults] = useState(false)
+  const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Растёт после «Применить дефолт»: пересоздаёт редакторы ролей/колонок, чтобы черновик взял новые значения. */
   const [settingsRev, setSettingsRev] = useState(0)
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
@@ -232,6 +244,16 @@ export function App(): React.JSX.Element {
     setSettingsRev((r) => r + 1)
   }
 
+  function toggleProjects(): void {
+    const next = !showProjects
+    setShowProjects(next)
+    try {
+      localStorage.setItem(SHOW_PROJECTS_KEY, String(next))
+    } catch {
+      // localStorage недоступен — состояние просто не переживёт перезапуск
+    }
+  }
+
   async function removeProject(p: Project): Promise<void> {
     await window.orca.projects.remove(p.id)
     await refreshProjects()
@@ -332,39 +354,31 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${showProjects ? '' : 'no-sidebar'}`}>
       <aside className="rail">
-        <button className="icon"><Icon.menu /></button>
-        <div style={{ height: 40 }} />
-        <button className={`icon ${tab === 'board' ? 'active' : ''}`} title="Доска" onClick={() => setTab('board')}><Icon.board /></button>
-        <button className="icon" title="Координатор" onClick={() => setShowCoord(true)}><Icon.users /></button>
-        <button className={`icon ${tab === 'terminals' ? 'active' : ''}`} title="Терминалы" onClick={() => setTab('terminals')}><Icon.terminal /></button>
-        <button className={`icon ${tab === 'info' ? 'active' : ''}`} title="О проекте" onClick={() => setTab('info')}><Icon.gear /></button>
+        <button className={`icon ${showProjects ? 'active' : ''}`} title="Проекты" onClick={toggleProjects}><Icon.folder /></button>
+        <button className={`icon ${showDefaults ? 'active' : ''}`} title="Основные настройки" onClick={() => setShowDefaults(true)}><Icon.gear /></button>
         <div className="grow" />
         <div className="avatar">🐋</div>
       </aside>
 
-      <aside className="sidebar">
-        <div className="head">
-          <h2>Проекты</h2>
-          <button className="icon-btn fill" title="Добавить репозиторий" onClick={addProject}><Icon.plus /></button>
-        </div>
-        <div className="list">
-          {projects.length === 0 && <div className="empty">Нажмите +, чтобы добавить git-репозиторий</div>}
-          {projects.map((p) => (
-            <div key={p.id} className={`item ${p.id === active?.id ? 'active' : ''}`} onClick={() => switchProject(p)}>
-              <div className="name">{p.name}</div>
-              <div className="sub" title={p.root}>{p.root.replace(/^\/Users\/[^/]+/, '~')}</div>
-            </div>
-          ))}
-        </div>
-        <div className="foot">
-          <button className="btn-ghost" onClick={() => setShowDefaults(true)}>Настройки по умолчанию</button>
-          {active && (
-            <button className="btn-ghost" onClick={() => removeProject(active)}>Убрать из списка</button>
-          )}
-        </div>
-      </aside>
+      {showProjects && (
+        <aside className="sidebar">
+          <div className="head">
+            <h2>Проекты</h2>
+            <button className="icon-btn fill" title="Добавить репозиторий" onClick={addProject}><Icon.plus /></button>
+          </div>
+          <div className="list">
+            {projects.length === 0 && <div className="empty">Нажмите +, чтобы добавить git-репозиторий</div>}
+            {projects.map((p) => (
+              <div key={p.id} className={`item ${p.id === active?.id ? 'active' : ''}`} onClick={() => switchProject(p)}>
+                <div className="name">{p.name}</div>
+                <div className="sub" title={p.root}>{p.root.replace(/^\/Users\/[^/]+/, '~')}</div>
+              </div>
+            ))}
+          </div>
+        </aside>
+      )}
 
       <main className="main">
         <div className="main-head">
@@ -494,11 +508,11 @@ export function App(): React.JSX.Element {
               </label>
               {active && (
                 <>
-                  <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Настройки по умолчанию</h3>
+                  <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Основные настройки</h3>
                   <div className="defaults-actions">
                     <button className="btn-sm" onClick={() => void saveAsDefaults(active)}>Сохранить настройки этого проекта как дефолт</button>
                     <button className="btn-sm" onClick={() => void applyDefaults(active)}>Применить дефолт к этому проекту</button>
-                    <button className="btn-text" onClick={() => setShowDefaults(true)}>Редактировать дефолт</button>
+                    <button className="btn-text" onClick={() => setShowDefaults(true)}>Открыть основные настройки</button>
                   </div>
                   <p style={{ fontSize: 12, margin: '0 0 24px' }}>
                     Дефолт автоматически применяется к новым проектам. Применение к этому проекту заменит агентов,
@@ -512,6 +526,9 @@ export function App(): React.JSX.Element {
               <p>Задач: {tasks.length}. Открытых терминалов: {projectTerminals.length}.</p>
               <p>Worktree создаются рядом с репозиторием в папке <code>.orca-worktrees</code>.</p>
               <p>Сокет CLI: <code>{socketPath}</code>. В терминалах доступна команда <code>orca-board --help</code>.</p>
+              {active && (
+                <button className="btn-ghost" style={{ width: 'auto', padding: '10px 18px' }} onClick={() => removeProject(active)}>Убрать из списка</button>
+              )}
             </div>
           )}
 
