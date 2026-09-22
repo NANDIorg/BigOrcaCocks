@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 import { type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
@@ -12,6 +13,27 @@ import type { PtySpawnOptions, TaskPatch } from '../shared/ipc'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
+
+/**
+ * PATH из интерактивной оболочки пользователя. Приложение, запущенное из Dock или из чужой
+ * сессии, получает урезанный PATH, и агенты (claude, codex) находятся не те или не находятся вовсе.
+ */
+function shellPath(): string | null {
+  if (process.platform === 'win32') return null
+  try {
+    const sh = process.env.SHELL ?? '/bin/zsh'
+    const out = execFileSync(sh, ['-ilc', 'printf "%s" "$PATH"'], {
+      timeout: 4000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).toString()
+    const line = out.split('\n').filter(Boolean).pop()?.trim()
+    return line && line.includes('/') ? line : null
+  } catch {
+    return null
+  }
+}
+const userPath = shellPath()
+if (userPath) process.env.PATH = userPath
 app.setPath('userData', join(app.getPath('appData'), 'orca-board'))
 
 let win: BrowserWindow | null = null
