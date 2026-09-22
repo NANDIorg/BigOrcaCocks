@@ -1,4 +1,4 @@
-import type { Task, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run } from '@orca-board/core'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -154,7 +154,12 @@ export interface OrcaApi {
     start(taskId: string, cols: number, rows: number): Promise<{ ptyId: string; dispatchId: string }>
   }
   coordinator: {
-    start(objective: string, cols: number, rows: number): Promise<string>
+    /**
+     * Запуск координатора. `images` — вставленные из буфера изображения: main проверяет их
+     * (`validateImageAttachments`), сохраняет файлами на время прогона и передаёт агенту пути.
+     * Пустая цель допустима только с изображениями (тогда цель — `DEFAULT_IMAGE_OBJECTIVE`).
+     */
+    start(objective: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
   }
   review: {
     info(taskId: string): Promise<ReviewInfo>

@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, type TaskStore, type Role } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, coordinatorPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment } from '@orca-board/core'
 import workerSkill from '../../../../skills/worker.md?raw'
 import coordinatorSkill from '../../../../skills/coordinator.md?raw'
-import { defaultShell, spawnPty, type PtyCommand } from './pty'
+import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
 import { extraPathDirs, findBin, isCmdScript } from './agents'
 
@@ -213,9 +213,66 @@ export function startWorker(
   return { ptyId, dispatchId, worktree, branch }
 }
 
+const ATTACHMENTS_DIR = '.orca-attachments'
+
+/**
+ * Папка изображений координатора: `<repoRoot>/.orca-attachments` — внутри cwd координатора (чтение
+ * без лишних разрешений агенту), в том числе когда repoRoot сам linked worktree. Внутри лежит свой
+ * `.gitignore` с `*`: папка не попадает в `git status`/`git add -A`, а .gitignore репозитория не трогаем.
+ */
+function attachmentsRoot(repoRoot: string): string {
+  const root = join(repoRoot, ATTACHMENTS_DIR)
+  try {
+    mkdirSync(root, { recursive: true })
+    const ignore = join(root, '.gitignore')
+    if (!existsSync(ignore)) writeFileSync(ignore, '*\n')
+    return root
+  } catch (e) {
+    throw new Error(`не удалось создать папку ${ATTACHMENTS_DIR} для изображений координатора: ${(e as Error).message}`)
+  }
+}
+
+/** Удаляет папки изображений закрытых прогонов, чей координатор уже не работает. */
+function pruneAttachments(store: TaskStore, root: string): void {
+  let dirs: string[]
+  try {
+    dirs = readdirSync(root)
+  } catch {
+    return
+  }
+  for (const id of dirs) {
+    if (id === '.gitignore') continue
+    const run = store.getRun(id)
+    if (!run?.closedAt || (run.coordinatorPtyId && isAlive(run.coordinatorPtyId))) continue
+    try {
+      rmSync(join(root, id), { recursive: true, force: true })
+    } catch (e) {
+      console.error(`[orca] не удалось удалить вложения прогона ${id}:`, (e as Error).message)
+    }
+  }
+}
+
+/** Пишет изображения прогона в `<root>/<runId>/image-N.ext` и возвращает абсолютные пути. */
+function writeAttachments(root: string, runId: string, images: ImageAttachment[]): string[] {
+  const dir = join(root, runId)
+  try {
+    mkdirSync(dir, { recursive: true })
+    return images.map((img, i) => {
+      const file = join(dir, imageAttachmentFileName(i, img.ext))
+      writeFileSync(file, img.data, { flag: 'wx', mode: 0o600 })
+      return file
+    })
+  } catch (e) {
+    rmSync(dir, { recursive: true, force: true })
+    throw new Error(`не удалось сохранить изображения для координатора: ${(e as Error).message}`)
+  }
+}
+
 /**
  * Координатор: агент роли coordinator (нет такой роли — claude без модели) в корне репозитория с инструкцией и целью.
  * Каждый запуск — новый прогон (Run): его id уходит координатору в ORCA_RUN_ID.
+ * `images` (уже проверенные `validateImageAttachments`) сохраняются файлами на время прогона,
+ * в промпт уходят только их пути — содержимое через терминал не передаётся.
  */
 export function startCoordinator(
   store: TaskStore,
@@ -223,22 +280,25 @@ export function startCoordinator(
   ctx: WorkerEnvContext,
   objective: string,
   cols = 120,
-  rows = 30
+  rows = 30,
+  images: ImageAttachment[] = []
 ): { ptyId: string; runId: string } {
-  const prompt = `Цель: ${objective}\n\nНачни с декомпозиции и создания задач через orca-board.`
   const role = ctx.roles.find((r) => r.id === 'coordinator')
   const spec = role ? getAgent(role.agent) : undefined
   if (role && !spec) throw new Error(`неизвестный агент: ${role.agent}`)
-  const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(coordinatorSkill, role), prompt, {
-    permissionMode: ctx.permissionMode,
-    shell: defaultShell(),
-    model: role?.model,
-    effort: role?.effort
-  })
-  const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
+  const root = images.length > 0 ? attachmentsRoot(repoRoot) : undefined
+  if (root) pruneAttachments(store, root)
   const run = store.createRun(objective)
   let ptyId: string
   try {
+    const paths = root ? writeAttachments(root, run.id, images) : []
+    const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(coordinatorSkill, role), coordinatorPrompt(objective, paths), {
+      permissionMode: ctx.permissionMode,
+      shell: defaultShell(),
+      model: role?.model,
+      effort: role?.effort
+    })
+    const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
     ptyId = spawnPty({
       meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
       cwd: repoRoot,
@@ -257,8 +317,9 @@ export function startCoordinator(
       }
     })
   } catch (e) {
-    // Координатор не запустился — пустой прогон не оставляем висеть открытым.
+    // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     store.closeRun(run.id)
+    if (root) rmSync(join(root, run.id), { recursive: true, force: true })
     throw e
   }
   store.setRunPty(run.id, ptyId)

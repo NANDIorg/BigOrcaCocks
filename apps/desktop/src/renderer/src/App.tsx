@@ -643,9 +643,9 @@ export function App(): React.JSX.Element {
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}
-          onStart={async (objective) => {
+          onStart={async (objective, images) => {
             const projectId = active.id
-            const ptyId = await window.orca.coordinator.start(objective, 120, 30)
+            const ptyId = await window.orca.coordinator.start(objective, 120, 30, images)
             setShowCoord(false)
             showTerminal(ptyId, projectId)
           }}

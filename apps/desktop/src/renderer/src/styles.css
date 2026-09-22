@@ -214,6 +214,17 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 textarea { min-height: 96px; resize: vertical; }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
 .modal .btn-primary { height: 40px; padding: 0 20px; border-radius: 20px; font-size: 14px; }
+/* Модалка координатора: подсказка про вставку и миниатюры вставленных изображений */
+.coord-hint { font-size: 12px; margin-top: -6px; }
+.coord-images { display: flex; flex-wrap: wrap; gap: 8px; }
+.coord-image { position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--frame); }
+.coord-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.coord-image-loading { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.coord-image-remove {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(0,0,0,.65); color: #fff; font-size: 14px; line-height: 20px; cursor: pointer;
+}
+.coord-image-remove:hover { background: #ef6b6b; }
 .btn-text { background: transparent; border: 0; color: var(--muted); padding: 0 14px; }
 .btn-text:hover { color: var(--text); }
 
