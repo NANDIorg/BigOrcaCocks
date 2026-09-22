@@ -579,7 +579,7 @@ export function App(): React.JSX.Element {
                 <Icon.users /> Координатор
               </button>
             )}
-            {tab === 'board' && openGlobal ? (
+            {openGlobal ? (
               <button className="btn-primary" onClick={() => setShowNew(true)} disabled={!active}>
                 <Icon.plus /> Новая подзадача
               </button>
