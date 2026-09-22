@@ -279,6 +279,27 @@ button:disabled { opacity: .45; cursor: default; }
 .segmented .seg:hover { color: var(--text); }
 .segmented .seg.active { background: var(--accent); color: #fff; }
 
+/* ---------- прогоны: метка, фильтр, список в «О проекте» ---------- */
+.run-filter { width: auto; max-width: 260px; padding: 5px 10px; font-size: 13px; margin-right: 12px; }
+.chip.run-badge { --run: #7b86f5; border-color: var(--run); color: var(--run); background: color-mix(in srgb, var(--run) 14%, transparent); max-width: 180px; }
+.chip.run-badge.closed { opacity: .5; background: transparent; border-style: dashed; }
+.run-c0 { --run: #7b86f5; }
+.run-c1 { --run: #5ad1cc; }
+.run-c2 { --run: #f08a3a; }
+.run-c3 { --run: #e46fb0; }
+.run-c4 { --run: #8fd16a; }
+.run-c5 { --run: #e8b04a; }
+.run-c6 { --run: #b57bee; }
+.run-c7 { --run: #5aa9f0; }
+.runs-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+.run-row { background: var(--card); border-radius: 10px; padding: 10px 14px; }
+.run-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.run-meta { font-size: 12px; }
+.run-status { font-size: 12px; }
+.run-status.live { color: var(--col-progress); }
+.run-row-head .btn-sm { margin-left: auto; }
+.run-objective { color: var(--text); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+
 /* ---------- вкладка «Терминалы» ---------- */
 .tab { display: inline-flex; align-items: center; gap: 8px; }
 .tab-badge {

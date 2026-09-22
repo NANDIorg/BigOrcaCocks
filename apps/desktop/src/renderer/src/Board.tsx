@@ -2,10 +2,11 @@ import type React from 'react'
 import { useState } from 'react'
 import {
   AGENT_TITLES,
-  type Task, type Question, type Dispatch, type BoardColumn, type ColumnKind, type Role
+  type Task, type Question, type Dispatch, type BoardColumn, type ColumnKind, type Role, type Run
 } from '@orca-board/core'
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
+import { RunBadge, runShortLabel, type RunFilter } from './runs'
 
 /** Порядок карточек внутри колонок. */
 export type BoardSort = 'created' | 'done' | 'updated'
@@ -64,6 +65,11 @@ interface Props {
   /** Роли проекта — для подписи на карточке. */
   roles: Role[]
   tasks: Task[]
+  /** Прогоны проекта: метка на карточке и фильтр. */
+  runs: Run[]
+  /** Фильтр по прогону; хранит App, свой у каждого проекта. */
+  runFilter: RunFilter
+  onRunFilter(filter: RunFilter): void
   questions: Question[]
   dispatches: Dispatch[]
   selectedId?: string
@@ -108,7 +114,7 @@ function subtitle(task: Task, role: Role | undefined): string {
 }
 
 export function Board(props: Props): React.JSX.Element {
-  const { columns, roles, tasks, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask } = props
+  const { columns, roles, runs, runFilter, onRunFilter, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask } = props
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [sort, setSort] = useState<BoardSort>(readSort)
@@ -116,7 +122,13 @@ export function Board(props: Props): React.JSX.Element {
     setSort(next)
     writeSort(next)
   }
-  const byId = new Map(tasks.map((t) => [t.id, t]))
+  const byId = new Map(props.tasks.map((t) => [t.id, t]))
+  const runById = new Map(runs.map((r) => [r.id, r]))
+  // Выбранный прогон исчез из снимка — показываем все.
+  const filter: RunFilter = runFilter === 'all' || runFilter === 'none' || runById.has(runFilter) ? runFilter : 'all'
+  const tasks = props.tasks.filter((t) =>
+    filter === 'all' ? true : filter === 'none' ? !t.runId : t.runId === filter
+  )
   // Все проверки статуса — по виду колонки, а не по её id: id у кастомных колонок произвольные.
   const kindById = new Map(columns.map((c) => [c.id, c.kind]))
   const kindOf = (status: string): ColumnKind | undefined => kindById.get(status)
@@ -136,6 +148,25 @@ export function Board(props: Props): React.JSX.Element {
   return (
     <div className="board-wrap">
       <div className="board-toolbar">
+        {(runs.length > 0 || filter !== 'all') && (
+          <>
+            <span className="board-sort-label">Прогон:</span>
+            <select
+              className="run-filter"
+              value={filter}
+              aria-label="Фильтр по прогону"
+              onChange={(e) => onRunFilter(e.target.value)}
+            >
+              <option value="all">Все прогоны</option>
+              {runs.map((r) => (
+                <option key={r.id} value={r.id} title={r.objective}>
+                  {runShortLabel(r, 5, 40)}{r.closedAt !== undefined ? ' (закрыт)' : ''}
+                </option>
+              ))}
+              <option value="none">Без прогона</option>
+            </select>
+          </>
+        )}
         <span className="board-sort-label">Сортировка:</span>
         <div className="segmented" role="group" aria-label="Сортировка карточек">
           {SORT_OPTIONS.map((o) => (
@@ -235,6 +266,7 @@ export function Board(props: Props): React.JSX.Element {
                         </div>
                       </div>
                       <div className="chips">
+                        {task.runId && runById.has(task.runId) && <RunBadge run={runById.get(task.runId)!} runs={runs} />}
                         {task.branch && <span className="chip mono" title={task.branch}>{task.branch}</span>}
                         {task.deps.map((dep) => (
                           <span key={dep} className="chip" title={byId.get(dep)?.title}>
