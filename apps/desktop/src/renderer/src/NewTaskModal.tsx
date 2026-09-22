@@ -1,19 +1,24 @@
 import type React from 'react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AGENT_TITLES, DEFAULT_ROLE_ID, modelLabel, type AgentInfo, type Role, type Task } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
+import { ipcErrorMessage } from './useAutoSave'
 
 interface Props {
+  /** Глобальная задача, куда попадёт подзадача, — для заголовка. */
+  globalTitle?: string
+  /** Кандидаты в зависимости: подзадачи той же глобальной задачи. */
   tasks: Task[]
   /** Роли проекта; в выбор попадают только те, чей агент включён. */
   roles: Role[]
   /** Все агенты проекта — чтобы отсеять роли с выключенным агентом. */
   agents: AgentInfo[]
   onClose(): void
-  onCreate(input: { title: string; spec: string; deps: string[]; roleId: string }): void
+  /** Ошибка (reject) показывается в форме, введённое не теряется. */
+  onCreate(input: { title: string; spec: string; deps: string[]; roleId: string }): Promise<void>
 }
 
-export function NewTaskModal({ tasks, roles, agents, onClose, onCreate }: Props): React.JSX.Element {
+export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCreate }: Props): React.JSX.Element {
   const enabledAgents = new Set(agents.filter((a) => a.enabled).map((a) => a.id))
   const available = roles.filter((r) => enabledAgents.has(r.agent))
   const noRoles = available.length === 0
@@ -25,11 +30,41 @@ export function NewTaskModal({ tasks, roles, agents, onClose, onCreate }: Props)
   )
   const [deps, setDeps] = useState<string[]>([])
   const selectedRole = available.find((r) => r.id === roleId)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const busyRef = useRef(false)
+  const close = (): void => {
+    if (!busyRef.current) onClose()
+  }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const create = async (): Promise<void> => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
+    setError(null)
+    try {
+      await onCreate({ title: title.trim(), spec, deps, roleId })
+    } catch (e) {
+      setError(ipcErrorMessage(e))
+    } finally {
+      busyRef.current = false
+      setBusy(false)
+    }
+  }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Новая задача</h3>
+    <div className="modal-backdrop" onClick={close}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Новая подзадача" onClick={(e) => e.stopPropagation()}>
+        <h3>Новая подзадача</h3>
+        {globalTitle && <p className="muted modal-sub" title={globalTitle}>в «{globalTitle}»</p>}
         <label>
           Название
           <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Что нужно сделать" />
@@ -57,6 +92,7 @@ export function NewTaskModal({ tasks, roles, agents, onClose, onCreate }: Props)
           </div>
           {noRoles && <span>Нет ролей с включённым агентом — настройте во вкладке „О проекте“</span>}
         </label>
+        {tasks.length > 0 && (
         <label>
           Зависит от
           <select
@@ -69,12 +105,14 @@ export function NewTaskModal({ tasks, roles, agents, onClose, onCreate }: Props)
             ))}
           </select>
         </label>
+        )}
+        {error && <span className="error-text">{error}</span>}
         <div className="row">
-          <button className="btn-text" onClick={onClose}>Отмена</button>
+          <button className="btn-text" onClick={close} disabled={busy}>Отмена</button>
           <button
             className="btn-primary"
-            disabled={!title.trim() || noRoles}
-            onClick={() => onCreate({ title: title.trim(), spec, deps, roleId })}
+            disabled={!title.trim() || noRoles || busy}
+            onClick={() => void create()}
           >
             Создать
           </button>
