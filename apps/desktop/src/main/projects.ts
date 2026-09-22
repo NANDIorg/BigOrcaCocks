@@ -7,7 +7,8 @@ import {
   type OrcaEvent, type AgentKind, type Role, type BoardColumn
 } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
-import type { AppSettings } from '../shared/ipc'
+import type { AppSettings, AppSettingsPatch } from '../shared/ipc'
+import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -49,7 +50,7 @@ interface ProjectsFile {
   settings?: Partial<AppSettings>
 }
 
-export const DEFAULT_APP_SETTINGS: AppSettings = { keepInBackground: true }
+export const DEFAULT_APP_SETTINGS: AppSettings = { keepInBackground: true, notifications: DEFAULT_NOTIFICATION_SETTINGS }
 
 /**
  * Список репозиториев и по TaskStore на каждый. Доска хранится в userData/boards/<id>.json.
@@ -176,16 +177,20 @@ export class ProjectManager {
   settings(): AppSettings {
     const s = this.data.settings ?? {}
     return {
-      keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground
+      keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground,
+      notifications: normalizeNotificationSettings(s.notifications)
     }
   }
 
-  setSettings(patch: Partial<AppSettings>): AppSettings {
+  setSettings(patch: AppSettingsPatch): AppSettings {
     if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw new Error('настройки приложения: ожидается объект')
     const next: Partial<AppSettings> = { ...(this.data.settings ?? {}) }
     if (patch.keepInBackground !== undefined) {
       if (typeof patch.keepInBackground !== 'boolean') throw new Error('keepInBackground должен быть boolean')
       next.keepInBackground = patch.keepInBackground
+    }
+    if (patch.notifications !== undefined) {
+      next.notifications = mergeNotificationSettings(this.settings().notifications, patch.notifications)
     }
     this.data.settings = next
     this.save()

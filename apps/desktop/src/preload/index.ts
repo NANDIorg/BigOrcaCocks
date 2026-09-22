@@ -11,7 +11,8 @@ const api: OrcaApi = {
   app: {
     info: () => ipcRenderer.invoke('app:info'),
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
-    setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch)
+    setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
+    testNotification: () => ipcRenderer.invoke('app:testNotification')
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),

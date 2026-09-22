@@ -686,6 +686,18 @@ button:disabled { opacity: .45; cursor: default; }
 .switch.on::after { left: 17px; }
 .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* «Настройки → Уведомления» (settings/NotificationsSection.tsx) */
+.notif-rows { display: flex; flex-direction: column; gap: 14px; }
+.notif-hint { margin: -6px 0 12px !important; }
+.notif-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px 16px; }
+.notif-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.notif-check input { margin-top: 3px; }
+.notif-check span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.notif-check small { font-size: 11px; color: var(--muted); }
+.notif-check:has(input:disabled) { opacity: .55; cursor: default; }
+.notif-quiet { display: flex; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); font-size: 13px; }
+.notif-quiet input { width: auto; }
+
 /* «Разрешения»: режимы карточками-радио */
 .perm-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .perm-card {

@@ -14,7 +14,9 @@ import { ProjectManager, type PermissionMode, type ProjectDefaults } from './pro
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
-import type { AppSettings, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import type { AppSettingsPatch, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import { shouldNotify } from '../shared/notifications'
+import { describeEvent } from './notify'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -287,30 +289,39 @@ function deliverAnswers(projectId: string, events: OrcaEvent[]): void {
   }
 }
 
-/** Системные уведомления на события, требующие человека. */
+/** Окно по клику на уведомление: показать и перейти в проект. */
+function focusProject(projectId: string): void {
+  const existed = win !== null && !win.isDestroyed()
+  const w = showWindow()
+  // Новое окно ещё грузит renderer — шлём фокус, когда он сможет его принять.
+  if (existed && !w.webContents.isLoading()) w.webContents.send('projects:focus', projectId)
+  else w.webContents.once('did-finish-load', () => w.webContents.send('projects:focus', projectId))
+}
+
+/** Системные уведомления на события, требующие человека; фильтр — «Настройки → Уведомления» (shouldNotify). */
 function notify(projectId: string, events: OrcaEvent[]): void {
   if (!Notification.isSupported()) return
+  const settings = projects.settings().notifications
+  const focused = BrowserWindow.getFocusedWindow() !== null
   const project = projects.get(projectId)
   const store = projects.store(projectId)
   for (const e of events) {
     const task = e.taskId ? store.getTask(e.taskId) : undefined
-    const title = task ? `${task.title} · ${project?.name ?? ''}` : project?.name ?? 'orca-board'
-    let body: string | null = null
-    if (e.type === 'question') body = `Вопрос: ${String(e.payload.question ?? '')}`
-    if (e.type === 'escalation') body = `Эскалация: ${String(e.payload.reason ?? '')}`
-    if (e.type === 'worker_done') body = `Готово к ревью${e.payload.summary ? `: ${String(e.payload.summary)}` : ''}`
-    if (!body) continue
-    const column = task ? projects.columns(projectId).find((c) => c.id === task.status) : undefined
-    const n = new Notification({ title, body: body.slice(0, 200), subtitle: column?.title })
-    n.on('click', () => {
-      const existed = win !== null && !win.isDestroyed()
-      const w = showWindow()
-      // Новое окно ещё грузит renderer — шлём фокус, когда он сможет его принять.
-      if (existed && !w.webContents.isLoading()) w.webContents.send('projects:focus', projectId)
-      else w.webContents.once('did-finish-load', () => w.webContents.send('projects:focus', projectId))
-    })
+    const content = describeEvent(e, task, project?.name ?? 'orca-board', settings.showPreview)
+    if (!content || !shouldNotify(content, settings, new Date(), focused)) continue
+    const column = task && settings.showPreview ? projects.columns(projectId).find((c) => c.id === task.status) : undefined
+    const n = new Notification({ title: content.title, body: content.body, subtitle: column?.title, silent: !settings.sound })
+    n.on('click', () => focusProject(projectId))
     n.show()
   }
+}
+
+/** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */
+function testNotification(): void {
+  if (!Notification.isSupported()) throw new Error('системные уведомления не поддерживаются')
+  const s = projects.settings().notifications
+  const body = s.showPreview ? 'Вопрос: так уведомления и будут выглядеть' : 'Вопрос'
+  new Notification({ title: 'orca-board', body, silent: !s.sound }).show()
 }
 
 /**
@@ -336,7 +347,8 @@ function docRoot(source: unknown): string {
 
 function registerIpc(): void {
   ipcMain.handle('app:getSettings', () => projects.settings())
-  ipcMain.handle('app:setSettings', (_e, patch: Partial<AppSettings>) => projects.setSettings(patch ?? {}))
+  ipcMain.handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
+  ipcMain.handle('app:testNotification', () => testNotification())
   ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:inProgressCounts', () => projects.inProgressCounts())

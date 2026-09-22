@@ -1,4 +1,5 @@
 import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience } from '@orca-board/core'
+import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -36,6 +37,14 @@ export interface TerminalSnapshot extends TerminalInfo {
 export interface AppSettings {
   /** Закрытие окна не завершает приложение: PTY живут, иконка в трее. По умолчанию true. */
   keepInBackground: boolean
+  /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
+  notifications: NotificationSettings
+}
+
+/** Патч настроек приложения: notifications мержится по полям. */
+export interface AppSettingsPatch {
+  keepInBackground?: boolean
+  notifications?: NotificationSettingsPatch
 }
 
 /** Правка задачи из UI/CLI: только название и описание. */
@@ -130,7 +139,9 @@ export interface OrcaApi {
     info(): Promise<{ socketPath: string; active: Project | null; projects: Project[] }>
     getSettings(): Promise<AppSettings>
     /** Мерж патча в глобальные настройки; возвращает итоговые. */
-    setSettings(patch: Partial<AppSettings>): Promise<AppSettings>
+    setSettings(patch: AppSettingsPatch): Promise<AppSettings>
+    /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
+    testNotification(): Promise<void>
   }
   projects: {
     list(): Promise<{ active: Project | null; projects: Project[] }>

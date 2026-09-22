@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { AgentInfo, AgentKind } from '@orca-board/core'
-import type { AppSettings, PermissionMode } from '../../../shared/ipc'
+import { DEFAULT_ROLES, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
+import type { AppSettings, AppSettingsPatch, PermissionMode, Project } from '../../../shared/ipc'
 import { RolesEditor } from '../RolesEditor'
 import { ColumnsEditor } from '../ColumnsEditor'
 import { Icon } from '../icons'
@@ -11,10 +11,11 @@ import { AgentsSection } from '../about/AgentsSection'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import { useProjectDefaults } from '../about/useProjectDefaults'
 import { GeneralSection } from './GeneralSection'
+import { NotificationsSection } from './NotificationsSection'
 
-type Section = 'general' | 'agents' | 'roles' | 'columns' | 'perm'
+type Section = 'general' | 'notifications' | 'agents' | 'roles' | 'columns' | 'perm'
 
-const SECTIONS: readonly Section[] = ['general', 'agents', 'roles', 'columns', 'perm']
+const SECTIONS: readonly Section[] = ['general', 'notifications', 'agents', 'roles', 'columns', 'perm']
 const SECTION_KEY = 'orca.settingsSection'
 /** Ключ черновиков редакторов ролей/колонок дефолта (не пересекается с id проектов). */
 const DEFAULTS_KEY = 'defaults'
@@ -36,11 +37,13 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
   const { defaults, error: defaultsError, save: saveDefaults } = useProjectDefaults()
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
+  const [projectList, setProjectList] = useState<Project[]>([])
   const [agentsError, setAgentsError] = useState<string | null>(null)
   const [permError, setPermError] = useState<string | null>(null)
 
   useEffect(() => {
     window.orca.app.getSettings().then(setAppSettings, (e) => setAppError(ipcErrorMessage(e)))
+    window.orca.projects.list().then((r) => setProjectList(r.projects), () => undefined)
   }, [])
 
   // Esc закрывает окно.
@@ -57,7 +60,7 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
     storeSection(SECTION_KEY, s)
   }
 
-  async function saveApp(patch: Partial<AppSettings>): Promise<void> {
+  async function saveApp(patch: AppSettingsPatch): Promise<void> {
     try {
       setAppSettings(await window.orca.app.setSettings(patch))
       setAppError(null)
@@ -87,9 +90,20 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
     void saveDefaults({ enabledAgents: next }, setAgentsError)
   }
 
+  // Роли для фильтра уведомлений: дефолт и все проекты, первый встреченный title на id.
+  const notifyRoles: Role[] = []
+  for (const r of [...roles, ...projectList.flatMap((p) => p.roles ?? DEFAULT_ROLES)]) {
+    if (!notifyRoles.some((x) => x.id === r.id)) notifyRoles.push(r)
+  }
+
   // ---------- меню ----------
 
   const general: NavEntry<Section> = { id: 'general', label: 'Общие', icon: Icon.gear }
+  const notifyOn = appSettings?.notifications.enabled
+  const notifications: NavEntry<Section> = {
+    id: 'notifications', label: 'Уведомления', icon: Icon.bell,
+    count: notifyOn === undefined ? undefined : notifyOn ? 'вкл' : 'выкл'
+  }
   const forNew: NavEntry<Section>[] = [
     { id: 'agents', label: 'Агенты', icon: Icon.cpu, count: `${agentsOn} из ${installed.length}` },
     {
@@ -160,6 +174,7 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
           <div className="about">
             <nav className="about-nav" aria-label="Разделы настроек">
               <NavItem item={general} current={section} onGo={go} />
+              <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
               <div className="about-nav-group">Для новых проектов</div>
               {forNew.map((item) => <NavItem key={item.id} item={item} current={section} showCount={!!defaults} onGo={go} />)}
             </nav>
@@ -167,6 +182,13 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
               <section className="about-sec">
                 {section === 'general' ? (
                   <GeneralSection settings={appSettings} error={appError} onChange={(p) => void saveApp(p)} />
+                ) : section === 'notifications' ? (
+                  <NotificationsSection
+                    settings={appSettings}
+                    roles={notifyRoles}
+                    error={appError}
+                    onChange={(p) => void saveApp({ notifications: p })}
+                  />
                 ) : (
                   <>
                     <div className="about-banner">
