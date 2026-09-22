@@ -61,9 +61,9 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
   return res
 }
 
-function runCoordinator(objective: string, cols?: number, rows?: number): string {
+function runCoordinator(objective: string, projectId?: string, cols?: number, rows?: number): string {
   if (!win) throw new Error('no window')
-  const p = resolveProject()
+  const p = resolveProject(projectId)
   const ptyId = startCoordinator(win, p.root, ctx(p.id), objective, cols, rows)
   win.webContents.send('worker:opened', { ptyId, projectId: p.id, label: 'координатор', role: 'coordinator' })
   return ptyId
@@ -149,7 +149,7 @@ function registerIpc(): void {
   ipcMain.on('pty:kill', (_e, id: string) => killPty(id))
 
   ipcMain.handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
-  ipcMain.handle('coordinator:start', (_e, objective: string, cols: number, rows: number) => runCoordinator(objective, cols, rows))
+  ipcMain.handle('coordinator:start', (_e, objective: string, cols: number, rows: number) => runCoordinator(objective, undefined, cols, rows))
   ipcMain.handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)
@@ -183,7 +183,8 @@ app.whenReady().then(() => {
         store: p.store,
         startWorker: (taskId) => runWorker(taskId, p.id),
         review: (taskId) => getReview(p.store, p.root, taskId),
-        accept: (taskId) => acceptReview(p.store, p.root, taskId)
+        accept: (taskId) => acceptReview(p.store, p.root, taskId),
+        startCoordinator: (objective) => runCoordinator(objective, p.id)
       }
     }
   })

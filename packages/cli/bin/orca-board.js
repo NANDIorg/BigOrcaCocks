@@ -9,6 +9,9 @@ const SOCKET = process.env.ORCA_SOCKET ?? join(homedir(), '.orca-board', 'orca.s
 
 const HELP = `orca-board — управление доской агентов
 
+Человек:
+  coordinator start --objective "..."     открыть Claude Code-координатора в приложении
+
 Координатор:
   task list
   task create --title "..." [--spec "..."] [--agent claude|codex|opencode|shell] [--dep <id>]...

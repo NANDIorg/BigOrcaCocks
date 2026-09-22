@@ -27,7 +27,11 @@ function shellQuote(s: string): string {
 function agentInvocation(agent: AgentKind, system: string, prompt: string): { command: string; args: string[] } {
   switch (agent) {
     case 'claude':
-      return { command: 'claude', args: ['--append-system-prompt', system, prompt] }
+      // orca-board разрешён без подтверждения, правки файлов — тоже; остальной Bash спросит в терминале
+      return {
+        command: 'claude',
+        args: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(orca-board:*)', '--append-system-prompt', system, prompt]
+      }
     case 'codex':
       return { command: 'codex', args: [`${system}\n\n---\n\n${prompt}`] }
     case 'opencode':
@@ -114,7 +118,7 @@ export function startCoordinator(
   return spawnPty(win, {
     cwd: repoRoot,
     command: 'claude',
-    args: ['--append-system-prompt', coordinatorSkill, prompt],
+    args: ['--allowedTools', 'Bash(orca-board:*)', '--append-system-prompt', coordinatorSkill, prompt],
     cols,
     rows,
     env: { ...baseEnv(ctx), ORCA_ROLE: 'coordinator' }

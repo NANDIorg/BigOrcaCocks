@@ -13,6 +13,7 @@ export interface ProjectDeps {
   startWorker(taskId: string): { ptyId: string; dispatchId: string; worktree: string; branch: string }
   review(taskId: string): unknown
   accept(taskId: string): void
+  startCoordinator(objective: string): string
 }
 
 export interface SocketDeps {
@@ -73,6 +74,11 @@ const handlers: Record<string, Handler> = {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')
     return deps.startWorker(id)
+  },
+  'coordinator.start': (r, deps) => {
+    const objective = str(r.params.objective)
+    if (!objective) throw new Error('--objective обязателен')
+    return { ptyId: deps.startCoordinator(objective) }
   },
   'worker.read': (r, _d, store) => {
     const id = str(r.params.dispatch)

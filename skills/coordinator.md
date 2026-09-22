@@ -6,17 +6,22 @@
 
 Цикл:
 1. `orca-board task create --title "..." --spec "..." [--agent claude] [--dep <id>]` — по одной на подзадачу.
-   Спека — это промпт воркера: контекст, файлы, критерии готовности. Режь задачи по разным файлам.
+   Спека — это промпт воркера: контекст, какие файлы трогать, критерии готовности. Режь задачи по разным файлам.
+   Маленькая цель = одна задача, не дроби ради дробления.
 2. `orca-board task list` — задачи со статусом `ready` можно запускать.
 3. `orca-board worker start --task <id>` — создаёт worktree и терминал с агентом. Запускай все `ready` сразу.
-4. `orca-board check --wait --types worker_done,question,escalation,task_ready --timeout-ms 900000` —
-   блокируется до первого события. Никаких sleep-циклов.
+4. `orca-board check --wait --types worker_done,question,escalation,task_ready --timeout-ms 100000` —
+   блокируется до первого события. Если вернулось `timedOut: true` — просто вызови ещё раз.
+   Не ставь `--timeout-ms` больше 100000: инструмент Bash оборвёт команду раньше. Никаких sleep.
 5. По событию:
-   - `worker_done` → `orca-board worker read --dispatch <id>` (итог, файлы, хвост терминала).
-     Устраивает — `orca-board task move --task <id> --status done`; зависимые задачи станут `ready`.
-     Нет — новая задача на доработку с `--dep`.
+   - `worker_done` → `orca-board worker read --dispatch <id>` (итог, файлы, хвост терминала),
+     затем `orca-board review info --task <id>` (diff-stat). Устраивает —
+     `orca-board review accept --task <id>` (мерж в текущую ветку, worktree удаляется);
+     зависимые задачи станут `ready`. Не устраивает — `orca-board review reject --task <id> --feedback "..."`
+     и снова `worker start`.
    - `question` → ответь сам, если знаешь: `orca-board question answer --question <id> --answer "..."`.
-     Не знаешь — оставь, человек ответит в приложении.
-   - `escalation` → воркер вышел без `done`. Посмотри `worker read`, перезапусти `worker start` или спроси человека.
+     Не знаешь — оставь, человек ответит в приложении, тебе придёт `question_answered`.
+   - `escalation` → воркер вышел без `done` или молчит. Посмотри `worker read`, перезапусти `worker start`
+     или спроси человека.
    - `task_ready` → запусти воркера.
-6. Повторяй, пока все задачи не в `done`. В конце дай сводку по веткам `orca/<id>` для мержа.
+6. Повторяй, пока все задачи не в `done`. В конце дай короткую сводку: что слито, что осталось.
