@@ -108,7 +108,15 @@ needs_input — **вычисляемая** колонка: там карточк
 человеку сразу (`questionForHuman`).
 
 **Колонка «Нужен ответ» глобального канбана.** Подзадача ждёт человека (`waitingForHuman`), если это
-задача-ответ для человека в колонке `kind=review` или у неё открыт вопрос, адресованный человеку.
+задача-ответ для человека в колонке `kind=needs_input` (`kind=review` — старые данные) или у неё открыт
+вопрос, адресованный человеку.
+
+Сама подзадача при этом тоже стоит в `kind=needs_input`, а не в review (`store.ts`):
+- `finishDispatch` задачи-ответа `answerFor: 'human'` → needs_input (остальные — review, как раньше);
+  принять (`review accept`) → done, уточнить (`review reject` + перезапуск) → ready → in_progress.
+- `ask` → needs_input (как и раньше), `forwardQuestion` тоже ставит needs_input (кроме done).
+  `answer` последнего открытого вопроса возвращает в поток: живой dispatch — in_progress, иначе ready.
+  Сданный ответ для человека (`humanAnswerReady`) остаётся в needs_input.
 `toGlobalTask` считает таких подзадач `GlobalTask.waiting`; если их > 0 и карточка не в `kind=done`,
 её `status` — колонка `kind=needs_input` проекта (если такая колонка есть). `Run.status` при этом **не
 меняется**: человек ответил или принял ответ — карточка сама возвращается в свою колонку. Поставить

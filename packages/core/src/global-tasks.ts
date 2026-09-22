@@ -106,8 +106,8 @@ export function questionForHuman(q: Pick<Question, 'forHuman'>, run: Pick<Run, '
 }
 
 /**
- * Подзадача ждёт человека: готов ответ для человека (задача-ответ `answerFor: 'human'` в колонке review)
- * или открыт вопрос, адресованный человеку (`questionForHuman`).
+ * Подзадача ждёт человека: готов ответ для человека (задача-ответ `answerFor: 'human'` в колонке
+ * needs_input; review — старые данные, до переноса таких ответов в needs_input) или открыт вопрос, адресованный человеку (`questionForHuman`).
  */
 export function waitingForHuman(
   task: Pick<Task, 'id' | 'answerFor'>,
@@ -115,7 +115,7 @@ export function waitingForHuman(
   questions: readonly Question[],
   run: Pick<Run, 'inbox' | 'coordinatorPtyId' | 'finishedAt'> | undefined
 ): boolean {
-  if (task.answerFor === 'human' && kind === 'review') return true
+  if (task.answerFor === 'human' && (kind === 'needs_input' || kind === 'review')) return true
   return questions.some((q) => q.taskId === task.id && !q.answeredAt && questionForHuman(q, run))
 }
 

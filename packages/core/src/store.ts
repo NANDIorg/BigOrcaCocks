@@ -535,6 +535,7 @@ export class TaskStore {
   /**
    * Явное завершение воркером через `orca-board done`. У задачи-ответа ответ обязателен и уходит
    * в событие worker_done вместе с `answerFor` — координатор решает по нему, принимать ли ответ сам.
+   * Ответ для человека (`answerFor: 'human'`) ждёт его в needs_input, остальное — в review.
    */
   finishDispatch(dispatchId: string, summary: string, files: string[] = [], answer?: string): Dispatch {
     const dispatch = this.mustDispatch(dispatchId)
@@ -551,7 +552,7 @@ export class TaskStore {
     dispatch.summary = summary
     dispatch.files = files
     if (text) dispatch.answer = text
-    this.setStatus(task, this.columnId('review'))
+    this.setStatus(task, this.columnId(task.answerFor === 'human' ? 'needs_input' : 'review'))
     this.pushEvent('worker_done', {
       taskId: task.id, dispatchId, summary, files,
       ...(task.answerFor ? { answerFor: task.answerFor } : {}),
@@ -649,7 +650,11 @@ export class TaskStore {
     q.answeredAt = Date.now()
     const task = this.mustTask(q.taskId)
     const stillOpen = [...this.questions.values()].some((x) => x.taskId === task.id && !x.answeredAt)
-    if (!stillOpen && this.isKind(task, 'needs_input')) this.setStatus(task, this.columnId('in_progress'))
+    if (!stillOpen && this.isKind(task, 'needs_input') && !this.humanAnswerReady(task)) {
+      // Обратно в поток: воркер жив — работает дальше, иначе задача ждёт запуска.
+      const live = task.dispatchId !== undefined && !this.dispatches.get(task.dispatchId)?.endedAt
+      this.setStatus(task, this.columnId(live ? 'in_progress' : 'ready'))
+    }
     task.updatedAt = Date.now()
     this.pushEvent('question_answered', { taskId: task.id, dispatchId: q.dispatchId, questionId, answer })
     this.commit()
@@ -657,17 +662,25 @@ export class TaskStore {
   }
 
   /**
-   * Координатор передал вопрос человеку: вопрос остаётся открытым, глобальная задача показывается
-   * в needs_input, пока человек не ответит. Отвеченный вопрос передать нельзя.
+   * Координатор передал вопрос человеку: вопрос остаётся открытым, подзадача стоит в needs_input,
+   * глобальная задача показывается там же, пока человек не ответит. Отвеченный вопрос передать нельзя.
    */
   forwardQuestion(questionId: string): Question {
     const q = this.questions.get(questionId)
     if (!q) throw new Error(`question not found: ${questionId}`)
     if (q.answeredAt) throw new Error(`на вопрос ${questionId} уже ответили`)
     q.forHuman = true
-    this.mustTask(q.taskId).updatedAt = Date.now()
+    const task = this.mustTask(q.taskId)
+    if (!this.isKind(task, 'done')) this.setStatus(task, this.columnId('needs_input'))
+    task.updatedAt = Date.now()
     this.commit()
     return q
+  }
+
+  /** Задача-ответ для человека сдана и ждёт, пока человек её примет или уточнит. */
+  private humanAnswerReady(task: Task): boolean {
+    const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
+    return task.answerFor === 'human' && d?.outcome === 'done' && d.answer !== undefined
   }
 
   getQuestion(id: string): Question | undefined {

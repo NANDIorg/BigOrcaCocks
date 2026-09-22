@@ -248,7 +248,7 @@ export function Board(props: Props): React.JSX.Element {
                       {task.feedback && column.kind !== 'review' && (
                         <div className="card-feedback" title={task.feedback}>↩ {task.feedback}</div>
                       )}
-                      {column.kind === 'review' && (
+                      {(column.kind === 'review' || (column.kind === 'needs_input' && task.answerFor && d?.answer)) && (
                         <div className="card-brief review-brief">
                           <span className="brief-text" title={task.answerFor ? d?.summary : undefined}>
                             {task.answerFor
