@@ -68,9 +68,9 @@ export function DefaultsModal({ agents, onClose }: Props): React.JSX.Element {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal task-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Настройки по умолчанию">
+      <div className="modal task-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Основные настройки">
         <div className="task-modal-head">
-          <h3 className="task-modal-title">Настройки по умолчанию для новых проектов</h3>
+          <h3 className="task-modal-title">Основные настройки — для новых проектов</h3>
           <button className="icon-btn task-modal-close" title="Закрыть" aria-label="Закрыть" onClick={onClose}>
             <Icon.close />
           </button>
