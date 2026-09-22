@@ -20,6 +20,8 @@
    несколько воркеров работают одновременно в своих worktree.
 3. `orca-board check --wait --types worker_done,question,escalation,task_ready,question_answered --timeout-ms 100000` —
    блокируется до первого события. `timedOut: true` — просто вызови ещё раз. Больше 100000 не ставь.
+   Прогон (`--run`) подставляется из `ORCA_RUN_ID` сам — у `task create` и `check` его не указывай.
+   `check --follow` — бесконечный поток (строка JSON на событие) для мониторинга, не для этого цикла.
 4. По событию:
    - `worker_done` по **рабочей** задаче A → создай задачу ревью:
      `orca-board task create --title "Ревью: <A.title>" --role reviewer --spec "Проверь ветку orca/<A.id> задачи <A.id>: orca-board review info --task <A.id>, git diff master...orca/<A.id>, прогони pnpm typecheck в своём worktree после git merge --no-commit orca/<A.id> (потом git merge --abort). Критерии: <критерии из спеки A>. Если всё хорошо — orca-board review accept --task <A.id>. Если нет — orca-board review reject --task <A.id> --feedback '<что исправить>'. Затем orca-board done --summary 'принято' или 'отклонено: ...'"`

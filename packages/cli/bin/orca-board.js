@@ -17,12 +17,16 @@ const HELP = `orca-board — управление доской агентов
   roles list       роли проекта: id, название, агент, модель, включён ли агент
   columns list     колонки доски: id, название, kind
   task list
-  task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]...
+  task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]... [--run <id>]
   task move --task <id> --status <id колонки из columns list>
   task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
   worker start --task <id>
   worker read --dispatch <id> [--limit 80]
-  check [--wait] [--types worker_done,question,escalation,task_ready] [--timeout-ms 900000]
+  check [--wait] [--types worker_done,question,escalation,task_ready] [--timeout-ms 900000] [--run <id>]
+  check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается
+                                          сам (до Ctrl+C / SIGTERM); --follow важнее --wait
+  runs list                               прогоны координатора
+  runs close [--run <id>]                 закрыть прогон
   question list
   question answer --question <id> --answer "..."
   review info --task <id>                 diff-stat и коммиты ветки задачи
@@ -34,6 +38,9 @@ const HELP = `orca-board — управление доской агентов
 Воркер (ORCA_DISPATCH_ID уже в окружении):
   done --summary "..." [--files a.ts,b.ts]
   ask --question "..." [--options a,b,c] [--no-wait]     блокируется до ответа
+
+Прогон: --run <id> у task create, check и runs close по умолчанию берётся из $ORCA_RUN_ID —
+задачи, созданные координатором, наследуют его прогон.
 
 Общее: --socket <path>, --project <id> (иначе $ORCA_PROJECT или активный проект в приложении).
 Сокет: $ORCA_SOCKET или ~/.orca-board/orca.sock`
@@ -67,6 +74,22 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 
+// Прогон координатора: явный --run важнее $ORCA_RUN_ID.
+const RUN_METHODS = ['task.create', 'check', 'runs.close']
+if (RUN_METHODS.includes(method) && params.run === undefined && process.env.ORCA_RUN_ID) {
+  params.run = process.env.ORCA_RUN_ID
+}
+if (params.run === true) {
+  console.error('ошибка: --run требует id прогона')
+  process.exit(1)
+}
+if (method === 'runs.close' && !params.run) {
+  console.error('ошибка: не указан прогон — передайте --run <id> или задайте ORCA_RUN_ID')
+  process.exit(1)
+}
+const follow = method === 'check' && params.follow === true
+if (follow) delete params.wait
+
 const socketPath = params.socket ?? SOCKET
 delete params.socket
 delete params.json
@@ -85,22 +108,58 @@ const sock = connect(socketPath)
 let buf = ''
 sock.setEncoding('utf8')
 sock.on('connect', () => sock.write(JSON.stringify(request) + '\n'))
-sock.on('data', (chunk) => {
-  buf += chunk
-  const nl = buf.indexOf('\n')
-  if (nl < 0) return
-  const res = JSON.parse(buf.slice(0, nl))
-  // Не process.exit сразу после записи: большой вывод в пайп уходит асинхронно и обрезается.
-  const finish = (code) => {
+if (follow) {
+  // Поток событий: соединение живёт, пока его не закроем мы (сигнал) или сервер (ошибка).
+  let closing = false
+  const stop = () => {
+    closing = true
     sock.destroy()
-    process.exitCode = code
+    process.exitCode = 0
   }
-  if (res.ok) {
-    process.stdout.write(JSON.stringify(res.result, null, 2) + '\n', () => finish(0))
-  } else {
-    process.stderr.write(`ошибка: ${res.error}\n`, () => finish(1))
-  }
-})
+  process.on('SIGINT', stop)
+  process.on('SIGTERM', stop)
+  sock.on('data', (chunk) => {
+    buf += chunk
+    let nl
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl)
+      buf = buf.slice(nl + 1)
+      if (!line.trim()) continue
+      const res = JSON.parse(line)
+      if (!res.ok) {
+        closing = true
+        process.stderr.write(`ошибка: ${res.error}\n`, () => {
+          sock.destroy()
+          process.exitCode = 1
+        })
+        return
+      }
+      if (res.result?.event !== undefined) process.stdout.write(JSON.stringify(res.result.event) + '\n')
+    }
+  })
+  sock.on('close', () => {
+    if (closing) return
+    process.stderr.write('ошибка: сервер закрыл соединение\n')
+    process.exitCode = 1
+  })
+} else {
+  sock.on('data', (chunk) => {
+    buf += chunk
+    const nl = buf.indexOf('\n')
+    if (nl < 0) return
+    const res = JSON.parse(buf.slice(0, nl))
+    // Не process.exit сразу после записи: большой вывод в пайп уходит асинхронно и обрезается.
+    const finish = (code) => {
+      sock.destroy()
+      process.exitCode = code
+    }
+    if (res.ok) {
+      process.stdout.write(JSON.stringify(res.result, null, 2) + '\n', () => finish(0))
+    } else {
+      process.stderr.write(`ошибка: ${res.error}\n`, () => finish(1))
+    }
+  })
+}
 sock.on('error', (e) => {
   console.error(`не удалось подключиться к ${socketPath}: ${e.message}\nПриложение orca-board запущено?`)
   process.exit(2)
