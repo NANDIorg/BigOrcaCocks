@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, coordinatorPrompt, workerTaskPrompt, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, coordinatorPrompt, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -282,19 +282,9 @@ export function resumeObjective(store: TaskStore, runId: string): { run: Run; ob
     throw new Error(`координатор этой глобальной задачи уже работает (терминал ${run.coordinatorPtyId})`)
   }
   const goal = run.objective.trim() || globalTaskTitle(run)
-  const tasks = store.listSubtasks(runId)
-  if (tasks.length === 0) return { run, objective: goal }
   const title = (status: string): string => store.columns().find((c) => c.id === status)?.title ?? status
-  const lines = tasks.map((t) => `- ${t.id} [${title(t.status)}] ${t.title}`)
-  return {
-    run,
-    objective: [
-      goal,
-      `Повторный запуск: у этой глобальной задачи уже есть подзадачи (orca-board global tasks). Продолжай с ними и не создавай дубли:`,
-      ...lines,
-      `Если делать больше нечего (всё в done и новых подзадач не нужно) — не жди run_done: напиши сводку и выполни \`orca-board runs finish\`, он сам закроет прогон.`
-    ].join('\n')
-  }
+  const tasks = store.listSubtasks(runId).map((t) => ({ id: t.id, title: t.title, status: title(t.status) }))
+  return { run, objective: resumeCoordinatorObjective(goal, tasks) }
 }
 
 /**

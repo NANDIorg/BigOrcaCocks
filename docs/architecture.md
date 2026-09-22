@@ -143,7 +143,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   с `lingersAfterAnswer` в реестре агентов (сейчас Codex) после финальной сводки ждёт ввода и сам не выходит.
   Тишина терминала ≠ завершение (агент может ждать подтверждения команды, человек — читать ответ), поэтому
   нужен положительный сигнал: координатор последней командой вызывает `orca-board runs finish`
-  (`store.finishRun` → `Run.finishedAt`; до `run_done` — ошибка). PTY закрывается `killPty` (вкладка уходит
+  (`store.finishRun` → `Run.finishedAt`). На незакрытом прогоне — ошибка, кроме переоткрытого повторным
+  запуском прогона, где все подзадачи уже в `kind=done`: тогда `finishRun` сам закрывает его (`closedAt`,
+  `run_done` сразу потреблён, см. `docs/nested-kanban.md`). PTY закрывается `killPty` (вкладка уходит
   по `terminals:changed`), если прогон закрыт именно `run_done`, все задачи прогона и сейчас в `kind=done`,
   по ним нет открытых вопросов и терминал неактивен `COORDINATOR_FINISH_GRACE_MS` (15 с) после сигнала.
   Без сигнала — страховка: `COORDINATOR_ABANDONED_MS` (30 мин) неактивности с `run_done`.
@@ -175,7 +177,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Monitor** (`skills/coordinator.md`, шаг 3): основной путь для Claude Code — инструмент Monitor с командой
   `orca-board check --follow --types worker_done,question,escalation,task_ready,question_answered,run_done`
   и `timeout_ms: 1800000`; каждое уведомление монитора = одно событие, после таймаута монитор ставится заново.
-  На `run_done` координатор останавливает монитор, пишет сводку и завершается.
+  На `run_done` координатор останавливает монитор, пишет сводку и вызывает `runs finish`. Исключение —
+  раздел «Повторный запуск»: если все подзадачи уже в done и новых не нужно, `run_done` не придёт, и
+  координатор сразу пишет сводку и вызывает `runs finish` без монитора.
 - **Запасной путь** (нет Monitor или агент не Claude Code): `check --wait ... --timeout-ms 1500000` —
   блокируется до первого события; `timedOut: true` → вызвать снова. Чтобы такой вызов не обрывался,
   координатору ставятся `BASH_DEFAULT_TIMEOUT_MS=1800000` / `BASH_MAX_TIMEOUT_MS=3600000` (воркерам — нет).
@@ -195,7 +199,7 @@ orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run 
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
 orca-board runs list                        # [{...Run, tasks, done}]
 orca-board runs close [--run <id>]          # закрыть прогон вручную
-orca-board runs finish [--run <id>]         # координатор закончил работу после run_done (закрыть его терминал)
+orca-board runs finish [--run <id>]         # координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал)
 orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md
 orca-board worker read --dispatch <id>
 orca-board gate create --task <id> --question "..." --options a,b

@@ -39,3 +39,22 @@ export function promptChannel(spec: Pick<AgentSpec, 'invoke'> | undefined): Prom
   if (args.includes(system)) return 'system'
   return args.some((a) => a.includes(system)) ? 'combined' : 'none'
 }
+
+/** Раздел skills/coordinator.md, на который ссылается цель повторного запуска. */
+export const COORDINATOR_RESUME_SECTION = 'Повторный запуск'
+
+/**
+ * Цель повторного запуска координатора на глобальной задаче: исходная цель плюс уже созданные подзадачи
+ * (`status` — название колонки). Правила продолжения — раздел «Повторный запуск» встроенной инструкции,
+ * здесь только ссылка на него. Подзадач нет — цель без изменений.
+ */
+export function resumeCoordinatorObjective(goal: string, subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>): string {
+  if (subtasks.length === 0) return goal
+  return [
+    goal,
+    '',
+    `${COORDINATOR_RESUME_SECTION}: у этой глобальной задачи уже есть подзадачи — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции (сверься с \`orca-board global tasks\`, не создавай дубли):`,
+    ...subtasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`),
+    'Если все они в done и новых подзадач не нужно — run_done не придёт: сводка и сразу `orca-board runs finish`.'
+  ].join('\n')
+}

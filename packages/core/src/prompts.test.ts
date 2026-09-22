@@ -1,7 +1,8 @@
 // Запуск: node --test (type stripping Node ≥ 22.6). Из tsc исключён — в core нет @types/node.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { builtinPromptKind, promptChannel, workerTaskPrompt } from './prompts.ts'
+import { readFileSync } from 'node:fs'
+import { builtinPromptKind, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION } from './prompts.ts'
 import { getAgent } from './agents.ts'
 import { withRoleInstructions } from './types.ts'
 
@@ -36,5 +37,39 @@ describe('встроенная инструкция и дополнения ро
     assert.equal(system.split(builtin).length - 1, 1)
     assert.ok(system.startsWith(builtin))
     assert.ok(system.endsWith('# Инструкции роли «Координатор»\n\nпиши кратко'))
+  })
+})
+
+describe('повторный запуск координатора', () => {
+  // Тот же файл, что main отдаёт как BUILTIN_PROMPTS.coordinator (apps/desktop/src/main/prompts.ts).
+  const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+
+  it('встроенный промпт содержит раздел-исключение: runs finish без ожидания run_done', () => {
+    const start = skill.indexOf(`${COORDINATOR_RESUME_SECTION}:`)
+    assert.ok(start >= 0, 'нет раздела «Повторный запуск»')
+    const section = skill.slice(start)
+    assert.match(section, /orca-board global tasks/)
+    assert.match(section, /не жди `run_done`/)
+    assert.match(section, /orca-board runs finish/)
+    // Общий запрет «до run_done» оговаривает исключение, а не противоречит разделу.
+    assert.match(skill, /Не вызывай её до `run_done` и до сводки — кроме повторного\s+запуска без новой работы/)
+  })
+
+  it('подзадач нет — цель без изменений', () => {
+    assert.equal(resumeCoordinatorObjective('цель', []), 'цель')
+  })
+
+  it('подзадачи есть — список и ссылка на раздел инструкции', () => {
+    const text = resumeCoordinatorObjective('цель', [
+      { id: 't1', title: 'Сделать A', status: 'Done' },
+      { id: 't2', title: 'Ревью: A', status: 'Done' }
+    ])
+    assert.ok(text.startsWith('цель\n'))
+    assert.ok(text.includes('- t1 [Done] Сделать A'))
+    assert.ok(text.includes('- t2 [Done] Ревью: A'))
+    assert.ok(text.includes(`по разделу «${COORDINATOR_RESUME_SECTION}»`))
+    assert.ok(text.includes('orca-board runs finish'))
+    // Цель начинается строкой-маркером, которую раздел инструкции и распознаёт.
+    assert.ok(text.split('\n').some((l) => l.startsWith(COORDINATOR_RESUME_SECTION)))
   })
 })
