@@ -123,8 +123,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   IPC `runs:list` → `Run[]` активного проекта (без счётчиков), изменения приходят в `board:changed`
   (`snapshot.runs`).
 - **UI** (`renderer/src/runs.tsx`: `RunFilter` = `'all' | 'none' | <runId>`, `runShortLabel`, `runColorIndex`,
-  `RunBadge`, `RunsSection`): данные — `snapshot.runs` и `runId` в `worker:opened` координатора
-  (`TerminalOpened.runId`). На карточке задачи с `runId` — метка `RunBadge`; в шапке доски (`Board.tsx`) —
+  `RunBadge`, `RunsSection`): данные — `snapshot.runs` (у PTY координатора `runId` есть и в реестре
+  терминалов — `TerminalInfo.runId`, см. «Реестр терминалов»). На карточке задачи с `runId` — метка `RunBadge`; в шапке доски (`Board.tsx`) —
   select «Прогон» (при `runs.length > 0`), у закрытых прогонов — «(закрыт)»; фильтр хранит `App.tsx`
   в `runFilters` по `viewKey` (id проекта). В «О проекте» — раздел «Прогоны» (`RunsSection`) с закрытием
   через `window.orca.runs.close` (IPC `runs:close`). Подробности — «UI: доска и «О проекте»».
@@ -321,13 +321,14 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   активного проекта (`projectTerminals` — фильтр `terminals` по `projectId === active.id`). Справа `Terminal`
   рендерится на **каждый** PTY всех проектов; неактивные и чужие скрыты через `.hidden`, не размонтируются —
   при возврате на проект вывод и состояние xterm сохранены.
-  Терминалы появляются по `worker:opened` (из UI и через CLI координатора; вкладка при CLI-запуске
-  не переключается; если у проекта терминала ещё нет — новый становится его `activePty`), исчезают
-  по `worker:closed` (`dropTerminal`: только функциональные апдейтеры, потому что события приходят пачкой;
-  если закрыт активный терминал проекта — выбирается соседний терминал того же проекта) или по крестику.
-  Завершившийся сам PTY остаётся в списке с серой точкой, пока его не закроют.
+  Список сверяется с реестром main (`syncTerminals` по `terminals:changed`, см. «Реестр терминалов»):
+  новые PTY (из UI и через CLI координатора) добавляются, вкладка при этом не переключается; если у проекта
+  терминала ещё нет — новый становится его `activePty`. Пропавшие из реестра убираются (`withoutTerminal`:
+  только функциональные апдейтеры, потому что события приходят пачкой; если закрыт активный терминал
+  проекта — выбирается соседний терминал того же проекта). Завершившийся сам PTY (был `pty:exit`)
+  остаётся в списке с серой точкой, пока его не закроют крестиком (`dropTerminal`).
 - **`showTerminal(ptyId?, projectId = active.id)`**: проект терминала берётся из списка терминалов,
-  иначе переданный `projectId` (PTY только что создан, `worker:opened` ещё не пришёл), иначе активный.
+  иначе переданный `projectId` (PTY только что создан, `terminals:changed` ещё не пришёл), иначе активный.
   В запись этого проекта пишутся `tab: 'terminals'` и `activePty`. Активный проект **не переключается**:
   если терминал принадлежит другому проекту (пользователь успел переключиться, пока шёл `await`
   запуска), вкладка и терминал просто запоминаются до перехода на тот проект. `openShell`, `startTask`
@@ -357,16 +358,80 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `permissionMode`; каждое изменение — `setDefaults(patch)`, ошибка main — под разделом. В ролях «включён» считается
   по дефолту, а не по активному проекту. Закрытие — Esc, фон, крестик.
 
+## Реестр терминалов (`src/main/pty.ts`)
+
+Источник правды для вкладки «Терминалы» — реестр живых PTY в main (`sessions: Map<ptyId, Session>`,
+порядок вставки = порядок открытия), а не состояние renderer.
+
+- **Запись** (`TerminalInfo` в `shared/ipc.ts`): `ptyId`, `label`, `role` (`coordinator` | `worker` | `shell`),
+  `taskId?`, `projectId?`, `runId?` (прогон координатора), `createdAt`. Кроме неё сессия хранит процесс,
+  `tail` (сырой вывод, до 256 КБ), `lastOutputAt` (детектор тишины) и текущий размер.
+- **Регистрация** — `spawnPty({ meta })`, метаданные передаёт вызывающий: IPC `pty:spawn` из UI
+  (`role: 'shell'`, `label` или «терминал», проект из параметра или активный; `index.ts`), `startWorker`
+  (`role: 'worker'`, `label` = название задачи, `taskId`) и `startCoordinator` (`role: 'coordinator'`,
+  `label` «координатор», `runId`; `worker.ts`). После вставки — `terminals:changed`.
+- **Удаление**: процесс вышел (`onExit`) или `killPty` (крестик, `closeTaskWorkers`, `killAll` при выходе).
+  `killPty` удаляет запись и шлёт `terminals:changed` сразу, до `kill()`; последующий `onExit` видит, что
+  записи уже нет, и `terminals:changed` повторно не шлёт. Шаг `before` (setup на Windows) выходом не считается —
+  в том же `ptyId` стартует основная команда.
+- **Порядок при выходе**: сначала `pty:exit:<id>`, потом `terminals:changed` без этого id. Renderer помечает
+  PTY завершившимся синхронно (`exitedRef`) и при сверке списка оставляет его вкладку с серой точкой; при
+  обратном порядке вкладка пропала бы вместе с выводом до того, как пользователь увидел код выхода.
+- **IPC**: `terminals:list` → `terminalSnapshots()` — реестр плюс `tail` (`ptyTail(id, 200)`: последние 200 строк
+  без ANSI-кодов и `\r`). `terminals:changed` — всегда полный список `TerminalInfo[]` (`listTerminals()`), без хвостов.
+- **Окно вывода**: `pty:data`/`pty:exit`/`terminals:changed` идут в текущее окно из `setPtyWindow(win)`
+  (ставится в `createWindow`, сбрасывается на `closed`), а не в окно, захваченное при spawn. Окна нет —
+  вывод копится только в `tail`. Поэтому закрытие и пересоздание окна (фоновый режим) терминалы не теряет.
+- **Восстановление в renderer** (`App.tsx`): при монтировании сначала подписка `terminals.onChanged(syncTerminals)`,
+  потом `terminals.list()` — хвосты в `tails`, список — в `syncTerminals`. `Terminal.tsx` получает `initialTail`
+  и пишет его в xterm (`\n` → `\r\n`) при создании, **до** подписки на `pty.onData` — дальше идёт живой вывод.
+  Смена `initialTail` xterm не пересоздаёт.
+- **Проекты**: `Terminal` рендерится на каждый PTY всех проектов, а список, бейдж и счётчик показывают
+  только `projectTerminals` — фильтр по `projectId === active.id` (см. «UI: доска и «О проекте»»).
+
+## Фоновый режим (`src/main/index.ts`, `src/main/tray.ts`)
+
+Закрытие окна не останавливает агентов: приложение, PTY, сокет, детектор тишины и уведомления живут в main,
+окно создаётся заново по требованию.
+
+- **Настройка** `AppSettings.keepInBackground` (`shared/ipc.ts`) — глобальная, не проектная: поле `settings`
+  в `userData/projects.json`, `ProjectManager.settings()` / `setSettings(patch)` (`projects.ts`; не boolean → ошибка,
+  `settings` не-объект → удаляется при `load()`). По умолчанию включена (`DEFAULT_APP_SETTINGS`). В UI —
+  чекбокс «Работать в фоне при закрытии окна» в разделе «Приложение» модалки «Основные настройки»
+  (`DefaultsModal.tsx`, шестерёнка в сайдбаре), IPC `app:getSettings` / `app:setSettings`.
+- **`window-all-closed`**: одинаково на всех платформах — при `keepInBackground` (или ещё не созданном
+  `projects`) ничего не делаем; выключена — `quitNow()` (без подтверждения: окно уже закрыто пользователем).
+  Окно при закрытии уничтожается, `win = null`, `setPtyWindow(null)`.
+- **Tray** (`createTray` в `app.whenReady()`, ссылка хранится в модуле — иначе GC уберёт иконку): строка меню
+  на macOS, трей на Windows/Linux, tooltip `orca-board`. Меню: «Открыть orca-board», неактивный пункт
+  «Задач в работе: N» (`activeDispatchCount` — незавершённые dispatch'и всех загруженных проектов;
+  меню пересобирает `refreshTray()` на каждый `projects.onChange`), «Выйти» (`requestQuit`).
+  На macOS клик по иконке открывает меню, на Windows/Linux клик — `showWindow()`.
+- **Вернуть окно**: `showWindow()` — существующее развернуть/показать/сфокусировать, закрытое — `createWindow()`.
+  Вызывается из пункта трея, клика по трею (Windows/Linux), `app.on('activate')` (клик по Dock на macOS)
+  и клика по уведомлению.
+- **Выход**: все пути (Cmd+Q, меню приложения, «Выйти» в трее, `app.quit()`) идут через `before-quit` →
+  `requestQuit()`. Живых воркеров (`liveWorkerCount`: dispatch не завершён и PTY жив) нет — `quitNow()`
+  (`killAll()` + `app.quit()`). Есть — диалог `warning` «N задач(а/и) в работе, агенты будут остановлены. Выйти?»
+  с кнопками «Выйти» / «Отмена» (по умолчанию «Отмена»); родитель — окно, если оно есть. Второй диалог
+  не открывается (`confirmingQuit`), после подтверждения `before-quit` не перехватывается (`quitting`).
+- **Уведомления при закрытом окне** — см. «Уведомления»: клик создаёт окно и шлёт `projects:focus` после `did-finish-load`.
+- **Иконка** (`tray.ts`): монохромное кольцо с плавником рисуется программно (`drawIcon`, суперсэмплинг 4×4),
+  кодируется встроенным PNG-энкодером (`encodePng`, zlib + CRC32) в два представления — 16px и 32px (Retina);
+  файлов в сборке нет. На macOS — template image, система красит её под тему строки меню.
+
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`; `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
-  `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
+  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
-- События main → renderer: `board:changed {projectId, snapshot}`, `worker:opened` (у координатора — с `runId`), `worker:closed`,
+- События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `projects:focus` (клик по уведомлению), `pty:data:<id>`, `pty:exit:<id>`.
+- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.terminals.{list, onChanged}`;
+  у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
 
@@ -409,13 +474,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   так что `updatedAt` и `board:changed` идут как обычно.
 - **Автозакрытие**: main в `projects.onChange` (любой `commit` store) вызывает `closeDoneWorkers`:
   у задач в колонке `kind=done` закрываются dispatch'и (`store.closeDispatches` ставит `endedAt`/`outcome=unknown`
-  незакрытым — иначе `ptyExited` принял бы kill за падение), живые PTY убиваются (`killPty`), renderer получает
-  `worker:closed { ptyId, taskId, projectId }` (`window.orca.worker.onClosed` в preload). Ловятся все пути в done:
+  незакрытым — иначе `ptyExited` принял бы kill за падение), живые PTY убиваются (`killPty`) — реестр `pty.ts` сам шлёт
+  renderer'у `terminals:changed` без них (см. «Реестр терминалов»). Ловятся все пути в done:
   `review accept`, `task move`, `tasks:move` из UI. После `orca-board done` dispatch уже закрыт, а PTY жив —
   поэтому проверяется и живость PTY у закрытых dispatch'ей (`isAlive`).
 - **Перезапуск** (`runWorker`, общий путь для IPC `worker:start` и сокета `worker.start`): задача в
   `kind=in_progress` отвергается, роль и агент перепроверяются, затем старые терминалы задачи закрываются
-  тем же `closeTaskWorkers` с `worker:closed`, и только потом стартует новый PTY (`worker:opened`).
+  тем же `closeTaskWorkers`, и только потом стартует новый PTY (оба изменения renderer видит через `terminals:changed`).
 - PTY координатора не привязан к dispatch и ни в одном сценарии приложением не закрывается
   (только крестиком в списке терминалов).
 
@@ -441,7 +506,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 UI работает с активным проектом; агенты получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
 поэтому воркер продолжает писать в свою доску, даже если пользователь переключился на другой проект.
 
-**Формат `projects.json`**: `{ projects: Project[], activeId, defaults?: Partial<ProjectDefaults> }`.
+**Формат `projects.json`**: `{ projects: Project[], activeId, defaults?: Partial<ProjectDefaults>, settings?: Partial<AppSettings> }`
+(`settings` — глобальные настройки приложения, см. «Фоновый режим»).
 `ProjectDefaults { permissionMode, enabledAgents?, roles, columns }` (`projects.ts`, дубль типа —
 `shared/ipc.ts`). Файл без `defaults` (старый формат) читается как есть; `defaults` не-объект → удаляется при `load()`.
 
@@ -465,7 +531,10 @@ UI работает с активным проектом; агенты полу�
 
 `ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification`
 для `question`, `escalation`, `worker_done` (в подзаголовке — название колонки задачи).
-Клик по уведомлению фокусирует окно и переключает проект.
+Уведомления работают и при закрытом окне (фоновый режим): `notify` живёт в main и от окна не зависит.
+Клик по уведомлению — `showWindow()` (развернуть существующее окно или создать новое) и `projects:focus <projectId>`
+(renderer делает проект активным). Если окно только что создано или ещё грузится, `projects:focus` шлётся
+по `webContents.once('did-finish-load')` — иначе renderer его не услышит.
 На Windows уведомления показываются только при заданном AppUserModelID — `app.setAppUserModelId('orca-board')`
 в `app.whenReady()` (`src/main/index.ts`).
 
