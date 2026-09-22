@@ -13,6 +13,8 @@ export interface AgentInvokeOptions {
   permissionMode: string
   /** Оболочка пользователя ($SHELL), для агента shell. */
   shell: string
+  /** Модель агента; пусто — по умолчанию у агента. */
+  model?: string
 }
 
 export interface AgentSpec {
@@ -23,6 +25,8 @@ export interface AgentSpec {
   bin: string
   /** Аргументы для получения версии (нет — версию не спрашиваем). */
   versionArgs?: string[]
+  /** Подсказки моделей для datalist в UI (не ограничение: можно ввести любую). */
+  modelHints?: readonly string[]
   /** Как передать системную инструкцию (system) и задание (prompt). */
   invoke(system: string, prompt: string, opts: AgentInvokeOptions): AgentInvocation
 }
@@ -32,18 +36,25 @@ function combine(system: string, prompt: string): string {
   return `${system}\n\n---\n\n${prompt}`
 }
 
+/** Флаг модели для аргументов CLI; пустая модель — без флага. */
+function modelFlag(flag: string, model?: string): string[] {
+  return model ? [flag, model] : []
+}
+
 export const AGENTS = [
   {
     id: 'claude',
     title: 'Claude Code',
     bin: 'claude',
     versionArgs: ['--version'],
+    modelHints: ['opus', 'sonnet', 'haiku', 'claude-opus-5', 'claude-sonnet-5', 'claude-fable-5-1'],
     // Режим разрешений проекта + orca-board всегда без вопросов.
     invoke: (system, prompt, opts) => ({
       command: 'claude',
       args: [
         '--permission-mode', opts.permissionMode,
         '--allowedTools', 'Bash(orca-board:*)',
+        ...modelFlag('--model', opts.model),
         '--append-system-prompt', system,
         prompt
       ]
@@ -54,14 +65,20 @@ export const AGENTS = [
     title: 'Codex',
     bin: 'codex',
     versionArgs: ['--version'],
-    invoke: (system, prompt) => ({ command: 'codex', args: [combine(system, prompt)] })
+    invoke: (system, prompt, opts) => ({
+      command: 'codex',
+      args: [...modelFlag('-m', opts.model), combine(system, prompt)]
+    })
   },
   {
     id: 'opencode',
     title: 'OpenCode',
     bin: 'opencode',
     versionArgs: ['--version'],
-    invoke: (system, prompt) => ({ command: 'opencode', args: ['--prompt', combine(system, prompt)] })
+    invoke: (system, prompt, opts) => ({
+      command: 'opencode',
+      args: [...modelFlag('--model', opts.model), '--prompt', combine(system, prompt)]
+    })
   },
   {
     id: 'gemini',
@@ -69,20 +86,27 @@ export const AGENTS = [
     bin: 'gemini',
     versionArgs: ['--version'],
     // Интерактивный режим с начальным промптом.
-    invoke: (system, prompt) => ({ command: 'gemini', args: ['-i', combine(system, prompt)] })
+    invoke: (system, prompt, opts) => ({
+      command: 'gemini',
+      args: [...modelFlag('-m', opts.model), '-i', combine(system, prompt)]
+    })
   },
   {
     id: 'cursor',
     title: 'Cursor Agent',
     bin: 'cursor-agent',
     versionArgs: ['--version'],
-    invoke: (system, prompt) => ({ command: 'cursor-agent', args: [combine(system, prompt)] })
+    invoke: (system, prompt, opts) => ({
+      command: 'cursor-agent',
+      args: [...modelFlag('--model', opts.model), combine(system, prompt)]
+    })
   },
   {
     id: 'amp',
     title: 'Amp',
     bin: 'amp',
     versionArgs: ['--version'],
+    // Модель не выбирается из CLI — игнорируем.
     invoke: (system, prompt) => ({ command: 'amp', args: [combine(system, prompt)] })
   },
   {
@@ -90,6 +114,7 @@ export const AGENTS = [
     title: 'GitHub Copilot CLI',
     bin: 'copilot',
     versionArgs: ['--version'],
+    // Модель не выбирается из CLI — игнорируем.
     invoke: (system, prompt) => ({ command: 'copilot', args: ['-i', combine(system, prompt)] })
   },
   {
@@ -97,6 +122,7 @@ export const AGENTS = [
     title: 'Goose',
     bin: 'goose',
     versionArgs: ['--version'],
+    // Модель задаётся конфигом goose, из CLI — игнорируем.
     invoke: (system, prompt) => ({
       command: 'goose',
       args: ['run', '--interactive', '--text', combine(system, prompt)]
@@ -136,4 +162,9 @@ export function getAgent(id: string): AgentSpec | undefined {
 
 export function isAgentKind(id: string): id is AgentKind {
   return AGENTS.some((a) => a.id === id)
+}
+
+/** Подсказки моделей агента для UI; у неизвестного агента или без подсказок — []. */
+export function modelHints(agent: string): readonly string[] {
+  return getAgent(agent)?.modelHints ?? []
 }

@@ -1,4 +1,9 @@
-import type { Dispatch, OrcaEvent, Task, TaskStatus, AgentKind, EventType, Question } from './types'
+import type {
+  Dispatch, OrcaEvent, Task, TaskStatus, AgentKind, EventType, Question,
+  BoardColumn, ColumnKind, SystemColumnKind
+} from './types'
+import { DEFAULT_COLUMNS, DEFAULT_ROLE_ID } from './types'
+import { DEFAULT_AGENT } from './agents'
 
 export interface StoreSnapshot {
   tasks: Task[]
@@ -20,7 +25,9 @@ export function newId(prefix: string): string {
 
 /**
  * Единственный владелец состояния доски. Живёт в main-процессе Electron.
- * Переход задачи в `ready` — автоматический, когда все deps в `done`.
+ * Статус задачи — id колонки; автоматические переходы идут по `kind` колонки
+ * (backlog → ready, когда все deps в done; in_progress при запуске и т.д.).
+ * Колонки приходят снаружи функцией — их хранит проект, а не store.
  */
 export class TaskStore {
   private tasks = new Map<string, Task>()
@@ -28,11 +35,15 @@ export class TaskStore {
   private questions = new Map<string, Question>()
   private events: OrcaEvent[] = []
   private listeners = new Set<() => void>()
+  private readonly columnsFn: () => BoardColumn[]
 
-  constructor(private persistence?: Persistence) {
+  constructor(private persistence?: Persistence, columns?: () => BoardColumn[]) {
+    this.columnsFn = columns ?? (() => DEFAULT_COLUMNS)
     const snap = persistence?.load()
     if (snap) {
-      snap.tasks?.forEach((t) => this.tasks.set(t.id, t))
+      // Миграция на лету: у старых задач нет roleId. Статусы старых задач совпадают
+      // с id дефолтных колонок (backlog, ready, ...), их переводить не нужно.
+      snap.tasks?.forEach((t) => this.tasks.set(t.id, { ...t, roleId: t.roleId ?? DEFAULT_ROLE_ID }))
       snap.dispatches?.forEach((d) => this.dispatches.set(d.id, d))
       snap.questions?.forEach((q) => this.questions.set(q.id, q))
       this.events = snap.events ?? []
@@ -58,6 +69,33 @@ export class TaskStore {
     }
   }
 
+  // ---------- columns ----------
+
+  columns(): BoardColumn[] {
+    return this.columnsFn()
+  }
+
+  /** Id первой колонки с таким kind; если такой нет — сам kind как запасной вариант. */
+  columnId(kind: SystemColumnKind): string {
+    return this.columns().find((c) => c.kind === kind)?.id ?? kind
+  }
+
+  columnKind(id: string): ColumnKind | undefined {
+    return this.columns().find((c) => c.id === id)?.kind
+  }
+
+  private isKind(task: Task, kind: SystemColumnKind): boolean {
+    return this.columnKind(task.status) === kind
+  }
+
+  /** Все смены статуса идут здесь: следим за doneAt при входе/выходе из колонки done. */
+  private setStatus(task: Task, status: TaskStatus): void {
+    task.status = status
+    if (this.columnKind(status) === 'done') task.doneAt ??= Date.now()
+    else task.doneAt = undefined
+    task.updatedAt = Date.now()
+  }
+
   // ---------- tasks ----------
 
   listTasks(): Task[] {
@@ -68,15 +106,17 @@ export class TaskStore {
     return this.tasks.get(id)
   }
 
-  createTask(input: { title: string; spec?: string; deps?: string[]; agent?: AgentKind }): Task {
+  /** Валидность roleId проверяет main (роли живут в проекте), store её не знает. */
+  createTask(input: { title: string; spec?: string; deps?: string[]; roleId?: string; agent?: AgentKind }): Task {
     const now = Date.now()
     const task: Task = {
       id: newId('task'),
       title: input.title,
       spec: input.spec ?? '',
-      status: 'backlog',
+      status: this.columnId('backlog'),
       deps: (input.deps ?? []).filter((d) => this.tasks.has(d)),
-      agent: input.agent ?? 'claude',
+      roleId: input.roleId ?? DEFAULT_ROLE_ID,
+      agent: input.agent ?? DEFAULT_AGENT,
       createdAt: now,
       updatedAt: now
     }
@@ -88,14 +128,32 @@ export class TaskStore {
 
   updateTask(id: string, patch: Partial<Omit<Task, 'id' | 'createdAt'>>): Task {
     const task = this.mustTask(id)
-    Object.assign(task, patch, { updatedAt: Date.now() })
+    const { status, ...rest } = patch
+    Object.assign(task, rest, { updatedAt: Date.now() })
+    if (status !== undefined) this.setStatus(task, status)
     this.promoteReady()
     this.commit()
     return task
   }
 
-  moveTask(id: string, status: TaskStatus): Task {
+  moveTask(id: string, status: string): Task {
+    if (!this.columnKind(status)) throw new Error(`колонки с id «${status}» нет на доске`)
     return this.updateTask(id, { status })
+  }
+
+  /** Перенести все задачи из колонки fromId в toId (при удалении колонки). Возвращает число перенесённых. */
+  reassignColumn(fromId: string, toId: string): number {
+    let moved = 0
+    for (const task of this.tasks.values()) {
+      if (task.status !== fromId) continue
+      this.setStatus(task, toId)
+      moved += 1
+    }
+    if (moved > 0) {
+      this.promoteReady()
+      this.commit()
+    }
+    return moved
   }
 
   deleteTask(id: string): void {
@@ -104,13 +162,16 @@ export class TaskStore {
     this.commit()
   }
 
-  /** backlog → ready, если все зависимости закрыты. */
+  /** backlog → ready, если все зависимости закрыты (по kind колонок). */
   private promoteReady(): void {
     for (const task of this.tasks.values()) {
-      if (task.status !== 'backlog') continue
-      const depsDone = task.deps.every((d) => this.tasks.get(d)?.status === 'done')
+      if (!this.isKind(task, 'backlog')) continue
+      const depsDone = task.deps.every((d) => {
+        const dep = this.tasks.get(d)
+        return dep !== undefined && this.isKind(dep, 'done')
+      })
       if (depsDone) {
-        task.status = 'ready'
+        this.setStatus(task, this.columnId('ready'))
         this.pushEvent('task_ready', { taskId: task.id })
       }
     }
@@ -127,8 +188,8 @@ export class TaskStore {
     const dispatch: Dispatch = { id: dispatchId, taskId, ptyId, startedAt: Date.now() }
     this.dispatches.set(dispatch.id, dispatch)
     task.dispatchId = dispatch.id
-    task.status = 'in_progress'
-    task.updatedAt = Date.now()
+    task.startedAt ??= Date.now()
+    this.setStatus(task, this.columnId('in_progress'))
     this.commit()
     return dispatch
   }
@@ -141,8 +202,7 @@ export class TaskStore {
     dispatch.summary = summary
     dispatch.files = files
     const task = this.mustTask(dispatch.taskId)
-    task.status = 'review'
-    task.updatedAt = Date.now()
+    this.setStatus(task, this.columnId('review'))
     this.pushEvent('worker_done', { taskId: task.id, dispatchId, summary, files })
     this.commit()
     return dispatch
@@ -156,8 +216,7 @@ export class TaskStore {
       dispatch.endedAt = Date.now()
       dispatch.outcome = exitCode === 0 ? 'unknown' : 'failed'
       const task = this.mustTask(dispatch.taskId)
-      task.status = 'needs_input'
-      task.updatedAt = Date.now()
+      this.setStatus(task, this.columnId('needs_input'))
       this.pushEvent('escalation', {
         taskId: task.id,
         dispatchId: dispatch.id,
@@ -191,8 +250,7 @@ export class TaskStore {
   rejectReview(taskId: string, feedback: string): Task {
     const task = this.mustTask(taskId)
     task.feedback = feedback
-    task.status = 'ready'
-    task.updatedAt = Date.now()
+    this.setStatus(task, this.columnId('ready'))
     this.commit()
     return task
   }
@@ -210,8 +268,7 @@ export class TaskStore {
       createdAt: Date.now()
     }
     this.questions.set(q.id, q)
-    task.status = 'needs_input'
-    task.updatedAt = Date.now()
+    this.setStatus(task, this.columnId('needs_input'))
     this.pushEvent('question', { taskId: task.id, dispatchId: q.dispatchId, questionId: q.id, question: q.question, options: q.options })
     this.commit()
     return q
@@ -224,7 +281,7 @@ export class TaskStore {
     q.answeredAt = Date.now()
     const task = this.mustTask(q.taskId)
     const stillOpen = [...this.questions.values()].some((x) => x.taskId === task.id && !x.answeredAt)
-    if (!stillOpen && task.status === 'needs_input') task.status = 'in_progress'
+    if (!stillOpen && this.isKind(task, 'needs_input')) this.setStatus(task, this.columnId('in_progress'))
     task.updatedAt = Date.now()
     this.pushEvent('question_answered', { taskId: task.id, dispatchId: q.dispatchId, questionId, answer })
     this.commit()

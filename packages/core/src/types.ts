@@ -1,15 +1,35 @@
 import type { AgentKind } from './agents'
 export type { AgentKind }
 
-export type TaskStatus =
-  | 'backlog'
-  | 'ready'
-  | 'in_progress'
-  | 'needs_input'
-  | 'review'
-  | 'done'
+// ---------- роли ----------
 
-export const TASK_STATUSES: TaskStatus[] = [
+/** Роль проекта: кто выполняет задачу (агент + модель). */
+export interface Role {
+  id: string
+  title: string
+  agent: AgentKind
+  /** Модель агента; пусто — по умолчанию. */
+  model?: string
+}
+
+export const DEFAULT_ROLES: Role[] = [
+  { id: 'coordinator', title: 'Координатор', agent: 'claude' },
+  { id: 'developer', title: 'Программист', agent: 'claude' },
+  { id: 'reviewer', title: 'Ревьюер', agent: 'claude' },
+  { id: 'qa', title: 'QA', agent: 'claude' }
+]
+
+export const DEFAULT_ROLE_ID = 'developer'
+
+// ---------- колонки ----------
+
+/** Системные виды колонок: по ним store переводит задачи автоматически. */
+export type SystemColumnKind = 'backlog' | 'ready' | 'in_progress' | 'needs_input' | 'review' | 'done'
+
+/** Вид колонки: системная или произвольная пользовательская. */
+export type ColumnKind = SystemColumnKind | 'custom'
+
+export const SYSTEM_COLUMN_KINDS: SystemColumnKind[] = [
   'backlog',
   'ready',
   'in_progress',
@@ -18,21 +38,58 @@ export const TASK_STATUSES: TaskStatus[] = [
   'done'
 ]
 
-export const STATUS_TITLES: Record<TaskStatus, string> = {
-  backlog: 'Бэклог',
-  ready: 'Готовы',
-  in_progress: 'В работе',
-  needs_input: 'Нужен ответ',
-  review: 'Ревью',
-  done: 'Сделано'
+export interface BoardColumn {
+  id: string
+  title: string
+  /** Цвет заголовка, hex. */
+  color: string
+  kind: ColumnKind
 }
+
+/** 8 предустановленных цветов заголовка колонки. */
+export const COLUMN_COLORS: { value: string; title: string }[] = [
+  { value: '#6b6f7c', title: 'Серый' },
+  { value: '#7b86f5', title: 'Синий' },
+  { value: '#f08a3a', title: 'Оранжевый' },
+  { value: '#e8b04a', title: 'Жёлтый' },
+  { value: '#b57bee', title: 'Фиолетовый' },
+  { value: '#5ad1cc', title: 'Бирюзовый' },
+  { value: '#e5484d', title: 'Красный' },
+  { value: '#2ea043', title: 'Зелёный' }
+]
+
+/** Колонки по умолчанию: id === kind, цвета — первые шесть из COLUMN_COLORS. */
+export const DEFAULT_COLUMNS: BoardColumn[] = [
+  { id: 'backlog', title: 'Бэклог', color: COLUMN_COLORS[0].value, kind: 'backlog' },
+  { id: 'ready', title: 'Готовы', color: COLUMN_COLORS[1].value, kind: 'ready' },
+  { id: 'in_progress', title: 'В работе', color: COLUMN_COLORS[2].value, kind: 'in_progress' },
+  { id: 'needs_input', title: 'Нужен ответ', color: COLUMN_COLORS[3].value, kind: 'needs_input' },
+  { id: 'review', title: 'Ревью', color: COLUMN_COLORS[4].value, kind: 'review' },
+  { id: 'done', title: 'Сделано', color: COLUMN_COLORS[5].value, kind: 'done' }
+]
+
+/** Статус задачи — id колонки доски (см. BoardColumn). */
+export type TaskStatus = string
+
+/** @deprecated Колонки берутся из настроек проекта, это только дефолт. */
+export const TASK_STATUSES: TaskStatus[] = DEFAULT_COLUMNS.map((c) => c.id)
+
+/** @deprecated Названия колонок берутся из настроек проекта, это только дефолт. */
+export const STATUS_TITLES: Record<string, string> = Object.fromEntries(
+  DEFAULT_COLUMNS.map((c) => [c.id, c.title])
+)
+
+// ---------- задачи ----------
 
 export interface Task {
   id: string
   title: string
   spec: string
+  /** Id колонки доски. */
   status: TaskStatus
   deps: string[]
+  /** Роль проекта: агент и модель берутся из неё; `agent` — снимок на момент создания/запуска. */
+  roleId: string
   agent: AgentKind
   worktree?: string
   branch?: string
@@ -41,6 +98,10 @@ export interface Task {
   feedback?: string
   createdAt: number
   updatedAt: number
+  /** Первый startDispatch. */
+  startedAt?: number
+  /** Момент попадания в колонку kind=done. */
+  doneAt?: number
 }
 
 export type DispatchOutcome = 'done' | 'failed' | 'unknown'
