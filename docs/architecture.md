@@ -18,7 +18,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель
 
-- `Task { id, title, spec, status, deps[], worktree?, branch?, agent?, dispatchId? }`
+- `Task { id, title, spec, status, deps[], worktree?, branch?, agent, dispatchId? }`;
+  `agent` — `AgentKind`, id из реестра `packages/core/src/agents.ts` (см. «Агенты»).
 - `Dispatch { id, taskId, pty, startedAt, endedAt?, outcome? }`
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
   типы: `task_ready`, `worker_done`, `question`, `escalation`, `gate_answered`.
@@ -29,8 +30,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ```
 orca-board run create --objective "..."
-orca-board task create --title ... --spec ... [--dep <id>]
-orca-board worker start --task <id> --agent claude
+orca-board agents list                      # [{id,title,installed,enabled,version?}]
+orca-board task create --title ... --spec ... [--agent <id>] [--dep <id>]
+orca-board worker start --task <id>
 orca-board check --wait --types worker_done,question --timeout-ms 900000
 orca-board worker read --dispatch <id>
 orca-board gate create --task <id> --question "..." --options a,b
@@ -45,10 +47,41 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 
 ## Как воркер получает контекст
 
-При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`,
-а в `PATH` — папка с `orca-board`. Для `claude` инструкция воркера (`skills/worker.md`)
-передаётся через `--append-system-prompt`, задание — позиционным аргументом.
-Для остальных агентов инструкция и задание склеиваются в один промпт.
+При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`, `ORCA_PROJECT`,
+а в `PATH` — папка с `orca-board`. Команда запуска берётся из реестра:
+`AGENTS[task.agent].invoke(инструкция, задание, {permissionMode, shell})` → `{command, args}`
+(`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + замечания ревью.
+
+| Агент | Бинарник | Как передаются инструкция и задание |
+|---|---|---|
+| `claude` | `claude` | инструкция через `--append-system-prompt`, задание — позиционный аргумент; плюс `--permission-mode`, `--allowedTools "Bash(orca-board:*)"` |
+| `codex`, `cursor` (`cursor-agent`), `amp` | по id | склейка `инструкция\n\n---\n\nзадание` одним позиционным аргументом |
+| `opencode` | `opencode` | склейка в `--prompt` |
+| `gemini`, `copilot` | по id | склейка в `-i` (интерактив с начальным промптом) |
+| `goose` | `goose` | `run --interactive --text <склейка>` |
+| `shell` | `$SHELL` (для детекта — `sh`) | ничего: пустой терминал в worktree |
+
+Координатор всегда запускается через `claude` с `skills/coordinator.md` и целью.
+
+## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
+
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, invoke}`. Из него выводятся
+  `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`.
+  Новый агент — одна запись в массиве, остальное (типы, детект, UI, проверки) подхватывается само.
+- **Детект** (`detectAgents`): ищем `bin` как исполняемый файл в `PATH` процесса плюс стандартных папках
+  (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.cargo/bin`, `~/.bun/bin`) —
+  Electron из Finder получает урезанный PATH. Сам агент не запускается; только для найденного бинарника
+  читается версия `<bin> <versionArgs>` с таймаутом 3 с (первая строка, до 60 символов; ошибка → без версии).
+  Результат кэшируется на процесс, `detectAgents(true)` пересканирует (кнопка «Обновить» в «О проекте»).
+- **`Project.enabledAgents?: AgentKind[]`** (`projects.ts`): какие агенты включены в проекте; `undefined` —
+  все установленные. `agentInfos(enabledAgents)` собирает `AgentInfo[]`:
+  `enabled = installed && (enabledAgents === undefined || включён)`. Меняется через IPC `projects:setEnabledAgents`.
+- **Где проверяется** (`assertAgentUsable`: неизвестный / не установлен / выключен → ошибка с текстом для CLI и UI):
+  `task.create` по сокету и `tasks:create` из UI — через `pickAgent`: указанный агент проверяется,
+  без `--agent` берётся `claude`, если включён, иначе первый включённый;
+  `worker.start` (сокет и UI) — агент задачи проверяется заново, его могли выключить после создания.
+- **Сокет `agents.list`** → `[{id, title, installed, enabled, version?}]` в порядке реестра;
+  IPC `agents:list(refresh?)` — то же для активного проекта.
 
 ## Протокол сокета
 
