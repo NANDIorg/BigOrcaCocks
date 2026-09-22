@@ -9,7 +9,8 @@ import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
-import type { PtySpawnOptions, TaskPatch } from '../shared/ipc'
+import { createTray, refreshTray } from './tray'
+import type { AppSettings, PtySpawnOptions, TaskPatch } from '../shared/ipc'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -38,11 +39,15 @@ app.setPath('userData', join(app.getPath('appData'), 'orca-board'))
 
 let win: BrowserWindow | null = null
 let projects: ProjectManager
+/** Выход подтверждён (или подтверждать нечего) — before-quit больше не перехватываем. */
+let quitting = false
+/** Диалог подтверждения уже открыт — второй не показываем. */
+let confirmingQuit = false
 
 const SOCKET_PATH = defaultSocketPath({ env: process.env, platform: process.platform, homedir: homedir() })
 const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   win = new BrowserWindow({
     width: 1500,
     height: 940,
@@ -69,6 +74,65 @@ function createWindow(): void {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return win
+}
+
+/** Показать окно: существующее — развернуть и сфокусировать, закрытое — создать заново. */
+function showWindow(): BrowserWindow {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    return win
+  }
+  return createWindow()
+}
+
+/** Незавершённые dispatch'и по всем загруженным проектам (для трея). */
+function activeDispatchCount(): number {
+  return projects.loadedStores().reduce((n, [, store]) => n + store.activeDispatches().length, 0)
+}
+
+/** Воркеры, которых выход реально остановит: dispatch не завершён и PTY жив. */
+function liveWorkerCount(): number {
+  return projects.loadedStores().reduce((n, [, store]) => n + store.activeDispatches().filter((d) => isAlive(d.ptyId)).length, 0)
+}
+
+function quitNow(): void {
+  quitting = true
+  killAll()
+  app.quit()
+}
+
+/** Единая точка выхода: при живых воркерах — подтверждение. */
+async function requestQuit(): Promise<void> {
+  if (quitting || confirmingQuit) return
+  const n = liveWorkerCount()
+  if (n === 0) return quitNow()
+  confirmingQuit = true
+  try {
+    const opts = {
+      type: 'warning' as const,
+      message: `${n} ${tasksWord(n)} в работе, агенты будут остановлены. Выйти?`,
+      buttons: ['Выйти', 'Отмена'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true
+    }
+    const parent = win && !win.isDestroyed() ? win : null
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts)
+    if (response === 0) quitNow()
+  } finally {
+    confirmingQuit = false
+  }
+}
+
+function tasksWord(n: number): string {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return 'задача'
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'задачи'
+  return 'задач'
 }
 
 function ctx(projectId: string): WorkerEnvContext {
@@ -168,16 +232,19 @@ function notify(projectId: string, events: OrcaEvent[]): void {
     const column = task ? projects.columns(projectId).find((c) => c.id === task.status) : undefined
     const n = new Notification({ title, body: body.slice(0, 200), subtitle: column?.title })
     n.on('click', () => {
-      if (!win) return
-      if (win.isMinimized()) win.restore()
-      win.focus()
-      win.webContents.send('projects:focus', projectId)
+      const existed = win !== null && !win.isDestroyed()
+      const w = showWindow()
+      // Новое окно ещё грузит renderer — шлём фокус, когда он сможет его принять.
+      if (existed && !w.webContents.isLoading()) w.webContents.send('projects:focus', projectId)
+      else w.webContents.once('did-finish-load', () => w.webContents.send('projects:focus', projectId))
     })
     n.show()
   }
 }
 
 function registerIpc(): void {
+  ipcMain.handle('app:getSettings', () => projects.settings())
+  ipcMain.handle('app:setSettings', (_e, patch: Partial<AppSettings>) => projects.setSettings(patch ?? {}))
   ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:setActive', (_e, id: string) => projects.setActive(id))
@@ -262,6 +329,7 @@ app.whenReady().then(() => {
     if (win && !win.isDestroyed()) win.webContents.send('board:changed', { projectId, snapshot: store.snapshot() })
     // Любой путь в done (review accept, task move, tasks:move из UI) проходит через commit store — ловим здесь.
     closeDoneWorkers(store)
+    refreshTray()
   })
   projects.onEvents(notify)
   registerIpc()
@@ -281,13 +349,21 @@ app.whenReady().then(() => {
     }
   })
   watchStuck()
+  createTray({ open: () => showWindow(), quit: () => void requestQuit(), activeCount: activeDispatchCount })
   createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  // Клик по иконке в Dock (macOS) — вернуть окно.
+  app.on('activate', () => showWindow())
+})
+
+// Cmd+Q, «Выйти» из меню приложения, app.quit() — всё идёт через подтверждение.
+app.on('before-quit', (e) => {
+  if (quitting) return
+  e.preventDefault()
+  void requestQuit()
 })
 
 app.on('window-all-closed', () => {
-  killAll()
-  app.quit()
+  // Фоновый режим: окно закрыто, приложение, PTY и уведомления живут; вернуться — Dock или трей.
+  if (projects?.settings().keepInBackground ?? true) return
+  quitNow()
 })
