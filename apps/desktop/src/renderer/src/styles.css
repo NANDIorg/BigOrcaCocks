@@ -613,10 +613,6 @@ button:disabled { opacity: .45; cursor: default; }
 .about-host { container: about / inline-size; min-width: 0; min-height: 0; display: flex; }
 .about { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
 .about-nav { border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 0; }
-.about-scope { display: grid; grid-template-columns: 1fr 1fr; background: var(--page); border-radius: 10px; padding: 3px; margin-bottom: 14px; flex-shrink: 0; }
-.about-scope button { background: transparent; border: 0; color: var(--muted); font-size: 12px; padding: 6px 4px; border-radius: 8px; line-height: 1.2; }
-.about-scope button.on { background: var(--side-2); color: var(--text); }
-.about-scope button:not(.on):not(:disabled):hover { color: var(--text); }
 .about-nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 14px 10px 6px; }
 .about-nav-item {
   display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; border: 0;
@@ -698,12 +694,21 @@ button:disabled { opacity: .45; cursor: default; }
 .perm-card span { font-size: 12px; color: var(--muted); }
 .perm-card input[type='radio'] { width: auto; margin: 0; accent-color: var(--accent); }
 
+/* Окно «Настройки» (settings/SettingsModal.tsx): внутри — та же сетка .about, что во вкладке «О проекте» */
+.settings-modal {
+  background: var(--page); border-radius: 18px; width: 1100px; max-width: calc(100vw - 48px);
+  height: min(780px, calc(100vh - 48px)); display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 30px 80px rgba(0,0,0,.5);
+}
+.settings-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px 14px 24px; border-bottom: 1px solid var(--line); }
+.settings-head h3 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
+.settings-modal .about-host { flex: 1; }
+
 /* Узкая вкладка: меню — горизонтальная полоса над разделом */
 @container about (max-width: 900px) {
   .about { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .about-nav { flex-direction: row; align-items: center; gap: 4px; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 16px; overflow-x: auto; overflow-y: hidden; }
   .about-nav-group { display: none; }
-  .about-scope { margin: 0 8px 0 0; width: 210px; }
   .about-nav-item { border-left: 0; padding: 6px 10px; }
   .about-nav-item svg { display: none; }
   .about-sec { padding: 20px 20px 32px; }

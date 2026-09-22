@@ -66,3 +66,54 @@ export function plural(n: number, one: string, few: string, many: string): strin
   if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
   return many
 }
+
+/** Пункт меню разделов (слева в «О проекте» и «Настройках»). */
+export interface NavEntry<S extends string> {
+  id: S
+  label: string
+  icon: () => React.JSX.Element
+  /** Счётчик справа; не показывается, пока данные не загружены (showCount). */
+  count?: string
+  tone?: 'warn' | 'live'
+  title?: string
+}
+
+export function NavItem<S extends string>({ item, current, showCount = true, onGo }: {
+  item: NavEntry<S>
+  current: S
+  showCount?: boolean
+  onGo(id: S): void
+}): React.JSX.Element {
+  const on = current === item.id
+  return (
+    <button
+      type="button"
+      className={`about-nav-item ${on ? 'on' : ''}`}
+      aria-current={on ? 'page' : undefined}
+      title={item.title}
+      onClick={() => onGo(item.id)}
+    >
+      <item.icon />
+      <span className="about-nav-label">{item.label}</span>
+      {showCount && item.count && <span className={`about-nav-count ${item.tone ?? ''}`}>{item.count}</span>}
+    </button>
+  )
+}
+
+/** Выбранный раздел меню из localStorage; неизвестное значение — fallback. */
+export function storedSection<S extends string>(key: string, all: readonly S[], fallback: S): S {
+  try {
+    const v = localStorage.getItem(key) as S | null
+    return v && all.includes(v) ? v : fallback
+  } catch {
+    return fallback
+  }
+}
+
+export function storeSection(key: string, s: string): void {
+  try {
+    localStorage.setItem(key, s)
+  } catch {
+    // localStorage недоступен — раздел просто не переживёт перезапуск
+  }
+}

@@ -5,19 +5,17 @@ import { Icon } from '../icons'
 import { SectionHead, Switch } from './parts'
 
 interface Props {
-  /** Агенты из реестра; enabled — включённость в текущем режиме (проект или дефолт). */
+  /** Агенты из реестра; enabled — включённость в проекте или в дефолте. */
   agents: AgentInfo[]
   /** Только для дефолта: «все установленные» (enabledAgents не задан) и его переключение. */
   all?: { on: boolean; onChange(on: boolean): void }
-  /** Нет проекта — переключатели недоступны. */
-  disabled?: boolean
   error: string | null
   onToggle(id: AgentKind, on: boolean): void
   onRefresh(): void
 }
 
 /** Раздел «Агенты»: карточки установленных с переключателем; не установленные — под спойлером. */
-export function AgentsSection({ agents, all, disabled, error, onToggle, onRefresh }: Props): React.JSX.Element {
+export function AgentsSection({ agents, all, error, onToggle, onRefresh }: Props): React.JSX.Element {
   const installed = agents.filter((a) => a.installed)
   const missing = agents.filter((a) => !a.installed)
 
@@ -30,7 +28,7 @@ export function AgentsSection({ agents, all, disabled, error, onToggle, onRefres
       </div>
       <Switch
         on={a.installed && a.enabled}
-        disabled={disabled || !a.installed || all?.on}
+        disabled={!a.installed || all?.on}
         title={all?.on ? 'Включены все установленные' : a.enabled ? 'Выключить' : 'Включить'}
         onChange={(on) => onToggle(a.id, on)}
       />
