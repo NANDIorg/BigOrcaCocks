@@ -85,7 +85,7 @@ describe('глобальные задачи: CRUD и колонки проект
     assert.throws(() => store.updateGlobalTask('run_nope', { title: 'x' }), /run not found/)
   })
 
-  it('ручное перемещение по реальным колонкам не меняет статусы подзадач и жизненный цикл', () => {
+  it('ручное перемещение по реальным колонкам не меняет статусы подзадач', () => {
     const store = newStore()
     const g = store.createGlobalTask({ title: 'G' })
     const a = store.createTask({ title: 'a', runId: g.id })
@@ -94,7 +94,7 @@ describe('глобальные задачи: CRUD и колонки проект
     assert.equal(store.moveGlobalTask(g.id, 'wip').status, 'wip')
     assert.equal(store.moveGlobalTask(g.id, 'fin').status, 'fin')
     assert.deepEqual(statuses(store.listSubtasks(g.id)), before)
-    assert.equal(store.getRun(g.id)!.closedAt, undefined, 'ручной done не закрывает прогон')
+    assert.ok(store.getRun(g.id)!.closedAt, 'ручной done закрывает прогон')
     assert.throws(() => store.moveGlobalTask(g.id, 'done'), /колонки с id «done» нет/)
     assert.equal(store.getTask(b.id)!.status, 'plan')
   })
@@ -405,6 +405,90 @@ describe('жизненный цикл прогона = глобальной за
     store.moveTask(t2.id, 'fin')
     assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
     assert.ok(store.finishRun(run.id).finishedAt)
+  })
+
+  it('ручной перенос в «Сделано»: прогон закрыт, координатор получает run_done {manual}, терминал закрывается', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_c', 'claude')
+    const t = store.createTask({ title: 't', runId: run.id })
+    store.startDispatch(t.id, 'pty_w')
+    const got: string[] = []
+    const unsub = store.subscribe(() => got.push(...store.consumeEvents(['run_done'], run.id, run.id).map((e) => e.type)))
+
+    const g = store.moveGlobalTask(run.id, 'fin')
+    unsub()
+    assert.equal(g.status, 'fin')
+    assert.ok(g.closedAt)
+    assert.equal(store.getTask(t.id)!.status, 'wip', 'статусы подзадач не меняются')
+    assert.deepEqual(got, ['run_done'], 'ждущий координатор (check --follow) получает run_done')
+    const ev = store.listEvents().find((e) => e.type === 'run_done')!
+    assert.deepEqual(ev.payload, { runId: run.id, objective: 'X', manual: true })
+
+    // Координатор мог и не вызвать runs finish: приложение закрывает его терминал само.
+    const snap = store.snapshot()
+    const toClose = coordinatorsToClose({
+      ...snap,
+      isDone: (s) => store.columnKind(s) === 'done',
+      lingers: () => false,
+      lastActivityAt: () => ev.createdAt,
+      now: ev.createdAt + COORDINATOR_FINISH_GRACE_MS
+    })
+    assert.deepEqual(toClose, [{ runId: run.id, ptyId: 'pty_c' }])
+    // runs finish после ручного done не падает.
+    assert.ok(store.finishRun(run.id).finishedAt)
+  })
+
+  it('повторный перенос в «Сделано» не падает и не шлёт второй run_done', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', status: 'wip' })
+    store.moveGlobalTask(g.id, 'fin')
+    const closedAt = store.getRun(g.id)!.closedAt
+    store.moveGlobalTask(g.id, 'fin')
+    assert.equal(store.getRun(g.id)!.closedAt, closedAt)
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 1)
+    // Уже закрытый автоматически прогон — тоже без второго события.
+    const auto = store.createGlobalTask({ title: 'A' })
+    store.moveTask(store.createTask({ title: 'a', runId: auto.id }).id, 'fin')
+    store.moveGlobalTask(auto.id, 'fin')
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done' && e.payload.runId === auto.id).length, 1)
+  })
+
+  it('возврат из «Сделано»: прогон снова открыт, run_done погашен, повторный перенос шлёт новый', () => {
+    const store = newStore()
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_c', 'codex')
+    const t = store.createTask({ title: 't', runId: run.id })
+    store.moveGlobalTask(run.id, 'fin')
+    const back = store.moveGlobalTask(run.id, 'plan')
+    assert.equal(back.status, 'plan', 'карточка там, куда её перенёс человек')
+    assert.equal(back.closedAt, undefined)
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 0, 'старый run_done не долетает')
+    const snap = store.snapshot()
+    const toClose = coordinatorsToClose({
+      ...snap,
+      isDone: (s) => store.columnKind(s) === 'done',
+      lingers: () => true,
+      lastActivityAt: () => 0,
+      now: Date.now() + 10 * COORDINATOR_FINISH_GRACE_MS
+    })
+    assert.deepEqual(toClose, [], 'терминал ожившего прогона не закрывается')
+    // Подзадача дошла до done — прогон закрывается автоматически, как обычно.
+    store.moveTask(t.id, 'fin')
+    assert.ok(store.getRun(run.id)!.closedAt)
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
+    // Снова вернули и снова вручную в done — новый run_done.
+    store.moveGlobalTask(run.id, 'wip')
+    store.moveGlobalTask(run.id, 'fin')
+    assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
+  })
+
+  it('«Входящие» в «Сделано» вручную: закрыты, run_done не шлют', () => {
+    const store = newStore()
+    store.createTask({ title: 'во входящие' })
+    const inbox = store.listGlobalTasks().find((g) => g.inbox)!
+    assert.ok(store.moveGlobalTask(inbox.id, 'fin').closedAt)
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 0)
   })
 
   it('свежий прогон без подзадач: runs finish — ошибка; «Входящие» run_done не шлют', () => {

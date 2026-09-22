@@ -120,9 +120,14 @@ describe('coordinatorsToClose', () => {
     assert.deepEqual(coordinatorsToClose(input({ runs, tasks, events: [runDone('run_a')] })), [])
   })
 
-  it('координатор на агенте, который выходит сам (claude), и старый прогон без агента — не трогает', () => {
-    assert.deepEqual(coordinatorsToClose(input({ runs: [run('run_a', { coordinatorAgent: 'claude' })] })), [])
-    assert.deepEqual(coordinatorsToClose(input({ runs: [run('run_a', { coordinatorAgent: undefined })] })), [])
+  it('сигнал runs finish закрывает терминал любого агента (claude, старый прогон без агента)', () => {
+    assert.equal(coordinatorsToClose(input({ runs: [run('run_a', { coordinatorAgent: 'claude' })] })).length, 1)
+    assert.equal(coordinatorsToClose(input({ runs: [run('run_a', { coordinatorAgent: undefined })] })).length, 1)
+  })
+
+  it('без сигнала страховка только для «незакрывающегося» агента: claude не трогает', () => {
+    const runs = [run('run_a', { coordinatorAgent: 'claude', finishedAt: undefined })]
+    assert.deepEqual(coordinatorsToClose(input({ runs, lastActivityAt: () => T0, now: T0 + 2 * ABANDONED })), [])
   })
 
   it('PTY уже не жив (вышел сам или закрыт вручную) — нечего закрывать', () => {
@@ -150,5 +155,39 @@ describe('lingersAfterAnswer', () => {
   it('codex после финального ответа не выходит; claude — без флага', () => {
     assert.equal(getAgent('codex')?.lingersAfterAnswer, true)
     assert.equal(getAgent('claude')?.lingersAfterAnswer, undefined)
+  })
+})
+
+describe('coordinatorsToClose: глобальная задача перенесена в «Сделано» вручную', () => {
+  const manualDone = (runId: string, at = T0): OrcaEvent => ({ ...runDone(runId, at), payload: { runId, manual: true } })
+  /** Подзадачи не закрыты, координатор (claude) сигнала не прислал и молчит с run_done. */
+  const manual = (patch: Partial<CoordinatorCloseInput> = {}): CoordinatorCloseInput =>
+    input({
+      runs: [run('run_a', { coordinatorAgent: 'claude', finishedAt: undefined })],
+      tasks: [task('work', 'run_a', 'in_progress')],
+      questions: [{ id: 'q1', taskId: 'work', question: '?', options: [], createdAt: T0 }],
+      events: [manualDone('run_a')],
+      lastActivityAt: () => T0 - 1,
+      now: T0 + GRACE,
+      ...patch
+    })
+
+  it('закрывает терминал любого агента после короткой тишины, даже без runs finish и с открытыми подзадачами', () => {
+    assert.deepEqual(coordinatorsToClose(manual()), [{ runId: 'run_a', ptyId: 'pty_run_a' }])
+    assert.deepEqual(coordinatorsToClose(manual({ now: T0 + GRACE - 1 })), [])
+  })
+
+  it('координатор реагирует на run_done (пишет сводку) — закрытие ждёт тишины после активности', () => {
+    const lastActivityAt = (): number => T0 + 30_000
+    assert.deepEqual(coordinatorsToClose(manual({ lastActivityAt, now: T0 + 30_000 + GRACE - 1 })), [])
+    assert.equal(coordinatorsToClose(manual({ lastActivityAt, now: T0 + 30_000 + GRACE })).length, 1)
+  })
+
+  it('глобальную задачу вернули из done (прогон открыт) — не закрывает', () => {
+    assert.deepEqual(coordinatorsToClose(manual({ runs: [run('run_a', { closedAt: undefined, finishedAt: undefined })] })), [])
+  })
+
+  it('PTY координатора уже не жив — нечего закрывать', () => {
+    assert.deepEqual(coordinatorsToClose(manual({ lastActivityAt: () => undefined })), [])
   })
 })

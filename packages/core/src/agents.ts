@@ -51,7 +51,8 @@ export interface AgentSpec {
   effortOptions: readonly string[]
   /**
    * Интерактивный CLI не выходит сам после финального ответа, а ждёт ввода. Терминал координатора
-   * на таком агенте приложение закрывает само после run_done (см. `coordinatorsToClose`).
+   * на таком агенте приложение закрывает после run_done и без сигнала `runs finish` — по долгой тишине
+   * (см. `coordinatorsToClose`; с сигналом или при ручном done закрывается терминал любого агента).
    */
   lingersAfterAnswer?: boolean
   /** Как передать системную инструкцию (system) и задание (prompt). */

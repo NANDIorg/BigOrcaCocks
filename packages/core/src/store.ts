@@ -379,10 +379,20 @@ export class TaskStore {
     return this.getGlobalTask(id)
   }
 
-  /** Ручное перемещение карточки по колонкам проекта. Статусы подзадач и жизненный цикл прогона не меняются. */
+  /**
+   * Ручное перемещение карточки по колонкам проекта. Статусы подзадач не меняются.
+   * В колонку kind=done — человек объявил глобальную задачу сделанной: открытый прогон закрывается
+   * с `run_done {manual: true}`, чтобы координатор (если ждёт) закончил, а приложение закрыло его терминал.
+   * Уже закрытый прогон повторно не закрывается. Из done в другую колонку — прогон снова открыт (reopenRun).
+   */
   moveGlobalTask(id: string, status: string): GlobalTask {
     const run = this.mustRun(id)
     this.assertGlobalColumn(status)
+    if (this.columnKind(status) === 'done') {
+      if (run.closedAt === undefined) this.closeDone(run, true)
+    } else if (run.closedAt !== undefined) {
+      this.reopenRun(run)
+    }
     run.status = status
     run.updatedAt = Date.now()
     this.commit()
@@ -481,14 +491,16 @@ export class TaskStore {
 
   /**
    * Закрыть прогон как завершённый: карточка в done и событие run_done (его и возвращает).
+   * `manual` — карточку перенёс в done человек (подзадачи могут быть не закрыты), в событии `manual: true`.
    * «Входящим» run_done не шлётся: у них нет координатора, событие некому забрать.
    */
-  private closeDone(run: Run): OrcaEvent | undefined {
+  private closeDone(run: Run, manual = false): OrcaEvent | undefined {
     run.closedAt = Date.now()
     run.reopenedAt = undefined
     run.status = this.columnId('done')
     run.updatedAt = run.closedAt
-    return run.inbox ? undefined : this.pushEvent('run_done', { runId: run.id, objective: run.objective })
+    if (run.inbox) return undefined
+    return this.pushEvent('run_done', { runId: run.id, objective: run.objective, ...(manual ? { manual: true } : {}) })
   }
 
   // ---------- dispatches ----------

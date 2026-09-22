@@ -24,7 +24,7 @@ const HELP = `orca-board — управление доской агентов
   global get [--global <id>]
   global create [--title "..."] [--description "..."] [--status <id колонки>]
   global update --global <id> [--title "..."] [--description "..."]
-  global move --global <id> --status <id колонки>    только backlog/in_progress/done; подзадачи не трогает
+  global move --global <id> --status <id колонки>    только backlog/in_progress/done; подзадачи не трогает; в done — закрывает прогон (run_done)
   global delete --global <id> [--cascade]  с подзадачами — только --cascade (удаляются вместе с ней)
   global tasks [--global <id>]            подзадачи только этой глобальной задачи
   global add-task [--global <id>] --title "..." [--spec "..."] --role <id> [--dep <id>]...
