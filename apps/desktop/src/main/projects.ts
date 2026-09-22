@@ -309,7 +309,7 @@ function nonEmpty(v: unknown): v is string {
   return typeof v === 'string' && v.trim() !== ''
 }
 
-/** Роли: непустые уникальные id, непустые названия, известный агент, модель — строка или отсутствует. */
+/** Роли: непустые уникальные id, непустые названия, известный агент; модель, effort, системный промпт — строки или отсутствуют. */
 function validateRoles(roles: Role[]): Role[] {
   if (!Array.isArray(roles) || roles.length === 0) throw new Error('нужна хотя бы одна роль')
   const seen = new Set<string>()
@@ -321,9 +321,15 @@ function validateRoles(roles: Role[]): Role[] {
     if (!isAgentKind(r.agent)) throw new Error(`роль «${r.id}»: неизвестный агент ${String(r.agent)}`)
     if (r.model !== undefined && typeof r.model !== 'string') throw new Error(`роль «${r.id}»: модель должна быть строкой`)
     if (r.effort !== undefined && typeof r.effort !== 'string') throw new Error(`роль «${r.id}»: effort должен быть строкой`)
+    if (r.systemPrompt !== undefined && typeof r.systemPrompt !== 'string') throw new Error(`роль «${r.id}»: системный промпт должен быть строкой`)
     const model = r.model?.trim()
     const effort = r.effort?.trim()
-    return { id: r.id, title: r.title.trim(), agent: r.agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+    // Промпт хранится как введён (многострочный, без trim — иначе автосохранение съедало бы ввод); из одних пробелов — поля нет.
+    const systemPrompt = r.systemPrompt?.trim() ? r.systemPrompt : undefined
+    return {
+      id: r.id, title: r.title.trim(), agent: r.agent,
+      ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(systemPrompt ? { systemPrompt } : {})
+    }
   })
 }
 

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, type TaskStore, type Role } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, type TaskStore, type Role } from '@orca-board/core'
 import workerSkill from '../../../../skills/worker.md?raw'
 import coordinatorSkill from '../../../../skills/coordinator.md?raw'
 import { defaultShell, spawnPty, type PtyCommand } from './pty'
@@ -182,7 +182,7 @@ export function startWorker(
   const dispatchId = newId('disp')
   const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
   const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
-  const inv = spec.invoke(workerSkill, prompt, { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  const inv = spec.invoke(withRoleInstructions(workerSkill, role), prompt, { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -229,7 +229,7 @@ export function startCoordinator(
   const role = ctx.roles.find((r) => r.id === 'coordinator')
   const spec = role ? getAgent(role.agent) : undefined
   if (role && !spec) throw new Error(`неизвестный агент: ${role.agent}`)
-  const inv = (spec ?? getAgent('claude')!).invoke(coordinatorSkill, prompt, {
+  const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(coordinatorSkill, role), prompt, {
     permissionMode: ctx.permissionMode,
     shell: defaultShell(),
     model: role?.model,

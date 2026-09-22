@@ -12,6 +12,11 @@ export interface Role {
   model?: string
   /** Уровень рассуждений агента (см. effortOptions); пусто — по умолчанию. */
   effort?: string
+  /**
+   * Системный промпт роли: инструкции пользователя, которые дописываются к служебной инструкции Orca
+   * (skills/worker.md или coordinator.md) при каждом запуске агента этой роли. Пусто — поля нет, поведение прежнее.
+   */
+  systemPrompt?: string
 }
 
 export const DEFAULT_ROLES: Role[] = [
@@ -22,6 +27,17 @@ export const DEFAULT_ROLES: Role[] = [
 ]
 
 export const DEFAULT_ROLE_ID = 'developer'
+
+/**
+ * Служебная инструкция Orca + системный промпт роли одним текстом. Блок роли идёт после служебной
+ * инструкции и не заменяет её; текст роли вставляется как есть (переносы строк, кавычки), обрезаются
+ * только пробелы по краям. Нет роли или промпт пустой — служебная инструкция без изменений.
+ */
+export function withRoleInstructions(system: string, role: Pick<Role, 'title' | 'systemPrompt'> | undefined): string {
+  const own = role?.systemPrompt?.trim()
+  if (!own) return system
+  return `${system}\n\n# Инструкции роли «${role!.title}»\n\n${own}`
+}
 
 // ---------- колонки ----------
 
