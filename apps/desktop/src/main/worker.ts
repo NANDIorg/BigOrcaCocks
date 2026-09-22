@@ -184,8 +184,11 @@ export function startWorker(
 
   const dispatchId = newId('disp')
   // Уточнение к задаче-ответу идёт вместе с прошлым ответом: воркер отвечает заново, а не с нуля.
-  const previousAnswer = store.snapshot().dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
-  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.worker, role), workerTaskPrompt(task, previousAnswer), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  const snap = store.snapshot()
+  const previousAnswer = snap.dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
+  // Ответы на вопросы прошлых запусков: перезапуск после ответа человека не должен спрашивать заново.
+  const answers = snap.questions.filter((q) => q.taskId === task.id && q.answeredAt).sort((a, b) => a.createdAt - b.createdAt)
+  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.worker, role), workerTaskPrompt(task, previousAnswer, answers), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null

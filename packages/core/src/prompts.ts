@@ -1,6 +1,6 @@
 // Только type-импорты: модуль тестируется node --test без бандлера.
 import type { AgentSpec } from './agents'
-import type { Task } from './types'
+import type { Question, Task } from './types'
 
 /**
  * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
@@ -22,19 +22,35 @@ export function builtinPromptKind(roleId: string): BuiltinPromptKind {
 /** Кому адресован ответ — для промпта воркера. */
 const ANSWER_READER = { human: 'человек', coordinator: 'координатор' } as const
 
+/** Вопрос воркера с ответом — для промпта перезапуска и доставки ответа в терминал. */
+export type AnsweredQuestion = Pick<Question, 'question' | 'answer'>
+
+/** Раздел с ответами на прошлые вопросы: перезапущенный воркер не должен спрашивать заново. */
+function answersSection(answers: AnsweredQuestion[]): string[] {
+  const done = answers.filter((q) => q.answer !== undefined)
+  if (done.length === 0) return []
+  return ['', '# Ответы на твои вопросы', '', ...done.map((q) => `- ${q.question}\n  Ответ: ${q.answer}`)]
+}
+
 /**
- * Стартовое задание воркера: название, описание и замечания после ревью. У задачи-ответа (`answerFor`) —
- * блок о том, что результат — ответ в markdown, а замечания — уточнение к прошлому ответу (`previousAnswer`).
+ * Стартовое задание воркера: название, описание, замечания после ревью и ответы на вопросы по задаче
+ * (`answers` — если воркер спрашивал до перезапуска). У задачи-ответа (`answerFor`) — блок о том, что
+ * результат — ответ в markdown, а замечания — уточнение к прошлому ответу (`previousAnswer`).
  */
-export function workerTaskPrompt(task: Pick<Task, 'title' | 'spec' | 'feedback' | 'answerFor'>, previousAnswer?: string): string {
+export function workerTaskPrompt(
+  task: Pick<Task, 'title' | 'spec' | 'feedback' | 'answerFor'>,
+  previousAnswer?: string,
+  answers: AnsweredQuestion[] = []
+): string {
   if (!task.answerFor) {
     const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
-    return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
+    return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', ...answersSection(answers), feedback].join('\n')
   }
   const parts = [
     `# Задача: ${task.title}`,
     '',
     task.spec || '(описание не задано)',
+    ...answersSection(answers),
     '',
     '# Результат — ответ, а не код',
     '',
@@ -47,6 +63,16 @@ export function workerTaskPrompt(task: Pick<Task, 'title' | 'spec' | 'feedback' 
     parts.push('', '# Уточнение к прошлому ответу', '', task.feedback, '', 'Дай новый полный ответ с учётом уточнения.')
   }
   return parts.join('\n')
+}
+
+/**
+ * Ответ на вопрос, который приложение вписывает в терминал живого воркера, когда его `orca-board ask`
+ * уже не ждёт (инструмент оборвал команду по таймауту или `--no-wait`). Одна строка: перевод строки
+ * в терминале агента отправил бы сообщение по частям.
+ */
+export function questionAnswerMessage(q: AnsweredQuestion): string {
+  const flat = (s: string): string => s.replace(/\s*\n\s*/g, ' ').trim()
+  return `[orca] Ответ на твой вопрос «${flat(q.question)}»: ${flat(q.answer ?? '')} — продолжай задачу с учётом ответа.`
 }
 
 /**

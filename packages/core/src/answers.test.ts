@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore } from './store.ts'
 import { questionForHuman, waitingForHuman } from './global-tasks.ts'
-import { workerTaskPrompt } from './prompts.ts'
+import { workerTaskPrompt, questionAnswerMessage } from './prompts.ts'
 import { DEFAULT_COLUMNS, MAX_ANSWER_LENGTH } from './types.ts'
 
 /** Глобальная задача с живым координатором (как после global start) и двумя подзадачами. */
@@ -180,5 +180,102 @@ describe('workerTaskPrompt задачи-ответа', () => {
     assert.match(text, /читает координатор/)
     assert.doesNotMatch(text, /Прошлый ответ/)
     assert.match(text, /# Уточнение к прошлому ответу\n\nF/)
+  })
+})
+
+/** События прогона, как их видит координатор через `check --run <runId>`. */
+function coordinatorEvents(store: TaskStore, runId: string) {
+  return store.consumeEvents(['worker_done', 'question', 'escalation', 'task_ready', 'question_answered', 'answer_accepted', 'run_done'], runId, runId)
+}
+
+describe('после ответа человека процесс идёт дальше сам', () => {
+  it('человек принял ответ → answer_accepted с текстом ответа в прогон координатора, задача в done', () => {
+    const { store, g, task, dispatch } = setup('human')
+    store.finishDispatch(dispatch.id, 'суть', [], '# Варианты\n\n- A')
+    coordinatorEvents(store, g.id)
+    store.acceptTask(task.id)
+    assert.equal(store.getTask(task.id)!.status, 'done')
+    assert.equal(store.getGlobalTask(g.id).status, 'in_progress', 'карточка ушла из «Нужен ответ»')
+    const events = coordinatorEvents(store, g.id)
+    assert.deepEqual(events.map((e) => e.type), ['answer_accepted'])
+    assert.equal(events[0].taskId, task.id)
+    assert.equal(events[0].payload.answer, '# Варианты\n\n- A')
+    assert.equal(events[0].payload.summary, 'суть')
+    // Повторная приёмка события не шлёт.
+    store.acceptTask(task.id)
+    assert.deepEqual(coordinatorEvents(store, g.id), [])
+  })
+
+  it('принятый ответ был последней задачей — answer_accepted приходит раньше run_done', () => {
+    const { store, g, task, other, dispatch } = setup('human')
+    store.moveTask(other.id, 'done')
+    store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
+    coordinatorEvents(store, g.id)
+    store.acceptTask(task.id)
+    assert.deepEqual(coordinatorEvents(store, g.id).map((e) => e.type), ['answer_accepted', 'run_done'])
+    // Координатор решил продолжить по ответу: новая подзадача переоткрывает прогон.
+    store.createTask({ title: 'Сделать вариант A', runId: g.id })
+    assert.equal(store.getRun(g.id)!.closedAt, undefined)
+  })
+
+  it('ответ координатору и обычная задача: accept без answer_accepted (решает сам координатор)', () => {
+    const { store, g, task, dispatch } = setup('coordinator')
+    store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
+    coordinatorEvents(store, g.id)
+    store.acceptTask(task.id)
+    assert.deepEqual(coordinatorEvents(store, g.id), [])
+  })
+
+  it('уточнение: задача уходит из «Нужен ответ» в ready, перезапуск — снова worker_done в прогон', () => {
+    const { store, g, task, dispatch } = setup('human')
+    store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
+    store.rejectReview(task.id, 'подробнее')
+    assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
+    const again = store.startDispatch(task.id, 'pty_w2')
+    store.finishDispatch(again.id, 'суть 2', [], 'ответ 2')
+    const done = coordinatorEvents(store, g.id).filter((e) => e.type === 'worker_done').at(-1)!
+    assert.equal(done.payload.answer, 'ответ 2')
+  })
+
+  it('ответ человека на переданный вопрос — question_answered в прогон координатора, воркер жив', () => {
+    const { store, g, task, dispatch } = setup()
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' })
+    store.forwardQuestion(q.id)
+    coordinatorEvents(store, g.id)
+    store.answer(q.id, 'Postgres')
+    const [e] = coordinatorEvents(store, g.id)
+    assert.equal(e.type, 'question_answered')
+    assert.equal(e.payload.workerLive, true)
+    assert.equal(e.payload.question, 'Какую БД?')
+    assert.equal(e.payload.answer, 'Postgres')
+    assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
+  })
+
+  it('ответ, когда воркер уже вышел, — workerLive: false, задача в ready, ответ в промпте перезапуска', () => {
+    const { store, g, task, dispatch } = setup()
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' })
+    store.forwardQuestion(q.id)
+    store.ptyExited('pty_w', 0)
+    coordinatorEvents(store, g.id)
+    store.answer(q.id, 'Postgres')
+    const [e] = coordinatorEvents(store, g.id)
+    assert.equal(e.payload.workerLive, false)
+    assert.equal(e.payload.status, 'ready')
+    assert.equal(store.getTask(task.id)!.status, 'ready')
+    assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
+    const answered = store.snapshot().questions.filter((x) => x.taskId === task.id && x.answeredAt)
+    assert.match(workerTaskPrompt(store.getTask(task.id)!, undefined, answered), /# Ответы на твои вопросы\n\n- Какую БД\?\n  Ответ: Postgres/)
+  })
+})
+
+describe('questionAnswerMessage', () => {
+  it('одна строка: вопрос, ответ и просьба продолжить', () => {
+    const text = questionAnswerMessage({ question: 'Какую\nБД?', answer: 'Postgres,\n  версии 16' })
+    assert.equal(text, '[orca] Ответ на твой вопрос «Какую БД?»: Postgres, версии 16 — продолжай задачу с учётом ответа.')
+    assert.doesNotMatch(text, /\n/)
+  })
+
+  it('промпт без ответов на вопросы — без раздела', () => {
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: '?' }]), /Ответы на твои вопросы/)
   })
 })

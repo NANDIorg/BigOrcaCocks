@@ -52,7 +52,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Question { id, taskId, dispatchId?, question, options[], answer?, forHuman?, createdAt, answeredAt? }` — `forHuman`:
   координатор передал вопрос человеку (`question forward`).
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
-  типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `run_done`.
+  типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `answer_accepted`, `run_done`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
   `in_progress` при старте воркера; `review` после `done`; `needs_input` при вопросе или выходе PTY без `done`.
 

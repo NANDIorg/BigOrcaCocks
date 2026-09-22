@@ -23,5 +23,6 @@ export function acceptReview(store: TaskStore, repoRoot: string, taskId: string)
     if (info.commits.length > 0) mergeBranch(repoRoot, task.branch, `Merge orca task: ${task.title}`)
     removeWorktree(repoRoot, task.worktree, task.branch)
   }
-  store.updateTask(taskId, { status: store.columnId('done'), worktree: undefined, branch: undefined })
+  // Ответ для человека: store шлёт координатору answer_accepted.
+  store.acceptTask(taskId)
 }

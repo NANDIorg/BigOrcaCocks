@@ -252,6 +252,8 @@ export type EventType =
   | 'question'
   | 'escalation'
   | 'question_answered'
+  /** Человек принял ответ задачи-ответа `answerFor: 'human'` — координатор решает, что делать дальше. */
+  | 'answer_accepted'
   | 'run_done'
 
 export const EVENT_TYPES: EventType[] = [
@@ -260,6 +262,7 @@ export const EVENT_TYPES: EventType[] = [
   'question',
   'escalation',
   'question_answered',
+  'answer_accepted',
   'run_done'
 ]
 
