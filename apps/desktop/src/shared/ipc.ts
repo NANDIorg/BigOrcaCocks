@@ -134,6 +134,8 @@ export interface OrcaApi {
   }
   projects: {
     list(): Promise<{ active: Project | null; projects: Project[] }>
+    /** Задачи в колонках kind=in_progress по id проекта — для бейджа в списке проектов. */
+    inProgressCounts(): Promise<Record<string, number>>
     add(): Promise<Project | null>
     remove(id: string): Promise<void>
     setActive(id: string): Promise<Project>

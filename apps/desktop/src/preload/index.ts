@@ -15,6 +15,7 @@ const api: OrcaApi = {
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
+    inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
     add: () => ipcRenderer.invoke('projects:add'),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),

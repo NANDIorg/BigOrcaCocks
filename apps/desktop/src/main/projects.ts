@@ -292,6 +292,11 @@ export class ProjectManager {
     return this.store(p.id)
   }
 
+  /** Число задач в работе (kind=in_progress) по id каждого проекта, включая неактивные. */
+  inProgressCounts(): Record<string, number> {
+    return Object.fromEntries(this.list().map((p) => [p.id, this.store(p.id).inProgressCount()]))
+  }
+
   /** Все загруженные store — для детектора тишины. */
   loadedStores(): Array<[string, TaskStore]> {
     return [...this.stores.entries()]
