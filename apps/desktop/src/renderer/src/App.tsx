@@ -146,6 +146,9 @@ export function App(): React.JSX.Element {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
   const openTask = openTaskId ? tasks.find((t) => t.id === openTaskId) : undefined
+  /** Задачи активного проекта по роли — счётчики в редакторе ролей. */
+  const roleTaskCounts: Record<string, number> = {}
+  for (const t of tasks) roleTaskCounts[t.roleId] = (roleTaskCounts[t.roleId] ?? 0) + 1
 
   /** Записать вкладку/активный терминал в запись проекта (функционально — безопасно из обработчиков событий). */
   function updateView(projectId: string, patch: Partial<ProjectView>): void {
@@ -691,6 +694,7 @@ export function App(): React.JSX.Element {
                   storageKey={active.id}
                   roles={active.roles ?? DEFAULT_ROLES}
                   agents={agents}
+                  taskCounts={roleTaskCounts}
                   onSave={async (roles) => {
                     await window.orca.projects.setRoles(active.id, roles)
                     await refreshProjects()
