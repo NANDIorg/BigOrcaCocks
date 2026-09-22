@@ -7,6 +7,8 @@ import {
 import type { TaskPatch } from '../../shared/ipc'
 import { AgentLogo } from './AgentLogo'
 import { ReviewBlock } from './ReviewBlock'
+import { AnswerBlock } from './AnswerBlock'
+import { Markdown } from './Markdown'
 import { Icon } from './icons'
 
 interface Props {
@@ -51,6 +53,9 @@ function outcomeLabel(d: Dispatch): { text: string; cls: string } {
   }
 }
 
+/** Подпись задачи-ответа: кто читает ответ. */
+export const ANSWER_FOR_TITLE = { human: 'ответ для человека', coordinator: 'ответ для координатора' } as const
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
@@ -66,6 +71,8 @@ export function TaskModal(props: Props): React.JSX.Element {
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const history = dispatches.filter((d) => d.taskId === task.id).sort((a, b) => b.startedAt - a.startedAt)
   const last = history[0]
+  /** Последний сданный ответ задачи-ответа; прежние остаются в истории запусков. */
+  const answered = history.find((d) => d.answer)
   const taskQuestions = questions.filter((q) => q.taskId === task.id).sort((a, b) => a.createdAt - b.createdAt)
   const editable = kind !== 'in_progress'
   const canStart =
@@ -178,6 +185,12 @@ export function TaskModal(props: Props): React.JSX.Element {
                 {role?.title ?? task.roleId} · {AGENT_TITLES[task.agent]}{role?.model ? ` · ${modelLabel(agents?.find((a) => a.id === role.agent), role.model)}` : ''}
               </span>
             </div>
+            {task.answerFor && (
+              <div className="meta-row">
+                <span className="meta-key">Результат</span>
+                <span className="meta-val"><span className="chip answer">{ANSWER_FOR_TITLE[task.answerFor]}</span></span>
+              </div>
+            )}
             <div className="meta-row">
               <span className="meta-key">Колонка</span>
               <span className="meta-val">
@@ -209,6 +222,31 @@ export function TaskModal(props: Props): React.JSX.Element {
             )}
           </div>
 
+          {task.answerFor && (
+            <section className="task-modal-section">
+              <h4>Ответ</h4>
+              {answered?.answer ? (
+                <AnswerBlock
+                  answer={answered.answer}
+                  summary={answered.summary}
+                  answerFor={task.answerFor}
+                  actionable={kind === 'review'}
+                  onAccept={async () => {
+                    await onAccept(task.id)
+                    onClose()
+                  }}
+                  onClarify={async (text) => {
+                    await onReject(task.id, text)
+                    await onStart(task)
+                    onClose()
+                  }}
+                />
+              ) : (
+                <div className="muted">{kind === 'in_progress' ? 'Воркер готовит ответ…' : 'Ответа ещё нет'}</div>
+              )}
+            </section>
+          )}
+
           <section className="task-modal-section">
             <h4>Задание для агента</h4>
             {editable ? (
@@ -236,12 +274,12 @@ export function TaskModal(props: Props): React.JSX.Element {
 
           {task.feedback && (
             <section className="task-modal-section">
-              <h4>Замечания после ревью</h4>
+              <h4>{task.answerFor ? 'Уточнение' : 'Замечания после ревью'}</h4>
               <pre className="task-modal-feedback">{task.feedback}</pre>
             </section>
           )}
 
-          {kind === 'review' && (
+          {kind === 'review' && !task.answerFor && (
             <section className="task-modal-section">
               <h4>Ревью</h4>
               <ReviewBlock
@@ -316,6 +354,12 @@ export function TaskModal(props: Props): React.JSX.Element {
                     {d.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
                   </div>
                   {d.summary && <pre className="dispatch-summary">{d.summary}</pre>}
+                  {d.answer && d !== answered && (
+                    <details className="dispatch-answer">
+                      <summary>Прошлый ответ</summary>
+                      <Markdown text={d.answer} />
+                    </details>
+                  )}
                   {d.files && d.files.length > 0 && (
                     <ul className="dispatch-files">
                       {d.files.map((f) => <li key={f}>{f}</li>)}

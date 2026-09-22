@@ -3,6 +3,7 @@
 // Вызывается агентами из их Bash. Состоянием владеет приложение.
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
+import { readFileSync } from 'node:fs'
 
 // Та же логика, что defaultSocketPath() в packages/core/src/paths.ts — менять синхронно.
 // На Windows — именованный канал, иначе unix-сокет в ~/.orca-board.
@@ -27,7 +28,7 @@ const HELP = `orca-board — управление доской агентов
   global move --global <id> --status <id колонки>    только backlog/in_progress/done; подзадачи не трогает; в done — закрывает прогон (run_done)
   global delete --global <id> [--cascade]  с подзадачами — только --cascade (удаляются вместе с ней)
   global tasks [--global <id>]            подзадачи только этой глобальной задачи
-  global add-task [--global <id>] --title "..." [--spec "..."] --role <id> [--dep <id>]...
+  global add-task [--global <id>] --title "..." [--spec "..."] --role <id> [--dep <id>]... [--answer-for human|coordinator]
   global start --global <id>              = coordinator start --global <id>
 
 Координатор:
@@ -36,6 +37,8 @@ const HELP = `orca-board — управление доской агентов
   columns list     колонки доски: id, название, kind
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
   task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]... [--run <id>]
+              [--answer-for human|coordinator]   задача-ответ: результат — ответ в markdown, не код;
+                                          human — ответ читает человек, coordinator — ты сам
   task move --task <id> --status <id колонки из columns list>
   task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
   worker start --task <id>
@@ -48,6 +51,7 @@ const HELP = `orca-board — управление доской агентов
   runs finish [--run <id>]                координатор закончил работу (после run_done и сводки; если все подзадачи в done — закрывает прогон сам)
   question list
   question answer --question <id> --answer "..."
+  question forward --question <id>        передать вопрос человеку: глобальная задача ждёт его ответа
   review info --task <id>                 diff-stat и коммиты ветки задачи
   review accept --task <id>               слить в текущую ветку, убрать worktree, задача → done
   review reject --task <id> --feedback "..."   задача → ready с замечаниями для перезапуска
@@ -55,7 +59,8 @@ const HELP = `orca-board — управление доской агентов
   events list
 
 Воркер (ORCA_DISPATCH_ID уже в окружении):
-  done --summary "..." [--files a.ts,b.ts]
+  done --summary "..." [--files a.ts,b.ts] [--answer-file answer.md | --answer "..."]
+                                          у задачи-ответа ответ (markdown) обязателен
   ask --question "..." [--options a,b,c] [--no-wait]     блокируется до ответа
 
 Прогон: --run <id> у task create, check, runs close и runs finish по умолчанию берётся из $ORCA_RUN_ID —
@@ -111,6 +116,20 @@ if (params.global === true) {
 if (params.run === true) {
   console.error('ошибка: --run требует id прогона')
   process.exit(1)
+}
+// Ответ задачи-ответа: файл читает CLI (он в cwd воркера), серверу уходит текст.
+if (method === 'worker.done' && params['answer-file'] !== undefined) {
+  if (params['answer-file'] === true) {
+    console.error('ошибка: --answer-file требует путь к файлу')
+    process.exit(1)
+  }
+  try {
+    params.answer = readFileSync(params['answer-file'], 'utf8')
+  } catch (e) {
+    console.error(`ошибка: не удалось прочитать ${params['answer-file']}: ${e.message}`)
+    process.exit(1)
+  }
+  delete params['answer-file']
 }
 if ((method === 'runs.close' || method === 'runs.finish') && !params.run) {
   console.error('ошибка: не указан прогон — передайте --run <id> или задайте ORCA_RUN_ID')

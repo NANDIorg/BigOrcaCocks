@@ -20,7 +20,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, createdAt, updatedAt, startedAt?, doneAt? }`.
+- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, doneAt? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль проекта (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -28,6 +28,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `updateTask` его не меняет. Без прогона задача попадает во «Входящие» (`docs/nested-kanban.md`).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
+  - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
+    см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
@@ -46,7 +48,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
-- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, stuckNotified? }`
+- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
+- `Question { id, taskId, dispatchId?, question, options[], answer?, forHuman?, createdAt, answeredAt? }` — `forHuman`:
+  координатор передал вопрос человеку (`question forward`).
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
   типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `run_done`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
@@ -201,7 +205,8 @@ orca-board coordinator start --objective "..."   # человек; создаё�
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
 orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
-orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>]
+orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator]
+orca-board question forward --question <id>   # вопрос воркера — человеку (глобальная задача → «Нужен ответ»)
 orca-board task move --task <id> --status <id колонки>
 orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
 orca-board worker start --task <id>
@@ -225,6 +230,7 @@ orca-board gate create --task <id> --question "..." --options a,b
 
 ```
 orca-board done --summary "..." --files a.ts,b.ts
+orca-board done --summary "..." --answer-file answer.md   # задача-ответ: CLI читает файл, шлёт текст в params.answer
 orca-board ask --question "..." --options a,b      # блокирует до ответа
 ```
 
@@ -546,6 +552,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ветку репозитория, `git worktree remove --force`, `git branch -D`; задача → колонка `kind=done`
   (`store.columnId('done')`, проставляется `doneAt`). Конфликт → `merge --abort` и ошибка в UI.
 - `review reject --feedback`: задача → колонка `kind=ready`, `task.feedback` добавляется в промпт при следующем старте.
+- Задача-ответ (`answerFor`): `review accept` ничего не коммитит и не сливает — только удаляет worktree и ветку;
+  `reject` — уточнение, при перезапуске промпт получает последний `Dispatch.answer` и уточнение (`workerTaskPrompt`).
+- Ответ рендерится в `TaskModal` (`AnswerBlock`, `Markdown.tsx`: `marked` + `DOMPurify`). Кликабельны только
+  `http(s)`-ссылки (открываются во внешнем браузере); остальные схемы и относительные пути — без `href`,
+  чтобы `shell.openExternal` не получил `file://` из текста агента.
 
 ## Редактирование задачи и автозакрытие терминалов (`src/main/index.ts`)
 

@@ -11,7 +11,10 @@ export interface GlobalTaskAttention {
 }
 
 interface Props {
-  /** Колонки глобального канбана (globalBoardColumns: backlog / in_progress / done); статус карточки — id колонки. */
+  /**
+   * Колонки глобального канбана (globalBoardColumns: backlog / in_progress / needs_input / done); статус карточки —
+   * id колонки. needs_input заполняется сама (подзадачи ждут человека) — туда не перетаскивают.
+   */
   columns: BoardColumn[]
   globals: GlobalTask[]
   /** Глобальные задачи с живым координатором (терминал role=coordinator, runId). */
@@ -62,7 +65,7 @@ export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.El
   )
 }
 
-/** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Сделано проекта. */
+/** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Нужен ответ / Сделано проекта. */
 export function GlobalBoard(props: Props): React.JSX.Element {
   const { columns, globals, liveCoordinators, attention, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -106,6 +109,8 @@ export function GlobalBoard(props: Props): React.JSX.Element {
       <div className="g-board" ref={boardRef}>
         {columns.map((column) => {
           const items = globals.filter((g) => columnOf(g) === column.id).sort((a, b) => compareGlobals(sort, a, b))
+          // «Нужен ответ» вычисляется из подзадач: карточка сама приходит и уходит, руками её сюда не ставят.
+          const auto = column.kind === 'needs_input'
           return (
             <section
               key={column.id}
@@ -113,7 +118,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
               style={{ '--col': column.color } as React.CSSProperties}
               aria-label={`${column.title}: ${items.length}`}
               onDragOver={(e) => {
-                if (!e.dataTransfer.types.includes('text/global-id')) return
+                if (auto || !e.dataTransfer.types.includes('text/global-id')) return
                 e.preventDefault()
                 setDragOver(column.id)
               }}
@@ -122,6 +127,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
               }}
               onDrop={(e) => {
                 e.preventDefault()
+                if (auto) return
                 const id = e.dataTransfer.getData('text/global-id')
                 if (id && byId.get(id)?.status !== column.id) onMove(id, column.id)
                 setDragOver(null)
@@ -135,7 +141,9 @@ export function GlobalBoard(props: Props): React.JSX.Element {
               <div className="g-col-body">
                 {dragOver === column.id && dragging && byId.get(dragging)?.status !== column.id && <div className="placeholder" />}
                 {items.length === 0 && dragOver !== column.id && (
-                  <div className="g-empty">Здесь пока пусто — перетащите карточку сюда</div>
+                  <div className="g-empty">
+                    {auto ? 'Здесь появятся задачи, где подзадачи ждут вашего ответа' : 'Здесь пока пусто — перетащите карточку сюда'}
+                  </div>
                 )}
                 {items.map((g) => {
                   const live = liveCoordinators.has(g.id)
@@ -189,6 +197,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         <span className="g-chip status">{column.title}</span>
                         {g.inbox && <span className="g-chip">служебная</span>}
                         {live && <span className="chip live">● координатор</span>}
+                        {g.waiting > 0 && <span className="g-chip warn">ждёт вашего ответа: {g.waiting}</span>}
                         {att && att.questions > 0 && <span className="g-chip warn">вопросов: {att.questions}</span>}
                         {att && att.review > 0 && <span className="g-chip review">на ревью: {att.review}</span>}
                       </div>

@@ -172,6 +172,17 @@ export interface Run {
 
 // ---------- задачи ----------
 
+/**
+ * Кто читает ответ задачи-ответа: `human` — человек (глобальная задача ждёт его в колонке needs_input),
+ * `coordinator` — координатор сам принимает ответ и использует его дальше.
+ */
+export type AnswerAudience = 'human' | 'coordinator'
+
+export const ANSWER_AUDIENCES: AnswerAudience[] = ['human', 'coordinator']
+
+/** Предел длины ответа (символов): ответ хранится в снапшоте доски. */
+export const MAX_ANSWER_LENGTH = 200_000
+
 export interface Task {
   id: string
   title: string
@@ -187,8 +198,13 @@ export interface Task {
   worktree?: string
   branch?: string
   dispatchId?: string
-  /** Замечания после ревью, попадут в промпт при перезапуске. */
+  /** Замечания после ревью (у задачи-ответа — уточнение), попадут в промпт при перезапуске. */
   feedback?: string
+  /**
+   * Задача-ответ («посмотри», «разберись», «предложи»): результат — текст в markdown (`Dispatch.answer`),
+   * а не изменения в коде; ревью кода не нужно. Значение — кто читает ответ. Нет поля — обычная задача.
+   */
+  answerFor?: AnswerAudience
   createdAt: number
   updatedAt: number
   /** Первый startDispatch. */
@@ -208,6 +224,8 @@ export interface Dispatch {
   outcome?: DispatchOutcome
   summary?: string
   files?: string[]
+  /** Ответ задачи-ответа (markdown), `orca-board done --answer-file`. */
+  answer?: string
   /** Уже отправили эскалацию «нет вывода». */
   stuckNotified?: boolean
 }
@@ -219,6 +237,11 @@ export interface Question {
   question: string
   options: string[]
   answer?: string
+  /**
+   * Координатор решил, что ответить должен человек (`orca-board question forward`). Вопросы задач без
+   * координатора (см. `questionForHuman`) адресованы человеку и без этой метки.
+   */
+  forHuman?: boolean
   createdAt: number
   answeredAt?: number
 }

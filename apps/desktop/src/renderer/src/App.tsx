@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, globalBoardColumns, toGlobalTasks,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type AgentKind, type Role, type GlobalTask
 } from '@orca-board/core'
 import { PERMISSION_MODES, type Project, type PermissionMode, type TerminalInfo } from '../../shared/ipc'
@@ -257,9 +257,10 @@ export function App(): React.JSX.Element {
   // ---------- глобальные задачи (docs/nested-kanban.md) ----------
   const columns = active?.columns ?? DEFAULT_COLUMNS
   const kindById = new Map(columns.map((c) => [c.id, c.kind]))
-  // Глобальный канбан — только Бэклог / В работе / Сделано; локальный канбан подзадач — все колонки.
+  // Глобальный канбан — Бэклог / В работе / Нужен ответ / Сделано; локальный канбан подзадач — все колонки.
+  // «Нужен ответ» вычисляется (подзадачи ждут человека), поэтому в создание и перенос она не попадает.
   const globalColumns = globalBoardColumns(columns)
-  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns)
+  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.questions)
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
   const subtasks = openGlobal ? tasks.filter((t) => t.runId === openGlobal.id) : []
@@ -276,7 +277,8 @@ export function App(): React.JSX.Element {
   }
   const taskRun = new Map(tasks.map((t) => [t.id, t.runId]))
   for (const q of snap.questions) if (!q.answeredAt) bump(taskRun.get(q.taskId), 'questions')
-  for (const t of tasks) if (kindById.get(t.status) === 'review') bump(t.runId, 'review')
+  // Задача-ответ в review — не ревью кода: она считается в GlobalTask.waiting.
+  for (const t of tasks) if (kindById.get(t.status) === 'review' && !t.answerFor) bump(t.runId, 'review')
   const editingGlobal = globalModal?.mode === 'edit' ? globals.find((g) => g.id === globalModal.id) : undefined
 
   function openGlobalTask(g: GlobalTask): void {
@@ -864,7 +866,7 @@ export function App(): React.JSX.Element {
         <GlobalTaskModal
           key={globalModal.mode === 'edit' ? globalModal.id : 'create'}
           global={editingGlobal}
-          columns={globalColumns}
+          columns={globalStoredColumns(columns)}
           onClose={() => setGlobalModal(null)}
           onSave={saveGlobalTask}
         />

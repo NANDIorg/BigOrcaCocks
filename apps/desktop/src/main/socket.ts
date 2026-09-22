@@ -2,7 +2,7 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent
+  EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, pickRole } from './agents'
@@ -87,13 +87,17 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   if (!title) throw new Error('--title обязателен')
   if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
   const role = pickRole(deps.roles(), deps.agents(), str(r.params.role))
+  // --answer-for human|coordinator — задача-ответ; значение проверяет store.
+  const answerFor = r.params['answer-for'] ?? r.params.answerFor
+  if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
   return store.createTask({
     title,
     spec: str(r.params.spec),
     deps: list(r.params.dep ?? r.params.deps),
     roleId: role.id,
     agent: role.agent,
-    runId
+    runId,
+    ...(answerFor !== undefined ? { answerFor: answerFor as AnswerAudience } : {})
   })
 }
 
@@ -176,7 +180,8 @@ const handlers: Record<string, Handler> = {
   'worker.done': (r, _d, store) => {
     const id = str(r.params.dispatch) ?? r.dispatchId
     if (!id) throw new Error('нет dispatch: укажи --dispatch или запусти из воркера (ORCA_DISPATCH_ID)')
-    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files))
+    // CLI читает --answer-file сам и присылает текст в answer.
+    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer))
   },
   'worker.ask': async (r, _d, store) => {
     const dispatchId = str(r.params.dispatch) ?? r.dispatchId
@@ -203,6 +208,11 @@ const handlers: Record<string, Handler> = {
     return store.answer(id, answer)
   },
   'question.list': (_r, _d, store) => store.openQuestions(),
+  'question.forward': (r, _d, store) => {
+    const id = str(r.params.question)
+    if (!id) throw new Error('--question обязателен')
+    return store.forwardQuestion(id)
+  },
   'review.info': (r, deps) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')

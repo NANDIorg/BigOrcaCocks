@@ -2,7 +2,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
-import { globalBoardColumns, globalColumnKind, globalTaskStatus, globalTaskTitle, INBOX_TITLE, toGlobalTasks } from './global-tasks.ts'
+import {
+  globalBoardColumns, globalColumnKind, globalStoredColumns, globalTaskStatus, globalTaskTitle, INBOX_TITLE, toGlobalTasks
+} from './global-tasks.ts'
 import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
 import { DEFAULT_COLUMNS, type BoardColumn, type Run, type Task } from './types.ts'
 
@@ -54,15 +56,17 @@ describe('глобальные задачи: CRUD и колонки проект
     assert.throws(() => store.createGlobalTask({ title: 'x', status: 'backlog' }), /колонки с id «backlog» нет/)
   })
 
-  it('создание и перемещение в колонку подзадач (ready/needs_input/review/custom) — ошибка', () => {
+  it('создание и перемещение в колонку подзадач (ready/review/custom) и в вычисляемую needs_input — ошибка', () => {
     const store = newStore()
-    for (const status of ['todo', 'ask', 'ai', 'human']) {
+    for (const status of ['todo', 'ai', 'human']) {
       assert.throws(() => store.createGlobalTask({ title: 'x', status }), /только для подзадач/)
     }
+    assert.throws(() => store.createGlobalTask({ title: 'x', status: 'ask' }), /заполняется сама/)
     const g = store.createGlobalTask({ title: 'G' })
-    for (const status of ['todo', 'ask', 'ai', 'human']) {
+    for (const status of ['todo', 'ai', 'human']) {
       assert.throws(() => store.moveGlobalTask(g.id, status), /только для подзадач/)
     }
+    assert.throws(() => store.moveGlobalTask(g.id, 'ask'), /заполняется сама/)
     assert.equal(store.getGlobalTask(g.id).status, 'plan')
     assert.equal(store.listGlobalTasks().length, 1)
   })
@@ -123,9 +127,10 @@ describe('глобальные задачи: CRUD и колонки проект
 })
 
 describe('колонки глобального канбана', () => {
-  it('глобальный канбан — только backlog / in_progress / done в порядке проекта', () => {
-    assert.deepEqual(globalBoardColumns(COLUMNS).map((c) => c.id), ['plan', 'wip', 'fin'])
-    assert.deepEqual(globalBoardColumns(DEFAULT_COLUMNS).map((c) => c.title), ['Бэклог', 'В работе', 'Сделано'])
+  it('глобальный канбан — backlog / in_progress / needs_input / done в порядке проекта; хранятся — без needs_input', () => {
+    assert.deepEqual(globalBoardColumns(COLUMNS).map((c) => c.id), ['plan', 'wip', 'ask', 'fin'])
+    assert.deepEqual(globalBoardColumns(DEFAULT_COLUMNS).map((c) => c.title), ['Бэклог', 'В работе', 'Нужен ответ', 'Сделано'])
+    assert.deepEqual(globalStoredColumns(COLUMNS).map((c) => c.id), ['plan', 'wip', 'fin'])
     assert.equal(DEFAULT_COLUMNS.length, 6, 'колонки проекта (локальный канбан) не меняются')
   })
 
