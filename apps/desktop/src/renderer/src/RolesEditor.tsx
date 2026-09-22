@@ -1,5 +1,13 @@
 import type React from 'react'
-import { effortOptions, modelHints, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
+import {
+  effortOptions,
+  effortOptionsFor,
+  modelLabel,
+  modelOptions,
+  type AgentInfo,
+  type AgentKind,
+  type Role
+} from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { useAutoSave } from './useAutoSave'
 
@@ -16,8 +24,14 @@ interface Props {
 /** Роль с новыми полями; пустые model/effort не сохраняем вовсе (undefined — «по умолчанию у агента»). */
 function withPatch(r: Role, p: Partial<Role>): Role {
   const next: Role = { ...r, ...p }
+  if (!next.model) delete next.model
   if (!next.effort) delete next.effort
   return next
+}
+
+/** Уровни effort роли: по модели агента, если агент известен, иначе общий список из реестра. */
+function effortsOf(info: AgentInfo | undefined, agent: string, model: string | undefined): readonly string[] {
+  return info ? effortOptionsFor(info, model) : effortOptions(agent)
 }
 
 /** Раздел «Роли» («О проекте» и дефолт для новых проектов): название, агент, модель, усилие; сохраняется автоматически. */
@@ -30,10 +44,17 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
     update(roles.map((r, j) => (j === i ? withPatch(r, p) : r)), debounce)
   }
 
-  /** Смена агента: effort, которого нет у нового агента, сбрасывается. */
+  /** Смена агента: модель и effort прошлого агента к новому не подходят — сбрасываются в «по умолчанию». */
   function changeAgent(i: number, agent: AgentKind): void {
-    const effort = roles[i].effort
-    patch(i, { agent, effort: effort && effortOptions(agent).includes(effort) ? effort : undefined })
+    patch(i, { agent, model: undefined, effort: undefined })
+  }
+
+  /** Смена модели: effort, которого нет у новой модели, сбрасывается. */
+  function changeModel(i: number, model: string, debounce = false): void {
+    const r = roles[i]
+    const efforts = effortsOf(agents.find((a) => a.id === r.agent), r.agent, model || undefined)
+    const effort = r.effort && efforts.includes(r.effort) ? r.effort : undefined
+    patch(i, { model, effort }, debounce)
   }
 
   function add(): void {
@@ -54,14 +75,10 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
           const current = agents.find((a) => a.id === r.agent)
           const currentOff = current !== undefined && !current.enabled
           const defaults = current?.defaults
-          const baseHints = modelHints(r.agent)
-          // Модель из конфига агента (codex) — первой подсказкой, если её нет в списке.
-          const hints =
-            defaults?.model && !baseHints.some((h) => h.value === defaults.model)
-              ? [{ value: defaults.model, label: 'по умолчанию' }, ...baseHints]
-              : baseHints
-          const efforts = effortOptions(r.agent)
-          const listId = `models-${storageKey}-${r.id}`
+          const models = current ? modelOptions(current) : []
+          const customModel = r.model && !models.some((m) => m.id === r.model) ? r.model : undefined
+          const defaultModel = modelLabel(current, defaults?.model)
+          const efforts = effortsOf(current, r.agent, r.model)
           return (
             <div key={r.id} className="editor-row">
               <div>
@@ -90,16 +107,20 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
                 </select>
               </div>
               <div>
-                <input
-                  value={r.model ?? ''}
-                  placeholder={defaults?.model ? `по умолчанию: ${defaults.model}` : 'по умолчанию агента'}
-                  list={hints.length ? listId : undefined}
-                  onChange={(e) => patch(i, { model: e.target.value }, true)}
-                />
-                {hints.length > 0 && (
-                  <datalist id={listId}>
-                    {hints.map((m) => <option key={m.value} value={m.value} label={m.label} />)}
-                  </datalist>
+                {models.length > 0 ? (
+                  <select value={r.model ?? ''} onChange={(e) => changeModel(i, e.target.value)}>
+                    <option value="">{defaultModel ? `по умолчанию: ${defaultModel}` : 'по умолчанию агента'}</option>
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                    {customModel && <option value={customModel}>{customModel} (нестандартная)</option>}
+                  </select>
+                ) : (
+                  <input
+                    value={r.model ?? ''}
+                    placeholder={defaults?.model ? `по умолчанию: ${defaults.model}` : 'по умолчанию агента'}
+                    onChange={(e) => changeModel(i, e.target.value, true)}
+                  />
                 )}
               </div>
               <div>
