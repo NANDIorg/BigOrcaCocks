@@ -26,4 +26,6 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+portable:
+  artifactName: ${productName}-${version}-portable-${arch}.${ext}
 npmRebuild: true
