@@ -289,8 +289,11 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
     sock.on('error', () => undefined)
   })
 
-  mkdirSync(dirname(path), { recursive: true })
-  if (existsSync(path)) unlinkSync(path)
+  // Именованный канал Windows не лежит в ФС: каталог и удаление старого файла не нужны.
+  if (process.platform !== 'win32') {
+    mkdirSync(dirname(path), { recursive: true })
+    if (existsSync(path)) unlinkSync(path)
+  }
   server.listen(path)
   return server
 }

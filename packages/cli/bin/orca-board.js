@@ -3,9 +3,15 @@
 // Вызывается агентами из их Bash. Состоянием владеет приложение.
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
 
-const SOCKET = process.env.ORCA_SOCKET ?? join(homedir(), '.orca-board', 'orca.sock')
+// Та же логика, что defaultSocketPath() в packages/core/src/paths.ts — менять синхронно.
+// На Windows — именованный канал, иначе unix-сокет в ~/.orca-board.
+function defaultSocketPath(opts) {
+  const { env, platform, homedir } = opts
+  if (env.ORCA_SOCKET !== undefined) return env.ORCA_SOCKET
+  if (platform === 'win32') return '\\\\.\\pipe\\orca-board'
+  return `${homedir.replace(/\/+$/, '')}/.orca-board/orca.sock`
+}
 
 const HELP = `orca-board — управление доской агентов
 
@@ -43,7 +49,7 @@ const HELP = `orca-board — управление доской агентов
 задачи, созданные координатором, наследуют его прогон.
 
 Общее: --socket <path>, --project <id> (иначе $ORCA_PROJECT или активный проект в приложении).
-Сокет: $ORCA_SOCKET или ~/.orca-board/orca.sock`
+Сокет: $ORCA_SOCKET или ~/.orca-board/orca.sock (на Windows — именованный канал \\\\.\\pipe\\orca-board)`
 
 const argv = process.argv.slice(2)
 if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
@@ -90,7 +96,7 @@ if (method === 'runs.close' && !params.run) {
 const follow = method === 'check' && params.follow === true
 if (follow) delete params.wait
 
-const socketPath = params.socket ?? SOCKET
+const socketPath = params.socket ?? defaultSocketPath({ env: process.env, platform: process.platform, homedir: homedir() })
 delete params.socket
 delete params.json
 
