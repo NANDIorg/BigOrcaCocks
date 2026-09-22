@@ -655,6 +655,7 @@ export function App(): React.JSX.Element {
           tasks={tasks}
           columns={active.columns ?? DEFAULT_COLUMNS}
           roles={active.roles ?? DEFAULT_ROLES}
+          agents={agents}
           dispatches={snap.dispatches}
           questions={snap.questions}
           running={runningTaskIds.has(openTask.id)}

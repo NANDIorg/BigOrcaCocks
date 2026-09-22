@@ -1,8 +1,8 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
-  AGENT_TITLES,
-  type Task, type Question, type Dispatch, type BoardColumn, type Role
+  AGENT_TITLES, modelLabel,
+  type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role
 } from '@orca-board/core'
 import type { TaskPatch } from '../../shared/ipc'
 import { AgentLogo } from './AgentLogo'
@@ -15,6 +15,8 @@ interface Props {
   tasks: Task[]
   columns: BoardColumn[]
   roles: Role[]
+  /** Агенты — для подписи модели роли; без них показывается сырой id модели. */
+  agents?: AgentInfo[]
   dispatches: Dispatch[]
   questions: Question[]
   /** У задачи есть живой терминал. */
@@ -55,7 +57,7 @@ function errorText(e: unknown): string {
 
 export function TaskModal(props: Props): React.JSX.Element {
   const {
-    task, tasks, columns, roles, dispatches, questions, running,
+    task, tasks, columns, roles, agents, dispatches, questions, running,
     onClose, onUpdate, onStart, onOpenTerminal, onRemove, onAnswer, onAccept, onReject
   } = props
   const column = columns.find((c) => c.id === task.status)
@@ -173,7 +175,7 @@ export function TaskModal(props: Props): React.JSX.Element {
             <div className="meta-row">
               <span className="meta-key">Роль</span>
               <span className="meta-val">
-                {role?.title ?? task.roleId} · {AGENT_TITLES[task.agent]}{role?.model ? ` · ${role.model}` : ''}
+                {role?.title ?? task.roleId} · {AGENT_TITLES[task.agent]}{role?.model ? ` · ${modelLabel(agents?.find((a) => a.id === role.agent), role.model)}` : ''}
               </span>
             </div>
             <div className="meta-row">

@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useState } from 'react'
-import { AGENT_TITLES, DEFAULT_ROLE_ID, type AgentInfo, type Role, type Task } from '@orca-board/core'
+import { AGENT_TITLES, DEFAULT_ROLE_ID, modelLabel, type AgentInfo, type Role, type Task } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 
 interface Props {
@@ -50,7 +50,7 @@ export function NewTaskModal({ tasks, roles, agents, onClose, onCreate }: Props)
             >
               {available.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.title} · {AGENT_TITLES[r.agent]}{r.model ? ` (${r.model})` : ''}
+                  {r.title} · {AGENT_TITLES[r.agent]}{r.model ? ` (${modelLabel(agents.find((a) => a.id === r.agent), r.model)})` : ''}
                 </option>
               ))}
             </select>
