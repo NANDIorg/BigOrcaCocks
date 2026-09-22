@@ -53,9 +53,8 @@ export function RunsSection(props: {
   const sorted = [...runs].sort((a, b) => b.createdAt - a.createdAt)
   return (
     <>
-      <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Прогоны</h3>
       {sorted.length === 0 ? (
-        <p style={{ fontSize: 12, margin: '0 0 24px' }}>Прогонов пока нет — они появляются при запуске координатора.</p>
+        <p className="muted">Прогонов пока нет — они появляются при запуске координатора.</p>
       ) : (
         <div className="runs-list">
           {sorted.map((run) => {

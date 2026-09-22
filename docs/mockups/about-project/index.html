@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Редизайн «О проекте»</title>
+<style>
+:root { --page: #26282e; --side: #33353d; --card: #3b3e47; --chip: #5b5e68; --text: #ecedf1; --muted: #9ea1ad; --accent: #7b86f5; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.5 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px 16px; }
+main { max-width: 960px; margin: 0 auto; }
+h1 { margin: 0 0 6px; font-size: 26px; font-weight: 600; }
+p.lead { color: var(--muted); margin: 0 0 28px; max-width: 70ch; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+a.card { display: flex; flex-direction: column; gap: 10px; background: var(--side); border: 1px solid transparent; border-radius: 14px; padding: 18px 20px; color: inherit; text-decoration: none; }
+a.card:hover { border-color: var(--chip); background: var(--card); }
+.tag { align-self: flex-start; font-size: 12px; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 1px 10px; }
+a.card b { font-size: 17px; font-weight: 600; }
+a.card span { color: var(--muted); font-size: 13px; }
+pre { margin: 0; font: 11px/1.35 ui-monospace, Menlo, monospace; color: #c9ccd6; background: #2e3037; border-radius: 10px; padding: 10px; overflow-x: auto; }
+.note { color: var(--muted); font-size: 13px; margin-top: 28px; }
+code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+</style></head>
+<body><main>
+<h1>Редизайн вкладки «О проекте»</h1>
+<p class="lead">Три варианта всей вкладки на реальных разделах: проект, агенты, роли, колонки, разрешения, прогоны, дефолт. Макеты статические, но кликабельные: переключение разделов, выезжающая панель, оглавление. Сверху в каждом макете можно сузить окно (1180 / 980) и скрыть список проектов, чтобы проверить узкую ширину.</p>
+<div class="grid">
+  <a class="card" href="variant-a.html"><span class="tag">A</span><b>Навигация по разделам</b>
+    <pre>┌────────┬────────────────┐
+│Проект ▾│ Роли           │
+│ Обзор  │ ┌────┬───────┐ │
+│ Агенты │ │list│ panel │ │
+│▶Роли   │ └────┴───────┘ │
+│ Колонки│                │
+└────────┴────────────────┘</pre>
+    <span>Один раздел за раз. Переключатель «Этот проект / Для новых проектов» заменяет модалку дефолтов.</span></a>
+  <a class="card" href="variant-b.html"><span class="tag">B</span><b>Дашборд-карточки</b>
+    <pre>┌──────── Проект ─────────┐
+├────────┬────────────────┤
+│Агенты  │ Роли        ›  │
+├────────┴──┬─────────────┤
+│Колонки ›  │ Разрешения  │
+└───────────┴─────────────┘
+          ⇢ панель справа</pre>
+    <span>Сводка всего проекта на одном экране; редакторы — в выезжающей панели.</span></a>
+  <a class="card" href="variant-c.html"><span class="tag">C</span><b>Одна страница + оглавление</b>
+    <pre>┌──────────────────┬─────┐
+│ Проект           │▶Про.│
+│ Агенты           │ Аге.│
+│ Роли ┌───┬─────┐ │ Рол.│
+│      └───┴─────┘ │ Кол.│
+│ Колонки …        │     │
+└──────────────────┴─────┘</pre>
+    <span>Всё подряд в карточках, липкое оглавление с подсветкой; ближе всего к текущему коду.</span></a>
+</div>
+<p class="note">Стили — токены из <code>apps/desktop/src/renderer/src/styles.css</code>; редактор ролей показан в уже принятом виде (список + панель, коммит cda1ebf).</p>
+</main></body></html>

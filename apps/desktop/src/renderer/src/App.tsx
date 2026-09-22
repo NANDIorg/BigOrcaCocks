@@ -2,21 +2,18 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, globalBoardColumns, globalStoredColumns, toGlobalTasks,
-  type Task, type StoreSnapshot, type AgentInfo, type AgentKind, type Role, type GlobalTask
+  type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask
 } from '@orca-board/core'
-import { PERMISSION_MODES, type Project, type PermissionMode, type TerminalInfo } from '../../shared/ipc'
+import type { Project, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
 import { TaskModal } from './TaskModal'
-import { RolesEditor } from './RolesEditor'
-import { ColumnsEditor } from './ColumnsEditor'
-import { DefaultsModal } from './DefaultsModal'
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
-import { RunsSection } from './runs'
+import { AboutProject, type AboutScope } from './about/AboutProject'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
@@ -124,10 +121,9 @@ export function App(): React.JSX.Element {
   /** Глобальная задача, из которой вернулись на общую доску, — её карточке возвращается фокус. */
   const [lastGlobal, setLastGlobal] = useState<string | undefined>()
   const [showCoord, setShowCoord] = useState(false)
-  const [showDefaults, setShowDefaults] = useState(false)
   const [showProjects, setShowProjects] = useState(storedShowProjects)
-  /** Растёт после «Применить дефолт»: пересоздаёт редакторы ролей/колонок, чтобы черновик взял новые значения. */
-  const [settingsRev, setSettingsRev] = useState(0)
+  /** «О проекте» редактирует активный проект или дефолт для новых проектов (шестерёнка в rail). */
+  const [aboutScope, setAboutScope] = useState<AboutScope>('project')
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -146,9 +142,6 @@ export function App(): React.JSX.Element {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
   const openTask = openTaskId ? tasks.find((t) => t.id === openTaskId) : undefined
-  /** Задачи активного проекта по роли — счётчики в редакторе ролей. */
-  const roleTaskCounts: Record<string, number> = {}
-  for (const t of tasks) roleTaskCounts[t.roleId] = (roleTaskCounts[t.roleId] ?? 0) + 1
 
   /** Записать вкладку/активный терминал в запись проекта (функционально — безопасно из обработчиков событий). */
   function updateView(projectId: string, patch: Partial<ProjectView>): void {
@@ -194,13 +187,6 @@ export function App(): React.JSX.Element {
   /** Список агентов (установлен/включён в активном проекте); refresh — заново просканировать PATH. */
   async function refreshAgents(refresh = false): Promise<void> {
     setAgents(await window.orca.agents.list(refresh))
-  }
-
-  async function toggleAgent(id: AgentKind, enabled: boolean): Promise<void> {
-    if (!active) return
-    const next = agents.filter((a) => (a.id === id ? enabled : a.enabled)).map((a) => a.id)
-    await window.orca.projects.setEnabledAgents(active.id, next)
-    await refreshProjects()
   }
 
   useEffect(() => {
@@ -359,35 +345,10 @@ export function App(): React.JSX.Element {
     if (p) await refreshProjects()
   }
 
-  /** Текущие настройки активного проекта → глобальный дефолт для новых проектов. */
-  async function saveAsDefaults(p: Project): Promise<void> {
-    if (!confirm(`Сохранить настройки проекта «${p.name}» (агенты, роли, колонки, разрешения) как дефолт для новых проектов?`)) return
-    try {
-      await window.orca.projects.setDefaults({
-        permissionMode: p.permissionMode,
-        enabledAgents: p.enabledAgents,
-        roles: p.roles ?? DEFAULT_ROLES,
-        columns: p.columns ?? DEFAULT_COLUMNS
-      })
-    } catch (e) {
-      alert(ipcErrorMessage(e))
-    }
-  }
-
-  /** Переписать настройки проекта дефолтом; задачи из исчезнувших колонок уезжают в бэклог. */
-  async function applyDefaults(p: Project): Promise<void> {
-    const ok = confirm(
-      `Заменить агентов, роли, колонки и разрешения проекта «${p.name}» настройками по умолчанию?\n\n` +
-        'Задачи из колонок, которых нет в дефолте, переедут в бэклог.'
-    )
-    if (!ok) return
-    try {
-      await window.orca.projects.applyDefaults(p.id)
-    } catch (e) {
-      alert(ipcErrorMessage(e))
-    }
-    await refreshProjects()
-    setSettingsRev((r) => r + 1)
+  /** Шестерёнка в rail: «О проекте» в режиме «Для новых проектов». */
+  function openDefaults(): void {
+    setAboutScope('defaults')
+    setTab('info')
   }
 
   function toggleProjects(): void {
@@ -550,7 +511,13 @@ export function App(): React.JSX.Element {
     <div className={`app ${showProjects ? '' : 'no-sidebar'}`}>
       <aside className="rail">
         <button className={`icon ${showProjects ? 'active' : ''}`} title="Проекты" onClick={toggleProjects}><Icon.folder /></button>
-        <button className={`icon ${showDefaults ? 'active' : ''}`} title="Основные настройки" onClick={() => setShowDefaults(true)}><Icon.gear /></button>
+        <button
+          className={`icon ${tab === 'info' && aboutScope === 'defaults' ? 'active' : ''}`}
+          title="Настройки для новых проектов"
+          onClick={openDefaults}
+        >
+          <Icon.gear />
+        </button>
         <div className="grow" />
         <div className="avatar">🐋</div>
       </aside>
@@ -662,113 +629,19 @@ export function App(): React.JSX.Element {
             </GlobalTaskView>
           )}
           {tab === 'info' && (
-            <div className="info-page">
-            <div className="info">
-              <div className="agents-head">
-                <h3>Агенты</h3>
-                <button className="btn-text" onClick={() => void refreshAgents(true)}>Обновить</button>
-              </div>
-              <div className="agents-list" style={{ marginBottom: 8 }}>
-                {agents.map((a) => (
-                  <label key={a.id} className={`agent-row ${a.installed ? '' : 'off'}`}>
-                    <input
-                      type="checkbox"
-                      checked={a.enabled}
-                      disabled={!active || !a.installed}
-                      onChange={(e) => void toggleAgent(a.id, e.target.checked)}
-                    />
-                    <AgentLogo agent={a.id} size={20} />
-                    <span>{a.title}</span>
-                    {a.version && <span className="ver">{a.version}</span>}
-                    {!a.installed && <span className="ver">не установлен</span>}
-                  </label>
-                ))}
-              </div>
-              <p style={{ fontSize: 12, margin: '0 0 24px' }}>
-                Выключенные агенты нельзя выбрать для роли; координатор их тоже не предложит.
-                Установленные агенты определяются по PATH.
-              </p>
-              {active && (
-                <RolesEditor
-                  key={`${active.id}:${settingsRev}`}
-                  storageKey={active.id}
-                  roles={active.roles ?? DEFAULT_ROLES}
-                  agents={agents}
-                  taskCounts={roleTaskCounts}
-                  onSave={async (roles) => {
-                    await window.orca.projects.setRoles(active.id, roles)
-                    await refreshProjects()
-                  }}
-                />
-              )}
-              {active && (
-                <ColumnsEditor
-                  key={`${active.id}:${settingsRev}`}
-                  storageKey={active.id}
-                  columns={active.columns ?? DEFAULT_COLUMNS}
-                  onSave={async (columns) => {
-                    await window.orca.projects.setColumns(active.id, columns)
-                    await refreshProjects()
-                  }}
-                />
-              )}
-              {active && (
-                <RunsSection
-                  runs={snap.runs}
-                  tasks={tasks}
-                  columns={active.columns ?? DEFAULT_COLUMNS}
-                  onClose={async (id) => {
-                    try {
-                      await window.orca.runs.close(id)
-                    } catch (e) {
-                      alert(ipcErrorMessage(e))
-                    }
-                  }}
-                />
-              )}
-              <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Разрешения агентов</h3>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24 }}>
-                Как Claude Code (координатор и воркеры) обращается с подтверждениями
-                <select
-                  value={active?.permissionMode ?? 'auto'}
-                  disabled={!active}
-                  onChange={async (e) => {
-                    if (!active) return
-                    await window.orca.projects.setPermissionMode(active.id, e.target.value as PermissionMode)
-                    await refreshProjects()
-                  }}
-                >
-                  {(Object.keys(PERMISSION_MODES) as PermissionMode[]).map((m) => (
-                    <option key={m} value={m}>{PERMISSION_MODES[m]}</option>
-                  ))}
-                </select>
-                <span style={{ fontSize: 12 }}>Команда <code>orca-board</code> разрешена всегда. Действует на новые терминалы.</span>
-              </label>
-              {active && (
-                <>
-                  <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Основные настройки</h3>
-                  <div className="defaults-actions">
-                    <button className="btn-sm" onClick={() => void saveAsDefaults(active)}>Сохранить настройки этого проекта как дефолт</button>
-                    <button className="btn-sm" onClick={() => void applyDefaults(active)}>Применить дефолт к этому проекту</button>
-                    <button className="btn-text" onClick={() => setShowDefaults(true)}>Открыть основные настройки</button>
-                  </div>
-                  <p style={{ fontSize: 12, margin: '0 0 24px' }}>
-                    Дефолт автоматически применяется к новым проектам. Применение к этому проекту заменит агентов,
-                    роли, колонки и разрешения; задачи из удалённых колонок переедут в бэклог.
-                  </p>
-                </>
-              )}
-              <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>О проекте</h3>
-              <p>Репозиторий: <code>{active?.root ?? '—'}</code></p>
-              <p>Идентификатор проекта для CLI: <code>{active?.id ?? '—'}</code></p>
-              <p>Задач: {tasks.length}. Открытых терминалов: {projectTerminals.length}.</p>
-              <p>Worktree создаются рядом с репозиторием в папке <code>.orca-worktrees</code>.</p>
-              <p>Сокет CLI: <code>{socketPath}</code>. В терминалах доступна команда <code>orca-board --help</code>.</p>
-              {active && (
-                <button className="btn-ghost" style={{ width: 'auto', padding: '10px 18px' }} onClick={() => removeProject(active)}>Убрать из списка</button>
-              )}
-            </div>
-            </div>
+            <AboutProject
+              project={active}
+              scope={aboutScope}
+              onScope={setAboutScope}
+              agents={agents}
+              tasks={tasks}
+              runs={snap.runs}
+              terminals={projectTerminals.length}
+              socketPath={socketPath}
+              onProjectChanged={refreshProjects}
+              onRefreshAgents={() => refreshAgents(true)}
+              onRemoveProject={removeProject}
+            />
           )}
 
           <div className={`term-page ${tab === 'terminals' ? '' : 'hidden'}`}>
@@ -819,7 +692,6 @@ export function App(): React.JSX.Element {
         </div>
       </main>
 
-      {showDefaults && <DefaultsModal agents={agents} onClose={() => setShowDefaults(false)} />}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}

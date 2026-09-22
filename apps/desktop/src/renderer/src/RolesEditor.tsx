@@ -215,7 +215,6 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
 
   return (
     <div className="editor roles-editor">
-      <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Роли</h3>
       <div className="roles-md">
         <aside className="roles-list" aria-label="Список ролей">
           {system.length > 0 && (

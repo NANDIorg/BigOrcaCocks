@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>О проекте — вариант C</title>
+<style>
+/* ===== Общая база макетов: токены и хром приложения из apps/desktop/src/renderer/src/styles.css ===== */
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --line: rgba(255,255,255,.06);
+  --text: #ecedf1; --muted: #9ea1ad; --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b; --radius: 14px;
+  --mono: ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: #1c1d22; color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+button { font: inherit; cursor: pointer; }
+code { font-family: var(--mono); font-size: 12px; }
+svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+
+/* панель макета (не часть приложения) */
+.mock-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: #15161a; color: var(--muted); font-size: 12px; flex-wrap: wrap; border-bottom: 1px solid #000; }
+.mock-bar b { color: var(--text); font-weight: 600; }
+.mock-bar a { color: var(--accent); text-decoration: none; }
+.mock-bar .grow { flex: 1; }
+.mock-bar .seg button { background: transparent; border: 1px solid #3a3c44; color: var(--muted); padding: 3px 10px; font-size: 12px; }
+.mock-bar .seg button:first-child { border-radius: 8px 0 0 8px; }
+.mock-bar .seg button:last-child { border-radius: 0 8px 8px 0; }
+.mock-bar .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; padding: 0; }
+.app { width: 100%; max-width: var(--w, 100%); height: 100%; display: grid; grid-template-columns: 72px 260px minmax(0, 1fr); background: var(--frame); transition: max-width .2s; }
+.app.no-sidebar { grid-template-columns: 72px minmax(0, 1fr); }
+.app.no-sidebar .sidebar { display: none; }
+
+.rail { display: flex; flex-direction: column; align-items: center; padding: 22px 0; gap: 8px; border-right: 1px solid var(--line); }
+.rail .icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; color: var(--muted); }
+.rail .icon.active { color: var(--accent); }
+.rail .grow { flex: 1; }
+.sidebar { display: flex; flex-direction: column; background: var(--side); border-right: 1px solid var(--line); min-width: 0; }
+.sidebar .head { display: flex; align-items: center; gap: 10px; padding: 22px 20px 18px; border-bottom: 1px solid var(--line); }
+.sidebar .head h2 { margin: 0; font-size: 20px; font-weight: 600; flex: 1; }
+.sidebar .head .plus { background: var(--accent); color: #fff; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; }
+.sidebar .item { padding: 14px 20px; border-left: 3px solid transparent; }
+.sidebar .item .name { font-size: 16px; font-weight: 500; }
+.sidebar .item .sub { color: var(--muted); font-size: 13px; margin-top: 2px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar .item.active { background: var(--side-2); border-left-color: var(--accent); }
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; container-type: inline-size; container-name: main; }
+.main-head { padding: 24px 32px 0; border-bottom: 1px solid var(--line); }
+.main-head .row { display: flex; align-items: center; gap: 12px; }
+.main-head h1 { margin: 0; font-size: 26px; font-weight: 600; flex: 1; letter-spacing: -.01em; }
+.round-btn { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--chip); background: transparent; color: var(--muted); display: grid; place-items: center; }
+.btn-primary { display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 22px; border-radius: 22px; border: 0; background: var(--accent); color: #fff; font-weight: 500; font-size: 15px; white-space: nowrap; }
+.btn-primary.ghost { background: transparent; border: 1px solid var(--chip); color: var(--text); }
+.tabs { display: flex; gap: 32px; margin-top: 22px; }
+.tab { background: transparent; border: 0; color: var(--muted); font-size: 16px; padding: 0 0 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab-badge { display: inline-block; margin-left: 6px; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--chip); color: var(--text); font-size: 11px; line-height: 18px; text-align: center; }
+.content { flex: 1; min-height: 0; display: flex; }
+@container main (max-width: 720px) { .main-head .btn-primary .lbl { display: none; } .main-head .btn-primary { padding: 0 14px; } }
+
+/* общие контролы */
+.btn-sm { height: 32px; padding: 0 14px; border-radius: 16px; border: 1px solid var(--chip); background: transparent; color: var(--text); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-sm:hover { border-color: var(--text); }
+.btn-sm.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-sm.danger { color: var(--danger); border-color: rgba(239,107,107,.5); }
+.btn-sm.xs { height: 26px; padding: 0 10px; font-size: 12px; }
+.btn-text { background: transparent; border: 0; color: var(--muted); padding: 0 8px; }
+.btn-text:hover { color: var(--text); }
+.link { background: transparent; border: 0; padding: 0; color: var(--accent); font-size: 12px; }
+input, textarea, select { background: var(--frame); color: var(--text); border: 1px solid transparent; border-radius: 10px; padding: 8px 12px; font: inherit; width: 100%; outline: none; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+input[type='checkbox'], input[type='radio'] { width: auto; margin: 0; accent-color: var(--accent); }
+.chip { border: 1px solid var(--chip); color: #c9ccd6; border-radius: 999px; padding: 2px 10px; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+.chip.mono { font-family: var(--mono); font-size: 11px; }
+.chip.sys { border-color: rgba(123,134,245,.5); color: #b9bff9; }
+.chip.live { border-color: var(--col-progress); color: var(--col-progress); }
+.chip.ok { border-color: rgba(90,209,204,.5); color: var(--col-done); }
+.chip.warn { border-color: rgba(232,176,74,.55); color: var(--col-input); }
+.chip.run { --run: #7b86f5; border-color: var(--run); color: var(--run); background: color-mix(in srgb, var(--run) 14%, transparent); }
+.muted { color: var(--muted); font-size: 13px; }
+.hint { color: var(--muted); font-size: 12px; }
+.hint code { font-size: 11px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.dot.on { background: var(--col-done); } .dot.off { background: var(--col-input); } .dot.none { background: var(--chip); }
+.saved { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.saved::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--col-done); }
+
+/* логотипы агентов — плашки с буквой */
+.logo { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.logo.sm { width: 18px; height: 18px; font-size: 10px; border-radius: 5px; }
+.lg-claude { background: #d97757; } .lg-codex { background: #10a37f; } .lg-opencode { background: #444; }
+.lg-gemini { background: #4f7df3; } .lg-cursor { background: #111; border: 1px solid #555; } .lg-amp { background: #f25c54; }
+.lg-copilot { background: #6e40c9; } .lg-goose { background: #333; border: 1px solid #555; } .lg-shell { background: #5b5e68; }
+
+/* ===== общие блоки содержимого: агенты / роли (вариант A из cda1ebf) / колонки / прогоны ===== */
+.agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.agent { display: flex; align-items: center; gap: 10px; background: var(--side); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.agent .t { flex: 1; min-width: 0; }
+.agent .t b { font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent .t span { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.agent.off { opacity: .55; }
+.agent.off .t b { color: var(--muted); }
+.switch { width: 34px; height: 20px; border-radius: 10px; background: var(--chip); position: relative; flex-shrink: 0; border: 0; padding: 0; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 17px; }
+.switch:disabled { opacity: .4; }
+
+.roles-md { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; align-items: start; }
+.roles-list { background: var(--side); border-radius: var(--radius); padding: 8px; }
+.roles-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 10px 10px 6px; }
+.roles-item { display: grid; grid-template-columns: 12px minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; border-left: 3px solid transparent; }
+.roles-item.active { background: var(--side-2); border-left-color: var(--accent); }
+.roles-item .grip { color: var(--chip); font-size: 12px; }
+.roles-item .n { font-weight: 500; display: flex; gap: 6px; align-items: center; }
+.roles-item .s { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.roles-panel { background: var(--side); border-radius: var(--radius); padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.roles-panel h4 { margin: 0; font-size: 20px; font-weight: 600; }
+.grid3 { display: grid; grid-template-columns: 1.2fr 1fr 1.4fr; gap: 12px; }
+.fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fld > span { font-size: 12px; color: var(--muted); }
+.effort { display: flex; gap: 4px; flex-wrap: wrap; }
+.effort button { background: var(--frame); border: 0; color: var(--muted); border-radius: 8px; padding: 7px 10px; font-size: 12px; }
+.effort button.on { background: var(--accent); color: #fff; }
+.preview { margin: 0; background: var(--frame); border-radius: 10px; padding: 10px 12px; font: 12px/1.5 var(--mono); color: #c9ccd6; white-space: pre-wrap; word-break: break-all; }
+.preview .k { color: var(--accent); }
+.rtabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line); }
+.rtabs span { padding: 0 0 8px; color: var(--muted); font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.rtabs span.on { color: var(--text); border-bottom-color: var(--accent); }
+.roles-foot { display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--line); padding-top: 14px; flex-wrap: wrap; }
+.roles-foot .grow { flex: 1; }
+
+.cols { display: flex; flex-direction: column; gap: 6px; }
+.col { display: grid; grid-template-columns: 16px 14px minmax(120px, 1fr) 150px 150px auto; gap: 10px; align-items: center; background: var(--side); border-radius: 12px; padding: 8px 12px; }
+.col .grip { color: var(--chip); }
+.col .sw { width: 14px; height: 14px; border-radius: 4px; }
+.col input { background: transparent; padding: 6px 8px; }
+.col input:hover { background: var(--frame); }
+.col .kind { font-size: 12px; color: var(--muted); }
+.col .id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.swatches { display: flex; gap: 4px; }
+.swatches i { width: 16px; height: 16px; border-radius: 50%; display: block; outline-offset: 2px; }
+.swatches i.on { outline: 2px solid var(--text); }
+
+.runs { display: flex; flex-direction: column; gap: 8px; }
+.run { background: var(--side); border-radius: 12px; padding: 10px 14px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; align-items: center; }
+.run .obj { grid-column: 1 / -1; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run .h { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.bar { height: 4px; border-radius: 2px; background: var(--frame); overflow: hidden; width: 90px; display: inline-block; }
+.bar i { display: block; height: 100%; background: var(--col-done); }
+
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; }
+.kv dt { color: var(--muted); font-size: 13px; }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.copy { background: transparent; border: 0; color: var(--muted); font-size: 12px; padding: 2px 6px; border-radius: 6px; }
+.copy:hover { color: var(--text); background: var(--frame); }
+
+.perm { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.perm label { background: var(--side); border: 1px solid transparent; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+.perm label.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--side)); }
+.perm label b { display: flex; gap: 8px; align-items: center; font-weight: 500; }
+.perm label span { font-size: 12px; color: var(--muted); }
+
+@container main (max-width: 900px) {
+  .roles-md { grid-template-columns: minmax(0, 1fr); }
+  .grid3 { grid-template-columns: minmax(0, 1fr); }
+  .col { grid-template-columns: 16px 14px minmax(0, 1fr) auto; }
+  .col .swatches, .col .kind { display: none; }
+  .perm { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ===== Вариант C ===== */
+.page { flex: 1; min-width: 0; overflow-y: auto; scroll-behavior: smooth; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 28px; padding: 24px 32px 60px; max-width: 1280px; }
+.toc { position: sticky; top: 24px; align-self: start; display: flex; flex-direction: column; gap: 2px; }
+.toc .cap { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 0 12px 8px; }
+.toc a { color: var(--muted); text-decoration: none; padding: 6px 12px; border-left: 2px solid var(--line); font-size: 13px; display: flex; gap: 8px; }
+.toc a:hover { color: var(--text); }
+.toc a.on { color: var(--text); border-left-color: var(--accent); }
+.toc a .c { margin-left: auto; font-size: 11px; }
+.toc a .c.warn { color: var(--col-input); } .toc a .c.live { color: var(--col-progress); }
+.toc .sep { height: 1px; background: var(--line); margin: 10px 12px; }
+.toc .saved { padding: 4px 12px; }
+.sections { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+.sec { scroll-margin-top: 16px; }
+.sec-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.sec-h h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.sec-h .d { color: var(--muted); font-size: 13px; flex: 1; min-width: 200px; }
+.card { background: var(--side); border-radius: var(--radius); padding: 18px 20px; }
+.sec .roles-list, .sec .roles-panel, .sec .col, .sec .run, .sec .agent, .sec .perm label { background: var(--side); }
+.passport { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, var(--side)), var(--side)); border-radius: var(--radius); padding: 20px 22px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; }
+.passport h2 { margin: 0 0 12px; font-size: 18px; }
+.nums { display: flex; gap: 22px; }
+.nums b { display: block; font-size: 22px; font-weight: 600; }
+.nums span { font-size: 12px; color: var(--muted); }
+.more { margin-top: 10px; }
+.defaults { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.defaults .card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; }
+.defaults .card b { font-weight: 500; }
+.defaults .card .btn-sm { align-self: flex-start; margin-top: auto; }
+.danger { border: 1px solid rgba(239,107,107,.3); background: rgba(239,107,107,.05); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.danger .t { flex: 1; min-width: 220px; }
+.jump { display: none; }
+@container main (max-width: 980px) {
+  .layout { grid-template-columns: minmax(0, 1fr); padding: 0 20px 48px; }
+  .toc { display: none; }
+  .jump { display: flex; position: sticky; top: 0; z-index: 3; gap: 4px; overflow-x: auto; padding: 10px 0; background: var(--frame); border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .jump a { white-space: nowrap; color: var(--muted); text-decoration: none; padding: 5px 12px; border-radius: 999px; font-size: 13px; border: 1px solid transparent; }
+  .jump a.on { color: var(--text); border-color: var(--chip); background: var(--side); }
+  .passport { grid-template-columns: minmax(0, 1fr); }
+  .defaults { grid-template-columns: minmax(0, 1fr); }
+  .sec { scroll-margin-top: 64px; }
+}
+</style></head>
+<body>
+<div class="mock-bar"><a href="index.html">← Все варианты</a><b>Вариант C — одна страница с липким оглавлением</b><span>Все разделы подряд в карточках, справа липкое оглавление с подсветкой текущего раздела; на узком окне — полоса-якоря сверху</span><span class="grow"></span>
+<span>Варианты: <a href="variant-a.html">A</a> · <a href="variant-b.html">B</a> · <a href="variant-c.html" style="color:var(--text);font-weight:600">C</a></span>
+<span>Окно:</span><span class="seg" id="wseg"><button data-w="100%" class="on">во всю ширину</button><button data-w="1180px">1180</button><button data-w="980px">980</button></span>
+<span class="seg" id="sseg"><button data-s="1" class="on">с проектами</button><button data-s="0">без</button></span></div>
+<div class="stage"><div class="app" id="app">
+  <nav class="rail"><div class="icon active"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M15 4v16"/></svg></div><div class="icon"><svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div><div class="icon"><svg class="i" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 21h4"/></svg></div><div class="grow"></div><div class="icon"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></div></nav>
+  <aside class="sidebar"><div class="head"><h2>Проекты</h2><span class="plus"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span></div>
+    <div class="item active"><div class="name">orca-board</div><div class="sub">~/project/orca-board</div></div>
+    <div class="item"><div class="name">md-audit-backend</div><div class="sub">~/work/md-audit/backend</div></div>
+    <div class="item"><div class="name">autotests-new</div><div class="sub">~/work/md-audit/autotests-new</div></div>
+  </aside>
+  <main class="main">
+    <div class="main-head"><div class="row"><h1>orca-board</h1><button class="round-btn"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9l3 3-3 3M12 15h5"/></svg></button>
+      <button class="btn-primary ghost"><svg class="i" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-5-6.3"/></svg><span class="lbl">Координатор</span></button><button class="btn-primary"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">Новая задача</span></button></div>
+      <div class="tabs"><button class="tab">Канбан</button><button class="tab">Терминалы<span class="tab-badge">3</span></button><button class="tab active">О проекте</button></div>
+    </div>
+    <div class="content">
+<div class="page" id="page">
+ <div class="layout">
+  <div class="sections">
+    <nav class="jump"><a href="#s-project" class="on">Проект</a><a href="#s-agents">Агенты</a><a href="#s-roles">Роли</a><a href="#s-columns">Колонки</a><a href="#s-perm">Разрешения</a><a href="#s-runs">Прогоны</a><a href="#s-defaults">Дефолт</a></nav>
+
+    <section class="sec" id="s-project">
+      <div class="passport">
+        <div><h2>Проект</h2><dl class="kv">
+  <dt>Репозиторий</dt><dd><code>~/project/orca-board</code></dd><dd><button class="copy">Скопировать</button> <button class="copy">Открыть в Finder</button></dd>
+  <dt>ID для CLI</dt><dd><code>p_mf2k9x7q</code></dd><dd><button class="copy">Скопировать</button></dd>
+  <dt>Worktree</dt><dd><code>~/project/.orca-worktrees/</code> · 3 активных</dd><dd><button class="copy">Открыть</button></dd>
+  <dt>Сокет CLI</dt><dd><code>~/Library/Application Support/orca-board/orca.sock</code></dd><dd><button class="copy">Скопировать</button></dd>
+</dl>
+<div class="hint" style="margin-top:10px">В терминалах доступна команда <code>orca-board --help</code>.</div></div>
+        <div class="nums"><div><b>24</b><span>задачи</span></div><div><b>6</b><span>открыто</span></div><div><b>3</b><span>терминала</span></div></div>
+      </div>
+    </section>
+
+    <section class="sec" id="s-agents">
+      <div class="sec-h"><h2>Агенты</h2><span class="d">Выключенные нельзя выбрать для роли; координатор их не предложит. Определяются по PATH.</span><button class="btn-sm xs"><svg class="i" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg> Обновить</button></div>
+      <div class="agents"><div class="agent"><span class="logo lg-claude">C</span><div class="t"><b>Claude Code</b><span>2.1.4</span></div><button class="switch on" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-codex">Cx</span><div class="t"><b>Codex</b><span>0.48.0</span></div><button class="switch on" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-gemini">G</span><div class="t"><b>Gemini CLI</b><span>0.9.1</span></div><button class="switch" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-opencode">Oc</span><div class="t"><b>OpenCode</b><span>0.14.2</span></div><button class="switch" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-shell">$</span><div class="t"><b>Оболочка</b><span>zsh 5.9</span></div><button class="switch on" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div></div>
+      <details class="more"><summary class="muted" style="cursor:pointer">Ещё 4 не установлены: Cursor Agent, Amp, GitHub Copilot CLI, Goose</summary><div style="margin-top:10px"><div class="agents"><div class="agent"><span class="logo lg-claude">C</span><div class="t"><b>Claude Code</b><span>2.1.4</span></div><button class="switch on" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-codex">Cx</span><div class="t"><b>Codex</b><span>0.48.0</span></div><button class="switch on" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-gemini">G</span><div class="t"><b>Gemini CLI</b><span>0.9.1</span></div><button class="switch" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-opencode">Oc</span><div class="t"><b>OpenCode</b><span>0.14.2</span></div><button class="switch" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent off"><span class="logo lg-cursor">Cu</span><div class="t"><b>Cursor Agent</b><span>не установлен</span></div><button class="switch" disabled onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent off"><span class="logo lg-amp">A</span><div class="t"><b>Amp</b><span>не установлен</span></div><button class="switch" disabled onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent off"><span class="logo lg-copilot">Gh</span><div class="t"><b>GitHub Copilot CLI</b><span>не установлен</span></div><button class="switch" disabled onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent off"><span class="logo lg-goose">Go</span><div class="t"><b>Goose</b><span>не установлен</span></div><button class="switch" disabled onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div><div class="agent"><span class="logo lg-shell">$</span><div class="t"><b>Оболочка</b><span>zsh 5.9</span></div><button class="switch on" onclick="this.classList.toggle('on')" title="Включить для проекта"></button></div></div></div></details>
+    </section>
+
+    <section class="sec" id="s-roles">
+      <div class="sec-h"><h2>Роли</h2><span class="d">Кто выполняет задачи. Порядок — как в «Новой задаче».</span></div>
+      
+<div class="roles-md">
+  <div class="roles-list">
+    <div class="roles-group">Процесс</div>
+    <div class="roles-item"><span></span><div><div class="n">Координатор <span class="chip sys">системная</span></div><div class="s"><span class="logo lg-claude sm">C</span> claude · opus</div></div><span class="dot on"></span></div>
+    <div class="roles-group">Роли задач · 4</div>
+    <div class="roles-item active"><span class="grip">⋮⋮</span><div><div class="n">Программист</div><div class="s"><span class="logo lg-claude sm">C</span> claude · sonnet · 12 задач</div></div><span class="dot on"></span></div>
+    <div class="roles-item"><span class="grip">⋮⋮</span><div><div class="n">Ревьюер</div><div class="s"><span class="logo lg-codex sm">Cx</span> codex · gpt-5 · 5 задач</div></div><span class="dot on"></span></div>
+    <div class="roles-item"><span class="grip">⋮⋮</span><div><div class="n">QA</div><div class="s"><span class="logo lg-claude sm">C</span> claude · по умолч. · 3</div></div><span class="dot on"></span></div>
+    <div class="roles-item"><span class="grip">⋮⋮</span><div><div class="n">Дизайнер <span class="chip warn">агент выкл.</span></div><div class="s"><span class="logo lg-gemini sm">G</span> gemini · 0 задач</div></div><span class="dot off"></span></div>
+    <button class="btn-sm" style="width:100%;justify-content:center;margin-top:8px"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Новая роль</button>
+  </div>
+  <div class="roles-panel">
+    <div style="display:flex;gap:12px;align-items:flex-start"><div style="flex:1"><h4>Программист</h4>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap"><span class="chip sys">системная</span><span class="chip mono">developer</span><span class="chip">12 задач</span></div></div></div>
+    <div class="fld"><span>Описание — видит координатор при выборе роли</span><input value="Пишет и меняет код: фичи, исправления, рефакторинг."></div>
+    <div class="grid3">
+      <div class="fld"><span>Агент</span><select><option>Claude Code</option></select></div>
+      <div class="fld"><span>Модель</span><select><option>sonnet</option></select></div>
+      <div class="fld"><span>Усилие</span><div class="effort"><button>low</button><button class="on">medium</button><button>high</button><button>max</button></div></div>
+    </div>
+    <pre class="preview"><span class="k">claude</span> --model sonnet --effort medium --append-system-prompt &lt;роль&gt;</pre>
+    <div class="rtabs"><span class="on">Своя инструкция</span><span>Встроенный промпт</span><span>Задача воркеру</span></div>
+    <textarea rows="3" placeholder="Дополнительная инструкция роли…">Пиши тесты рядом с кодом. Не трогай apps/desktop/src/main без явной просьбы.</textarea>
+    <div class="roles-foot"><span class="saved">Сохранено</span><span class="grow"></span><button class="btn-sm">Дублировать</button><button class="btn-sm danger" disabled>Удалить</button></div>
+  </div>
+</div>
+    </section>
+
+    <section class="sec" id="s-columns">
+      <div class="sec-h"><h2>Колонки</h2><span class="d">Системные нельзя удалить — по ним работает автоматика.</span><button class="btn-sm xs"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Колонка</button></div>
+      <div style="margin-bottom:10px"><div style="display:flex;gap:4px"><div title="Бэклог" style="flex:1;height:20px;border-radius:6px;background:color-mix(in srgb,#6b6f7c 22%,var(--frame));border-top:3px solid #6b6f7c;font-size:11px;color:var(--muted);padding:4px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Бэклог</div><div title="Готовы" style="flex:1;height:20px;border-radius:6px;background:color-mix(in srgb,#7b86f5 22%,var(--frame));border-top:3px solid #7b86f5;font-size:11px;color:var(--muted);padding:4px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Готовы</div><div title="В работе" style="flex:1;height:20px;border-radius:6px;background:color-mix(in srgb,#f08a3a 22%,var(--frame));border-top:3px solid #f08a3a;font-size:11px;color:var(--muted);padding:4px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">В работе</div><div title="Нужен ответ" style="flex:1;height:20px;border-radius:6px;background:color-mix(in srgb,#e8b04a 22%,var(--frame));border-top:3px solid #e8b04a;font-size:11px;color:var(--muted);padding:4px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Нужен ответ</div><div title="Ревью" style="flex:1;height:20px;border-radius:6px;background:color-mix(in srgb,#b57bee 22%,var(--frame));border-top:3px solid #b57bee;font-size:11px;color:var(--muted);padding:4px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Ревью</div><div title="Тестирование" style="flex:1;height:20px;border-radius:6px;background:color-mix(in srgb,#2ea043 22%,var(--frame));border-top:3px solid #2ea043;font-size:11px;color:var(--muted);padding:4px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Тестирование</div><div title="Сделано" style="flex:1;height:20px;border-radius:6px;background:color-mix(in srgb,#5ad1cc 22%,var(--frame));border-top:3px solid #5ad1cc;font-size:11px;color:var(--muted);padding:4px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Сделано</div></div></div>
+      <div class="cols"><div class="col"><span class="grip">⋮⋮</span><span class="sw" style="background:#6b6f7c"></span><div><input value="Бэклог"><div class="id">backlog</div></div><div class="swatches"><i style="background:#6b6f7c" class=on></i><i style="background:#7b86f5"></i><i style="background:#f08a3a"></i><i style="background:#e8b04a"></i><i style="background:#b57bee"></i><i style="background:#5ad1cc"></i><i style="background:#e5484d"></i><i style="background:#2ea043"></i></div><span class="kind">системная</span><span class="chip sys" title="По ней работает автоматика">сист.</span></div><div class="col"><span class="grip">⋮⋮</span><span class="sw" style="background:#7b86f5"></span><div><input value="Готовы"><div class="id">ready</div></div><div class="swatches"><i style="background:#6b6f7c"></i><i style="background:#7b86f5" class=on></i><i style="background:#f08a3a"></i><i style="background:#e8b04a"></i><i style="background:#b57bee"></i><i style="background:#5ad1cc"></i><i style="background:#e5484d"></i><i style="background:#2ea043"></i></div><span class="kind">системная</span><span class="chip sys" title="По ней работает автоматика">сист.</span></div><div class="col"><span class="grip">⋮⋮</span><span class="sw" style="background:#f08a3a"></span><div><input value="В работе"><div class="id">in_progress</div></div><div class="swatches"><i style="background:#6b6f7c"></i><i style="background:#7b86f5"></i><i style="background:#f08a3a" class=on></i><i style="background:#e8b04a"></i><i style="background:#b57bee"></i><i style="background:#5ad1cc"></i><i style="background:#e5484d"></i><i style="background:#2ea043"></i></div><span class="kind">системная</span><span class="chip sys" title="По ней работает автоматика">сист.</span></div><div class="col"><span class="grip">⋮⋮</span><span class="sw" style="background:#e8b04a"></span><div><input value="Нужен ответ"><div class="id">needs_input</div></div><div class="swatches"><i style="background:#6b6f7c"></i><i style="background:#7b86f5"></i><i style="background:#f08a3a"></i><i style="background:#e8b04a" class=on></i><i style="background:#b57bee"></i><i style="background:#5ad1cc"></i><i style="background:#e5484d"></i><i style="background:#2ea043"></i></div><span class="kind">системная</span><span class="chip sys" title="По ней работает автоматика">сист.</span></div><div class="col"><span class="grip">⋮⋮</span><span class="sw" style="background:#b57bee"></span><div><input value="Ревью"><div class="id">review</div></div><div class="swatches"><i style="background:#6b6f7c"></i><i style="background:#7b86f5"></i><i style="background:#f08a3a"></i><i style="background:#e8b04a"></i><i style="background:#b57bee" class=on></i><i style="background:#5ad1cc"></i><i style="background:#e5484d"></i><i style="background:#2ea043"></i></div><span class="kind">системная</span><span class="chip sys" title="По ней работает автоматика">сист.</span></div><div class="col"><span class="grip">⋮⋮</span><span class="sw" style="background:#2ea043"></span><div><input value="Тестирование"><div class="id">col_mh3k2</div></div><div class="swatches"><i style="background:#6b6f7c"></i><i style="background:#7b86f5"></i><i style="background:#f08a3a"></i><i style="background:#e8b04a"></i><i style="background:#b57bee"></i><i style="background:#5ad1cc"></i><i style="background:#e5484d"></i><i style="background:#2ea043" class=on></i></div><span class="kind">своя</span><button class="btn-sm xs danger" title="Удалить; задачи переедут в бэклог"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button></div><div class="col"><span class="grip">⋮⋮</span><span class="sw" style="background:#5ad1cc"></span><div><input value="Сделано"><div class="id">done</div></div><div class="swatches"><i style="background:#6b6f7c"></i><i style="background:#7b86f5"></i><i style="background:#f08a3a"></i><i style="background:#e8b04a"></i><i style="background:#b57bee"></i><i style="background:#5ad1cc" class=on></i><i style="background:#e5484d"></i><i style="background:#2ea043"></i></div><span class="kind">системная</span><span class="chip sys" title="По ней работает автоматика">сист.</span></div></div>
+    </section>
+
+    <section class="sec" id="s-perm">
+      <div class="sec-h"><h2>Разрешения агентов</h2><span class="d">Как Claude Code (координатор и воркеры) обращается с подтверждениями.</span></div>
+      <div class="perm">
+  <label class="on"><b><input type="radio" name="perm1" checked> Авто</b><span>Claude сам решает, опасное спросит</span></label>
+  <label><b><input type="radio" name="perm1"> Без подтверждений</b><span>Полностью автономно</span></label>
+  <label><b><input type="radio" name="perm1"> Только правки файлов</b><span>Остальное спросит в терминале</span></label>
+</div>
+<div class="hint" style="margin-top:8px">Команда <code>orca-board</code> разрешена всегда. Действует на новые терминалы.</div>
+    </section>
+
+    <section class="sec" id="s-runs">
+      <div class="sec-h"><h2>Прогоны</h2><span class="d">Появляются при запуске координатора.</span><span class="chip live">1 идёт</span></div>
+      <div class="runs"><div class="run"><div class="h"><span class="chip run" style="--run:#7b86f5">Редизайн вкладки…</span><span>22.09.2026 14:05</span><span><span class="bar"><i style="width:33%"></i></span> 2/6</span><span class="chip live">идёт</span></div><button class="btn-sm xs">Закрыть</button><div class="obj">Редизайн вкладки «О проекте»: макеты трёх вариантов и выбор</div></div><div class="run"><div class="h"><span class="chip run" style="--run:#5ad1cc">Процесс продолжается…</span><span>21.09.2026 18:40</span><span><span class="bar"><i style="width:100%"></i></span> 4/4</span><span class="muted" style="font-size:12px">закрыт 21.09.2026 21:12</span></div><button class="btn-text" style="font-size:12px">На доске →</button><div class="obj">Процесс продолжается сам после ответа человека</div></div><div class="run"><div class="h"><span class="chip run" style="--run:#f08a3a">Подзадача с вопросом…</span><span>20.09.2026 11:02</span><span><span class="bar"><i style="width:100%"></i></span> 5/5</span><span class="muted" style="font-size:12px">закрыт 20.09.2026 16:30</span></div><button class="btn-text" style="font-size:12px">На доске →</button><div class="obj">Подзадача с вопросом/ответом человеку — в «Нужен ответ», а не в «Ревью»</div></div></div>
+      <button class="btn-text more" style="font-size:13px">Показать ещё 2 закрытых</button>
+    </section>
+
+    <section class="sec" id="s-defaults">
+      <div class="sec-h"><h2>Дефолт для новых проектов</h2><span class="d">Отличается от этого проекта: роли, колонки.</span></div>
+      <div class="defaults">
+        <div class="card"><b>Сделать дефолтом</b><span class="hint">Настройки этого проекта станут шаблоном для новых.</span><button class="btn-sm">Сохранить как дефолт</button></div>
+        <div class="card"><b>Применить дефолт</b><span class="hint">Заменит агентов, роли, колонки и разрешения; задачи из удалённых колонок — в бэклог.</span><button class="btn-sm">Применить…</button></div>
+        <div class="card"><b>Основные настройки</b><span class="hint">Редактировать дефолт и «Работать в фоне».</span><button class="btn-sm">Открыть</button></div>
+      </div>
+      <div class="card danger" style="margin-top:14px"><div class="t"><b style="font-weight:500">Убрать проект из списка</b><div class="hint">Репозиторий и worktree на диске не удаляются.</div></div><button class="btn-sm danger"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg> Убрать</button></div>
+    </section>
+  </div>
+
+  <aside class="toc">
+    <div class="cap">На странице</div>
+    <a href="#s-project" class="on">Проект</a>
+    <a href="#s-agents">Агенты <span class="c">3</span></a>
+    <a href="#s-roles">Роли <span class="c warn">5 · 1 !</span></a>
+    <a href="#s-columns">Колонки <span class="c">7</span></a>
+    <a href="#s-perm">Разрешения <span class="c">Авто</span></a>
+    <a href="#s-runs">Прогоны <span class="c live">1</span></a>
+    <a href="#s-defaults">Дефолт</a>
+    <div class="sep"></div>
+    <span class="saved">Все изменения сохранены</span>
+  </aside>
+ </div>
+</div>
+</div></main></div></div>
+<script>
+document.querySelectorAll('#wseg button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#wseg button').forEach(x => x.classList.toggle('on', x === b));
+  document.getElementById('app').style.setProperty('--w', b.dataset.w);
+});
+document.querySelectorAll('#sseg button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#sseg button').forEach(x => x.classList.toggle('on', x === b));
+  document.getElementById('app').classList.toggle('no-sidebar', b.dataset.s === '0');
+});
+document.querySelectorAll('.perm').forEach(p => p.addEventListener('change', () =>
+  p.querySelectorAll('label').forEach(l => l.classList.toggle('on', l.querySelector('input').checked))));
+</script>
+<script>
+const page = document.getElementById('page');
+const secs = [...document.querySelectorAll('.sec')];
+function spy() {
+  const top = page.getBoundingClientRect().top + 90;
+  let cur = secs[0].id;
+  for (const s of secs) if (s.getBoundingClientRect().top <= top) cur = s.id;
+  if (page.scrollTop + page.clientHeight >= page.scrollHeight - 4) cur = secs[secs.length - 1].id;
+  document.querySelectorAll('.toc a, .jump a').forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + cur));
+}
+page.addEventListener('scroll', spy); spy();
+</script>
+</body></html>
