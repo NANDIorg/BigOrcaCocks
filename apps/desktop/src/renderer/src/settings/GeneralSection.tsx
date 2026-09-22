@@ -1,12 +1,12 @@
 import type React from 'react'
-import type { AppSettings } from '../../../shared/ipc'
+import type { AppSettings, AppSettingsPatch } from '../../../shared/ipc'
 import { SectionHead, Switch } from '../about/parts'
 
 /** Раздел «Настройки → Общие»: настройки приложения, действующие на все проекты. */
 export function GeneralSection({ settings, error, onChange }: {
   settings: AppSettings | null
   error: string | null
-  onChange(patch: Partial<AppSettings>): void
+  onChange(patch: AppSettingsPatch): void
 }): React.JSX.Element {
   return (
     <>
