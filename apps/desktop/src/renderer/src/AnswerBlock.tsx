@@ -8,9 +8,10 @@ interface Props {
   /** Суть ответа одной строкой (`done --summary`). */
   summary?: string
   answerFor: AnswerAudience
-  /** Ответ ждёт решения (задача в колонке review): показать «Принять» / «Уточнить». */
+  /** Ответ ждёт решения (задача в needs_input или review): показать «Принять» / «Уточнить». */
   actionable: boolean
-  onAccept(): Promise<void>
+  /** `decision` — что человек решил по ответу (только для ответа человеку): уйдёт координатору. */
+  onAccept(decision?: string): Promise<void>
   /** Вернуть воркеру с уточнением и перезапустить его. */
   onClarify(text: string): Promise<void>
 }
@@ -19,6 +20,7 @@ interface Props {
 export function AnswerBlock({ answer, summary, answerFor, actionable, onAccept, onClarify }: Props): React.JSX.Element {
   const [mode, setMode] = useState<'view' | 'clarify'>('view')
   const [text, setText] = useState('')
+  const [decision, setDecision] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -43,11 +45,21 @@ export function AnswerBlock({ answer, summary, answerFor, actionable, onAccept, 
       )}
       {error && <span className="error-text">{error}</span>}
       {actionable && (mode === 'view' ? (
-        <div className="actions">
-          <button className="btn-sm primary" disabled={busy} onClick={() => void run(onAccept)}>
-            {busy ? '…' : 'Принять'}
-          </button>
-          <button className="btn-sm" disabled={busy} onClick={() => setMode('clarify')}>Уточнить</button>
+        <div className="reject">
+          {answerFor === 'human' && (
+            <textarea
+              placeholder="Решение / что делать дальше (необязательно). Координатор получит его вместе с ответом и заведёт задачи."
+              aria-label="Решение / что делать дальше"
+              value={decision}
+              onChange={(e) => setDecision(e.target.value)}
+            />
+          )}
+          <div className="actions">
+            <button className="btn-sm primary" disabled={busy} onClick={() => void run(() => onAccept(decision.trim() || undefined))}>
+              {busy ? '…' : 'Принять'}
+            </button>
+            <button className="btn-sm" disabled={busy} onClick={() => setMode('clarify')}>Уточнить</button>
+          </div>
         </div>
       ) : (
         <div className="reject">

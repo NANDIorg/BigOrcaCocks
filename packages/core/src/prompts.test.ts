@@ -85,6 +85,11 @@ describe('события после ответа человека в инстр�
 
   it('есть что делать по question_answered и answer_accepted', () => {
     assert.match(skill, /- `question_answered` →[\s\S]*workerLive: false[\s\S]*worker start/)
-    assert.match(skill, /- `answer_accepted` →/)
+    assert.match(skill, /- `answer_accepted` →[\s\S]*`decision`/)
+  })
+
+  it('воркер после done не берёт работу из терминала, а отправляет в приложение', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    assert.match(worker, /После `orca-board done` новую работу не бери[\s\S]*Решение \/ что делать дальше/)
   })
 })

@@ -231,8 +231,9 @@ export function TaskModal(props: Props): React.JSX.Element {
                   summary={answered.summary}
                   answerFor={task.answerFor}
                   actionable={kind === 'needs_input' || kind === 'review'}
-                  onAccept={async () => {
-                    await onAccept(task.id)
+                  onAccept={async (decision) => {
+                    // Решение идёт прямо в IPC: onAccept из App.tsx его не пробрасывает.
+                    await (decision ? window.orca.review.accept(task.id, decision) : onAccept(task.id))
                     onClose()
                   }}
                   onClarify={async (text) => {
