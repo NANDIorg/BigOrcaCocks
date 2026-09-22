@@ -1,1 +1,11 @@
-orca-board.js
+#!/bin/sh
+# Обёртка CLI: в собранном приложении Node берётся из Electron (ORCA_NODE), иначе — системный node.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "$ORCA_NODE" ]; then
+  ELECTRON_RUN_AS_NODE=1 exec "$ORCA_NODE" "$DIR/orca-board.js" "$@"
+fi
+if command -v node >/dev/null 2>&1; then
+  exec node "$DIR/orca-board.js" "$@"
+fi
+echo "orca-board: не найден node и не задан ORCA_NODE" >&2
+exit 2

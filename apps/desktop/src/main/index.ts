@@ -203,6 +203,7 @@ function registerIpc(): void {
         ...opts,
         cwd: opts.cwd ?? p?.root,
         env: {
+          ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}),
           ORCA_SOCKET: SOCKET_PATH,
           ...(p ? { ORCA_PROJECT: p.id } : {}),
           PATH: workerPath(),

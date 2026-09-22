@@ -10,6 +10,18 @@ interface Session {
 }
 
 const TAIL_LIMIT = 64 * 1024
+
+/**
+ * Окружение для агентов без служебных переменных Claude Code: если приложение запущено
+ * из сессии Claude Code, агенты иначе считают себя её дочерними сессиями и не сохраняют транскрипт.
+ */
+function cleanEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('CLAUDE_CODE_') || key === 'CLAUDECODE') delete env[key]
+  }
+  return env
+}
 const sessions = new Map<string, Session>()
 
 export function spawnPty(
@@ -24,7 +36,7 @@ export function spawnPty(
     cols: opts.cols,
     rows: opts.rows,
     cwd: opts.cwd ?? process.env.HOME,
-    env: { ...process.env, ...(opts.env ?? {}) } as Record<string, string>
+    env: { ...cleanEnv(), ...(opts.env ?? {}) } as Record<string, string>
   })
   const session: Session = { proc, tail: '', lastOutputAt: Date.now() }
   sessions.set(id, session)

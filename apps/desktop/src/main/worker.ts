@@ -42,6 +42,8 @@ function userShell(): string {
 
 function baseEnv(ctx: WorkerEnvContext): Record<string, string> {
   return {
+    // В собранном приложении внешнего Node может не быть — обёртка orca-board использует Node из Electron.
+    ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}),
     ORCA_SOCKET: ctx.socketPath,
     ORCA_PROJECT: ctx.projectId,
     PATH: workerPath()
