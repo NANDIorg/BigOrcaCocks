@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES, type Task, type StoreSnapshot, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
 import { PERMISSION_MODES, type Project, type PermissionMode } from '../../shared/ipc'
 import { Board } from './Board'
@@ -24,6 +24,35 @@ interface OpenTerminal {
 
 const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [] }
 
+/** Что открыто у проекта: вкладка и выбранный терминал. У каждого проекта своё. */
+interface ProjectView {
+  tab: Tab
+  activePty: string | null
+}
+
+const TABS: Tab[] = ['board', 'terminals', 'info']
+const tabKey = (projectId: string): string => `orca.tab.${projectId}`
+
+/** Вкладка проекта из localStorage (переживает перезапуск); activePty хранится только в памяти. */
+function storedTab(projectId: string): Tab {
+  if (!projectId) return 'board'
+  try {
+    const v = localStorage.getItem(tabKey(projectId)) as Tab | null
+    return v && TABS.includes(v) ? v : 'board'
+  } catch {
+    return 'board'
+  }
+}
+
+function storeTab(projectId: string, tab: Tab): void {
+  if (!projectId) return
+  try {
+    localStorage.setItem(tabKey(projectId), tab)
+  } catch {
+    // localStorage недоступен — вкладка просто не переживёт перезапуск
+  }
+}
+
 export function App(): React.JSX.Element {
   const [snap, setSnap] = useState<StoreSnapshot>(EMPTY)
   const [projects, setProjects] = useState<Project[]>([])
@@ -31,17 +60,49 @@ export function App(): React.JSX.Element {
   const [socketPath, setSocketPath] = useState('')
   const [selected, setSelected] = useState<Task | undefined>()
   const [terminals, setTerminals] = useState<OpenTerminal[]>([])
-  const [activePty, setActivePty] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [showCoord, setShowCoord] = useState(false)
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('board')
+  /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
+  const [views, setViews] = useState<Record<string, ProjectView>>({})
   /** PTY, которые уже завершились (pty:exit); терминал остаётся в списке, пока его не закроют. */
   const [exited, setExited] = useState<Set<string>>(() => new Set())
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
   const openTask = openTaskId ? tasks.find((t) => t.id === openTaskId) : undefined
+
+  /** Записать вкладку/активный терминал в запись проекта (функционально — безопасно из обработчиков событий). */
+  function updateView(projectId: string, patch: Partial<ProjectView>): void {
+    if (patch.tab) storeTab(projectId, patch.tab)
+    setViews((prev) => {
+      const cur = prev[projectId] ?? { tab: storedTab(projectId), activePty: null }
+      return { ...prev, [projectId]: { ...cur, ...patch } }
+    })
+  }
+
+  /** Терминалы активного проекта: только их показываем в списке, бейдже и «О проекте». */
+  const projectTerminals = terminals.filter((t) => t.projectId === active?.id)
+  // Без проекта ключ '' — вкладки («О проекте» со списком агентов) работают, но не сохраняются.
+  const viewKey = active?.id ?? ''
+  const view: ProjectView = views[viewKey] ?? { tab: storedTab(viewKey), activePty: null }
+  const tab = view.tab
+  // activePty указывает на закрытый терминал (или не выбран) — берём первый оставшийся терминал проекта.
+  const activePty = projectTerminals.some((t) => t.ptyId === view.activePty)
+    ? view.activePty
+    : projectTerminals[0]?.ptyId ?? null
+
+  function setTab(next: Tab): void {
+    updateView(viewKey, { tab: next })
+  }
+
+  function setActivePty(ptyId: string): void {
+    updateView(viewKey, { activePty: ptyId })
+  }
+
+  /** id активного проекта для async-обработчиков, которым после await нужно текущее, а не замкнутое значение. */
+  const activeIdRef = useRef(active?.id)
+  activeIdRef.current = active?.id
 
   async function refreshProjects(): Promise<void> {
     const res = await window.orca.projects.list()
@@ -81,7 +142,12 @@ export function App(): React.JSX.Element {
           ? prev
           : [...prev, { ptyId: t.ptyId, label: t.label, taskId: t.taskId, projectId: t.projectId, role: t.role ?? 'worker' }]
       )
-      setActivePty((cur) => cur ?? t.ptyId)
+      if (t.projectId) {
+        const pid = t.projectId
+        setViews((prev) =>
+          prev[pid]?.activePty ? prev : { ...prev, [pid]: { tab: prev[pid]?.tab ?? storedTab(pid), activePty: t.ptyId } }
+        )
+      }
     })
     // Приложение само закрыло терминал воркера (задача → done, перезапуск): убираем его из списка.
     const offClosed = window.orca.worker.onClosed(({ ptyId }) => dropTerminal(ptyId))
@@ -107,6 +173,12 @@ export function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ptyKey])
 
+  // Смена активного проекта (сайдбар или projects:focus): выбор и модалка задачи чужого проекта не остаются.
+  useEffect(() => {
+    setSelected(undefined)
+    setOpenTaskId(null)
+  }, [active?.id])
+
   const runningTaskIds = new Set(terminals.filter((t) => t.taskId && !exited.has(t.ptyId)).map((t) => t.taskId!))
 
   async function switchProject(p: Project): Promise<void> {
@@ -126,10 +198,16 @@ export function App(): React.JSX.Element {
     await refreshProjects()
   }
 
-  /** Показать вкладку «Терминалы» и, если задан, выбрать терминал. */
-  function showTerminal(ptyId?: string): void {
-    setTab('terminals')
-    if (ptyId) setActivePty(ptyId)
+  /**
+   * Показать вкладку «Терминалы» у проекта, которому принадлежит терминал, и выбрать его.
+   * Проект берётся из списка терминалов, иначе projectId (терминал только что создан и worker:opened
+   * ещё не пришёл), иначе активный. Активный проект не переключается — у чужого проекта вкладка и
+   * терминал просто запоминаются до перехода на него.
+   */
+  function showTerminal(ptyId?: string, projectId = active?.id): void {
+    const pid = (ptyId && terminals.find((t) => t.ptyId === ptyId)?.projectId) || projectId
+    if (!pid) return
+    updateView(pid, ptyId ? { tab: 'terminals', activePty: ptyId } : { tab: 'terminals' })
   }
 
   /**
@@ -146,20 +224,22 @@ export function App(): React.JSX.Element {
   }
 
   async function openShell(): Promise<void> {
+    const projectId = active?.id
     const ptyId = await window.orca.pty.spawn({ cols: 120, rows: 30 })
-    setTerminals((prev) => [...prev, { ptyId, label: 'терминал', projectId: active?.id, role: 'shell' }])
-    showTerminal(ptyId)
+    setTerminals((prev) => [...prev, { ptyId, label: 'терминал', projectId, role: 'shell' }])
+    showTerminal(ptyId, projectId)
   }
 
   /** Запуск из UI (кнопка «Запустить»): в отличие от CLI-запуска, сразу показываем терминал. */
   async function startTask(task: Task): Promise<void> {
+    const projectId = active?.id
     const res = await window.orca.worker.start(task.id, 120, 30)
-    setSelected(task)
-    showTerminal(res.ptyId)
+    if (projectId === activeIdRef.current) setSelected(task)
+    showTerminal(res.ptyId, projectId)
   }
 
   /**
-   * Убрать терминал из списка; если он был активным — выбрать соседний.
+   * Убрать терминал из списка; если он был активным в своём проекте — выбрать соседний терминал того же проекта.
    * Только функциональные апдейтеры: worker:closed может прийти пачкой (main закрывает воркеры циклом)
    * до перерисовки, и обычное состояние/ref в обработчике было бы устаревшим. Повторный вызов
    * с тем же ptyId — no-op.
@@ -168,8 +248,15 @@ export function App(): React.JSX.Element {
     setTerminals((prev) => {
       const idx = prev.findIndex((t) => t.ptyId === ptyId)
       if (idx < 0) return prev
+      const pid = prev[idx].projectId
       const next = prev.filter((t) => t.ptyId !== ptyId)
-      setActivePty((a) => (a === ptyId ? (next[idx] ?? next[idx - 1])?.ptyId ?? null : a))
+      if (pid) {
+        const same = prev.filter((t) => t.projectId === pid)
+        const pos = same.findIndex((t) => t.ptyId === ptyId)
+        const rest = same.filter((t) => t.ptyId !== ptyId)
+        const neighbor = (rest[pos] ?? rest[pos - 1])?.ptyId ?? null
+        setViews((v) => (v[pid]?.activePty === ptyId ? { ...v, [pid]: { ...v[pid], activePty: neighbor } } : v))
+      }
       return next
     })
     setExited((prev) => {
@@ -255,7 +342,7 @@ export function App(): React.JSX.Element {
             <button className={`tab ${tab === 'board' ? 'active' : ''}`} onClick={() => setTab('board')}>Канбан</button>
             <button className={`tab ${tab === 'terminals' ? 'active' : ''}`} onClick={() => setTab('terminals')}>
               Терминалы
-              {terminals.length > 0 && <span className="tab-badge">{terminals.length}</span>}
+              {projectTerminals.length > 0 && <span className="tab-badge">{projectTerminals.length}</span>}
             </button>
             <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>О проекте</button>
           </div>
@@ -347,7 +434,7 @@ export function App(): React.JSX.Element {
               <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>О проекте</h3>
               <p>Репозиторий: <code>{active?.root ?? '—'}</code></p>
               <p>Идентификатор проекта для CLI: <code>{active?.id ?? '—'}</code></p>
-              <p>Задач: {tasks.length}. Открытых терминалов: {terminals.length}.</p>
+              <p>Задач: {tasks.length}. Открытых терминалов: {projectTerminals.length}.</p>
               <p>Worktree создаются рядом с репозиторием в папке <code>.orca-worktrees</code>.</p>
               <p>Сокет CLI: <code>{socketPath}</code>. В терминалах доступна команда <code>orca-board --help</code>.</p>
             </div>
@@ -355,8 +442,8 @@ export function App(): React.JSX.Element {
 
           <div className={`term-page ${tab === 'terminals' ? '' : 'hidden'}`}>
             <div className="term-list">
-              {terminals.length === 0 && <div className="empty">Нет открытых терминалов</div>}
-              {terminals.map((t) => {
+              {projectTerminals.length === 0 && <div className="empty">Нет открытых терминалов</div>}
+              {projectTerminals.map((t) => {
                 const info = describeTerminal(t)
                 const alive = !exited.has(t.ptyId)
                 const project = projects.find((p) => p.id === t.projectId)
@@ -388,7 +475,7 @@ export function App(): React.JSX.Element {
               })}
             </div>
             <div className="term-body">
-              {terminals.length === 0 && (
+              {projectTerminals.length === 0 && (
                 <div className="empty">Терминалы появятся при запуске задачи или координатора. Кнопка сверху открывает обычную оболочку.</div>
               )}
               {terminals.map((t) => (
@@ -405,9 +492,10 @@ export function App(): React.JSX.Element {
         <CoordinatorModal
           onClose={() => setShowCoord(false)}
           onStart={async (objective) => {
+            const projectId = active.id
             const ptyId = await window.orca.coordinator.start(objective, 120, 30)
             setShowCoord(false)
-            showTerminal(ptyId)
+            showTerminal(ptyId, projectId)
           }}
         />
       )}
