@@ -314,3 +314,44 @@ button:disabled { opacity: .45; cursor: default; }
 .term-body .term.hidden { display: none; }
 .term-body .term > div { height: 100%; }
 .term-body > .empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 40px; }
+
+/* ---------- модалка задачи ---------- */
+.modal.task-modal { width: 720px; max-width: calc(100vw - 48px); max-height: 90vh; padding: 0; gap: 0; overflow: hidden; }
+.task-modal-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px 14px; border-bottom: 1px solid var(--line); }
+.task-modal-head h3.task-modal-title { flex: 1; min-width: 0; margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-modal-head input.task-modal-title { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; padding: 8px 12px; }
+.task-modal-close {
+  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent;
+  color: var(--muted); display: grid; place-items: center;
+}
+.task-modal-close:hover { background: var(--side-2); color: var(--text); }
+.task-modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 18px; }
+.task-modal-meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; }
+.task-modal-meta .meta-row { display: contents; }
+.task-modal-meta .meta-key { color: var(--muted); }
+.task-modal-meta .meta-val { min-width: 0; overflow-wrap: anywhere; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.task-modal .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.task-modal-section { display: flex; flex-direction: column; gap: 8px; }
+.task-modal-section h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.task-modal-spec { min-height: 140px; }
+.task-modal-spec-view, .task-modal-feedback, .dispatch-summary {
+  margin: 0; padding: 10px 12px; background: var(--frame); border-radius: 10px; font: inherit; font-size: 13px;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto;
+}
+.task-modal-feedback { border: 1px solid rgba(240,138,58,.4); }
+.task-modal-save { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.error-text { color: #ef6b6b; font-size: 13px; overflow-wrap: anywhere; }
+.task-modal .review { margin-top: 0; }
+.task-modal .review .summary { margin-top: 0; }
+.task-modal-questions { display: flex; flex-direction: column; gap: 10px; }
+.task-modal-questions .question { margin-top: 0; }
+.task-modal-questions .question.answered { background: transparent; border-color: var(--line); }
+.q-answer { font-size: 13px; white-space: pre-wrap; }
+.dispatch { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.03); border: 1px solid var(--line); }
+.dispatch-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.dispatch-summary { max-height: 160px; font-size: 12px; }
+.dispatch-files { margin: 0; padding-left: 18px; font-size: 12px; font-family: ui-monospace, Menlo, monospace; color: var(--muted); }
+.chip.ok { border-color: var(--col-done); color: var(--col-done); }
+.task-modal-foot { display: flex; align-items: center; gap: 10px; padding: 14px 24px 18px; border-top: 1px solid var(--line); }
+.task-modal-foot .grow { flex: 1; }
+.task-modal-foot .btn-sm { height: 34px; padding: 0 16px; font-size: 13px; }
