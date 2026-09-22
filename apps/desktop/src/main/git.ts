@@ -2,8 +2,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
+// git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
+// сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim()
+  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim()
 }
 
 export function currentBranch(repoRoot: string): string {
@@ -44,18 +46,19 @@ export function commitWorktree(worktree: string, message: string): void {
   git(worktree, ['add', '-A'])
   execFileSync('git', ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message], {
     cwd: worktree,
-    stdio: 'pipe'
+    stdio: 'pipe',
+    encoding: 'utf8'
   })
 }
 
 /** Слить ветку задачи в текущую ветку репозитория. Бросает с текстом конфликта. */
 export function mergeBranch(repoRoot: string, branch: string, message: string): void {
   try {
-    execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd: repoRoot, stdio: 'pipe' })
+    execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' })
   } catch (e) {
-    const err = e as { stdout?: Buffer; stderr?: Buffer }
+    const err = e as { stdout?: string; stderr?: string }
     try {
-      execFileSync('git', ['merge', '--abort'], { cwd: repoRoot, stdio: 'pipe' })
+      execFileSync('git', ['merge', '--abort'], { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' })
     } catch {
       /* нечего отменять */
     }
@@ -72,7 +75,11 @@ export function removeWorktree(repoRoot: string, worktree: string, branch: strin
   }
 }
 
-/** Команда подготовки нового worktree по lock-файлу. */
+/**
+ * Команда подготовки нового worktree по lock-файлу.
+ * Это строка для shell платформы (на Windows pnpm/npm/yarn — .cmd-шимы, нужен cmd.exe),
+ * запуском занимается worker.ts.
+ */
 export function setupCommand(worktree: string): string | null {
   if (existsSync(join(worktree, 'pnpm-lock.yaml'))) return 'pnpm install --prefer-offline'
   if (existsSync(join(worktree, 'package-lock.json'))) return 'npm ci'
