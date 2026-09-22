@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask } from '@orca-board/core'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -42,6 +42,28 @@ export interface AppSettings {
 export interface TaskPatch {
   title?: string
   spec?: string
+}
+
+/** Новая глобальная задача: нужно название или описание; status — id колонки (по умолчанию kind=backlog). */
+export interface GlobalTaskInput {
+  title?: string
+  description?: string
+  status?: string
+}
+
+/** Правка глобальной задачи: название (непустое) и/или описание. */
+export interface GlobalTaskPatch {
+  title?: string
+  description?: string
+}
+
+/** Подзадача внутри глобальной задачи. Без roleId — единственная роль проекта, иначе ошибка. */
+export interface SubtaskInput {
+  title: string
+  spec?: string
+  /** Только подзадачи той же глобальной задачи, иначе ошибка. */
+  deps?: string[]
+  roleId?: string
 }
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -123,8 +145,35 @@ export interface OrcaApi {
     /** Закрыть прогон вручную (closedAt). */
     close(id: string): Promise<Run>
   }
+  /**
+   * Глобальные задачи активного проекта — верхний уровень доски (docs/nested-kanban.md).
+   * Глобальная задача = прогон (Run), подзадачи — задачи с `runId === id`. Изменения — в board.onChange
+   * (snapshot.runs + snapshot.tasks; карточки из снапшота строит `toGlobalTasks` из core).
+   */
+  globalTasks: {
+    /** Карточки с прогрессом подзадач, в порядке создания. Нет проекта — []. */
+    list(): Promise<GlobalTask[]>
+    get(id: string): Promise<GlobalTask>
+    create(input: GlobalTaskInput): Promise<GlobalTask>
+    update(id: string, patch: GlobalTaskPatch): Promise<GlobalTask>
+    /** status — id колонки проекта. Подзадачи не трогает. */
+    move(id: string, status: string): Promise<GlobalTask>
+    /**
+     * С подзадачами — только `cascade: true` (удаляются вместе с ней). Ошибка, если жив координатор
+     * или у подзадачи идёт воркер.
+     */
+    remove(id: string, opts?: { cascade?: boolean }): Promise<{ deleted: string; tasks: string[] }>
+    /** Подзадачи только этой глобальной задачи. */
+    tasks(id: string): Promise<Task[]>
+    createTask(id: string, input: SubtaskInput): Promise<Task>
+    /**
+     * Запуск координатора на существующей глобальной задаче (цель — её описание и список подзадач).
+     * Новые подзадачи координатора попадают в неё же. Второй живой координатор — ошибка.
+     */
+    startCoordinator(id: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
+  }
   tasks: {
-    /** Без roleId — единственная роль проекта, иначе ошибка. */
+    /** Без roleId — единственная роль проекта, иначе ошибка. Задача попадает во «Входящие» (см. globalTasks). */
     create(input: { title: string; spec?: string; deps?: string[]; roleId?: string }): Promise<Task>
     /** status — id колонки. */
     move(id: string, status: string): Promise<Task>

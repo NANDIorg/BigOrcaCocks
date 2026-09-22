@@ -1,9 +1,10 @@
 import type {
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind
-} from './types'
-import { DEFAULT_COLUMNS, DEFAULT_ROLE_ID } from './types'
-import { DEFAULT_AGENT } from './agents'
+} from './types.ts'
+import { DEFAULT_COLUMNS, DEFAULT_ROLE_ID } from './types.ts'
+import { DEFAULT_AGENT } from './agents.ts'
+import { toGlobalTask, toGlobalTasks, type GlobalTask } from './global-tasks.ts'
 
 export interface StoreSnapshot {
   tasks: Task[]
@@ -38,8 +39,11 @@ export class TaskStore {
   private events: OrcaEvent[] = []
   private listeners = new Set<() => void>()
   private readonly columnsFn: () => BoardColumn[]
+  // Не parameter property: node --test (type stripping) их не поддерживает.
+  private readonly persistence?: Persistence
 
-  constructor(private persistence?: Persistence, columns?: () => BoardColumn[]) {
+  constructor(persistence?: Persistence, columns?: () => BoardColumn[]) {
+    this.persistence = persistence
     this.columnsFn = columns ?? (() => DEFAULT_COLUMNS)
     const snap = persistence?.load()
     if (snap) {
@@ -51,7 +55,35 @@ export class TaskStore {
       // Старые снапшоты без runs — просто нет прогонов.
       snap.runs?.forEach((r) => this.runs.set(r.id, r))
       this.events = snap.events ?? []
+      if (this.migrateGlobalTasks()) this.persistence?.save(this.snapshot())
     }
+  }
+
+  /**
+   * Миграция к глобальным задачам (docs/nested-kanban.md): прогон без status получает колонку
+   * (закрыт → done, иначе in_progress), задачи без прогона уходят во «Входящие» — так у каждой
+   * задачи есть глобальная. run_done при этом не шлётся: «Входящие» из одних done сразу закрыты.
+   * Возвращает true, если что-то поменялось (тогда снапшот сохраняется сразу — id «Входящих» стабилен).
+   */
+  private migrateGlobalTasks(): boolean {
+    let changed = false
+    for (const run of this.runs.values()) {
+      if (run.status !== undefined) continue
+      run.status = this.columnId(run.closedAt !== undefined ? 'done' : 'in_progress')
+      run.updatedAt ??= run.createdAt
+      changed = true
+    }
+    const orphans = [...this.tasks.values()].filter((t) => t.runId === undefined || !this.runs.has(t.runId))
+    if (orphans.length > 0) {
+      const inbox = this.inbox() ?? this.addRun({ objective: '', inbox: true }, Math.min(...orphans.map((t) => t.createdAt)))
+      orphans.forEach((t) => (t.runId = inbox.id))
+      const tasks = [...this.tasks.values()].filter((t) => t.runId === inbox.id)
+      const allDone = tasks.every((t) => this.isKind(t, 'done'))
+      if (allDone) inbox.closedAt ??= Date.now()
+      inbox.status = this.columnId(allDone ? 'done' : 'in_progress')
+      changed = true
+    }
+    return changed
   }
 
   subscribe(fn: () => void): () => void {
@@ -97,8 +129,12 @@ export class TaskStore {
   /** Все смены статуса идут здесь: следим за doneAt при входе/выходе из колонки done. */
   private setStatus(task: Task, status: TaskStatus): void {
     task.status = status
-    if (this.columnKind(status) === 'done') task.doneAt ??= Date.now()
-    else task.doneAt = undefined
+    if (this.columnKind(status) === 'done') {
+      // Подзадача впервые дошла до done после переоткрытия прогона — автозакрытие снова разрешено.
+      const run = task.doneAt === undefined && task.runId !== undefined ? this.runs.get(task.runId) : undefined
+      if (run) run.reopenedAt = undefined
+      task.doneAt ??= Date.now()
+    } else task.doneAt = undefined
     task.updatedAt = Date.now()
   }
 
@@ -122,19 +158,26 @@ export class TaskStore {
     runId?: string
   }): Task {
     const now = Date.now()
+    // Подзадача всегда внутри глобальной задачи: без runId — во «Входящие»; чужой/несуществующий — ошибка.
+    const run = input.runId !== undefined ? this.mustRun(input.runId) : (this.inbox() ?? this.addRun({ objective: '', inbox: true }))
+    const deps = (input.deps ?? []).filter((d) => this.tasks.has(d))
+    const foreign = deps.filter((d) => this.tasks.get(d)!.runId !== run.id)
+    if (foreign.length > 0) throw new Error(`зависимости из другой глобальной задачи: ${foreign.join(', ')}`)
     const task: Task = {
       id: newId('task'),
       title: input.title,
       spec: input.spec ?? '',
       status: this.columnId('backlog'),
-      deps: (input.deps ?? []).filter((d) => this.tasks.has(d)),
+      deps,
       roleId: input.roleId ?? DEFAULT_ROLE_ID,
       agent: input.agent ?? DEFAULT_AGENT,
-      runId: input.runId,
+      runId: run.id,
       createdAt: now,
       updatedAt: now
     }
     this.tasks.set(task.id, task)
+    // Новая работа в закрытой глобальной задаче: прогон снова открыт, run_done придёт по её завершении.
+    if (run.closedAt !== undefined) this.reopenRun(run)
     this.promoteReady()
     this.commit()
     return task
@@ -174,12 +217,21 @@ export class TaskStore {
     return this.updateTask(id, { status })
   }
 
-  /** Перенести все задачи из колонки fromId в toId (при удалении колонки). Возвращает число перенесённых. */
+  /**
+   * Перенести все задачи и глобальные задачи из колонки fromId в toId (при удалении колонки).
+   * Возвращает число перенесённых.
+   */
   reassignColumn(fromId: string, toId: string): number {
     let moved = 0
     for (const task of this.tasks.values()) {
       if (task.status !== fromId) continue
       this.setStatus(task, toId)
+      moved += 1
+    }
+    for (const run of this.runs.values()) {
+      if (run.status !== fromId) continue
+      run.status = toId
+      run.updatedAt = Date.now()
       moved += 1
     }
     if (moved > 0) {
@@ -221,18 +273,125 @@ export class TaskStore {
   }
 
   createRun(objective: string, coordinatorPtyId?: string): Run {
-    const run: Run = { id: newId('run'), objective, createdAt: Date.now(), coordinatorPtyId }
-    this.runs.set(run.id, run)
+    const run = this.addRun({ objective, coordinatorPtyId })
     this.commit()
     return run
   }
 
+  /** Новый прогон без commit. Статус по умолчанию — колонка kind=backlog. */
+  private addRun(fields: Partial<Omit<Run, 'id' | 'createdAt'>> & { objective: string }, createdAt = Date.now()): Run {
+    const run: Run = { status: this.columnId('backlog'), ...fields, id: newId('run'), createdAt, updatedAt: createdAt }
+    this.runs.set(run.id, run)
+    return run
+  }
+
+  private inbox(): Run | undefined {
+    return [...this.runs.values()].find((r) => r.inbox)
+  }
+
+  /** Закрытый прогон снова открыт: автозакрытие ждёт новой подзадачи в done; карточка из done — в работу. */
+  private reopenRun(run: Run): void {
+    run.closedAt = undefined
+    run.finishedAt = undefined
+    run.reopenedAt = Date.now()
+    if (run.status === undefined || this.columnKind(run.status) === 'done') run.status = this.columnId('in_progress')
+    run.updatedAt = Date.now()
+  }
+
+  /**
+   * Координатор запущен на прогоне (новом или повторно на существующей глобальной задаче):
+   * закрытый прогон переоткрывается, карточка — в колонку kind=in_progress.
+   */
   setRunPty(runId: string, ptyId: string, agent?: AgentKind): Run {
     const run = this.mustRun(runId)
+    if (run.closedAt !== undefined) this.reopenRun(run)
     run.coordinatorPtyId = ptyId
     run.coordinatorAgent = agent
+    run.status = this.columnId('in_progress')
+    run.updatedAt = Date.now()
     this.commit()
     return run
+  }
+
+  // ---------- global tasks ----------
+
+  /** Карточки глобальных задач с прогрессом подзадач, в порядке создания. */
+  listGlobalTasks(): GlobalTask[] {
+    return toGlobalTasks(this.listRuns(), this.listTasks(), (s) => this.columnKind(s), this.columnId('backlog'))
+  }
+
+  getGlobalTask(id: string): GlobalTask {
+    return toGlobalTask(this.mustRun(id), this.listTasks(), (s) => this.columnKind(s), this.columnId('backlog'))
+  }
+
+  /** Подзадачи глобальной задачи (только её), в порядке создания. Нет такой — ошибка. */
+  listSubtasks(runId: string): Task[] {
+    this.mustRun(runId)
+    return this.listTasks().filter((t) => t.runId === runId)
+  }
+
+  /** Глобальная задача без координатора. Нужно название или описание; status — id колонки (по умолчанию backlog). */
+  createGlobalTask(input: { title?: string; description?: string; status?: string }): GlobalTask {
+    const title = input.title?.trim() || undefined
+    const objective = input.description ?? ''
+    if (!title && !objective.trim()) throw new Error('укажи название или описание глобальной задачи')
+    if (input.status !== undefined) this.assertColumn(input.status)
+    const run = this.addRun({ objective, ...(title ? { title } : {}), ...(input.status !== undefined ? { status: input.status } : {}) })
+    this.commit()
+    return this.getGlobalTask(run.id)
+  }
+
+  /** Переименовать/сменить описание. Подзадачи не трогает; координатору правка не доходит (он уже получил цель). */
+  updateGlobalTask(id: string, patch: { title?: string; description?: string }): GlobalTask {
+    const run = this.mustRun(id)
+    if (patch.title === undefined && patch.description === undefined) throw new Error('укажи название и/или описание')
+    if (patch.title !== undefined) {
+      const title = patch.title.trim()
+      if (!title) throw new Error('название не может быть пустым')
+      run.title = title
+    }
+    if (patch.description !== undefined) run.objective = patch.description
+    run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /** Ручное перемещение карточки по колонкам проекта. Статусы подзадач и жизненный цикл прогона не меняются. */
+  moveGlobalTask(id: string, status: string): GlobalTask {
+    const run = this.mustRun(id)
+    this.assertColumn(status)
+    run.status = status
+    run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /**
+   * Удалить глобальную задачу. С подзадачами — только `cascade: true`, и тогда удаляются и они
+   * (с их вопросами), сирот не остаётся. Подзадача с живым воркером — ошибка. Живого координатора
+   * проверяет main (store не знает о PTY).
+   */
+  deleteGlobalTask(id: string, opts: { cascade?: boolean } = {}): { deleted: string; tasks: string[] } {
+    this.mustRun(id)
+    const children = [...this.tasks.values()].filter((t) => t.runId === id)
+    if (children.length > 0 && !opts.cascade) {
+      throw new Error(`у глобальной задачи ${children.length} подзадач(и) — удаление только вместе с ними (cascade)`)
+    }
+    const ids = new Set(children.map((t) => t.id))
+    const busy = this.activeDispatches().filter((d) => ids.has(d.taskId))
+    if (busy.length > 0) throw new Error(`подзадачи в работе (${busy.map((d) => d.taskId).join(', ')}) — сначала останови воркеров`)
+    for (const taskId of ids) this.tasks.delete(taskId)
+    for (const q of [...this.questions.values()]) if (ids.has(q.taskId)) this.questions.delete(q.id)
+    // Зависимости между глобальными запрещены при создании, но старые данные могли их содержать.
+    for (const t of this.tasks.values()) if (t.deps.some((d) => ids.has(d))) t.deps = t.deps.filter((d) => !ids.has(d))
+    this.runs.delete(id)
+    this.promoteReady()
+    this.commit()
+    return { deleted: id, tasks: [...ids] }
+  }
+
+  private assertColumn(status: string): void {
+    if (!this.columnKind(status)) throw new Error(`колонки с id «${status}» нет на доске`)
   }
 
   /** Закрыть прогон вручную. Идемпотентно: повторный вызов closedAt не меняет. */
@@ -267,7 +426,11 @@ export class TaskStore {
       if (run.closedAt !== undefined) continue
       const tasks = [...this.tasks.values()].filter((t) => t.runId === run.id)
       if (tasks.length === 0 || !tasks.every((t) => this.isKind(t, 'done'))) continue
+      // Переоткрытый прогон: ждём, пока хоть одна подзадача дойдёт до done после переоткрытия (setStatus снимет метку).
+      if (run.reopenedAt !== undefined) continue
       run.closedAt = Date.now()
+      run.status = this.columnId('done')
+      run.updatedAt = run.closedAt
       this.pushEvent('run_done', { runId: run.id, objective: run.objective })
     }
   }

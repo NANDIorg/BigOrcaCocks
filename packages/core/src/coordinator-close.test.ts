@@ -137,6 +137,16 @@ describe('coordinatorsToClose', () => {
 })
 
 describe('lingersAfterAnswer', () => {
+  it('переоткрытый прогон (повторный координатор): считается последний run_done, а не первый', () => {
+    const R2 = FIN + ABANDONED
+    // Второй координатор: новый run_done R2, сигнала runs finish ещё нет — рано закрывать по старому run_done.
+    const events = [runDone('run_a', T0 - ABANDONED), { ...runDone('run_a', R2), id: 'evt_2' }]
+    const runs = [run('run_a', { finishedAt: undefined, closedAt: R2 })]
+    const lastActivityAt = (): number => T0
+    assert.deepEqual(coordinatorsToClose(input({ runs, events, lastActivityAt, now: R2 + GRACE })), [])
+    assert.deepEqual(coordinatorsToClose(input({ runs, events, lastActivityAt, now: R2 + ABANDONED })), [{ runId: 'run_a', ptyId: 'pty_run_a' }])
+  })
+
   it('codex после финального ответа не выходит; claude — без флага', () => {
     assert.equal(getAgent('codex')?.lingersAfterAnswer, true)
     assert.equal(getAgent('claude')?.lingersAfterAnswer, undefined)

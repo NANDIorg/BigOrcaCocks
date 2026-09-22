@@ -59,7 +59,8 @@ export function coordinatorsToClose(input: CoordinatorCloseInput): CoordinatorTo
   for (const run of input.runs) {
     const ptyId = run.coordinatorPtyId
     if (!ptyId || run.closedAt === undefined || !input.lingers(run.coordinatorAgent)) continue
-    const runDone = input.events.find((e) => e.type === 'run_done' && e.payload.runId === run.id)
+    // Последний run_done: прогон мог переоткрываться (повторный запуск координатора на глобальной задаче).
+    const runDone = input.events.filter((e) => e.type === 'run_done' && e.payload.runId === run.id).pop()
     if (!runDone) continue
     const tasks = input.tasks.filter((t) => t.runId === run.id)
     // Прогон «ожил» после run_done (новая задача, задачу вернули из done) — не закрываем.

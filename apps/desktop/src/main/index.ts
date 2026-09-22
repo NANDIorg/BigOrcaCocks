@@ -10,7 +10,7 @@ import { startSocketServer } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
 import { createTray, refreshTray } from './tray'
-import type { AppSettings, PtySpawnOptions, TaskPatch } from '../shared/ipc'
+import type { AppSettings, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -198,9 +198,32 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
   return startWorker(p.store, p.root, ctx(p.id), taskId, cols, rows)
 }
 
-function runCoordinator(objective: string, projectId?: string, cols?: number, rows?: number, images: ImageAttachment[] = []): string {
+function runCoordinator(
+  objective: string,
+  projectId?: string,
+  cols?: number,
+  rows?: number,
+  images: ImageAttachment[] = [],
+  runId?: string
+): string {
   const p = resolveProject(projectId)
-  return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows, images).ptyId
+  return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows, images, runId).ptyId
+}
+
+/**
+ * Удаление глобальной задачи (IPC и сокет): при живом координаторе — ошибка; store отвергает подзадачи
+ * с живым dispatch и удаление с подзадачами без cascade. Оставшиеся терминалы подзадач (после `done`
+ * dispatch закрыт, а PTY жив) закрываются после удаления.
+ */
+function removeGlobalTask(store: TaskStore, runId: string, cascade: boolean): { deleted: string; tasks: string[] } {
+  const run = store.getRun(runId)
+  if (run?.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
+    throw new Error('координатор этой глобальной задачи ещё работает — сначала закрой его терминал')
+  }
+  const ptyIds = store.snapshot().dispatches.filter((d) => store.getTask(d.taskId)?.runId === runId && isAlive(d.ptyId)).map((d) => d.ptyId)
+  const result = store.deleteGlobalTask(runId, { cascade })
+  ptyIds.forEach((id) => killPty(id))
+  return result
 }
 
 /** Раз в минуту: живой воркер без вывода дольше STUCK_MS → эскалация. */
@@ -298,6 +321,25 @@ function registerIpc(): void {
   ipcMain.handle('tasks:move', (_e, id: string, status: string) => projects.activeStore().moveTask(id, status))
   ipcMain.handle('tasks:update', (_e, id: string, patch: TaskPatch) => projects.activeStore().editTask(id, patch ?? {}))
   ipcMain.handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
+
+  // Глобальные задачи активного проекта (docs/nested-kanban.md). Изменения — в board:changed.
+  ipcMain.handle('globalTasks:list', () => (projects.active() ? projects.activeStore().listGlobalTasks() : []))
+  ipcMain.handle('globalTasks:get', (_e, id: string) => projects.activeStore().getGlobalTask(id))
+  ipcMain.handle('globalTasks:create', (_e, input: GlobalTaskInput) => projects.activeStore().createGlobalTask(input ?? {}))
+  ipcMain.handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
+  ipcMain.handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
+  ipcMain.handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
+    removeGlobalTask(projects.activeStore(), id, opts?.cascade === true)
+  )
+  ipcMain.handle('globalTasks:tasks', (_e, id: string) => projects.activeStore().listSubtasks(id))
+  ipcMain.handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
+    const p = resolveProject()
+    const role = pickRole(projects.roles(p.id), projectAgents(p.id), input.roleId)
+    return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
+  })
+  ipcMain.handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
+    runCoordinator('', undefined, cols, rows, validateImageAttachments(images), id)
+  )
   ipcMain.handle('questions:answer', (_e, id: string, answer: string) => projects.activeStore().answer(id, answer))
 
   ipcMain.handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
@@ -368,7 +410,8 @@ app.whenReady().then(() => {
         startWorker: (taskId) => runWorker(taskId, p.id),
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId) => acceptReview(p.store, p.root, taskId),
-        startCoordinator: (objective) => runCoordinator(objective, p.id),
+        startCoordinator: (objective, runId) => runCoordinator(objective, p.id, undefined, undefined, [], runId),
+        deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
         agents: () => projectAgents(p.id),
         roles: () => projects.roles(p.id),
         columns: () => projects.columns(p.id)
