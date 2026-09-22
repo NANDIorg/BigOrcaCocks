@@ -240,3 +240,17 @@ button:disabled { opacity: .45; cursor: default; }
 .agent-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; color: var(--text); font-size: 14px; }
 .agent-row.off { color: var(--muted); }
 .agent-row .ver { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+
+/* Сортировка доски */
+.board-wrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.board-wrap .board { flex: 1; padding-top: 12px; }
+.board-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 32px 0; }
+.board-sort-label { color: var(--muted); font-size: 13px; }
+.segmented { display: inline-flex; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.segmented .seg {
+  height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font-size: 13px;
+}
+.segmented .seg + .seg { border-left: 1px solid var(--chip); }
+.segmented .seg:hover { color: var(--text); }
+.segmented .seg.active { background: var(--accent); color: #fff; }
+.card .stamp { margin-top: 10px; color: var(--muted); font-size: 12px; }
