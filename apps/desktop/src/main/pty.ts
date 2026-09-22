@@ -1,9 +1,10 @@
 import * as pty from 'node-pty'
 import type { BrowserWindow } from 'electron'
 import { newId } from '@orca-board/core'
-import type { PtySpawnOptions } from '../shared/ipc'
+import type { PtySpawnOptions, TerminalInfo, TerminalSnapshot } from '../shared/ipc'
 
 interface Session {
+  info: TerminalInfo
   proc: pty.IPty
   tail: string
   lastOutputAt: number
@@ -11,7 +12,7 @@ interface Session {
   size: { cols: number; rows: number }
 }
 
-const TAIL_LIMIT = 64 * 1024
+const TAIL_LIMIT = 256 * 1024
 
 /**
  * Окружение для агентов без служебных переменных Claude Code: если приложение запущено
@@ -45,7 +46,35 @@ function mergeEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>): Recor
   return env
 }
 
+/** Реестр живых PTY: источник правды для вкладок «Терминалы». Порядок вставки = порядок открытия. */
 const sessions = new Map<string, Session>()
+
+/**
+ * Окно, в которое идёт вывод PTY. Не захватывается при spawn: окно могут закрыть и создать заново
+ * (фоновый режим), и новое окно должно получать данные тех же PTY. Нет окна — копится только tail.
+ */
+let ptyWindow: BrowserWindow | null = null
+
+export function setPtyWindow(win: BrowserWindow | null): void {
+  ptyWindow = win
+}
+
+function send(channel: string, ...args: unknown[]): void {
+  if (ptyWindow && !ptyWindow.isDestroyed()) ptyWindow.webContents.send(channel, ...args)
+}
+
+export function listTerminals(): TerminalInfo[] {
+  return [...sessions.values()].map((s) => ({ ...s.info }))
+}
+
+/** Реестр с хвостами вывода — для восстановления вкладок после перезагрузки/пересоздания окна. */
+export function terminalSnapshots(): TerminalSnapshot[] {
+  return listTerminals().map((t) => ({ ...t, tail: ptyTail(t.ptyId, 200) }))
+}
+
+function emitChanged(): void {
+  send('terminals:changed', listTerminals())
+}
 
 /** Команда для pty.spawn; args строкой — готовая командная строка Windows, node-pty передаёт её без переквотирования. */
 export interface PtyCommand {
@@ -54,8 +83,9 @@ export interface PtyCommand {
 }
 
 export function spawnPty(
-  win: BrowserWindow,
-  opts: Omit<PtySpawnOptions, 'args'> & {
+  opts: Omit<PtySpawnOptions, 'args' | 'label' | 'projectId'> & {
+    /** Метаданные терминала для реестра (terminals:list/changed). */
+    meta: Omit<TerminalInfo, 'ptyId' | 'createdAt'>
     args?: string[] | string
     /**
      * Шаг перед основной командой в том же терминале (тот же ptyId): после его выхода с любым кодом
@@ -72,13 +102,20 @@ export function spawnPty(
   const start = (c: PtyCommand): pty.IPty =>
     pty.spawn(c.command, c.args, { name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd, env })
   const main: PtyCommand = { command: opts.command ?? defaultShell(), args: opts.args ?? [] }
-  const session: Session = { proc: start(opts.before ?? main), tail: '', lastOutputAt: Date.now(), size }
+  const session: Session = {
+    info: { ...opts.meta, ptyId: id, createdAt: Date.now() },
+    proc: start(opts.before ?? main),
+    tail: '',
+    lastOutputAt: Date.now(),
+    size
+  }
   sessions.set(id, session)
+  emitChanged()
   const attach = (proc: pty.IPty, last: boolean): void => {
     proc.onData((data) => {
       session.tail = (session.tail + data).slice(-TAIL_LIMIT)
       session.lastOutputAt = Date.now()
-      if (!win.isDestroyed()) win.webContents.send(`pty:data:${id}`, data)
+      send(`pty:data:${id}`, data)
     })
     proc.onExit(({ exitCode }) => {
       // Подготовка завершилась — запускаем основную команду. Если терминал закрыли (killPty) —
@@ -90,11 +127,16 @@ export function spawnPty(
           return
         } catch (e) {
           const msg = `\r\n[orca] не удалось запустить ${main.command}: ${e instanceof Error ? e.message : String(e)}\r\n`
-          if (!win.isDestroyed()) win.webContents.send(`pty:data:${id}`, msg)
+          session.tail = (session.tail + msg).slice(-TAIL_LIMIT)
+          send(`pty:data:${id}`, msg)
         }
       }
-      sessions.delete(id)
-      if (!win.isDestroyed()) win.webContents.send(`pty:exit:${id}`, exitCode)
+      // Сначала pty:exit (renderer оставит вкладку «завершённой»), потом terminals:changed без этого id.
+      // После killPty сессии в реестре уже нет и terminals:changed ушёл сразу — повторно не шлём.
+      const registered = sessions.get(id) === session
+      if (registered) sessions.delete(id)
+      send(`pty:exit:${id}`, exitCode)
+      if (registered) emitChanged()
       onExit?.(id, exitCode)
     })
   }
@@ -116,8 +158,11 @@ export function resizePty(id: string, cols: number, rows: number): void {
 }
 
 export function killPty(id: string): void {
-  sessions.get(id)?.proc.kill()
+  const s = sessions.get(id)
+  if (!s) return
   sessions.delete(id)
+  emitChanged()
+  s.proc.kill()
 }
 
 export function killAll(): void {

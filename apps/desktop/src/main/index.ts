@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { defaultSocketPath, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
-import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive } from './pty'
+import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
@@ -54,6 +54,12 @@ function createWindow(): void {
       contextIsolation: true
     }
   })
+  setPtyWindow(win)
+  const created = win
+  win.on('closed', () => {
+    if (win === created) win = null
+    setPtyWindow(win)
+  })
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -87,18 +93,15 @@ function resolveProject(projectId?: string): { id: string; root: string; store: 
 
 /**
  * Закрыть терминалы воркеров задачи: живые dispatch'и помечаются завершёнными (иначе ptyExited
- * примет kill за падение), PTY убиваются, renderer получает worker:closed. PTY координатора
+ * примет kill за падение), PTY убиваются — реестр pty.ts сам разошлёт terminals:changed. PTY координатора
  * не привязан к dispatch и сюда не попадает.
  */
-function closeTaskWorkers(projectId: string, store: TaskStore, taskId: string): void {
+function closeTaskWorkers(store: TaskStore, taskId: string): void {
   const ptyIds = new Set<string>()
   for (const d of store.closeDispatches(taskId)) ptyIds.add(d.ptyId)
   // Старые dispatch'и уже закрыты (например, после `orca-board done`), но их PTY может жить до сих пор.
   for (const d of store.snapshot().dispatches) if (d.taskId === taskId && isAlive(d.ptyId)) ptyIds.add(d.ptyId)
-  for (const ptyId of ptyIds) {
-    if (isAlive(ptyId)) killPty(ptyId)
-    if (win && !win.isDestroyed()) win.webContents.send('worker:closed', { ptyId, taskId, projectId })
-  }
+  for (const ptyId of ptyIds) killPty(ptyId)
 }
 
 /**
@@ -106,18 +109,17 @@ function closeTaskWorkers(projectId: string, store: TaskStore, taskId: string): 
  * незакрытые dispatch'и, но и живые PTY уже закрытых: после `orca-board done` dispatch завершён,
  * а терминал агента ещё открыт до самого review accept.
  */
-function closeDoneWorkers(projectId: string, store: TaskStore): void {
+function closeDoneWorkers(store: TaskStore): void {
   const doneTasks = new Set<string>()
   for (const d of store.snapshot().dispatches) {
     if (d.endedAt && !isAlive(d.ptyId)) continue
     const task = store.getTask(d.taskId)
     if (task && store.columnKind(task.status) === 'done') doneTasks.add(task.id)
   }
-  for (const taskId of doneTasks) closeTaskWorkers(projectId, store, taskId)
+  for (const taskId of doneTasks) closeTaskWorkers(store, taskId)
 }
 
 function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number): ReturnType<typeof startWorker> {
-  if (!win) throw new Error('no window')
   const p = resolveProject(projectId)
   // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
   const task0 = p.store.getTask(taskId)
@@ -127,20 +129,14 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
     if (!role) throw new Error(`роль ${task0.roleId} не найдена в проекте`)
     assertAgentUsable(projectAgents(p.id), role.agent)
     // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
-    closeTaskWorkers(p.id, p.store, taskId)
+    closeTaskWorkers(p.store, taskId)
   }
-  const res = startWorker(win, p.store, p.root, ctx(p.id), taskId, cols, rows)
-  const task = p.store.getTask(taskId)
-  win.webContents.send('worker:opened', { ptyId: res.ptyId, taskId, projectId: p.id, label: task?.title ?? taskId, role: 'worker' })
-  return res
+  return startWorker(p.store, p.root, ctx(p.id), taskId, cols, rows)
 }
 
 function runCoordinator(objective: string, projectId?: string, cols?: number, rows?: number): string {
-  if (!win) throw new Error('no window')
   const p = resolveProject(projectId)
-  const { ptyId, runId } = startCoordinator(win, p.store, p.root, ctx(p.id), objective, cols, rows)
-  win.webContents.send('worker:opened', { ptyId, projectId: p.id, label: 'координатор', role: 'coordinator', runId })
-  return ptyId
+  return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows).ptyId
 }
 
 /** Раз в минуту: живой воркер без вывода дольше STUCK_MS → эскалация. */
@@ -216,13 +212,12 @@ function registerIpc(): void {
   ipcMain.handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
   ipcMain.handle('questions:answer', (_e, id: string, answer: string) => projects.activeStore().answer(id, answer))
 
-  ipcMain.handle('pty:spawn', (_e, opts: PtySpawnOptions) => {
-    if (!win) throw new Error('no window')
-    const p = projects.active()
+  ipcMain.handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
+    const p = projectId ? projects.get(projectId) : projects.active()
     return spawnPty(
-      win,
       {
         ...opts,
+        meta: { role: 'shell', label: label ?? 'терминал', projectId: projectId ?? p?.id },
         cwd: opts.cwd ?? p?.root,
         env: {
           ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}),
@@ -238,6 +233,7 @@ function registerIpc(): void {
   ipcMain.on('pty:write', (_e, id: string, data: string) => writePty(id, data))
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => resizePty(id, cols, rows))
   ipcMain.on('pty:kill', (_e, id: string) => killPty(id))
+  ipcMain.handle('terminals:list', () => terminalSnapshots())
 
   ipcMain.handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
   ipcMain.handle('coordinator:start', (_e, objective: string, cols: number, rows: number) => runCoordinator(objective, undefined, cols, rows))
@@ -265,7 +261,7 @@ app.whenReady().then(() => {
   projects.onChange((projectId, store) => {
     if (win && !win.isDestroyed()) win.webContents.send('board:changed', { projectId, snapshot: store.snapshot() })
     // Любой путь в done (review accept, task move, tasks:move из UI) проходит через commit store — ловим здесь.
-    closeDoneWorkers(projectId, store)
+    closeDoneWorkers(store)
   })
   projects.onEvents(notify)
   registerIpc()

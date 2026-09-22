@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
-import { app, type BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { newId, getAgent, type TaskStore, type Role } from '@orca-board/core'
 import workerSkill from '../../../../skills/worker.md?raw'
 import coordinatorSkill from '../../../../skills/coordinator.md?raw'
@@ -152,7 +152,6 @@ function baseEnv(ctx: WorkerEnvContext): Record<string, string> {
  * Worktree создаётся рядом с репозиторием: <repo>/../.orca-worktrees/<taskId>.
  */
 export function startWorker(
-  win: BrowserWindow,
   store: TaskStore,
   repoRoot: string,
   ctx: WorkerEnvContext,
@@ -198,8 +197,8 @@ export function startWorker(
       : { command: inv.command, args: inv.args }
 
   const ptyId = spawnPty(
-    win,
     {
+      meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
       cwd: worktree,
       command,
       args,
@@ -219,7 +218,6 @@ export function startWorker(
  * Каждый запуск — новый прогон (Run): его id уходит координатору в ORCA_RUN_ID.
  */
 export function startCoordinator(
-  win: BrowserWindow,
   store: TaskStore,
   repoRoot: string,
   ctx: WorkerEnvContext,
@@ -241,7 +239,8 @@ export function startCoordinator(
   const run = store.createRun(objective)
   let ptyId: string
   try {
-    ptyId = spawnPty(win, {
+    ptyId = spawnPty({
+      meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
       cwd: repoRoot,
       command: launch.command,
       args: launch.args,
