@@ -69,7 +69,9 @@ button { font: inherit; cursor: pointer; }
 .sidebar .item {
   padding: 14px 20px; cursor: pointer; border-left: 3px solid transparent;
 }
-.sidebar .item .name { font-size: 16px; font-weight: 500; }
+.sidebar .item .name { font-size: 16px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar .item .name-row { display: flex; align-items: center; gap: 8px; }
+.sidebar .item .name-row .tab-badge { margin-left: auto; flex-shrink: 0; }
 .sidebar .item .sub { color: var(--muted); font-size: 13px; margin-top: 2px; font-family: ui-monospace, Menlo, monospace; }
 .sidebar .item.active { background: var(--side-2); border-left-color: var(--accent); }
 .sidebar .item:hover:not(.active) { background: rgba(255,255,255,.03); }

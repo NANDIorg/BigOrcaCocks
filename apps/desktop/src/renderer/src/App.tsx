@@ -114,6 +114,8 @@ export function App(): React.JSX.Element {
   const [snap, setSnap] = useState<StoreSnapshot>(EMPTY)
   const [projects, setProjects] = useState<Project[]>([])
   const [active, setActive] = useState<Project | null>(null)
+  /** Задач в работе по id проекта — бейдж в сайдбаре «Проекты». */
+  const [inProgress, setInProgress] = useState<Record<string, number>>({})
   const [socketPath, setSocketPath] = useState('')
   const [selected, setSelected] = useState<Task | undefined>()
   const [terminals, setTerminals] = useState<OpenTerminal[]>([])
@@ -184,8 +186,13 @@ export function App(): React.JSX.Element {
     const res = await window.orca.projects.list()
     setProjects(res.projects)
     setActive(res.active)
+    void refreshInProgress()
     setSnap(res.active ? await window.orca.board.get() : EMPTY)
     await refreshAgents()
+  }
+
+  async function refreshInProgress(): Promise<void> {
+    setInProgress(await window.orca.projects.inProgressCounts())
   }
 
   /** Список агентов (установлен/включён в активном проекте); refresh — заново просканировать PATH. */
@@ -201,6 +208,7 @@ export function App(): React.JSX.Element {
         if (cur?.id === projectId) setSnap(snapshot)
         return cur
       })
+      void refreshInProgress()
     })
     // Источник правды — реестр PTY в main. Подписка раньше list(), чтобы не пропустить изменения между ними.
     const offTerminals = window.orca.terminals.onChanged(syncTerminals)
@@ -533,7 +541,12 @@ export function App(): React.JSX.Element {
             {projects.length === 0 && <div className="empty">Нажмите +, чтобы добавить git-репозиторий</div>}
             {projects.map((p) => (
               <div key={p.id} className={`item ${p.id === active?.id ? 'active' : ''}`} onClick={() => switchProject(p)}>
-                <div className="name">{p.name}</div>
+                <div className="name-row">
+                  <div className="name">{p.name}</div>
+                  {(inProgress[p.id] ?? 0) > 0 && (
+                    <span className="tab-badge" title={`Задач в работе: ${inProgress[p.id]}`}>{inProgress[p.id]}</span>
+                  )}
+                </div>
                 <div className="sub" title={p.root}>{p.root.replace(/^\/Users\/[^/]+/, '~')}</div>
               </div>
             ))}

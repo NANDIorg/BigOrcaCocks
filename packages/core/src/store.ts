@@ -169,6 +169,13 @@ export class TaskStore {
 
   // ---------- tasks ----------
 
+  /** Задачи в колонках kind=in_progress (колонки кастомные — по kind, не по id); для счётчика в списке проектов. */
+  inProgressCount(): number {
+    let n = 0
+    for (const t of this.tasks.values()) if (this.isKind(t, 'in_progress')) n++
+    return n
+  }
+
   listTasks(): Task[] {
     return [...this.tasks.values()].sort((a, b) => a.createdAt - b.createdAt)
   }
