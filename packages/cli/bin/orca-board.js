@@ -14,9 +14,11 @@ const HELP = `orca-board — управление доской агентов
 
 Координатор:
   agents list      известные агенты: установлен ли, включён ли в проекте, версия
+  roles list       роли проекта: id, название, агент, модель, включён ли агент
+  columns list     колонки доски: id, название, kind
   task list
-  task create --title "..." [--spec "..."] [--agent <id из agents list>] [--dep <id>]...
-  task move --task <id> --status backlog|ready|in_progress|needs_input|review|done
+  task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]...
+  task move --task <id> --status <id колонки из columns list>
   worker start --task <id>
   worker read --dispatch <id> [--limit 80]
   check [--wait] [--types worker_done,question,escalation,task_ready] [--timeout-ms 900000]

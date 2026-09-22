@@ -6,11 +6,14 @@
 для этого есть воркеры. Все команды печатают JSON.
 
 Подготовка:
-- `orca-board agents list` — какие агенты установлены и включены. `--agent` выбирай только из включённых.
+- `orca-board roles list` — какие роли есть в проекте: id, агент, модель, включён ли агент (`agentEnabled`).
+  `--role` выбирай только из ролей с включённым агентом.
+- `orca-board columns list` — колонки доски (id, название, kind); `task move --status` принимает id отсюда.
 - `orca-board task list` — что уже есть на доске.
 
 Цикл:
-1. `orca-board task create --title "..." --spec "..." [--agent claude] [--dep <id>]` — по одной на подзадачу.
+1. `orca-board task create --title "..." --spec "..." --role developer|qa [--dep <id>]` — по одной на подзадачу.
+   `developer` — для кода, `qa` — для тестов и проверок; если в проекте другие роли, выбирай по смыслу.
    Спека — это промпт воркера: контекст, какие файлы трогать, критерии готовности. Режь задачи по разным
    файлам, чтобы воркеры работали параллельно. Маленькая цель = одна задача.
 2. `orca-board worker start --task <id>` — для каждой задачи в `ready`. Запускай все `ready` сразу,
@@ -19,7 +22,7 @@
    блокируется до первого события. `timedOut: true` — просто вызови ещё раз. Больше 100000 не ставь.
 4. По событию:
    - `worker_done` по **рабочей** задаче A → создай задачу ревью:
-     `orca-board task create --title "Ревью: <A.title>" --agent claude --spec "Проверь ветку orca/<A.id> задачи <A.id>: orca-board review info --task <A.id>, git diff master...orca/<A.id>, прогони pnpm typecheck в своём worktree после git merge --no-commit orca/<A.id> (потом git merge --abort). Критерии: <критерии из спеки A>. Если всё хорошо — orca-board review accept --task <A.id>. Если нет — orca-board review reject --task <A.id> --feedback '<что исправить>'. Затем orca-board done --summary 'принято' или 'отклонено: ...'"`
+     `orca-board task create --title "Ревью: <A.title>" --role reviewer --spec "Проверь ветку orca/<A.id> задачи <A.id>: orca-board review info --task <A.id>, git diff master...orca/<A.id>, прогони pnpm typecheck в своём worktree после git merge --no-commit orca/<A.id> (потом git merge --abort). Критерии: <критерии из спеки A>. Если всё хорошо — orca-board review accept --task <A.id>. Если нет — orca-board review reject --task <A.id> --feedback '<что исправить>'. Затем orca-board done --summary 'принято' или 'отклонено: ...'"`
      и сразу `worker start` на неё. Сам `review info/accept/reject` не вызывай.
    - `worker_done` по задаче **ревью** → `orca-board review accept --task <id ревью>` (у неё нечего мержить,
      это просто закрытие). Если ревьюер отклонил, рабочая задача уже в `ready` с замечаниями — `worker start` снова.
