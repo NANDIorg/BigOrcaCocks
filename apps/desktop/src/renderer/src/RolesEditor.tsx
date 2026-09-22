@@ -21,11 +21,12 @@ interface Props {
   onSave(roles: Role[]): Promise<void>
 }
 
-/** Роль с новыми полями; пустые model/effort не сохраняем вовсе (undefined — «по умолчанию у агента»). */
+/** Роль с новыми полями; пустые model/effort/systemPrompt не сохраняем вовсе (undefined — «по умолчанию»). */
 function withPatch(r: Role, p: Partial<Role>): Role {
   const next: Role = { ...r, ...p }
   if (!next.model) delete next.model
   if (!next.effort) delete next.effort
+  if (!next.systemPrompt?.trim()) delete next.systemPrompt
   return next
 }
 
@@ -148,6 +149,15 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
               >
                 Удалить
               </button>
+              <label className="role-prompt">
+                <span className="editor-head">Системный промпт</span>
+                <textarea
+                  value={r.systemPrompt ?? ''}
+                  placeholder="Дополнительные инструкции для агента этой роли (необязательно)"
+                  rows={3}
+                  onChange={(e) => patch(i, { systemPrompt: e.target.value }, true)}
+                />
+              </label>
             </div>
           )
         })}
@@ -157,7 +167,8 @@ export function RolesEditor({ storageKey, roles: initial, agents, onSave }: Prop
         <button className="btn-sm" onClick={add}>Добавить роль</button>
       </div>
       <p className="editor-hint">
-        Роль задаёт агента, модель и усилие (уровень рассуждений). Координатор запускается ролью <code>coordinator</code>; в задачах роль
+        Роль задаёт агента, модель и усилие (уровень рассуждений). Системный промпт роли дописывается к служебным
+        инструкциям Orca при следующем запуске агента этой роли и не заменяет их. Координатор запускается ролью <code>coordinator</code>; в задачах роль
         выбирается при создании (для CLI — <code>--role &lt;id&gt;</code>).
       </p>
     </div>

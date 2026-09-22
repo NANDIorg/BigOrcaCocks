@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, coordinatorPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, coordinatorPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment } from '@orca-board/core'
 import workerSkill from '../../../../skills/worker.md?raw'
 import coordinatorSkill from '../../../../skills/coordinator.md?raw'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
@@ -182,7 +182,7 @@ export function startWorker(
   const dispatchId = newId('disp')
   const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
   const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
-  const inv = spec.invoke(workerSkill, prompt, { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  const inv = spec.invoke(withRoleInstructions(workerSkill, role), prompt, { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -292,7 +292,7 @@ export function startCoordinator(
   let ptyId: string
   try {
     const paths = root ? writeAttachments(root, run.id, images) : []
-    const inv = (spec ?? getAgent('claude')!).invoke(coordinatorSkill, coordinatorPrompt(objective, paths), {
+    const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(coordinatorSkill, role), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
       shell: defaultShell(),
       model: role?.model,
