@@ -322,6 +322,6 @@ export function startCoordinator(
     if (root) rmSync(join(root, run.id), { recursive: true, force: true })
     throw e
   }
-  store.setRunPty(run.id, ptyId)
+  store.setRunPty(run.id, ptyId, role?.agent ?? 'claude')
   return { ptyId, runId: run.id }
 }

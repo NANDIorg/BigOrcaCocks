@@ -108,6 +108,8 @@ export interface Run {
   closedAt?: number
   /** PTY координатора прогона. */
   coordinatorPtyId?: string
+  /** Агент координатора: по нему решается, закрывать ли его терминал после run_done. */
+  coordinatorAgent?: AgentKind
 }
 
 // ---------- задачи ----------

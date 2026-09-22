@@ -128,6 +128,13 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   задачи и все они в колонке `kind=done`, получает `closedAt` и событие `run_done {runId, objective}`.
   Ловит любой путь в done и удаление задач. Прогон без задач автоматически не закрывается; закрытый —
   повторно не закрывается и `run_done` не шлёт.
+- **Закрытие терминала координатора** (`coordinatorsToClose` в `packages/core/src/coordinator-close.ts`,
+  опрос раз в 5 с — `watchFinishedCoordinators` в `apps/desktop/src/main/index.ts`): интерактивный CLI
+  с `lingersAfterAnswer` в реестре агентов (сейчас Codex) после финальной сводки ждёт ввода и сам не выходит.
+  Его PTY закрывается `killPty` (вкладка уходит по `terminals:changed`), если прогон закрыт именно `run_done`,
+  все задачи прогона и сейчас в `kind=done`, по ним нет открытых вопросов и терминал молчит
+  `COORDINATOR_IDLE_MS` (45 с) с момента `run_done`. Агент координатора — `Run.coordinatorAgent`
+  (пишется в `setRunPty`). Ручное закрытие прогона, чужие прогоны и координаторы на claude не затрагиваются.
 - **Ручное закрытие**: `store.closeRun(id)` — идемпотентно, `run_done` не шлёт. Сокет `runs.close {run}`
   (без `run` — ошибка), CLI `runs close [--run <id>]`, IPC `runs:close(id)`.
 - **Список**: сокет `runs.list` → `Run` + `tasks` (число задач прогона) и `done` (из них в `kind=done`);
@@ -198,7 +205,7 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 (`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + замечания ревью.
 
 Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
-`setRunPty(runId, ptyId)`; если спавн упал, прогон сразу закрывается (`closeRun`), чтобы не висел открытым.
+`setRunPty(runId, ptyId, agent)`; если спавн упал, прогон сразу закрывается (`closeRun`), чтобы не висел открытым.
 В env: `ORCA_ROLE=coordinator`, `ORCA_RUN_ID=<runId>` и таймауты Bash-инструмента
 Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (долгое ожидание воркеров).
 Воркерам эти переменные не ставятся.

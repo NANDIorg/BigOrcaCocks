@@ -2,8 +2,8 @@ import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electr
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { defaultSocketPath, validateImageAttachments, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
-import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive, setPtyWindow, terminalSnapshots } from './pty'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
+import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastOutputAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
@@ -216,6 +216,27 @@ function watchStuck(): void {
   }, 60_000)
 }
 
+/**
+ * Раз в 5 с: терминал координатора завершённого прогона (run_done), чей агент сам не выходит
+ * после финального ответа (Codex), закрывается, когда молчит COORDINATOR_IDLE_MS после run_done —
+ * координатор успевает дописать сводку. Решение — в coordinatorsToClose, killPty идемпотентен.
+ */
+function watchFinishedCoordinators(): void {
+  setInterval(() => {
+    for (const [, store] of projects.loadedStores()) {
+      const snap = store.snapshot()
+      const due = coordinatorsToClose({
+        ...snap,
+        isDone: (status) => store.columnKind(status) === 'done',
+        lingers: (agent) => (agent ? getAgent(agent)?.lingersAfterAnswer === true : false),
+        lastOutputAt,
+        now: Date.now()
+      })
+      for (const { ptyId } of due) killPty(ptyId)
+    }
+  }, 5_000)
+}
+
 /** Системные уведомления на события, требующие человека. */
 function notify(projectId: string, events: OrcaEvent[]): void {
   if (!Notification.isSupported()) return
@@ -355,6 +376,7 @@ app.whenReady().then(() => {
     }
   })
   watchStuck()
+  watchFinishedCoordinators()
   createTray({ open: () => showWindow(), quit: () => void requestQuit(), activeCount: activeDispatchCount })
   createWindow()
   // Клик по иконке в Dock (macOS) — вернуть окно.

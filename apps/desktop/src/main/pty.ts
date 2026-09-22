@@ -180,6 +180,11 @@ export function isAlive(id: string): boolean {
   return sessions.has(id)
 }
 
+/** Время последнего вывода PTY; undefined — PTY уже не жив. */
+export function lastOutputAt(id: string): number | undefined {
+  return sessions.get(id)?.lastOutputAt
+}
+
 export function silentFor(id: string): number {
   const s = sessions.get(id)
   return s ? Date.now() - s.lastOutputAt : 0

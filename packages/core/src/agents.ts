@@ -49,6 +49,11 @@ export interface AgentSpec {
   models?: readonly ModelOption[]
   /** Допустимые уровни effort; [] — агент effort не поддерживает. */
   effortOptions: readonly string[]
+  /**
+   * Интерактивный CLI не выходит сам после финального ответа, а ждёт ввода. Терминал координатора
+   * на таком агенте приложение закрывает само после run_done (см. `coordinatorsToClose`).
+   */
+  lingersAfterAnswer?: boolean
   /** Как передать системную инструкцию (system) и задание (prompt). */
   invoke(system: string, prompt: string, opts: AgentInvokeOptions): AgentInvocation
 }
@@ -106,6 +111,7 @@ export const AGENTS = [
     bin: 'codex',
     versionArgs: ['--version'],
     effortOptions: ['low', 'medium', 'high'],
+    lingersAfterAnswer: true,
     invoke: (system, prompt, opts) => ({
       command: 'codex',
       args: [

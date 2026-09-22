@@ -227,9 +227,10 @@ export class TaskStore {
     return run
   }
 
-  setRunPty(runId: string, ptyId: string): Run {
+  setRunPty(runId: string, ptyId: string, agent?: AgentKind): Run {
     const run = this.mustRun(runId)
     run.coordinatorPtyId = ptyId
+    run.coordinatorAgent = agent
     this.commit()
     return run
   }
