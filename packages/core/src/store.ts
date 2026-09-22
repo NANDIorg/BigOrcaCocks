@@ -1,13 +1,14 @@
-import type { Dispatch, OrcaEvent, Task, TaskStatus, AgentKind, EventType } from './types'
+import type { Dispatch, OrcaEvent, Task, TaskStatus, AgentKind, EventType, Question } from './types'
 
 export interface StoreSnapshot {
   tasks: Task[]
   dispatches: Dispatch[]
   events: OrcaEvent[]
+  questions: Question[]
 }
 
 export interface Persistence {
-  load(): StoreSnapshot | null
+  load(): Partial<StoreSnapshot> | null
   save(snapshot: StoreSnapshot): void
 }
 
@@ -24,15 +25,17 @@ export function newId(prefix: string): string {
 export class TaskStore {
   private tasks = new Map<string, Task>()
   private dispatches = new Map<string, Dispatch>()
+  private questions = new Map<string, Question>()
   private events: OrcaEvent[] = []
   private listeners = new Set<() => void>()
 
   constructor(private persistence?: Persistence) {
     const snap = persistence?.load()
     if (snap) {
-      snap.tasks.forEach((t) => this.tasks.set(t.id, t))
-      snap.dispatches.forEach((d) => this.dispatches.set(d.id, d))
-      this.events = snap.events
+      snap.tasks?.forEach((t) => this.tasks.set(t.id, t))
+      snap.dispatches?.forEach((d) => this.dispatches.set(d.id, d))
+      snap.questions?.forEach((q) => this.questions.set(q.id, q))
+      this.events = snap.events ?? []
     }
   }
 
@@ -48,11 +51,14 @@ export class TaskStore {
 
   snapshot(): StoreSnapshot {
     return {
-      tasks: [...this.tasks.values()],
+      tasks: this.listTasks(),
       dispatches: [...this.dispatches.values()],
-      events: [...this.events]
+      events: [...this.events],
+      questions: [...this.questions.values()]
     }
   }
+
+  // ---------- tasks ----------
 
   listTasks(): Task[] {
     return [...this.tasks.values()].sort((a, b) => a.createdAt - b.createdAt)
@@ -62,19 +68,14 @@ export class TaskStore {
     return this.tasks.get(id)
   }
 
-  createTask(input: {
-    title: string
-    spec?: string
-    deps?: string[]
-    agent?: AgentKind
-  }): Task {
+  createTask(input: { title: string; spec?: string; deps?: string[]; agent?: AgentKind }): Task {
     const now = Date.now()
     const task: Task = {
       id: newId('task'),
       title: input.title,
       spec: input.spec ?? '',
       status: 'backlog',
-      deps: input.deps ?? [],
+      deps: (input.deps ?? []).filter((d) => this.tasks.has(d)),
       agent: input.agent ?? 'claude',
       createdAt: now,
       updatedAt: now
@@ -99,6 +100,7 @@ export class TaskStore {
 
   deleteTask(id: string): void {
     this.tasks.delete(id)
+    this.promoteReady()
     this.commit()
   }
 
@@ -114,14 +116,15 @@ export class TaskStore {
     }
   }
 
-  startDispatch(taskId: string, ptyId: string): Dispatch {
+  // ---------- dispatches ----------
+
+  getDispatch(id: string): Dispatch | undefined {
+    return this.dispatches.get(id)
+  }
+
+  startDispatch(taskId: string, ptyId: string, dispatchId = newId('disp')): Dispatch {
     const task = this.mustTask(taskId)
-    const dispatch: Dispatch = {
-      id: newId('disp'),
-      taskId,
-      ptyId,
-      startedAt: Date.now()
-    }
+    const dispatch: Dispatch = { id: dispatchId, taskId, ptyId, startedAt: Date.now() }
     this.dispatches.set(dispatch.id, dispatch)
     task.dispatchId = dispatch.id
     task.status = 'in_progress'
@@ -147,6 +150,7 @@ export class TaskStore {
 
   /** PTY закрылся без `done` — это не успех, это `unknown`. */
   ptyExited(ptyId: string, exitCode: number): void {
+    let changed = false
     for (const dispatch of this.dispatches.values()) {
       if (dispatch.ptyId !== ptyId || dispatch.endedAt) continue
       dispatch.endedAt = Date.now()
@@ -157,11 +161,56 @@ export class TaskStore {
       this.pushEvent('escalation', {
         taskId: task.id,
         dispatchId: dispatch.id,
-        reason: `pty exited with code ${exitCode} without explicit done`
+        reason: `процесс завершился с кодом ${exitCode} без orca-board done`
       })
+      changed = true
     }
-    this.commit()
+    if (changed) this.commit()
   }
+
+  // ---------- questions ----------
+
+  ask(input: { taskId: string; dispatchId?: string; question: string; options?: string[] }): Question {
+    const task = this.mustTask(input.taskId)
+    const q: Question = {
+      id: newId('q'),
+      taskId: task.id,
+      dispatchId: input.dispatchId,
+      question: input.question,
+      options: input.options ?? [],
+      createdAt: Date.now()
+    }
+    this.questions.set(q.id, q)
+    task.status = 'needs_input'
+    task.updatedAt = Date.now()
+    this.pushEvent('question', { taskId: task.id, dispatchId: q.dispatchId, questionId: q.id, question: q.question, options: q.options })
+    this.commit()
+    return q
+  }
+
+  answer(questionId: string, answer: string): Question {
+    const q = this.questions.get(questionId)
+    if (!q) throw new Error(`question not found: ${questionId}`)
+    q.answer = answer
+    q.answeredAt = Date.now()
+    const task = this.mustTask(q.taskId)
+    const stillOpen = [...this.questions.values()].some((x) => x.taskId === task.id && !x.answeredAt)
+    if (!stillOpen && task.status === 'needs_input') task.status = 'in_progress'
+    task.updatedAt = Date.now()
+    this.pushEvent('question_answered', { taskId: task.id, dispatchId: q.dispatchId, questionId, answer })
+    this.commit()
+    return q
+  }
+
+  getQuestion(id: string): Question | undefined {
+    return this.questions.get(id)
+  }
+
+  openQuestions(): Question[] {
+    return [...this.questions.values()].filter((q) => !q.answeredAt)
+  }
+
+  // ---------- events ----------
 
   pushEvent(type: EventType, payload: Record<string, unknown>): OrcaEvent {
     const event: OrcaEvent = {
@@ -178,6 +227,15 @@ export class TaskStore {
 
   listEvents(): OrcaEvent[] {
     return [...this.events]
+  }
+
+  /** Забрать непрочитанные события заданных типов и пометить их прочитанными. */
+  consumeEvents(types: EventType[], consumer: string): OrcaEvent[] {
+    const hit = this.events.filter((e) => !e.consumedBy && types.includes(e.type))
+    if (hit.length === 0) return []
+    hit.forEach((e) => (e.consumedBy = consumer))
+    this.persistence?.save(this.snapshot())
+    return hit
   }
 
   private mustTask(id: string): Task {

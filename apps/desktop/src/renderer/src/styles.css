@@ -194,3 +194,16 @@ textarea { min-height: 96px; resize: vertical; }
 .modal .btn-primary { height: 40px; padding: 0 20px; border-radius: 20px; font-size: 14px; }
 .btn-text { background: transparent; border: 0; color: var(--muted); padding: 0 14px; }
 .btn-text:hover { color: var(--text); }
+
+/* ---------- вопросы и итоги ---------- */
+.chip.live { border-color: var(--col-progress); color: var(--col-progress); }
+.chip.warn { border-color: #ef6b6b; color: #ef6b6b; }
+.summary { margin-top: 12px; color: var(--muted); font-size: 13px; white-space: pre-wrap; max-height: 120px; overflow: auto; }
+.question {
+  margin-top: 14px; padding: 12px; border-radius: 10px; background: rgba(232,176,74,.08);
+  border: 1px solid rgba(232,176,74,.35); display: flex; flex-direction: column; gap: 10px; cursor: default;
+}
+.q-text { font-size: 14px; white-space: pre-wrap; }
+.q-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.q-free { display: flex; gap: 8px; }
+.q-free input { flex: 1; padding: 6px 10px; }

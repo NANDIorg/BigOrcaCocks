@@ -60,12 +60,25 @@ export interface Dispatch {
   files?: string[]
 }
 
+export interface Question {
+  id: string
+  taskId: string
+  dispatchId?: string
+  question: string
+  options: string[]
+  answer?: string
+  createdAt: number
+  answeredAt?: number
+}
+
 export type EventType =
   | 'task_ready'
   | 'worker_done'
   | 'question'
   | 'escalation'
-  | 'gate_answered'
+  | 'question_answered'
+
+export const EVENT_TYPES: EventType[] = ['task_ready', 'worker_done', 'question', 'escalation', 'question_answered']
 
 export interface OrcaEvent {
   id: string

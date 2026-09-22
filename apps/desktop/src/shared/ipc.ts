@@ -1,4 +1,4 @@
-import type { Task, TaskStatus, AgentKind, OrcaEvent } from '@orca-board/core'
+import type { Task, TaskStatus, AgentKind, StoreSnapshot } from '@orca-board/core'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -9,20 +9,28 @@ export interface PtySpawnOptions {
   rows: number
 }
 
+export interface TerminalOpened {
+  ptyId: string
+  taskId?: string
+  label: string
+}
+
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
 export interface OrcaApi {
   app: {
-    info(): Promise<{ repoRoot: string; repoName: string }>
+    info(): Promise<{ repoRoot: string; repoName: string; socketPath: string }>
+  }
+  board: {
+    get(): Promise<StoreSnapshot>
+    onChange(cb: (snapshot: StoreSnapshot) => void): () => void
   }
   tasks: {
-    list(): Promise<Task[]>
     create(input: { title: string; spec?: string; deps?: string[]; agent?: AgentKind }): Promise<Task>
     move(id: string, status: TaskStatus): Promise<Task>
     remove(id: string): Promise<void>
-    onChange(cb: (tasks: Task[]) => void): () => void
   }
-  events: {
-    list(): Promise<OrcaEvent[]>
+  questions: {
+    answer(id: string, answer: string): Promise<void>
   }
   pty: {
     spawn(opts: PtySpawnOptions): Promise<string>
@@ -35,5 +43,7 @@ export interface OrcaApi {
   /** Запустить воркера для задачи: worktree + PTY + dispatch. */
   worker: {
     start(taskId: string, cols: number, rows: number): Promise<{ ptyId: string; dispatchId: string }>
+    /** Терминал открыт извне (через CLI координатора). */
+    onOpened(cb: (t: TerminalOpened) => void): () => void
   }
 }

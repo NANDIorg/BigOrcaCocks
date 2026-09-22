@@ -1,15 +1,33 @@
 import { execFileSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
-import type { BrowserWindow } from 'electron'
-import type { TaskStore, AgentKind } from '@orca-board/core'
+import { app, type BrowserWindow } from 'electron'
+import { newId, type TaskStore, type AgentKind } from '@orca-board/core'
+import workerSkill from '../../../../skills/worker.md?raw'
 import { spawnPty } from './pty'
 
-const AGENT_COMMANDS: Record<AgentKind, { command: string; args: string[] }> = {
-  claude: { command: 'claude', args: [] },
-  codex: { command: 'codex', args: [] },
-  opencode: { command: 'opencode', args: [] },
-  shell: { command: process.env.SHELL ?? '/bin/zsh', args: [] }
+export interface WorkerEnvContext {
+  socketPath: string
+}
+
+/** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
+export function cliBinDir(): string {
+  const dev = resolve(app.getAppPath(), '../../packages/cli/bin')
+  if (existsSync(dev)) return dev
+  return join(process.resourcesPath, 'cli')
+}
+
+function agentInvocation(agent: AgentKind, prompt: string): { command: string; args: string[] } {
+  switch (agent) {
+    case 'claude':
+      return { command: 'claude', args: ['--append-system-prompt', workerSkill, prompt] }
+    case 'codex':
+      return { command: 'codex', args: [`${workerSkill}\n\n---\n\n${prompt}`] }
+    case 'opencode':
+      return { command: 'opencode', args: ['--prompt', `${workerSkill}\n\n---\n\n${prompt}`] }
+    case 'shell':
+      return { command: process.env.SHELL ?? '/bin/zsh', args: [] }
+  }
 }
 
 /**
@@ -20,35 +38,45 @@ export function startWorker(
   win: BrowserWindow,
   store: TaskStore,
   repoRoot: string,
+  ctx: WorkerEnvContext,
   taskId: string,
-  cols: number,
-  rows: number
-): { ptyId: string; dispatchId: string } {
+  cols = 120,
+  rows = 30
+): { ptyId: string; dispatchId: string; worktree: string; branch: string } {
   const task = store.getTask(taskId)
   if (!task) throw new Error(`task not found: ${taskId}`)
+  if (task.status === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
 
   const branch = `orca/${task.id}`
   const worktree = join(repoRoot, '..', '.orca-worktrees', task.id)
   if (!existsSync(worktree)) {
-    execFileSync('git', ['worktree', 'add', '-b', branch, worktree], { cwd: repoRoot, stdio: 'pipe' })
+    const branchExists = execFileSync('git', ['branch', '--list', branch], { cwd: repoRoot }).toString().trim() !== ''
+    const args = branchExists ? ['worktree', 'add', worktree, branch] : ['worktree', 'add', '-b', branch, worktree]
+    execFileSync('git', args, { cwd: repoRoot, stdio: 'pipe' })
   }
   store.updateTask(task.id, { worktree, branch })
 
-  const agent = AGENT_COMMANDS[task.agent]
-  // dispatchId нужен до спавна PTY, чтобы положить его в env — генерируем заранее через store после спавна
-  let dispatchId = ''
+  const dispatchId = newId('disp')
+  const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)'].join('\n')
+  const inv = agentInvocation(task.agent, prompt)
+
   const ptyId = spawnPty(
     win,
     {
       cwd: worktree,
-      command: agent.command,
-      args: agent.args,
+      command: inv.command,
+      args: inv.args,
       cols,
       rows,
-      env: { ORCA_TASK_ID: task.id }
+      env: {
+        ORCA_TASK_ID: task.id,
+        ORCA_DISPATCH_ID: dispatchId,
+        ORCA_SOCKET: ctx.socketPath,
+        PATH: `${cliBinDir()}:${process.env.PATH ?? ''}`
+      }
     },
     (id, code) => store.ptyExited(id, code)
   )
-  dispatchId = store.startDispatch(task.id, ptyId).id
-  return { ptyId, dispatchId }
+  store.startDispatch(task.id, ptyId, dispatchId)
+  return { ptyId, dispatchId, worktree, branch }
 }

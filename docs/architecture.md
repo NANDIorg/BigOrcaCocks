@@ -43,8 +43,21 @@ orca-board done --summary "..." --files a.ts,b.ts
 orca-board ask --question "..." --options a,b      # блокирует до ответа
 ```
 
+## Как воркер получает контекст
+
+При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`,
+а в `PATH` — папка с `orca-board`. Для `claude` инструкция воркера (`skills/worker.md`)
+передаётся через `--append-system-prompt`, задание — позиционным аргументом.
+Для остальных агентов инструкция и задание склеиваются в один промпт.
+
+## Протокол сокета
+
+Одна строка JSON-запроса `{id, method, params, dispatchId?, taskId?}`, одна строка ответа
+`{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
+События помечаются `consumedBy`, повторно `check` их не отдаёт.
+
 ## Открытые вопросы
 
-- Как воркер узнаёт свой `dispatchId` — через env `ORCA_DISPATCH_ID` при старте PTY.
 - Определение «агент завис»: таймаут без вывода в PTY N минут → событие `escalation`.
-- Мерж: кнопка на карточке в `review`, `git merge --no-ff` в основной ветке.
+- Мерж: кнопка на карточке в `review`, `git merge --no-ff` в основной ветке, удаление worktree.
+- В worktree не попадают `node_modules` — нужен хук «после создания worktree» (например `pnpm install`).

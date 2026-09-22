@@ -1,44 +1,39 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { OrcaApi } from '../shared/ipc'
 
+function on<T>(channel: string, cb: (payload: T) => void): () => void {
+  const handler = (_e: unknown, payload: T): void => cb(payload)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
+
 const api: OrcaApi = {
   app: {
     info: () => ipcRenderer.invoke('app:info')
   },
+  board: {
+    get: () => ipcRenderer.invoke('board:get'),
+    onChange: (cb) => on('board:changed', cb)
+  },
   tasks: {
-    list: () => ipcRenderer.invoke('tasks:list'),
     create: (input) => ipcRenderer.invoke('tasks:create', input),
     move: (id, status) => ipcRenderer.invoke('tasks:move', id, status),
-    remove: (id) => ipcRenderer.invoke('tasks:remove', id),
-    onChange: (cb) => {
-      const handler = (_e: unknown, tasks: Parameters<typeof cb>[0]): void => cb(tasks)
-      ipcRenderer.on('tasks:changed', handler)
-      return () => ipcRenderer.removeListener('tasks:changed', handler)
-    }
+    remove: (id) => ipcRenderer.invoke('tasks:remove', id)
   },
-  events: {
-    list: () => ipcRenderer.invoke('events:list')
+  questions: {
+    answer: (id, answer) => ipcRenderer.invoke('questions:answer', id, answer)
   },
   pty: {
     spawn: (opts) => ipcRenderer.invoke('pty:spawn', opts),
     write: (id, data) => ipcRenderer.send('pty:write', id, data),
     resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
     kill: (id) => ipcRenderer.send('pty:kill', id),
-    onData: (id, cb) => {
-      const channel = `pty:data:${id}`
-      const handler = (_e: unknown, data: string): void => cb(data)
-      ipcRenderer.on(channel, handler)
-      return () => ipcRenderer.removeListener(channel, handler)
-    },
-    onExit: (id, cb) => {
-      const channel = `pty:exit:${id}`
-      const handler = (_e: unknown, code: number): void => cb(code)
-      ipcRenderer.on(channel, handler)
-      return () => ipcRenderer.removeListener(channel, handler)
-    }
+    onData: (id, cb) => on(`pty:data:${id}`, cb),
+    onExit: (id, cb) => on(`pty:exit:${id}`, cb)
   },
   worker: {
-    start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows)
+    start: (taskId, cols, rows) => ipcRenderer.invoke('worker:start', taskId, cols, rows),
+    onOpened: (cb) => on('worker:opened', cb)
   }
 }
 

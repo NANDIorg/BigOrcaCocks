@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { Task } from '@orca-board/core'
+import type { Task, StoreSnapshot } from '@orca-board/core'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -14,18 +14,27 @@ interface OpenTerminal {
 }
 
 export function App(): React.JSX.Element {
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [snap, setSnap] = useState<StoreSnapshot>({ tasks: [], dispatches: [], events: [], questions: [] })
+  const tasks = snap.tasks
   const [selected, setSelected] = useState<Task | undefined>()
   const [terminals, setTerminals] = useState<OpenTerminal[]>([])
   const [activePty, setActivePty] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [tab, setTab] = useState<'board' | 'info'>('board')
-  const [repo, setRepo] = useState<{ repoRoot: string; repoName: string }>({ repoRoot: '', repoName: '…' })
+  const [repo, setRepo] = useState<{ repoRoot: string; repoName: string; socketPath: string }>({ repoRoot: '', repoName: '…', socketPath: '' })
 
   useEffect(() => {
-    window.orca.tasks.list().then(setTasks)
+    window.orca.board.get().then(setSnap)
     window.orca.app.info().then(setRepo)
-    return window.orca.tasks.onChange(setTasks)
+    const offBoard = window.orca.board.onChange(setSnap)
+    const offOpened = window.orca.worker.onOpened((t) => {
+      setTerminals((prev) => (prev.some((x) => x.ptyId === t.ptyId) ? prev : [...prev, { ptyId: t.ptyId, label: t.label, taskId: t.taskId, color: 'var(--col-progress)' }]))
+      setActivePty(t.ptyId)
+    })
+    return () => {
+      offBoard()
+      offOpened()
+    }
   }, [])
 
   const runningTaskIds = new Set(terminals.filter((t) => t.taskId).map((t) => t.taskId!))
@@ -41,8 +50,8 @@ export function App(): React.JSX.Element {
   }
 
   async function startTask(task: Task): Promise<void> {
-    const { ptyId } = await window.orca.worker.start(task.id, 120, 30)
-    addTerminal({ ptyId, label: task.title, taskId: task.id, color: 'var(--col-progress)' })
+    // вкладка добавится через worker.onOpened
+    await window.orca.worker.start(task.id, 120, 30)
     setSelected(task)
   }
 
@@ -113,18 +122,22 @@ export function App(): React.JSX.Element {
           {tab === 'board' ? (
             <Board
               tasks={tasks}
+              questions={snap.questions}
+              dispatches={snap.dispatches}
               selectedId={selected?.id}
               runningTaskIds={runningTaskIds}
               onSelect={selectTask}
               onMove={(id, status) => window.orca.tasks.move(id, status)}
               onStart={startTask}
               onRemove={(id) => window.orca.tasks.remove(id)}
+              onAnswer={(qid, a) => window.orca.questions.answer(qid, a)}
             />
           ) : (
             <div style={{ padding: '28px 32px', color: 'var(--muted)' }}>
               <p>Репозиторий: <code>{repo.repoRoot}</code></p>
               <p>Задач: {tasks.length}. Открытых терминалов: {terminals.length}.</p>
               <p>Worktree создаются рядом с репозиторием в папке <code>.orca-worktrees</code>.</p>
+              <p>Сокет CLI: <code>{repo.socketPath}</code>. В терминалах доступна команда <code>orca-board --help</code>.</p>
             </div>
           )}
 

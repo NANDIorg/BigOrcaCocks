@@ -45,4 +45,9 @@ orca-board/
 
 ## Статус
 
-Скелет собран и запускается: `pnpm install && pnpm dev`. Доска, создание задач, drag-and-drop между колонками, терминал, старт воркера в git worktree. CLI и сокет — заглушки.
+Работает: `pnpm install && pnpm dev`. Доска, задачи, drag-and-drop, терминалы с вкладками,
+старт воркера в git worktree с заданием, CLI `orca-board` через unix-сокет
+(`~/.orca-board/orca.sock`), вопросы воркера с ответом из приложения, явный `done`,
+`check --wait` для координатора.
+
+Проверить CLI руками: открыть «Терминал» в приложении и набрать `orca-board --help`.
