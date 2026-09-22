@@ -230,7 +230,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                   answer={answered.answer}
                   summary={answered.summary}
                   answerFor={task.answerFor}
-                  actionable={kind === 'review'}
+                  actionable={kind === 'needs_input' || kind === 'review'}
                   onAccept={async () => {
                     await onAccept(task.id)
                     onClose()

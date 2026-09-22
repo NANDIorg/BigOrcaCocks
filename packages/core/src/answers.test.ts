@@ -63,6 +63,7 @@ describe('«Нужен ответ» на глобальном канбане', (
     const { store, g, task, dispatch } = setup('human')
     assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
     store.finishDispatch(dispatch.id, 'итог', [], 'ответ')
+    assert.equal(store.getTask(task.id)!.status, 'needs_input', 'подзадача ждёт человека, не ревью')
     const waiting = store.getGlobalTask(g.id)
     assert.equal(waiting.status, 'needs_input')
     assert.equal(waiting.waiting, 1)
@@ -77,6 +78,7 @@ describe('«Нужен ответ» на глобальном канбане', (
     const { store, g, task, dispatch } = setup('human')
     store.finishDispatch(dispatch.id, 'итог', [], 'ответ')
     store.rejectReview(task.id, 'подробнее про БД')
+    assert.equal(store.getTask(task.id)!.status, 'ready')
     assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
     assert.match(workerTaskPrompt(store.getTask(task.id)!, 'ответ'), /# Прошлый ответ\n\nответ\n\n# Уточнение к прошлому ответу\n\nподробнее про БД/)
   })
@@ -84,6 +86,7 @@ describe('«Нужен ответ» на глобальном канбане', (
   it('ответ для координатора человека не ждёт', () => {
     const { store, g, dispatch } = setup('coordinator')
     store.finishDispatch(dispatch.id, 'итог', [], 'ответ')
+    assert.equal(store.getTask(dispatch.taskId)!.status, 'review')
     assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
     assert.equal(store.getGlobalTask(g.id).waiting, 0)
   })
@@ -93,11 +96,37 @@ describe('«Нужен ответ» на глобальном канбане', (
     const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' })
     assert.equal(store.getGlobalTask(g.id).status, 'in_progress', 'координатор ещё решает, кому вопрос')
     store.forwardQuestion(q.id)
+    assert.equal(store.getTask(task.id)!.status, 'needs_input')
     assert.equal(store.getGlobalTask(g.id).status, 'needs_input')
     store.answer(q.id, 'Postgres')
+    assert.equal(store.getTask(task.id)!.status, 'in_progress', 'воркер жив — работает дальше')
     assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
     assert.throws(() => store.forwardQuestion(q.id), /уже ответили/)
     assert.throws(() => store.forwardQuestion('q_none'), /not found/)
+  })
+
+  it('forward возвращает в needs_input, даже если задачу успели сдвинуть', () => {
+    const { store, task, dispatch } = setup()
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: '?' })
+    store.moveTask(task.id, 'in_progress')
+    store.forwardQuestion(q.id)
+    assert.equal(store.getTask(task.id)!.status, 'needs_input')
+  })
+
+  it('ответ на вопрос без живого воркера — задача в ready', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const t = store.createTask({ title: 't' })
+    const q = store.ask({ taskId: t.id, question: '?' })
+    store.answer(q.id, 'да')
+    assert.equal(store.getTask(t.id)!.status, 'ready')
+  })
+
+  it('сданный ответ для человека: ответ на старый вопрос не уводит задачу из needs_input', () => {
+    const { store, task, dispatch } = setup('human')
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: '?' })
+    store.finishDispatch(dispatch.id, 'итог', [], 'ответ')
+    store.answer(q.id, 'поздно')
+    assert.equal(store.getTask(task.id)!.status, 'needs_input')
   })
 
   it('без координатора вопрос сразу адресован человеку — и из бэклога карточка тоже уходит в needs_input', () => {
@@ -118,8 +147,9 @@ describe('«Нужен ответ» на глобальном канбане', (
     assert.equal(questionForHuman({}, undefined), true)
   })
 
-  it('waitingForHuman: ответ для человека только в review', () => {
+  it('waitingForHuman: ответ для человека в needs_input (и review — старые данные)', () => {
     const run = { coordinatorPtyId: 'p' }
+    assert.equal(waitingForHuman({ id: 't', answerFor: 'human' }, 'needs_input', [], run), true)
     assert.equal(waitingForHuman({ id: 't', answerFor: 'human' }, 'review', [], run), true)
     assert.equal(waitingForHuman({ id: 't', answerFor: 'human' }, 'in_progress', [], run), false)
     assert.equal(waitingForHuman({ id: 't', answerFor: 'coordinator' }, 'review', [], run), false)
