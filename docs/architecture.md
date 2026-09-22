@@ -24,8 +24,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль проекта (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
-  - `runId` — прогон, к которому относится задача (см. «Прогоны»); задаётся только при создании,
-    `updateTask` его не меняет. Нет — задача создана вне прогона (из UI).
+  - `runId` — прогон (= глобальная задача), к которому относится задача (см. «Прогоны»); задаётся только при создании,
+    `updateTask` его не меняет. Без прогона задача попадает во «Входящие» (`docs/nested-kanban.md`).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
 - `Role { id, title, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
@@ -39,8 +39,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, createdAt, closedAt?, coordinatorPtyId? }` — прогон: один запуск координатора
-  со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
+- `Run { id, objective, title?, status?, inbox?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, ... }` — прогон:
+  один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
+  Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
+  контракт и миграция — `docs/nested-kanban.md`.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, stuckNotified? }`
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
   типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `run_done`.
@@ -119,7 +121,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Наследование**: CLI для `task.create`, `check`, `runs.close`, `runs.finish` подставляет `params.run = $ORCA_RUN_ID`,
   если `--run` не передан явно (`packages/cli/bin/orca-board.js`, `RUN_METHODS`). Сервер env не читает —
   `task.create` просто пишет `runId: params.run` в задачу. Так задачи координатора, включая задачи ревью,
-  попадают в его прогон. Задачи из UI (`tasks:create`) прогона не получают.
+  попадают в его прогон. Задачи без прогона (`tasks:create` из UI, `task create` без `--run`) — во «Входящие».
+- **Глобальные задачи** (`docs/nested-kanban.md`): прогон со статусом-колонкой и подзадачами; повторный запуск
+  координатора на существующем прогоне — `coordinator start --global <id>` (новый прогон не создаётся).
 - **Фильтр событий** (`store.consumeEvents(types, consumer, runId?)`): с `runId` — только события прогона:
   по задаче с этим `runId` или с `payload.runId === runId` (так ловится `run_done`). В сокете `check`
   consumer = `params.consumer ?? runId ?? 'coordinator'`, поэтому прогоны не «съедают» события друг друга
@@ -186,6 +190,7 @@ orca-board check --follow [--types ...] [--run <id>]   # поток: строк�
 orca-board runs list                        # [{...Run, tasks, done}]
 orca-board runs close [--run <id>]          # закрыть прогон вручную
 orca-board runs finish [--run <id>]         # координатор закончил работу после run_done (закрыть его терминал)
+orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md
 orca-board worker read --dispatch <id>
 orca-board gate create --task <id> --question "..." --options a,b
 ```
@@ -478,7 +483,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
-  `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
+  `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
+  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
@@ -499,6 +505,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`) |
 | `check` | `types?`, `run?`, `consumer?`, `wait?`, `timeout-ms?`, `follow?` | `{events, timedOut}`; с `follow` — поток `{event}` |
 | `runs.list` | — | `[{...Run, tasks, done}]` |
+| `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт) | `Run` с `finishedAt` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
