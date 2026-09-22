@@ -43,8 +43,15 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 ## Роли и колонки (`src/main/projects.ts`)
 
 - **Хранение**: `Project.roles?: Role[]` и `Project.columns?: BoardColumn[]` в `userData/projects.json`.
-  `undefined` — `DEFAULT_ROLES` / `DEFAULT_COLUMNS` (`ProjectManager.roles(id)`, `columns(id)`).
-  Меняются через IPC `projects:setRoles` / `projects:setColumns` (вкладка «О проекте»).
+  Новый проект получает копию ролей и колонок из глобального дефолта (`ProjectManager.defaults()`,
+  см. «Проекты»), поэтому у него они всегда заданы. `undefined` остаётся только у старых проектов,
+  созданных до появления дефолта, и читается как встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`
+  (`ProjectManager.roles(id)`, `columns(id)`), а не как текущий глобальный дефолт.
+  Меняются через IPC `projects:setRoles` / `projects:setColumns` (вкладка «О проекте») или целиком
+  переписываются дефолтом через `projects:applyDefaults`.
+- **Откуда берётся дефолт**: `projects.json → defaults.roles` / `defaults.columns`; не заданы —
+  встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`. При `setDefaults` роли и колонки проходят те же
+  `validateRoles` / `validateColumns`, что и у проекта.
 - **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая.
 - **Валидация ролей** (`validateRoles`): хотя бы одна роль; непустые уникальные `id`, непустые
   `title`; `agent` — известный `AgentKind`; `model` — строка или отсутствует (пустая после trim → удаляется).
@@ -157,6 +164,15 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 
 ## UI: доска и «О проекте»
 
+- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `О проекте`) и выбранный
+  терминал — свои у каждого проекта: `views: Record<projectId, ProjectView { tab, activePty }>`,
+  запись через `updateView(projectId, patch)` (функциональный апдейтер, безопасен из обработчиков событий).
+  Вкладка дублируется в `localStorage` ключом `orca.tab.<projectId>` (`storedTab` / `storeTab`,
+  ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
+  Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
+  указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
+- **Смена проекта** (`useEffect` по `active?.id`: сайдбар или `projects:focus`) сбрасывает выбранную
+  задачу и закрывает модалку задачи (`openTaskId = null`) — чужая задача в модалке не остаётся.
 - **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет заголовка, иконка по `kind`).
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
 - **Карточка** компактная: слева `AgentLogo` (28), справа заголовок (до 2 строк, `-webkit-line-clamp: 2`)
@@ -194,11 +210,22 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 - **Вкладка «Терминалы»** (`App.tsx`, `.term-page`): грид `220px + xterm`. Слева список открытых PTY:
   точка «жив/завершился» (по `pty:exit`), `AgentLogo` (16), название и роль (по задаче из снимка;
   координатор — «координатор»/роль `coordinator`; голая оболочка — «оболочка»), крестик — `pty.kill` +
-  удаление из списка. Справа `Terminal` на каждый PTY; неактивные скрыты через `.hidden`, не размонтируются.
-  На вкладке в шапке бейдж с числом открытых терминалов. Терминалы появляются по `worker:opened`
-  (из UI и через CLI координатора; вкладка при CLI-запуске не переключается), исчезают по `worker:closed`
-  (`dropTerminal`: только функциональные апдейтеры, потому что события приходят пачкой) или по крестику.
+  удаление из списка. Список, бейдж на вкладке и счётчик в «О проекте» показывают только терминалы
+  активного проекта (`projectTerminals` — фильтр `terminals` по `projectId === active.id`). Справа `Terminal`
+  рендерится на **каждый** PTY всех проектов; неактивные и чужие скрыты через `.hidden`, не размонтируются —
+  при возврате на проект вывод и состояние xterm сохранены.
+  Терминалы появляются по `worker:opened` (из UI и через CLI координатора; вкладка при CLI-запуске
+  не переключается; если у проекта терминала ещё нет — новый становится его `activePty`), исчезают
+  по `worker:closed` (`dropTerminal`: только функциональные апдейтеры, потому что события приходят пачкой;
+  если закрыт активный терминал проекта — выбирается соседний терминал того же проекта) или по крестику.
   Завершившийся сам PTY остаётся в списке с серой точкой, пока его не закроют.
+- **`showTerminal(ptyId?, projectId = active.id)`**: проект терминала берётся из списка терминалов,
+  иначе переданный `projectId` (PTY только что создан, `worker:opened` ещё не пришёл), иначе активный.
+  В запись этого проекта пишутся `tab: 'terminals'` и `activePty`. Активный проект **не переключается**:
+  если терминал принадлежит другому проекту (пользователь успел переключиться, пока шёл `await`
+  запуска), вкладка и терминал просто запоминаются до перехода на тот проект. `openShell`, `startTask`
+  и старт координатора фиксируют `projectId` до `await`; `startTask` выделяет задачу, только если
+  проект всё ещё активен (`activeIdRef`).
 - **«О проекте»**, разделы:
   - «Агенты» — кто установлен (логотип, название, версия), чекбоксы включения (`enabledAgents`).
   - «Роли» (`RolesEditor.tsx`) — список ролей: id, название, агент (только из реестра),
@@ -207,6 +234,26 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns`.
   - «Разрешения агентов» — `permissionMode` проекта (см. «Разрешения Claude Code»).
+  - *(ожидается, отдельная UI-задача; в master пока нет)* кнопки «Сохранить как дефолт» —
+    `projects:setDefaults` с текущими `permissionMode`, `enabledAgents`, `roles`, `columns` проекта — и
+    «Применить дефолт» — `projects:applyDefaults(active.id)` (с подтверждением: задачи из исчезнувших
+    колонок уедут в backlog).
+- **Модалка настроек по умолчанию** *(ожидается, `DefaultsModal.tsx`; в master пока нет)*: открывается
+  кнопкой в подвале сайдбара, редактирует глобальный дефолт для новых проектов — режим разрешений,
+  включённые агенты, роли, колонки. Загружает `projects:getDefaults`, сохраняет `projects:setDefaults`.
+  `RolesEditor` / `ColumnsEditor` обобщаются: вместо `active: Project` принимают сами роли/колонки
+  и `onSave`, чтобы один редактор работал и для проекта, и для дефолта.
+
+## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
+
+- `invoke`: `app:info`; `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
+  `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
+  `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
+  `board:get`; `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
+  `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
+- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
+- События main → renderer: `board:changed {projectId, snapshot}`, `worker:opened`, `worker:closed`,
+  `projects:focus` (клик по уведомлению), `pty:data:<id>`, `pty:exit:<id>`.
 
 ## Протокол сокета
 
@@ -267,6 +314,26 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
 UI работает с активным проектом; агенты получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
 поэтому воркер продолжает писать в свою доску, даже если пользователь переключился на другой проект.
+
+**Формат `projects.json`**: `{ projects: Project[], activeId, defaults?: Partial<ProjectDefaults> }`.
+`ProjectDefaults { permissionMode, enabledAgents?, roles, columns }` (`projects.ts`, дубль типа —
+`shared/ipc.ts`). Файл без `defaults` (старый формат) читается как есть; `defaults` не-объект → удаляется при `load()`.
+
+**Настройки по умолчанию**:
+- `defaults()` — глобальный дефолт с подстановкой встроенных значений для незаданных полей
+  (`permissionMode` → `auto`, `enabledAgents` → нет поля = все установленные, `roles` → `DEFAULT_ROLES`,
+  `columns` → `DEFAULT_COLUMNS`); массивы и объекты — копии.
+- `setDefaults(patch)` — мерж патча в `data.defaults`: `permissionMode` проверяется по `PERMISSION_MODES`
+  (`isPermissionMode`), роли/колонки — `validateRoles` / `validateColumns`, `enabledAgents` фильтруется
+  через `isAgentKind`; явный ключ `enabledAgents: null/undefined` — сброс в «все установленные».
+  Не объект → ошибка. Возвращает `defaults()`.
+- `add(root)`: новый проект получает копию дефолта — `permissionMode`, `enabledAgents` (если задан),
+  `roles`, `columns`. Уже добавленный репозиторий возвращается как есть, дефолт к нему не применяется.
+  Проекты, созданные раньше, не меняются при правке дефолта.
+- `applyDefaults(id)` — переписывает настройки существующего проекта дефолтом: `permissionMode`,
+  `enabledAgents` (нет в дефолте → поле удаляется), затем `setRoles` и `setColumns` — последний, как и при
+  ручной правке, переводит задачи из исчезнувших колонок в колонку `kind=backlog` (`store.reassignColumn`).
+  Задачи с `roleId` удалённой роли остаются как есть — `worker.start` для них вернёт ошибку.
 
 ## Уведомления
 
