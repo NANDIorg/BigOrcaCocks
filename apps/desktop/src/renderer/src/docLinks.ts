@@ -48,6 +48,17 @@ export function resolveDocLink(from: string, href: string): string | null {
   return parts.join('/')
 }
 
+/** Якорь ссылки на документ: «b.md#Раздел» → «Раздел». Нет якоря — undefined. */
+export function docLinkHash(href: string): string | undefined {
+  const i = href.indexOf('#')
+  if (i < 0) return undefined
+  try {
+    return decodeURIComponent(href.slice(i + 1)) || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Поиск по пути без учёта регистра; пробелы разделяют слова, нужны все. */
 export function matchesQuery(file: DocFile, query: string): boolean {
   const path = file.path.toLowerCase()

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { docsApi, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, STALE_APP_MESSAGE } from './docLinks'
+import { docLinkHash, docsApi, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, STALE_APP_MESSAGE } from './docLinks'
 import type { OrcaApi } from '../../shared/ipc'
 
 test('docsApi — старый preload без docs даёт понятную ошибку, а не TypeError', () => {
@@ -44,4 +44,12 @@ test('matchesQuery — все слова, без учёта регистра', (
   assert.equal(matchesQuery(f, ''), true)
   assert.equal(matchesQuery(f, 'kanban docs'), true)
   assert.equal(matchesQuery(f, 'kanban readme'), false)
+})
+
+test('docLinkHash — якорь из ссылки на документ', () => {
+  assert.equal(docLinkHash('b.md#%D0%A0%D0%BE%D0%BB%D0%B8'), 'Роли')
+  assert.equal(docLinkHash('b.md#intro'), 'intro')
+  assert.equal(docLinkHash('b.md'), undefined)
+  assert.equal(docLinkHash('b.md#'), undefined)
+  assert.equal(docLinkHash('b.md#%E0%A4%A'), undefined)
 })
