@@ -9,8 +9,10 @@ import { CoordinatorModal } from './CoordinatorModal'
 import { TaskModal } from './TaskModal'
 import { RolesEditor } from './RolesEditor'
 import { ColumnsEditor } from './ColumnsEditor'
+import { DefaultsModal } from './DefaultsModal'
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
+import { ipcErrorMessage } from './useAutoSave'
 
 type Tab = 'board' | 'terminals' | 'info'
 
@@ -62,6 +64,9 @@ export function App(): React.JSX.Element {
   const [terminals, setTerminals] = useState<OpenTerminal[]>([])
   const [showNew, setShowNew] = useState(false)
   const [showCoord, setShowCoord] = useState(false)
+  const [showDefaults, setShowDefaults] = useState(false)
+  /** Растёт после «Применить дефолт»: пересоздаёт редакторы ролей/колонок, чтобы черновик взял новые значения. */
+  const [settingsRev, setSettingsRev] = useState(0)
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -193,6 +198,37 @@ export function App(): React.JSX.Element {
     if (p) await refreshProjects()
   }
 
+  /** Текущие настройки активного проекта → глобальный дефолт для новых проектов. */
+  async function saveAsDefaults(p: Project): Promise<void> {
+    if (!confirm(`Сохранить настройки проекта «${p.name}» (агенты, роли, колонки, разрешения) как дефолт для новых проектов?`)) return
+    try {
+      await window.orca.projects.setDefaults({
+        permissionMode: p.permissionMode,
+        enabledAgents: p.enabledAgents,
+        roles: p.roles ?? DEFAULT_ROLES,
+        columns: p.columns ?? DEFAULT_COLUMNS
+      })
+    } catch (e) {
+      alert(ipcErrorMessage(e))
+    }
+  }
+
+  /** Переписать настройки проекта дефолтом; задачи из исчезнувших колонок уезжают в бэклог. */
+  async function applyDefaults(p: Project): Promise<void> {
+    const ok = confirm(
+      `Заменить агентов, роли, колонки и разрешения проекта «${p.name}» настройками по умолчанию?\n\n` +
+        'Задачи из колонок, которых нет в дефолте, переедут в бэклог.'
+    )
+    if (!ok) return
+    try {
+      await window.orca.projects.applyDefaults(p.id)
+    } catch (e) {
+      alert(ipcErrorMessage(e))
+    }
+    await refreshProjects()
+    setSettingsRev((r) => r + 1)
+  }
+
   async function removeProject(p: Project): Promise<void> {
     await window.orca.projects.remove(p.id)
     await refreshProjects()
@@ -320,6 +356,7 @@ export function App(): React.JSX.Element {
           ))}
         </div>
         <div className="foot">
+          <button className="btn-ghost" onClick={() => setShowDefaults(true)}>Настройки по умолчанию</button>
           {active && (
             <button className="btn-ghost" onClick={() => removeProject(active)}>Убрать из списка</button>
           )}
@@ -396,7 +433,9 @@ export function App(): React.JSX.Element {
               </p>
               {active && (
                 <RolesEditor
-                  active={active}
+                  key={`${active.id}:${settingsRev}`}
+                  storageKey={active.id}
+                  roles={active.roles ?? DEFAULT_ROLES}
                   agents={agents}
                   onSave={async (roles) => {
                     await window.orca.projects.setRoles(active.id, roles)
@@ -406,7 +445,9 @@ export function App(): React.JSX.Element {
               )}
               {active && (
                 <ColumnsEditor
-                  active={active}
+                  key={`${active.id}:${settingsRev}`}
+                  storageKey={active.id}
+                  columns={active.columns ?? DEFAULT_COLUMNS}
                   onSave={async (columns) => {
                     await window.orca.projects.setColumns(active.id, columns)
                     await refreshProjects()
@@ -431,6 +472,20 @@ export function App(): React.JSX.Element {
                 </select>
                 <span style={{ fontSize: 12 }}>Команда <code>orca-board</code> разрешена всегда. Действует на новые терминалы.</span>
               </label>
+              {active && (
+                <>
+                  <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Настройки по умолчанию</h3>
+                  <div className="defaults-actions">
+                    <button className="btn-sm" onClick={() => void saveAsDefaults(active)}>Сохранить настройки этого проекта как дефолт</button>
+                    <button className="btn-sm" onClick={() => void applyDefaults(active)}>Применить дефолт к этому проекту</button>
+                    <button className="btn-text" onClick={() => setShowDefaults(true)}>Редактировать дефолт</button>
+                  </div>
+                  <p style={{ fontSize: 12, margin: '0 0 24px' }}>
+                    Дефолт автоматически применяется к новым проектам. Применение к этому проекту заменит агентов,
+                    роли, колонки и разрешения; задачи из удалённых колонок переедут в бэклог.
+                  </p>
+                </>
+              )}
               <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>О проекте</h3>
               <p>Репозиторий: <code>{active?.root ?? '—'}</code></p>
               <p>Идентификатор проекта для CLI: <code>{active?.id ?? '—'}</code></p>
@@ -488,6 +543,7 @@ export function App(): React.JSX.Element {
         </div>
       </main>
 
+      {showDefaults && <DefaultsModal agents={agents} onClose={() => setShowDefaults(false)} />}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}

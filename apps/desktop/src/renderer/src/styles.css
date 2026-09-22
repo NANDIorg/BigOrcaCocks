@@ -355,3 +355,10 @@ button:disabled { opacity: .45; cursor: default; }
 .task-modal-foot { display: flex; align-items: center; gap: 10px; padding: 14px 24px 18px; border-top: 1px solid var(--line); }
 .task-modal-foot .grow { flex: 1; }
 .task-modal-foot .btn-sm { height: 34px; padding: 0 16px; font-size: 13px; }
+
+/* Модалка настроек по умолчанию: .modal label по умолчанию — колонка, строкам агентов нужна строка */
+.defaults-body h3 { font-size: 16px; margin: 0 0 12px; color: var(--text); }
+.modal .agent-row { flex-direction: row; gap: 10px; color: var(--text); font-size: 14px; }
+.modal .agent-row.off { color: var(--muted); }
+.sidebar .foot { display: flex; flex-direction: column; gap: 8px; }
+.defaults-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
