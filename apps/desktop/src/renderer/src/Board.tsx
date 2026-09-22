@@ -65,11 +65,13 @@ interface Props {
   /** Роли проекта — для подписи на карточке. */
   roles: Role[]
   tasks: Task[]
-  /** Прогоны проекта: метка на карточке и фильтр. */
-  runs: Run[]
+  /** Прогоны проекта: метка на карточке и фильтр. Нет — доска одной глобальной задачи, без меток и фильтра. */
+  runs?: Run[]
   /** Фильтр по прогону; хранит App, свой у каждого проекта. */
-  runFilter: RunFilter
-  onRunFilter(filter: RunFilter): void
+  runFilter?: RunFilter
+  onRunFilter?(filter: RunFilter): void
+  /** Подпись пустой колонки. */
+  emptyText?: string
   questions: Question[]
   dispatches: Dispatch[]
   selectedId?: string
@@ -114,7 +116,7 @@ function subtitle(task: Task, role: Role | undefined): string {
 }
 
 export function Board(props: Props): React.JSX.Element {
-  const { columns, roles, runs, runFilter, onRunFilter, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask } = props
+  const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText = 'Пусто', questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask } = props
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [sort, setSort] = useState<BoardSort>(readSort)
@@ -148,7 +150,7 @@ export function Board(props: Props): React.JSX.Element {
   return (
     <div className="board-wrap">
       <div className="board-toolbar">
-        {(runs.length > 0 || filter !== 'all') && (
+        {onRunFilter && (runs.length > 0 || filter !== 'all') && (
           <>
             <span className="board-sort-label">Прогон:</span>
             <select
@@ -191,6 +193,7 @@ export function Board(props: Props): React.JSX.Element {
               key={status}
               className={`column ${dragOver === status ? 'drag-over' : ''}`}
               onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes('text/task-id')) return
                 e.preventDefault()
                 setDragOver(status)
               }}
@@ -198,7 +201,7 @@ export function Board(props: Props): React.JSX.Element {
               onDrop={(e) => {
                 e.preventDefault()
                 const id = e.dataTransfer.getData('text/task-id')
-                if (id) onMove(id, status)
+                if (id && byId.get(id)?.status !== status) onMove(id, status)
                 setDragOver(null)
                 setDragging(null)
               }}
@@ -216,7 +219,7 @@ export function Board(props: Props): React.JSX.Element {
                 {dragOver === status && dragging && byId.get(dragging)?.status !== status && (
                   <div className="placeholder" />
                 )}
-                {items.length === 0 && dragOver !== status && <div className="empty">Пусто</div>}
+                {items.length === 0 && dragOver !== status && <div className="empty">{emptyText}</div>}
                 {items.map((task) => {
                   const qs = openQ.get(task.id) ?? []
                   const d = lastDispatch.get(task.id)
@@ -235,6 +238,10 @@ export function Board(props: Props): React.JSX.Element {
                       }}
                       onDragEnd={() => setDragging(null)}
                       onClick={() => open(task)}
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.target === e.currentTarget && e.key === 'Enter') open(task)
+                      }}
                     >
                       <div className="card-tools" onClick={(e) => e.stopPropagation()}>
                         {canStart && (

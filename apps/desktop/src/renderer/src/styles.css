@@ -318,7 +318,7 @@ button:disabled { opacity: .45; cursor: default; }
 /* Сортировка доски */
 .board-wrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 .board-wrap .board { flex: 1; padding-top: 12px; }
-.board-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 32px 0; }
+.board-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 32px 0; }
 .board-sort-label { color: var(--muted); font-size: 13px; }
 .segmented { display: inline-flex; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
 .segmented .seg {
@@ -431,3 +431,103 @@ button:disabled { opacity: .45; cursor: default; }
 .modal .agent-row { flex-direction: row; gap: 10px; color: var(--text); font-size: 14px; }
 .modal .agent-row.off { color: var(--muted); }
 .defaults-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+
+/* ---------- глобальные задачи: общая доска ---------- */
+/* Колонки как у Auto Claude: тонкая рамка, цветная верхняя линия, счётчик у заголовка; скроллится тело. */
+.g-board { display: flex; align-items: stretch; gap: 16px; padding: 20px 32px 28px; overflow-x: auto; overflow-y: hidden; min-height: 0; flex: 1; }
+.g-column {
+  --col: var(--col-backlog);
+  flex: 0 0 300px; width: 300px; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--side) 70%, var(--frame)); border: 1px solid var(--line);
+  border-top: 3px solid var(--col); border-radius: var(--radius); overflow: hidden;
+}
+.g-column.drag-over { border-color: color-mix(in srgb, var(--col) 60%, transparent); border-top-color: var(--col); }
+.g-col-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; min-width: 0; }
+.g-col-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.g-col-count {
+  flex: 0 0 auto; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; font-size: 12px; font-weight: 600;
+  display: inline-grid; place-items: center; color: var(--col); background: color-mix(in srgb, var(--col) 16%, transparent);
+}
+.g-col-body { flex: 1 1 0; min-height: 80px; overflow-y: auto; overflow-x: hidden; padding: 4px 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.g-col-body > * { flex-shrink: 0; }
+.g-empty {
+  margin: 8px 4px; padding: 26px 14px; border: 1px dashed var(--line); border-radius: 12px;
+  color: var(--muted); font-size: 12px; text-align: center; line-height: 1.5;
+}
+.g-card {
+  position: relative; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; cursor: pointer; user-select: none; overflow-wrap: anywhere; word-break: break-word;
+  display: flex; flex-direction: column; gap: 8px; transition: background .12s, border-color .12s;
+}
+.g-card:hover { background: var(--card-hover); }
+.g-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.g-card.dragging { opacity: .5; }
+.g-card .card-tools {
+  position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; padding: 2px; border-radius: 10px;
+  background: var(--card-hover); box-shadow: -8px 0 10px var(--card-hover); opacity: 0; transition: opacity .12s;
+}
+.g-card .card-tools .card-tool { background: var(--card-hover); }
+.g-card:hover .card-tools, .g-card:focus-within .card-tools { opacity: 1; }
+@media (hover: none) { .g-card .card-tools { opacity: 1; } }
+.g-card-title {
+  font-size: 14px; font-weight: 600; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.g-card-desc {
+  color: var(--muted); font-size: 12px; line-height: 1.45; white-space: pre-line;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.g-card-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.g-chip {
+  border-radius: 6px; padding: 1px 8px; font-size: 11px; font-weight: 500; white-space: nowrap; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; background: rgba(255,255,255,.06); color: #c9ccd6;
+}
+.g-chip.status { color: var(--col); background: color-mix(in srgb, var(--col) 16%, transparent); }
+.g-chip.warn { color: var(--col-input); background: rgba(232,176,74,.12); }
+.g-chip.review { color: var(--col-review); background: rgba(181,123,238,.12); }
+.g-progress { display: flex; flex-direction: column; gap: 4px; }
+.g-progress-line { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+.g-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
+.g-bar-fill { height: 100%; border-radius: 2px; background: var(--col-done); transition: width .2s; }
+.g-card-foot { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+
+/* ---------- глобальная задача: экран подзадач ---------- */
+.g-view { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; }
+/* Низкое окно: шапка не сжимает доску — прокручивается весь экран, доске остаётся минимум высоты. */
+.g-view > .board-wrap { flex: 1 0 auto; min-height: 380px; height: 0; }
+.g-view-head { flex-shrink: 0; }
+.segmented .seg { white-space: nowrap; }
+.g-view-head { padding: 18px 32px 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.g-crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--muted); }
+.g-back {
+  flex: 0 0 auto; background: transparent; border: 0; color: var(--muted); padding: 4px 8px; margin-left: -8px; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.g-back:hover { color: var(--text); background: var(--side-2); }
+.g-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--text); }
+.g-crumb-sep { opacity: .5; }
+.g-crumb-current { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.g-view-title-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.g-view-title {
+  flex: 1 1 320px; min-width: 0; margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.g-view-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.g-view-actions svg { width: 14px; height: 14px; }
+.g-live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-done); box-shadow: 0 0 0 3px rgba(90,209,204,.18); }
+.g-view-desc { color: var(--muted); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 110ch; max-height: 30vh; overflow-y: auto; }
+.g-view-desc.clamped { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.g-more { align-self: flex-start; padding: 0; font-size: 12px; }
+.g-view-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; }
+.g-view-progress { width: 240px; max-width: 100%; }
+.modal-sub { margin: -8px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal { max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow-y: auto; }
+
+@media (max-width: 900px) {
+  .g-board, .board { padding-left: 16px; padding-right: 16px; }
+  .g-view-head, .board-toolbar { padding-left: 16px; padding-right: 16px; }
+  .g-column { flex-basis: 260px; width: 260px; }
+}
+/* Узкое окно: кнопки шапки переносятся, а не выталкивают страницу за край */
+.main-head .row { flex-wrap: wrap; row-gap: 10px; }
+.main-head h1 { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
