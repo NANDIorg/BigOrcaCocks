@@ -1,0 +1,41 @@
+// Только type-импорты: модуль тестируется node --test без бандлера.
+import type { AgentSpec } from './agents'
+import type { Task } from './types'
+
+/**
+ * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
+ * (skills/coordinator.md), `worker` — при старте задачи (skills/worker.md).
+ */
+export type BuiltinPromptKind = 'coordinator' | 'worker'
+
+/** Тексты служебных инструкций. Источник — skills/*.md, их отдаёт main-процесс (тот же текст, что при запуске). */
+export type BuiltinPrompts = Record<BuiltinPromptKind, string>
+
+/** Роль, которой запускается координатор. */
+export const COORDINATOR_ROLE_ID = 'coordinator'
+
+/** Служебная инструкция роли: у coordinator — координаторская, у остальных — воркерская. */
+export function builtinPromptKind(roleId: string): BuiltinPromptKind {
+  return roleId === COORDINATOR_ROLE_ID ? 'coordinator' : 'worker'
+}
+
+/** Стартовое задание воркера: название, описание и замечания после ревью. */
+export function workerTaskPrompt(task: Pick<Task, 'title' | 'spec' | 'feedback'>): string {
+  const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
+  return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
+}
+
+/**
+ * Как агент получает системную инструкцию: `system` — отдельным system prompt (claude, `--append-system-prompt`),
+ * `combined` — в начале стартового сообщения перед заданием, `none` — не получает (оболочка).
+ * Выводится из `invoke` реестра, а не из отдельного списка.
+ */
+export type PromptChannel = 'system' | 'combined' | 'none'
+
+export function promptChannel(spec: Pick<AgentSpec, 'invoke'> | undefined): PromptChannel {
+  if (!spec) return 'none'
+  const system = '\u0000orca-system\u0000'
+  const { args } = spec.invoke(system, '\u0000orca-task\u0000', { permissionMode: 'auto', shell: 'sh' })
+  if (args.includes(system)) return 'system'
+  return args.some((a) => a.includes(system)) ? 'combined' : 'none'
+}

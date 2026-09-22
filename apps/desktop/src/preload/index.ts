@@ -30,6 +30,9 @@ const api: OrcaApi = {
   agents: {
     list: (refresh) => ipcRenderer.invoke('agents:list', refresh)
   },
+  prompts: {
+    builtin: () => ipcRenderer.invoke('prompts:builtin')
+  },
   board: {
     get: () => ipcRenderer.invoke('board:get'),
     onChange: (cb) => on('board:changed', cb)

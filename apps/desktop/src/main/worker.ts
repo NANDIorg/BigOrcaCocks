@@ -2,9 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, coordinatorPrompt, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
-import workerSkill from '../../../../skills/worker.md?raw'
-import coordinatorSkill from '../../../../skills/coordinator.md?raw'
+import { newId, getAgent, withRoleInstructions, coordinatorPrompt, workerTaskPrompt, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
+import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
 import { extraPathDirs, findBin, isCmdScript } from './agents'
@@ -184,9 +183,7 @@ export function startWorker(
   store.updateTask(task.id, { agent: role.agent, worktree, branch })
 
   const dispatchId = newId('disp')
-  const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
-  const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
-  const inv = spec.invoke(withRoleInstructions(workerSkill, role), prompt, { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.worker, role), workerTaskPrompt(task), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -329,7 +326,7 @@ export function startCoordinator(
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
     if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
     const paths = root ? writeAttachments(root, run.id, images) : []
-    const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(coordinatorSkill, role), coordinatorPrompt(objective, paths), {
+    const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(BUILTIN_PROMPTS.coordinator, role), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
       shell: defaultShell(),
       model: role?.model,
