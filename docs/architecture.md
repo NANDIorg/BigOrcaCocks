@@ -56,8 +56,26 @@ orca-board ask --question "..." --options a,b      # блокирует до о�
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 События помечаются `consumedBy`, повторно `check` их не отдаёт.
 
+## Ревью и мерж (`src/main/review.ts`, `src/main/git.ts`)
+
+- `review info`: `git diff --stat base...branch`, `git log base..branch`, плюс незакоммиченное в worktree.
+- `review accept`: незакоммиченное коммитится от `orca-board`, затем `git merge --no-ff` в текущую
+  ветку репозитория, `git worktree remove --force`, `git branch -D`. Конфликт → `merge --abort` и ошибка в UI.
+- `review reject --feedback`: задача → `ready`, `task.feedback` добавляется в промпт при следующем старте.
+
+## Детектор тишины
+
+`pty.ts` хранит `lastOutputAt` на сессию. Раз в минуту main проверяет живые dispatch'и:
+нет вывода дольше `ORCA_STUCK_MINUTES` (по умолчанию 10) → одно событие `escalation` на dispatch
+(`Dispatch.stuckNotified`), на карточке чип «молчит».
+
+## Подготовка worktree
+
+Если worktree только что создан и есть lock-файл, агент запускается через
+`$SHELL -c "<setup>; exec <agent> ..."` — установка идёт в том же терминале, что видит пользователь.
+
 ## Открытые вопросы
 
-- Определение «агент завис»: таймаут без вывода в PTY N минут → событие `escalation`.
-- Мерж: кнопка на карточке в `review`, `git merge --no-ff` в основной ветке, удаление worktree.
-- В worktree не попадают `node_modules` — нужен хук «после создания worktree» (например `pnpm install`).
+- Несколько репозиториев в сайдбаре.
+- Уведомления macOS на `question` / `escalation` / `worker_done`.
+- Упаковка: `electron-builder`, CLI в `resources/cli`.
