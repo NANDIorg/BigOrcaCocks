@@ -6,6 +6,8 @@ import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
+import { RolesEditor } from './RolesEditor'
+import { ColumnsEditor } from './ColumnsEditor'
 import { Icon } from './icons'
 
 interface OpenTerminal {
@@ -231,9 +233,28 @@ export function App(): React.JSX.Element {
                 ))}
               </div>
               <p style={{ fontSize: 12, margin: '0 0 24px' }}>
-                Выключенные агенты нельзя выбрать в новой задаче; координатор их тоже не предложит.
+                Выключенные агенты нельзя выбрать для роли; координатор их тоже не предложит.
                 Установленные агенты определяются по PATH.
               </p>
+              {active && (
+                <RolesEditor
+                  active={active}
+                  agents={agents}
+                  onSave={async (roles) => {
+                    await window.orca.projects.setRoles(active.id, roles)
+                    await refreshProjects()
+                  }}
+                />
+              )}
+              {active && (
+                <ColumnsEditor
+                  active={active}
+                  onSave={async (columns) => {
+                    await window.orca.projects.setColumns(active.id, columns)
+                    await refreshProjects()
+                  }}
+                />
+              )}
               <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Разрешения агентов</h3>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24 }}>
                 Как Claude Code (координатор и воркеры) обращается с подтверждениями

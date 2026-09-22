@@ -240,3 +240,21 @@ button:disabled { opacity: .45; cursor: default; }
 .agent-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; color: var(--text); font-size: 14px; }
 .agent-row.off { color: var(--muted); }
 .agent-row .ver { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+
+/* Редакторы ролей и колонок */
+.editor { margin-bottom: 24px; }
+.editor-table { display: grid; gap: 8px 10px; align-items: start; }
+.editor-table.roles { grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1fr) minmax(120px, 1fr) auto; }
+.editor-table.columns { grid-template-columns: 14px minmax(140px, 1.2fr) minmax(110px, 1fr) auto auto; }
+.editor-row { display: contents; }
+.editor-head { font-size: 12px; color: var(--muted); }
+.editor-table input, .editor-table select { padding: 6px 10px; }
+.editor-table select.off { color: var(--muted); }
+.editor-id { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); margin-top: 3px; padding-left: 2px; }
+.editor-kind { font-size: 12px; color: var(--muted); white-space: nowrap; padding-top: 9px; }
+.editor-btns { display: flex; gap: 6px; }
+.editor-btns .btn-sm { padding: 0 10px; }
+.col-swatch { width: 14px; height: 14px; border-radius: 4px; margin-top: 10px; display: inline-block; }
+.editor-error { color: #ef6b6b; font-size: 12px; margin-top: 8px; }
+.editor-actions { margin-top: 10px; }
+.editor-hint { font-size: 12px; margin: 10px 0 0; }
