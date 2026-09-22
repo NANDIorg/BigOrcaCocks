@@ -20,14 +20,24 @@ export interface DetectedAgent {
  */
 export function extraPathDirs(): string[] {
   const home = homedir()
-  const dirs = [
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    join(home, '.local', 'bin'),
-    join(home, '.npm-global', 'bin'),
-    join(home, '.cargo', 'bin'),
-    join(home, '.bun', 'bin')
-  ]
+  const dirs =
+    process.platform === 'win32'
+      ? [
+          // npm i -g кладёт shim-ы claude.cmd и т.п. в %APPDATA%\npm.
+          ...(process.env.APPDATA ? [join(process.env.APPDATA, 'npm')] : []),
+          ...(process.env.LOCALAPPDATA ? [join(process.env.LOCALAPPDATA, 'Programs')] : []),
+          join(home, '.local', 'bin'),
+          join(home, '.cargo', 'bin'),
+          join(home, '.bun', 'bin')
+        ]
+      : [
+          '/opt/homebrew/bin',
+          '/usr/local/bin',
+          join(home, '.local', 'bin'),
+          join(home, '.npm-global', 'bin'),
+          join(home, '.cargo', 'bin'),
+          join(home, '.bun', 'bin')
+        ]
   const current = new Set((process.env.PATH ?? '').split(delimiter).filter(Boolean))
   return dirs.filter((d) => !current.has(d))
 }
@@ -42,12 +52,30 @@ function isExecutable(file: string): boolean {
   }
 }
 
+/**
+ * Суффиксы имени бинарника: на Windows — расширения из PATHEXT (claude.cmd, codex.exe…), затем имя как есть;
+ * иначе только имя как есть. Расширения первыми: рядом с claude.cmd npm кладёт sh-скрипт `claude` без расширения.
+ */
+function binSuffixes(): string[] {
+  if (process.platform !== 'win32') return ['']
+  const exts = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+  return [...exts.map((e) => e.toLowerCase()), '']
+}
+
+/** Бинарник — bat/cmd-скрипт: на Windows его запускает только cmd.exe. */
+export function isCmdScript(file: string): boolean {
+  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(file)
+}
+
 /** Полный путь к бинарнику: PATH процесса плюс стандартные папки. */
-function findBin(bin: string): string | undefined {
+export function findBin(bin: string): string | undefined {
   const dirs = [...(process.env.PATH ?? '').split(delimiter).filter(Boolean), ...extraPathDirs()]
+  const suffixes = binSuffixes()
   for (const dir of dirs) {
-    const file = join(dir, bin)
-    if (isExecutable(file)) return file
+    for (const suffix of suffixes) {
+      const file = join(dir, bin + suffix)
+      if (isExecutable(file)) return file
+    }
   }
   return undefined
 }
@@ -55,7 +83,10 @@ function findBin(bin: string): string | undefined {
 /** Первая строка вывода `<bin> <versionArgs>`, не длиннее 60 символов; ошибки и таймаут → undefined. */
 function readVersion(binPath: string, args: string[]): string | undefined {
   try {
-    const out = execFileSync(binPath, args, { timeout: 3000, stdio: 'pipe', encoding: 'utf8' })
+    // .cmd/.bat Node запускает только через оболочку; аргументы versionArgs — простые флаги без спецсимволов.
+    const out = isCmdScript(binPath)
+      ? execFileSync(`"${binPath}"`, args, { timeout: 3000, stdio: 'pipe', encoding: 'utf8', shell: true })
+      : execFileSync(binPath, args, { timeout: 3000, stdio: 'pipe', encoding: 'utf8' })
     const line = out.split(/\r?\n/).find((l) => l.trim())?.trim()
     return line ? line.slice(0, 60) : undefined
   } catch {

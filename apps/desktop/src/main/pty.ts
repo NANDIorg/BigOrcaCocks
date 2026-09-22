@@ -22,21 +22,43 @@ function cleanEnv(): NodeJS.ProcessEnv {
   }
   return env
 }
+
+/** Оболочка по умолчанию: на Windows — COMSPEC (обычно cmd.exe), иначе — $SHELL. */
+export function defaultShell(): string {
+  if (process.platform === 'win32') return process.env.COMSPEC ?? 'powershell.exe'
+  return process.env.SHELL ?? '/bin/zsh'
+}
+
+/**
+ * Накладывает extra на base. На Windows имена переменных регистронезависимы: если в base уже есть
+ * `Path`, то `PATH` из extra пишется в этот же ключ, а не создаёт дубликат.
+ */
+function mergeEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>): Record<string, string> {
+  const env = { ...base } as Record<string, string>
+  for (const [key, value] of Object.entries(extra)) {
+    const existing =
+      process.platform === 'win32' ? Object.keys(env).find((k) => k.toUpperCase() === key.toUpperCase()) : undefined
+    env[existing ?? key] = value
+  }
+  return env
+}
+
 const sessions = new Map<string, Session>()
 
 export function spawnPty(
   win: BrowserWindow,
-  opts: PtySpawnOptions,
+  // args строкой — готовая командная строка Windows, node-pty передаёт её без переквотирования.
+  opts: Omit<PtySpawnOptions, 'args'> & { args?: string[] | string },
   onExit?: (id: string, code: number) => void
 ): string {
   const id = newId('pty')
-  const shell = opts.command ?? process.env.SHELL ?? '/bin/zsh'
+  const shell = opts.command ?? defaultShell()
   const proc = pty.spawn(shell, opts.args ?? [], {
     name: 'xterm-256color',
     cols: opts.cols,
     rows: opts.rows,
     cwd: opts.cwd ?? process.env.HOME,
-    env: { ...cleanEnv(), ...(opts.env ?? {}) } as Record<string, string>
+    env: mergeEnv(cleanEnv(), opts.env ?? {})
   })
   const session: Session = { proc, tail: '', lastOutputAt: Date.now() }
   sessions.set(id, session)

@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { join, resolve, delimiter } from 'node:path'
+import { join, resolve, delimiter, isAbsolute } from 'node:path'
 import { existsSync } from 'node:fs'
 import { app, type BrowserWindow } from 'electron'
 import { newId, getAgent, type TaskStore, type Role } from '@orca-board/core'
 import workerSkill from '../../../../skills/worker.md?raw'
 import coordinatorSkill from '../../../../skills/coordinator.md?raw'
-import { spawnPty } from './pty'
+import { defaultShell, spawnPty } from './pty'
 import { setupCommand } from './git'
-import { extraPathDirs } from './agents'
+import { extraPathDirs, findBin, isCmdScript } from './agents'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -30,14 +30,49 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
+/** Метасимволы cmd.exe, перед которыми ставится ^. */
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g
+
+/**
+ * Аргумент для командной строки `cmd.exe /d /s /c "..."` (схема как в cross-spawn):
+ * 1) кавычки по правилам MSVCRT, чтобы запускаемая программа получила аргумент целиком:
+ *    `"` → `\"`, обратные слэши перед `"` и в конце строки удваиваются;
+ * 2) ^ перед метасимволами cmd (& | < > ^ % ! " и т.п.), чтобы cmd не выполнил их сам.
+ * .cmd/.bat-shim (npm: claude.cmd) ещё раз разбирает аргументы через cmd (`%*`) — там ^ удваивается.
+ * Перевод строки cmd передать не умеет (обрывает команду) — заменяется пробелом.
+ */
+function cmdQuoteArg(arg: string, doubleEscape: boolean): string {
+  const msvcrt = `"${arg
+    .replace(/\r?\n/g, ' ')
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\*)$/, '$1$1')}"`
+  const once = msvcrt.replace(CMD_META, '^$1')
+  return doubleEscape ? once.replace(CMD_META, '^$1') : once
+}
+
+/** Имя/путь программы для cmd.exe: только ^ перед метасимволами (включая пробелы в пути). */
+function cmdQuoteCommand(cmd: string): string {
+  return cmd.replace(CMD_META, '^$1')
+}
+
+/**
+ * Запуск агента на Windows. .exe без подготовки — напрямую: node-pty сам квотирует argv,
+ * многострочный промпт доходит целиком. Иначе (.cmd-shim или есть setup) — через
+ * `cmd.exe /d /s /c "<setup> & <agent> <args>"`; args строкой, чтобы node-pty не переквотировал.
+ * `&`, а не `&&` — как `;` на unix: агент стартует, даже если установка зависимостей упала.
+ */
+function win32Launch(command: string, args: string[], setup: string | null): { command: string; args: string[] | string } {
+  const bin = isAbsolute(command) ? command : (findBin(command) ?? command)
+  const shim = isCmdScript(bin)
+  if (!setup && !shim) return { command: bin, args }
+  const agent = [cmdQuoteCommand(bin), ...args.map((a) => cmdQuoteArg(a, shim))].join(' ')
+  const line = setup ? `echo [orca] ${setup} & ${setup} & ${agent}` : agent
+  return { command: 'cmd.exe', args: `/d /s /c "${line}"` }
+}
+
 /** PATH для терминалов и агентов: bin CLI orca-board, PATH процесса, стандартные папки с агентами. */
 export function workerPath(): string {
   return [cliBinDir(), ...(process.env.PATH ?? '').split(delimiter).filter(Boolean), ...extraPathDirs()].join(delimiter)
-}
-
-/** Оболочка пользователя — для агента shell и для установочного шага. */
-function userShell(): string {
-  return process.env.SHELL ?? '/bin/zsh'
 }
 
 function baseEnv(ctx: WorkerEnvContext): Record<string, string> {
@@ -86,14 +121,19 @@ export function startWorker(
   const dispatchId = newId('disp')
   const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
   const prompt = [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', feedback].join('\n')
-  const inv = spec.invoke(workerSkill, prompt, { permissionMode: ctx.permissionMode, shell: userShell(), model: role.model, effort: role.effort })
+  const inv = spec.invoke(workerSkill, prompt, { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
-  const command = setup ? userShell() : inv.command
-  const args = setup
-    ? ['-c', `echo "[orca] ${setup}"; ${setup}; exec ${[inv.command, ...inv.args].map(shellQuote).join(' ')}`]
-    : inv.args
+  const { command, args } =
+    process.platform === 'win32'
+      ? win32Launch(inv.command, inv.args, setup)
+      : setup
+        ? {
+            command: defaultShell(),
+            args: ['-c', `echo "[orca] ${setup}"; ${setup}; exec ${[inv.command, ...inv.args].map(shellQuote).join(' ')}`]
+          }
+        : { command: inv.command, args: inv.args }
 
   const ptyId = spawnPty(
     win,
@@ -130,17 +170,18 @@ export function startCoordinator(
   if (role && !spec) throw new Error(`неизвестный агент: ${role.agent}`)
   const inv = (spec ?? getAgent('claude')!).invoke(coordinatorSkill, prompt, {
     permissionMode: ctx.permissionMode,
-    shell: userShell(),
+    shell: defaultShell(),
     model: role?.model,
     effort: role?.effort
   })
   const run = store.createRun(objective)
+  const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args, null) : inv
   let ptyId: string
   try {
     ptyId = spawnPty(win, {
       cwd: repoRoot,
-      command: inv.command,
-      args: inv.args,
+      command: launch.command,
+      args: launch.args,
       cols,
       rows,
       env: {
