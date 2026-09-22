@@ -5,10 +5,11 @@ import type { DocGroup } from '../../shared/ipc'
 import { Markdown } from './Markdown'
 import { ipcErrorMessage } from './useAutoSave'
 import { docLinkHash, docsApi, isStaleDocsError, resolveDocLink, STALE_APP_MESSAGE } from './docLinks'
-import { alsoIn, buildTree, dirAncestors, excerpt, sameDoc, slugify, type DocRef, type TaskMark } from './docTree'
-import { clearMatches, findInDoc, headingText, paintMatches, scrollToRange, type TextMatch } from './docFind'
+import { alsoIn, buildTree, dirAncestors, excerpt, sameDoc, type DocRef, type TaskMark } from './docTree'
+import { clearMatches, findInDoc, paintMatches, scrollToRange, type TextMatch } from './docFind'
+import { buildDocToc, findDocHeading } from './docToc'
 import { DocsTree, dirKey, TaskDot, type TreeMode } from './DocsTree'
-import { DocsToc, type TocItem } from './DocsToc'
+import { DocsToc } from './DocsToc'
 import { DocsBlank, DocsStart, taskCards } from './DocsStart'
 import { DocIcon } from './docsIcons'
 
@@ -57,12 +58,6 @@ function store(key: string, value: string): void {
   }
 }
 
-/** Заголовок документа по якорю: точный id или id, посчитанный из текста якоря (как у GitHub). */
-function findAnchor(root: Element, hash: string): Element | null {
-  const slug = slugify(hash, new Set())
-  return [...root.querySelectorAll('[id]')].find((el) => el.id === hash || el.id === slug) ?? null
-}
-
 export interface DocsModalProps {
   projectName: string
   tasks: Task[]
@@ -88,7 +83,6 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
   const [mode, setModeState] = useState<TreeMode>(() => (stored(MODE_KEY) === 'recent' ? 'recent' : 'tree'))
   const [showToc, setShowToc] = useState(() => stored(TOC_KEY) !== '0')
   const [openDirs, setOpenDirs] = useState<Set<string>>(new Set())
-  const [toc, setToc] = useState<TocItem[]>([])
   const [spy, setSpy] = useState<{ active: string | null; progress: number }>({ active: null, progress: 0 })
   const [find, setFind] = useState<Find>({ open: false, query: '', index: 0 })
   const [findMatches, setFindMatches] = useState<TextMatch[]>([])
@@ -103,11 +97,14 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
   const pendingScroll = useRef<{ hash?: string; top: number } | null>(null)
   const dirsInited = useRef(false)
   const spyFrame = useRef(0)
+  const revealTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const current: Entry | null = hist.stack[hist.index] ?? null
   const currentGroup = groups?.find((g) => g.source === current?.source)
   const currentFile = currentGroup?.files.find((f) => f.path === current?.path)
   const total = (groups ?? []).reduce((n, g) => n + g.files.length, 0)
+  // Оглавление — из исходника: те же id, что у заголовков в <Markdown variant="doc">.
+  const toc = useMemo(() => (content === null ? [] : buildDocToc(content)), [content])
 
   const marks = useMemo(() => {
     const byId = new Map(columns.map((c) => [c.id, c]))
@@ -225,43 +222,43 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
 
   const updateSpy = useCallback((): void => {
     const body = bodyRef.current
-    const root = articleRef.current
-    if (!body || !root) return
+    if (!body) return
     const top = body.getBoundingClientRect().top
-    const heads = root.querySelectorAll('h2[id], h3[id]')
     // Вверху документа, до первого раздела, подсвечен первый.
-    let active: string | null = heads[0]?.id ?? null
-    for (const h of heads) {
-      if (h.getBoundingClientRect().top - top <= 48) active = h.id
+    let active: string | null = toc[0]?.id ?? null
+    for (const item of toc) {
+      const h = document.getElementById(item.id)
+      if (!h) continue
+      if (h.getBoundingClientRect().top - top <= 48) active = item.id
       else break
     }
     const max = body.scrollHeight - body.clientHeight
     const progress = max <= 0 ? 1 : Math.min(1, body.scrollTop / max)
     setSpy((s) => (s.active === active && Math.abs(s.progress - progress) < 0.005 ? s : { active, progress }))
-  }, [])
+  }, [toc])
 
   const onScroll = (): void => {
     cancelAnimationFrame(spyFrame.current)
     spyFrame.current = requestAnimationFrame(updateSpy)
   }
 
-  // Оглавление — по отрендеренному DOM: h2/h3 документа. Заголовкам без id даём id из текста.
+  // Размонтирование: отложенные кадр scroll-spy и прокрутка дерева не должны сработать после закрытия.
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(spyFrame.current)
+      clearTimeout(revealTimer.current)
+    },
+    []
+  )
+
+  // Документ отрендерен: прокрутка к якорю или на запомненное место, затем scroll-spy.
   useLayoutEffect(() => {
     const root = articleRef.current
-    if (!root) {
-      setToc([])
-      return
-    }
-    const used = new Set<string>()
-    const heads = [...root.querySelectorAll('h1, h2, h3')]
-    for (const h of heads) if (h.id) used.add(h.id)
-    for (const h of heads) if (!h.id) h.id = slugify(headingText(h), used)
-    setToc(heads.filter((h) => h.tagName !== 'H1').map((h) => ({ id: h.id, text: headingText(h), level: h.tagName === 'H2' ? 2 : 3 })))
     const body = bodyRef.current
     const ps = pendingScroll.current
     pendingScroll.current = null
-    if (ps && body) {
-      const anchor = ps.hash ? findAnchor(root, ps.hash) : null
+    if (root && ps && body) {
+      const anchor = ps.hash ? findDocHeading(root, ps.hash) : null
       if (anchor) anchor.scrollIntoView({ block: 'start' })
       else body.scrollTop = ps.top
     }
@@ -270,7 +267,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
 
   function jumpTo(hash: string): void {
     const root = articleRef.current
-    const el = root && findAnchor(root, hash)
+    const el = root && findDocHeading(root, hash)
     if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
     else setDocError({ title: `В документе нет раздела «${hash}»` })
   }
@@ -364,15 +361,11 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
     const a = (e.target as Element).closest('a, [data-doc-href]')
     if (!a || !current) return
     const docHref = a.getAttribute('data-doc-href')
-    const href = a.getAttribute('href')
     if (docHref !== null) {
       e.preventDefault()
       const path = resolveDocLink(current.path, docHref)
       if (path) void go({ source: current.source, path }, { hash: docLinkHash(docHref), link: docHref })
       else setDocError({ title: `Ссылка ведёт за пределы проекта: ${docHref}`, detail: STAY })
-    } else if (href?.startsWith('#')) {
-      e.preventDefault()
-      jumpTo(docLinkHash(href) ?? '')
     }
   }
 
@@ -391,7 +384,8 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
     setMode('tree')
     setQuery('')
     openAncestors({ source: 'project', path: `${dir}/x.md` }, dir)
-    setTimeout(() => {
+    clearTimeout(revealTimer.current)
+    revealTimer.current = setTimeout(() => {
       const prefixes = dirAncestors(`${dir}/x.md`).reverse()
       for (const d of prefixes) {
         const row = document.querySelector(`[data-dir-key="${CSS.escape(dirKey('project', d))}"]`)
@@ -506,7 +500,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
             )
           )}
           <article className="docs-article" ref={articleRef} onClick={onDocClick}>
-            <Markdown text={content} className="docs-markdown" />
+            <Markdown text={content} variant="doc" />
           </article>
         </div>
       </section>

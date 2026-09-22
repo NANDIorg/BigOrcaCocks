@@ -251,15 +251,6 @@ export function alsoIn(groups: DocGroup[], source: string, path: string): DocGro
   return groups.filter((g) => g.source !== source && g.files.some((f) => f.path === path))
 }
 
-/** id заголовка из текста: «Роли и колонки» → «роли-и-колонки»; повтор — «-2», «-3». */
-export function slugify(text: string, used: Set<string>): string {
-  const base = text.toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '') || 'раздел'
-  let slug = base
-  for (let i = 2; used.has(slug); i++) slug = `${base}-${i}`
-  used.add(slug)
-  return slug
-}
-
 /** Открытый (или открываемый) документ: источник (`project` или id задачи) и путь в нём. */
 export interface DocRef {
   source: string

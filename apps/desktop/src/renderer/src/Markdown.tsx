@@ -2,7 +2,7 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { marked, Marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { anchorId, assignHeadingIds, DOC_ID_PREFIX, type DocHeading } from './docToc'
+import { assignHeadingIds, DOC_ID_PREFIX, findDocHeading, type DocHeading } from './docToc'
 import './docs-markdown.css'
 
 /** Сейчас санитизируется документ, а не чат: только в документе `#якорь` становится переходом. */
@@ -80,8 +80,7 @@ function onDocClick(e: React.MouseEvent<HTMLDivElement>): void {
   const anchor = target.closest('[data-doc-anchor]')
   if (anchor) {
     e.preventDefault()
-    const id = anchorId(anchor.getAttribute('data-doc-anchor') ?? '')
-    const heading = [...e.currentTarget.querySelectorAll('[id]')].find((el) => el.id === id)
+    const heading = findDocHeading(e.currentTarget, anchor.getAttribute('data-doc-anchor') ?? '')
     heading?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     return
   }

@@ -32,6 +32,16 @@ export function anchorId(fragment: string): string {
   return DOC_ID_PREFIX + raw.toLowerCase()
 }
 
+/**
+ * Заголовок документа по якорю: `#Раздел`, `#%D1%80…` и `#раздел` из другого документа
+ * находят один и тот же элемент. Второй вариант — якорь, записанный текстом заголовка («#Роли и колонки»).
+ */
+export function findDocHeading(root: ParentNode, fragment: string): Element | null {
+  const id = anchorId(fragment)
+  const bySlug = DOC_ID_PREFIX + slugify(id.slice(DOC_ID_PREFIX.length))
+  return [...root.querySelectorAll('[id]')].find((el) => el.id === id || el.id === bySlug) ?? null
+}
+
 /** Текст заголовка без markdown-разметки: `**Важно** и \`код\`` → «Важно и код». */
 function plainText(tokens: Token[]): string {
   return tokens
