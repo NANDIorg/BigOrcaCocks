@@ -24,7 +24,7 @@ interface OpenTerminal {
   role: 'coordinator' | 'worker' | 'shell'
 }
 
-const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [] }
+const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [], runs: [] }
 
 /** Что открыто у проекта: вкладка и выбранный терминал. У каждого проекта своё. */
 interface ProjectView {

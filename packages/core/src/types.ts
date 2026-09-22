@@ -81,6 +81,19 @@ export const STATUS_TITLES: Record<string, string> = Object.fromEntries(
   DEFAULT_COLUMNS.map((c) => [c.id, c.title])
 )
 
+// ---------- прогоны ----------
+
+/** Прогон: один координатор со своим набором задач. В проекте их может быть несколько. */
+export interface Run {
+  id: string
+  objective: string
+  createdAt: number
+  /** Все задачи прогона дошли до kind=done (или прогон закрыт вручную). */
+  closedAt?: number
+  /** PTY координатора прогона. */
+  coordinatorPtyId?: string
+}
+
 // ---------- задачи ----------
 
 export interface Task {
@@ -90,6 +103,8 @@ export interface Task {
   /** Id колонки доски. */
   status: TaskStatus
   deps: string[]
+  /** Прогон, к которому относится задача; нет — задача создана из UI вне прогона. */
+  runId?: string
   /** Роль проекта: агент и модель берутся из неё; `agent` — снимок на момент создания/запуска. */
   roleId: string
   agent: AgentKind
@@ -138,8 +153,16 @@ export type EventType =
   | 'question'
   | 'escalation'
   | 'question_answered'
+  | 'run_done'
 
-export const EVENT_TYPES: EventType[] = ['task_ready', 'worker_done', 'question', 'escalation', 'question_answered']
+export const EVENT_TYPES: EventType[] = [
+  'task_ready',
+  'worker_done',
+  'question',
+  'escalation',
+  'question_answered',
+  'run_done'
+]
 
 export interface OrcaEvent {
   id: string
