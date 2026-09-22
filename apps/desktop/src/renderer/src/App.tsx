@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, type Task, type StoreSnapshot, type AgentInfo, type AgentKind } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, type Task, type StoreSnapshot, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
 import { PERMISSION_MODES, type Project, type PermissionMode } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
@@ -9,13 +9,16 @@ import { CoordinatorModal } from './CoordinatorModal'
 import { RolesEditor } from './RolesEditor'
 import { ColumnsEditor } from './ColumnsEditor'
 import { Icon } from './icons'
+import { AgentLogo } from './AgentLogo'
+
+type Tab = 'board' | 'terminals' | 'info'
 
 interface OpenTerminal {
   ptyId: string
   label: string
   taskId?: string
   projectId?: string
-  color: string
+  role: 'coordinator' | 'worker' | 'shell'
 }
 
 const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [] }
@@ -30,8 +33,9 @@ export function App(): React.JSX.Element {
   const [activePty, setActivePty] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [showCoord, setShowCoord] = useState(false)
-  const [tab, setTab] = useState<'board' | 'info'>('board')
-  const [termVisible, setTermVisible] = useState(true)
+  const [tab, setTab] = useState<Tab>('board')
+  /** PTY, которые уже завершились (pty:exit); терминал остаётся в списке, пока его не закроют. */
+  const [exited, setExited] = useState<Set<string>>(() => new Set())
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
 
@@ -64,16 +68,19 @@ export function App(): React.JSX.Element {
         return cur
       })
     })
+    // Терминал открыт (из UI или координатором через CLI). Вкладку не переключаем: при запуске из UI
+    // это делает сам обработчик кнопки (startTask / startCoordinator / openShell), а CLI-запуск не должен
+    // выдёргивать пользователя с доски. Активным становится только если ничего не выбрано.
     const offOpened = window.orca.worker.onOpened((t) => {
-      const color = t.role === 'coordinator' ? 'var(--accent)' : 'var(--col-progress)'
       setTerminals((prev) =>
         prev.some((x) => x.ptyId === t.ptyId)
           ? prev
-          : [...prev, { ptyId: t.ptyId, label: t.label, taskId: t.taskId, projectId: t.projectId, color }]
+          : [...prev, { ptyId: t.ptyId, label: t.label, taskId: t.taskId, projectId: t.projectId, role: t.role ?? 'worker' }]
       )
-      setActivePty(t.ptyId)
-      setTermVisible(true)
+      setActivePty((cur) => cur ?? t.ptyId)
     })
+    // Приложение само закрыло терминал воркера (задача → done, перезапуск): убираем его из списка.
+    const offClosed = window.orca.worker.onClosed(({ ptyId }) => dropTerminal(ptyId))
     const offFocus = window.orca.projects.onFocus(async (projectId) => {
       await window.orca.projects.setActive(projectId)
       await refreshProjects()
@@ -81,11 +88,22 @@ export function App(): React.JSX.Element {
     return () => {
       offBoard()
       offOpened()
+      offClosed()
       offFocus()
     }
   }, [])
 
-  const runningTaskIds = new Set(terminals.filter((t) => t.taskId).map((t) => t.taskId!))
+  // Состояние «жив/завершился» для точки в списке терминалов.
+  const ptyKey = terminals.map((t) => t.ptyId).join('\n')
+  useEffect(() => {
+    const offs = terminals.map((t) =>
+      window.orca.pty.onExit(t.ptyId, () => setExited((prev) => (prev.has(t.ptyId) ? prev : new Set(prev).add(t.ptyId))))
+    )
+    return () => offs.forEach((off) => off())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ptyKey])
+
+  const runningTaskIds = new Set(terminals.filter((t) => t.taskId && !exited.has(t.ptyId)).map((t) => t.taskId!))
 
   async function switchProject(p: Project): Promise<void> {
     await window.orca.projects.setActive(p.id)
@@ -103,25 +121,63 @@ export function App(): React.JSX.Element {
     await refreshProjects()
   }
 
-  async function openShell(): Promise<void> {
-    const ptyId = await window.orca.pty.spawn({ cols: 120, rows: 30 })
-    setTerminals((prev) => [...prev, { ptyId, label: 'терминал', projectId: active?.id, color: 'var(--muted)' }])
-    setActivePty(ptyId)
-    setTermVisible(true)
+  /** Показать вкладку «Терминалы» и, если задан, выбрать терминал. */
+  function showTerminal(ptyId?: string): void {
+    setTab('terminals')
+    if (ptyId) setActivePty(ptyId)
   }
 
+  /**
+   * Открыть терминал задачи: вкладка «Терминалы» + PTY активного dispatch'а
+   * (task.dispatchId → dispatch.ptyId). Нет открытого терминала — просто переключить вкладку.
+   * Board кнопки «Терминал» на карточке не имеет; функция для модалки задачи (следующая задача).
+   */
+  function openTerminalForTask(taskId: string): void {
+    const task = tasks.find((t) => t.id === taskId)
+    const dispatch = snap.dispatches.find((d) => d.id === task?.dispatchId)
+    const byDispatch = dispatch && terminals.find((t) => t.ptyId === dispatch.ptyId)
+    const byTask = terminals.find((t) => t.taskId === taskId)
+    showTerminal((byDispatch ?? byTask)?.ptyId)
+  }
+
+  async function openShell(): Promise<void> {
+    const ptyId = await window.orca.pty.spawn({ cols: 120, rows: 30 })
+    setTerminals((prev) => [...prev, { ptyId, label: 'терминал', projectId: active?.id, role: 'shell' }])
+    showTerminal(ptyId)
+  }
+
+  /** Запуск из UI (кнопка «Запустить»): в отличие от CLI-запуска, сразу показываем терминал. */
   async function startTask(task: Task): Promise<void> {
-    await window.orca.worker.start(task.id, 120, 30)
+    const res = await window.orca.worker.start(task.id, 120, 30)
     setSelected(task)
+    showTerminal(res.ptyId)
+  }
+
+  /**
+   * Убрать терминал из списка; если он был активным — выбрать соседний.
+   * Только функциональные апдейтеры: worker:closed может прийти пачкой (main закрывает воркеры циклом)
+   * до перерисовки, и обычное состояние/ref в обработчике было бы устаревшим. Повторный вызов
+   * с тем же ptyId — no-op.
+   */
+  function dropTerminal(ptyId: string): void {
+    setTerminals((prev) => {
+      const idx = prev.findIndex((t) => t.ptyId === ptyId)
+      if (idx < 0) return prev
+      const next = prev.filter((t) => t.ptyId !== ptyId)
+      setActivePty((a) => (a === ptyId ? (next[idx] ?? next[idx - 1])?.ptyId ?? null : a))
+      return next
+    })
+    setExited((prev) => {
+      if (!prev.has(ptyId)) return prev
+      const next = new Set(prev)
+      next.delete(ptyId)
+      return next
+    })
   }
 
   function closeTerminal(ptyId: string): void {
     window.orca.pty.kill(ptyId)
-    setTerminals((prev) => {
-      const next = prev.filter((t) => t.ptyId !== ptyId)
-      if (activePty === ptyId) setActivePty(next[next.length - 1]?.ptyId ?? null)
-      return next
-    })
+    dropTerminal(ptyId)
   }
 
   function selectTask(task: Task): void {
@@ -130,7 +186,19 @@ export function App(): React.JSX.Element {
     if (t) setActivePty(t.ptyId)
   }
 
-  const hasTerm = terminals.length > 0 && termVisible
+  /** Подпись терминала в списке: имя, роль и агент — по задаче из снимка или по роли координатора. */
+  function describeTerminal(t: OpenTerminal): { name: string; role: string; agent: string } {
+    const project = projects.find((p) => p.id === t.projectId)
+    const roles: Role[] = (project?.id === active?.id ? active?.roles : project?.roles) ?? DEFAULT_ROLES
+    if (t.role === 'coordinator') {
+      const role = roles.find((r) => r.id === 'coordinator')
+      return { name: 'координатор', role: role?.title ?? 'Координатор', agent: role?.agent ?? 'claude' }
+    }
+    if (t.role === 'shell') return { name: t.label, role: 'оболочка', agent: 'shell' }
+    const task = t.projectId === active?.id ? tasks.find((x) => x.id === t.taskId) : undefined
+    const role = task && roles.find((r) => r.id === task.roleId)
+    return { name: task?.title ?? t.label, role: role?.title ?? task?.roleId ?? 'воркер', agent: task?.agent ?? 'shell' }
+  }
 
   return (
     <div className="app">
@@ -139,7 +207,7 @@ export function App(): React.JSX.Element {
         <div style={{ height: 40 }} />
         <button className={`icon ${tab === 'board' ? 'active' : ''}`} title="Доска" onClick={() => setTab('board')}><Icon.board /></button>
         <button className="icon" title="Координатор" onClick={() => setShowCoord(true)}><Icon.users /></button>
-        <button className="icon" title="Терминал" onClick={openShell}><Icon.terminal /></button>
+        <button className={`icon ${tab === 'terminals' ? 'active' : ''}`} title="Терминалы" onClick={() => setTab('terminals')}><Icon.terminal /></button>
         <button className={`icon ${tab === 'info' ? 'active' : ''}`} title="О проекте" onClick={() => setTab('info')}><Icon.gear /></button>
         <div className="grow" />
         <div className="avatar">🐋</div>
@@ -170,16 +238,7 @@ export function App(): React.JSX.Element {
         <div className="main-head">
           <div className="row">
             <h1>{active?.name ?? 'orca-board'}</h1>
-            <button className="round-btn" title="Открыть новый терминал" onClick={openShell} disabled={!active}><Icon.plus /></button>
-            <button
-              className={`round-btn ${hasTerm ? 'on' : ''}`}
-              title={termVisible ? 'Скрыть панель терминалов' : 'Показать панель терминалов'}
-              onClick={() => setTermVisible((v) => !v)}
-              disabled={terminals.length === 0}
-            >
-              <Icon.terminal />
-              {terminals.length > 0 && <span className="badge">{terminals.length}</span>}
-            </button>
+            <button className="round-btn" title="Открыть новый терминал" onClick={openShell} disabled={!active}><Icon.terminal /></button>
             <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active}>
               <Icon.users /> Координатор
             </button>
@@ -189,12 +248,16 @@ export function App(): React.JSX.Element {
           </div>
           <div className="tabs">
             <button className={`tab ${tab === 'board' ? 'active' : ''}`} onClick={() => setTab('board')}>Канбан</button>
+            <button className={`tab ${tab === 'terminals' ? 'active' : ''}`} onClick={() => setTab('terminals')}>
+              Терминалы
+              {terminals.length > 0 && <span className="tab-badge">{terminals.length}</span>}
+            </button>
             <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>О проекте</button>
           </div>
         </div>
 
-        <div className={`content ${hasTerm ? '' : 'no-term'}`}>
-          {tab === 'board' ? (
+        <div className="content">
+          {tab === 'board' && (
             <Board
               columns={active?.columns ?? DEFAULT_COLUMNS}
               roles={active?.roles ?? DEFAULT_ROLES}
@@ -211,7 +274,8 @@ export function App(): React.JSX.Element {
               onAccept={(id) => window.orca.review.accept(id)}
               onReject={(id, fb) => window.orca.review.reject(id, fb)}
             />
-          ) : (
+          )}
+          {tab === 'info' && (
             <div className="info">
               <div className="agents-head">
                 <h3>Агенты</h3>
@@ -226,6 +290,7 @@ export function App(): React.JSX.Element {
                       disabled={!active || !a.installed}
                       onChange={(e) => void toggleAgent(a.id, e.target.checked)}
                     />
+                    <AgentLogo agent={a.id} size={20} />
                     <span>{a.title}</span>
                     {a.version && <span className="ver">{a.version}</span>}
                     {!a.installed && <span className="ver">не установлен</span>}
@@ -282,40 +347,51 @@ export function App(): React.JSX.Element {
             </div>
           )}
 
-          {terminals.length > 0 && (
-            <div className={`term-panel ${hasTerm ? '' : 'hidden'}`}>
-              <div className="term-tabs">
-                {terminals.map((t) => (
-                  <button
+          <div className={`term-page ${tab === 'terminals' ? '' : 'hidden'}`}>
+            <div className="term-list">
+              {terminals.length === 0 && <div className="empty">Нет открытых терминалов</div>}
+              {terminals.map((t) => {
+                const info = describeTerminal(t)
+                const alive = !exited.has(t.ptyId)
+                const project = projects.find((p) => p.id === t.projectId)
+                return (
+                  <div
                     key={t.ptyId}
-                    className={`term-tab ${t.ptyId === activePty ? 'active' : ''}`}
+                    className={`term-item ${t.ptyId === activePty ? 'active' : ''}`}
                     onClick={() => setActivePty(t.ptyId)}
-                    title={projects.find((p) => p.id === t.projectId)?.name}
+                    title={[info.name, info.role, project?.name].filter(Boolean).join(' · ')}
                   >
-                    <span className="dot" style={{ background: t.color }} />
-                    {t.label}
-                    <span
+                    <span className={`dot ${alive ? 'alive' : 'dead'}`} title={alive ? 'работает' : 'завершился'} />
+                    <AgentLogo agent={info.agent} size={16} />
+                    <span className="who">
+                      <span className="name">{info.name}</span>
+                      <span className="role">{info.role}</span>
+                    </span>
+                    <button
                       className="x"
+                      title="Закрыть терминал"
                       onClick={(e) => {
                         e.stopPropagation()
                         closeTerminal(t.ptyId)
                       }}
                     >
                       <Icon.close />
-                    </span>
-                  </button>
-                ))}
-                <div className="grow" />
-              </div>
-              <div className="term-body">
-                {terminals.map((t) => (
-                  <div key={t.ptyId} className={`term ${t.ptyId === activePty ? '' : 'hidden'}`}>
-                    <Terminal ptyId={t.ptyId} visible={t.ptyId === activePty} />
+                    </button>
                   </div>
-                ))}
-              </div>
+                )
+              })}
             </div>
-          )}
+            <div className="term-body">
+              {terminals.length === 0 && (
+                <div className="empty">Терминалы появятся при запуске задачи или координатора. Кнопка сверху открывает обычную оболочку.</div>
+              )}
+              {terminals.map((t) => (
+                <div key={t.ptyId} className={`term ${t.ptyId === activePty ? '' : 'hidden'}`}>
+                  <Terminal ptyId={t.ptyId} visible={tab === 'terminals' && t.ptyId === activePty} />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </main>
 
@@ -323,8 +399,9 @@ export function App(): React.JSX.Element {
         <CoordinatorModal
           onClose={() => setShowCoord(false)}
           onStart={async (objective) => {
-            await window.orca.coordinator.start(objective, 120, 30)
+            const ptyId = await window.orca.coordinator.start(objective, 120, 30)
             setShowCoord(false)
+            showTerminal(ptyId)
           }}
         />
       )}
