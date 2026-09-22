@@ -2,10 +2,10 @@ import type React from 'react'
 import { useState } from 'react'
 import {
   AGENT_TITLES,
-  type Task, type AgentKind, type Question, type Dispatch, type BoardColumn, type ColumnKind, type Role
+  type Task, type Question, type Dispatch, type BoardColumn, type ColumnKind, type Role
 } from '@orca-board/core'
 import { Icon } from './icons'
-import { ReviewBlock } from './ReviewBlock'
+import { AgentLogo } from './AgentLogo'
 
 /** Порядок карточек внутри колонок. */
 export type BoardSort = 'created' | 'done' | 'updated'
@@ -76,6 +76,8 @@ interface Props {
   onAnswer(questionId: string, answer: string): void
   onAccept(taskId: string): Promise<void>
   onReject(taskId: string, feedback: string): Promise<void>
+  /** Открыть карточку целиком (модалка задачи): клик по карточке и кнопка «Открыть». */
+  onOpenTask?: (task: Task) => void
 }
 
 /** Иконка заголовка по виду колонки; у пользовательских — нейтральная. */
@@ -89,49 +91,24 @@ const COLUMN_ICON: Record<ColumnKind, () => React.JSX.Element> = {
   custom: Icon.board
 }
 
-const AGENT_COLOR: Record<AgentKind, string> = {
-  claude: '#d97757',
-  codex: '#10a37f',
-  opencode: '#8b5cf6',
-  gemini: '#4285f4',
-  cursor: '#e5484d',
-  amp: '#f59e0b',
-  copilot: '#2ea043',
-  goose: '#0ea5e9',
-  shell: '#6b6f7c'
+/** «3 файла», «5 файлов», «21 файл». */
+function filesLabel(n: number): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return `${n} файл`
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} файла`
+  return `${n} файлов`
 }
 
-function agentInitial(agent: AgentKind): string {
-  return agent === 'shell' ? '$' : agent[0].toUpperCase()
-}
-
-function QuestionBlock({ q, onAnswer }: { q: Question; onAnswer(id: string, a: string): void }): React.JSX.Element {
-  const [text, setText] = useState('')
-  return (
-    <div className="question" onClick={(e) => e.stopPropagation()}>
-      <div className="q-text">{q.question}</div>
-      <div className="q-options">
-        {q.options.map((o) => (
-          <button key={o} className="btn-sm primary" onClick={() => onAnswer(q.id, o)}>{o}</button>
-        ))}
-      </div>
-      <div className="q-free">
-        <input
-          value={text}
-          placeholder="Свой ответ"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && text.trim()) onAnswer(q.id, text.trim())
-          }}
-        />
-        <button className="btn-sm" disabled={!text.trim()} onClick={() => onAnswer(q.id, text.trim())}>Ответить</button>
-      </div>
-    </div>
-  )
+/** Строка «роль · агент · модель» под заголовком карточки. */
+function subtitle(task: Task, role: Role | undefined): string {
+  const parts = [role?.title ?? task.roleId, AGENT_TITLES[task.agent]]
+  if (role?.model) parts.push(role.model)
+  return parts.join(' · ')
 }
 
 export function Board(props: Props): React.JSX.Element {
-  const { columns, roles, tasks, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onAnswer, onAccept, onReject } = props
+  const { columns, roles, tasks, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask } = props
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [sort, setSort] = useState<BoardSort>(readSort)
@@ -143,7 +120,14 @@ export function Board(props: Props): React.JSX.Element {
   // Все проверки статуса — по виду колонки, а не по её id: id у кастомных колонок произвольные.
   const kindById = new Map(columns.map((c) => [c.id, c.kind]))
   const kindOf = (status: string): ColumnKind | undefined => kindById.get(status)
-  const roleTitle = (task: Task): string => roles.find((r) => r.id === task.roleId)?.title ?? task.roleId
+  const roleOf = (task: Task): Role | undefined => roles.find((r) => r.id === task.roleId)
+  const open = (task: Task): void => {
+    onSelect(task)
+    onOpenTask?.(task)
+  }
+  const remove = (task: Task): void => {
+    if (window.confirm(`Удалить задачу «${task.title}»?`)) onRemove(task.id)
+  }
   const openQ = new Map<string, Question[]>()
   questions.filter((q) => !q.answeredAt).forEach((q) => openQ.set(q.taskId, [...(openQ.get(q.taskId) ?? []), q]))
   const lastDispatch = new Map<string, Dispatch>()
@@ -219,20 +203,39 @@ export function Board(props: Props): React.JSX.Element {
                         setDragging(task.id)
                       }}
                       onDragEnd={() => setDragging(null)}
-                      onClick={() => onSelect(task)}
+                      onClick={() => open(task)}
                     >
+                      <div className="card-tools" onClick={(e) => e.stopPropagation()}>
+                        {canStart && (
+                          <button
+                            type="button"
+                            className="card-tool"
+                            title="Запустить"
+                            aria-label="Запустить"
+                            onClick={() => onStart(task)}
+                          >
+                            <Icon.play />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="card-tool danger"
+                          title="Удалить"
+                          aria-label="Удалить"
+                          onClick={() => remove(task)}
+                        >
+                          <Icon.trash />
+                        </button>
+                      </div>
                       <div className="top">
-                        <div className="av" style={{ background: AGENT_COLOR[task.agent] }}>
-                          {agentInitial(task.agent)}
-                        </div>
+                        <AgentLogo agent={task.agent} size={28} />
                         <div className="who">
                           <div className="name" title={task.title}>{task.title}</div>
-                          <div className="role">{roleTitle(task)} · {AGENT_TITLES[task.agent]}</div>
+                          <div className="role">{subtitle(task, roleOf(task))}</div>
                         </div>
-                        <span className="grip"><Icon.grip /></span>
                       </div>
                       <div className="chips">
-                        {task.branch && <span className="chip mono">{task.branch}</span>}
+                        {task.branch && <span className="chip mono" title={task.branch}>{task.branch}</span>}
                         {task.deps.map((dep) => (
                           <span key={dep} className="chip" title={byId.get(dep)?.title}>
                             ← {byId.get(dep)?.title ?? dep}
@@ -248,38 +251,27 @@ export function Board(props: Props): React.JSX.Element {
                       ) : sort === 'updated' ? (
                         <div className="stamp">Обновлено: {formatStamp(task.updatedAt)}</div>
                       ) : null}
-                      {task.feedback && column.kind !== 'review' && <div className="summary">↩ {task.feedback}</div>}
-                      {column.kind === 'review' && (
-                        <ReviewBlock
-                          taskId={task.id}
-                          summary={d?.summary}
-                          onAccept={() => onAccept(task.id)}
-                          onReject={(fb) => onReject(task.id, fb)}
-                        />
+                      {task.feedback && column.kind !== 'review' && (
+                        <div className="card-feedback" title={task.feedback}>↩ {task.feedback}</div>
                       )}
-                      {qs.map((q) => <QuestionBlock key={q.id} q={q} onAnswer={onAnswer} />)}
-                      <div className="actions">
-                        {canStart && (
-                          <button
-                            className="btn-sm primary"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onStart(task)
-                            }}
-                          >
-                            <Icon.play /> Запустить
+                      {column.kind === 'review' && (
+                        <div className="card-brief review-brief">
+                          <span className="brief-text">
+                            {d?.files && d.files.length > 0 ? `Ждёт ревью: ${filesLabel(d.files.length)}` : 'Ждёт ревью'}
+                          </span>
+                          <button type="button" className="btn-sm" onClick={(e) => { e.stopPropagation(); open(task) }}>
+                            Открыть
                           </button>
-                        )}
-                        <button
-                          className="btn-sm danger"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onRemove(task.id)
-                          }}
-                        >
-                          Удалить
-                        </button>
-                      </div>
+                        </div>
+                      )}
+                      {qs.map((q) => (
+                        <div key={q.id} className="card-brief question-brief">
+                          <span className="brief-text" title={q.question}>{q.question}</span>
+                          <button type="button" className="btn-sm" onClick={(e) => { e.stopPropagation(); open(task) }}>
+                            Открыть
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )
                 })}

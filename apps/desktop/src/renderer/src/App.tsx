@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES, type Task, type StoreSnapshot, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
 import { PERMISSION_MODES, type Project, type PermissionMode } from '../../shared/ipc'
 import { Board } from './Board'
@@ -38,9 +38,6 @@ export function App(): React.JSX.Element {
   const [exited, setExited] = useState<Set<string>>(() => new Set())
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
-  /** Актуальный список терминалов для обработчиков, подписанных при монтировании (worker:closed). */
-  const terminalsRef = useRef<OpenTerminal[]>([])
-  terminalsRef.current = terminals
 
   async function refreshProjects(): Promise<void> {
     const res = await window.orca.projects.list()
@@ -156,14 +153,20 @@ export function App(): React.JSX.Element {
     showTerminal(res.ptyId)
   }
 
-  /** Убрать терминал из списка; если он был активным — выбрать соседний. */
+  /**
+   * Убрать терминал из списка; если он был активным — выбрать соседний.
+   * Только функциональные апдейтеры: worker:closed может прийти пачкой (main закрывает воркеры циклом)
+   * до перерисовки, и обычное состояние/ref в обработчике было бы устаревшим. Повторный вызов
+   * с тем же ptyId — no-op.
+   */
   function dropTerminal(ptyId: string): void {
-    const cur = terminalsRef.current
-    const idx = cur.findIndex((t) => t.ptyId === ptyId)
-    if (idx < 0) return
-    const next = cur.filter((t) => t.ptyId !== ptyId)
-    setTerminals(next)
-    setActivePty((a) => (a === ptyId ? (next[idx] ?? next[idx - 1])?.ptyId ?? null : a))
+    setTerminals((prev) => {
+      const idx = prev.findIndex((t) => t.ptyId === ptyId)
+      if (idx < 0) return prev
+      const next = prev.filter((t) => t.ptyId !== ptyId)
+      setActivePty((a) => (a === ptyId ? (next[idx] ?? next[idx - 1])?.ptyId ?? null : a))
+      return next
+    })
     setExited((prev) => {
       if (!prev.has(ptyId)) return prev
       const next = new Set(prev)

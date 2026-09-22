@@ -104,7 +104,9 @@ button { font: inherit; cursor: pointer; }
 .info code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 
 /* ---------- board ---------- */
-.board { display: flex; gap: 20px; padding: 28px 32px; overflow-x: auto; min-height: 0; }
+/* Цепочка высоты: .content (grid, min-height 0) → .board-wrap → .board → .column → .col-body.
+   Каждое звено с min-height: 0, чтобы колонки упирались в окно, а скроллилось только .col-body. */
+.board { display: flex; align-items: stretch; gap: 20px; padding: 28px 32px; overflow-x: auto; overflow-y: hidden; min-height: 0; flex: 1; }
 .column { flex: 0 0 300px; width: 300px; max-width: 300px; min-width: 0; display: flex; flex-direction: column; min-height: 0; gap: 16px; }
 .col-head {
   display: flex; height: 56px; border-radius: 12px; overflow: hidden; color: #fff; font-weight: 600; font-size: 16px;
@@ -112,9 +114,11 @@ button { font: inherit; cursor: pointer; }
 .col-head .label { flex: 1; display: flex; align-items: center; gap: 12px; padding: 0 18px; }
 .col-head .count { width: 64px; display: grid; place-items: center; font-weight: 500; font-size: 15px; }
 .col-body {
-  flex: 1; min-height: 120px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  flex: 1 1 0; min-height: 120px; overflow-y: auto; overflow-x: hidden; padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
   background: var(--side); border-radius: var(--radius);
 }
+.col-body > * { flex-shrink: 0; }
 .column.drag-over .col-body { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .placeholder {
   height: 110px; border-radius: 12px;
@@ -123,29 +127,57 @@ button { font: inherit; cursor: pointer; }
 
 /* ---------- card ---------- */
 .card {
-  min-width: 0; overflow: hidden;
-  background: var(--card); border-radius: 12px; padding: 18px; cursor: grab; user-select: none;
+  position: relative; min-width: 0; max-width: 100%; flex-shrink: 0;
+  background: var(--card); border-radius: 12px; padding: 14px 16px; cursor: grab; user-select: none;
+  overflow-wrap: anywhere; word-break: break-word;
   transition: background .12s, transform .12s;
 }
 .card:hover { background: var(--card-hover); }
 .card.selected { box-shadow: 0 0 0 2px var(--accent) inset; }
 .card:active { cursor: grabbing; }
-.card .top { display: flex; gap: 14px; align-items: center; }
-.card .av {
-  width: 52px; height: 52px; border-radius: 50%; flex: 0 0 52px;
-  display: grid; place-items: center; font-weight: 700; font-size: 18px; color: #fff;
-}
+.card .top { display: flex; gap: 12px; align-items: flex-start; padding-right: 52px; }
 .card .who { min-width: 0; flex: 1; }
-.card .name { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card .role { color: var(--muted); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card .grip { color: var(--muted); }
-.card .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.chip {
-  border: 1px solid var(--chip); color: #c9ccd6; border-radius: 999px; padding: 3px 12px; font-size: 13px;
-  white-space: nowrap;
+.card .name {
+  font-size: 15px; font-weight: 600; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.chip.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.card .role { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* кнопки «Запустить»/«Удалить»: правый верхний угол, видны при наведении, фокусе и на touch */
+.card .card-tools {
+  position: absolute; top: 10px; right: 10px; display: flex; gap: 4px;
+  opacity: 0; transition: opacity .12s;
+}
+.card:hover .card-tools, .card:focus-within .card-tools, .card.selected .card-tools { opacity: 1; }
+@media (hover: none) { .card .card-tools { opacity: 1; } }
+.card-tool {
+  width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--chip);
+  background: var(--card); color: var(--muted); display: grid; place-items: center; padding: 0;
+}
+.card-tool svg { width: 14px; height: 14px; }
+.card-tool:hover { color: var(--text); border-color: var(--text); }
+.card-tool.danger:hover { color: #ef6b6b; border-color: #ef6b6b; }
+.card .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; min-width: 0; }
+.card .chips:empty { display: none; }
+.chip {
+  border: 1px solid var(--chip); color: #c9ccd6; border-radius: 999px; padding: 2px 10px; font-size: 12px;
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.chip.mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
 .card .actions { display: flex; gap: 8px; margin-top: 14px; }
+.card .stamp { margin-top: 8px; color: var(--muted); font-size: 12px; }
+.card .card-feedback {
+  margin-top: 8px; color: var(--muted); font-size: 12px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* краткие блоки вопроса и ревью: одна строка + «Открыть» (полная форма — в модалке задачи) */
+.card .card-brief {
+  margin-top: 10px; padding: 8px 10px; border-radius: 10px; display: flex; align-items: center; gap: 8px;
+  cursor: default; min-width: 0;
+}
+.card .card-brief .brief-text { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .card-brief .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; flex-shrink: 0; }
+.card .question-brief { background: rgba(232,176,74,.08); border: 1px solid rgba(232,176,74,.35); }
+.card .review-brief { background: rgba(120,140,250,.08); border: 1px solid rgba(120,140,250,.35); }
 .btn-sm {
   height: 32px; padding: 0 14px; border-radius: 16px; border: 1px solid var(--chip);
   background: transparent; color: var(--text); font-size: 13px; font-weight: 500;
@@ -235,7 +267,7 @@ button:disabled { opacity: .45; cursor: default; }
 .editor-hint { font-size: 12px; margin: 10px 0 0; }
 
 /* Сортировка доски */
-.board-wrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.board-wrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 .board-wrap .board { flex: 1; padding-top: 12px; }
 .board-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 32px 0; }
 .board-sort-label { color: var(--muted); font-size: 13px; }
@@ -246,7 +278,6 @@ button:disabled { opacity: .45; cursor: default; }
 .segmented .seg + .seg { border-left: 1px solid var(--chip); }
 .segmented .seg:hover { color: var(--text); }
 .segmented .seg.active { background: var(--accent); color: #fff; }
-.card .stamp { margin-top: 10px; color: var(--muted); font-size: 12px; }
 
 /* ---------- вкладка «Терминалы» ---------- */
 .tab { display: inline-flex; align-items: center; gap: 8px; }
