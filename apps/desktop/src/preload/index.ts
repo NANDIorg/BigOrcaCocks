@@ -18,6 +18,8 @@ const api: OrcaApi = {
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setPermissionMode: (id, mode) => ipcRenderer.invoke('projects:setPermissionMode', id, mode),
     setEnabledAgents: (id, agents) => ipcRenderer.invoke('projects:setEnabledAgents', id, agents),
+    setRoles: (id, roles) => ipcRenderer.invoke('projects:setRoles', id, roles),
+    setColumns: (id, columns) => ipcRenderer.invoke('projects:setColumns', id, columns),
     onFocus: (cb) => on('projects:focus', cb)
   },
   agents: {

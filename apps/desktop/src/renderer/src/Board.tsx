@@ -1,20 +1,25 @@
 import type React from 'react'
 import { useState } from 'react'
 import {
-  TASK_STATUSES, STATUS_TITLES, AGENT_TITLES,
-  type Task, type TaskStatus, type AgentKind, type Question, type Dispatch
+  AGENT_TITLES,
+  type Task, type AgentKind, type Question, type Dispatch, type BoardColumn, type ColumnKind, type Role
 } from '@orca-board/core'
 import { Icon } from './icons'
 import { ReviewBlock } from './ReviewBlock'
 
 interface Props {
+  /** Колонки доски в порядке показа; статус задачи — id колонки. */
+  columns: BoardColumn[]
+  /** Роли проекта — для подписи на карточке. */
+  roles: Role[]
   tasks: Task[]
   questions: Question[]
   dispatches: Dispatch[]
   selectedId?: string
   runningTaskIds: Set<string>
   onSelect(task: Task): void
-  onMove(id: string, status: TaskStatus): void
+  /** status — id колонки. */
+  onMove(id: string, status: string): void
   onStart(task: Task): void
   onRemove(id: string): void
   onAnswer(questionId: string, answer: string): void
@@ -22,13 +27,15 @@ interface Props {
   onReject(taskId: string, feedback: string): Promise<void>
 }
 
-const COLUMN_STYLE: Record<TaskStatus, { color: string; icon: () => React.JSX.Element }> = {
-  backlog: { color: 'var(--col-backlog)', icon: Icon.layers },
-  ready: { color: 'var(--col-ready)', icon: Icon.star },
-  in_progress: { color: 'var(--col-progress)', icon: Icon.spinner },
-  needs_input: { color: 'var(--col-input)', icon: Icon.question },
-  review: { color: 'var(--col-review)', icon: Icon.eye },
-  done: { color: 'var(--col-done)', icon: Icon.done }
+/** Иконка заголовка по виду колонки; у пользовательских — нейтральная. */
+const COLUMN_ICON: Record<ColumnKind, () => React.JSX.Element> = {
+  backlog: Icon.layers,
+  ready: Icon.star,
+  in_progress: Icon.spinner,
+  needs_input: Icon.question,
+  review: Icon.eye,
+  done: Icon.done,
+  custom: Icon.board
 }
 
 const AGENT_COLOR: Record<AgentKind, string> = {
@@ -73,10 +80,14 @@ function QuestionBlock({ q, onAnswer }: { q: Question; onAnswer(id: string, a: s
 }
 
 export function Board(props: Props): React.JSX.Element {
-  const { tasks, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onAnswer, onAccept, onReject } = props
-  const [dragOver, setDragOver] = useState<TaskStatus | null>(null)
+  const { columns, roles, tasks, questions, dispatches, selectedId, runningTaskIds, onSelect, onMove, onStart, onRemove, onAnswer, onAccept, onReject } = props
+  const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const byId = new Map(tasks.map((t) => [t.id, t]))
+  // Все проверки статуса — по виду колонки, а не по её id: id у кастомных колонок произвольные.
+  const kindById = new Map(columns.map((c) => [c.id, c.kind]))
+  const kindOf = (status: string): ColumnKind | undefined => kindById.get(status)
+  const roleTitle = (task: Task): string => roles.find((r) => r.id === task.roleId)?.title ?? task.roleId
   const openQ = new Map<string, Question[]>()
   questions.filter((q) => !q.answeredAt).forEach((q) => openQ.set(q.taskId, [...(openQ.get(q.taskId) ?? []), q]))
   const lastDispatch = new Map<string, Dispatch>()
@@ -84,10 +95,10 @@ export function Board(props: Props): React.JSX.Element {
 
   return (
     <div className="board">
-      {TASK_STATUSES.map((status) => {
+      {columns.map((column) => {
+        const status = column.id
         const items = tasks.filter((t) => t.status === status)
-        const style = COLUMN_STYLE[status]
-        const ColIcon = style.icon
+        const ColIcon = COLUMN_ICON[column.kind]
         return (
           <div
             key={status}
@@ -105,10 +116,10 @@ export function Board(props: Props): React.JSX.Element {
               setDragging(null)
             }}
           >
-            <div className="col-head" style={{ background: style.color }}>
+            <div className="col-head" style={{ background: column.color }}>
               <div className="label">
                 <ColIcon />
-                {STATUS_TITLES[status]}
+                {column.title}
               </div>
               <div className="count" style={{ background: 'rgba(0,0,0,.25)' }}>
                 {items.length}
@@ -122,8 +133,9 @@ export function Board(props: Props): React.JSX.Element {
               {items.map((task) => {
                 const qs = openQ.get(task.id) ?? []
                 const d = lastDispatch.get(task.id)
+                const kind = kindOf(task.status)
                 const canStart =
-                  (task.status === 'ready' || task.status === 'backlog' || d?.outcome === 'unknown' || d?.outcome === 'failed') &&
+                  (kind === 'ready' || kind === 'backlog' || d?.outcome === 'unknown' || d?.outcome === 'failed') &&
                   !runningTaskIds.has(task.id)
                 return (
                   <div
@@ -143,7 +155,7 @@ export function Board(props: Props): React.JSX.Element {
                       </div>
                       <div className="who">
                         <div className="name" title={task.title}>{task.title}</div>
-                        <div className="role">{AGENT_TITLES[task.agent]}</div>
+                        <div className="role">{roleTitle(task)} · {AGENT_TITLES[task.agent]}</div>
                       </div>
                       <span className="grip"><Icon.grip /></span>
                     </div>
@@ -159,8 +171,8 @@ export function Board(props: Props): React.JSX.Element {
                       {d?.outcome === 'failed' && <span className="chip warn">упал</span>}
                       {d?.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
                     </div>
-                    {task.feedback && status !== 'review' && <div className="summary">↩ {task.feedback}</div>}
-                    {status === 'review' && (
+                    {task.feedback && column.kind !== 'review' && <div className="summary">↩ {task.feedback}</div>}
+                    {column.kind === 'review' && (
                       <ReviewBlock
                         taskId={task.id}
                         summary={d?.summary}

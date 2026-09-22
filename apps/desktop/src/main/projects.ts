@@ -2,7 +2,10 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { TaskStore, isAgentKind, type OrcaEvent, type AgentKind } from '@orca-board/core'
+import {
+  TaskStore, isAgentKind, DEFAULT_ROLES, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
+  type OrcaEvent, type AgentKind, type Role, type BoardColumn
+} from '@orca-board/core'
 import { jsonPersistence } from './persistence'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -15,6 +18,10 @@ export interface Project {
   permissionMode?: PermissionMode
   /** Включённые агенты. undefined — все установленные. */
   enabledAgents?: AgentKind[]
+  /** Роли проекта. undefined — DEFAULT_ROLES. */
+  roles?: Role[]
+  /** Колонки доски в порядке показа. undefined — DEFAULT_COLUMNS. */
+  columns?: BoardColumn[]
 }
 
 interface ProjectsFile {
@@ -111,6 +118,44 @@ export class ProjectManager {
     return p
   }
 
+  /** Роли проекта; не заданы — дефолтные. */
+  roles(id: string): Role[] {
+    return this.get(id)?.roles ?? DEFAULT_ROLES
+  }
+
+  /** Колонки доски в порядке показа; не заданы — дефолтные. */
+  columns(id: string): BoardColumn[] {
+    return this.get(id)?.columns ?? DEFAULT_COLUMNS
+  }
+
+  setRoles(id: string, roles: Role[]): Project {
+    const p = this.get(id)
+    if (!p) throw new Error(`project not found: ${id}`)
+    p.roles = validateRoles(roles)
+    this.save()
+    return p
+  }
+
+  /**
+   * Заменить набор колонок. Задачи из удалённых колонок переезжают в backlog —
+   * так на доске не остаётся задач со статусом, которого нет.
+   */
+  setColumns(id: string, columns: BoardColumn[]): Project {
+    const p = this.get(id)
+    if (!p) throw new Error(`project not found: ${id}`)
+    const next = validateColumns(columns)
+    const store = this.store(id)
+    // Сначала применяем новый набор: store читает колонки через this.columns(id),
+    // и перенос задач должен считать doneAt/ready уже по новым колонкам.
+    p.columns = next
+    this.save()
+    const backlogId = next.find((c) => c.kind === 'backlog')!.id
+    const keep = new Set(next.map((c) => c.id))
+    const orphaned = new Set(store.listTasks().map((t) => t.status).filter((s) => !keep.has(s)))
+    for (const oldId of orphaned) store.reassignColumn(oldId, backlogId)
+    return p
+  }
+
   remove(id: string): void {
     this.data.projects = this.data.projects.filter((p) => p.id !== id)
     if (this.data.activeId === id) this.data.activeId = this.data.projects[0]?.id ?? null
@@ -122,7 +167,7 @@ export class ProjectManager {
     if (!s) {
       const project = this.get(id)
       if (!project) throw new Error(`project not found: ${id}`)
-      const created = new TaskStore(jsonPersistence(join(this.userData, 'boards', `${id}.json`)))
+      const created = new TaskStore(jsonPersistence(join(this.userData, 'boards', `${id}.json`)), () => this.columns(id))
       this.seenEvents.set(id, created.listEvents().length)
       created.subscribe(() => {
         this.listeners.forEach((fn) => fn(id, created))
@@ -159,4 +204,51 @@ export class ProjectManager {
     this.eventListeners.add(fn)
     return () => this.eventListeners.delete(fn)
   }
+}
+
+function nonEmpty(v: unknown): v is string {
+  return typeof v === 'string' && v.trim() !== ''
+}
+
+/** Роли: непустые уникальные id, непустые названия, известный агент, модель — строка или отсутствует. */
+function validateRoles(roles: Role[]): Role[] {
+  if (!Array.isArray(roles) || roles.length === 0) throw new Error('нужна хотя бы одна роль')
+  const seen = new Set<string>()
+  return roles.map((r, i) => {
+    if (!nonEmpty(r.id)) throw new Error(`роль №${i + 1}: пустой id`)
+    if (seen.has(r.id)) throw new Error(`роль «${r.id}» указана дважды`)
+    seen.add(r.id)
+    if (!nonEmpty(r.title)) throw new Error(`роль «${r.id}»: пустое название`)
+    if (!isAgentKind(r.agent)) throw new Error(`роль «${r.id}»: неизвестный агент ${String(r.agent)}`)
+    if (r.model !== undefined && typeof r.model !== 'string') throw new Error(`роль «${r.id}»: модель должна быть строкой`)
+    const model = r.model?.trim()
+    return { id: r.id, title: r.title.trim(), agent: r.agent, ...(model ? { model } : {}) }
+  })
+}
+
+/**
+ * Колонки: непустые уникальные id и названия, каждый системный kind ровно один раз,
+ * остальные — custom. Порядок массива = порядок на доске.
+ */
+function validateColumns(columns: BoardColumn[]): BoardColumn[] {
+  if (!Array.isArray(columns) || columns.length === 0) throw new Error('нужна хотя бы одна колонка')
+  const ids = new Set<string>()
+  const kinds = new Map<string, number>()
+  const result = columns.map((c, i) => {
+    if (!nonEmpty(c.id)) throw new Error(`колонка №${i + 1}: пустой id`)
+    if (ids.has(c.id)) throw new Error(`колонка «${c.id}» указана дважды`)
+    ids.add(c.id)
+    if (!nonEmpty(c.title)) throw new Error(`колонка «${c.id}»: пустое название`)
+    const system = (SYSTEM_COLUMN_KINDS as string[]).includes(c.kind)
+    if (!system && c.kind !== 'custom') throw new Error(`колонка «${c.id}»: неизвестный вид ${String(c.kind)}`)
+    if (system) kinds.set(c.kind, (kinds.get(c.kind) ?? 0) + 1)
+    const color = nonEmpty(c.color) ? c.color.trim() : COLUMN_COLORS[0].value
+    return { id: c.id, title: c.title.trim(), color, kind: c.kind }
+  })
+  for (const kind of SYSTEM_COLUMN_KINDS) {
+    const n = kinds.get(kind) ?? 0
+    if (n === 0) throw new Error(`нет системной колонки «${kind}» — её нельзя удалить`)
+    if (n > 1) throw new Error(`системная колонка «${kind}» должна быть одна, а их ${n}`)
+  }
+  return result
 }

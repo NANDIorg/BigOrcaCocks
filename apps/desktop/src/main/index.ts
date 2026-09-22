@@ -1,13 +1,13 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { STATUS_TITLES, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo } from '@orca-board/core'
+import { type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, isAlive } from './pty'
-import { startWorker, startCoordinator, workerPath } from './worker'
+import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview } from './review'
 import { startSocketServer } from './socket'
 import { ProjectManager, type PermissionMode } from './projects'
-import { agentInfos, assertAgentUsable, pickAgent } from './agents'
+import { agentInfos, assertAgentUsable, pickRole } from './agents'
 import type { PtySpawnOptions } from '../shared/ipc'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
@@ -43,8 +43,13 @@ function createWindow(): void {
   }
 }
 
-function ctx(projectId: string): { socketPath: string; projectId: string; permissionMode: PermissionMode } {
-  return { socketPath: SOCKET_PATH, projectId, permissionMode: projects.get(projectId)?.permissionMode ?? 'auto' }
+function ctx(projectId: string): WorkerEnvContext {
+  return {
+    socketPath: SOCKET_PATH,
+    projectId,
+    permissionMode: projects.get(projectId)?.permissionMode ?? 'auto',
+    roles: projects.roles(projectId)
+  }
 }
 
 /** Агенты с учётом настроек проекта; refresh — пересканировать PATH. */
@@ -61,9 +66,13 @@ function resolveProject(projectId?: string): { id: string; root: string; store: 
 function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number): ReturnType<typeof startWorker> {
   if (!win) throw new Error('no window')
   const p = resolveProject(projectId)
-  // Агент задачи могли выключить в проекте после её создания.
+  // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
   const task0 = p.store.getTask(taskId)
-  if (task0) assertAgentUsable(projectAgents(p.id), task0.agent)
+  if (task0) {
+    const role = projects.roles(p.id).find((r) => r.id === task0.roleId)
+    if (!role) throw new Error(`роль ${task0.roleId} не найдена в проекте`)
+    assertAgentUsable(projectAgents(p.id), role.agent)
+  }
   const res = startWorker(win, p.store, p.root, ctx(p.id), taskId, cols, rows)
   const task = p.store.getTask(taskId)
   win.webContents.send('worker:opened', { ptyId: res.ptyId, taskId, projectId: p.id, label: task?.title ?? taskId, role: 'worker' })
@@ -104,7 +113,8 @@ function notify(projectId: string, events: OrcaEvent[]): void {
     if (e.type === 'escalation') body = `Эскалация: ${String(e.payload.reason ?? '')}`
     if (e.type === 'worker_done') body = `Готово к ревью${e.payload.summary ? `: ${String(e.payload.summary)}` : ''}`
     if (!body) continue
-    const n = new Notification({ title, body: body.slice(0, 200), subtitle: task ? STATUS_TITLES[task.status] : undefined })
+    const column = task ? projects.columns(projectId).find((c) => c.id === task.status) : undefined
+    const n = new Notification({ title, body: body.slice(0, 200), subtitle: column?.title })
     n.on('click', () => {
       if (!win) return
       if (win.isMinimized()) win.restore()
@@ -122,6 +132,8 @@ function registerIpc(): void {
   ipcMain.handle('projects:remove', (_e, id: string) => projects.remove(id))
   ipcMain.handle('projects:setPermissionMode', (_e, id: string, mode: PermissionMode) => projects.setPermissionMode(id, mode))
   ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
+  ipcMain.handle('projects:setRoles', (_e, id: string, roles: Role[]) => projects.setRoles(id, roles))
+  ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   ipcMain.handle('projects:add', async () => {
     if (!win) throw new Error('no window')
@@ -133,11 +145,12 @@ function registerIpc(): void {
   ipcMain.handle('board:get', () =>
     projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [] }
   )
-  ipcMain.handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; agent?: AgentKind }) => {
+  ipcMain.handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; roleId?: string }) => {
     const p = resolveProject()
-    return p.store.createTask({ ...input, agent: pickAgent(projectAgents(p.id), input.agent) })
+    const role = pickRole(projects.roles(p.id), projectAgents(p.id), input.roleId)
+    return p.store.createTask({ ...input, roleId: role.id, agent: role.agent })
   })
-  ipcMain.handle('tasks:move', (_e, id: string, status) => projects.activeStore().moveTask(id, status))
+  ipcMain.handle('tasks:move', (_e, id: string, status: string) => projects.activeStore().moveTask(id, status))
   ipcMain.handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
   ipcMain.handle('questions:answer', (_e, id: string, answer: string) => projects.activeStore().answer(id, answer))
 
@@ -200,7 +213,9 @@ app.whenReady().then(() => {
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId) => acceptReview(p.store, p.root, taskId),
         startCoordinator: (objective) => runCoordinator(objective, p.id),
-        agents: () => projectAgents(p.id)
+        agents: () => projectAgents(p.id),
+        roles: () => projects.roles(p.id),
+        columns: () => projects.columns(p.id)
       }
     }
   })
