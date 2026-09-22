@@ -225,3 +225,10 @@ textarea { min-height: 96px; resize: vertical; }
 .btn-primary.ghost { background: transparent; border: 1px solid var(--chip); color: var(--text); }
 .btn-primary.ghost:hover { border-color: var(--text); background: transparent; }
 button:disabled { opacity: .45; cursor: default; }
+
+/* Вкладка «О проекте»: список агентов */
+.agents-head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.agents-head h3 { margin: 0; color: var(--text); }
+.agent-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; color: var(--text); font-size: 14px; }
+.agent-row.off { color: var(--muted); }
+.agent-row .ver { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }

@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { Task, StoreSnapshot } from '@orca-board/core'
+import type { Task, StoreSnapshot, AgentInfo, AgentKind } from '@orca-board/core'
 import { PERMISSION_MODES, type Project, type PermissionMode } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
@@ -29,6 +29,7 @@ export function App(): React.JSX.Element {
   const [showNew, setShowNew] = useState(false)
   const [showCoord, setShowCoord] = useState(false)
   const [tab, setTab] = useState<'board' | 'info'>('board')
+  const [agents, setAgents] = useState<AgentInfo[]>([])
   const tasks = snap.tasks
 
   async function refreshProjects(): Promise<void> {
@@ -36,6 +37,19 @@ export function App(): React.JSX.Element {
     setProjects(res.projects)
     setActive(res.active)
     setSnap(res.active ? await window.orca.board.get() : EMPTY)
+    await refreshAgents()
+  }
+
+  /** Список агентов (установлен/включён в активном проекте); refresh — заново просканировать PATH. */
+  async function refreshAgents(refresh = false): Promise<void> {
+    setAgents(await window.orca.agents.list(refresh))
+  }
+
+  async function toggleAgent(id: AgentKind, enabled: boolean): Promise<void> {
+    if (!active) return
+    const next = agents.filter((a) => (a.id === id ? enabled : a.enabled)).map((a) => a.id)
+    await window.orca.projects.setEnabledAgents(active.id, next)
+    await refreshProjects()
   }
 
   useEffect(() => {
@@ -183,6 +197,29 @@ export function App(): React.JSX.Element {
             />
           ) : (
             <div style={{ padding: '28px 32px', color: 'var(--muted)', maxWidth: 720 }}>
+              <div className="agents-head">
+                <h3>Агенты</h3>
+                <button className="btn-text" onClick={() => void refreshAgents(true)}>Обновить</button>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                {agents.map((a) => (
+                  <label key={a.id} className={`agent-row ${a.installed ? '' : 'off'}`}>
+                    <input
+                      type="checkbox"
+                      checked={a.enabled}
+                      disabled={!active || !a.installed}
+                      onChange={(e) => void toggleAgent(a.id, e.target.checked)}
+                    />
+                    <span>{a.title}</span>
+                    {a.version && <span className="ver">{a.version}</span>}
+                    {!a.installed && <span className="ver">не установлен</span>}
+                  </label>
+                ))}
+              </div>
+              <p style={{ fontSize: 12, margin: '0 0 24px' }}>
+                Выключенные агенты нельзя выбрать в новой задаче; координатор их тоже не предложит.
+                Установленные агенты определяются по PATH.
+              </p>
               <h3 style={{ color: 'var(--text)', margin: '0 0 12px' }}>Разрешения агентов</h3>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24 }}>
                 Как Claude Code (координатор и воркеры) обращается с подтверждениями
@@ -259,6 +296,7 @@ export function App(): React.JSX.Element {
       {showNew && active && (
         <NewTaskModal
           tasks={tasks}
+          agents={agents}
           onClose={() => setShowNew(false)}
           onCreate={async (input) => {
             await window.orca.tasks.create(input)

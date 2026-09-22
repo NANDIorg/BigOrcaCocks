@@ -1,17 +1,24 @@
 import type React from 'react'
 import { useState } from 'react'
-import { AGENT_TITLES, type AgentKind, type Task } from '@orca-board/core'
+import type { AgentInfo, AgentKind, Task } from '@orca-board/core'
 
 interface Props {
   tasks: Task[]
+  /** Все агенты проекта; в выбор попадают только включённые. */
+  agents: AgentInfo[]
   onClose(): void
   onCreate(input: { title: string; spec: string; deps: string[]; agent: AgentKind }): void
 }
 
-export function NewTaskModal({ tasks, onClose, onCreate }: Props): React.JSX.Element {
+export function NewTaskModal({ tasks, agents, onClose, onCreate }: Props): React.JSX.Element {
+  const enabled = agents.filter((a) => a.enabled)
+  const noAgents = enabled.length === 0
   const [title, setTitle] = useState('')
   const [spec, setSpec] = useState('')
-  const [agent, setAgent] = useState<AgentKind>('claude')
+  // По умолчанию Claude Code, если он включён, иначе первый включённый агент.
+  const [agent, setAgent] = useState<AgentKind>(
+    () => enabled.find((a) => a.id === 'claude')?.id ?? enabled[0]?.id ?? 'claude'
+  )
   const [deps, setDeps] = useState<string[]>([])
 
   return (
@@ -28,11 +35,12 @@ export function NewTaskModal({ tasks, onClose, onCreate }: Props): React.JSX.Ele
         </label>
         <label>
           Агент
-          <select value={agent} onChange={(e) => setAgent(e.target.value as AgentKind)}>
-            {(Object.keys(AGENT_TITLES) as AgentKind[]).map((k) => (
-              <option key={k} value={k}>{AGENT_TITLES[k]}</option>
+          <select value={agent} disabled={noAgents} onChange={(e) => setAgent(e.target.value as AgentKind)}>
+            {enabled.map((a) => (
+              <option key={a.id} value={a.id}>{a.title}</option>
             ))}
           </select>
+          {noAgents && <span>Нет включённых агентов — включите во вкладке „О проекте“</span>}
         </label>
         <label>
           Зависит от
@@ -50,7 +58,7 @@ export function NewTaskModal({ tasks, onClose, onCreate }: Props): React.JSX.Ele
           <button className="btn-text" onClick={onClose}>Отмена</button>
           <button
             className="btn-primary"
-            disabled={!title.trim()}
+            disabled={!title.trim() || noAgents}
             onClick={() => onCreate({ title: title.trim(), spec, deps, agent })}
           >
             Создать
