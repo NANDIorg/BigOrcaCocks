@@ -1,11 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTemplate, isBuiltinModelEdit, type AgentInfo, type ProjectTemplate } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTemplate, isBuiltinExecutorEdit, type AgentInfo, type ProjectTemplate, type Role } from '@orca-board/core'
 import type { OrcaApi, Project, TemplatesState } from '../../shared/ipc'
 import {
-  BUILTIN_MODELS_STALE_MESSAGE, TEMPLATES_STALE_MESSAGE, deleteConfirmText, modelOnlyPatch, rolesEditorKey, templateRolesMode, overridesBuiltin, templateEditorKey, patchedTemplate, pickTemplateId, renamedTemplate,
+  BUILTIN_EXECUTOR_STALE_MESSAGE, TEMPLATES_STALE_MESSAGE, deleteConfirmText, executorOnlyPatch, rolesEditorKey, templateRolesMode, overridesBuiltin, templateEditorKey, patchedTemplate, pickTemplateId, renamedTemplate,
   resolveTemplateSettings, splitTemplates, templateAgents, templateUsage, templatesApi, templatesError
 } from './projectTemplates'
+import { agentChangePatch, withPatch } from './roleEdit'
 
 const own: ProjectTemplate = {
   id: 'tpl_1', title: 'Мой', description: 'для сервисов',
@@ -100,27 +101,51 @@ test('ключ редакторов меняется, когда удалена 
   assert.equal(templateEditorKey(copy), templateEditorKey({ ...copy }))
 })
 
-test('встроенный шаблон: роли меняются только моделью и усилием, правка собирается в копию, которую примет main', () => {
-  assert.equal(templateRolesMode(frontend), 'models')
+test('встроенный шаблон: у ролей меняются только агент, модель и усилие, правка собирается в копию, которую примет main', () => {
+  assert.equal(templateRolesMode(frontend), 'executor')
   assert.equal(templateRolesMode(own), 'full')
   assert.equal(templateRolesMode({ ...general, builtin: undefined }), 'full')
-  assert.deepEqual(modelOnlyPatch({ title: 'x', agent: 'codex', systemPrompt: 'y', model: 'opus' }), { model: 'opus' })
+  assert.deepEqual(executorOnlyPatch({ title: 'x', agent: 'codex', systemPrompt: 'y', model: 'opus' }), { agent: 'codex', model: 'opus' })
   // undefined — сброс в «по умолчанию агента», его терять нельзя.
-  const reset = modelOnlyPatch({ effort: undefined })
+  const reset = executorOnlyPatch({ effort: undefined })
   assert.ok('effort' in reset)
-  assert.deepEqual(modelOnlyPatch({ description: 'x' }), {})
+  assert.deepEqual(executorOnlyPatch({ description: 'x' }), {})
   for (const t of [general, frontend]) {
     const roles = (t.settings.roles ?? DEFAULT_ROLES).map((r, i) => (i === 0 ? { ...r, model: 'opus', effort: 'high' } : r))
     const input = patchedTemplate(t, { roles })
     assert.equal(input.id, t.id)
-    assert.equal(isBuiltinModelEdit(t, input), true, t.id)
+    assert.equal(isBuiltinExecutorEdit(t, input), true, t.id)
   }
 })
 
-test('старый main без правки моделей встроенного — «перезапустите»', () => {
+test('встроенный шаблон: смена агента роли сбрасывает модель и усилие, как в полном редакторе, и принимается main', () => {
+  for (const t of [general, frontend]) {
+    const base = t.settings.roles ?? DEFAULT_ROLES
+    const i = base.findIndex((r) => r.id === 'developer')
+    const from: Role = { ...base[i], model: 'opus', effort: 'high' }
+    const agent = from.agent === 'claude' ? 'codex' : 'claude'
+    // Встроенный режим пропускает ту же правку, что полный редактор, — без потери сброса модели и усилия.
+    const allowed = executorOnlyPatch(agentChangePatch(agent))
+    assert.deepEqual(allowed, agentChangePatch(agent))
+    const changed = withPatch(from, allowed)
+    const expected: Role = { ...from, agent }
+    delete expected.model
+    delete expected.effort
+    assert.deepEqual(changed, expected)
+    // Прочие поля роли из встроенного режима не проходят даже вместе со сменой агента.
+    assert.equal(withPatch(from, executorOnlyPatch({ ...agentChangePatch(agent), title: 'x', systemPrompt: 'y' })).title, from.title)
+    const roles = base.map((r, j) => (j === i ? changed : r))
+    assert.equal(isBuiltinExecutorEdit(t, patchedTemplate(t, { roles })), true, t.id)
+  }
+})
+
+test('старый main без правки агента встроенного — «перезапустите»', () => {
   const old = 'шаблон «Фронтенд» встроенный и только для чтения — сделайте копию («Дублировать») и правьте её'
-  assert.equal(templatesError(old), BUILTIN_MODELS_STALE_MESSAGE)
-  const now = 'шаблон «Фронтенд» встроенный и только для чтения: без копии в нём меняются только модель и усилие ролей, остальное — через «Дублировать»'
+  assert.equal(templatesError(old), BUILTIN_EXECUTOR_STALE_MESSAGE)
+  // main, где без копии менялись только модель и усилие: смену агента он отвергнет.
+  const modelsOnly = 'шаблон «Фронтенд» встроенный и только для чтения: без копии в нём меняются только модель и усилие ролей, остальное — через «Дублировать»'
+  assert.equal(templatesError(modelsOnly), BUILTIN_EXECUTOR_STALE_MESSAGE)
+  const now = 'шаблон «Фронтенд» встроенный и только для чтения: без копии в нём меняются только агент, модель и усилие ролей, остальное — через «Дублировать»'
   assert.equal(templatesError(now), now)
 })
 

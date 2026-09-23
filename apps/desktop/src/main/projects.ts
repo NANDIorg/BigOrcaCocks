@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
-  BUILTIN_TEMPLATES, GENERAL_TEMPLATE_ID, TEMPLATE_SECTIONS, builtinTemplate, builtinTemplates, isBuiltinModelEdit,
+  BUILTIN_TEMPLATES, GENERAL_TEMPLATE_ID, TEMPLATE_SECTIONS, builtinTemplate, builtinTemplates, isBuiltinExecutorEdit,
   applySections, stableJson,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
   type ProjectTemplate, type ProjectTemplateSettings, type TemplateSection
@@ -254,8 +254,8 @@ export class ProjectManager {
 
   /**
    * Создать (без `id` — новый id) или целиком заменить пользовательский шаблон. Настройки проходят ту же
-   * валидацию, что у проекта. У встроенного шаблона без копии меняются только модель и усилие ролей
-   * (`isBuiltinModelEdit`) — сохраняется копия с его id, удаление которой вернёт встроенный; остальное —
+   * валидацию, что у проекта. У встроенного шаблона без копии меняются только агент, модель и усилие ролей
+   * (`isBuiltinExecutorEdit`) — сохраняется копия с его id, удаление которой вернёт встроенный; остальное —
    * ошибка с подсказкой «Дублировать».
    */
   saveTemplate(input: TemplateInput): ProjectTemplate {
@@ -271,9 +271,9 @@ export class ProjectManager {
       id, title: input.title.trim(), ...(description ? { description } : {}),
       settings: validSettings(input.settings ?? {}, {}, `шаблон «${input.title.trim()}»`)
     }
-    // Встроенный без своей копии: копия с тем же id («изменённый встроенный») создаётся только сменой моделей ролей.
+    // Встроенный без своей копии: копия с тем же id («изменённый встроенный») создаётся только сменой агентов, моделей и усилий ролей.
     const builtin = i === -1 ? builtinTemplate(id) : undefined
-    if (builtin && !isBuiltinModelEdit(builtin, template)) throw new Error(readonlyTemplateMessage(id))
+    if (builtin && !isBuiltinExecutorEdit(builtin, template)) throw new Error(readonlyTemplateMessage(id))
     if (i === -1) user.push(template)
     else user[i] = template
     this.data.templates = user
@@ -701,7 +701,7 @@ function isBuiltinId(id: string): boolean {
 
 function readonlyTemplateMessage(id: string): string {
   const title = BUILTIN_TEMPLATES.find((t) => t.id === id)?.title ?? id
-  return `шаблон «${title}» встроенный и только для чтения: без копии в нём меняются только модель и усилие ролей, остальное — через «Дублировать»`
+  return `шаблон «${title}» встроенный и только для чтения: без копии в нём меняются только агент, модель и усилие ролей, остальное — через «Дублировать»`
 }
 
 function cloneTemplate(t: ProjectTemplate): ProjectTemplate {

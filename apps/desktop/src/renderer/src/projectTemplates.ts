@@ -25,16 +25,22 @@ export function isStaleTemplatesError(message: string): boolean {
 }
 
 /**
- * Старый main не даёт сохранить встроенный шаблон вовсе (в новом без копии меняются модель и усилие ролей) —
- * его ошибку узнаём по прежнему тексту.
+ * Старый main не даёт сохранить встроенный шаблон вовсе или меняет в нём только модель и усилие (в новом без копии
+ * меняются агент, модель и усилие ролей) — его ошибку узнаём по прежним текстам.
  */
-export const BUILTIN_MODELS_STALE_MESSAGE =
-  'Приложение запущено со старой версией main, где у встроенного шаблона нельзя менять модели. Перезапустите приложение.'
+export const BUILTIN_EXECUTOR_STALE_MESSAGE =
+  'Приложение запущено со старой версией main, где у встроенного шаблона нельзя менять агента или модель роли. Перезапустите приложение.'
+
+/** Тексты отказа прежних main: до правки встроенного и с правкой только модели и усилия. */
+const BUILTIN_READONLY_OLD = [
+  /встроенный и только для чтения — сделайте копию/,
+  /встроенный и только для чтения: без копии в нём меняются только модель и усилие ролей/
+]
 
 /** Текст ошибки IPC для раздела: старый main — «перезапустите приложение». */
 export function templatesError(message: string): string {
   if (isStaleTemplatesError(message)) return TEMPLATES_STALE_MESSAGE
-  if (/встроенный и только для чтения — сделайте копию/.test(message)) return BUILTIN_MODELS_STALE_MESSAGE
+  if (BUILTIN_READONLY_OLD.some((re) => re.test(message))) return BUILTIN_EXECUTOR_STALE_MESSAGE
   return message
 }
 
@@ -95,7 +101,7 @@ export function renamedTemplate(t: ProjectTemplate, title: string, description: 
 }
 
 /**
- * Группы меню: встроенные (и изменённые встроенные — на месте своего встроенного, чтобы смена модели не уносила
+ * Группы меню: встроенные (и изменённые встроенные — на месте своего встроенного, чтобы смена исполнителя не уносила
  * пункт в «Свои») и свои. Порядок внутри групп — как отдал main.
  */
 export function splitTemplates(templates: readonly ProjectTemplate[]): { builtin: ProjectTemplate[]; own: ProjectTemplate[] } {
@@ -120,7 +126,7 @@ export function templateEditorKey(t: Pick<ProjectTemplate, 'id' | 'builtin'>): s
 }
 
 /**
- * Ключ черновика редактора ролей. Смена модели во встроенном шаблоне сохраняет «изменённый встроенный» — id тот же,
+ * Ключ черновика редактора ролей. Смена агента или модели во встроенном шаблоне сохраняет «изменённый встроенный» — id тот же,
  * а `templateEditorKey` меняется с `b` на `u`, и черновик сбросился бы на ответ main посреди быстрых кликов
  * (второй выбор, ещё не дошедший до main, пропал бы с экрана). Поэтому шаблон, ставший своей копией из этого
  * редактора (`promotedId`), сохраняет ключ встроенного; после удаления копии `promotedId` сбрасывается, и ключ
@@ -132,15 +138,20 @@ export function rolesEditorKey(t: Pick<ProjectTemplate, 'id' | 'builtin'>, promo
     : templateEditorKey(t)
 }
 
-/** У встроенного шаблона роли правятся только моделью и усилием, остальное — через «Дублировать». */
-export function templateRolesMode(t: Pick<ProjectTemplate, 'builtin'>): 'models' | 'full' {
-  return t.builtin ? 'models' : 'full'
+/** У встроенного шаблона у ролей меняется только исполнитель (агент, модель, усилие), остальное — через «Дублировать». */
+export function templateRolesMode(t: Pick<ProjectTemplate, 'builtin'>): 'executor' | 'full' {
+  return t.builtin ? 'executor' : 'full'
 }
 
-/** Правка роли в режиме «только модель и усилие»: прочие поля отбрасываются (undefined в них — сброс, сохраняется). */
-export function modelOnlyPatch(p: Partial<Role>): Partial<Role> {
+/**
+ * Правка роли в режиме «только агент, модель и усилие»: прочие поля отбрасываются (undefined в них — сброс,
+ * сохраняется). Смена агента приходит сюда уже со сброшенными моделью и усилием (`changeAgent` в RolesEditor).
+ */
+export function executorOnlyPatch(p: Partial<Role>): Partial<Role> {
   const next: Partial<Role> = {}
-  for (const k of BUILTIN_EDITABLE_ROLE_FIELDS) if (k in p) next[k] = p[k]
+  // Отдельная функция с ключом-параметром: для объединения ключей TS не сводит типы полей `agent` и `model`.
+  const copy = <K extends keyof Role>(k: K): void => { next[k] = p[k] }
+  for (const k of BUILTIN_EDITABLE_ROLE_FIELDS) if (k in p) copy(k)
   return next
 }
 
