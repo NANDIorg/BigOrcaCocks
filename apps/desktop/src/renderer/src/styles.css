@@ -891,3 +891,90 @@ button:disabled { opacity: .45; cursor: default; }
   .docs-keys { display: none; }
   .docs-body, .docs-start { padding: 24px 20px 48px; }
 }
+
+/* ---------- Инбокс: запросы к человеку (InboxPanel, RequestCard) ---------- */
+.inbox-badge {
+  height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--chip); background: transparent;
+  color: var(--muted); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px;
+}
+.inbox-badge:hover:not(:disabled), .inbox-badge.active { color: var(--text); border-color: var(--text); }
+.inbox-badge.has { color: var(--col-input); border-color: color-mix(in srgb, var(--col-input) 60%, transparent); }
+.inbox-badge.has:hover, .inbox-badge.has.active { border-color: var(--col-input); background: rgba(232,176,74,.08); }
+.inbox-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-input); box-shadow: 0 0 0 3px rgba(232,176,74,.2); }
+
+.inbox-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 20; }
+.inbox {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: calc(100vw - 72px); z-index: 21;
+  display: flex; flex-direction: column; background: var(--side); border-left: 1px solid var(--line);
+  box-shadow: -24px 0 60px rgba(0,0,0,.4); outline: none;
+  transform: translateX(100%); visibility: hidden; transition: transform .18s ease, visibility 0s linear .18s;
+}
+.inbox.open { transform: none; visibility: visible; transition: transform .18s ease; }
+.inbox-head { display: flex; align-items: center; gap: 10px; padding: 18px 16px 14px 20px; border-bottom: 1px solid var(--line); }
+.inbox-head h3 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.inbox-count {
+  min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; font-size: 12px; font-weight: 600;
+  display: inline-grid; place-items: center; color: var(--col-input); background: rgba(232,176,74,.16);
+}
+.inbox-notice { display: flex; align-items: flex-start; gap: 8px; padding: 10px 20px; border-bottom: 1px solid var(--line); background: rgba(239,107,107,.06); }
+.inbox-notice .error-text { flex: 1; }
+.inbox-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.inbox-item { flex-shrink: 0; border-radius: 12px; outline: none; }
+.inbox-item.sent { display: none; }
+.inbox-foot { padding: 10px 20px 14px; border-top: 1px solid var(--line); font-size: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+
+.rq-kbd {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px;
+  font: 600 11px ui-monospace, Menlo, monospace; color: var(--muted); background: var(--frame); border: 1px solid var(--chip);
+}
+.btn-sm .rq-kbd { margin-left: -6px; }
+.btn-sm.primary .rq-kbd { color: #fff; background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.3); }
+
+/* Карточка запроса: цвет полосы слева — вид запроса. */
+.rq {
+  --rq: var(--col-input);
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 14px; cursor: default;
+  background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--rq); border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.rq-answer { --rq: var(--col-review); }
+.rq-escalation { --rq: var(--danger); }
+.rq.active { border-color: color-mix(in srgb, var(--accent) 70%, transparent); border-left-color: var(--rq); box-shadow: 0 0 0 1px var(--accent) inset; }
+.inbox-item:focus-visible .rq { box-shadow: 0 0 0 2px var(--accent) inset; }
+.rq-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 11px; }
+.rq-kind { flex-shrink: 0; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--rq, var(--muted)); font-size: 11px; }
+.rq-where { min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rq-title { font-size: 14px; font-weight: 600; line-height: 1.35; white-space: pre-wrap; }
+.rq-toggle { align-self: flex-start; background: transparent; border: 0; padding: 0; color: var(--muted); font-size: 12px; }
+.rq-toggle:hover { color: var(--text); }
+.rq-body { display: flex; flex-direction: column; gap: 6px; }
+.rq-md { padding: 10px 12px; background: var(--frame); border-radius: 10px; max-height: 280px; overflow: auto; }
+.rq-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.rq-option {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 32px; padding: 4px 12px 4px 8px;
+  border-radius: 16px; border: 1px solid var(--chip); background: transparent; color: var(--text); font-size: 13px; text-align: left;
+}
+.rq-option:hover:not(:disabled) { border-color: var(--text); }
+.rq-option.recommended { border-color: color-mix(in srgb, var(--accent) 70%, transparent); background: rgba(123,134,245,.1); }
+.rq-option-label { font-weight: 500; }
+.rq-star { color: var(--col-input); }
+.rq-hint { color: var(--muted); font-size: 12px; }
+.rq-free { display: flex; gap: 8px; align-items: flex-end; }
+.rq-free.column { flex-direction: column; align-items: stretch; }
+.rq-free textarea { flex: 1; min-height: 36px; max-height: 200px; padding: 8px 10px; font-size: 13px; resize: vertical; }
+.rq-free.column textarea { min-height: 56px; }
+.rq-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rq-open { padding: 0; font-size: 13px; color: var(--accent); }
+.rq-open:hover { color: #8791f7; }
+.rq.compact { padding: 8px 10px; gap: 8px; }
+.rq.compact .rq-title { font-size: 13px; }
+.rq.compact .btn-sm, .rq.compact .rq-option { height: 26px; min-height: 26px; padding: 0 10px; font-size: 12px; }
+.rq.compact .rq-free.column textarea, .rq.compact .rq-free textarea { min-height: 30px; padding: 5px 8px; }
+
+/* «Открыть полностью»: ответ во всю ширину поверх Инбокса. */
+.inbox-full-backdrop { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }
+.modal.inbox-full { width: 880px; max-width: calc(100vw - 48px); height: 88vh; padding: 0; gap: 0; overflow: hidden; }
+.inbox-full .task-modal-body { display: block; }
+.inbox-full-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.inbox-full-title .rq-kind { color: var(--muted); }
+.inbox-full-title h3 { margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
