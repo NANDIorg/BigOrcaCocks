@@ -142,7 +142,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   CLAUDE.md/AGENTS.md и не обычные сессии агента в репозитории. Два уровня:
   - общие правила проекта — `Project.agentRules` (markdown одной строкой, `ProjectManager.agentRules(id)` / `setAgentRules(id, text)`);
   - правила роли — **это существующий `Role.systemPrompt`**, отдельного поля нет: он уже доходит и до воркера
-    (роль задачи), и до координатора (роль `coordinator`), редактируется в «О проекте → Роли» и сохраняется через `projects:setRoles`.
+    (роль задачи), и до координатора (роль `coordinator`), редактируется в «О проекте → Роли» (вкладка «Инструкции роли») и сохраняется через `projects:setRoles`.
   Системный промпт: служебная инструкция Orca → `# Правила проекта` + текст (если непустой) →
   `# Инструкции роли «<title>»` (если непустой). Пусто/одни пробелы — блока нет, trim только по краям, текст как есть.
   Хранится как введено (без trim, как `systemPrompt`); из одних пробелов → поле удаляется; не строка → ошибка
@@ -151,7 +151,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   и применяются при следующем запуске агента. Ассистент их не получает (`AssistantContext` без `agentRules`: он один на
   приложение и не работает в репозитории проекта); свой `systemPrompt` роли `assistant` — получает, как раньше.
   Меняются: IPC `projects:getAgentRules` / `projects:setAgentRules`, сокет `rules.get` / `rules.set`,
-  CLI `orca-board rules get|set`. Есть и в глобальном дефолте (`ProjectDefaults.agentRules`, см. «Проекты»).
+  CLI `orca-board rules get|set`, в UI — «О проекте → Правила доски». Есть и в глобальном дефолте (`ProjectDefaults.agentRules`, см. «Проекты»).
 - **Встроенные промпты в UI** (`packages/core/src/prompts.ts`, `src/main/prompts.ts`): тексты `skills/*.md` импортирует
   только `src/main/prompts.ts` (`BUILTIN_PROMPTS`); их же берёт `worker.ts` при запуске и отдаёт IPC `prompts:builtin`
   для раздела «Роли». Там по кнопке «Инструкции» (свёрнуто по умолчанию) видны: встроенная инструкция роли только для чтения
@@ -533,16 +533,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   проект всё ещё активен (`activeIdRef`).
 - **«О проекте»** (`about/AboutProject.tsx`): только настройки активного проекта (`projects:set*`, после —
   `refreshProjects`); без активного проекта вкладка показывает заглушку. Слева меню разделов (Обзор, Агенты, Роли,
-  Колонки, Разрешения, Правила, Прогоны), справа один раздел (выбранный хранится в `localStorage` `orca.aboutSection`).
+  Колонки, Разрешения, Правила доски, Правила, Прогоны), справа один раздел (выбранный хранится в `localStorage` `orca.aboutSection`).
   У пунктов меню счётчики: агенты «N из M» (включено из установленных), роли (+ «k !» — роли с выключенным
-  агентом), колонки, режим разрешений, прогоны («N идёт» или всего). Пункт меню — общий `NavItem`, заголовки
+  агентом), колонки, режим разрешений, правила доски (непустых строк или «нет»), прогоны («N идёт» или всего). Пункт меню — общий `NavItem`, заголовки
   разделов — `SectionHead` (`about/parts.tsx`). Узкая вкладка (`@container about`, ≤ 900px) — меню становится
   горизонтальной полосой. Дефолт для новых проектов здесь не редактируется — только сравнение в «Обзоре».
   - «Обзор» (`OverviewSection.tsx`) — статистика (задачи/открытые, терминалы, идущие прогоны, включённые агенты);
     паспорт: репозиторий, ID для CLI, папка worktree (`<repo>/../.orca-worktrees/`), сокет CLI — у каждого
     «Скопировать»; блок «Дефолт для новых проектов»: отличия проекта от дефолта (`about/defaultsDiff.ts`:
-    агенты, роли и колонки — добавленные/удалённые/изменённые/порядок, разрешения), «Сделать дефолтом»
-    (`setDefaults` с permissionMode/enabledAgents/roles/columns проекта, `confirm`) и «Применить дефолт…»
+    агенты, роли и колонки — добавленные/удалённые/изменённые/порядок, разрешения, правила доски), «Сделать дефолтом»
+    (`setDefaults` с permissionMode/enabledAgents/roles/columns/agentRules проекта, `confirm`) и «Применить дефолт…»
     (`projects:applyDefaults`, `confirm`; после — `refreshProjects` и пересоздание редакторов через `rev`);
     красная зона «Убрать из списка» (`confirm`, `projects:remove`).
   - «Агенты» (`AgentsSection.tsx`) — карточки установленных (логотип, название, версия) с переключателем
@@ -559,6 +559,12 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns` (в дефолте — `setDefaults({ columns })`).
   - «Разрешения» (`PermissionsSection.tsx`) — `permissionMode` карточками-радио (см. «Разрешения Claude Code»).
+  - «Правила доски» (`about/AgentRulesSection.tsx`, логика — `renderer/src/agentRules.ts`) — textarea `Project.agentRules`
+    с автосохранением (`useAutoSave`, задержка) через `projects:setAgentRules`, затем `refreshProjects`. Начальное
+    значение — из `Project`, отдельного `getAgentRules` не нужно. Текст раздела явно разводит его с «Правилами»
+    (CLAUDE.md/AGENTS.md): эти получают только воркеры и координатор доски. Старый preload без `setAgentRules` —
+    поле задизейблено и сообщение «перезапустите приложение»; старый main («No handler registered») — то же сообщение
+    вместо ошибки IPC.
   - «Правила» (`about/RulesSection.tsx`, логика — `renderer/src/rules.ts`) — `CLAUDE.md` и `AGENTS.md` из **корня
     репозитория** проекта (`Project.root`, не worktree задач), вкладки между ними (выбор — `localStorage` `orca.rulesFile`).
     Просмотр — `Markdown variant="doc"`; «Редактировать» — textarea с исходником, «Сохранить» (⌘S/Ctrl+S) / «Отмена»

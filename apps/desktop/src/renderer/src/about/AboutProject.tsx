@@ -15,12 +15,14 @@ import { OverviewSection } from './OverviewSection'
 import { AgentsSection } from './AgentsSection'
 import { PermissionsSection, permissionParts } from './PermissionsSection'
 import { RulesSection } from './RulesSection'
+import { AgentRulesSection } from './AgentRulesSection'
+import { agentRulesCount } from '../agentRules'
 import { defaultsDiff } from './defaultsDiff'
 import { useProjectDefaults } from './useProjectDefaults'
 
-type Section = 'overview' | 'agents' | 'roles' | 'columns' | 'perm' | 'rules' | 'runs'
+type Section = 'overview' | 'agents' | 'roles' | 'columns' | 'perm' | 'agentRules' | 'rules' | 'runs'
 
-const SECTIONS: readonly Section[] = ['overview', 'agents', 'roles', 'columns', 'perm', 'rules', 'runs']
+const SECTIONS: readonly Section[] = ['overview', 'agents', 'roles', 'columns', 'perm', 'agentRules', 'rules', 'runs']
 const SECTION_KEY = 'orca.aboutSection'
 
 interface Props {
@@ -79,13 +81,14 @@ export function AboutProject(props: Props): React.JSX.Element {
 
   /** Текущие настройки проекта → дефолт для новых проектов. */
   async function makeDefault(): Promise<void> {
-    if (!confirm(`Сохранить настройки проекта «${project.name}» (агенты, роли, колонки, разрешения) как дефолт для новых проектов?`)) return
+    if (!confirm(`Сохранить настройки проекта «${project.name}» (агенты, роли, колонки, разрешения, правила доски) как дефолт для новых проектов?`)) return
     await saveDefaults(
       {
         permissionMode: project.permissionMode ?? 'auto',
         enabledAgents: project.enabledAgents,
         roles: project.roles ?? DEFAULT_ROLES,
-        columns: project.columns ?? DEFAULT_COLUMNS
+        columns: project.columns ?? DEFAULT_COLUMNS,
+        agentRules: project.agentRules ?? ''
       },
       setDefaultsError
     )
@@ -94,7 +97,7 @@ export function AboutProject(props: Props): React.JSX.Element {
   /** Переписать настройки проекта дефолтом; задачи из исчезнувших колонок уезжают в бэклог. */
   async function applyDefault(): Promise<void> {
     const ok = confirm(
-      `Заменить агентов, роли, колонки и разрешения проекта «${project.name}» настройками по умолчанию?\n\n` +
+      `Заменить агентов, роли, колонки, разрешения и правила доски проекта «${project.name}» настройками по умолчанию?\n\n` +
         'Задачи из колонок, которых нет в дефолте, переедут в бэклог.'
     )
     if (!ok) return
@@ -140,6 +143,10 @@ export function AboutProject(props: Props): React.JSX.Element {
     },
     { id: 'columns', label: 'Колонки', icon: Icon.columns, count: String(columns.length) },
     { id: 'perm', label: 'Разрешения', icon: Icon.shield, count: permissionParts(permission).title },
+    {
+      id: 'agentRules', label: 'Правила доски', icon: Icon.layers, count: agentRulesCount(project.agentRules),
+      title: 'Только для воркеров и координатора доски; не CLAUDE.md'
+    },
     { id: 'rules', label: 'Правила', icon: Icon.doc, title: 'CLAUDE.md и AGENTS.md в корне репозитория' },
     {
       id: 'runs', label: 'Прогоны', icon: Icon.runs,
@@ -221,6 +228,8 @@ export function AboutProject(props: Props): React.JSX.Element {
             onChange={(mode) => void saveProject(() => window.orca.projects.setPermissionMode(project.id, mode), setPermError)}
           />
         )
+      case 'agentRules':
+        return <AgentRulesSection key={project.id} project={project} onSaved={onProjectChanged} />
       case 'rules':
         return <RulesSection key={project.id} root={project.root} />
       case 'runs':
