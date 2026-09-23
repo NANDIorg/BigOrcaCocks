@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
-import { globalTaskTicking, globalTimeLabel, globalTimeTitle, type GlobalTimePart } from './duration'
+import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, type GlobalTimePart } from './duration'
 import { useNow } from './useNow'
 import { GLOBAL_BOARD_SORT_KEY, SORT_OPTIONS, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
@@ -60,15 +60,14 @@ export function subtasksLabel(n: number): string {
 }
 
 /**
- * Два времени глобальной задачи: основное (сама была в работе) — первым, сумма подзадач — «Σ …» рядом.
- * Каждое тикает само: живой счётчик только у идущего, стоящее — застывшее «⏸ …». Основное неизвестно
- * (прогон от старого кода, старый main) — только сумма. variant="line" — строка для шапок.
+ * Время глобальной задачи. chip (карточка) — только своё время в работе; line (внутри задачи) — два
+ * подписанных: «В работе» и «Сумма подзадач». Что показывать — `globalTimeParts`. Каждое тикает само:
+ * живой счётчик только у идущего, стоящее — застывшее «⏸ …».
  */
 export function GlobalDuration({ global, variant = 'chip' }: { global: GlobalTask; variant?: 'chip' | 'line' }): React.JSX.Element {
   return (
-    <span className="g-duration">
-      <DurationPart global={global} part="own" variant={variant} />
-      <DurationPart global={global} part="subtasks" variant={variant} />
+    <span className={`g-duration g-duration-${variant}`}>
+      {globalTimeParts(global, variant).map((part) => <DurationPart key={part} global={global} part={part} variant={variant} />)}
     </span>
   )
 }

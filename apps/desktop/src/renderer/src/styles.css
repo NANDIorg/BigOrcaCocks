@@ -549,9 +549,9 @@ button:disabled { opacity: .45; cursor: default; }
 .g-bar-fill { height: 100%; border-radius: 2px; background: var(--col-done); transition: width .2s; }
 .g-card-foot { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
 .g-duration { white-space: nowrap; font-variant-numeric: tabular-nums; }
-/* Два времени: основное — первым, сумма подзадач — мельче и тише (одна может быть без другой). */
-.g-duration-own + .g-duration-sum { margin-left: 0.5em; }
-.g-duration-sum { font-size: 0.9em; opacity: 0.7; }
+/* Внутри задачи два подписанных времени через «·»; своё может отсутствовать (старый main) — тогда одна сумма. */
+.g-duration-line .g-duration-own + .g-duration-sum { margin-left: 0.4em; }
+.g-duration-line .g-duration-own + .g-duration-sum::before { content: '· '; }
 
 /* ---------- глобальная задача: экран подзадач ---------- */
 .g-view { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; }
