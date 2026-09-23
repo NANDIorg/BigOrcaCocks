@@ -362,6 +362,15 @@ button:disabled { opacity: .45; cursor: default; }
 .roles-foot .btn-sm svg { width: 14px; height: 14px; }
 .roles-foot .btn-sm.danger { color: #ef6b6b; border-color: rgba(239,107,107,.5); }
 .roles-foot .btn-sm:disabled:hover { border-color: rgba(239,107,107,.5); }
+.roles-confirm {
+  border: 1px solid rgba(239,107,107,.45); background: rgba(239,107,107,.07); border-radius: 10px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+}
+.roles-confirm-title { font-weight: 600; }
+.roles-confirm ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+.roles-confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
+.roles-confirm .btn-sm.danger-fill { background: #d9534f; border-color: #d9534f; color: #fff; }
+.roles-confirm .btn-sm.danger-fill:hover { background: #ef6b6b; border-color: #ef6b6b; }
 .role-text {
   margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--page); color: var(--text);
   font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;

@@ -9,6 +9,9 @@
 - `orca-board roles list` — какие роли есть в проекте: id, название (`title`), назначение (`description`), агент,
   модель, включён ли агент (`agentEnabled`). `--role` выбирай только из ролей с включённым агентом.
   `description` — главный ориентир: что роль делает и когда её брать. Нет описания — суди по id и названию.
+  Роли из примеров ниже (`developer`, `qa`, `reviewer`) человек мог удалить: `--role` — только id из `roles list`,
+  иначе `task create` вернёт ошибку. Нет `reviewer` — задачи ревью не создавай: рабочая задача после `worker_done`
+  остаётся в «Ревью», её примет или вернёт человек в приложении; скажи об этом в сводке.
 - `orca-board columns list` — колонки доски (id, название, kind); `task move --status` принимает id отсюда.
 - `orca-board task list` — что уже есть на доске.
 
@@ -51,7 +54,7 @@
        человек либо принимает его (задача уйдёт в done, придёт `answer_accepted`), либо уточняет (придёт
        `answer_clarified`, воркер перезапустится сам и снова придёт `worker_done`). Ревью не создавай,
        `review accept` не вызывай. Писать тебе в терминал человеку не нужно — жди события.
-   - `worker_done` по **рабочей** задаче A → создай задачу ревью:
+   - `worker_done` по **рабочей** задаче A → создай задачу ревью (роли `reviewer` нет — не создавай, см. «Подготовка»):
      `orca-board task create --title "Ревью: <A.title>" --role reviewer --spec "Проверь ветку orca/<A.id> задачи <A.id>: orca-board review info --task <A.id>, git diff master...orca/<A.id>, прогони pnpm typecheck в своём worktree после git merge --no-commit orca/<A.id> (потом git merge --abort). Критерии: <критерии из спеки A>. Если всё хорошо — orca-board review accept --task <A.id>. Если нет — orca-board review reject --task <A.id> --feedback '<что исправить>'. Затем orca-board done --summary 'принято' или 'отклонено: ...'. Последней командой обязательно вызови orca-board done --summary '...', даже после review accept/reject — без этого твоя задача ревью останется открытой."`
      и сразу `worker start` на неё. Сам `review info/accept/reject` не вызывай.
    - `worker_done` по задаче **ревью** → `orca-board review accept --task <id ревью>` (у неё нечего мержить,

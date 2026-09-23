@@ -2,7 +2,6 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
   ASSISTANT_START_PROMPT,
-  DEFAULT_ROLES,
   builtinPromptKind,
   coordinatorPrompt,
   defaultRoleDescription,
@@ -22,6 +21,7 @@ import {
 } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
+import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
 
 interface Props {
@@ -35,9 +35,6 @@ interface Props {
   taskCounts?: Readonly<Record<string, number>>
   onSave(roles: Role[]): Promise<void>
 }
-
-/** Системные роли (из DEFAULT_ROLES): их нельзя удалить, у пустого назначения есть значение по умолчанию. */
-const SYSTEM_ROLE_IDS: ReadonlySet<string> = new Set(DEFAULT_ROLES.map((r) => r.id))
 
 /** Роль с новыми полями; пустые description/model/effort/systemPrompt не сохраняем вовсе (undefined — «по умолчанию»). */
 function withPatch(r: Role, p: Partial<Role>): Role {
@@ -121,6 +118,14 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
     setSelectedId(next[Math.min(i, next.length - 1)]?.id)
   }
 
+  /** Вернуть удалённые системные роли с настройками по умолчанию; выбранной становится первая возвращённая. */
+  function restore(): void {
+    const back = missingSystemRoles(roles)
+    if (back.length === 0) return
+    update(restoreSystemRoles(roles))
+    setSelectedId(back[0].id)
+  }
+
   /** Переставить роль `id` на место роли `targetId` (порядок массива = порядок в «Новой задаче»). */
   function move(id: string, targetId: string): void {
     const from = roles.findIndex((r) => r.id === id)
@@ -141,6 +146,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
 
   const system = roles.filter((r) => !isTaskRole(r.id))
   const taskRoles = roles.filter((r) => isTaskRole(r.id))
+  const missing = missingSystemRoles(roles)
 
   function item(r: Role): React.JSX.Element {
     const info = agents.find((a) => a.id === r.agent)
@@ -230,6 +236,12 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
           <div className="roles-hint">
             Порядок — как в «Новой задаче».{taskCounts ? ' Число — задач проекта на роли.' : ''}
           </div>
+          {missing.length > 0 && (
+            <div className="roles-hint">
+              Удалены системные: {missing.map((r) => r.id).join(', ')}.{' '}
+              <button type="button" className="roles-link" onClick={restore}>Вернуть системные роли</button>
+            </div>
+          )}
         </aside>
         {selected ? (
           <RolePanel
@@ -238,7 +250,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
             agents={agents}
             enabled={enabled}
             count={taskCounts?.[selected.id]}
-            canDelete={roles.length > 1}
+            deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
             onPatch={(p, debounce) => patch(index, p, debounce)}
             onAgent={(agent) => changeAgent(index, agent)}
@@ -260,7 +272,8 @@ interface PanelProps {
   agents: AgentInfo[]
   enabled: AgentInfo[]
   count: number | undefined
-  canDelete: boolean
+  /** Почему удалить нельзя (последняя роль); undefined — можно. */
+  deleteBlocker: string | undefined
   builtin: BuiltinState
   onPatch(p: Partial<Role>, debounce?: boolean): void
   onAgent(agent: AgentKind): void
@@ -273,9 +286,11 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, canDelete, builtin, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, deleteBlocker, builtin, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
   const [tab, setTab] = useState<RoleTab>('prompt')
+  /** Открыто подтверждение удаления: что сломается без роли. */
+  const [confirming, setConfirming] = useState(false)
   const current = agents.find((a) => a.id === r.agent)
   const state = agentState(current)
   const defaults = current?.defaults
@@ -283,14 +298,12 @@ function RolePanel({
   const customModel = r.model && !models.some((m) => m.id === r.model) ? r.model : undefined
   const defaultModel = modelLabel(current, defaults?.model)
   const efforts = effortsOf(current, r.agent, r.model)
-  const isSystem = SYSTEM_ROLE_IDS.has(r.id)
+  const isSystem = isSystemRole(r.id)
   const isService = !isTaskRole(r.id)
   const defaultDescription = defaultRoleDescription(r.id)
   const kind = builtinPromptKind(r.id)
   const builtinText = builtin && 'prompts' in builtin ? builtin.prompts[kind] : undefined
-  const deleteTitle = isSystem
-    ? 'Системную роль удалить нельзя'
-    : !canDelete ? 'Нельзя удалить последнюю роль' : 'Удалить роль'
+  const losses = removalConsequences(r.id, count)
   const tabs: { id: RoleTab; label: string }[] = [
     { id: 'prompt', label: r.systemPrompt ? 'Инструкции роли •' : 'Инструкции роли' },
     { id: 'builtin', label: `Встроенная инструкция Orca${builtinText ? ` · ${lineCount(builtinText)} строк` : ''}` },
@@ -310,7 +323,7 @@ function RolePanel({
           />
           <div className="roles-meta">
             <span className="chip mono" title="id роли (для CLI: --role)">{r.id}</span>
-            {isSystem && <span className="chip sys">системная · нельзя удалить</span>}
+            {isSystem && <span className="chip sys" title="Встроенная роль Orca: после удаления её можно вернуть с настройками по умолчанию">системная</span>}
             {isService
               ? <span className="chip sys">{SERVICE_TEXT[kind].toLowerCase()} · задачам не назначается</span>
               : <span className="chip ok">назначается задачам</span>}
@@ -514,10 +527,28 @@ function RolePanel({
           </span>
         )}
         <span className="grow" />
-        <button type="button" className="btn-sm danger" disabled={isSystem || !canDelete} title={deleteTitle} onClick={onRemove}>
+        <button
+          type="button"
+          className="btn-sm danger"
+          disabled={deleteBlocker !== undefined || confirming}
+          title={deleteBlocker ?? 'Удалить роль'}
+          onClick={() => (losses.length > 0 ? setConfirming(true) : onRemove())}
+        >
           <Icon.trash /> Удалить роль
         </button>
       </div>
+      {confirming && (
+        <div className="roles-confirm" role="alertdialog" aria-label={`Удалить роль «${r.title}»?`}>
+          <div className="roles-confirm-title">
+            Удалить {isSystem ? 'системную роль' : 'роль'} «{r.title || r.id}»?
+          </div>
+          <ul>{losses.map((l) => <li key={l}>{l}</li>)}</ul>
+          <div className="roles-confirm-btns">
+            <button type="button" className="btn-sm" autoFocus onClick={() => setConfirming(false)}>Отмена</button>
+            <button type="button" className="btn-sm danger-fill" onClick={onRemove}>Удалить</button>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

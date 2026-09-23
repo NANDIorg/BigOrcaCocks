@@ -252,3 +252,28 @@ describe('task reopen', () => {
     assert.match((await call('task.reopen', { task: task.id, feedback: true })).error!, /--feedback требует текста/)
   })
 })
+
+describe('удалённая системная роль', () => {
+  it('task create --role reviewer без роли reviewer — ошибка со списком ролей и подсказкой вернуть', async () => {
+    roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
+    const res = await call('task.create', { title: 'Ревью', role: 'reviewer' })
+    assert.equal(res.ok, false)
+    assert.match(res.error!, /роли «reviewer» нет в проекте\. Роли: coordinator, assistant, developer, qa\./)
+    assert.match(res.error!, /Вернуть системные роли/)
+    assert.equal(store.listTasks().length, 0)
+  })
+
+  it('пользовательская роль — без подсказки про системные', async () => {
+    const res = await call('task.create', { title: 'X', role: 'role_nope' })
+    assert.equal(res.error, 'роли «role_nope» нет в проекте. Роли: coordinator, assistant, developer, reviewer, qa.')
+  })
+
+  it('worker start задачи на удалённой роли — понятная ошибка, воркер не запускается', async () => {
+    const task = store.createTask({ title: 'Тесты', roleId: 'qa' })
+    roles = DEFAULT_ROLES.filter((r) => r.id !== 'qa')
+    const res = await call('worker.start', { task: task.id })
+    assert.equal(res.ok, false)
+    assert.match(res.error!, /^воркер не запустится: роли «qa» нет в проекте/)
+    assert.deepEqual(calls, [])
+  })
+})

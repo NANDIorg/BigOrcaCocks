@@ -132,6 +132,11 @@ describe('события после ответа человека в инстр�
     assert.doesNotMatch(worker, /--options a,b/)
   })
 
+  it('координатор берёт роли только из roles list и без reviewer не создаёт ревью', () => {
+    assert.match(skill, /`--role` — только id из `roles list`/)
+    assert.match(skill, /Нет `reviewer` — задачи ревью не создавай/)
+  })
+
   it('воркер после done не берёт работу из терминала, а отправляет в приложение', () => {
     const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
     assert.match(worker, /После `orca-board done` новую работу не бери[\s\S]*Решение \/ что делать дальше/)

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { AGENTS, AGENT_IDS, getAgent, parseCodexModelsCache, type AgentInfo, type AgentKind, type AgentSpec, type ModelOption, type Role } from '@orca-board/core'
+import { AGENTS, AGENT_IDS, DEFAULT_ROLES, getAgent, parseCodexModelsCache, type AgentInfo, type AgentKind, type AgentSpec, type ModelOption, type Role } from '@orca-board/core'
 
 /** Реестр как список общего типа: у элементов union'а опциональные поля вроде versionArgs недоступны. */
 const SPECS: readonly AgentSpec[] = AGENTS
@@ -212,6 +212,18 @@ export function assertAgentUsable(agents: AgentInfo[], id: string): asserts id i
 }
 
 /**
+ * Текст ошибки «роли нет в проекте»: какие роли есть и, для системной роли (её могли удалить в «О проекте»),
+ * как её вернуть. Один текст для task create, запуска воркера и координатора.
+ */
+export function missingRoleMessage(roleId: string, roles: readonly Role[]): string {
+  const ids = roles.map((r) => r.id).join(', ') || 'нет'
+  const hint = DEFAULT_ROLES.some((r) => r.id === roleId)
+    ? ' Это системная роль — её можно вернуть: «О проекте» → «Роли» → «Вернуть системные роли».'
+    : ''
+  return `роли «${roleId}» нет в проекте. Роли: ${ids}.${hint}`
+}
+
+/**
  * Роль для новой задачи: указанная (её агент должен быть usable) или единственная
  * в проекте. Если ролей несколько и ни одна не указана — ошибка со списком.
  */
@@ -219,7 +231,7 @@ export function pickRole(roles: Role[], agents: AgentInfo[], requested: string |
   const ids = roles.map((r) => r.id).join(', ')
   if (requested !== undefined) {
     const role = roles.find((r) => r.id === requested)
-    if (!role) throw new Error(`роли «${requested}» нет в проекте. Роли: ${ids}`)
+    if (!role) throw new Error(missingRoleMessage(requested, roles))
     assertAgentUsable(agents, role.agent)
     return role
   }
