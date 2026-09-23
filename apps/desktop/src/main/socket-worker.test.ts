@@ -87,7 +87,7 @@ beforeEach(async () => {
   roles = DEFAULT_ROLES
   agents = [{ id: 'claude', title: 'Claude Code', installed: true, enabled: true, models: [], defaults: {} }]
   calls = []
-  server = startSocketServer(sockPath, { resolve: () => fakeDeps() })
+  server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [] })
   await new Promise((r) => server.once('listening', r))
 })
 

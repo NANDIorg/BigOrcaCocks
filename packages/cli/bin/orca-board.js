@@ -20,6 +20,10 @@ const HELP = `orca-board — управление доской агентов
   coordinator start --objective "..."     открыть Claude Code-координатора в приложении (новая глобальная задача)
   coordinator start --global <id>         повторный запуск координатора на существующей глобальной задаче
 
+Проекты (уровень приложения, --project не нужен):
+  projects list                           все проекты: id, name, root, active (активный в приложении),
+                                          inProgress — задач в работе; без проектов — []
+
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
   global list                             карточки: название, описание, статус-колонка, прогресс подзадач,
                                           coordinatorAlive — жив ли терминал координатора
@@ -189,7 +193,8 @@ const request = {
   params,
   dispatchId: process.env.ORCA_DISPATCH_ID,
   taskId: process.env.ORCA_TASK_ID,
-  projectId: params.project ?? process.env.ORCA_PROJECT
+  // Команды уровня приложения проект не выбирают: --project и $ORCA_PROJECT им не передаём.
+  projectId: method === 'projects.list' ? undefined : params.project ?? process.env.ORCA_PROJECT
 }
 delete params.project
 
