@@ -144,6 +144,7 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
               storageKey={DEFAULTS_KEY}
               roles={roles}
               agents={defaultAgents}
+              workflow={defaults.workflow}
               onSave={(next) => saveDefaults({ roles: next })}
             />
           </>

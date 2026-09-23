@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, type AgentInfo } from '@orca-board/core'
 import { defaultsDiff } from './about/defaultsDiff'
 
 const agent = (id: string, installed = true): AgentInfo =>
@@ -32,4 +32,12 @@ test('изменённая роль и порядок колонок', () => {
 test('правила доски: отличие по тексту без пробелов по краям', () => {
   assert.deepEqual(defaultsDiff({ ...project, agentRules: '- без ORION' }, defaults, agents), ['правила доски'])
   assert.deepEqual(defaultsDiff({ ...project, agentRules: '- без ORION\n' }, { ...defaults, agentRules: '- без ORION' }, agents), [])
+})
+
+test('воркфлоу: без своих графов совпадает, свой граф проекта — отличие', () => {
+  const wf = defaultWorkflow(DEFAULT_ROLES)
+  assert.deepEqual(defaultsDiff({ ...project, workflow: wf }, defaults, agents), [])
+  const moved = { ...wf, nodes: wf.nodes.map((n) => (n.id === 'end' ? { ...n, title: 'Готово' } : n)) }
+  assert.deepEqual(defaultsDiff({ ...project, workflow: moved }, defaults, agents), ['воркфлоу'])
+  assert.deepEqual(defaultsDiff(project, { ...defaults, workflow: moved }, agents), ['воркфлоу'])
 })
