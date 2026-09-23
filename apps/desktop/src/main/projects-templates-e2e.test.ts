@@ -347,16 +347,22 @@ describe('встроенные шаблоны только для чтения',
   }
 
   for (const tpl of BUILTIN_TEMPLATES) {
-    it(`«${tpl.title}»: смена модели и усилия ролей без копии — «изменённый встроенный», удаление возвращает встроенный`, () => {
+    it(`«${tpl.title}»: смена агента, модели и усилия ролей без копии — «изменённый встроенный», удаление возвращает встроенный`, () => {
       const pm = new ProjectManager(tmp)
-      const roles = (tpl.settings.roles ?? DEFAULT_ROLES).map((r, i) => (i === 0 ? { ...r, model: 'opus', effort: 'high' } : { ...r }))
+      const roles = (tpl.settings.roles ?? DEFAULT_ROLES).map((r, i) =>
+        i === 0 ? { ...r, model: 'opus', effort: 'high' }
+          : i === 1 ? { ...r, agent: r.agent === 'claude' ? 'codex' as const : 'claude' as const, model: 'gpt-5' }
+            : { ...r })
       const saved1 = pm.saveTemplate({ id: tpl.id, title: tpl.title, description: tpl.description, settings: { ...tpl.settings, roles } })
       assert.deepEqual(saved1.settings.roles?.[0], roles[0])
-      // После перезапуска — своя копия с тем же id вместо встроенного, модель на месте.
+      assert.deepEqual(saved1.settings.roles?.[1], roles[1])
+      // После перезапуска — своя копия с тем же id вместо встроенного, агент и модель на месте.
       const after = new ProjectManager(tmp).template(tpl.id)
       assert.equal(after?.builtin, undefined)
       assert.equal(after?.settings.roles?.[0].model, 'opus')
       assert.equal(after?.settings.roles?.[0].effort, 'high')
+      assert.equal(after?.settings.roles?.[1].agent, roles[1].agent)
+      assert.equal(after?.settings.roles?.[1].model, 'gpt-5')
       // Своя копия дальше правится как обычный шаблон (как «Общий» после миграции).
       pm.saveTemplate({ id: tpl.id, title: tpl.title, description: tpl.description, settings: { ...tpl.settings, roles: tpl.settings.roles ?? DEFAULT_ROLES } })
       pm.deleteTemplate(tpl.id)

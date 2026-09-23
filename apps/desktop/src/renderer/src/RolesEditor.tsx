@@ -24,7 +24,8 @@ import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
 import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
-import { modelOnlyPatch } from './projectTemplates'
+import { executorOnlyPatch } from './projectTemplates'
+import { agentChangePatch, withPatch } from './roleEdit'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -40,21 +41,11 @@ interface Props {
   /** Только просмотр: роли можно выбирать и читать, правки не сохраняются. */
   readOnly?: boolean
   /**
-   * Меняются только модель и усилие (встроенный шаблон): состав, порядок, агент, названия и инструкции ролей
-   * заблокированы — их правят в копии шаблона.
+   * Меняется только исполнитель — агент, модель и усилие (встроенный шаблон): состав, порядок, названия и инструкции
+   * ролей заблокированы — их правят в копии шаблона.
    */
-  modelOnly?: boolean
+  executorOnly?: boolean
   onSave(roles: Role[]): Promise<void>
-}
-
-/** Роль с новыми полями; пустые description/model/effort/systemPrompt не сохраняем вовсе (undefined — «по умолчанию»). */
-function withPatch(r: Role, p: Partial<Role>): Role {
-  const next: Role = { ...r, ...p }
-  if (!next.description?.trim()) delete next.description
-  if (!next.model) delete next.model
-  if (!next.effort) delete next.effort
-  if (!next.systemPrompt?.trim()) delete next.systemPrompt
-  return next
 }
 
 /** Уровни effort роли: по модели агента, если агент известен, иначе общий список из реестра. */
@@ -82,11 +73,11 @@ function newRoleId(): string {
 
 /** Раздел «Роли» («О проекте» и дефолт для новых проектов): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
 export function RolesEditor({
-  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, modelOnly = false, onSave
+  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, executorOnly = false, onSave
 }: Props): React.JSX.Element {
   const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
-  /** Состав и порядок ролей: заблокированы и в просмотре, и в режиме «только модель». */
-  const locked = readOnly || modelOnly
+  /** Состав и порядок ролей: заблокированы и в просмотре, и в режиме «только исполнитель». */
+  const locked = readOnly || executorOnly
   const update: typeof save = locked ? () => undefined : save
   const enabled = agents.filter((a) => a.enabled)
   const builtin = useBuiltinPrompts()
@@ -100,14 +91,13 @@ export function RolesEditor({
 
   function patch(i: number, p: Partial<Role>, debounce = false): void {
     if (readOnly) return
-    const allowed = modelOnly ? modelOnlyPatch(p) : p
+    const allowed = executorOnly ? executorOnlyPatch(p) : p
     save(roles.map((r, j) => (j === i ? withPatch(r, allowed) : r)), debounce)
   }
 
-  /** Смена агента: модель и effort прошлого агента к новому не подходят — сбрасываются в «по умолчанию». */
+  /** Смена агента (и во встроенном шаблоне): модель и effort сбрасываются — `agentChangePatch`. */
   function changeAgent(i: number, agent: AgentKind): void {
-    if (locked) return
-    patch(i, { agent, model: undefined, effort: undefined })
+    patch(i, agentChangePatch(agent))
   }
 
   /** Смена модели: effort, которого нет у новой модели, сбрасывается. */
@@ -273,7 +263,7 @@ export function RolesEditor({
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
             readOnly={readOnly}
-            modelOnly={modelOnly}
+            executorOnly={executorOnly}
             onPatch={(p, debounce) => patch(index, p, debounce)}
             onAgent={(agent) => changeAgent(index, agent)}
             onModel={(model, debounce) => changeModel(index, model, debounce)}
@@ -299,7 +289,7 @@ interface PanelProps {
   deleteBlocker: string | undefined
   builtin: BuiltinState
   readOnly: boolean
-  modelOnly: boolean
+  executorOnly: boolean
   onPatch(p: Partial<Role>, debounce?: boolean): void
   onAgent(agent: AgentKind): void
   onModel(model: string, debounce?: boolean): void
@@ -311,9 +301,9 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, readOnly, modelOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, readOnly, executorOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
-  const locked = readOnly || modelOnly
+  const locked = readOnly || executorOnly
   const [tab, setTab] = useState<RoleTab>('prompt')
   /** Открыто подтверждение удаления: что сломается без роли. */
   const [confirming, setConfirming] = useState(false)
@@ -347,7 +337,7 @@ function RolePanel({
             value={r.title}
             placeholder="Название роли"
             aria-label="Название роли"
-            disabled={modelOnly}
+            disabled={executorOnly}
             onChange={(e) => onPatch({ title: e.target.value }, true)}
           />
           <div className="roles-meta">
@@ -380,7 +370,7 @@ function RolePanel({
           rows={3}
           placeholder={defaultDescription ?? 'Что делает роль и когда её брать'}
           aria-label="Назначение роли"
-          disabled={modelOnly}
+          disabled={executorOnly}
           onChange={(e) => onPatch({ description: e.target.value }, true)}
         />
         {defaultDescription ? (
@@ -408,7 +398,6 @@ function RolePanel({
                 value={r.agent}
                 className={state !== 'on' ? 'off' : ''}
                 aria-label="Агент"
-                disabled={modelOnly}
                 onChange={(e) => onAgent(e.target.value as AgentKind)}
               >
                 {enabled.map((a) => (

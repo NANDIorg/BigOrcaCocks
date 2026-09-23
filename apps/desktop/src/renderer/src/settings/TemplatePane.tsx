@@ -51,7 +51,7 @@ const TAB_LABELS: Record<TemplateTab, string> = {
 /**
  * Один шаблон в «Настройки → Шаблоны проектов»: шапка (название, отметки, действия) и те же редакторы разделов,
  * что в «О проекте», но пишут они в шаблон (templates:save). Встроенный шаблон — просмотр и «Дублировать»; в нём
- * меняются только модель и усилие ролей: первая такая правка сохраняет «изменённый встроенный» (копию с тем же id).
+ * меняются только агент, модель и усилие ролей: первая такая правка сохраняет «изменённый встроенный» (копию с тем же id).
  */
 export function TemplatePane({
   template: t, state, usage, agents, onRefreshAgents, tab, onTab, api, onSelect, projects, onProjectsChanged
@@ -72,7 +72,7 @@ export function TemplatePane({
   const [bulk, setBulk] = useState(false)
   /** Встроенный шаблон, ставший своей копией из редактора ролей: ключ его черновика не меняется (`rolesEditorKey`). */
   const [promoted, setPromoted] = useState<string | null>(null)
-  const modelsOnly = templateRolesMode(t) === 'models'
+  const executorOnly = templateRolesMode(t) === 'executor'
   // Старый preload без applyTemplate — массового применения нет, шапка как раньше.
   const canBulk = !!applyApi(window.orca) && projects.length > 0
   const candidates = bulkCandidates(projects, t, agents)
@@ -152,8 +152,8 @@ export function TemplatePane({
           <>
             <SectionHead
               title="Роли"
-              hint={modelsOnly
-                ? 'Во встроенном шаблоне меняются только модель и усилие ролей — шаблон станет «изменённым встроенным». Остальное — через «Дублировать».'
+              hint={executorOnly
+                ? 'Во встроенном шаблоне у ролей меняются только агент, модель и усилие — шаблон станет «изменённым встроенным». Остальное — через «Дублировать».'
                 : 'Кто выполняет задачи: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче».'}
             />
             <RolesEditor
@@ -161,9 +161,9 @@ export function TemplatePane({
               roles={s.roles}
               agents={tplAgents}
               workflow={s.workflow}
-              modelOnly={modelsOnly}
+              executorOnly={executorOnly}
               onSave={(next) => {
-                if (modelsOnly) setPromoted(t.id)
+                if (executorOnly) setPromoted(t.id)
                 return api.patch(t.id, { roles: next })
               }}
             />
@@ -283,7 +283,7 @@ export function TemplatePane({
       <div className="about-banner">
         {readOnly ? (
           <>
-            Встроенный шаблон обновляется вместе с приложением. <b>Модель и усилие ролей</b> можно поменять прямо здесь
+            Встроенный шаблон обновляется вместе с приложением. <b>Агента, модель и усилие ролей</b> можно поменять прямо здесь
             (вкладка «Роли») — шаблон станет «изменённым встроенным». Остальное — «Дублировать» и правьте копию.
           </>
         ) : overridesBuiltin(t) ? (
