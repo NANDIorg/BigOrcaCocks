@@ -324,6 +324,8 @@ function watchStuck(): void {
  * Раз в 5 с: терминал координатора завершённого прогона (run_done), чей агент сам не выходит
  * после финального ответа (Codex), закрывается после его сигнала `runs finish` и короткой тишины
  * (без сигнала — только после долгой тишины). Решение — в coordinatorsToClose, killPty идемпотентен.
+ * Там же прогоны после run_done, чей координатор уже не жив (закрыли терминал, перезапуск приложения),
+ * уходят на «Проверку» — settleIdleRuns.
  */
 function watchFinishedCoordinators(): void {
   setInterval(() => {
@@ -337,6 +339,7 @@ function watchFinishedCoordinators(): void {
         now: Date.now()
       })
       for (const { ptyId } of due) killPty(ptyId)
+      store.settleIdleRuns(isAlive)
     }
   }, 5_000)
 }

@@ -124,7 +124,7 @@ describe('describeEvent', () => {
     assert.equal(describeEvent(ev('worker_done', { answerFor: 'coordinator' }), task, 'P', true)?.kind, 'workerDone')
     assert.equal(describeEvent(ev('request_created', { kind: 'question', requestId: 'r1' }), task, 'P', true)?.roleId, 'reviewer')
     const run = describeEvent({ ...ev('run_done', { objective: 'цель' }), taskId: undefined }, undefined, 'P', true)
-    assert.deepEqual(run && { kind: run.kind, roleId: run.roleId, body: run.body }, { kind: 'runDone', roleId: 'coordinator', body: 'Ждёт проверки: цель' })
+    assert.deepEqual(run && { kind: run.kind, roleId: run.roleId, body: run.body }, { kind: 'runDone', roleId: 'coordinator', body: 'Подзадачи сделаны, скоро проверка: цель' })
     const manual = describeEvent({ ...ev('run_done', { objective: 'цель', manual: true }), taskId: undefined }, undefined, 'P', true)
     assert.equal(manual?.body, 'Прогон завершён: цель', 'ручной перенос — человек сам объявил задачу сделанной')
     assert.equal(describeEvent(ev('task_ready', {}), task, 'P', true), null)
