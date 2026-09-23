@@ -2,19 +2,12 @@ import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { Terminal } from './Terminal'
 import { Icon } from './icons'
+import type { AssistantTerminal } from './assistantPty'
 
-/** Терминал ассистента одного проекта: панель держит смонтированными терминалы всех проектов. */
-export interface AssistantTerminal {
-  projectId: string
-  ptyId: string
-  /** Хвост вывода из terminals:list — после перезагрузки окна терминал не пустой. */
-  tail?: string
-}
 
 interface Props {
   open: boolean
-  projectName: string
-  /** Ассистенты всех проектов; виден только терминал активного. */
+  /** Терминалы ассистента (после «Новый диалог» или со старым main их бывает несколько); виден только activePty. */
   terminals: AssistantTerminal[]
   activePty: string | null
   /** Запуск идёт (assistant.open / reset) или сорвался — текст вместо терминала. */
@@ -25,11 +18,12 @@ interface Props {
 }
 
 /**
- * Ассистент доски: выезжающая справа панель с терминалом агента активного проекта (skills/assistant.md).
+ * Ассистент доски: выезжающая справа панель с терминалом агента — одного на приложение, он работает со всеми
+ * проектами через orca-board --project (skills/assistant.md).
  * Терминалы не размонтируются при закрытии панели и смене проекта — вывод и история xterm сохраняются.
  * Esc закрывает панель, только если фокус не в терминале: в xterm Esc нужен агенту (прервать ответ).
  */
-export function AssistantPanel({ open, projectName, terminals, activePty, status, onClose, onReset, onOpenInTerminals }: Props): React.JSX.Element {
+export function AssistantPanel({ open, terminals, activePty, status, onClose, onReset, onOpenInTerminals }: Props): React.JSX.Element {
   const panelRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -56,8 +50,8 @@ export function AssistantPanel({ open, projectName, terminals, activePty, status
       {open && <div className="inbox-scrim" onClick={onClose} />}
       <aside ref={panelRef} tabIndex={-1} className={`inbox assistant ${open ? 'open' : ''}`} aria-label="Ассистент" inert={!open}>
         <div className="inbox-head">
-          <h3 title={projectName}>
-            <span className="assistant-title">Ассистент · {projectName}</span>
+          <h3>
+            <span className="assistant-title">Ассистент</span>
           </h3>
           <kbd className="rq-kbd" title="Открыть / закрыть">⌘K</kbd>
           <button className="icon-btn" title="Новый диалог: перезапустить ассистента с чистым контекстом" aria-label="Новый диалог" onClick={onReset} disabled={status.busy}>

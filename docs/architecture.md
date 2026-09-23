@@ -101,8 +101,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет — `claude` без модели.
-- **Ассистент** (`startAssistant`): роль `assistant`; в старых проектах без неё — агент, модель и effort роли
-  `coordinator` (без её инструкций, `assistantRole`), нет и её — `claude` без модели. См. «Ассистент».
+- **Ассистент** (`startAssistant`): роли — из настроек по умолчанию (`projects.defaults()`), не из проекта;
+  роль `assistant`, без неё — агент, модель и effort роли `coordinator` (без её инструкций, `assistantRole`),
+  нет и её — `claude` без модели. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
   при старте воркера и координатора к служебной инструкции Orca (`skills/worker.md` / `coordinator.md`)
   дописывается блок `# Инструкции роли «<title>»` с текстом роли (trim по краям, внутри — как есть).
@@ -278,9 +279,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 | Переменная | Кому | Значение |
 |---|---|---|
-| `ORCA_SOCKET`, `ORCA_PROJECT` | всем агентам | сокет приложения, id проекта |
+| `ORCA_SOCKET` | всем агентам | сокет приложения |
+| `ORCA_PROJECT` | воркеру и координатору (ассистенту — нет) | id проекта; ассистент один на приложение и передаёт `--project` сам, без флага CLI берёт активный проект |
 | `ORCA_TASK_ID`, `ORCA_DISPATCH_ID` | воркеру | задача и dispatch |
-| `ORCA_ROLE` | координатору | `coordinator` |
+| `ORCA_ROLE` | координатору, ассистенту | `coordinator` / `assistant` |
 | `ORCA_RUN_ID` | координатору | id прогона; CLI подставляет его в `--run` |
 | `BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` | координатору | `1800000` / `3600000` (30 / 60 мин) |
 | `ORCA_STUCK_MINUTES` | main-процессу | порог детектора тишины, по умолчанию 10 |
@@ -332,24 +334,32 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 естественным языком («создай задачу», «верни в работу», «перенеси», «закрой», «перезапусти воркера»),
 а он выполняет это командами `orca-board`. Код не пишет и не читает.
 
-- **Запуск** (`startAssistant(repoRoot, ctx, cols, rows)`): агент роли `assistant` (fallback см. «Роли и колонки»),
+- **Один на всё приложение**: ассистент не принадлежит проекту и работает со всеми проектами через
+  `orca-board --project <id>`; без флага CLI берёт активный в UI проект. Файлового доступа к репозиториям
+  нет (`--add-dir` не передаётся) — только CLI.
+- **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext` без `projectId`): роли и режим
+  разрешений — из настроек по умолчанию (`projects.defaults()`), агент роли `assistant` (fallback см. «Роли и колонки»),
   system prompt — `skills/assistant.md` + инструкции роли (`withRoleInstructions`), стартовое сообщение —
-  `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — корень репозитория
-  проекта, режим разрешений — проекта, `orca-board` без вопросов (`--allowedTools Bash(orca-board:*)` у claude),
-  на Windows — `win32Launch`, как у координатора.
-- **Окружение**: `ORCA_SOCKET`, `ORCA_PROJECT`, `PATH` с bin CLI (`baseEnv`) и `ORCA_ROLE=assistant`.
-  **Нет** `ORCA_RUN_ID`: прогон не создаётся, ассистент работает со всей доской проекта (задачи без `--run`
-  попадают во «Входящие», глобальные задачи он называет явно через `--global`/`--run`).
-- **IPC**: `assistant:open(cols, rows) → { ptyId }` — один ассистент на проект (`Map<projectId, ptyId>`):
-  живой PTY возвращается как есть, иначе запускается новый; `assistant:reset(cols, rows) → { ptyId }` — живой
-  закрывается (`killPty`), запускается новый с чистым контекстом. Проект — активный (`resolveProject()`),
-  как у `coordinator:start`. В renderer — `window.orca.assistant.open/reset`.
+  `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — нейтральный
+  `userData/assistant` (создаётся при запуске), не репозиторий; `orca-board` без вопросов
+  (`--allowedTools Bash(orca-board:*)` у claude), на Windows — `win32Launch`, как у координатора.
+  meta PTY — `{ role: 'assistant', label: 'ассистент' }` без `projectId`.
+- **Окружение** (`assistantEnv` в `src/main/assistant.ts`, тест — `assistant.test.ts`): `ORCA_SOCKET`,
+  `PATH` с bin CLI, `ORCA_NODE` в сборке и `ORCA_ROLE=assistant`. **Нет** `ORCA_PROJECT` (проект —
+  `--project` или активный) и `ORCA_RUN_ID`: прогон не создаётся (задачи без `--run` попадают во «Входящие»,
+  глобальные задачи он называет явно через `--global`/`--run`).
+- **IPC**: `assistant:open(cols, rows) → { ptyId }` — один ассистент на приложение (`assistantPty` в `index.ts`):
+  живой PTY возвращается как есть при любом активном проекте, иначе запускается новый;
+  `assistant:reset(cols, rows) → { ptyId }` («Новый диалог») — живой закрывается (`killPty`), запускается
+  новый с чистым контекстом. В renderer — `window.orca.assistant.open/reset`.
 - **UI** (`renderer/src/AssistantPanel.tsx`, состояние — в `App.tsx`): правая выезжающая панель (как Инбокс,
   480px, на ширине <600px — во весь экран), открывается кнопкой в rail и ⌘K / Ctrl+K (capture-обработчик
-  рядом с ⌘J, работает из xterm; открытие одной панели закрывает другую). При открытии, если у активного
-  проекта ассистента нет или он завершился, — `assistant.open`. Терминалы ассистентов всех проектов остаются
-  смонтированными (вывод не теряется при закрытии панели и смене проекта); PTY находится по ответу
-  open/reset, после перезагрузки окна — по роли `assistant` в `terminals:list`. «Новый диалог» — `reset`,
+  рядом с ⌘J, работает из xterm; открытие одной панели закрывает другую). Заголовок — «Ассистент» без имени
+  проекта. При открытии, если ассистента нет или он завершился, — `assistant.open`. Терминал остаётся
+  смонтированным (вывод не теряется при закрытии панели), при смене проекта — тот же. PTY выбирает
+  `pickAssistant` (`renderer/src/assistantPty.ts`, тест рядом): ответ open/reset, после перезагрузки окна —
+  роль `assistant` без `projectId` в `terminals:list`; со старым main (ассистент по проекту, PTY с `projectId`)
+  — ассистент активного проекта. Во вкладке «Терминалы» ассистент приложения виден в любом проекте. «Новый диалог» — `reset`,
   старый PTY сразу убирается из списка терминалов. Esc закрывает панель, только если фокус не в xterm:
   там Esc нужен агенту (прервать ответ). В списке «Терминалы» ассистент подписан «ассистент».
 - **Правила поведения** — в `skills/assistant.md`: ассистент работает со **всеми** проектами пользователя.
@@ -699,8 +709,9 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 `enabledAgents`, `roles`, `columns`), доску каждого — в `userData/boards/<id>.json`
 (`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board` (на Windows — `%APPDATA%\orca-board`).
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
-UI работает с активным проектом; агенты получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
+UI работает с активным проектом; воркеры и координатор получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
 поэтому воркер продолжает писать в свою доску, даже если пользователь переключился на другой проект.
+Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`**: `{ projects: Project[], activeId, defaults?: Partial<ProjectDefaults>, settings?: Partial<AppSettings> }`
 (`settings` — глобальные настройки приложения, см. «Фоновый режим»).

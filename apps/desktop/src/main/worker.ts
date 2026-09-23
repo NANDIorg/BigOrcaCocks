@@ -7,6 +7,7 @@ import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
 import { extraPathDirs, findBin, isCmdScript } from './agents'
+import { assistantEnv } from './assistant'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -366,12 +367,16 @@ export function startCoordinator(
   return { ptyId, runId: run.id }
 }
 
+/** Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из настроек по умолчанию. */
+export type AssistantContext = Omit<WorkerEnvContext, 'projectId'>
+
 /**
- * Ассистент доски: интерактивный агент роли assistant (нет такой роли — агент роли coordinator, нет и её — claude)
- * в корне репозитория. Прогон не создаётся и ORCA_RUN_ID нет: ассистент действует на всём проекте через
- * orca-board по просьбам человека в терминале (skills/assistant.md).
+ * Ассистент доски: интерактивный агент роли assistant (нет такой роли — агент роли coordinator, нет и её — claude).
+ * Один на всё приложение: работает со всеми проектами через orca-board --project (без флага — активный в UI).
+ * cwd — нейтральный userData/assistant, а не репозиторий: файлового доступа к проектам у ассистента нет.
+ * Прогон не создаётся и ORCA_RUN_ID нет (skills/assistant.md).
  */
-export function startAssistant(repoRoot: string, ctx: WorkerEnvContext, cols = 120, rows = 30): { ptyId: string } {
+export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30): { ptyId: string } {
   const role = assistantRole(ctx.roles)
   const spec = getAgent(role?.agent ?? 'claude')
   if (!spec) throw new Error(`неизвестный агент: ${role?.agent}`)
@@ -381,15 +386,20 @@ export function startAssistant(repoRoot: string, ctx: WorkerEnvContext, cols = 1
     model: role?.model,
     effort: role?.effort
   })
+  const cwd = join(app.getPath('userData'), 'assistant')
+  mkdirSync(cwd, { recursive: true })
   const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
   const ptyId = spawnPty({
-    meta: { role: 'assistant', label: 'ассистент', projectId: ctx.projectId },
-    cwd: repoRoot,
+    meta: { role: 'assistant', label: 'ассистент' },
+    cwd,
     command: launch.command,
     args: launch.args,
     cols,
     rows,
-    env: { ...baseEnv(ctx), ...launch.env, ORCA_ROLE: 'assistant' }
+    env: {
+      ...assistantEnv({ socketPath: ctx.socketPath, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
+      ...launch.env
+    }
   })
   return { ptyId }
 }
