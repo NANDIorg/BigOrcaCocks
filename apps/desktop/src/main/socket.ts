@@ -126,6 +126,12 @@ const handlers: Record<string, Handler> = {
     return run ? store.listSubtasks(run) : store.listTasks()
   },
   'task.get': (r, _d, store) => store.getTask(str(r.params.task) ?? '') ?? null,
+  // Полный ответ задачи-ответа и decision: в событиях answer обрезан (answerTruncated).
+  'task.answer': (r, _d, store) => {
+    const id = str(r.params.task)
+    if (!id) throw new Error('--task обязателен')
+    return store.taskAnswer(id)
+  },
   // CLI подставляет ORCA_RUN_ID в params.run; сервер env не читает.
   'task.create': (r, deps, store) => createTask(r, deps, store, str(r.params.run)),
   'global.list': (_r, _d, store) => store.listGlobalTasks(),

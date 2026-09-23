@@ -40,7 +40,8 @@
      `orca-board check --wait --types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done --timeout-ms 1500000` —
      блокируется до первого события. `timedOut: true` — просто вызови ещё раз.
 4. По событию:
-   - `worker_done` по **задаче-ответу** (в событии есть `answerFor`, текст — в `answer`):
+   - `worker_done` по **задаче-ответу** (в событии есть `answerFor`, текст — в `answer`; при
+     `answerTruncated: true` там только начало — полный текст: `orca-board task answer --task <id>`):
      - `answerFor: coordinator` → прочитай `answer`, прими его `orca-board review accept --task <id>`
        (ревьюера не создавай) и действуй дальше по ответу: создай следующие задачи или дай сводку.
      - `answerFor: human` → сейчас ничего не делай: ответ читает человек в приложении и либо принимает его
@@ -63,7 +64,8 @@
    - `question_answered` → на вопрос ответили (ты или человек в приложении). Ответ до воркера доходит сам:
      через его `ask` или сообщением в его терминал. `workerLive: false` (воркер уже не работает, задача в `ready`) →
      `orca-board worker start --task <taskId>` — ответ будет в его задании. Иначе ничего не делай.
-   - `answer_accepted` → человек принял ответ задачи-ответа (`answerFor: human`), текст — в `answer`, задача
+   - `answer_accepted` → человек принял ответ задачи-ответа (`answerFor: human`), текст — в `answer`
+     (при `answerTruncated: true` — только начало, полный текст и `decision`: `orca-board task answer --task <id>`), задача
      уже в `done`, её коммиты (если были) уже слиты в текущую ветку.
      - Есть `decision` — это решение человека по ответу («делаем вариант A», «теперь реализуй»): заведи задачи
        по нему (контекст — из `answer`) и запусти воркеров. `decision` важнее твоих догадок о цели.

@@ -53,8 +53,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   координатор передал вопрос человеку (`question forward`).
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
   типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `answer_accepted`, `run_done`.
+  В `worker_done`/`answer_accepted` `answer` — последнее поле, обрезан до 2000 символов (`answerTruncated: true`);
+  полный ответ и `decision` — `orca-board task answer --task <id>`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
   `in_progress` при старте воркера; `review` после `done`; `needs_input` при вопросе или выходе PTY без `done`.
+  При загрузке снапшота dispatch без `endedAt` закрываются (`unknown`), их задачи из `in_progress` → `ready`.
 
 ## Роли и колонки (`src/main/projects.ts`)
 

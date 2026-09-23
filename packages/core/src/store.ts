@@ -22,6 +22,14 @@ export interface Persistence {
   save(snapshot: StoreSnapshot): void
 }
 
+/** Сколько символов ответа кладётся в событие (worker_done, answer_accepted); остальное — через `task answer`. */
+export const EVENT_ANSWER_LIMIT = 2000
+
+/** Поля ответа для payload события: обрезанный текст и признак answerTruncated. Ставить последними. */
+function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
+  return text.length > EVENT_ANSWER_LIMIT ? { answer: text.slice(0, EVENT_ANSWER_LIMIT), answerTruncated: true } : { answer: text }
+}
+
 let counter = 0
 export function newId(prefix: string): string {
   counter += 1
@@ -59,8 +67,29 @@ export class TaskStore {
       snap.runs?.forEach((r) => this.runs.set(r.id, r))
       this.events = snap.events ?? []
       const migrated = this.migrateGlobalTasks()
-      if (this.migrateHumanAnswers() || migrated) this.persistence?.save(this.snapshot())
+      const humanAnswers = this.migrateHumanAnswers()
+      if (this.closeStaleDispatches() || humanAnswers || migrated) this.persistence?.save(this.snapshot())
     }
+  }
+
+  /**
+   * PTY не переживают перезапуск приложения, а при quit ptyExited может не успеть записать endedAt.
+   * Все dispatch без endedAt при загрузке — мёртвые: закрываем с outcome 'unknown', задачу «В работе»
+   * возвращаем в ready (иначе worker start отказывает «уже в работе»). Задача в needs_input с открытым
+   * вопросом остаётся ждать ответа — после него answer() сам переведёт её в ready.
+   */
+  private closeStaleDispatches(): boolean {
+    let changed = false
+    const now = Date.now()
+    for (const d of this.dispatches.values()) {
+      if (d.endedAt) continue
+      d.endedAt = now
+      d.outcome = 'unknown'
+      changed = true
+      const task = this.tasks.get(d.taskId)
+      if (task && task.dispatchId === d.id && this.isKind(task, 'in_progress')) this.setStatus(task, this.columnId('ready'))
+    }
+    return changed
   }
 
   /**
@@ -577,10 +606,12 @@ export class TaskStore {
     dispatch.files = files
     if (text) dispatch.answer = text
     this.setStatus(task, this.columnId(task.answerFor === 'human' ? 'needs_input' : 'review'))
+    // Ответ — последним и обрезанным: строка события в мониторе координатора обрезается, поля до него
+    // должны дойти целиком. Полный текст — `orca-board task answer --task <id>`.
     this.pushEvent('worker_done', {
       taskId: task.id, dispatchId, summary, files,
       ...(task.answerFor ? { answerFor: task.answerFor } : {}),
-      ...(text ? { answer: text } : {})
+      ...(text ? eventAnswer(text) : {})
     })
     this.commit()
     return dispatch
@@ -650,15 +681,38 @@ export class TaskStore {
     const task = this.mustTask(taskId)
     if (task.answerFor === 'human' && !this.isKind(task, 'done')) {
       const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
+      // decision — сразу после taskId, ответ — последним и обрезанным (см. finishDispatch).
       this.pushEvent('answer_accepted', {
-        taskId: task.id, dispatchId: d?.id, answerFor: task.answerFor,
+        taskId: task.id,
+        ...(decision?.trim() ? { decision: decision.trim() } : {}),
         ...(d?.summary ? { summary: d.summary } : {}),
-        ...(d?.answer ? { answer: d.answer } : {}),
-        ...(decision?.trim() ? { decision: decision.trim() } : {})
+        dispatchId: d?.id, answerFor: task.answerFor,
+        ...(d?.answer ? eventAnswer(d.answer) : {})
       })
     }
     // Событие — до commit в updateTask: если задача последняя, run_done придёт после answer_accepted.
     return this.updateTask(taskId, { status: this.columnId('done'), worktree: undefined, branch: undefined })
+  }
+
+  /**
+   * Полный ответ задачи-ответа (`orca-board task answer`): в событиях он обрезан. Берётся из последнего
+   * dispatch задачи; `decision` — из последнего `answer_accepted` по задаче.
+   */
+  taskAnswer(taskId: string): {
+    taskId: string; answerFor?: AnswerAudience; dispatchId?: string; summary?: string; decision?: string; answer?: string
+  } {
+    const task = this.mustTask(taskId)
+    const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
+    const accepted = [...this.events].reverse().find((e) => e.type === 'answer_accepted' && e.taskId === task.id)
+    const decision = typeof accepted?.payload.decision === 'string' ? accepted.payload.decision : undefined
+    return {
+      taskId: task.id,
+      ...(task.answerFor ? { answerFor: task.answerFor } : {}),
+      ...(d ? { dispatchId: d.id } : {}),
+      ...(d?.summary ? { summary: d.summary } : {}),
+      ...(decision ? { decision } : {}),
+      ...(d?.answer ? { answer: d.answer } : {})
+    }
   }
 
   /** Ревью не прошло: задача обратно в ready с замечаниями. */

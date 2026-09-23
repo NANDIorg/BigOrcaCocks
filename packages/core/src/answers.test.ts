@@ -2,7 +2,7 @@
 // Задачи-ответы и колонка «Нужен ответ» глобального канбана (docs/nested-kanban.md, «Ответы и ожидание человека»).
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TaskStore } from './store.ts'
+import { TaskStore, EVENT_ANSWER_LIMIT } from './store.ts'
 import { questionForHuman, waitingForHuman } from './global-tasks.ts'
 import { workerTaskPrompt, questionAnswerMessage } from './prompts.ts'
 import { DEFAULT_COLUMNS, MAX_ANSWER_LENGTH } from './types.ts'
@@ -311,5 +311,75 @@ describe('ответ для человека, застрявший в review', (
     assert.equal(loaded.getTask(coord.id)!.status, 'review')
     assert.equal(loaded.getGlobalTask(g.id).status, 'needs_input')
     assert.equal(saved, 1)
+  })
+})
+
+describe('короткие payload событий с ответом', () => {
+  it('answer_accepted: decision идёт раньше answer, answer — последним', () => {
+    const { store, g, task, dispatch } = setup('human')
+    store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
+    coordinatorEvents(store, g.id)
+    store.acceptTask(task.id, 'Делаем A')
+    const [e] = coordinatorEvents(store, g.id)
+    const keys = Object.keys(e.payload)
+    assert.deepEqual(keys, ['taskId', 'decision', 'summary', 'dispatchId', 'answerFor', 'answer'])
+    // В строке JSON decision тоже раньше ответа — обрезка строки в мониторе его не съест.
+    const line = JSON.stringify(e.payload)
+    assert.ok(line.indexOf('"decision"') < line.indexOf('"answer"'))
+  })
+
+  it('длинный ответ обрезан в worker_done и answer_accepted с answerTruncated; полный — через taskAnswer', () => {
+    const { store, g, task, dispatch } = setup('human')
+    const long = 'x'.repeat(EVENT_ANSWER_LIMIT) + 'хвост'
+    coordinatorEvents(store, g.id)
+    store.finishDispatch(dispatch.id, 'суть', [], long)
+    const [done] = coordinatorEvents(store, g.id)
+    assert.equal(done.type, 'worker_done')
+    assert.equal((done.payload.answer as string).length, EVENT_ANSWER_LIMIT)
+    assert.equal(done.payload.answerTruncated, true)
+    assert.equal(Object.keys(done.payload).at(-1), 'answerTruncated')
+    store.acceptTask(task.id, 'Делаем A')
+    const [acc] = coordinatorEvents(store, g.id)
+    assert.equal((acc.payload.answer as string).length, EVENT_ANSWER_LIMIT)
+    assert.equal(acc.payload.answerTruncated, true)
+    assert.deepEqual(store.taskAnswer(task.id), {
+      taskId: task.id, answerFor: 'human', dispatchId: dispatch.id, summary: 'суть', decision: 'Делаем A', answer: long
+    })
+  })
+
+  it('короткий ответ не помечен answerTruncated', () => {
+    const { store, g, dispatch } = setup('coordinator')
+    coordinatorEvents(store, g.id)
+    store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
+    const [done] = coordinatorEvents(store, g.id)
+    assert.equal(done.payload.answer, 'ответ')
+    assert.equal('answerTruncated' in done.payload, false)
+  })
+})
+
+describe('висящие dispatch после перезапуска', () => {
+  it('при загрузке dispatch без endedAt закрывается, задача «В работе» → ready', () => {
+    const { store, task, dispatch } = setup()
+    let saved = 0
+    const loaded = new TaskStore({ load: () => store.snapshot(), save: () => void saved++ }, () => DEFAULT_COLUMNS)
+    const d = loaded.getDispatch(dispatch.id)!
+    assert.ok(d.endedAt)
+    assert.equal(d.outcome, 'unknown')
+    assert.equal(loaded.getTask(task.id)!.status, 'ready')
+    assert.deepEqual(loaded.activeDispatches(), [])
+    assert.equal(saved, 1)
+  })
+
+  it('задача с открытым вопросом остаётся в needs_input; ответ переводит её в ready с workerLive false', () => {
+    const { store, g, task, dispatch } = setup()
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' })
+    const loaded = new TaskStore({ load: () => store.snapshot(), save: () => {} }, () => DEFAULT_COLUMNS)
+    assert.equal(loaded.getTask(task.id)!.status, 'needs_input')
+    coordinatorEvents(loaded, g.id)
+    loaded.answer(q.id, 'Postgres')
+    assert.equal(loaded.getTask(task.id)!.status, 'ready')
+    const [e] = coordinatorEvents(loaded, g.id)
+    assert.equal(e.type, 'question_answered')
+    assert.equal(e.payload.workerLive, false)
   })
 })
