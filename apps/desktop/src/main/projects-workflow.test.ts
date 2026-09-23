@@ -1,14 +1,16 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Воркфлоу проекта: хранение в projects.json (ProjectManager),
-// дефолт по ролям, валидация при сохранении, миграция и будущая версия формата при загрузке.
+// Запуск: pnpm --filter @orca-board/desktop test. Воркфлоу типа задачи: хранение в projects.json (ProjectManager),
+// дефолт по ролям типа, валидация при сохранении, миграция графа проекта в его тип и будущая версия формата.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_ROLES, WORKFLOW_VERSION, defaultWorkflow, type Workflow } from '@orca-board/core'
+import { DEFAULT_ROLES, WORKFLOW_VERSION, defaultWorkflow, type TaskType, type Workflow } from '@orca-board/core'
 import { ProjectManager } from './projects'
 
 const PID = 'p1'
+/** Тип, в который миграция перенесла настройки проекта `PID`. */
+const TID = `type_${PID}`
 let tmp: string
 
 function writeConfig(project: Record<string, unknown> = {}, defaults?: Record<string, unknown>): void {
@@ -19,8 +21,12 @@ function writeConfig(project: Record<string, unknown> = {}, defaults?: Record<st
   }))
 }
 
-function saved(): { projects: Array<{ workflow?: Workflow }>; defaults?: { workflow?: Workflow } } {
+function saved(): { projects: Array<Record<string, unknown>>; taskTypes?: TaskType[] } {
   return JSON.parse(readFileSync(path.join(tmp, 'projects.json'), 'utf8'))
+}
+
+function savedType(id: string): TaskType | undefined {
+  return saved().taskTypes?.find((t) => t.id === id)
 }
 
 /** Дефолтный граф с гейтом QA вместо ревью — валиден при ролях по умолчанию. */
@@ -32,24 +38,35 @@ function qaWorkflow(): Workflow {
 beforeEach(() => { tmp = mkdtempSync(path.join(tmpdir(), 'orca-wf-')) })
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
-describe('ProjectManager.workflow', () => {
-  it('не задан — дефолтный по ролям проекта: есть reviewer — гейт, нет — человек', () => {
+describe('воркфлоу типа задачи', () => {
+  it('граф проекта без своего графа фиксируется в его типе дефолтным: смена ролей его не двигает', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
     assert.deepEqual(pm.workflow(PID), defaultWorkflow(DEFAULT_ROLES))
+    assert.equal(pm.taskTypeWorkflow(TID).custom, true, 'граф записан в тип')
     pm.setRoles(PID, DEFAULT_ROLES.filter((r) => r.id !== 'reviewer'))
-    assert.equal(pm.workflow(PID).nodes.find((n) => n.id === 'review')?.type, 'human')
-    assert.equal(pm.get(PID)?.workflow, undefined, 'дефолт не записывается в проект')
+    assert.equal(pm.workflow(PID).nodes.find((n) => n.id === 'review')?.type, 'gate')
   })
 
-  it('setWorkflow сохраняет валидный граф, null возвращает дефолтный', () => {
+  it('тип без своего графа — дефолтный по ролям типа: есть reviewer — гейт, нет — человек', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const t = pm.saveTaskType({ title: 'Без ревьюера', settings: { roles: DEFAULT_ROLES.filter((r) => r.id !== 'reviewer') } })
+    const wf = pm.taskTypeWorkflow(t.id)
+    assert.equal(wf.custom, false)
+    assert.equal(wf.workflow.nodes.find((n) => n.id === 'review')?.type, 'human')
+    assert.equal(savedType(t.id)?.settings.workflow, undefined, 'дефолт не записывается в тип')
+  })
+
+  it('setWorkflow сохраняет валидный граф в тип проекта по умолчанию, null возвращает дефолтный', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
     const wf = qaWorkflow()
     assert.deepEqual(pm.setWorkflow(PID, wf).workflow, wf)
     assert.deepEqual(new ProjectManager(tmp).workflow(PID), wf, 'переживает перезапуск')
     assert.equal(pm.setWorkflow(PID, null).workflow, undefined)
-    assert.equal(saved().projects[0].workflow, undefined)
+    assert.equal(savedType(TID)?.settings.workflow, undefined)
+    assert.equal('workflow' in saved().projects[0], false, 'в проекте графа нет')
     assert.deepEqual(pm.workflow(PID), defaultWorkflow(DEFAULT_ROLES))
   })
 
@@ -61,7 +78,7 @@ describe('ProjectManager.workflow', () => {
     assert.throws(() => pm.setWorkflow(PID, noReject), /воркфлоу не сохранён: .*нет перехода для reject/)
     const ghostRole = { ...wf, nodes: wf.nodes.map((n) => (n.id === 'review' ? { ...n, roleId: 'ghost' } : n)) }
     assert.throws(() => pm.setWorkflow(PID, ghostRole), /ghost/)
-    assert.equal(pm.get(PID)?.workflow, undefined)
+    assert.deepEqual(pm.workflow(PID), wf)
   })
 
   it('мусор вместо графа — понятная ошибка, а не падение валидатора', () => {
@@ -73,7 +90,7 @@ describe('ProjectManager.workflow', () => {
     }
   })
 
-  it('каждый вид битого графа (§5 проекта) отвергается, сохранённый граф и projects.json не меняются', () => {
+  it('каждый вид битого графа отвергается, сохранённый граф и projects.json не меняются', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
     const good = qaWorkflow()
@@ -109,7 +126,6 @@ describe('ProjectManager.workflow', () => {
         wf.edges.find((e) => e.id === 'e_review_reject')!.to = 'lim'
         wf.edges.push({ id: 'ly', from: 'lim', outcome: 'yes', to: 'conflict' }, { id: 'ln', from: 'lim', outcome: 'no', to: 'work' })
       }), /несуществующую ноду «ghost»/],
-      ['колонки нет', edit((wf) => { node(wf, 'conflict').column = 'nope' }), /нет колонки «nope»/],
       ['нет работы', edit((wf) => {
         wf.nodes = wf.nodes.filter((n) => n.type !== 'work')
         wf.edges = wf.edges.filter((e) => e.from !== 'work').map((e) => (e.to === 'work' ? { ...e, to: 'review' } : e))
@@ -120,6 +136,14 @@ describe('ProjectManager.workflow', () => {
     }
     assert.deepEqual(pm.workflow(PID), good)
     assert.equal(readFileSync(path.join(tmp, 'projects.json'), 'utf8'), before)
+  })
+
+  it('колонка ноды по доске не проверяется: тип общий для проектов с разными колонками', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const wf = defaultWorkflow(DEFAULT_ROLES)
+    const withColumn = { ...wf, nodes: wf.nodes.map((n) => (n.id === 'conflict' ? { ...n, column: 'nope' } : n)) }
+    assert.deepEqual(pm.setWorkflow(PID, withColumn).workflow, withColumn)
   })
 
   it('предупреждения сохранению не мешают: агент роли гейта выключен', () => {
@@ -133,17 +157,25 @@ describe('ProjectManager.workflow', () => {
     const pm = new ProjectManager(tmp)
     assert.throws(() => pm.setWorkflow(PID, { ...qaWorkflow(), version: WORKFLOW_VERSION + 1 }), /обновите приложение/)
   })
+
+  it('встроенный тип: граф без копии не меняется — ошибка с подсказкой «Дублировать»', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    assert.throws(() => pm.patchTaskType('general', { workflow: qaWorkflow() }), /Дублировать/)
+  })
 })
 
 describe('загрузка projects.json', () => {
-  it('будущая версия остаётся как есть, workflow(id) — ошибка «обновите приложение»', () => {
+  it('будущая версия переезжает в тип как есть, workflow(id) — ошибка; правка типа граф не портит', () => {
     const future = { ...qaWorkflow(), version: WORKFLOW_VERSION + 1, extra: 'поле новой версии' }
     writeConfig({ workflow: future })
     const pm = new ProjectManager(tmp)
-    assert.deepEqual(pm.get(PID)?.workflow, future)
+    assert.deepEqual(savedType(TID)?.settings.workflow, future)
     assert.throws(() => pm.workflow(PID), /обновите приложение/)
-    pm.setPermissionMode(PID, 'auto')
-    assert.deepEqual(saved().projects[0].workflow, future, 'сохранение проекта граф не портит')
+    pm.setPermissionMode(PID, 'acceptEdits')
+    pm.setAgentRules(PID, 'правила')
+    assert.deepEqual(savedType(TID)?.settings.workflow, future, 'сохранение типа граф не портит')
+    assert.equal(pm.runType(PID).workflow, undefined, 'в снимок прогона будущий граф не попадает')
   })
 
   it('старая версия мигрируется до текущей', () => {
@@ -151,31 +183,37 @@ describe('загрузка projects.json', () => {
     assert.equal(new ProjectManager(tmp).workflow(PID).version, WORKFLOW_VERSION)
   })
 
-  it('битый граф отбрасывается — читается дефолтный', () => {
+  it('битый граф отбрасывается — в типе фиксируется дефолтный', () => {
     writeConfig({ workflow: 'мусор' }, { workflow: { nodes: 1 } })
     const pm = new ProjectManager(tmp)
-    assert.equal(pm.get(PID)?.workflow, undefined)
     assert.deepEqual(pm.workflow(PID), defaultWorkflow(DEFAULT_ROLES))
     assert.equal(pm.defaults().workflow, undefined)
   })
 })
 
-describe('воркфлоу в дефолте проектов', () => {
-  it('setDefaults проверяет граф, applyDefaults копирует его в проект, null удаляет', () => {
+describe('воркфлоу в типе библиотеки по умолчанию (старые каналы «Для новых проектов»)', () => {
+  /** Пользовательский тип по умолчанию: у встроенного граф без копии не меняется. */
+  function withUserDefault(pm: ProjectManager): void {
+    pm.setDefaultTaskType(pm.duplicateTaskType('general').id)
+  }
+
+  it('setDefaults проверяет граф, applyDefaults делает тип проекта по умолчанию, null удаляет граф', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
+    withUserDefault(pm)
     const wf = qaWorkflow()
     const bad = { ...wf, nodes: wf.nodes.filter((n) => n.type !== 'end') }
     assert.throws(() => pm.setDefaults({ workflow: bad }), /нет ноды «Конец»/)
     assert.deepEqual(pm.setDefaults({ workflow: wf }).workflow, wf)
     assert.deepEqual(pm.applyDefaults(PID).workflow, wf)
     assert.equal(pm.setDefaults({ workflow: null as unknown as Workflow }).workflow, undefined)
-    assert.equal(pm.applyDefaults(PID).workflow, undefined)
+    assert.equal(pm.view(pm.get(PID)!).workflow, undefined)
   })
 
-  it('граф дефолта проверяется по ролям из того же патча', () => {
+  it('граф проверяется по ролям из того же патча', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
+    withUserDefault(pm)
     assert.throws(() => pm.setDefaults({ roles: DEFAULT_ROLES.filter((r) => r.id !== 'qa'), workflow: qaWorkflow() }), /qa/)
   })
 })

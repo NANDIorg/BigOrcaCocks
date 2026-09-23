@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment, type Workflow } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment, type RunTypeInput } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -15,13 +15,14 @@ export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 export interface WorkerEnvContext {
   socketPath: string
   projectId: string
+  /** Режим разрешений типа задачи прогона (`resolveRunType`). */
   permissionMode: PermissionMode
-  /** Роли проекта: из них берутся агент и модель для задачи и координатора. */
+  /** Роли типа задачи прогона: из них берутся агент и модель для задачи и координатора. */
   roles: Role[]
-  /** Правила проекта (`Project.agentRules`): блок «Правила проекта» в системном промпте воркеров и координатора. */
+  /** Правила агентов типа задачи прогона: блок «Правила проекта» в системном промпте воркеров и координатора. */
   agentRules?: string
-  /** Воркфлоу проекта: снимок уходит в новый прогон координатора (`Run.workflow`). */
-  workflow?: Workflow
+  /** Тип нового прогона координатора: id, снимок и граф уходят в `Run.typeId`, `Run.taskType`, `Run.workflow`. */
+  type?: RunTypeInput
 }
 
 /** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
@@ -317,7 +318,7 @@ export function startCoordinator(
   if (resume) objective = resume.objective
   const root = images.length > 0 ? attachmentsRoot(repoRoot) : undefined
   if (root) pruneAttachments(store, root)
-  const run = resume?.run ?? store.createRun(objective, undefined, ctx.workflow)
+  const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
   try {
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
@@ -379,7 +380,7 @@ export function returnToWork(
 }
 
 /**
- * Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из настроек по умолчанию.
+ * Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из типа библиотеки по умолчанию.
  * Правил проекта у него нет: они относятся к агентам, работающим в репозитории проекта.
  */
 export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules'>

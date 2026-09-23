@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type TaskPriority, type Workflow, type TemplateSection } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, resolveTaskType, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type TaskPriority, type Workflow, type TemplateSection, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
@@ -12,11 +12,11 @@ import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } 
 import { listRules, writeRule } from './rules'
 import { currentBranch } from './git'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
-import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
+import { ProjectManager, runnableWorkflow, type PermissionMode } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
-import type { AppSettingsPatch, TemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import type { AppSettingsPatch, ProjectDefaults, ProjectTaskTypesInput, TaskTypeInput, TemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 
@@ -143,13 +143,21 @@ function tasksWord(n: number): string {
   return 'задач'
 }
 
-function ctx(projectId: string): WorkerEnvContext {
+/**
+ * Окружение агентов прогона `runId`: роли, правила и разрешения — из типа его глобальной задачи
+ * (`projects.resolveRun`); без прогона («Входящие») — из типа проекта по умолчанию.
+ */
+function ctx(projectId: string, runId?: string): WorkerEnvContext {
+  return typeCtx(projectId, projects.resolveRun(projectId, runId))
+}
+
+function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
   return {
     socketPath: SOCKET_PATH,
     projectId,
-    permissionMode: projects.get(projectId)?.permissionMode ?? 'auto',
-    roles: projects.roles(projectId),
-    agentRules: projects.agentRules(projectId)
+    permissionMode: type.permissionMode,
+    roles: type.roles,
+    agentRules: type.agentRules
   }
 }
 
@@ -198,7 +206,7 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
   const task0 = p.store.getTask(taskId)
   if (task0) {
     if (p.store.columnKind(task0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
-    const roles = projects.roles(p.id)
+    const roles = projects.roles(p.id, task0.runId)
     const role = roles.find((r) => r.id === task0.roleId)
     if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task0.roleId, roles)}`)
     assertAgentUsable(projectAgents(p.id), role.agent)
@@ -207,28 +215,23 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
     // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды может сменить роль задачи).
     enterWork(workflowDeps(p.id), taskId)
   }
-  return startWorker(p.store, p.root, ctx(p.id), taskId, cols, rows)
+  return startWorker(p.store, p.root, ctx(p.id, task0?.runId), taskId, cols, rows)
 }
 
 /**
- * Граф для снимка в новом прогоне (`Run.workflow`). Граф из будущей версии приложения не снимается —
- * прогон пойдёт по дефолтному графу, а не упадёт при создании.
+ * Исполнитель воркфлоу проекта: store, репозиторий, тип прогона задачи (роли и граф) и запуск воркера
+ * (docs/workflow.md). Граф будущей версии не исполняется — прогон без снимка пойдёт по дефолтному по ролям.
  */
-function runSnapshotWorkflow(projectId: string): Workflow | undefined {
-  try {
-    return projects.workflow(projectId)
-  } catch {
-    return undefined
-  }
-}
-
-/** Исполнитель воркфлоу проекта: store, репозиторий, роли и запуск воркера (docs/workflow.md). */
 function workflowDeps(projectId: string): WorkflowDeps {
   const p = resolveProject(projectId)
   return {
     store: p.store,
     repoRoot: p.root,
-    roles: () => projects.roles(p.id),
+    run: (runId) => {
+      const t = projects.resolveRun(p.id, runId)
+      const workflow = runnableWorkflow(t.workflow)
+      return { roles: t.roles, ...(workflow ? { workflow } : {}) }
+    },
     startWorker: (taskId) => runWorker(taskId, p.id)
   }
 }
@@ -263,11 +266,15 @@ function runCoordinator(
   cols?: number,
   rows?: number,
   images: ImageAttachment[] = [],
-  runId?: string
+  runId?: string,
+  typeId?: string
 ): string {
   const p = resolveProject(projectId)
-  const workflow = runId === undefined ? runSnapshotWorkflow(p.id) : undefined
-  return startCoordinator(p.store, p.root, { ...ctx(p.id), ...(workflow ? { workflow } : {}) }, objective, cols, rows, images, runId).ptyId
+  // Повторный запуск — роли типа прогона; новый прогон — выбранного типа (нет — типа проекта по умолчанию).
+  if (runId !== undefined) return startCoordinator(p.store, p.root, ctx(p.id, runId), objective, cols, rows, images, runId).ptyId
+  const type = projects.runType(p.id, typeId)
+  const env = { ...typeCtx(p.id, projects.resolveType(p.id, type.typeId)), type }
+  return startCoordinator(p.store, p.root, env, objective, cols, rows, images).ptyId
 }
 
 /** Живой терминал ассистента: один на всё приложение, повторное открытие — тот же PTY при любом активном проекте. */
@@ -284,8 +291,8 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
     killPty(assistantPty)
   }
   assistantPty = null
-  // Ассистент один на все проекты: роли и режим разрешений — из шаблона по умолчанию, не из проекта.
-  const d = projects.defaults()
+  // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
+  const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
   const { ptyId } = startAssistant({ socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles }, cols, rows)
   assistantPty = ptyId
   return { ptyId }
@@ -449,20 +456,26 @@ async function pickRepoFolder(): Promise<string | null> {
   return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
 }
 
+/** Активный проект для renderer (`ProjectManager.view`). */
+function activeView(): ReturnType<ProjectManager['view']> | null {
+  const a = projects.active()
+  return a ? projects.view(a) : null
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:getSettings', () => projects.settings())
   ipcMain.handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
   ipcMain.handle('app:testNotification', () => testNotification())
-  ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
-  ipcMain.handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
+  ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: activeView(), projects: projects.views() }))
+  ipcMain.handle('projects:list', () => ({ active: activeView(), projects: projects.views() }))
   ipcMain.handle('projects:inProgressCounts', () => projects.inProgressCounts())
   ipcMain.handle('projects:taskRefs', (_e, id: string) => projects.taskRefs(id))
-  ipcMain.handle('projects:setActive', (_e, id: string) => projects.setActive(id))
+  ipcMain.handle('projects:setActive', (_e, id: string) => projects.view(projects.setActive(id)))
   ipcMain.handle('projects:remove', (_e, id: string) => projects.remove(id))
   ipcMain.handle('projects:setPermissionMode', (_e, id: string, mode: PermissionMode) => projects.setPermissionMode(id, mode))
-  ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
+  ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.view(projects.setEnabledAgents(id, agents)))
   ipcMain.handle('projects:setRoles', (_e, id: string, roles: Role[]) => projects.setRoles(id, roles))
-  ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
+  ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.view(projects.setColumns(id, columns)))
   ipcMain.handle('projects:getAgentRules', (_e, id: string) => projects.agentRules(id))
   ipcMain.handle('projects:setAgentRules', (_e, id: string, text: string) => projects.setAgentRules(id, text))
   ipcMain.handle('projects:setWorkflow', (_e, id: string, wf: Workflow | null) => projects.setWorkflow(id, wf))
@@ -475,14 +488,26 @@ function registerIpc(): void {
   ipcMain.handle('projects:applyDefaults', (_e, id: string) => projects.applyDefaults(id))
   ipcMain.handle('prompts:builtin', () => BUILTIN_PROMPTS)
   ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
-  ipcMain.handle('projects:add', async (_e, templateId?: string, path?: string) => {
+  ipcMain.handle('projects:add', async (_e, typeId?: string, path?: string) => {
     const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
-    return dir ? projects.add(dir, typeof templateId === 'string' && templateId ? templateId : undefined) : null
+    return dir ? projects.view(projects.add(dir, typeof typeId === 'string' && typeId ? typeId : undefined)) : null
+  })
+  ipcMain.handle('projects:detectTaskType', async (_e, path?: string) => {
+    const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
+    return dir ? projects.detectTaskType(dir) : null
   })
   ipcMain.handle('projects:detectTemplate', async (_e, path?: string) => {
     const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
-    return dir ? projects.detectTemplate(dir) : null
+    if (!dir) return null
+    const d = projects.detectTaskType(dir)
+    return { path: d.path, templateId: d.typeId, reason: d.reason }
   })
+  ipcMain.handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.view(projects.setProjectTaskTypes(id, input)))
+  ipcMain.handle('taskTypes:list', () => projects.taskTypesState())
+  ipcMain.handle('taskTypes:save', (_e, input: TaskTypeInput) => projects.saveTaskType(input))
+  ipcMain.handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
+  ipcMain.handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
+  ipcMain.handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
   ipcMain.handle('projects:applyTemplate', (_e, id: string, templateId: string, sections: TemplateSection[], roleIds?: string[]) =>
     projects.applyTemplate(id, templateId, sections, roleIds ?? undefined)
   )
@@ -499,6 +524,7 @@ function registerIpc(): void {
   ipcMain.handle('runs:close', (_e, runId: string) => projects.activeStore().closeRun(runId))
   ipcMain.handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; roleId?: string; priority?: TaskPriority }) => {
     const p = resolveProject()
+    // «Входящие» — по типу проекта по умолчанию.
     const role = pickRole(projects.roles(p.id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent })
   })
@@ -511,7 +537,9 @@ function registerIpc(): void {
   ipcMain.handle('globalTasks:get', (_e, id: string) => projects.activeStore().getGlobalTask(id))
   ipcMain.handle('globalTasks:create', (_e, input: GlobalTaskInput) => {
     const p = resolveProject()
-    return p.store.createGlobalTask({ ...(input ?? {}), workflow: runSnapshotWorkflow(p.id) })
+    const { typeId, ...rest } = input ?? {}
+    // Тип проверяется до создания: недоступный проекту — ошибка, задача не создаётся.
+    return p.store.createGlobalTask({ ...rest, type: projects.runType(p.id, typeof typeId === 'string' && typeId ? typeId : undefined) })
   })
   ipcMain.handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
   ipcMain.handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
@@ -522,7 +550,7 @@ function registerIpc(): void {
   ipcMain.handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
     if (!input?.title?.trim()) throw new Error('название подзадачи не может быть пустым')
     const p = resolveProject()
-    const role = pickRole(projects.roles(p.id), projectAgents(p.id), input.roleId)
+    const role = pickRole(projects.roles(p.id, id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
   })
   ipcMain.handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
@@ -531,7 +559,7 @@ function registerIpc(): void {
   ipcMain.handle('globalTasks:accept', (_e, id: string) => projects.activeStore().acceptGlobalTask(id))
   ipcMain.handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number) => {
     const p = resolveProject()
-    return returnToWork(p.store, p.root, ctx(p.id), id, typeof text === 'string' ? text : '', cols, rows).ptyId
+    return returnToWork(p.store, p.root, ctx(p.id, id), id, typeof text === 'string' ? text : '', cols, rows).ptyId
   })
   ipcMain.handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
   ipcMain.handle('requests:list', (_e, opts?: RequestListOptions) => {
@@ -627,30 +655,37 @@ app.whenReady().then(() => {
         accept: (taskId, decision) => reviewAccept(workflowDeps(p.id), taskId, decision),
         reject: (taskId, feedback) => reviewReject(workflowDeps(p.id), taskId, feedback),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
-        startCoordinator: (objective, runId) => runCoordinator(objective, p.id, undefined, undefined, [], runId),
+        startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
         agents: () => projectAgents(p.id),
-        roles: () => projects.roles(p.id),
+        roles: (runId) => projects.roles(p.id, runId),
+        resolveRun: (runId) => projects.resolveRun(p.id, runId),
+        taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),
+        runType: (typeId) => projects.runType(p.id, typeId),
+        saveTaskTypeRules: (typeId, roleId, text) => projects.saveTaskTypeRules(typeId, roleId, text),
         setRoles: (roles) => projects.setRoles(p.id, roles).roles ?? roles,
         agentRules: () => projects.agentRules(p.id),
         setAgentRules: (text) => projects.setAgentRules(p.id, text).agentRules ?? '',
         columns: () => projects.columns(p.id),
-        workflow: () => ({ workflow: projects.workflow(p.id), custom: projects.get(p.id)?.workflow !== undefined })
+        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(p.id))
       }
     },
     projects: () => {
       const activeId = projects.active()?.id
       const counts = projects.inProgressCounts()
       return projects.list().map((p) => {
-        const template = p.templateId ? projects.template(p.templateId) : undefined
+        const type = projects.projectDefaultType(p.id)
         return {
           id: p.id,
           name: p.name,
           root: p.root,
           active: p.id === activeId,
           inProgress: counts[p.id] ?? 0,
-          ...(p.templateId ? { templateId: p.templateId } : {}),
-          ...(template ? { templateTitle: template.title } : {})
+          defaultTypeId: type.id,
+          defaultTypeTitle: type.title,
+          // Старые поля до перевода сокета на типы (задача 3): тип по умолчанию на месте шаблона.
+          templateId: type.id,
+          templateTitle: type.title
         }
       })
     }

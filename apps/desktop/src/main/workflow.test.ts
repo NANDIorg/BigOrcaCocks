@@ -39,7 +39,7 @@ beforeEach(() => {
   deps = {
     store,
     repoRoot: repo,
-    roles: () => roles,
+    run: () => ({ roles }),
     // Как runWorker: задача входит в воркфлоу / на этап «Работа», затем dispatch.
     startWorker(taskId) {
       enterWork(deps, taskId)
@@ -465,7 +465,11 @@ describe('сценарии с проектом: правка графа и уд�
       projects: [{ id: PID, root: repo, name: 'repo', roles: DEFAULT_ROLES }], activeId: PID
     }))
     pm = new ProjectManager(userData)
-    deps.roles = () => pm.roles(PID)
+    // Прогоны теста живут в своём store, не в доске pm: тип у них — тип проекта по умолчанию («repo» после миграции).
+    deps.run = (runId) => {
+      const t = pm.resolveRun(PID, runId)
+      return { roles: t.roles, workflow: t.workflow }
+    }
   })
 
   it('граф поменяли посреди прогона — идущая задача живёт на снимке, новый прогон — на новом графе', () => {
@@ -494,12 +498,13 @@ describe('сценарии с проектом: правка графа и уд�
     assert.deepEqual(store.getRun(run2.id)!.workflow, noReview)
   })
 
-  it('задача без прогона («Входящие») идёт по дефолтному графу ролей, а не по графу проекта (ограничение v1)', () => {
+  it('задача без прогона («Входящие») идёт по графу типа проекта по умолчанию', () => {
     pm.setWorkflow(PID, noReview)
     const c = workTask('C')
+    commit(c, 'c.ts', 'c\n')
     done(c.id)
-    assert.equal(task(c.id).stage?.nodeId, 'review')
-    assert.equal(gatesOf(c.id).length, 1)
+    assert.equal(task(c.id).status, 'done', 'граф типа — без ревью')
+    assert.equal(gatesOf(c.id).length, 0)
   })
 
   it('роль гейта удалили после сохранения графа — workflow_blocked (уведомление-эскалация), человек решает сам', () => {

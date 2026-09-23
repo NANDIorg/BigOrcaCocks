@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import {
   EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type Question, type GlobalTask
+  type RequestResolution, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole } from './agents'
@@ -30,14 +30,25 @@ export interface ProjectDeps {
   reject(taskId: string, feedback: string): unknown
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
   resolveRequest(id: string, resolution: RequestResolution): unknown
-  /** Без runId — новый прогон (глобальная задача); с runId — повторный запуск на существующей. */
-  startCoordinator(objective: string, runId?: string): string
+  /**
+   * Без runId — новый прогон (глобальная задача) типа `typeId` (нет — типа проекта по умолчанию; недоступный
+   * проекту — ошибка); с runId — повторный запуск на существующей.
+   */
+  startCoordinator(objective: string, runId?: string, typeId?: string): string
   /** Удалить глобальную задачу: живой координатор — ошибка, терминалы подзадач закрываются. */
   deleteGlobalTask(runId: string, cascade: boolean): { deleted: string; tasks: string[] }
   /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
   agents(): AgentInfo[]
-  /** Роли проекта. */
-  roles(): Role[]
+  /** Роли типа прогона `runId`; без прогона — типа проекта по умолчанию. */
+  roles(runId?: string): Role[]
+  /** Тип прогона целиком (`resolveRunType`): роли, правила, разрешения, граф и откуда он взят. */
+  resolveRun(runId?: string): ResolvedRunType
+  /** Типы задач, доступные проекту, и тип проекта по умолчанию — для `types list`. */
+  taskTypes(): { taskTypes: TaskType[]; defaultTypeId: string }
+  /** Тип нового прогона для store (`createGlobalTask`): без `typeId` — тип по умолчанию, недоступный — ошибка. */
+  runType(typeId?: string): RunTypeInput
+  /** `rules set` по типу: правила агентов (`roleId` нет) или системный промпт роли; встроенный правится на месте. */
+  saveTaskTypeRules(typeId: string, roleId: string | undefined, text: string): TaskType
   /** Сохранить роли проекта (с валидацией); возвращает сохранённые. Для `rules set --role`. */
   setRoles(roles: Role[]): Role[]
   /** Правила проекта для агентов доски (`Project.agentRules`); не заданы — ''. */
@@ -46,8 +57,8 @@ export interface ProjectDeps {
   setAgentRules(text: string): string
   /** Колонки доски в порядке показа. */
   columns(): BoardColumn[]
-  /** Воркфлоу проекта (`custom: false` — дефолтный по ролям, проект свой не задал). */
-  workflow(): { workflow: Workflow; custom: boolean }
+  /** Граф типа `typeId` (нет — типа проекта по умолчанию); `custom: false` — дефолтный по ролям типа. */
+  workflow(typeId?: string): { typeId: string; title: string; workflow: Workflow; custom: boolean }
 }
 
 /** Проект в ответе `projects list`: то, что нужно ассистенту, чтобы выбрать `--project`. */
@@ -59,9 +70,12 @@ export interface ProjectSummary {
   active: boolean
   /** Задач в колонке kind in_progress. */
   inProgress: number
-  /** Шаблон («тип проекта»), из которого проект создан; нет — проект старше шаблонов. */
+  /** Тип задач проекта по умолчанию: глобальные задачи без `--type`, «Входящие». */
+  defaultTypeId: string
+  defaultTypeTitle: string
+  /** @deprecated То же, что `defaultTypeId`, — до перевода ассистента на типы. */
   templateId?: string
-  /** Название этого шаблона; нет — шаблон удалён (или нет `templateId`). */
+  /** @deprecated То же, что `defaultTypeTitle`. */
   templateTitle?: string
 }
 
