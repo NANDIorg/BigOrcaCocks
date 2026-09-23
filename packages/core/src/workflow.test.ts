@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
-  WORKFLOW_VERSION, WF_PORTS, defaultWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, nextStage,
+  WORKFLOW_VERSION, WF_PORTS, defaultWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, nextStage, pipelineWorkflow,
   startStage, stageAction, validateWorkflow
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfValidation, Workflow } from './workflow.ts'
@@ -414,5 +414,27 @@ describe('gateTaskSpec', () => {
     const spec = gateTaskSpec({ ...task, branch: undefined }, { ...gate, instructions: '  Прогони pnpm test.  ' })
     assert.ok(spec.includes('orca/task_1'))
     assert.ok(spec.endsWith('## Как проверять\n\nПрогони pnpm test.'))
+  })
+})
+
+describe('pipelineWorkflow', () => {
+  it('без проверок: работа сразу в мерж, граф валиден', () => {
+    const wf = pipelineWorkflow([])
+    assert.equal(wf.edges.find((e) => e.id === 'e_work')!.to, 'merge')
+    assert.deepEqual(validateWorkflow(wf, ctx).errors, [])
+  })
+
+  it('проверка onlyForRoles: условие по роли перед ней, остальные роли её пропускают', () => {
+    const wf = pipelineWorkflow([
+      { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
+      { type: 'human', id: 'eyes', title: 'Глазами', onlyForRoles: ['qa'] }
+    ])
+    assert.deepEqual(validateWorkflow(wf, ctx).errors, [])
+    assert.deepEqual(node(wf, 'eyes_if'), { id: 'eyes_if', type: 'condition', title: 'Глазами?', test: { kind: 'role', roleIds: ['qa'] }, x: 660, y: 0 })
+    assert.equal(edge(wf, 'e_review_accept').to, 'eyes_if')
+    assert.equal(edge(wf, 'e_eyes_if_yes').to, 'eyes')
+    assert.equal(edge(wf, 'e_eyes_if_no').to, 'merge')
+    assert.equal(edge(wf, 'e_eyes_accept').to, 'merge')
+    assert.equal(edge(wf, 'e_eyes_reject').to, 'work')
   })
 })
