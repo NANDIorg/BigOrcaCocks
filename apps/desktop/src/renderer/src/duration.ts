@@ -1,3 +1,5 @@
+import { activeDuration, globalActiveDuration, taskActiveTime, type GlobalTask, type Task } from '@orca-board/core'
+
 const MIN = 60_000
 const HOUR = 60 * MIN
 const DAY = 24 * HOUR
@@ -13,13 +15,21 @@ export function formatDuration(ms: number): string {
   return `${mins} мин`
 }
 
-/** Длительность подзадачи: от первого запуска воркера до done (не done — до now). Не запускалась — undefined. */
-export function taskDuration(t: { startedAt?: number; doneAt?: number }, now: number): number | undefined {
-  if (t.startedAt === undefined) return undefined
-  return (t.doneAt ?? now) - t.startedAt
+/**
+ * Время работы подзадачи: копится только в kind=in_progress (`Task.activeMs` + текущий отрезок до now).
+ * Не бывала в работе — undefined. Задача от старого main — прежний расчёт от первого запуска (`taskActiveTime`).
+ */
+export function taskDuration(t: Pick<Task, 'activeMs' | 'activeSince' | 'startedAt' | 'doneAt'>, now: number): number | undefined {
+  const a = taskActiveTime(t)
+  return a && activeDuration(a, now)
 }
 
-/** Длительность глобальной задачи: от создания до закрытия прогона (не закрыт — до now). */
-export function globalTaskDuration(g: { createdAt: number; closedAt?: number }, now: number): number {
-  return (g.closedAt ?? now) - g.createdAt
+/** Время сейчас тикает: задача в работе (открыт отрезок). */
+export function taskTicking(t: Pick<Task, 'activeMs' | 'activeSince' | 'startedAt' | 'doneAt'>): boolean {
+  return taskActiveTime(t)?.since !== undefined
+}
+
+/** Время работы глобальной задачи: сумма времени её подзадач; тикает, пока хоть одна в работе. */
+export function globalTaskDuration(g: Pick<GlobalTask, 'activeMs' | 'activeSince'>, now: number): number {
+  return globalActiveDuration(g, now)
 }

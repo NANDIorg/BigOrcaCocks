@@ -12,7 +12,7 @@ import { AnswerBlock } from './AnswerBlock'
 import { RequestCard, REQUEST_KIND_TITLE } from './RequestCard'
 import { Markdown } from './Markdown'
 import { Icon } from './icons'
-import { formatDuration, taskDuration } from './duration'
+import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
 
 interface Props {
@@ -245,9 +245,9 @@ export function TaskModal(props: Props): React.JSX.Element {
             </div>
             {duration !== undefined && (
               <div className="meta-row">
-                <span className="meta-key">Длительность</span>
-                <span className="meta-val">
-                  {task.doneAt === undefined ? `⏱ ${formatDuration(duration)}` : formatDuration(duration)}
+                <span className="meta-key">Время работы</span>
+                <span className="meta-val" title="Копится, только пока задача в работе">
+                  {taskTicking(task) ? `⏱ ${formatDuration(duration)}` : formatDuration(duration)}
                 </span>
               </div>
             )}

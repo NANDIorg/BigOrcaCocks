@@ -213,6 +213,13 @@ export interface Task {
   updatedAt: number
   /** Первый startDispatch. */
   startedAt?: number
+  /**
+   * Время работы: сумма закрытых отрезков в колонке kind=in_progress, мс. Нет — задача ещё не бывала
+   * в работе. Считается в `TaskStore.setStatus` (`trackActiveTime`), показывается через `taskActiveTime`.
+   */
+  activeMs?: number
+  /** Начало текущего отрезка работы: есть, только пока задача в kind=in_progress (время тикает). */
+  activeSince?: number
   /** Момент попадания в колонку kind=done. */
   doneAt?: number
 }

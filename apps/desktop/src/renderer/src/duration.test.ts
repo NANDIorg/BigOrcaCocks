@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatDuration, globalTaskDuration, taskDuration } from './duration'
+import { formatDuration, globalTaskDuration, taskDuration, taskTicking } from './duration'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -22,20 +22,30 @@ test('formatDuration: минуты, часы, дни; секунды отбра�
   assert.equal(formatDuration(3 * DAY + 4 * HOUR + 30 * MIN), '3 д 4 ч')
 })
 
-test('taskDuration: done — от startedAt до doneAt', () => {
-  assert.equal(taskDuration({ startedAt: 1000, doneAt: 5000 }, 99_999), 4000)
+test('taskDuration: накопленное время работы плюс идущий отрезок до now', () => {
+  assert.equal(taskDuration({ activeMs: 5 * MIN, activeSince: 1000 }, 1000 + 2 * MIN), 7 * MIN)
+  assert.ok(taskTicking({ activeMs: 5 * MIN, activeSince: 1000 }))
 })
 
-test('taskDuration: не done — до now', () => {
-  assert.equal(taskDuration({ startedAt: 1000 }, 7000), 6000)
+test('taskDuration: не в работе — застывшее значение, от now не зависит', () => {
+  const t = { activeMs: 3 * MIN, startedAt: 0 }
+  assert.equal(taskDuration(t, 10 * DAY), 3 * MIN)
+  assert.equal(taskDuration(t, 0), 3 * MIN)
+  assert.equal(taskTicking(t), false)
 })
 
-test('taskDuration: без startedAt — undefined', () => {
+test('taskDuration: не бывала в работе — undefined', () => {
   assert.equal(taskDuration({}, 7000), undefined)
+  assert.equal(taskTicking({}), false)
+})
+
+test('taskDuration: задача от старого main — от startedAt до doneAt, не done — до now', () => {
+  assert.equal(taskDuration({ startedAt: 1000, doneAt: 5000 }, 99_999), 4000)
+  assert.equal(taskDuration({ startedAt: 1000 }, 7000), 6000)
   assert.equal(taskDuration({ doneAt: 5000 }, 7000), undefined)
 })
 
-test('globalTaskDuration: закрыта — до closedAt, открыта — до now', () => {
-  assert.equal(globalTaskDuration({ createdAt: 100, closedAt: 600 }, 9999), 500)
-  assert.equal(globalTaskDuration({ createdAt: 100 }, 900), 800)
+test('globalTaskDuration: сумма подзадач; тикает только идущими отрезками', () => {
+  assert.equal(globalTaskDuration({ activeMs: 10 * MIN, activeSince: [] }, 5 * HOUR), 10 * MIN)
+  assert.equal(globalTaskDuration({ activeMs: 10 * MIN, activeSince: [0, MIN] }, 3 * MIN), 10 * MIN + 3 * MIN + 2 * MIN)
 })

@@ -61,21 +61,21 @@ export function subtasksLabel(n: number): string {
 
 /** Полоса прогресса «готово / всего» с подписью; без подзадач — спокойная подпись. */
 /**
- * Длительность глобальной задачи (от создания до закрытия прогона). Закрытая — итог «за 3 ч 20 мин»,
- * открытая — живой счётчик «⏱ 1 ч 5 мин»; variant="line" — строка «Длительность: …» для шапок.
- * closedAt при переоткрытии снимается, так что открыта/закрыта определяется по нему.
+ * Время работы глобальной задачи — сумма времени работы подзадач (`globalTaskDuration`). Хоть одна
+ * подзадача в работе — живой счётчик «⏱ 1 ч 5 мин»; закрытая — итог «за 3 ч 20 мин»; иначе застывшее «⏸ …».
+ * variant="line" — строка «Время работы: …» для шапок.
  */
 export function GlobalDuration({ global, variant = 'chip' }: { global: GlobalTask; variant?: 'chip' | 'line' }): React.JSX.Element {
-  if (global.closedAt !== undefined) {
-    const text = formatDuration(globalTaskDuration(global, global.closedAt))
-    return <span className="g-duration">{variant === 'line' ? `Длительность: ${text}` : `за ${text}`}</span>
-  }
-  return <LiveDuration global={global} variant={variant} />
+  if (global.activeSince.length > 0) return <LiveDuration global={global} variant={variant} />
+  const text = formatDuration(globalTaskDuration(global, 0))
+  const title = 'Сумма времени работы подзадач; сейчас ни одна не в работе'
+  if (variant === 'line') return <span className="g-duration" title={title}>Время работы: {text}</span>
+  return <span className="g-duration" title={title}>{global.closedAt !== undefined ? `за ${text}` : `⏸ ${text}`}</span>
 }
 
 function LiveDuration({ global, variant }: { global: GlobalTask; variant: 'chip' | 'line' }): React.JSX.Element {
   const text = formatDuration(globalTaskDuration(global, useNow()))
-  return <span className="g-duration" title="Задача ещё выполняется">{variant === 'line' ? `Длительность: ${text}` : `⏱ ${text}`}</span>
+  return <span className="g-duration" title="Сумма времени работы подзадач; идёт, пока хоть одна в работе">{variant === 'line' ? `Время работы: ${text}` : `⏱ ${text}`}</span>
 }
 
 export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.Element {
