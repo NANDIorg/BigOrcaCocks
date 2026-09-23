@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatDuration, globalTaskDuration, taskDuration, taskTicking } from './duration'
+import { formatDuration, globalTaskDuration, globalTaskTicking, globalTimeLabel, taskDuration, taskTicking } from './duration'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -45,7 +45,47 @@ test('taskDuration: задача от старого main — от startedAt д�
   assert.equal(taskDuration({ doneAt: 5000 }, 7000), undefined)
 })
 
-test('globalTaskDuration: сумма подзадач; тикает только идущими отрезками', () => {
-  assert.equal(globalTaskDuration({ activeMs: 10 * MIN, activeSince: [] }, 5 * HOUR), 10 * MIN)
-  assert.equal(globalTaskDuration({ activeMs: 10 * MIN, activeSince: [0, MIN] }, 3 * MIN), 10 * MIN + 3 * MIN + 2 * MIN)
+test('globalTaskDuration subtasks: сумма подзадач; тикает только идущими отрезками', () => {
+  const stopped = { subtasksActiveMs: 10 * MIN, subtasksActiveSince: [] }
+  assert.equal(globalTaskDuration(stopped, 'subtasks', 5 * HOUR), 10 * MIN)
+  assert.equal(globalTaskTicking(stopped, 'subtasks'), false)
+  const running = { subtasksActiveMs: 10 * MIN, subtasksActiveSince: [0, MIN] }
+  assert.equal(globalTaskDuration(running, 'subtasks', 3 * MIN), 10 * MIN + 3 * MIN + 2 * MIN)
+  assert.equal(globalTaskTicking(running, 'subtasks'), true)
+})
+
+test('globalTaskDuration own: своё время тикает независимо от подзадач', () => {
+  const g = { ownActiveMs: 5 * MIN, ownActiveSince: HOUR, subtasksActiveMs: 0, subtasksActiveSince: [] }
+  assert.equal(globalTaskDuration(g, 'own', HOUR + 2 * MIN), 7 * MIN)
+  assert.equal(globalTaskTicking(g, 'own'), true)
+  assert.equal(globalTaskTicking(g, 'subtasks'), false)
+  const paused = { ownActiveMs: 5 * MIN, subtasksActiveMs: 3 * MIN, subtasksActiveSince: [0] }
+  assert.equal(globalTaskDuration(paused, 'own', 10 * DAY), 5 * MIN)
+  assert.equal(globalTaskTicking(paused, 'own'), false)
+})
+
+test('своё время неизвестно (старый прогон) — undefined, подписи нет', () => {
+  const g = { subtasksActiveMs: 3 * MIN, subtasksActiveSince: [] }
+  assert.equal(globalTaskDuration(g, 'own', HOUR), undefined)
+  assert.equal(globalTimeLabel(g, 'own', HOUR, 'chip'), undefined)
+  assert.equal(globalTimeLabel(g, 'subtasks', HOUR, 'chip'), 'Σ ⏸ 3 мин')
+})
+
+test('карточка от старого main: activeMs/activeSince — сумма подзадач, основного нет', () => {
+  const legacy = { activeMs: 10 * MIN, activeSince: [0] }
+  assert.equal(globalTaskDuration(legacy, 'subtasks', 2 * MIN), 12 * MIN)
+  assert.equal(globalTaskTicking(legacy, 'subtasks'), true)
+  assert.equal(globalTaskDuration(legacy, 'own', 2 * MIN), undefined)
+  assert.equal(globalTaskDuration({}, 'subtasks', HOUR), 0)
+})
+
+test('globalTimeLabel: иконки хода и паузы, закрытая — «за …», строка для шапки', () => {
+  const g = { ownActiveMs: HOUR, ownActiveSince: 0, subtasksActiveMs: 2 * HOUR, subtasksActiveSince: [] }
+  assert.equal(globalTimeLabel(g, 'own', 5 * MIN, 'chip'), '⏱ 1 ч 5 мин')
+  assert.equal(globalTimeLabel(g, 'subtasks', 5 * MIN, 'chip'), 'Σ ⏸ 2 ч')
+  assert.equal(globalTimeLabel(g, 'own', 5 * MIN, 'line'), 'Время работы: ⏱ 1 ч 5 мин')
+  assert.equal(globalTimeLabel(g, 'subtasks', 5 * MIN, 'line'), 'Σ подзадач: ⏸ 2 ч')
+  const closed = { ownActiveMs: HOUR, subtasksActiveMs: 2 * HOUR, subtasksActiveSince: [], closedAt: 1 }
+  assert.equal(globalTimeLabel(closed, 'own', 0, 'chip'), 'за 1 ч')
+  assert.equal(globalTimeLabel(closed, 'subtasks', 0, 'chip'), 'Σ 2 ч')
 })

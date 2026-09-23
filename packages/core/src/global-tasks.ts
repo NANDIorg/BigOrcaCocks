@@ -4,7 +4,7 @@
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
 import type { BoardColumn, ColumnKind, HumanRequest, Run, Task } from './types'
-import { taskActiveTime } from './active-time.ts'
+import { activeDuration, taskActiveTime } from './active-time.ts'
 
 /** Название «Входящих» — служебной глобальной задачи для задач без глобальной. */
 export const INBOX_TITLE = 'Входящие'
@@ -59,12 +59,21 @@ export interface GlobalTask {
   coordinatorAgent?: Run['coordinatorAgent']
   progress: GlobalTaskProgress
   /**
-   * Время работы глобальной задачи — сумма времени работы её подзадач (`taskActiveTime`): закрытые отрезки, мс.
-   * Параллельные подзадачи складываются — это трудозатраты агентов, а не календарное время.
+   * Основное время — сколько сама глобальная задача была в работе (`Run.activeMs`): закрытые отрезки, мс.
+   * Копится, только пока карточка показана в колонке kind=in_progress; в «Нужен ответ», бэклоге и done стоит.
+   * Нет поля — своё время неизвестно (прогон от старого кода) или карточка от старого main: показывать только
+   * сумму подзадач. Длительность — `globalOwnDuration`.
    */
-  activeMs: number
-  /** Начала текущих отрезков подзадач в работе: пусто — время стоит; длительность — `globalActiveDuration`. */
-  activeSince: number[]
+  ownActiveMs?: number
+  /** Начало текущего отрезка основного времени; нет — стоит. */
+  ownActiveSince?: number
+  /**
+   * Сумма времени работы подзадач (`taskActiveTime`): закрытые отрезки, мс. Параллельные подзадачи
+   * складываются — это трудозатраты агентов, а не календарное время.
+   */
+  subtasksActiveMs: number
+  /** Начала текущих отрезков подзадач в работе: пусто — сумма стоит; длительность — `globalSubtasksDuration`. */
+  subtasksActiveSince: number[]
 }
 
 /** Название карточки: заданное, иначе первая непустая строка описания (обрезанная), иначе id. */
@@ -95,22 +104,28 @@ export function globalTaskProgress(
 }
 
 /** Время работы подзадач прогона: сумма закрытых отрезков и начала идущих. */
-export function globalActiveTime(runId: string, tasks: readonly Task[]): Pick<GlobalTask, 'activeMs' | 'activeSince'> {
-  let activeMs = 0
-  const activeSince: number[] = []
+export function globalSubtasksTime(runId: string, tasks: readonly Task[]): Pick<GlobalTask, 'subtasksActiveMs' | 'subtasksActiveSince'> {
+  let subtasksActiveMs = 0
+  const subtasksActiveSince: number[] = []
   for (const t of tasks) {
     if (t.runId !== runId) continue
     const a = taskActiveTime(t)
     if (!a) continue
-    activeMs += a.closedMs
-    if (a.since !== undefined) activeSince.push(a.since)
+    subtasksActiveMs += a.closedMs
+    if (a.since !== undefined) subtasksActiveSince.push(a.since)
   }
-  return { activeMs, activeSince }
+  return { subtasksActiveMs, subtasksActiveSince }
 }
 
-/** Длительность глобальной задачи на момент now: закрытое время подзадач плюс идущие отрезки. */
-export function globalActiveDuration(g: Pick<GlobalTask, 'activeMs' | 'activeSince'>, now: number): number {
-  return g.activeSince.reduce((sum, since) => sum + Math.max(0, now - since), g.activeMs)
+/** Сумма времени подзадач на момент now: закрытое время плюс идущие отрезки. */
+export function globalSubtasksDuration(g: Pick<GlobalTask, 'subtasksActiveMs' | 'subtasksActiveSince'>, now: number): number {
+  return g.subtasksActiveSince.reduce((sum, since) => sum + Math.max(0, now - since), g.subtasksActiveMs)
+}
+
+/** Основное время глобальной задачи на момент now; своё время неизвестно — undefined. */
+export function globalOwnDuration(g: Pick<GlobalTask, 'ownActiveMs' | 'ownActiveSince'>, now: number): number | undefined {
+  if (g.ownActiveMs === undefined && g.ownActiveSince === undefined) return undefined
+  return activeDuration({ closedMs: g.ownActiveMs ?? 0, ...(g.ownActiveSince !== undefined ? { since: g.ownActiveSince } : {}) }, now)
 }
 
 /** Колонки проекта, которые показывает глобальный канбан (порядок проекта сохраняется), включая needs_input. */
@@ -164,9 +179,26 @@ export function globalTaskStatus(status: string | undefined, columns: readonly B
 }
 
 /**
- * Прогон → карточка. Статус сведён к колонке глобального канбана (globalTaskStatus); несделанная задача
- * с pending-запросами к человеку показывается в колонке needs_input (если она есть в проекте).
+ * Колонка, в которой показывается карточка: хранимый статус, сведённый к глобальному канбану (globalTaskStatus);
+ * несделанная задача с pending-запросами (`waiting` > 0) — в needs_input, если такая колонка есть в проекте.
  */
+export function globalDisplayStatus(run: Pick<Run, 'status'>, columns: readonly BoardColumn[], waiting: number): string {
+  const stored = globalTaskStatus(run.status, columns) ?? 'backlog'
+  const needsInput = columns.find((c) => c.kind === 'needs_input')?.id
+  const storedKind = columns.find((c) => c.id === stored)?.kind
+  return waiting > 0 && needsInput && storedKind !== 'done' ? needsInput : stored
+}
+
+/**
+ * Идёт ли сейчас собственное время глобальной задачи: карточка показана в колонке kind=in_progress.
+ * «Нужен ответ» — ожидание человека, как у подзадач, время стоит.
+ */
+export function globalTaskInProgress(run: Pick<Run, 'id' | 'status'>, columns: readonly BoardColumn[], requests: readonly HumanRequest[]): boolean {
+  const status = globalDisplayStatus(run, columns, pendingRequestsOf(requests, { runId: run.id }).length)
+  return columns.find((c) => c.id === status)?.kind === 'in_progress'
+}
+
+/** Прогон → карточка; колонка — `globalDisplayStatus`. */
 export function toGlobalTask(
   run: Run,
   tasks: readonly Task[],
@@ -178,9 +210,7 @@ export function toGlobalTask(
   const own = tasks.filter((t) => t.runId === run.id)
   const activityAt = own.reduce((max, t) => (t.updatedAt > max ? t.updatedAt : max), updatedAt)
   const waiting = pendingRequestsOf(requests, { runId: run.id }).length
-  const stored = globalTaskStatus(run.status, columns) ?? 'backlog'
-  const needsInput = columns.find((c) => c.kind === 'needs_input')?.id
-  const status = waiting > 0 && needsInput && columnKind(stored) !== 'done' ? needsInput : stored
+  const status = globalDisplayStatus(run, columns, waiting)
   return {
     id: run.id,
     title: globalTaskTitle(run),
@@ -195,7 +225,9 @@ export function toGlobalTask(
     coordinatorPtyId: run.coordinatorPtyId,
     coordinatorAgent: run.coordinatorAgent,
     progress: globalTaskProgress(run.id, tasks, columnKind),
-    ...globalActiveTime(run.id, tasks),
+    ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
+    ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),
+    ...globalSubtasksTime(run.id, tasks),
     waiting
   }
 }

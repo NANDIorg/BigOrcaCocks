@@ -57,10 +57,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, ... }` — прогон:
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
+  - `activeMs`/`activeSince` — **собственное время** глобальной задачи (по образцу `Task`, `trackActiveTime`): отрезок
+    открыт, пока карточка показана в `kind=in_progress` (в «Нужен ответ» стоит). Пересчёт — `syncRunActiveTime` в
+    `commit()`, миграция — `migrateRunActiveTime`. В `GlobalTask` — `ownActiveMs`/`ownActiveSince`, рядом сумма
+    подзадач `subtasksActiveMs`/`subtasksActiveSince` (`docs/nested-kanban.md`, «Тип GlobalTask»).
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос

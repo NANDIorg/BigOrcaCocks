@@ -9,7 +9,7 @@ import {
 import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
 import {
-  globalStoredColumns, globalColumnKind, globalTaskStatus, toGlobalTask, toGlobalTasks,
+  globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, toGlobalTask, toGlobalTasks,
   type GlobalColumnKind, type GlobalTask
 } from './global-tasks.ts'
 
@@ -87,7 +87,10 @@ export class TaskStore {
       const migrated = this.migrateGlobalTasks()
       const stale = this.closeStaleDispatches()
       const requests = this.migrateRequests(snap.requests === undefined)
-      if (active || stale || requests || migrated) this.persistence?.save(this.snapshot())
+      // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
+      const own = this.migrateRunActiveTime()
+      const synced = this.syncRunActiveTime()
+      if (active || stale || requests || migrated || own || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -146,6 +149,43 @@ export class TaskStore {
         task.activeSince = live?.startedAt ?? task.updatedAt
       }
       changed = true
+    }
+    return changed
+  }
+
+  /**
+   * Собственное время глобальных задач от кода до `Run.activeMs`/`activeSince`. Прошлых отрезков не восстановить:
+   * смены статуса прогона не журналируются, а сумма подзадач — трудозатраты агентов, не время карточки в работе.
+   * Поэтому прогон, который сейчас в работе, получает открытый отрезок от `updatedAt` (последняя правка —
+   * обычно перенос в работу или запуск координатора), остальные остаются без полей — «своё время неизвестно»,
+   * UI показывает только сумму подзадач, пока прогон снова не войдёт в работу. Возвращает true, если что-то поменялось.
+   */
+  private migrateRunActiveTime(): boolean {
+    let changed = false
+    const requests = this.listRequests()
+    for (const run of this.runs.values()) {
+      if (run.activeMs !== undefined || run.activeSince !== undefined) continue
+      if (!globalTaskInProgress(run, this.columns(), requests)) continue
+      run.activeMs = 0
+      run.activeSince = run.updatedAt ?? run.createdAt
+      changed = true
+    }
+    return changed
+  }
+
+  /**
+   * Собственное время глобальных задач: отрезок открыт, пока карточка показана в kind=in_progress
+   * (`globalTaskInProgress` — хранимый статус и pending-запросы). Статус прогона меняется во многих местах,
+   * а «Нужен ответ» зависит ещё и от запросов, поэтому пересчёт — одним проходом из commit(), а не в каждом
+   * присваивании `run.status`. Возвращает true, если что-то поменялось.
+   */
+  private syncRunActiveTime(now = Date.now()): boolean {
+    let changed = false
+    const requests = this.listRequests()
+    for (const run of this.runs.values()) {
+      const before = run.activeSince
+      trackActiveTime(run, globalTaskInProgress(run, this.columns(), requests), now)
+      if (run.activeSince !== before) changed = true
     }
     return changed
   }
@@ -213,6 +253,7 @@ export class TaskStore {
 
   private commit(): void {
     this.closeFinishedRuns()
+    this.syncRunActiveTime()
     this.persistence?.save(this.snapshot())
     this.listeners.forEach((fn) => fn())
   }

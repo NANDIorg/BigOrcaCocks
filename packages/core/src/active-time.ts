@@ -34,9 +34,10 @@ export function activeDuration(a: ActiveTime, now: number): number {
 
 /**
  * Переход статуса для учёта времени: вошла в in_progress — открыть отрезок, вышла — закрыть и прибавить.
- * Мутирует задачу; вызывается из единственного места смены статуса (`TaskStore.setStatus`).
+ * Мутирует объект. Задача — из единственного места смены статуса (`TaskStore.setStatus`); прогон (собственное
+ * время глобальной задачи) — из `TaskStore.commit` → `syncRunActiveTime`.
  */
-export function trackActiveTime(t: Pick<Task, 'activeMs' | 'activeSince'>, inProgress: boolean, now: number): void {
+export function trackActiveTime(t: { activeMs?: number; activeSince?: number }, inProgress: boolean, now: number): void {
   if (inProgress) {
     t.activeMs ??= 0
     t.activeSince ??= now
