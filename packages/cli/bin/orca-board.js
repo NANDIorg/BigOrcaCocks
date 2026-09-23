@@ -40,6 +40,7 @@ const HELP = `orca-board — управление доской агентов
   global delete --global <id> [--cascade]  с подзадачами — только --cascade (удаляются вместе с ней)
   global tasks [--global <id>]            подзадачи только этой глобальной задачи
   global add-task [--global <id>] --title "..." [--spec "..."] --role <id> [--dep <id>]... [--answer-for human|coordinator]
+                  [--priority urgent|high|normal|low]
   global start --global <id>              = coordinator start --global <id>
 
 Координатор:
@@ -47,11 +48,14 @@ const HELP = `orca-board — управление доской агентов
   roles list       роли проекта: id, название, назначение, агент, модель, включён ли агент
   columns list     колонки доски: id, название, kind
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
+                                          (у каждой — priority: urgent|high|normal|low)
   task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]... [--run <id>]
               [--answer-for human|coordinator]   задача-ответ: результат — ответ в markdown, не код;
                                           human — ответ читает человек, coordinator — ты сам
+              [--priority urgent|high|normal|low]   приоритет, по умолчанию normal
   task move --task <id> --status <id колонки из columns list>
-  task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
+  task update --task <id> [--title "..."] [--spec "..."] [--priority urgent|high|normal|low]
+                                          правка задачи; название и описание — не в работе, приоритет — в любой колонке
   task answer --task <id>                 полный ответ задачи-ответа и decision (в событиях answer обрезан)
   worker start --task <id>
   worker stop --task <id>                 закрыть воркеров задачи (без эскалации), задача из работы → ready

@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo, type Role } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo, type Role, type Task } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 
 let tmp: string
@@ -278,5 +278,24 @@ describe('удалённая системная роль', () => {
     assert.equal(res.ok, false)
     assert.match(res.error!, /^воркер не запустится: роли «qa» нет в проекте/)
     assert.deepEqual(calls, [])
+  })
+})
+
+describe('приоритет задачи через сокет', () => {
+  it('task create --priority high создаёт задачу с priority high, без флага — normal', async () => {
+    const res = await call('task.create', { title: 'Срочно', role: 'developer', priority: 'high' })
+    assert.equal(res.ok, true)
+    assert.equal((res.result as Task).priority, 'high')
+    const plain = await call('task.create', { title: 'Обычная', role: 'developer' })
+    assert.equal((plain.result as Task).priority, 'normal')
+  })
+
+  it('task update --priority меняет приоритет задачи в работе; флаг без значения и мусор — ошибки', async () => {
+    const task = store.createTask({ title: 'Логин', roleId: 'developer' })
+    store.moveTask(task.id, 'in_progress')
+    assert.equal(((await call('task.update', { task: task.id, priority: 'urgent' })).result as Task).priority, 'urgent')
+    assert.match((await call('task.update', { task: task.id, priority: true })).error!, /--priority требует значения: urgent, high, normal, low/)
+    assert.match((await call('task.create', { title: 'X', role: 'developer', priority: 'asap' })).error!, /приоритет: ожидается/)
+    assert.match((await call('task.update', { task: task.id })).error!, /укажи --title, --spec и\/или --priority/)
   })
 })
