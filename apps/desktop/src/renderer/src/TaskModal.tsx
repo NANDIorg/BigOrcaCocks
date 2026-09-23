@@ -2,12 +2,14 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
   AGENT_TITLES, modelLabel,
-  type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role
+  type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
+  type RequestResolution
 } from '@orca-board/core'
 import type { TaskPatch } from '../../shared/ipc'
 import { AgentLogo } from './AgentLogo'
 import { ReviewBlock } from './ReviewBlock'
 import { AnswerBlock } from './AnswerBlock'
+import { RequestCard, REQUEST_KIND_TITLE } from './RequestCard'
 import { Markdown } from './Markdown'
 import { Icon } from './icons'
 
@@ -21,6 +23,8 @@ interface Props {
   agents?: AgentInfo[]
   dispatches: Dispatch[]
   questions: Question[]
+  /** Запросы к человеку проекта: pending этой задачи — «Нужен ваш ответ», решённые — история. */
+  requests: HumanRequest[]
   /** У задачи есть живой терминал. */
   running: boolean
   onClose(): void
@@ -28,7 +32,9 @@ interface Props {
   onStart(task: Task): Promise<void>
   onOpenTerminal(taskId: string): void
   onRemove(id: string): Promise<void>
-  onAnswer(questionId: string, answer: string): Promise<void>
+  /** Ответ на вопрос, приёмка и уточнение ответа, перезапуск эскалации — всё через requests.resolve. */
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
+  /** Ревью кода (не задачи-ответа). */
   onAccept(taskId: string): Promise<void>
   onReject(taskId: string, feedback: string): Promise<void>
 }
@@ -56,14 +62,35 @@ function outcomeLabel(d: Dispatch): { text: string; cls: string } {
 /** Подпись задачи-ответа: кто читает ответ. */
 export const ANSWER_FOR_TITLE = { human: 'ответ для человека', coordinator: 'ответ для координатора' } as const
 
+/** Чем закончился запрос: выбранный вариант / текст ответа, «принят» с решением, уточнение, отмена. */
+function resolutionText(r: HumanRequest): string {
+  if (r.status === 'cancelled') return 'Отменён — стал не нужен'
+  const res = r.resolution
+  if (!res) return 'Решён'
+  switch (res.action) {
+    case 'answer': {
+      const option = res.optionId ? r.options.find((o) => o.id === res.optionId)?.label ?? res.optionId : undefined
+      return [option, res.text].filter(Boolean).join(' — ') || 'Отвечен'
+    }
+    case 'accept':
+      return res.text ? `Принят. Решение: ${res.text}` : 'Принят'
+    case 'clarify':
+      return `Уточнение: ${res.text ?? ''}`
+    case 'restart':
+      return 'Воркер перезапущен'
+    case 'dismiss':
+      return 'Скрыт'
+  }
+}
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
 export function TaskModal(props: Props): React.JSX.Element {
   const {
-    task, tasks, columns, roles, agents, dispatches, questions, running,
-    onClose, onUpdate, onStart, onOpenTerminal, onRemove, onAnswer, onAccept, onReject
+    task, tasks, columns, roles, agents, dispatches, questions, requests, running,
+    onClose, onUpdate, onStart, onOpenTerminal, onRemove, onResolveRequest, onAccept, onReject
   } = props
   const column = columns.find((c) => c.id === task.status)
   const kind = column?.kind
@@ -73,7 +100,15 @@ export function TaskModal(props: Props): React.JSX.Element {
   const last = history[0]
   /** Последний сданный ответ задачи-ответа; прежние остаются в истории запусков. */
   const answered = history.find((d) => d.answer)
-  const taskQuestions = questions.filter((q) => q.taskId === task.id).sort((a, b) => a.createdAt - b.createdAt)
+  const taskRequests = requests.filter((r) => r.taskId === task.id).sort((a, b) => a.createdAt - b.createdAt)
+  const pending = taskRequests.filter((r) => r.status === 'pending')
+  const resolved = taskRequests.filter((r) => r.status !== 'pending')
+  /** Вопросы без запроса к человеку — их решает координатор; с запросом — в «Нужен ваш ответ» / истории. */
+  const withRequest = new Set(taskRequests.map((r) => r.questionId).filter(Boolean))
+  const coordinatorQuestions = questions
+    .filter((q) => q.taskId === task.id && !withRequest.has(q.id))
+    .sort((a, b) => a.createdAt - b.createdAt)
+  const answerPending = pending.some((r) => r.kind === 'answer')
   const editable = kind !== 'in_progress'
   const canStart =
     (kind === 'ready' || kind === 'backlog' || last?.outcome === 'unknown' || last?.outcome === 'failed') && !running
@@ -101,25 +136,6 @@ export function TaskModal(props: Props): React.JSX.Element {
       setSaveError(errorText(e))
     } finally {
       setSaving(false)
-    }
-  }
-
-  // ---- ответы на вопросы ----
-  const [freeAnswer, setFreeAnswer] = useState('')
-  const [answerError, setAnswerError] = useState<string | null>(null)
-  const [answering, setAnswering] = useState(false)
-
-  async function answer(q: Question, text: string): Promise<void> {
-    if (!text.trim()) return
-    setAnswering(true)
-    setAnswerError(null)
-    try {
-      await onAnswer(q.id, text.trim())
-      setFreeAnswer('')
-    } catch (e) {
-      setAnswerError(errorText(e))
-    } finally {
-      setAnswering(false)
     }
   }
 
@@ -178,6 +194,23 @@ export function TaskModal(props: Props): React.JSX.Element {
         </div>
 
         <div className="task-modal-body">
+          {pending.length > 0 && (
+            <section className="task-modal-section task-modal-requests">
+              <h4>Нужен ваш ответ</h4>
+              {pending.map((r) => (
+                <RequestCard
+                  key={r.id}
+                  request={r}
+                  onResolve={(res) => onResolveRequest(r, res)}
+                  onOpenTerminal={(taskId) => {
+                    onOpenTerminal(taskId)
+                    onClose()
+                  }}
+                />
+              ))}
+            </section>
+          )}
+
           <div className="task-modal-meta">
             <div className="meta-row">
               <span className="meta-key">Роль</span>
@@ -229,18 +262,13 @@ export function TaskModal(props: Props): React.JSX.Element {
                 <AnswerBlock
                   answer={answered.answer}
                   summary={answered.summary}
-                  answerFor={task.answerFor}
-                  actionable={kind === 'needs_input' || kind === 'review'}
-                  onAccept={async (decision) => {
-                    // Решение идёт прямо в IPC: onAccept из App.tsx его не пробрасывает.
-                    await (decision ? window.orca.review.accept(task.id, decision) : onAccept(task.id))
-                    onClose()
-                  }}
-                  onClarify={async (text) => {
-                    await onReject(task.id, text)
-                    await onStart(task)
-                    onClose()
-                  }}
+                  note={
+                    answerPending
+                      ? 'Принять или уточнить — в блоке «Нужен ваш ответ» выше.'
+                      : task.answerFor === 'coordinator' && (kind === 'needs_input' || kind === 'review')
+                        ? 'Ответ предназначен координатору — он примет его сам.'
+                        : undefined
+                  }
                 />
               ) : (
                 <div className="muted">{kind === 'in_progress' ? 'Воркер готовит ответ…' : 'Ответа ещё нет'}</div>
@@ -298,11 +326,27 @@ export function TaskModal(props: Props): React.JSX.Element {
             </section>
           )}
 
-          {taskQuestions.length > 0 && (
+          {resolved.length > 0 && (
             <section className="task-modal-section">
-              <h4>Вопросы</h4>
+              <h4>Ваши ответы</h4>
               <div className="task-modal-questions">
-                {taskQuestions.map((q) => (
+                {resolved.map((r) => (
+                  <div key={r.id} className="question answered">
+                    <div className="q-text"><span className="muted">{REQUEST_KIND_TITLE[r.kind]}:</span> {r.title}</div>
+                    <div className="q-answer">
+                      {r.resolvedAt && <span className="muted">{formatDate(r.resolvedAt)}:</span>} {resolutionText(r)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {coordinatorQuestions.length > 0 && (
+            <section className="task-modal-section">
+              <h4>Вопросы координатору</h4>
+              <div className="task-modal-questions">
+                {coordinatorQuestions.map((q) => (
                   <div key={q.id} className={`question ${q.answeredAt ? 'answered' : ''}`}>
                     <div className="q-text">{q.question}</div>
                     {q.answeredAt ? (
@@ -310,30 +354,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                         <span className="muted">Ответ ({formatDate(q.answeredAt)}):</span> {q.answer}
                       </div>
                     ) : (
-                      <>
-                        {q.options.length > 0 && (
-                          <div className="q-options">
-                            {q.options.map((o) => (
-                              <button key={o.id} className="btn-sm" disabled={answering} title={o.hint} onClick={() => void answer(q, o.label)}>{o.label}</button>
-                            ))}
-                          </div>
-                        )}
-                        <div className="q-free">
-                          <input
-                            value={freeAnswer}
-                            placeholder="Свой ответ"
-                            disabled={answering}
-                            onChange={(e) => setFreeAnswer(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') void answer(q, freeAnswer)
-                            }}
-                          />
-                          <button className="btn-sm primary" disabled={answering || !freeAnswer.trim()} onClick={() => void answer(q, freeAnswer)}>
-                            Ответить
-                          </button>
-                        </div>
-                        {answerError && <span className="error-text">{answerError}</span>}
-                      </>
+                      <div className="muted">Ждёт ответа координатора. Если нужен вы — он передаст вопрос во Входящие.</div>
                     )}
                   </div>
                 ))}

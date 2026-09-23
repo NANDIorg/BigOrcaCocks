@@ -1,12 +1,15 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { BoardColumn, GlobalTask } from '@orca-board/core'
+import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
+import { RequestCard } from './RequestCard'
 import { GLOBAL_BOARD_SORT_KEY, SORT_OPTIONS, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
-/** Сводка по подзадачам, которую карточке не вычислить из GlobalTask: вопросы и ревью. */
+/**
+ * Сводка по подзадачам, которую карточке не вычислить из GlobalTask: ревью кода. Всё, что ждёт человека
+ * (вопросы, ответы, эскалации), — pending-запросы: GlobalTask.waiting.
+ */
 export interface GlobalTaskAttention {
-  questions: number
   review: number
 }
 
@@ -20,6 +23,12 @@ interface Props {
   /** Глобальные задачи с живым координатором (терминал role=coordinator, runId). */
   liveCoordinators: Set<string>
   attention: Map<string, GlobalTaskAttention>
+  /** Запросы к человеку проекта (snapshot.requests): первый pending — на карточке в «Нужен ответ». */
+  requests: HumanRequest[]
+  /** Подзадачи — подпись, чей запрос. */
+  tasks: Task[]
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
+  onOpenInbox(requestId: string): void
   /** Карточка, из которой вернулись, — ей возвращается фокус. */
   focusId?: string
   onOpen(global: GlobalTask): void
@@ -67,7 +76,9 @@ export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.El
 
 /** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Нужен ответ / Сделано проекта. */
 export function GlobalBoard(props: Props): React.JSX.Element {
-  const { columns, globals, liveCoordinators, attention, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
+  const { columns, globals, liveCoordinators, attention, requests, tasks, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
+  const { onResolveRequest, onOpenInbox } = props
+  const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [sort, setSort] = useState<BoardSort>(() => readSort(GLOBAL_BOARD_SORT_KEY))
@@ -148,6 +159,8 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                 {items.map((g) => {
                   const live = liveCoordinators.has(g.id)
                   const att = attention.get(g.id)
+                  // Первый (самый старый) запрос — прямо на карточке; остальные — во Входящих.
+                  const request = column.kind === 'needs_input' ? pendingRequestsOf(requests, { runId: g.id }).sort((a, b) => a.createdAt - b.createdAt)[0] : undefined
                   return (
                     <article
                       key={g.id}
@@ -198,9 +211,23 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         {g.inbox && <span className="g-chip">служебная</span>}
                         {live && <span className="chip live">● координатор</span>}
                         {g.waiting > 0 && <span className="g-chip warn">ждёт вашего ответа: {g.waiting}</span>}
-                        {att && att.questions > 0 && <span className="g-chip warn">вопросов: {att.questions}</span>}
                         {att && att.review > 0 && <span className="g-chip review">на ревью: {att.review}</span>}
                       </div>
+                      {request && (
+                        // Клики внутри запроса не открывают задачу, а перетаскивание из него не тащит карточку.
+                        <div className="g-card-request" draggable onDragStart={(e) => { e.preventDefault(); e.stopPropagation() }} onClick={(e) => e.stopPropagation()}>
+                          <RequestCard
+                            key={request.id}
+                            request={request}
+                            compact
+                            where={taskTitle.get(request.taskId)}
+                            onResolve={(res) => onResolveRequest(request, res)}
+                          />
+                          <button type="button" className="btn-text g-card-inbox" onClick={() => onOpenInbox(request.id)}>
+                            {g.waiting > 1 ? `Открыть во Входящих · ещё ${g.waiting - 1}` : 'Открыть во Входящих'}
+                          </button>
+                        </div>
+                      )}
                       <GlobalProgress global={g} />
                       {column.kind === 'done' && g.closedAt !== undefined ? (
                         <div className="stamp">Завершено: {formatStamp(g.closedAt)}</div>

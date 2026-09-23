@@ -2,7 +2,7 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, globalBoardColumns, globalStoredColumns, toGlobalTasks,
-  type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask
+  type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution
 } from '@orca-board/core'
 import type { Project, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
@@ -291,17 +291,26 @@ export function App(): React.JSX.Element {
   for (const t of projectTerminals) {
     if (t.role === 'coordinator' && t.runId && !exited.has(t.ptyId)) coordinatorPtys.set(t.runId, t.ptyId)
   }
+  // Что ждёт человека, считается в GlobalTask.waiting (pending-запросы); здесь — только ревью кода.
   const attention = new Map<string, GlobalTaskAttention>()
-  const bump = (runId: string | undefined, key: keyof GlobalTaskAttention): void => {
-    if (!runId) return
-    const cur = attention.get(runId) ?? { questions: 0, review: 0 }
-    attention.set(runId, { ...cur, [key]: cur[key] + 1 })
+  for (const t of tasks) {
+    if (!t.runId || kindById.get(t.status) !== 'review' || t.answerFor) continue
+    attention.set(t.runId, { review: (attention.get(t.runId)?.review ?? 0) + 1 })
   }
-  const taskRun = new Map(tasks.map((t) => [t.id, t.runId]))
-  for (const q of snap.questions) if (!q.answeredAt) bump(taskRun.get(q.taskId), 'questions')
-  // Задача-ответ в review — не ревью кода: она считается в GlobalTask.waiting.
-  for (const t of tasks) if (kindById.get(t.status) === 'review' && !t.answerFor) bump(t.runId, 'review')
+  const requests = snap.requests ?? []
   const inboxCount = pendingRequests(snap.requests).length
+
+  /** Открыть Инбокс на запросе (кнопка «Открыть во Входящих» на карточке). */
+  function openInboxAt(requestId: string): void {
+    setInboxFocus((prev) => ({ requestId, nonce: (prev?.nonce ?? 0) + 1 }))
+    setShowInbox(true)
+  }
+
+  /** Решить запрос вне Инбокса (карточка, экран глобальной задачи, модалка задачи). Ошибка — на карточке. */
+  async function resolveRequest(r: HumanRequest, resolution: RequestResolution): Promise<void> {
+    const res = await window.orca.requests.resolve(r.id, resolution)
+    if (res.startError) alert(`«${r.title}»: решение принято, но воркер не запустился — ${res.startError}. Координатор получил эскалацию.`)
+  }
   const editingGlobal = globalModal?.mode === 'edit' ? globals.find((g) => g.id === globalModal.id) : undefined
 
   function openGlobalTask(g: GlobalTask): void {
@@ -629,6 +638,10 @@ export function App(): React.JSX.Element {
               globals={globals}
               liveCoordinators={new Set(coordinatorPtys.keys())}
               attention={attention}
+              requests={requests}
+              tasks={tasks}
+              onResolveRequest={resolveRequest}
+              onOpenInbox={openInboxAt}
               focusId={lastGlobal}
               onOpen={openGlobalTask}
               onMove={async (id, status) => {
@@ -651,6 +664,11 @@ export function App(): React.JSX.Element {
               onEdit={() => setGlobalModal({ mode: 'edit', id: openGlobal.id })}
               onStartCoordinator={() => void startGlobalCoordinator(openGlobal)}
               onShowCoordinator={(ptyId) => showTerminal(ptyId)}
+              requests={requests}
+              tasks={subtasks}
+              onResolveRequest={resolveRequest}
+              onOpenTask={(taskId) => setOpenTaskId(taskId)}
+              onOpenTerminal={openTerminalForTask}
             >
               <Board
                 columns={columns}
@@ -771,13 +789,14 @@ export function App(): React.JSX.Element {
           agents={agents}
           dispatches={snap.dispatches}
           questions={snap.questions}
+          requests={requests}
           running={runningTaskIds.has(openTask.id)}
           onClose={() => setOpenTaskId(null)}
           onUpdate={(id, patch) => window.orca.tasks.update(id, patch)}
           onStart={startTask}
           onOpenTerminal={openTerminalForTask}
           onRemove={(id) => window.orca.tasks.remove(id)}
-          onAnswer={(qid, a) => window.orca.questions.answer(qid, a)}
+          onResolveRequest={resolveRequest}
           onAccept={(id) => window.orca.review.accept(id)}
           onReject={(id, fb) => window.orca.review.reject(id, fb)}
         />

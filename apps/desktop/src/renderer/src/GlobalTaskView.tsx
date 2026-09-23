@@ -1,7 +1,8 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { GlobalTask } from '@orca-board/core'
+import { pendingRequestsOf, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
+import { RequestCard } from './RequestCard'
 import { GlobalProgress, relativeTime } from './GlobalBoard'
 
 interface Props {
@@ -12,6 +13,14 @@ interface Props {
   onEdit(): void
   onStartCoordinator(): void
   onShowCoordinator(ptyId: string): void
+  /** Запросы к человеку проекта: pending этой глобальной задачи — лента «Ждут вашего ответа». */
+  requests: HumanRequest[]
+  /** Подзадачи этой глобальной задачи — подпись, чей запрос. */
+  tasks: Task[]
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
+  /** «Открыть полностью» у ответа — модалка подзадачи. */
+  onOpenTask(taskId: string): void
+  onOpenTerminal(taskId: string): void
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
   children: React.ReactNode
 }
@@ -19,6 +28,9 @@ interface Props {
 /** Экран глобальной задачи: хлебные крошки, заголовок, описание и канбан только её подзадач. */
 export function GlobalTaskView(props: Props): React.JSX.Element {
   const { global, coordinatorPty, onBack, onEdit, onStartCoordinator, onShowCoordinator, children } = props
+  const { requests, tasks, onResolveRequest, onOpenTask, onOpenTerminal } = props
+  const pending = pendingRequestsOf(requests, { runId: global.id }).sort((a, b) => a.createdAt - b.createdAt)
+  const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
   const [expanded, setExpanded] = useState(false)
   const backRef = useRef<HTMLButtonElement>(null)
 
@@ -83,6 +95,23 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
           {global.inbox && <span className="muted">· сюда попадают задачи без глобальной</span>}
         </div>
       </div>
+      {pending.length > 0 && (
+        <section className="g-requests" aria-label={`Ждут вашего ответа: ${pending.length}`}>
+          <h3 className="g-requests-title">Ждут вашего ответа <span className="g-col-count">{pending.length}</span></h3>
+          <div className="g-requests-list">
+            {pending.map((r) => (
+              <RequestCard
+                key={r.id}
+                request={r}
+                where={taskTitle.get(r.taskId) ?? r.taskId}
+                onResolve={(res) => onResolveRequest(r, res)}
+                onOpenFull={(req) => onOpenTask(req.taskId)}
+                onOpenTerminal={onOpenTerminal}
+              />
+            ))}
+          </div>
+        </section>
+      )}
       {children}
     </div>
   )
