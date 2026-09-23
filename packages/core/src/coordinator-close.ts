@@ -48,13 +48,15 @@ export interface CoordinatorToClose {
 
 /**
  * Терминалы координаторов, которые пора закрыть. Прогон подходит, только если он закрыт событием
- * run_done (закрытие `runs close` без события не в счёт) и PTY координатора жив. Дальше два случая:
+ * run_done или получил run_done и ещё не закрыт (`runDoneAt`: координатор решает, нужна ли новая работа;
+ * закрытие `runs close` без события не в счёт) и PTY координатора жив. Дальше два случая:
  * - run_done `manual` — человек перенёс глобальную задачу в «Сделано» или «Проверку»: решение за ним, подзадачи и вопросы
  *   не проверяются (прогон снова открыт → `closedAt` снят, сюда не попадёт); закрыть для любого агента,
  *   когда терминал молчит `graceMs` с run_done, сигнала `runs finish` и последней активности;
  * - автоматический run_done — все задачи и сейчас в kind=done, по ним нет открытых вопросов. Координатор
  *   прислал `runs finish` после run_done — закрыть для любого агента, когда терминал молчит `graceMs`;
- *   сигнала нет — только «незакрывающийся» агент (`lingers`) и только после `abandonedMs` тишины (страховка).
+ *   сигнала нет — только «незакрывающийся» агент (`lingers`) и только после `abandonedMs` тишины (страховка;
+ *   после неё прогон с `runDoneAt` закрывает `settleIdleRuns` — карточка уходит на «Проверку»).
  * Активность до run_done не в счёт — сводка пишется после него.
  */
 export function coordinatorsToClose(input: CoordinatorCloseInput): CoordinatorToClose[] {
@@ -63,7 +65,7 @@ export function coordinatorsToClose(input: CoordinatorCloseInput): CoordinatorTo
   const out: CoordinatorToClose[] = []
   for (const run of input.runs) {
     const ptyId = run.coordinatorPtyId
-    if (!ptyId || run.closedAt === undefined) continue
+    if (!ptyId || (run.closedAt === undefined && run.runDoneAt === undefined)) continue
     // Последний run_done: прогон мог переоткрываться (повторный запуск координатора на глобальной задаче).
     const runDone = input.events.filter((e) => e.type === 'run_done' && e.payload.runId === run.id).pop()
     if (!runDone) continue

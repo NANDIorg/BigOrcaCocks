@@ -287,7 +287,7 @@ describe('удаление глобальной задачи', () => {
 })
 
 describe('жизненный цикл прогона = глобальной задачи', () => {
-  it('координатор: прогон → in_progress; все подзадачи в done → run_done и карточка на «Проверке»', () => {
+  it('координатор: прогон → in_progress; все подзадачи в done → run_done, карточка «В работе»; runs finish → «Проверка»', () => {
     const store = newStore()
     const run = store.createRun('сделать X')
     assert.equal(store.getGlobalTask(run.id).status, 'plan')
@@ -300,11 +300,17 @@ describe('жизненный цикл прогона = глобальной за
     const ev = store.consumeEvents(['worker_done'], run.id, run.id)
     assert.equal(ev.length, 1, 'worker_done по-прежнему доходит до прогона')
     store.moveTask(t.id, 'fin')
+    // Координатор жив и ещё решает, нужна ли новая работа: прогон не закрыт, карточка не на проверке.
     const g = store.getGlobalTask(run.id)
-    assert.ok(g.closedAt)
-    assert.equal(g.status, 'ai')
+    assert.equal(g.closedAt, undefined)
+    assert.equal(g.status, 'wip')
+    assert.ok(store.getRun(run.id)!.runDoneAt)
     assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
     assert.equal(store.finishRun(run.id).finishedAt !== undefined, true)
+    assert.ok(store.getRun(run.id)!.closedAt)
+    assert.equal(store.getRun(run.id)!.runDoneAt, undefined)
+    assert.equal(store.getGlobalTask(run.id).status, 'ai', 'после runs finish — на «Проверку», не в «Сделано»')
+    assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 1, 'runs finish второй run_done не шлёт')
   })
 
   it('повторный запуск координатора на закрытой глобальной: переоткрыта, run_done не приходит сразу', () => {
@@ -328,7 +334,7 @@ describe('жизненный цикл прогона = глобальной за
 
     const t2 = store.createTask({ title: 't2', runId: run.id })
     store.moveTask(t2.id, 'fin')
-    assert.ok(store.getRun(run.id)!.closedAt)
+    assert.ok(store.getRun(run.id)!.runDoneAt)
     assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
   })
 
@@ -483,9 +489,9 @@ describe('жизненный цикл прогона = глобальной за
       now: Date.now() + 10 * COORDINATOR_FINISH_GRACE_MS
     })
     assert.deepEqual(toClose, [], 'терминал ожившего прогона не закрывается')
-    // Подзадача дошла до done — прогон закрывается автоматически, как обычно.
+    // Подзадача дошла до done — run_done координатору, как обычно (прогон ждёт его runs finish).
     store.moveTask(t.id, 'fin')
-    assert.ok(store.getRun(run.id)!.closedAt)
+    assert.ok(store.getRun(run.id)!.runDoneAt)
     assert.equal(store.consumeEvents(['run_done'], run.id, run.id).length, 1)
     // Снова вернули и снова вручную в done — новый run_done.
     store.moveGlobalTask(run.id, 'wip')
@@ -642,10 +648,11 @@ describe('«Проверка»: приёмка глобальной задачи
     store.setRunPty(runId, 'pty_2', 'claude')
     const t2 = store.createTask({ title: 't2', runId })
     store.moveTask(t2.id, 'fin')
-    assert.equal(store.getGlobalTask(runId).status, 'ai')
+    assert.equal(store.getGlobalTask(runId).status, 'wip', 'до runs finish — в работе')
     assert.equal(store.consumeEvents(['run_done'], runId, runId).length, 1)
     assert.equal(runDones(store, runId).length, 2)
     store.finishRun(runId)
+    assert.equal(store.getGlobalTask(runId).status, 'ai')
     // Второй возврат, координатор решил, что работы нет: runs finish — на проверку.
     store.returnGlobalTask(runId, 'поправь README')
     assert.deepEqual(store.getGlobalTask(runId).returns?.map((r) => r.text), ['добавь тесты', 'поправь README'])

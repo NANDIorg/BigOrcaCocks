@@ -77,8 +77,8 @@ function doneSubtask(runId: string, title: string): string {
 }
 
 describe('цикл «Проверки»: работа → проверка → возврат → проверка → подтверждение', () => {
-  it('сценарии 1–3: две подзадачи → review и run_done; возврат с уточнением; новая работа → снова review; «Подтвердить» → done', () => {
-    // 1. Прогон с двумя подзадачами: обе done → автозакрытие на «Проверку».
+  it('сценарии 1–3: две подзадачи → run_done, runs finish → review; возврат с уточнением; новая работа → снова review; «Подтвердить» → done', () => {
+    // 1. Прогон с двумя подзадачами: обе done → run_done координатору, после его runs finish — на «Проверку».
     const runId = startNew('Сделать логин')
     const a = store.createTask({ title: 'Форма', runId })
     const b = store.createTask({ title: 'API', runId })
@@ -87,22 +87,24 @@ describe('цикл «Проверки»: работа → проверка → �
     assert.equal(runDones(runId).length, 0)
     store.moveTask(b.id, 'done')
 
-    assert.equal(card(runId).status, 'review', 'после работы — на проверку, не в «Сделано»')
-    assert.ok(card(runId).closedAt)
+    assert.equal(card(runId).status, 'in_progress', 'координатор жив и решает, нужна ли ещё работа')
+    assert.equal(card(runId).closedAt, undefined)
     const [first] = runDones(runId)
     assert.ok(first, 'run_done пришёл координатору')
     assert.equal(first.payload.manual, undefined)
     assert.equal(first.consumedBy, undefined)
-    // На глобальном канбане колонка review называется «Проверка»; уведомление — «ждёт проверки».
-    const col = globalBoardColumns(store.columns()).find((c) => c.id === card(runId).status)!
-    assert.equal(col.title, GLOBAL_REVIEW_TITLE)
     const note = describeEvent(first, undefined, 'orca', true)!
     assert.equal(note.kind, 'runDone')
     assert.match(`${note.title} ${note.body}`, /проверк/i)
 
     finishAndClose(runId)
-    assert.equal(card(runId).status, 'review', 'runs finish закрытого прогона — только сигнал, карточка на проверке')
+    assert.equal(card(runId).status, 'review', 'после runs finish — на проверку, не в «Сделано»')
+    // На глобальном канбане колонка review называется «Проверка».
+    const col = globalBoardColumns(store.columns()).find((c) => c.id === card(runId).status)!
+    assert.equal(col.title, GLOBAL_REVIEW_TITLE)
+    assert.ok(card(runId).closedAt)
     assert.ok(store.getRun(runId)!.finishedAt)
+    assert.equal(runDones(runId).length, 1, 'runs finish после run_done второго события не шлёт')
 
     // 2. «Вернуть в работу» с текстом: in_progress, старый run_done погашен, цель — уточнение + подзадачи.
     const eventsBefore = store.listEvents().length
@@ -125,14 +127,15 @@ describe('цикл «Проверки»: работа → проверка → �
     assert.equal(card(runId).status, 'in_progress')
     assert.equal(runDones(runId).length, 1)
 
-    // 3. Новая подзадача done → снова review и новый (непогашенный) run_done.
+    // 3. Новая подзадача done → новый (непогашенный) run_done, после runs finish — снова review.
     store.moveTask(c.id, 'done')
-    assert.equal(card(runId).status, 'review')
+    assert.equal(card(runId).status, 'in_progress')
     const dones = runDones(runId)
     assert.equal(dones.length, 2, 'новый run_done после повторной работы')
     assert.equal(dones[1].consumedBy, undefined)
     assert.equal(dones[1].payload.manual, undefined)
     finishAndClose(runId)
+    assert.equal(card(runId).status, 'review')
 
     // «Подтвердить» → done без событий, closedAt не меняется.
     const closedAt = card(runId).closedAt
@@ -174,6 +177,107 @@ describe('цикл «Проверки»: работа → проверка → �
     assert.throws(() => returnToWork(runId, '   '), /напиши, что доделать/)
     assert.equal(card(runId).status, 'review')
     assert.equal(card(runId).returns, undefined)
+  })
+})
+
+describe('все подзадачи done при живом координаторе', () => {
+  it('run_done отправлен, но карточка не в «Сделано» и не на «Проверке»; settleIdleRuns живой прогон не трогает', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг')
+    const g = card(runId)
+    assert.equal(g.status, 'in_progress')
+    assert.equal(g.closedAt, undefined)
+    assert.ok(store.getRun(runId)!.runDoneAt)
+    assert.equal(runDones(runId).length, 1)
+    assert.deepEqual(store.settleIdleRuns(isAlive), [], 'координатор жив — решает он')
+    assert.equal(card(runId).status, 'in_progress')
+    // Повторные коммиты стора второй run_done не шлют.
+    store.createGlobalTask({ title: 'другая' })
+    assert.equal(runDones(runId).length, 1)
+  })
+
+  it('после run_done координатор создал подзадачу → прогон снова открыт, по её done — новый run_done', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг 1')
+    assert.equal(store.consumeEvents(['run_done'], runId, runId).length, 1)
+    const t = store.createTask({ title: 'Шаг 2', runId })
+    assert.equal(store.getRun(runId)!.runDoneAt, undefined, 'прогон снова открыт')
+    assert.equal(card(runId).status, 'in_progress')
+    assert.throws(() => store.finishRun(runId), /дождись run_done/, 'runs finish до конца новой работы — ошибка')
+    store.moveTask(t.id, 'done')
+    assert.equal(card(runId).status, 'in_progress')
+    assert.equal(store.consumeEvents(['run_done'], runId, runId).length, 1, 'новый run_done')
+    finishAndClose(runId)
+    assert.equal(card(runId).status, 'review')
+  })
+
+  it('подзадачу вернули из done после run_done → прогон открыт, непрочитанный run_done погашен', () => {
+    const runId = startNew('Цель')
+    const t = doneSubtask(runId, 'Шаг')
+    store.moveTask(t, 'in_progress')
+    assert.equal(store.getRun(runId)!.runDoneAt, undefined)
+    assert.equal(runDones(runId)[0].consumedBy, 'reopen')
+    assert.equal(store.consumeEvents(['run_done'], runId, runId).length, 0)
+    store.moveTask(t, 'done')
+    assert.equal(store.consumeEvents(['run_done'], runId, runId).length, 1)
+  })
+
+  it('координатор вышел после run_done без runs finish → «Проверка» без нового run_done', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг')
+    alive.delete(store.getRun(runId)!.coordinatorPtyId!)
+    assert.deepEqual(store.settleIdleRuns(isAlive), [runId])
+    const g = card(runId)
+    assert.equal(g.status, 'review')
+    assert.ok(g.closedAt)
+    assert.equal(runDones(runId).length, 1)
+    assert.deepEqual(store.settleIdleRuns(isAlive), [], 'повторно не закрывает')
+  })
+
+  it('координатор умер до конца работы: подзадачи дошли до done → run_done, затем settleIdleRuns → «Проверка»', () => {
+    const runId = startNew('Цель')
+    const t = store.createTask({ title: 'Шаг', runId })
+    alive.clear()
+    store.moveTask(t.id, 'done')
+    assert.equal(card(runId).status, 'in_progress')
+    store.settleIdleRuns(isAlive)
+    assert.equal(card(runId).status, 'review')
+  })
+
+  it('«незакрывающийся» координатор без runs finish: терминал закрывается по страховке, затем «Проверка»', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг')
+    const ptyId = store.getRun(runId)!.coordinatorPtyId!
+    const toClose = coordinatorsToClose({
+      runs: store.listRuns(),
+      tasks: store.listTasks(),
+      questions: [],
+      events: store.listEvents(),
+      isDone: (s) => store.columnKind(s) === 'done',
+      lingers: () => true,
+      lastActivityAt: () => 0,
+      now: Date.now() + 60 * 60_000
+    })
+    assert.deepEqual(toClose, [{ runId, ptyId }])
+    alive.delete(ptyId)
+    store.settleIdleRuns(isAlive)
+    assert.equal(card(runId).status, 'review')
+  })
+
+  it('человек перенёс карточку, пока координатор решал: закрыта с run_done {manual}', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг')
+    assert.equal(store.moveGlobalTask(runId, 'done').status, 'done')
+    assert.ok(card(runId).closedAt)
+    assert.deepEqual(runDones(runId).map((e) => e.payload.manual), [undefined, true])
+  })
+
+  it('глобальная задача без координатора (завёл человек): все подзадачи done → сразу «Проверка» с run_done', () => {
+    const g = store.createGlobalTask({ title: 'Руками' })
+    const t = store.createTask({ title: 'Шаг', runId: g.id })
+    store.moveTask(t.id, 'done')
+    assert.equal(card(g.id).status, 'review')
+    assert.equal(runDones(g.id).length, 1)
   })
 })
 
@@ -315,6 +419,12 @@ describe('сценарий 6: рестарт приложения', () => {
     assert.match(objective, /второе/)
     assert.match(objective, /- первое/)
     doneSubtask(runId, 'Шаг 3')
+    assert.equal(card(runId).status, 'in_progress', 'координатор жив — ждём его runs finish')
+    // Снова рестарт: координатор умер после run_done, runs finish не будет — main закрывает прогон на проверку.
+    alive.clear()
+    store = new TaskStore(memory(JSON.parse(JSON.stringify(store.snapshot())) as StoreSnapshot), () => DEFAULT_COLUMNS)
+    assert.equal(card(runId).status, 'in_progress', 'загрузка сама прогон не закрывает')
+    assert.deepEqual(store.settleIdleRuns(isAlive), [runId])
     assert.equal(card(runId).status, 'review')
     assert.equal(store.acceptGlobalTask(runId).status, 'done')
   })
