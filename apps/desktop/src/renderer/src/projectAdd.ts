@@ -1,30 +1,26 @@
-import type { ProjectTemplate } from '@orca-board/core'
-import type { OrcaApi, Project, TemplateDetection, TemplatesState } from '../../shared/ipc'
+import type { TaskType } from '@orca-board/core'
+import type { OrcaApi, Project, TaskTypeDetection, TaskTypesState } from '../../shared/ipc'
+import { isStaleTaskTypesError } from './taskTypes'
 
 /**
  * Часть `window.orca`, нужная для добавления проекта. Поля необязательные: в `pnpm dev` renderer приходит по HMR,
- * а preload может быть старым — без `projects.detectTemplate` и `templates`.
+ * а preload может быть старым — без `projects.detectTaskType` и `taskTypes`.
  */
 export interface AddProjectApi {
-  projects?: Partial<Pick<OrcaApi['projects'], 'detectTemplate'>>
-  templates?: Partial<Pick<OrcaApi['templates'], 'list'>>
+  projects?: Partial<Pick<OrcaApi['projects'], 'detectTaskType'>>
+  taskTypes?: Partial<Pick<OrcaApi['taskTypes'], 'list'>>
 }
 
 /** Что делать после выбора папки. */
 export type AddProjectStart =
-  /** Старый main/preload без шаблонов: прежний `projects.add()` со своим диалогом. */
+  /** Старый main/preload без типов задач: прежний `projects.add()` со своим диалогом. */
   | { kind: 'legacy' }
   /** Диалог выбора папки отменён. */
   | { kind: 'cancel' }
   /** Репозиторий уже добавлен (или выбирать не из чего) — `projects.add(undefined, path)` без модалки. */
   | { kind: 'direct'; path: string }
-  /** Показать выбор типа с предвыбранным `selected`. */
-  | { kind: 'pick'; detection: TemplateDetection; templates: ProjectTemplate[]; defaultTemplateId: string; selected: string }
-
-/** Preload новый, а main старый — invoke падает с «No handler registered for 'projects:detectTemplate'». */
-export function isStaleTemplatesError(message: string): boolean {
-  return /No handler registered for '(projects:detectTemplate|templates:)/.test(message)
-}
+  /** Показать выбор типа по умолчанию с предвыбранным `selected`. */
+  | { kind: 'pick'; detection: TaskTypeDetection; types: TaskType[]; defaultTypeId: string; selected: string }
 
 function trimSeparators(p: string): string {
   return p.length > 1 ? p.replace(/[\\/]+$/, '') : p
@@ -42,12 +38,12 @@ export function findProjectForPath(projects: Pick<Project, 'id' | 'root'>[], pat
   })
 }
 
-/** Предвыбор: угаданный тип, иначе шаблон по умолчанию, иначе первый в списке. */
-export function preselectedTemplate(state: TemplatesState, detected?: string): string {
-  const has = (id: string | undefined): id is string => !!id && state.templates.some((t) => t.id === id)
+/** Предвыбор: угаданный тип, иначе тип библиотеки по умолчанию, иначе первый в списке. */
+export function preselectedType(state: TaskTypesState, detected?: string): string {
+  const has = (id: string | undefined): id is string => !!id && state.taskTypes.some((t) => t.id === id)
   if (has(detected)) return detected
-  if (has(state.defaultTemplateId)) return state.defaultTemplateId
-  return state.templates[0]?.id ?? ''
+  if (has(state.defaultTaskTypeId)) return state.defaultTaskTypeId
+  return state.taskTypes[0]?.id ?? ''
 }
 
 /**
@@ -55,25 +51,25 @@ export function preselectedTemplate(state: TemplatesState, detected?: string): s
  * Ошибки, кроме «старого main», пробрасываются.
  */
 export async function startAddProject(api: AddProjectApi | undefined, projects: Pick<Project, 'id' | 'root'>[]): Promise<AddProjectStart> {
-  const detect = api?.projects?.detectTemplate
-  const list = api?.templates?.list
+  const detect = api?.projects?.detectTaskType
+  const list = api?.taskTypes?.list
   if (typeof detect !== 'function' || typeof list !== 'function') return { kind: 'legacy' }
-  let detection: TemplateDetection | null
+  let detection: TaskTypeDetection | null
   try {
     detection = await detect()
   } catch (e) {
-    if (isStaleTemplatesError(e instanceof Error ? e.message : String(e))) return { kind: 'legacy' }
+    if (isStaleTaskTypesError(e instanceof Error ? e.message : String(e))) return { kind: 'legacy' }
     throw e
   }
   if (!detection) return { kind: 'cancel' }
   if (findProjectForPath(projects, detection.path)) return { kind: 'direct', path: detection.path }
   const state = await list()
-  if (!state.templates.length) return { kind: 'direct', path: detection.path }
+  if (!state.taskTypes.length) return { kind: 'direct', path: detection.path }
   return {
     kind: 'pick',
     detection,
-    templates: state.templates,
-    defaultTemplateId: state.defaultTemplateId,
-    selected: preselectedTemplate(state, detection.templateId)
+    types: state.taskTypes,
+    defaultTypeId: state.defaultTaskTypeId,
+    selected: preselectedType(state, detection.typeId)
   }
 }

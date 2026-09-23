@@ -2,7 +2,7 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
   type RequestResolution, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
@@ -49,12 +49,6 @@ export interface ProjectDeps {
   runType(typeId?: string): RunTypeInput
   /** `rules set` по типу: правила агентов (`roleId` нет) или системный промпт роли; встроенный правится на месте. */
   saveTaskTypeRules(typeId: string, roleId: string | undefined, text: string): TaskType
-  /** Сохранить роли проекта (с валидацией); возвращает сохранённые. Для `rules set --role`. */
-  setRoles(roles: Role[]): Role[]
-  /** Правила проекта для агентов доски (`Project.agentRules`); не заданы — ''. */
-  agentRules(): string
-  /** Сохранить правила проекта; возвращает сохранённое ('' — правил нет). */
-  setAgentRules(text: string): string
   /** Колонки доски в порядке показа. */
   columns(): BoardColumn[]
   /** Граф типа `typeId` (нет — типа проекта по умолчанию); `custom: false` — дефолтный по ролям типа. */
@@ -73,10 +67,6 @@ export interface ProjectSummary {
   /** Тип задач проекта по умолчанию: глобальные задачи без `--type`, «Входящие». */
   defaultTypeId: string
   defaultTypeTitle: string
-  /** @deprecated То же, что `defaultTypeId`, — до перевода ассистента на типы. */
-  templateId?: string
-  /** @deprecated То же, что `defaultTypeTitle`. */
-  templateTitle?: string
 }
 
 export interface SocketDeps {
@@ -173,7 +163,7 @@ export function answerQuestion(store: TaskStore, questionId: string, answer: str
   return store.answer(questionId, answer)
 }
 
-/** Роль задачи существует в проекте и её агент можно запускать. */
+/** Роль задачи есть в типе её прогона и её агент можно запускать. */
 function assertRoleUsable(roles: Role[], agents: AgentInfo[], roleId: string): void {
   const role = roles.find((r) => r.id === roleId)
   if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(roleId, roles)}`)
@@ -185,7 +175,8 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   const title = str(r.params.title)
   if (!title) throw new Error('--title обязателен')
   if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
-  const role = pickRole(deps.roles(), deps.agents(), str(r.params.role))
+  // Роли — типа глобальной задачи; у «Входящих» (runId нет) — типа проекта по умолчанию.
+  const role = pickRole(deps.roles(runId), deps.agents(), str(r.params.role))
   // --answer-for human|coordinator — задача-ответ; значение проверяет store.
   const answerFor = r.params['answer-for'] ?? r.params.answerFor
   if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
@@ -202,11 +193,56 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   })
 }
 
-function projectWorkflow(deps: ProjectDeps): Workflow | undefined {
-  try {
-    return deps.workflow().workflow
-  } catch {
-    return undefined
+/** --type: id типа задачи; флаг без значения — ошибка, нет флага — undefined. */
+function typeParam(r: Request): string | undefined {
+  if (r.params.type === true || r.params.type === '') throw new Error('--type требует id типа задачи (orca-board types list)')
+  return str(r.params.type)
+}
+
+/**
+ * Тип для `rules.*` и `roles.list`: `--type` (из доступных проекту), иначе тип прогона `--run` (координатору CLI
+ * подставляет ORCA_RUN_ID), иначе тип проекта по умолчанию.
+ */
+function typeOf(r: Request, deps: ProjectDeps, store: TaskStore): ResolvedRunType {
+  const typeId = typeParam(r)
+  if (typeId === undefined) {
+    const runId = str(r.params.run)
+    if (runId !== undefined && !store.getRun(runId)) throw new Error(`run not found: ${runId}`)
+    return deps.resolveRun(runId)
+  }
+  const type = deps.taskTypes().taskTypes.find((t) => t.id === typeId)
+  if (!type) throw new Error(`тип задачи «${typeId}» недоступен в проекте (доступные: orca-board types list)`)
+  return { ...resolveTaskType(type), source: 'type' }
+}
+
+/** Роль типа по --role для `rules.*`; нет такой — ошибка со списком ролей типа. */
+function ruleRole(r: Request, type: ResolvedRunType): Role | undefined {
+  const roleId = str(r.params.role)
+  if (r.params.role === true || roleId === '') throw new Error('--role требует id роли')
+  if (roleId === undefined) return undefined
+  const role = type.roles.find((x) => x.id === roleId)
+  if (!role) throw new Error(missingRoleMessage(roleId, type.roles))
+  return role
+}
+
+/** Тип в ответе `types list`: роли с признаком «агент включён» и этапы графа кратко. */
+function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): unknown {
+  const resolved = resolveTaskType(t)
+  return {
+    id: t.id,
+    title: t.title,
+    ...(t.description ? { description: t.description } : {}),
+    ...(t.id === defaultTypeId ? { default: true } : {}),
+    ...(t.builtin ? { builtin: true } : {}),
+    permissionMode: resolved.permissionMode,
+    roles: resolved.roles.map((role) => ({
+      id: role.id,
+      title: role.title,
+      agent: role.agent,
+      ...(role.model ? { model: role.model } : {}),
+      agentEnabled: enabled.has(role.agent)
+    })),
+    stages: describeWorkflow(resolved.workflow).map((s) => ({ id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}) }))
   }
 }
 
@@ -246,8 +282,8 @@ const handlers: Record<string, Handler> = {
       description: str(r.params.description),
       status: str(r.params.status),
       priority: priorityParam(r) as TaskPriority | undefined,
-      // Снимок воркфлоу проекта; граф из будущей версии не снимается — прогон пойдёт по дефолтному.
-      workflow: projectWorkflow(deps)
+      // Тип (--type, иначе тип проекта по умолчанию): id, снимок ролей и графа. Недоступный проекту — ошибка.
+      type: deps.runType(typeParam(r))
     }),
   'global.update': (r, _d, store) =>
     store.updateGlobalTask(globalId(r), {
@@ -292,7 +328,7 @@ const handlers: Record<string, Handler> = {
     if (!id) throw new Error('--task обязателен')
     // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
     const task = store.getTask(id)
-    if (task) assertRoleUsable(deps.roles(), deps.agents(), task.roleId)
+    if (task) assertRoleUsable(deps.roles(task.runId), deps.agents(), task.roleId)
     return deps.startWorker(id)
   },
   'worker.stop': (r, deps, store) => {
@@ -314,7 +350,7 @@ const handlers: Record<string, Handler> = {
       throw new Error(`задача ${id} уже ${kind === 'done' ? 'сделана' : 'на ревью'}: используй task reopen --task ${id} [--feedback "..."] --start`)
     }
     // Проверяем роль до остановки: иначе остановили бы воркера и не смогли поднять новый.
-    assertRoleUsable(deps.roles(), deps.agents(), task.roleId)
+    assertRoleUsable(deps.roles(task.runId), deps.agents(), task.roleId)
     const { stopped } = deps.stopWorker(id)
     const feedback = str(r.params.feedback)?.trim()
     if (feedback) store.updateTask(id, { feedback })
@@ -326,7 +362,7 @@ const handlers: Record<string, Handler> = {
     if (!id) throw new Error('--task обязателен')
     if (r.params.feedback === true) throw new Error('--feedback требует текста')
     const existing = store.getTask(id)
-    if (r.params.start === true && existing) assertRoleUsable(deps.roles(), deps.agents(), existing.roleId)
+    if (r.params.start === true && existing) assertRoleUsable(deps.roles(existing.runId), deps.agents(), existing.roleId)
     const task = store.reopenTask(id, str(r.params.feedback))
     if (r.params.start !== true) return task
     return { task, worker: deps.startWorker(id) }
@@ -334,10 +370,14 @@ const handlers: Record<string, Handler> = {
   'coordinator.start': (r, deps) => {
     // --global — повторный запуск на существующей глобальной задаче (цель — её описание).
     const run = str(r.params.global)
-    if (run) return { ptyId: deps.startCoordinator('', run) }
+    const typeId = typeParam(r)
+    if (run) {
+      if (typeId !== undefined) throw new Error('--type задаётся только новой глобальной задаче: у существующей тип уже выбран')
+      return { ptyId: deps.startCoordinator('', run) }
+    }
     const objective = str(r.params.objective)
     if (!objective) throw new Error('--objective обязателен')
-    return { ptyId: deps.startCoordinator(objective) }
+    return { ptyId: deps.startCoordinator(objective, undefined, typeId) }
   },
   'worker.read': (r, _d, store) => {
     const id = str(r.params.dispatch)
@@ -451,46 +491,57 @@ const handlers: Record<string, Handler> = {
     return deps.reject(id, feedback)
   },
   // Граф этапов задачи: с --run (координатору CLI подставляет ORCA_RUN_ID) — снимок прогона, по нему идут его
-  // задачи; без --run — воркфлоу проекта, с которым начнутся новые прогоны.
+  // задачи (прогон без снимка — граф его типа, `source: type`); без --run — граф типа --type или типа проекта
+  // по умолчанию, с которым начнутся новые глобальные задачи.
   'workflow.show': (r, deps, store) => {
     const runId = str(r.params.run)
-    if (runId !== undefined) {
+    const typeId = typeParam(r)
+    if (runId !== undefined && typeId === undefined) {
       const run = store.getRun(runId)
       if (!run) throw new Error(`run not found: ${runId}`)
-      const wf = store.runWorkflow(runId, deps.roles().map((x) => x.id))
-      return { source: run.workflow ? 'run' : 'default', run: runId, stages: describeWorkflow(wf) }
+      const type = deps.resolveRun(runId)
+      const wf = store.runWorkflow(runId, { roleIds: type.roles.map((x) => x.id), workflow: type.workflow })
+      return { source: run.workflow ? 'run' : 'type', run: runId, typeId: type.typeId, typeTitle: type.title, stages: describeWorkflow(wf) }
     }
-    const { workflow, custom } = deps.workflow()
-    return { source: custom ? 'project' : 'default', stages: describeWorkflow(workflow) }
+    const { typeId: id, title, workflow, custom } = deps.workflow(typeId)
+    return { source: 'type', typeId: id, typeTitle: title, custom, stages: describeWorkflow(workflow) }
   },
   'events.list': (_r, _d, store) => store.listEvents(),
   'agents.list': (_r, deps) => deps.agents(),
-  // Роли с признаком, включён ли их агент в проекте: координатору видно, какие роли можно назначать.
-  'roles.list': (_r, deps) => {
+  // Роли типа глобальной задачи (--run, координатору — его прогон) с признаком, включён ли их агент в проекте:
+  // координатору видно, какие роли можно назначать. Без прогона — типа --type или типа проекта по умолчанию.
+  'roles.list': (r, deps, store) => {
     const enabled = new Set(deps.agents().filter((a) => a.enabled).map((a) => a.id))
-    return deps.roles().map((role) => ({ ...role, agentEnabled: enabled.has(role.agent) }))
+    return typeOf(r, deps, store).roles.map((role) => ({ ...role, agentEnabled: enabled.has(role.agent) }))
+  },
+  // Типы задач, доступные проекту: глобальная задача получает тип при создании (global create --type).
+  'types.list': (_r, deps) => {
+    const enabled = new Set(deps.agents().filter((a) => a.enabled).map((a) => a.id))
+    const { taskTypes, defaultTypeId } = deps.taskTypes()
+    return taskTypes.map((t) => typeSummary(t, defaultTypeId, enabled))
   },
   'columns.list': (_r, deps) => deps.columns(),
-  // Правила агентов доски: общие — Project.agentRules, роли — её systemPrompt (оба уходят в системный промпт, withAgentRules).
-  'rules.get': (r, deps) => {
-    const roleId = str(r.params.role)
-    if (r.params.role === true || roleId === '') throw new Error('--role требует id роли')
-    if (roleId === undefined) return { rules: deps.agentRules() }
-    const role = deps.roles().find((x) => x.id === roleId)
-    if (!role) throw new Error(missingRoleMessage(roleId, deps.roles()))
-    return { role: role.id, title: role.title, rules: role.systemPrompt ?? '' }
+  // Правила агентов доски — типа задачи (typeOf): общие — agentRules типа, роли — её systemPrompt (оба уходят в
+  // системный промпт, withAgentRules). У встроенного типа они правятся на месте, копия не нужна.
+  'rules.get': (r, deps, store) => {
+    const type = typeOf(r, deps, store)
+    const role = ruleRole(r, type)
+    const of = { typeId: type.typeId, typeTitle: type.title }
+    if (!role) return { ...of, rules: type.agentRules }
+    return { ...of, role: role.id, title: role.title, rules: role.systemPrompt ?? '' }
   },
-  'rules.set': (r, deps) => {
+  'rules.set': (r, deps, store) => {
     const text = r.params.text
     if (typeof text !== 'string') throw new Error('нужен текст правил: --text "..." или --file <путь> (пустая строка — очистить)')
-    const roleId = str(r.params.role)
-    if (r.params.role === true || roleId === '') throw new Error('--role требует id роли')
-    if (roleId === undefined) return { rules: deps.setAgentRules(text) }
-    const roles = deps.roles()
-    if (!roles.some((x) => x.id === roleId)) throw new Error(missingRoleMessage(roleId, roles))
-    const saved = deps.setRoles(roles.map((x) => (x.id === roleId ? { ...x, systemPrompt: text } : x)))
-    const role = saved.find((x) => x.id === roleId)
-    return { role: roleId, title: role?.title ?? roleId, rules: role?.systemPrompt ?? '' }
+    const type = typeOf(r, deps, store)
+    const role = ruleRole(r, type)
+    // Тип прогона удалили из библиотеки — прогон идёт по снимку, править нечего.
+    if (type.source === 'snapshot') throw new Error(`тип «${type.title}» удалён из библиотеки: прогон идёт по его снимку, правила не изменить`)
+    const saved = resolveTaskType(deps.saveTaskTypeRules(type.typeId, role?.id, text))
+    const of = { typeId: saved.typeId, typeTitle: saved.title }
+    if (!role) return { ...of, rules: saved.agentRules }
+    const next = saved.roles.find((x) => x.id === role.id)
+    return { ...of, role: role.id, title: next?.title ?? role.title, rules: next?.systemPrompt ?? '' }
   },
   // Прогоны с числом задач и числом задач в kind=done.
   'runs.list': (_r, _d, store) => {

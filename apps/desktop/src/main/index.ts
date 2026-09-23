@@ -663,9 +663,6 @@ app.whenReady().then(() => {
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),
         runType: (typeId) => projects.runType(p.id, typeId),
         saveTaskTypeRules: (typeId, roleId, text) => projects.saveTaskTypeRules(typeId, roleId, text),
-        setRoles: (roles) => projects.setRoles(p.id, roles).roles ?? roles,
-        agentRules: () => projects.agentRules(p.id),
-        setAgentRules: (text) => projects.setAgentRules(p.id, text).agentRules ?? '',
         columns: () => projects.columns(p.id),
         workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(p.id))
       }
@@ -682,10 +679,7 @@ app.whenReady().then(() => {
           active: p.id === activeId,
           inProgress: counts[p.id] ?? 0,
           defaultTypeId: type.id,
-          defaultTypeTitle: type.title,
-          // Старые поля до перевода сокета на типы (задача 3): тип по умолчанию на месте шаблона.
-          templateId: type.id,
-          templateTitle: type.title
+          defaultTypeTitle: type.title
         }
       })
     }

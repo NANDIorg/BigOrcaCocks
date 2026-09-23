@@ -50,9 +50,6 @@ function fakeDeps(): ProjectDeps {
     taskTypes: () => ({ taskTypes: builtinTaskTypes(), defaultTypeId: 'general' }),
     runType: () => runTypeInput(builtinTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
-    setRoles: (next) => (roles = next),
-    agentRules: () => '',
-    setAgentRules: (text) => text,
     columns: () => DEFAULT_COLUMNS,
     workflow: () => ({ typeId: 'general', title: 'Общий', workflow: defaultWorkflow(roles), custom: false })
   }
@@ -289,11 +286,11 @@ describe('удалённая системная роль', () => {
 
 describe('workflow show', () => {
   type Shown = { source: string; run?: string; stages: WfStageInfo[] }
-  it('без --run — воркфлоу проекта этапами в порядке обхода с переходами', async () => {
+  it('без --run — граф типа проекта по умолчанию этапами в порядке обхода с переходами', async () => {
     const res = await call('workflow.show', {})
     assert.equal(res.ok, true, res.error)
     const shown = res.result as unknown as Shown
-    assert.equal(shown.source, 'default')
+    assert.equal(shown.source, 'type')
     assert.deepEqual(shown.stages.map((s) => s.id).slice(0, 4), ['start', 'work', 'review', 'merge'])
     const review = shown.stages.find((s) => s.id === 'review')!
     assert.equal(review.type, 'gate')
@@ -301,7 +298,7 @@ describe('workflow show', () => {
     assert.deepEqual(review.next, { accept: 'Мерж (merge)', reject: 'Работа (work)' })
   })
 
-  it('с --run — снимок прогона; прогон без снимка — дефолтный граф', async () => {
+  it('с --run — снимок прогона; прогон без снимка — граф его типа', async () => {
     const wf = defaultWorkflow([])
     const withSnap = store.createGlobalTask({ title: 'Со снимком', workflow: wf })
     const res = await call('workflow.show', { run: withSnap.id })
@@ -310,7 +307,7 @@ describe('workflow show', () => {
     assert.equal(shown.source, 'run')
     assert.equal(shown.stages.find((s) => s.id === 'review')!.type, 'human', 'снимок без reviewer, а не текущие роли')
     const old = store.createGlobalTask({ title: 'Старый' })
-    assert.equal(((await call('workflow.show', { run: old.id })).result as unknown as Shown).source, 'default')
+    assert.equal(((await call('workflow.show', { run: old.id })).result as unknown as Shown).source, 'type')
     assert.match((await call('workflow.show', { run: 'run_nope' })).error!, /run not found/)
   })
 })

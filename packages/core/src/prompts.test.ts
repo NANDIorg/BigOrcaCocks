@@ -214,6 +214,13 @@ describe('события после ответа человека в инстр�
     assert.match(skill, /`--role` — только id из `roles list`/)
   })
 
+  it('роли координатора — типа его глобальной задачи; тип он не меняет', () => {
+    const prep = skill.slice(skill.indexOf('Подготовка:'), skill.indexOf('Цикл:'))
+    assert.match(prep, /`orca-board roles list` — роли \*\*типа твоей глобальной задачи\*\*/)
+    assert.match(prep, /Тип выбирает человек при создании — ты его не меняешь/)
+    assert.doesNotMatch(prep, /роли есть в проекте/, 'роли больше не у проекта')
+  })
+
   it('воркер после done не берёт работу из терминала, а отправляет в приложение', () => {
     const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
     assert.match(worker, /После `orca-board done` новую работу не бери[\s\S]*Решение \/ что делать дальше/)
@@ -254,6 +261,14 @@ describe('skill ассистента: все проекты пользовате
     assert.match(text, /orca-board columns list --project <id>/)
     assert.match(text, /orca-board roles list --project <id>/)
     assert.match(text, /active: true/)
+  })
+  it('тип задачи: types list, global create --type, роли подзадачи — по типу глобальной, rules set --type', () => {
+    assert.match(text, /orca-board types list --project <id>/)
+    assert.match(text, /orca-board global create --project <id> [^`]*--type <id>/)
+    assert.match(text, /orca-board roles list --project <id> --run <id глобальной>/)
+    assert.match(text, /orca-board rules set --project <id> --type <id>/)
+    assert.match(text, /defaultTypeId/)
+    assert.doesNotMatch(text, /templateId/)
   })
   it('нет запрета --project и привязки к ORCA_PROJECT', () => {
     assert.doesNotMatch(text, /--project` не указывай/)

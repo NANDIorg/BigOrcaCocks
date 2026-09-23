@@ -469,15 +469,16 @@ Store хранит позицию и решает, куда задача пер�
 ## CLI (минимум для координатора)
 
 ```
-orca-board coordinator start --objective "..."   # человек; создаёт прогон (см. «Прогоны»)
-orca-board projects list                    # [{id,name,root,active,inProgress,templateId?,templateTitle?}]; без проектов — []; --project не нужен
+orca-board coordinator start --objective "..." [--type <id>]   # человек; создаёт прогон типа --type (см. «Прогоны»)
+orca-board projects list                    # [{id,name,root,active,inProgress,defaultTypeId,defaultTypeTitle}]; без проектов — []; --project не нужен
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
-orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
+orca-board types list                       # типы задач, доступные проекту: [{id,title,description?,default?,builtin?,permissionMode,roles,stages}]
+orca-board roles list [--run <id>] [--type <id>]   # роли типа прогона: [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
-orca-board workflow show [--run <id>]       # {source: run|project|default, run?, stages: WfStageInfo[]} — этапы задачи после worker_done
+orca-board workflow show [--run <id>] [--type <id>]   # {source: run|type, run?, typeId, typeTitle, stages: WfStageInfo[]} — этапы задачи после worker_done
 orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor
-orca-board rules get [--role <id>]          # правила агентов доски: общие ({rules}) или роли ({role,title,rules})
-orca-board rules set [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
+orca-board rules get [--type <id>] [--run <id>] [--role <id>]   # правила агентов типа: общие ({typeId,typeTitle,rules}) или роли (+ role, title)
+orca-board rules set [--type <id>] [--run <id>] [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]
 orca-board question answer --question <id> --answer "..."
 orca-board question forward --question <id> [--note "..."]   # вопрос воркера — человеку (запрос в Инбокс, глобальная → «Нужен ответ»)
@@ -496,13 +497,15 @@ orca-board check --follow [--types ...] [--run <id>]   # поток: строк�
 orca-board runs list                        # [{...Run, tasks, done}]
 orca-board runs close [--run <id>]          # закрыть прогон вручную
 orca-board runs finish [--run <id>] [--summary "..." | --summary-file summary.md]   # координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал); сводка — Run.summary
-orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md
+orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md; global create [--type <id>]
 orca-board worker read --dispatch <id>
 ```
 
-`--run` у `task create`, `check`, `request list`, `workflow show`, `runs close` и `runs finish` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
-`params.run`: задачи, созданные координатором, наследуют его прогон, а `workflow show` показывает снимок графа его прогона
-(`packages/cli/bin/orca-board.js`). `runs close`/`runs finish` без прогона — ошибка до обращения к сокету.
+`--run` у `task create`, `check`, `request list`, `workflow show`, `roles list`, `rules get|set`, `runs close` и `runs finish`
+по умолчанию берётся из `$ORCA_RUN_ID` и уходит как `params.run` (`RUN_METHODS` в `packages/cli/bin/orca-board.js`): задачи,
+созданные координатором, наследуют его прогон, `workflow show` показывает снимок графа его прогона, а `roles list` и `rules` —
+роли и правила типа его глобальной задачи. У `workflow show`, `roles list` и `rules` явный `--type` важнее: прогон из окружения
+тогда не подставляется (`TYPE_METHODS`), иначе он перебил бы выбранный тип. `runs close`/`runs finish` без прогона — ошибка до обращения к сокету.
 `runs finish --summary-file` CLI читает сам (он в cwd координатора) и шлёт текст в `params.summary`, как
 `done --answer-file`; нет файла или `--summary` без текста — ошибка до сокета.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
@@ -948,24 +951,27 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 | Метод | Параметры | Результат |
 |---|---|---|
-| `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`) |
+| `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`); `role` проверяется по ролям типа прогона (`ProjectDeps.roles(run)`), без `run` («Входящие») — типа проекта по умолчанию |
+| `global.create` | `title?`, `description?`, `status?`, `priority?`, `type?` | `GlobalTask` с `typeId`/`typeTitle`; тип — `ProjectDeps.runType(type)` (нет — тип проекта по умолчанию; вне `taskTypeIds` или неизвестный — ошибка с подсказкой `types list`); остальные `global.*` — `docs/nested-kanban.md` |
+| `coordinator.start` | `objective` или `global`, `type?` | `{ptyId}`; `type` — тип новой глобальной задачи, вместе с `global` — ошибка (тип не меняется) |
 | `check` | `types?`, `run?`, `consumer?`, `wait?`, `timeout-ms?`, `follow?` | `{events, timedOut}`; с `follow` — поток `{event}` |
 | `runs.list` | — | `[{...Run, tasks, done}]` |
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`) |
-| `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle, templateId?, templateTitle?}]` (`defaultTypeId` — тип задач проекта по умолчанию; `templateId`/`templateTitle` — то же, старые имена); без проектов — `[]` |
+| `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
-| `roles.list` | — | `[{...Role, agentEnabled}]` |
-| `rules.get` | `role?` | без `role` — `{rules}` (`Project.agentRules`, нет — `''`); с `role` — `{role, title, rules}` (= `Role.systemPrompt`) |
-| `rules.set` | `text` (строка, обязателен; `''` — очистить), `role?` | то же, что `rules.get`, после сохранения; с `role` — через `setRoles` (валидация ролей) |
+| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, builtin?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?}]}]` (`resolveTaskType`, `describeWorkflow`) |
+| `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
+| `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
+| `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); встроенный тип правится на месте; тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
 | `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
 | `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `reject`, `restart`, `dismiss` | `{request, worker?, startError?}` |
 | `task.list` / `task.get` | `run?` / `task` | `Task[]` / `Task \| null` — со `stage` и `gateFor` |
-| `workflow.show` | `run?` | с `run` — `{source: 'run' \| 'default', run, stages}` (снимок прогона, у прогона без снимка — дефолт по ролям); без — `{source: 'project' \| 'default', stages}` (`ProjectDeps.workflow` → `ProjectManager.workflow`); `stages` — `describeWorkflow` |
+| `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', run, typeId, typeTitle, stages}` (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` |
 | `review.accept` | `task`, `decision?` | `Task`; на этапе проверки — исход `accept` воркфлоу (`reviewAccept`, `src/main/workflow.ts`) |
 | `review.reject` | `task`, `feedback` | `Task`; на этапе проверки — исход `reject` воркфлоу (`ProjectDeps.reject` → `reviewReject`) |
 | `worker.stop` | `task` | `{stopped: dispatchId[], task}` |

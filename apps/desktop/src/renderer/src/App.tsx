@@ -1,11 +1,11 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
+  DEFAULT_COLUMNS, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
   type TaskPriority
 } from '@orca-board/core'
-import type { GlobalTaskPatch, Project, TerminalInfo } from '../../shared/ipc'
+import type { GlobalTaskPatch, Project, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -28,7 +28,7 @@ import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
 import { pickAssistant } from './assistantPty'
-import { useProjectDefaults } from './about/useProjectDefaults'
+import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun } from './taskTypes'
 
 type Tab = 'board' | 'terminals' | 'info'
 
@@ -131,7 +131,7 @@ export function App(): React.JSX.Element {
   const [terminals, setTerminals] = useState<OpenTerminal[]>([])
   const [showNew, setShowNew] = useState(false)
   /** Модалка глобальной задачи: создание или правка (по id — берётся актуальная из снимка). */
-  /** Выбор типа для только что выбранной папки (новый main с шаблонами проектов). */
+  /** Выбор типа задач по умолчанию для только что выбранной папки (новый main с типами задач). */
   const [addPick, setAddPick] = useState<Extract<AddProjectStart, { kind: 'pick' }> | null>(null)
   const [globalModal, setGlobalModal] = useState<{ mode: 'create' } | { mode: 'edit'; id: string } | null>(null)
   /** Глобальная задача, которую возвращают с «Проверки» в работу (модалка уточнения). */
@@ -171,8 +171,11 @@ export function App(): React.JSX.Element {
    * После перезагрузки окна null — тогда ассистент находится по роли в списке терминалов (pickAssistant).
    */
   const [launchedAssistant, setLaunchedAssistant] = useState<string | null>(null)
-  /** Настройки по умолчанию: из них main берёт роль ассистента — нужны для подписи его терминала. */
-  const { defaults: projectDefaults } = useProjectDefaults()
+  /**
+   * Библиотека типов задач: по типу глобальной задачи берутся роли её подзадач и выбирается тип новой.
+   * null — старый main/preload без типов (или ещё не загрузилась): роли проекта, как раньше.
+   */
+  const [taskTypes, setTaskTypes] = useState<TaskTypesState | null>(null)
   /** Запуск ассистента идёт / сорвался. */
   const [assistantState, setAssistantState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null })
   const tasks = snap.tasks
@@ -212,7 +215,13 @@ export function App(): React.JSX.Element {
   const activeIdRef = useRef(active?.id)
   activeIdRef.current = active?.id
 
+  /** Перечитать библиотеку типов. Сбой (не «старый main») оставляет прежнюю: подписи ролей не прыгают на роли проекта. */
+  function refreshTaskTypes(): void {
+    loadTaskTypes(window.orca).then(setTaskTypes, () => {})
+  }
+
   async function refreshProjects(): Promise<void> {
+    refreshTaskTypes()
     const res = await window.orca.projects.list()
     setProjects(res.projects)
     setActive(res.active)
@@ -321,6 +330,9 @@ export function App(): React.JSX.Element {
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
   const subtasks = openGlobal ? tasks.filter((t) => t.runId === openGlobal.id) : []
+  /** Роли задач прогона — по типу его глобальной задачи; нет прогона — тип проекта по умолчанию. */
+  const rolesFor = (runId: string | undefined): Role[] => rolesForRun(runId, snap.runs, active, taskTypes)
+  const openGlobalRoles = rolesFor(openGlobal?.id)
   /** Живой координатор глобальной задачи → его PTY (реестр терминалов, runId). */
   const coordinatorPtys = new Map<string, string>()
   for (const t of projectTerminals) {
@@ -469,7 +481,7 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function saveGlobalTask(input: { title: string; description: string; status?: string; priority?: TaskPriority }): Promise<void> {
+  async function saveGlobalTask(input: { title: string; description: string; status?: string; priority?: TaskPriority; typeId?: string }): Promise<void> {
     if (globalModal?.mode === 'edit') {
       const cur = globals.find((g) => g.id === globalModal.id)
       if (!cur) throw new Error('глобальная задача не найдена — возможно, её удалили')
@@ -483,7 +495,8 @@ export function App(): React.JSX.Element {
         title: input.title || undefined,
         description: input.description || undefined,
         status: input.status,
-        ...(input.priority !== undefined ? { priority: input.priority } : {})
+        ...(input.priority !== undefined ? { priority: input.priority } : {}),
+        ...(input.typeId !== undefined ? { typeId: input.typeId } : {})
       })
     }
     setGlobalModal(null)
@@ -497,8 +510,8 @@ export function App(): React.JSX.Element {
   }
 
   /**
-   * «Добавить репозиторий»: папка → подсказка типа → модалка «Тип проекта». Уже добавленный репозиторий
-   * открывается без модалки; со старым main/preload — прежний `projects.add()` с шаблоном по умолчанию.
+   * «Добавить репозиторий»: папка → подсказка типа → модалка «Тип задач по умолчанию». Уже добавленный
+   * репозиторий открывается без модалки; со старым main/preload — прежний `projects.add()` без выбора.
    */
   async function addProject(): Promise<void> {
     const start = await startAddProject(window.orca, projects)
@@ -508,8 +521,8 @@ export function App(): React.JSX.Element {
     if (p) await refreshProjects()
   }
 
-  async function addProjectWithTemplate(path: string, templateId: string): Promise<void> {
-    const p = await window.orca.projects.add(templateId, path)
+  async function addProjectWithType(path: string, typeId: string): Promise<void> {
+    const p = await window.orca.projects.add(typeId, path)
     setAddPick(null)
     if (p) await refreshProjects()
   }
@@ -658,20 +671,23 @@ export function App(): React.JSX.Element {
   /** Подпись терминала в списке: имя, роль и агент — по задаче из снимка или по роли координатора. */
   function describeTerminal(t: OpenTerminal): { name: string; role: string; agent: string } {
     const project = projects.find((p) => p.id === t.projectId)
-    const roles: Role[] = (project?.id === active?.id ? active?.roles : project?.roles) ?? DEFAULT_ROLES
+    const isActive = project !== undefined && project.id === active?.id
+    // Роли — по типу прогона терминала; прогоны есть только у активного проекта, у чужого — тип по умолчанию.
+    const rolesOf = (runId: string | undefined): Role[] =>
+      isActive ? rolesFor(runId) : rolesForRun(undefined, [], project, taskTypes)
     if (t.role === 'coordinator') {
-      const role = roles.find((r) => r.id === 'coordinator')
+      const role = rolesOf(t.runId).find((r) => r.id === 'coordinator')
       const global = t.projectId === active?.id && t.runId ? globals.find((g) => g.id === t.runId) : undefined
       return { name: global?.title ?? 'координатор', role: role?.title ?? 'Координатор', agent: role?.agent ?? 'claude' }
     }
     if (t.role === 'assistant') {
-      // Ассистент приложения запущен с ролями из настроек по умолчанию; у старого main (с projectId) — проекта.
-      const role = assistantRole((t.projectId ? roles : projectDefaults?.roles) ?? roles)
+      // Ассистент приложения запущен с ролями типа библиотеки по умолчанию; у старого main — проекта.
+      const role = assistantRole(taskTypes && !t.projectId ? libraryDefaultRoles(taskTypes) : rolesOf(undefined))
       return { name: 'ассистент', role: role?.title ?? 'Ассистент', agent: role?.agent ?? 'claude' }
     }
     if (t.role === 'shell') return { name: t.label, role: 'оболочка', agent: 'shell' }
     const task = t.projectId === active?.id ? tasks.find((x) => x.id === t.taskId) : undefined
-    const role = task && roles.find((r) => r.id === task.roleId)
+    const role = task && rolesFor(task.runId).find((r) => r.id === task.roleId)
     return { name: task?.title ?? t.label, role: role?.title ?? task?.roleId ?? 'воркер', agent: task?.agent ?? 'shell' }
   }
 
@@ -801,6 +817,7 @@ export function App(): React.JSX.Element {
               onStartCoordinator={(g) => void startGlobalCoordinator(g)}
               onAccept={(g) => void acceptGlobalTask(g)}
               onReturn={(g) => setReturnGlobalId(g.id)}
+              typeTitle={(g) => globalTypeTitle(g, taskTypes)}
             />
           )}
           {tab === 'board' && openGlobal && (
@@ -821,10 +838,11 @@ export function App(): React.JSX.Element {
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
+              typeTitle={globalTypeTitle(openGlobal, taskTypes)}
             >
               <Board
                 columns={columns}
-                roles={active?.roles ?? DEFAULT_ROLES}
+                roles={openGlobalRoles}
                 tasks={subtasks}
                 emptyText="Нет подзадач"
                 questions={snap.questions}
@@ -937,7 +955,10 @@ export function App(): React.JSX.Element {
           agents={agents}
           onRefreshAgents={() => refreshAgents(true)}
           onProjectsChanged={refreshProjects}
-          onClose={() => setShowSettings(false)}
+          onClose={() => {
+            setShowSettings(false)
+            refreshTaskTypes()
+          }}
         />
       )}
       {showDocs && active && <DocsModal key={active.id} projectName={active.name} tasks={tasks} columns={columns} onClose={() => setShowDocs(false)} />}
@@ -957,7 +978,7 @@ export function App(): React.JSX.Element {
           task={openTask}
           tasks={tasks}
           columns={active.columns ?? DEFAULT_COLUMNS}
-          roles={active.roles ?? DEFAULT_ROLES}
+          roles={rolesFor(openTask.runId)}
           agents={agents}
           dispatches={snap.dispatches}
           questions={snap.questions}
@@ -978,7 +999,7 @@ export function App(): React.JSX.Element {
           key={openGlobal.id}
           globalTitle={openGlobal.title}
           tasks={subtasks}
-          roles={active?.roles ?? DEFAULT_ROLES}
+          roles={openGlobalRoles}
           agents={agents}
           onClose={() => setShowNew(false)}
           onCreate={async (input) => {
@@ -992,11 +1013,11 @@ export function App(): React.JSX.Element {
         <ProjectTypeModal
           key={addPick.detection.path}
           detection={addPick.detection}
-          templates={addPick.templates}
-          defaultTemplateId={addPick.defaultTemplateId}
+          types={addPick.types}
+          defaultTypeId={addPick.defaultTypeId}
           selected={addPick.selected}
           onClose={() => setAddPick(null)}
-          onSubmit={(templateId) => addProjectWithTemplate(addPick.detection.path, templateId)}
+          onSubmit={(typeId) => addProjectWithType(addPick.detection.path, typeId)}
         />
       )}
       {globalModal && active && (globalModal.mode === 'create' || editingGlobal) && (
@@ -1004,6 +1025,10 @@ export function App(): React.JSX.Element {
           key={globalModal.mode === 'edit' ? globalModal.id : 'create'}
           global={editingGlobal}
           columns={globalStoredColumns(columns)}
+          types={taskTypes ? availableTypes(active, taskTypes) : undefined}
+          defaultTypeId={taskTypes ? projectDefaultTypeId(active, taskTypes) : undefined}
+          agents={agents}
+          typeTitle={editingGlobal ? globalTypeTitle(editingGlobal, taskTypes) : undefined}
           priorityEditable={runsKnowPriority(snap.runs)}
           statusKind={editingGlobal ? globalKindById.get(editingGlobal.status) : undefined}
           live={editingGlobal ? coordinatorPtys.has(editingGlobal.id) : false}

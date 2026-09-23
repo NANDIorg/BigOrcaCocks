@@ -1306,6 +1306,16 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .wf-actions-sep { width: 1px; height: 18px; background: var(--chip); }
 .about-sec .wf-notice { margin: 0; }
 
+/* Тип задачи (TaskType) у глобальной задачи: выбор при создании, бейдж при правке, чип на карточке. */
+.task-type-hint { font-size: 12px; font-weight: 400; }
+.task-type-warn {
+  font-size: 12px; font-weight: 400; color: var(--col-input); background: rgba(232,176,74,.12);
+  border-radius: 6px; padding: 6px 8px; overflow-wrap: anywhere;
+}
+.task-type-line { display: flex; align-items: center; gap: 6px; }
+.task-type-badge { font-size: 12px; font-weight: 500; color: var(--text); background: var(--side-2); border-radius: 6px; padding: 1px 8px; }
+.g-chip.task-type-chip { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
 /* «О проекте → Типы задач» (about/TaskTypesSection.tsx): типы библиотеки с галочкой «доступен» и «по умолчанию» */
 .tt-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .tt-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: var(--radius); background: var(--side); }

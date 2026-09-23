@@ -69,7 +69,7 @@ describe('projects list', () => {
   it('отдаёт проекты с признаком active и типом проекта, работает с projectId чужого проекта', async () => {
     projects = [
       { id: 'p_a', name: 'a', root: '/a', active: false, inProgress: 0, defaultTypeId: 'general', defaultTypeTitle: 'Общий' },
-      { id: 'p_b', name: 'b', root: '/b', active: true, inProgress: 2, defaultTypeId: 'backend', defaultTypeTitle: 'Бэкенд', templateId: 'backend', templateTitle: 'Бэкенд' }
+      { id: 'p_b', name: 'b', root: '/b', active: true, inProgress: 2, defaultTypeId: 'backend', defaultTypeTitle: 'Бэкенд' }
     ]
     const res = await call('projects.list', 'p_gone')
     assert.equal(res.ok, true, res.error)
