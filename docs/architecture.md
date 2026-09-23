@@ -22,12 +22,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt? }`.
+- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль проекта (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
   - `runId` — прогон (= глобальная задача), к которому относится задача (см. «Прогоны»); задаётся только при создании,
     `updateTask` его не меняет. Без прогона задача попадает во «Входящие» (`docs/nested-kanban.md`).
+  - `stage { nodeId, visits }` — позиция в воркфлоу прогона, `gateFor { taskId, nodeId }` — у задачи-гейта: чью
+    ветку она проверяет (см. «Воркфлоу: состояние в store»).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
   - **Время работы** (`activeMs`, `activeSince`, `packages/core/src/active-time.ts`) копится только пока задача в
@@ -57,7 +59,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, workflow?, ... }` — прогон:
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -75,7 +77,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `docs/human-requests.md`. Хранится в `StoreSnapshot.requests`.
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
   типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `answer_accepted`, `run_done`,
-  `request_created`, `request_resolved`, `answer_clarified`. Payload короткие: в `worker_done`/`answer_accepted` `answer` —
+  `request_created`, `request_resolved`, `answer_clarified`, `stage_changed`, `workflow_blocked` (последние два — воркфлоу,
+  см. «Воркфлоу: состояние в store»; пока их шлёт только `advanceStage`, координатору они не нужны). Payload короткие: в `worker_done`/`answer_accepted` `answer` —
   последнее поле, обрезан до 2000 символов (`answerTruncated: true`), полный ответ и `decision` — `orca-board task answer --task <id>`;
   тексты в `question`/`request_created`/`answer_clarified` — до 300 символов, целиком — `question get` / `request get`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
@@ -195,8 +198,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 ## Воркфлоу: модель (`packages/core/src/workflow.ts`)
 
 Граф этапов, которые проходит **одна рабочая задача** от первого запуска до мержа. Декомпозиция цели остаётся
-за координатором, задачи-ответы (`answerFor`) идут мимо воркфлоу. Сейчас в core есть только модель и чистые
-функции; хранение (`Project.workflow`), снимок в прогоне и исполнитель в main — следующие шаги.
+за координатором, задачи-ответы (`answerFor`) идут мимо воркфлоу. Сейчас в core есть модель, чистые функции
+и состояние в store (ниже); хранение (`Project.workflow`) и исполнитель в main — следующие шаги.
 Модуль без node-импортов: его импортирует renderer ради живой валидации в редакторе.
 
 - **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 1`. Ноды (`WfNode`): `start`, `work`
@@ -230,6 +233,26 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   проверка через `git merge --no-commit`/`--abort`, `review accept` / `review reject`, обязательный `done`,
   спека рабочей задачи как критерии. Команды сборки и тестов конкретного репозитория в шаблон не входят —
   они берутся из `node.instructions` (раздел «Как проверять») или системного промпта роли.
+
+### Воркфлоу: состояние в store (`packages/core/src/store.ts`)
+
+Исполнитель ещё выключен: `finishDispatch`, `rejectReview`, `acceptTask` работают по-старому и `stage` не трогают,
+колонку задачи `advanceStage` тоже не меняет. Store хранит только позицию.
+
+- **Снимок графа** — `Run.workflow`: `createRun(objective, ptyId?, workflow?)` и `createGlobalTask({…, workflow})`
+  кладут глубокую копию графа, который передаёт вызывающий код (store в проект не ходит). Правка графа посреди
+  прогона не ломает переходы идущих задач. `runWorkflow(runId, roleIds?)` — снимок, а у прогона без него (от кода
+  до воркфлоу, «Входящие») — `defaultWorkflow` по переданным ролям проекта.
+- **`advanceStage(taskId, outcome, {roleIds?})` → `{task, action}`** — `nextStage` по графу прогона; задача без
+  `stage` входит в граф из старта (`startStage`, только исход `next`). Задачи-ответы и задачи-гейты (`gateFor`) —
+  ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}`;
+  `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
+  гейта удалена). Эффекты `action` выполнит main.
+- **Миграция при загрузке** (`migrateStages`): задача в колонке kind=review без `stage` (сдана кодом до воркфлоу),
+  кроме задач-ответов и задач-гейтов, встаёт на первый гейт дефолтного графа — `{nodeId: 'review', visits:
+  {start: 1, work: 1, review: 1}}`. Id ноды ревью одинаковый с `reviewer` и без, поэтому роли не нужны. Событий
+  нет. Задачи «Ревью: …», созданные координатором вручную (роль `reviewer`, без `gateFor`), миграция не отличает
+  от рабочих — их разбирает исполнитель.
 
 ## Прогоны (`packages/core/src/store.ts`, `src/main/worker.ts`, `src/main/socket.ts`)
 
