@@ -45,6 +45,8 @@ interface Props {
   onAccept(global: GlobalTask): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
   onReturn(global: GlobalTask): void
+  /** Название типа задачи для чипа на карточке (`globalTypeTitle`); нет — чипа нет (старый main, «Входящие»). */
+  typeTitle?(global: GlobalTask): string | undefined
 }
 
 /** «только что», «5 мин назад», «3 ч назад», иначе дата. */
@@ -119,7 +121,7 @@ export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.El
 /** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Нужен ответ / Проверка / Сделано проекта. */
 export function GlobalBoard(props: Props): React.JSX.Element {
   const { columns, globals, liveCoordinators, attention, requests, tasks, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
-  const { onResolveRequest, onOpenInbox, onAccept, onReturn } = props
+  const { onResolveRequest, onOpenInbox, onAccept, onReturn, typeTitle } = props
   const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
@@ -257,6 +259,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         <span className="g-chip status">{column.title}</span>
                         <PriorityBadge item={g} className="g-chip" />
                         {g.inbox && <span className="g-chip">служебная</span>}
+                        {typeTitle?.(g) && <span className="g-chip task-type-chip" title="Тип задачи">{typeTitle(g)}</span>}
                         {live && <span className="chip live">● координатор</span>}
                         {g.waiting > 0 && <span className="g-chip warn">ждёт вашего ответа: {g.waiting}</span>}
                         {att && att.review > 0 && <span className="g-chip review">на ревью: {att.review}</span>}

@@ -38,6 +38,8 @@ interface Props {
   /** «Открыть полностью» у ответа — модалка подзадачи. */
   onOpenTask(taskId: string): void
   onOpenTerminal(taskId: string): void
+  /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
+  typeTitle?: string
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
   children: React.ReactNode
 }
@@ -45,7 +47,7 @@ interface Props {
 /** Экран глобальной задачи: хлебные крошки, заголовок, описание и канбан только её подзадач. */
 export function GlobalTaskView(props: Props): React.JSX.Element {
   const { global, statusKind, coordinatorPty, onBack, onEdit, onStartCoordinator, onShowCoordinator, onAccept, onReturn, children } = props
-  const { requests, tasks, columns, dispatches, onResolveRequest, onOpenTask, onOpenTerminal } = props
+  const { requests, tasks, columns, dispatches, onResolveRequest, onOpenTask, onOpenTerminal, typeTitle } = props
   const pending = pendingRequestsOf(requests, { runId: global.id }).sort((a, b) => a.createdAt - b.createdAt)
   const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
   const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
@@ -118,6 +120,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
           <div className="g-view-progress"><GlobalProgress global={global} /></div>
           {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
           <PriorityBadge item={global} className="g-chip" />
+          {typeTitle && <span className="g-chip task-type-chip" title="Тип задачи: роли, воркфлоу и правила агентов">{typeTitle}</span>}
           <span className="muted">Обновлено {relativeTime(global.activityAt)}</span>
           {!global.inbox && (
             <span className="muted" title={`Создана ${formatStamp(global.createdAt)}${global.closedAt !== undefined ? `, закрыта ${formatStamp(global.closedAt)}` : ''}`}>

@@ -1,27 +1,31 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { ProjectTemplate } from '@orca-board/core'
-import type { TemplateDetection } from '../../shared/ipc'
+import type { TaskType } from '@orca-board/core'
+import type { TaskTypeDetection } from '../../shared/ipc'
 import { ipcErrorMessage } from './useAutoSave'
 
 interface Props {
-  detection: TemplateDetection
-  templates: ProjectTemplate[]
-  defaultTemplateId: string
-  /** Предвыбор: угаданный по файлам тип или шаблон по умолчанию. */
+  detection: TaskTypeDetection
+  types: TaskType[]
+  /** Тип библиотеки по умолчанию — бейдж «по умолчанию». */
+  defaultTypeId: string
+  /** Предвыбор: угаданный по файлам тип или тип библиотеки по умолчанию. */
   selected: string
   onClose(): void
-  /** Добавить проект с копией шаблона. Ошибка остаётся в модалке. */
-  onSubmit(templateId: string): Promise<void>
+  /** Добавить проект с этим типом задач по умолчанию. Ошибка остаётся в модалке. */
+  onSubmit(typeId: string): Promise<void>
 }
 
-/** «Тип проекта» после выбора папки: проект получит копию настроек выбранного шаблона. */
-export function ProjectTypeModal({ detection, templates, defaultTemplateId, selected: initial, onClose, onSubmit }: Props): React.JSX.Element {
+/**
+ * Тип задач по умолчанию для нового проекта (после выбора папки). Копии настроек нет: проект ссылается на тип
+ * из библиотеки, а тип конкретной глобальной задачи выбирается при её создании.
+ */
+export function ProjectTypeModal({ detection, types, defaultTypeId, selected: initial, onClose, onSubmit }: Props): React.JSX.Element {
   const [selected, setSelected] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busyRef = useRef(false)
-  const detected = detection.reason ? templates.find((t) => t.id === detection.templateId) : undefined
+  const detected = detection.reason ? types.find((t) => t.id === detection.typeId) : undefined
 
   const close = (): void => {
     if (!busyRef.current) onClose()
@@ -55,17 +59,19 @@ export function ProjectTypeModal({ detection, templates, defaultTemplateId, sele
 
   return (
     <div className="modal-backdrop" onClick={close}>
-      <div className="modal project-type-modal" role="dialog" aria-modal="true" aria-label="Тип проекта" onClick={(e) => e.stopPropagation()}>
-        <h3>Тип проекта</h3>
+      <div className="modal project-type-modal" role="dialog" aria-modal="true" aria-label="Тип задач по умолчанию" onClick={(e) => e.stopPropagation()}>
+        <h3>Тип задач по умолчанию</h3>
         <p className="muted modal-sub" title={detection.path}>{detection.path}</p>
         <span className="muted project-type-hint">
           {detected
             ? <>Похоже на «{detected.title}»: {detection.reason}. </>
             : null}
-          Проект получит копию ролей, колонок, воркфлоу и правил шаблона — потом их можно менять в «О проекте».
+          Тип задаёт роли, воркфлоу и правила агентов. Проект возьмёт его для глобальных задач, где тип не выбран,
+          и для «Входящих»; у каждой глобальной задачи тип можно выбрать при создании. Сами типы настраиваются
+          в «Настройках → Типы задач».
         </span>
-        <div className="project-type-list" role="radiogroup" aria-label="Шаблон">
-          {templates.map((t) => (
+        <div className="project-type-list" role="radiogroup" aria-label="Тип задач">
+          {types.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -85,7 +91,7 @@ export function ProjectTypeModal({ detection, templates, defaultTemplateId, sele
             >
               <span className="project-type-title">
                 {t.title}
-                {t.id === defaultTemplateId && <span className="project-type-badge">по умолчанию</span>}
+                {t.id === defaultTypeId && <span className="project-type-badge">по умолчанию</span>}
                 {t.id === detected?.id && <span className="project-type-badge accent">подходит</span>}
                 {!t.builtin && <span className="project-type-badge">свой</span>}
               </span>
