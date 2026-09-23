@@ -551,6 +551,17 @@ app.whenReady().then(() => {
         roles: () => projects.roles(p.id),
         columns: () => projects.columns(p.id)
       }
+    },
+    projects: () => {
+      const activeId = projects.active()?.id
+      const counts = projects.inProgressCounts()
+      return projects.list().map((p) => ({
+        id: p.id,
+        name: p.name,
+        root: p.root,
+        active: p.id === activeId,
+        inProgress: counts[p.id] ?? 0
+      }))
     }
   })
   watchStuck()

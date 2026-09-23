@@ -150,4 +150,13 @@ describe('orca-board CLI', () => {
       assert.ok(out.includes(cmd), cmd)
     }
   })
+
+  it('projects list: метод projects.list, --project и ORCA_PROJECT не уходят; есть в help', async () => {
+    const { req } = await run(['projects', 'list', '--project', 'p_x'], { ORCA_PROJECT: 'p_other' })
+    assert.equal(req.method, 'projects.list')
+    assert.equal(req.projectId, undefined)
+    assert.deepEqual(req.params, {})
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    assert.ok(out.includes('projects list'))
+  })
 })

@@ -218,6 +218,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ```
 orca-board coordinator start --objective "..."   # человек; создаёт прогон (см. «Прогоны»)
+orca-board projects list                    # [{id,name,root,active,inProgress}]; без проектов — []; --project не нужен
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
 orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
@@ -599,6 +600,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 `check` с `follow: true` — исключение: сервер пишет по строке `{id, ok: true, result: {event}}` на каждое
 событие, пока клиент не закроет соединение (см. «Ожидание событий без токенов»).
+Методы уровня приложения (`appHandlers` в `src/main/socket.ts`, сейчас только `projects.list`) выполняются
+до `SocketDeps.resolve(projectId)`: работают без проектов и игнорируют `projectId`, даже чужой или удалённый.
 События помечаются `consumedBy` (= `runId` прогона, иначе `coordinator`), повторно `check` их не отдаёт.
 
 | Метод | Параметры | Результат |
@@ -609,6 +612,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт) | `Run` с `finishedAt` |
+| `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress}]`; без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
 | `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу |

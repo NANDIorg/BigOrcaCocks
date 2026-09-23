@@ -38,9 +38,22 @@ export interface ProjectDeps {
   columns(): BoardColumn[]
 }
 
+/** Проект в ответе `projects list`: то, что нужно ассистенту, чтобы выбрать `--project`. */
+export interface ProjectSummary {
+  id: string
+  name: string
+  root: string
+  /** Активный проект приложения — его берут команды без --project и ORCA_PROJECT. */
+  active: boolean
+  /** Задач в колонке kind in_progress. */
+  inProgress: number
+}
+
 export interface SocketDeps {
   /** Проект из запроса (ORCA_PROJECT у агента) или активный. */
   resolve(projectId?: string): ProjectDeps
+  /** Все проекты пользователя; пустой массив, если проектов нет. */
+  projects(): ProjectSummary[]
 }
 
 interface Request {
@@ -460,6 +473,14 @@ const handlers: Record<string, Handler> = {
   }
 }
 
+/**
+ * Команды уровня приложения: выполняются до resolve(projectId), поэтому работают без проектов
+ * и не падают на ORCA_PROJECT удалённого или чужого проекта.
+ */
+const appHandlers: Record<string, (req: Request, deps: SocketDeps) => unknown> = {
+  'projects.list': (_r, deps) => deps.projects()
+}
+
 export function startSocketServer(path: string, socketDeps: SocketDeps): Server {
   async function handle(line: string, sock: Socket): Promise<void> {
     let req: Request
@@ -470,6 +491,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       return
     }
     const handler = handlers[req.method]
+    const appHandler = appHandlers[req.method]
     const open = (): boolean => !sock.destroyed && sock.writable
     const stream: Stream = {
       onClose: (fn) => {
@@ -488,6 +510,11 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
         })
     }
     try {
+      if (appHandler) {
+        const result = await appHandler({ ...req, params: req.params ?? {} }, socketDeps)
+        sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
+        return
+      }
       if (!handler) throw new Error(`неизвестная команда: ${req.method}`)
       const deps = socketDeps.resolve(req.projectId || undefined)
       const result = await handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream)
