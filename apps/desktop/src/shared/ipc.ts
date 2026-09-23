@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, HumanRequest, RequestResolution } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -133,6 +133,29 @@ export interface DocGroup {
   files: DocFile[]
 }
 
+/** Фильтр списка запросов к человеку активного проекта. */
+export interface RequestListOptions {
+  /** Только запросы этой глобальной задачи (прогона). */
+  runId?: string
+  /** Только ждущие человека (`status === 'pending'`). */
+  pending?: boolean
+}
+
+/** Итог requests:resolve. */
+export interface RequestResolveResult {
+  request: HumanRequest
+  /** «Уточнить» / «Перезапустить»: запущенный воркер. */
+  worker?: { ptyId: string; dispatchId: string }
+  /** Запрос решён, но воркер не стартовал — координатору ушла escalation с этой причиной. */
+  startError?: string
+}
+
+/** Клик по уведомлению о запросе: открыть Инбокс на нём. */
+export interface RequestFocus {
+  projectId: string
+  requestId: string
+}
+
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
 export interface OrcaApi {
   app: {
@@ -220,6 +243,20 @@ export interface OrcaApi {
   }
   questions: {
     answer(id: string, answer: string): Promise<void>
+  }
+  /**
+   * Запросы к человеку активного проекта (HumanRequest). Изменения приходят в board.onChange
+   * (snapshot.requests).
+   */
+  requests: {
+    list(opts?: RequestListOptions): Promise<HumanRequest[]>
+    /**
+     * Решить запрос одним вызовом: вариант/текст вопроса, «Принять» (с git-частью, `text` — решение),
+     * «Уточнить» и «Перезапустить» (сразу стартует воркера), «Скрыть». Уже решённый — ошибка.
+     */
+    resolve(id: string, resolution: RequestResolution): Promise<RequestResolveResult>
+    /** Клик по системному уведомлению о запросе: открыть Инбокс на этом запросе. */
+    onFocus(cb: (p: RequestFocus) => void): () => void
   }
   pty: {
     spawn(opts: PtySpawnOptions): Promise<string>

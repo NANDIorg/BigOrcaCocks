@@ -3,20 +3,20 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, questionAnswerMessage, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
-import { getReview, acceptReview } from './review'
+import { getReview, acceptReview, resolveHumanRequest } from './review'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { currentBranch } from './git'
-import { startSocketServer, askWaiting } from './socket'
+import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
 import { agentInfos, assertAgentUsable, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
-import type { AppSettingsPatch, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import type { AppSettingsPatch, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
-import { describeEvent } from './notify'
+import { describeEvent, answerNudge } from './notify'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -271,8 +271,8 @@ const SUBMIT_DELAY_MS = 150
 
 /**
  * Ответ на вопрос воркера, чей `orca-board ask` уже не ждёт (инструмент агента оборвал команду по
- * таймауту — человек отвечает дольше; или `--no-wait`), вписывается в терминал живого воркера отдельным
- * сообщением. Иначе воркер так и стоит, пока человек не напишет ему сам. Ждёт ask — ответ уйдёт через сокет.
+ * таймауту — человек отвечает дольше; или `--no-wait`): в терминал живого воркера — короткий пинок с командой,
+ * по которой он заберёт ответ сам (основной путь — ask/переподключение). Ждёт ask — ответ уйдёт через сокет.
  */
 function deliverAnswers(projectId: string, events: OrcaEvent[]): void {
   const store = projects.store(projectId)
@@ -282,23 +282,33 @@ function deliverAnswers(projectId: string, events: OrcaEvent[]): void {
     if (askWaiting(questionId)) continue
     const d = store.getDispatch(e.dispatchId)
     if (!d || d.endedAt || !isAlive(d.ptyId)) continue
-    const q = store.getQuestion(questionId)
-    if (!q) continue
-    writePty(d.ptyId, questionAnswerMessage(q))
+    const requestId = typeof e.payload.requestId === 'string' ? e.payload.requestId : undefined
+    writePty(d.ptyId, answerNudge(questionId, requestId))
     setTimeout(() => writePty(d.ptyId, '\r'), SUBMIT_DELAY_MS)
   }
 }
 
-/** Окно по клику на уведомление: показать и перейти в проект. */
-function focusProject(projectId: string): void {
-  const existed = win !== null && !win.isDestroyed()
-  const w = showWindow()
-  // Новое окно ещё грузит renderer — шлём фокус, когда он сможет его принять.
-  if (existed && !w.webContents.isLoading()) w.webContents.send('projects:focus', projectId)
-  else w.webContents.once('did-finish-load', () => w.webContents.send('projects:focus', projectId))
+/** Отправить в renderer, когда он сможет принять: новое окно ещё грузится. */
+function sendWhenReady(w: BrowserWindow, existed: boolean, channel: string, payload: unknown): void {
+  if (existed && !w.webContents.isLoading()) w.webContents.send(channel, payload)
+  else w.webContents.once('did-finish-load', () => w.webContents.send(channel, payload))
 }
 
-/** Системные уведомления на события, требующие человека; фильтр — «Настройки → Уведомления» (shouldNotify). */
+/**
+ * Окно по клику на уведомление: показать и перейти в проект; уведомление о запросе к человеку —
+ * ещё и открыть Инбокс на этом запросе (`requests:focus`).
+ */
+function focusProject(projectId: string, requestId?: string): void {
+  const existed = win !== null && !win.isDestroyed()
+  const w = showWindow()
+  sendWhenReady(w, existed, 'projects:focus', projectId)
+  if (requestId) sendWhenReady(w, existed, 'requests:focus', { projectId, requestId } satisfies RequestFocus)
+}
+
+/**
+ * Системные уведомления на события, требующие человека (запрос к человеку, готовая к ревью задача,
+ * «нет вывода», конец прогона — см. notifyKind); фильтр — «Настройки → Уведомления» (shouldNotify).
+ */
 function notify(projectId: string, events: OrcaEvent[]): void {
   if (!Notification.isSupported()) return
   const settings = projects.settings().notifications
@@ -311,9 +321,17 @@ function notify(projectId: string, events: OrcaEvent[]): void {
     if (!content || !shouldNotify(content, settings, new Date(), focused)) continue
     const column = task && settings.showPreview ? projects.columns(projectId).find((c) => c.id === task.status) : undefined
     const n = new Notification({ title: content.title, body: content.body, subtitle: column?.title, silent: !settings.sound })
-    n.on('click', () => focusProject(projectId))
+    n.on('click', () => focusProject(projectId, content.requestId))
     n.show()
   }
+}
+
+/** Решение запроса к человеку (IPC и сокет): accept — с git-частью, clarify/restart — сразу старт воркера. */
+function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution): ReturnType<typeof resolveHumanRequest> {
+  const p = resolveProject(projectId)
+  const request = p.store.getRequest(id)
+  if (request) syncWorkerLiveness(p.store, request.taskId)
+  return resolveHumanRequest(p.store, p.root, id, resolution, (taskId) => runWorker(taskId, p.id))
 }
 
 /** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */
@@ -403,7 +421,13 @@ function registerIpc(): void {
   ipcMain.handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
     runCoordinator('', undefined, cols, rows, validateImageAttachments(images), id)
   )
-  ipcMain.handle('questions:answer', (_e, id: string, answer: string) => projects.activeStore().answer(id, answer))
+  ipcMain.handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
+  ipcMain.handle('requests:list', (_e, opts?: RequestListOptions) => {
+    if (!projects.active()) return []
+    const store = projects.activeStore()
+    return store.listRequests().filter((r) => (!opts?.runId || r.runId === opts.runId) && (!opts?.pending || r.status === 'pending'))
+  })
+  ipcMain.handle('requests:resolve', (_e, id: string, resolution: RequestResolution) => resolveRequest(undefined, id, resolution))
 
   ipcMain.handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
     const p = projectId ? projects.get(projectId) : projects.active()
@@ -485,6 +509,7 @@ app.whenReady().then(() => {
         startWorker: (taskId) => runWorker(taskId, p.id),
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId, decision) => acceptReview(p.store, p.root, taskId, decision),
+        resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId) => runCoordinator(objective, p.id, undefined, undefined, [], runId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
         agents: () => projectAgents(p.id),

@@ -299,6 +299,15 @@ export function resumeObjective(store: TaskStore, runId: string): { run: Run; ob
  * `images` (уже проверенные `validateImageAttachments`) сохраняются файлами на время прогона,
  * в промпт уходят только их пути — содержимое через терминал не передаётся.
  */
+/**
+ * PTY координатора закрылся: его открытые вопросы больше некому разбирать — они уходят человеку
+ * (запросы к человеку). Прогон могли удалить, пока терминал жил, — тогда нечего эскалировать.
+ */
+function escalateAfterCoordinator(store: TaskStore, runId: string): void {
+  if (!store.getRun(runId)) return
+  store.escalateOpenQuestions(runId)
+}
+
 export function startCoordinator(
   store: TaskStore,
   repoRoot: string,
@@ -345,7 +354,7 @@ export function startCoordinator(
         BASH_DEFAULT_TIMEOUT_MS: '1800000',
         BASH_MAX_TIMEOUT_MS: '3600000'
       }
-    })
+    }, () => escalateAfterCoordinator(store, run.id))
   } catch (e) {
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.

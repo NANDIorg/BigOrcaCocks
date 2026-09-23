@@ -10,7 +10,7 @@ import {
   shouldNotify,
   type NotificationSettings
 } from '../shared/notifications'
-import { describeEvent } from './notify'
+import { describeEvent, answerNudge } from './notify'
 
 const at = (hhmm: string): Date => new Date(2026, 0, 1, Number(hhmm.slice(0, 2)), Number(hhmm.slice(3)))
 const noon = at('12:00')
@@ -120,18 +120,31 @@ describe('describeEvent', () => {
 
   it('вид и роль по событию', () => {
     assert.equal(describeEvent(ev('worker_done', { summary: 's' }), task, 'P', true)?.kind, 'workerDone')
-    assert.equal(describeEvent(ev('worker_done', { answerFor: 'human' }), task, 'P', true)?.kind, 'answerReady')
+    assert.equal(describeEvent(ev('worker_done', { answerFor: 'human' }), task, 'P', true), null, 'ответ для человека — через request_created')
     assert.equal(describeEvent(ev('worker_done', { answerFor: 'coordinator' }), task, 'P', true)?.kind, 'workerDone')
-    assert.equal(describeEvent(ev('question', {}), task, 'P', true)?.roleId, 'reviewer')
+    assert.equal(describeEvent(ev('request_created', { kind: 'question', requestId: 'r1' }), task, 'P', true)?.roleId, 'reviewer')
     const run = describeEvent({ ...ev('run_done', { objective: 'цель' }), taskId: undefined }, undefined, 'P', true)
     assert.deepEqual(run && { kind: run.kind, roleId: run.roleId, body: run.body }, { kind: 'runDone', roleId: 'coordinator', body: 'Прогон завершён: цель' })
     assert.equal(describeEvent(ev('task_ready', {}), task, 'P', true), null)
     assert.equal(describeEvent(ev('question_answered', {}), task, 'P', true), null)
   })
 
-  it('превью: с текстом и без', () => {
-    const e = ev('question', { question: 'Какой вариант?' })
-    assert.deepEqual(describeEvent(e, task, 'P', true), { kind: 'question', roleId: 'reviewer', title: 'Задача · P', body: 'Вопрос: Какой вариант?' })
-    assert.deepEqual(describeEvent(e, task, 'P', false), { kind: 'question', roleId: 'reviewer', title: 'P', body: 'Вопрос' })
+  it('уведомляет только о запросах к человеку, а не о каждом вопросе и эскалации', () => {
+    assert.equal(describeEvent(ev('question', { question: 'q' }), task, 'P', true), null, 'вопрос координатору')
+    assert.equal(describeEvent(ev('escalation', { reason: 'код 1' }), task, 'P', true), null, 'эскалация без запроса')
+    assert.equal(describeEvent(ev('escalation', { reason: 'нет вывода 20 мин', stuck: true }), task, 'P', true)?.kind, 'escalation')
+    const kinds = (['question', 'answer', 'escalation'] as const).map((kind) => describeEvent(ev('request_created', { kind, requestId: 'r', title: 't' }), task, 'P', true)?.kind)
+    assert.deepEqual(kinds, ['question', 'answerReady', 'escalation'])
+  })
+
+  it('превью: с текстом и без; requestId — для клика', () => {
+    const e = ev('request_created', { kind: 'question', requestId: 'req_1', title: 'Какой вариант?' })
+    assert.deepEqual(describeEvent(e, task, 'P', true), { kind: 'question', roleId: 'reviewer', title: 'Задача · P', body: 'Вопрос: Какой вариант?', requestId: 'req_1' })
+    assert.deepEqual(describeEvent(e, task, 'P', false), { kind: 'question', roleId: 'reviewer', title: 'P', body: 'Вопрос', requestId: 'req_1' })
+  })
+
+  it('пинок воркеру — команда, а не текст ответа', () => {
+    assert.equal(answerNudge('q_1', 'req_1'), '[orca] на вопрос q_1 ответили: orca-board request get --request req_1')
+    assert.equal(answerNudge('q_1'), '[orca] на вопрос q_1 ответили: orca-board question get --question q_1')
   })
 })

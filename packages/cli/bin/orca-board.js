@@ -44,27 +44,43 @@ const HELP = `orca-board — управление доской агентов
   task answer --task <id>                 полный ответ задачи-ответа и decision (в событиях answer обрезан)
   worker start --task <id>
   worker read --dispatch <id> [--limit 80]
-  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done] [--timeout-ms 900000] [--run <id>]
+  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified] [--timeout-ms 900000] [--run <id>]
   check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
   runs finish [--run <id>]                координатор закончил работу (после run_done и сводки; если все подзадачи в done — закрывает прогон сам)
   question list
+  question get --question <id>            вопрос целиком и ответ на него
   question answer --question <id> --answer "..."
-  question forward --question <id>        передать вопрос человеку: глобальная задача ждёт его ответа
+  question forward --question <id> [--note "..."]   передать вопрос человеку (запрос в Инбокс);
+                                          --note — твоё мнение, попадёт в текст запроса
+
   review info --task <id>                 diff-stat и коммиты ветки задачи
   review accept --task <id> [--decision "..."]  слить в текущую ветку, убрать worktree, задача → done
   review reject --task <id> --feedback "..."   задача → ready с замечаниями для перезапуска
   task delete --task <id>
   events list
 
+Запросы к человеку (Инбокс: вопросы, ответы задач-ответов, упавшие воркеры):
+  request list [--run <id>] [--all]       ждущие ответа (pending); --all — и решённые
+  request get --request <id>              запрос целиком: текст, контекст/ответ, варианты, решение
+  request resolve --request <id> --option <id|метка> [--text "..."]   ответ на вопрос вариантом
+  request resolve --request <id> --text "..."                        ответ на вопрос своим текстом
+  request resolve --request <id> --accept [--decision "..."]         принять ответ задачи-ответа
+  request resolve --request <id> --clarify "..."                     уточнить: воркер перезапускается
+  request resolve --request <id> --restart | --dismiss               упавший воркер: перезапуск / скрыть
+
 Воркер (ORCA_DISPATCH_ID уже в окружении):
   done --summary "..." [--files a.ts,b.ts] [--answer-file answer.md | --answer "..."]
                                           у задачи-ответа ответ (markdown) обязателен
-  ask --question "..." [--options a,b,c] [--no-wait]     блокируется до ответа
+  ask --question "..." [--option "метка|пояснение"]... [--recommend <id|метка>] [--context-file why.md] [--no-wait]
+                                          блокируется до ответа; --option повторяется, запятые в метке
+                                          допустимы (старое --options a,b тоже работает); id варианта — его номер.
+                                          Оборвался по таймауту — повтори ту же команду: переподключится
+                                          к тому же вопросу (или сразу вернёт ответ), новый не создастся
 
-Прогон: --run <id> у task create, check, runs close и runs finish по умолчанию берётся из $ORCA_RUN_ID —
+Прогон: --run <id> у task create, check, request list, runs close и runs finish по умолчанию берётся из $ORCA_RUN_ID —
 задачи, созданные координатором, наследуют его прогон (= его глобальную задачу). Так же --global
 у global get, global tasks и global add-task. Задача без прогона попадает во «Входящие».
 
@@ -84,24 +100,34 @@ let method = words.join('.')
 if (method === 'done') method = 'worker.done'
 if (method === 'ask') method = 'worker.ask'
 
+// Флаги без значения. Остальные берут следующий аргумент как значение, даже если он начинается
+// с `--` (`--answer "--force"`): иначе значение превращалось в true, а следующий флаг терялся.
+const BOOLEAN_FLAGS = new Set(['wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help'])
+// Повторяемые флаги: каждое вхождение — отдельный элемент (без split по запятой).
+const REPEATABLE_FLAGS = new Set(['option'])
+
 const params = {}
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
   if (!a.startsWith('--')) continue
   const key = a.slice(2)
+  if (key.startsWith('no-')) {
+    params[key.slice(3)] = false
+    continue
+  }
   const next = argv[i + 1]
-  const value = next !== undefined && !next.startsWith('--') ? (i++, next) : true
+  const value = !BOOLEAN_FLAGS.has(key) && next !== undefined ? (i++, next) : true
   if (key === 'dep' || key === 'deps') {
     params.dep = [...(params.dep ?? []), ...String(value).split(',')]
-  } else if (key.startsWith('no-')) {
-    params[key.slice(3)] = false
+  } else if (REPEATABLE_FLAGS.has(key)) {
+    params[key] = [...(params[key] ?? []), value]
   } else {
     params[key] = value
   }
 }
 
 // Прогон координатора: явный --run важнее $ORCA_RUN_ID.
-const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish']
+const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'request.list']
 if (RUN_METHODS.includes(method) && params.run === undefined && process.env.ORCA_RUN_ID) {
   params.run = process.env.ORCA_RUN_ID
 }
@@ -118,19 +144,26 @@ if (params.run === true) {
   console.error('ошибка: --run требует id прогона')
   process.exit(1)
 }
-// Ответ задачи-ответа: файл читает CLI (он в cwd воркера), серверу уходит текст.
-if (method === 'worker.done' && params['answer-file'] !== undefined) {
-  if (params['answer-file'] === true) {
-    console.error('ошибка: --answer-file требует путь к файлу')
+// Файлы читает CLI (он в cwd воркера), серверу уходит текст: ответ задачи-ответа, контекст вопроса.
+function readFileParam(flag, into) {
+  if (params[flag] === undefined) return
+  if (params[flag] === true) {
+    console.error(`ошибка: --${flag} требует путь к файлу`)
     process.exit(1)
   }
   try {
-    params.answer = readFileSync(params['answer-file'], 'utf8')
+    params[into] = readFileSync(params[flag], 'utf8')
   } catch (e) {
-    console.error(`ошибка: не удалось прочитать ${params['answer-file']}: ${e.message}`)
+    console.error(`ошибка: не удалось прочитать ${params[flag]}: ${e.message}`)
     process.exit(1)
   }
-  delete params['answer-file']
+  delete params[flag]
+}
+if (method === 'worker.done') readFileParam('answer-file', 'answer')
+if (method === 'worker.ask') readFileParam('context-file', 'context')
+if (params.option !== undefined && params.option.includes(true)) {
+  console.error('ошибка: --option требует текста варианта ("метка|пояснение")')
+  process.exit(1)
 }
 if ((method === 'runs.close' || method === 'runs.finish') && !params.run) {
   console.error('ошибка: не указан прогон — передайте --run <id> или задайте ORCA_RUN_ID')
