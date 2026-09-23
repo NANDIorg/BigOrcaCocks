@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution
@@ -20,6 +20,7 @@ import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
 import { InboxPanel, pendingRequests } from './InboxPanel'
+import { AssistantPanel, type AssistantTerminal } from './AssistantPanel'
 
 type Tab = 'board' | 'terminals' | 'info'
 
@@ -151,6 +152,15 @@ export function App(): React.JSX.Element {
   const [showInbox, setShowInbox] = useState(false)
   /** Запрос, на котором открыть Инбокс (уведомление); nonce — повторный клик по тому же уведомлению. */
   const [inboxFocus, setInboxFocus] = useState<{ requestId: string; nonce: number } | null>(null)
+  /** Панель ассистента (⌘K, кнопка в rail). У каждого проекта свой ассистент — свой PTY. */
+  const [showAssistant, setShowAssistant] = useState(false)
+  /**
+   * PTY ассистента по projectId из ответа assistant.open/reset: terminals:changed может прийти позже.
+   * После перезагрузки окна пусто — тогда ассистент находится по роли в списке терминалов.
+   */
+  const [assistantPtys, setAssistantPtys] = useState<Record<string, string>>({})
+  /** Запуск ассистента идёт / сорвался — по projectId. */
+  const [assistantStatus, setAssistantStatus] = useState<Record<string, { busy: boolean; error: string | null }>>({})
   const tasks = snap.tasks
   const openTask = openTaskId ? tasks.find((t) => t.id === openTaskId) : undefined
 
@@ -233,13 +243,21 @@ export function App(): React.JSX.Element {
     const offRequestFocus = window.orca.requests.onFocus(({ requestId }) => {
       setInboxFocus((prev) => ({ requestId, nonce: (prev?.nonce ?? 0) + 1 }))
       setShowInbox(true)
+      setShowAssistant(false)
     })
-    // ⌘J / Ctrl+J — Инбокс; в фазе захвата, чтобы сработало и из терминала (xterm).
+    // ⌘J / Ctrl+J — Инбокс, ⌘K / Ctrl+K — ассистент; в фазе захвата, чтобы сработало и из терминала (xterm).
+    // Панели выезжают на одно место, поэтому открытие одной закрывает другую.
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === 'KeyJ') {
-        e.preventDefault()
-        e.stopPropagation()
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      if (e.code !== 'KeyJ' && e.code !== 'KeyK') return
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.code === 'KeyJ') {
         setShowInbox((v) => !v)
+        setShowAssistant(false)
+      } else {
+        setShowAssistant((v) => !v)
+        setShowInbox(false)
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -298,12 +316,70 @@ export function App(): React.JSX.Element {
     attention.set(t.runId, { review: (attention.get(t.runId)?.review ?? 0) + 1 })
   }
   const requests = snap.requests ?? []
+
+  // ---------- ассистент ----------
+  /** Терминалы ассистентов всех проектов: по реестру (роль) плюс только что запущенные, которых там ещё нет. */
+  const assistantTerminals: AssistantTerminal[] = terminals
+    .filter((t) => t.role === 'assistant' && t.projectId)
+    .map((t) => ({ projectId: t.projectId!, ptyId: t.ptyId, tail: tails[t.ptyId] }))
+  for (const [projectId, ptyId] of Object.entries(assistantPtys)) {
+    if (!assistantTerminals.some((t) => t.ptyId === ptyId) && !killedRef.current.has(ptyId)) assistantTerminals.push({ projectId, ptyId })
+  }
+  // Свежий из ответа main важнее найденного по роли: после «Новый диалог» старый может ещё быть в списке.
+  const assistantPty = active
+    ? (assistantTerminals.find((t) => t.ptyId === assistantPtys[active.id]) ?? assistantTerminals.find((t) => t.projectId === active.id))?.ptyId ?? null
+    : null
+  const assistantState = (active && assistantStatus[active.id]) || { busy: false, error: null }
+
+  /** Запустить (open) или перезапустить (reset) ассистента активного проекта. */
+  async function launchAssistant(reset: boolean): Promise<void> {
+    const projectId = active?.id
+    if (!projectId) return
+    const old = assistantPty
+    setAssistantStatus((prev) => ({ ...prev, [projectId]: { busy: true, error: null } }))
+    try {
+      const { ptyId } = reset ? await window.orca.assistant.reset(80, 30) : await window.orca.assistant.open(80, 30)
+      // Старый PTY main закрыл сам; из списка его убираем сразу, чтобы не висел «завершившимся».
+      if (old && old !== ptyId && reset) {
+        killedRef.current.add(old)
+        dropTerminal(old)
+      }
+      setAssistantPtys((prev) => ({ ...prev, [projectId]: ptyId }))
+      setAssistantStatus((prev) => ({ ...prev, [projectId]: { busy: false, error: null } }))
+    } catch (e) {
+      setAssistantStatus((prev) => ({ ...prev, [projectId]: { busy: false, error: `Не удалось запустить ассистента: ${ipcErrorMessage(e)}` } }))
+    }
+  }
+
+  // Панель открыта, а у активного проекта ассистента нет или он завершился — запустить (open вернёт живой, если есть).
+  // Ошибка не перезапускает запуск в цикле: повтор — «Новый диалог» или повторное открытие панели.
+  const assistantDead = !assistantPty || exited.has(assistantPty)
+  useEffect(() => {
+    if (!showAssistant || !active || !assistantDead || assistantState.busy || assistantState.error) return
+    void launchAssistant(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAssistant, active?.id, assistantDead])
+
+  // Закрыли панель — ошибка запуска сбрасывается, чтобы следующее открытие попробовало снова.
+  useEffect(() => {
+    if (!showAssistant) setAssistantStatus((prev) => {
+      const failed = Object.keys(prev).filter((id) => prev[id].error)
+      if (!failed.length) return prev
+      const next = { ...prev }
+      for (const id of failed) next[id] = { busy: false, error: null }
+      return next
+    })
+  }, [showAssistant])
+
   const inboxCount = pendingRequests(snap.requests).length
+
+  const closeAssistant = useCallback(() => setShowAssistant(false), [])
 
   /** Открыть Инбокс на запросе (кнопка «Открыть во Входящих» на карточке). */
   function openInboxAt(requestId: string): void {
     setInboxFocus((prev) => ({ requestId, nonce: (prev?.nonce ?? 0) + 1 }))
     setShowInbox(true)
+    setShowAssistant(false)
   }
 
   /** Решить запрос вне Инбокса (карточка, экран глобальной задачи, модалка задачи). Ошибка — на карточке. */
@@ -562,6 +638,17 @@ export function App(): React.JSX.Element {
         <button className={`icon ${showDocs ? 'active' : ''}`} title="Документы" onClick={() => setShowDocs(true)} disabled={!active}>
           <Icon.doc />
         </button>
+        <button
+          className={`icon ${showAssistant ? 'active' : ''}`}
+          title="Ассистент (⌘K)"
+          onClick={() => {
+            setShowAssistant((v) => !v)
+            setShowInbox(false)
+          }}
+          disabled={!active}
+        >
+          <Icon.assistant />
+        </button>
         <div className="grow" />
         <div className="avatar">🐋</div>
       </aside>
@@ -595,7 +682,10 @@ export function App(): React.JSX.Element {
             <h1>{active?.name ?? 'orca-board'}</h1>
             <button
               className={`inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
-              onClick={() => setShowInbox((v) => !v)}
+              onClick={() => {
+                setShowInbox((v) => !v)
+                setShowAssistant(false)
+              }}
               disabled={!active}
               title="Запросы, которые ждут вашего ответа (⌘J)"
             >
@@ -767,6 +857,22 @@ export function App(): React.JSX.Element {
           focus={inboxFocus}
           onClose={() => setShowInbox(false)}
           onOpenTerminal={openTerminalForTask}
+        />
+      )}
+      {active && (
+        <AssistantPanel
+          open={showAssistant}
+          projectName={active.name}
+          terminals={assistantTerminals}
+          activePty={assistantPty}
+          status={assistantState}
+          onClose={closeAssistant}
+          onReset={() => void launchAssistant(true)}
+          onOpenInTerminals={() => {
+            if (!assistantPty) return
+            setShowAssistant(false)
+            showTerminal(assistantPty, active.id)
+          }}
         />
       )}
       {showSettings && (
