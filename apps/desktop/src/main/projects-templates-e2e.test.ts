@@ -369,12 +369,12 @@ describe('встроенные шаблоны только для чтения',
 })
 
 describe('шаблоны из файла проходят ту же проверку, что и при сохранении', () => {
-  // Дефект: loadedTemplate проверяет только id/title/объект settings, роли и колонки берутся как есть.
-  // Руками испорченный projects.json даёт проект без backlog, а applyTemplate успевает записать часть разделов
-  // до того, как setColumns бросит ошибку.
+  // Был дефект: loadedTemplate проверял только id/title/объект settings, роли и колонки брались как есть.
+  // Руками испорченный projects.json давал проект без backlog, а applyTemplate успевал записать часть разделов
+  // до того, как setColumns бросал ошибку.
   const brokenColumns = DEFAULT_COLUMNS.filter((c) => c.kind !== 'backlog')
 
-  it('шаблон без колонки backlog не даёт проекту битую доску', { todo: 'дефект: loadedTemplate не валидирует роли и колонки' }, () => {
+  it('шаблон без колонки backlog не даёт проекту битую доску', () => {
     writeFileSync(path.join(tmp, 'projects.json'), JSON.stringify({
       projects: [], activeId: null,
       templates: [{ id: 'broken', title: 'Битый', settings: { columns: brokenColumns } }]
@@ -385,7 +385,7 @@ describe('шаблоны из файла проходят ту же провер
     if (p) assert.ok(pm.columns(p.id).some((c) => c.kind === 'backlog'))
   })
 
-  it('applyTemplate с битыми колонками шаблона не применяет остальные разделы', { todo: 'дефект: частичная запись до setColumns' }, () => {
+  it('applyTemplate с битыми колонками шаблона не применяет остальные разделы', () => {
     writeFileSync(path.join(tmp, 'projects.json'), JSON.stringify({
       projects: [], activeId: null,
       templates: [{ id: 'broken', title: 'Битый', settings: { columns: brokenColumns, agentRules: 'из битого' } }]
