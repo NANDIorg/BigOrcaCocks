@@ -141,7 +141,6 @@ describe('сокет: правила, роли и типы задач', () => {
         startCoordinator: () => '',
         deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
         agents: () => [{ id: 'claude', title: 'Claude Code', installed: true, enabled: true, models: [], defaults: {} }],
-        roles: (runId) => projects.roles(PID, runId),
         resolveRun: (runId) => projects.resolveRun(PID, runId),
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(PID), defaultTypeId: projects.projectDefaultTypeId(PID) }),
         runType: (typeId) => projects.runType(PID, typeId),
@@ -182,8 +181,8 @@ describe('сокет: правила, роли и типы задач', () => {
 
   it('ошибки: нет текста, неизвестная роль, --role без значения', async () => {
     assert.match((await call('rules.set', {})).error ?? '', /нужен текст правил/)
-    assert.match((await call('rules.get', { role: 'nope' })).error ?? '', /роли «nope» нет в проекте/)
-    assert.match((await call('rules.set', { role: 'nope', text: 'x' })).error ?? '', /роли «nope» нет в проекте/)
+    assert.match((await call('rules.get', { role: 'nope' })).error ?? '', /роли «nope» нет в типе задачи «/)
+    assert.match((await call('rules.set', { role: 'nope', text: 'x' })).error ?? '', /роли «nope» нет в типе задачи «/)
     assert.match((await call('rules.get', { role: true })).error ?? '', /--role требует id роли/)
     assert.match((await call('rules.get', { type: true })).error ?? '', /--type требует id типа/)
     assert.match((await call('rules.set', { type: 'type_nope', text: 'x' })).error ?? '', /тип задачи «type_nope» недоступен в проекте.*types list/)
@@ -233,7 +232,7 @@ describe('сокет: правила, роли и типы задач', () => {
     assert.ok(result<Role[]>(await call('roles.list', { type: 'autotests' })).some((r) => r.id === 'autotester'))
 
     const wrong = await call('task.create', { title: 'Код', role: 'developer', run: g.id })
-    assert.match(wrong.error ?? '', /роли «developer» нет в проекте\. Роли: coordinator, assistant, writer, reviewer\./)
+    assert.match(wrong.error ?? '', /роли «developer» нет в типе задачи «Документация»\. Роли типа: coordinator, assistant, writer, reviewer \(orca-board roles list\)\./)
     const ok = result<Task>(await call('task.create', { title: 'Текст', role: 'writer', run: g.id }))
     assert.equal(ok.roleId, 'writer')
     // «Входящие» (без прогона) — по типу проекта по умолчанию: writer там нет.

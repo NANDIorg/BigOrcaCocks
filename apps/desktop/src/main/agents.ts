@@ -211,27 +211,35 @@ export function assertAgentUsable(agents: AgentInfo[], id: string): asserts id i
   }
 }
 
+/** Роли типа задачи и его название — для текста ошибки «роли нет» (`ResolvedRunType` подходит как есть). */
+export interface RoleSource {
+  title: string
+  roles: readonly Role[]
+}
+
 /**
- * Текст ошибки «роли нет в проекте»: какие роли есть и, для системной роли (её могли удалить в «О проекте»),
- * как её вернуть. Один текст для task create, запуска воркера и координатора.
+ * Текст ошибки «роли нет в типе задачи»: какие роли у типа прогона, как их посмотреть агенту (`roles list`)
+ * и где их правит человек. Роли живут в типе задачи, у проекта их нет. Один текст для task create,
+ * запуска воркера и координатора.
  */
-export function missingRoleMessage(roleId: string, roles: readonly Role[]): string {
-  const ids = roles.map((r) => r.id).join(', ') || 'нет'
+export function missingRoleMessage(roleId: string, type: RoleSource): string {
+  const ids = type.roles.map((r) => r.id).join(', ') || 'нет'
   const hint = DEFAULT_ROLES.some((r) => r.id === roleId)
-    ? ' Это системная роль — её можно вернуть: «О проекте» → «Роли» → «Вернуть системные роли».'
-    : ''
-  return `роли «${roleId}» нет в проекте. Роли: ${ids}.${hint}`
+    ? ` Это системная роль — её можно вернуть: «Настройки» → «Типы задач» → «${type.title}» → «Вернуть системные роли».`
+    : ' Роли типа меняются в «Настройки» → «Типы задач».'
+  return `роли «${roleId}» нет в типе задачи «${type.title}». Роли типа: ${ids} (orca-board roles list).${hint}`
 }
 
 /**
  * Роль для новой задачи: указанная (её агент должен быть usable) или единственная
- * в проекте. Если ролей несколько и ни одна не указана — ошибка со списком.
+ * в типе задачи. Если ролей несколько и ни одна не указана — ошибка со списком.
  */
-export function pickRole(roles: Role[], agents: AgentInfo[], requested: string | undefined): Role {
+export function pickRole(type: RoleSource, agents: AgentInfo[], requested: string | undefined): Role {
+  const roles = type.roles
   const ids = roles.map((r) => r.id).join(', ')
   if (requested !== undefined) {
     const role = roles.find((r) => r.id === requested)
-    if (!role) throw new Error(missingRoleMessage(requested, roles))
+    if (!role) throw new Error(missingRoleMessage(requested, type))
     assertAgentUsable(agents, role.agent)
     return role
   }

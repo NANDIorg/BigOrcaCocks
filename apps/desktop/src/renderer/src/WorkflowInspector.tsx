@@ -204,7 +204,7 @@ function RoleSelect({ value, roles, empty, onChange }: {
     <select value={value} className={unknown ? 'off' : undefined} onChange={(e) => onChange(e.target.value)}>
       <option value="">{empty}</option>
       {roles.map((r) => <option key={r.id} value={r.id}>{r.title} ({r.id})</option>)}
-      {unknown && <option value={value}>{value} (нет в проекте)</option>}
+      {unknown && <option value={value}>{value} (нет в типе задачи)</option>}
     </select>
   )
 }

@@ -19,6 +19,8 @@ export interface WorkerEnvContext {
   permissionMode: PermissionMode
   /** Роли типа задачи прогона: из них берутся агент и модель для задачи и координатора. */
   roles: Role[]
+  /** Название типа задачи прогона — для ошибки «роли нет в типе задачи» (`missingRoleMessage`). */
+  typeTitle: string
   /** Правила агентов типа задачи прогона: блок «Правила проекта» в системном промпте воркеров и координатора. */
   agentRules?: string
   /** Тип нового прогона координатора: id, снимок и граф уходят в `Run.typeId`, `Run.taskType`, `Run.workflow`. */
@@ -173,7 +175,7 @@ export function startWorker(
   }
   if (store.columnKind(task.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
   const role = ctx.roles.find((r) => r.id === task.roleId)
-  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task.roleId, ctx.roles)}`)
+  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task.roleId, { title: ctx.typeTitle, roles: ctx.roles })}`)
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
 
@@ -309,9 +311,9 @@ export function startCoordinator(
   images: ImageAttachment[] = [],
   runId?: string
 ): { ptyId: string; runId: string } {
-  // Роль coordinator можно удалить в «О проекте»; молча запускать claude вместо неё нельзя — человек её убрал.
+  // Роль coordinator можно удалить из типа задачи («Настройки» → «Типы задач»); молча запускать claude вместо неё нельзя — человек её убрал.
   const role = ctx.roles.find((r) => r.id === 'coordinator')
-  if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', ctx.roles)}`)
+  if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', { title: ctx.typeTitle, roles: ctx.roles })}`)
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined

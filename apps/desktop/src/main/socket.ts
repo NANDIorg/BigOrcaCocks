@@ -7,7 +7,7 @@ import {
   type RequestResolution, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
-import { assertAgentUsable, missingRoleMessage, pickRole } from './agents'
+import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams } from './request-params'
 
 /**
@@ -39,8 +39,6 @@ export interface ProjectDeps {
   deleteGlobalTask(runId: string, cascade: boolean): { deleted: string; tasks: string[] }
   /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
   agents(): AgentInfo[]
-  /** Роли типа прогона `runId`; без прогона — типа проекта по умолчанию. */
-  roles(runId?: string): Role[]
   /** Тип прогона целиком (`resolveRunType`): роли, правила, разрешения, граф и откуда он взят. */
   resolveRun(runId?: string): ResolvedRunType
   /** Типы задач, доступные проекту, и тип проекта по умолчанию — для `types list`. */
@@ -164,9 +162,9 @@ export function answerQuestion(store: TaskStore, questionId: string, answer: str
 }
 
 /** Роль задачи есть в типе её прогона и её агент можно запускать. */
-function assertRoleUsable(roles: Role[], agents: AgentInfo[], roleId: string): void {
-  const role = roles.find((r) => r.id === roleId)
-  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(roleId, roles)}`)
+function assertRoleUsable(type: RoleSource, agents: AgentInfo[], roleId: string): void {
+  const role = type.roles.find((r) => r.id === roleId)
+  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(roleId, type)}`)
   assertAgentUsable(agents, role.agent)
 }
 
@@ -176,7 +174,7 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   if (!title) throw new Error('--title обязателен')
   if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
   // Роли — типа глобальной задачи; у «Входящих» (runId нет) — типа проекта по умолчанию.
-  const role = pickRole(deps.roles(runId), deps.agents(), str(r.params.role))
+  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role))
   // --answer-for human|coordinator — задача-ответ; значение проверяет store.
   const answerFor = r.params['answer-for'] ?? r.params.answerFor
   if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
@@ -221,7 +219,7 @@ function ruleRole(r: Request, type: ResolvedRunType): Role | undefined {
   if (r.params.role === true || roleId === '') throw new Error('--role требует id роли')
   if (roleId === undefined) return undefined
   const role = type.roles.find((x) => x.id === roleId)
-  if (!role) throw new Error(missingRoleMessage(roleId, type.roles))
+  if (!role) throw new Error(missingRoleMessage(roleId, type))
   return role
 }
 
@@ -328,7 +326,7 @@ const handlers: Record<string, Handler> = {
     if (!id) throw new Error('--task обязателен')
     // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
     const task = store.getTask(id)
-    if (task) assertRoleUsable(deps.roles(task.runId), deps.agents(), task.roleId)
+    if (task) assertRoleUsable(deps.resolveRun(task.runId), deps.agents(), task.roleId)
     return deps.startWorker(id)
   },
   'worker.stop': (r, deps, store) => {
@@ -350,7 +348,7 @@ const handlers: Record<string, Handler> = {
       throw new Error(`задача ${id} уже ${kind === 'done' ? 'сделана' : 'на ревью'}: используй task reopen --task ${id} [--feedback "..."] --start`)
     }
     // Проверяем роль до остановки: иначе остановили бы воркера и не смогли поднять новый.
-    assertRoleUsable(deps.roles(task.runId), deps.agents(), task.roleId)
+    assertRoleUsable(deps.resolveRun(task.runId), deps.agents(), task.roleId)
     const { stopped } = deps.stopWorker(id)
     const feedback = str(r.params.feedback)?.trim()
     if (feedback) store.updateTask(id, { feedback })
@@ -362,7 +360,7 @@ const handlers: Record<string, Handler> = {
     if (!id) throw new Error('--task обязателен')
     if (r.params.feedback === true) throw new Error('--feedback требует текста')
     const existing = store.getTask(id)
-    if (r.params.start === true && existing) assertRoleUsable(deps.roles(existing.runId), deps.agents(), existing.roleId)
+    if (r.params.start === true && existing) assertRoleUsable(deps.resolveRun(existing.runId), deps.agents(), existing.roleId)
     const task = store.reopenTask(id, str(r.params.feedback))
     if (r.params.start !== true) return task
     return { task, worker: deps.startWorker(id) }

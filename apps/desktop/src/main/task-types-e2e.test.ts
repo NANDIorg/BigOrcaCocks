@@ -51,8 +51,8 @@ interface Launch {
   model?: string
 }
 
-/** Тип прогона глазами исполнителя: роли и граф (для прогона без снимка графа). */
-type TypeOf = (runId: string | undefined) => { roles: Role[]; workflow?: Workflow }
+/** Тип прогона глазами исполнителя: название, роли и граф (для прогона без снимка графа). */
+type TypeOf = (runId: string | undefined) => { title: string; roles: Role[]; workflow?: Workflow }
 
 interface Harness {
   store: TaskStore
@@ -84,12 +84,12 @@ function harness(store: TaskStore, typeOf: TypeOf): Harness {
     startWorker(taskId) {
       const t0 = task(taskId)
       if (store.columnKind(t0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
-      const roles0 = typeOf(t0.runId).roles
-      if (!roles0.some((r) => r.id === t0.roleId)) throw new Error(`воркер не запустится: ${missingRoleMessage(t0.roleId, roles0)}`)
+      const type0 = typeOf(t0.runId)
+      if (!type0.roles.some((r) => r.id === t0.roleId)) throw new Error(`воркер не запустится: ${missingRoleMessage(t0.roleId, type0)}`)
       enterWork(deps, taskId)
       const t = task(taskId)
       const role = typeOf(t.runId).roles.find((r) => r.id === t.roleId)
-      if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(t.roleId, typeOf(t.runId).roles)}`)
+      if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(t.roleId, typeOf(t.runId))}`)
       const branch = `orca/${t.id}`
       const worktree = path.join(tmp, 'wt', t.id)
       if (!existsSync(worktree)) {
@@ -137,15 +137,16 @@ function appHarness(pm: ProjectManager, projectId: string): Harness {
   return harness(pm.store(projectId), (runId) => {
     const t = pm.resolveRun(projectId, runId)
     const workflow = runnableWorkflow(t.workflow)
-    return { roles: t.roles, ...(workflow ? { workflow } : {}) }
+    return { title: t.title, roles: t.roles, ...(workflow ? { workflow } : {}) }
   })
 }
 
 /** Роль координатора нового прогона (`runCoordinator` без runId → `startCoordinator`): тип и прогон в store. */
 function startCoordinator(pm: ProjectManager, h: Harness, projectId: string, objective: string, typeId?: string): string {
   const type = pm.runType(projectId, typeId)
-  const role = pm.resolveType(projectId, type.typeId).roles.find((r) => r.id === 'coordinator')
-  if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', pm.resolveType(projectId, type.typeId).roles)}`)
+  const resolved = pm.resolveType(projectId, type.typeId)
+  const role = resolved.roles.find((r) => r.id === 'coordinator')
+  if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', resolved)}`)
   const run = h.store.createRun(objective, undefined, type)
   h.store.setRunPty(run.id, `pty_coord_${run.id}`, role.agent)
   h.launches.push({ kind: 'coordinator', runId: run.id, roleId: role.id, agent: role.agent, ...(role.model ? { model: role.model } : {}) })
@@ -189,7 +190,7 @@ function legacyProjectsJson(): string {
 /** Доска «старым кодом»: store без типов, роли — проекта (`projects.roles`), граф прогона — снимок графа проекта. */
 function legacyBoard(): Harness {
   const store = new TaskStore(jsonPersistence(path.join(tmp, 'user', 'boards', `${PID}.json`)), () => DEFAULT_COLUMNS)
-  return harness(store, () => ({ roles: LEGACY_ROLES }))
+  return harness(store, () => ({ title: 'repo', roles: LEGACY_ROLES }))
 }
 
 function newProjectManager(): ProjectManager {
@@ -511,12 +512,13 @@ describe('сценарий 4: тип проекта по умолчанию см
 })
 
 describe('тексты ошибок после переноса ролей в типы задач', () => {
-  it('нет роли: ошибка говорит о типе задачи и не ведёт в «О проекте → Роли»', {
-    todo: 'дефект: missingRoleMessage (agents.ts) всё ещё пишет «нет в проекте» и советует «О проекте» → «Роли», а этого раздела больше нет'
-  }, () => {
-    const text = missingRoleMessage('reviewer', DEFAULT_ROLES.filter((r) => r.id !== 'reviewer'))
+  it('нет роли: ошибка говорит о типе задачи и не ведёт в «О проекте → Роли»', () => {
+    const type = { title: 'Программирование', roles: DEFAULT_ROLES.filter((r) => r.id !== 'reviewer') }
+    const text = missingRoleMessage('reviewer', type)
     assert.doesNotMatch(text, /нет в проекте/)
     assert.doesNotMatch(text, /О проекте/)
-    assert.match(text, /тип/)
+    assert.match(text, /^роли «reviewer» нет в типе задачи «Программирование»\. Роли типа: coordinator, assistant, developer, qa \(orca-board roles list\)\./)
+    assert.match(text, /«Настройки» → «Типы задач» → «Программирование» → «Вернуть системные роли»/)
+    assert.match(missingRoleMessage('role_nope', type), /Роли типа меняются в «Настройки» → «Типы задач»\.$/)
   })
 })

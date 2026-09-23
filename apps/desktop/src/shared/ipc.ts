@@ -77,7 +77,7 @@ export interface GlobalTaskPatch {
   priority?: TaskPriority
 }
 
-/** Подзадача внутри глобальной задачи. Без roleId — единственная роль проекта, иначе ошибка. */
+/** Подзадача внутри глобальной задачи. Без roleId — единственная роль типа задачи, иначе ошибка. */
 export interface SubtaskInput {
   title: string
   spec?: string
@@ -329,7 +329,7 @@ export interface OrcaApi {
     returnToWork(id: string, text: string, cols: number, rows: number): Promise<string>
   }
   tasks: {
-    /** Без roleId — единственная роль проекта, иначе ошибка. Задача попадает во «Входящие» (см. globalTasks). */
+    /** Без roleId — единственная роль типа проекта по умолчанию, иначе ошибка. Задача попадает во «Входящие» (см. globalTasks). */
     create(input: { title: string; spec?: string; deps?: string[]; roleId?: string; priority?: TaskPriority }): Promise<Task>
     /** status — id колонки. */
     move(id: string, status: string): Promise<Task>
