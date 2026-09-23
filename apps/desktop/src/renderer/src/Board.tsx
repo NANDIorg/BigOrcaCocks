@@ -7,7 +7,8 @@ import {
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { RunBadge, runShortLabel, type RunFilter } from './runs'
-import { BOARD_SORT_KEY, SORT_OPTIONS, compareTasks, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
+import { priorityBadge } from './taskPriority'
+import { BOARD_SORT_KEY, BOARD_SORT_OPTIONS, compareTasks, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
 
@@ -140,7 +141,7 @@ export function Board(props: Props): React.JSX.Element {
         )}
         <span className="board-sort-label">Сортировка:</span>
         <div className="segmented" role="group" aria-label="Сортировка карточек">
-          {SORT_OPTIONS.map((o) => (
+          {BOARD_SORT_OPTIONS.map((o) => (
             <button
               key={o.value}
               type="button"
@@ -196,6 +197,7 @@ export function Board(props: Props): React.JSX.Element {
                   const canStart =
                     (kind === 'ready' || kind === 'backlog' || d?.outcome === 'unknown' || d?.outcome === 'failed') &&
                     !runningTaskIds.has(task.id)
+                  const badge = priorityBadge(task)
                   return (
                     <div
                       key={task.id}
@@ -242,6 +244,11 @@ export function Board(props: Props): React.JSX.Element {
                         </div>
                       </div>
                       <div className="chips">
+                        {badge && (
+                          <span className={`chip priority ${badge.priority}`} title={`Приоритет: ${badge.title}`}>
+                            {badge.title}
+                          </span>
+                        )}
                         {task.runId && runById.has(task.runId) && <RunBadge run={runById.get(task.runId)!} runs={runs} />}
                         {task.answerFor && (
                           <span className="chip answer" title={task.answerFor === 'human' ? 'Результат — ответ для человека' : 'Результат — ответ для координатора'}>

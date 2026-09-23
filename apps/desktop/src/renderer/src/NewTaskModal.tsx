@@ -1,6 +1,9 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { AGENT_TITLES, DEFAULT_ROLE_ID, isTaskRole, modelLabel, type AgentInfo, type Role, type Task } from '@orca-board/core'
+import {
+  AGENT_TITLES, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, PRIORITY_TITLES, TASK_PRIORITIES, isTaskPriority, isTaskRole, modelLabel,
+  type AgentInfo, type Role, type Task, type TaskPriority
+} from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
 
@@ -15,7 +18,7 @@ interface Props {
   agents: AgentInfo[]
   onClose(): void
   /** Ошибка (reject) показывается в форме, введённое не теряется. */
-  onCreate(input: { title: string; spec: string; deps: string[]; roleId: string; answerFor?: 'human' }): Promise<void>
+  onCreate(input: { title: string; spec: string; deps: string[]; roleId: string; priority: TaskPriority; answerFor?: 'human' }): Promise<void>
 }
 
 export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCreate }: Props): React.JSX.Element {
@@ -30,6 +33,7 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
     () => available.find((r) => r.id === DEFAULT_ROLE_ID)?.id ?? available[0]?.id ?? ''
   )
   const [deps, setDeps] = useState<string[]>([])
+  const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY)
   /** Результат — ответ для человека («посмотри», «предложи»), а не изменения в коде. */
   const [answer, setAnswer] = useState(false)
   const selectedRole = available.find((r) => r.id === roleId)
@@ -54,7 +58,7 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
     setBusy(true)
     setError(null)
     try {
-      await onCreate({ title: title.trim(), spec, deps, roleId, ...(answer ? { answerFor: 'human' as const } : {}) })
+      await onCreate({ title: title.trim(), spec, deps, roleId, priority, ...(answer ? { answerFor: 'human' as const } : {}) })
     } catch (e) {
       setError(ipcErrorMessage(e))
     } finally {
@@ -94,6 +98,14 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
             </select>
           </div>
           {noRoles && <span>Нет ролей с включённым агентом — настройте во вкладке „О проекте“</span>}
+        </label>
+        <label>
+          Приоритет
+          <select value={priority} onChange={(e) => isTaskPriority(e.target.value) && setPriority(e.target.value)}>
+            {TASK_PRIORITIES.map((p) => (
+              <option key={p} value={p}>{PRIORITY_TITLES[p]}</option>
+            ))}
+          </select>
         </label>
         <label>
           Результат

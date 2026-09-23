@@ -1,20 +1,27 @@
-import type { GlobalTask, Task } from '@orca-board/core'
+import { priorityRank, type GlobalTask, type Task, type TaskPriority } from '@orca-board/core'
 
 /** Порядок карточек внутри колонок. */
-export type BoardSort = 'created' | 'done' | 'updated'
+export type BoardSort = 'created' | 'done' | 'updated' | 'priority'
 
 /** Ключи localStorage: у локального и глобального канбана выбор хранится отдельно. */
 export const BOARD_SORT_KEY = 'orca.board.sort'
 export const GLOBAL_BOARD_SORT_KEY = 'orca.globalBoard.sort'
 
+/** Сортировки по датам — у глобального канбана (приоритета у глобальных задач пока нет). */
 export const SORT_OPTIONS: { value: BoardSort; title: string }[] = [
   { value: 'created', title: 'по созданию' },
   { value: 'done', title: 'по завершению' },
   { value: 'updated', title: 'по обновлению' }
 ]
 
+/** Сортировки локального канбана: даты и приоритет. */
+export const BOARD_SORT_OPTIONS: { value: BoardSort; title: string }[] = [
+  ...SORT_OPTIONS,
+  { value: 'priority', title: 'по приоритету' }
+]
+
 export function isBoardSort(v: unknown): v is BoardSort {
-  return SORT_OPTIONS.some((o) => o.value === v)
+  return BOARD_SORT_OPTIONS.some((o) => o.value === v)
 }
 
 /** Сохранённая сортировка; при любой ошибке localStorage — дефолт. */
@@ -42,10 +49,14 @@ export interface SortDates {
   doneAt?: number
 }
 
-/** Компаратор: created — старые сверху; done/updated — свежие сверху, без doneAt — в конец. */
+/**
+ * Компаратор: created — старые сверху; done/updated — свежие сверху, без doneAt — в конец.
+ * priority по датам — как created: это порядок при равном приоритете.
+ */
 export function compareByDates(sort: BoardSort, a: SortDates, b: SortDates): number {
   switch (sort) {
     case 'created':
+    case 'priority':
       return a.createdAt - b.createdAt
     case 'done':
       if (a.doneAt !== undefined && b.doneAt !== undefined) return b.doneAt - a.doneAt
@@ -57,8 +68,23 @@ export function compareByDates(sort: BoardSort, a: SortDates, b: SortDates): num
   }
 }
 
+/** Всё, у чего может быть приоритет: Task, а позже и GlobalTask. */
+export interface Prioritized {
+  priority?: TaskPriority
+}
+
+/** Выше приоритет — раньше. Нет поля (задача от старого main) — как normal. */
+export function compareByPriority(a: Prioritized, b: Prioritized): number {
+  return priorityRank(a.priority) - priorityRank(b.priority)
+}
+
+/** Сначала приоритет (только в режиме priority), при равном — даты. */
+export function compareSorted(sort: BoardSort, a: Prioritized & SortDates, b: Prioritized & SortDates): number {
+  return (sort === 'priority' ? compareByPriority(a, b) : 0) || compareByDates(sort, a, b)
+}
+
 export function compareTasks(sort: BoardSort, a: Task, b: Task): number {
-  return compareByDates(sort, a, b)
+  return compareSorted(sort, a, b)
 }
 
 /** Даты глобальной задачи: обновление — активность карточки или подзадач, завершение — закрытие прогона. */

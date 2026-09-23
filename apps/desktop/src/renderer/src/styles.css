@@ -227,6 +227,10 @@ textarea { min-height: 96px; resize: vertical; }
 /* ---------- вопросы и итоги ---------- */
 .chip.live { border-color: var(--col-progress); color: var(--col-progress); }
 .chip.warn { border-color: #ef6b6b; color: #ef6b6b; }
+/* Приоритет: normal бейджа не имеет; low — приглушённый, чтобы не спорить с важными. */
+.chip.priority.urgent { border-color: var(--danger); color: var(--danger); font-weight: 600; }
+.chip.priority.high { border-color: var(--col-progress); color: var(--col-progress); }
+.chip.priority.low { border-style: dashed; color: var(--muted); }
 .summary { margin-top: 12px; color: var(--muted); font-size: 13px; white-space: pre-wrap; max-height: 120px; overflow: auto; }
 .question {
   margin-top: 14px; padding: 12px; border-radius: 10px; background: rgba(232,176,74,.08);
@@ -474,6 +478,7 @@ button:disabled { opacity: .45; cursor: default; }
 .task-modal-meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; }
 .task-modal-meta .meta-row { display: contents; }
 .task-modal-meta .meta-key { color: var(--muted); }
+.task-modal-meta select.task-modal-priority { width: auto; padding: 4px 8px; font-size: 13px; }
 .task-modal-meta .meta-val { min-width: 0; overflow-wrap: anywhere; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .task-modal .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .task-modal-section { display: flex; flex-direction: column; gap: 8px; }
