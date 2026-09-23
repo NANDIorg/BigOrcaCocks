@@ -346,6 +346,24 @@ describe('встроенные шаблоны только для чтения',
     })
   }
 
+  for (const tpl of BUILTIN_TEMPLATES) {
+    it(`«${tpl.title}»: смена модели и усилия ролей без копии — «изменённый встроенный», удаление возвращает встроенный`, () => {
+      const pm = new ProjectManager(tmp)
+      const roles = (tpl.settings.roles ?? DEFAULT_ROLES).map((r, i) => (i === 0 ? { ...r, model: 'opus', effort: 'high' } : { ...r }))
+      const saved1 = pm.saveTemplate({ id: tpl.id, title: tpl.title, description: tpl.description, settings: { ...tpl.settings, roles } })
+      assert.deepEqual(saved1.settings.roles?.[0], roles[0])
+      // После перезапуска — своя копия с тем же id вместо встроенного, модель на месте.
+      const after = new ProjectManager(tmp).template(tpl.id)
+      assert.equal(after?.builtin, undefined)
+      assert.equal(after?.settings.roles?.[0].model, 'opus')
+      assert.equal(after?.settings.roles?.[0].effort, 'high')
+      // Своя копия дальше правится как обычный шаблон (как «Общий» после миграции).
+      pm.saveTemplate({ id: tpl.id, title: tpl.title, description: tpl.description, settings: { ...tpl.settings, roles: tpl.settings.roles ?? DEFAULT_ROLES } })
+      pm.deleteTemplate(tpl.id)
+      assert.deepEqual(new ProjectManager(tmp).template(tpl.id), builtinTemplate(tpl.id))
+    })
+  }
+
   it('«Общий» — встроенный, но правка дефолта делает его пользовательскую копию; копия перекрывает встроенный', () => {
     const pm = new ProjectManager(tmp)
     assert.throws(() => pm.saveTemplate({ id: GENERAL_TEMPLATE_ID, title: 'x', settings: {} }), /только для чтения/)

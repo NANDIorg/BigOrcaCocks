@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES, SYSTEM_COLUMN_KINDS } from './types.ts'
 import { defaultWorkflow, startStage, nextStage, validateWorkflow } from './workflow.ts'
-import { BUILTIN_TEMPLATES, GENERAL_TEMPLATE_ID, builtinTemplate, builtinTemplates } from './templates.ts'
+import { BUILTIN_TEMPLATES, GENERAL_TEMPLATE_ID, builtinTemplate, builtinTemplates, isBuiltinModelEdit } from './templates.ts'
 
 const EXPECTED = ['general', 'frontend', 'backend', 'fullstack', 'mobile', 'autotests', 'docs']
 
@@ -99,5 +99,40 @@ describe('встроенные шаблоны проектов', () => {
     const wf = builtinTemplate('docs')!.settings.workflow!
     assert.equal(wf.nodes.some((n) => n.type === 'gate'), false)
     assert.ok(wf.nodes.some((n) => n.type === 'human' && n.id === 'review'))
+  })
+})
+
+describe('isBuiltinModelEdit — правка встроенного шаблона без копии', () => {
+  const frontend = builtinTemplate('frontend')!
+  const general = builtinTemplate(GENERAL_TEMPLATE_ID)!
+  const roles = (t: typeof frontend) => (t.settings.roles ?? DEFAULT_ROLES).map((r) => ({ ...r }))
+
+  it('модель и усилие ролей можно менять, в том числе у шаблона без явных ролей', () => {
+    for (const t of [frontend, general]) {
+      const next = roles(t)
+      next[0] = { ...next[0], model: 'opus', effort: 'high' }
+      assert.equal(isBuiltinModelEdit(t, { title: t.title, description: t.description, settings: { ...t.settings, roles: next } }), true, t.id)
+    }
+  })
+
+  it('без изменений — тоже можно (роли записаны явно)', () => {
+    assert.equal(isBuiltinModelEdit(general, { title: general.title, description: general.description, settings: { ...general.settings, roles: roles(general) } }), true)
+  })
+
+  it('остальное — только через копию', () => {
+    const base = { title: frontend.title, description: frontend.description }
+    const renamed = roles(frontend).map((r, i) => (i === 0 ? { ...r, title: 'Другое' } : r))
+    const otherAgent = roles(frontend).map((r, i) => (i === 0 ? { ...r, agent: r.agent === 'claude' ? 'codex' as const : 'claude' as const } : r))
+    const cases = [
+      { ...base, title: 'x', settings: frontend.settings },
+      { ...base, description: 'другое', settings: frontend.settings },
+      { ...base, settings: { ...frontend.settings, agentRules: 'x' } },
+      { ...base, settings: { ...frontend.settings, permissionMode: 'bypassPermissions' as const } },
+      { ...base, settings: { ...frontend.settings, roles: renamed } },
+      { ...base, settings: { ...frontend.settings, roles: otherAgent } },
+      { ...base, settings: { ...frontend.settings, roles: roles(frontend).slice(1) } },
+      { ...base, settings: { ...frontend.settings, roles: roles(frontend).reverse() } }
+    ]
+    for (const c of cases) assert.equal(isBuiltinModelEdit(frontend, c), false, JSON.stringify(c).slice(0, 80))
   })
 })

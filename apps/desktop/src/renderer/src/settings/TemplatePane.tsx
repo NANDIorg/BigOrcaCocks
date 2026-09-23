@@ -11,7 +11,8 @@ import { SectionHead, plural } from '../about/parts'
 import { AgentsSection } from '../about/AgentsSection'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import {
-  TEMPLATE_TABS, deleteConfirmText, overridesBuiltin, templateEditorKey, resolveTemplateSettings, templateAgents, type TemplateTab
+  TEMPLATE_TABS, deleteConfirmText, overridesBuiltin, rolesEditorKey, templateEditorKey, templateRolesMode, resolveTemplateSettings,
+  templateAgents, type TemplateTab
 } from '../projectTemplates'
 import { bulkCandidates, usageHint, usageSummary } from '../bulkApply'
 import { templatesApi as applyApi } from '../projectType'
@@ -49,7 +50,8 @@ const TAB_LABELS: Record<TemplateTab, string> = {
 
 /**
  * Один шаблон в «Настройки → Шаблоны проектов»: шапка (название, отметки, действия) и те же редакторы разделов,
- * что в «О проекте», но пишут они в шаблон (templates:save). Встроенный шаблон — только просмотр и «Дублировать».
+ * что в «О проекте», но пишут они в шаблон (templates:save). Встроенный шаблон — просмотр и «Дублировать»; в нём
+ * меняются только модель и усилие ролей: первая такая правка сохраняет «изменённый встроенный» (копию с тем же id).
  */
 export function TemplatePane({
   template: t, state, usage, agents, onRefreshAgents, tab, onTab, api, onSelect, projects, onProjectsChanged
@@ -68,6 +70,9 @@ export function TemplatePane({
   const [error, setError] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)
   const [bulk, setBulk] = useState(false)
+  /** Встроенный шаблон, ставший своей копией из редактора ролей: ключ его черновика не меняется (`rolesEditorKey`). */
+  const [promoted, setPromoted] = useState<string | null>(null)
+  const modelsOnly = templateRolesMode(t) === 'models'
   // Старый preload без applyTemplate — массового применения нет, шапка как раньше.
   const canBulk = !!applyApi(window.orca) && projects.length > 0
   const candidates = bulkCandidates(projects, t, agents)
@@ -79,6 +84,7 @@ export function TemplatePane({
     setBulk(false)
     setError(null)
     setSectionError(null)
+    setPromoted(null)
   }, [t.id])
   useEffect(() => setSectionError(null), [tab])
 
@@ -104,6 +110,7 @@ export function TemplatePane({
   const remove = (): Promise<void> => {
     if (!confirm(deleteConfirmText(t, state, usage))) return Promise.resolve()
     return act(async () => {
+      setPromoted(null)
       await api.remove(t.id)
       // Копия встроенного после удаления снова встроенный шаблон с тем же id — остаёмся на нём.
       onSelect(overridesBuiltin(t) ? t.id : null)
@@ -143,14 +150,22 @@ export function TemplatePane({
       case 'roles':
         return (
           <>
-            <SectionHead title="Роли" hint="Кто выполняет задачи: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче»." />
+            <SectionHead
+              title="Роли"
+              hint={modelsOnly
+                ? 'Во встроенном шаблоне меняются только модель и усилие ролей — шаблон станет «изменённым встроенным». Остальное — через «Дублировать».'
+                : 'Кто выполняет задачи: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче».'}
+            />
             <RolesEditor
-              storageKey={editorKey}
+              storageKey={rolesEditorKey(t, promoted)}
               roles={s.roles}
               agents={tplAgents}
               workflow={s.workflow}
-              readOnly={readOnly}
-              onSave={(next) => api.patch(t.id, { roles: next })}
+              modelOnly={modelsOnly}
+              onSave={(next) => {
+                if (modelsOnly) setPromoted(t.id)
+                return api.patch(t.id, { roles: next })
+              }}
             />
           </>
         )
@@ -239,9 +254,15 @@ export function TemplatePane({
               <button type="button" className="btn-sm" disabled={busy || renaming} onClick={() => setRenaming(true)}>
                 <Icon.edit /> Переименовать
               </button>
-              <button type="button" className="btn-sm danger" disabled={busy} onClick={() => void remove()}>
-                <Icon.trash /> Удалить
-              </button>
+              {overridesBuiltin(t) ? (
+                <button type="button" className="btn-sm danger" disabled={busy} onClick={() => void remove()} title="Удалить свою версию — вернётся встроенный шаблон">
+                  <Icon.trash /> Вернуть встроенный
+                </button>
+              ) : (
+                <button type="button" className="btn-sm danger" disabled={busy} onClick={() => void remove()}>
+                  <Icon.trash /> Удалить
+                </button>
+              )}
             </>
           )}
         </div>
@@ -261,7 +282,15 @@ export function TemplatePane({
 
       <div className="about-banner">
         {readOnly ? (
-          <>Встроенный шаблон <b>только для чтения</b> и обновляется вместе с приложением. Чтобы поменять настройки — «Дублировать» и правьте копию.</>
+          <>
+            Встроенный шаблон обновляется вместе с приложением. <b>Модель и усилие ролей</b> можно поменять прямо здесь
+            (вкладка «Роли») — шаблон станет «изменённым встроенным». Остальное — «Дублировать» и правьте копию.
+          </>
+        ) : overridesBuiltin(t) ? (
+          <>
+            Ваша версия встроенного шаблона: она <b>копируется в проект при добавлении</b>, правка не меняет уже созданные
+            проекты. «Вернуть встроенный» удалит её — вернётся встроенный шаблон, который обновляется с приложением.
+          </>
         ) : (
           <>Шаблон <b>копируется в проект при добавлении</b>; правка шаблона не меняет уже созданные проекты.</>
         )}

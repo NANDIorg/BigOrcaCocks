@@ -1,5 +1,5 @@
 import {
-  BUILTIN_TEMPLATES, DEFAULT_COLUMNS, DEFAULT_ROLES,
+  BUILTIN_EDITABLE_ROLE_FIELDS, BUILTIN_TEMPLATES, DEFAULT_COLUMNS, DEFAULT_ROLES,
   type AgentInfo, type AgentKind, type BoardColumn, type ProjectTemplate, type ProjectTemplateSettings, type Role, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, PermissionMode, Project, TemplateInput, TemplatesState } from '../../shared/ipc'
@@ -24,9 +24,18 @@ export function isStaleTemplatesError(message: string): boolean {
   return /No handler registered for 'templates:/.test(message)
 }
 
+/**
+ * Старый main не даёт сохранить встроенный шаблон вовсе (в новом без копии меняются модель и усилие ролей) —
+ * его ошибку узнаём по прежнему тексту.
+ */
+export const BUILTIN_MODELS_STALE_MESSAGE =
+  'Приложение запущено со старой версией main, где у встроенного шаблона нельзя менять модели. Перезапустите приложение.'
+
 /** Текст ошибки IPC для раздела: старый main — «перезапустите приложение». */
 export function templatesError(message: string): string {
-  return isStaleTemplatesError(message) ? TEMPLATES_STALE_MESSAGE : message
+  if (isStaleTemplatesError(message)) return TEMPLATES_STALE_MESSAGE
+  if (/встроенный и только для чтения — сделайте копию/.test(message)) return BUILTIN_MODELS_STALE_MESSAGE
+  return message
 }
 
 /** Вкладки редактора шаблона — те же разделы, что в «О проекте». */
@@ -85,16 +94,20 @@ export function renamedTemplate(t: ProjectTemplate, title: string, description: 
   return { id: t.id, title: name, ...(desc ? { description: desc } : {}), settings: t.settings }
 }
 
-/** Встроенные — только чтение, пользовательские — правятся. Порядок внутри групп — как отдал main. */
+/**
+ * Группы меню: встроенные (и изменённые встроенные — на месте своего встроенного, чтобы смена модели не уносила
+ * пункт в «Свои») и свои. Порядок внутри групп — как отдал main.
+ */
 export function splitTemplates(templates: readonly ProjectTemplate[]): { builtin: ProjectTemplate[]; own: ProjectTemplate[] } {
-  return { builtin: templates.filter((t) => t.builtin), own: templates.filter((t) => !t.builtin) }
+  const isBuiltin = (t: ProjectTemplate): boolean => !!t.builtin || overridesBuiltin(t)
+  return { builtin: templates.filter(isBuiltin), own: templates.filter((t) => !isBuiltin(t)) }
 }
 
 /**
  * Пользовательская копия встроенного с тем же id (так «Общий» переживает миграцию старого дефолта):
  * удаление вернёт встроенный, а не уберёт шаблон из списка.
  */
-export function overridesBuiltin(t: ProjectTemplate): boolean {
+export function overridesBuiltin(t: Pick<ProjectTemplate, 'id' | 'builtin'>): boolean {
   return !t.builtin && BUILTIN_TEMPLATES.some((b) => b.id === t.id)
 }
 
@@ -104,6 +117,31 @@ export function overridesBuiltin(t: ProjectTemplate): boolean {
  */
 export function templateEditorKey(t: Pick<ProjectTemplate, 'id' | 'builtin'>): string {
   return `tpl:${t.id}:${t.builtin ? 'b' : 'u'}`
+}
+
+/**
+ * Ключ черновика редактора ролей. Смена модели во встроенном шаблоне сохраняет «изменённый встроенный» — id тот же,
+ * а `templateEditorKey` меняется с `b` на `u`, и черновик сбросился бы на ответ main посреди быстрых кликов
+ * (второй выбор, ещё не дошедший до main, пропал бы с экрана). Поэтому шаблон, ставший своей копией из этого
+ * редактора (`promotedId`), сохраняет ключ встроенного; после удаления копии `promotedId` сбрасывается, и ключ
+ * меняется, как у остальных редакторов.
+ */
+export function rolesEditorKey(t: Pick<ProjectTemplate, 'id' | 'builtin'>, promotedId: string | null): string {
+  return promotedId === t.id && overridesBuiltin(t)
+    ? templateEditorKey({ id: t.id, builtin: true })
+    : templateEditorKey(t)
+}
+
+/** У встроенного шаблона роли правятся только моделью и усилием, остальное — через «Дублировать». */
+export function templateRolesMode(t: Pick<ProjectTemplate, 'builtin'>): 'models' | 'full' {
+  return t.builtin ? 'models' : 'full'
+}
+
+/** Правка роли в режиме «только модель и усилие»: прочие поля отбрасываются (undefined в них — сброс, сохраняется). */
+export function modelOnlyPatch(p: Partial<Role>): Partial<Role> {
+  const next: Partial<Role> = {}
+  for (const k of BUILTIN_EDITABLE_ROLE_FIELDS) if (k in p) next[k] = p[k]
+  return next
 }
 
 /**
