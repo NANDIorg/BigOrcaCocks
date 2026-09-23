@@ -423,6 +423,34 @@ describe('жизненный цикл прогона = глобальной за
     assert.ok(store.finishRun(run.id).finishedAt)
   })
 
+  it('runs finish --summary: сводка на прогоне и в карточке, новая заменяет прежнюю, пустая не стирает, переживает рестарт', () => {
+    const p = memory()
+    const store = newStore(p)
+    const run = store.createRun('X')
+    store.setRunPty(run.id, 'pty_1', 'claude')
+    const t = store.createTask({ title: 't', runId: run.id })
+    assert.throws(() => store.finishRun(run.id, 'рано'), /run not closed/)
+    assert.equal(store.getRun(run.id)!.summary, undefined, 'при ошибке сводка не сохраняется')
+    store.moveTask(t.id, 'fin')
+    const fin = store.finishRun(run.id, '  ## Сделано\n- t  ')
+    assert.deepEqual(fin.summary, { at: fin.finishedAt, text: '## Сделано\n- t' })
+    const card = () => toGlobalTasks(store.listRuns(), store.listTasks(), COLUMNS).find((g) => g.id === run.id)!
+    assert.equal(card().summary?.text, '## Сделано\n- t')
+    store.finishRun(run.id, '   ')
+    store.finishRun(run.id)
+    assert.equal(card().summary?.text, '## Сделано\n- t', 'пустая сводка и её отсутствие прежнюю не стирают')
+    store.finishRun(run.id, 'итог целиком')
+    assert.equal(card().summary?.text, 'итог целиком')
+    assert.equal(newStore(p).getRun(run.id)!.summary?.text, 'итог целиком')
+  })
+
+  it('старый прогон без сводки открывается: в карточке нет summary', () => {
+    const run: Run = { id: 'run_old', objective: 'X', status: 'ai', createdAt: 1, closedAt: 2 }
+    const store = newStore(memory({ runs: [run], tasks: [] }))
+    const g = toGlobalTasks(store.listRuns(), store.listTasks(), COLUMNS).find((x) => x.id === 'run_old')!
+    assert.equal('summary' in g, false)
+  })
+
   it('ручной перенос в «Сделано»: прогон закрыт, координатор получает run_done {manual}, терминал закрывается', () => {
     const store = newStore()
     const run = store.createRun('X')

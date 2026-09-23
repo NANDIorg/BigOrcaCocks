@@ -75,7 +75,10 @@ const HELP = `orca-board — управление доской агентов
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
-  runs finish [--run <id>]                координатор закончил работу (после run_done и сводки; если все подзадачи в done — закрывает прогон сам)
+  runs finish [--run <id>] [--summary "..." | --summary-file summary.md]
+                                          координатор закончил работу (после run_done; если все подзадачи в done —
+                                          закрывает прогон сам); --summary — итог в markdown «что сделано и что
+                                          проверить», человек видит его на «Проверке»; заменяет прежнюю сводку
   question list
   question get --question <id>            вопрос целиком и ответ на него
   question answer --question <id> --answer "..."
@@ -195,6 +198,11 @@ function readFileParam(flag, into) {
 if (method === 'worker.done') readFileParam('answer-file', 'answer')
 if (method === 'worker.ask') readFileParam('context-file', 'context')
 if (method === 'rules.set') readFileParam('file', 'text')
+if (method === 'runs.finish') readFileParam('summary-file', 'summary')
+if (method === 'runs.finish' && params.summary === true) {
+  console.error('ошибка: --summary требует текста сводки')
+  process.exit(1)
+}
 if (method === 'rules.set' && typeof params.text !== 'string') {
   console.error('ошибка: rules set требует --text "..." или --file <путь>')
   process.exit(1)

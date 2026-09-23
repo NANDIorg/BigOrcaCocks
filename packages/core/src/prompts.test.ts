@@ -163,6 +163,18 @@ describe('повторный запуск координатора', () => {
     assert.match(item, /остаётся «В работе»/)
     assert.match(item, /только `runs finish` отправляет её человеку на проверку/)
   })
+
+  it('итоговая сводка уходит в runs finish --summary: после run_done, в повторном запуске и в цели', () => {
+    const item = skill.slice(skill.indexOf('- `run_done` →'), skill.indexOf('Что сейчас ждёт человека'))
+    assert.match(item, /orca-board runs finish --summary "\.\.\."/)
+    assert.match(item, /что сделано и что проверить человеку/)
+    assert.match(item, /--summary-file/)
+    const section = skill.slice(skill.indexOf(`${COORDINATOR_RESUME_SECTION}:`))
+    assert.match(section, /orca-board runs finish --summary/)
+    assert.match(section, /заменяет прежнюю/)
+    assert.ok(resumeCoordinatorObjective('цель', [{ id: 't1', title: 'A', status: 'Done' }]).includes('orca-board runs finish --summary'))
+    assert.ok(resumeCoordinatorObjective('цель', [{ id: 't1', title: 'A', status: 'Done' }], [{ text: 'x' }]).includes('orca-board runs finish --summary'))
+  })
 })
 
 describe('события после ответа человека в инструкции координатора', () => {

@@ -54,6 +54,23 @@ describe('orca-board CLI', () => {
     assert.equal(req.dispatchId, 'disp_1')
   })
 
+  it('runs finish --summary / --summary-file: сводка уходит текстом в summary; нет файла или текста — ошибка без запроса', async () => {
+    const inline = await run(['runs', 'finish', '--summary', '## Итог'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(inline.req.method, 'runs.finish')
+    assert.equal(inline.req.params.summary, '## Итог')
+    const file = join(dir, 'summary.md')
+    writeFileSync(file, '## Сделано\n\n- «пункт» и `код`\n')
+    const { req } = await run(['runs', 'finish', '--summary-file', file], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(req.params.summary, '## Сделано\n\n- «пункт» и `код`\n')
+    assert.equal('summary-file' in req.params, false)
+    const missing = await run(['runs', 'finish', '--summary-file', join(dir, 'nope.md')], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(missing.req, null)
+    assert.equal(missing.code, 1)
+    const empty = await run(['runs', 'finish', '--summary'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(empty.req, null)
+    assert.equal(empty.code, 1)
+  })
+
   it('done --answer-file: CLI читает файл и шлёт текст в answer; нет файла — ошибка без запроса', async () => {
     const file = join(dir, 'answer.md')
     writeFileSync(file, '# Ответ\n\n- «кавычки» и `код`\n')

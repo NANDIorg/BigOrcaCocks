@@ -37,6 +37,13 @@ export interface GlobalTaskReturn {
   text: string
 }
 
+/** Сводка координатора «что сделано» (`Run.summary`, `runs finish --summary`). */
+export interface GlobalTaskSummary {
+  at: number
+  /** Markdown. */
+  text: string
+}
+
 /** Длина названия, выведенного из описания. */
 const DERIVED_TITLE_MAX = 80
 
@@ -75,6 +82,8 @@ export interface GlobalTask {
   coordinatorAgent?: Run['coordinatorAgent']
   /** Уточнения человека при возвратах с проверки в работу, по порядку (`Run.returns`); нет — не возвращали. */
   returns?: GlobalTaskReturn[]
+  /** Итоговая сводка координатора (`Run.summary`); нет — не передавал. */
+  summary?: GlobalTaskSummary
   progress: GlobalTaskProgress
   /**
    * Основное время — сколько сама глобальная задача была в работе (`Run.activeMs`): закрытые отрезки, мс.
@@ -250,6 +259,7 @@ export function toGlobalTask(
     coordinatorPtyId: run.coordinatorPtyId,
     coordinatorAgent: run.coordinatorAgent,
     ...(run.returns && run.returns.length > 0 ? { returns: run.returns.map((r) => ({ ...r })) } : {}),
+    ...(run.summary ? { summary: { ...run.summary } } : {}),
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),

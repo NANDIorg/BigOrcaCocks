@@ -1,12 +1,16 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { pendingRequestsOf, type ColumnKind, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
+import {
+  pendingRequestsOf, type BoardColumn, type ColumnKind, type Dispatch, type GlobalTask, type HumanRequest, type RequestResolution, type Task
+} from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
 import { PriorityBadge } from './Priority'
 import { globalTaskActions, returnsNewestFirst } from './globalReview'
+import { globalDoneReport } from './globalDoneReport'
+import { Markdown } from './Markdown'
 
 interface Props {
   global: GlobalTask
@@ -26,6 +30,10 @@ interface Props {
   requests: HumanRequest[]
   /** Подзадачи этой глобальной задачи — подпись, чей запрос. */
   tasks: Task[]
+  /** Колонки проекта (доски подзадач): какие подзадачи сделаны — для фоллбэка «Что сделал». */
+  columns: BoardColumn[]
+  /** Запуски воркеров: сводка последнего запуска сделанной подзадачи — фоллбэк «Что сделал». */
+  dispatches: Dispatch[]
   onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
   /** «Открыть полностью» у ответа — модалка подзадачи. */
   onOpenTask(taskId: string): void
@@ -37,7 +45,7 @@ interface Props {
 /** Экран глобальной задачи: хлебные крошки, заголовок, описание и канбан только её подзадач. */
 export function GlobalTaskView(props: Props): React.JSX.Element {
   const { global, statusKind, coordinatorPty, onBack, onEdit, onStartCoordinator, onShowCoordinator, onAccept, onReturn, children } = props
-  const { requests, tasks, onResolveRequest, onOpenTask, onOpenTerminal } = props
+  const { requests, tasks, columns, dispatches, onResolveRequest, onOpenTask, onOpenTerminal } = props
   const pending = pendingRequestsOf(requests, { runId: global.id }).sort((a, b) => a.createdAt - b.createdAt)
   const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
   const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
@@ -120,6 +128,9 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
           {global.inbox && <span className="muted">· сюда попадают задачи без глобальной</span>}
         </div>
         {statusKind === 'review' && <div className="g-review-note">Все подзадачи сделаны — проверьте результат: подтвердите или верните в работу с уточнением.</div>}
+        {statusKind === 'review' && (
+          <GlobalDoneReportBlock global={global} tasks={tasks} columns={columns} dispatches={dispatches} onOpenTask={onOpenTask} />
+        )}
         <GlobalReturns global={global} />
       </div>
       {pending.length > 0 && (
@@ -160,5 +171,47 @@ export function GlobalReturns({ global }: { global: GlobalTask }): React.JSX.Ele
         ))}
       </ol>
     </details>
+  )
+}
+
+/**
+ * «Что сделал» на «Проверке»: итоговая сводка координатора (`runs finish --summary`), а без неё — сделанные
+ * подзадачи со сводками воркеров (`globalDoneReport`).
+ */
+function GlobalDoneReportBlock(props: {
+  global: GlobalTask
+  tasks: Task[]
+  columns: BoardColumn[]
+  dispatches: Dispatch[]
+  onOpenTask(taskId: string): void
+}): React.JSX.Element {
+  const { global, tasks, columns, dispatches, onOpenTask } = props
+  const isDone = (status: string): boolean => columns.find((c) => c.id === status)?.kind === 'done'
+  const report = globalDoneReport(global, tasks, dispatches, isDone)
+  return (
+    <section className="g-done-report" aria-label="Что сделал">
+      <h3 className="g-done-report-title">
+        Что сделал
+        {report.kind === 'coordinator' ? (
+          <span className="muted g-done-report-sub">сводка координатора · {formatStamp(report.at)}</span>
+        ) : (
+          <span className="muted g-done-report-sub">координатор не оставил сводку — сделанные подзадачи</span>
+        )}
+      </h3>
+      {report.kind === 'coordinator' && <Markdown text={report.text} className="g-done-report-md" />}
+      {report.kind === 'subtasks' && report.items.length === 0 && <div className="muted">Сделанных подзадач нет.</div>}
+      {report.kind === 'subtasks' && report.items.length > 0 && (
+        <ul className="g-done-report-list">
+          {report.items.map((item) => (
+            <li key={item.taskId}>
+              <button type="button" className="btn-text g-done-report-task" onClick={() => onOpenTask(item.taskId)} title="Открыть подзадачу">
+                {item.title}
+              </button>
+              {item.summary ? <div className="g-done-report-text">{item.summary}</div> : <div className="muted">без сводки</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }

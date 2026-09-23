@@ -816,6 +816,8 @@ export function App(): React.JSX.Element {
               onReturn={() => setReturnGlobalId(openGlobal.id)}
               requests={requests}
               tasks={subtasks}
+              columns={columns}
+              dispatches={snap.dispatches}
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
