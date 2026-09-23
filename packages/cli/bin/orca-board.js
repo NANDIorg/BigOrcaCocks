@@ -49,8 +49,13 @@ const HELP = `orca-board — управление доской агентов
   agents list      известные агенты: установлен ли, включён ли в проекте, версия
   roles list       роли проекта: id, название, назначение, агент, модель, включён ли агент
   columns list     колонки доски: id, название, kind
+  workflow show [--run <id>]              воркфлоу: этапы рабочей задачи после worker_done (проверки, человек,
+                                          мерж) и переходы; с --run — снимок прогона, без — воркфлоу проекта
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
-                                          (у каждой — priority: urgent|high|normal|low)
+                                          (у каждой — priority: urgent|high|normal|low);
+                                          у задачи в воркфлоу — stage (этап: nodeId и число заходов visits),
+                                          у задачи-проверки — gateFor (чью ветку проверяет)
+  task get --task <id>                    одна задача (со stage и gateFor)
   task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]... [--run <id>]
               [--answer-for human|coordinator]   задача-ответ: результат — ответ в markdown, не код;
                                           human — ответ читает человек, coordinator — ты сам
@@ -64,7 +69,7 @@ const HELP = `orca-board — управление доской агентов
   worker restart --task <id> [--feedback "..."]   stop + запуск заново; работает и на задаче в работе
                                           задачу в review/done не перезапускает: для неё task reopen --task <id> --start
   worker read --dispatch <id> [--limit 80]
-  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified] [--timeout-ms 900000] [--run <id>]
+  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked] [--timeout-ms 900000] [--run <id>]
   check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
@@ -77,22 +82,26 @@ const HELP = `orca-board — управление доской агентов
                                           --note — твоё мнение, попадёт в текст запроса
 
   review info --task <id>                 diff-stat и коммиты ветки задачи
-  review accept --task <id> [--decision "..."]  слить в текущую ветку, убрать worktree, задача → done
-  review reject --task <id> --feedback "..."   задача → ready с замечаниями для перезапуска
+  review accept --task <id> [--decision "..."]  задача на этапе проверки — исход accept, дальше по воркфлоу
+                                          (обычно мерж и done); вне воркфлоу — слить ветку, задача → done
+  review reject --task <id> --feedback "..."   задача на этапе проверки — исход reject (обычно снова в работу,
+                                          воркер стартует сам); вне воркфлоу — ready с замечаниями
   task reopen --task <id> [--feedback "..."] [--start]   задача (done/review/backlog/…) → ready, feedback — по
                                           желанию; ждёт решения по ответу — это «Уточнить» (feedback обязателен);
                                           --start — сразу запустить воркера
   task delete --task <id>
   events list
 
-Запросы к человеку (Инбокс: вопросы, ответы задач-ответов, упавшие воркеры):
+Запросы к человеку (Инбокс: вопросы, ответы задач-ответов, упавшие воркеры, этапы воркфлоу «человек»):
   request list [--run <id>] [--all]       ждущие ответа (pending); --all — и решённые
   request get --request <id>              запрос целиком: текст, контекст/ответ, варианты, решение
   request resolve --request <id> --option <id|метка> [--text "..."]   ответ на вопрос вариантом
   request resolve --request <id> --text "..."                        ответ на вопрос своим текстом
-  request resolve --request <id> --accept [--decision "..."]         принять ответ задачи-ответа
+  request resolve --request <id> --accept [--decision "..."]         принять ответ задачи-ответа или этап
+                                                                      «человек» воркфлоу (approval)
   request resolve --request <id> --clarify "..."                     уточнить: воркер перезапускается
   request resolve --request <id> --restart | --dismiss               упавший воркер: перезапуск / скрыть
+  request resolve --request <id> --reject "..."                      этап «человек»: вернуть с замечаниями
 
 Воркер (ORCA_DISPATCH_ID уже в окружении):
   done --summary "..." [--files a.ts,b.ts] [--answer-file answer.md | --answer "..."]
@@ -150,7 +159,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 // Прогон координатора: явный --run важнее $ORCA_RUN_ID.
-const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'request.list']
+const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'request.list', 'workflow.show']
 if (RUN_METHODS.includes(method) && params.run === undefined && process.env.ORCA_RUN_ID) {
   params.run = process.env.ORCA_RUN_ID
 }

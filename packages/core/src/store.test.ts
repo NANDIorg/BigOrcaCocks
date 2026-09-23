@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
-import { defaultWorkflow, type Workflow } from './workflow.ts'
+import { defaultWorkflow, describeWorkflow, type Workflow } from './workflow.ts'
 
 /** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
 function memory(initial?: Partial<StoreSnapshot>): Persistence & { data: Partial<StoreSnapshot> | null } {
@@ -213,5 +213,97 @@ describe('миграция и рестарт', () => {
     assert.deepEqual(loaded.getTask(t.id)!.stage, { nodeId: 'review', visits: { start: 1, work: 1, review: 1 } })
     assert.equal(loaded.advanceStage(t.id, 'reject').action.type, 'start_worker')
     assert.equal(loaded.getTask(t.id)!.stage!.visits.limit, 1)
+  })
+})
+
+describe('исполнитель: переходы store', () => {
+  const REVIEWER = ['developer', 'reviewer']
+
+  it('enterWork: задача без этапа входит в граф, этап «Работа» не трогается, этап проверки сбрасывается с накоплением заходов', () => {
+    const s = store()
+    const t = s.createTask({ title: 'A' })
+    assert.deepEqual(s.enterWork(t.id, { roleIds: REVIEWER }), { type: 'start_worker', nodeId: 'work' })
+    assert.equal(s.getTask(t.id)!.stage!.nodeId, 'work')
+    assert.equal(s.enterWork(t.id, { roleIds: REVIEWER }), undefined, 'уже в работе — без изменений')
+    s.advanceStage(t.id, 'next', { roleIds: REVIEWER })
+    assert.equal(s.getTask(t.id)!.stage!.nodeId, 'review')
+    const action = s.enterWork(t.id, { roleIds: REVIEWER })
+    assert.equal(action?.type, 'start_worker')
+    assert.equal(s.getTask(t.id)!.stage!.nodeId, 'work')
+    assert.equal(s.getTask(t.id)!.stage!.visits.work, 2)
+    const last = s.listEvents().filter((e) => e.type === 'stage_changed').at(-1)!
+    assert.deepEqual([last.payload.from, last.payload.to, last.payload.outcome], ['review', 'work', 'restart'])
+  })
+
+  it('enterWork: задачи-ответы и гейты — мимо', () => {
+    const s = store()
+    const ans = s.createTask({ title: 'Q', answerFor: 'human' })
+    const work = s.createTask({ title: 'A' })
+    const gate = s.createTask({ title: 'Ревью: A', roleId: 'reviewer', gateFor: { taskId: work.id, nodeId: 'review' } })
+    assert.equal(s.enterWork(ans.id), undefined)
+    assert.equal(s.enterWork(gate.id), undefined)
+    assert.equal(s.getTask(ans.id)!.stage, undefined)
+    assert.equal(s.getTask(gate.id)!.stage, undefined)
+  })
+
+  it('задача-гейт: task_ready не шлётся, чужая проверяемая задача — ошибка', () => {
+    const s = store()
+    const work = s.createTask({ title: 'A' })
+    const gate = s.createTask({ title: 'Ревью: A', roleId: 'reviewer', gateFor: { taskId: work.id, nodeId: 'review' } })
+    assert.equal(s.getTask(gate.id)!.status, 'ready')
+    assert.deepEqual(s.listEvents().filter((e) => e.type === 'task_ready').map((e) => e.taskId), [work.id])
+    assert.throws(() => s.createTask({ title: 'x', gateFor: { taskId: 'task_nope', nodeId: 'review' } }), /проверяемой задачи task_nope нет/)
+    const d = s.startDispatch(gate.id, 'pty')
+    s.finishDispatch(d.id, 'принято', [])
+    assert.equal(s.listEvents().find((e) => e.type === 'worker_done')!.payload.gateFor, work.id)
+  })
+
+  it('approval: запрос с нодой, needs_input; reject — замечания в feedback, request_resolved; повтор не дублирует', () => {
+    const s = store()
+    const t = s.createTask({ title: 'A' })
+    const r = s.requestApproval(t.id, { nodeId: 'review', title: 'Ревью человеком: A', body: 'проверь' })
+    assert.equal(s.requestApproval(t.id, { nodeId: 'review', title: 'дубль' }).id, r.id)
+    assert.equal(r.kind, 'approval')
+    assert.equal(r.nodeId, 'review')
+    assert.equal(s.getTask(t.id)!.status, 'needs_input')
+    assert.throws(() => s.resolveRequest(r.id, { action: 'clarify', text: 'x' }), /accept, reject/)
+    s.resolveRequest(r.id, { action: 'reject', text: 'поправь' })
+    assert.equal(s.getRequest(r.id)!.status, 'resolved')
+    assert.equal(s.getTask(t.id)!.feedback, 'поправь')
+    assert.equal(s.getTask(t.id)!.status, 'ready', 'из «Нужен ответ» — дальше ведёт исполнитель')
+    const e = s.listEvents().find((x) => x.type === 'request_resolved')!
+    assert.deepEqual([e.payload.kind, e.payload.action, e.payload.nodeId], ['approval', 'reject', 'review'])
+  })
+
+  it('approval accept не трогает ответ и ветку: задача не в done, answer_accepted нет', () => {
+    const s = store()
+    const t = s.createTask({ title: 'A' })
+    s.updateTask(t.id, { branch: 'orca/x', worktree: '/wt' })
+    const r = s.requestApproval(t.id, { nodeId: 'review', title: 'A' })
+    s.resolveRequest(r.id, { action: 'accept' })
+    assert.notEqual(s.getTask(t.id)!.status, 'done')
+    assert.equal(s.getTask(t.id)!.branch, 'orca/x')
+    assert.equal(s.listEvents().some((e) => e.type === 'answer_accepted'), false)
+  })
+
+  it('blockStage: workflow_blocked с этапом и причиной', () => {
+    const s = store()
+    const t = s.createTask({ title: 'A' })
+    s.enterWork(t.id)
+    s.blockStage(t.id, 'воркер не запустился')
+    const e = s.listEvents().find((x) => x.type === 'workflow_blocked')!
+    assert.deepEqual([e.taskId, e.payload.nodeId, e.payload.reason], [t.id, 'work', 'воркер не запустился'])
+  })
+})
+
+describe('describeWorkflow', () => {
+  it('этапы в порядке обхода от старта, переходы — названием и id, условие словами', () => {
+    const stages = describeWorkflow(withLimit())
+    assert.deepEqual(stages.map((x) => x.id), ['start', 'work', 'review', 'merge', 'limit', 'end', 'conflict', 'boss'])
+    const review = stages.find((x) => x.id === 'review')!
+    assert.deepEqual(review, { id: 'review', type: 'gate', title: 'Ревью', roleId: 'reviewer', next: { accept: 'Мерж (merge)', reject: 'Условие (limit)' } })
+    assert.equal(stages.find((x) => x.id === 'limit')!.condition, 'задача заходила в «Работа» не меньше 3 раз')
+    assert.match(stages.find((x) => x.id === 'conflict')!.instructions!, /Разрешите конфликт/)
+    assert.deepEqual(stages.find((x) => x.id === 'end')!.next, {})
   })
 })

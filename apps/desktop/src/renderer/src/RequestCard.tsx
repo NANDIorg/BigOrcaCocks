@@ -8,18 +8,19 @@ import { ipcErrorMessage } from './useAutoSave'
 export const REQUEST_KIND_TITLE: Record<HumanRequestKind, string> = {
   question: 'Вопрос',
   answer: 'Ответ',
-  escalation: 'Эскалация'
+  escalation: 'Эскалация',
+  approval: 'Решение'
 }
 
-const KIND_ICON: Record<HumanRequestKind, string> = { question: '❓', answer: '📄', escalation: '⚠' }
+const KIND_ICON: Record<HumanRequestKind, string> = { question: '❓', answer: '📄', escalation: '⚠', approval: '✋' }
 
 /** Действия карточки для горячих клавиш Инбокса (InboxPanel): вызываются на выбранной карточке. */
 export interface RequestCardHandle {
   /** Вариант вопроса по номеру (1 — первый). */
   option(n: number): void
-  /** «Принять» ответ (с решением из поля). */
+  /** «Принять» ответ (с решением из поля) или этап воркфлоу. */
   accept(): void
-  /** «Уточнить…»: открыть поле уточнения. */
+  /** «Уточнить…» ответа / «Вернуть…» этапа воркфлоу: открыть поле текста. */
   clarify(): void
   /** «Перезапустить» эскалацию. */
   restart(): void
@@ -70,7 +71,8 @@ function Kbd({ show, k }: { show: boolean; k: string }): React.JSX.Element | nul
 
 /**
  * Запрос к человеку (HumanRequest): вопрос с вариантами и своим ответом, ответ задачи-ответа с
- * «Принять» + решение / «Уточнить…», эскалация с «Перезапустить» / «Терминал» / «Скрыть».
+ * «Принять» + решение / «Уточнить…», эскалация с «Перезапустить» / «Терминал» / «Скрыть»,
+ * этап воркфлоу «человек» (approval) с «Принять» / «Вернуть…» и замечаниями.
  * Поля ввода — свои у каждой карточки. Один компонент для Инбокса, карточки на доске и модалки задачи.
  */
 export const RequestCard = forwardRef<RequestCardHandle, Props>(function RequestCard(props, ref) {
@@ -106,6 +108,10 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
   const sendClarify = (): void => {
     if (clarifyText.trim()) void resolve({ action: 'clarify', text: clarifyText.trim() })
   }
+  // Этап воркфлоу «человек»: «Вернуть» — с замечаниями, они уйдут воркеру при следующем запуске.
+  const sendReject = (): void => {
+    if (clarifyText.trim()) void resolve({ action: 'reject', text: clarifyText.trim() })
+  }
   const openClarify = (): void => {
     setClarifying(true)
     // Поле появится после перерисовки.
@@ -118,10 +124,10 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
       if (o) void resolve({ action: 'answer', optionId: o.id })
     },
     accept() {
-      if (r.kind === 'answer') accept()
+      if (r.kind === 'answer' || r.kind === 'approval') accept()
     },
     clarify() {
-      if (r.kind === 'answer') openClarify()
+      if (r.kind === 'answer' || r.kind === 'approval') openClarify()
     },
     restart() {
       if (r.kind === 'escalation') void resolve({ action: 'restart' })
@@ -131,7 +137,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
     }
   }))
 
-  const bodyLabel = r.kind === 'answer' ? 'ответ' : r.kind === 'question' ? 'контекст' : 'подробности'
+  const bodyLabel = r.kind === 'answer' ? 'ответ' : r.kind === 'question' ? 'контекст' : r.kind === 'approval' ? 'что проверить' : 'подробности'
 
   return (
     <div className={`rq rq-${r.kind}${compact ? ' compact' : ''}${active ? ' active' : ''}`} onClick={onSelect}>
@@ -236,6 +242,39 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
             </div>
           )}
         </>
+      )}
+
+      {r.kind === 'approval' && (
+        <div className="rq-free rq-stack">
+          {clarifying ? (
+            <>
+              <textarea
+                ref={clarifyRef}
+                value={clarifyText}
+                placeholder="Что исправить. Замечания получит воркер при следующем запуске."
+                aria-label="Замечания"
+                disabled={busy}
+                onChange={(e) => setClarifyText(e.target.value)}
+                onKeyDown={submitKeys(sendReject, onEscape)}
+              />
+              <div className="rq-actions">
+                <button className="btn-sm primary" disabled={busy || !clarifyText.trim()} onClick={sendReject}>
+                  {busy ? '…' : 'Вернуть'}
+                </button>
+                <button className="btn-text" disabled={busy} onClick={() => setClarifying(false)}>Отмена</button>
+              </div>
+            </>
+          ) : (
+            <div className="rq-actions">
+              <button className="btn-sm primary" disabled={busy} onClick={accept} title="Дальше по воркфлоу проекта (обычно мерж)">
+                <Kbd show={hints} k="A" />{busy ? '…' : 'Принять'}
+              </button>
+              <button className="btn-sm" disabled={busy} onClick={openClarify}>
+                <Kbd show={hints} k="C" />Вернуть…
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {r.kind === 'escalation' && (

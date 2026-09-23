@@ -61,13 +61,15 @@
   только в колонку kind `backlog`, `in_progress` или `done`. Подзадачу в колонку kind `in_progress`
   не переноси — без воркера она зависнет «в работе»; вместо этого запусти воркера (`worker start` или `task reopen --start`).
 - «Закрой»:
-  - подзадача в колонке ревью → `orca-board review accept --project <id> --task <id>` (слить ветку и закрыть);
+  - подзадача в колонке ревью → `orca-board review accept --project <id> --task <id>` («Принять»: дальше по
+    воркфлоу проекта — обычно слить ветку и закрыть; что будет, покажет `orca-board workflow show --project <id>`);
   - подзадача в другой колонке → `orca-board task move --project <id> --task <id> --status <id колонки done>` —
     предупреди, что это **без мержа** (изменения ветки не попадут в основную), и делай только после явного «да»;
   - глобальная → `orca-board global move --project <id> --global <id> --status <id колонки done>`.
 - «Ответь на вопрос» / «что там ждёт ответа» → `orca-board request list --project <id>`, полный текст —
   `orca-board request get --project <id> --request <id>`, ответ — `orca-board request resolve --project <id> --request <id> ...`
-  (вариантом `--option`, своим текстом `--text`, принять ответ `--accept`, уточнить `--clarify`).
+  (вариантом `--option`, своим текстом `--text`, принять ответ или этап воркфлоу `--accept`, уточнить `--clarify`,
+  вернуть задачу с этапа воркфлоу с замечаниями `--reject "..."`).
 - «Что на доске» / «что в работе» → `task list` / `global list` выбранного проекта (или всех — см. выше),
   ответ — сжатым списком.
 

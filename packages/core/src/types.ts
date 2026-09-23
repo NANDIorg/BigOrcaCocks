@@ -371,29 +371,31 @@ export interface Question {
 /**
  * Что ждёт человека: `question` — вопрос воркера (адресован человеку сразу или передан координатором),
  * `answer` — сданный ответ задачи `answerFor: 'human'` («Принять» / «Уточнить»), `escalation` — воркер
- * вышел без `orca-board done` («Перезапустить» / «Скрыть»).
+ * вышел без `orca-board done` («Перезапустить» / «Скрыть»), `approval` — рабочая задача на ноде `human`
+ * воркфлоу ждёт решения человека («Принять» / «Вернуть», docs/workflow.md).
  */
-export type HumanRequestKind = 'question' | 'answer' | 'escalation'
+export type HumanRequestKind = 'question' | 'answer' | 'escalation' | 'approval'
 
-export const HUMAN_REQUEST_KINDS: HumanRequestKind[] = ['question', 'answer', 'escalation']
+export const HUMAN_REQUEST_KINDS: HumanRequestKind[] = ['question', 'answer', 'escalation', 'approval']
 
 /** `pending` — единственный признак «ждёт человека» (колонка «Нужен ответ»). */
 export type HumanRequestStatus = 'pending' | 'resolved' | 'cancelled'
 
-export type ResolutionAction = 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss'
+export type ResolutionAction = 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss' | 'reject'
 
 /** Какие решения допустимы для вида запроса. */
 export const REQUEST_ACTIONS: Record<HumanRequestKind, ResolutionAction[]> = {
   question: ['answer'],
   answer: ['accept', 'clarify'],
-  escalation: ['restart', 'dismiss']
+  escalation: ['restart', 'dismiss'],
+  approval: ['accept', 'reject']
 }
 
 export interface RequestResolution {
   action: ResolutionAction
   /** Выбранный вариант вопроса (RequestOption.id). */
   optionId?: string
-  /** Свободный текст: ответ на вопрос, решение при «Принять», уточнение при «Уточнить». */
+  /** Свободный текст: ответ на вопрос, решение при «Принять», уточнение при «Уточнить», замечания при «Вернуть». */
   text?: string
 }
 
@@ -414,10 +416,12 @@ export interface HumanRequest {
   title: string
   /** Markdown: контекст вопроса (+ заметка координатора) или сам ответ задачи-ответа. */
   body?: string
-  /** Варианты вопроса; у answer/escalation пусто — их действия встроены (REQUEST_ACTIONS). */
+  /** Варианты вопроса; у answer/escalation/approval пусто — их действия встроены (REQUEST_ACTIONS). */
   options: RequestOption[]
   /** Вопрос, из которого создан запрос (kind=question): сокет `ask` держится за него. */
   questionId?: string
+  /** Нода `human` воркфлоу, на которой задача ждёт решения (kind=approval). */
+  nodeId?: string
   resolution?: RequestResolution
   createdAt: number
   /** Решён или отменён. */

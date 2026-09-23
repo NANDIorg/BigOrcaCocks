@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type TaskPriority, type Workflow } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, workerPath, type WorkerEnvContext } from './worker'
-import { getReview, acceptReview, resolveHumanRequest } from './review'
+import { getReview, resolveHumanRequest } from './review'
+import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, writeRule } from './rules'
 import { currentBranch } from './git'
@@ -203,8 +204,45 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
     assertAgentUsable(projectAgents(p.id), role.agent)
     // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
     closeTaskWorkers(p.store, taskId)
+    // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды может сменить роль задачи).
+    enterWork(workflowDeps(p.id), taskId)
   }
   return startWorker(p.store, p.root, ctx(p.id), taskId, cols, rows)
+}
+
+/**
+ * Граф для снимка в новом прогоне (`Run.workflow`). Граф из будущей версии приложения не снимается —
+ * прогон пойдёт по дефолтному графу, а не упадёт при создании.
+ */
+function runSnapshotWorkflow(projectId: string): Workflow | undefined {
+  try {
+    return projects.workflow(projectId)
+  } catch {
+    return undefined
+  }
+}
+
+/** Исполнитель воркфлоу проекта: store, репозиторий, роли и запуск воркера (docs/workflow.md). */
+function workflowDeps(projectId: string): WorkflowDeps {
+  const p = resolveProject(projectId)
+  return {
+    store: p.store,
+    repoRoot: p.root,
+    roles: () => projects.roles(p.id),
+    startWorker: (taskId) => runWorker(taskId, p.id)
+  }
+}
+
+/**
+ * Шаги воркфлоу по событиям store. Не внутри commit, где пришло событие: иначе `orca-board done` ждал бы мержа
+ * и запуска проверки, а вложенные commit перемешали бы порядок событий у подписчиков.
+ */
+function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
+  if (!events.some((e) => e.type === 'worker_done' || e.type === 'escalation')) return
+  setImmediate(() => {
+    if (!projects.get(projectId)) return
+    handleWorkflowEvents(workflowDeps(projectId), events)
+  })
 }
 
 /**
@@ -228,7 +266,8 @@ function runCoordinator(
   runId?: string
 ): string {
   const p = resolveProject(projectId)
-  return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows, images, runId).ptyId
+  const workflow = runId === undefined ? runSnapshotWorkflow(p.id) : undefined
+  return startCoordinator(p.store, p.root, { ...ctx(p.id), ...(workflow ? { workflow } : {}) }, objective, cols, rows, images, runId).ptyId
 }
 
 /** Живой терминал ассистента: один на всё приложение, повторное открытие — тот же PTY при любом активном проекте. */
@@ -366,7 +405,8 @@ function resolveRequest(projectId: string | undefined, id: string, resolution: R
   const p = resolveProject(projectId)
   const request = p.store.getRequest(id)
   if (request) syncWorkerLiveness(p.store, request.taskId)
-  return resolveHumanRequest(p.store, p.root, id, resolution, (taskId) => runWorker(taskId, p.id))
+  const deps = workflowDeps(p.id)
+  return resolveHumanRequest(p.store, p.root, id, resolution, deps.startWorker, (r) => approvalResolved(deps, r))
 }
 
 /** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */
@@ -447,7 +487,10 @@ function registerIpc(): void {
   // Глобальные задачи активного проекта (docs/nested-kanban.md). Изменения — в board:changed.
   ipcMain.handle('globalTasks:list', () => (projects.active() ? projects.activeStore().listGlobalTasks() : []))
   ipcMain.handle('globalTasks:get', (_e, id: string) => projects.activeStore().getGlobalTask(id))
-  ipcMain.handle('globalTasks:create', (_e, input: GlobalTaskInput) => projects.activeStore().createGlobalTask(input ?? {}))
+  ipcMain.handle('globalTasks:create', (_e, input: GlobalTaskInput) => {
+    const p = resolveProject()
+    return p.store.createGlobalTask({ ...(input ?? {}), workflow: runSnapshotWorkflow(p.id) })
+  })
   ipcMain.handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
   ipcMain.handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
   ipcMain.handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
@@ -522,11 +565,8 @@ function registerIpc(): void {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)
   })
-  ipcMain.handle('review:accept', (_e, taskId: string, decision?: string) => {
-    const p = resolveProject()
-    return acceptReview(p.store, p.root, taskId, decision)
-  })
-  ipcMain.handle('review:reject', (_e, taskId: string, feedback: string) => projects.activeStore().rejectReview(taskId, feedback))
+  ipcMain.handle('review:accept', (_e, taskId: string, decision?: string) => reviewAccept(workflowDeps(resolveProject().id), taskId, decision))
+  ipcMain.handle('review:reject', (_e, taskId: string, feedback: string) => reviewReject(workflowDeps(resolveProject().id), taskId, feedback))
 }
 
 app.whenReady().then(() => {
@@ -547,6 +587,7 @@ app.whenReady().then(() => {
   })
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
+  projects.onEvents(runWorkflowEvents)
   registerIpc()
   startSocketServer(SOCKET_PATH, {
     resolve: (projectId) => {
@@ -556,7 +597,8 @@ app.whenReady().then(() => {
         startWorker: (taskId) => runWorker(taskId, p.id),
         stopWorker: (taskId) => stopTaskWorker(p.store, taskId),
         review: (taskId) => getReview(p.store, p.root, taskId),
-        accept: (taskId, decision) => acceptReview(p.store, p.root, taskId, decision),
+        accept: (taskId, decision) => reviewAccept(workflowDeps(p.id), taskId, decision),
+        reject: (taskId, feedback) => reviewReject(workflowDeps(p.id), taskId, feedback),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId) => runCoordinator(objective, p.id, undefined, undefined, [], runId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
@@ -565,7 +607,8 @@ app.whenReady().then(() => {
         setRoles: (roles) => projects.setRoles(p.id, roles).roles ?? roles,
         agentRules: () => projects.agentRules(p.id),
         setAgentRules: (text) => projects.setAgentRules(p.id, text).agentRules ?? '',
-        columns: () => projects.columns(p.id)
+        columns: () => projects.columns(p.id),
+        workflow: () => ({ workflow: projects.workflow(p.id), custom: projects.get(p.id)?.workflow !== undefined })
       }
     },
     projects: () => {

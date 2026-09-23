@@ -66,6 +66,11 @@ export function mergeBranch(repoRoot: string, branch: string, message: string): 
   }
 }
 
+/** Убрать только worktree, ветку оставить: работа не слита, но и не потеряна (воркфлоу закончился без мержа). */
+export function removeWorktreeKeepBranch(repoRoot: string, worktree: string): void {
+  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
+}
+
 export function removeWorktree(repoRoot: string, worktree: string, branch: string): void {
   if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
   try {

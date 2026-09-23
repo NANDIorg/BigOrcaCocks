@@ -2,7 +2,7 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, TASK_PRIORITIES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
   type RequestResolution, type Question, type GlobalTask
 } from '@orca-board/core'
@@ -24,7 +24,10 @@ export interface ProjectDeps {
    */
   stopWorker(taskId: string): { stopped: string[] }
   review(taskId: string): unknown
+  /** `review accept`: на этапе проверки — исход accept по воркфлоу, иначе прежняя приёмка (src/main/workflow.ts). */
   accept(taskId: string, decision?: string): void
+  /** `review reject`: на этапе проверки — исход reject по воркфлоу, иначе ready с замечаниями. */
+  reject(taskId: string, feedback: string): unknown
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
   resolveRequest(id: string, resolution: RequestResolution): unknown
   /** Без runId — новый прогон (глобальная задача); с runId — повторный запуск на существующей. */
@@ -43,6 +46,8 @@ export interface ProjectDeps {
   setAgentRules(text: string): string
   /** Колонки доски в порядке показа. */
   columns(): BoardColumn[]
+  /** Воркфлоу проекта (`custom: false` — дефолтный по ролям, проект свой не задал). */
+  workflow(): { workflow: Workflow; custom: boolean }
 }
 
 /** Проект в ответе `projects list`: то, что нужно ассистенту, чтобы выбрать `--project`. */
@@ -179,6 +184,14 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   })
 }
 
+function projectWorkflow(deps: ProjectDeps): Workflow | undefined {
+  try {
+    return deps.workflow().workflow
+  } catch {
+    return undefined
+  }
+}
+
 /** --priority: значение проверяет store; флаг без значения (true) — отдельная понятная ошибка. */
 function priorityParam(r: Request): string | undefined {
   if (r.params.priority === true) throw new Error(`--priority требует значения: ${TASK_PRIORITIES.join(', ')}`)
@@ -209,12 +222,14 @@ const handlers: Record<string, Handler> = {
   'task.create': (r, deps, store) => createTask(r, deps, store, str(r.params.run)),
   'global.list': (_r, _d, store) => store.listGlobalTasks().map(withCoordinatorAlive),
   'global.get': (r, _d, store) => withCoordinatorAlive(store.getGlobalTask(globalId(r))),
-  'global.create': (r, _d, store) =>
+  'global.create': (r, deps, store) =>
     store.createGlobalTask({
       title: str(r.params.title),
       description: str(r.params.description),
       status: str(r.params.status),
-      priority: priorityParam(r) as TaskPriority | undefined
+      priority: priorityParam(r) as TaskPriority | undefined,
+      // Снимок воркфлоу проекта; граф из будущей версии не снимается — прогон пойдёт по дефолтному.
+      workflow: projectWorkflow(deps)
     }),
   'global.update': (r, _d, store) =>
     store.updateGlobalTask(globalId(r), {
@@ -411,11 +426,24 @@ const handlers: Record<string, Handler> = {
     deps.accept(id, str(r.params.decision))
     return store.getTask(id)
   },
-  'review.reject': (r, _d, store) => {
+  'review.reject': (r, deps) => {
     const id = str(r.params.task)
     const feedback = str(r.params.feedback)
     if (!id || !feedback) throw new Error('--task и --feedback обязательны')
-    return store.rejectReview(id, feedback)
+    return deps.reject(id, feedback)
+  },
+  // Граф этапов задачи: с --run (координатору CLI подставляет ORCA_RUN_ID) — снимок прогона, по нему идут его
+  // задачи; без --run — воркфлоу проекта, с которым начнутся новые прогоны.
+  'workflow.show': (r, deps, store) => {
+    const runId = str(r.params.run)
+    if (runId !== undefined) {
+      const run = store.getRun(runId)
+      if (!run) throw new Error(`run not found: ${runId}`)
+      const wf = store.runWorkflow(runId, deps.roles().map((x) => x.id))
+      return { source: run.workflow ? 'run' : 'default', run: runId, stages: describeWorkflow(wf) }
+    }
+    const { workflow, custom } = deps.workflow()
+    return { source: custom ? 'project' : 'default', stages: describeWorkflow(workflow) }
   },
   'events.list': (_r, _d, store) => store.listEvents(),
   'agents.list': (_r, deps) => deps.agents(),

@@ -85,6 +85,8 @@ function resolutionText(r: HumanRequest): string {
       return 'Воркер перезапущен'
     case 'dismiss':
       return 'Скрыт'
+    case 'reject':
+      return res.text ? `Возвращён: ${res.text}` : 'Возвращён'
   }
 }
 

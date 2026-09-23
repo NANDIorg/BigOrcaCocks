@@ -63,7 +63,8 @@
   (как `defaultsDiff.test.ts`). Логику из компонентов выноси в `.ts`-модуль и тестируй его
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).
 - **Обновляй docs в том же коммите:** `docs/architecture.md` (модель, IPC, сокет, CLI),
-  `docs/nested-kanban.md` (глобальные задачи), `docs/human-requests.md` (запросы к человеку).
+  `docs/nested-kanban.md` (глобальные задачи), `docs/human-requests.md` (запросы к человеку),
+  `docs/workflow.md` (воркфлоу задачи: этапы, проверки, мерж).
   Нашёл грабли — добавь их в раздел «Грабли разработки».
 
 ## Стиль кода

@@ -79,19 +79,22 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
   адресован человеку и по нему есть `HumanRequest`. Ответить можно один раз, у запуска — не больше одного открытого вопроса.
-- `HumanRequest { id, runId, taskId, dispatchId?, kind, status, title, body?, options[], questionId?, resolution?, createdAt, resolvedAt? }` —
-  запрос к человеку: `kind` `question` | `answer` | `escalation`, `status` `pending` | `resolved` | `cancelled`.
+- `HumanRequest { id, runId, taskId, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, resolution?, createdAt, resolvedAt? }` —
+  запрос к человеку: `kind` `question` | `answer` | `escalation` | `approval` (этап воркфлоу «человек», `nodeId` — его нода),
+  `status` `pending` | `resolved` | `cancelled`.
   Единственный источник «ждёт человека» (колонка «Нужен ответ», Инбокс, уведомления); модель, переходы и события —
   `docs/human-requests.md`. Хранится в `StoreSnapshot.requests`.
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
   типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `answer_accepted`, `run_done`,
   `request_created`, `request_resolved`, `answer_clarified`, `stage_changed`, `workflow_blocked` (последние два — воркфлоу,
-  см. «Воркфлоу: состояние в store»; пока их шлёт только `advanceStage`, координатору они не нужны). Payload короткие: в `worker_done`/`answer_accepted` `answer` —
+  см. «Воркфлоу: состояние в store»; координатор подписан только на `workflow_blocked`, `stage_changed` — для UI).
+  `worker_done` задачи-проверки несёт `gateFor` (id проверяемой задачи). Payload короткие: в `worker_done`/`answer_accepted` `answer` —
   последнее поле, обрезан до 2000 символов (`answerTruncated: true`), полный ответ и `decision` — `orca-board task answer --task <id>`;
   тексты в `question`/`request_created`/`answer_clarified` — до 300 символов, целиком — `question get` / `request get`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
   `in_progress` при старте воркера; `review` после `done`; `needs_input` — пока у задачи есть `pending` `HumanRequest`
-  (вопрос к человеку, ответ для человека, выход PTY без `done`); решили последний — обратно в поток.
+  (вопрос к человеку, ответ для человека, выход PTY без `done`, этап «человек»); решили последний — обратно в поток.
+  Дальше после `review` рабочую задачу двигает исполнитель воркфлоу («Ревью и мерж»).
   При загрузке снапшота dispatch без `endedAt` закрываются (`unknown`), их задачи из `in_progress` → `ready`.
 
 ## Роли и колонки (`src/main/projects.ts`)
@@ -118,7 +121,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   граф не передаётся — он строится по ролям и без `reviewer` сам переходит на ревью человеком); под списком ролей — «Вернуть системные роли» (`restoreSystemRoles`: недостающие из
   `DEFAULT_ROLES` с настройками по умолчанию, на свои места). Без роли: `task create --role <id>` и `worker start` —
   ошибка `missingRoleMessage` (`src/main/agents.ts`: список ролей и, для системной, как её вернуть); координатор
-  не запускается (см. ниже); без `reviewer` координатор не создаёт задачи ревью (`skills/coordinator.md`).
+  не запускается (см. ниже); без `reviewer` дефолтный воркфлоу отдаёт ревью человеку (нода `human`, `docs/workflow.md`).
 - **Валидация ролей** (`validateRoles`): хотя бы одна роль; непустые уникальные `id`, непустые
   `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются);
   `description` и `systemPrompt` — строки или отсутствуют, хранятся как введены (без trim), из одних пробелов → удаляются;
@@ -210,9 +213,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 ## Воркфлоу: модель (`packages/core/src/workflow.ts`)
 
 Граф этапов, которые проходит **одна рабочая задача** от первого запуска до мержа. Декомпозиция цели остаётся
-за координатором, задачи-ответы (`answerFor`) идут мимо воркфлоу. Сейчас в core есть модель, чистые функции
-и состояние в store (ниже); хранение (`Project.workflow`) и исполнитель в main — следующие шаги.
-Модуль без node-импортов: его импортирует renderer ради живой валидации в редакторе.
+за координатором, задачи-ответы (`answerFor`) идут мимо воркфлоу. В core — модель, чистые функции и состояние
+в store (ниже), в `projects.json` — граф проекта (`Project.workflow`), исполняет его main (`src/main/workflow.ts`,
+раздел «Ревью и мерж» и `docs/workflow.md`). Модуль без node-импортов: его импортирует renderer ради живой
+валидации в редакторе.
 
 - **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 1`. Ноды (`WfNode`): `start`, `work`
   (без `roleId` — роль задачи), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
@@ -245,11 +249,15 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   проверка через `git merge --no-commit`/`--abort`, `review accept` / `review reject`, обязательный `done`,
   спека рабочей задачи как критерии. Команды сборки и тестов конкретного репозитория в шаблон не входят —
   они берутся из `node.instructions` (раздел «Как проверять») или системного промпта роли.
+- **`describeWorkflow(wf)` → `WfStageInfo[]`** — граф для `orca-board workflow show`: этапы в порядке обхода от
+  старта (недостижимые — в конце) с `type`, `title`, `roleId?`, `instructions?`, `condition?` (условие словами) и
+  `next` — исход → «название (id)» ноды.
 
 ### Воркфлоу: состояние в store (`packages/core/src/store.ts`)
 
-Исполнитель ещё выключен: `finishDispatch`, `rejectReview`, `acceptTask` работают по-старому и `stage` не трогают,
-колонку задачи `advanceStage` тоже не меняет. Store хранит только позицию.
+Store хранит позицию и решает, куда задача переходит; колонки, воркеры, проверки и мерж — эффекты исполнителя
+в main (`src/main/workflow.ts`, `docs/workflow.md`). `finishDispatch`, `rejectReview`, `acceptTask` сами `stage`
+не двигают — исход до `advanceStage` доводит main.
 
 - **Снимок графа** — `Run.workflow`: `createRun(objective, ptyId?, workflow?)` и `createGlobalTask({…, workflow})`
   кладут глубокую копию графа, который передаёт вызывающий код (store в проект не ходит). Правка графа посреди
@@ -260,11 +268,22 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}`;
   `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
   гейта удалена). Эффекты `action` выполнит main.
+- **`enterWork(taskId, {roleIds?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
+  задача не на ноде `work` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
+  складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` —
+  ничего. Задачи-ответы и гейты — мимо. Возвращает `action` нового этапа.
+- **`blockStage(taskId, reason)`** — эффект этапа не выполнился (воркер не стартовал, мерж упал не конфликтом):
+  `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
+- **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
+  задача в `needs_input`; ждущий approval той же задачи не дублируется. Решение — `resolveRequest` с `accept` /
+  `reject` (`text` при reject → `task.feedback`), `request_resolved {kind: 'approval', action, nodeId}`.
+- **Задача-гейт** — `createTask({…, gateFor: {taskId, nodeId}})` (проверяемая задача должна существовать): `task_ready`
+  по ней не шлётся (воркера запускает исполнитель), `worker_done` несёт `gateFor: <id рабочей задачи>`.
 - **Миграция при загрузке** (`migrateStages`): задача в колонке kind=review без `stage` (сдана кодом до воркфлоу),
   кроме задач-ответов и задач-гейтов, встаёт на первый гейт дефолтного графа — `{nodeId: 'review', visits:
   {start: 1, work: 1, review: 1}}`. Id ноды ревью одинаковый с `reviewer` и без, поэтому роли не нужны. Событий
-  нет. Задачи «Ревью: …», созданные координатором вручную (роль `reviewer`, без `gateFor`), миграция не отличает
-  от рабочих — их разбирает исполнитель.
+  нет. Задачи «Ревью: …», созданные координатором вручную до воркфлоу (роль `reviewer`, без `gateFor`), миграция
+  не отличает от рабочих: сданная такая задача встаёт на ревью, и её закрывает человек «Принять» (сливать нечего).
 
 ### Воркфлоу: редактор (`renderer/src/WorkflowCanvas.tsx`, `WorkflowInspector.tsx`, `about/WorkflowSection.tsx`)
 
@@ -397,6 +416,8 @@ orca-board projects list                    # [{id,name,root,active,inProgress}]
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
 orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
+orca-board workflow show [--run <id>]       # {source: run|project|default, run?, stages: WfStageInfo[]} — этапы задачи после worker_done
+orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor
 orca-board rules get [--role <id>]          # правила агентов доски: общие ({rules}) или роли ({role,title,rules})
 orca-board rules set [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]
@@ -421,8 +442,8 @@ orca-board global list|get|create|update|move|delete|tasks|add-task|start   # г
 orca-board worker read --dispatch <id>
 ```
 
-`--run` у `task create`, `check`, `request list`, `runs close` и `runs finish` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
-`params.run`: задачи (в т.ч. ревью), созданные координатором, наследуют его прогон
+`--run` у `task create`, `check`, `request list`, `workflow show`, `runs close` и `runs finish` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
+`params.run`: задачи, созданные координатором, наследуют его прогон, а `workflow show` показывает снимок графа его прогона
 (`packages/cli/bin/orca-board.js`). `runs close`/`runs finish` без прогона — ошибка до обращения к сокету.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
 каждую строку ответа; SIGINT/SIGTERM → закрыть сокет, код 0; ошибка сервера или разрыв соединения → код 1.
@@ -838,7 +859,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
-| `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `restart`, `dismiss` | `{request, worker?, startError?}` |
+| `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `reject`, `restart`, `dismiss` | `{request, worker?, startError?}` |
+| `task.list` / `task.get` | `run?` / `task` | `Task[]` / `Task \| null` — со `stage` и `gateFor` |
+| `workflow.show` | `run?` | с `run` — `{source: 'run' \| 'default', run, stages}` (снимок прогона, у прогона без снимка — дефолт по ролям); без — `{source: 'project' \| 'default', stages}` (`ProjectDeps.workflow` → `ProjectManager.workflow`); `stages` — `describeWorkflow` |
+| `review.accept` | `task`, `decision?` | `Task`; на этапе проверки — исход `accept` воркфлоу (`reviewAccept`, `src/main/workflow.ts`) |
+| `review.reject` | `task`, `feedback` | `Task`; на этапе проверки — исход `reject` воркфлоу (`ProjectDeps.reject` → `reviewReject`) |
 | `worker.stop` | `task` | `{stopped: dispatchId[], task}` |
 | `worker.restart` | `task`, `feedback?` | `{stopped, ptyId, dispatchId, worktree, branch}` |
 | `task.reopen` | `task`, `feedback?`, `start?` | `Task`; со `start` — `{task, worker}` |
@@ -861,17 +886,46 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 спрашивает только про опасные. `bypassPermissions` — вообще без вопросов, `acceptEdits` —
 только правки файлов без вопросов, остальной Bash спросит в терминале приложения.
 
-## Ревью и мерж (`src/main/review.ts`, `src/main/git.ts`)
+## Ревью и мерж (`src/main/review.ts`, `src/main/workflow.ts`, `src/main/git.ts`)
 
+Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
+Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
+
+- **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
+  старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
+  становится ролью задачи.
+- **Подписка** `projects.onEvents(runWorkflowEvents)` в `src/main/index.ts` (как `deliverAnswers`), шаги —
+  `setImmediate`, не внутри commit: `worker_done` рабочей задачи текущего dispatch → исход `next`; `worker_done`
+  задачи-проверки → закрыть её (решение уже есть) или `workflow_blocked` «сдана без решения»; `escalation`
+  проверки с решением → закрыть. Задачи-ответы — мимо.
+- **Эффекты** (`execute`): `start_worker` — задача в ready и `runWorker`; `create_gate` — рабочая в колонку ноды
+  (по умолчанию `kind=review`), `createTask` с `gateFor`, `gateTaskTitle`/`gateTaskSpec` и ролью гейта, сразу
+  `runWorker`; `request_human` — `requestApproval` (тело: инструкция ноды, текст конфликта, итог воркера, ветка);
+  `merge` — `mergeTaskBranch`, затем сразу исход `ok` / `conflict`; `done` — ветка слита → `acceptTask`, не слита
+  (конец без мержа) → хвосты коммитятся, worktree убирается, **ветка остаётся**, задача в done. Ошибка эффекта →
+  `blockStage` (`workflow_blocked`) с причиной и командой, если её можно выполнить. Больше 50 переходов подряд без
+  ожидания — тоже `workflow_blocked`.
+- **`mergeTaskBranch(repoRoot, task)`** (`review.ts`) — git-часть приёмки: незакоммиченное коммитится от
+  `orca-board`, `git merge --no-ff` в текущую ветку репозитория (если в ветке есть коммиты), `git worktree remove
+  --force`, `git branch -D`. Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
+  месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
+- **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
+  исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
+  проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
+  `mergeTaskBranch`, конфликт — ошибка). На другом этапе — ошибка «принимать нечего».
+- **`review reject --feedback` / «Вернуть»** — `reviewReject`: на ноде проверки — `feedback` и исход `reject`
+  (дефолт — снова в работу, воркер стартует сразу); иначе `store.rejectReview` (ready с замечаниями, у ответа —
+  «Уточнить»). `task.feedback` добавляется в промпт при следующем старте.
+- **approval** из Инбокса / `request resolve --accept|--reject` — `resolveHumanRequest` → `store.resolveRequest` →
+  `approvalResolved`: переход по исходу, если задача всё ещё на ноде запроса.
 - `review info`: `git diff --stat base...branch`, `git log base..branch`, плюс незакоммиченное в worktree.
-- `review accept`: незакоммиченное коммитится от `orca-board`, затем `git merge --no-ff` в текущую
-  ветку репозитория, `git worktree remove --force`, `git branch -D`; задача → колонка `kind=done`
-  (`store.columnId('done')`, проставляется `doneAt`). Конфликт → `merge --abort` и ошибка в UI.
-- `review reject --feedback`: задача → колонка `kind=ready`, `task.feedback` добавляется в промпт при следующем старте.
-- Задача-ответ (`answerFor`): `review accept` ничего не коммитит и не сливает — только удаляет worktree и ветку;
-  `reject` — уточнение, при перезапуске промпт получает последний `Dispatch.answer` и уточнение (`workerTaskPrompt`).
-  Для `answerFor: 'human'` приёмка и уточнение — решение запроса `answer` (`resolveHumanRequest`: «Уточнить» сразу
-  стартует воркера, событие `answer_clarified`), см. `docs/human-requests.md`.
+- Задача-ответ (`answerFor`): `review accept` ничего не коммитит — сливает только коммиты ветки, удаляет worktree
+  и ветку; `reject` — уточнение, при перезапуске промпт получает последний `Dispatch.answer` и уточнение
+  (`workerTaskPrompt`). Для `answerFor: 'human'` приёмка и уточнение — решение запроса `answer`
+  (`resolveHumanRequest`: «Уточнить» сразу стартует воркера, событие `answer_clarified`), см. `docs/human-requests.md`.
+- **Снимок графа в новом прогоне**: `runCoordinator` (новый прогон), IPC `globalTasks:create` и сокет
+  `global.create` передают граф проекта (`ProjectManager.workflow`; граф будущей версии не снимается — прогон
+  пойдёт по дефолтному). «Входящие» и прогоны до воркфлоу — дефолтный граф по текущим ролям.
 - Ответ рендерится в `TaskModal` (`AnswerBlock`, `Markdown.tsx`: `marked` + `DOMPurify`). Кликабельны только
   `http(s)`-ссылки (открываются во внешнем браузере); остальные схемы и относительные пути — без `href`,
   чтобы `shell.openExternal` не получил `file://` из текста агента.
@@ -1026,6 +1080,10 @@ UI работает с активным проектом; воркеры и ко
 - В `styles.css` стили глобальные: модификатор с общим именем подхватывает чужие правила. Поле «Решение»
   в карточке запроса было `rq-free column` и получало `.column { width: 300px; flex: 0 0 300px }` колонки
   доски — вылезало за карточку. Модификаторы компонента называй с его префиксом (`rq-stack`).
+- Подписчики `projects.onEvents` вызываются синхронно внутри `commit` store. Тяжёлый эффект прямо в подписке
+  (мерж, запуск проверки) выполнялся бы внутри `orca-board done` воркера, а вложенные commit перемешали бы
+  порядок событий у остальных подписчиков. Исполнитель воркфлоу откладывает шаги через `setImmediate`
+  (`runWorkflowEvents` в `src/main/index.ts`).
 
 ## Открытые вопросы
 

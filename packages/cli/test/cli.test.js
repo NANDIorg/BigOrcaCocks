@@ -196,4 +196,16 @@ describe('orca-board CLI', () => {
     const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
     for (const cmd of ['rules get', 'rules set']) assert.ok(out.includes(cmd), cmd)
   })
+
+  it('workflow show: прогон из ORCA_RUN_ID, явный --run важнее, без прогона — воркфлоу проекта; есть в help', async () => {
+    const own = await run(['workflow', 'show'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(own.req.method, 'workflow.show')
+    assert.deepEqual(own.req.params, { run: 'run_1' })
+    assert.deepEqual((await run(['workflow', 'show', '--run', 'run_2'], { ORCA_RUN_ID: 'run_1' })).req.params, { run: 'run_2' })
+    assert.deepEqual((await run(['workflow', 'show'])).req.params, {})
+    const reject = await run(['request', 'resolve', '--request', 'req_1', '--reject', 'поправь'])
+    assert.deepEqual(reject.req.params, { request: 'req_1', reject: 'поправь' })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['workflow show', 'task get', '--reject', 'workflow_blocked']) assert.ok(out.includes(cmd), cmd)
+  })
 })
