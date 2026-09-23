@@ -80,7 +80,7 @@ needs_input — **вычисляемая** колонка: там карточк
 | Координатор запущен на прогоне (`setRunPty`) | закрытый прогон переоткрывается; карточка → `kind=in_progress` |
 | Все подзадачи в `kind=done` (`closeFinishedRuns`) | `closedAt`, событие `run_done`, карточка → **`kind=review` («Проверка»)**. У «Входящих» — без события (нет координатора) и сразу `kind=done` |
 | `runs finish` на незакрытом прогоне, где все подзадачи в `kind=done` (`finishRun`) | то же закрытие (`closedAt`, `reopenedAt` снят, карточка → `kind=review`, `run_done` сразу помечен потреблённым) + `finishedAt` |
-| Ручной перенос карточки в `kind=done` или `kind=review` (`moveGlobalTask`, UI и `global move`) | pending-запросы прогона отменяются; открытый прогон закрывается: `closedAt`, `reopenedAt` снят, событие `run_done {runId, objective, manual: true}` (у «Входящих» — без события); подзадачи не трогаются. Уже закрытый — без изменений и без второго события (review → done = «Подтвердить», done → review — просто перенос). Координатор получает `run_done`, а `coordinatorsToClose` закрывает его терминал после короткой тишины, даже без `runs finish`. В done из backlog/in_progress — сразу «Сделано»: человек сам объявил задачу сделанной, проверка не нужна |
+| Ручной перенос карточки в `kind=done` или `kind=review` (`moveGlobalTask`, UI и `global move`) | pending-запросы прогона отменяются; открытый прогон закрывается: `closedAt`, `reopenedAt` снят, событие `run_done {runId, objective, manual: true}` (у «Входящих» — без события); подзадачи не трогаются. Уже закрытый — без изменений и без второго события (review → done = «Подтвердить», done → review — просто перенос). Координатор получает `run_done`, а `coordinatorsToClose` закрывает его терминал после короткой тишины, даже без `runs finish`. В done из backlog/in_progress — сразу «Сделано»: человек сам объявил задачу сделанной, проверка не нужна. «Входящие» в `kind=review` — ошибка: у них нет «Подтвердить» и «Вернуть в работу» |
 | Ручной перенос карточки из `kind=done`/`kind=review` в backlog или in_progress (`moveGlobalTask`) | закрытый прогон переоткрывается (как ниже: `reopenedAt`, старые `run_done` погашены), карточка — в выбранную колонку. Координатор не запускается, уточнения нет — для этого «Вернуть в работу» |
 | «Подтвердить» (`acceptGlobalTask`) | только из `kind=review` → `kind=done`; `closedAt` не меняется, событий нет |
 | «Вернуть в работу» (`returnGlobalTask` + запуск координатора в main) | только из `kind=review`, не «Входящие», текст обязателен: уточнение → `returns`, прогон переоткрыт (`reopenRun`), карточка → `kind=in_progress`; см. «Проверка» |
@@ -170,7 +170,7 @@ needs_input — **вычисляемая** колонка: там карточк
   глобальная задача (название — из цели), его подзадачи попадают в неё через `ORCA_RUN_ID`.
 - **Повторный запуск на существующей**: `coordinator start --global <id>` = `global start --global <id>`,
   IPC `globalTasks.startCoordinator(id, cols, rows, images?)`. Новый прогон **не создаётся** — тот же id,
-  подзадачи идут туда же (дублей глобальной задачи нет). Проверки (`resumeObjective`, `worker.ts`):
+  подзадачи идут туда же (дублей глобальной задачи нет). Проверки (`resumeObjective`, `src/main/coordinator-resume.ts` — без PTY, живость терминала передаёт `worker.ts`):
   нет такой → ошибка; «Входящие» → ошибка; жив прежний координатор этой глобальной (`coordinatorPtyId`) → ошибка.
   Цель (`resumeCoordinatorObjective`, `packages/core/src/prompts.ts`) — описание (пусто → название) плюс
   строка «Повторный запуск: …» со ссылкой на одноимённый раздел `skills/coordinator.md` и список уже
@@ -198,7 +198,7 @@ needs_input — **вычисляемая** колонка: там карточк
 - **Подтвердить** — IPC `globalTasks.accept(id)` → `TaskStore.acceptGlobalTask`: `kind=review` → `kind=done`,
   без событий. Не на проверке — ошибка «глобальная задача … не на проверке».
 - **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows)` → `ptyId` координатора
-  (`returnToWork` в `apps/desktop/src/main/worker.ts`):
+  (`returnToWork` в `apps/desktop/src/main/worker.ts`; шаги 1–2 — `returnGlobalTaskToWork` в `coordinator-resume.ts`):
   1. жив прежний координатор (окно после `runs finish`, пока `coordinatorsToClose` не закрыл терминал) —
      ошибка «координатор … ещё завершается — повторите через несколько секунд», стор не меняется;
   2. `TaskStore.returnGlobalTask(id, text)`: пустой текст, «Входящие», не на проверке — ошибка; иначе
@@ -361,6 +361,10 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
   «Проверка»: автозакрытие и `runs finish` → review, «Подтвердить», «Вернуть в работу» (уточнения, погашенные
   `run_done`, повторный цикл), ручные переносы в/из review, «Входящие» не на проверке, рестарт с review.
 - `packages/core/src/coordinator-close.test.ts` — последний `run_done` переоткрытого прогона.
+- `apps/desktop/src/main/global-review.test.ts` — сквозной цикл «Проверки» на store + `resumeObjective` /
+  `returnGlobalTaskToWork` без PTY: автозакрытие → review → `runs finish` и закрытие терминала → возврат с
+  уточнением (цель) → новая работа → review → «Подтвердить»; возврат без новой работы; ручные переносы;
+  рестарт; «Входящие».
 - `packages/core/src/answers.test.ts`, `requests.test.ts` — задачи-ответы, запросы к человеку: создание, решения,
   отмена, миграция, колонка «Нужен ответ» только по `pending`.
 - `packages/core/src/prompts.test.ts` — встроенный промпт координатора содержит раздел «Повторный запуск»
