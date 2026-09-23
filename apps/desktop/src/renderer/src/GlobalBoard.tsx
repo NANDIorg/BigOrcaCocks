@@ -5,7 +5,8 @@ import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, type GlobalTimePart } from './duration'
 import { useNow } from './useNow'
-import { GLOBAL_BOARD_SORT_KEY, SORT_OPTIONS, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
+import { PriorityBadge } from './Priority'
+import { BOARD_SORT_OPTIONS, GLOBAL_BOARD_SORT_KEY, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
 /**
  * Сводка по подзадачам, которую карточке не вычислить из GlobalTask: ревью кода. Всё, что ждёт человека
@@ -140,7 +141,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
       <div className="board-toolbar">
         <span className="board-sort-label">Сортировка:</span>
         <div className="segmented" role="group" aria-label="Сортировка карточек">
-          {SORT_OPTIONS.map((o) => (
+          {BOARD_SORT_OPTIONS.map((o) => (
             <button
               key={o.value}
               type="button"
@@ -243,6 +244,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                       )}
                       <div className="g-card-chips">
                         <span className="g-chip status">{column.title}</span>
+                        <PriorityBadge item={g} className="g-chip" />
                         {g.inbox && <span className="g-chip">служебная</span>}
                         {live && <span className="chip live">● координатор</span>}
                         {g.waiting > 0 && <span className="g-chip warn">ждёт вашего ответа: {g.waiting}</span>}

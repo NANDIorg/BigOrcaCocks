@@ -18,3 +18,13 @@ export function priorityBadge(t: { priority?: unknown }): { priority: TaskPriori
 export function priorityEditable(t: { priority?: unknown }): boolean {
   return isTaskPriority(t.priority)
 }
+
+export const STALE_PRIORITY_MESSAGE = 'Приложение запущено со старой версией main, где ещё нет приоритетов. Перезапустите приложение.'
+
+/**
+ * Знает ли main приоритет глобальных задач. Новый main проставляет `Run.priority` всем прогонам (миграция),
+ * старый — никому; по нему и судим. Прогонов нет — считаем, что знает: старый main просто создаст normal.
+ */
+export function runsKnowPriority(runs: readonly { priority?: unknown }[]): boolean {
+  return runs.length === 0 || runs.some(priorityEditable)
+}

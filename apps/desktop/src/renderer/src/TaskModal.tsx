@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
-  AGENT_TITLES, PRIORITY_TITLES, TASK_PRIORITIES, isTaskPriority, modelLabel,
+  AGENT_TITLES, PRIORITY_TITLES, isTaskPriority, modelLabel,
   type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
   type RequestResolution
 } from '@orca-board/core'
@@ -14,7 +14,8 @@ import { Markdown } from './Markdown'
 import { Icon } from './icons'
 import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
-import { priorityEditable, taskPriorityOf } from './taskPriority'
+import { STALE_PRIORITY_MESSAGE, priorityEditable, taskPriorityOf } from './taskPriority'
+import { PriorityOptions } from './Priority'
 
 interface Props {
   /** Актуальная задача из снимка: App находит её по id при каждом обновлении. */
@@ -47,8 +48,6 @@ function formatDate(ts: number): string {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
   })
 }
-
-const STALE_PRIORITY_MESSAGE = 'Приложение запущено со старой версией main, где ещё нет приоритетов. Перезапустите приложение.'
 
 /** Подпись исхода dispatch'а. Без outcome: ещё работает, если не завершён, иначе неизвестно. */
 function outcomeLabel(d: Dispatch): { text: string; cls: string } {
@@ -260,9 +259,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                     aria-label="Приоритет"
                     onChange={(e) => void changePriority(e.target.value)}
                   >
-                    {TASK_PRIORITIES.map((p) => (
-                      <option key={p} value={p}>{PRIORITY_TITLES[p]}</option>
-                    ))}
+                    <PriorityOptions />
                   </select>
                 ) : (
                   // Задача без поля — main старый и приоритет не сохранит.

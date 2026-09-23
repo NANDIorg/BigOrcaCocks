@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { compareByDates, compareByPriority, compareSorted, globalSortDates, isBoardSort, readSort, type BoardSort, type Prioritized, type SortDates } from './boardSort'
+import { BOARD_SORT_OPTIONS, compareByDates, compareByPriority, compareGlobals, compareSorted, globalSortDates, isBoardSort, readSort, type BoardSort, type GlobalSortable, type Prioritized, type SortDates } from './boardSort'
 
 const a: SortDates = { createdAt: 1, updatedAt: 30 }
 const b: SortDates = { createdAt: 2, updatedAt: 10, doneAt: 20 }
@@ -64,4 +64,36 @@ test('в режимах по датам приоритет не влияет', (
     [card('b', 2, 'urgent'), card('a', 1, 'low')].sort((x, y) => compareSorted('created', x, y)).map((x) => x.id),
     ['a', 'b']
   )
+})
+
+type G = GlobalSortable & { id: string }
+const global = (id: string, createdAt: number, priority?: Prioritized['priority']): G =>
+  ({ id, createdAt, activityAt: 100 - createdAt, ...(priority ? { priority } : {}) })
+const globalsBy = (sort: BoardSort, items: G[]): string[] => [...items].sort((x, y) => compareGlobals(sort, x, y)).map((x) => x.id)
+
+test('глобальная доска предлагает сортировку по приоритету', () => {
+  assert.ok(BOARD_SORT_OPTIONS.some((o) => o.value === 'priority' && o.title === 'по приоритету'))
+})
+
+test('compareGlobals priority — сначала выше приоритет', () => {
+  assert.deepEqual(
+    globalsBy('priority', [global('low', 1, 'low'), global('normal', 2, 'normal'), global('urgent', 3, 'urgent'), global('high', 4, 'high')]),
+    ['urgent', 'high', 'normal', 'low']
+  )
+})
+
+test('compareGlobals priority — при равном приоритете порядок по созданию', () => {
+  assert.deepEqual(globalsBy('priority', [global('c', 3, 'urgent'), global('a', 1, 'urgent'), global('b', 2, 'urgent')]), ['a', 'b', 'c'])
+})
+
+test('compareGlobals priority — карточка без поля (старый main) считается normal', () => {
+  assert.deepEqual(
+    globalsBy('priority', [global('old', 1), global('low', 0, 'low'), global('norm', 2, 'normal'), global('high', 3, 'high')]),
+    ['high', 'old', 'norm', 'low']
+  )
+})
+
+test('compareGlobals по датам приоритет не учитывает', () => {
+  assert.deepEqual(globalsBy('created', [global('b', 2, 'urgent'), global('a', 1, 'low')]), ['a', 'b'])
+  assert.deepEqual(globalsBy('updated', [global('a', 1, 'low'), global('b', 2, 'urgent')]), ['a', 'b'])
 })

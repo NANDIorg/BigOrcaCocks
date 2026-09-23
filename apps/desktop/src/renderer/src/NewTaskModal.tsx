@@ -1,10 +1,11 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
-  AGENT_TITLES, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, PRIORITY_TITLES, TASK_PRIORITIES, isTaskPriority, isTaskRole, modelLabel,
+  AGENT_TITLES, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, isTaskPriority, isTaskRole, modelLabel,
   type AgentInfo, type Role, type Task, type TaskPriority
 } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
+import { PriorityOptions } from './Priority'
 import { ipcErrorMessage } from './useAutoSave'
 
 interface Props {
@@ -102,9 +103,7 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
         <label>
           Приоритет
           <select value={priority} onChange={(e) => isTaskPriority(e.target.value) && setPriority(e.target.value)}>
-            {TASK_PRIORITIES.map((p) => (
-              <option key={p} value={p}>{PRIORITY_TITLES[p]}</option>
-            ))}
+            <PriorityOptions />
           </select>
         </label>
         <label>
