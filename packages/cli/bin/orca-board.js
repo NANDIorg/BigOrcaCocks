@@ -17,26 +17,36 @@ function defaultSocketPath(opts) {
 const HELP = `orca-board — управление доской агентов
 
 Человек:
-  coordinator start --objective "..."     открыть Claude Code-координатора в приложении (новая глобальная задача)
+  coordinator start --objective "..." [--type <id>]   открыть Claude Code-координатора в приложении (новая
+                                          глобальная задача типа --type; без него — типа проекта по умолчанию)
   coordinator start --global <id>         повторный запуск координатора на существующей глобальной задаче
 
 Проекты (уровень приложения, --project не нужен):
   projects list                           все проекты: id, name, root, active (активный в приложении),
-                                          inProgress — задач в работе, templateId и templateTitle —
-                                          тип проекта (шаблон, из которого создан); без проектов — []
+                                          inProgress — задач в работе, defaultTypeId и defaultTypeTitle —
+                                          тип задач проекта по умолчанию; без проектов — []
 
-Правила агентов доски (попадают только в системный промпт воркеров и координатора, не в CLAUDE.md/AGENTS.md):
-  rules get [--role <id>]                 без --role — общие правила проекта, с --role — правила роли
-                                          (= её системный промпт в «О проекте → Роли»); не заданы — ""
-  rules set [--role <id>] --text "..."    заменить правила; --text "" — очистить
-  rules set [--role <id>] --file rules.md   то же из файла (markdown); применяется при следующем запуске агента
+Типы задач (тип выбирается у глобальной задачи и задаёт её роли, воркфлоу, правила агентов и разрешения):
+  types list                              типы, доступные проекту: id, title, description, default — тип проекта
+                                          по умолчанию, builtin — встроенный, роли (agent, agentEnabled), этапы графа
+
+Правила агентов доски — правила типа задачи (попадают только в системный промпт воркеров и координатора,
+не в CLAUDE.md/AGENTS.md). Тип: --type <id>, иначе тип глобальной задачи --run (координатору — $ORCA_RUN_ID),
+иначе тип проекта по умолчанию. Встроенный тип правится на месте:
+  rules get [--type <id>] [--run <id>] [--role <id>]   без --role — общие правила типа, с --role — правила роли
+                                          (= её системный промпт); не заданы — ""
+  rules set [--type <id>] [--run <id>] [--role <id>] --text "..."    заменить правила; --text "" — очистить
+  rules set [--type <id>] [--run <id>] [--role <id>] --file rules.md   то же из файла (markdown); применяется
+                                          при следующем запуске агента во всех проектах с этим типом
 
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
   global list                             карточки: название, описание, статус-колонка, priority, прогресс подзадач,
-                                          coordinatorAlive — жив ли терминал координатора
+                                          typeId и typeTitle — тип задачи, coordinatorAlive — жив ли терминал координатора
   global get [--global <id>]              одна карточка (с coordinatorAlive)
   global create [--title "..."] [--description "..."] [--status <id колонки>]
                 [--priority urgent|high|normal|low]   приоритет глобальной задачи, по умолчанию normal
+                [--type <id из types list>]   тип задачи (роли, воркфлоу, правила); без него — тип проекта
+                                          по умолчанию; тип задаётся при создании и потом не меняется
   global update --global <id> [--title "..."] [--description "..."] [--priority urgent|high|normal|low]
                                           приоритет меняется в любой колонке; подзадач не касается
   global move --global <id> --status <id колонки>    только backlog/in_progress/review/done; подзадачи не трогает; в review/done — закрывает прогон (run_done)
@@ -48,10 +58,13 @@ const HELP = `orca-board — управление доской агентов
 
 Координатор:
   agents list      известные агенты: установлен ли, включён ли в проекте, версия
-  roles list       роли проекта: id, название, назначение, агент, модель, включён ли агент
+  roles list [--run <id>] [--type <id>]   роли типа глобальной задачи (прогона $ORCA_RUN_ID): id, название,
+                                          назначение, агент, модель, включён ли агент; без прогона — типа
+                                          --type или типа проекта по умолчанию
   columns list     колонки доски: id, название, kind
-  workflow show [--run <id>]              воркфлоу: этапы рабочей задачи после worker_done (проверки, человек,
-                                          мерж) и переходы; с --run — снимок прогона, без — воркфлоу проекта
+  workflow show [--run <id>] [--type <id>]   воркфлоу: этапы рабочей задачи после worker_done (проверки, человек,
+                                          мерж) и переходы; с --run — снимок прогона, без — граф типа --type
+                                          или типа проекта по умолчанию
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
                                           (у каждой — priority: urgent|high|normal|low);
                                           у задачи в воркфлоу — stage (этап: nodeId и число заходов visits),
@@ -116,9 +129,11 @@ const HELP = `orca-board — управление доской агентов
                                           Оборвался по таймауту — повтори ту же команду: переподключится
                                           к тому же вопросу (или сразу вернёт ответ), новый не создастся
 
-Прогон: --run <id> у task create, check, request list, runs close и runs finish по умолчанию берётся из $ORCA_RUN_ID —
-задачи, созданные координатором, наследуют его прогон (= его глобальную задачу). Так же --global
-у global get, global tasks и global add-task. Задача без прогона попадает во «Входящие».
+Прогон: --run <id> у task create, check, request list, runs close, runs finish, roles list, rules get/set
+и workflow show по умолчанию берётся из $ORCA_RUN_ID (у roles list, rules и workflow show — если нет --type) —
+задачи, созданные координатором, наследуют его прогон (= его глобальную задачу) и роли его типа. Так же --global
+у global get, global tasks и global add-task. Задача без прогона попадает во «Входящие» (роли — типа проекта
+по умолчанию).
 
 Общее: --socket <path>, --project <id> (иначе $ORCA_PROJECT или активный проект в приложении).
 Сокет: $ORCA_SOCKET или ~/.orca-board/orca.sock (на Windows — именованный канал \\\\.\\pipe\\orca-board)`
@@ -163,8 +178,11 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 // Прогон координатора: явный --run важнее $ORCA_RUN_ID.
-const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'request.list', 'workflow.show']
-if (RUN_METHODS.includes(method) && params.run === undefined && process.env.ORCA_RUN_ID) {
+const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'request.list', 'workflow.show', 'roles.list', 'rules.get', 'rules.set']
+// Здесь --type выбирает тип явно: прогон из окружения не подставляем, иначе он перебил бы выбор.
+const TYPE_METHODS = ['workflow.show', 'roles.list', 'rules.get', 'rules.set']
+const explicitType = TYPE_METHODS.includes(method) && params.type !== undefined
+if (RUN_METHODS.includes(method) && !explicitType && params.run === undefined && process.env.ORCA_RUN_ID) {
   params.run = process.env.ORCA_RUN_ID
 }
 // Глобальная задача координатора = его прогон: те же умолчания для чтения и добавления подзадач.
