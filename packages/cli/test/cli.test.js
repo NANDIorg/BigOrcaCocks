@@ -225,4 +225,30 @@ describe('orca-board CLI', () => {
     const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
     for (const cmd of ['workflow show', 'task get', '--reject', 'workflow_blocked']) assert.ok(out.includes(cmd), cmd)
   })
+
+  it('типы задач: types list, global create / coordinator start --type уходят как есть; есть в help', async () => {
+    const list = await run(['types', 'list'], { ORCA_PROJECT: 'p_1', ORCA_RUN_ID: 'run_1' })
+    assert.equal(list.req.method, 'types.list')
+    assert.equal(list.req.projectId, 'p_1')
+    assert.deepEqual(list.req.params, {})
+    assert.deepEqual((await run(['global', 'create', '--title', 't', '--type', 'docs'])).req.params, { title: 't', type: 'docs' })
+    const start = await run(['coordinator', 'start', '--objective', 'o', '--type', 'docs'])
+    assert.deepEqual(start.req.params, { objective: 'o', type: 'docs' })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['types list', 'global create', '--type <id', 'roles list [--run <id>]', 'defaultTypeId']) assert.ok(out.includes(cmd), cmd)
+  })
+
+  it('roles list / rules / workflow show: прогон из ORCA_RUN_ID, а с --type — без прогона', async () => {
+    for (const cmd of [['roles', 'list'], ['rules', 'get'], ['workflow', 'show']]) {
+      assert.deepEqual((await run(cmd, { ORCA_RUN_ID: 'run_1' })).req.params, { run: 'run_1' }, cmd.join(' '))
+      assert.deepEqual((await run([...cmd, '--type', 'docs'], { ORCA_RUN_ID: 'run_1' })).req.params, { type: 'docs' }, cmd.join(' '))
+      assert.deepEqual((await run([...cmd, '--run', 'run_2'], { ORCA_RUN_ID: 'run_1' })).req.params, { run: 'run_2' }, cmd.join(' '))
+    }
+    const set = await run(['rules', 'set', '--role', 'writer', '--text', 'x'], { ORCA_RUN_ID: 'run_1' })
+    assert.deepEqual(set.req.params, { role: 'writer', text: 'x', run: 'run_1' })
+    const typed = await run(['rules', 'set', '--type', 'general', '--text', 'x'], { ORCA_RUN_ID: 'run_1' })
+    assert.deepEqual(typed.req.params, { type: 'general', text: 'x' })
+    // Вне координатора прогона нет — тип проекта по умолчанию выбирает сервер.
+    assert.deepEqual((await run(['roles', 'list'])).req.params, {})
+  })
 })
