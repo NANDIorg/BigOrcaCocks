@@ -126,6 +126,24 @@ describe('orca-board CLI', () => {
     assert.equal(get.req.method, 'request.get')
   })
 
+  it('worker stop/restart и task reopen: --start — флаг, --feedback берёт значение', async () => {
+    const stop = await run(['worker', 'stop', '--task', 't_1'])
+    assert.equal(stop.req.method, 'worker.stop')
+    assert.deepEqual(stop.req.params, { task: 't_1' })
+    const restart = await run(['worker', 'restart', '--task', 't_1', '--feedback', 'поправь тесты'])
+    assert.equal(restart.req.method, 'worker.restart')
+    assert.deepEqual(restart.req.params, { task: 't_1', feedback: 'поправь тесты' })
+    const reopen = await run(['task', 'reopen', '--task', 't_1', '--start', '--feedback', 'ещё раз'])
+    assert.equal(reopen.req.method, 'task.reopen')
+    assert.deepEqual(reopen.req.params, { task: 't_1', start: true, feedback: 'ещё раз' })
+    assert.deepEqual((await run(['task', 'reopen', '--task', 't_1'])).req.params, { task: 't_1' })
+  })
+
+  it('help показывает worker stop/restart и task reopen', async () => {
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['worker stop', 'worker restart', 'task reopen', '--start']) assert.ok(out.includes(cmd), cmd)
+  })
+
   it('help показывает команды запросов', async () => {
     const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
     for (const cmd of ['request list', 'request get', 'request resolve', '--clarify', '--recommend', '--context-file', '--note']) {

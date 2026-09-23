@@ -17,6 +17,11 @@ import { askOptions, resolutionFromParams } from './request-params'
 export interface ProjectDeps {
   store: TaskStore
   startWorker(taskId: string): { ptyId: string; dispatchId: string; worktree: string; branch: string }
+  /**
+   * Остановить воркеров задачи: dispatch'и закрываются как unknown без эскалации, PTY убиваются;
+   * задача из in_progress — в ready. Возвращает id закрытых dispatch'ей.
+   */
+  stopWorker(taskId: string): { stopped: string[] }
   review(taskId: string): unknown
   accept(taskId: string, decision?: string): void
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
@@ -210,6 +215,37 @@ const handlers: Record<string, Handler> = {
     const task = store.getTask(id)
     if (task) assertRoleUsable(deps.roles(), deps.agents(), task.roleId)
     return deps.startWorker(id)
+  },
+  'worker.stop': (r, deps, store) => {
+    const id = str(r.params.task)
+    if (!id) throw new Error('--task обязателен')
+    if (!store.getTask(id)) throw new Error(`task not found: ${id}`)
+    return { ...deps.stopWorker(id), task: store.getTask(id) }
+  },
+  // stop + (feedback) + start: работает и на задаче в работе, где worker start падает.
+  'worker.restart': (r, deps, store) => {
+    const id = str(r.params.task)
+    if (!id) throw new Error('--task обязателен')
+    if (r.params.feedback === true) throw new Error('--feedback требует текста')
+    const task = store.getTask(id)
+    if (!task) throw new Error(`task not found: ${id}`)
+    // Проверяем роль до остановки: иначе остановили бы воркера и не смогли поднять новый.
+    assertRoleUsable(deps.roles(), deps.agents(), task.roleId)
+    const { stopped } = deps.stopWorker(id)
+    const feedback = str(r.params.feedback)?.trim()
+    if (feedback) store.updateTask(id, { feedback })
+    return { stopped, ...deps.startWorker(id) }
+  },
+  // Переоткрыть задачу в ready (feedback — по желанию); --start — сразу запустить воркера.
+  'task.reopen': (r, deps, store) => {
+    const id = str(r.params.task)
+    if (!id) throw new Error('--task обязателен')
+    if (r.params.feedback === true) throw new Error('--feedback требует текста')
+    const existing = store.getTask(id)
+    if (r.params.start === true && existing) assertRoleUsable(deps.roles(), deps.agents(), existing.roleId)
+    const task = store.reopenTask(id, str(r.params.feedback))
+    if (r.params.start !== true) return task
+    return { task, worker: deps.startWorker(id) }
   },
   'coordinator.start': (r, deps) => {
     // --global — повторный запуск на существующей глобальной задаче (цель — её описание).

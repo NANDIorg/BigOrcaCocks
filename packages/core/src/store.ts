@@ -827,6 +827,29 @@ export class TaskStore {
     return task
   }
 
+  /**
+   * Переоткрыть задачу (`orca-board task reopen`): из любой колонки, кроме in_progress, — в ready;
+   * feedback выставляется, только если передан (без него остаётся прежний). Ждущий ответ для человека —
+   * это «Уточнить», как в rejectReview (уточнение обязательно). Прочие ждущие запросы задачи отменяются:
+   * воркер начнёт заново. Задачу с живым воркером переоткрыть нельзя — для неё `worker restart`.
+   */
+  reopenTask(taskId: string, feedback?: string): Task {
+    const task = this.mustTask(taskId)
+    if (this.isKind(task, 'in_progress') || this.workerLive(task)) {
+      throw new Error(`задача ${task.id} в работе — перезапусти воркера: orca-board worker restart`)
+    }
+    const text = feedback?.trim() || undefined
+    const request = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer')
+    if (request) this.applyClarify(task, request, text ?? '')
+    else {
+      if (text) task.feedback = text
+      this.setStatus(task, this.columnId('ready'))
+    }
+    this.cancelRequests((r) => r.taskId === task.id)
+    this.commit()
+    return task
+  }
+
   /** «Уточнить» без commit: feedback, ready, answer_clarified (воркера стартует main). */
   private applyClarify(task: Task, request: HumanRequest, feedback: string): void {
     const text = feedback.trim()
