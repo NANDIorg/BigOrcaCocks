@@ -348,7 +348,7 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 |---|---|---|---|
 | `list()` | `globalTasks:list` | `GlobalTask[]` в порядке создания (нет проекта → `[]`) | — |
 | `get(id)` | `globalTasks:get` | `GlobalTask` | `run not found` |
-| `create({title?, description?, status?, priority?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана; неизвестный приоритет |
+| `create({title?, description?, status?, priority?, typeId?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана; неизвестный приоритет; тип не найден или недоступен проекту (`Project.taskTypeIds`). Без `typeId` — тип проекта по умолчанию |
 | `update(id, {title?, description?, priority?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название; неизвестный приоритет (карточка не меняется) |
 | `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |
@@ -451,9 +451,25 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
   с `task.runId === id` (прежние действия подзадач: drag `tasks.move`, модалка задачи, запуск воркера, вопросы, ревью).
 - `GlobalTaskModal.tsx` — создание (`globalTasks.create`, колонка глобального канбана и приоритет на выбор, по умолчанию
   «обычный») и правка (`globalTasks.update`, только изменённые поля, приоритет — тоже). У «Входящих» приоритета в модалке нет.
+  При создании — селект «Тип задачи»: типы, доступные проекту (`availableTypes`), предвыбран тип проекта по умолчанию
+  (`projectDefaultTypeId` — то же правило, что в main), под ним описание типа и предупреждение, если у какой-то роли
+  типа агент в проекте выключен или не установлен (`rolesWithDisabledAgent`: тип создастся, но воркер этой роли не
+  стартует). При правке тип только показывается бейджем — в v1 он задаётся один раз, при создании.
   Старый main (прогоны в снимке без `priority`, `runsKnowPriority` в `taskPriority.ts`) приоритет не сохранит:
   вместо выбора — текущий приоритет и просьба перезапустить приложение, в `create`/`update` поле не уходит.
   «Новая подзадача» в шапке открыта задачей → `NewTaskModal` с зависимостями только из её подзадач и приоритетом (по умолчанию «обычный») → `globalTasks.createTask`.
+- Тип задачи в renderer — `renderer/src/taskTypes.ts`. `App` грузит библиотеку (`loadTaskTypes` → `taskTypes.list`)
+  вместе со списком проектов и после закрытия «Настроек». Роли задачи — `rolesForRun(task.runId, runs, project, state)`
+  через общее правило `resolveRunType` (core): тип прогона из библиотеки → снимок `Run.taskType` → тип проекта по
+  умолчанию. Так подписаны роли на доске подзадач (`Board`), в `TaskModal`, в «Новой подзадаче» (выбор роли —
+  только из ролей типа этой глобальной задачи) и в списке терминалов (координатор — по `runId` терминала,
+  ассистент — тип библиотеки по умолчанию). Название типа — чип на карточке `GlobalBoard` и на экране
+  `GlobalTaskView` (`globalTypeTitle`: из библиотеки, тип удалён — из снимка; у «Входящих» чипа нет).
+  Старый main/preload без `window.orca.taskTypes` (`pnpm dev` после HMR) — `state = null`: роли проекта
+  (`Project.roles`), без селекта и чипов, `typeId` в `create` не уходит.
+- «Добавить репозиторий» (`projectAdd.ts` → `ProjectTypeModal`): после выбора папки — тип задач по умолчанию нового
+  проекта (`projects.detectTaskType` угадывает по файлам, `projects.add(typeId, path)`); копии настроек нет, проект
+  ссылается на тип. Старый main — прежний `projects.add()` без модалки.
 - Открытая глобальная задача — в `ProjectView.globalId` (по проекту, `localStorage` `orca.global.<projectId>`):
   переживает перезагрузку; id, которого нет в снимке активного проекта, показывает общую доску.
 - Клавиатура: карточка фокусируется Tab, Enter/Space открывает; на экране задачи фокус на «назад», Esc (вне полей и

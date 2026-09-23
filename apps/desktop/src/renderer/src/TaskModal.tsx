@@ -22,6 +22,7 @@ interface Props {
   task: Task
   tasks: Task[]
   columns: BoardColumn[]
+  /** Роли типа глобальной задачи этой задачи (`rolesForRun`). */
   roles: Role[]
   /** Агенты — для подписи модели роли; без них показывается сырой id модели. */
   agents?: AgentInfo[]

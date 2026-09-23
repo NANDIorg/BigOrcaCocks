@@ -1,6 +1,9 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { PRIORITY_TITLES, isTaskPriority, type BoardColumn, type ColumnKind, type GlobalTask, type TaskPriority } from '@orca-board/core'
+import {
+  AGENT_TITLES, PRIORITY_TITLES, isTaskPriority,
+  type AgentInfo, type BoardColumn, type ColumnKind, type GlobalTask, type TaskPriority, type TaskType
+} from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { GlobalDuration } from './GlobalBoard'
 import { GlobalReturns } from './GlobalTaskView'
@@ -8,12 +11,24 @@ import { globalTaskActions } from './globalReview'
 import { formatStamp } from './boardSort'
 import { PriorityOptions } from './Priority'
 import { STALE_PRIORITY_MESSAGE, taskPriorityOf } from './taskPriority'
+import { rolesWithDisabledAgent } from './taskTypes'
 
 interface Props {
   /** Правка существующей; без неё — создание новой. */
   global?: GlobalTask
   /** Колонки проекта — выбор начального статуса при создании. */
   columns: BoardColumn[]
+  /**
+   * Типы задач, доступные проекту, — выбор типа при создании. Нет — старый main без типов: выбора нет,
+   * задача создаётся как раньше (main подставит тип проекта по умолчанию).
+   */
+  types?: TaskType[]
+  /** Предвыбранный тип — тип проекта по умолчанию. */
+  defaultTypeId?: string
+  /** Агенты активного проекта: предупреждение, если у роли выбранного типа агент выключен. */
+  agents?: AgentInfo[]
+  /** Название типа правимой задачи — только бейдж: в v1 тип задаётся при создании. */
+  typeTitle?: string
   /** main знает приоритет глобальных задач (`runsKnowPriority`); старый main его не сохранит — выбор не даём. */
   priorityEditable: boolean
   /** Вид колонки глобального канбана, где сейчас задача, и живой ли координатор — действия «Проверки». */
@@ -25,21 +40,27 @@ interface Props {
   onReturn?(): void
   onClose(): void
   /** priority — только если main его знает; при правке App отправляет его, только если он изменился. */
-  onSave(input: { title: string; description: string; status?: string; priority?: TaskPriority }): Promise<void>
+  onSave(input: { title: string; description: string; status?: string; priority?: TaskPriority; typeId?: string }): Promise<void>
 }
 
-/** Создание и правка глобальной задачи: название, описание, приоритет и (при создании) колонка. */
-export function GlobalTaskModal({ global, columns, priorityEditable, statusKind, live = false, onAccept, onReturn, onClose, onSave }: Props): React.JSX.Element {
+/** Создание и правка глобальной задачи: название, описание, приоритет и (при создании) тип и колонка. */
+export function GlobalTaskModal(props: Props): React.JSX.Element {
+  const { global, columns, types, defaultTypeId, agents = [], typeTitle, priorityEditable, statusKind, live = false, onAccept, onReturn, onClose, onSave } = props
   const [title, setTitle] = useState(global?.title ?? '')
   const [description, setDescription] = useState(global?.description ?? '')
   // Новая — «обычный»; у карточки от старого main поля нет — тоже normal.
   const [priority, setPriority] = useState<TaskPriority>(() => taskPriorityOf(global ?? {}))
   const [status, setStatus] = useState(() => columns.find((c) => c.kind === 'backlog')?.id ?? columns[0]?.id ?? '')
+  // Выбор человека; пока его нет (или типы догрузились позже) — тип проекта по умолчанию, иначе первый.
+  const [pickedTypeId, setTypeId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busyRef = useRef(false)
   const editing = global !== undefined
   const actions = global ? globalTaskActions(global, statusKind, live) : undefined
+  const selectedType = editing ? undefined
+    : types?.find((t) => t.id === pickedTypeId) ?? types?.find((t) => t.id === defaultTypeId) ?? types?.[0]
+  const offAgentRoles = selectedType ? rolesWithDisabledAgent(selectedType, agents) : []
   // У «Входящих» название фиксированное и описания нет — правится только то, что задано явно.
   const canSave = !busy && (title.trim() !== '' || (!editing && description.trim() !== ''))
 
@@ -68,6 +89,7 @@ export function GlobalTaskModal({ global, columns, priorityEditable, statusKind,
         title: title.trim(),
         description: description.trim(),
         status: editing ? undefined : status,
+        ...(selectedType ? { typeId: selectedType.id } : {}),
         ...(priorityEditable ? { priority } : {})
       })
     } catch (e) {
@@ -87,6 +109,9 @@ export function GlobalTaskModal({ global, columns, priorityEditable, statusKind,
             Создана {formatStamp(global.createdAt)}
             {global.closedAt !== undefined && <> · закрыта {formatStamp(global.closedAt)}</>} · <GlobalDuration global={global} variant="line" />
           </p>
+        )}
+        {global && typeTitle && (
+          <p className="muted modal-sub task-type-line">Тип задачи: <span className="task-type-badge">{typeTitle}</span></p>
         )}
         {global && <GlobalReturns global={global} />}
         {actions && (actions.accept || actions.returnToWork) && (
@@ -132,6 +157,25 @@ export function GlobalTaskModal({ global, columns, priorityEditable, statusKind,
             ) : (
               // main старый: приоритет не сохранится — показываем текущий и просим перезапустить.
               <span className="muted" title={STALE_PRIORITY_MESSAGE}>{PRIORITY_TITLES[priority]} · перезапустите приложение, чтобы менять</span>
+            )}
+          </label>
+        )}
+        {!editing && types && types.length > 0 && (
+          <label>
+            Тип задачи
+            <select value={selectedType?.id ?? ''} onChange={(e) => setTypeId(e.target.value)}>
+              {types.map((t) => (
+                <option key={t.id} value={t.id}>{t.title}{t.id === defaultTypeId ? ' (по умолчанию)' : ''}</option>
+              ))}
+            </select>
+            <span className="muted task-type-hint">
+              {selectedType?.description ? `${selectedType.description}. ` : ''}Тип задаёт роли, воркфлоу и правила агентов этой задачи; потом его не сменить.
+            </span>
+            {offAgentRoles.length > 0 && (
+              <span className="task-type-warn" role="status">
+                В проекте выключен агент у ролей: {offAgentRoles.map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ')} —
+                их подзадачи не запустятся. Включите агента в «О проекте → Агенты» или выберите другой тип.
+              </span>
             )}
           </label>
         )}
