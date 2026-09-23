@@ -228,23 +228,23 @@ function runCoordinator(
   return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows, images, runId).ptyId
 }
 
-/** Живой терминал ассистента по проекту: один ассистент на проект, повторное открытие — тот же PTY. */
-const assistants = new Map<string, string>()
+/** Живой терминал ассистента: один на всё приложение, повторное открытие — тот же PTY при любом активном проекте. */
+let assistantPty: string | null = null
 
 /**
- * Терминал ассистента активного проекта: живой — возвращается как есть, иначе (или при `reset` — всегда,
- * старый закрывается) запускается новый.
+ * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
+ * старый закрывается) запускается новый. Роли, агент и режим разрешений — из настроек по умолчанию:
+ * ассистент не принадлежит ни одному проекту.
  */
 function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: string } {
-  const p = resolveProject()
-  const current = assistants.get(p.id)
-  if (current && isAlive(current)) {
-    if (!reset) return { ptyId: current }
-    killPty(current)
+  if (assistantPty && isAlive(assistantPty)) {
+    if (!reset) return { ptyId: assistantPty }
+    killPty(assistantPty)
   }
-  assistants.delete(p.id)
-  const { ptyId } = startAssistant(p.root, ctx(p.id), cols, rows)
-  assistants.set(p.id, ptyId)
+  assistantPty = null
+  const d = projects.defaults()
+  const { ptyId } = startAssistant({ socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles }, cols, rows)
+  assistantPty = ptyId
   return { ptyId }
 }
 
