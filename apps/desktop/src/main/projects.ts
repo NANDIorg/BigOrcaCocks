@@ -257,6 +257,7 @@ export class ProjectManager {
     // сравнение с копией, а не с кодом — копия могла прийти из миграции старого `defaults` с другими ролями.
     const base = isBuiltinId(id) ? (i === -1 ? builtinTaskType(id) : user[i]) : undefined
     if (base && !isBuiltinTypeInPlaceEdit(base, type)) throw new Error(readonlyTypeMessage(id))
+    if (i !== -1) this.settleLegacyRuns(id)
     if (i === -1) user.push(type)
     else user[i] = type
     this.data.taskTypes = user
@@ -284,11 +285,23 @@ export class ProjectManager {
     if (!user.some((t) => t.id === id)) {
       throw new Error(isBuiltinId(id) ? readonlyTypeMessage(id) : `тип задачи не найден: ${id}`)
     }
+    this.settleLegacyRuns(id)
     this.data.taskTypes = user.filter((t) => t.id !== id)
     if (!this.data.taskTypes.length) delete this.data.taskTypes
     if (this.data.defaultTaskTypeId === id && !isBuiltinId(id)) delete this.data.defaultTaskTypeId
     this.save()
     return this.taskTypesState()
+  }
+
+  /**
+   * Перед правкой или удалением типа, в который миграция перенесла настройки проекта, загрузить незагруженные
+   * доски таких проектов: `store` отдаёт их старым прогонам снимок типа (`assignRunTypes`), пока он ещё прежний.
+   * Иначе доска, открытая после удаления, не нашла бы тип и прогоны ушли бы на тип проекта по умолчанию,
+   * а после правки их снимок был бы уже с изменёнными ролями — не как у прогонов, созданных до правки. Снимок не хранится в projects.json заранее: роли с
+   * промптами дублировались бы в файле, а момент, когда тип перестаёт совпадать со старыми настройками, — ровно этот.
+   */
+  private settleLegacyRuns(typeId: string): void {
+    for (const p of this.data.projects) if (p.legacyTypeId === typeId) this.store(p.id)
   }
 
   /** Копия типа (в том числе встроенного) под новым id — так правят встроенные. */

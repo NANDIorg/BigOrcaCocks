@@ -490,9 +490,7 @@ describe('сценарий 4: тип проекта по умолчанию см
     assert.deepEqual(brief(h.lastLaunch(i.id)), { roleId: 'writer', agent: 'claude', model: 'sonnet' })
   })
 
-  it('тип «repo» удалили до первой загрузки доски: старые прогоны сохраняют роли проекта', {
-    todo: 'дефект: прогоны незагруженной доски не получают ни тип, ни снимок и молча уходят на тип проекта по умолчанию'
-  }, () => {
+  it('тип «repo» удалили до первой загрузки доски: старые прогоны сохраняют роли проекта', () => {
     const old = legacyBoard()
     const runId = old.store.createRun('Старый прогон', undefined, defaultWorkflow(LEGACY_ROLES)).id
     const t = old.store.createTask({ title: 'Старая задача', roleId: 'developer', runId })
@@ -502,11 +500,28 @@ describe('сценарий 4: тип проекта по умолчанию см
     pm.setProjectTaskTypes(PID, { defaultTypeId: 'docs' })
     pm.deleteTaskType(LEGACY_TID)
     const h = appHarness(pm, PID)
-    // Ожидаемое: прогон помечен типом «repo» со снимком (как прогон удалённого типа) и идёт по ролям проекта.
-    // Фактическое: typeId нет, роли — «Документации», у которой нет программиста, воркер не стартует.
+    // Прогон помечен типом «repo» со снимком (как прогон удалённого типа) и идёт по ролям проекта.
     assert.equal(h.store.getRun(runId)?.typeId, LEGACY_TID)
     assert.equal(pm.resolveRun(PID, runId).roles.find((r) => r.id === 'reviewer')?.agent, 'codex')
     assert.doesNotThrow(() => h.deps.startWorker(t.id))
+  })
+
+  it('тип «repo» изменили до первой загрузки доски: снимок старых прогонов — до правки, как у прогона, созданного до неё', () => {
+    const old = legacyBoard()
+    const runId = old.store.createRun('Старый прогон', undefined, defaultWorkflow(LEGACY_ROLES)).id
+    writeLegacyProjects()
+
+    const pm = newProjectManager()
+    pm.patchTaskType(LEGACY_TID, { roles: DEFAULT_ROLES, agentRules: 'новые правила' })
+    const h = appHarness(pm, PID)
+    const run = h.store.getRun(runId)
+    assert.equal(run?.typeId, LEGACY_TID)
+    assert.equal(run?.taskType?.roles.find((x) => x.id === 'reviewer')?.agent, 'codex', 'снимок — бывшие роли проекта')
+    assert.equal(run?.taskType?.agentRules, 'правила проекта')
+    // Пока тип жив, прогон идёт по нему (правка применяется), снимок нужен после удаления.
+    assert.equal(pm.resolveRun(PID, runId).agentRules, 'новые правила')
+    pm.deleteTaskType(LEGACY_TID)
+    assert.equal(pm.resolveRun(PID, runId).roles.find((x) => x.id === 'reviewer')?.agent, 'codex')
   })
 })
 
