@@ -2,6 +2,8 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { BoardColumn, GlobalTask } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
+import { GlobalDuration } from './GlobalBoard'
+import { formatStamp } from './boardSort'
 
 interface Props {
   /** Правка существующей; без неё — создание новой. */
@@ -58,6 +60,12 @@ export function GlobalTaskModal({ global, columns, onClose, onSave }: Props): Re
     <div className="modal-backdrop" onClick={close}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={editing ? 'Глобальная задача' : 'Новая глобальная задача'} onClick={(e) => e.stopPropagation()}>
         <h3>{editing ? 'Глобальная задача' : 'Новая глобальная задача'}</h3>
+        {global && !global.inbox && (
+          <p className="muted modal-sub">
+            Создана {formatStamp(global.createdAt)}
+            {global.closedAt !== undefined && <> · закрыта {formatStamp(global.closedAt)}</>} · <GlobalDuration global={global} variant="line" />
+          </p>
+        )}
         <label>
           Название
           <input

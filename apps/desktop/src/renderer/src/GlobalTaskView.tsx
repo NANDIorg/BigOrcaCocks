@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { pendingRequestsOf, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
-import { GlobalProgress, relativeTime } from './GlobalBoard'
+import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
+import { formatStamp } from './boardSort'
 
 interface Props {
   global: GlobalTask
@@ -91,6 +92,11 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         <div className="g-view-meta">
           <div className="g-view-progress"><GlobalProgress global={global} /></div>
           <span className="muted">Обновлено {relativeTime(global.activityAt)}</span>
+          {!global.inbox && (
+            <span className="muted" title={`Создана ${formatStamp(global.createdAt)}${global.closedAt !== undefined ? `, закрыта ${formatStamp(global.closedAt)}` : ''}`}>
+              · <GlobalDuration global={global} variant="line" />
+            </span>
+          )}
           {global.closedAt !== undefined && <span className="muted">· закрыта</span>}
           {global.inbox && <span className="muted">· сюда попадают задачи без глобальной</span>}
         </div>
