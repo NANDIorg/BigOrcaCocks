@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
-import { formatDuration, globalTaskDuration } from './duration'
+import { globalTaskTicking, globalTimeLabel, globalTimeTitle, type GlobalTimePart } from './duration'
 import { useNow } from './useNow'
 import { GLOBAL_BOARD_SORT_KEY, SORT_OPTIONS, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
@@ -59,25 +59,41 @@ export function subtasksLabel(n: number): string {
   return `${n} подзадач`
 }
 
-/** Полоса прогресса «готово / всего» с подписью; без подзадач — спокойная подпись. */
 /**
- * Время работы глобальной задачи — сумма времени работы подзадач (`globalTaskDuration`). Хоть одна
- * подзадача в работе — живой счётчик «⏱ 1 ч 5 мин»; закрытая — итог «за 3 ч 20 мин»; иначе застывшее «⏸ …».
- * variant="line" — строка «Время работы: …» для шапок.
+ * Два времени глобальной задачи: основное (сама была в работе) — первым, сумма подзадач — «Σ …» рядом.
+ * Каждое тикает само: живой счётчик только у идущего, стоящее — застывшее «⏸ …». Основное неизвестно
+ * (прогон от старого кода, старый main) — только сумма. variant="line" — строка для шапок.
  */
 export function GlobalDuration({ global, variant = 'chip' }: { global: GlobalTask; variant?: 'chip' | 'line' }): React.JSX.Element {
-  if (global.activeSince.length > 0) return <LiveDuration global={global} variant={variant} />
-  const text = formatDuration(globalTaskDuration(global, 0))
-  const title = 'Сумма времени работы подзадач; сейчас ни одна не в работе'
-  if (variant === 'line') return <span className="g-duration" title={title}>Время работы: {text}</span>
-  return <span className="g-duration" title={title}>{global.closedAt !== undefined ? `за ${text}` : `⏸ ${text}`}</span>
+  return (
+    <span className="g-duration">
+      <DurationPart global={global} part="own" variant={variant} />
+      <DurationPart global={global} part="subtasks" variant={variant} />
+    </span>
+  )
 }
 
-function LiveDuration({ global, variant }: { global: GlobalTask; variant: 'chip' | 'line' }): React.JSX.Element {
-  const text = formatDuration(globalTaskDuration(global, useNow()))
-  return <span className="g-duration" title="Сумма времени работы подзадач; идёт, пока хоть одна в работе">{variant === 'line' ? `Время работы: ${text}` : `⏱ ${text}`}</span>
+interface DurationPartProps {
+  global: GlobalTask
+  part: GlobalTimePart
+  variant: 'chip' | 'line'
 }
 
+function DurationPart(props: DurationPartProps): React.JSX.Element | null {
+  return globalTaskTicking(props.global, props.part) ? <LiveDurationPart {...props} /> : <DurationText {...props} now={0} />
+}
+
+function LiveDurationPart(props: DurationPartProps): React.JSX.Element | null {
+  return <DurationText {...props} now={useNow()} />
+}
+
+function DurationText({ global, part, variant, now }: DurationPartProps & { now: number }): React.JSX.Element | null {
+  const text = globalTimeLabel(global, part, now, variant)
+  if (text === undefined) return null
+  return <span className={part === 'own' ? 'g-duration-own' : 'g-duration-sum'} title={globalTimeTitle(global, part)}>{text}</span>
+}
+
+/** Полоса прогресса «готово / всего» с подписью; без подзадач — спокойная подпись. */
 export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.Element {
   const { done, total } = global.progress
   const pct = total ? Math.round((done / total) * 100) : 0

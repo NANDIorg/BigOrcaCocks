@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS, type Task } from './types.ts'
 import { activeDuration, taskActiveTime, trackActiveTime } from './active-time.ts'
-import { toGlobalTask, globalActiveDuration } from './global-tasks.ts'
+import { toGlobalTask, globalOwnDuration, globalSubtasksDuration, type GlobalTask } from './global-tasks.ts'
 
 const MIN = 60_000
 
@@ -127,7 +127,7 @@ describe('TaskStore: время работы по переходам стату�
     assert.equal(store.getTask(task.id)!.activeSince, undefined)
   })
 
-  it('глобальная задача — сумма подзадач, тикает, пока хоть одна в работе', (t) => {
+  it('глобальная задача: сумма подзадач тикает, пока хоть одна в работе', (t) => {
     const tick = clock(t)
     const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
     const run = store.createRun('цель')
@@ -139,14 +139,76 @@ describe('TaskStore: время работы по переходам стату�
     tick(3 * MIN)
     store.finishDispatch(da.id, 'сделал', [])
     const g1 = toGlobalTask(store.getRun(run.id)!, store.listTasks(), DEFAULT_COLUMNS)
-    assert.equal(g1.activeMs, 5 * MIN)
-    assert.equal(g1.activeSince.length, 1)
-    assert.equal(globalActiveDuration(g1, Date.now()), 8 * MIN)
+    assert.equal(g1.subtasksActiveMs, 5 * MIN)
+    assert.equal(g1.subtasksActiveSince.length, 1)
+    assert.equal(globalSubtasksDuration(g1, Date.now()), 8 * MIN)
     store.moveTask(b.id, 'ready')
     tick(60 * MIN)
     const g2 = toGlobalTask(store.getRun(run.id)!, store.listTasks(), DEFAULT_COLUMNS)
-    assert.deepEqual(g2.activeSince, [])
-    assert.equal(globalActiveDuration(g2, Date.now()), 8 * MIN)
+    assert.deepEqual(g2.subtasksActiveSince, [])
+    assert.equal(globalSubtasksDuration(g2, Date.now()), 8 * MIN)
+  })
+})
+
+describe('TaskStore: собственное время глобальной задачи', () => {
+  function global(store: TaskStore, id: string): GlobalTask {
+    return store.getGlobalTask(id)
+  }
+
+  it('тикает только в in_progress: бэклог и done стоят, несколько отрезков складываются', (t) => {
+    const tick = clock(t)
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const g = store.createGlobalTask({ title: 'Цель' })
+    tick(10 * MIN)
+    assert.equal(globalOwnDuration(global(store, g.id), Date.now()), undefined, 'в бэклоге не бывала в работе')
+    store.moveGlobalTask(g.id, 'in_progress')
+    tick(3 * MIN)
+    assert.equal(global(store, g.id).ownActiveSince !== undefined, true)
+    assert.equal(globalOwnDuration(global(store, g.id), Date.now()), 3 * MIN)
+    store.moveGlobalTask(g.id, 'backlog')
+    tick(60 * MIN)
+    assert.equal(global(store, g.id).ownActiveSince, undefined)
+    assert.equal(globalOwnDuration(global(store, g.id), Date.now()), 3 * MIN)
+    store.moveGlobalTask(g.id, 'in_progress')
+    tick(2 * MIN)
+    store.moveGlobalTask(g.id, 'done')
+    tick(60 * MIN)
+    assert.equal(global(store, g.id).ownActiveMs, 5 * MIN)
+    assert.equal(globalOwnDuration(global(store, g.id), Date.now()), 5 * MIN)
+  })
+
+  it('не зависит от подзадач: подзадачи стоят — своё идёт, и наоборот', (t) => {
+    const tick = clock(t)
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const run = store.createRun('цель')
+    store.setRunPty(run.id, 'pty_c')
+    const a = store.createTask({ title: 'A', runId: run.id })
+    tick(4 * MIN)
+    const da = store.startDispatch(a.id, 'pty_a')
+    tick(1 * MIN)
+    store.finishDispatch(da.id, 'сделал', [])
+    tick(5 * MIN)
+    const g = global(store, run.id)
+    assert.equal(globalOwnDuration(g, Date.now()), 10 * MIN)
+    assert.equal(globalSubtasksDuration(g, Date.now()), 1 * MIN)
+  })
+
+  it('«Нужен ответ» — время стоит, после ответа идёт снова', (t) => {
+    const tick = clock(t)
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const run = store.createRun('цель')
+    store.setRunPty(run.id, 'pty_c')
+    const a = store.createTask({ title: 'A', runId: run.id })
+    const d = store.startDispatch(a.id, 'pty_a')
+    tick(2 * MIN)
+    const q = store.ask({ taskId: a.id, dispatchId: d.id, question: 'как быть?' })
+    assert.equal(global(store, run.id).status, 'needs_input')
+    assert.equal(global(store, run.id).ownActiveSince, undefined)
+    tick(30 * MIN)
+    assert.equal(globalOwnDuration(global(store, run.id), Date.now()), 2 * MIN)
+    store.answer(q.id, 'так')
+    tick(1 * MIN)
+    assert.equal(globalOwnDuration(global(store, run.id), Date.now()), 3 * MIN)
   })
 })
 
@@ -214,12 +276,43 @@ describe('миграция времени работы при загрузке',
   it('уже мигрированные данные не трогаются', (t) => {
     clock(t, 100 * MIN)
     const { store, saved } = load({
-      runs: [{ id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', updatedAt: 0 }],
+      runs: [{ id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', updatedAt: 0, activeMs: 7, activeSince: 0 }],
       tasks: [oldTask('t', 'review', { startedAt: 0, activeMs: 42 })],
       dispatches: [{ id: 'd1', taskId: 't', ptyId: 'p1', startedAt: 0, endedAt: 4 * MIN, outcome: 'done' }],
       requests: []
     })
     assert.equal(store.getTask('t')!.activeMs, 42)
+    assert.equal(store.getRun('run_1')!.activeSince, 0)
     assert.equal(saved.length, 0)
+  })
+
+  it('прогон от старого кода: в работе — отрезок от updatedAt, остальные — без полей (своё время неизвестно)', (t) => {
+    clock(t, 100 * MIN)
+    const { store, saved } = load({
+      runs: [
+        { id: 'run_1', objective: 'идёт', createdAt: 0, updatedAt: 70 * MIN, status: 'in_progress' },
+        { id: 'run_2', objective: 'сделана', createdAt: 0, updatedAt: 50 * MIN, status: 'done', closedAt: 50 * MIN },
+        { id: 'run_3', objective: 'в бэклоге', createdAt: 0, status: 'backlog' }
+      ],
+      requests: []
+    })
+    assert.ok(saved.length > 0, 'миграция сохраняется сразу')
+    assert.equal(store.getRun('run_1')!.activeSince, 70 * MIN)
+    assert.equal(globalOwnDuration(store.getGlobalTask('run_1'), Date.now()), 30 * MIN)
+    for (const id of ['run_2', 'run_3']) {
+      assert.equal(store.getRun(id)!.activeMs, undefined)
+      assert.equal(globalOwnDuration(store.getGlobalTask(id), Date.now()), undefined)
+    }
+  })
+
+  it('прогон от старого кода в «Нужен ответ» — отрезок не открывается', (t) => {
+    clock(t, 100 * MIN)
+    const { store } = load({
+      runs: [{ id: 'run_1', objective: 'ждёт', createdAt: 0, updatedAt: 70 * MIN, status: 'in_progress' }],
+      tasks: [oldTask('t', 'needs_input')],
+      requests: [{ id: 'req_1', runId: 'run_1', taskId: 't', kind: 'escalation', status: 'pending', title: 'упал', options: [], createdAt: 80 * MIN }]
+    })
+    assert.equal(store.getRun('run_1')!.activeSince, undefined)
+    assert.equal(store.getRun('run_1')!.activeMs, undefined)
   })
 })

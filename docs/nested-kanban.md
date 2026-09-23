@@ -203,18 +203,40 @@ interface GlobalTask {
     byStatus: Record<string, number>          // по id колонки, только непустые
     byKind: Partial<Record<ColumnKind, number>> // по kind колонки
   }
-  activeMs: number           // время работы: сумма закрытых отрезков подзадач (Task.activeMs), мс
-  activeSince: number[]      // начала идущих отрезков подзадач в работе; пусто — время стоит
+  ownActiveMs?: number       // основное время: сама глобальная была в работе (= Run.activeMs), закрытые отрезки, мс
+  ownActiveSince?: number    // начало идущего отрезка основного времени (= Run.activeSince); нет — стоит
+  subtasksActiveMs: number   // сумма закрытых отрезков подзадач (Task.activeMs), мс
+  subtasksActiveSince: number[] // начала идущих отрезков подзадач в работе; пусто — сумма стоит
 }
 ```
 
-Время работы глобальной задачи — сумма времени работы её подзадач (`globalActiveTime`, длительность —
-`globalActiveDuration(g, now)`): тикает, только пока хоть одна подзадача в `kind=in_progress`, параллельные
-подзадачи складываются (трудозатраты агентов, а не календарное время). Статус самой глобальной задачи и
-`createdAt`/`closedAt` на время не влияют.
+У глобальной задачи **два времени**:
+
+- **Основное** (`ownActiveMs`/`ownActiveSince`, длительность — `globalOwnDuration(g, now)`) — сколько сама карточка
+  была в работе. Отрезок открыт, пока карточка **показана** в колонке `kind=in_progress`
+  (`globalTaskInProgress`: хранимый `Run.status` в in_progress и нет pending-запросов прогона). В «Нужен ответ»
+  время стоит — это ожидание человека, как у подзадач в needs_input; в бэклоге и done — тоже. Хранится в
+  `Run.activeMs`/`Run.activeSince` и пересчитывается одним проходом в `TaskStore.commit` → `syncRunActiveTime`
+  (`trackActiveTime`), а не в каждом присваивании `run.status`: статус прогона меняют перенос, запуск координатора,
+  reopen, автозакрытие, удаление колонки, а «Нужен ответ» зависит ещё и от запросов.
+  Нет полей — своё время неизвестно: карточка от старого main или прогон от кода до этих полей (см. миграцию).
+- **Сумма подзадач** (`subtasksActiveMs`/`subtasksActiveSince`, `globalSubtasksTime`, длительность —
+  `globalSubtasksDuration(g, now)`): тикает, только пока хоть одна подзадача в `kind=in_progress`, параллельные
+  подзадачи складываются (трудозатраты агентов, а не календарное время). Статус глобальной на неё не влияет.
+
+Миграция (`migrateRunActiveTime` при загрузке, после статусов и запросов): прошлые отрезки прогона не
+восстановить — смены его статуса не журналируются, а сумма подзадач — другая величина. Прогон, который сейчас
+в работе (и не ждёт человека), получает открытый отрезок от `updatedAt` (нет — `createdAt`); остальные остаются
+без полей до следующего входа в работу. UI без основного времени показывает только сумму подзадач.
+
+Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `globalTaskTicking`, `globalTimeLabel`.
+Карточка и шапки (`GlobalDuration` в `GlobalBoard.tsx`) — основное первым («⏱ 1 ч», «⏸ 1 ч», у закрытой «за 1 ч»),
+сумма рядом тише («Σ ⏸ 3 ч», в шапке «Σ подзадач: …»); каждое тикает само. Карточка от старого main с прежними
+`activeMs`/`activeSince` (это была сумма подзадач) показывается как одна сумма.
 
 Чистые функции для renderer (без IPC): `toGlobalTasks(runs, tasks, columns, requests?)`,
-`toGlobalTask`, `globalTaskProgress`, `globalActiveTime`, `globalActiveDuration`, `globalTaskTitle`, `isPendingRequest`, `pendingRequestsOf`, `hasPendingRequest`,
+`toGlobalTask`, `globalTaskProgress`, `globalSubtasksTime`, `globalSubtasksDuration`, `globalOwnDuration`,
+`globalDisplayStatus`, `globalTaskInProgress`, `globalTaskTitle`, `isPendingRequest`, `pendingRequestsOf`, `hasPendingRequest`,
 `INBOX_TITLE` — экспортируются из `@orca-board/core`. Без `requests` `waiting` = 0.
 Живой UI может строить карточки из `board:changed` (`snapshot.runs` + `snapshot.tasks` + `snapshot.requests`) без лишних запросов.
 
