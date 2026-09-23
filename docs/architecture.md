@@ -152,6 +152,19 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   приложение и не работает в репозитории проекта); свой `systemPrompt` роли `assistant` — получает, как раньше.
   Меняются: IPC `projects:getAgentRules` / `projects:setAgentRules`, сокет `rules.get` / `rules.set`,
   CLI `orca-board rules get|set`, в UI — «О проекте → Правила доски». Есть и в глобальном дефолте (`ProjectDefaults.agentRules`, см. «Проекты»).
+- **Воркфлоу проекта** (`Project.workflow?: Workflow`, модель и валидация — `packages/core/src/workflow.ts`): граф этапов
+  жизненного цикла одной рабочей задачи, один на проект, хранится в `projects.json` рядом с ролями и колонками.
+  `ProjectManager.workflow(id)` — граф проекта, а без поля — `defaultWorkflow(roles(id))` (есть `reviewer` — гейт-агент,
+  нет — человек; дефолт в проект не записывается и меняется вместе с ролями). `setWorkflow(id, wf)` сначала проверяет
+  форму (объект, числовая `version`, массивы `nodes`/`edges`, строковые id/тип/концы рёбер, числовые координаты — иначе
+  `validateWorkflow` упал бы, а не вернул ошибку), затем `migrateWorkflow` и `validateWorkflow` по ролям, колонкам и
+  `enabledAgents` проекта: ошибки → исключение `воркфлоу не сохранён: …` (все сообщения через `; `), предупреждения не
+  мешают; `null` удаляет поле (снова дефолт). Роли и колонки после сохранения графа менять можно: удалённую роль гейта
+  ловит исполнитель, а не сеттер. Загрузка (`load()`): битый граф отбрасывается (= дефолтный), `version < WORKFLOW_VERSION`
+  → `migrateWorkflow`, будущая версия остаётся как есть (переживает сохранение проекта), но `workflow(id)` бросает
+  «… обновите приложение». В дефолте — `ProjectDefaults.workflow` (проверяется в `setDefaults` по ролям и колонкам
+  с учётом того же патча, `null` удаляет; копируется в новый проект и в `applyDefaults` без повторной проверки).
+  Граф отдаётся renderer вместе с `Project`; для проекта без поля renderer берёт дефолт через `workflow:default(roles)`.
 - **Встроенные промпты в UI** (`packages/core/src/prompts.ts`, `src/main/prompts.ts`): тексты `skills/*.md` импортирует
   только `src/main/prompts.ts` (`BUILTIN_PROMPTS`); их же берёт `worker.ts` при запуске и отдаёт IPC `prompts:builtin`
   для раздела «Роли». Там по кнопке «Инструкции» (свёрнуто по умолчанию) видны: встроенная инструкция роли только для чтения
@@ -694,7 +707,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getAgentRules(id)` → `string` ('' — правил нет), `projects:setAgentRules(id, text)` → `Project` (правила агентов доски, см. «Роли и колонки»),
-  `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
+  `projects:setWorkflow(id, wf | null)` → `Project` (ошибки `validateWorkflow` — исключением), `workflow:default(roles)` → `Workflow` (см. «Роли и колонки → Воркфлоу проекта»);
+  `projects:getDefaults`, `projects:setDefaults(patch)` (в т. ч. `workflow`), `projects:applyDefaults(id)`; `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.

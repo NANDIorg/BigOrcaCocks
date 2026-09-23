@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, HumanRequest, RequestResolution } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, HumanRequest, RequestResolution, Workflow } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -102,6 +102,8 @@ export interface Project {
    * Пусто — поля нет. Правила отдельной роли — её `systemPrompt`.
    */
   agentRules?: string
+  /** Воркфлоу задач проекта. undefined — дефолтный граф по ролям проекта (`workflow.default(roles)`). */
+  workflow?: Workflow
 }
 
 /** Настройки по умолчанию, копируемые в каждый новый проект. */
@@ -113,6 +115,8 @@ export interface ProjectDefaults {
   columns: BoardColumn[]
   /** Правила проекта для агентов доски, копируются в новый проект; пусто — поля нет. */
   agentRules?: string
+  /** Воркфлоу для новых проектов; нет — дефолтный граф по ролям проекта. В `setDefaults` null удаляет поле. */
+  workflow?: Workflow
 }
 
 export interface ReviewInfo {
@@ -211,6 +215,11 @@ export interface OrcaApi {
     getAgentRules(id: string): Promise<string>
     /** Сохранить правила проекта как введены; из одних пробелов — поле удаляется. Применяются при следующем запуске агента. */
     setAgentRules(id: string, text: string): Promise<Project>
+    /**
+     * Сохранить воркфлоу проекта (`Project.workflow`); null — вернуть дефолтный. Граф с ошибками
+     * `validateWorkflow` отвергается с их текстом, предупреждения не мешают.
+     */
+    setWorkflow(id: string, wf: Workflow | null): Promise<Project>
     /** Глобальный дефолт для новых проектов (незаданное — встроенные значения). */
     getDefaults(): Promise<ProjectDefaults>
     /** Мерж патча в дефолт; роли/колонки валидируются, мусор — ошибка. enabledAgents: undefined — «все установленные». */
@@ -219,6 +228,10 @@ export interface OrcaApi {
     applyDefaults(id: string): Promise<Project>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
+  }
+  workflow: {
+    /** Дефолтный граф для этих ролей (`defaultWorkflow` в core): показать, когда `Project.workflow` не задан. */
+    default(roles: Role[]): Promise<Workflow>
   }
   agents: {
     /** Агенты реестра с признаками «установлен»/«включён» для активного проекта. refresh — пересканировать PATH. */

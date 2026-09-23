@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
-  type OrcaEvent, type AgentKind, type Role, type BoardColumn
+  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
+  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext
 } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
 import type { AppSettings, AppSettingsPatch } from '../shared/ipc'
@@ -36,6 +37,11 @@ export interface Project {
    * Пусто — поля нет. Правила отдельной роли — её `systemPrompt`.
    */
   agentRules?: string
+  /**
+   * Воркфлоу задач проекта (граф этапов). undefined — `defaultWorkflow(roles)`, см. `ProjectManager.workflow(id)`.
+   * Граф из будущей версии формата хранится как есть, но не исполняется.
+   */
+  workflow?: Workflow
 }
 
 /** Настройки, которые копируются в каждый новый проект. */
@@ -47,6 +53,8 @@ export interface ProjectDefaults {
   columns: BoardColumn[]
   /** Правила проекта для агентов доски, копируются в новый проект; пусто — поля нет. */
   agentRules?: string
+  /** Воркфлоу для новых проектов; нет — у нового проекта тоже нет (= дефолтный граф по его ролям). */
+  workflow?: Workflow
 }
 
 interface ProjectsFile {
@@ -90,6 +98,18 @@ export class ProjectManager {
       // Правила агентов появились позже: у старых конфигов поля нет (= правил нет), не-строку отбрасываем.
       for (const p of data.projects ?? []) if (p.agentRules !== undefined && typeof p.agentRules !== 'string') delete p.agentRules
       if (data.defaults && data.defaults.agentRules !== undefined && typeof data.defaults.agentRules !== 'string') delete data.defaults.agentRules
+      // Воркфлоу: битый граф отбрасываем (= дефолтный), старую версию формата мигрируем,
+      // будущую не трогаем — её отвергнет workflow(id) с просьбой обновить приложение.
+      for (const p of data.projects ?? []) {
+        const wf = loadedWorkflow(p.workflow)
+        if (wf) p.workflow = wf
+        else delete p.workflow
+      }
+      if (data.defaults) {
+        const wf = loadedWorkflow(data.defaults.workflow)
+        if (wf) data.defaults.workflow = wf
+        else delete data.defaults.workflow
+      }
       return data
     } catch {
       return { projects: [], activeId: null }
@@ -143,7 +163,8 @@ export class ProjectManager {
       ...(d.enabledAgents ? { enabledAgents: d.enabledAgents } : {}),
       roles: d.roles,
       columns: d.columns,
-      ...(d.agentRules ? { agentRules: d.agentRules } : {})
+      ...(d.agentRules ? { agentRules: d.agentRules } : {}),
+      ...(d.workflow ? { workflow: d.workflow } : {})
     }
     this.data.projects.push(project)
     this.data.activeId = id
@@ -159,7 +180,8 @@ export class ProjectManager {
       ...(d.enabledAgents ? { enabledAgents: [...d.enabledAgents] } : {}),
       roles: (d.roles ?? DEFAULT_ROLES).map((r) => ({ ...r })),
       columns: (d.columns ?? DEFAULT_COLUMNS).map((c) => ({ ...c })),
-      ...(d.agentRules ? { agentRules: d.agentRules } : {})
+      ...(d.agentRules ? { agentRules: d.agentRules } : {}),
+      ...(d.workflow ? { workflow: cloneWorkflow(d.workflow) } : {})
     }
   }
 
@@ -185,6 +207,13 @@ export class ProjectManager {
       const rules = validateAgentRules(patch.agentRules ?? '')
       if (rules) next.agentRules = rules
       else delete next.agentRules
+    }
+    if ('workflow' in patch) {
+      // Граф проверяется по ролям и колонкам дефолта с учётом этого же патча.
+      if (patch.workflow == null) delete next.workflow
+      else next.workflow = checkedWorkflow(patch.workflow, {
+        roles: next.roles ?? DEFAULT_ROLES, columns: next.columns ?? DEFAULT_COLUMNS, enabledAgents: next.enabledAgents
+      })
     }
     this.data.defaults = next
     this.save()
@@ -225,6 +254,9 @@ export class ProjectManager {
     else delete p.enabledAgents
     if (d.agentRules) p.agentRules = d.agentRules
     else delete p.agentRules
+    // Без повторной проверки: граф дефолта проверен по ролям дефолта, а они сейчас же станут ролями проекта.
+    if (d.workflow) p.workflow = d.workflow
+    else delete p.workflow
     this.setRoles(id, d.roles)
     return this.setColumns(id, d.columns)
   }
@@ -267,6 +299,30 @@ export class ProjectManager {
     const rules = validateAgentRules(text)
     if (rules) p.agentRules = rules
     else delete p.agentRules
+    this.save()
+    return p
+  }
+
+  /**
+   * Воркфлоу проекта; не задан — дефолтный по ролям проекта (есть `reviewer` — ревью агентом, нет — человеком).
+   * Граф из будущей версии формата не исполняем: ошибка с просьбой обновить приложение.
+   */
+  workflow(id: string): Workflow {
+    const wf = this.get(id)?.workflow
+    if (!wf) return defaultWorkflow(this.roles(id))
+    if (wf.version > WORKFLOW_VERSION) throw new Error(futureWorkflowMessage(wf.version))
+    return wf
+  }
+
+  /**
+   * Сохранить воркфлоу проекта; null — вернуть дефолтный (поле удаляется). Граф с ошибками `validateWorkflow`
+   * не сохраняется, предупреждения не мешают. Роли могут удалить позже — это ловит исполнитель, не сеттер.
+   */
+  setWorkflow(id: string, wf: Workflow | null): Project {
+    const p = this.get(id)
+    if (!p) throw new Error(`project not found: ${id}`)
+    if (wf == null) delete p.workflow
+    else p.workflow = checkedWorkflow(wf, { roles: this.roles(id), columns: this.columns(id), enabledAgents: p.enabledAgents })
     this.save()
     return p
   }
@@ -420,4 +476,58 @@ function validateColumns(columns: BoardColumn[]): BoardColumn[] {
     if (n > 1) throw new Error(`системная колонка «${kind}» должна быть одна, а их ${n}`)
   }
   return result
+}
+
+function futureWorkflowMessage(version: number): string {
+  return `воркфлоу сохранён в формате версии ${version}, приложение знает только ${WORKFLOW_VERSION} — обновите приложение`
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/**
+ * Форма графа — то, без чего `validateWorkflow` упадёт, а не вернёт ошибку: объект, числовая версия,
+ * массивы нод и рёбер, строковые id/тип/концы рёбер, числовые координаты. Возвращает копию.
+ */
+function parseWorkflow(v: unknown): Workflow {
+  if (!isObject(v)) throw new Error('воркфлоу: ожидается объект')
+  if (typeof v.version !== 'number') throw new Error('воркфлоу: нет номера версии формата')
+  if (!Array.isArray(v.nodes) || !Array.isArray(v.edges)) throw new Error('воркфлоу: nodes и edges должны быть массивами')
+  v.nodes.forEach((n: unknown, i) => {
+    if (!isObject(n)) throw new Error(`воркфлоу: нода №${i + 1} — не объект`)
+    if (typeof n.id !== 'string' || typeof n.type !== 'string') throw new Error(`воркфлоу: нода №${i + 1} — id и тип должны быть строками`)
+    if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) throw new Error(`воркфлоу: нода «${n.id}» — координаты должны быть числами`)
+  })
+  v.edges.forEach((e: unknown, i) => {
+    if (!isObject(e)) throw new Error(`воркфлоу: переход №${i + 1} — не объект`)
+    for (const key of ['id', 'from', 'to', 'outcome'] as const) {
+      if (typeof e[key] !== 'string') throw new Error(`воркфлоу: переход №${i + 1} — ${key} должен быть строкой`)
+    }
+  })
+  // Форма проверена выше; остальное (типы нод, порты, роли) проверяет validateWorkflow.
+  return cloneWorkflow(v as unknown as Workflow)
+}
+
+function cloneWorkflow(wf: Workflow): Workflow {
+  return JSON.parse(JSON.stringify(wf)) as Workflow
+}
+
+/** Граф из projects.json: битый → undefined, старая версия → migrateWorkflow, будущая — как есть. */
+function loadedWorkflow(v: unknown): Workflow | undefined {
+  if (v === undefined) return undefined
+  try {
+    return migrateWorkflow(parseWorkflow(v))
+  } catch {
+    return undefined
+  }
+}
+
+/** Граф на сохранение: форма, миграция, `validateWorkflow`; ошибки — одним сообщением. */
+function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
+  const wf = migrateWorkflow(parseWorkflow(v))
+  // Будущую версию validateWorkflow тоже отвергает («обновите приложение»).
+  const { errors } = validateWorkflow(wf, ctx)
+  if (errors.length) throw new Error(`воркфлоу не сохранён: ${errors.map((e) => e.message).join('; ')}`)
+  return wf
 }
