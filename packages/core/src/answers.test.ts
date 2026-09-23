@@ -3,7 +3,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, EVENT_ANSWER_LIMIT } from './store.ts'
-import { workerTaskPrompt, questionAnswerMessage } from './prompts.ts'
+import { workerTaskPrompt } from './prompts.ts'
 import { DEFAULT_COLUMNS, MAX_ANSWER_LENGTH } from './types.ts'
 
 /** Глобальная задача с живым координатором (как после global start) и двумя подзадачами. */
@@ -266,13 +266,7 @@ describe('после ответа человека процесс идёт да�
   })
 })
 
-describe('questionAnswerMessage', () => {
-  it('одна строка: вопрос, ответ и просьба продолжить', () => {
-    const text = questionAnswerMessage({ question: 'Какую\nБД?', answer: 'Postgres,\n  версии 16' })
-    assert.equal(text, '[orca] Ответ на твой вопрос «Какую БД?»: Postgres, версии 16 — продолжай задачу с учётом ответа.')
-    assert.doesNotMatch(text, /\n/)
-  })
-
+describe('ответы на вопросы в промпте', () => {
   it('промпт без ответов на вопросы — без раздела', () => {
     assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: '?' }]), /Ответы на твои вопросы/)
   })

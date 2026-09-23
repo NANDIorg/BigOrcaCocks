@@ -77,10 +77,10 @@ describe('повторный запуск координатора', () => {
 describe('события после ответа человека в инструкции координатора', () => {
   const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
 
-  it('check подписан на question_answered и answer_accepted во всех вариантах', () => {
+  it('check подписан на question_answered, answer_accepted и события запросов к человеку во всех вариантах', () => {
     const checks = skill.split('\n').filter((l) => l.includes('orca-board check'))
     assert.ok(checks.length >= 2)
-    for (const l of checks) assert.match(l, /question_answered,answer_accepted,run_done/)
+    for (const l of checks) assert.match(l, /question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified/)
   })
 
   it('есть что делать по question_answered и answer_accepted', () => {
@@ -88,8 +88,54 @@ describe('события после ответа человека в инстр�
     assert.match(skill, /- `answer_accepted` →[\s\S]*`decision`/)
   })
 
+  it('есть что делать по событиям запросов к человеку', () => {
+    assert.match(skill, /question forward --question <id> --note/)
+    assert.match(skill, /- `answer_clarified` →[\s\S]*Не вызывай `worker start`/)
+    assert.match(skill, /- `request_created` →[\s\S]*request get --request <requestId>/)
+    assert.match(skill, /- `request_resolved` →[\s\S]*restart[\s\S]*dismiss/)
+    assert.match(skill, /startFailed: true/)
+    assert.match(skill, /orca-board request list/)
+  })
+
+  it('воркер спрашивает с вариантами и переподключается после таймаута', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    assert.match(worker, /orca-board ask --question "\.\.\." --option "метка\|пояснение"/)
+    assert.match(worker, /--recommend/)
+    assert.match(worker, /--context-file/)
+    assert.match(worker, /повтори ту же команду/)
+    assert.match(worker, /orca-board request get --request/)
+    assert.doesNotMatch(worker, /--options a,b/)
+  })
+
   it('воркер после done не берёт работу из терминала, а отправляет в приложение', () => {
     const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
     assert.match(worker, /После `orca-board done` новую работу не бери[\s\S]*Решение \/ что делать дальше/)
   })
+})
+
+describe('команды в инструкциях и документации совпадают с CLI', () => {
+  const read = (path: string): string => readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8')
+  const help = read('packages/cli/bin/orca-board.js')
+  const helpText = help.slice(help.indexOf('const HELP = `'), help.indexOf('`', help.indexOf('const HELP = `') + 14))
+  // Команды из справки: «  <слово> [<слово>]» в начале строки; done и ask — однословные.
+  const commands = new Set(
+    [...helpText.matchAll(/^ {2}([a-z][a-z-]*)(?: ([a-z][a-z-]*))?/gm)].map((m) => (m[1] === 'done' || m[1] === 'ask' ? m[1] : `${m[1]} ${m[2] ?? ''}`.trim()))
+  )
+  const flags = new Set([...helpText.matchAll(/--([a-z][a-z-]*)/g)].map((m) => m[1]))
+
+  for (const file of ['skills/coordinator.md', 'skills/worker.md', 'docs/human-requests.md', 'docs/architecture.md', 'docs/nested-kanban.md']) {
+    it(file, () => {
+      const text = read(file)
+      const uses = [...text.matchAll(/orca-board ([a-z][a-z-]*(?: [a-z][a-z-]*)?)([^`\n]*)/g)]
+      assert.ok(uses.length > 0)
+      for (const [, cmd, rest] of uses) {
+        const name = cmd.startsWith('done') || cmd.startsWith('ask') ? cmd.split(' ')[0] : cmd
+        assert.ok(commands.has(name), `${file}: нет команды «orca-board ${name}» в справке CLI`)
+        // Флаги внутри значений в кавычках (спека задачи ревью с git-командами) — не флаги orca-board.
+        for (const [, flag] of rest.replace(/"[^"]*"|'[^']*'/g, '""').matchAll(/--([a-z][a-z-]*)/g)) {
+          assert.ok(flags.has(flag), `${file}: флага --${flag} (orca-board ${name}) нет в справке CLI`)
+        }
+      }
+    })
+  }
 })
