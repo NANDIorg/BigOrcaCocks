@@ -16,6 +16,7 @@ import {
   globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, toGlobalTask, toGlobalTasks,
   type GlobalColumnKind, type GlobalTask
 } from './global-tasks.ts'
+import type { RunTypeInput, TaskTypeSnapshot } from './task-types.ts'
 
 export interface StoreSnapshot {
   tasks: Task[]
@@ -48,8 +49,34 @@ function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
 }
 
 /** Глубокая копия графа: правка графа проекта после создания прогона не должна менять снимок. */
+/**
+ * Запасной граф для `runWorkflow`, если у прогона нет снимка: граф типа прогона (или типа проекта по умолчанию
+ * для «Входящих»), иначе — дефолтный по ролям `roleIds`. Оба приходят от вызывающего кода: store в библиотеку
+ * типов не ходит.
+ */
+export interface RunWorkflowFallback {
+  roleIds?: readonly string[]
+  workflow?: Workflow
+}
+
+/** Старая форма запасного графа — только роли (`runWorkflow(runId, roleIds)`). */
+function isRoleIdList(x: readonly string[] | RunWorkflowFallback): x is readonly string[] {
+  return Array.isArray(x)
+}
+
 function snapshotWorkflow(wf: Workflow): Workflow {
   return JSON.parse(JSON.stringify(wf)) as Workflow
+}
+
+/** Поля нового прогона из его типа (копии) или, по-старому, из одного графа. */
+function runTypeFields(type: Workflow | RunTypeInput | undefined): Pick<Run, 'typeId' | 'taskType' | 'workflow'> {
+  if (!type) return {}
+  if (!('typeId' in type)) return { workflow: snapshotWorkflow(type) }
+  return {
+    typeId: type.typeId,
+    taskType: JSON.parse(JSON.stringify(type.snapshot)) as TaskTypeSnapshot,
+    ...(type.workflow ? { workflow: snapshotWorkflow(type.workflow) } : {})
+  }
 }
 
 /** Этап первого гейта (gate/human) на пути от старта; дальше исходом next. Нет такого — undefined. */
@@ -549,36 +576,59 @@ export class TaskStore {
     return this.runs.get(id)
   }
 
-  /** `workflow` — граф проекта сейчас: прогон хранит его снимок (см. `Run.workflow`). */
-  createRun(objective: string, coordinatorPtyId?: string, workflow?: Workflow): Run {
-    const run = this.addRun({ objective, coordinatorPtyId, ...(workflow ? { workflow: snapshotWorkflow(workflow) } : {}) })
+  /**
+   * `type` — тип глобальной задачи (`RunTypeInput`: id, снимок и граф, прогон хранит их копии — `Run.typeId`,
+   * `Run.taskType`, `Run.workflow`) или, по-старому, только граф.
+   */
+  createRun(objective: string, coordinatorPtyId?: string, type?: Workflow | RunTypeInput): Run {
+    const run = this.addRun({ objective, coordinatorPtyId, ...runTypeFields(type) })
     this.commit()
     return run
   }
 
   /**
-   * Граф прогона: снимок, а у прогона без снимка (от кода до воркфлоу, «Входящие») — дефолтный граф по
-   * ролям проекта `roleIds` (их передаёт вызывающий код, как и граф в `createRun`).
+   * Граф прогона: снимок, а у прогона без снимка (от кода до воркфлоу, «Входящие») — `fallback.workflow`
+   * (граф типа), иначе дефолтный граф по ролям `fallback.roleIds`. Массив вместо объекта — старая форма
+   * (только роли).
    */
-  runWorkflow(runId: string | undefined, roleIds: readonly string[] = []): Workflow {
+  runWorkflow(runId: string | undefined, fallback: readonly string[] | RunWorkflowFallback = {}): Workflow {
     const run = runId !== undefined ? this.runs.get(runId) : undefined
-    return run?.workflow ?? defaultWorkflow(roleIds.map((id) => ({ id })))
+    const fb = isRoleIdList(fallback) ? { roleIds: fallback } : fallback
+    return run?.workflow ?? fb.workflow ?? defaultWorkflow((fb.roleIds ?? []).map((id) => ({ id })))
+  }
+
+  /**
+   * Миграция на типы задач: прогоны без `typeId` (кроме «Входящих») получают тип и его снимок — тип, в который
+   * main перенёс настройки проекта. `Run.workflow` не трогается: идущие задачи продолжают по своему графу.
+   * Идемпотентна; возвращает число изменённых прогонов (0 — без записи на диск).
+   */
+  assignRunTypes(type: { typeId: string; snapshot: TaskTypeSnapshot }): number {
+    let changed = 0
+    for (const run of this.runs.values()) {
+      if (run.inbox || run.typeId !== undefined) continue
+      run.typeId = type.typeId
+      run.taskType = JSON.parse(JSON.stringify(type.snapshot)) as TaskTypeSnapshot
+      changed += 1
+    }
+    if (changed > 0) this.commit()
+    return changed
   }
 
   /**
    * Переход задачи по воркфлоу прогона: `nextStage` по исходу `outcome` текущего этапа. Задача без `stage`
    * входит в граф из старта (только `next`). Меняет только `stage` — колонку, воркера, гейт и мерж по
    * `action` делает исполнитель в main. Событие `stage_changed`, если этап сменился, и `workflow_blocked`,
-   * если дальше идти нельзя. `roleIds` — роли проекта: для дефолтного графа и проверки роли гейта.
+   * если дальше идти нельзя. `opts` — роли типа прогона (проверка роли гейта, дефолтный граф) и граф типа для
+   * прогона без снимка (`runWorkflow`).
    */
-  advanceStage(taskId: string, outcome: WfOutcome, opts: { roleIds?: readonly string[] } = {}): { task: Task; action: WfAction } {
+  advanceStage(taskId: string, outcome: WfOutcome, opts: RunWorkflowFallback = {}): { task: Task; action: WfAction } {
     const task = this.mustTask(taskId)
     if (task.answerFor) throw new Error(`задача ${taskId} — задача-ответ, она идёт мимо воркфлоу`)
     if (task.gateFor) throw new Error(`задача ${taskId} — проверка задачи ${task.gateFor.taskId}, у неё нет своего этапа`)
     if (!task.stage && outcome !== 'next') {
       throw new Error(`задача ${taskId} ещё не в воркфлоу: войти в него можно только исходом next, получено ${outcome}`)
     }
-    const wf = this.runWorkflow(task.runId, opts.roleIds)
+    const wf = this.runWorkflow(task.runId, opts)
     const ctx = { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}) }
     const step = task.stage ? nextStage(wf, task.stage, outcome, ctx) : startStage(wf, ctx)
     const from = task.stage?.nodeId
@@ -606,10 +656,10 @@ export class TaskStore {
    * копятся: лимит повторов считает и такие возвраты. Этап «Работа» не трогается. Задачи-ответы и гейты — мимо.
    * Возвращает действие нового этапа или undefined, если этап не менялся.
    */
-  enterWork(taskId: string, opts: { roleIds?: readonly string[] } = {}): WfAction | undefined {
+  enterWork(taskId: string, opts: RunWorkflowFallback = {}): WfAction | undefined {
     const task = this.mustTask(taskId)
     if (task.answerFor || task.gateFor) return undefined
-    const wf = this.runWorkflow(task.runId, opts.roleIds)
+    const wf = this.runWorkflow(task.runId, opts)
     const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
     if (current?.type === 'work') return undefined
     if (!task.stage) return this.advanceStage(taskId, 'next', opts).action
@@ -733,9 +783,11 @@ export class TaskStore {
 
   /**
    * Глобальная задача без координатора. Нужно название или описание; status — id колонки (по умолчанию backlog),
-   * priority — по умолчанию normal.
+   * priority — по умолчанию normal. `type` — тип задачи (как в `createRun`); `workflow` — старая форма, только граф.
    */
-  createGlobalTask(input: { title?: string; description?: string; status?: string; priority?: TaskPriority; workflow?: Workflow }): GlobalTask {
+  createGlobalTask(input: {
+    title?: string; description?: string; status?: string; priority?: TaskPriority; workflow?: Workflow; type?: RunTypeInput
+  }): GlobalTask {
     const title = input.title?.trim() || undefined
     const objective = input.description ?? ''
     if (!title && !objective.trim()) throw new Error('укажи название или описание глобальной задачи')
@@ -746,7 +798,7 @@ export class TaskStore {
       ...(title ? { title } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
-      ...(input.workflow ? { workflow: snapshotWorkflow(input.workflow) } : {})
+      ...runTypeFields(input.type ?? input.workflow)
     })
     this.commit()
     return this.getGlobalTask(run.id)

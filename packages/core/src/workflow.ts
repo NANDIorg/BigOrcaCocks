@@ -202,7 +202,11 @@ export interface WfValidation {
 
 export interface WfValidationContext {
   roles: readonly Pick<Role, 'id' | 'title' | 'agent'>[]
-  columns: readonly Pick<BoardColumn, 'id'>[]
+  /**
+   * Колонки доски; нет — проверка колонок нод пропускается: граф типа задачи общий для проектов с разными
+   * колонками (неизвестную колонку исполнитель в рантайме пропускает).
+   */
+  columns?: readonly Pick<BoardColumn, 'id'>[]
   /** Агенты, включённые в проекте; нет — проверка «агент роли выключен» пропускается. */
   enabledAgents?: readonly string[]
 }
@@ -348,9 +352,9 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       warnings.push({ message: `${nodeLabel(n)}: агент роли «${role.title}» (${role.agent}) выключен в проекте — задача остановится на этом этапе`, nodeId: n.id })
     }
   }
-  const columnIds = new Set(ctx.columns.map((c) => c.id))
+  const columnIds = ctx.columns ? new Set(ctx.columns.map((c) => c.id)) : undefined
   for (const n of nodes.values()) {
-    if (n.column !== undefined && !columnIds.has(n.column)) {
+    if (n.column !== undefined && columnIds && !columnIds.has(n.column)) {
       errors.push({ message: `${nodeLabel(n)}: нет колонки «${n.column}» на доске`, nodeId: n.id })
     }
     if (n.type === 'gate') {

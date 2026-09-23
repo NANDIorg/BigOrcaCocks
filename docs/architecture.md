@@ -64,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, workflow?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, typeId?, taskType?, workflow?, ... }` — прогон:
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -75,6 +75,27 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   - `priority` — приоритет глобальной задачи, та же шкала `TaskPriority`, что у `Task.priority`. `addRun` ставит
     `normal`, `createGlobalTask`/`updateGlobalTask` принимают и проверяют (`assertPriority`), миграция —
     `migrateRunPriority`. В `GlobalTask.priority` всегда есть: `toGlobalTask` читает нет поля как `normal`.
+  - `typeId` — **тип задачи** глобальной задачи (см. «Типы задач»), `taskType` — его снимок
+    `TaskTypeSnapshot {id, title, roles, agentRules?, permissionMode?}` на момент создания (страховка, если тип удалят),
+    `workflow` — снимок графа типа. Нет `typeId` — «Входящие» или прогон от кода до типов: тип проекта по умолчанию.
+    В `GlobalTask` — `typeId` и `typeTitle` (название из снимка).
+- **Типы задач** (`packages/core/src/task-types.ts`, без node-импортов — для main и renderer). `TaskType {id, title,
+  description?, builtin?, settings: {roles?, workflow?, agentRules?, permissionMode?}}` — бывший шаблон проекта без
+  колонок и агентов: тип выбирается у глобальной задачи и задаёт её роли, граф, правила агентов доски и разрешения.
+  Пустое поле — `DEFAULT_ROLES`, `defaultWorkflow(roles)`, без правил, `auto` (`resolveTaskType`).
+  - Встроенные — `builtinTaskTypes()`: встроенные шаблоны (`builtinTemplates()`) без `columns`/`enabledAgents`, с теми
+    же id (`general`, `frontend`, …, `docs`), поэтому `templateId` старых проектов переходит в id типа без таблицы.
+  - Правка встроенного на месте, без «Дублировать» (`isBuiltinTypeInPlaceEdit`): поля ролей
+    `BUILTIN_EDITABLE_TYPE_ROLE_FIELDS` — агент, модель, усилие и `systemPrompt`, — и `agentRules` типа. Название,
+    состав ролей, граф и разрешения — только в копии. Поэтому `rules set` на встроенном типе — правка на месте, не ошибка.
+  - **Какой тип у прогона** — одно правило, `resolveRunType(run, types, projectDefaultTypeId)` → `ResolvedRunType`
+    (`roles`, `agentRules`, `permissionMode`, `workflow`, `source`): `run.typeId` → тип из библиотеки (`source: 'type'`,
+    роли «вживую» — смена модели действует со следующего запуска) → снимок `run.taskType` (тип удалён,
+    `'snapshot'`) → тип проекта по умолчанию → встроенный `general` (`'default'`). `types` — вся библиотека
+    (встроенные с подменами и пользовательские); `general` берётся из кода, если в ней его нет.
+  - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
+  - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
+    с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
@@ -255,12 +276,13 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `defaultWorkflow` и графы встроенных шаблонов проектов; id нод и рёбер стабильны (`work`, `merge`, `end`,
   `conflict`, `e_<нода>_<исход>`).
 - **`migrateWorkflow(wf)`** — старую версию поднимает до текущей (пока без шагов), будущую не трогает.
-- **`validateWorkflow(wf, {roles, columns, enabledAgents?})` → `{errors, warnings}`**, у каждой проблемы
+- **`validateWorkflow(wf, {roles, columns?, enabledAgents?})` → `{errors, warnings}`**, у каждой проблемы
   `message` по-русски и `nodeId`/`edgeId` для подсветки. Ошибки: версия не текущая; пустые/дублирующиеся id,
   ребро в несуществующую ноду; не ровно один `start`, ребро в `start`, нет `end`; порт без ребра, два ребра на
   порт, исход не из `WF_PORTS`, выход из `end`; из достижимой ноды нет пути к `end`; цикл из одних условий;
   роль гейта (и `work.roleId`) не существует или служебная (`isTaskRole`), `attempts` на несуществующую ноду
-  или `atLeast < 1`, роль из условия `role` не существует, условие `files`, несуществующая колонка; от старта
+  или `atLeast < 1`, роль из условия `role` не существует, условие `files`, несуществующая колонка (только если
+  `columns` переданы: у графа типа задачи колонок нет — тип общий для проектов с разными колонками); от старта
   недостижима ни одна `work`. Предупреждения: агент роли гейта выключен (только если передан `enabledAgents`),
   нода недостижима, возврат в `work` в обход `attempts` и `human` (решение человека цикл не делает бесконечным), путь accept ведёт в `end` без `merge`, после `merge ok`
   путь снова приходит в `merge`.
@@ -286,16 +308,21 @@ Store хранит позицию и решает, куда задача пер�
 в main (`src/main/workflow.ts`, `docs/workflow.md`). `finishDispatch`, `rejectReview`, `acceptTask` сами `stage`
 не двигают — исход до `advanceStage` доводит main.
 
-- **Снимок графа** — `Run.workflow`: `createRun(objective, ptyId?, workflow?)` и `createGlobalTask({…, workflow})`
-  кладут глубокую копию графа, который передаёт вызывающий код (store в проект не ходит). Правка графа посреди
-  прогона не ломает переходы идущих задач. `runWorkflow(runId, roleIds?)` — снимок, а у прогона без него (от кода
-  до воркфлоу, «Входящие») — `defaultWorkflow` по переданным ролям проекта.
-- **`advanceStage(taskId, outcome, {roleIds?})` → `{task, action}`** — `nextStage` по графу прогона; задача без
+- **Снимок графа** — `Run.workflow`: `createRun(objective, ptyId?, type?)` и `createGlobalTask({…, type})`
+  кладут глубокие копии типа (`RunTypeInput`: `Run.typeId`, снимок `Run.taskType` и граф), который передаёт вызывающий
+  код (store в библиотеку типов не ходит); старая форма — только граф (`Workflow` / `workflow`). Правка графа посреди
+  прогона не ломает переходы идущих задач. `runWorkflow(runId, fallback?)` — снимок, а у прогона без него (от кода
+  до воркфлоу, «Входящие») — `fallback.workflow` (граф типа), иначе `defaultWorkflow` по `fallback.roleIds`;
+  массив вместо объекта — старая форма (только роли).
+- **`assignRunTypes({typeId, snapshot})`** — миграция на типы задач: прогоны без `typeId`, кроме «Входящих», получают
+  тип и снимок (тип, в который main перенёс настройки проекта); `Run.workflow` не трогается. Идемпотентна, один
+  `commit` только при изменениях; возвращает число изменённых прогонов.
+- **`advanceStage(taskId, outcome, {roleIds?, workflow?})` → `{task, action}`** — `nextStage` по графу прогона; задача без
   `stage` входит в граф из старта (`startStage`, только исход `next`). Задачи-ответы и задачи-гейты (`gateFor`) —
   ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}`;
   `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
   гейта удалена). Эффекты `action` выполнит main.
-- **`enterWork(taskId, {roleIds?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
+- **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
   задача не на ноде `work` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
   складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` —
   ничего. Задачи-ответы и гейты — мимо. Возвращает `action` нового этапа.
