@@ -225,6 +225,9 @@ orca-board task answer --task <id>          # полный ответ задач
 orca-board task move --task <id> --status <id колонки>
 orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
 orca-board worker start --task <id>
+orca-board worker stop --task <id>          # закрыть воркеров задачи без эскалации; in_progress → ready
+orca-board worker restart --task <id> [--feedback "..."]   # stop + feedback + start; работает и на in_progress
+orca-board task reopen --task <id> [--feedback "..."] [--start]   # → ready (не из in_progress); ждущий ответ — как «Уточнить»
 orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run <id>]
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
 orca-board runs list                        # [{...Run, tasks, done}]
@@ -576,6 +579,18 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
 | `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `restart`, `dismiss` | `{request, worker?, startError?}` |
+| `worker.stop` | `task` | `{stopped: dispatchId[], task}` |
+| `worker.restart` | `task`, `feedback?` | `{stopped, ptyId, dispatchId, worktree, branch}` |
+| `task.reopen` | `task`, `feedback?`, `start?` | `Task`; со `start` — `{task, worker}` |
+
+`worker.stop` — `ProjectDeps.stopWorker` (`stopTaskWorker` в `src/main/index.ts`): `closeTaskWorkers` закрывает живые
+dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalation` — `ptyExited` видит `endedAt` и молчит) и убивает PTY
+(и живые PTY уже закрытых dispatch'ей); задача из `kind=in_progress` переносится в первую колонку `kind=ready`, из других колонок
+не двигается. `worker.restart` сначала проверяет роль/агента (чтобы не остановить воркера, которого не поднять), затем stop,
+непустой `feedback` → `task.feedback`, затем `startWorker` (`runWorker`). `task.reopen` — `store.reopenTask`
+(`packages/core/src/store.ts`): задача в `kind=in_progress` или с живым dispatch отвергается (подсказка — `worker restart`);
+ждущий запрос `answer` → как `rejectReview`: «Уточнить» (`answer_clarified`, feedback обязателен); иначе feedback (если передан)
+и колонка `kind=ready`; прочие ждущие запросы задачи отменяются. `start: true` — после этого `startWorker`.
 
 ## Разрешения Claude Code
 

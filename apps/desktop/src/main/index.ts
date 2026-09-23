@@ -204,6 +204,18 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
   return startWorker(p.store, p.root, ctx(p.id), taskId, cols, rows)
 }
 
+/**
+ * `orca-board worker stop`: закрыть воркеров задачи (dispatch'и — unknown без эскалации, PTY убиты)
+ * и вернуть задачу из in_progress в ready. Задачу в другой колонке не двигает.
+ */
+function stopTaskWorker(store: TaskStore, taskId: string): { stopped: string[] } {
+  const stopped = store.activeDispatches().filter((d) => d.taskId === taskId).map((d) => d.id)
+  closeTaskWorkers(store, taskId)
+  const task = store.getTask(taskId)
+  if (task && store.columnKind(task.status) === 'in_progress') store.moveTask(taskId, store.columnId('ready'))
+  return { stopped }
+}
+
 function runCoordinator(
   objective: string,
   projectId?: string,
@@ -507,6 +519,7 @@ app.whenReady().then(() => {
       return {
         store: p.store,
         startWorker: (taskId) => runWorker(taskId, p.id),
+        stopWorker: (taskId) => stopTaskWorker(p.store, taskId),
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId, decision) => acceptReview(p.store, p.root, taskId, decision),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),

@@ -43,6 +43,8 @@ const HELP = `orca-board — управление доской агентов
   task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
   task answer --task <id>                 полный ответ задачи-ответа и decision (в событиях answer обрезан)
   worker start --task <id>
+  worker stop --task <id>                 закрыть воркеров задачи (без эскалации), задача из работы → ready
+  worker restart --task <id> [--feedback "..."]   stop + запуск заново; работает и на задаче в работе
   worker read --dispatch <id> [--limit 80]
   check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified] [--timeout-ms 900000] [--run <id>]
   check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается
@@ -59,6 +61,9 @@ const HELP = `orca-board — управление доской агентов
   review info --task <id>                 diff-stat и коммиты ветки задачи
   review accept --task <id> [--decision "..."]  слить в текущую ветку, убрать worktree, задача → done
   review reject --task <id> --feedback "..."   задача → ready с замечаниями для перезапуска
+  task reopen --task <id> [--feedback "..."] [--start]   задача (done/review/backlog/…) → ready, feedback — по
+                                          желанию; ждёт решения по ответу — это «Уточнить» (feedback обязателен);
+                                          --start — сразу запустить воркера
   task delete --task <id>
   events list
 
@@ -102,7 +107,7 @@ if (method === 'ask') method = 'worker.ask'
 
 // Флаги без значения. Остальные берут следующий аргумент как значение, даже если он начинается
 // с `--` (`--answer "--force"`): иначе значение превращалось в true, а следующий флаг терялся.
-const BOOLEAN_FLAGS = new Set(['wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help'])
+const BOOLEAN_FLAGS = new Set(['wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help', 'start'])
 // Повторяемые флаги: каждое вхождение — отдельный элемент (без split по запятой).
 const REPEATABLE_FLAGS = new Set(['option'])
 
