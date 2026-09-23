@@ -96,6 +96,10 @@ const api: OrcaApi = {
     open: (source, path) => ipcRenderer.invoke('docs:open', source, path),
     reveal: (source, path) => ipcRenderer.invoke('docs:reveal', source, path)
   },
+  rules: {
+    list: () => ipcRenderer.invoke('rules:list'),
+    save: (name, text) => ipcRenderer.invoke('rules:save', name, text)
+  },
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),
     accept: (taskId, decision) => ipcRenderer.invoke('review:accept', taskId, decision),
