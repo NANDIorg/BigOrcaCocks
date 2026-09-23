@@ -1,0 +1,67 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import type { OrcaApi } from '../../shared/ipc'
+import {
+  RETURN_BLOCKED_LIVE,
+  STALE_REVIEW_MESSAGE,
+  globalReviewApi,
+  globalTaskActions,
+  returnsNewestFirst,
+  reviewErrorMessage
+} from './globalReview'
+
+test('globalTaskActions: на «Проверке» — подтвердить и вернуть, без запуска координатора', () => {
+  assert.deepEqual(globalTaskActions({}, 'review', false), { startCoordinator: false, accept: true, returnToWork: true })
+})
+
+test('globalTaskActions: живой координатор на «Проверке» — возврат выключен с причиной', () => {
+  const a = globalTaskActions({}, 'review', true)
+  assert.equal(a.returnToWork, true)
+  assert.equal(a.returnBlocked, RETURN_BLOCKED_LIVE)
+  assert.equal(a.startCoordinator, false)
+})
+
+test('globalTaskActions: вне «Проверки» — только запуск координатора, если он не жив', () => {
+  for (const kind of ['backlog', 'in_progress', 'needs_input', 'done', undefined] as const) {
+    assert.deepEqual(globalTaskActions({}, kind, false), { startCoordinator: true, accept: false, returnToWork: false }, String(kind))
+    assert.equal(globalTaskActions({}, kind, true).startCoordinator, false, String(kind))
+  }
+})
+
+test('globalTaskActions: у «Входящих» действий нет даже в review', () => {
+  assert.deepEqual(globalTaskActions({ inbox: true }, 'review', false), { startCoordinator: false, accept: false, returnToWork: false })
+  assert.deepEqual(globalTaskActions({ inbox: true }, 'in_progress', false), { startCoordinator: false, accept: false, returnToWork: false })
+})
+
+test('returnsNewestFirst: новые сверху, без возвратов — пусто, исходный массив не трогаем', () => {
+  assert.deepEqual(returnsNewestFirst({}), [])
+  const returns = [{ at: 1, text: 'a' }, { at: 3, text: 'c' }, { at: 2, text: 'b' }]
+  assert.deepEqual(returnsNewestFirst({ returns }).map((r) => r.text), ['c', 'b', 'a'])
+  assert.equal(returns[0].text, 'a')
+})
+
+test('globalReviewApi: старый preload без методов — «перезапустите приложение»', () => {
+  assert.throws(() => globalReviewApi(undefined), { message: STALE_REVIEW_MESSAGE })
+  const old = { globalTasks: {} } as unknown as Partial<OrcaApi>
+  assert.throws(() => globalReviewApi(old), { message: STALE_REVIEW_MESSAGE })
+})
+
+test('globalReviewApi: новый preload — вызовы уходят в методы', async () => {
+  const calls: unknown[][] = []
+  const api = {
+    globalTasks: {
+      accept: async (id: string) => { calls.push(['accept', id]); return {} },
+      returnToWork: async (id: string, text: string, cols: number, rows: number) => { calls.push(['return', id, text, cols, rows]); return 'pty1' }
+    }
+  } as unknown as Partial<OrcaApi>
+  const r = globalReviewApi(api)
+  await r.accept('g1')
+  assert.equal(await r.returnToWork('g1', 'доделай', 120, 30), 'pty1')
+  assert.deepEqual(calls, [['accept', 'g1'], ['return', 'g1', 'доделай', 120, 30]])
+})
+
+test('reviewErrorMessage: нет хендлера в старом main — «перезапустите», остальное как есть', () => {
+  assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:accept'"), STALE_REVIEW_MESSAGE)
+  assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:returnToWork'"), STALE_REVIEW_MESSAGE)
+  assert.equal(reviewErrorMessage('глобальная задача не на проверке'), 'глобальная задача не на проверке')
+})

@@ -20,6 +20,8 @@ import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
+import { ReturnGlobalModal } from './ReturnGlobalModal'
+import { globalReviewApi, reviewErrorMessage } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
@@ -128,6 +130,8 @@ export function App(): React.JSX.Element {
   const [showNew, setShowNew] = useState(false)
   /** Модалка глобальной задачи: создание или правка (по id — берётся актуальная из снимка). */
   const [globalModal, setGlobalModal] = useState<{ mode: 'create' } | { mode: 'edit'; id: string } | null>(null)
+  /** Глобальная задача, которую возвращают с «Проверки» в работу (модалка уточнения). */
+  const [returnGlobalId, setReturnGlobalId] = useState<string | null>(null)
   /** Глобальная задача, из которой вернулись на общую доску, — её карточке возвращается фокус. */
   const [lastGlobal, setLastGlobal] = useState<string | undefined>()
   const [showCoord, setShowCoord] = useState(false)
@@ -296,6 +300,7 @@ export function App(): React.JSX.Element {
     setOpenTaskId(null)
     setShowNew(false)
     setGlobalModal(null)
+    setReturnGlobalId(null)
     setLastGlobal(undefined)
   }, [active?.id])
 
@@ -304,10 +309,11 @@ export function App(): React.JSX.Element {
   // ---------- глобальные задачи (docs/nested-kanban.md) ----------
   const columns = active?.columns ?? DEFAULT_COLUMNS
   const kindById = new Map(columns.map((c) => [c.id, c.kind]))
-  // Глобальный канбан — Бэклог / В работе / Нужен ответ / Сделано; локальный канбан подзадач — все колонки.
+  // Глобальный канбан — Бэклог / В работе / Нужен ответ / Проверка / Сделано; локальный канбан подзадач — все колонки.
   // «Нужен ответ» вычисляется (подзадачи ждут человека), поэтому в создание и перенос она не попадает.
   const globalColumns = globalBoardColumns(columns)
   const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.requests ?? [])
+  const globalKindById = new Map(globalColumns.map((c) => [c.id, c.kind]))
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
   const subtasks = openGlobal ? tasks.filter((t) => t.runId === openGlobal.id) : []
@@ -382,6 +388,7 @@ export function App(): React.JSX.Element {
     const res = await window.orca.requests.resolve(r.id, resolution)
     if (res.startError) alert(`«${r.title}»: решение принято, но воркер не запустился — ${res.startError}. Координатор получил эскалацию.`)
   }
+  const returningGlobal = returnGlobalId ? globals.find((g) => g.id === returnGlobalId) : undefined
   const editingGlobal = globalModal?.mode === 'edit' ? globals.find((g) => g.id === globalModal.id) : undefined
 
   function openGlobalTask(g: GlobalTask): void {
@@ -412,6 +419,35 @@ export function App(): React.JSX.Element {
       showTerminal(ptyId, projectId)
     } catch (e) {
       alert(`Не удалось запустить координатора: ${ipcErrorMessage(e)}`)
+    }
+  }
+
+  /** «Подтвердить» на «Проверке»: результат принят, задача — в «Сделано». */
+  async function acceptGlobalTask(g: GlobalTask): Promise<void> {
+    try {
+      await globalReviewApi(window.orca).accept(g.id)
+    } catch (e) {
+      alert(`Не удалось подтвердить: ${reviewErrorMessage(ipcErrorMessage(e))}`)
+    }
+  }
+
+  /**
+   * «Вернуть в работу» с уточнением: main переводит задачу в работу и запускает координатора — открываем
+   * его терминал, как startGlobalCoordinator. Старый preload — ошибка остаётся в модалке.
+   */
+  async function returnGlobalTask(id: string, text: string): Promise<void> {
+    const projectId = active?.id
+    const api = globalReviewApi(window.orca)
+    try {
+      const ptyId = await api.returnToWork(id, text, 120, 30)
+      setReturnGlobalId(null)
+      showTerminal(ptyId, projectId)
+    } catch (e) {
+      const message = reviewErrorMessage(ipcErrorMessage(e))
+      // Задача могла уже уйти в работу, а упал запуск координатора: уточнение сохранено в ней, повторный
+      // возврат не пройдёт — закрываем модалку, «Запустить координатора» подхватит уточнение.
+      setReturnGlobalId(null)
+      alert(`Не удалось вернуть в работу: ${message}\n\nЕсли задача уже «В работе», запустите координатора кнопкой — уточнение сохранено.`)
     }
   }
 
@@ -746,16 +782,21 @@ export function App(): React.JSX.Element {
               onEdit={(g) => setGlobalModal({ mode: 'edit', id: g.id })}
               onRemove={(g) => void removeGlobalTask(g)}
               onStartCoordinator={(g) => void startGlobalCoordinator(g)}
+              onAccept={(g) => void acceptGlobalTask(g)}
+              onReturn={(g) => setReturnGlobalId(g.id)}
             />
           )}
           {tab === 'board' && openGlobal && (
             <GlobalTaskView
               global={openGlobal}
+              statusKind={globalKindById.get(openGlobal.status)}
               coordinatorPty={coordinatorPtys.get(openGlobal.id)}
               onBack={closeGlobalTask}
               onEdit={() => setGlobalModal({ mode: 'edit', id: openGlobal.id })}
               onStartCoordinator={() => void startGlobalCoordinator(openGlobal)}
               onShowCoordinator={(ptyId) => showTerminal(ptyId)}
+              onAccept={() => void acceptGlobalTask(openGlobal)}
+              onReturn={() => setReturnGlobalId(openGlobal.id)}
               requests={requests}
               tasks={subtasks}
               onResolveRequest={resolveRequest}
@@ -929,8 +970,20 @@ export function App(): React.JSX.Element {
           global={editingGlobal}
           columns={globalStoredColumns(columns)}
           priorityEditable={runsKnowPriority(snap.runs)}
+          statusKind={editingGlobal ? globalKindById.get(editingGlobal.status) : undefined}
+          live={editingGlobal ? coordinatorPtys.has(editingGlobal.id) : false}
+          onAccept={editingGlobal ? () => { setGlobalModal(null); void acceptGlobalTask(editingGlobal) } : undefined}
+          onReturn={editingGlobal ? () => { setGlobalModal(null); setReturnGlobalId(editingGlobal.id) } : undefined}
           onClose={() => setGlobalModal(null)}
           onSave={saveGlobalTask}
+        />
+      )}
+      {returningGlobal && (
+        <ReturnGlobalModal
+          key={returningGlobal.id}
+          global={returningGlobal}
+          onClose={() => setReturnGlobalId(null)}
+          onSubmit={(text) => returnGlobalTask(returningGlobal.id, text)}
         />
       )}
     </div>
