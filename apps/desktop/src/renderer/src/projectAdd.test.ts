@@ -31,7 +31,7 @@ test('preselectedType — угаданный, иначе тип библиоте
 test('startAddProject — старый preload без типов и старый main без хендлеров: прежний add()', async () => {
   assert.deepEqual(await startAddProject(undefined, []), { kind: 'legacy' })
   assert.deepEqual(await startAddProject({ projects: {} }, []), { kind: 'legacy' })
-  // main до типов задач: у preload есть только detectTemplate и templates — тоже прежний add().
+  // main до типов задач: у preload нет taskTypes — тоже прежний add().
   assert.deepEqual(await startAddProject({ projects: {}, taskTypes: undefined }, []), { kind: 'legacy' })
   const staleMain: AddProjectApi = {
     projects: { detectTaskType: async () => { throw new Error("Error invoking remote method 'projects:detectTaskType': Error: No handler registered for 'projects:detectTaskType'") } },

@@ -1,6 +1,6 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Типы задач в ProjectManager: библиотека (встроенные и
 // пользовательские, правка встроенного на месте), типы проекта, тип нового прогона и роли по прогону,
-// старые каналы шаблонов и настроек проекта поверх типа проекта по умолчанию. Миграция — task-types-migration.test.ts.
+// колонки проекта. Миграция — task-types-migration.test.ts.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -8,14 +8,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, TEMPLATE_SECTIONS, builtinTaskType, builtinTaskTypes, defaultWorkflow,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes, defaultWorkflow,
   type BoardColumn, type Role
 } from '@orca-board/core'
 import { ProjectManager } from './projects'
 import { PROJECTS_FILE_VERSION } from './task-types-migration'
 
 const PID = 'p1'
-const TID = `type_${PID}`
 let tmp: string
 
 /** projects.json нового формата с одним проектом без своего типа. */
@@ -25,14 +24,6 @@ function writeConfig(extra: Record<string, unknown> = {}, project: Record<string
     projects: [{ id: PID, root: path.join(tmp, 'repo'), name: 'repo', columns: DEFAULT_COLUMNS, ...project }],
     activeId: PID,
     ...extra
-  }))
-}
-
-/** projects.json старого формата: проект со своими ролями — после загрузки у него тип `TID`. */
-function writeLegacy(project: Record<string, unknown> = {}): void {
-  writeFileSync(path.join(tmp, 'projects.json'), JSON.stringify({
-    projects: [{ id: PID, root: path.join(tmp, 'repo'), name: 'repo', roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS, ...project }],
-    activeId: PID
   }))
 }
 
@@ -65,6 +56,21 @@ describe('библиотека типов', () => {
     assert.deepEqual(new ProjectManager(tmp).taskType(own.id), own, 'переживает перезапуск')
   })
 
+  it('копия встроенного под старым названием получает новое: встроенные переименовали («Общий» → «Программирование»)', () => {
+    const general = builtinTaskType(GENERAL_TASK_TYPE_ID)!
+    const docs = builtinTaskType('docs')!
+    writeConfig({ taskTypes: [
+      { id: GENERAL_TASK_TYPE_ID, title: 'Общий', description: 'Перенесён из «Настройки → Для новых проектов».', settings: { agentRules: 'r' } },
+      { ...docs, builtin: undefined, title: 'Документация / аналитика' }
+    ] })
+    const pm = new ProjectManager(tmp)
+    assert.equal(pm.taskType(GENERAL_TASK_TYPE_ID)?.title, general.title)
+    assert.equal(pm.taskType(GENERAL_TASK_TYPE_ID)?.settings.agentRules, 'r', 'настройки копии не трогаются')
+    assert.equal(pm.taskType('docs')?.title, docs.title)
+    // Правка на месте сверяется с копией — после переименования она по-прежнему проходит.
+    assert.equal(pm.saveTaskTypeRules('docs', undefined, 'правила').title, docs.title)
+  })
+
   it('встроенный на месте: исполнитель, системный промпт роли и правила — да, остальное — «Дублировать»', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
@@ -94,17 +100,17 @@ describe('библиотека типов', () => {
     assert.equal(next.settings.permissionMode, 'acceptEdits')
   })
 
-  it('валидация: название, роли, граф — по ролям типа; колонки и агенты шаблонов отбрасываются', () => {
+  it('валидация: название, роли, граф — по ролям типа; колонки и агенты старого формата отбрасываются', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
     assert.throws(() => pm.saveTaskType({ title: '', settings: {} }), /пустое название/)
     assert.throws(() => pm.saveTaskType({ title: 'T', settings: { roles: [] } }), /хотя бы одна роль/)
     assert.throws(() => pm.saveTaskType({ title: 'T', settings: { permissionMode: 'x' as never } }), /режим разрешений/)
-    const t = pm.saveTemplate({ title: 'Из шаблона', settings: { columns: DEFAULT_COLUMNS, enabledAgents: ['claude'], agentRules: 'r' } })
+    const t = pm.saveTaskType({ title: 'Со старыми полями', settings: { columns: DEFAULT_COLUMNS, enabledAgents: ['claude'], agentRules: 'r' } as never })
     assert.deepEqual(t.settings, { agentRules: 'r' })
   })
 
-  it('тип по умолчанию: установка, удаление сбрасывает на «Общий»', () => {
+  it('тип по умолчанию: установка, удаление сбрасывает на «Программирование»', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
     const t = pm.saveTaskType({ title: 'Мой', settings: {} })
@@ -144,7 +150,7 @@ describe('типы проекта', () => {
     assert.equal(api.defaultTaskTypeId, 'backend')
     assert.deepEqual(api.columns, DEFAULT_COLUMNS)
     assert.equal('roles' in api, false)
-    assert.deepEqual(pm.view(api).roles, builtinTaskType('backend')!.settings.roles ?? DEFAULT_ROLES, 'view дополняет ролями типа')
+    assert.deepEqual(pm.roles(api.id), builtinTaskType('backend')!.settings.roles ?? DEFAULT_ROLES, 'роли — из типа по умолчанию')
     assert.equal(pm.add(gitRepo('plain')).defaultTaskTypeId, GENERAL_TASK_TYPE_ID)
     assert.throws(() => pm.add(gitRepo('x'), 'нет-такого'), /тип задачи не найден/)
     assert.equal(pm.add(gitRepo('api'), 'frontend').defaultTaskTypeId, 'backend', 'уже добавленный — как есть')
@@ -225,51 +231,7 @@ describe('тип прогона и роли по прогону', () => {
   })
 })
 
-describe('старые каналы поверх типа проекта по умолчанию', () => {
-  it('setRoles / setAgentRules / setPermissionMode пишут в пользовательский тип проекта', () => {
-    writeLegacy()
-    const pm = new ProjectManager(tmp)
-    const p = pm.setRoles(PID, [...DEFAULT_ROLES, DESIGNER])
-    assert.ok(p.roles?.some((r) => r.id === 'designer'))
-    assert.equal(pm.setAgentRules(PID, 'r').agentRules, 'r')
-    assert.equal(pm.setPermissionMode(PID, 'acceptEdits').permissionMode, 'acceptEdits')
-    const type = pm.taskType(TID)!
-    assert.equal(type.settings.agentRules, 'r')
-    assert.equal(type.settings.permissionMode, 'acceptEdits')
-    assert.equal(pm.view(pm.get(PID)!).templateId, TID)
-  })
-
-  it('у встроенного типа проекта: состав ролей и разрешения — ошибка «Дублировать», правила — на месте', () => {
-    writeConfig()
-    const pm = new ProjectManager(tmp)
-    assert.throws(() => pm.setRoles(PID, [...DEFAULT_ROLES, DESIGNER]), /Дублировать/)
-    assert.throws(() => pm.setPermissionMode(PID, 'bypassPermissions'), /Дублировать/)
-    assert.equal(pm.setAgentRules(PID, 'на месте').agentRules, 'на месте')
-  })
-
-  it('applyTemplate: все разделы — сменить тип проекта; часть — записать разделы в его тип', () => {
-    writeLegacy()
-    const pm = new ProjectManager(tmp)
-    const p = pm.applyTemplate(PID, 'backend', ['agentRules'])
-    assert.equal(p.agentRules, builtinTaskType('backend')!.settings.agentRules)
-    assert.equal(p.templateId, TID, 'частичное применение тип не меняет')
-    assert.equal(pm.applyTemplate(PID, 'docs', [...TEMPLATE_SECTIONS]).templateId, 'docs')
-    pm.setDefaultTaskType('backend')
-    assert.equal(pm.applyDefaults(PID).templateId, 'backend')
-    assert.throws(() => pm.applyTemplate(PID, 'backend', []), /ни один раздел/)
-  })
-
-  it('templates* — те же типы в форме шаблонов', () => {
-    writeConfig()
-    const pm = new ProjectManager(tmp)
-    assert.equal(pm.templatesState().templates.length, pm.taskTypes().length)
-    const copy = pm.duplicateTemplate('backend')
-    assert.equal(pm.setDefaultTemplate(copy.id).defaultTemplateId, copy.id)
-    assert.equal(pm.defaults().agentRules, builtinTaskType('backend')!.settings.agentRules)
-    assert.deepEqual(pm.defaults().columns, DEFAULT_COLUMNS)
-    assert.equal(pm.deleteTemplate(copy.id).defaultTemplateId, GENERAL_TASK_TYPE_ID)
-  })
-
+describe('проект', () => {
   it('колонки остаются у проекта: задачи из исчезнувших колонок — в backlog', () => {
     const cols: BoardColumn[] = [...DEFAULT_COLUMNS, { id: 'qa', title: 'QA', color: '#fff', kind: 'custom' }]
     writeConfig({}, { columns: cols })
@@ -279,6 +241,5 @@ describe('старые каналы поверх типа проекта по у
     pm.setColumns(PID, DEFAULT_COLUMNS)
     const status = pm.store(PID).getTask(task.id)?.status
     assert.ok(DEFAULT_COLUMNS.some((c) => c.id === status && (c.kind === 'backlog' || c.kind === 'ready')), String(status))
-    assert.deepEqual(pm.taskRefs(PID), [{ status, roleId: pm.store(PID).getTask(task.id)?.roleId }])
   })
 })

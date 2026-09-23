@@ -5,18 +5,16 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
-  GENERAL_TASK_TYPE_ID, TEMPLATE_SECTIONS, builtinTaskType, builtinTaskTypes, isBuiltinTypeInPlaceEdit,
-  applySections, resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
+  GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes, isBuiltinTypeInPlaceEdit,
+  resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
-  type ProjectTemplate, type ProjectTemplateSettings, type TemplateSection,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
-import { detectTemplate } from './template-detect'
+import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
 import type {
-  AppSettings, AppSettingsPatch, Project as ProjectView, ProjectDefaults, ProjectTaskTypesInput, TaskRef,
-  TaskTypeDetection, TaskTypeInput, TaskTypesState, TemplateDetection, TemplateInput, TemplatesState
+  AppSettings, AppSettingsPatch, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput, TaskTypesState
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
@@ -74,7 +72,7 @@ export interface ProjectsFile {
 
 /** projects.json до типов задач: поля, которые читает только миграция. */
 interface RawProjectsFile extends Omit<LegacyProjectsFile, 'templates'> {
-  /** Старый глобальный дефолт для новых проектов — переносится в тип «Общий» (`migrateDefaults`). */
+  /** Старый глобальный дефолт для новых проектов — переносится в копию встроенного `general` (`normalizeLegacy`). */
   defaults?: Record<string, unknown>
   /** Шаблоны проектов: в файле — с колонками и агентами, после `normalizeLegacy` — уже типы. */
   templates?: unknown
@@ -122,7 +120,7 @@ export class ProjectManager {
       const { data, changed } = migrateProjectsFile(raw as LegacyProjectsFile)
       // Типы чистятся при каждой загрузке по разделам (`loadedTaskType`): битый раздел не уносит тип целиком,
       // иначе проект молча уехал бы на тип по умолчанию, а его роли и правила пропали бы при первой же записи.
-      data.taskTypes = Array.isArray(data.taskTypes) ? data.taskTypes.flatMap(loadedTaskType) : []
+      data.taskTypes = Array.isArray(data.taskTypes) ? data.taskTypes.flatMap(loadedTaskType).map(withBuiltinTitle) : []
       if (!data.taskTypes.length) delete data.taskTypes
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
@@ -163,27 +161,6 @@ export class ProjectManager {
   }
 
   /**
-   * Проект для renderer: свои поля плюс (до перевода renderer на типы) настройки его типа по умолчанию в старых
-   * полях `roles`, `workflow`, `agentRules`, `permissionMode`, `templateId`.
-   */
-  view(p: Project): ProjectView {
-    const type = this.projectDefaultType(p.id)
-    const r = resolveTaskType(type)
-    return {
-      ...clone(p),
-      permissionMode: r.permissionMode,
-      roles: r.roles,
-      ...(r.agentRules ? { agentRules: r.agentRules } : {}),
-      ...(type.settings.workflow ? { workflow: clone(type.settings.workflow) } : {}),
-      templateId: type.id
-    }
-  }
-
-  views(): ProjectView[] {
-    return this.data.projects.map((p) => this.view(p))
-  }
-
-  /**
    * Добавить репозиторий. Путь нормализуется до корня git. Новый проект получает встроенные колонки и тип по
    * умолчанию `typeId` (нет — тип библиотеки по умолчанию); копии настроек типа нет — связь живая.
    * Уже добавленный репозиторий возвращается как есть.
@@ -211,12 +188,12 @@ export class ProjectManager {
   }
 
   /**
-   * Подсказка типа по файлам репозитория (`detectTemplate`: id встроенных типов совпадают с id старых шаблонов)
-   * — только предвыбор. Нет признаков или угаданного типа нет в библиотеке — тип библиотеки по умолчанию.
+   * Подсказка типа по файлам репозитория (`guessTaskType`) — только предвыбор. Нет признаков или угаданного
+   * типа нет в библиотеке — тип библиотеки по умолчанию.
    */
   detectTaskType(path: string): TaskTypeDetection {
-    const hint = detectTemplate(path)
-    if (hint.templateId && this.taskType(hint.templateId)) return { path, typeId: hint.templateId, reason: hint.reason }
+    const hint = guessTaskType(path)
+    if (hint.typeId && this.taskType(hint.typeId)) return { path, typeId: hint.typeId, reason: hint.reason }
     return { path, typeId: this.defaultTaskTypeId(), reason: '' }
   }
 
@@ -244,7 +221,7 @@ export class ProjectManager {
     return { taskTypes: this.taskTypes(), defaultTaskTypeId: this.defaultTaskTypeId() }
   }
 
-  /** Тип библиотеки по умолчанию: заданный и существующий, иначе «Общий» (встроенный есть всегда). */
+  /** Тип библиотеки по умолчанию: заданный и существующий, иначе «Программирование» (встроенный есть всегда). */
   defaultTaskTypeId(): string {
     const id = this.data.defaultTaskTypeId
     return id && this.taskType(id) ? id : GENERAL_TASK_TYPE_ID
@@ -298,9 +275,9 @@ export class ProjectManager {
   }
 
   /**
-   * Удалить пользовательский тип. Удалённый тип библиотеки по умолчанию сбрасывается на «Общий»; ссылки проектов
-   * (`defaultTaskTypeId`, `taskTypeIds`) остаются висячими и при чтении пропускаются, прогоны этого типа
-   * дорабатывают по снимку (`resolveRunType`). Удаление копии встроенного возвращает встроенный.
+   * Удалить пользовательский тип. Удалённый тип библиотеки по умолчанию сбрасывается на «Программирование»;
+   * ссылки проектов (`defaultTaskTypeId`, `taskTypeIds`) остаются висячими и при чтении пропускаются, прогоны
+   * этого типа дорабатывают по снимку (`resolveRunType`). Удаление копии встроенного возвращает встроенный.
    */
   deleteTaskType(id: string): TaskTypesState {
     const user = this.data.taskTypes ?? []
@@ -451,130 +428,6 @@ export class ProjectManager {
     return this.resolveRun(projectId, runId).agentRules
   }
 
-  // ---------- совместимость: старые каналы поверх типа проекта по умолчанию (уберутся вместе с шаблонами) ----------
-
-  /** Граф типа проекта по умолчанию. */
-  workflow(projectId: string): Workflow {
-    return this.taskTypeWorkflow(this.projectDefaultTypeId(projectId)).workflow
-  }
-
-  private patchProjectType(projectId: string, patch: Partial<Record<keyof TaskTypeSettings, unknown>>): ProjectView {
-    const p = this.mustGet(projectId)
-    this.patchTaskType(this.projectDefaultTypeId(projectId), patch)
-    return this.view(p)
-  }
-
-  setRoles(projectId: string, roles: Role[]): ProjectView {
-    return this.patchProjectType(projectId, { roles })
-  }
-
-  setAgentRules(projectId: string, text: string): ProjectView {
-    return this.patchProjectType(projectId, { agentRules: text })
-  }
-
-  /** null — вернуть типу дефолтный граф по ролям. */
-  setWorkflow(projectId: string, wf: Workflow | null): ProjectView {
-    return this.patchProjectType(projectId, { workflow: wf })
-  }
-
-  setPermissionMode(projectId: string, mode: PermissionMode): ProjectView {
-    return this.patchProjectType(projectId, { permissionMode: mode })
-  }
-
-  templates(): ProjectTemplate[] {
-    return this.taskTypes()
-  }
-
-  template(id: string): ProjectTemplate | undefined {
-    return this.taskType(id)
-  }
-
-  templatesState(): TemplatesState {
-    return { templates: this.taskTypes(), defaultTemplateId: this.defaultTaskTypeId() }
-  }
-
-  setDefaultTemplate(id: string): TemplatesState {
-    this.setDefaultTaskType(id)
-    return this.templatesState()
-  }
-
-  saveTemplate(input: TemplateInput): ProjectTemplate {
-    if (!isObject(input)) throw new Error('тип задачи: ожидается объект')
-    return this.saveTaskType({ ...input, settings: typePart(input.settings ?? {}) })
-  }
-
-  deleteTemplate(id: string): TemplatesState {
-    this.deleteTaskType(id)
-    return this.templatesState()
-  }
-
-  duplicateTemplate(id: string): ProjectTemplate {
-    return this.duplicateTaskType(id)
-  }
-
-  /** Тип библиотеки по умолчанию в форме старого «Для новых проектов»; колонки — встроенные. */
-  defaults(): ProjectDefaults {
-    const t = this.requireType(this.defaultTaskTypeId())
-    const r = resolveTaskType(t)
-    return {
-      permissionMode: r.permissionMode,
-      roles: r.roles,
-      columns: clone(DEFAULT_COLUMNS),
-      ...(r.agentRules ? { agentRules: r.agentRules } : {}),
-      ...(t.settings.workflow ? { workflow: clone(t.settings.workflow) } : {})
-    }
-  }
-
-  /** Патч в тип библиотеки по умолчанию; колонки и агенты — разделы проекта, у типа их нет. */
-  setDefaults(patch: Partial<ProjectDefaults>): ProjectDefaults {
-    if (!isObject(patch)) throw new Error('настройки по умолчанию: ожидается объект')
-    this.patchTaskType(this.defaultTaskTypeId(), typePart(patch))
-    return this.defaults()
-  }
-
-  /**
-   * Все разделы — «сменить тип»: `templateId` становится типом проекта по умолчанию. Часть разделов — роли,
-   * разрешения, правила и граф типа `templateId` пишутся в тип проекта по умолчанию (`applySections`;
-   * `roleIds` с `roles` — только эти роли). Колонки и агенты больше не переносятся — у типа их нет.
-   */
-  applyTemplate(id: string, templateId: string, sections: TemplateSection[], roleIds?: string[]): ProjectView {
-    const p = this.mustGet(id)
-    const source = this.requireType(templateId)
-    if (!Array.isArray(sections) || !sections.length) throw new Error('применение шаблона: не выбран ни один раздел')
-    for (const s of sections) {
-      if (!TEMPLATE_SECTIONS.includes(s)) throw new Error(`применение шаблона: неизвестный раздел ${String(s)}`)
-    }
-    if (roleIds !== undefined && (!Array.isArray(roleIds) || !roleIds.every(nonEmpty))) {
-      throw new Error('применение шаблона: roleIds должен быть массивом id ролей')
-    }
-    if (TEMPLATE_SECTIONS.every((s) => sections.includes(s))) return this.useProjectType(p, source.id)
-    const typeSections = sections.filter((s) => s !== 'columns' && s !== 'agents')
-    if (!typeSections.length) return this.view(p)
-    const target = this.projectDefaultType(id)
-    // Колонки проекта — только для проверки графа внутри applySections.
-    const next = applySections<PermissionMode, ProjectTemplateSettings>(
-      { ...target.settings, columns: this.columns(id) }, source.settings, typeSections, roleIds
-    )
-    const patch: Partial<Record<keyof TaskTypeSettings, unknown>> = {}
-    if (typeSections.includes('roles')) patch.roles = next.roles ?? DEFAULT_ROLES
-    if (typeSections.includes('permissions')) patch.permissionMode = next.permissionMode ?? null
-    if (typeSections.includes('agentRules')) patch.agentRules = next.agentRules ?? ''
-    if (typeSections.includes('workflow')) patch.workflow = next.workflow ?? null
-    return this.patchProjectType(id, patch)
-  }
-
-  /** Тип библиотеки по умолчанию становится типом проекта по умолчанию. */
-  applyDefaults(id: string): ProjectView {
-    return this.useProjectType(this.mustGet(id), this.defaultTaskTypeId())
-  }
-
-  private useProjectType(p: Project, typeId: string): ProjectView {
-    p.defaultTaskTypeId = typeId
-    if (p.taskTypeIds && !p.taskTypeIds.includes(typeId)) p.taskTypeIds = [...p.taskTypeIds, typeId]
-    this.save()
-    return this.view(p)
-  }
-
   // ---------- настройки приложения и проекта ----------
 
   /** Настройки приложения; незаданные и некорректные поля — дефолты. */
@@ -672,14 +525,6 @@ export class ProjectManager {
     const p = this.active()
     if (!p) throw new Error('нет проектов: добавьте репозиторий')
     return this.store(p.id)
-  }
-
-  /**
-   * Статус и роль каждой задачи проекта — для последствий применения шаблона к неактивному проекту
-   * («Применить к проектам…» в настройках): сколько задач уедет в backlog и останется без роли.
-   */
-  taskRefs(id: string): TaskRef[] {
-    return this.store(id).listTasks().map((t) => ({ status: t.status, roleId: t.roleId }))
   }
 
   /** Число задач в работе (kind=in_progress) по id каждого проекта, включая неактивные. */
@@ -830,7 +675,6 @@ function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
 
 // ---------- типы задач ----------
 
-const GENERAL_TITLE = 'Общий'
 const GENERAL_DESCRIPTION = 'Перенесён из «Настройки → Для новых проектов».'
 
 const BUILTIN_TYPE_IDS = builtinTaskTypes().map((t) => t.id)
@@ -848,16 +692,10 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
 }
 
-/** Разделы типа из настроек шаблона или старого дефолта: колонки и агенты — у проекта, не у типа. */
-function typePart(s: object): TaskTypeSettings {
-  const { columns: _c, enabledAgents: _a, ...rest } = s as ProjectTemplateSettings
-  return rest
-}
-
 /**
  * Патч настроек типа поверх `base`: разрешения — по `PERMISSION_MODES` (null — встроенное `auto`), роли —
  * `validateRoles`, правила из пробелов удаляют поле, граф (null — дефолтный по ролям) проверяется по ролям с
- * учётом этого же патча, колонки нод — нет. Посторонние поля (колонки, агенты старых шаблонов) отбрасываются.
+ * учётом этого же патча, колонки нод — нет. Посторонние поля (колонки и агенты старого формата) отбрасываются.
  * `label` — начало текста ошибки.
  */
 function validTypeSettings(patch: unknown, base: TaskTypeSettings, label: string): TaskTypeSettings {
@@ -926,6 +764,16 @@ function loadedTaskType(v: unknown): TaskType[] {
 }
 
 /**
+ * Копия встроенного типа (тот же id) носит название встроенного. Без копии название встроенного не меняется
+ * (`isBuiltinTypeInPlaceEdit`), так что расходиться оно может только после переименования встроенных в новой
+ * версии — например, «Общий» → «Программирование»; иначе копия осталась бы под старым названием.
+ */
+function withBuiltinTitle(t: TaskType): TaskType {
+  const builtin = builtinTaskType(t.id)
+  return builtin && builtin.title !== t.title ? { ...t, title: builtin.title } : t
+}
+
+/**
  * Роли типа из projects.json: целиком по `validateRoles`, а если список не проходит — по одной (битые и
  * повторные id выпадают, остальные остаются). Не осталось ни одной — поля нет, тип берёт роли по умолчанию.
  */
@@ -959,7 +807,7 @@ function normalizeProject(p: Project): void {
 /**
  * Нормализация старого формата перед миграцией на типы (как её делал `load()` до типов): назначения системных
  * ролей, нестроковые правила, битые графы проектов; шаблоны проверяются как типы (колонки и агенты
- * отбрасываются); старый `defaults` становится типом «Общий».
+ * отбрасываются); старый `defaults` становится типом «Программирование».
  */
 function normalizeLegacy(raw: RawProjectsFile): void {
   const projects = raw.projects as unknown as Array<Record<string, unknown>>
@@ -974,12 +822,12 @@ function normalizeLegacy(raw: RawProjectsFile): void {
   }
   const templates = Array.isArray(raw.templates) ? raw.templates.flatMap(loadedTaskType) : []
   if (raw.defaultTemplateId !== undefined && !nonEmpty(raw.defaultTemplateId)) delete raw.defaultTemplateId
-  // Старый `defaults` (единственный дефолт для новых проектов) → пользовательский тип «Общий», он же тип по
-  // умолчанию. Пустой дефолт ничего не создаёт: встроенный «Общий» равен ему. Битый — тоже.
+  // Старый `defaults` (единственный дефолт для новых проектов) → пользовательский тип «Программирование», он же тип по
+  // умолчанию. Пустой дефолт ничего не создаёт: встроенный «Программирование» равен ему. Битый — тоже.
   const d = raw.defaults
   delete raw.defaults
   if (d && Object.keys(d).length && !templates.some((t) => t.id === GENERAL_TASK_TYPE_ID)) {
-    const general = loadedTaskType({ id: GENERAL_TASK_TYPE_ID, title: GENERAL_TITLE, description: GENERAL_DESCRIPTION, settings: d })
+    const general = loadedTaskType({ id: GENERAL_TASK_TYPE_ID, title: builtinTaskType(GENERAL_TASK_TYPE_ID)!.title, description: GENERAL_DESCRIPTION, settings: d })
     if (general.length) {
       templates.push(...general)
       raw.defaultTemplateId ??= GENERAL_TASK_TYPE_ID

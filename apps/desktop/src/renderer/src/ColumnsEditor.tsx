@@ -7,7 +7,7 @@ interface Props {
   storageKey: string
   /** Начальные колонки (берутся при монтировании и при смене storageKey). */
   columns: BoardColumn[]
-  /** Только просмотр (встроенный шаблон): поля и кнопки недоступны. */
+  /** Только просмотр: поля и кнопки недоступны. */
   readOnly?: boolean
   onSave(columns: BoardColumn[]): Promise<void>
 }

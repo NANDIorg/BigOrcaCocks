@@ -458,6 +458,11 @@ describe('сценарии с проектом: правка графа и уд�
   const PID = 'p1'
   let pm: ProjectManager
 
+  /** Граф типа проекта по умолчанию («repo» после миграции); null — дефолтный по ролям. */
+  function saveWorkflow(wf: Workflow | null): void {
+    pm.patchTaskType(pm.projectDefaultTypeId(PID), { workflow: wf })
+  }
+
   beforeEach(() => {
     const userData = path.join(tmp, 'userData')
     mkdirSync(userData)
@@ -473,16 +478,16 @@ describe('сценарии с проектом: правка графа и уд�
   })
 
   it('граф поменяли посреди прогона — идущая задача живёт на снимке, новый прогон — на новом графе', () => {
-    const run1 = store.createRun('первая цель', undefined, pm.workflow(PID))
+    const run1 = store.createRun('первая цель', undefined, pm.runType(PID))
     const a = workTask('A', run1.id)
     commit(a, 'a.ts', 'a\n')
 
-    pm.setWorkflow(PID, noReview)
+    saveWorkflow(noReview)
     done(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'review', 'по снимку — ревью, хотя в проекте его уже нет')
     assert.equal(gatesOf(a.id).length, 1)
 
-    const run2 = store.createRun('вторая цель', undefined, pm.workflow(PID))
+    const run2 = store.createRun('вторая цель', undefined, pm.runType(PID))
     const b = workTask('B', run2.id)
     commit(b, 'b.ts', 'b\n')
     done(b.id)
@@ -490,7 +495,7 @@ describe('сценарии с проектом: правка графа и уд�
     assert.equal(existsSync(path.join(repo, 'b.ts')), true)
 
     // Ещё одна правка (сброс к дефолту) — снимок первого прогона по-прежнему ведёт задачу A.
-    pm.setWorkflow(PID, null)
+    saveWorkflow(null)
     reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'a.ts')), true)
@@ -499,7 +504,7 @@ describe('сценарии с проектом: правка графа и уд�
   })
 
   it('задача без прогона («Входящие») идёт по графу типа проекта по умолчанию', () => {
-    pm.setWorkflow(PID, noReview)
+    saveWorkflow(noReview)
     const c = workTask('C')
     commit(c, 'c.ts', 'c\n')
     done(c.id)
@@ -509,10 +514,10 @@ describe('сценарии с проектом: правка графа и уд�
 
   it('роль гейта удалили после сохранения графа — workflow_blocked (уведомление-эскалация), человек решает сам', () => {
     const base = defaultWorkflow(DEFAULT_ROLES)
-    pm.setWorkflow(PID, { ...base, nodes: base.nodes.map((n) => (n.id === 'review' ? { ...n, roleId: 'qa', title: 'QA' } : n)) })
-    const run = store.createRun('цель', undefined, pm.workflow(PID))
-    pm.setRoles(PID, DEFAULT_ROLES.filter((r) => r.id !== 'qa'))
-    assert.throws(() => pm.setWorkflow(PID, pm.workflow(PID)), /нет роли «qa»/, 'граф проекта с удалённой ролью больше не сохранить')
+    saveWorkflow({ ...base, nodes: base.nodes.map((n) => (n.id === 'review' ? { ...n, roleId: 'qa', title: 'QA' } : n)) })
+    const run = store.createRun('цель', undefined, pm.runType(PID))
+    pm.patchTaskType(pm.projectDefaultTypeId(PID), { roles: DEFAULT_ROLES.filter((r) => r.id !== 'qa') })
+    assert.throws(() => saveWorkflow(pm.taskTypeWorkflow(pm.projectDefaultTypeId(PID)).workflow), /нет роли «qa»/, 'граф типа с удалённой ролью больше не сохранить')
 
     const a = workTask('Логин', run.id)
     commit(a, 'login.ts', 'x\n')

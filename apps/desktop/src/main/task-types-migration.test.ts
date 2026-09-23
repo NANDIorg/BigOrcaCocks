@@ -22,12 +22,15 @@ function qaWorkflow(): Workflow {
   return { ...wf, nodes: wf.nodes.map((n) => (n.id === 'review' ? { id: 'review', type: 'gate', roleId: 'qa', x: n.x, y: n.y } : n)) }
 }
 
+/** Id шаблона проекта из файла до типов задач: не переносится, миграция его отбрасывает. */
+const OLD_TEMPLATE_FIELD = { templateId: 'backend' }
+
 describe('migrateProjectsFile', () => {
   const legacy = (): LegacyProjectsFile => ({
     activeId: 'a',
     projects: [
-      { id: 'a', root: '/a', name: 'api', roles: [...DEFAULT_ROLES, DESIGNER], workflow: qaWorkflow(), agentRules: 'правила', permissionMode: 'acceptEdits', templateId: 'backend', columns: DEFAULT_COLUMNS },
-      { id: 'b', root: '/b', name: 'Общий' },
+      { id: 'a', root: '/a', name: 'api', roles: [...DEFAULT_ROLES, DESIGNER], workflow: qaWorkflow(), agentRules: 'правила', permissionMode: 'acceptEdits', columns: DEFAULT_COLUMNS, ...OLD_TEMPLATE_FIELD },
+      { id: 'b', root: '/b', name: 'Программирование' },
       { id: 'c', root: '/c', name: 'api' }
     ],
     templates: [{ id: 'tpl_1', title: 'Мой', settings: { agentRules: 'x' } }],
@@ -60,8 +63,8 @@ describe('migrateProjectsFile', () => {
     const title = (id: string): string => data.taskTypes!.find((t) => t.id === legacyTaskTypeId(id))!.title
     assert.equal(title('a'), 'api')
     assert.equal(title('c'), 'api (2)')
-    assert.ok(builtinTaskTypes().some((t) => t.title === 'Общий'))
-    assert.equal(title('b'), 'Общий (2)')
+    assert.ok(builtinTaskTypes().some((t) => t.title === 'Программирование'))
+    assert.equal(title('b'), 'Программирование (2)')
   })
 
   it('шаблоны → типы с теми же id, defaultTemplateId → defaultTaskTypeId', () => {
@@ -117,8 +120,8 @@ describe('миграция в ProjectManager', () => {
     assert.deepEqual(r.roles.map((x) => x.id), [...DEFAULT_ROLES, DESIGNER].map((x) => x.id))
     assert.equal(r.agentRules, 'свои')
     assert.equal(r.permissionMode, 'bypassPermissions')
-    assert.deepEqual(pm.workflow(PID), qaWorkflow())
-    // Старый `defaults` → пользовательский «Общий» (без колонок и агентов), он же тип библиотеки по умолчанию.
+    assert.deepEqual(pm.taskTypeWorkflow(pm.projectDefaultTypeId(PID)).workflow, qaWorkflow())
+    // Старый `defaults` → копия встроенного `general` (без колонок и агентов), он же тип библиотеки по умолчанию.
     const general = pm.taskType(GENERAL_TASK_TYPE_ID)!
     assert.equal(general.builtin, undefined)
     assert.deepEqual(general.settings, { agentRules: 'общие' })

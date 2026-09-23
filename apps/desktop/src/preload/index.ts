@@ -17,24 +17,13 @@ const api: OrcaApi = {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
-    taskRefs: (id) => ipcRenderer.invoke('projects:taskRefs', id),
     add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
     detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
     setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
-    detectTemplate: (path) => ipcRenderer.invoke('projects:detectTemplate', path),
-    applyTemplate: (id, templateId, sections, roleIds) => ipcRenderer.invoke('projects:applyTemplate', id, templateId, sections, roleIds),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
-    setPermissionMode: (id, mode) => ipcRenderer.invoke('projects:setPermissionMode', id, mode),
     setEnabledAgents: (id, agents) => ipcRenderer.invoke('projects:setEnabledAgents', id, agents),
-    setRoles: (id, roles) => ipcRenderer.invoke('projects:setRoles', id, roles),
     setColumns: (id, columns) => ipcRenderer.invoke('projects:setColumns', id, columns),
-    getAgentRules: (id) => ipcRenderer.invoke('projects:getAgentRules', id),
-    setAgentRules: (id, text) => ipcRenderer.invoke('projects:setAgentRules', id, text),
-    setWorkflow: (id, wf) => ipcRenderer.invoke('projects:setWorkflow', id, wf),
-    getDefaults: () => ipcRenderer.invoke('projects:getDefaults'),
-    setDefaults: (patch) => ipcRenderer.invoke('projects:setDefaults', patch),
-    applyDefaults: (id) => ipcRenderer.invoke('projects:applyDefaults', id),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {
@@ -43,16 +32,6 @@ const api: OrcaApi = {
     delete: (id) => ipcRenderer.invoke('taskTypes:delete', id),
     duplicate: (id) => ipcRenderer.invoke('taskTypes:duplicate', id),
     setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id)
-  },
-  templates: {
-    list: () => ipcRenderer.invoke('templates:list'),
-    save: (input) => ipcRenderer.invoke('templates:save', input),
-    delete: (id) => ipcRenderer.invoke('templates:delete', id),
-    duplicate: (id) => ipcRenderer.invoke('templates:duplicate', id),
-    setDefault: (id) => ipcRenderer.invoke('templates:setDefault', id)
-  },
-  workflow: {
-    default: (roles) => ipcRenderer.invoke('workflow:default', roles)
   },
   agents: {
     list: (refresh) => ipcRenderer.invoke('agents:list', refresh)

@@ -2,8 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, nextStage, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
 import {
-  WORKFLOW_STALE_MESSAGE, addRetryLimit, changeNodeType, conditionOfKind, exportWorkflowJson, isStaleWorkflowError,
-  parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowApi, workflowFileName
+  addRetryLimit, changeNodeType, conditionOfKind, exportWorkflowJson, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName
 } from './workflowForm'
 
 const wf = defaultWorkflow(DEFAULT_ROLES)
@@ -109,13 +108,4 @@ test('пресет «3 отказа → человек»: граф валиде�
   const again = addRetryLimit(limited)
   assert.ok('error' in again, 'повторно лимит не ставится')
   assert.ok('error' in addRetryLimit(defaultWorkflow([])), 'без проверки агентом ставить некуда')
-})
-
-test('старый main/preload: понятная ошибка вместо падения', () => {
-  assert.throws(() => workflowApi(undefined), { message: WORKFLOW_STALE_MESSAGE })
-  assert.throws(() => workflowApi({ projects: {}, workflow: {} }), { message: WORKFLOW_STALE_MESSAGE })
-  const api = workflowApi({ projects: { setWorkflow: async () => ({ id: 'p', root: '/', name: 'p' }) }, workflow: { default: async () => wf } })
-  assert.equal(typeof api.setWorkflow, 'function')
-  assert.equal(isStaleWorkflowError("Error invoking remote method 'projects:setWorkflow': Error: No handler registered for 'projects:setWorkflow'"), true)
-  assert.equal(isStaleWorkflowError('воркфлоу не сохранён: нет ноды «Старт»'), false)
 })

@@ -60,9 +60,8 @@ test('rolesForRun — задачи разных глобальных задач 
   assert.deepEqual(ids(rolesForRun(undefined, [], null, STATE)), ['coordinator', 'developer', 'qa'])
 })
 
-test('rolesForRun — старый main без типов: роли проекта, как раньше', () => {
+test('rolesForRun — старый main без типов: встроенные роли (ролей у проекта больше нет)', () => {
   const runs = [{ id: 'r_docs', typeId: 'docs' }]
-  assert.deepEqual(ids(rolesForRun('r_docs', runs, { roles: [role('старая')] }, null)), ['старая'])
   assert.deepEqual(rolesForRun('r_docs', runs, {}, null), DEFAULT_ROLES)
   assert.deepEqual(rolesForRun(undefined, [], null, null), DEFAULT_ROLES)
 })

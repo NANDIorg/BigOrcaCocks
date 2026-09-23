@@ -1,10 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-/** Подсказка типа проекта по файлам репозитория: только предвыбор в «Типе проекта», человек может выбрать другой. */
-export interface TemplateHint {
-  /** Id встроенного шаблона; null — признаков нет, предвыбирается шаблон по умолчанию. */
-  templateId: string | null
+/**
+ * Подсказка типа задач по умолчанию для нового проекта по файлам репозитория: только предвыбор при добавлении
+ * проекта, человек может выбрать другой.
+ */
+export interface TaskTypeHint {
+  /** Id встроенного типа задачи; null — признаков нет, предвыбирается тип библиотеки по умолчанию. */
+  typeId: string | null
   /** Почему: «package.json: react», «go.mod». Пусто, если признаков нет. */
   reason: string
 }
@@ -47,32 +50,32 @@ function packageDeps(root: string): Set<string> {
  * Угадать тип по корню репозитория. Порядок важен: мобильные проекты часто содержат package.json с react,
  * а фронт с серверным фреймворком (или рядом go.mod) — это fullstack.
  */
-export function detectTemplate(root: string): TemplateHint {
+export function guessTaskType(root: string): TaskTypeHint {
   const top = names(root)
   const deps = packageDeps(root)
   const found = (list: string[]): string[] => list.filter((d) => deps.has(d))
 
   const android = ANDROID_MANIFESTS.find((f) => existsSync(join(root, f)))
-  if (android) return { templateId: 'mobile', reason: android }
+  if (android) return { typeId: 'mobile', reason: android }
   for (const dir of IOS_DIRS) {
     const xcode = names(join(root, dir)).find((n) => n.endsWith('.xcodeproj') || n.endsWith('.xcworkspace'))
-    if (xcode) return { templateId: 'mobile', reason: dir === '.' ? xcode : `${dir}/${xcode}` }
+    if (xcode) return { typeId: 'mobile', reason: dir === '.' ? xcode : `${dir}/${xcode}` }
   }
-  if (top.includes('pubspec.yaml')) return { templateId: 'mobile', reason: 'pubspec.yaml' }
+  if (top.includes('pubspec.yaml')) return { typeId: 'mobile', reason: 'pubspec.yaml' }
   const mobile = found(MOBILE_DEPS)
-  if (mobile.length) return { templateId: 'mobile', reason: `package.json: ${mobile.join(', ')}` }
+  if (mobile.length) return { typeId: 'mobile', reason: `package.json: ${mobile.join(', ')}` }
 
   const frontend = found(FRONTEND_DEPS)
   const backend = [...found(BACKEND_DEPS).map((d) => `package.json: ${d}`), ...BACKEND_FILES.filter((f) => top.includes(f))]
   if (frontend.length && backend.length) {
-    return { templateId: 'fullstack', reason: [`package.json: ${frontend.join(', ')}`, ...backend].join('; ') }
+    return { typeId: 'fullstack', reason: [`package.json: ${frontend.join(', ')}`, ...backend].join('; ') }
   }
-  if (frontend.length) return { templateId: 'frontend', reason: `package.json: ${frontend.join(', ')}` }
-  if (backend.length) return { templateId: 'backend', reason: backend.join('; ') }
+  if (frontend.length) return { typeId: 'frontend', reason: `package.json: ${frontend.join(', ')}` }
+  if (backend.length) return { typeId: 'backend', reason: backend.join('; ') }
 
   const autotests = found(AUTOTEST_DEPS)
-  if (autotests.length) return { templateId: 'autotests', reason: `package.json: ${autotests.join(', ')}` }
+  if (autotests.length) return { typeId: 'autotests', reason: `package.json: ${autotests.join(', ')}` }
   const docs = DOCS_FILES.find((f) => top.includes(f))
-  if (docs) return { templateId: 'docs', reason: docs }
-  return { templateId: null, reason: '' }
+  if (docs) return { typeId: 'docs', reason: docs }
+  return { typeId: null, reason: '' }
 }

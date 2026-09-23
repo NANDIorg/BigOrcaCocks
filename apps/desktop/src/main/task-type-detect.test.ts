@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { detectTemplate } from './template-detect'
+import { guessTaskType } from './task-type-detect'
 
 let tmp: string
 
@@ -22,47 +22,47 @@ const pkg = (deps: Record<string, string>, dev: Record<string, string> = {}): st
 beforeEach(() => { tmp = mkdtempSync(path.join(tmpdir(), 'orca-detect-')) })
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
-describe('detectTemplate', () => {
+describe('guessTaskType', () => {
   it('пустой репозиторий — признаков нет', () => {
-    assert.deepEqual(detectTemplate(repo({})), { templateId: null, reason: '' })
+    assert.deepEqual(guessTaskType(repo({})), { typeId: null, reason: '' })
   })
 
   it('фронтенд по зависимостям package.json', () => {
-    assert.deepEqual(detectTemplate(repo({ 'package.json': pkg({ vue: '3' }) })), { templateId: 'frontend', reason: 'package.json: vue' })
+    assert.deepEqual(guessTaskType(repo({ 'package.json': pkg({ vue: '3' }) })), { typeId: 'frontend', reason: 'package.json: vue' })
   })
 
   it('бэкенд по файлам языка и серверному фреймворку', () => {
-    assert.equal(detectTemplate(repo({ 'go.mod': 'module x' })).templateId, 'backend')
+    assert.equal(guessTaskType(repo({ 'go.mod': 'module x' })).typeId, 'backend')
     rmSync(path.join(tmp, 'go.mod'))
-    assert.equal(detectTemplate(repo({ 'package.json': pkg({ express: '4' }) })).templateId, 'backend')
+    assert.equal(guessTaskType(repo({ 'package.json': pkg({ express: '4' }) })).typeId, 'backend')
   })
 
   it('фронт + бэкенд — fullstack', () => {
-    const hint = detectTemplate(repo({ 'package.json': pkg({ react: '18' }), 'pyproject.toml': '' }))
-    assert.equal(hint.templateId, 'fullstack')
+    const hint = guessTaskType(repo({ 'package.json': pkg({ react: '18' }), 'pyproject.toml': '' }))
+    assert.equal(hint.typeId, 'fullstack')
     assert.match(hint.reason, /react.*pyproject\.toml/)
   })
 
   it('мобилка важнее фронта: react-native, AndroidManifest, xcodeproj, pubspec', () => {
-    assert.equal(detectTemplate(repo({ 'package.json': pkg({ react: '18', 'react-native': '0.7' }) })).templateId, 'mobile')
+    assert.equal(guessTaskType(repo({ 'package.json': pkg({ react: '18', 'react-native': '0.7' }) })).typeId, 'mobile')
     assert.deepEqual(
-      detectTemplate(repo({ 'app/src/main/AndroidManifest.xml': '<manifest/>' })),
-      { templateId: 'mobile', reason: 'app/src/main/AndroidManifest.xml' }
+      guessTaskType(repo({ 'app/src/main/AndroidManifest.xml': '<manifest/>' })),
+      { typeId: 'mobile', reason: 'app/src/main/AndroidManifest.xml' }
     )
   })
 
   it('xcodeproj в ios/ и pubspec.yaml', () => {
     mkdirSync(path.join(tmp, 'ios', 'App.xcodeproj'), { recursive: true })
-    assert.deepEqual(detectTemplate(tmp), { templateId: 'mobile', reason: 'ios/App.xcodeproj' })
+    assert.deepEqual(guessTaskType(tmp), { typeId: 'mobile', reason: 'ios/App.xcodeproj' })
     rmSync(path.join(tmp, 'ios'), { recursive: true })
-    assert.deepEqual(detectTemplate(repo({ 'pubspec.yaml': '' })), { templateId: 'mobile', reason: 'pubspec.yaml' })
+    assert.deepEqual(guessTaskType(repo({ 'pubspec.yaml': '' })), { typeId: 'mobile', reason: 'pubspec.yaml' })
   })
 
   it('автотесты — только тестовый раннер без фреймворка UI', () => {
-    assert.equal(detectTemplate(repo({ 'package.json': pkg({}, { '@playwright/test': '1' }) })).templateId, 'autotests')
+    assert.equal(guessTaskType(repo({ 'package.json': pkg({}, { '@playwright/test': '1' }) })).typeId, 'autotests')
   })
 
   it('документация по mkdocs.yml; битый package.json не мешает', () => {
-    assert.equal(detectTemplate(repo({ 'package.json': '{', 'mkdocs.yml': '' })).templateId, 'docs')
+    assert.equal(guessTaskType(repo({ 'package.json': '{', 'mkdocs.yml': '' })).typeId, 'docs')
   })
 })

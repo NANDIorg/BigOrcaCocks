@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_ROLES, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
+import { DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
 import { ProjectManager } from './projects'
 import { startSocketServer } from './socket'
 
@@ -96,9 +96,9 @@ describe('правила агентов в типе проекта по умол
     writeOldConfig()
     projects = new ProjectManager(tmp)
     const text = 'Не создавать задачи в ORION.\n\n- «кавычки», `код`\n'
-    projects.setAgentRules(PID, text)
+    projects.saveTaskTypeRules(`type_${PID}`, undefined, text)
     assert.equal(new ProjectManager(tmp).agentRules(PID), text)
-    projects.setAgentRules(PID, ' \n\t ')
+    projects.saveTaskTypeRules(`type_${PID}`, undefined, ' \n\t ')
     const saved = JSON.parse(readFileSync(path.join(tmp, 'projects.json'), 'utf8')) as {
       projects: Array<Record<string, unknown>>; taskTypes: Array<{ id: string; settings: Record<string, unknown> }>
     }
@@ -109,19 +109,17 @@ describe('правила агентов в типе проекта по умол
   it('не строка — ошибка', () => {
     writeOldConfig()
     projects = new ProjectManager(tmp)
-    assert.throws(() => projects.setAgentRules(PID, 1 as unknown as string), /правила агентов должны быть строкой/)
+    assert.throws(() => projects.saveTaskTypeRules(`type_${PID}`, undefined, 1 as unknown as string), /правила агентов должны быть строкой/)
   })
 
-  it('тип библиотеки по умолчанию: его правила действуют в проекте после applyDefaults, пустые — удаляют поле', () => {
+  it('тип проекта по умолчанию: его правила действуют в проекте, пустые — удаляют поле', () => {
     writeOldConfig()
     projects = new ProjectManager(tmp)
-    projects.setDefaults({ agentRules: 'общие' })
-    assert.equal(projects.defaults().agentRules, 'общие')
-    projects.applyDefaults(PID)
+    projects.saveTaskTypeRules(GENERAL_TASK_TYPE_ID, undefined, 'общие')
+    projects.setProjectTaskTypes(PID, { defaultTypeId: GENERAL_TASK_TYPE_ID })
     assert.equal(projects.agentRules(PID), 'общие')
-    projects.setDefaults({ agentRules: '' })
-    assert.equal('agentRules' in projects.defaults(), false)
-    projects.applyDefaults(PID)
+    projects.saveTaskTypeRules(GENERAL_TASK_TYPE_ID, undefined, '')
+    assert.equal('agentRules' in projects.taskType(GENERAL_TASK_TYPE_ID)!.settings, false)
     assert.equal(projects.agentRules(PID), '')
   })
 })
@@ -194,12 +192,12 @@ describe('сокет: правила, роли и типы задач', () => {
 
   it('rules set --type general: встроенный тип правится на месте, тип проекта не тронут', async () => {
     const set = await call('rules.set', { type: 'general', text: 'Общие правила' })
-    assert.deepEqual(set.result, { typeId: 'general', typeTitle: 'Общий', rules: 'Общие правила' })
+    assert.deepEqual(set.result, { typeId: 'general', typeTitle: 'Программирование', rules: 'Общие правила' })
     assert.equal(projects.taskType('general')!.settings.agentRules, 'Общие правила')
     const role = await call('rules.set', { type: 'general', role: 'qa', text: 'Гонять e2e' })
     assert.equal(role.result.rules, 'Гонять e2e')
     assert.equal(projects.taskType('general')!.settings.roles!.find((r) => r.id === 'qa')!.systemPrompt, 'Гонять e2e')
-    assert.deepEqual((await call('rules.get', { type: 'general' })).result, { typeId: 'general', typeTitle: 'Общий', rules: 'Общие правила' })
+    assert.deepEqual((await call('rules.get', { type: 'general' })).result, { typeId: 'general', typeTitle: 'Программирование', rules: 'Общие правила' })
     assert.equal(projects.agentRules(PID), '', 'правила типа проекта «repo» не тронуты')
   })
 
@@ -226,7 +224,7 @@ describe('сокет: правила, роли и типы задач', () => {
   it('global create --type docs: тип в карточке, roles list / rules / task create — по ролям типа прогона', async () => {
     const g = result<GlobalTask>(await call('global.create', { title: 'README', type: 'docs' }))
     assert.equal(result<GlobalTask>(await call('global.get', { global: g.id })).typeId, 'docs')
-    assert.equal(result<GlobalTask>(await call('global.get', { global: g.id })).typeTitle, 'Документация / аналитика')
+    assert.equal(result<GlobalTask>(await call('global.get', { global: g.id })).typeTitle, 'Документация')
     const roles = result<Array<Role & { agentEnabled: boolean }>>(await call('roles.list', { run: g.id }))
     assert.deepEqual(roles.map((r) => r.id), ['coordinator', 'assistant', 'writer', 'reviewer'])
     assert.ok(roles.every((r) => r.agentEnabled))
@@ -244,7 +242,7 @@ describe('сокет: правила, роли и типы задач', () => {
     assert.deepEqual((await call('rules.get', { run: g.id, role: 'writer' })).result.typeId, 'docs')
     assert.match((await call('rules.set', { run: g.id, role: 'developer', text: 'x' })).error ?? '', /роли «developer» нет/)
     const set = await call('rules.set', { run: g.id, text: 'Писать по-русски' })
-    assert.deepEqual(set.result, { typeId: 'docs', typeTitle: 'Документация / аналитика', rules: 'Писать по-русски' })
+    assert.deepEqual(set.result, { typeId: 'docs', typeTitle: 'Документация', rules: 'Писать по-русски' })
     assert.equal(projects.taskType('docs')!.settings.agentRules, 'Писать по-русски')
   })
 
@@ -264,7 +262,7 @@ describe('сокет: правила, роли и типы задач', () => {
     const g = result<GlobalTask>(await call('global.create', { title: 'README', type: 'docs' }))
     const byRun = result<Shown>(await call('workflow.show', { run: g.id }))
     assert.equal(byRun.source, 'run')
-    assert.equal(byRun.typeTitle, 'Документация / аналитика')
+    assert.equal(byRun.typeTitle, 'Документация')
     assert.match((await call('workflow.show', { type: 'type_nope' })).error ?? '', /тип задачи не найден/)
   })
 

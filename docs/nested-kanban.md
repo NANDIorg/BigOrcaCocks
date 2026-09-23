@@ -465,8 +465,9 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
   только из ролей типа этой глобальной задачи) и в списке терминалов (координатор — по `runId` терминала,
   ассистент — тип библиотеки по умолчанию). Название типа — чип на карточке `GlobalBoard` и на экране
   `GlobalTaskView` (`globalTypeTitle`: из библиотеки, тип удалён — из снимка; у «Входящих» чипа нет).
-  Старый main/preload без `window.orca.taskTypes` (`pnpm dev` после HMR) — `state = null`: роли проекта
-  (`Project.roles`), без селекта и чипов, `typeId` в `create` не уходит.
+  Старый main/preload без `window.orca.taskTypes` (`pnpm dev` после HMR) — `state = null`: встроенные роли
+  (`DEFAULT_ROLES`: ролей у проекта больше нет), без селекта и чипов, `typeId` в `create` не уходит; разделы «Типы
+  задач» просят перезапустить приложение.
 - «Добавить репозиторий» (`projectAdd.ts` → `ProjectTypeModal`): после выбора папки — тип задач по умолчанию нового
   проекта (`projects.detectTaskType` угадывает по файлам, `projects.add(typeId, path)`); копии настроек нет, проект
   ссылается на тип. Старый main — прежний `projects.add()` без модалки.

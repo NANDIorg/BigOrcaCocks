@@ -2,7 +2,6 @@ import {
   WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflow, wfNodeTitle,
   type Role, type WfCondition, type WfNode, type WfNodeType, type WfOutcome, type Workflow
 } from '@orca-board/core'
-import type { OrcaApi } from '../../shared/ipc'
 import { NODE_H, NODE_W } from './workflowGeometry'
 import { connect, makeNode, uniqueId } from './workflowEdit'
 
@@ -231,30 +230,4 @@ export function addRetryLimit(wf: Workflow, limit = 3): { workflow: Workflow; ad
     }
   }
   return { workflow: next, added: rejects.length }
-}
-
-// ---------- старый main/preload ----------
-
-/** Как STALE_APP_MESSAGE в docLinks.ts: renderer обновился по HMR, а main/preload — ещё нет. */
-export const WORKFLOW_STALE_MESSAGE =
-  'Приложение запущено со старой версией main/preload, где ещё нет «Воркфлоу». Перезапустите приложение.'
-
-type WorkflowApi = {
-  setWorkflow: OrcaApi['projects']['setWorkflow']
-  defaultWorkflow: OrcaApi['workflow']['default']
-}
-
-/** Методы воркфлоу из `window.orca` или понятная ошибка: старый preload их не знает. */
-export function workflowApi(
-  api: { projects?: Partial<OrcaApi['projects']>; workflow?: Partial<OrcaApi['workflow']> } | undefined
-): WorkflowApi {
-  const setWorkflow = api?.projects?.setWorkflow
-  const defaultWorkflow = api?.workflow?.default
-  if (!setWorkflow || !defaultWorkflow) throw new Error(WORKFLOW_STALE_MESSAGE)
-  return { setWorkflow, defaultWorkflow }
-}
-
-/** Preload новый, а main старый — invoke падает с «No handler registered for 'projects:setWorkflow'». */
-export function isStaleWorkflowError(message: string): boolean {
-  return /No handler registered for '(projects:setWorkflow|workflow:default)'/.test(message)
 }

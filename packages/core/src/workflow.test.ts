@@ -5,7 +5,7 @@ import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
   WORKFLOW_VERSION, WF_PORTS, defaultWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, nextStage, pipelineWorkflow,
-  startStage, stageAction, validateWorkflow
+  startStage, stageAction, validateWorkflow, stableJson
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfValidation, Workflow } from './workflow.ts'
 
@@ -442,5 +442,13 @@ describe('pipelineWorkflow', () => {
     assert.equal(edge(wf, 'e_eyes_if_no').to, 'merge')
     assert.equal(edge(wf, 'e_eyes_accept').to, 'merge')
     assert.equal(edge(wf, 'e_eyes_reject').to, 'work')
+  })
+})
+
+describe('stableJson', () => {
+  it('порядок ключей не влияет, undefined-поля пропускаются, порядок массива — влияет', () => {
+    assert.equal(stableJson({ b: 1, a: { d: [1, 2], c: undefined } }), stableJson({ a: { d: [1, 2] }, b: 1 }))
+    assert.notEqual(stableJson({ a: [1, 2] }), stableJson({ a: [2, 1] }))
+    assert.equal(stableJson({ b: 'x', a: null }), '{"a":null,"b":"x"}')
   })
 })
