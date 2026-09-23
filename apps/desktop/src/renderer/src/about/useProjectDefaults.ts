@@ -6,6 +6,21 @@ import { ipcErrorMessage } from '../useAutoSave'
 const listeners = new Set<(d: ProjectDefaults) => void>()
 
 /**
+ * Перечитать шаблон по умолчанию во всех смонтированных useProjectDefaults: его меняют и мимо `save` —
+ * «Настройки → Шаблоны проектов» (templates:save, templates:setDefault). Ошибку глушим: подписчики
+ * останутся со старым значением, а раздел шаблонов покажет свою.
+ */
+export async function refreshProjectDefaults(): Promise<void> {
+  if (!listeners.size) return
+  try {
+    const next = await window.orca.projects.getDefaults()
+    for (const l of listeners) l(next)
+  } catch {
+    // старый main или ошибка чтения — см. комментарий выше
+  }
+}
+
+/**
  * Дефолт для новых проектов (projects:getDefaults/setDefaults). Нужен и «О проекте» (сравнение,
  * «Сделать дефолтом»), и «Настройкам» (редактирование) — сохранение в одном обновляет другое.
  */

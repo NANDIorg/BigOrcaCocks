@@ -792,6 +792,45 @@ button:disabled { opacity: .45; cursor: default; }
 .settings-head h3 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
 .settings-modal .about-host { flex: 1; }
 
+/* «Настройки → Шаблоны проектов» (settings/TemplatePane.tsx): шаблоны — пункты меню, внутри — вкладки разделов */
+.tpl-nav { display: contents; }
+/* Название шаблона бывает длинным («Документация / аналитика»): сжимается с многоточием, а не вылезает из меню. */
+.tpl-nav .about-nav-label { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tpl-nav .about-nav-count { flex-shrink: 0; }
+.tpl-nav-sub { padding-top: 10px; }
+.tpl-nav-add:disabled { opacity: .5; cursor: default; }
+.tpl-nav-error { margin: 4px 10px 0; font-size: 12px; }
+.tpl-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.tpl-head-text { flex: 1; min-width: 240px; }
+.tpl-head h2 { margin: 0 0 4px; font-size: 20px; font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.tpl-head h2 .chip { font-size: 11px; font-weight: 400; }
+.tpl-head p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
+.tpl-head .tpl-usage { margin-top: 6px; font-size: 12px; }
+.tpl-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tpl-actions .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
+.tpl-actions .btn-sm svg { width: 14px; height: 14px; }
+.tpl-actions .btn-sm.danger { color: var(--danger); border-color: rgba(239,107,107,.5); }
+.tpl-rename {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 14px;
+  padding: 12px 14px; background: var(--side); border-radius: var(--radius);
+}
+.tpl-rename label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; min-width: 200px; }
+.tpl-rename-btns { display: flex; gap: 8px; }
+.tpl-tabs { display: flex; flex-wrap: wrap; gap: 4px 20px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
+.tpl-tabs button {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--muted); font-size: 13px; margin-bottom: -1px;
+}
+.tpl-tabs button:hover { color: var(--text); }
+.tpl-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.tpl-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tpl-tab-count { font-size: 11px; color: var(--muted); background: var(--chip); border-radius: 6px; padding: 0 5px; }
+.tpl-tab-count.warn { color: var(--col-input); }
+/* fieldset — только чтобы выключить поля встроенного шаблона; в раскладке его не видно. */
+.tpl-fieldset, .roles-fields { display: contents; }
+fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
+.about-sec fieldset.editor { margin-bottom: 0; }
+
 /* Узкая вкладка: меню — горизонтальная полоса над разделом */
 @container about (max-width: 900px) {
   .about { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }

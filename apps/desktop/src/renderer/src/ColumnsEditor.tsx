@@ -7,11 +7,13 @@ interface Props {
   storageKey: string
   /** Начальные колонки (берутся при монтировании и при смене storageKey). */
   columns: BoardColumn[]
+  /** Только просмотр (встроенный шаблон): поля и кнопки недоступны. */
+  readOnly?: boolean
   onSave(columns: BoardColumn[]): Promise<void>
 }
 
 /** Раздел «Колонки» («О проекте» и дефолт для новых проектов): порядок, название, цвет; сохраняется автоматически. */
-export function ColumnsEditor({ storageKey, columns: initial, onSave }: Props): React.JSX.Element {
+export function ColumnsEditor({ storageKey, columns: initial, readOnly = false, onSave }: Props): React.JSX.Element {
   const { draft: columns, error, update } = useAutoSave<BoardColumn[]>(storageKey, initial, onSave)
 
   function patch(i: number, p: Partial<BoardColumn>, debounce = false): void {
@@ -35,7 +37,7 @@ export function ColumnsEditor({ storageKey, columns: initial, onSave }: Props): 
   }
 
   return (
-    <div className="editor">
+    <fieldset className="editor" disabled={readOnly}>
       <div className="editor-table columns">
         <div className="editor-head" />
         <div className="editor-head">Название</div>
@@ -79,13 +81,15 @@ export function ColumnsEditor({ storageKey, columns: initial, onSave }: Props): 
         ))}
       </div>
       {error && <div className="editor-error">{error}</div>}
-      <div className="editor-actions">
-        <button className="btn-sm" onClick={add}>Добавить колонку</button>
-      </div>
+      {!readOnly && (
+        <div className="editor-actions">
+          <button className="btn-sm" onClick={add}>Добавить колонку</button>
+        </div>
+      )}
       <p className="editor-hint">
         Системные колонки нельзя удалить: по ним работает автоматика (ready, in_progress, review, done …).
         Для CLI: <code>orca-board task move --status &lt;id колонки&gt;</code>.
       </p>
-    </div>
+    </fieldset>
   )
 }
