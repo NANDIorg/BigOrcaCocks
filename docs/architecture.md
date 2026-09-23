@@ -120,16 +120,16 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Роли и колонки (`src/main/projects.ts`)
 
-- **Хранение**: `Project.roles?: Role[]` и `Project.columns?: BoardColumn[]` в `userData/projects.json`.
-  Новый проект получает копию ролей и колонок из выбранного шаблона проекта (нет — из шаблона по умолчанию,
-  см. «Проекты → Шаблоны проектов»), поэтому у него они всегда заданы. `undefined` остаётся только у старых проектов,
-  созданных до появления дефолта, и читается как встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`
-  (`ProjectManager.roles(id)`, `columns(id)`), а не как текущий глобальный дефолт.
-  Меняются через IPC `projects:setRoles` / `projects:setColumns` (вкладка «О проекте») или берутся из шаблона
-  через `projects:applyTemplate` (по разделам, роли — и по одной) / `projects:applyDefaults` (всё из шаблона по умолчанию).
-- **Откуда берётся дефолт**: настройки шаблона по умолчанию (`projects.json → templates` / встроенные, см. «Проекты»);
-  незаданные роли/колонки шаблона — встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`. При `saveTemplate` / `setDefaults`
-  роли и колонки проходят те же `validateRoles` / `validateColumns`, что и у проекта.
+- **Хранение**: колонки — у проекта (`Project.columns?: BoardColumn[]` в `userData/projects.json`, нет — `DEFAULT_COLUMNS`),
+  роли — у **типа задачи** (`TaskType.settings.roles`, нет — `DEFAULT_ROLES`, см. «Проекты → Типы задач»). Роли задачи —
+  роли типа её глобальной задачи: `ProjectManager.roles(projectId, runId?)` → `resolveRun(projectId, runId).roles`;
+  без прогона («Входящие») — тип проекта по умолчанию. Колонки меняются через `projects:setColumns`, роли — в типе
+  (`taskTypes:save`); старые каналы `projects:setRoles` / `applyTemplate` / `applyDefaults` до перевода renderer на типы
+  пишут в тип проекта по умолчанию (см. «Проекты → Совместимость»).
+- **Роли и граф в main — только по прогону**: `ctx(projectId, runId?)` (окружение воркера и координатора: роли,
+  правила агентов, режим разрешений) и `WorkflowDeps.run(runId)` (роли и граф типа для исполнителя воркфлоу) собираются
+  из `projects.resolveRun`. Две глобальные задачи одного проекта разных типов стартуют воркеров с разными агентами,
+  моделями и промптами и идут разными графами.
 - **Шаблоны проектов** (`packages/core/src/templates.ts`, без node-импортов — его импортирует renderer):
   `ProjectTemplate { id, title, description?, builtin?, settings: ProjectTemplateSettings }`, где `settings` —
   те же разделы, что `ProjectDefaults` (роли, колонки, воркфлоу, правила доски, агенты, режим разрешений).
@@ -140,7 +140,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   «Документация / аналитика» (`writer`, ревью человеком). У всех `coordinator` и `assistant` из `DEFAULT_ROLES`
   (у Fullstack координатор с инструкцией декомпозировать по слоям); общие куски промптов — константы модуля.
   Графы собраны `pipelineWorkflow`. Хранение пользовательских шаблонов, миграция и применение — `ProjectManager`,
-  см. «Проекты → Шаблоны проектов».
+  см. «Проекты → Типы задач».
 - **Дефолтные роли**: `coordinator`, `assistant`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
   `coordinator` и `assistant` — служебные (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
   их нет, в редакторе ролей они в группе «Системная».
@@ -172,7 +172,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет (удалили в «О проекте») — ошибка «координатор не запустится: …» до создания прогона.
-- **Ассистент** (`startAssistant`): роли — из шаблона по умолчанию (`projects.defaults()`), не из проекта;
+- **Ассистент** (`startAssistant`): роли и режим разрешений — из типа библиотеки по умолчанию
+  (`resolveTaskType(taskType(defaultTaskTypeId()))`), не из проекта;
   роль `assistant`, без неё — агент, модель и effort роли `coordinator` (без её инструкций, `assistantRole`),
   нет и её — `claude` без модели. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
@@ -947,18 +948,25 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:setActive`, `projects:remove`
+  (проекты — `ProjectManager.view`: с полями типа проекта по умолчанию, см. «Проекты → Совместимость»);
+  `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
+  `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
+  (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
+  `projects:detectTaskType(path?)` → `TaskTypeDetection {path, typeId, reason} | null`;
+  `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка). Дальше — старые каналы поверх типа проекта
+  по умолчанию (`@deprecated` в `OrcaApi`):
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getAgentRules(id)` → `string` ('' — правил нет), `projects:setAgentRules(id, text)` → `Project` (правила агентов доски, см. «Роли и колонки»),
   `projects:setWorkflow(id, wf | null)` → `Project` (ошибки `validateWorkflow` — исключением), `workflow:default(roles)` → `Workflow` (см. «Роли и колонки → Воркфлоу проекта»);
   `projects:getDefaults`, `projects:setDefaults(patch)` (в т. ч. `workflow`), `projects:applyDefaults(id)` — алиасы шаблона по умолчанию;
-  `projects:add(templateId?, path?)` (без `path` — диалог выбора папки, отмена → `null`), `projects:detectTemplate(path?)` →
+  `projects:add(typeId?, path?)` (без `path` — диалог выбора папки, отмена → `null`), `projects:detectTemplate(path?)` →
   `TemplateDetection {path, templateId, reason} | null` (без `path` — диалог; проект не добавляет),
   `projects:applyTemplate(id, templateId, sections, roleIds?)` → `Project`, `projects:taskRefs(id)` → `TaskRef[]`
   (`{status, roleId}` задач любого проекта — последствия «Применить к проектам…»);
   `templates:list` → `TemplatesState {templates, defaultTemplateId}`, `templates:save(input)` → `ProjectTemplate`,
   `templates:delete(id)` → `TemplatesState`, `templates:duplicate(id)` → `ProjectTemplate`, `templates:setDefault(id)` → `TemplatesState`
-  (см. «Проекты → Шаблоны проектов»); `agents:list(refresh?)`;
+  (см. «Проекты → Типы задач»); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.
@@ -986,7 +994,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`) |
-| `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, templateId?, templateTitle?}]` (`templateTitle` — название шаблона, нет — шаблон удалён); без проектов — `[]` |
+| `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle, templateId?, templateTitle?}]` (`defaultTypeId` — тип задач проекта по умолчанию; `templateId`/`templateTitle` — то же, старые имена); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
 | `rules.get` | `role?` | без `role` — `{rules}` (`Project.agentRules`, нет — `''`); с `role` — `{role, title, rules}` (= `Role.systemPrompt`) |
@@ -1102,71 +1110,91 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 ## Проекты (`src/main/projects.ts`)
 
-`ProjectManager` хранит список репозиториев в `userData/projects.json` (вместе с `permissionMode`,
-`enabledAgents`, `roles`, `columns`, `agentRules`), доску каждого — в `userData/boards/<id>.json`
+`ProjectManager` хранит список репозиториев и библиотеку типов задач в `userData/projects.json` (у проекта —
+`enabledAgents`, `columns`, `taskTypeIds`, `defaultTaskTypeId`, `legacyTypeId`), доску каждого — в `userData/boards/<id>.json`
 (`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board` (на Windows — `%APPDATA%\orca-board`).
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
 UI работает с активным проектом; воркеры и координатор получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
 поэтому воркер продолжает писать в свою доску, даже если пользователь переключился на другой проект.
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
-**Формат `projects.json`**: `{ projects: Project[], activeId, templates?: ProjectTemplate[], defaultTemplateId?, settings?: Partial<AppSettings> }`
-(`settings` — глобальные настройки приложения, см. «Фоновый режим»). `Project.templateId?` — шаблон, из которого проект
-создан или который последним применён целиком. `ProjectDefaults { permissionMode, enabledAgents?, roles, columns, agentRules?, workflow? }`
-(`projects.ts`, дубль типа — `shared/ipc.ts`) — настройки шаблона с подставленными встроенными значениями.
-Мусор при `load()`: `settings` не-объект, пустой `templateId` / `defaultTemplateId`, шаблоны без `id`, названия или объекта
-`settings` — отбрасываются; у шаблонов битый граф удаляется, старая версия графа мигрируется, флаг `builtin` снимается.
+**Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
+`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings> }`
+(`settings` — глобальные настройки приложения, см. «Фоновый режим»).
+- `Project { id, root, name, enabledAgents?, columns?, taskTypeIds?, defaultTaskTypeId?, legacyTypeId? }`. Ролей, графа,
+  правил агентов и разрешений у проекта нет — они у типа. `taskTypeIds` нет — доступны все типы библиотеки;
+  `defaultTaskTypeId` — тип глобальных задач без выбранного типа, координатора и «Входящих»; `legacyTypeId` — тип,
+  в который миграция перенесла настройки проекта.
+- Мусор при `load()`: `settings` не-объект, пустые id — отбрасываются; тип без `id`, названия или объекта `settings`, с
+  ролями или графом, не прошедшими проверку, отбрасывается **целиком** (граф ссылается на роли, и «починенный» по частям
+  тип молча стал бы другим; прогоны такого типа доработают по снимку). Граф будущей версии хранится как есть, старая
+  версия мигрируется, флаг `builtin` снимается.
 
-**Шаблоны проектов** («типы проектов», вариант A+: копия при создании, живой связи нет):
-- `templates()` — встроенные (`builtinTemplates()` из core, порядок карточек), затем пользовательские из `projects.json`.
-  Встроенные в файле не хранятся и обновляются вместе с приложением. Пользовательский шаблон с id встроенного
-  **подменяет** его в списке — так живёт «Общий» после миграции; удаление такой копии возвращает встроенный.
-- `saveTemplate({id?, title, description?, settings})` — создать (без `id` — `tpl_<hex>`) или целиком заменить
-  пользовательский шаблон; `settings` проверяются как у проекта (`validSettings`: режим разрешений, `validateRoles`,
-  `validateColumns`, агенты через `isAgentKind`, `checkedWorkflow` по ролям и колонкам этого же шаблона).
-  Встроенный id без пользовательской копии сохраняется, только если отличаются лишь агент, модель и усилие ролей
-  (`isBuiltinExecutorEdit` в core: название, описание, прочие разделы, состав, порядок и остальные поля ролей — как у
-  встроенного): так создаётся «изменённый встроенный» с тем же id. Иначе — ошибка «шаблон «…» встроенный и только для
-  чтения: без копии в нём меняются только агент, модель и усилие ролей, остальное — через «Дублировать»». Своя копия дальше
-  правится целиком, как любой пользовательский шаблон.
-  `duplicateTemplate(id)` — копия «<название> (копия)» под новым id; `deleteTemplate(id)` — только пользовательские.
-- `defaultTemplateId()` — заданный и существующий, иначе `general`. `setDefaultTemplate(id)`; удалённый шаблон по
-  умолчанию сбрасывается на «Общий». Шаблон по умолчанию предвыбран при добавлении проекта и даёт роли и режим
-  разрешений ассистенту.
-- `baseTemplate(projectId)` — база сравнения в «Обзоре»: шаблон проекта, а если `templateId` нет (проект старше
-  шаблонов) или он висячий (шаблон удалён) — шаблон по умолчанию.
-- `resolvedSettings(t.settings)` — копия со встроенными значениями (`permissionMode` → `auto`, `roles` → `DEFAULT_ROLES`,
-  `columns` → `DEFAULT_COLUMNS`). Граф, совпадающий с `defaultWorkflow(roles)` шаблона, **не копируется**: у проекта без
-  своего графа он и так дефолтный, но следует за правкой ролей. Поэтому встроенный «Общий» даёт то же, что старый пустой дефолт.
-- **Миграция** (`migrateDefaults` в `load()`): непустой старый `defaults` → пользовательский шаблон «Общий» (`general`,
-  подменяет встроенный) с тем же содержимым и `defaultTemplateId: 'general'`, если он не был задан. Пустой `defaults`
-  шаблона не создаёт. Поле `defaults` из памяти удаляется, из файла — при следующем сохранении. Существующим проектам
-  `templateId` не проставляется: их база — шаблон по умолчанию, как раньше дефолт.
-- `detectTemplate(path)` (`src/main/template-detect.ts`) — подсказка по файлам корня, только предвыбор:
-  `AndroidManifest.xml` (корень, `app/src/main`, `android/app/src/main`), `*.xcodeproj`/`*.xcworkspace` (корень, `ios/`),
-  `pubspec.yaml`, react-native/expo/capacitor в `package.json` → `mobile`; фронтовый фреймворк (react, vue, svelte,
-  `@angular/core`, next, nuxt…) вместе с серверным (express, fastify, `@nestjs/core`…) или файлом языка (`go.mod`,
-  `pom.xml`, `pyproject.toml`, `requirements.txt`, `Cargo.toml`, `Gemfile`, `composer.json`, `mix.exs`) → `fullstack`;
-  только фронт → `frontend`; только сервер → `backend`; playwright/cypress/webdriverio без фреймворка → `autotests`;
-  `mkdocs.yml`/`book.toml`/`antora.yml` → `docs`; иначе (или угаданного шаблона нет) — шаблон по умолчанию.
+**Типы задач** (`ProjectManager`, модель — «Модель → Типы задач»):
+- `taskTypes()` — встроенные (`builtinTaskTypes()`, их порядок), затем пользовательские. Встроенные в файле не хранятся.
+  Пользовательский тип с id встроенного **подменяет** его («изменённый встроенный»); удаление копии возвращает встроенный.
+- `saveTaskType({id?, title, description?, settings})` — создать (без `id` — `type_<hex>`) или целиком заменить тип.
+  `validTypeSettings`: режим разрешений, `validateRoles`, правила из пробелов удаляют поле, граф (`checkedWorkflow`) — по
+  ролям типа, **колонки нод не проверяются**: тип общий для проектов с разными колонками, переход в неизвестную колонку
+  исполнитель пропускает (`moveTo`). Неизменённый граф заново не проверяется (`savedTypeSettings`) — иначе удаление роли,
+  на которую ссылается граф, или любая правка типа с графом будущей версии падали бы; такой граф исполнитель встретит
+  как `workflow_blocked` или дефолтный. Колонки и агенты во входе (старые шаблоны) отбрасываются.
+- Встроенный тип и его копия с тем же id правятся на месте только в полях `isBuiltinTypeInPlaceEdit` (исполнитель и
+  `systemPrompt` ролей, `agentRules`); сравнение — с копией, если она есть (копия могла прийти из миграции старого
+  `defaults` с другими ролями). Иначе — ошибка «тип «…» встроенный: … остальное — через «Дублировать»».
+- `patchTaskType(id, patch)` — мерж раздела (null у графа и разрешений — встроенное значение); `saveTaskTypeRules(typeId,
+  roleId?, text)` — `rules set` по типу: правила агентов или `systemPrompt` роли. `duplicateTaskType(id)` — «<название> (копия)».
+  `deleteTaskType(id)` — только пользовательские; ссылки проектов остаются висячими и при чтении пропускаются.
+- `defaultTaskTypeId()` — тип библиотеки по умолчанию: заданный и существующий, иначе `general`. Предвыбран при
+  добавлении проекта, даёт роли и режим разрешений ассистенту.
+- `taskTypeWorkflow(typeId)` → `{typeId, title, workflow, custom}`: свой граф или дефолтный по ролям; граф будущей
+  версии — ошибка «обновите приложение».
 
-**Настройки по умолчанию** (старые имена, теперь алиасы шаблона по умолчанию; их используют «О проекте → Обзор» и ассистент, «Настройки» пишут шаблоны через `templates:*`):
-- `defaults()` — `resolvedSettings` шаблона по умолчанию; массивы и объекты — копии.
-- `setDefaults(patch)` — мерж патча в шаблон по умолчанию (`validSettings` поверх его `settings`): явный ключ
-  `enabledAgents: null/undefined` — сброс в «все установленные»; `agentRules` пустые/пробелы → поле удаляется.
-  Встроенный «Общий» при первой правке получает пользовательскую копию с тем же id; другой встроенный шаблон по
-  умолчанию только читается — ошибка. Возвращает `defaults()`.
-- `add(root, templateId?)`: новый проект получает копию `resolvedSettings` шаблона (нет — по умолчанию; неизвестный id —
-  ошибка) и `templateId`. Уже добавленный репозиторий возвращается как есть, шаблон к нему не применяется.
-  Проекты, созданные раньше, не меняются при правке шаблона.
-- `applyTemplate(id, templateId, sections, roleIds?)` — разделы `sections ⊂ TEMPLATE_SECTIONS` (`agents`, `roles`, `columns`,
-  `workflow`, `permissions`, `agentRules`) из `resolvedSettings` шаблона через `applySections` (core): раздела нет в
-  шаблоне → у проекта удаляется; `roleIds` с `roles` — только эти роли (`mergeRole`). Граф проверяется по итоговым
-  ролям и колонкам; ошибка («…примените вместе с разделами: роли») — до записи, проект не меняется. Роли — через
-  `validateRoles`, колонки — через `setColumns` (задачи из исчезнувших колонок → `kind=backlog`, `store.reassignColumn`).
-  Все разделы сразу — «сменить тип»: проект запоминает `templateId`; частичное применение его не меняет.
-  Задачи с `roleId` удалённой роли остаются как есть — `worker.start` для них вернёт ошибку.
-- `applyDefaults(id)` = `applyTemplate(id, defaultTemplateId(), все разделы)`.
+**Типы проекта и прогонов**:
+- `projectTaskTypes(id)` — доступные (висячие id пропускаются; не осталось ни одного — тип по умолчанию);
+  `projectDefaultTypeId(id)` — свой тип по умолчанию, если он есть в библиотеке, иначе тип библиотеки по умолчанию,
+  если доступен, иначе первый доступный. `setProjectTaskTypes(id, {typeIds?, defaultTypeId})` — `null` — все типы;
+  тип по умолчанию должен быть среди доступных.
+- `add(root, typeId?)`: новый проект — `columns: DEFAULT_COLUMNS` и `defaultTaskTypeId` (нет — тип библиотеки по
+  умолчанию; неизвестный — ошибка). Копии настроек нет: связь с типом живая.
+- `detectTaskType(path)` — `detectTemplate` (`src/main/template-detect.ts`, id встроенных типов совпадают с id шаблонов:
+  `AndroidManifest.xml`, `*.xcodeproj`, `pubspec.yaml`, react-native → `mobile`; фронт + сервер или файл языка →
+  `fullstack`; только фронт → `frontend`; только сервер → `backend`; playwright/cypress → `autotests`;
+  `mkdocs.yml`/`book.toml` → `docs`); угаданного типа нет в библиотеке — тип по умолчанию.
+- `runType(id, typeId?)` → `RunTypeInput` для `createRun` / `createGlobalTask`: без `typeId` — тип проекта по умолчанию,
+  тип вне `taskTypeIds` — ошибка «тип «…» недоступен в проекте «…»» с подсказкой на `types list`. Граф будущей
+  версии в снимок не попадает — прогон пойдёт по графу типа из `runWorkflow`, а не упадёт.
+- `resolveRun(id, runId?)` → `ResolvedRunType` через `resolveRunType` из core — единственное правило «какой тип у задачи».
+  `resolveType(id, typeId)` — то же для нового прогона без записи в store.
+
+**Миграция на типы** (`migrateProjectsFile` в `src/main/task-types-migration.ts` — чистая функция, тест без ФС;
+вызывает `load()` при `version` < 2):
+1. Нормализация старого формата, как до типов (`normalizeLegacy`): назначения системных ролей, нестроковые правила,
+   битые графы проектов; шаблоны проверяются как типы (колонки и агенты отбрасываются); непустой старый `defaults` →
+   пользовательский «Общий» (`general`) и тип по умолчанию.
+2. Шаблоны → типы с теми же id, `defaultTemplateId` → `defaultTaskTypeId`.
+3. **Каждый** проект → пользовательский тип «<имя проекта>» (`type_<projectId>`, описание «Перенесён из настроек
+   проекта…»; занятое название — «<имя> (2)», в том числе среди встроенных) с его ролями, графом, правилами и
+   разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)` (`taskTypeFromLegacyProject`). Проект:
+   `defaultTaskTypeId = legacyTypeId = type_<id>`, `taskTypeIds` не задаётся, старые поля удаляются.
+4. Файл пишется **сразу** (`legacyTypeId` должен дожить до ленивой загрузки досок), исходный текст — в
+   `projects.v1.bak.json`, если бэкапа ещё нет (откат на старую версию прочтёт проекты без ролей как `DEFAULT_ROLES`).
+   Повторная загрузка ничего не меняет.
+
+Доска — лениво, в `store(id)`: прогоны без `typeId` (кроме «Входящих») получают `legacyTypeId` проекта и его снимок
+(`assignRunTypes`, идемпотентна, `Run.workflow` не трогает). Через `legacyTypeId`, а не тип по умолчанию: если человек
+успел сменить тип проекта по умолчанию до первого открытия доски, старые прогоны всё равно останутся на ролях своего
+проекта. Незакрытый dispatch и задача на гейте после миграции продолжают: граф — из `Run.workflow`, роли — из типа
+«<имя проекта>» = бывших ролей проекта.
+
+**Совместимость** (до перевода renderer и сокета на типы; уберётся вместе с шаблонами): `view(project)` дополняет проект
+для renderer полями `roles`, `workflow`, `agentRules`, `permissionMode`, `templateId` типа проекта по умолчанию
+(`projects:list`, `app:info` и все каналы, возвращающие `Project`). `setRoles`, `setWorkflow`, `setAgentRules`,
+`setPermissionMode` пишут в тип проекта по умолчанию (у встроенного — по правилам правки на месте, иначе «Дублировать»).
+`applyTemplate` со всеми разделами делает тип проектом по умолчанию, с частью — пишет роли / разрешения / правила /
+граф шаблона в тип проекта по умолчанию (колонки и агенты больше не переносятся). `applyDefaults(id)` — тип библиотеки
+по умолчанию становится типом проекта. `templates*` — те же типы; `defaults()` / `setDefaults(patch)` — тип библиотеки
+по умолчанию (колонки — встроенные).
 
 ## Уведомления
 
@@ -1243,6 +1271,17 @@ UI работает с активным проектом; воркеры и ко
 `dist`/`pack` в конце вызывают `electron-builder install-app-deps` — пересборку под текущую машину.
 
 ## Грабли разработки
+
+- Настройки типа сохраняются целиком (`saveTaskType`), и каждое сохранение раньше заново проверяло граф. Правка ролей
+  через патч (`setRoles`, `rules set --role`) падала на «нет роли «qa»», если граф ссылался на удаляемую роль, а
+  любая правка типа с графом будущей версии — на «обновите приложение». Неизменённый граф заново не проверяется
+  (`savedTypeSettings` в `src/main/projects.ts`); проверку проходит только граф из самой правки.
+
+- Загрузка `projects.json` сверяла граф типа с его ролями и при ошибке выбрасывала тип целиком. Граф со ссылкой на
+  удалённую роль бывает законно: так его сохраняет `savedTypeSettings`, и так его приносит миграция проекта (до
+  типов `setRoles` граф не сверял). После рестарта тип пропадал, проект уезжал на тип по умолчанию, а роли, модели
+  и правила терялись при первой же записи файла. Теперь `loadedTaskType` чистит разделы по одному: граф — только
+  форма и версия, роли — по одной, тип отбрасывается лишь без id, названия или объекта настроек.
 
 - `pnpm dev` (electron-vite) пересобирает renderer по HMR, а main и всё, что main импортирует из core
   (store, автозакрытие), — только при перезапуске приложения. После мержа ветки со сменой поведения store старое

@@ -18,7 +18,9 @@ const api: OrcaApi = {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
     taskRefs: (id) => ipcRenderer.invoke('projects:taskRefs', id),
-    add: (templateId, path) => ipcRenderer.invoke('projects:add', templateId, path),
+    add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
+    detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
+    setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
     detectTemplate: (path) => ipcRenderer.invoke('projects:detectTemplate', path),
     applyTemplate: (id, templateId, sections, roleIds) => ipcRenderer.invoke('projects:applyTemplate', id, templateId, sections, roleIds),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
@@ -34,6 +36,13 @@ const api: OrcaApi = {
     setDefaults: (patch) => ipcRenderer.invoke('projects:setDefaults', patch),
     applyDefaults: (id) => ipcRenderer.invoke('projects:applyDefaults', id),
     onFocus: (cb) => on('projects:focus', cb)
+  },
+  taskTypes: {
+    list: () => ipcRenderer.invoke('taskTypes:list'),
+    save: (input) => ipcRenderer.invoke('taskTypes:save', input),
+    delete: (id) => ipcRenderer.invoke('taskTypes:delete', id),
+    duplicate: (id) => ipcRenderer.invoke('taskTypes:duplicate', id),
+    setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id)
   },
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),

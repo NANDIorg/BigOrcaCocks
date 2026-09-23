@@ -1,6 +1,7 @@
 import {
   gateTaskSpec, gateTaskTitle, wfNodeTitle,
-  type HumanRequest, type OrcaEvent, type Role, type Task, type TaskStore, type WfAction, type WfNode, type WfOutcome
+  type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
+  type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { acceptReview, mergeTaskBranch } from './review'
 import { commitWorktree, removeWorktree, removeWorktreeKeepBranch } from './git'
@@ -12,8 +13,11 @@ import { commitWorktree, removeWorktree, removeWorktreeKeepBranch } from './git'
 export interface WorkflowDeps {
   store: TaskStore
   repoRoot: string
-  /** Роли проекта сейчас: дефолтный граф прогона без снимка и проверка роли гейта. */
-  roles(): Role[]
+  /**
+   * Тип прогона `runId` сейчас (`resolveRunType`): роли — для роли ноды «Работа» и гейта, граф типа — для прогона
+   * без снимка графа. Без прогона («Входящие») — тип проекта по умолчанию.
+   */
+  run(runId: string | undefined): { roles: Role[]; workflow?: Workflow }
   /** Запуск воркера задачи с проверками роли и агента (`runWorker` в index.ts). */
   startWorker(taskId: string): { ptyId: string; dispatchId: string }
 }
@@ -21,8 +25,14 @@ export interface WorkflowDeps {
 /** Сколько переходов подряд без ожидания (мерж → условие → мерж…) допускается, прежде чем считать граф зациклившимся. */
 const MAX_STEPS = 50
 
-function roleIds(deps: WorkflowDeps): string[] {
-  return deps.roles().map((r) => r.id)
+/** Запасной граф для store (`runWorkflow`): роли и граф типа прогона задачи. */
+function fallback(deps: WorkflowDeps, task: Task): RunWorkflowFallback {
+  const t = deps.run(task.runId)
+  return { roleIds: t.roles.map((r) => r.id), ...(t.workflow ? { workflow: t.workflow } : {}) }
+}
+
+function rolesOf(deps: WorkflowDeps, task: Task): Role[] {
+  return deps.run(task.runId).roles
 }
 
 function mustTask(deps: WorkflowDeps, taskId: string): Task {
@@ -34,7 +44,7 @@ function mustTask(deps: WorkflowDeps, taskId: string): Task {
 /** Нода, на которой стоит задача, в графе её прогона. */
 function stageNode(deps: WorkflowDeps, task: Task): WfNode | undefined {
   if (!task.stage) return undefined
-  return deps.store.runWorkflow(task.runId, roleIds(deps)).nodes.find((n) => n.id === task.stage!.nodeId)
+  return deps.store.runWorkflow(task.runId, fallback(deps, task)).nodes.find((n) => n.id === task.stage!.nodeId)
 }
 
 function message(e: unknown): string {
@@ -52,19 +62,19 @@ function moveTo(deps: WorkflowDeps, taskId: string, status: string): void {
  * «Работа» (store.enterWork). Роль ноды «Работа», если задана, становится ролью задачи.
  */
 export function enterWork(deps: WorkflowDeps, taskId: string): void {
-  const action = deps.store.enterWork(taskId, { roleIds: roleIds(deps) })
+  const action = deps.store.enterWork(taskId, fallback(deps, mustTask(deps, taskId)))
   if (action?.type === 'start_worker' && action.roleId) applyWorkRole(deps, taskId, action.roleId)
 }
 
 function applyWorkRole(deps: WorkflowDeps, taskId: string, roleId: string): void {
   const task = mustTask(deps, taskId)
-  const role = deps.roles().find((r) => r.id === roleId)
+  const role = rolesOf(deps, task).find((r) => r.id === roleId)
   if (role && task.roleId !== role.id) deps.store.updateTask(taskId, { roleId: role.id, agent: role.agent })
 }
 
 /** Исход текущего этапа задачи → переход по графу и эффекты новых этапов. */
 export function advance(deps: WorkflowDeps, taskId: string, outcome: WfOutcome): void {
-  const { action } = deps.store.advanceStage(taskId, outcome, { roleIds: roleIds(deps) })
+  const { action } = deps.store.advanceStage(taskId, outcome, fallback(deps, mustTask(deps, taskId)))
   execute(deps, taskId, action)
 }
 
@@ -80,7 +90,7 @@ function execute(deps: WorkflowDeps, taskId: string, first: WfAction): void {
   for (let step = 0; step < MAX_STEPS; step += 1) {
     const task = store.getTask(taskId)
     if (!task) return
-    const node = store.runWorkflow(task.runId, roleIds(deps)).nodes.find((n) => n.id === action.nodeId)
+    const node = store.runWorkflow(task.runId, fallback(deps, task)).nodes.find((n) => n.id === action.nodeId)
     switch (action.type) {
       case 'start_worker':
         if (action.roleId) applyWorkRole(deps, taskId, action.roleId)
@@ -110,7 +120,7 @@ function execute(deps: WorkflowDeps, taskId: string, first: WfAction): void {
           note = undefined
           if (task.worktree !== undefined || task.branch !== undefined) store.updateTask(taskId, { worktree: undefined, branch: undefined })
         } else note = result.error
-        action = store.advanceStage(taskId, result.ok ? 'ok' : 'conflict', { roleIds: roleIds(deps) }).action
+        action = store.advanceStage(taskId, result.ok ? 'ok' : 'conflict', fallback(deps, task)).action
         continue
       }
       case 'done':
@@ -127,9 +137,9 @@ function execute(deps: WorkflowDeps, taskId: string, first: WfAction): void {
 /** Нода gate: задача-проверка на ветку рабочей задачи и сразу её воркер. Рабочая задача — в колонку этапа (по умолчанию «Ревью»). */
 function createGate(deps: WorkflowDeps, task: Task, node: Extract<WfNode, { type: 'gate' }>): void {
   const { store } = deps
-  const role = deps.roles().find((r) => r.id === node.roleId)
+  const role = rolesOf(deps, task).find((r) => r.id === node.roleId)
   if (!role) {
-    store.blockStage(task.id, `нода «${wfNodeTitle(node)}»: нет роли «${node.roleId}» в проекте`)
+    store.blockStage(task.id, `нода «${wfNodeTitle(node)}»: нет роли «${node.roleId}» в типе задачи`)
     return
   }
   moveTo(deps, task.id, node.column ?? store.columnId('review'))
@@ -233,7 +243,7 @@ function settleGate(deps: WorkflowDeps, gate: Task, why: 'done' | 'exit'): void 
 function workDone(deps: WorkflowDeps, task: Task, dispatchId: string | undefined): void {
   // Сданный прошлый запуск (задачу уже перезапустили) переход не делает.
   if (dispatchId !== undefined && task.dispatchId !== dispatchId) return
-  if (!task.stage) deps.store.enterWork(task.id, { roleIds: roleIds(deps) })
+  if (!task.stage) deps.store.enterWork(task.id, fallback(deps, task))
   const current = mustTask(deps, task.id)
   const node = stageNode(deps, current)
   if (node?.type !== 'work') {

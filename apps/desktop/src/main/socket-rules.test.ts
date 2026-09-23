@@ -60,7 +60,7 @@ afterEach(async () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
-describe('Project.agentRules в projects.json', () => {
+describe('правила агентов в типе проекта по умолчанию (projects.json)', () => {
   it('старый конфиг без поля грузится: правил нет, роли и их systemPrompt на месте', () => {
     writeOldConfig()
     projects = new ProjectManager(tmp)
@@ -75,24 +75,27 @@ describe('Project.agentRules в projects.json', () => {
     assert.equal('agentRules' in projects.get(PID)!, false)
   })
 
-  it('сохраняется как введено и переживает перезагрузку; пробелы — поле удаляется', () => {
+  it('сохраняются в тип «repo» как введены и переживают перезагрузку; пробелы — поле удаляется', () => {
     writeOldConfig()
     projects = new ProjectManager(tmp)
     const text = 'Не создавать задачи в ORION.\n\n- «кавычки», `код`\n'
     projects.setAgentRules(PID, text)
     assert.equal(new ProjectManager(tmp).agentRules(PID), text)
     projects.setAgentRules(PID, ' \n\t ')
-    const saved = JSON.parse(readFileSync(path.join(tmp, 'projects.json'), 'utf8')) as { projects: Array<Record<string, unknown>> }
+    const saved = JSON.parse(readFileSync(path.join(tmp, 'projects.json'), 'utf8')) as {
+      projects: Array<Record<string, unknown>>; taskTypes: Array<{ id: string; settings: Record<string, unknown> }>
+    }
     assert.equal('agentRules' in saved.projects[0], false)
+    assert.equal('agentRules' in saved.taskTypes.find((t) => t.id === `type_${PID}`)!.settings, false)
   })
 
   it('не строка — ошибка', () => {
     writeOldConfig()
     projects = new ProjectManager(tmp)
-    assert.throws(() => projects.setAgentRules(PID, 1 as unknown as string), /правила проекта должны быть строкой/)
+    assert.throws(() => projects.setAgentRules(PID, 1 as unknown as string), /правила агентов должны быть строкой/)
   })
 
-  it('дефолт: правила копируются в проект при applyDefaults, пустые — удаляют поле', () => {
+  it('тип библиотеки по умолчанию: его правила действуют в проекте после applyDefaults, пустые — удаляют поле', () => {
     writeOldConfig()
     projects = new ProjectManager(tmp)
     projects.setDefaults({ agentRules: 'общие' })
@@ -123,12 +126,16 @@ describe('сокет rules.get / rules.set', () => {
         startCoordinator: () => '',
         deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
         agents: () => [],
-        roles: () => projects.roles(PID),
+        roles: (runId) => projects.roles(PID, runId),
+        resolveRun: (runId) => projects.resolveRun(PID, runId),
+        taskTypes: () => ({ taskTypes: projects.projectTaskTypes(PID), defaultTypeId: projects.projectDefaultTypeId(PID) }),
+        runType: (typeId) => projects.runType(PID, typeId),
+        saveTaskTypeRules: (typeId, roleId, text) => projects.saveTaskTypeRules(typeId, roleId, text),
         setRoles: (roles) => projects.setRoles(PID, roles).roles ?? roles,
         agentRules: () => projects.agentRules(PID),
         setAgentRules: (text) => projects.setAgentRules(PID, text).agentRules ?? '',
         columns: () => projects.columns(PID),
-        workflow: () => ({ workflow: projects.workflow(PID), custom: false })
+        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(PID))
       }),
       projects: () => []
     })
