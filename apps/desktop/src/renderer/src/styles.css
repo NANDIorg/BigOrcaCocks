@@ -19,6 +19,8 @@
   --col-done: #5ad1cc;
   --danger: #ef6b6b;
   --radius: 14px;
+  /* Фон терминала — совпадает с theme.background xterm в Terminal.tsx. */
+  --term-bg: #1b1c21;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -246,6 +248,14 @@ textarea { min-height: 96px; resize: vertical; }
 .btn-primary.ghost { background: transparent; border: 1px solid var(--chip); color: var(--text); }
 .btn-primary.ghost:hover { border-color: var(--text); background: transparent; }
 button:disabled { opacity: .45; cursor: default; }
+/* Базовая кнопка-иконка. Раньше .icon-btn был описан только внутри .sidebar .head и .docs-modal,
+   и в других шапках (панель ассистента) рендерился как браузерная кнопка. Контекстные правила ниже
+   специфичнее и переопределяют только размер. */
+.icon-btn {
+  flex: 0 0 auto; width: 32px; height: 32px; padding: 0; border-radius: 8px; border: 0; background: transparent;
+  color: var(--muted); display: grid; place-items: center;
+}
+.icon-btn:hover:not(:disabled) { background: var(--side-2); color: var(--text); }
 
 
 /* Редакторы ролей и колонок */
@@ -432,7 +442,7 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .term-item:hover .x, .term-item.active .x { opacity: 1; }
 .term-item .x:hover { background: var(--side-2); color: var(--text); }
-.term-body { min-width: 0; min-height: 0; background: #1b1c21; padding: 10px; position: relative; }
+.term-body { min-width: 0; min-height: 0; background: var(--term-bg); padding: 10px; position: relative; }
 .term-body .term { height: 100%; }
 .term-body .term.hidden { display: none; }
 .term-body .term > div { height: 100%; }
@@ -923,7 +933,7 @@ button:disabled { opacity: .45; cursor: default; }
 /* Ассистент — та же выезжающая панель, что Инбокс, но шире и с терминалом во всю высоту. */
 .inbox.assistant { width: 480px; }
 .assistant-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.assistant-body { flex: 1; min-height: 0; position: relative; background: #1b1c21; padding: 8px 6px 8px 10px; }
+.assistant-body { flex: 1; min-height: 0; position: relative; background: var(--term-bg); padding: 8px 6px 8px 10px; }
 .assistant-body .term { height: 100%; }
 .assistant-body .term.hidden { display: none; }
 .assistant-body .term > div { height: 100%; }
