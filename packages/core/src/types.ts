@@ -220,12 +220,44 @@ export const ANSWER_AUDIENCES: AnswerAudience[] = ['human', 'coordinator']
 /** Предел длины ответа (символов): ответ хранится в снапшоте доски. */
 export const MAX_ANSWER_LENGTH = 200_000
 
+/**
+ * Приоритет задачи: влияет только на порядок показа и выбора, не на промпт воркера. Порядок в
+ * `TASK_PRIORITIES` — от высшего к низшему, на нём держится `priorityRank`.
+ */
+export type TaskPriority = 'urgent' | 'high' | 'normal' | 'low'
+
+export const TASK_PRIORITIES: TaskPriority[] = ['urgent', 'high', 'normal', 'low']
+
+export const DEFAULT_TASK_PRIORITY: TaskPriority = 'normal'
+
+export const PRIORITY_TITLES: Record<TaskPriority, string> = {
+  urgent: 'срочный',
+  high: 'высокий',
+  normal: 'обычный',
+  low: 'низкий'
+}
+
+export function isTaskPriority(v: unknown): v is TaskPriority {
+  return typeof v === 'string' && (TASK_PRIORITIES as string[]).includes(v)
+}
+
+/**
+ * Ранг для сортировки по возрастанию: urgent=0 … low=3. Нет поля или неизвестное значение (снапшот от
+ * кода до приоритетов, ещё не прошедший миграцию) — как normal, чтобы такие задачи не всплывали наверх.
+ */
+export function priorityRank(p: TaskPriority | undefined): number {
+  const i = p === undefined ? -1 : TASK_PRIORITIES.indexOf(p)
+  return i === -1 ? TASK_PRIORITIES.indexOf(DEFAULT_TASK_PRIORITY) : i
+}
+
 export interface Task {
   id: string
   title: string
   spec: string
   /** Id колонки доски. */
   status: TaskStatus
+  /** Приоритет; у задач из старых снапшотов проставляется при загрузке (`migrateTaskPriority`). */
+  priority: TaskPriority
   deps: string[]
   /** Прогон, к которому относится задача; нет — задача создана из UI вне прогона. */
   runId?: string

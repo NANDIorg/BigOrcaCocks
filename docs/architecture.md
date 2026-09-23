@@ -22,7 +22,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль проекта (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -45,6 +45,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     перезапуск приложения, закрывается моментом загрузки — время простоя приложения попадает в отрезок.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
+  - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
+    подписи `PRIORITY_TITLES`, ранг для сортировки `priorityRank`: urgent=0 … low=3, нет поля — как normal).
+    Влияет только на порядок показа, не на промпт воркера, статус и воркфлоу. `createTask` без приоритета — `normal`;
+    неизвестное значение в `createTask`/`updateTask`/`editTask` — ошибка `приоритет: ожидается …, получено «…»`.
+    Миграция при загрузке (`migrateTaskPriority`): задача без поля или с неизвестным значением → `normal`.
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
@@ -192,8 +197,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   отвергается с подсказкой про `--role`. `worker.start` (сокет и UI) заново проверяет роль задачи
   и её агента: роль могли удалить, агента — выключить.
 - **Сокет**: `roles.list` → роли плюс `agentEnabled` (включён ли агент роли в проекте);
-  `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?}` → `store.editTask`
-  (без `--title`/`--spec` — ошибка; см. «Редактирование задачи»).
+  `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?, priority?}` → `store.editTask`
+  (без `--title`/`--spec`/`--priority` — ошибка; см. «Редактирование задачи»). `task.create` и `global.add-task`
+  принимают `priority` (значение проверяет store; `--priority` без значения — ошибка сокета).
 
 ## Воркфлоу: модель (`packages/core/src/workflow.ts`)
 
@@ -362,7 +368,7 @@ orca-board roles list                       # [{id,title,description?,agent,mode
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board rules get [--role <id>]          # правила агентов доски: общие ({rules}) или роли ({role,title,rules})
 orca-board rules set [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
-orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator]
+orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]
 orca-board question answer --question <id> --answer "..."
 orca-board question forward --question <id> [--note "..."]   # вопрос воркера — человеку (запрос в Инбокс, глобальная → «Нужен ответ»)
 orca-board question get --question <id>     # вопрос целиком: варианты с пояснениями, контекст, ответ
@@ -370,7 +376,7 @@ orca-board request list [--run <id>] [--all]   # запросы к челове�
 orca-board request get --request <id>
 orca-board task answer --task <id>          # полный ответ задачи-ответа и decision
 orca-board task move --task <id> --status <id колонки>
-orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
+orca-board task update --task <id> [--title ...] [--spec ...] [--priority ...]   # title/spec — не в in_progress, priority — в любой колонке
 orca-board worker start --task <id>
 orca-board worker stop --task <id>          # закрыть воркеров задачи без эскалации; in_progress → ready
 orca-board worker restart --task <id> [--feedback "..."]   # stop + feedback + start; работает и на in_progress; review/done → ошибка (task reopen --start)
@@ -832,9 +838,11 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 ## Редактирование задачи и автозакрытие терминалов (`src/main/index.ts`)
 
-- `store.editTask(id, {title?, spec?})` (core) — единая точка для IPC `tasks:update` (модалка задачи)
-  и сокета `task.update` (CLI `orca-board task update`): задача в колонке `kind=in_progress` отвергается
-  с ошибкой (воркер уже получил задание в промпт), пустое название после trim — тоже. Внутри — `updateTask`,
+- `store.editTask(id, {title?, spec?, priority?})` (core) — единая точка для IPC `tasks:update` (модалка задачи)
+  и сокета `task.update` (CLI `orca-board task update`): правка названия/описания задачи в колонке
+  `kind=in_progress` отвергается с ошибкой (воркер уже получил задание в промпт), пустое название после trim — тоже.
+  Приоритет меняется в любой колонке: в промпт он не попадает. Отдельного IPC для приоритета нет — `tasks:update`
+  и `tasks:create`/`globalTasks:createTask` принимают `priority`. Внутри — `updateTask`,
   так что `updatedAt` и `board:changed` идут как обычно.
 - **Автозакрытие**: main в `projects.onChange` (любой `commit` store) вызывает `closeDoneWorkers`:
   у задач в колонке `kind=done` закрываются dispatch'и (`store.closeDispatches` ставит `endedAt`/`outcome=unknown`

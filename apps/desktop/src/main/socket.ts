@@ -2,7 +2,8 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  EVENT_TYPES, TASK_PRIORITIES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  type TaskPriority,
   type RequestResolution, type Question, type GlobalTask
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
@@ -165,6 +166,7 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   // --answer-for human|coordinator — задача-ответ; значение проверяет store.
   const answerFor = r.params['answer-for'] ?? r.params.answerFor
   if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
+  const priority = priorityParam(r)
   return store.createTask({
     title,
     spec: str(r.params.spec),
@@ -172,8 +174,15 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
     roleId: role.id,
     agent: role.agent,
     runId,
-    ...(answerFor !== undefined ? { answerFor: answerFor as AnswerAudience } : {})
+    ...(answerFor !== undefined ? { answerFor: answerFor as AnswerAudience } : {}),
+    ...(priority !== undefined ? { priority: priority as TaskPriority } : {})
   })
+}
+
+/** --priority: значение проверяет store; флаг без значения (true) — отдельная понятная ошибка. */
+function priorityParam(r: Request): string | undefined {
+  if (r.params.priority === true) throw new Error(`--priority требует значения: ${TASK_PRIORITIES.join(', ')}`)
+  return str(r.params.priority)
 }
 
 /** Id глобальной задачи (= id прогона) из --global; CLI подставляет $ORCA_RUN_ID для global get/tasks/add-task. */
@@ -225,9 +234,10 @@ const handlers: Record<string, Handler> = {
     if (!id) throw new Error('--task обязателен')
     const title = str(r.params.title)
     const spec = str(r.params.spec)
-    if (title === undefined && spec === undefined) throw new Error('укажи --title и/или --spec')
-    // Задачу в работе store отвергает.
-    return store.editTask(id, { title, spec })
+    const priority = priorityParam(r)
+    if (title === undefined && spec === undefined && priority === undefined) throw new Error('укажи --title, --spec и/или --priority')
+    // Название/описание задачи в работе store отвергает, приоритет меняется в любой колонке.
+    return store.editTask(id, { title, spec, priority: priority as TaskPriority | undefined })
   },
   'task.delete': (r, _d, store) => {
     const id = str(r.params.task)

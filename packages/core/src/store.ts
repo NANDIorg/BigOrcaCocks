@@ -1,10 +1,11 @@
 import type {
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
-  HumanRequest, RequestOption, RequestResolution
+  HumanRequest, RequestOption, RequestResolution, TaskPriority
 } from './types.ts'
 import {
-  ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, MAX_ANSWER_LENGTH, REQUEST_ACTIONS, normalizeOptions
+  ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, MAX_ANSWER_LENGTH, REQUEST_ACTIONS,
+  TASK_PRIORITIES, isTaskPriority, normalizeOptions
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
@@ -62,6 +63,11 @@ function firstGateStage(wf: Workflow, roleId: string): WfStage | undefined {
 }
 
 let counter = 0
+/** Значение приходит из CLI/IPC строкой без проверки — неизвестное отвергаем с перечнем допустимых. */
+function assertPriority(p: unknown): asserts p is TaskPriority {
+  if (!isTaskPriority(p)) throw new Error(`приоритет: ожидается ${TASK_PRIORITIES.join(', ')}, получено «${String(p)}»`)
+}
+
 export function newId(prefix: string): string {
   counter += 1
   return `${prefix}_${Date.now().toString(36)}${counter.toString(36)}`
@@ -102,6 +108,7 @@ export class TaskStore {
       this.events = snap.events ?? []
       // До closeStaleDispatches: задача «В работе» от старого кода должна войти в него с открытым отрезком.
       const active = this.migrateActiveTime()
+      const priority = this.migrateTaskPriority()
       const migrated = this.migrateGlobalTasks()
       const stale = this.closeStaleDispatches()
       const requests = this.migrateRequests(snap.requests === undefined)
@@ -109,7 +116,7 @@ export class TaskStore {
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
       const synced = this.syncRunActiveTime()
-      if (active || stale || requests || stages || migrated || own || synced) this.persistence?.save(this.snapshot())
+      if (active || priority || stale || requests || stages || migrated || own || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -248,6 +255,20 @@ export class TaskStore {
   }
 
   /**
+   * Задачи из снапшотов до приоритетов (или с неизвестным значением, руками правленный state) получают
+   * normal: поле обязательное, и renderer сортирует по нему. Возвращает true, если что-то поменялось.
+   */
+  private migrateTaskPriority(): boolean {
+    let changed = false
+    for (const task of this.tasks.values()) {
+      if (isTaskPriority(task.priority)) continue
+      task.priority = DEFAULT_TASK_PRIORITY
+      changed = true
+    }
+    return changed
+  }
+
+  /**
    * Миграция к глобальным задачам (docs/nested-kanban.md): прогон без status получает колонку
    * (закрыт → done, иначе in_progress), прогон в колонке подзадач сводится к колонке глобального канбана
    * (globalTaskStatus), задачи без прогона уходят во «Входящие» — так у каждой
@@ -370,7 +391,10 @@ export class TaskStore {
     runId?: string
     /** Задача-ответ: кто читает ответ. Нет — обычная задача. */
     answerFor?: AnswerAudience
+    /** Нет — normal. */
+    priority?: TaskPriority
   }): Task {
+    if (input.priority !== undefined) assertPriority(input.priority)
     if (input.answerFor !== undefined && !ANSWER_AUDIENCES.includes(input.answerFor)) {
       throw new Error(`answerFor: ожидается ${ANSWER_AUDIENCES.join(' или ')}, получено ${String(input.answerFor)}`)
     }
@@ -385,6 +409,7 @@ export class TaskStore {
       title: input.title,
       spec: input.spec ?? '',
       status: this.columnId('backlog'),
+      priority: input.priority ?? DEFAULT_TASK_PRIORITY,
       deps,
       roleId: input.roleId ?? DEFAULT_ROLE_ID,
       agent: input.agent ?? DEFAULT_AGENT,
@@ -405,6 +430,7 @@ export class TaskStore {
   updateTask(id: string, patch: Partial<Omit<Task, 'id' | 'createdAt' | 'runId'>>): Task {
     const task = this.mustTask(id)
     const { status, ...rest } = patch as Partial<Task>
+    if (rest.priority !== undefined) assertPriority(rest.priority)
     delete rest.runId
     // Время работы ведёт только setStatus: правка не должна сбить накопленное.
     delete rest.activeMs
@@ -417,13 +443,19 @@ export class TaskStore {
   }
 
   /**
-   * Правка названия/описания из UI или CLI. Задачу в работе (kind=in_progress) править нельзя:
-   * воркер уже получил задание в промпт, и правка его не догонит.
+   * Правка названия/описания/приоритета из UI или CLI. Название и описание задачи в работе (kind=in_progress)
+   * править нельзя: воркер уже получил задание в промпт, и правка его не догонит. Приоритет меняется в любой
+   * колонке: в промпт он не попадает и на статус, dispatch и воркфлоу не влияет — только на порядок показа.
    */
-  editTask(id: string, patch: { title?: string; spec?: string }): Task {
+  editTask(id: string, patch: { title?: string; spec?: string; priority?: TaskPriority }): Task {
     const task = this.mustTask(id)
-    if (this.isKind(task, 'in_progress')) throw new Error('задача в работе — сначала дождись воркера или перезапусти её')
-    const next: { title?: string; spec?: string } = {}
+    const text = patch.title !== undefined || patch.spec !== undefined
+    if (text && this.isKind(task, 'in_progress')) throw new Error('задача в работе — сначала дождись воркера или перезапусти её')
+    const next: { title?: string; spec?: string; priority?: TaskPriority } = {}
+    if (patch.priority !== undefined) {
+      assertPriority(patch.priority)
+      next.priority = patch.priority
+    }
     if (patch.title !== undefined) {
       const title = patch.title.trim()
       if (!title) throw new Error('название не может быть пустым')

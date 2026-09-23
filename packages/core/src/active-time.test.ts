@@ -219,6 +219,7 @@ describe('миграция времени работы при загрузке',
     return { store: new TaskStore(persistence, () => DEFAULT_COLUMNS), saved }
   }
 
+  /** Задача от старого кода: без полей, которые проставляют миграции (priority, activeMs…). */
   function oldTask(id: string, status: string, extra: Partial<Task> = {}): Task {
     return { id, title: id, spec: '', status, deps: [], roleId: 'worker', agent: 'claude', runId: 'run_1', createdAt: 0, updatedAt: 0, ...extra }
   }
@@ -278,7 +279,8 @@ describe('миграция времени работы при загрузке',
     const { store, saved } = load({
       runs: [{ id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', updatedAt: 0, activeMs: 7, activeSince: 0 }],
       // stage — задача в review уже на этапе воркфлоу, иначе её мигрирует migrateStages.
-      tasks: [oldTask('t', 'review', { startedAt: 0, activeMs: 42, stage: { nodeId: 'review', visits: { review: 1 } } })],
+      // priority — иначе задачу мигрирует migrateTaskPriority.
+      tasks: [oldTask('t', 'review', { startedAt: 0, activeMs: 42, priority: 'normal', stage: { nodeId: 'review', visits: { review: 1 } } })],
       dispatches: [{ id: 'd1', taskId: 't', ptyId: 'p1', startedAt: 0, endedAt: 4 * MIN, outcome: 'done' }],
       requests: []
     })

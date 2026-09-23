@@ -274,7 +274,7 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 | `global move --global <id> --status <col>` | `global.move` | `global`, `status` | `GlobalTask` |
 | `global delete --global <id> [--cascade]` | `global.delete` | `global`, `cascade?: true` | `{deleted, tasks}` |
 | `global tasks [--global <id>]` | `global.tasks` | `global` | `Task[]` |
-| `global add-task [--global <id>] --title … [--spec …] --role <id> [--dep <id>]…` | `global.add-task` | `global`, как `task.create` | `Task` |
+| `global add-task [--global <id>] --title … [--spec …] --role <id> [--dep <id>]… [--priority …]` | `global.add-task` | `global`, как `task.create` | `Task` |
 | `global start --global <id>` | `global.start` | `global` | `{ptyId}` |
 | `coordinator start --global <id>` | `coordinator.start` | `global` (важнее `objective`) | `{ptyId}` |
 | `task list [--run <id>]` | `task.list` | `run?` | с `run` — только подзадачи, без — все задачи (как раньше) |
