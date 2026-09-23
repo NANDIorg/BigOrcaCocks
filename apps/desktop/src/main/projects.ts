@@ -383,16 +383,18 @@ export class ProjectManager {
       throw new Error('применение шаблона: roleIds должен быть массивом id ролей')
     }
     const next = applySections<PermissionMode, Project>(p, resolvedSettings(template.settings), sections, roleIds)
-    // Роли проверяем до записи: после неё откатывать было бы нечего.
+    // Роли и колонки проверяем до первой записи: применение атомарное, откатывать было бы нечего.
     const roles = sections.includes('roles') ? validateRoles(next.roles ?? DEFAULT_ROLES) : undefined
+    const columns = sections.includes('columns') ? validateColumns(next.columns ?? DEFAULT_COLUMNS) : undefined
     for (const key of ['permissionMode', 'enabledAgents', 'agentRules', 'workflow'] as const) {
       if (next[key] === undefined) delete p[key]
       else (p as Record<typeof key, unknown>)[key] = next[key]
     }
     if (roles) p.roles = roles
     if (TEMPLATE_SECTIONS.every((s) => sections.includes(s))) p.templateId = template.id
-    this.save()
-    return sections.includes('columns') ? this.setColumns(id, next.columns ?? DEFAULT_COLUMNS) : p
+    if (columns) this.replaceColumns(p, columns)
+    else this.save()
+    return p
   }
 
   /** Переписать все настройки проекта шаблоном по умолчанию. Задачи из исчезнувших колонок уходят в backlog. */
@@ -481,8 +483,13 @@ export class ProjectManager {
   setColumns(id: string, columns: BoardColumn[]): Project {
     const p = this.get(id)
     if (!p) throw new Error(`project not found: ${id}`)
-    const next = validateColumns(columns)
-    const store = this.store(id)
+    this.replaceColumns(p, validateColumns(columns))
+    return p
+  }
+
+  /** Записать уже проверенные колонки (с сохранением файла) и перенести задачи из исчезнувших колонок в backlog. */
+  private replaceColumns(p: Project, next: BoardColumn[]): void {
+    const store = this.store(p.id)
     // Сначала применяем новый набор: store читает колонки через this.columns(id),
     // и перенос задач должен считать doneAt/ready уже по новым колонкам.
     p.columns = next
@@ -491,7 +498,6 @@ export class ProjectManager {
     const keep = new Set(next.map((c) => c.id))
     const orphaned = new Set(store.listTasks().map((t) => t.status).filter((s) => !keep.has(s)))
     for (const oldId of orphaned) store.reassignColumn(oldId, backlogId)
-    return p
   }
 
   remove(id: string): void {
@@ -749,15 +755,29 @@ function validSettings(patch: unknown, base: ProjectTemplateSettings, label: str
   return next
 }
 
-/** Шаблон из projects.json: без id, названия или объекта настроек — отбрасывается, мусорные поля — чистятся. */
+/**
+ * Шаблон из projects.json: без id, названия или объекта настроек — отбрасывается. Настройки проходят ту же
+ * `validSettings`, что при сохранении: руками испорченный шаблон (роли, колонки, разрешения, граф) отбрасывается
+ * целиком, а не по разделам — граф ссылается на роли и колонки, и «починенный» по частям шаблон молча стал бы
+ * другим типом проекта. Проекты с его `templateId` сравниваются с шаблоном по умолчанию (`baseTemplate`).
+ * Мусор, который терпели и раньше, чистится без отказа: нестроковые правила, граф будущей версии хранится как есть.
+ */
 function loadedTemplate(v: unknown): ProjectTemplate[] {
   if (!isObject(v) || !nonEmpty(v.id) || !nonEmpty(v.title) || !isObject(v.settings)) return []
-  const settings = v.settings as ProjectTemplateSettings
-  if (Array.isArray(settings.roles)) settings.roles = withDefaultDescriptions(settings.roles)
-  if (settings.agentRules !== undefined && typeof settings.agentRules !== 'string') delete settings.agentRules
-  const wf = loadedWorkflow(settings.workflow)
-  if (wf) settings.workflow = wf
-  else delete settings.workflow
+  const raw = { ...v.settings }
+  if (raw.agentRules !== undefined && typeof raw.agentRules !== 'string') delete raw.agentRules
+  const wf = loadedWorkflow(raw.workflow)
+  // Будущую версию графа validateWorkflow отвергает — её не проверяем, как и у проекта (`workflow(id)` откажет при запуске).
+  const future = wf && wf.version > WORKFLOW_VERSION ? wf : undefined
+  if (wf && !future) raw.workflow = wf
+  else delete raw.workflow
+  let settings: ProjectTemplateSettings
+  try {
+    settings = validSettings(raw, {}, `шаблон «${v.title}»`)
+  } catch {
+    return []
+  }
+  if (future) settings.workflow = future
   // Флаг builtin — только у шаблонов из кода; сохранённая копия встроенного — обычный пользовательский шаблон.
   return [{
     id: v.id, title: v.title,
@@ -776,7 +796,10 @@ function migrateDefaults(data: ProjectsFile): void {
   delete data.defaults
   const templates = data.templates ?? []
   if (!d || !Object.keys(d).length || templates.some((t) => t.id === GENERAL_TEMPLATE_ID)) return
-  templates.push({ id: GENERAL_TEMPLATE_ID, title: GENERAL_TITLE, description: GENERAL_DESCRIPTION, settings: d })
+  // Старый дефолт проверяется как любой шаблон из файла: битый не становится шаблоном по умолчанию.
+  const general = loadedTemplate({ id: GENERAL_TEMPLATE_ID, title: GENERAL_TITLE, description: GENERAL_DESCRIPTION, settings: d })
+  if (!general.length) return
+  templates.push(...general)
   data.templates = templates
   data.defaultTemplateId ??= GENERAL_TEMPLATE_ID
 }
