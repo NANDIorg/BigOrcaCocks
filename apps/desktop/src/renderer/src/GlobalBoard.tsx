@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
+import { formatDuration, globalTaskDuration } from './duration'
+import { useNow } from './useNow'
 import { GLOBAL_BOARD_SORT_KEY, SORT_OPTIONS, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
 /**
@@ -58,6 +60,24 @@ export function subtasksLabel(n: number): string {
 }
 
 /** Полоса прогресса «готово / всего» с подписью; без подзадач — спокойная подпись. */
+/**
+ * Длительность глобальной задачи (от создания до закрытия прогона). Закрытая — итог «за 3 ч 20 мин»,
+ * открытая — живой счётчик «⏱ 1 ч 5 мин»; variant="line" — строка «Длительность: …» для шапок.
+ * closedAt при переоткрытии снимается, так что открыта/закрыта определяется по нему.
+ */
+export function GlobalDuration({ global, variant = 'chip' }: { global: GlobalTask; variant?: 'chip' | 'line' }): React.JSX.Element {
+  if (global.closedAt !== undefined) {
+    const text = formatDuration(globalTaskDuration(global, global.closedAt))
+    return <span className="g-duration">{variant === 'line' ? `Длительность: ${text}` : `за ${text}`}</span>
+  }
+  return <LiveDuration global={global} variant={variant} />
+}
+
+function LiveDuration({ global, variant }: { global: GlobalTask; variant: 'chip' | 'line' }): React.JSX.Element {
+  const text = formatDuration(globalTaskDuration(global, useNow()))
+  return <span className="g-duration" title="Задача ещё выполняется">{variant === 'line' ? `Длительность: ${text}` : `⏱ ${text}`}</span>
+}
+
 export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.Element {
   const { done, total } = global.progress
   const pct = total ? Math.round((done / total) * 100) : 0
@@ -236,7 +256,9 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                       ) : null}
                       <div className="g-card-foot">
                         <span title={new Date(g.activityAt).toLocaleString('ru-RU')}>{relativeTime(g.activityAt)}</span>
-                        {g.closedAt !== undefined && <span>закрыта</span>}
+                        {!g.inbox ? (
+                          <span>{g.closedAt !== undefined && 'закрыта · '}<GlobalDuration global={g} /></span>
+                        ) : g.closedAt !== undefined && <span>закрыта</span>}
                       </div>
                     </article>
                   )

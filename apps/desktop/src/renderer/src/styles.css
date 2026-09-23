@@ -538,6 +538,7 @@ button:disabled { opacity: .45; cursor: default; }
 .g-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
 .g-bar-fill { height: 100%; border-radius: 2px; background: var(--col-done); transition: width .2s; }
 .g-card-foot { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+.g-duration { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* ---------- глобальная задача: экран подзадач ---------- */
 .g-view { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; }
