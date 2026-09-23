@@ -7,14 +7,7 @@ interface Props {
   project: Project
   socketPath: string
   stats: { tasks: number; openTasks: number; terminals: number; liveRuns: number; agentsOn: number }
-  /** Отличия от дефолта (defaultsDiff); null — дефолт ещё не загружен. */
-  diff: string[] | null
-  defaultsError: string | null
-  onMakeDefault(): void
-  onApplyDefault(): void
   onRemove(): void
-  /** Блок «Тип проекта» (ProjectTypeBox); нет — старый preload без шаблонов, показывается прежний блок дефолта. */
-  typeBox?: React.ReactNode
 }
 
 /** Папка worktree задач: <repo>/../.orca-worktrees (как в main/worker.ts). */
@@ -24,11 +17,10 @@ function worktreeDir(root: string): string {
 
 const home = (path: string): string => path.replace(/^\/Users\/[^/]+/, '~')
 
-/** Раздел «Обзор»: статистика, паспорт проекта для CLI, тип проекта (сравнение с шаблоном) и удаление из списка. */
+/** Раздел «Обзор»: статистика, паспорт проекта для CLI и удаление из списка. */
 export function OverviewSection(props: Props): React.JSX.Element {
-  const { project, socketPath, stats, diff, defaultsError, onMakeDefault, onApplyDefault, onRemove, typeBox } = props
+  const { project, socketPath, stats, onRemove } = props
   const worktrees = worktreeDir(project.root)
-  const same = diff !== null && diff.length === 0
 
   return (
     <>
@@ -70,25 +62,6 @@ export function OverviewSection(props: Props): React.JSX.Element {
         </dl>
         <p className="hint">В терминалах доступна команда <code>orca-board --help</code>.</p>
       </div>
-
-      {typeBox ?? <div className="about-box">
-        <h3>Дефолт для новых проектов</h3>
-        <div className="row-act">
-          <div className="row-act-text">
-            <b>
-              {diff === null
-                ? defaultsError ? 'Не удалось загрузить дефолт' : 'Загрузка…'
-                : same ? 'Совпадает с дефолтом' : `Отличается от дефолта: ${diff.join(', ')}`}
-            </b>
-            <span className="hint">
-              Применение дефолта заменит агентов, роли, колонки и разрешения; задачи из удалённых колонок переедут в бэклог.
-            </span>
-          </div>
-          <button className="btn-sm" disabled={same} onClick={onMakeDefault}>Сделать дефолтом</button>
-          <button className="btn-sm" disabled={same} onClick={onApplyDefault}>Применить дефолт…</button>
-        </div>
-        {defaultsError && <div className="editor-error">{defaultsError}</div>}
-      </div>}
 
       <div className="about-box danger-zone">
         <div className="row-act">

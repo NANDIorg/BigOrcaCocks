@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useMemo, useRef, useState } from 'react'
-import { defaultWorkflow, stableJson, validateWorkflow, type AgentInfo, type BoardColumn, type Role, type Workflow } from '@orca-board/core'
+import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type Workflow } from '@orca-board/core'
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
@@ -9,26 +9,27 @@ import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName 
 import { SectionHead } from '../about/parts'
 
 interface Props {
-  /** Название шаблона — имя файла экспорта. */
+  /** Название типа — имя файла экспорта. */
   title: string
-  /** Свой граф шаблона; нет — дефолтный по ролям шаблона. */
+  /** Свой граф типа; нет — дефолтный по ролям типа. */
   workflow: Workflow | undefined
   roles: Role[]
+  /**
+   * Колонки для выбора в нодах (встроенные и колонки проектов). По ним граф не проверяется: тип общий для досок
+   * с разными колонками, колонку проверяет доска конкретного проекта.
+   */
   columns: BoardColumn[]
-  /** Агенты с включённостью по шаблону: выключенный агент роли гейта — предупреждение валидации. */
-  agents: AgentInfo[]
   readOnly: boolean
-  /** null — вернуть дефолтный граф (поле удаляется из шаблона). Ошибка — наружу, покажем под кнопками. */
+  /** null — вернуть дефолтный граф (поле удаляется из типа). Ошибка — наружу, покажем под кнопками. */
   onSave(wf: Workflow | null): Promise<void>
 }
 
 /**
- * «Шаблоны проектов → Воркфлоу»: тот же холст и инспектор, что в «О проекте → Воркфлоу» (about/WorkflowSection),
- * но граф сохраняется в шаблон. Как и у проекта — кнопкой: промежуточный граф почти всегда невалиден.
- * Встроенный шаблон — только просмотр: холст не меняет граф, инспектор недоступен. Компонент монтируется
- * с `key` = id шаблона, поэтому черновик другого шаблона сюда не протекает.
+ * «Типы задач → Воркфлоу»: холст и инспектор графа типа. Сохраняется кнопкой: промежуточный граф почти всегда
+ * невалиден. Встроенный тип — только просмотр: холст не меняет граф, инспектор недоступен. Компонент монтируется
+ * с `key` по id типа, поэтому черновик другого типа сюда не протекает.
  */
-export function TemplateWorkflow({ title, workflow, roles, columns, agents, readOnly, onSave }: Props): React.JSX.Element {
+export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, onSave }: Props): React.JSX.Element {
   const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
   const [draft, setDraft] = useState<Workflow>(saved)
   const [selection, setSelection] = useState<WfSelection>(null)
@@ -39,8 +40,8 @@ export function TemplateWorkflow({ title, workflow, roles, columns, agents, read
   const [canvasRev, setCanvasRev] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const enabledAgents = useMemo(() => agents.filter((a) => a.enabled).map((a) => a.id as string), [agents])
-  const issues = useMemo(() => validateWorkflow(draft, { roles, columns, enabledAgents }), [draft, roles, columns, enabledAgents])
+  // Без колонок и агентов: и то и другое у проекта, а тип общий для всех проектов.
+  const issues = useMemo(() => validateWorkflow(draft, { roles }), [draft, roles])
   const dirty = stableJson(draft) !== stableJson(saved)
   const custom = workflow !== undefined
   const { errors, warnings } = issues
@@ -72,16 +73,16 @@ export function TemplateWorkflow({ title, workflow, roles, columns, agents, read
   }
 
   const save = (): Promise<void> =>
-    run(() => onSave(draft), 'Сохранено. Граф получат проекты, созданные из шаблона после этого; существующие не меняются.')
+    run(() => onSave(draft), 'Сохранено. Граф получат новые глобальные задачи этого типа; уже созданные идут по своему снимку графа.')
 
   const reset = (): Promise<void> => {
-    if (!confirm(`Вернуть шаблону «${title}» дефолтный воркфлоу?\n\nДефолт строится по ролям: есть роль reviewer — ревью делает агент, нет — человек.`)) {
+    if (!confirm(`Вернуть типу «${title}» дефолтный воркфлоу?\n\nДефолт строится по ролям: есть роль reviewer — ревью делает агент, нет — человек.`)) {
       return Promise.resolve()
     }
     return run(async () => {
       await onSave(null)
       replace(defaultWorkflow(roles), null)
-    }, 'Шаблон снова на дефолтном воркфлоу.')
+    }, 'Тип снова на дефолтном воркфлоу.')
   }
 
   function exportJson(): void {
@@ -122,11 +123,15 @@ export function TemplateWorkflow({ title, workflow, roles, columns, agents, read
     <>
       <SectionHead
         title="Воркфлоу"
-        hint="Этапы рабочей задачи в новом проекте: работа, проверки, решение человека, мерж. Роли в графе — роли этого шаблона."
+        hint="Этапы подзадачи глобальной задачи этого типа: работа, проверки, решение человека, мерж. Роли в графе — роли этого типа."
       />
+      <div className="about-banner">
+        Колонки в нодах графа <b>проверяются по доске конкретного проекта</b>: тип общий для проектов с разными колонками.
+        Если колонки нет на доске проекта, задача в неё не переедет — этап пройдёт без смены колонки.
+      </div>
       <div className="wf-section">
         <div className="wf-status">
-          <span className={`chip ${custom ? 'ok' : 'sys'}`}>{custom ? 'свой граф шаблона' : 'дефолтный граф'}</span>
+          <span className={`chip ${custom ? 'ok' : 'sys'}`}>{custom ? 'свой граф типа' : 'дефолтный граф'}</span>
           {dirty && <span className="chip warn">есть несохранённые изменения</span>}
           {errors.length > 0 && <span className="wf-count wf-count--error">ошибок: {errors.length}</span>}
           {warnings.length > 0 && <span className="wf-count wf-count--warning">предупреждений: {warnings.length}</span>}
@@ -142,7 +147,7 @@ export function TemplateWorkflow({ title, workflow, roles, columns, agents, read
             onSelect={setSelection}
             issues={issues}
           />
-          {/* Встроенный шаблон: инспектор показывает выбранную ноду, но поля недоступны. */}
+          {/* Встроенный тип: инспектор показывает выбранную ноду, но поля недоступны. */}
           <fieldset className="tpl-fieldset" disabled={readOnly}>
             <WorkflowInspector
               workflow={draft}

@@ -821,7 +821,6 @@ button:disabled { opacity: .45; cursor: default; }
 .tpl-head h2 .chip { font-size: 11px; font-weight: 400; }
 .tpl-head p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
 .tpl-head .tpl-usage { margin-top: 6px; font-size: 12px; }
-.tpl-head .tpl-usage-lag { color: var(--text); }
 .btn-link { background: transparent; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
 .btn-link:hover { text-decoration: underline; }
 .tpl-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1307,37 +1306,13 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .wf-actions-sep { width: 1px; height: 18px; background: var(--chip); }
 .about-sec .wf-notice { margin: 0; }
 
-/* «Обзор → Тип проекта» (about/ProjectTypeBox.tsx): отличия от шаблона с «Взять из шаблона» */
-.type-diff { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
-.type-diff .hint { margin: 0 0 8px; }
-.type-diff-list, .type-diff-roles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.type-diff-roles { margin: 6px 0 4px 16px; padding-left: 12px; border-left: 2px solid var(--line); }
-.type-diff-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.type-diff-line { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
-.type-diff-roles .btn-sm { flex-shrink: 0; }
-
-/* Диалоги шаблонов (about/ApplyTemplateModal.tsx, SaveTemplateModal.tsx) */
-.modal.tpl-apply { width: 600px; }
-.modal label.tpl-check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
-.tpl-desc { margin-top: -6px; }
-.tpl-sections { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
-.tpl-sections legend { padding: 0; margin-bottom: 8px; }
-.tpl-conseq { background: var(--frame); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
-.tpl-conseq-item b { font-weight: 500; }
-.tpl-conseq-item ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
-.tpl-conseq-error { display: flex; flex-direction: column; gap: 4px; color: var(--danger); overflow-wrap: anywhere; }
-
-/* «Применить к проектам…» (settings/BulkApplyModal.tsx): список проектов прокручивается, кнопки остаются видны. */
-.modal.tpl-bulk { width: 680px; max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); }
-.bulk-list { flex: 1; min-height: 80px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.bulk-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.bulk-group { font-size: 12px; margin-top: 4px; }
-.bulk-row { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
-.bulk-row.on { border-color: var(--accent); }
-.modal label.bulk-row-head { flex-wrap: wrap; }
-.bulk-row-name { font-weight: 500; overflow-wrap: anywhere; }
-.bulk-row-head .chip { font-size: 11px; }
-.bulk-row-diff { flex: 1; min-width: 160px; text-align: right; font-size: 12px; color: var(--text); }
-.bulk-row-diff.muted { color: var(--muted); }
-.bulk-row-result { font-size: 13px; overflow-wrap: anywhere; }
-.bulk-row-result.ok { color: var(--col-done); }
+/* «О проекте → Типы задач» (about/TaskTypesSection.tsx): типы библиотеки с галочкой «доступен» и «по умолчанию» */
+.tt-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tt-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: var(--radius); background: var(--side); }
+.tt-item.off { opacity: .6; }
+.tt-item > input { margin-top: 3px; flex-shrink: 0; }
+.tt-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tt-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.tt-roles { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.tt-warn { font-size: 12px; color: var(--col-input); }
+.tt-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; flex-shrink: 0; }
