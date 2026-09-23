@@ -777,11 +777,14 @@ export class TaskStore {
    * его терминал. Уже закрытый прогон повторно не закрывается (review → done — это «Подтвердить», done → review —
    * просто перенос). Из done/review в backlog/in_progress — прогон снова открыт (reopenRun), координатор не
    * запускается. В done/review запросы прогона к человеку отменяются (cancelled): отвечать больше незачем.
+   * «Входящие» на «Проверку» не ставятся (как и при автозакрытии, `reviewColumn`): у них нет координатора,
+   * «Подтвердить» и «Вернуть в работу» им недоступны — карточка застряла бы в колонке без действий.
    */
   moveGlobalTask(id: string, status: string): GlobalTask {
     const run = this.mustRun(id)
     this.assertGlobalColumn(status)
     const kind = this.columnKind(status)
+    if (kind === 'review' && run.inbox) throw new Error('«Входящие» не проверяются: у них нет координатора — перенеси в «Сделано»')
     if (kind === 'done' || kind === 'review') {
       this.cancelRequests((r) => r.runId === run.id)
       if (run.closedAt === undefined) this.closeDone(run, status, true)
