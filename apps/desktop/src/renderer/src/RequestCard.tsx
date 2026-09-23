@@ -196,7 +196,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
             </div>
           )}
           {clarifying ? (
-            <div className="rq-free column">
+            <div className="rq-free rq-stack">
               <textarea
                 ref={clarifyRef}
                 value={clarifyText}
@@ -214,7 +214,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
               </div>
             </div>
           ) : (
-            <div className="rq-free column">
+            <div className="rq-free rq-stack">
               <textarea
                 ref={inputRef}
                 rows={compact ? 1 : 2}
