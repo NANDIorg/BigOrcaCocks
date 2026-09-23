@@ -1,8 +1,11 @@
 import type {
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
-  BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience
+  BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
+  HumanRequest, RequestOption, RequestResolution
 } from './types.ts'
-import { ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, MAX_ANSWER_LENGTH } from './types.ts'
+import {
+  ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, MAX_ANSWER_LENGTH, REQUEST_ACTIONS, normalizeOptions
+} from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
 import {
   globalStoredColumns, globalColumnKind, globalTaskStatus, toGlobalTask, toGlobalTasks,
@@ -15,6 +18,8 @@ export interface StoreSnapshot {
   events: OrcaEvent[]
   questions: Question[]
   runs: Run[]
+  /** Запросы к человеку. Нет в снапшотах до их появления — тогда при загрузке идёт миграция. */
+  requests: HumanRequest[]
 }
 
 export interface Persistence {
@@ -24,6 +29,13 @@ export interface Persistence {
 
 /** Сколько символов ответа кладётся в событие (worker_done, answer_accepted); остальное — через `task answer`. */
 export const EVENT_ANSWER_LIMIT = 2000
+
+/** Сколько символов текста (вопрос, причина, summary) кладётся в request_created; целиком — в самом запросе. */
+export const EVENT_TITLE_LIMIT = 300
+
+function short(text: string): string {
+  return text.length > EVENT_TITLE_LIMIT ? `${text.slice(0, EVENT_TITLE_LIMIT - 1)}…` : text
+}
 
 /** Поля ответа для payload события: обрезанный текст и признак answerTruncated. Ставить последними. */
 function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
@@ -47,6 +59,7 @@ export class TaskStore {
   private dispatches = new Map<string, Dispatch>()
   private questions = new Map<string, Question>()
   private runs = new Map<string, Run>()
+  private requests = new Map<string, HumanRequest>()
   private events: OrcaEvent[] = []
   private listeners = new Set<() => void>()
   private readonly columnsFn: () => BoardColumn[]
@@ -62,14 +75,53 @@ export class TaskStore {
       // с id дефолтных колонок (backlog, ready, ...), их переводить не нужно.
       snap.tasks?.forEach((t) => this.tasks.set(t.id, { ...t, roleId: t.roleId ?? DEFAULT_ROLE_ID }))
       snap.dispatches?.forEach((d) => this.dispatches.set(d.id, d))
-      snap.questions?.forEach((q) => this.questions.set(q.id, q))
+      // Варианты старых вопросов — строки.
+      snap.questions?.forEach((q) => this.questions.set(q.id, { ...q, options: normalizeOptions(q.options as (string | RequestOption)[]) }))
       // Старые снапшоты без runs — просто нет прогонов.
       snap.runs?.forEach((r) => this.runs.set(r.id, r))
+      snap.requests?.forEach((r) => this.requests.set(r.id, r))
       this.events = snap.events ?? []
       const migrated = this.migrateGlobalTasks()
-      const humanAnswers = this.migrateHumanAnswers()
-      if (this.closeStaleDispatches() || humanAnswers || migrated) this.persistence?.save(this.snapshot())
+      const stale = this.closeStaleDispatches()
+      const requests = this.migrateRequests(snap.requests === undefined)
+      if (stale || requests || migrated) this.persistence?.save(this.snapshot())
     }
+  }
+
+  /**
+   * Запросы к человеку при загрузке. PTY не переживают перезапуск, значит и координаторов нет: открытые
+   * вопросы текущих dispatch'ей, ещё не адресованные человеку, уходят ему (как `escalateOpenQuestions`, но
+   * без событий). `legacy` — снапшот до HumanRequest (одноразовая миграция): сданный ответ для человека
+   * (в needs_input или review) → запрос answer; задача в needs_input, которой после этого ждать нечего,
+   * — упавший воркер: запрос escalation. Возвращает true, если что-то поменялось.
+   */
+  private migrateRequests(legacy: boolean): boolean {
+    let changed = false
+    if (legacy) {
+      for (const task of this.tasks.values()) {
+        if (task.answerFor !== 'human' || !(this.isKind(task, 'needs_input') || this.isKind(task, 'review'))) continue
+        const d = this.lastDispatch(task)
+        if (d?.outcome !== 'done' || d.answer === undefined) continue
+        this.createRequest(task, { kind: 'answer', title: d.summary || 'Ответ готов', body: d.answer, dispatchId: d.id }, false)
+        changed = true
+      }
+    }
+    for (const q of this.openQuestions()) {
+      if (this.pendingRequest((r) => r.questionId === q.id) || (q.forHuman && !legacy) || !this.currentQuestion(q)) continue
+      this.addQuestionRequest(q, undefined, false)
+      changed = true
+    }
+    if (legacy) {
+      for (const task of this.tasks.values()) {
+        if (!this.isKind(task, 'needs_input') || this.hasPending(task.id)) continue
+        const d = this.lastDispatch(task)
+        if (d && (d.outcome === 'failed' || d.outcome === 'unknown')) {
+          this.createRequest(task, { kind: 'escalation', title: 'процесс завершился без orca-board done', dispatchId: d.id }, false)
+        } else this.setStatus(task, this.columnId('ready'))
+        changed = true
+      }
+    }
+    return changed
   }
 
   /**
@@ -128,22 +180,6 @@ export class TaskStore {
     return changed
   }
 
-  /**
-   * Сданный ответ для человека, застрявший в review (сдан до переноса таких ответов в needs_input или
-   * main-процессом со старым кодом — `electron-vite dev` не пересобирает main без перезапуска), — в needs_input.
-   * Возвращает true, если что-то поменялось.
-   */
-  private migrateHumanAnswers(): boolean {
-    let changed = false
-    for (const task of this.tasks.values()) {
-      if (this.isKind(task, 'review') && this.humanAnswerReady(task)) {
-        task.status = this.columnId('needs_input')
-        changed = true
-      }
-    }
-    return changed
-  }
-
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn)
     return () => this.listeners.delete(fn)
@@ -161,7 +197,8 @@ export class TaskStore {
       dispatches: [...this.dispatches.values()],
       events: [...this.events],
       questions: [...this.questions.values()],
-      runs: this.listRuns()
+      runs: this.listRuns(),
+      requests: this.listRequests()
     }
   }
 
@@ -188,6 +225,8 @@ export class TaskStore {
   private setStatus(task: Task, status: TaskStatus): void {
     task.status = status
     if (this.columnKind(status) === 'done') {
+      // Сделанной задаче ждать от человека нечего (перенесли вручную, приняли).
+      this.cancelRequests((r) => r.taskId === task.id)
       // Подзадача впервые дошла до done после переоткрытия прогона — автозакрытие снова разрешено.
       const run = task.doneAt === undefined && task.runId !== undefined ? this.runs.get(task.runId) : undefined
       if (run) run.reopenedAt = undefined
@@ -314,6 +353,7 @@ export class TaskStore {
 
   deleteTask(id: string): void {
     this.tasks.delete(id)
+    for (const r of [...this.requests.values()]) if (r.taskId === id) this.requests.delete(r.id)
     this.promoteReady()
     this.commit()
   }
@@ -399,11 +439,11 @@ export class TaskStore {
 
   /** Карточки глобальных задач с прогрессом подзадач, в порядке создания. */
   listGlobalTasks(): GlobalTask[] {
-    return toGlobalTasks(this.listRuns(), this.listTasks(), this.columns(), [...this.questions.values()])
+    return toGlobalTasks(this.listRuns(), this.listTasks(), this.columns(), this.listRequests())
   }
 
   getGlobalTask(id: string): GlobalTask {
-    return toGlobalTask(this.mustRun(id), this.listTasks(), this.columns(), [...this.questions.values()])
+    return toGlobalTask(this.mustRun(id), this.listTasks(), this.columns(), this.listRequests())
   }
 
   /** Подзадачи глобальной задачи (только её), в порядке создания. Нет такой — ошибка. */
@@ -443,11 +483,13 @@ export class TaskStore {
    * В колонку kind=done — человек объявил глобальную задачу сделанной: открытый прогон закрывается
    * с `run_done {manual: true}`, чтобы координатор (если ждёт) закончил, а приложение закрыло его терминал.
    * Уже закрытый прогон повторно не закрывается. Из done в другую колонку — прогон снова открыт (reopenRun).
+   * В done запросы прогона к человеку отменяются (cancelled): отвечать больше незачем.
    */
   moveGlobalTask(id: string, status: string): GlobalTask {
     const run = this.mustRun(id)
     this.assertGlobalColumn(status)
     if (this.columnKind(status) === 'done') {
+      this.cancelRequests((r) => r.runId === run.id)
       if (run.closedAt === undefined) this.closeDone(run, true)
     } else if (run.closedAt !== undefined) {
       this.reopenRun(run)
@@ -474,6 +516,7 @@ export class TaskStore {
     if (busy.length > 0) throw new Error(`подзадачи в работе (${busy.map((d) => d.taskId).join(', ')}) — сначала останови воркеров`)
     for (const taskId of ids) this.tasks.delete(taskId)
     for (const q of [...this.questions.values()]) if (ids.has(q.taskId)) this.questions.delete(q.id)
+    for (const r of [...this.requests.values()]) if (r.runId === id || ids.has(r.taskId)) this.requests.delete(r.id)
     // Зависимости между глобальными запрещены при создании, но старые данные могли их содержать.
     for (const t of this.tasks.values()) if (t.deps.some((d) => ids.has(d))) t.deps = t.deps.filter((d) => !ids.has(d))
     this.runs.delete(id)
@@ -578,6 +621,9 @@ export class TaskStore {
     const task = this.mustTask(taskId)
     const dispatch: Dispatch = { id: dispatchId, taskId, ptyId, startedAt: Date.now() }
     this.dispatches.set(dispatch.id, dispatch)
+    // Новый запуск начинает с чистого листа: запросы прошлых запусков (сданный ответ, эскалация, вопрос
+    // умершего воркера) больше не ждут человека. Ответы на прошлые вопросы — в промпте запуска.
+    this.cancelRequests((r) => r.taskId === task.id)
     task.dispatchId = dispatch.id
     task.startedAt ??= Date.now()
     this.setStatus(task, this.columnId('in_progress'))
@@ -588,7 +634,7 @@ export class TaskStore {
   /**
    * Явное завершение воркером через `orca-board done`. У задачи-ответа ответ обязателен и уходит
    * в событие worker_done вместе с `answerFor` — координатор решает по нему, принимать ли ответ сам.
-   * Ответ для человека (`answerFor: 'human'`) ждёт его в needs_input, остальное — в review.
+   * Ответ для человека (`answerFor: 'human'`) — запрос answer к человеку (needs_input), остальное — в review.
    */
   finishDispatch(dispatchId: string, summary: string, files: string[] = [], answer?: string): Dispatch {
     const dispatch = this.mustDispatch(dispatchId)
@@ -605,19 +651,30 @@ export class TaskStore {
     dispatch.summary = summary
     dispatch.files = files
     if (text) dispatch.answer = text
-    this.setStatus(task, this.columnId(task.answerFor === 'human' ? 'needs_input' : 'review'))
+    // Запуск сдал работу: его вопрос и прошлый ответ человека больше не ждут (сам вопрос остаётся открытым).
+    this.cancelRequests((r) => r.taskId === task.id)
+    let request: HumanRequest | undefined
+    if (task.answerFor === 'human') {
+      request = this.createRequest(task, { kind: 'answer', title: summary.trim() || 'Ответ готов', body: text, dispatchId }, false)
+    } else this.setStatus(task, this.columnId('review'))
     // Ответ — последним и обрезанным: строка события в мониторе координатора обрезается, поля до него
     // должны дойти целиком. Полный текст — `orca-board task answer --task <id>`.
     this.pushEvent('worker_done', {
       taskId: task.id, dispatchId, summary, files,
       ...(task.answerFor ? { answerFor: task.answerFor } : {}),
+      ...(request ? { requestId: request.id } : {}),
       ...(text ? eventAnswer(text) : {})
     })
+    if (request) this.requestCreated(request)
     this.commit()
     return dispatch
   }
 
-  /** PTY закрылся без `done` — это не успех, это `unknown`. */
+  /**
+   * PTY закрылся без `done` — это не успех, это `unknown`/`failed`. Координатору — событие escalation,
+   * человеку — запрос escalation («Перезапустить» / «Скрыть»), если это текущий запуск задачи и воркер не
+   * ждал ответа человека на свой вопрос (тогда ответ сам вернёт задачу в поток — в ready).
+   */
   ptyExited(ptyId: string, exitCode: number): void {
     let changed = false
     for (const dispatch of this.dispatches.values()) {
@@ -625,12 +682,12 @@ export class TaskStore {
       dispatch.endedAt = Date.now()
       dispatch.outcome = exitCode === 0 ? 'unknown' : 'failed'
       const task = this.mustTask(dispatch.taskId)
-      this.setStatus(task, this.columnId('needs_input'))
-      this.pushEvent('escalation', {
-        taskId: task.id,
-        dispatchId: dispatch.id,
-        reason: `процесс завершился с кодом ${exitCode} без orca-board done`
-      })
+      const reason = `процесс завершился с кодом ${exitCode} без orca-board done`
+      this.pushEvent('escalation', { taskId: task.id, dispatchId: dispatch.id, reason })
+      const current = task.dispatchId === dispatch.id && !this.isKind(task, 'done')
+      const asked = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'question')
+      if (current && !asked) this.createRequest(task, { kind: 'escalation', title: reason, dispatchId: dispatch.id })
+      else this.settleTask(task)
       changed = true
     }
     if (changed) this.commit()
@@ -638,7 +695,7 @@ export class TaskStore {
 
   /**
    * Закрыть живые dispatch'и задачи (перед kill PTY: иначе ptyExited примет kill за падение
-   * и утащит задачу в needs_input). Статус задачи не трогает. Возвращает закрытые dispatch'и.
+   * и заведёт эскалацию). Статус задачи не трогает. Возвращает закрытые dispatch'и.
    */
   closeDispatches(taskId: string): Dispatch[] {
     const closed = [...this.dispatches.values()].filter((d) => d.taskId === taskId && !d.endedAt)
@@ -672,26 +729,53 @@ export class TaskStore {
 
   /**
    * Приёмка (`review accept`, «Принять» в UI): задача → done, worktree и ветка забыты (git-часть делает main).
-   * Ответ для человека (`answerFor: 'human'`) принимает человек — координатор узнаёт об этом из
-   * `answer_accepted` (с текстом ответа) и продолжает работу: иначе он ждал бы, пока ему напишут в терминал.
+   * Ответ для человека (`answerFor: 'human'`) принимает человек: это решение его запроса answer
+   * (см. resolveRequest), координатор узнаёт о нём из `answer_accepted` и продолжает работу.
    * `decision` — что человек решил по ответу («Решение / что делать дальше»): уходит в событие, по нему
-   * координатор заводит задачи. Повторная приёмка задачи в done события не шлёт.
+   * координатор заводит задачи. Принять можно только ответ последнего запуска (assertAnswerAcceptable).
+   * Повторная приёмка задачи в done события не шлёт.
    */
   acceptTask(taskId: string, decision?: string): Task {
     const task = this.mustTask(taskId)
     if (task.answerFor === 'human' && !this.isKind(task, 'done')) {
-      const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
-      // decision — сразу после taskId, ответ — последним и обрезанным (см. finishDispatch).
-      this.pushEvent('answer_accepted', {
-        taskId: task.id,
-        ...(decision?.trim() ? { decision: decision.trim() } : {}),
-        ...(d?.summary ? { summary: d.summary } : {}),
-        dispatchId: d?.id, answerFor: task.answerFor,
-        ...(d?.answer ? eventAnswer(d.answer) : {})
-      })
+      this.applyAccept(task, this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer'), decision)
     }
     // Событие — до commit в updateTask: если задача последняя, run_done придёт после answer_accepted.
     return this.updateTask(taskId, { status: this.columnId('done'), worktree: undefined, branch: undefined })
+  }
+
+  /**
+   * Проверка до git-части приёмки в main: ответ для человека принимается, только если последний запуск
+   * задачи сдал ответ (`done --answer-file`). Иначе (перезапуск после «Уточнить» упал, воркер ещё работает)
+   * человек принял бы устаревший ответ.
+   */
+  assertAnswerAcceptable(taskId: string): void {
+    const task = this.mustTask(taskId)
+    if (task.answerFor !== 'human' || this.isKind(task, 'done')) return
+    const d = this.lastDispatch(task)
+    if (d?.outcome !== 'done' || d.answer === undefined) {
+      throw new Error('принять нечего: последний запуск задачи не сдал ответ')
+    }
+  }
+
+  /** «Принять» ответ для человека без commit: закрыть запрос answer и отправить answer_accepted. */
+  private applyAccept(task: Task, request: HumanRequest | undefined, decision?: string): void {
+    this.assertAnswerAcceptable(task.id)
+    const d = this.lastDispatch(task)!
+    if (request && request.dispatchId !== undefined && request.dispatchId !== d.id) {
+      throw new Error(`запрос ${request.id} относится к прошлому запуску задачи`)
+    }
+    const text = decision?.trim() || undefined
+    if (request) this.closeRequest(request, 'resolved', { action: 'accept', ...(text ? { text } : {}) })
+    // decision — сразу после taskId, ответ — последним и обрезанным (см. finishDispatch).
+    this.pushEvent('answer_accepted', {
+      taskId: task.id,
+      ...(text ? { decision: text } : {}),
+      ...(d.summary ? { summary: d.summary } : {}),
+      ...(request ? { requestId: request.id } : {}),
+      dispatchId: d.id, answerFor: task.answerFor,
+      ...(d.answer ? eventAnswer(d.answer) : {})
+    })
   }
 
   /**
@@ -702,7 +786,7 @@ export class TaskStore {
     taskId: string; answerFor?: AnswerAudience; dispatchId?: string; summary?: string; decision?: string; answer?: string
   } {
     const task = this.mustTask(taskId)
-    const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
+    const d = this.lastDispatch(task)
     const accepted = [...this.events].reverse().find((e) => e.type === 'answer_accepted' && e.taskId === task.id)
     const decision = typeof accepted?.payload.decision === 'string' ? accepted.payload.decision : undefined
     return {
@@ -715,77 +799,131 @@ export class TaskStore {
     }
   }
 
-  /** Ревью не прошло: задача обратно в ready с замечаниями. */
+  /**
+   * Ревью не прошло: задача обратно в ready с замечаниями. У ответа для человека, который ждёт решения,
+   * это «Уточнить» (resolveRequest clarify): запрос решён, событие answer_clarified.
+   */
   rejectReview(taskId: string, feedback: string): Task {
     const task = this.mustTask(taskId)
-    task.feedback = feedback
-    this.setStatus(task, this.columnId('ready'))
+    const request = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer')
+    if (request) this.applyClarify(task, request, feedback)
+    else {
+      task.feedback = feedback
+      this.setStatus(task, this.columnId('ready'))
+    }
     this.commit()
     return task
   }
 
+  /** «Уточнить» без commit: feedback, ready, answer_clarified (воркера стартует main). */
+  private applyClarify(task: Task, request: HumanRequest, feedback: string): void {
+    const text = feedback.trim()
+    if (!text) throw new Error('уточнение не может быть пустым')
+    this.closeRequest(request, 'resolved', { action: 'clarify', text })
+    task.feedback = text
+    this.setStatus(task, this.columnId('ready'))
+    this.pushEvent('answer_clarified', { taskId: task.id, feedback: short(text), requestId: request.id, dispatchId: request.dispatchId })
+  }
+
   // ---------- questions ----------
 
-  ask(input: { taskId: string; dispatchId?: string; question: string; options?: string[] }): Question {
+  /**
+   * Вопрос воркера (`orca-board ask`). Спрашивать может только текущий живой запуск задачи; без dispatch
+   * (от имени координатора/человека) — только по несделанной задаче. Идемпотентно: пока у запуска есть
+   * открытый вопрос, повторный ask возвращает его (инструмент оборвал ask по таймауту — воркер переспросил).
+   * Адресат фиксируется здесь: `coordinatorAlive` (живость PTY координатора знает только main) — вопрос
+   * ждёт координатора, задача в работе; иначе сразу запрос к человеку (needs_input).
+   */
+  ask(
+    input: { taskId: string; dispatchId?: string; question: string; options?: readonly (string | RequestOption)[]; context?: string },
+    opts: { coordinatorAlive?: boolean } = {}
+  ): Question {
     const task = this.mustTask(input.taskId)
+    if (input.dispatchId !== undefined) {
+      const d = this.mustDispatch(input.dispatchId)
+      if (d.taskId !== task.id || task.dispatchId !== d.id || d.endedAt) {
+        throw new Error(`спрашивать может только текущий живой запуск задачи ${task.id}`)
+      }
+    } else if (this.isKind(task, 'done')) throw new Error(`задача ${task.id} уже сделана`)
+    const existing = this.openQuestions().find((q) => q.taskId === task.id && q.dispatchId === input.dispatchId)
+    if (existing) return existing
+    const question = input.question.trim()
+    if (!question) throw new Error('вопрос не может быть пустым')
     const q: Question = {
       id: newId('q'),
       taskId: task.id,
       dispatchId: input.dispatchId,
-      question: input.question,
-      options: input.options ?? [],
+      question,
+      options: normalizeOptions(input.options),
+      ...(input.context?.trim() ? { context: input.context.trim() } : {}),
       createdAt: Date.now()
     }
     this.questions.set(q.id, q)
-    this.setStatus(task, this.columnId('needs_input'))
-    this.pushEvent('question', { taskId: task.id, dispatchId: q.dispatchId, questionId: q.id, question: q.question, options: q.options })
-    this.commit()
-    return q
-  }
-
-  answer(questionId: string, answer: string): Question {
-    const q = this.questions.get(questionId)
-    if (!q) throw new Error(`question not found: ${questionId}`)
-    q.answer = answer
-    q.answeredAt = Date.now()
-    const task = this.mustTask(q.taskId)
-    const stillOpen = [...this.questions.values()].some((x) => x.taskId === task.id && !x.answeredAt)
-    // Воркер жив — ответ дойдёт до него (ask или терминал), иначе задачу надо перезапустить.
-    const live = task.dispatchId !== undefined && !this.dispatches.get(task.dispatchId)?.endedAt
-    if (!stillOpen && this.isKind(task, 'needs_input') && !this.humanAnswerReady(task)) {
-      // Обратно в поток: воркер жив — работает дальше, иначе задача ждёт запуска.
-      this.setStatus(task, this.columnId(live ? 'in_progress' : 'ready'))
-    }
-    task.updatedAt = Date.now()
-    // workerLive: false и задача в ready — координатору сделать `worker start` (ответ будет в промпте).
-    this.pushEvent('question_answered', {
-      taskId: task.id, dispatchId: q.dispatchId, questionId, question: q.question, answer,
-      workerLive: live, status: task.status
+    const forHuman = opts.coordinatorAlive !== true
+    this.pushEvent('question', {
+      taskId: task.id, dispatchId: q.dispatchId, questionId: q.id, question: short(q.question),
+      ...(forHuman ? { forHuman: true } : {}), options: q.options.map((o) => o.label)
     })
+    if (forHuman) this.addQuestionRequest(q)
     this.commit()
     return q
   }
 
   /**
-   * Координатор передал вопрос человеку: вопрос остаётся открытым, подзадача стоит в needs_input,
-   * глобальная задача показывается там же, пока человек не ответит. Отвеченный вопрос передать нельзя.
+   * Ответ на вопрос (координатор, человек, resolveRequest). Отвеченный вопрос — ошибка: второй ответ
+   * воркер получил бы вдогонку к первому. Запрос к человеку по вопросу закрывается; задача без других
+   * запросов — обратно в поток: воркер жив — работает дальше, иначе ready (координатор сделает worker start).
    */
-  forwardQuestion(questionId: string): Question {
-    const q = this.questions.get(questionId)
-    if (!q) throw new Error(`question not found: ${questionId}`)
-    if (q.answeredAt) throw new Error(`на вопрос ${questionId} уже ответили`)
-    q.forHuman = true
-    const task = this.mustTask(q.taskId)
-    if (!this.isKind(task, 'done')) this.setStatus(task, this.columnId('needs_input'))
-    task.updatedAt = Date.now()
+  answer(questionId: string, answer: string): Question {
+    const q = this.mustQuestion(questionId)
+    this.applyAnswer(q, answer)
     this.commit()
     return q
   }
 
-  /** Задача-ответ для человека сдана и ждёт, пока человек её примет или уточнит. */
-  private humanAnswerReady(task: Task): boolean {
-    const d = task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
-    return task.answerFor === 'human' && d?.outcome === 'done' && d.answer !== undefined
+  private applyAnswer(q: Question, answer: string, resolution?: RequestResolution): void {
+    if (q.answeredAt) throw new Error(`на вопрос ${q.id} уже ответили: ${q.answer ?? ''}`)
+    if (!answer.trim()) throw new Error('ответ не может быть пустым')
+    q.answer = answer
+    q.answeredAt = Date.now()
+    const task = this.mustTask(q.taskId)
+    const request = this.pendingRequest((r) => r.questionId === q.id)
+    if (request) this.closeRequest(request, 'resolved', resolution ?? { action: 'answer', text: answer })
+    this.settleTask(task)
+    task.updatedAt = Date.now()
+    // workerLive: false и задача в ready — координатору сделать `worker start` (ответ будет в промпте).
+    this.pushEvent('question_answered', {
+      taskId: task.id, dispatchId: q.dispatchId, questionId: q.id,
+      ...(request ? { requestId: request.id } : {}),
+      question: q.question, answer, workerLive: this.workerLive(task), status: task.status
+    })
+  }
+
+  /**
+   * Координатор передал вопрос человеку: вопрос остаётся открытым, по нему — запрос к человеку
+   * (`note` — мнение координатора, попадает в текст запроса), событие request_created. Отвеченный вопрос
+   * передать нельзя; уже переданный — повторно не передаётся.
+   */
+  forwardQuestion(questionId: string, note?: string): Question {
+    const q = this.mustQuestion(questionId)
+    if (q.answeredAt) throw new Error(`на вопрос ${questionId} уже ответили`)
+    if (q.forHuman) return q
+    this.addQuestionRequest(q, note)
+    this.commit()
+    return q
+  }
+
+  /**
+   * Координатор прогона умер (main зовёт это по выходу его PTY): открытые вопросы текущих запусков,
+   * которые ждали координатора, уходят человеку. Возвращает созданные запросы.
+   */
+  escalateOpenQuestions(runId: string): HumanRequest[] {
+    this.mustRun(runId)
+    const created = this.openQuestions()
+      .filter((q) => !q.forHuman && this.tasks.get(q.taskId)?.runId === runId && this.currentQuestion(q))
+      .map((q) => this.addQuestionRequest(q))
+    if (created.length > 0) this.commit()
+    return created
   }
 
   getQuestion(id: string): Question | undefined {
@@ -794,6 +932,164 @@ export class TaskStore {
 
   openQuestions(): Question[] {
     return [...this.questions.values()].filter((q) => !q.answeredAt)
+  }
+
+  /** Вопрос от текущего запуска задачи (или без запуска): вопрос прошлого запуска уже никому не нужен. */
+  private currentQuestion(q: Question): boolean {
+    return q.dispatchId === undefined || this.tasks.get(q.taskId)?.dispatchId === q.dispatchId
+  }
+
+  /** Вопрос → запрос к человеку (адресат — человек). Тело: контекст вопроса и заметка координатора. */
+  private addQuestionRequest(q: Question, note?: string, emit = true): HumanRequest {
+    q.forHuman = true
+    const body = [q.context, note?.trim() ? `**Координатор:** ${note.trim()}` : undefined].filter(Boolean).join('\n\n')
+    return this.createRequest(this.mustTask(q.taskId), {
+      kind: 'question', title: q.question, ...(body ? { body } : {}), options: q.options, questionId: q.id, dispatchId: q.dispatchId
+    }, emit)
+  }
+
+  // ---------- requests ----------
+
+  listRequests(): HumanRequest[] {
+    return [...this.requests.values()].sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  /** Запросы, которые ждут человека; с runId — только этого прогона. */
+  pendingRequests(runId?: string): HumanRequest[] {
+    return this.listRequests().filter((r) => r.status === 'pending' && (runId === undefined || r.runId === runId))
+  }
+
+  getRequest(id: string): HumanRequest | undefined {
+    return this.requests.get(id)
+  }
+
+  /**
+   * Решение человека по запросу — одна транзакция (один commit) и одно событие:
+   * - question + answer (вариант `optionId` и/или `text`) → ответ на вопрос, `question_answered`;
+   * - answer + accept (`text` — решение) → задача в done, `answer_accepted`. Git-часть приёмки (слить ветку,
+   *   убрать worktree) делает main до вызова; main может звать и `acceptTask` — это тот же переход;
+   * - answer + clarify (`text` — уточнение) → задача в ready с feedback, `answer_clarified`; воркера стартует main;
+   * - escalation + restart → задача в ready, `request_resolved`; воркера стартует main;
+   * - escalation + dismiss → задача из «Нужен ответ» в ready (воркер мёртв), `request_resolved`.
+   * Решённый или отменённый запрос — ошибка «уже решено».
+   */
+  resolveRequest(id: string, resolution: RequestResolution): HumanRequest {
+    const request = this.requests.get(id)
+    if (!request) throw new Error(`request not found: ${id}`)
+    if (request.status !== 'pending') throw new Error(`уже решено: запрос ${id} ${request.status === 'cancelled' ? 'отменён' : 'решён'}`)
+    if (!REQUEST_ACTIONS[request.kind].includes(resolution.action)) {
+      throw new Error(`запрос ${request.kind}: действие ${resolution.action} недопустимо — ${REQUEST_ACTIONS[request.kind].join(', ')}`)
+    }
+    const task = this.mustTask(request.taskId)
+    const text = resolution.text?.trim() || undefined
+    switch (resolution.action) {
+      case 'answer': {
+        const q = this.mustQuestion(request.questionId ?? '')
+        const option = resolution.optionId !== undefined ? request.options.find((o) => o.id === resolution.optionId) : undefined
+        if (resolution.optionId !== undefined && !option) throw new Error(`варианта «${resolution.optionId}» у запроса ${id} нет`)
+        const answer = [option?.label, text].filter(Boolean).join(' — ')
+        if (!answer) throw new Error('нужен ответ: вариант или текст')
+        this.applyAnswer(q, answer, { action: 'answer', ...(option ? { optionId: option.id } : {}), ...(text ? { text } : {}) })
+        break
+      }
+      case 'accept':
+        this.applyAccept(task, request, text)
+        task.worktree = undefined
+        task.branch = undefined
+        this.setStatus(task, this.columnId('done'))
+        this.promoteReady()
+        break
+      case 'clarify':
+        this.applyClarify(task, request, text ?? '')
+        break
+      case 'restart':
+      case 'dismiss':
+        this.closeRequest(request, 'resolved', { action: resolution.action, ...(text ? { text } : {}) })
+        if (resolution.action === 'restart' && !this.isKind(task, 'done')) this.setStatus(task, this.columnId('ready'))
+        else this.settleTask(task)
+        this.pushEvent('request_resolved', {
+          taskId: task.id, action: resolution.action, requestId: request.id, kind: request.kind, dispatchId: request.dispatchId
+        })
+        break
+    }
+    this.commit()
+    return request
+  }
+
+  /**
+   * Новый запрос к человеку без commit. Задача (если не сделана) — в needs_input: колонка подзадачи
+   * держится тем же предикатом, что и глобальная карточка, — есть pending-запрос. `emit` — событие
+   * request_created (без него — миграция при загрузке и finishDispatch, который шлёт его после worker_done).
+   */
+  private createRequest(
+    task: Task,
+    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId'>>,
+    emit = true
+  ): HumanRequest {
+    const request: HumanRequest = {
+      id: newId('req'),
+      runId: task.runId ?? '',
+      taskId: task.id,
+      ...(fields.dispatchId !== undefined ? { dispatchId: fields.dispatchId } : {}),
+      kind: fields.kind,
+      status: 'pending',
+      title: fields.title,
+      ...(fields.body !== undefined ? { body: fields.body } : {}),
+      options: fields.options ?? [],
+      ...(fields.questionId !== undefined ? { questionId: fields.questionId } : {}),
+      createdAt: Date.now()
+    }
+    this.requests.set(request.id, request)
+    if (!this.isKind(task, 'done') && !this.isKind(task, 'needs_input')) this.setStatus(task, this.columnId('needs_input'))
+    if (emit) this.requestCreated(request)
+    return request
+  }
+
+  /** Событие request_created: короткое, полный текст — в запросе по requestId. */
+  private requestCreated(r: HumanRequest): void {
+    this.pushEvent('request_created', {
+      taskId: r.taskId, requestId: r.id, kind: r.kind, title: short(r.title), runId: r.runId,
+      ...(r.dispatchId ? { dispatchId: r.dispatchId } : {}),
+      ...(r.questionId ? { questionId: r.questionId } : {})
+    })
+  }
+
+  private closeRequest(r: HumanRequest, status: 'resolved' | 'cancelled', resolution?: RequestResolution): void {
+    r.status = status
+    r.resolvedAt = Date.now()
+    if (resolution) r.resolution = resolution
+  }
+
+  /** Отменить pending-запросы (без события): ждать человека больше незачем. */
+  private cancelRequests(match: (r: HumanRequest) => boolean): void {
+    for (const r of this.requests.values()) if (r.status === 'pending' && match(r)) this.closeRequest(r, 'cancelled')
+  }
+
+  private pendingRequest(match: (r: HumanRequest) => boolean): HumanRequest | undefined {
+    for (const r of this.requests.values()) if (r.status === 'pending' && match(r)) return r
+    return undefined
+  }
+
+  private hasPending(taskId: string): boolean {
+    return this.pendingRequest((r) => r.taskId === taskId) !== undefined
+  }
+
+  /**
+   * Задача в needs_input, которой больше нечего ждать от человека, — обратно в поток: воркер жив —
+   * in_progress, иначе ready. Другие колонки не трогает (задачу могли перенести руками).
+   */
+  private settleTask(task: Task): void {
+    if (!this.isKind(task, 'needs_input') || this.hasPending(task.id)) return
+    this.setStatus(task, this.columnId(this.workerLive(task) ? 'in_progress' : 'ready'))
+  }
+
+  private workerLive(task: Task): boolean {
+    const d = this.lastDispatch(task)
+    return d !== undefined && d.endedAt === undefined
+  }
+
+  private lastDispatch(task: Task): Dispatch | undefined {
+    return task.dispatchId ? this.dispatches.get(task.dispatchId) : undefined
   }
 
   // ---------- events ----------
@@ -841,6 +1137,12 @@ export class TaskStore {
     const run = this.runs.get(id)
     if (!run) throw new Error(`run not found: ${id}`)
     return run
+  }
+
+  private mustQuestion(id: string): Question {
+    const q = this.questions.get(id)
+    if (!q) throw new Error(`question not found: ${id}`)
+    return q
   }
 
   private mustDispatch(id: string): Dispatch {

@@ -3,7 +3,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, EVENT_ANSWER_LIMIT } from './store.ts'
-import { questionForHuman, waitingForHuman } from './global-tasks.ts'
 import { workerTaskPrompt, questionAnswerMessage } from './prompts.ts'
 import { DEFAULT_COLUMNS, MAX_ANSWER_LENGTH } from './types.ts'
 
@@ -93,8 +92,9 @@ describe('«Нужен ответ» на глобальном канбане', (
 
   it('вопрос воркера ждёт координатора; forward — ждёт человека; ответ — обратно в работу', () => {
     const { store, g, task, dispatch } = setup()
-    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' })
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' }, { coordinatorAlive: true })
     assert.equal(store.getGlobalTask(g.id).status, 'in_progress', 'координатор ещё решает, кому вопрос')
+    assert.equal(store.getTask(task.id)!.status, 'in_progress', 'вопрос координатору не ставит подзадачу в «Нужен ответ»')
     store.forwardQuestion(q.id)
     assert.equal(store.getTask(task.id)!.status, 'needs_input')
     assert.equal(store.getGlobalTask(g.id).status, 'needs_input')
@@ -107,7 +107,7 @@ describe('«Нужен ответ» на глобальном канбане', (
 
   it('forward возвращает в needs_input, даже если задачу успели сдвинуть', () => {
     const { store, task, dispatch } = setup()
-    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: '?' })
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: '?' }, { coordinatorAlive: true })
     store.moveTask(task.id, 'in_progress')
     store.forwardQuestion(q.id)
     assert.equal(store.getTask(task.id)!.status, 'needs_input')
@@ -136,24 +136,6 @@ describe('«Нужен ответ» на глобальном канбане', (
     store.ask({ taskId: t.id, question: '?' })
     assert.equal(store.getRun(g.id)!.status, 'backlog')
     assert.equal(store.getGlobalTask(g.id).status, 'needs_input')
-  })
-
-  it('координатор закончил (runs finish) или «Входящие» — вопросы человеку', () => {
-    const run = { coordinatorPtyId: 'p' }
-    assert.equal(questionForHuman({}, run), false)
-    assert.equal(questionForHuman({ forHuman: true }, run), true)
-    assert.equal(questionForHuman({}, { ...run, finishedAt: 1 }), true)
-    assert.equal(questionForHuman({}, { inbox: true }), true)
-    assert.equal(questionForHuman({}, undefined), true)
-  })
-
-  it('waitingForHuman: ответ для человека в needs_input (и review — старые данные)', () => {
-    const run = { coordinatorPtyId: 'p' }
-    assert.equal(waitingForHuman({ id: 't', answerFor: 'human' }, 'needs_input', [], run), true)
-    assert.equal(waitingForHuman({ id: 't', answerFor: 'human' }, 'review', [], run), true)
-    assert.equal(waitingForHuman({ id: 't', answerFor: 'human' }, 'in_progress', [], run), false)
-    assert.equal(waitingForHuman({ id: 't', answerFor: 'coordinator' }, 'review', [], run), false)
-    assert.equal(waitingForHuman({ id: 't' }, 'review', [], run), false)
   })
 
   it('сделанная глобальная задача в needs_input не уходит', () => {
@@ -255,7 +237,7 @@ describe('после ответа человека процесс идёт да�
 
   it('ответ человека на переданный вопрос — question_answered в прогон координатора, воркер жив', () => {
     const { store, g, task, dispatch } = setup()
-    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' })
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' }, { coordinatorAlive: true })
     store.forwardQuestion(q.id)
     coordinatorEvents(store, g.id)
     store.answer(q.id, 'Postgres')
@@ -269,7 +251,7 @@ describe('после ответа человека процесс идёт да�
 
   it('ответ, когда воркер уже вышел, — workerLive: false, задача в ready, ответ в промпте перезапуска', () => {
     const { store, g, task, dispatch } = setup()
-    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' })
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' }, { coordinatorAlive: true })
     store.forwardQuestion(q.id)
     store.ptyExited('pty_w', 0)
     coordinatorEvents(store, g.id)
@@ -302,14 +284,16 @@ describe('ответ для человека, застрявший в review', (
     store.finishDispatch(dispatch.id, 'суть', [], 'ответ')
     const coord = store.createTask({ title: 'Для координатора', runId: g.id, answerFor: 'coordinator' })
     store.finishDispatch(store.startDispatch(coord.id, 'pty_c').id, 'суть', [], 'ответ')
-    const snap = store.snapshot()
-    // Как сдал main со старым кодом: ответ для человека — в review.
-    snap.tasks.find((t) => t.id === task.id)!.status = 'review'
+    const snap: Partial<ReturnType<typeof store.snapshot>> = store.snapshot()
+    // Как сдал main со старым кодом: ответ для человека — в review, запросов к человеку ещё нет.
+    snap.tasks!.find((t) => t.id === task.id)!.status = 'review'
+    delete snap.requests
     let saved = 0
     const loaded = new TaskStore({ load: () => snap, save: () => void saved++ }, () => DEFAULT_COLUMNS)
     assert.equal(loaded.getTask(task.id)!.status, 'needs_input')
     assert.equal(loaded.getTask(coord.id)!.status, 'review')
     assert.equal(loaded.getGlobalTask(g.id).status, 'needs_input')
+    assert.deepEqual(loaded.pendingRequests().map((r) => [r.kind, r.taskId]), [['answer', task.id]])
     assert.equal(saved, 1)
   })
 })
@@ -322,7 +306,7 @@ describe('короткие payload событий с ответом', () => {
     store.acceptTask(task.id, 'Делаем A')
     const [e] = coordinatorEvents(store, g.id)
     const keys = Object.keys(e.payload)
-    assert.deepEqual(keys, ['taskId', 'decision', 'summary', 'dispatchId', 'answerFor', 'answer'])
+    assert.deepEqual(keys, ['taskId', 'decision', 'summary', 'requestId', 'dispatchId', 'answerFor', 'answer'])
     // В строке JSON decision тоже раньше ответа — обрезка строки в мониторе его не съест.
     const line = JSON.stringify(e.payload)
     assert.ok(line.indexOf('"decision"') < line.indexOf('"answer"'))

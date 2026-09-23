@@ -314,7 +314,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                         {q.options.length > 0 && (
                           <div className="q-options">
                             {q.options.map((o) => (
-                              <button key={o} className="btn-sm" disabled={answering} onClick={() => void answer(q, o)}>{o}</button>
+                              <button key={o.id} className="btn-sm" disabled={answering} title={o.hint} onClick={() => void answer(q, o.label)}>{o.label}</button>
                             ))}
                           </div>
                         )}

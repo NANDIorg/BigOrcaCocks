@@ -3,7 +3,7 @@
  * Глобальная задача — это прогон (`Run`), её подзадачи — задачи с `Task.runId === run.id`.
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
-import type { BoardColumn, ColumnKind, Question, Run, Task } from './types'
+import type { BoardColumn, ColumnKind, HumanRequest, Run, Task } from './types'
 
 /** Название «Входящих» — служебной глобальной задачи для задач без глобальной. */
 export const INBOX_TITLE = 'Входящие'
@@ -17,8 +17,8 @@ export type GlobalColumnKind = (typeof GLOBAL_COLUMN_KINDS)[number]
 
 /**
  * Колонки, которые показывает глобальный канбан: хранимые плюс needs_input. В needs_input карточка
- * попадает только вычисленно — задача не сделана, и хотя бы одна подзадача ждёт человека
- * (`waitingForHuman`); ответил человек — карточка сама возвращается в свою колонку. Руками туда не ставится.
+ * попадает только вычисленно — задача не сделана, и в прогоне есть pending-запрос к человеку
+ * (`hasPendingRequest`); человек решил запрос — карточка сама возвращается в свою колонку. Руками туда не ставится.
  */
 export const GLOBAL_BOARD_KINDS: readonly ColumnKind[] = ['backlog', 'in_progress', 'needs_input', 'done']
 
@@ -49,7 +49,7 @@ export interface GlobalTask {
   updatedAt: number
   /** Последнее изменение карточки или любой её подзадачи — «время» на карточке. */
   activityAt: number
-  /** Подзадачи, которые ждут человека (`waitingForHuman`); > 0 и задача в работе — карточка в needs_input. */
+  /** Pending-запросы к человеку в прогоне; > 0 и задача не сделана — карточка в needs_input. */
   waiting: number
   /** Прогон закрыт: все подзадачи дошли до done (run_done) или закрыт вручную. */
   closedAt?: number
@@ -97,26 +97,21 @@ export function globalStoredColumns(columns: readonly BoardColumn[]): BoardColum
 }
 
 /**
- * Вопрос адресован человеку: координатор передал его (`forHuman`) или отвечать больше некому —
- * «Входящие», глобальная задача без координатора или координатор уже закончил (`runs finish`).
+ * Запрос ждёт человека. Единственный источник «Нужен ответ» — и для глобальной карточки, и для колонки
+ * подзадачи, и для счётчиков: статус хранится в запросе, а не выводится из колонок и координатора.
  */
-export function questionForHuman(q: Pick<Question, 'forHuman'>, run: Pick<Run, 'inbox' | 'coordinatorPtyId' | 'finishedAt'> | undefined): boolean {
-  if (q.forHuman) return true
-  return !run || run.inbox === true || !run.coordinatorPtyId || run.finishedAt !== undefined
+export function isPendingRequest(r: Pick<HumanRequest, 'status'>): boolean {
+  return r.status === 'pending'
 }
 
-/**
- * Подзадача ждёт человека: готов ответ для человека (задача-ответ `answerFor: 'human'` в колонке
- * needs_input; review — старые данные, до переноса таких ответов в needs_input) или открыт вопрос, адресованный человеку (`questionForHuman`).
- */
-export function waitingForHuman(
-  task: Pick<Task, 'id' | 'answerFor'>,
-  kind: ColumnKind | undefined,
-  questions: readonly Question[],
-  run: Pick<Run, 'inbox' | 'coordinatorPtyId' | 'finishedAt'> | undefined
-): boolean {
-  if (task.answerFor === 'human' && (kind === 'needs_input' || kind === 'review')) return true
-  return questions.some((q) => q.taskId === task.id && !q.answeredAt && questionForHuman(q, run))
+/** Pending-запросы прогона (`runId`) или подзадачи (`taskId`). */
+export function pendingRequestsOf(requests: readonly HumanRequest[], where: { runId?: string; taskId?: string }): HumanRequest[] {
+  return requests.filter((r) => isPendingRequest(r) && (where.runId === undefined || r.runId === where.runId) && (where.taskId === undefined || r.taskId === where.taskId))
+}
+
+/** Есть ли pending-запрос у прогона/подзадачи. */
+export function hasPendingRequest(requests: readonly HumanRequest[], where: { runId?: string; taskId?: string }): boolean {
+  return pendingRequestsOf(requests, where).length > 0
 }
 
 /**
@@ -142,20 +137,20 @@ export function globalTaskStatus(status: string | undefined, columns: readonly B
 }
 
 /**
- * Прогон → карточка. Статус сведён к колонке глобального канбана (globalTaskStatus); несделанная задача,
- * у которой подзадачи ждут человека, показывается в колонке needs_input (если она есть в проекте).
+ * Прогон → карточка. Статус сведён к колонке глобального канбана (globalTaskStatus); несделанная задача
+ * с pending-запросами к человеку показывается в колонке needs_input (если она есть в проекте).
  */
 export function toGlobalTask(
   run: Run,
   tasks: readonly Task[],
   columns: readonly BoardColumn[],
-  questions: readonly Question[] = []
+  requests: readonly HumanRequest[] = []
 ): GlobalTask {
   const columnKind = (status: string): ColumnKind | undefined => columns.find((c) => c.id === status)?.kind
   const updatedAt = run.updatedAt ?? run.createdAt
   const own = tasks.filter((t) => t.runId === run.id)
   const activityAt = own.reduce((max, t) => (t.updatedAt > max ? t.updatedAt : max), updatedAt)
-  const waiting = own.filter((t) => waitingForHuman(t, columnKind(t.status), questions, run)).length
+  const waiting = pendingRequestsOf(requests, { runId: run.id }).length
   const stored = globalTaskStatus(run.status, columns) ?? 'backlog'
   const needsInput = columns.find((c) => c.kind === 'needs_input')?.id
   const status = waiting > 0 && needsInput && columnKind(stored) !== 'done' ? needsInput : stored
@@ -182,7 +177,7 @@ export function toGlobalTasks(
   runs: readonly Run[],
   tasks: readonly Task[],
   columns: readonly BoardColumn[],
-  questions: readonly Question[] = []
+  requests: readonly HumanRequest[] = []
 ): GlobalTask[] {
-  return [...runs].sort((a, b) => a.createdAt - b.createdAt).map((run) => toGlobalTask(run, tasks, columns, questions))
+  return [...runs].sort((a, b) => a.createdAt - b.createdAt).map((run) => toGlobalTask(run, tasks, columns, requests))
 }

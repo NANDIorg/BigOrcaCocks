@@ -3,10 +3,11 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import {
-  globalBoardColumns, globalColumnKind, globalStoredColumns, globalTaskStatus, globalTaskTitle, INBOX_TITLE, toGlobalTasks
+  globalBoardColumns, globalColumnKind, globalStoredColumns, globalTaskStatus, globalTaskTitle, INBOX_TITLE, toGlobalTasks,
+  hasPendingRequest, pendingRequestsOf
 } from './global-tasks.ts'
 import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
-import { DEFAULT_COLUMNS, type BoardColumn, type Run, type Task } from './types.ts'
+import { DEFAULT_COLUMNS, type BoardColumn, type HumanRequest, type Run, type Task } from './types.ts'
 
 /** Колонки проекта не совпадают с дефолтными id: API не должен их хардкодить. */
 const COLUMNS: BoardColumn[] = [
@@ -565,5 +566,25 @@ describe('сохранение и миграция', () => {
     assert.equal(inbox.status, 'fin')
     store.createGlobalTask({ title: 'commit' })
     assert.equal(store.listEvents().filter((e) => e.type === 'run_done').length, 0)
+  })
+})
+
+describe('«Нужен ответ» — pending-запросы', () => {
+  const req = (id: string, runId: string, taskId: string, status: HumanRequest['status']): HumanRequest =>
+    ({ id, runId, taskId, kind: 'question', status, title: '?', options: [], createdAt: 1 })
+  const requests = [req('a', 'r1', 't1', 'pending'), req('b', 'r1', 't2', 'resolved'), req('c', 'r2', 't3', 'cancelled')]
+
+  it('предикат только по status === pending', () => {
+    assert.deepEqual(pendingRequestsOf(requests, { runId: 'r1' }).map((r) => r.id), ['a'])
+    assert.equal(hasPendingRequest(requests, { taskId: 't1' }), true)
+    assert.equal(hasPendingRequest(requests, { taskId: 't2' }), false)
+    assert.equal(hasPendingRequest(requests, { runId: 'r2' }), false)
+  })
+
+  it('карточка в needs_input ⇔ pending-запрос прогона; из done не уходит', () => {
+    const run = (id: string, status: string): Run => ({ id, objective: id, status, createdAt: 1 })
+    const globals = toGlobalTasks([run('r1', 'plan'), run('r2', 'wip'), run('r3', 'fin')], [], COLUMNS,
+      [...requests, req('d', 'r3', 't4', 'pending')])
+    assert.deepEqual(globals.map((g) => [g.id, g.status, g.waiting]), [['r1', 'ask', 1], ['r2', 'wip', 0], ['r3', 'fin', 1]])
   })
 })
