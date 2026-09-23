@@ -3,25 +3,27 @@
 // Чистая функция без ФС — её вызывает `ProjectManager.load()` после нормализации старого формата, а тесты — напрямую.
 import {
   builtinTaskTypes, taskTypeFromLegacyProject,
-  type Role, type TaskType, type TemplatePermissionMode, type Workflow
+  type Role, type TaskType, type TaskTypePermissionMode, type Workflow
 } from '@orca-board/core'
 import type { Project, ProjectsFile } from './projects'
 
 /** Версия формата projects.json с типами задач; нет поля или меньше — старый формат, его переводит миграция. */
 export const PROJECTS_FILE_VERSION = 2
 
-/** Поля проекта старого формата — после миграции они живут в его типе «<имя проекта>». */
+/**
+ * Поля проекта старого формата — после миграции они живут в его типе «<имя проекта>». Ещё было поле id
+ * шаблона проекта: оно не переносится и отбрасывается вместе с прочими неизвестными полями (`stripLegacy`).
+ */
 export interface LegacyProjectFields {
-  permissionMode?: TemplatePermissionMode
+  permissionMode?: TaskTypePermissionMode
   roles?: Role[]
   agentRules?: string
   workflow?: Workflow
-  templateId?: string
 }
 
 /**
  * projects.json старого формата после нормализации в `load()`: пользовательские шаблоны уже проверены и
- * без колонок и агентов (это готовые типы), старый `defaults` уже перенесён в «Общий».
+ * без колонок и агентов (это готовые типы), старый `defaults` уже перенесён в копию встроенного `general`.
  */
 export interface LegacyProjectsFile extends Omit<ProjectsFile, 'projects'> {
   projects: Array<Project & LegacyProjectFields>
@@ -54,7 +56,7 @@ export function migrateProjectsFile(input: LegacyProjectsFile): { data: Projects
   }
   const types: TaskType[] = [...(input.taskTypes ?? [])]
   for (const t of input.templates ?? []) if (!types.some((x) => x.id === t.id)) types.push(t)
-  // Названия встроенных тоже заняты: тип «Общий» из проекта с таким именем путал бы выбор типа.
+  // Названия встроенных тоже заняты: тип «Программирование» из проекта с таким именем путал бы выбор типа.
   const titles = new Set([...builtinTaskTypes().map((t) => t.title), ...types.map((t) => t.title)])
   const projects = input.projects.map((p) => {
     const id = legacyTaskTypeId(p.id)
@@ -82,10 +84,20 @@ export function migrateProjectsFile(input: LegacyProjectsFile): { data: Projects
   }
 }
 
-/** Проект без полей старого формата. */
+/**
+ * Проект только с полями нового формата. Белый список, а не удаление старых полей по именам: так из файла
+ * уходят и поля, о которых новая версия не знает (id шаблона проекта и т. п.).
+ */
 function stripLegacy(p: Project & LegacyProjectFields): Project {
-  const { permissionMode: _pm, roles: _r, agentRules: _ar, workflow: _wf, templateId: _tpl, ...rest } = p
-  return rest
+  const { id, root, name, enabledAgents, columns, taskTypeIds, defaultTaskTypeId, legacyTypeId } = p
+  return {
+    id, root, name,
+    ...(enabledAgents !== undefined ? { enabledAgents } : {}),
+    ...(columns !== undefined ? { columns } : {}),
+    ...(taskTypeIds !== undefined ? { taskTypeIds } : {}),
+    ...(defaultTaskTypeId !== undefined ? { defaultTaskTypeId } : {}),
+    ...(legacyTypeId !== undefined ? { legacyTypeId } : {})
+  }
 }
 
 /** `name`, а если занято — `name (2)`, `name (3)`… */

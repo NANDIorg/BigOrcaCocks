@@ -1,5 +1,5 @@
 // Запуск: node --test (type stripping Node ≥ 22.6). Из tsc исключён — в core нет @types/node.
-// Типы задач: встроенные типы из шаблонов, правка встроенного на месте, правило разрешения типа прогона.
+// Типы задач: встроенные типы, правка встроенного на месте, правило разрешения типа прогона.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -7,9 +7,8 @@ import {
   builtinTaskTypes, isBuiltinTypeInPlaceEdit, resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
   taskTypeFromLegacyProject, type TaskType
 } from './task-types.ts'
-import { builtinTemplates } from './templates.ts'
 import { DEFAULT_ROLES, type Role } from './types.ts'
-import { defaultWorkflow, pipelineWorkflow, validateWorkflow } from './workflow.ts'
+import { defaultWorkflow, nextStage, pipelineWorkflow, startStage, validateWorkflow } from './workflow.ts'
 
 const writer: Role = { id: 'writer', title: 'Автор', agent: 'codex', model: 'gpt-5' }
 
@@ -29,18 +28,75 @@ function docsType(): TaskType {
 }
 
 describe('встроенные типы', () => {
-  it('те же id, названия и роли, что у встроенных шаблонов, без колонок и агентов', () => {
+  it('набор и уникальные id: id не меняются — на них ссылаются проекты, прогоны и копии в projects.json', () => {
     const types = builtinTaskTypes()
-    const templates = builtinTemplates()
-    assert.deepEqual(types.map((t) => t.id), templates.map((t) => t.id))
-    for (const [i, t] of types.entries()) {
+    assert.deepEqual(types.map((t) => t.id), ['general', 'frontend', 'backend', 'fullstack', 'mobile', 'autotests', 'docs'])
+    for (const t of types) {
       assert.equal(t.builtin, true)
-      assert.equal(t.title, templates[i].title)
-      assert.deepEqual(t.settings.roles, templates[i].settings.roles)
-      assert.deepEqual(t.settings.workflow, templates[i].settings.workflow)
+      assert.ok(t.title.trim(), `${t.id}: пустое название`)
       assert.ok(!('columns' in t.settings), `${t.id}: колонки у типа`)
       assert.ok(!('enabledAgents' in t.settings), `${t.id}: агенты у типа`)
     }
+    assert.equal(new Set(types.map((t) => t.title)).size, types.length, 'повтор названий')
+  })
+
+  it('названия — по виду задачи, а не проекта', () => {
+    assert.deepEqual(builtinTaskTypes().map((t) => t.title), [
+      'Программирование', 'Фронтенд', 'Бэкенд', 'Фронтенд и бэкенд', 'Мобильная разработка', 'QA: автотесты', 'Документация'
+    ])
+  })
+
+  for (const t of builtinTaskTypes()) {
+    it(`«${t.title}»: роли с уникальными id, coordinator и assistant из DEFAULT_ROLES, есть рабочая роль`, () => {
+      const roles = t.settings.roles ?? []
+      const ids = roles.map((r) => r.id)
+      assert.equal(new Set(ids).size, ids.length, `повтор id ролей: ${ids.join(', ')}`)
+      for (const r of roles) assert.ok(r.title.trim() && r.id.trim(), `пустой id или название у ${r.id}`)
+      for (const service of ['coordinator', 'assistant']) {
+        const own = roles.find((r) => r.id === service)
+        const base = DEFAULT_ROLES.find((r) => r.id === service)!
+        assert.ok(own, `нет роли ${service}`)
+        assert.equal(own.agent, base.agent)
+        assert.equal(own.description, base.description)
+      }
+      assert.ok(roles.some((r) => r.id !== 'coordinator' && r.id !== 'assistant'), 'нет рабочих ролей')
+    })
+  }
+
+  it('«Программирование» — дефолт: DEFAULT_ROLES и defaultWorkflow', () => {
+    const general = builtinTaskType(GENERAL_TASK_TYPE_ID)!
+    assert.deepEqual(general.settings.roles, DEFAULT_ROLES)
+    assert.deepEqual(general.settings.workflow, defaultWorkflow(DEFAULT_ROLES))
+  })
+
+  it('«Фронтенд и бэкенд»: задача frontend после ревью идёт к человеку, backend — сразу в мерж', () => {
+    const wf = builtinTaskType('fullstack')!.settings.workflow!
+    const afterReview = (roleId: string): string => {
+      const ctx = { roleId }
+      const work = startStage(wf, ctx)
+      const review = nextStage(wf, work.stage, 'next', ctx)
+      assert.equal(review.stage.nodeId, 'review')
+      return nextStage(wf, review.stage, 'accept', ctx).stage.nodeId
+    }
+    assert.equal(afterReview('frontend'), 'eyes')
+    assert.equal(afterReview('backend'), 'merge')
+  })
+
+  it('«Бэкенд»: после ревью — прогон тестов ролью qa, затем мерж', () => {
+    const wf = builtinTaskType('backend')!.settings.workflow!
+    const ctx = { roleId: 'developer' }
+    const work = startStage(wf, ctx)
+    const review = nextStage(wf, work.stage, 'next', ctx)
+    const tests = nextStage(wf, review.stage, 'accept', ctx)
+    assert.deepEqual(tests.action, { type: 'create_gate', nodeId: 'tests', roleId: 'qa' })
+    assert.equal(nextStage(wf, tests.stage, 'accept', ctx).stage.nodeId, 'merge')
+    assert.equal(nextStage(wf, tests.stage, 'reject', ctx).stage.nodeId, 'work')
+  })
+
+  it('«Документация»: ревью делает человек, агентного гейта нет', () => {
+    const wf = builtinTaskType('docs')!.settings.workflow!
+    assert.equal(wf.nodes.some((n) => n.type === 'gate'), false)
+    assert.ok(wf.nodes.some((n) => n.type === 'human' && n.id === 'review'))
   })
 
   it('каждый вызов — свежие объекты', () => {
@@ -53,7 +109,10 @@ describe('встроенные типы', () => {
   it('графы встроенных типов валидны по своим ролям без колонок доски', () => {
     for (const t of builtinTaskTypes()) {
       const r = resolveTaskType(t)
-      assert.deepEqual(validateWorkflow(r.workflow, { roles: r.roles }).errors, [], t.id)
+      const v = validateWorkflow(r.workflow, { roles: r.roles })
+      assert.deepEqual(v.errors, [], t.id)
+      // Возврат в работу без лимита повторов — как у дефолтного графа; других предупреждений быть не должно.
+      assert.deepEqual(v.warnings.filter((w) => !w.message.includes('без лимита повторов')), [], t.id)
     }
   })
 })
@@ -150,7 +209,7 @@ describe('resolveRunType: какой тип у прогона', () => {
     assert.equal(r.typeId, 'backend')
   })
 
-  it('неизвестный тип по умолчанию — «Общий», даже если его нет в библиотеке', () => {
+  it('неизвестный тип по умолчанию — «Программирование», даже если его нет в библиотеке', () => {
     const fromLib = resolveRunType(undefined, library(), 'type_gone')
     assert.equal(fromLib.typeId, GENERAL_TASK_TYPE_ID)
     assert.equal(fromLib.source, 'default')

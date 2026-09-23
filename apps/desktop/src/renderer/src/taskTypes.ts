@@ -11,7 +11,8 @@ import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 
 /**
  * `window.orca.taskTypes` или undefined: в `pnpm dev` renderer приходит по HMR, а preload может быть старым —
- * без типов. Тогда UI работает как раньше: роли проекта (`Project.roles`), без выбора типа.
+ * без типов. Тогда выбора типа нет, подписи ролей — встроенные (`DEFAULT_ROLES`), а разделы «Типы задач»
+ * просят перезапустить приложение (`TASK_TYPES_STALE_MESSAGE`).
  */
 export function taskTypesApi(api: TaskTypesHost | undefined): Pick<OrcaApi['taskTypes'], 'list'> | undefined {
   const types = api?.taskTypes
@@ -31,7 +32,7 @@ export function isStaleTaskTypesError(message: string): boolean {
 
 /**
  * Библиотека типов или null, если main/preload её не знают (старая версия). Прочие ошибки пробрасываются —
- * молча откатываться на роли проекта при живых типах нельзя: подписи ролей разошлись бы с тем, что запустит main.
+ * молча откатываться на встроенные роли при живых типах нельзя: подписи ролей разошлись бы с тем, что запустит main.
  */
 export async function loadTaskTypes(api: TaskTypesHost | undefined): Promise<TaskTypesState | null> {
   const types = taskTypesApi(api)
@@ -71,15 +72,16 @@ export function availableTypes(project: Pick<Project, 'defaultTaskTypeId' | 'tas
 
 /**
  * Роли задачи прогона `runId` (подзадача глобальной задачи, «Входящие») — по типу прогона через общее правило
- * `resolveRunType`; нет прогона — тип проекта по умолчанию. Старый main (state null) — роли проекта, как раньше.
+ * `resolveRunType`; нет прогона — тип проекта по умолчанию. Старый main без типов (state null) — встроенные роли:
+ * ролей у проекта больше нет, а до перезапуска приложения точнее не узнать.
  */
 export function rolesForRun(
   runId: string | undefined,
   runs: readonly Pick<Run, 'id' | 'typeId' | 'taskType'>[],
-  project: Pick<Project, 'roles' | 'defaultTaskTypeId' | 'taskTypeIds'> | null | undefined,
+  project: Pick<Project, 'defaultTaskTypeId' | 'taskTypeIds'> | null | undefined,
   state: TaskTypesState | null
 ): Role[] {
-  if (!state) return project?.roles ?? DEFAULT_ROLES
+  if (!state) return DEFAULT_ROLES
   const run = runId ? runs.find((r) => r.id === runId) : undefined
   const defaultId = project ? projectDefaultTypeId(project, state) : state.defaultTaskTypeId
   return resolveRunType(run, state.taskTypes, defaultId).roles

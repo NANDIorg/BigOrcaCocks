@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import type { TaskType } from '@orca-board/core'
 import type { TaskTypeInput, TaskTypesState } from '../../../shared/ipc'
 import { ipcErrorMessage } from '../useAutoSave'
-import { refreshProjectDefaults } from '../about/useProjectDefaults'
 import {
   TASK_TYPES_STALE_MESSAGE, patchedTaskType, renamedTaskType, taskTypeLibraryApi, taskTypesError, type TaskTypePatch
 } from '../taskTypeEdit'
@@ -30,8 +29,8 @@ export interface TaskTypesHook {
 
 /**
  * Библиотека типов задач (taskTypes:*) для «Настроек». После каждой записи список перечитывается целиком (порядок
- * и копии встроенных решает main), а ещё — тип по умолчанию в useProjectDefaults (роли ассистента) и проекты
- * приложения (`onChanged`): пока живы шимы, main дописывает в проект роли его типа по умолчанию.
+ * и копии встроенных решает main), а ещё — проекты приложения (`onChanged`): удаление типа меняет их тип по
+ * умолчанию, а доске нужны свежие роли типов.
  */
 export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
   const stale = !window.orca.taskTypes
@@ -57,7 +56,7 @@ export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
     reload().catch((e: unknown) => setError(message(e)))
   }, [])
 
-  /** Запись + перечитать список, тип по умолчанию и проекты; ошибка — с текстом «перезапустите» для старого main. */
+  /** Запись + перечитать список и проекты; ошибка — с текстом «перезапустите» для старого main. */
   async function write<T>(action: () => Promise<T>): Promise<T> {
     let result: T
     try {
@@ -66,7 +65,6 @@ export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
       throw new Error(message(e))
     }
     await reload().catch((e: unknown) => setError(message(e)))
-    void refreshProjectDefaults()
     void onChanged?.().catch(() => undefined)
     return result
   }

@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { AgentInfo, Role, TaskType } from '@orca-board/core'
+import { DEFAULT_ROLES, type AgentInfo, type Role, type TaskType } from '@orca-board/core'
 import type { AppSettings, AppSettingsPatch, Project } from '../../../shared/ipc'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
@@ -128,10 +128,8 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
   const current: TaskType | undefined = state?.taskTypes.find((t) => t.id === currentId)
   const { builtin, own } = splitTaskTypes(state?.taskTypes ?? [])
 
-  // Роли для фильтра уведомлений: роли всех типов библиотеки; старый main без типов — роли проектов.
-  const notifyRoles: Role[] = state
-    ? libraryRoles(state.taskTypes)
-    : libraryRoles(projectList.flatMap((p) => (p.roles ? [{ id: p.id, title: p.name, settings: { roles: p.roles } }] : [])))
+  // Роли для фильтра уведомлений: роли всех типов библиотеки; старый main без типов — встроенные.
+  const notifyRoles: Role[] = state ? libraryRoles(state.taskTypes) : DEFAULT_ROLES
 
   // ---------- меню ----------
 

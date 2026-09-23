@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTaskType, isBuiltinTypeInPlaceEdit, type AgentInfo, type Role, type TaskType
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, isBuiltinTypeInPlaceEdit, type AgentInfo, type Role, type TaskType
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 import {
@@ -148,7 +148,7 @@ test('колонки для графа типа — встроенные плю�
 
 test('подтверждение удаления говорит о проектах и снимке глобальных задач', () => {
   const text = deleteTypeConfirmText(own, { ...state, defaultTaskTypeId: 'type_1' }, { asDefault: 2, available: 3 })
-  assert.match(text, /им станет «Общий»/)
+  assert.ok(text.includes(`им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title}»`))
   assert.match(text, /проектах \(2\)/)
   assert.match(text, /по снимку/)
   assert.match(deleteTypeConfirmText({ ...general, builtin: undefined }, state, undefined), /вернётся встроенный/)

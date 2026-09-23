@@ -106,7 +106,7 @@ const CONFLICT_INSTRUCTIONS =
 /**
  * Конструктор типового графа: старт → работа → проверки по порядку → мерж → конец. Отказ любой проверки
  * возвращает в работу, конфликт мержа уходит человеку (принять — снова мерж, вернуть — в работу).
- * Из него собраны `defaultWorkflow` и графы встроенных шаблонов проектов (templates.ts), поэтому id нод
+ * Из него собраны `defaultWorkflow` и графы встроенных типов задач (task-types.ts), поэтому id нод
  * и рёбер стабильны: `work`, `merge`, `end`, `conflict`, `e_<нода>_<исход>`; условие роли — `<id проверки>_if`.
  */
 export function pipelineWorkflow(checks: readonly WfPipelineCheck[]): Workflow {
@@ -633,4 +633,18 @@ function conditionText(test: WfCondition, byId: Map<string, WfNode>): string {
     default:
       return 'неизвестное условие'
   }
+}
+
+/** JSON с отсортированными ключами: сравнение ролей и графов не зависит от порядка полей. */
+export function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`
+  if (v && typeof v === 'object') {
+    const obj = v as Record<string, unknown>
+    return `{${Object.keys(obj)
+      .filter((k) => obj[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson(obj[k])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(v)
 }

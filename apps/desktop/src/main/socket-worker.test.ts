@@ -51,7 +51,7 @@ function fakeDeps(): ProjectDeps {
     runType: () => runTypeInput(builtinTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
-    workflow: () => ({ typeId: 'general', title: 'Общий', workflow: defaultWorkflow(roles), custom: false })
+    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: defaultWorkflow(roles), custom: false })
   }
 }
 

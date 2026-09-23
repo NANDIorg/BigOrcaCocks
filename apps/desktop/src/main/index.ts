@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, resolveTaskType, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type TaskPriority, type Workflow, type TemplateSection, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
@@ -12,11 +12,11 @@ import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } 
 import { listRules, writeRule } from './rules'
 import { currentBranch } from './git'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
-import { ProjectManager, runnableWorkflow, type PermissionMode } from './projects'
+import { ProjectManager, runnableWorkflow } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
-import type { AppSettingsPatch, ProjectDefaults, ProjectTaskTypesInput, TaskTypeInput, TemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import type { AppSettingsPatch, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 
@@ -456,66 +456,33 @@ async function pickRepoFolder(): Promise<string | null> {
   return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
 }
 
-/** Активный проект для renderer (`ProjectManager.view`). */
-function activeView(): ReturnType<ProjectManager['view']> | null {
-  const a = projects.active()
-  return a ? projects.view(a) : null
-}
-
 function registerIpc(): void {
   ipcMain.handle('app:getSettings', () => projects.settings())
   ipcMain.handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
   ipcMain.handle('app:testNotification', () => testNotification())
-  ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: activeView(), projects: projects.views() }))
-  ipcMain.handle('projects:list', () => ({ active: activeView(), projects: projects.views() }))
+  ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
+  ipcMain.handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:inProgressCounts', () => projects.inProgressCounts())
-  ipcMain.handle('projects:taskRefs', (_e, id: string) => projects.taskRefs(id))
-  ipcMain.handle('projects:setActive', (_e, id: string) => projects.view(projects.setActive(id)))
+  ipcMain.handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   ipcMain.handle('projects:remove', (_e, id: string) => projects.remove(id))
-  ipcMain.handle('projects:setPermissionMode', (_e, id: string, mode: PermissionMode) => projects.setPermissionMode(id, mode))
-  ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.view(projects.setEnabledAgents(id, agents)))
-  ipcMain.handle('projects:setRoles', (_e, id: string, roles: Role[]) => projects.setRoles(id, roles))
-  ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.view(projects.setColumns(id, columns)))
-  ipcMain.handle('projects:getAgentRules', (_e, id: string) => projects.agentRules(id))
-  ipcMain.handle('projects:setAgentRules', (_e, id: string, text: string) => projects.setAgentRules(id, text))
-  ipcMain.handle('projects:setWorkflow', (_e, id: string, wf: Workflow | null) => projects.setWorkflow(id, wf))
-  ipcMain.handle('workflow:default', (_e, roles: Role[]) => {
-    if (!Array.isArray(roles)) throw new Error('дефолтный воркфлоу: роли должны быть массивом')
-    return defaultWorkflow(roles)
-  })
-  ipcMain.handle('projects:getDefaults', () => projects.defaults())
-  ipcMain.handle('projects:setDefaults', (_e, patch: Partial<ProjectDefaults>) => projects.setDefaults(patch ?? {}))
-  ipcMain.handle('projects:applyDefaults', (_e, id: string) => projects.applyDefaults(id))
+  ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
+  ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   ipcMain.handle('prompts:builtin', () => BUILTIN_PROMPTS)
   ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   ipcMain.handle('projects:add', async (_e, typeId?: string, path?: string) => {
     const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
-    return dir ? projects.view(projects.add(dir, typeof typeId === 'string' && typeId ? typeId : undefined)) : null
+    return dir ? projects.add(dir, typeof typeId === 'string' && typeId ? typeId : undefined) : null
   })
   ipcMain.handle('projects:detectTaskType', async (_e, path?: string) => {
     const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
     return dir ? projects.detectTaskType(dir) : null
   })
-  ipcMain.handle('projects:detectTemplate', async (_e, path?: string) => {
-    const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
-    if (!dir) return null
-    const d = projects.detectTaskType(dir)
-    return { path: d.path, templateId: d.typeId, reason: d.reason }
-  })
-  ipcMain.handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.view(projects.setProjectTaskTypes(id, input)))
+  ipcMain.handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.setProjectTaskTypes(id, input))
   ipcMain.handle('taskTypes:list', () => projects.taskTypesState())
   ipcMain.handle('taskTypes:save', (_e, input: TaskTypeInput) => projects.saveTaskType(input))
   ipcMain.handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   ipcMain.handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
   ipcMain.handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
-  ipcMain.handle('projects:applyTemplate', (_e, id: string, templateId: string, sections: TemplateSection[], roleIds?: string[]) =>
-    projects.applyTemplate(id, templateId, sections, roleIds ?? undefined)
-  )
-  ipcMain.handle('templates:list', () => projects.templatesState())
-  ipcMain.handle('templates:save', (_e, input: TemplateInput) => projects.saveTemplate(input))
-  ipcMain.handle('templates:delete', (_e, id: string) => projects.deleteTemplate(id))
-  ipcMain.handle('templates:duplicate', (_e, id: string) => projects.duplicateTemplate(id))
-  ipcMain.handle('templates:setDefault', (_e, id: string) => projects.setDefaultTemplate(id))
 
   ipcMain.handle('board:get', () =>
     projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [], runs: [] }

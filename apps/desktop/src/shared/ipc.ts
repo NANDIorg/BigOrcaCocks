@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, ProjectTemplate, ProjectTemplateSettings, TemplateSection, TaskType, TaskTypeSettings } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -119,16 +119,6 @@ export interface Project {
   defaultTaskTypeId?: string
   /** Тип, в который миграция перенесла настройки проекта; его получают старые прогоны доски. */
   legacyTypeId?: string
-  /** @deprecated Режим разрешений типа проекта по умолчанию (вычисляется main); уйдёт вместе с шаблонами. */
-  permissionMode?: PermissionMode
-  /** @deprecated Роли типа проекта по умолчанию (вычисляются main); роли задачи — у типа её глобальной задачи. */
-  roles?: Role[]
-  /** @deprecated Правила агентов типа проекта по умолчанию (вычисляются main); пусто — поля нет. */
-  agentRules?: string
-  /** @deprecated Свой граф типа проекта по умолчанию (вычисляется main); нет — дефолтный по ролям. */
-  workflow?: Workflow
-  /** @deprecated Id типа проекта по умолчанию — база сравнения старого «Обзора». */
-  templateId?: string
 }
 
 /** Создать (без `id`) или целиком заменить тип задачи. */
@@ -159,49 +149,6 @@ export interface TaskTypeDetection {
   path: string
   /** Угаданный тип; признаков нет — тип библиотеки по умолчанию. */
   typeId: string
-  /** Почему угадан («package.json: react»); пусто — признаков нет. */
-  reason: string
-}
-
-/** @deprecated Настройки типа по умолчанию в старой форме «Для новых проектов» (колонки — встроенные). */
-export interface ProjectDefaults {
-  permissionMode: PermissionMode
-  /** undefined — все установленные агенты. */
-  enabledAgents?: AgentKind[]
-  roles: Role[]
-  columns: BoardColumn[]
-  /** Правила проекта для агентов доски, копируются в новый проект; пусто — поля нет. */
-  agentRules?: string
-  /** Воркфлоу для новых проектов; нет — дефолтный граф по ролям проекта. В `setDefaults` null удаляет поле. */
-  workflow?: Workflow
-}
-
-/** @deprecated Создать или заменить тип задачи через старый канал шаблонов (колонки и агенты отбрасываются). */
-export interface TemplateInput {
-  id?: string
-  title: string
-  description?: string
-  settings: ProjectTemplateSettings
-}
-
-/** Задача проекта в том объёме, что нужен для последствий применения шаблона: колонка и роль. */
-export interface TaskRef {
-  status: string
-  roleId: string
-}
-
-/** @deprecated Типы задач в форме старых шаблонов проектов (`templates:list`). */
-export interface TemplatesState {
-  templates: ProjectTemplate[]
-  defaultTemplateId: string
-}
-
-/** @deprecated Подсказка типа в старой форме (`projects.detectTemplate`), см. `TaskTypeDetection`. */
-export interface TemplateDetection {
-  /** Выбранная папка — её передают в `projects.add(templateId, path)`. */
-  path: string
-  /** Угаданный шаблон; признаков нет — шаблон по умолчанию. */
-  templateId: string
   /** Почему угадан («package.json: react»); пусто — признаков нет. */
   reason: string
 }
@@ -290,8 +237,6 @@ export interface OrcaApi {
     list(): Promise<{ active: Project | null; projects: Project[] }>
     /** Задачи в колонках kind=in_progress по id проекта — для бейджа в списке проектов. */
     inProgressCounts(): Promise<Record<string, number>>
-    /** Статус и роль задач проекта (не только активного) — последствия «Применить к проектам…» в «Настройках». */
-    taskRefs(id: string): Promise<TaskRef[]>
     /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id встроенных типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из
@@ -305,38 +250,11 @@ export interface OrcaApi {
     detectTaskType(path?: string): Promise<TaskTypeDetection | null>
     /** Доступные проекту типы и тип по умолчанию; неизвестный тип или тип по умолчанию вне списка — ошибка. */
     setTaskTypes(id: string, input: ProjectTaskTypesInput): Promise<Project>
-    /** @deprecated То же, что `detectTaskType`, в форме шаблонов. */
-    detectTemplate(path?: string): Promise<TemplateDetection | null>
-    /**
-     * @deprecated Все разделы — сменить тип проекта по умолчанию на `templateId`; часть разделов (роли, разрешения,
-     * правила, воркфлоу) — записать их в тип проекта по умолчанию (встроенный — только исполнители, промпты
-     * и правила). Колонки и агенты шаблона больше не переносятся — у типа их нет.
-     */
-    applyTemplate(id: string, templateId: string, sections: TemplateSection[], roleIds?: string[]): Promise<Project>
     remove(id: string): Promise<void>
     setActive(id: string): Promise<Project>
-    /** @deprecated Пишет в тип проекта по умолчанию; у встроенного — ошибка «дублируйте». */
-    setPermissionMode(id: string, mode: PermissionMode): Promise<Project>
     setEnabledAgents(id: string, agents: AgentKind[]): Promise<Project>
-    /** @deprecated Пишет в тип проекта по умолчанию; у встроенного меняются только исполнители и промпты ролей. */
-    setRoles(id: string, roles: Role[]): Promise<Project>
     /** Задачи из удалённых колонок переезжают в backlog. */
     setColumns(id: string, columns: BoardColumn[]): Promise<Project>
-    /** @deprecated Правила агентов типа проекта по умолчанию; не заданы — ''. */
-    getAgentRules(id: string): Promise<string>
-    /** @deprecated Сохранить правила агентов в тип проекта по умолчанию (встроенный — тоже, на месте). */
-    setAgentRules(id: string, text: string): Promise<Project>
-    /**
-     * @deprecated Сохранить воркфлоу в тип проекта по умолчанию; null — вернуть дефолтный. Граф с ошибками
-     * `validateWorkflow` отвергается с их текстом; встроенный тип — ошибка «дублируйте».
-     */
-    setWorkflow(id: string, wf: Workflow | null): Promise<Project>
-    /** @deprecated Настройки типа библиотеки по умолчанию (колонки — встроенные). */
-    getDefaults(): Promise<ProjectDefaults>
-    /** @deprecated Мерж патча в тип библиотеки по умолчанию; колонки и агенты игнорируются. */
-    setDefaults(patch: Partial<ProjectDefaults>): Promise<ProjectDefaults>
-    /** @deprecated Сделать типом проекта по умолчанию тип библиотеки по умолчанию. */
-    applyDefaults(id: string): Promise<Project>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
   }
@@ -357,21 +275,6 @@ export interface OrcaApi {
     /** Копия типа (в том числе встроенного) под новым id. */
     duplicate(id: string): Promise<TaskType>
     setDefault(id: string): Promise<TaskTypesState>
-  }
-  /** @deprecated Типы задач в форме шаблонов проектов — до перевода «Настроек» на `taskTypes`. */
-  templates: {
-    list(): Promise<TemplatesState>
-    /** Создать или заменить пользовательский шаблон; настройки валидируются как у проекта. */
-    save(input: TemplateInput): Promise<ProjectTemplate>
-    /** Удалить пользовательский шаблон; удалённый шаблон по умолчанию сбрасывается на «Общий». */
-    delete(id: string): Promise<TemplatesState>
-    /** Копия шаблона (в том числе встроенного) под новым id. */
-    duplicate(id: string): Promise<ProjectTemplate>
-    setDefault(id: string): Promise<TemplatesState>
-  }
-  workflow: {
-    /** Дефолтный граф для этих ролей (`defaultWorkflow` в core): показать, когда `Project.workflow` не задан. */
-    default(roles: Role[]): Promise<Workflow>
   }
   agents: {
     /** Агенты реестра с признаками «установлен»/«включён» для активного проекта. refresh — пересканировать PATH. */
