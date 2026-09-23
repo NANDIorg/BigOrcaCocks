@@ -59,6 +59,10 @@ export interface ProjectSummary {
   active: boolean
   /** Задач в колонке kind in_progress. */
   inProgress: number
+  /** Шаблон («тип проекта»), из которого проект создан; нет — проект старше шаблонов. */
+  templateId?: string
+  /** Название этого шаблона; нет — шаблон удалён (или нет `templateId`). */
+  templateTitle?: string
 }
 
 export interface SocketDeps {
