@@ -38,7 +38,7 @@ const HELP = `orca-board — управление доской агентов
                 [--priority urgent|high|normal|low]   приоритет глобальной задачи, по умолчанию normal
   global update --global <id> [--title "..."] [--description "..."] [--priority urgent|high|normal|low]
                                           приоритет меняется в любой колонке; подзадач не касается
-  global move --global <id> --status <id колонки>    только backlog/in_progress/done; подзадачи не трогает; в done — закрывает прогон (run_done)
+  global move --global <id> --status <id колонки>    только backlog/in_progress/review/done; подзадачи не трогает; в review/done — закрывает прогон (run_done)
   global delete --global <id> [--cascade]  с подзадачами — только --cascade (удаляются вместе с ней)
   global tasks [--global <id>]            подзадачи только этой глобальной задачи
   global add-task [--global <id>] --title "..." [--spec "..."] --role <id> [--dep <id>]... [--answer-for human|coordinator]

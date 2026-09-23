@@ -294,7 +294,7 @@ export function resumeObjective(store: TaskStore, runId: string): { run: Run; ob
   const goal = run.objective.trim() || globalTaskTitle(run)
   const title = (status: string): string => store.columns().find((c) => c.id === status)?.title ?? status
   const tasks = store.listSubtasks(runId).map((t) => ({ id: t.id, title: t.title, status: title(t.status) }))
-  return { run, objective: resumeCoordinatorObjective(goal, tasks) }
+  return { run, objective: resumeCoordinatorObjective(goal, tasks, run.returns) }
 }
 
 /**
@@ -371,6 +371,31 @@ export function startCoordinator(
   }
   store.setRunPty(run.id, ptyId, role.agent)
   return { ptyId, runId: run.id }
+}
+
+/**
+ * «Вернуть в работу» с «Проверки»: уточнение человека сохраняется в прогоне (`returnGlobalTask`), и координатор
+ * запускается повторно — уточнение он получит в цели (`resumeObjective` → `resumeCoordinatorObjective`).
+ * Живой координатор проверяется до правки стора: после `runs finish` его терминал закрывается не сразу
+ * (`coordinatorsToClose`), и возврат в это окно не должен оставить задачу «В работе» без нового координатора.
+ * Упал запуск после возврата — карточка остаётся «В работе» с уточнением, «Запустить координатора» его подхватит.
+ */
+export function returnToWork(
+  store: TaskStore,
+  repoRoot: string,
+  ctx: WorkerEnvContext,
+  runId: string,
+  text: string,
+  cols = 120,
+  rows = 30
+): { ptyId: string; runId: string } {
+  const run = store.getRun(runId)
+  if (!run) throw new Error(`глобальная задача не найдена: ${runId}`)
+  if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
+    throw new Error('координатор этой глобальной задачи ещё завершается — повторите через несколько секунд')
+  }
+  store.returnGlobalTask(runId, text)
+  return startCoordinator(store, repoRoot, ctx, '', cols, rows, [], runId)
 }
 
 /**

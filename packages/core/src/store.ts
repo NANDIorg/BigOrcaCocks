@@ -675,8 +675,14 @@ export class TaskStore {
     return [...this.runs.values()].find((r) => r.inbox)
   }
 
+  /** Карточка в закрытой колонке — «Проверка» (review) или «Сделано» (done): работа по ней не идёт. */
+  private isClosedKind(run: Run): boolean {
+    const kind = this.globalKind(run)
+    return kind === 'done' || kind === 'review'
+  }
+
   /**
-   * Закрытый прогон снова открыт: автозакрытие ждёт новой подзадачи в done; карточка из done — в работу.
+   * Закрытый прогон снова открыт: автозакрытие ждёт новой подзадачи в done; карточка из done/review — в работу.
    * Непрочитанные run_done прошлого закрытия гасятся, чтобы новый координатор не получил их сразу.
    */
   private reopenRun(run: Run): void {
@@ -686,7 +692,7 @@ export class TaskStore {
     run.closedAt = undefined
     run.finishedAt = undefined
     run.reopenedAt = Date.now()
-    if (run.status === undefined || this.globalKind(run) === 'done') run.status = this.columnId('in_progress')
+    if (run.status === undefined || this.isClosedKind(run)) run.status = this.columnId('in_progress')
     run.updatedAt = Date.now()
   }
 
@@ -766,22 +772,57 @@ export class TaskStore {
 
   /**
    * Ручное перемещение карточки по колонкам проекта. Статусы подзадач не меняются.
-   * В колонку kind=done — человек объявил глобальную задачу сделанной: открытый прогон закрывается
-   * с `run_done {manual: true}`, чтобы координатор (если ждёт) закончил, а приложение закрыло его терминал.
-   * Уже закрытый прогон повторно не закрывается. Из done в другую колонку — прогон снова открыт (reopenRun).
-   * В done запросы прогона к человеку отменяются (cancelled): отвечать больше незачем.
+   * В колонку kind=done или review («Проверка») — человек объявил работу сделанной: открытый прогон
+   * закрывается с `run_done {manual: true}`, чтобы координатор (если ждёт) закончил, а приложение закрыло
+   * его терминал. Уже закрытый прогон повторно не закрывается (review → done — это «Подтвердить», done → review —
+   * просто перенос). Из done/review в backlog/in_progress — прогон снова открыт (reopenRun), координатор не
+   * запускается. В done/review запросы прогона к человеку отменяются (cancelled): отвечать больше незачем.
    */
   moveGlobalTask(id: string, status: string): GlobalTask {
     const run = this.mustRun(id)
     this.assertGlobalColumn(status)
-    if (this.columnKind(status) === 'done') {
+    const kind = this.columnKind(status)
+    if (kind === 'done' || kind === 'review') {
       this.cancelRequests((r) => r.runId === run.id)
-      if (run.closedAt === undefined) this.closeDone(run, true)
+      if (run.closedAt === undefined) this.closeDone(run, status, true)
     } else if (run.closedAt !== undefined) {
       this.reopenRun(run)
     }
     run.status = status
     run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /**
+   * «Подтвердить» на проверке: человек принял результат — карточка из kind=review в done. Прогон уже закрыт
+   * (автозакрытие или `runs finish`), поэтому `closedAt` не меняется и событий нет.
+   */
+  acceptGlobalTask(id: string): GlobalTask {
+    const run = this.mustRun(id)
+    if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — подтвердить можно только из колонки «Проверка»`)
+    run.status = this.columnId('done')
+    run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /**
+   * «Вернуть в работу» с проверки: уточнение человека сохраняется в `Run.returns`, прогон переоткрывается
+   * (reopenRun гасит старые run_done — новый координатор не получит их сразу), карточка — в in_progress.
+   * Координатора запускает main (store не знает о PTY): уточнение он получит в цели повторного запуска
+   * (`resumeCoordinatorObjective`), поэтому отдельного события нет. У «Входящих» координатора нет — ошибка.
+   */
+  returnGlobalTask(id: string, text: string): GlobalTask {
+    const run = this.mustRun(id)
+    const clarification = text.trim()
+    if (!clarification) throw new Error('напиши, что доделать: уточнение получит координатор')
+    if (run.inbox) throw new Error('«Входящие» нельзя вернуть в работу: у них нет координатора')
+    if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — вернуть в работу можно только из колонки «Проверка»`)
+    const at = Date.now()
+    run.returns = [...(run.returns ?? []), { at, text: clarification }]
+    this.reopenRun(run)
+    run.status = this.columnId('in_progress')
     this.commit()
     return this.getGlobalTask(id)
   }
@@ -816,7 +857,7 @@ export class TaskStore {
   }
 
   /**
-   * Глобальная задача встаёт только в backlog / in_progress / done. В needs_input карточка попадает
+   * Глобальная задача встаёт только в backlog / in_progress / review («Проверка») / done. В needs_input карточка попадает
    * сама, пока подзадачи ждут человека (toGlobalTask), — руками туда нельзя.
    */
   private assertGlobalColumn(status: string): void {
@@ -825,13 +866,14 @@ export class TaskStore {
       throw new Error(`колонка «${status}» заполняется сама: там глобальные задачи, где подзадачи ждут ответа человека`)
     }
     if (!globalStoredColumns(this.columns()).some((c) => c.id === status)) {
-      throw new Error(`колонка «${status}» — только для подзадач; глобальная задача: бэклог, в работе или сделано`)
+      throw new Error(`колонка «${status}» — только для подзадач; глобальная задача: бэклог, в работе, проверка или сделано`)
     }
   }
 
   /**
-   * Закрыть прогон вручную. Карточку из kind=in_progress (туда её ставит сама система) — в done, как при
-   * автозакрытии; ручную расстановку по другим колонкам не трогает. run_done не шлёт.
+   * Закрыть прогон вручную. Карточку из kind=in_progress (туда её ставит сама система) — в done: это явное
+   * закрытие, а не результат работы, проверять нечего; ручную расстановку по другим колонкам не трогает.
+   * run_done не шлёт.
    * Идемпотентно: повторный вызов closedAt не меняет.
    */
   closeRun(id: string): Run {
@@ -847,7 +889,8 @@ export class TaskStore {
 
   /**
    * Координатор закончил работу по прогону (`runs finish`). Для закрытого прогона — просто сигнал.
-   * Незакрытый прогон, в котором все подзадачи уже в kind=done, закрывается здесь же с run_done:
+   * Незакрытый прогон, в котором все подзадачи уже в kind=done, закрывается здесь же с run_done (карточка —
+   * на «Проверку», как при автозакрытии):
    * это повторный запуск координатора без новой работы (или новую подзадачу удалили) — автозакрытие
    * ждёт новой подзадачи в done и само не сработает. У свежего прогона нужна хотя бы одна подзадача.
    * Иначе ошибка: до run_done координатору ещё есть что делать. Повторный вызов обновляет время.
@@ -859,7 +902,7 @@ export class TaskStore {
       const idle = tasks.every((t) => this.isKind(t, 'done')) && (tasks.length > 0 || run.reopenedAt !== undefined)
       if (!idle) throw new Error(`run not closed: ${id} — дождись run_done`)
       // Координатор сам сообщил о конце — ждать этот run_done ему уже не нужно.
-      const done = this.closeDone(run)
+      const done = this.closeDone(run, this.reviewColumn(run))
       if (done) done.consumedBy = 'runs finish'
     }
     run.finishedAt = Date.now()
@@ -879,19 +922,27 @@ export class TaskStore {
       if (tasks.length === 0 || !tasks.every((t) => this.isKind(t, 'done'))) continue
       // Переоткрытый прогон: ждём, пока хоть одна подзадача дойдёт до done после переоткрытия (setStatus снимет метку).
       if (run.reopenedAt !== undefined) continue
-      this.closeDone(run)
+      this.closeDone(run, this.reviewColumn(run))
     }
   }
 
   /**
-   * Закрыть прогон как завершённый: карточка в done и событие run_done (его и возвращает).
-   * `manual` — карточку перенёс в done человек (подзадачи могут быть не закрыты), в событии `manual: true`.
+   * Куда встаёт закрытая по итогам работы глобальная задача: на «Проверку» (kind=review) — результат
+   * принимает человек. «Входящие» — сразу в done: это не работа координатора, проверять нечего.
+   */
+  private reviewColumn(run: Run): string {
+    return this.columnId(run.inbox ? 'done' : 'review')
+  }
+
+  /**
+   * Закрыть прогон как завершённый: карточка в колонку `status` и событие run_done (его и возвращает).
+   * `manual` — карточку перенёс человек (подзадачи могут быть не закрыты), в событии `manual: true`.
    * «Входящим» run_done не шлётся: у них нет координатора, событие некому забрать.
    */
-  private closeDone(run: Run, manual = false): OrcaEvent | undefined {
+  private closeDone(run: Run, status: string, manual = false): OrcaEvent | undefined {
     run.closedAt = Date.now()
     run.reopenedAt = undefined
-    run.status = this.columnId('done')
+    run.status = status
     run.updatedAt = run.closedAt
     if (run.inbox) return undefined
     return this.pushEvent('run_done', { runId: run.id, objective: run.objective, ...(manual ? { manual: true } : {}) })

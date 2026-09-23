@@ -118,17 +118,42 @@ export function promptChannel(spec: Pick<AgentSpec, 'invoke'> | undefined): Prom
 export const COORDINATOR_RESUME_SECTION = 'Повторный запуск'
 
 /**
- * Цель повторного запуска координатора на глобальной задаче: исходная цель плюс уже созданные подзадачи
- * (`status` — название колонки). Правила продолжения — раздел «Повторный запуск» встроенной инструкции,
- * здесь только ссылка на него. Подзадач нет — цель без изменений.
+ * Заголовок блока цели повторного запуска с уточнением человека после «Вернуть в работу» на «Проверке».
+ * Та же строка — в разделе «Повторный запуск» skills/coordinator.md (сверяет prompts.test.ts).
  */
-export function resumeCoordinatorObjective(goal: string, subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>): string {
-  if (subtasks.length === 0) return goal
-  return [
-    goal,
-    '',
-    `${COORDINATOR_RESUME_SECTION}: у этой глобальной задачи уже есть подзадачи — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции (сверься с \`orca-board global tasks\`, не создавай дубли):`,
-    ...subtasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`),
-    'Если все они в done и новых подзадач не нужно — run_done не придёт: сводка и сразу `orca-board runs finish`.'
-  ].join('\n')
+export const COORDINATOR_RETURN_HEADING = 'Уточнение после проверки'
+
+/**
+ * Цель повторного запуска координатора на глобальной задаче: исходная цель, уточнения человека после
+ * проверки (`returns` — последнее полностью, прошлые списком) и уже созданные подзадачи (`status` — название
+ * колонки). Правила продолжения — раздел «Повторный запуск» встроенной инструкции, здесь только ссылка на него.
+ * Нет ни подзадач, ни уточнений — цель без изменений.
+ */
+export function resumeCoordinatorObjective(
+  goal: string,
+  subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>,
+  returns: ReadonlyArray<{ text: string }> = []
+): string {
+  const parts = [goal]
+  const last = returns[returns.length - 1]
+  if (last) {
+    parts.push(
+      '',
+      `${COORDINATOR_RETURN_HEADING}: человек проверил результат и вернул задачу в работу — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции:`,
+      last.text
+    )
+    const earlier = returns.slice(0, -1)
+    if (earlier.length > 0) parts.push('', 'Прошлые уточнения (уже учтены в прошлых запусках):', ...earlier.map((r) => `- ${r.text}`))
+  }
+  if (subtasks.length > 0) {
+    parts.push(
+      '',
+      `${COORDINATOR_RESUME_SECTION}: у этой глобальной задачи уже есть подзадачи — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции (сверься с \`orca-board global tasks\`, не создавай дубли):`,
+      ...subtasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`),
+      last
+        ? 'Уточнение — новая работа: создай подзадачи по нему. Если оно правда не требует работы — сводка с объяснением и сразу `orca-board runs finish`.'
+        : 'Если все они в done и новых подзадач не нужно — run_done не придёт: сводка и сразу `orca-board runs finish`.'
+    )
+  }
+  return parts.join('\n')
 }

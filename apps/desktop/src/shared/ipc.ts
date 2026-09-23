@@ -285,6 +285,13 @@ export interface OrcaApi {
      * Новые подзадачи координатора попадают в неё же. Второй живой координатор — ошибка.
      */
     startCoordinator(id: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
+    /** «Подтвердить» на «Проверке»: из колонки kind=review в done, событий нет. Не на проверке — ошибка. */
+    accept(id: string): Promise<GlobalTask>
+    /**
+     * «Вернуть в работу» с «Проверки» с уточнением (`text` обязателен): задача — в работу, координатор
+     * запускается повторно и получает уточнение в цели. Возвращает ptyId координатора.
+     */
+    returnToWork(id: string, text: string, cols: number, rows: number): Promise<string>
   }
   tasks: {
     /** Без roleId — единственная роль проекта, иначе ошибка. Задача попадает во «Входящие» (см. globalTasks). */

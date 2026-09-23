@@ -2,7 +2,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION } from './prompts.ts'
+import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION, COORDINATOR_RETURN_HEADING } from './prompts.ts'
 import { getAgent } from './agents.ts'
 import { withRoleInstructions, withAgentRules } from './types.ts'
 
@@ -136,6 +136,25 @@ describe('повторный запуск координатора', () => {
     assert.ok(text.includes('orca-board runs finish'))
     // Цель начинается строкой-маркером, которую раздел инструкции и распознаёт.
     assert.ok(text.split('\n').some((l) => l.startsWith(COORDINATOR_RESUME_SECTION)))
+  })
+
+  it('уточнение после проверки — в цели даже без подзадач, последнее полностью, прошлые списком', () => {
+    const only = resumeCoordinatorObjective('цель', [], [{ text: 'добавь тесты\nи доку' }])
+    assert.ok(only.startsWith('цель\n'))
+    assert.ok(only.split('\n').some((l) => l.startsWith(COORDINATOR_RETURN_HEADING)))
+    assert.ok(only.includes('добавь тесты\nи доку'))
+    assert.ok(only.includes(`по разделу «${COORDINATOR_RESUME_SECTION}»`))
+    const many = resumeCoordinatorObjective('цель', [{ id: 't1', title: 'A', status: 'Done' }], [{ text: 'первое' }, { text: 'второе' }])
+    assert.ok(many.includes('- первое'), 'прошлое уточнение — списком')
+    assert.ok(many.indexOf('второе') < many.indexOf('- t1 [Done] A'), 'последнее уточнение — до списка подзадач')
+    assert.ok(many.includes('Уточнение — новая работа'))
+  })
+
+  it('раздел «Повторный запуск» объясняет уточнение после проверки, run_done — сводку для проверки', () => {
+    const section = skill.slice(skill.indexOf(`${COORDINATOR_RESUME_SECTION}:`))
+    assert.ok(section.includes(`«${COORDINATOR_RETURN_HEADING}»`), 'маркер цели из resumeCoordinatorObjective')
+    assert.match(section, /новая\s+работа/)
+    assert.match(skill, /глобальная задача уходит человеку на проверку/)
   })
 })
 

@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type TaskPriority, type Workflow } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
-import { startWorker, startCoordinator, startAssistant, workerPath, type WorkerEnvContext } from './worker'
+import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
@@ -506,6 +506,11 @@ function registerIpc(): void {
   ipcMain.handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
     runCoordinator('', undefined, cols, rows, validateImageAttachments(images), id)
   )
+  ipcMain.handle('globalTasks:accept', (_e, id: string) => projects.activeStore().acceptGlobalTask(id))
+  ipcMain.handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number) => {
+    const p = resolveProject()
+    return returnToWork(p.store, p.root, ctx(p.id), id, typeof text === 'string' ? text : '', cols, rows).ptyId
+  })
   ipcMain.handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
   ipcMain.handle('requests:list', (_e, opts?: RequestListOptions) => {
     if (!projects.active()) return []
