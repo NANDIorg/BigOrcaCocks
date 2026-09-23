@@ -1,8 +1,10 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { PRIORITY_TITLES, isTaskPriority, type BoardColumn, type GlobalTask, type TaskPriority } from '@orca-board/core'
+import { PRIORITY_TITLES, isTaskPriority, type BoardColumn, type ColumnKind, type GlobalTask, type TaskPriority } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { GlobalDuration } from './GlobalBoard'
+import { GlobalReturns } from './GlobalTaskView'
+import { globalTaskActions } from './globalReview'
 import { formatStamp } from './boardSort'
 import { PriorityOptions } from './Priority'
 import { STALE_PRIORITY_MESSAGE, taskPriorityOf } from './taskPriority'
@@ -14,13 +16,20 @@ interface Props {
   columns: BoardColumn[]
   /** main знает приоритет глобальных задач (`runsKnowPriority`); старый main его не сохранит — выбор не даём. */
   priorityEditable: boolean
+  /** Вид колонки глобального канбана, где сейчас задача, и живой ли координатор — действия «Проверки». */
+  statusKind?: ColumnKind
+  live?: boolean
+  /** «Подтвердить» на «Проверке». */
+  onAccept?(): void
+  /** «Вернуть в работу…» на «Проверке» — модалка с уточнением (эта закрывается). */
+  onReturn?(): void
   onClose(): void
   /** priority — только если main его знает; при правке App отправляет его, только если он изменился. */
   onSave(input: { title: string; description: string; status?: string; priority?: TaskPriority }): Promise<void>
 }
 
 /** Создание и правка глобальной задачи: название, описание, приоритет и (при создании) колонка. */
-export function GlobalTaskModal({ global, columns, priorityEditable, onClose, onSave }: Props): React.JSX.Element {
+export function GlobalTaskModal({ global, columns, priorityEditable, statusKind, live = false, onAccept, onReturn, onClose, onSave }: Props): React.JSX.Element {
   const [title, setTitle] = useState(global?.title ?? '')
   const [description, setDescription] = useState(global?.description ?? '')
   // Новая — «обычный»; у карточки от старого main поля нет — тоже normal.
@@ -30,6 +39,7 @@ export function GlobalTaskModal({ global, columns, priorityEditable, onClose, on
   const [error, setError] = useState<string | null>(null)
   const busyRef = useRef(false)
   const editing = global !== undefined
+  const actions = global ? globalTaskActions(global, statusKind, live) : undefined
   // У «Входящих» название фиксированное и описания нет — правится только то, что задано явно.
   const canSave = !busy && (title.trim() !== '' || (!editing && description.trim() !== ''))
 
@@ -77,6 +87,20 @@ export function GlobalTaskModal({ global, columns, priorityEditable, onClose, on
             Создана {formatStamp(global.createdAt)}
             {global.closedAt !== undefined && <> · закрыта {formatStamp(global.closedAt)}</>} · <GlobalDuration global={global} variant="line" />
           </p>
+        )}
+        {global && <GlobalReturns global={global} />}
+        {actions && (actions.accept || actions.returnToWork) && (
+          <div className="g-modal-review">
+            <span className="muted">На проверке</span>
+            {actions.accept && onAccept && (
+              <button type="button" className="btn-sm primary" disabled={busy} onClick={onAccept}>Подтвердить</button>
+            )}
+            {actions.returnToWork && onReturn && (
+              <button type="button" className="btn-sm" disabled={busy || actions.returnBlocked !== undefined} title={actions.returnBlocked} onClick={onReturn}>
+                Вернуть в работу…
+              </button>
+            )}
+          </div>
         )}
         <label>
           Название

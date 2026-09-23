@@ -345,6 +345,12 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 - Кнопка «Запустить» на карточке — `startCoordinator`, не `worker.start`. Живой координатор — терминал
   с `role: 'coordinator'` и `runId === id` в реестре.
 - «Входящие» (`inbox: true`) — показывать как обычную карточку; координатора на ней не запускать.
+- «Проверка» (`kind=review`): на карточке и в деталях (`GlobalTaskView`, `GlobalTaskModal`) — «Подтвердить»
+  (`accept`) и «Вернуть в работу…» (модалка `ReturnGlobalModal` с обязательным текстом → `returnToWork` →
+  терминал координатора); «Запустить координатора» на ней скрыта, пока жив прежний координатор — возврат
+  выключен. Какие действия доступны — `globalTaskActions` (`renderer/src/globalReview.ts`), история уточнений —
+  `GlobalReturns` (новые сверху). Старый preload без методов — «перезапустите приложение» (`globalReviewApi`),
+  старый main («No handler registered») — то же (`reviewErrorMessage`).
 
 ## Проверки
 

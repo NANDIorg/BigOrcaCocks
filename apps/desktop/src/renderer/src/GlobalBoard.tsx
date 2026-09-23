@@ -5,6 +5,7 @@ import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, type GlobalTimePart } from './duration'
 import { useNow } from './useNow'
+import { globalTaskActions } from './globalReview'
 import { PriorityBadge } from './Priority'
 import { BOARD_SORT_OPTIONS, GLOBAL_BOARD_SORT_KEY, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
@@ -18,8 +19,9 @@ export interface GlobalTaskAttention {
 
 interface Props {
   /**
-   * Колонки глобального канбана (globalBoardColumns: backlog / in_progress / needs_input / done); статус карточки —
-   * id колонки. needs_input заполняется сама (подзадачи ждут человека) — туда не перетаскивают.
+   * Колонки глобального канбана (globalBoardColumns: backlog / in_progress / needs_input / review / done); статус
+   * карточки — id колонки. needs_input заполняется сама (подзадачи ждут человека) — туда не перетаскивают.
+   * review — «Проверка»: работа закрыта и ждёт приёмки человеком.
    */
   columns: BoardColumn[]
   globals: GlobalTask[]
@@ -39,6 +41,10 @@ interface Props {
   onEdit(global: GlobalTask): void
   onRemove(global: GlobalTask): void
   onStartCoordinator(global: GlobalTask): void
+  /** «Подтвердить» на «Проверке». */
+  onAccept(global: GlobalTask): void
+  /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
+  onReturn(global: GlobalTask): void
 }
 
 /** «только что», «5 мин назад», «3 ч назад», иначе дата. */
@@ -110,10 +116,10 @@ export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.El
   )
 }
 
-/** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Нужен ответ / Сделано проекта. */
+/** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Нужен ответ / Проверка / Сделано проекта. */
 export function GlobalBoard(props: Props): React.JSX.Element {
   const { columns, globals, liveCoordinators, attention, requests, tasks, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
-  const { onResolveRequest, onOpenInbox } = props
+  const { onResolveRequest, onOpenInbox, onAccept, onReturn } = props
   const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
@@ -189,12 +195,17 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                 {dragOver === column.id && dragging && byId.get(dragging)?.status !== column.id && <div className="placeholder" />}
                 {items.length === 0 && dragOver !== column.id && (
                   <div className="g-empty">
-                    {auto ? 'Здесь появятся задачи, где подзадачи ждут вашего ответа' : 'Здесь пока пусто — перетащите карточку сюда'}
+                    {auto
+                      ? 'Здесь появятся задачи, где подзадачи ждут вашего ответа'
+                      : column.kind === 'review'
+                        ? 'Сюда попадают задачи, когда все подзадачи сделаны: проверьте результат'
+                        : 'Здесь пока пусто — перетащите карточку сюда'}
                   </div>
                 )}
                 {items.map((g) => {
                   const live = liveCoordinators.has(g.id)
                   const att = attention.get(g.id)
+                  const actions = globalTaskActions(g, column.kind, live)
                   // Первый (самый старый) запрос — прямо на карточке; остальные — во Входящих.
                   const request = column.kind === 'needs_input' ? pendingRequestsOf(requests, { runId: g.id }).sort((a, b) => a.createdAt - b.createdAt)[0] : undefined
                   return (
@@ -224,7 +235,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                       }}
                     >
                       <div className="card-tools" onClick={(e) => e.stopPropagation()}>
-                        {!g.inbox && !live && (
+                        {actions.startCoordinator && (
                           <button type="button" className="card-tool" title="Запустить координатора" aria-label="Запустить координатора" onClick={() => onStartCoordinator(g)}>
                             <Icon.play />
                           </button>
@@ -266,6 +277,29 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         </div>
                       )}
                       <GlobalProgress global={g} />
+                      {(actions.accept || actions.returnToWork) && (
+                        <div className="g-card-review" onClick={(e) => e.stopPropagation()}>
+                          {actions.accept && (
+                            <button type="button" className="btn-sm primary" onClick={() => onAccept(g)} title="Результат принят — в «Сделано»">
+                              Подтвердить
+                            </button>
+                          )}
+                          {actions.returnToWork && (
+                            <button
+                              type="button"
+                              className="btn-sm"
+                              disabled={actions.returnBlocked !== undefined}
+                              title={actions.returnBlocked ?? 'Написать, что доделать, и запустить координатора'}
+                              onClick={() => onReturn(g)}
+                            >
+                              Вернуть в работу…
+                            </button>
+                          )}
+                          {g.returns && g.returns.length > 0 && (
+                            <span className="g-card-returns" title="Сколько раз задачу возвращали с проверки">возвратов: {g.returns.length}</span>
+                          )}
+                        </div>
+                      )}
                       {column.kind === 'done' && g.closedAt !== undefined ? (
                         <div className="stamp">Завершено: {formatStamp(g.closedAt)}</div>
                       ) : sort === 'updated' ? (
