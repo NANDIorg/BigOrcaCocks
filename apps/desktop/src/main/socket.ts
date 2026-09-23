@@ -210,9 +210,18 @@ const handlers: Record<string, Handler> = {
   'global.list': (_r, _d, store) => store.listGlobalTasks().map(withCoordinatorAlive),
   'global.get': (r, _d, store) => withCoordinatorAlive(store.getGlobalTask(globalId(r))),
   'global.create': (r, _d, store) =>
-    store.createGlobalTask({ title: str(r.params.title), description: str(r.params.description), status: str(r.params.status) }),
+    store.createGlobalTask({
+      title: str(r.params.title),
+      description: str(r.params.description),
+      status: str(r.params.status),
+      priority: priorityParam(r) as TaskPriority | undefined
+    }),
   'global.update': (r, _d, store) =>
-    store.updateGlobalTask(globalId(r), { title: str(r.params.title), description: str(r.params.description) }),
+    store.updateGlobalTask(globalId(r), {
+      title: str(r.params.title),
+      description: str(r.params.description),
+      priority: priorityParam(r) as TaskPriority | undefined
+    }),
   'global.move': (r, _d, store) => {
     const status = str(r.params.status)
     if (!status) throw new Error('--status обязателен (id колонки из columns list)')

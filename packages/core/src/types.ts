@@ -169,6 +169,12 @@ export interface Run {
   status?: TaskStatus
   /** Служебная «Входящие»: сюда попадают задачи без глобальной (старые и созданные без --run). */
   inbox?: boolean
+  /**
+   * Приоритет глобальной задачи — та же шкала, что у `Task.priority`. Store проставляет его всегда
+   * (новым — normal, старым — `migrateRunPriority`); необязательное, потому что renderer строит карточки
+   * из снапшота, который мог прислать main от кода до приоритетов, — `toGlobalTask` читает нет поля как normal.
+   */
+  priority?: TaskPriority
   createdAt: number
   /** Последняя правка карточки (название, описание, статус, запуск координатора). */
   updatedAt?: number

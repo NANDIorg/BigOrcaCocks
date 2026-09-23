@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo, type Role, type Task } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo, type GlobalTask, type Role, type Task } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 
 let tmp: string
@@ -297,5 +297,17 @@ describe('приоритет задачи через сокет', () => {
     assert.match((await call('task.update', { task: task.id, priority: true })).error!, /--priority требует значения: urgent, high, normal, low/)
     assert.match((await call('task.create', { title: 'X', role: 'developer', priority: 'asap' })).error!, /приоритет: ожидается/)
     assert.match((await call('task.update', { task: task.id })).error!, /укажи --title, --spec и\/или --priority/)
+  })
+
+  it('global create / update --priority: приоритет глобальной задачи; без флага — normal', async () => {
+    const created = await call('global.create', { title: 'x', priority: 'urgent' })
+    assert.equal(created.ok, true)
+    const g = created.result as GlobalTask
+    assert.equal(g.priority, 'urgent')
+    assert.equal(((await call('global.create', { title: 'y' })).result as GlobalTask).priority, 'normal')
+    assert.equal(((await call('global.update', { global: g.id, priority: 'low' })).result as GlobalTask).priority, 'low')
+    assert.match((await call('global.update', { global: g.id, priority: true })).error!, /--priority требует значения/)
+    assert.match((await call('global.create', { title: 'z', priority: 'asap' })).error!, /приоритет: ожидается/)
+    assert.equal(((await call('global.get', { global: g.id })).result as GlobalTask).priority, 'low')
   })
 })

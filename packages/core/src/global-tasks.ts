@@ -3,7 +3,8 @@
  * Глобальная задача — это прогон (`Run`), её подзадачи — задачи с `Task.runId === run.id`.
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
-import type { BoardColumn, ColumnKind, HumanRequest, Run, Task } from './types'
+import type { BoardColumn, ColumnKind, HumanRequest, Run, Task, TaskPriority } from './types'
+import { DEFAULT_TASK_PRIORITY, isTaskPriority } from './types.ts'
 import { activeDuration, taskActiveTime } from './active-time.ts'
 
 /** Название «Входящих» — служебной глобальной задачи для задач без глобальной. */
@@ -45,6 +46,8 @@ export interface GlobalTask {
   description: string
   /** Id колонки проекта. */
   status: string
+  /** Приоритет (`Run.priority`); у прогона без поля или с неизвестным значением — normal. */
+  priority: TaskPriority
   inbox: boolean
   createdAt: number
   updatedAt: number
@@ -216,6 +219,7 @@ export function toGlobalTask(
     title: globalTaskTitle(run),
     description: run.objective,
     status,
+    priority: isTaskPriority(run.priority) ? run.priority : DEFAULT_TASK_PRIORITY,
     inbox: run.inbox === true,
     createdAt: run.createdAt,
     updatedAt,

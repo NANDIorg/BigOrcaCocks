@@ -109,6 +109,7 @@ export class TaskStore {
       // До closeStaleDispatches: задача «В работе» от старого кода должна войти в него с открытым отрезком.
       const active = this.migrateActiveTime()
       const priority = this.migrateTaskPriority()
+      const runPriority = this.migrateRunPriority()
       const migrated = this.migrateGlobalTasks()
       const stale = this.closeStaleDispatches()
       const requests = this.migrateRequests(snap.requests === undefined)
@@ -116,7 +117,7 @@ export class TaskStore {
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
       const synced = this.syncRunActiveTime()
-      if (active || priority || stale || requests || stages || migrated || own || synced) this.persistence?.save(this.snapshot())
+      if (active || priority || runPriority || stale || requests || stages || migrated || own || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -263,6 +264,20 @@ export class TaskStore {
     for (const task of this.tasks.values()) {
       if (isTaskPriority(task.priority)) continue
       task.priority = DEFAULT_TASK_PRIORITY
+      changed = true
+    }
+    return changed
+  }
+
+  /**
+   * Глобальные задачи (прогоны) из снапшотов до приоритетов или с неизвестным значением получают normal —
+   * как задачи в `migrateTaskPriority`. Возвращает true, если что-то поменялось.
+   */
+  private migrateRunPriority(): boolean {
+    let changed = false
+    for (const run of this.runs.values()) {
+      if (isTaskPriority(run.priority)) continue
+      run.priority = DEFAULT_TASK_PRIORITY
       changed = true
     }
     return changed
@@ -578,7 +593,7 @@ export class TaskStore {
 
   /** Новый прогон без commit. Статус по умолчанию — колонка kind=backlog. */
   private addRun(fields: Partial<Omit<Run, 'id' | 'createdAt'>> & { objective: string }, createdAt = Date.now()): Run {
-    const run: Run = { status: this.columnId('backlog'), ...fields, id: newId('run'), createdAt, updatedAt: createdAt }
+    const run: Run = { status: this.columnId('backlog'), priority: DEFAULT_TASK_PRIORITY, ...fields, id: newId('run'), createdAt, updatedAt: createdAt }
     this.runs.set(run.id, run)
     return run
   }
@@ -639,32 +654,43 @@ export class TaskStore {
     return this.listTasks().filter((t) => t.runId === runId)
   }
 
-  /** Глобальная задача без координатора. Нужно название или описание; status — id колонки (по умолчанию backlog). */
-  createGlobalTask(input: { title?: string; description?: string; status?: string; workflow?: Workflow }): GlobalTask {
+  /**
+   * Глобальная задача без координатора. Нужно название или описание; status — id колонки (по умолчанию backlog),
+   * priority — по умолчанию normal.
+   */
+  createGlobalTask(input: { title?: string; description?: string; status?: string; priority?: TaskPriority; workflow?: Workflow }): GlobalTask {
     const title = input.title?.trim() || undefined
     const objective = input.description ?? ''
     if (!title && !objective.trim()) throw new Error('укажи название или описание глобальной задачи')
     if (input.status !== undefined) this.assertGlobalColumn(input.status)
+    if (input.priority !== undefined) assertPriority(input.priority)
     const run = this.addRun({
       objective,
       ...(title ? { title } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...(input.workflow ? { workflow: snapshotWorkflow(input.workflow) } : {})
     })
     this.commit()
     return this.getGlobalTask(run.id)
   }
 
-  /** Переименовать/сменить описание. Подзадачи не трогает; координатору правка не доходит (он уже получил цель). */
-  updateGlobalTask(id: string, patch: { title?: string; description?: string }): GlobalTask {
+  /**
+   * Переименовать/сменить описание/приоритет. Подзадачи не трогает (их приоритет свой); координатору правка
+   * не доходит (он уже получил цель). Приоритет меняется в любой колонке — он влияет только на порядок показа.
+   */
+  updateGlobalTask(id: string, patch: { title?: string; description?: string; priority?: TaskPriority }): GlobalTask {
     const run = this.mustRun(id)
-    if (patch.title === undefined && patch.description === undefined) throw new Error('укажи название и/или описание')
-    if (patch.title !== undefined) {
-      const title = patch.title.trim()
-      if (!title) throw new Error('название не может быть пустым')
-      run.title = title
+    if (patch.title === undefined && patch.description === undefined && patch.priority === undefined) {
+      throw new Error('укажи название, описание и/или приоритет')
     }
+    // Проверка до правок: неизвестный приоритет не должен оставить карточку наполовину изменённой.
+    if (patch.priority !== undefined) assertPriority(patch.priority)
+    const title = patch.title?.trim()
+    if (patch.title !== undefined && !title) throw new Error('название не может быть пустым')
+    if (title) run.title = title
     if (patch.description !== undefined) run.objective = patch.description
+    if (patch.priority !== undefined) run.priority = patch.priority
     run.updatedAt = Date.now()
     this.commit()
     return this.getGlobalTask(id)
