@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, TEMPLATE_SECTIONS, builtinTaskType, builtinTaskTypes,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, TEMPLATE_SECTIONS, builtinTaskType, builtinTaskTypes, defaultWorkflow,
   type BoardColumn, type Role
 } from '@orca-board/core'
 import { ProjectManager } from './projects'
@@ -123,7 +123,19 @@ describe('библиотека типов', () => {
     assert.equal(t.settings.roles?.find((r) => r.id === 'developer')?.systemPrompt, 'промпт')
     assert.throws(() => pm.saveTaskTypeRules(GENERAL_TASK_TYPE_ID, 'ghost', 'x'), /нет роли «ghost»/)
   })
+
+  it('пользовательский тип: граф со ссылкой на удалённую роль переживает рестарт вместе с ролями', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const t = pm.saveTaskType({ title: 'Мой', settings: { roles: DEFAULT_ROLES, workflow: defaultWorkflow(DEFAULT_ROLES) } })
+    const roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
+    pm.saveTaskType({ id: t.id, title: 'Мой', settings: { roles, workflow: defaultWorkflow(DEFAULT_ROLES) } })
+    const loaded = new ProjectManager(tmp).taskType(t.id)
+    assert.deepEqual(loaded?.settings.roles?.map((r) => r.id), roles.map((r) => r.id))
+    assert.deepEqual(loaded?.settings.workflow, defaultWorkflow(DEFAULT_ROLES))
+  })
 })
+
 
 describe('типы проекта', () => {
   it('add: колонки встроенные, тип по умолчанию — заданный или библиотеки; копии настроек нет', () => {

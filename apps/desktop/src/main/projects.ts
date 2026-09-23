@@ -120,8 +120,8 @@ export class ProjectManager {
       const legacy = !(typeof raw.version === 'number' && raw.version >= PROJECTS_FILE_VERSION)
       if (legacy) normalizeLegacy(raw)
       const { data, changed } = migrateProjectsFile(raw as LegacyProjectsFile)
-      // Типы проверяются при каждой загрузке: руками испорченный тип отбрасывается целиком — граф ссылается на
-      // роли, и «починенный» по частям тип молча стал бы другим. Прогоны такого типа доработают по снимку.
+      // Типы чистятся при каждой загрузке по разделам (`loadedTaskType`): битый раздел не уносит тип целиком,
+      // иначе проект молча уехал бы на тип по умолчанию, а его роли и правила пропали бы при первой же записи.
       data.taskTypes = Array.isArray(data.taskTypes) ? data.taskTypes.flatMap(loadedTaskType) : []
       if (!data.taskTypes.length) delete data.taskTypes
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
@@ -901,31 +901,52 @@ function savedTypeSettings(settings: unknown, existing: TaskType | undefined, la
 }
 
 /**
- * Тип из projects.json: без id, названия или объекта настроек — отбрасывается; настройки проходят ту же
- * `validTypeSettings`, что при сохранении, и битый тип отбрасывается целиком. Мусор, который терпели и раньше,
- * чистится без отказа: нестроковые правила; граф будущей версии хранится как есть (исполнитель его не возьмёт).
- * Флаг builtin — только у типов из кода; сохранённая копия встроенного — обычный пользовательский тип.
+ * Тип из projects.json. Отбрасывается только без id, названия или объекта настроек; разделы настроек чистятся
+ * по одному, и битый раздел не уносит с собой остальные (роли, правила и разрешения — то, что человек настраивал
+ * руками, и копии в другом месте у них нет). Граф — как в `savedTypeSettings`: только форма и миграция версии, без
+ * сверки с ролями. Ссылку на удалённую роль (её пропускал `setRoles` до типов, и её переносит миграция проекта)
+ * исполнитель встретит в рантайме, а графа будущей версии он не возьмёт. Флаг builtin — только у типов из кода;
+ * сохранённая копия встроенного — обычный пользовательский тип.
  */
 function loadedTaskType(v: unknown): TaskType[] {
   if (!isObject(v) || !nonEmpty(v.id) || !nonEmpty(v.title) || !isObject(v.settings)) return []
-  const raw = { ...v.settings }
-  if (raw.agentRules !== undefined && typeof raw.agentRules !== 'string') delete raw.agentRules
+  const raw = v.settings
+  const settings: TaskTypeSettings = {}
+  if (isPermissionMode(raw.permissionMode)) settings.permissionMode = raw.permissionMode
+  const roles = loadedRoles(raw.roles)
+  if (roles) settings.roles = roles
+  if (typeof raw.agentRules === 'string' && raw.agentRules.trim()) settings.agentRules = raw.agentRules
   const wf = loadedWorkflow(raw.workflow)
-  const future = wf && wf.version > WORKFLOW_VERSION ? wf : undefined
-  if (wf && !future) raw.workflow = wf
-  else delete raw.workflow
-  let settings: TaskTypeSettings
-  try {
-    settings = validTypeSettings(raw, {}, `тип «${v.title}»`)
-  } catch {
-    return []
-  }
-  if (future) settings.workflow = future
+  if (wf) settings.workflow = wf
   return [{
     id: v.id, title: v.title,
     ...(typeof v.description === 'string' && v.description.trim() ? { description: v.description } : {}),
     settings
   }]
+}
+
+/**
+ * Роли типа из projects.json: целиком по `validateRoles`, а если список не проходит — по одной (битые и
+ * повторные id выпадают, остальные остаются). Не осталось ни одной — поля нет, тип берёт роли по умолчанию.
+ */
+function loadedRoles(v: unknown): Role[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  try {
+    return validateRoles(v as Role[])
+  } catch {
+    const seen = new Set<string>()
+    const roles = v.flatMap((r: Role) => {
+      try {
+        const [role] = validateRoles([r])
+        if (seen.has(role.id)) return []
+        seen.add(role.id)
+        return [role]
+      } catch {
+        return []
+      }
+    })
+    return roles.length ? roles : undefined
+  }
 }
 
 /** Поля проекта нового формата: мусор отбрасывается (тип по умолчанию и доступные типы — строки id). */

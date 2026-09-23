@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, LEGACY_TASK_TYPE_DESCRIPTION, TaskStore, builtinTaskTypes,
-  defaultWorkflow, type Role, type TaskType, type Workflow
+  defaultWorkflow, type Role, type Workflow
 } from '@orca-board/core'
 import { PROJECTS_FILE_VERSION, legacyTaskTypeId, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
 import { PROJECTS_BACKUP_NAME, ProjectManager } from './projects'
@@ -178,9 +178,29 @@ describe('миграция в ProjectManager', () => {
     assert.equal(r.agentRules, 'свои')
   })
 
-  it('испорченный руками тип отбрасывается целиком при загрузке', () => {
-    const bad: TaskType = { id: 'type_bad', title: 'Битый', settings: { roles: [] } }
-    writeFileSync(path.join(tmp, 'projects.json'), JSON.stringify({ version: PROJECTS_FILE_VERSION, projects: [], activeId: null, taskTypes: [bad] }))
-    assert.equal(new ProjectManager(tmp).taskType('type_bad'), undefined)
+  it('граф проекта ссылается на удалённую роль — тип «<имя>» и его роли не теряются', () => {
+    // До типов `setRoles` не сверял граф с ролями: гейт reviewer остался, а роли reviewer уже нет.
+    const roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer').map((r) => (r.id === 'developer' ? { ...r, model: 'x' } : r))
+    writeLegacy({ projects: [{ id: PID, root: path.join(tmp, 'repo'), name: 'repo', roles, workflow: defaultWorkflow(DEFAULT_ROLES), agentRules: 'свои' }] })
+    const pm = new ProjectManager(tmp)
+    assert.equal(pm.projectDefaultTypeId(PID), `type_${PID}`)
+    assert.equal(pm.roles(PID).find((r) => r.id === 'developer')?.model, 'x')
+    assert.equal(pm.resolveRun(PID).agentRules, 'свои')
+    assert.deepEqual(pm.taskType(`type_${PID}`)?.settings.workflow, defaultWorkflow(DEFAULT_ROLES), 'граф сохранён как был')
+    const again = new ProjectManager(tmp)
+    assert.equal(again.roles(PID).find((r) => r.id === 'developer')?.model, 'x', 'и после рестарта')
+  })
+
+  it('битые разделы типа отбрасываются по одному, тип остаётся', () => {
+    const bad = {
+      id: 'type_bad', title: 'Битый',
+      settings: { roles: [DESIGNER, { id: 'x', title: 'X', agent: 'нет такого' }, { ...DESIGNER, title: 'Второй' }], permissionMode: 'нет', agentRules: 1, workflow: 'мусор' }
+    }
+    const empty = { id: 'type_empty', title: 'Пустой', settings: { roles: [], agentRules: 'правила' } }
+    writeFileSync(path.join(tmp, 'projects.json'), JSON.stringify({ version: PROJECTS_FILE_VERSION, projects: [], activeId: null, taskTypes: [bad, empty, { id: 'type_no', title: 'Без настроек' }] }))
+    const pm = new ProjectManager(tmp)
+    assert.deepEqual(pm.taskType('type_bad')?.settings, { roles: [DESIGNER] })
+    assert.deepEqual(pm.taskType('type_empty')?.settings, { agentRules: 'правила' })
+    assert.equal(pm.taskType('type_no'), undefined, 'без объекта настроек типа нет')
   })
 })
