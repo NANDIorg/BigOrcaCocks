@@ -12,6 +12,8 @@ import { AnswerBlock } from './AnswerBlock'
 import { RequestCard, REQUEST_KIND_TITLE } from './RequestCard'
 import { Markdown } from './Markdown'
 import { Icon } from './icons'
+import { formatDuration, taskDuration } from './duration'
+import { useNow } from './useNow'
 
 interface Props {
   /** Актуальная задача из снимка: App находит её по id при каждом обновлении. */
@@ -96,6 +98,8 @@ export function TaskModal(props: Props): React.JSX.Element {
   const kind = column?.kind
   const role = roles.find((r) => r.id === task.roleId)
   const byId = new Map(tasks.map((t) => [t.id, t]))
+  const now = useNow()
+  const duration = taskDuration(task, now)
   const history = dispatches.filter((d) => d.taskId === task.id).sort((a, b) => b.startedAt - a.startedAt)
   const last = history[0]
   /** Последний сданный ответ задачи-ответа; прежние остаются в истории запусков. */
@@ -239,6 +243,14 @@ export function TaskModal(props: Props): React.JSX.Element {
                 ))}
               </span>
             </div>
+            {duration !== undefined && (
+              <div className="meta-row">
+                <span className="meta-key">Длительность</span>
+                <span className="meta-val">
+                  {task.doneAt === undefined ? `⏱ ${formatDuration(duration)}` : formatDuration(duration)}
+                </span>
+              </div>
+            )}
             <div className="meta-row">
               <span className="meta-key">Ветка</span>
               <span className="meta-val mono">{task.branch ?? '—'}</span>
@@ -372,6 +384,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                   <div className="dispatch-head">
                     <span className="mono">{formatDate(d.startedAt)}</span>
                     {d.endedAt && <span className="muted">→ {formatDate(d.endedAt)}</span>}
+                    <span className="muted">{d.endedAt ? '' : '⏱ '}{formatDuration((d.endedAt ?? now) - d.startedAt)}</span>
                     <span className={`chip ${o.cls}`}>{o.text}</span>
                     {d.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
                   </div>

@@ -8,6 +8,8 @@ import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { RunBadge, runShortLabel, type RunFilter } from './runs'
 import { BOARD_SORT_KEY, SORT_OPTIONS, compareTasks, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
+import { formatDuration, taskDuration } from './duration'
+import { useNow } from './useNow'
 
 interface Props {
   /** Колонки доски в порядке показа; статус задачи — id колонки. */
@@ -63,6 +65,12 @@ function subtitle(task: Task, role: Role | undefined): string {
   const parts = [role?.title ?? task.roleId, AGENT_TITLES[task.agent]]
   if (role?.model) parts.push(role.model)
   return parts.join(' · ')
+}
+
+/** Живой счётчик задачи в работе: таймер только у таких карточек, доска целиком не перерисовывается. */
+function LiveDuration({ startedAt }: { startedAt: number }): React.JSX.Element {
+  const now = useNow()
+  return <div className="stamp">⏱ {formatDuration(taskDuration({ startedAt }, now) ?? 0)}</div>
 }
 
 export function Board(props: Props): React.JSX.Element {
@@ -241,10 +249,14 @@ export function Board(props: Props): React.JSX.Element {
                         {kind !== 'done' && d?.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
                       </div>
                       {column.kind === 'done' && task.doneAt !== undefined ? (
-                        <div className="stamp">Завершено: {formatStamp(task.doneAt)}</div>
+                        <div className="stamp">
+                          Завершено: {formatStamp(task.doneAt)}
+                          {task.startedAt !== undefined && <> · за {formatDuration(taskDuration(task, task.doneAt) ?? 0)}</>}
+                        </div>
                       ) : sort === 'updated' ? (
                         <div className="stamp">Обновлено: {formatStamp(task.updatedAt)}</div>
                       ) : null}
+                      {task.startedAt !== undefined && task.doneAt === undefined && <LiveDuration startedAt={task.startedAt} />}
                       {task.feedback && column.kind !== 'review' && (
                         <div className="card-feedback" title={task.feedback}>↩ {task.feedback}</div>
                       )}
