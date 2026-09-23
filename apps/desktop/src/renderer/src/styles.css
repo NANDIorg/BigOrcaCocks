@@ -1234,3 +1234,23 @@ button:disabled { opacity: .45; cursor: default; }
 .wf-actions .btn-sm:disabled { opacity: .5; cursor: default; }
 .wf-actions-sep { width: 1px; height: 18px; background: var(--chip); }
 .about-sec .wf-notice { margin: 0; }
+
+/* «Обзор → Тип проекта» (about/ProjectTypeBox.tsx): отличия от шаблона с «Взять из шаблона» */
+.type-diff { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.type-diff .hint { margin: 0 0 8px; }
+.type-diff-list, .type-diff-roles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.type-diff-roles { margin: 6px 0 4px 16px; padding-left: 12px; border-left: 2px solid var(--line); }
+.type-diff-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.type-diff-line { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.type-diff-roles .btn-sm { flex-shrink: 0; }
+
+/* Диалоги шаблонов (about/ApplyTemplateModal.tsx, SaveTemplateModal.tsx) */
+.modal.tpl-apply { width: 600px; }
+.modal label.tpl-check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
+.tpl-desc { margin-top: -6px; }
+.tpl-sections { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
+.tpl-sections legend { padding: 0; margin-bottom: 8px; }
+.tpl-conseq { background: var(--frame); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.tpl-conseq-item b { font-weight: 500; }
+.tpl-conseq-item ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
+.tpl-conseq-error { display: flex; flex-direction: column; gap: 4px; color: var(--danger); overflow-wrap: anywhere; }

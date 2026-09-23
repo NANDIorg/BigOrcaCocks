@@ -13,6 +13,8 @@ interface Props {
   onMakeDefault(): void
   onApplyDefault(): void
   onRemove(): void
+  /** Блок «Тип проекта» (ProjectTypeBox); нет — старый preload без шаблонов, показывается прежний блок дефолта. */
+  typeBox?: React.ReactNode
 }
 
 /** Папка worktree задач: <repo>/../.orca-worktrees (как в main/worker.ts). */
@@ -22,9 +24,9 @@ function worktreeDir(root: string): string {
 
 const home = (path: string): string => path.replace(/^\/Users\/[^/]+/, '~')
 
-/** Раздел «Обзор»: статистика, паспорт проекта для CLI, сравнение с дефолтом и удаление из списка. */
+/** Раздел «Обзор»: статистика, паспорт проекта для CLI, тип проекта (сравнение с шаблоном) и удаление из списка. */
 export function OverviewSection(props: Props): React.JSX.Element {
-  const { project, socketPath, stats, diff, defaultsError, onMakeDefault, onApplyDefault, onRemove } = props
+  const { project, socketPath, stats, diff, defaultsError, onMakeDefault, onApplyDefault, onRemove, typeBox } = props
   const worktrees = worktreeDir(project.root)
   const same = diff !== null && diff.length === 0
 
@@ -69,7 +71,7 @@ export function OverviewSection(props: Props): React.JSX.Element {
         <p className="hint">В терминалах доступна команда <code>orca-board --help</code>.</p>
       </div>
 
-      <div className="about-box">
+      {typeBox ?? <div className="about-box">
         <h3>Дефолт для новых проектов</h3>
         <div className="row-act">
           <div className="row-act-text">
@@ -86,7 +88,7 @@ export function OverviewSection(props: Props): React.JSX.Element {
           <button className="btn-sm" disabled={same} onClick={onApplyDefault}>Применить дефолт…</button>
         </div>
         {defaultsError && <div className="editor-error">{defaultsError}</div>}
-      </div>
+      </div>}
 
       <div className="about-box danger-zone">
         <div className="row-act">
