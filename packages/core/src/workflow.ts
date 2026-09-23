@@ -336,14 +336,17 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
     if (start && !fromStart.has(n.id)) warnings.push({ message: `${nodeLabel(n)}: недостижима от старта`, nodeId: n.id })
   }
 
-  const isAttemptsLimit = (id: string): boolean => {
+  // Цикл останавливают лимит повторов и человек: возврат через «Вернуть» — каждый раз его решение, а не
+  // автоматический круг. Иначе пресет «N отказов → человек» (его «Вернуть» и «Конфликт мержа» ведут в работу)
+  // всё равно получал бы это предупреждение.
+  const stopsLoop = (id: string): boolean => {
     const n = nodes.get(id)
-    return n?.type === 'condition' && n.test.kind === 'attempts'
+    return n?.type === 'human' || (n?.type === 'condition' && n.test.kind === 'attempts')
   }
   for (const n of nodes.values()) {
     if (n.type !== 'work' || !fromStart.has(n.id)) continue
-    // Работа достижима из самой себя в обход лимита повторов — возвраты могут идти бесконечно.
-    if (reach(succ(n.id), succ, isAttemptsLimit).has(n.id)) {
+    // Работа достижима из самой себя в обход лимита повторов и человека — возвраты могут идти бесконечно.
+    if (reach(succ(n.id), succ, stopsLoop).has(n.id)) {
       warnings.push({ message: `${nodeLabel(n)}: возврат в работу без лимита повторов — отказы могут повторяться бесконечно`, nodeId: n.id })
     }
   }

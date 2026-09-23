@@ -235,7 +235,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   роль гейта (и `work.roleId`) не существует или служебная (`isTaskRole`), `attempts` на несуществующую ноду
   или `atLeast < 1`, роль из условия `role` не существует, условие `files`, несуществующая колонка; от старта
   недостижима ни одна `work`. Предупреждения: агент роли гейта выключен (только если передан `enabledAgents`),
-  нода недостижима, возврат в `work` в обход `attempts`, путь accept ведёт в `end` без `merge`, после `merge ok`
+  нода недостижима, возврат в `work` в обход `attempts` и `human` (решение человека цикл не делает бесконечным), путь accept ведёт в `end` без `merge`, после `merge ok`
   путь снова приходит в `merge`.
 - **`nextStage(wf, stage, outcome, ctx)` → `{stage, action}`** — чистая функция перехода. `stage =
   {nodeId, visits}`, `visits` считает заходы в ноды (включая условия) и нужен `attempts`. Цепочка `condition`

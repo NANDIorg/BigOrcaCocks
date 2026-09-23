@@ -265,6 +265,16 @@ describe('validateWorkflow: предупреждения', () => {
     assert.ok(!limited.warnings.some((w) => w.message.includes('бесконечно')), messages(limited.warnings))
   })
 
+  it('возврат в работу только через решение человека — не бесконечный цикл', () => {
+    // Дефолт без reviewer: ревью и конфликт мержа — человек, его «Вернуть» ведёт в работу.
+    const human = validateWorkflow(defaultWorkflow([]), { ...ctx, roles: ctx.roles.filter((r) => r.id !== 'reviewer') })
+    assert.ok(!human.warnings.some((w) => w.message.includes('бесконечно')), messages(human.warnings))
+    // Лимит на отказе проверки, а «Вернуть» человека после лимита — снова в работу (как пресет редактора).
+    const wf = withAttemptsLimit()
+    edge(wf, 'e_esc_reject').to = 'work'
+    assert.ok(!validateWorkflow(wf, ctx).warnings.some((w) => w.message.includes('бесконечно')))
+  })
+
   it('accept ведёт в конец без мержа', () => {
     const wf = base()
     edge(wf, 'e_review_accept').to = 'end'
