@@ -288,8 +288,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                             <button
                               type="button"
                               className="btn-sm"
-                              disabled={actions.returnBlocked !== undefined}
-                              title={actions.returnBlocked ?? 'Написать, что доделать, и запустить координатора'}
+                              title="Написать, что доделать, и перезапустить координатора"
                               onClick={() => onReturn(g)}
                             >
                               Вернуть в работу…

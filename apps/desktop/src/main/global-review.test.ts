@@ -160,7 +160,7 @@ describe('цикл «Проверки»: работа → проверка → �
     assert.deepEqual(card(runId).returns?.map((r) => r.text), ['первое', 'второе'])
   })
 
-  it('возврат, пока старый координатор ещё не закрыт (окно после runs finish), — ошибка, стор не тронут', () => {
+  it('без stop: возврат при живом старом координаторе (окно после runs finish) — ошибка, стор не тронут', () => {
     const runId = startNew('Цель')
     doneSubtask(runId, 'Шаг')
     store.finishRun(runId) // терминал ещё жив: coordinatorsToClose закроет его через grace
@@ -168,6 +168,59 @@ describe('цикл «Проверки»: работа → проверка → �
     assert.equal(card(runId).status, 'review')
     assert.equal(card(runId).returns, undefined)
     assert.equal(runDones(runId)[0].consumedBy, undefined)
+  })
+
+  it('живой координатор после runs finish (окно grace, человек печатает в терминал; stop = killPty): возврат закрывает его и перезапускает с уточнением', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг')
+    store.finishRun(runId) // карточка на «Проверке», терминал ещё открыт
+    const old = store.getRun(runId)!.coordinatorPtyId!
+    assert.equal(card(runId).status, 'review')
+    // Человек печатает в терминал — отсчёт grace сдвигается, терминал не закрывается.
+    const now = Date.now() + 60 * 60_000
+    const toClose = coordinatorsToClose({
+      runs: store.listRuns(),
+      tasks: store.listTasks(),
+      questions: [],
+      events: store.listEvents(),
+      isDone: (s) => store.columnKind(s) === 'done',
+      lingers: () => false,
+      lastActivityAt: () => now - 1_000,
+      now
+    })
+    assert.deepEqual(toClose, [], 'пока в терминале активность, он открыт — карточка на «Проверке» с живым координатором')
+    const stopped: string[] = []
+    returnGlobalTaskToWork(store, runId, 'кнопка не та', isAlive, (ptyId) => { stopped.push(ptyId); alive.delete(ptyId) })
+    assert.deepEqual(stopped, [old])
+    const objective = restart(runId)
+    assert.match(objective, new RegExp(`${COORDINATOR_RETURN_HEADING}: .*\\n+кнопка не та\\n`))
+    assert.equal(card(runId).status, 'in_progress')
+    assert.notEqual(store.getRun(runId)!.coordinatorPtyId, old)
+  })
+
+  it('ручной перенос на «Проверку» при живом координаторе (run_done {manual}): возврат закрывает его терминал', () => {
+    const runId = startNew('Цель')
+    const t = store.createTask({ title: 'Шаг', runId })
+    store.moveTask(t.id, 'in_progress')
+    const old = store.getRun(runId)!.coordinatorPtyId!
+    assert.equal(store.moveGlobalTask(runId, 'review').status, 'review')
+    assert.ok(alive.has(old), 'терминал закроет coordinatorsToClose после тишины — пока он жив')
+    const stopped: string[] = []
+    returnGlobalTaskToWork(store, runId, 'не то', isAlive, (ptyId) => { stopped.push(ptyId); alive.delete(ptyId) })
+    assert.deepEqual(stopped, [old])
+    assert.match(restart(runId), new RegExp(`${COORDINATOR_RETURN_HEADING}: .*\\n+не то\\n`))
+    assert.equal(card(runId).status, 'in_progress')
+  })
+
+  it('живой координатор и отказ стора (пустое уточнение) — терминал не закрывается', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг')
+    store.finishRun(runId)
+    assert.equal(card(runId).status, 'review')
+    const stopped: string[] = []
+    assert.throws(() => returnGlobalTaskToWork(store, runId, ' ', isAlive, (ptyId) => stopped.push(ptyId)), /напиши, что доделать/)
+    assert.deepEqual(stopped, [])
+    assert.equal(card(runId).status, 'review')
   })
 
   it('пустое уточнение — ошибка, карточка остаётся на проверке', () => {

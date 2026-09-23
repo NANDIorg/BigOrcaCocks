@@ -2,17 +2,19 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { GlobalTask } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
-import { reviewErrorMessage } from './globalReview'
+import { returnHint, reviewErrorMessage } from './globalReview'
 
 interface Props {
   global: GlobalTask
+  /** Прежний координатор ещё жив — его терминал закроется при возврате (предупреждаем). */
+  closesCoordinator?: boolean
   onClose(): void
   /** Возврат с уточнением: задача уходит в работу, запускается координатор. Ошибка остаётся в модалке. */
   onSubmit(text: string): Promise<void>
 }
 
 /** «Вернуть в работу…» с «Проверки»: что доделать — обязательно, это уточнение попадёт в цель координатора. */
-export function ReturnGlobalModal({ global, onClose, onSubmit }: Props): React.JSX.Element {
+export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, onSubmit }: Props): React.JSX.Element {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,7 +68,7 @@ export function ReturnGlobalModal({ global, onClose, onSubmit }: Props): React.J
             placeholder="Что не так с результатом и что нужно изменить. Координатор получит это уточнение и продолжит работу."
           />
         </label>
-        <span className="muted g-return-hint">Задача уйдёт в «В работе», и откроется терминал координатора. ⌘/Ctrl+Enter — отправить.</span>
+        <span className="muted g-return-hint">{returnHint(closesCoordinator)} ⌘/Ctrl+Enter — отправить.</span>
         {error && <span className="error-text">{error}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>Отмена</button>

@@ -2,10 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { OrcaApi } from '../../shared/ipc'
 import {
-  RETURN_BLOCKED_LIVE,
+  STALE_RETURN_LIVE_MESSAGE,
   STALE_REVIEW_MESSAGE,
   globalReviewApi,
   globalTaskActions,
+  returnHint,
   returnsNewestFirst,
   reviewErrorMessage
 } from './globalReview'
@@ -14,11 +15,18 @@ test('globalTaskActions: на «Проверке» — подтвердить и
   assert.deepEqual(globalTaskActions({}, 'review', false), { startCoordinator: false, accept: true, returnToWork: true })
 })
 
-test('globalTaskActions: живой координатор на «Проверке» — возврат выключен с причиной', () => {
-  const a = globalTaskActions({}, 'review', true)
-  assert.equal(a.returnToWork, true)
-  assert.equal(a.returnBlocked, RETURN_BLOCKED_LIVE)
-  assert.equal(a.startCoordinator, false)
+test('globalTaskActions: живой координатор на «Проверке» — возврат доступен и закроет его терминал', () => {
+  // Регрессия: кнопка выключалась, а терминал Claude без runs finish не закрывается — уточнение не написать.
+  assert.deepEqual(globalTaskActions({}, 'review', true), {
+    startCoordinator: false, accept: true, returnToWork: true, returnClosesCoordinator: true
+  })
+})
+
+test('returnHint: при живом координаторе предупреждает, что его терминал закроется', () => {
+  assert.doesNotMatch(returnHint(false), /закрыт/)
+  assert.match(returnHint(false), /В работе/)
+  assert.match(returnHint(true), /терминал будет закрыт/)
+  assert.match(returnHint(true), /В работе/)
 })
 
 test('globalTaskActions: вне «Проверки» — только запуск координатора, если он не жив', () => {
@@ -64,4 +72,8 @@ test('reviewErrorMessage: нет хендлера в старом main — «п�
   assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:accept'"), STALE_REVIEW_MESSAGE)
   assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:returnToWork'"), STALE_REVIEW_MESSAGE)
   assert.equal(reviewErrorMessage('глобальная задача не на проверке'), 'глобальная задача не на проверке')
+  assert.equal(
+    reviewErrorMessage("Error invoking remote method 'globalTasks:returnToWork': Error: координатор этой глобальной задачи ещё завершается — повторите через несколько секунд"),
+    STALE_RETURN_LIVE_MESSAGE
+  )
 })

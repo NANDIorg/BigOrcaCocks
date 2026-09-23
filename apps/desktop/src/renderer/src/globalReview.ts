@@ -10,16 +10,16 @@ export interface GlobalTaskActions {
   startCoordinator: boolean
   /** «Подтвердить»: с «Проверки» в «Сделано». */
   accept: boolean
-  /** «Вернуть в работу…»: с «Проверки» в работу с уточнением и повторным запуском координатора. */
-  returnToWork: boolean
   /**
-   * Почему «Вернуть в работу…» сейчас недоступна (кнопка видна, но выключена). Координатор ещё жив —
-   * окно в несколько секунд после `runs finish`, пока приложение не закрыло его терминал; main откажет.
+   * «Вернуть в работу…»: с «Проверки» в работу с уточнением и повторным запуском координатора. Доступна и при
+   * живом прежнем координаторе: после `runs finish` или ручного переноса на «Проверку» его терминал закрывается
+   * лишь после тишины, а ввод человека в терминал продлевает окно. Выключенная кнопка оставляла человека
+   * без поля для уточнения на всё это время; возврат закрывает терминал сам.
    */
-  returnBlocked?: string
+  returnToWork: boolean
+  /** Прежний координатор ещё жив: возврат закроет его терминал (main, `returnGlobalTaskToWork`). */
+  returnClosesCoordinator?: boolean
 }
-
-export const RETURN_BLOCKED_LIVE = 'Координатор ещё завершается — повторите через несколько секунд'
 
 /**
  * Доступные действия. kind — вид колонки, в которой карточка показана (с учётом «Нужен ответ»);
@@ -32,13 +32,19 @@ export function globalTaskActions(g: { inbox?: boolean }, kind: ColumnKind | und
     startCoordinator: !review && !live,
     accept: review,
     returnToWork: review,
-    ...(review && live ? { returnBlocked: RETURN_BLOCKED_LIVE } : {})
+    ...(review && live ? { returnClosesCoordinator: true } : {})
   }
 }
 
 /** История уточнений для показа: новые сверху. У задачи без возвратов — пусто. */
 export function returnsNewestFirst(g: { returns?: GlobalTaskReturn[] }): GlobalTaskReturn[] {
   return [...(g.returns ?? [])].sort((a, b) => b.at - a.at)
+}
+
+/** Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. */
+export function returnHint(closesCoordinator: boolean): string {
+  const base = 'Задача уйдёт в «В работе», и откроется терминал координатора с этим уточнением.'
+  return closesCoordinator ? `Прежний координатор ещё открыт — его терминал будет закрыт. ${base}` : base
 }
 
 export const STALE_REVIEW_MESSAGE =
@@ -56,7 +62,16 @@ export function globalReviewApi(api: Partial<OrcaApi> | undefined): Pick<OrcaApi
   return { accept: (id) => accept(id), returnToWork: (id, text, cols, rows) => returnToWork(id, text, cols, rows) }
 }
 
-/** Ошибка IPC для человека: preload новый, а main старый — «No handler registered» → «перезапустите». */
+export const STALE_RETURN_LIVE_MESSAGE =
+  'Прежний координатор ещё открыт, а приложение запущено со старой версией main, которая не закрывает его при возврате. ' +
+  'Закройте терминал координатора или перезапустите приложение и повторите.'
+
+/**
+ * Ошибка IPC для человека: preload новый, а main старый — «No handler registered» → «перезапустите».
+ * Старый main отказывает в возврате при живом координаторе («ещё завершается») — объясняем, как обойти.
+ */
 export function reviewErrorMessage(message: string): string {
-  return /No handler registered for 'globalTasks:(accept|returnToWork)'/.test(message) ? STALE_REVIEW_MESSAGE : message
+  if (/No handler registered for 'globalTasks:(accept|returnToWork)'/.test(message)) return STALE_REVIEW_MESSAGE
+  if (/координатор этой глобальной задачи ещё завершается/.test(message)) return STALE_RETURN_LIVE_MESSAGE
+  return message
 }
