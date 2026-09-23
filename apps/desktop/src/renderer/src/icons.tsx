@@ -1,4 +1,5 @@
 import type React from 'react'
+import type { WfNodeType } from '@orca-board/core'
 
 const base = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
 
@@ -33,4 +34,15 @@ export const Icon = {
   refresh: (): React.JSX.Element => <svg {...base}><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>,
   runs: (): React.JSX.Element => <svg {...base}><path d="M7 5v14l12-7z" /></svg>,
   close: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 6l12 12M18 6L6 18" /></svg>
+}
+
+/** Иконки нод воркфлоу (WorkflowCanvas, инспектор) — по типу ноды. */
+export const WfNodeIcon: Record<WfNodeType, () => React.JSX.Element> = {
+  start: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M10 8.5v7l5.5-3.5z" /></svg>,
+  work: (): React.JSX.Element => <svg {...base}><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" /></svg>,
+  gate: Icon.shield,
+  human: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>,
+  condition: (): React.JSX.Element => <svg {...base}><path d="M12 3l9 9-9 9-9-9z" /><path d="M10 10a2 2 0 1 1 2.8 1.8c-.5.2-.8.6-.8 1.2M12 16h.01" /></svg>,
+  merge: (): React.JSX.Element => <svg {...base}><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="12" r="2" /><path d="M6 7v10M6 7c0 4 4 5 10 5" /></svg>,
+  end: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><rect x="9" y="9" width="6" height="6" rx="1" /></svg>
 }
