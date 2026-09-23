@@ -722,9 +722,21 @@ export class TaskStore {
     this.pushEvent('escalation', {
       taskId: task.id,
       dispatchId,
-      reason: `нет вывода ${Math.round(silentMs / 60000)} мин`
+      reason: `нет вывода ${Math.round(silentMs / 60000)} мин`,
+      stuck: true
     })
     this.commit()
+  }
+
+  /**
+   * Эскалация координатору от main (например, «Уточнить»/«Перезапустить» решены, а воркер не стартовал):
+   * событие escalation с причиной, статус задачи не трогает.
+   */
+  escalate(taskId: string, reason: string, extra: Record<string, unknown> = {}): OrcaEvent {
+    const task = this.mustTask(taskId)
+    const event = this.pushEvent('escalation', { taskId: task.id, reason: short(reason), ...extra })
+    this.commit()
+    return event
   }
 
   /**
@@ -1125,6 +1137,22 @@ export class TaskStore {
     hit.forEach((e) => (e.consumedBy = consumer))
     this.persistence?.save(this.snapshot())
     return hit
+  }
+
+  /**
+   * Вернуть события в непрочитанные: забрали, но доставить не смогли (запись в сокет не удалась) —
+   * следующий `check` получит их снова.
+   */
+  releaseEvents(ids: readonly string[]): void {
+    const set = new Set(ids)
+    let changed = false
+    for (const e of this.events) {
+      if (set.has(e.id) && e.consumedBy) {
+        e.consumedBy = undefined
+        changed = true
+      }
+    }
+    if (changed) this.persistence?.save(this.snapshot())
   }
 
   private mustTask(id: string): Task {

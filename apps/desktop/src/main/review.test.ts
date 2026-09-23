@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
-import { acceptReview } from './review'
+import { acceptReview, resolveHumanRequest } from './review'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -85,5 +85,53 @@ describe('acceptReview задачи-ответа', () => {
     assert.equal(branchExists(branch), true)
     assert.equal(existsSync(worktree), true)
     assert.equal(store.getTask(task.id)!.status, 'needs_input')
+  })
+})
+
+describe('resolveHumanRequest', () => {
+  const answerRequest = (store: TaskStore, taskId: string) => store.pendingRequests().find((r) => r.taskId === taskId && r.kind === 'answer')!
+  const noStart = (): never => assert.fail('воркер не должен стартовать')
+
+  it('accept — приёмка с git-частью, решение уходит в answer_accepted, запрос решён', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const { task, branch } = answerTask(store)
+    const req = answerRequest(store, task.id)
+
+    const out = resolveHumanRequest(store, repo, req.id, { action: 'accept', text: 'делаем B' }, noStart)
+
+    assert.equal(out.request.status, 'resolved')
+    assert.equal(branchExists(branch), false)
+    assert.equal(store.getTask(task.id)!.status, 'done')
+    assert.equal(store.listEvents().find((e) => e.type === 'answer_accepted')!.payload.decision, 'делаем B')
+    assert.throws(() => resolveHumanRequest(store, repo, req.id, { action: 'accept' }, noStart), /уже решено/)
+  })
+
+  it('clarify — сразу стартует воркера', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const { task } = answerTask(store)
+    const started: string[] = []
+    const out = resolveHumanRequest(store, repo, answerRequest(store, task.id).id, { action: 'clarify', text: 'подробнее' }, (id) => {
+      started.push(id)
+      return { ptyId: 'p2', dispatchId: 'd2' }
+    })
+    assert.deepEqual(started, [task.id])
+    assert.deepEqual(out.worker, { ptyId: 'p2', dispatchId: 'd2' })
+    assert.equal(store.getTask(task.id)!.feedback, 'подробнее')
+  })
+
+  it('старт после clarify упал — запрос решён, задача в ready, координатору escalation с причиной', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const { task } = answerTask(store)
+    const req = answerRequest(store, task.id)
+    const out = resolveHumanRequest(store, repo, req.id, { action: 'clarify', text: 'подробнее' }, () => {
+      throw new Error('агент выключен')
+    })
+    assert.equal(out.startError, 'агент выключен')
+    assert.equal(store.getRequest(req.id)!.status, 'resolved')
+    assert.equal(store.getTask(task.id)!.status, 'ready')
+    const esc = store.listEvents().filter((e) => e.type === 'escalation').at(-1)!
+    assert.equal(esc.taskId, task.id)
+    assert.match(String(esc.payload.reason), /не запустился: агент выключен/)
+    assert.equal(esc.payload.requestId, req.id)
   })
 })

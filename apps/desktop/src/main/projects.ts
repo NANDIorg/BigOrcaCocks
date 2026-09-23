@@ -286,6 +286,8 @@ export class ProjectManager {
         }
       })
       this.stores.set(id, created)
+      // После запуска приложения ни одного координатора в живых нет: вопросы, которые ждали их, — человеку.
+      for (const run of created.listRuns()) created.escalateOpenQuestions(run.id)
       s = created
     }
     return s

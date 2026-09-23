@@ -2,10 +2,12 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience
+  EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  type RequestResolution, type Question
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, pickRole } from './agents'
+import { askOptions, resolutionFromParams } from './request-params'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -17,6 +19,8 @@ export interface ProjectDeps {
   startWorker(taskId: string): { ptyId: string; dispatchId: string; worktree: string; branch: string }
   review(taskId: string): unknown
   accept(taskId: string, decision?: string): void
+  /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
+  resolveRequest(id: string, resolution: RequestResolution): unknown
   /** Без runId — новый прогон (глобальная задача); с runId — повторный запуск на существующей. */
   startCoordinator(objective: string, runId?: string): string
   /** Удалить глобальную задачу: живой координатор — ошибка, терминалы подзадач закрываются. */
@@ -43,12 +47,17 @@ interface Request {
   projectId?: string
 }
 
-/** Канал ответа для стриминговых команд: пишет строки в сокет и сообщает о его закрытии. */
+/** Канал ответа для стриминговых команд: пишет строки `{id, ok: true, result}` в сокет и сообщает о его закрытии. */
 interface Stream {
-  /** Отправить одну строку `{id, ok: true, result}`. */
-  emit(result: unknown): void
   /** Вызвать fn, когда клиент закроет соединение (сразу — если уже закрыто). */
   onClose(fn: () => void): void
+  /** Соединение ещё открыто — в него можно писать. */
+  open(): boolean
+  /**
+   * Отправить строку и узнать, ушла ли она: `false` — сокет закрыт или запись упала.
+   * Для событий координатору: недоставленное возвращается в непрочитанные.
+   */
+  send(result: unknown): Promise<boolean>
 }
 
 /**
@@ -62,7 +71,7 @@ export function askWaiting(questionId: string): boolean {
   return (askWaiters.get(questionId) ?? 0) > 0
 }
 
-/** Хендлер вернул STREAM — финального ответа не будет, он сам пишет через stream.emit. */
+/** Хендлер вернул STREAM — финального ответа не будет, он сам пишет через stream.send. */
 const STREAM = Symbol('stream')
 
 type Handler = (
@@ -83,6 +92,29 @@ function list(v: unknown): string[] {
 function num(v: unknown, def: number): number {
   const n = Number(v)
   return Number.isFinite(n) ? n : def
+}
+
+/** Координатор прогона задачи жив (PTY в реестре) и не закончил работу — вопрос адресуется ему. */
+export function coordinatorAlive(store: TaskStore, taskId: string): boolean {
+  const runId = store.getTask(taskId)?.runId
+  const run = runId ? store.getRun(runId) : undefined
+  return Boolean(run?.coordinatorPtyId && !run.finishedAt && !run.closedAt && isAlive(run.coordinatorPtyId))
+}
+
+/**
+ * Живость воркера — из реестра PTY: dispatch без endedAt, чей PTY уже мёртв (выход не дошёл до store),
+ * закрывается до ответа, иначе store сочтёт воркера живым и не вернёт задачу в ready.
+ */
+export function syncWorkerLiveness(store: TaskStore, taskId: string): void {
+  const active = store.activeDispatches().filter((d) => d.taskId === taskId)
+  if (active.length > 0 && active.every((d) => !isAlive(d.ptyId))) store.closeDispatches(taskId)
+}
+
+/** Ответ на вопрос с учётом живости воркера. */
+export function answerQuestion(store: TaskStore, questionId: string, answer: string): Question {
+  const q = store.getQuestion(questionId)
+  if (q) syncWorkerLiveness(store, q.taskId)
+  return store.answer(questionId, answer)
 }
 
 /** Роль задачи существует в проекте и её агент можно запускать. */
@@ -206,8 +238,18 @@ const handlers: Record<string, Handler> = {
     if (!taskId) throw new Error('нет задачи: укажи --task или запусти из воркера')
     const question = str(r.params.question)
     if (!question) throw new Error('--question обязателен')
-    const q = store.ask({ taskId, dispatchId, question, options: list(r.params.options) })
-    if (r.params.wait === false) return q
+    // Переподключение: инструмент оборвал ask по таймауту, воркер спросил то же самое, а ответ уже есть —
+    // отдаём его сразу, а не заводим новый вопрос. Открытый вопрос того же запуска store.ask вернёт сам.
+    const answered = store
+      .snapshot()
+      .questions.filter((q) => q.taskId === taskId && q.dispatchId === dispatchId && q.answeredAt && q.question === question.trim())
+      .at(-1)
+    if (answered && dispatchId !== undefined) return answered
+    const q = store.ask(
+      { taskId, dispatchId, question, options: askOptions(r.params), context: str(r.params.context) },
+      { coordinatorAlive: coordinatorAlive(store, taskId) }
+    )
+    if (r.params.wait === false || q.answeredAt) return q
     askWaiters.set(q.id, (askWaiters.get(q.id) ?? 0) + 1)
     return new Promise((resolve) => {
       const off = store.subscribe(() => {
@@ -231,13 +273,45 @@ const handlers: Record<string, Handler> = {
     const id = str(r.params.question)
     const answer = str(r.params.answer)
     if (!id || answer === undefined) throw new Error('--question и --answer обязательны')
-    return store.answer(id, answer)
+    return answerQuestion(store, id, answer)
   },
   'question.list': (_r, _d, store) => store.openQuestions(),
+  // Вопрос целиком (и ответ): так воркер забирает ответ по пинку в терминал.
+  'question.get': (r, _d, store) => {
+    const id = str(r.params.question)
+    if (!id) throw new Error('--question обязателен')
+    const q = store.getQuestion(id)
+    if (!q) throw new Error(`question not found: ${id}`)
+    return q
+  },
   'question.forward': (r, _d, store) => {
     const id = str(r.params.question)
     if (!id) throw new Error('--question обязателен')
-    return store.forwardQuestion(id)
+    if (r.params.note === true) throw new Error('--note требует текста')
+    return store.forwardQuestion(id, str(r.params.note))
+  },
+  // Запросы к человеку: по умолчанию ждущие (pending); --all — все; --run — одного прогона.
+  'request.list': (r, _d, store) => {
+    const run = str(r.params.run)
+    return r.params.all === true
+      ? store.listRequests().filter((q) => run === undefined || q.runId === run)
+      : store.pendingRequests(run)
+  },
+  // Полный текст запроса; у вопроса — ещё и ответ на него (воркер забирает ответ этой командой).
+  'request.get': (r, _d, store) => {
+    const id = str(r.params.request)
+    if (!id) throw new Error('--request обязателен')
+    const req = store.getRequest(id)
+    if (!req) throw new Error(`request not found: ${id}`)
+    const q = req.questionId ? store.getQuestion(req.questionId) : undefined
+    return { ...req, ...(q?.answer !== undefined ? { answer: q.answer } : {}) }
+  },
+  'request.resolve': (r, deps, store) => {
+    const id = str(r.params.request)
+    if (!id) throw new Error('--request обязателен')
+    const req = store.getRequest(id)
+    if (!req) throw new Error(`request not found: ${id}`)
+    return deps.resolveRequest(id, resolutionFromParams(req, r.params))
   },
   'review.info': (r, deps) => {
     const id = str(r.params.task)
@@ -287,11 +361,19 @@ const handlers: Record<string, Handler> = {
     // Прогон координатора: его события и отдельный consumer, чтобы прогоны не забирали чужое.
     const run = str(r.params.run)
     const consumer = str(r.params.consumer) ?? run ?? 'coordinator'
-    const consume = (): OrcaEvent[] => store.consumeEvents(types, consumer, run)
+    // Забираем события, только пока соединение открыто: иначе они помечены прочитанными, но не доставлены.
+    const consume = (): OrcaEvent[] => (stream.open() ? store.consumeEvents(types, consumer, run) : [])
 
     if (r.params.follow === true) {
-      consume().forEach((event) => stream.emit({ event }))
-      const off = store.subscribe(() => consume().forEach((event) => stream.emit({ event })))
+      const deliver = (): void => {
+        for (const event of consume()) {
+          void stream.send({ event }).then((ok) => {
+            if (!ok) store.releaseEvents([event.id])
+          })
+        }
+      }
+      deliver()
+      const off = store.subscribe(deliver)
       stream.onClose(off)
       return STREAM
     }
@@ -299,23 +381,32 @@ const handlers: Record<string, Handler> = {
     const wait = Boolean(r.params.wait)
     const timeoutMs = num(r.params['timeout-ms'] ?? r.params.timeoutMs, 900_000)
 
+    const reply = async (events: OrcaEvent[], timedOut: boolean): Promise<typeof STREAM> => {
+      const ok = await stream.send({ events, timedOut })
+      if (!ok && events.length) store.releaseEvents(events.map((e) => e.id))
+      return STREAM
+    }
+
     const now = consume()
-    if (now.length || !wait) return { events: now, timedOut: false }
+    if (now.length || !wait) return reply(now, false)
 
     return new Promise((resolve) => {
       let done = false
-      const finish = (events: unknown[], timedOut: boolean): void => {
+      const finish = (events: OrcaEvent[] | null, timedOut: boolean): void => {
         if (done) return
         done = true
         off()
         clearTimeout(timer)
-        resolve({ events, timedOut })
+        // Клиент ушёл, пока ждали: ничего не забирали — отвечать некому.
+        if (events === null) resolve(STREAM)
+        else resolve(reply(events, timedOut))
       }
       const off = store.subscribe(() => {
         const hit = consume()
         if (hit.length) finish(hit, false)
       })
       const timer = setTimeout(() => finish([], true), timeoutMs)
+      stream.onClose(() => finish(null, false))
     })
   }
 }
@@ -330,14 +421,22 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       return
     }
     const handler = handlers[req.method]
+    const open = (): boolean => !sock.destroyed && sock.writable
     const stream: Stream = {
-      emit: (result) => {
-        if (!sock.destroyed && sock.writable) sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
-      },
       onClose: (fn) => {
         if (sock.destroyed) fn()
         else sock.once('close', fn)
-      }
+      },
+      open,
+      send: (result) =>
+        new Promise((resolve) => {
+          if (!open()) return resolve(false)
+          try {
+            sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n', (err) => resolve(!err))
+          } catch {
+            resolve(false)
+          }
+        })
     }
     try {
       if (!handler) throw new Error(`неизвестная команда: ${req.method}`)

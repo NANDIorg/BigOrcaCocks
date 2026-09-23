@@ -95,4 +95,41 @@ describe('orca-board CLI', () => {
     assert.equal(req, null)
     assert.equal(code, 1)
   })
+
+  it('значение, начинающееся с --, не превращается в true (аудит 2.15)', async () => {
+    const { req } = await run(['question', 'answer', '--question', 'q_1', '--answer', '--force'])
+    assert.deepEqual(req.params, { question: 'q_1', answer: '--force' })
+    const res = await run(['request', 'resolve', '--request', 'req_1', '--accept', '--decision', '--делаем A'])
+    assert.deepEqual(res.req.params, { request: 'req_1', accept: true, decision: '--делаем A' })
+  })
+
+  it('ask: --option повторяется (запятые допустимы), --recommend, --context-file читает CLI', async () => {
+    const file = join(dir, 'why.md')
+    writeFileSync(file, 'почему спрашиваю\n')
+    const { req } = await run(
+      ['ask', '--question', 'БД?', '--option', 'sqlite, файл|проще', '--option', 'postgres', '--recommend', '1', '--context-file', file],
+      { ORCA_DISPATCH_ID: 'disp_1' }
+    )
+    assert.equal(req.method, 'worker.ask')
+    assert.deepEqual(req.params, { question: 'БД?', option: ['sqlite, файл|проще', 'postgres'], recommend: '1', context: 'почему спрашиваю\n' })
+    const noValue = await run(['ask', '--question', 'q', '--option'])
+    assert.equal(noValue.req, null)
+    assert.equal(noValue.code, 1)
+  })
+
+  it('request list берёт прогон из ORCA_RUN_ID; question forward --note; request get', async () => {
+    assert.deepEqual((await run(['request', 'list'], { ORCA_RUN_ID: 'run_1' })).req.params, { run: 'run_1' })
+    assert.deepEqual((await run(['request', 'list', '--all'])).req.params, { all: true })
+    const fwd = await run(['question', 'forward', '--question', 'q_1', '--note', 'моё мнение: sqlite'])
+    assert.deepEqual(fwd.req.params, { question: 'q_1', note: 'моё мнение: sqlite' })
+    const get = await run(['request', 'get', '--request', 'req_1'])
+    assert.equal(get.req.method, 'request.get')
+  })
+
+  it('help показывает команды запросов', async () => {
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['request list', 'request get', 'request resolve', '--clarify', '--recommend', '--context-file', '--note']) {
+      assert.ok(out.includes(cmd), cmd)
+    }
+  })
 })

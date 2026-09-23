@@ -444,3 +444,23 @@ describe('загрузка снапшота', () => {
     assert.equal(pending(again.loaded).length, 4)
   })
 })
+
+describe('доставка событий координатору', () => {
+  it('releaseEvents возвращает недоставленные события в непрочитанные', () => {
+    const { store, g, task } = setup()
+    store.escalate(task.id, 'воркер не запустился', { requestId: 'req_x' })
+    const first = store.consumeEvents(['escalation'], g.id, g.id)
+    assert.equal(first.length, 1)
+    assert.deepEqual(store.consumeEvents(['escalation'], g.id, g.id), [])
+    store.releaseEvents(first.map((e) => e.id))
+    const again = store.consumeEvents(['escalation'], g.id, g.id)
+    assert.deepEqual(again.map((e) => e.id), first.map((e) => e.id))
+    assert.equal(again[0].payload.requestId, 'req_x')
+  })
+
+  it('markStuck помечает эскалацию stuck — по ней уведомление человеку', () => {
+    const { store, dispatch } = setup()
+    store.markStuck(dispatch.id, 20 * 60_000)
+    assert.equal(store.listEvents().find((e) => e.type === 'escalation')!.payload.stuck, true)
+  })
+})

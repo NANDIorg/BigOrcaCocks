@@ -63,6 +63,11 @@ const api: OrcaApi = {
   questions: {
     answer: (id, answer) => ipcRenderer.invoke('questions:answer', id, answer)
   },
+  requests: {
+    list: (opts) => ipcRenderer.invoke('requests:list', opts),
+    resolve: (id, resolution) => ipcRenderer.invoke('requests:resolve', id, resolution),
+    onFocus: (cb) => on('requests:focus', cb)
+  },
   pty: {
     spawn: (opts) => ipcRenderer.invoke('pty:spawn', opts),
     write: (id, data) => ipcRenderer.send('pty:write', id, data),
