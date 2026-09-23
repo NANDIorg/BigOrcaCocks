@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, HumanRequest, RequestResolution, Workflow } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -47,23 +47,29 @@ export interface AppSettingsPatch {
   notifications?: NotificationSettingsPatch
 }
 
-/** Правка задачи из UI/CLI: только название и описание. */
+/** Правка задачи из UI/CLI: название, описание, приоритет (приоритет — в любой колонке). */
 export interface TaskPatch {
   title?: string
   spec?: string
+  priority?: TaskPriority
 }
 
-/** Новая глобальная задача: нужно название или описание; status — id колонки (по умолчанию kind=backlog). */
+/**
+ * Новая глобальная задача: нужно название или описание; status — id колонки (по умолчанию kind=backlog),
+ * priority — по умолчанию normal.
+ */
 export interface GlobalTaskInput {
   title?: string
   description?: string
   status?: string
+  priority?: TaskPriority
 }
 
-/** Правка глобальной задачи: название (непустое) и/или описание. */
+/** Правка глобальной задачи: название (непустое), описание и/или приоритет (в любой колонке). */
 export interface GlobalTaskPatch {
   title?: string
   description?: string
+  priority?: TaskPriority
 }
 
 /** Подзадача внутри глобальной задачи. Без roleId — единственная роль проекта, иначе ошибка. */
@@ -75,6 +81,8 @@ export interface SubtaskInput {
   roleId?: string
   /** Задача-ответ: результат — ответ в markdown, а не код (из UI — всегда для человека). */
   answerFor?: AnswerAudience
+  /** Нет — normal. */
+  priority?: TaskPriority
 }
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -280,10 +288,10 @@ export interface OrcaApi {
   }
   tasks: {
     /** Без roleId — единственная роль проекта, иначе ошибка. Задача попадает во «Входящие» (см. globalTasks). */
-    create(input: { title: string; spec?: string; deps?: string[]; roleId?: string }): Promise<Task>
+    create(input: { title: string; spec?: string; deps?: string[]; roleId?: string; priority?: TaskPriority }): Promise<Task>
     /** status — id колонки. */
     move(id: string, status: string): Promise<Task>
-    /** Название/описание. Задачу в колонке kind=in_progress править нельзя — ошибка. */
+    /** Название/описание/приоритет. Название и описание задачи в колонке kind=in_progress править нельзя — ошибка. */
     update(id: string, patch: TaskPatch): Promise<Task>
     remove(id: string): Promise<void>
   }

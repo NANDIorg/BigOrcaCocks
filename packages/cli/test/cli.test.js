@@ -73,6 +73,24 @@ describe('orca-board CLI', () => {
     assert.equal(fwd.req.params.question, 'q_1')
   })
 
+  it('task create / task update --priority уходят как есть (значение проверяет сервер)', async () => {
+    const created = await run(['task', 'create', '--title', 't', '--role', 'qa', '--priority', 'high'])
+    assert.equal(created.req.method, 'task.create')
+    assert.equal(created.req.params.priority, 'high')
+    const updated = await run(['task', 'update', '--task', 'task_1', '--priority', 'urgent'])
+    assert.equal(updated.req.method, 'task.update')
+    assert.deepEqual(updated.req.params, { task: 'task_1', priority: 'urgent' })
+  })
+
+  it('global create / update --priority уходят как есть (значение проверяет сервер)', async () => {
+    const created = await run(['global', 'create', '--title', 'x', '--priority', 'urgent'])
+    assert.equal(created.req.method, 'global.create')
+    assert.deepEqual(created.req.params, { title: 'x', priority: 'urgent' })
+    const updated = await run(['global', 'update', '--global', 'run_1', '--priority', 'low'])
+    assert.equal(updated.req.method, 'global.update')
+    assert.deepEqual(updated.req.params, { global: 'run_1', priority: 'low' })
+  })
+
   it('global tasks / add-task / get берут глобальную задачу из ORCA_RUN_ID, явный --global важнее', async () => {
     const tasks = await run(['global', 'tasks'], { ORCA_RUN_ID: 'run_1' })
     assert.equal(tasks.req.method, 'global.tasks')

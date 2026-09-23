@@ -22,7 +22,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль проекта (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -45,6 +45,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     перезапуск приложения, закрывается моментом загрузки — время простоя приложения попадает в отрезок.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
+  - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
+    подписи `PRIORITY_TITLES`, ранг для сортировки `priorityRank`: urgent=0 … low=3, нет поля — как normal).
+    Влияет только на порядок показа, не на промпт воркера, статус и воркфлоу. `createTask` без приоритета — `normal`;
+    неизвестное значение в `createTask`/`updateTask`/`editTask` — ошибка `приоритет: ожидается …, получено «…»`.
+    Миграция при загрузке (`migrateTaskPriority`): задача без поля или с неизвестным значением → `normal`.
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
@@ -59,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, workflow?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, workflow?, ... }` — прогон:
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -67,6 +72,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     открыт, пока карточка показана в `kind=in_progress` (в «Нужен ответ» стоит). Пересчёт — `syncRunActiveTime` в
     `commit()`, миграция — `migrateRunActiveTime`. В `GlobalTask` — `ownActiveMs`/`ownActiveSince`, рядом сумма
     подзадач `subtasksActiveMs`/`subtasksActiveSince` (`docs/nested-kanban.md`, «Тип GlobalTask»).
+  - `priority` — приоритет глобальной задачи, та же шкала `TaskPriority`, что у `Task.priority`. `addRun` ставит
+    `normal`, `createGlobalTask`/`updateGlobalTask` принимают и проверяют (`assertPriority`), миграция —
+    `migrateRunPriority`. В `GlobalTask.priority` всегда есть: `toGlobalTask` читает нет поля как `normal`.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
@@ -108,7 +116,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   (`validateRoles`). Удалённая роль не возвращается сама: `?? DEFAULT_ROLES` срабатывает только у проекта без поля
   `roles`, а сохранённый массив всегда непустой. Редактор ролей (`RolesEditor.tsx`, логика — `renderer/src/roleRemoval.ts`)
   перед удалением системной роли или роли с задачами показывает подтверждение со списком последствий
-  (`removalConsequences`); под списком ролей — «Вернуть системные роли» (`restoreSystemRoles`: недостающие из
+  (`removalConsequences`; роль, занятая в своём воркфлоу проекта или дефолта — гейт, работа, условие по роли, —
+  тоже попадает в последствия: `workflowNodesWithRole`, граф передаётся в `RolesEditor` пропом `workflow`; дефолтный
+  граф не передаётся — он строится по ролям и без `reviewer` сам переходит на ревью человеком); под списком ролей — «Вернуть системные роли» (`restoreSystemRoles`: недостающие из
   `DEFAULT_ROLES` с настройками по умолчанию, на свои места). Без роли: `task create --role <id>` и `worker start` —
   ошибка `missingRoleMessage` (`src/main/agents.ts`: список ролей и, для системной, как её вернуть); координатор
   не запускается (см. ниже); без `reviewer` дефолтный воркфлоу отдаёт ревью человеку (нода `human`, `docs/workflow.md`).
@@ -170,7 +180,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   → `migrateWorkflow`, будущая версия остаётся как есть (переживает сохранение проекта), но `workflow(id)` бросает
   «… обновите приложение». В дефолте — `ProjectDefaults.workflow` (проверяется в `setDefaults` по ролям и колонкам
   с учётом того же патча, `null` удаляет; копируется в новый проект и в `applyDefaults` без повторной проверки).
-  Граф отдаётся renderer вместе с `Project`; для проекта без поля renderer берёт дефолт через `workflow:default(roles)`.
+  Граф отдаётся renderer вместе с `Project`; для проекта без поля редактор показывает `defaultWorkflow(roles)` из core (та же чистая функция), а `workflow:default(roles)` зовёт кнопка «Сбросить к дефолтному».
 - **Встроенные промпты в UI** (`packages/core/src/prompts.ts`, `src/main/prompts.ts`): тексты `skills/*.md` импортирует
   только `src/main/prompts.ts` (`BUILTIN_PROMPTS`); их же берёт `worker.ts` при запуске и отдаёт IPC `prompts:builtin`
   для раздела «Роли». Там по кнопке «Инструкции» (свёрнуто по умолчанию) видны: встроенная инструкция роли только для чтения
@@ -195,8 +205,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   отвергается с подсказкой про `--role`. `worker.start` (сокет и UI) заново проверяет роль задачи
   и её агента: роль могли удалить, агента — выключить.
 - **Сокет**: `roles.list` → роли плюс `agentEnabled` (включён ли агент роли в проекте);
-  `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?}` → `store.editTask`
-  (без `--title`/`--spec` — ошибка; см. «Редактирование задачи»).
+  `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?, priority?}` → `store.editTask`
+  (без `--title`/`--spec`/`--priority` — ошибка; см. «Редактирование задачи»). `task.create` и `global.add-task`
+  принимают `priority` (значение проверяет store; `--priority` без значения — ошибка сокета). Так же
+  `global.create` и `global.update` — приоритет самой глобальной задачи (`store.createGlobalTask`/`updateGlobalTask`).
 
 ## Воркфлоу: модель (`packages/core/src/workflow.ts`)
 
@@ -272,6 +284,55 @@ Store хранит позицию и решает, куда задача пер�
   {start: 1, work: 1, review: 1}}`. Id ноды ревью одинаковый с `reviewer` и без, поэтому роли не нужны. Событий
   нет. Задачи «Ревью: …», созданные координатором вручную до воркфлоу (роль `reviewer`, без `gateFor`), миграция
   не отличает от рабочих: сданная такая задача встаёт на ревью, и её закрывает человек «Принять» (сливать нечего).
+
+### Воркфлоу: редактор (`renderer/src/WorkflowCanvas.tsx`, `WorkflowInspector.tsx`, `about/WorkflowSection.tsx`)
+
+Свой SVG-редактор без React Flow (граф из 5–15 нод, типы и порты фиксированы). Живёт в «О проекте → Воркфлоу».
+
+- **`WorkflowCanvas`** — пропсы `workflow`, `onChange`, `selection` (`WfSelection`: нода/ребро/`null`),
+  `onSelect`, `issues` (результат `validateWorkflow`). `<svg>` с `viewBox` из вида `{x, y, scale}`: колесо —
+  масштаб под курсором (слушатель `wheel` вешается вручную с `passive: false`, React-овский `onWheel` пассивный),
+  перетаскивание фона или средняя кнопка — панорама, перетаскивание ноды — перенос с привязкой к сетке 10
+  (в `onChange` уходит одно изменение на отпускании), от порта-кружка тянется ребро к ноде, Delete/Backspace
+  удаляет выделенное, Esc — отмена жеста/снятие выделения. Попадание в ноду/порт/ребро считается по геометрии,
+  а не по событиям элементов: при `setPointerCapture` события получает только `<svg>`. Порты — по `WF_PORTS`
+  на правой стороне ноды с подписью исхода; accept/ok зелёные (`--wf-accept`), reject/conflict красные
+  (`--wf-reject`). Проблемы валидации — рамка ноды/штрих ребра (ошибка красная, предупреждение пунктир),
+  тексты — в `<title>`. Панель: добавить ноду каждого типа (в центр вида), масштаб, «вписать», авторасстановка.
+- **`workflowGeometry.ts`** — размер ноды `NODE_W×NODE_H`, точки портов и входа, кривая Безье ребра
+  (`edgeCurve`: вперёд — S-кривая, назад и в себя — петля под нодами), hit-test `hitNode`/`hitPort`/`hitEdge`,
+  `autoLayout` (слой = BFS-расстояние от старта, недостижимые — последним слоем), вид холста: `screenToWorld`,
+  `zoomAt`, `panBy`, `fitView`.
+- **`workflowEdit.ts`** — чистые функции правки: `addNode` (уникальный id, пустые поля — их подсветит
+  валидация), `removeNode` (с рёбрами), `moveNode`, `connect` (у порта одно ребро: прежнее заменяется с
+  сохранением id; чужой порт и вход в `start` отвергаются), `disconnect`, `removeSelected`, `issueTargets`
+  (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS`. Недопустимая операция возвращает граф как есть.
+- **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
+  колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
+  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы пустое значение — «роль задачи»,
+  роль не из проекта — пунктом «(нет в проекте)»), инструкция гейта/человека, условие (заходы в ноду ≥ N или роль
+  рабочей задачи), «слито» у конца, колонка доски (не у старта и условия). На каждый порт — select «куда ведёт»
+  (`setPortTarget`: пусто — снять переход), поэтому граф собирается с клавиатуры без холста. Выбран переход — его цель
+  и удаление; ничего не выбрано — список нод кнопками. Проблемы валидации ноды — списком под формой.
+- **`workflowForm.ts`** — логика инспектора и раздела: `patchNode` (пустые необязательные поля удаляются),
+  `changeNodeType`, `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
+  (`exportWorkflowJson`, `parseWorkflowJson` — проверяет только форму `{version, nodes[], edges[]}`, смысл —
+  `validateWorkflow`; старую версию поднимает `migrateWorkflow`, будущую отвергает), пресет `addRetryLimit(wf, 3)`
+  и проверка старого main/preload (`workflowApi`, `WORKFLOW_STALE_MESSAGE`, `isStaleWorkflowError`).
+- **Пресет «3 отказа → человек»** (`addRetryLimit`): каждый `reject` гейта-агента, ведущий прямо в работу,
+  перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
+  же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
+  третий отказ. Повторное применение — ошибка «лимит уже стоит».
+- **Раздел «Воркфлоу»** (`about/WorkflowSection.tsx`): черновик графа — `Project.workflow`, а без него
+  `defaultWorkflow(roles)`. В отличие от ролей и колонок **без автосохранения**: промежуточный граф почти всегда
+  невалиден, и main его не примет. `validateWorkflow` по ролям, колонкам и включённым агентам считается на каждую
+  правку: ошибки блокируют «Сохранить», предупреждения нет; все проблемы списком, клик — выделить ноду/переход.
+  Кнопки: «Сохранить» (`projects:setWorkflow`), «Отменить правки», «3 отказа → человек», «Экспорт JSON» (скачивание
+  `workflow-<проект>.json`), «Импорт JSON» (в черновик, сохранить — отдельно), «Сбросить к дефолтному»
+  (`workflow:default(roles)` в черновик + `setWorkflow(id, null)`), «Сделать дефолтом для новых проектов»
+  (`setDefaults({ workflow })`, только сохранённый граф без ошибок). Импорт и сброс пересоздают холст (`key`), чтобы
+  граф заново вписался в окно. Старый preload без `setWorkflow`/`workflow` — сохранение выключено и сообщение
+  «перезапустите приложение», старый main («No handler registered») — то же сообщение.
 
 ## Прогоны (`packages/core/src/store.ts`, `src/main/worker.ts`, `src/main/socket.ts`)
 
@@ -359,7 +420,7 @@ orca-board workflow show [--run <id>]       # {source: run|project|default, run?
 orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor
 orca-board rules get [--role <id>]          # правила агентов доски: общие ({rules}) или роли ({role,title,rules})
 orca-board rules set [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
-orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator]
+orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]
 orca-board question answer --question <id> --answer "..."
 orca-board question forward --question <id> [--note "..."]   # вопрос воркера — человеку (запрос в Инбокс, глобальная → «Нужен ответ»)
 orca-board question get --question <id>     # вопрос целиком: варианты с пояснениями, контекст, ответ
@@ -367,7 +428,7 @@ orca-board request list [--run <id>] [--all]   # запросы к челове�
 orca-board request get --request <id>
 orca-board task answer --task <id>          # полный ответ задачи-ответа и decision
 orca-board task move --task <id> --status <id колонки>
-orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
+orca-board task update --task <id> [--title ...] [--spec ...] [--priority ...]   # title/spec — не в in_progress, priority — в любой колонке
 orca-board worker start --task <id>
 orca-board worker stop --task <id>          # закрыть воркеров задачи без эскалации; in_progress → ready
 orca-board worker restart --task <id> [--feedback "..."]   # stop + feedback + start; работает и на in_progress; review/done → ошибка (task reopen --start)
@@ -571,7 +632,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
 - **Карточка** компактная: слева `AgentLogo` (28), справа заголовок (до 2 строк, `-webkit-line-clamp: 2`)
   и строка «роль · агент · модель» (`role.title` по `task.roleId`, `AGENT_TITLES[task.agent]`, `role.model`
-  если задана). Ниже чипы: ветка (mono), зависимости `← <название>`, `● терминал` (есть живой PTY),
+  если задана). Ниже чипы: приоритет (`priorityBadge` из `renderer/src/taskPriority.ts`: для `normal` и задач без
+  поля не показывается; `urgent` — красный, `high` — оранжевый, `low` — приглушённый пунктир), ветка (mono), зависимости `← <название>`, `● терминал` (есть живой PTY),
   `вышел без done` / `упал` (по `outcome` последнего dispatch'а), `молчит` (`stuckNotified` без `endedAt`).
   Кнопки «Запустить» (только если `kind` `ready`/`backlog` или последний dispatch `unknown`/`failed`,
   и нет живого терминала) и «Удалить» (с `confirm`) — в правом верхнем углу, видны при наведении/фокусе/
@@ -585,8 +647,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   скроллится только `.col-body` (`overflow-y: auto`), цепочка `min-height: 0`:
   `.content → .board-wrap → .board → .column → .col-body`. Ширина колонки фиксирована (300px).
 - **Сортировка карточек** внутри колонки: переключатель «Сортировка: по созданию / по завершению /
-  по обновлению» (`createdAt` / `doneAt` / `updatedAt`), выбор хранится в `localStorage`
-  ключом `orca.board.sort`.
+  по обновлению / по приоритету» (`createdAt` / `doneAt` / `updatedAt` / `priorityRank`, при равном приоритете —
+  по `createdAt`), выбор хранится в `localStorage` ключом `orca.board.sort` (`BOARD_SORT_OPTIONS`,
+  `renderer/src/boardSort.ts`). Сравнение по приоритету `compareByPriority` обобщённое — по объекту
+  с необязательным `priority` (нет поля от старого main — как `normal`), `compareSorted` добавляет к нему даты.
+  У глобального канбана пока только сортировки по датам (`SORT_OPTIONS`).
 - **Прогоны на доске** (`runs.tsx`, `Board.tsx`): у задачи с `runId` среди чипов — метка прогона `RunBadge`
   (первые 3 слова цели, до 24 символов с `…`, полная цель в `title`). Цвет — `.run-c0…7` по индексу прогона
   в списке, отсортированном по `createdAt` (`runColorIndex`, по модулю 8); закрытый прогон (`closedAt`) —
@@ -596,7 +661,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Модалка задачи** (`TaskModal.tsx`): `App` хранит `openTaskId` и на каждый снимок находит задачу по id,
   так что модалка всегда показывает актуальное. Закрытие — Esc, клик по фону, крестик. Содержимое:
   - шапка: `AgentLogo` + название (input, если можно редактировать, иначе `<h3>`);
-  - мета: роль · агент · модель, колонка (чип цветом колонки), зависимости, ветка, worktree, «терминал открыт»;
+  - мета: роль · агент · модель, приоритет (select, сохраняется сразу через `tasks.update(id, {priority})` в любой
+    колонке; у задачи без поля — от старого main — только подпись «обычный» с подсказкой перезапустить приложение),
+    колонка (чип цветом колонки), зависимости, ветка, worktree, «терминал открыт»;
   - «Задание для агента»: textarea + «Сохранить» (активна при изменениях и непустом названии) →
     `window.orca.tasks.update(id, {title, spec})` (IPC `tasks:update`). Для задачи в колонке `kind=in_progress`
     поля только для чтения с подписью «Задача в работе — название и описание редактировать нельзя»;
@@ -629,16 +696,18 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   проект всё ещё активен (`activeIdRef`).
 - **«О проекте»** (`about/AboutProject.tsx`): только настройки активного проекта (`projects:set*`, после —
   `refreshProjects`); без активного проекта вкладка показывает заглушку. Слева меню разделов (Обзор, Агенты, Роли,
-  Колонки, Разрешения, Правила доски, Правила, Прогоны), справа один раздел (выбранный хранится в `localStorage` `orca.aboutSection`).
+  Колонки, Воркфлоу, Разрешения, Правила доски, Правила, Прогоны), справа один раздел (выбранный хранится в `localStorage` `orca.aboutSection`).
   У пунктов меню счётчики: агенты «N из M» (включено из установленных), роли (+ «k !» — роли с выключенным
-  агентом), колонки, режим разрешений, правила доски (непустых строк или «нет»), прогоны («N идёт» или всего). Пункт меню — общий `NavItem`, заголовки
+  агентом), колонки, воркфлоу («дефолт», «свой», «свой · k !» — ошибки `validateWorkflow` своего графа, например
+  после удаления роли), режим разрешений, правила доски (непустых строк или «нет»), прогоны («N идёт» или всего). Пункт меню — общий `NavItem`, заголовки
   разделов — `SectionHead` (`about/parts.tsx`). Узкая вкладка (`@container about`, ≤ 900px) — меню становится
   горизонтальной полосой. Дефолт для новых проектов здесь не редактируется — только сравнение в «Обзоре».
   - «Обзор» (`OverviewSection.tsx`) — статистика (задачи/открытые, терминалы, идущие прогоны, включённые агенты);
     паспорт: репозиторий, ID для CLI, папка worktree (`<repo>/../.orca-worktrees/`), сокет CLI — у каждого
     «Скопировать»; блок «Дефолт для новых проектов»: отличия проекта от дефолта (`about/defaultsDiff.ts`:
-    агенты, роли и колонки — добавленные/удалённые/изменённые/порядок, разрешения, правила доски), «Сделать дефолтом»
-    (`setDefaults` с permissionMode/enabledAgents/roles/columns/agentRules проекта, `confirm`) и «Применить дефолт…»
+    агенты, роли и колонки — добавленные/удалённые/изменённые/порядок, разрешения, правила доски, воркфлоу — сравнивается
+    исполняемый граф: свой или дефолтный по ролям), «Сделать дефолтом»
+    (`setDefaults` с permissionMode/enabledAgents/roles/columns/agentRules/workflow проекта, `confirm`) и «Применить дефолт…»
     (`projects:applyDefaults`, `confirm`; после — `refreshProjects` и пересоздание редакторов через `rev`);
     красная зона «Убрать из списка» (`confirm`, `projects:remove`).
   - «Агенты» (`AgentsSection.tsx`) — карточки установленных (логотип, название, версия) с переключателем
@@ -654,6 +723,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns` (в дефолте — `setDefaults({ columns })`).
+  - «Воркфлоу» (`about/WorkflowSection.tsx`) — см. «Воркфлоу: редактор».
   - «Разрешения» (`PermissionsSection.tsx`) — `permissionMode` карточками-радио (см. «Разрешения Claude Code»).
   - «Правила доски» (`about/AgentRulesSection.tsx`, логика — `renderer/src/agentRules.ts`) — textarea `Project.agentRules`
     с автосохранением (`useAutoSave`, задержка) через `projects:setAgentRules`, затем `refreshProjects`. Начальное
@@ -862,9 +932,12 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 ## Редактирование задачи и автозакрытие терминалов (`src/main/index.ts`)
 
-- `store.editTask(id, {title?, spec?})` (core) — единая точка для IPC `tasks:update` (модалка задачи)
-  и сокета `task.update` (CLI `orca-board task update`): задача в колонке `kind=in_progress` отвергается
-  с ошибкой (воркер уже получил задание в промпт), пустое название после trim — тоже. Внутри — `updateTask`,
+- `store.editTask(id, {title?, spec?, priority?})` (core) — единая точка для IPC `tasks:update` (модалка задачи)
+  и сокета `task.update` (CLI `orca-board task update`): правка названия/описания задачи в колонке
+  `kind=in_progress` отвергается с ошибкой (воркер уже получил задание в промпт), пустое название после trim — тоже.
+  Приоритет меняется в любой колонке: в промпт он не попадает. Отдельного IPC для приоритета нет — `tasks:update`
+  и `tasks:create`/`globalTasks:createTask` принимают `priority`; приоритет самой глобальной задачи —
+  через `globalTasks:create`/`globalTasks:update` (`GlobalTaskInput`/`GlobalTaskPatch`). Внутри — `updateTask`,
   так что `updatedAt` и `board:changed` идут как обычно.
 - **Автозакрытие**: main в `projects.onChange` (любой `commit` store) вызывает `closeDoneWorkers`:
   у задач в колонке `kind=done` закрываются dispatch'и (`store.closeDispatches` ставит `endedAt`/`outcome=unknown`

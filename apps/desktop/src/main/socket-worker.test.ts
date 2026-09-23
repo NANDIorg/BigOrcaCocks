@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, type AgentInfo, type Role, type WfStageInfo } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 
 let tmp: string
@@ -308,5 +308,36 @@ describe('workflow show', () => {
     const old = store.createGlobalTask({ title: 'Старый' })
     assert.equal(((await call('workflow.show', { run: old.id })).result as unknown as Shown).source, 'default')
     assert.match((await call('workflow.show', { run: 'run_nope' })).error!, /run not found/)
+  })
+})
+
+describe('приоритет задачи через сокет', () => {
+  it('task create --priority high создаёт задачу с priority high, без флага — normal', async () => {
+    const res = await call('task.create', { title: 'Срочно', role: 'developer', priority: 'high' })
+    assert.equal(res.ok, true)
+    assert.equal((res.result as Task).priority, 'high')
+    const plain = await call('task.create', { title: 'Обычная', role: 'developer' })
+    assert.equal((plain.result as Task).priority, 'normal')
+  })
+
+  it('task update --priority меняет приоритет задачи в работе; флаг без значения и мусор — ошибки', async () => {
+    const task = store.createTask({ title: 'Логин', roleId: 'developer' })
+    store.moveTask(task.id, 'in_progress')
+    assert.equal(((await call('task.update', { task: task.id, priority: 'urgent' })).result as Task).priority, 'urgent')
+    assert.match((await call('task.update', { task: task.id, priority: true })).error!, /--priority требует значения: urgent, high, normal, low/)
+    assert.match((await call('task.create', { title: 'X', role: 'developer', priority: 'asap' })).error!, /приоритет: ожидается/)
+    assert.match((await call('task.update', { task: task.id })).error!, /укажи --title, --spec и\/или --priority/)
+  })
+
+  it('global create / update --priority: приоритет глобальной задачи; без флага — normal', async () => {
+    const created = await call('global.create', { title: 'x', priority: 'urgent' })
+    assert.equal(created.ok, true)
+    const g = created.result as GlobalTask
+    assert.equal(g.priority, 'urgent')
+    assert.equal(((await call('global.create', { title: 'y' })).result as GlobalTask).priority, 'normal')
+    assert.equal(((await call('global.update', { global: g.id, priority: 'low' })).result as GlobalTask).priority, 'low')
+    assert.match((await call('global.update', { global: g.id, priority: true })).error!, /--priority требует значения/)
+    assert.match((await call('global.create', { title: 'z', priority: 'asap' })).error!, /приоритет: ожидается/)
+    assert.equal(((await call('global.get', { global: g.id })).result as GlobalTask).priority, 'low')
   })
 })

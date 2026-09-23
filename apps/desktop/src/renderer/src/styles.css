@@ -18,6 +18,9 @@
   --col-review: #b57bee;
   --col-done: #5ad1cc;
   --danger: #ef6b6b;
+  /* Исходы переходов воркфлоу: принять — зелёный, вернуть — красный. */
+  --wf-accept: #8fd16a;
+  --wf-reject: var(--danger);
   --radius: 14px;
   /* Фон терминала — совпадает с theme.background xterm в Terminal.tsx. */
   --term-bg: #1b1c21;
@@ -224,6 +227,10 @@ textarea { min-height: 96px; resize: vertical; }
 /* ---------- вопросы и итоги ---------- */
 .chip.live { border-color: var(--col-progress); color: var(--col-progress); }
 .chip.warn { border-color: #ef6b6b; color: #ef6b6b; }
+/* Приоритет: normal бейджа не имеет; low — приглушённый, чтобы не спорить с важными. */
+.chip.priority.urgent { border-color: var(--danger); color: var(--danger); font-weight: 600; }
+.chip.priority.high { border-color: var(--col-progress); color: var(--col-progress); }
+.chip.priority.low { border-style: dashed; color: var(--muted); }
 .summary { margin-top: 12px; color: var(--muted); font-size: 13px; white-space: pre-wrap; max-height: 120px; overflow: auto; }
 .question {
   margin-top: 14px; padding: 12px; border-radius: 10px; background: rgba(232,176,74,.08);
@@ -471,6 +478,7 @@ button:disabled { opacity: .45; cursor: default; }
 .task-modal-meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; }
 .task-modal-meta .meta-row { display: contents; }
 .task-modal-meta .meta-key { color: var(--muted); }
+.task-modal-meta select.task-modal-priority { width: auto; padding: 4px 8px; font-size: 13px; }
 .task-modal-meta .meta-val { min-width: 0; overflow-wrap: anywhere; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .task-modal .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .task-modal-section { display: flex; flex-direction: column; gap: 8px; }
@@ -1063,3 +1071,140 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .agent-rules .editor-error { margin-top: 0; }
 .about-sec .agent-rules-notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+/* Нодовый редактор воркфлоу (WorkflowCanvas.tsx). Цвета исходов — --wf-accept / --wf-reject. */
+.wf-canvas {
+  position: relative; min-height: 360px; height: 100%; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--side); overflow: hidden;
+}
+.wf-svg { display: block; width: 100%; height: 100%; position: absolute; inset: 0; touch-action: none; user-select: none; cursor: grab; }
+.wf-svg:focus { outline: none; }
+.wf-svg:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.wf-svg.panning { cursor: grabbing; }
+.wf-svg.connecting { cursor: crosshair; }
+.wf-grid-dot { fill: rgba(255,255,255,.07); }
+
+.wf-node { cursor: move; }
+.wf-node-box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
+.wf-node:hover .wf-node-box { fill: var(--card-hover); }
+.wf-node.selected .wf-node-box { stroke: var(--accent); stroke-width: 2; }
+.wf-node.wf-issue--warning .wf-node-box { stroke: var(--col-input); stroke-dasharray: 5 3; }
+.wf-node.wf-issue--error .wf-node-box { stroke: var(--danger); stroke-width: 2; stroke-dasharray: none; }
+.wf-node.drop-ok .wf-node-box { stroke: var(--wf-accept); stroke-width: 2.5; }
+.wf-node.drop-bad .wf-node-box { stroke: var(--danger); stroke-width: 2.5; stroke-dasharray: 3 3; }
+.wf-node-icon { color: var(--muted); }
+.wf-node--start .wf-node-icon, .wf-node--end .wf-node-icon { color: var(--col-done); }
+.wf-node--work .wf-node-icon { color: var(--col-progress); }
+.wf-node--gate .wf-node-icon { color: var(--col-review); }
+.wf-node--human .wf-node-icon { color: var(--col-input); }
+.wf-node--merge .wf-node-icon { color: var(--accent); }
+.wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
+.wf-node-sub { fill: var(--muted); font-size: 11px; }
+.wf-node text { pointer-events: none; }
+
+.wf-port { cursor: crosshair; }
+.wf-port circle { fill: var(--side); stroke: var(--muted); stroke-width: 2; }
+.wf-port:hover circle { fill: var(--muted); }
+.wf-port-label { fill: var(--muted); font-size: 10px; }
+.wf-port--accept circle, .wf-port--ok circle { stroke: var(--wf-accept); }
+.wf-port--accept .wf-port-label, .wf-port--ok .wf-port-label { fill: var(--wf-accept); }
+.wf-port--reject circle, .wf-port--conflict circle { stroke: var(--wf-reject); }
+.wf-port--reject .wf-port-label, .wf-port--conflict .wf-port-label { fill: var(--wf-reject); }
+.wf-port-in { fill: var(--chip); }
+
+.wf-edge { --edge: var(--muted); cursor: pointer; }
+.wf-edge--accept, .wf-edge--ok { --edge: var(--wf-accept); }
+.wf-edge--reject, .wf-edge--conflict { --edge: var(--wf-reject); }
+.wf-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.8; opacity: .75; }
+.wf-edge-arrow { fill: var(--edge); opacity: .75; }
+.wf-edge:hover .wf-edge-line, .wf-edge:hover .wf-edge-arrow { opacity: 1; }
+.wf-edge.selected .wf-edge-line { stroke-width: 3; opacity: 1; }
+.wf-edge.selected .wf-edge-arrow { opacity: 1; }
+.wf-edge.wf-issue--warning .wf-edge-line { stroke-dasharray: 6 4; }
+.wf-edge.wf-issue--error .wf-edge-line { stroke: var(--danger); stroke-dasharray: 6 4; opacity: 1; }
+.wf-edge-draft { fill: none; stroke: var(--edge, var(--accent)); stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; }
+.wf-edge-draft.wf-edge--next, .wf-edge-draft.wf-edge--yes, .wf-edge-draft.wf-edge--no { --edge: var(--accent); }
+
+.wf-toolbar {
+  position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 2px; padding: 3px;
+  background: var(--frame); border: 1px solid var(--line); border-radius: 10px;
+}
+.wf-toolbar .icon-btn { width: 30px; height: 30px; font-size: 16px; }
+.wf-toolbar .icon-btn svg { width: 17px; height: 17px; }
+.wf-toolbar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--chip); }
+
+/* «О проекте → Воркфлоу» (about/WorkflowSection.tsx) и инспектор ноды (WorkflowInspector.tsx) */
+.wf-section { display: flex; flex-direction: column; gap: 12px; }
+.wf-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.wf-count { color: var(--muted); }
+.wf-count--error { color: var(--danger); }
+.wf-count--warning { color: var(--col-input); }
+.wf-editor { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; height: 560px; }
+.wf-editor .wf-canvas { min-height: 0; }
+@container about (max-width: 900px) {
+  .wf-editor { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .wf-editor .wf-canvas { height: 420px; }
+}
+
+.wf-insp {
+  display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding: 14px;
+  background: var(--side); border: 1px solid var(--line); border-radius: var(--radius); font-size: 13px;
+}
+.wf-insp-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wf-insp-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-insp-icon { display: inline-flex; }
+.wf-insp-icon svg { width: 18px; height: 18px; }
+.wf-insp-icon.wf-node--work { color: var(--col-progress); }
+.wf-insp-icon.wf-node--gate { color: var(--col-review); }
+.wf-insp-icon.wf-node--human { color: var(--col-input); }
+.wf-insp-icon.wf-node--merge { color: var(--accent); }
+.wf-insp-icon.wf-node--start, .wf-insp-icon.wf-node--end { color: var(--col-done); }
+.wf-insp-icon.wf-node--condition { color: var(--muted); }
+.about-sec .wf-insp-hint { margin: 0; }
+.wf-insp input, .wf-insp select, .wf-insp textarea { padding: 7px 10px; font-size: 13px; border-radius: 8px; }
+.wf-insp textarea { min-height: 72px; }
+.wf-insp select.off { color: var(--muted); }
+.wf-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.wf-field > span { font-size: 12px; color: var(--muted); }
+.wf-row { display: flex; gap: 8px; }
+.wf-row .wf-field { flex: 1; }
+.wf-row .wf-num { flex: 0 0 90px; }
+.wf-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.wf-ports, .wf-roles { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.wf-ports legend, .wf-roles legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+.wf-port-field > span { font-weight: 600; }
+.wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
+.wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span { color: var(--wf-reject); }
+.wf-issues { margin: 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.wf-issues--error { color: var(--danger); }
+.wf-issues--warning { color: var(--col-input); }
+.wf-insp-foot { margin-top: auto; display: flex; }
+.wf-insp-foot .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
+.wf-insp-foot .btn-sm svg { width: 14px; height: 14px; }
+.wf-node-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wf-node-link {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.wf-node-link:hover, .wf-node-link:focus-visible { background: var(--card-hover); outline: none; }
+.wf-node-link svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--muted); }
+.wf-node-link span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--col-input); }
+.wf-node-link.wf-issue--error .wf-dot { background: var(--danger); }
+
+.wf-problems { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; }
+.wf-problem {
+  display: flex; gap: 10px; align-items: baseline; padding: 6px 10px; border: 0; border-radius: 8px; text-align: left;
+  background: var(--side); color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.wf-problem:disabled { cursor: default; }
+.wf-problem:not(:disabled):hover { background: var(--card-hover); }
+.wf-problem-kind { flex-shrink: 0; font-weight: 600; }
+.wf-problem--error .wf-problem-kind { color: var(--danger); }
+.wf-problem--warning .wf-problem-kind { color: var(--col-input); }
+.wf-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.wf-actions .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
+.wf-actions .btn-sm svg { width: 14px; height: 14px; }
+.wf-actions .btn-sm:disabled { opacity: .5; cursor: default; }
+.wf-actions-sep { width: 1px; height: 18px; background: var(--chip); }
+.about-sec .wf-notice { margin: 0; }

@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
-  AGENT_TITLES, modelLabel,
+  AGENT_TITLES, PRIORITY_TITLES, TASK_PRIORITIES, isTaskPriority, modelLabel,
   type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
   type RequestResolution
 } from '@orca-board/core'
@@ -14,6 +14,7 @@ import { Markdown } from './Markdown'
 import { Icon } from './icons'
 import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
+import { priorityEditable, taskPriorityOf } from './taskPriority'
 
 interface Props {
   /** Актуальная задача из снимка: App находит её по id при каждом обновлении. */
@@ -46,6 +47,8 @@ function formatDate(ts: number): string {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
   })
 }
+
+const STALE_PRIORITY_MESSAGE = 'Приложение запущено со старой версией main, где ещё нет приоритетов. Перезапустите приложение.'
 
 /** Подпись исхода dispatch'а. Без outcome: ещё работает, если не завершён, иначе неизвестно. */
 function outcomeLabel(d: Dispatch): { text: string; cls: string } {
@@ -145,6 +148,24 @@ export function TaskModal(props: Props): React.JSX.Element {
     }
   }
 
+  // ---- приоритет: сохраняется сразу, в любой колонке ----
+  const priority = taskPriorityOf(task)
+  const [priorityError, setPriorityError] = useState<string | null>(null)
+  const [prioritySaving, setPrioritySaving] = useState(false)
+
+  async function changePriority(next: string): Promise<void> {
+    if (!isTaskPriority(next) || next === priority) return
+    setPrioritySaving(true)
+    setPriorityError(null)
+    try {
+      await onUpdate(task.id, { priority: next })
+    } catch (e) {
+      setPriorityError(errorText(e))
+    } finally {
+      setPrioritySaving(false)
+    }
+  }
+
   // ---- нижние кнопки ----
   const [actionError, setActionError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -230,6 +251,28 @@ export function TaskModal(props: Props): React.JSX.Element {
                 <span className="meta-val"><span className="chip answer">{ANSWER_FOR_TITLE[task.answerFor]}</span></span>
               </div>
             )}
+            <div className="meta-row">
+              <span className="meta-key">Приоритет</span>
+              <span className="meta-val">
+                {priorityEditable(task) ? (
+                  <select
+                    className="task-modal-priority"
+                    value={priority}
+                    disabled={prioritySaving}
+                    aria-label="Приоритет"
+                    onChange={(e) => void changePriority(e.target.value)}
+                  >
+                    {TASK_PRIORITIES.map((p) => (
+                      <option key={p} value={p}>{PRIORITY_TITLES[p]}</option>
+                    ))}
+                  </select>
+                ) : (
+                  // Задача без поля — main старый и приоритет не сохранит.
+                  <span className="muted" title={STALE_PRIORITY_MESSAGE}>{PRIORITY_TITLES[priority]}</span>
+                )}
+                {priorityError && <span className="error-text">{priorityError}</span>}
+              </span>
+            </div>
             <div className="meta-row">
               <span className="meta-key">Колонка</span>
               <span className="meta-val">

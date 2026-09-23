@@ -29,6 +29,7 @@ needs_input — **вычисляемая** колонка: там карточк
 | `title?` | название карточки; нет — первая строка `objective` (≤ 80 символов), у «Входящих» — `Входящие` (`globalTaskTitle`) |
 | `status?` | id колонки глобального канбана (kind backlog / in_progress / done), где стоит карточка. После миграции есть всегда |
 | `inbox?` | служебная глобальная задача «Входящие» (одна на проект) |
+| `priority?` | приоритет карточки — та же шкала, что у подзадач (`TaskPriority`: `urgent` / `high` / `normal` / `low`). Новые — `normal`, после миграции есть всегда. Влияет только на порядок показа, не на цель координатора и не на приоритет подзадач |
 | `updatedAt?` | последняя правка карточки |
 | `reopenedAt?` | прогон переоткрыт и ещё ни одна подзадача не дошла до done после этого (см. «Жизненный цикл») |
 
@@ -57,6 +58,8 @@ needs_input — **вычисляемая** колонка: там карточк
 - Задачи без `runId` (или со ссылкой на несуществующий прогон) → во «Входящие» (существующие или новые,
   `createdAt` = самой ранней из них). Статус «Входящих»: все в done → `done` и `closedAt` (без `run_done`),
   иначе `in_progress`.
+- Прогон без `priority` или с неизвестным значением → `normal` (`migrateRunPriority`). `toGlobalTask` тоже читает
+  такой прогон как `normal`: renderer строит карточки из снапшота, который мог прислать ещё не перезапущенный main.
 - Если что-то мигрировало — снапшот сохраняется сразу (id «Входящих» стабилен между перезапусками).
   Повторная загрузка ничего не меняет.
 
@@ -187,6 +190,7 @@ interface GlobalTask {
   title: string              // globalTaskTitle(run)
   description: string        // = Run.objective
   status: string             // id колонки проекта; needs_input — вычислено из waiting
+  priority: TaskPriority     // = Run.priority; нет поля или мусор — normal
   inbox: boolean
   createdAt: number
   updatedAt: number          // правка карточки
@@ -251,8 +255,8 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 |---|---|---|---|
 | `list()` | `globalTasks:list` | `GlobalTask[]` в порядке создания (нет проекта → `[]`) | — |
 | `get(id)` | `globalTasks:get` | `GlobalTask` | `run not found` |
-| `create({title?, description?, status?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана |
-| `update(id, {title?, description?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название |
+| `create({title?, description?, status?, priority?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана; неизвестный приоритет |
+| `update(id, {title?, description?, priority?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название; неизвестный приоритет (карточка не меняется) |
 | `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / review / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |
 | `tasks(id)` | `globalTasks:tasks` | `Task[]` только этой глобальной | `run not found` |
@@ -269,19 +273,21 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 |---|---|---|---|
 | `global list` | `global.list` | — | `GlobalTask[]` + `coordinatorAlive` |
 | `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` |
-| `global create [--title] [--description] [--status <col>]` | `global.create` | `title?`, `description?`, `status?` | `GlobalTask` |
-| `global update --global <id> [--title] [--description]` | `global.update` | `global`, `title?`, `description?` | `GlobalTask` |
+| `global create [--title] [--description] [--status <col>] [--priority …]` | `global.create` | `title?`, `description?`, `status?`, `priority?` | `GlobalTask` |
+| `global update --global <id> [--title] [--description] [--priority …]` | `global.update` | `global`, `title?`, `description?`, `priority?` | `GlobalTask` |
 | `global move --global <id> --status <col>` | `global.move` | `global`, `status` | `GlobalTask` |
 | `global delete --global <id> [--cascade]` | `global.delete` | `global`, `cascade?: true` | `{deleted, tasks}` |
 | `global tasks [--global <id>]` | `global.tasks` | `global` | `Task[]` |
-| `global add-task [--global <id>] --title … [--spec …] --role <id> [--dep <id>]…` | `global.add-task` | `global`, как `task.create` | `Task` |
+| `global add-task [--global <id>] --title … [--spec …] --role <id> [--dep <id>]… [--priority …]` | `global.add-task` | `global`, как `task.create` | `Task` |
 | `global start --global <id>` | `global.start` | `global` | `{ptyId}` |
 | `coordinator start --global <id>` | `coordinator.start` | `global` (важнее `objective`) | `{ptyId}` |
 | `task list [--run <id>]` | `task.list` | `run?` | с `run` — только подзадачи, без — все задачи (как раньше) |
 
 `--global` у `global get`, `global tasks`, `global add-task` по умолчанию = `$ORCA_RUN_ID` (координатор
 видит свою глобальную задачу); у `update`/`move`/`delete`/`start` — только явно. `--global` без значения —
-ошибка до обращения к сокету. Совместимость: `task create [--run]`, `check`, `runs list/close/finish`,
+ошибка до обращения к сокету. `--priority urgent|high|normal|low` у `global create`/`global update`: значение
+проверяет store (`приоритет: ожидается …, получено «…»`), флаг без значения — ошибка сокета; приоритет глобальной
+меняется в любой колонке и подзадач не касается (у них свой, `task update --priority`). Совместимость: `task create [--run]`, `check`, `runs list/close/finish`,
 `done`, `worker start`, `review *` — без изменений (`ask` расширен, `question forward` получил `--note`, добавлены
 `request list|get|resolve` — `docs/human-requests.md`) (`runs.list` дополнительно покажет «Входящие»,
 если в проекте есть задачи без прогона).
@@ -325,7 +331,7 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
   прогресс, «Изменить», «Запустить координатора» / «Координатор работает» (переход к терминалу) и `Board` только
   с `task.runId === id` (прежние действия подзадач: drag `tasks.move`, модалка задачи, запуск воркера, вопросы, ревью).
 - `GlobalTaskModal.tsx` — создание (`globalTasks.create`, колонка глобального канбана на выбор) и правка (`globalTasks.update`, только изменённые поля).
-  «Новая подзадача» в шапке открыта задачей → `NewTaskModal` с зависимостями только из её подзадач → `globalTasks.createTask`.
+  «Новая подзадача» в шапке открыта задачей → `NewTaskModal` с зависимостями только из её подзадач и приоритетом (по умолчанию «обычный») → `globalTasks.createTask`.
 - Открытая глобальная задача — в `ProjectView.globalId` (по проекту, `localStorage` `orca.global.<projectId>`):
   переживает перезагрузку; id, которого нет в снимке активного проекта, показывает общую доску.
 - Клавиатура: карточка фокусируется Tab, Enter/Space открывает; на экране задачи фокус на «назад», Esc (вне полей и

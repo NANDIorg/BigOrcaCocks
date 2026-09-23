@@ -1,4 +1,4 @@
-import { DEFAULT_ROLES, type Role } from '@orca-board/core'
+import { DEFAULT_ROLES, wfNodeTitle, type Role, type Workflow } from '@orca-board/core'
 
 /** Системные роли — id из DEFAULT_ROLES: у пустого назначения есть значение по умолчанию, их можно вернуть из дефолта. */
 export const SYSTEM_ROLE_IDS: ReadonlySet<string> = new Set(DEFAULT_ROLES.map((r) => r.id))
@@ -37,13 +37,32 @@ export function removeBlocker(roles: readonly Role[]): string | undefined {
   return roles.length > 1 ? undefined : 'Нельзя удалить последнюю роль'
 }
 
+/** Названия нод воркфлоу, где занята роль: роль гейта, роль работы, роль в условии. */
+export function workflowNodesWithRole(wf: Workflow | undefined, roleId: string): string[] {
+  if (!wf) return []
+  return wf.nodes
+    .filter((n) =>
+      ((n.type === 'gate' || n.type === 'work') && n.roleId === roleId) ||
+      (n.type === 'condition' && n.test.kind === 'role' && n.test.roleIds.includes(roleId)))
+    .map((n) => wfNodeTitle(n))
+}
+
 /**
  * Последствия удаления роли для подтверждения. Пусто — подтверждать нечего (пользовательская роль без задач).
  * `taskCount` — задач проекта на роли (undefined — счётчиков нет, как в дефолте для новых проектов).
+ * `workflow` — свой воркфлоу проекта; дефолтный не передаётся: он строится по ролям и сам обходится без
+ * удалённой (нет reviewer — ревью делает человек).
  */
-export function removalConsequences(roleId: string, taskCount?: number): string[] {
+export function removalConsequences(roleId: string, taskCount?: number, workflow?: Workflow): string[] {
   const out = [...(SYSTEM_ROLE_LOSSES[roleId] ?? [])]
   if (taskCount) out.push(`Задачи на этой роли (${taskCount}) не запустятся, пока роль не вернут.`)
+  const stages = workflowNodesWithRole(workflow, roleId)
+  if (stages.length) {
+    out.push(
+      `Роль занята в воркфлоу: ${stages.map((t) => `«${t}»`).join(', ')}. Задачи остановятся на этих этапах, ` +
+        'а граф не сохранится, пока роль не заменят в «О проекте → Воркфлоу».'
+    )
+  }
   if (isSystemRole(roleId)) out.push('Вернуть роль можно кнопкой «Вернуть системные роли» под списком — с настройками по умолчанию.')
   return out
 }

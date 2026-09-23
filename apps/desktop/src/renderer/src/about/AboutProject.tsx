@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, validateWorkflow,
   type AgentInfo, type AgentKind, type BoardColumn, type Role, type Run, type Task
 } from '@orca-board/core'
 import type { PermissionMode, Project } from '../../../shared/ipc'
@@ -16,13 +16,14 @@ import { AgentsSection } from './AgentsSection'
 import { PermissionsSection, permissionParts } from './PermissionsSection'
 import { RulesSection } from './RulesSection'
 import { AgentRulesSection } from './AgentRulesSection'
+import { WorkflowSection } from './WorkflowSection'
 import { agentRulesCount } from '../agentRules'
 import { defaultsDiff } from './defaultsDiff'
 import { useProjectDefaults } from './useProjectDefaults'
 
-type Section = 'overview' | 'agents' | 'roles' | 'columns' | 'perm' | 'agentRules' | 'rules' | 'runs'
+type Section = 'overview' | 'agents' | 'roles' | 'columns' | 'workflow' | 'perm' | 'agentRules' | 'rules' | 'runs'
 
-const SECTIONS: readonly Section[] = ['overview', 'agents', 'roles', 'columns', 'perm', 'agentRules', 'rules', 'runs']
+const SECTIONS: readonly Section[] = ['overview', 'agents', 'roles', 'columns', 'workflow', 'perm', 'agentRules', 'rules', 'runs']
 const SECTION_KEY = 'orca.aboutSection'
 
 interface Props {
@@ -81,14 +82,16 @@ export function AboutProject(props: Props): React.JSX.Element {
 
   /** Текущие настройки проекта → дефолт для новых проектов. */
   async function makeDefault(): Promise<void> {
-    if (!confirm(`Сохранить настройки проекта «${project.name}» (агенты, роли, колонки, разрешения, правила доски) как дефолт для новых проектов?`)) return
+    if (!confirm(`Сохранить настройки проекта «${project.name}» (агенты, роли, колонки, воркфлоу, разрешения, правила доски) как дефолт для новых проектов?`)) return
     await saveDefaults(
       {
         permissionMode: project.permissionMode ?? 'auto',
         enabledAgents: project.enabledAgents,
         roles: project.roles ?? DEFAULT_ROLES,
         columns: project.columns ?? DEFAULT_COLUMNS,
-        agentRules: project.agentRules ?? ''
+        agentRules: project.agentRules ?? '',
+        // Нет своего графа — и в дефолте его не будет: новый проект получит граф по своим ролям.
+        workflow: project.workflow
       },
       setDefaultsError
     )
@@ -97,7 +100,7 @@ export function AboutProject(props: Props): React.JSX.Element {
   /** Переписать настройки проекта дефолтом; задачи из исчезнувших колонок уезжают в бэклог. */
   async function applyDefault(): Promise<void> {
     const ok = confirm(
-      `Заменить агентов, роли, колонки, разрешения и правила доски проекта «${project.name}» настройками по умолчанию?\n\n` +
+      `Заменить агентов, роли, колонки, воркфлоу, разрешения и правила доски проекта «${project.name}» настройками по умолчанию?\n\n` +
         'Задачи из колонок, которых нет в дефолте, переедут в бэклог.'
     )
     if (!ok) return
@@ -122,6 +125,10 @@ export function AboutProject(props: Props): React.JSX.Element {
   const rolesOff = roles.filter((r) => !agentOk.has(r.agent)).length
   const liveRuns = runs.filter((r) => !r.inbox && r.closedAt === undefined).length
   const doneIds = new Set(columns.filter((c) => c.kind === 'done').map((c) => c.id))
+  // Свой граф мог сломаться после сохранения (удалили роль или колонку) — подсветить раздел в меню.
+  const workflowErrors = project.workflow
+    ? validateWorkflow(project.workflow, { roles, columns }).errors.length
+    : 0
   const roleTaskCounts: Record<string, number> = {}
   for (const t of tasks) roleTaskCounts[t.roleId] = (roleTaskCounts[t.roleId] ?? 0) + 1
 
@@ -142,6 +149,12 @@ export function AboutProject(props: Props): React.JSX.Element {
       title: rolesOff ? `Ролей с выключенным агентом: ${rolesOff}` : undefined
     },
     { id: 'columns', label: 'Колонки', icon: Icon.columns, count: String(columns.length) },
+    {
+      id: 'workflow', label: 'Воркфлоу', icon: Icon.workflow,
+      count: workflowErrors ? `свой · ${workflowErrors} !` : project.workflow ? 'свой' : 'дефолт',
+      tone: workflowErrors ? 'warn' : undefined,
+      title: workflowErrors ? `Ошибок в графе: ${workflowErrors} — задачи остановятся на сломанных этапах` : undefined
+    },
     { id: 'perm', label: 'Разрешения', icon: Icon.shield, count: permissionParts(permission).title },
     {
       id: 'agentRules', label: 'Правила доски', icon: Icon.layers, count: agentRulesCount(project.agentRules),
@@ -198,6 +211,7 @@ export function AboutProject(props: Props): React.JSX.Element {
               roles={roles}
               agents={agents}
               taskCounts={roleTaskCounts}
+              workflow={project.workflow}
               onSave={async (next) => {
                 await window.orca.projects.setRoles(project.id, next)
                 await onProjectChanged()
@@ -219,6 +233,18 @@ export function AboutProject(props: Props): React.JSX.Element {
               }}
             />
           </>
+        )
+      case 'workflow':
+        return (
+          <WorkflowSection
+            key={editorKey}
+            project={project}
+            roles={roles}
+            columns={columns}
+            agents={agents}
+            onProjectChanged={onProjectChanged}
+            saveDefaults={saveDefaults}
+          />
         )
       case 'perm':
         return (
