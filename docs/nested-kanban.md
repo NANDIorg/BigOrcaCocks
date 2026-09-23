@@ -232,9 +232,10 @@ needs_input — **вычисляемая** колонка: там карточк
   (`returnToWork` в `apps/desktop/src/main/worker.ts`; шаги 1–2 — `returnGlobalTaskToWork` в `coordinator-resume.ts`):
   1. `TaskStore.returnGlobalTask(id, text)`: пустой текст, «Входящие», не на проверке — ошибка, терминалы не трогаются;
      иначе `returns.push({at, text})`, `reopenRun` (гасит старые `run_done`, ставит `reopenedAt`), карточка → in_progress;
-  2. жив прежний координатор — его терминал закрывается (`killPty`). Это не только окно после `runs finish`:
-     агент без `runs finish` (Claude — не `lingers`) держит терминал бессрочно, и отказ в возврате оставлял
-     человека без поля для уточнения. Без функции закрытия (`stop`) `returnGlobalTaskToWork` по-прежнему
+  2. жив прежний координатор — его терминал закрывается (`killPty`). На «Проверке» так бывает после `runs finish`
+     или ручного переноса карточки: `coordinatorsToClose` закрывает терминал только после
+     `COORDINATOR_FINISH_GRACE_MS` тишины, а ввод человека в терминал сдвигает отсчёт. Отказ в возврате в это
+     окно оставлял человека без поля для уточнения. Без функции закрытия (`stop`) `returnGlobalTaskToWork` по-прежнему
      отказывает «координатор … ещё завершается», стор не меняется;
   3. повторный запуск координатора (`startCoordinator(..., runId)`), как `globalTasks.startCoordinator`.
 
@@ -398,7 +399,9 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 - `packages/core/src/coordinator-close.test.ts` — последний `run_done` переоткрытого прогона.
 - `apps/desktop/src/main/global-review.test.ts` — сквозной цикл «Проверки» на store + `resumeObjective` /
   `returnGlobalTaskToWork` без PTY: `run_done` → `runs finish` → review и закрытие терминала → возврат с
-  уточнением (цель) → новая работа → review → «Подтвердить»; возврат без новой работы; ручные переносы;
+  уточнением (цель) → новая работа → review → «Подтвердить»; возврат при живом прежнем координаторе (окно grace
+  после `runs finish` с активностью в терминале, ручной перенос на «Проверку») закрывает его терминал;
+  возврат без новой работы; ручные переносы;
   рестарт; «Входящие». «Все подзадачи done при живом координаторе»: карточка в работе, новая подзадача
   переоткрывает прогон, смерть координатора (`settleIdleRuns`) и страховка `coordinatorsToClose` → review,
   ручной перенос, глобальная без координатора.
