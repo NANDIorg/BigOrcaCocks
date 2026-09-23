@@ -14,7 +14,12 @@ mac:
   target:
     - target: dmg
       arch: [arm64, x64]
-  identity: null
+  # Ad-hoc подпись: без неё скачанный браузером .app (карантин) на Apple Silicon macOS
+  # называет «повреждённым» и не даёт открыть. Нотаризации нет — Developer ID не нужен.
+  # hardenedRuntime выключен: с ним library validation отвергает Electron Framework,
+  # подписанный ad-hoc (другой Team ID), и приложение падает при запуске.
+  identity: '-'
+  hardenedRuntime: false
   artifactName: ${productName}-${version}-${arch}.${ext}
 win:
   target:
