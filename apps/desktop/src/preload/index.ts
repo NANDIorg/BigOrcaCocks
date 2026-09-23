@@ -17,6 +17,7 @@ const api: OrcaApi = {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
+    taskRefs: (id) => ipcRenderer.invoke('projects:taskRefs', id),
     add: (templateId, path) => ipcRenderer.invoke('projects:add', templateId, path),
     detectTemplate: (path) => ipcRenderer.invoke('projects:detectTemplate', path),
     applyTemplate: (id, templateId, sections, roleIds) => ipcRenderer.invoke('projects:applyTemplate', id, templateId, sections, roleIds),

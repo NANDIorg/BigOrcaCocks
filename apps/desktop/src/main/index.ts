@@ -453,6 +453,7 @@ function registerIpc(): void {
   ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   ipcMain.handle('projects:inProgressCounts', () => projects.inProgressCounts())
+  ipcMain.handle('projects:taskRefs', (_e, id: string) => projects.taskRefs(id))
   ipcMain.handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   ipcMain.handle('projects:remove', (_e, id: string) => projects.remove(id))
   ipcMain.handle('projects:setPermissionMode', (_e, id: string, mode: PermissionMode) => projects.setPermissionMode(id, mode))

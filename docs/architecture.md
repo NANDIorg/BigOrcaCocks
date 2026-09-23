@@ -752,7 +752,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
       («Взять роль»: изменённая заменится, недостающая добавится, лишняя удалится — `roleIds` в `applyTemplate`).
     - «Сменить тип…» — выбор шаблона и разделов (по умолчанию все). Взяты все — проект запоминает шаблон как тип.
     - Перед применением — диалог последствий `about/ApplyTemplateModal.tsx` (`applyPreview`: тот же `applySections`,
-      что в main, без записи): исчезающие колонки с числом задач и сколько уедет в backlog, пропадающие роли с задачами
+      что в main, без записи; сам блок последствий — общий `renderer/src/ApplyConsequences.tsx`, его же показывает
+      «Настройки → Применить к проектам…»): исчезающие колонки с числом задач и сколько уедет в backlog, пропадающие роли с задачами
       на них и `removalConsequences`, «воркфлоу — только для новых прогонов». Ошибка графа по итоговым ролям и
       колонкам (текст `applySections` с подсказкой, какой раздел взять вместе) показывается и блокирует «Применить».
       Применение — `projects:applyTemplate`, затем `refreshProjects` и пересоздание редакторов через `rev`.
@@ -805,12 +806,26 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     значения `agents`/`roles`/… ведут на шаблон по умолчанию): сначала встроенные, затем «Свои», внизу «Новый шаблон»
     (`templates:save` без id, пустые настройки = встроенные значения). Счётчик пункта — «по умолч.» или число
     проектов из шаблона. Панель шаблона — `settings/TemplatePane.tsx`: шапка (название, «встроенный» /
-    «изменённый встроенный» / «по умолчанию», «Используют N проектов» — место под будущее «Применить к проектам…»),
+    «изменённый встроенный» / «по умолчанию», «Используют N проектов»),
     действия «По умолчанию» (`templates:setDefault`), «Дублировать» (`templates:duplicate`, открывает копию), у своих —
     «Переименовать» (форма в шапке: название и описание) и «Удалить» (`confirm` с последствиями из
     `deleteConfirmText`). Ниже вкладки разделов (`orca.settingsTemplateTab`): «Агенты», «Роли», «Колонки»,
     «Воркфлоу» (`settings/TemplateWorkflow.tsx` — холст и инспектор, как в «О проекте», сохранение кнопкой),
     «Разрешения», «Правила доски». Все пишут в шаблон `templates:save` целиком.
+  - **Массовое применение** (`settings/BulkApplyModal.tsx`, логика — `renderer/src/bulkApply.ts`). Правка шаблона
+    до проектов сама не доходит, поэтому шапка шаблона сравнивает с ним все проекты (`bulkCandidates` → `templateDiffRows`):
+    есть проекты этого типа (`templateId`), отличающиеся от сохранённого шаблона, — вместо «Используют N проектов»
+    подсказка «Шаблон используют N проектов, у M настройки отличаются. Применить к ним…» (`usageHint`); кнопка
+    «Применить к проектам…» в действиях есть всегда, когда проекты есть (встроенный шаблон тоже можно применить).
+    Диалог: галочки разделов и проектов — сначала «Проекты этого типа», затем «Другие проекты» с их типом. При
+    открытии отмечены отстающие проекты этого типа и разделы, которыми они отличаются (`initialSelection`). Под каждым
+    отмеченным проектом — `ApplyConsequences` по `applyPreview` с его задачами (`projects:taskRefs` — статус и роль,
+    задачи неактивного проекта renderer иначе не видит). Проект с ошибкой графа не применяется (`applicableIds`),
+    его имя — в предупреждении. «Применить (K)» — `projects:applyTemplate` по одному проекту (`applyEach`: по очереди,
+    ошибка одного не останавливает остальные), итог — у каждой строки и строкой `resultsText`; затем `projects:list`
+    в «Настройках» и `refreshProjects` приложения (проп `onProjectsChanged` у `SettingsModal`). Взяты все разделы —
+    проект получает этот тип, как при «Сменить тип…». Старый preload без `applyTemplate` — ни подсказки, ни кнопки;
+    без `taskRefs` или старый main — последствия без счётчиков задач с просьбой перезапустить приложение.
   - Встроенный шаблон (`builtin`) — только просмотр: `RolesEditor` / `ColumnsEditor` с `readOnly` (роли выбираются и
     читаются, поля в `<fieldset disabled>`), холст воркфлоу не меняет граф, инспектор и прочие разделы — в
     `<fieldset disabled>` (`display: contents`, раскладку не трогает); баннер предлагает «Дублировать».
@@ -897,7 +912,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:getDefaults`, `projects:setDefaults(patch)` (в т. ч. `workflow`), `projects:applyDefaults(id)` — алиасы шаблона по умолчанию;
   `projects:add(templateId?, path?)` (без `path` — диалог выбора папки, отмена → `null`), `projects:detectTemplate(path?)` →
   `TemplateDetection {path, templateId, reason} | null` (без `path` — диалог; проект не добавляет),
-  `projects:applyTemplate(id, templateId, sections, roleIds?)` → `Project`;
+  `projects:applyTemplate(id, templateId, sections, roleIds?)` → `Project`, `projects:taskRefs(id)` → `TaskRef[]`
+  (`{status, roleId}` задач любого проекта — последствия «Применить к проектам…»);
   `templates:list` → `TemplatesState {templates, defaultTemplateId}`, `templates:save(input)` → `ProjectTemplate`,
   `templates:delete(id)` → `TemplatesState`, `templates:duplicate(id)` → `ProjectTemplate`, `templates:setDefault(id)` → `TemplatesState`
   (см. «Проекты → Шаблоны проектов»); `agents:list(refresh?)`;

@@ -140,6 +140,12 @@ export interface TemplateInput {
   settings: ProjectTemplateSettings
 }
 
+/** Задача проекта в том объёме, что нужен для последствий применения шаблона: колонка и роль. */
+export interface TaskRef {
+  status: string
+  roleId: string
+}
+
 /** Все шаблоны (встроенные, затем пользовательские) и шаблон по умолчанию. */
 export interface TemplatesState {
   templates: ProjectTemplate[]
@@ -240,6 +246,8 @@ export interface OrcaApi {
     list(): Promise<{ active: Project | null; projects: Project[] }>
     /** Задачи в колонках kind=in_progress по id проекта — для бейджа в списке проектов. */
     inProgressCounts(): Promise<Record<string, number>>
+    /** Статус и роль задач проекта (не только активного) — последствия «Применить к проектам…» в «Настройках». */
+    taskRefs(id: string): Promise<TaskRef[]>
     /**
      * Добавить репозиторий с копией шаблона `templateId` (нет — шаблон по умолчанию). Без `path` — диалог выбора
      * папки (отмена — null); с `path` (из `detectTemplate`) — без диалога. Уже добавленный возвращается как есть.

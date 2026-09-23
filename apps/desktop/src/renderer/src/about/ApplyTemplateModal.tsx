@@ -4,7 +4,7 @@ import { TEMPLATE_SECTIONS, TEMPLATE_SECTION_TITLES, type Task, type TemplateSec
 import type { Project, TemplatesState } from '../../../shared/ipc'
 import { ipcErrorMessage } from '../useAutoSave'
 import { applyPreview, type ApplyRequest } from '../projectType'
-import { plural } from './parts'
+import { ApplyConsequences } from '../ApplyConsequences'
 
 interface Props {
   project: Project
@@ -106,7 +106,7 @@ export function ApplyTemplateModal({ project, state, tasks, mode, initial, onClo
           </>
         )}
 
-        {preview && <ApplyConsequences preview={preview} mode={mode} templateTitle={template?.title ?? templateId} />}
+        {preview && <ApplyConsequences preview={preview} typeTitle={mode === 'type' ? (template?.title ?? templateId) : undefined} />}
         {mode === 'type' && !sections.length && <span className="muted">Выберите хотя бы один раздел.</span>}
         {error && <span className="error-text">{error}</span>}
 
@@ -117,52 +117,6 @@ export function ApplyTemplateModal({ project, state, tasks, mode, initial, onClo
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-function ApplyConsequences({ preview, mode, templateTitle }: {
-  preview: NonNullable<ReturnType<typeof applyPreview>>
-  mode: Props['mode']
-  templateTitle: string
-}): React.JSX.Element {
-  const { columnsGone, backlogTasks, rolesGone, notes, error, setsType } = preview
-  const tasksLabel = (n: number): string => `${n} ${plural(n, 'задача', 'задачи', 'задач')}`
-  const lossless = !columnsGone.length && !backlogTasks && !rolesGone.length
-  return (
-    <div className="tpl-conseq">
-      {error && (
-        <div className="tpl-conseq-error">
-          <b>Граф не пройдёт проверку — применить нельзя.</b>
-          <span>{error}</span>
-        </div>
-      )}
-      {columnsGone.length > 0 && (
-        <div className="tpl-conseq-item">
-          <b>Исчезнут колонки:</b>{' '}
-          {columnsGone.map((c) => `«${c.title}»${c.tasks ? ` (${tasksLabel(c.tasks)})` : ''}`).join(', ')}.
-        </div>
-      )}
-      {backlogTasks > 0 && (
-        <div className="tpl-conseq-item"><b>В бэклог переедет {tasksLabel(backlogTasks)}.</b></div>
-      )}
-      {rolesGone.map((r) => (
-        <div key={r.id} className="tpl-conseq-item">
-          <b>Пропадёт роль «{r.title}»{r.tasks ? ` — на ней ${tasksLabel(r.tasks)}` : ''}.</b>
-          {r.consequences.length > 0 && (
-            <ul>{r.consequences.map((c) => <li key={c}>{c}</li>)}</ul>
-          )}
-        </div>
-      ))}
-      {lossless && !error && <div className="tpl-conseq-item muted">Колонки и роли не пропадут, задачи останутся на местах.</div>}
-      {notes.map((n) => <div key={n} className="tpl-conseq-item muted">{n}</div>)}
-      {mode === 'type' && (
-        <div className="tpl-conseq-item muted">
-          {setsType
-            ? `Тип проекта станет «${templateTitle}».`
-            : 'Взяты не все разделы — тип проекта не изменится, изменятся только выбранные разделы.'}
-        </div>
-      )}
     </div>
   )
 }
