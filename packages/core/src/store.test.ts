@@ -4,7 +4,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
-import { defaultWorkflow, describeWorkflow, type Workflow } from './workflow.ts'
+import { defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
+import { builtinTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
 
 /** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
 function memory(initial?: Partial<StoreSnapshot>): Persistence & { data: Partial<StoreSnapshot> | null } {
@@ -60,6 +61,101 @@ describe('снимок воркфлоу в прогоне', () => {
     assert.deepEqual(s.runWorkflow(run.id), defaultWorkflow([]))
     assert.deepEqual(s.runWorkflow(run.id, ['developer', 'reviewer']), defaultWorkflow([{ id: 'reviewer' }]))
     assert.deepEqual(s.runWorkflow(undefined), defaultWorkflow([]))
+  })
+})
+
+describe('тип задачи в прогоне', () => {
+  const docs: TaskType = {
+    id: 'type_docs',
+    title: 'Документация',
+    settings: {
+      roles: [{ id: 'writer', title: 'Автор', agent: 'claude' }],
+      agentRules: 'Пиши по-русски.',
+      workflow: pipelineWorkflow([{ type: 'human', id: 'eyes', title: 'Глазами' }])
+    }
+  }
+
+  it('createRun и createGlobalTask пишут typeId, снимок и граф типа — копии', () => {
+    const s = store()
+    const input = runTypeInput(docs)
+    const run = s.createRun('цель', undefined, input)
+    const g = s.createGlobalTask({ title: 'Фича', type: input })
+    input.snapshot.roles[0].model = 'изменили'
+    input.workflow!.nodes.length = 0
+    for (const id of [run.id, g.id]) {
+      const saved = s.getRun(id)!
+      assert.equal(saved.typeId, 'type_docs')
+      assert.deepEqual(saved.taskType, snapshotTaskType(docs))
+      assert.deepEqual(saved.workflow, docs.settings.workflow)
+    }
+    assert.equal(g.typeId, 'type_docs')
+    assert.equal(g.typeTitle, 'Документация')
+  })
+
+  it('тип без графа (граф будущей версии) — прогон без снимка графа', () => {
+    const s = store()
+    const { workflow: _wf, ...input } = runTypeInput(docs)
+    const run = s.createRun('цель', undefined, input)
+    assert.equal(s.getRun(run.id)!.typeId, 'type_docs')
+    assert.equal(s.getRun(run.id)!.workflow, undefined)
+  })
+
+  it('две задачи разных прогонов идут разными графами', () => {
+    const s = store()
+    const review = s.createRun('код', undefined, runTypeInput(builtinTaskType('general')!))
+    const eyes = s.createRun('доки', undefined, runTypeInput(docs))
+    const a = s.createTask({ title: 'Код', runId: review.id })
+    const b = s.createTask({ title: 'Доки', runId: eyes.id })
+    for (const t of [a, b]) s.advanceStage(t.id, 'next')
+    assert.deepEqual(s.advanceStage(a.id, 'next').action, { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' })
+    assert.deepEqual(s.advanceStage(b.id, 'next').action, { type: 'request_human', nodeId: 'eyes' })
+  })
+
+  it('прогон без снимка графа идёт по графу типа из fallback, а не по дефолтному', () => {
+    const s = store()
+    const task = s.createTask({ title: 'Во «Входящих»' })
+    const opts = { roleIds: ['writer'], workflow: docs.settings.workflow }
+    assert.deepEqual(s.runWorkflow(task.runId, opts), docs.settings.workflow)
+    s.enterWork(task.id, opts)
+    assert.deepEqual(s.advanceStage(task.id, 'next', opts).action, { type: 'request_human', nodeId: 'eyes' })
+  })
+
+  it('assignRunTypes: прогоны без типа получают тип и снимок; inbox, Run.workflow и чужой тип не трогаются; идемпотентна', () => {
+    const p = memory()
+    const s = store(p)
+    const old = s.createRun('старый', undefined, withLimit())
+    const bare = s.createRun('до воркфлоу')
+    const typed = s.createRun('с типом', undefined, runTypeInput(builtinTaskType('backend')!))
+    const task = s.createTask({ title: 'Во «Входящих»' })
+    const legacy = { typeId: 'type_p1', snapshot: snapshotTaskType(docs) }
+
+    assert.equal(s.assignRunTypes(legacy), 2)
+    assert.equal(s.getRun(old.id)!.typeId, 'type_p1')
+    assert.deepEqual(s.getRun(old.id)!.taskType, snapshotTaskType(docs))
+    assert.deepEqual(s.getRun(old.id)!.workflow, withLimit())
+    assert.equal(s.getRun(bare.id)!.typeId, 'type_p1')
+    assert.equal(s.getRun(bare.id)!.workflow, undefined)
+    assert.equal(s.getRun(typed.id)!.typeId, 'backend')
+    const inbox = s.getRun(task.runId!)!
+    assert.equal(inbox.inbox, true)
+    assert.equal(inbox.typeId, undefined)
+    assert.equal(inbox.taskType, undefined)
+
+    const saved = JSON.stringify(p.data)
+    assert.equal(s.assignRunTypes(legacy), 0)
+    assert.equal(s.assignRunTypes({ typeId: 'type_other', snapshot: snapshotTaskType(docs) }), 0)
+    assert.equal(JSON.stringify(p.data), saved)
+  })
+
+  it('перезагрузка снапшота сохраняет typeId и снимок типа', () => {
+    const p = memory()
+    const s = store(p)
+    const g = s.createGlobalTask({ title: 'Фича', type: runTypeInput(docs) })
+    const reloaded = store(memory(p.data!))
+    assert.equal(reloaded.getRun(g.id)!.typeId, 'type_docs')
+    assert.deepEqual(reloaded.getRun(g.id)!.taskType, snapshotTaskType(docs))
+    assert.deepEqual(reloaded.getRun(g.id)!.workflow, docs.settings.workflow)
+    assert.equal(reloaded.getGlobalTask(g.id).typeTitle, 'Документация')
   })
 })
 

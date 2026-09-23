@@ -127,6 +127,22 @@ describe('глобальные задачи: CRUD и колонки проект
   })
 })
 
+describe('тип задачи на карточке', () => {
+  it('typeId и название типа из снимка; у «Входящих» и прогона до типов — нет', () => {
+    const store = newStore()
+    const snapshot = { id: 'docs', title: 'Документация', roles: [] }
+    const g = store.createGlobalTask({ title: 'Доки', type: { typeId: 'docs', snapshot } })
+    assert.equal(g.typeId, 'docs')
+    assert.equal(g.typeTitle, 'Документация')
+    const old = store.createGlobalTask({ title: 'Старая' })
+    const inbox = store.getGlobalTask(store.createTask({ title: 'Во «Входящих»' }).runId!)
+    for (const card of [old, inbox]) {
+      assert.ok(!('typeId' in card))
+      assert.ok(!('typeTitle' in card))
+    }
+  })
+})
+
 describe('колонки глобального канбана', () => {
   it('глобальный канбан — backlog / in_progress / needs_input / review / done в порядке проекта; хранятся — без needs_input', () => {
     assert.deepEqual(globalBoardColumns(COLUMNS).map((c) => c.id), ['plan', 'wip', 'ask', 'ai', 'fin'])

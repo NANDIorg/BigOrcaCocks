@@ -69,6 +69,13 @@ export interface GlobalTask {
   /** Приоритет (`Run.priority`); у прогона без поля или с неизвестным значением — normal. */
   priority: TaskPriority
   inbox: boolean
+  /** Тип задачи (`Run.typeId`); нет — «Входящие» или прогон до типов: действует тип проекта по умолчанию. */
+  typeId?: string
+  /**
+   * Название типа из снимка прогона (`Run.taskType.title`) — на момент создания; живое название (тип могли
+   * переименовать) UI берёт из библиотеки по `typeId`.
+   */
+  typeTitle?: string
   createdAt: number
   updatedAt: number
   /** Последнее изменение карточки или любой её подзадачи — «время» на карточке. */
@@ -251,6 +258,8 @@ export function toGlobalTask(
     status,
     priority: isTaskPriority(run.priority) ? run.priority : DEFAULT_TASK_PRIORITY,
     inbox: run.inbox === true,
+    ...(run.typeId !== undefined ? { typeId: run.typeId } : {}),
+    ...(run.taskType ? { typeTitle: run.taskType.title } : {}),
     createdAt: run.createdAt,
     updatedAt,
     activityAt,

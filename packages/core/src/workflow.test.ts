@@ -231,6 +231,12 @@ describe('validateWorkflow: ошибки', () => {
     assert.deepEqual(validateWorkflow(column, ctx).errors, [])
   })
 
+  it('п.6: без колонок доски (граф типа задачи) колонки нод не проверяются', () => {
+    const wf = base()
+    node(wf, 'review').column = 'nope'
+    assert.deepEqual(validateWorkflow(wf, { roles: DEFAULT_ROLES }).errors, [])
+  })
+
   it('п.7: от старта достижима работа', () => {
     const wf = base()
     wf.nodes = wf.nodes.filter((n) => n.id !== 'work')
