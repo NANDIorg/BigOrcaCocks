@@ -229,10 +229,15 @@ interface GlobalTask {
 в работе (и не ждёт человека), получает открытый отрезок от `updatedAt` (нет — `createdAt`); остальные остаются
 без полей до следующего входа в работу. UI без основного времени показывает только сумму подзадач.
 
-Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `globalTaskTicking`, `globalTimeLabel`.
-Карточка и шапки (`GlobalDuration` в `GlobalBoard.tsx`) — основное первым («⏱ 1 ч», «⏸ 1 ч», у закрытой «за 1 ч»),
-сумма рядом тише («Σ ⏸ 3 ч», в шапке «Σ подзадач: …»); каждое тикает само. Карточка от старого main с прежними
-`activeMs`/`activeSince` (это была сумма подзадач) показывается как одна сумма.
+Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `globalTaskTicking`, `globalTimeLabel`,
+`globalTimeParts` (какие времена где показывать). Компонент — `GlobalDuration` в `GlobalBoard.tsx`, каждое время
+тикает само:
+- **Карточка глобального канбана** (`variant="chip"`) — только основное: «⏱ 1 ч», «⏸ 1 ч», у закрытой «за 1 ч».
+  Сумма подзадач на карточку не выводится. Основное неизвестно (старый main с прежними `activeMs`/`activeSince` —
+  это была сумма подзадач — или прогон от кода до этих полей) — карточка показывает сумму «Σ ⏸ 3 ч», как раньше.
+- **Внутри глобальной задачи** (`variant="line"`: шапка экрана подзадач `GlobalTaskView.tsx` и модалка
+  `GlobalTaskModal.tsx`) — два подписанных времени: «В работе: ⏱ 1 ч · Сумма подзадач: ⏸ 3 ч». Основное
+  неизвестно — только «Сумма подзадач: …».
 
 Чистые функции для renderer (без IPC): `toGlobalTasks(runs, tasks, columns, requests?)`,
 `toGlobalTask`, `globalTaskProgress`, `globalSubtasksTime`, `globalSubtasksDuration`, `globalOwnDuration`,

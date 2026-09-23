@@ -59,16 +59,26 @@ export function globalTaskTicking(g: GlobalTimeFields, part: GlobalTimePart): bo
 }
 
 /**
+ * Какие времена показывать. chip — карточка глобального канбана: только своё время в работе, а если оно
+ * неизвестно (старый main, прогон от кода до этих полей) — сумма подзадач, как раньше, чтобы карточка не пустела.
+ * line — внутри глобальной задачи (шапка экрана подзадач, модалка): оба; неизвестное своё отсеет `globalTimeLabel`.
+ */
+export function globalTimeParts(g: GlobalTimeFields, variant: 'chip' | 'line'): GlobalTimePart[] {
+  if (variant === 'line') return ['own', 'subtasks']
+  return globalTaskDuration(g, 'own', 0) !== undefined ? ['own'] : ['subtasks']
+}
+
+/**
  * Подпись одного из времён: chip — на карточке («⏱ 1 ч», «⏸ 1 ч», у закрытой «за 1 ч»; сумма — «Σ ⏱ 3 ч»),
- * line — в шапках («Время работы: ⏱ 1 ч», «Σ подзадач: ⏸ 3 ч»). Основное неизвестно — undefined, показывать нечего.
+ * line — внутри задачи («В работе: ⏱ 1 ч», «Сумма подзадач: ⏸ 3 ч»). Основное неизвестно — undefined.
  */
 export function globalTimeLabel(g: GlobalTimeFields, part: GlobalTimePart, now: number, variant: 'chip' | 'line'): string | undefined {
   const ms = globalTaskDuration(g, part, now)
   if (ms === undefined) return undefined
   const ticking = globalTaskTicking(g, part)
   const value = `${ticking ? '⏱' : g.closedAt !== undefined ? '' : '⏸'} ${formatDuration(ms)}`.trim()
-  if (part === 'own') return variant === 'line' ? `Время работы: ${value}` : g.closedAt !== undefined && !ticking ? `за ${value}` : value
-  return variant === 'line' ? `Σ подзадач: ${value}` : `Σ ${value}`
+  if (part === 'own') return variant === 'line' ? `В работе: ${value}` : g.closedAt !== undefined && !ticking ? `за ${value}` : value
+  return variant === 'line' ? `Сумма подзадач: ${value}` : `Σ ${value}`
 }
 
 /** Всплывающая подсказка к времени: что считается и идёт ли оно сейчас. */

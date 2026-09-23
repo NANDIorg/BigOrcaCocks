@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatDuration, globalTaskDuration, globalTaskTicking, globalTimeLabel, taskDuration, taskTicking } from './duration'
+import { formatDuration, globalTaskDuration, globalTaskTicking, globalTimeLabel, globalTimeParts, taskDuration, taskTicking } from './duration'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -83,9 +83,20 @@ test('globalTimeLabel: иконки хода и паузы, закрытая —
   const g = { ownActiveMs: HOUR, ownActiveSince: 0, subtasksActiveMs: 2 * HOUR, subtasksActiveSince: [] }
   assert.equal(globalTimeLabel(g, 'own', 5 * MIN, 'chip'), '⏱ 1 ч 5 мин')
   assert.equal(globalTimeLabel(g, 'subtasks', 5 * MIN, 'chip'), 'Σ ⏸ 2 ч')
-  assert.equal(globalTimeLabel(g, 'own', 5 * MIN, 'line'), 'Время работы: ⏱ 1 ч 5 мин')
-  assert.equal(globalTimeLabel(g, 'subtasks', 5 * MIN, 'line'), 'Σ подзадач: ⏸ 2 ч')
+  assert.equal(globalTimeLabel(g, 'own', 5 * MIN, 'line'), 'В работе: ⏱ 1 ч 5 мин')
+  assert.equal(globalTimeLabel(g, 'subtasks', 5 * MIN, 'line'), 'Сумма подзадач: ⏸ 2 ч')
   const closed = { ownActiveMs: HOUR, subtasksActiveMs: 2 * HOUR, subtasksActiveSince: [], closedAt: 1 }
   assert.equal(globalTimeLabel(closed, 'own', 0, 'chip'), 'за 1 ч')
   assert.equal(globalTimeLabel(closed, 'subtasks', 0, 'chip'), 'Σ 2 ч')
+})
+
+test('globalTimeParts: на карточке только своё время, внутри задачи — оба', () => {
+  const g = { ownActiveMs: HOUR, subtasksActiveMs: 2 * HOUR, subtasksActiveSince: [] }
+  assert.deepEqual(globalTimeParts(g, 'chip'), ['own'])
+  assert.deepEqual(globalTimeParts(g, 'line'), ['own', 'subtasks'])
+  // своё неизвестно (старый main / старый прогон): на карточке — сумма, как раньше; внутри — только сумма
+  const legacy = { activeMs: 10 * MIN, activeSince: [0] }
+  assert.deepEqual(globalTimeParts(legacy, 'chip'), ['subtasks'])
+  const shown = globalTimeParts(legacy, 'line').map((p) => globalTimeLabel(legacy, p, 2 * MIN, 'line')).filter((l) => l !== undefined)
+  assert.deepEqual(shown, ['Сумма подзадач: ⏱ 12 мин'])
 })
