@@ -1211,7 +1211,22 @@ UI работает с активным проектом; воркеры и ко
 на arm64 падает с `posix_spawnp failed` (spawn-helper не той архитектуры). Поэтому скрипты
 `dist`/`pack` в конце вызывают `electron-builder install-app-deps` — пересборку под текущую машину.
 
+**Подпись macOS.** `mac.identity: '-'` — ad-hoc подпись всего бандла (Electron Framework, helpers, `pty.node`,
+`spawn-helper`) штатными средствами electron-builder ≥ 26; сертификата Apple и нотаризации нет.
+`hardenedRuntime: false` обязателен: с hardened runtime library validation отвергает фреймворки, подписанные
+ad-hoc, и приложение падает при запуске. Проверка после сборки — `codesign --verify --deep --strict` на `.app`.
+Скачанная сборка всё равно не проходит Gatekeeper («Apple не удалось подтвердить…»), её открывают через
+«Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
+
 ## Грабли разработки
+
+- `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
+  linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has
+  no resources but signature indicates they must be present». Пока .app собран локально, macOS его запускает, но
+  после скачивания браузером (атрибут `com.apple.quarantine`) Gatekeeper на Apple Silicon пишет «повреждён и не
+  может быть открыт», и не помогает даже ПКМ → «Открыть». Теперь `identity: '-'` (ad-hoc, см. «Сборка»).
+  Проверять подпись на скачанной копии: `xattr -w com.apple.quarantine "0081;00000000;Arc;" <копия .app>`,
+  `spctl -a -vv`, `syspolicy_check distribution`.
 
 - Настройки типа сохраняются целиком (`saveTaskType`), и каждое сохранение раньше заново проверяло граф. Правка ролей
   через патч (`setRoles`, `rules set --role`) падала на «нет роли «qa»», если граф ссылался на удаляемую роль, а
@@ -1284,4 +1299,4 @@ UI работает с активным проектом; воркеры и ко
 
 - Удалённый запуск по SSH, мобильный просмотр.
 - SQLite вместо JSON, если событий станет много.
-- Подпись и нотаризация .app.
+- Подпись Developer ID и нотаризация .app (сейчас только ad-hoc, см. «Сборка»).
