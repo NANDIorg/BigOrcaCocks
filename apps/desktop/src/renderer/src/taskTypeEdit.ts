@@ -1,5 +1,5 @@
 import {
-  BUILTIN_EDITABLE_TYPE_ROLE_FIELDS, DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTaskTypes,
+  BUILTIN_EDITABLE_TYPE_ROLE_FIELDS, DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes,
   type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState } from '../../shared/ipc'
@@ -180,7 +180,7 @@ export function typeColumnChoices(projects: readonly Project[]): BoardColumn[] {
 export function deleteTypeConfirmText(t: TaskType, state: TaskTypesState, usage: TypeUsage | undefined): string {
   const lines = [`Удалить тип «${t.title}»?`, '']
   if (overridesBuiltinType(t)) lines.push('Ваши правки пропадут — вернётся встроенный тип с этим именем.')
-  else if (state.defaultTaskTypeId === t.id) lines.push('Это тип по умолчанию библиотеки — им станет «Общий».')
+  else if (state.defaultTaskTypeId === t.id) lines.push(`Это тип по умолчанию библиотеки — им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title ?? GENERAL_TASK_TYPE_ID}».`)
   if (!overridesBuiltinType(t) && usage?.asDefault) {
     lines.push(`Он тип по умолчанию в проектах (${usage.asDefault}): они перейдут на тип библиотеки по умолчанию.`)
   }

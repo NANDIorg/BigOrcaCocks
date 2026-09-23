@@ -807,9 +807,9 @@ button:disabled { opacity: .45; cursor: default; }
 .settings-head h3 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
 .settings-modal .about-host { flex: 1; }
 
-/* «Настройки → Шаблоны проектов» (settings/TemplatePane.tsx): шаблоны — пункты меню, внутри — вкладки разделов */
+/* «Настройки → Типы задач» (settings/TaskTypePane.tsx): типы — пункты меню, внутри — вкладки разделов */
 .tpl-nav { display: contents; }
-/* Название шаблона бывает длинным («Документация / аналитика»): сжимается с многоточием, а не вылезает из меню. */
+/* Название типа бывает длинным («Фронтенд и бэкенд»): сжимается с многоточием, а не вылезает из меню. */
 .tpl-nav .about-nav-label { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tpl-nav .about-nav-count { flex-shrink: 0; }
 .tpl-nav-sub { padding-top: 10px; }
