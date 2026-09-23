@@ -126,6 +126,20 @@ describe('worker stop', () => {
   })
 })
 
+describe('global list/get: coordinatorAlive', () => {
+  it('вычисляется из реестра PTY: чужой/мёртвый ptyId — false, без координатора — false', async () => {
+    const g = store.createGlobalTask({ title: 'Цель' })
+    const get = await call('global.get', { global: g.id })
+    assert.equal(get.ok, true, get.error)
+    assert.equal((get.result as { coordinatorAlive?: boolean }).coordinatorAlive, false)
+    store.setRunPty(g.id, 'pty_dead')
+    const list = (await call('global.list', {})).result as unknown as Array<{ id: string; coordinatorPtyId?: string; coordinatorAlive?: boolean }>
+    const card = list.find((c) => c.id === g.id)!
+    assert.equal(card.coordinatorPtyId, 'pty_dead')
+    assert.equal(card.coordinatorAlive, false)
+  })
+})
+
 describe('worker restart', () => {
   it('на задаче в работе: stop, затем start; feedback записан', async () => {
     const task = store.createTask({ title: 'Логин', roleId: 'developer' })
@@ -155,6 +169,23 @@ describe('worker restart', () => {
     const task = store.createTask({ title: 'Логин', roleId: 'developer' })
     assert.match((await call('worker.restart', { task: task.id, feedback: true })).error!, /--feedback требует текста/)
     assert.deepEqual(calls, [])
+  })
+
+  it('задача в review или done — отказ с подсказкой task reopen --start, воркер не запущен', async () => {
+    const task = store.createTask({ title: 'Логин', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    store.finishDispatch(d.id, 'сделал', [])
+    assert.equal(store.getTask(task.id)!.status, 'review')
+    const inReview = await call('worker.restart', { task: task.id })
+    assert.equal(inReview.ok, false)
+    assert.match(inReview.error!, /task reopen .*--start/)
+    store.moveTask(task.id, 'done')
+    const done = await call('worker.restart', { task: task.id, feedback: 'ещё' })
+    assert.equal(done.ok, false)
+    assert.match(done.error!, /task reopen .*--start/)
+    assert.deepEqual(calls, [])
+    assert.equal(store.getTask(task.id)!.status, 'done')
+    assert.equal(store.getTask(task.id)!.feedback, undefined)
   })
 })
 

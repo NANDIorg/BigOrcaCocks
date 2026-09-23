@@ -21,8 +21,9 @@ const HELP = `orca-board — управление доской агентов
   coordinator start --global <id>         повторный запуск координатора на существующей глобальной задаче
 
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
-  global list                             карточки: название, описание, статус-колонка, прогресс подзадач
-  global get [--global <id>]
+  global list                             карточки: название, описание, статус-колонка, прогресс подзадач,
+                                          coordinatorAlive — жив ли терминал координатора
+  global get [--global <id>]              одна карточка (с coordinatorAlive)
   global create [--title "..."] [--description "..."] [--status <id колонки>]
   global update --global <id> [--title "..."] [--description "..."]
   global move --global <id> --status <id колонки>    только backlog/in_progress/done; подзадачи не трогает; в done — закрывает прогон (run_done)
@@ -45,6 +46,7 @@ const HELP = `orca-board — управление доской агентов
   worker start --task <id>
   worker stop --task <id>                 закрыть воркеров задачи (без эскалации), задача из работы → ready
   worker restart --task <id> [--feedback "..."]   stop + запуск заново; работает и на задаче в работе
+                                          задачу в review/done не перезапускает: для неё task reopen --task <id> --start
   worker read --dispatch <id> [--limit 80]
   check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified] [--timeout-ms 900000] [--run <id>]
   check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается

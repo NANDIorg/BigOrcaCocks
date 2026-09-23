@@ -232,7 +232,7 @@ orca-board task move --task <id> --status <id колонки>
 orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
 orca-board worker start --task <id>
 orca-board worker stop --task <id>          # закрыть воркеров задачи без эскалации; in_progress → ready
-orca-board worker restart --task <id> [--feedback "..."]   # stop + feedback + start; работает и на in_progress
+orca-board worker restart --task <id> [--feedback "..."]   # stop + feedback + start; работает и на in_progress; review/done → ошибка (task reopen --start)
 orca-board task reopen --task <id> [--feedback "..."] [--start]   # → ready (не из in_progress); ждущий ответ — как «Уточнить»
 orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run <id>]
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
@@ -623,7 +623,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 `worker.stop` — `ProjectDeps.stopWorker` (`stopTaskWorker` в `src/main/index.ts`): `closeTaskWorkers` закрывает живые
 dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalation` — `ptyExited` видит `endedAt` и молчит) и убивает PTY
 (и живые PTY уже закрытых dispatch'ей); задача из `kind=in_progress` переносится в первую колонку `kind=ready`, из других колонок
-не двигается. `worker.restart` сначала проверяет роль/агента (чтобы не остановить воркера, которого не поднять), затем stop,
+не двигается. `worker.restart` на задаче в `kind=review`/`done` отказывает с подсказкой `task reopen --start`
+(иначе воркер стартовал бы на готовой задаче в обход reopen), затем проверяет роль/агента (чтобы не остановить воркера, которого не поднять), затем stop,
 непустой `feedback` → `task.feedback`, затем `startWorker` (`runWorker`). `task.reopen` — `store.reopenTask`
 (`packages/core/src/store.ts`): задача в `kind=in_progress` или с живым dispatch отвергается (подсказка — `worker restart`);
 ждущий запрос `answer` → как `rejectReview`: «Уточнить» (`answer_clarified`, feedback обязателен); иначе feedback (если передан)
@@ -791,6 +792,9 @@ UI работает с активным проектом; агенты полу�
 
 - `git reset --hard` в скриптах тестирования дважды стёр незакоммиченные правки. Правило:
   коммит сразу после зелёного typecheck, тесты — только read-only git-командами.
+- Повторяемый флаг CLI (`REPEATABLE_FLAGS`, сейчас `option`) приходит в сокет массивом **всегда**, даже
+  из одного вхождения. Хендлер, которому нужно одно значение (`request.resolve --option`), должен принимать
+  и строку, и массив — `str()` на массиве даёт `undefined` (`singleOption` в `src/main/request-params.ts`).
 
 ## Открытые вопросы
 

@@ -38,6 +38,14 @@ describe('resolutionFromParams', () => {
     assert.throws(() => resolutionFromParams(req, { option: 'mysql' }), /варианта «mysql»/)
   })
 
+  it('--option массивом, как его шлёт CLI (повторяемый флаг)', () => {
+    assert.deepEqual(resolutionFromParams(req, { option: ['2'] }), { action: 'answer', optionId: '2' })
+    assert.deepEqual(resolutionFromParams(req, { option: ['sqlite'], text: 'x' }), { action: 'answer', optionId: '1', text: 'x' })
+    assert.throws(() => resolutionFromParams(req, { option: ['1', '2'] }), /только один вариант/)
+    assert.throws(() => resolutionFromParams(req, { option: [true] }), /требует значения/)
+    assert.throws(() => resolutionFromParams(req, { option: true }), /требует значения/)
+  })
+
   it('accept с решением, clarify, restart, dismiss', () => {
     assert.deepEqual(resolutionFromParams(req, { accept: true, decision: 'делаем A' }), { action: 'accept', text: 'делаем A' })
     assert.deepEqual(resolutionFromParams(req, { accept: true }), { action: 'accept' })

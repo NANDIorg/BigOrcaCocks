@@ -142,7 +142,8 @@ orca-board request resolve --request <id> --restart | --dismiss
 ```
 
 `--option` повторяется, запятая в метке допустима, `|` отделяет пояснение. `--recommend` и `request resolve
---option` принимают номер варианта или метку (без учёта регистра). У `request resolve` нужно ровно одно
+--option` принимают номер варианта или метку (без учёта регистра); CLI шлёт `option` массивом — `request.resolve`
+принимает строку или массив из одного элемента. У `request resolve` нужно ровно одно
 действие; `--decision` — только с `--accept`. `request get` у вопроса добавляет поле `answer`.
 
 Сокет: `request.list {run?, all?}`, `request.get {request}`, `request.resolve {request, option?|text?|accept|clarify|restart|dismiss, decision?}`,

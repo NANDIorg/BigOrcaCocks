@@ -3,7 +3,7 @@ import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   EVENT_TYPES, type TaskStore, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
-  type RequestResolution, type Question
+  type RequestResolution, type Question, type GlobalTask
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, pickRole } from './agents'
@@ -107,6 +107,14 @@ export function coordinatorAlive(store: TaskStore, taskId: string): boolean {
 }
 
 /**
+ * Карточка глобальной задачи + живость её координатора. coordinatorPtyId в store остаётся и после выхода
+ * PTY, а живость знает только реестр PTY — поэтому поле вычисляется при ответе и в store не хранится.
+ */
+export function withCoordinatorAlive(g: GlobalTask): GlobalTask & { coordinatorAlive: boolean } {
+  return { ...g, coordinatorAlive: Boolean(g.coordinatorPtyId && isAlive(g.coordinatorPtyId)) }
+}
+
+/**
  * Живость воркера — из реестра PTY: dispatch без endedAt, чей PTY уже мёртв (выход не дошёл до store),
  * закрывается до ответа, иначе store сочтёт воркера живым и не вернёт задачу в ready.
  */
@@ -171,8 +179,8 @@ const handlers: Record<string, Handler> = {
   },
   // CLI подставляет ORCA_RUN_ID в params.run; сервер env не читает.
   'task.create': (r, deps, store) => createTask(r, deps, store, str(r.params.run)),
-  'global.list': (_r, _d, store) => store.listGlobalTasks(),
-  'global.get': (r, _d, store) => store.getGlobalTask(globalId(r)),
+  'global.list': (_r, _d, store) => store.listGlobalTasks().map(withCoordinatorAlive),
+  'global.get': (r, _d, store) => withCoordinatorAlive(store.getGlobalTask(globalId(r))),
   'global.create': (r, _d, store) =>
     store.createGlobalTask({ title: str(r.params.title), description: str(r.params.description), status: str(r.params.status) }),
   'global.update': (r, _d, store) =>
@@ -229,6 +237,11 @@ const handlers: Record<string, Handler> = {
     if (r.params.feedback === true) throw new Error('--feedback требует текста')
     const task = store.getTask(id)
     if (!task) throw new Error(`task not found: ${id}`)
+    // Готовую задачу restart не переоткрывает: воркер стартовал бы на ней в обход reopen (feedback, колонка).
+    const kind = store.columnKind(task.status)
+    if (kind === 'done' || kind === 'review') {
+      throw new Error(`задача ${id} уже ${kind === 'done' ? 'сделана' : 'на ревью'}: используй task reopen --task ${id} [--feedback "..."] --start`)
+    }
     // Проверяем роль до остановки: иначе остановили бы воркера и не смогли поднять новый.
     assertRoleUsable(deps.roles(), deps.agents(), task.roleId)
     const { stopped } = deps.stopWorker(id)
