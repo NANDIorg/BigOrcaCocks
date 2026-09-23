@@ -560,6 +560,10 @@ button:disabled { opacity: .45; cursor: default; }
 .g-chip.status { color: var(--col); background: color-mix(in srgb, var(--col) 16%, transparent); }
 .g-chip.warn { color: var(--col-input); background: rgba(232,176,74,.12); }
 .g-chip.review { color: var(--col-review); background: rgba(181,123,238,.12); }
+/* Приоритет на глобальной карточке — те же цвета, что у .chip.priority, но заливкой, как у соседних .g-chip. */
+.g-chip.priority.urgent { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); font-weight: 600; }
+.g-chip.priority.high { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
+.g-chip.priority.low { color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--chip); }
 .g-progress { display: flex; flex-direction: column; gap: 4px; }
 .g-progress-line { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
 .g-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }

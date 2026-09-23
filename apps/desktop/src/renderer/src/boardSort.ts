@@ -7,16 +7,11 @@ export type BoardSort = 'created' | 'done' | 'updated' | 'priority'
 export const BOARD_SORT_KEY = 'orca.board.sort'
 export const GLOBAL_BOARD_SORT_KEY = 'orca.globalBoard.sort'
 
-/** Сортировки по датам — у глобального канбана (приоритета у глобальных задач пока нет). */
-export const SORT_OPTIONS: { value: BoardSort; title: string }[] = [
+/** Сортировки обеих досок (локальной и глобальной): даты и приоритет. */
+export const BOARD_SORT_OPTIONS: { value: BoardSort; title: string }[] = [
   { value: 'created', title: 'по созданию' },
   { value: 'done', title: 'по завершению' },
-  { value: 'updated', title: 'по обновлению' }
-]
-
-/** Сортировки локального канбана: даты и приоритет. */
-export const BOARD_SORT_OPTIONS: { value: BoardSort; title: string }[] = [
-  ...SORT_OPTIONS,
+  { value: 'updated', title: 'по обновлению' },
   { value: 'priority', title: 'по приоритету' }
 ]
 
@@ -68,7 +63,7 @@ export function compareByDates(sort: BoardSort, a: SortDates, b: SortDates): num
   }
 }
 
-/** Всё, у чего может быть приоритет: Task, а позже и GlobalTask. */
+/** Всё, у чего может быть приоритет: Task и GlobalTask. */
 export interface Prioritized {
   priority?: TaskPriority
 }
@@ -87,13 +82,16 @@ export function compareTasks(sort: BoardSort, a: Task, b: Task): number {
   return compareSorted(sort, a, b)
 }
 
+/** Поля глобальной задачи, по которым сортируем; priority может не быть у карточки от старого main. */
+export type GlobalSortable = Pick<GlobalTask, 'createdAt' | 'activityAt' | 'closedAt'> & Prioritized
+
 /** Даты глобальной задачи: обновление — активность карточки или подзадач, завершение — закрытие прогона. */
-export function globalSortDates(g: GlobalTask): SortDates {
+export function globalSortDates(g: GlobalSortable): SortDates {
   return { createdAt: g.createdAt, updatedAt: g.activityAt, doneAt: g.closedAt }
 }
 
-export function compareGlobals(sort: BoardSort, a: GlobalTask, b: GlobalTask): number {
-  return compareByDates(sort, globalSortDates(a), globalSortDates(b))
+export function compareGlobals(sort: BoardSort, a: GlobalSortable, b: GlobalSortable): number {
+  return compareSorted(sort, { ...globalSortDates(a), priority: a.priority }, { ...globalSortDates(b), priority: b.priority })
 }
 
 export function formatStamp(ts: number): string {

@@ -651,7 +651,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   по `createdAt`), выбор хранится в `localStorage` ключом `orca.board.sort` (`BOARD_SORT_OPTIONS`,
   `renderer/src/boardSort.ts`). Сравнение по приоритету `compareByPriority` обобщённое — по объекту
   с необязательным `priority` (нет поля от старого main — как `normal`), `compareSorted` добавляет к нему даты.
-  У глобального канбана пока только сортировки по датам (`SORT_OPTIONS`).
+  Глобальный канбан — те же четыре режима (`compareGlobals`: «обновление» — `activityAt`, «завершение» — `closedAt`),
+  ключ `orca.globalBoard.sort` (`GLOBAL_BOARD_SORT_KEY`); см. `docs/nested-kanban.md`.
+  Бейдж и варианты `<select>` приоритета — общие компоненты `PriorityBadge` / `PriorityOptions` (`renderer/src/Priority.tsx`).
 - **Прогоны на доске** (`runs.tsx`, `Board.tsx`): у задачи с `runId` среди чипов — метка прогона `RunBadge`
   (первые 3 слова цели, до 24 символов с `…`, полная цель в `title`). Цвет — `.run-c0…7` по индексу прогона
   в списке, отсортированном по `createdAt` (`runColorIndex`, по модулю 8); закрытый прогон (`closedAt`) —

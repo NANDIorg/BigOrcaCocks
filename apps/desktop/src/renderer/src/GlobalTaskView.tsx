@@ -5,6 +5,7 @@ import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
+import { PriorityBadge } from './Priority'
 
 interface Props {
   global: GlobalTask
@@ -91,6 +92,8 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         )}
         <div className="g-view-meta">
           <div className="g-view-progress"><GlobalProgress global={global} /></div>
+          {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
+          <PriorityBadge item={global} className="g-chip" />
           <span className="muted">Обновлено {relativeTime(global.activityAt)}</span>
           {!global.inbox && (
             <span className="muted" title={`Создана ${formatStamp(global.createdAt)}${global.closedAt !== undefined ? `, закрыта ${formatStamp(global.closedAt)}` : ''}`}>

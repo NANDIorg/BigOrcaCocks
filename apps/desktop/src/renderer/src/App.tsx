@@ -2,9 +2,10 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
-  type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution
+  type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
+  type TaskPriority
 } from '@orca-board/core'
-import type { Project, TerminalInfo } from '../../shared/ipc'
+import type { GlobalTaskPatch, Project, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -19,6 +20,7 @@ import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
+import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
 import { pickAssistant } from './assistantPty'
@@ -427,19 +429,21 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function saveGlobalTask(input: { title: string; description: string; status?: string }): Promise<void> {
+  async function saveGlobalTask(input: { title: string; description: string; status?: string; priority?: TaskPriority }): Promise<void> {
     if (globalModal?.mode === 'edit') {
       const cur = globals.find((g) => g.id === globalModal.id)
       if (!cur) throw new Error('глобальная задача не найдена — возможно, её удалили')
-      const patch: { title?: string; description?: string } = {}
+      const patch: GlobalTaskPatch = {}
       if (input.title !== cur.title) patch.title = input.title
       if (input.description !== cur.description.trim()) patch.description = input.description
-      if (patch.title !== undefined || patch.description !== undefined) await window.orca.globalTasks.update(cur.id, patch)
+      if (input.priority !== undefined && input.priority !== cur.priority) patch.priority = input.priority
+      if (Object.keys(patch).length > 0) await window.orca.globalTasks.update(cur.id, patch)
     } else {
       await window.orca.globalTasks.create({
         title: input.title || undefined,
         description: input.description || undefined,
-        status: input.status
+        status: input.status,
+        ...(input.priority !== undefined ? { priority: input.priority } : {})
       })
     }
     setGlobalModal(null)
@@ -924,6 +928,7 @@ export function App(): React.JSX.Element {
           key={globalModal.mode === 'edit' ? globalModal.id : 'create'}
           global={editingGlobal}
           columns={globalStoredColumns(columns)}
+          priorityEditable={runsKnowPriority(snap.runs)}
           onClose={() => setGlobalModal(null)}
           onSave={saveGlobalTask}
         />
