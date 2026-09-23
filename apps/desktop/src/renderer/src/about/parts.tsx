@@ -95,7 +95,9 @@ export function NavItem<S extends string>({ item, current, showCount = true, onG
     >
       <item.icon />
       <span className="about-nav-label">{item.label}</span>
-      {showCount && item.count && <span className={`about-nav-count ${item.tone ?? ''}`}>{item.count}</span>}
+      {showCount && item.count && (
+        <span className={`about-nav-count ${item.tone ?? ''}`} title={item.count}>{item.count}</span>
+      )}
     </button>
   )
 }
