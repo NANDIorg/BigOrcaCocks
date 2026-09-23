@@ -157,7 +157,7 @@ describe('цикл «Проверки»: работа → проверка → �
     assert.deepEqual(card(runId).returns?.map((r) => r.text), ['первое', 'второе'])
   })
 
-  it('возврат, пока старый координатор ещё не закрыт (окно после runs finish), — ошибка, стор не тронут', () => {
+  it('без stop: возврат при живом старом координаторе (окно после runs finish) — ошибка, стор не тронут', () => {
     const runId = startNew('Цель')
     doneSubtask(runId, 'Шаг')
     store.finishRun(runId) // терминал ещё жив: coordinatorsToClose закроет его через grace
@@ -165,6 +165,29 @@ describe('цикл «Проверки»: работа → проверка → �
     assert.equal(card(runId).status, 'review')
     assert.equal(card(runId).returns, undefined)
     assert.equal(runDones(runId)[0].consumedBy, undefined)
+  })
+
+  it('живой координатор без runs finish (как в приложении, stop = killPty): возврат закрывает его и перезапускает с уточнением', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг') // все подзадачи done → review, но терминал Claude сам не закроется
+    const old = store.getRun(runId)!.coordinatorPtyId!
+    assert.equal(card(runId).status, 'review')
+    const stopped: string[] = []
+    returnGlobalTaskToWork(store, runId, 'кнопка не та', isAlive, (ptyId) => { stopped.push(ptyId); alive.delete(ptyId) })
+    assert.deepEqual(stopped, [old])
+    const objective = restart(runId)
+    assert.match(objective, new RegExp(`${COORDINATOR_RETURN_HEADING}: .*\\n+кнопка не та\\n`))
+    assert.equal(card(runId).status, 'in_progress')
+    assert.notEqual(store.getRun(runId)!.coordinatorPtyId, old)
+  })
+
+  it('живой координатор и отказ стора (пустое уточнение) — терминал не закрывается', () => {
+    const runId = startNew('Цель')
+    doneSubtask(runId, 'Шаг')
+    const stopped: string[] = []
+    assert.throws(() => returnGlobalTaskToWork(store, runId, ' ', isAlive, (ptyId) => stopped.push(ptyId)), /напиши, что доделать/)
+    assert.deepEqual(stopped, [])
+    assert.equal(card(runId).status, 'review')
   })
 
   it('пустое уточнение — ошибка, карточка остаётся на проверке', () => {

@@ -96,7 +96,7 @@ export function GlobalTaskModal({ global, columns, priorityEditable, statusKind,
               <button type="button" className="btn-sm primary" disabled={busy} onClick={onAccept}>Подтвердить</button>
             )}
             {actions.returnToWork && onReturn && (
-              <button type="button" className="btn-sm" disabled={busy || actions.returnBlocked !== undefined} title={actions.returnBlocked} onClick={onReturn}>
+              <button type="button" className="btn-sm" disabled={busy} title="Написать, что доделать, и перезапустить координатора" onClick={onReturn}>
                 Вернуть в работу…
               </button>
             )}

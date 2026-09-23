@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { app } from 'electron'
 import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
-import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
+import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleMessage } from './agents'
 import { assistantEnv } from './assistant'
@@ -359,7 +359,8 @@ export function startCoordinator(
 /**
  * «Вернуть в работу» с «Проверки»: уточнение человека сохраняется в прогоне (`returnGlobalTask`), и координатор
  * запускается повторно — уточнение он получит в цели (`resumeObjective` → `resumeCoordinatorObjective`).
- * Живой координатор проверяется до правки стора (`returnGlobalTaskToWork`).
+ * Прежний координатор, если его терминал ещё жив, закрывается после правки стора (`returnGlobalTaskToWork`):
+ * иначе возврат был бы недоступен, пока агент сам не выйдет.
  * Упал запуск после возврата — карточка остаётся «В работе» с уточнением, «Запустить координатора» его подхватит.
  */
 export function returnToWork(
@@ -371,7 +372,7 @@ export function returnToWork(
   cols = 120,
   rows = 30
 ): { ptyId: string; runId: string } {
-  returnGlobalTaskToWork(store, runId, text, isAlive)
+  returnGlobalTaskToWork(store, runId, text, isAlive, killPty)
   return startCoordinator(store, repoRoot, ctx, '', cols, rows, [], runId)
 }
 

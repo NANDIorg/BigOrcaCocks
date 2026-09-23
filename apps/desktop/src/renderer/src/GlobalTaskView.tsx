@@ -84,7 +84,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
               <button type="button" className="btn-sm primary" onClick={onAccept} title="Результат принят — в «Сделано»">Подтвердить</button>
             )}
             {actions.returnToWork && (
-              <button type="button" className="btn-sm" disabled={actions.returnBlocked !== undefined} title={actions.returnBlocked} onClick={onReturn}>
+              <button type="button" className="btn-sm" title="Написать, что доделать, и перезапустить координатора" onClick={onReturn}>
                 Вернуть в работу…
               </button>
             )}

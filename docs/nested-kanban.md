@@ -199,10 +199,12 @@ needs_input — **вычисляемая** колонка: там карточк
   без событий. Не на проверке — ошибка «глобальная задача … не на проверке».
 - **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows)` → `ptyId` координатора
   (`returnToWork` в `apps/desktop/src/main/worker.ts`; шаги 1–2 — `returnGlobalTaskToWork` в `coordinator-resume.ts`):
-  1. жив прежний координатор (окно после `runs finish`, пока `coordinatorsToClose` не закрыл терминал) —
-     ошибка «координатор … ещё завершается — повторите через несколько секунд», стор не меняется;
-  2. `TaskStore.returnGlobalTask(id, text)`: пустой текст, «Входящие», не на проверке — ошибка; иначе
-     `returns.push({at, text})`, `reopenRun` (гасит старые `run_done`, ставит `reopenedAt`), карточка → in_progress;
+  1. `TaskStore.returnGlobalTask(id, text)`: пустой текст, «Входящие», не на проверке — ошибка, терминалы не трогаются;
+     иначе `returns.push({at, text})`, `reopenRun` (гасит старые `run_done`, ставит `reopenedAt`), карточка → in_progress;
+  2. жив прежний координатор — его терминал закрывается (`killPty`). Это не только окно после `runs finish`:
+     агент без `runs finish` (Claude — не `lingers`) держит терминал бессрочно, и отказ в возврате оставлял
+     человека без поля для уточнения. Без функции закрытия (`stop`) `returnGlobalTaskToWork` по-прежнему
+     отказывает «координатор … ещё завершается», стор не меняется;
   3. повторный запуск координатора (`startCoordinator(..., runId)`), как `globalTasks.startCoordinator`.
 
   Упал запуск после шага 2 — карточка остаётся «В работе» с уточнением, отката нет: «Запустить координатора»
@@ -303,7 +305,7 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 | `createTask(id, {title, spec?, deps?, roleId?})` | `globalTasks:createTask` | `Task` (`runId = id`) | пустое название; роль (`pickRole`); deps из другой глобальной; `run not found` |
 | `startCoordinator(id, cols, rows, images?)` | `globalTasks:startCoordinator` | `ptyId` | см. «Повторный запуск» |
 | `accept(id)` | `globalTasks:accept` | `GlobalTask` | не на проверке; `run not found` |
-| `returnToWork(id, text, cols, rows)` | `globalTasks:returnToWork` | `ptyId` координатора | пустой текст; «Входящие»; не на проверке; координатор ещё жив; ошибки запуска (см. «Проверка») |
+| `returnToWork(id, text, cols, rows)` | `globalTasks:returnToWork` | `ptyId` координатора | пустой текст; «Входящие»; не на проверке; ошибки запуска (см. «Проверка»). Живой прежний координатор — не ошибка: его терминал закрывается |
 
 Изменения приходят как раньше в `board.onChange` (`board:changed {projectId, snapshot}`). Старые
 `tasks.*`, `runs.*`, `coordinator.start`, `worker.start` не менялись (кроме: `tasks.create` → во «Входящие»).
@@ -347,10 +349,12 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 - «Входящие» (`inbox: true`) — показывать как обычную карточку; координатора на ней не запускать.
 - «Проверка» (`kind=review`): на карточке и в деталях (`GlobalTaskView`, `GlobalTaskModal`) — «Подтвердить»
   (`accept`) и «Вернуть в работу…» (модалка `ReturnGlobalModal` с обязательным текстом → `returnToWork` →
-  терминал координатора); «Запустить координатора» на ней скрыта, пока жив прежний координатор — возврат
-  выключен. Какие действия доступны — `globalTaskActions` (`renderer/src/globalReview.ts`), история уточнений —
+  терминал координатора); «Запустить координатора» на ней скрыта. «Вернуть в работу…» доступна всегда: при
+  живом прежнем координаторе (`returnClosesCoordinator`) модалка предупреждает, что его терминал закроется
+  (`returnHint`). Какие действия доступны — `globalTaskActions` (`renderer/src/globalReview.ts`), история уточнений —
   `GlobalReturns` (новые сверху). Старый preload без методов — «перезапустите приложение» (`globalReviewApi`),
-  старый main («No handler registered») — то же (`reviewErrorMessage`).
+  старый main («No handler registered») — то же, его отказ «ещё завершается» — «закройте терминал координатора
+  или перезапустите» (`reviewErrorMessage`).
 
 ## Проверки
 

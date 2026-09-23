@@ -1015,6 +1015,7 @@ export function App(): React.JSX.Element {
         <ReturnGlobalModal
           key={returningGlobal.id}
           global={returningGlobal}
+          closesCoordinator={coordinatorPtys.has(returningGlobal.id)}
           onClose={() => setReturnGlobalId(null)}
           onSubmit={(text) => returnGlobalTask(returningGlobal.id, text)}
         />

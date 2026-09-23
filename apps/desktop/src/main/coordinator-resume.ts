@@ -27,15 +27,27 @@ export function resumeObjective(store: TaskStore, runId: string, alive: PtyAlive
 }
 
 /**
- * Правка стора при «Вернуть в работу» — до запуска координатора. Живой координатор проверяется до
- * `returnGlobalTask`: после `runs finish` его терминал закрывается не сразу (`coordinatorsToClose`), и возврат
- * в это окно не должен оставить задачу «В работе» с уточнением, но без нового координатора.
+ * Правка стора при «Вернуть в работу» — до запуска координатора. Прежний координатор может быть ещё жив:
+ * окно после `runs finish`, пока `coordinatorsToClose` не закрыл терминал, или агент без `runs finish`
+ * (тогда терминал висит до `COORDINATOR_ABANDONED_MS`, а без `lingers` — бессрочно). Отказывать в возврате
+ * нельзя: на «Проверке» человеку больше некуда написать уточнение. Поэтому сначала стор (его проверки —
+ * пустой текст, «Входящие», не на проверке — не трогают терминал), затем прежний терминал закрывается `stop`,
+ * чтобы повторный запуск (`resumeObjective`) не упал на «координатор уже работает». Без `stop` (или если
+ * терминал пережил его) — прежняя ошибка, стор не меняется.
  */
-export function returnGlobalTaskToWork(store: TaskStore, runId: string, text: string, alive: PtyAlive): void {
+export function returnGlobalTaskToWork(
+  store: TaskStore,
+  runId: string,
+  text: string,
+  alive: PtyAlive,
+  stop?: (ptyId: string) => void
+): void {
   const run = store.getRun(runId)
   if (!run) throw new Error(`глобальная задача не найдена: ${runId}`)
-  if (run.coordinatorPtyId && alive(run.coordinatorPtyId)) {
+  const ptyId = run.coordinatorPtyId
+  if (ptyId && alive(ptyId) && !stop) {
     throw new Error('координатор этой глобальной задачи ещё завершается — повторите через несколько секунд')
   }
   store.returnGlobalTask(runId, text)
+  if (ptyId && alive(ptyId) && stop) stop(ptyId)
 }
