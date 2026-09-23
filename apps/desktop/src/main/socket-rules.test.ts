@@ -118,6 +118,7 @@ describe('сокет rules.get / rules.set', () => {
         stopWorker: () => ({ stopped: [] }),
         review: () => ({}),
         accept: () => undefined,
+        reject: () => undefined,
         resolveRequest: () => ({}),
         startCoordinator: () => '',
         deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
@@ -126,7 +127,8 @@ describe('сокет rules.get / rules.set', () => {
         setRoles: (roles) => projects.setRoles(PID, roles).roles ?? roles,
         agentRules: () => projects.agentRules(PID),
         setAgentRules: (text) => projects.setAgentRules(PID, text).agentRules ?? '',
-        columns: () => projects.columns(PID)
+        columns: () => projects.columns(PID),
+        workflow: () => ({ workflow: projects.workflow(PID), custom: false })
       }),
       projects: () => []
     })

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -19,6 +19,8 @@ export interface WorkerEnvContext {
   roles: Role[]
   /** Правила проекта (`Project.agentRules`): блок «Правила проекта» в системном промпте воркеров и координатора. */
   agentRules?: string
+  /** Воркфлоу проекта: снимок уходит в новый прогон координатора (`Run.workflow`). */
+  workflow?: Workflow
 }
 
 /** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
@@ -330,7 +332,7 @@ export function startCoordinator(
   if (resume) objective = resume.objective
   const root = images.length > 0 ? attachmentsRoot(repoRoot) : undefined
   if (root) pruneAttachments(store, root)
-  const run = resume?.run ?? store.createRun(objective)
+  const run = resume?.run ?? store.createRun(objective, undefined, ctx.workflow)
   let ptyId: string
   try {
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.

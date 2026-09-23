@@ -370,6 +370,8 @@ export class TaskStore {
     runId?: string
     /** Задача-ответ: кто читает ответ. Нет — обычная задача. */
     answerFor?: AnswerAudience
+    /** Задача-гейт воркфлоу: чью ветку проверяет (создаёт исполнитель в main, не координатор). */
+    gateFor?: { taskId: string; nodeId: string }
   }): Task {
     if (input.answerFor !== undefined && !ANSWER_AUDIENCES.includes(input.answerFor)) {
       throw new Error(`answerFor: ожидается ${ANSWER_AUDIENCES.join(' или ')}, получено ${String(input.answerFor)}`)
@@ -377,6 +379,7 @@ export class TaskStore {
     const now = Date.now()
     // Подзадача всегда внутри глобальной задачи: без runId — во «Входящие»; чужой/несуществующий — ошибка.
     const run = input.runId !== undefined ? this.mustRun(input.runId) : (this.inbox() ?? this.addRun({ objective: '', inbox: true }))
+    if (input.gateFor && !this.tasks.has(input.gateFor.taskId)) throw new Error(`проверяемой задачи ${input.gateFor.taskId} нет`)
     const deps = (input.deps ?? []).filter((d) => this.tasks.has(d))
     const foreign = deps.filter((d) => this.tasks.get(d)!.runId !== run.id)
     if (foreign.length > 0) throw new Error(`зависимости из другой глобальной задачи: ${foreign.join(', ')}`)
@@ -390,6 +393,7 @@ export class TaskStore {
       agent: input.agent ?? DEFAULT_AGENT,
       runId: run.id,
       ...(input.answerFor ? { answerFor: input.answerFor } : {}),
+      ...(input.gateFor ? { gateFor: { ...input.gateFor } } : {}),
       createdAt: now,
       updatedAt: now
     }
@@ -469,7 +473,10 @@ export class TaskStore {
     this.commit()
   }
 
-  /** backlog → ready, если все зависимости закрыты (по kind колонок). */
+  /**
+   * backlog → ready, если все зависимости закрыты (по kind колонок). Задаче-гейту task_ready не шлётся:
+   * её воркера запускает исполнитель воркфлоу сразу после создания, координатору делать нечего.
+   */
   private promoteReady(): void {
     for (const task of this.tasks.values()) {
       if (!this.isKind(task, 'backlog')) continue
@@ -479,7 +486,7 @@ export class TaskStore {
       })
       if (depsDone) {
         this.setStatus(task, this.columnId('ready'))
-        this.pushEvent('task_ready', { taskId: task.id })
+        if (!task.gateFor) this.pushEvent('task_ready', { taskId: task.id })
       }
     }
   }
@@ -542,6 +549,67 @@ export class TaskStore {
     }
     this.commit()
     return { task, action: step.action }
+  }
+
+  /**
+   * Задача снова идёт в работу (`worker start`, перезапуск, «Уточнить» не в счёт — у задач-ответов этапа нет):
+   * этап, который не «Работа» (задачу вернули вручную с ревью, переоткрыли из done), сбрасывается на первый этап
+   * от старта — иначе её `done` пришёл бы на этап проверки. Задача без этапа входит в граф. Заходы (`visits`)
+   * копятся: лимит повторов считает и такие возвраты. Этап «Работа» не трогается. Задачи-ответы и гейты — мимо.
+   * Возвращает действие нового этапа или undefined, если этап не менялся.
+   */
+  enterWork(taskId: string, opts: { roleIds?: readonly string[] } = {}): WfAction | undefined {
+    const task = this.mustTask(taskId)
+    if (task.answerFor || task.gateFor) return undefined
+    const wf = this.runWorkflow(task.runId, opts.roleIds)
+    const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
+    if (current?.type === 'work') return undefined
+    if (!task.stage) return this.advanceStage(taskId, 'next', opts).action
+    const ctx = { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}) }
+    const step = startStage(wf, ctx)
+    if (step.action.type === 'blocked') {
+      this.pushEvent('workflow_blocked', { taskId, runId: task.runId, nodeId: step.action.nodeId, reason: short(step.action.reason) })
+      this.commit()
+      return step.action
+    }
+    const visits = { ...task.stage.visits }
+    for (const [id, n] of Object.entries(step.stage.visits)) visits[id] = (visits[id] ?? 0) + n
+    const from = task.stage.nodeId
+    task.stage = { nodeId: step.stage.nodeId, visits }
+    task.updatedAt = Date.now()
+    const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
+    this.pushEvent('stage_changed', {
+      taskId, runId: task.runId, from, to: step.stage.nodeId, outcome: 'restart',
+      ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
+    })
+    this.commit()
+    return step.action
+  }
+
+  /**
+   * Исполнитель не смог выполнить эффект этапа (воркер или проверка не запустились, мерж упал не конфликтом):
+   * задача остаётся на этапе, координатору и человеку — `workflow_blocked` с причиной.
+   */
+  blockStage(taskId: string, reason: string): OrcaEvent {
+    const task = this.mustTask(taskId)
+    const event = this.pushEvent('workflow_blocked', {
+      taskId, runId: task.runId, ...(task.stage ? { nodeId: task.stage.nodeId } : {}), reason: short(reason)
+    })
+    this.commit()
+    return event
+  }
+
+  /**
+   * Нода `human`: запрос approval к человеку («Принять» / «Вернуть»), задача — в «Нужен ответ».
+   * Ждущий approval той же задачи не дублируется — возвращается он.
+   */
+  requestApproval(taskId: string, fields: { nodeId: string; title: string; body?: string }): HumanRequest {
+    const task = this.mustTask(taskId)
+    const existing = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'approval')
+    if (existing) return existing
+    const request = this.createRequest(task, { kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}) })
+    this.commit()
+    return request
   }
 
   /** Новый прогон без commit. Статус по умолчанию — колонка kind=backlog. */
@@ -822,6 +890,8 @@ export class TaskStore {
     this.pushEvent('worker_done', {
       taskId: task.id, dispatchId, summary, files,
       ...(task.answerFor ? { answerFor: task.answerFor } : {}),
+      // Проверка воркфлоу: координатору по ней делать нечего, исход уже у рабочей задачи.
+      ...(task.gateFor ? { gateFor: task.gateFor.taskId } : {}),
       ...(request ? { requestId: request.id } : {}),
       ...(text ? eventAnswer(text) : {})
     })
@@ -1010,6 +1080,20 @@ export class TaskStore {
     return task
   }
 
+  /**
+   * Решение по approval без commit: запрос закрыт, при «Вернуть» замечания — в feedback для следующего запуска.
+   * Колонку не трогает, кроме выхода из «Нужен ответ» (settleTask): дальше задачу ведёт исполнитель воркфлоу.
+   */
+  private applyApproval(task: Task, request: HumanRequest, action: 'accept' | 'reject', text?: string): void {
+    this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}) })
+    if (action === 'reject' && text) task.feedback = text
+    this.settleTask(task)
+    task.updatedAt = Date.now()
+    this.pushEvent('request_resolved', {
+      taskId: task.id, action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {})
+    })
+  }
+
   /** «Уточнить» без commit: feedback, ready, answer_clarified (воркера стартует main). */
   private applyClarify(task: Task, request: HumanRequest, feedback: string): void {
     const text = feedback.trim()
@@ -1165,7 +1249,9 @@ export class TaskStore {
    *   убрать worktree) делает main до вызова; main может звать и `acceptTask` — это тот же переход;
    * - answer + clarify (`text` — уточнение) → задача в ready с feedback, `answer_clarified`; воркера стартует main;
    * - escalation + restart → задача в ready, `request_resolved`; воркера стартует main;
-   * - escalation + dismiss → задача из «Нужен ответ» в ready (воркер мёртв), `request_resolved`.
+   * - escalation + dismiss → задача из «Нужен ответ» в ready (воркер мёртв), `request_resolved`;
+   * - approval + accept / reject (`text` — комментарий, при reject — замечания в feedback) → запрос решён,
+   *   `request_resolved`; переход воркфлоу по этому исходу делает main (`src/main/workflow.ts`).
    * Решённый или отменённый запрос — ошибка «уже решено».
    */
   resolveRequest(id: string, resolution: RequestResolution): HumanRequest {
@@ -1188,6 +1274,10 @@ export class TaskStore {
         break
       }
       case 'accept':
+        if (request.kind === 'approval') {
+          this.applyApproval(task, request, 'accept', text)
+          break
+        }
         this.applyAccept(task, request, text)
         task.worktree = undefined
         task.branch = undefined
@@ -1196,6 +1286,9 @@ export class TaskStore {
         break
       case 'clarify':
         this.applyClarify(task, request, text ?? '')
+        break
+      case 'reject':
+        this.applyApproval(task, request, 'reject', text)
         break
       case 'restart':
       case 'dismiss':
@@ -1218,7 +1311,7 @@ export class TaskStore {
    */
   private createRequest(
     task: Task,
-    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId'>>,
+    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId'>>,
     emit = true
   ): HumanRequest {
     const request: HumanRequest = {
@@ -1232,6 +1325,7 @@ export class TaskStore {
       ...(fields.body !== undefined ? { body: fields.body } : {}),
       options: fields.options ?? [],
       ...(fields.questionId !== undefined ? { questionId: fields.questionId } : {}),
+      ...(fields.nodeId !== undefined ? { nodeId: fields.nodeId } : {}),
       createdAt: Date.now()
     }
     this.requests.set(request.id, request)

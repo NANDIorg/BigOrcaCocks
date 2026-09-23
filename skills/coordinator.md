@@ -9,9 +9,14 @@
 - `orca-board roles list` — какие роли есть в проекте: id, название (`title`), назначение (`description`), агент,
   модель, включён ли агент (`agentEnabled`). `--role` выбирай только из ролей с включённым агентом.
   `description` — главный ориентир: что роль делает и когда её брать. Нет описания — суди по id и названию.
-  Роли из примеров ниже (`developer`, `qa`, `reviewer`) человек мог удалить: `--role` — только id из `roles list`,
-  иначе `task create` вернёт ошибку. Нет `reviewer` — задачи ревью не создавай: рабочая задача после `worker_done`
-  остаётся в «Ревью», её примет или вернёт человек в приложении; скажи об этом в сводке.
+  Роли из примеров ниже (`developer`, `qa`) человек мог удалить: `--role` — только id из `roles list`,
+  иначе `task create` вернёт ошибку.
+- `orca-board workflow show` — воркфлоу: что приложение само делает с рабочей задачей после её `worker_done`.
+  Этапы (`stages`): `gate` — проверка агентом роли `roleId` (приложение создаёт и запускает задачу-проверку),
+  `human` — решение человека в Инбоксе, `merge` — слияние ветки, `end` — задача в `done`; `next` — куда ведёт
+  каждый исход. Проверки, мерж и повторный запуск после отказа делает **приложение, не ты**: задачи ревью не
+  создавай, `review accept/reject` не вызывай. Если в воркфлоу есть этап `human` — скажи в сводке, что задачи
+  ждут решения человека.
 - `orca-board columns list` — колонки доски (id, название, kind); `task move --status` принимает id отсюда.
 - `orca-board task list` — что уже есть на доске.
 
@@ -19,7 +24,8 @@
 1. `orca-board task create --title "..." --spec "..." --role developer|qa [--dep <id>]` — по одной на подзадачу.
    Роль подбирай по `description` из `roles list`: задача должна совпадать с назначением роли. Без описаний —
    `developer` для кода, `qa` для тестов и проверок, для других ролей — по id и названию. `coordinator` задачам
-   не назначай, `reviewer` — только задачам ревью (шаг 4).
+   не назначай; роли проверок из `workflow show` (`roleId` этапов `gate`, например `reviewer`) — тоже:
+   их задачи создаёт приложение.
    Спека — это промпт воркера: контекст, какие файлы трогать, критерии готовности. Режь задачи по разным
    файлам, чтобы воркеры работали параллельно. Маленькая цель = одна задача.
    **Задача-ответ** — когда результат не код, а знание: «посмотри», «разберись», «оцени», «предложи».
@@ -32,18 +38,18 @@
    несколько воркеров работают одновременно в своих worktree.
 3. Жди события. Ты работаешь в своём прогоне (`ORCA_RUN_ID` в окружении; задачи из `task create`
    попадают в него автоматически), поэтому `check` показывает только события твоих задач.
-   Типы: `worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified` — `run_done` в списке,
+   Типы: `worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked` — `run_done` в списке,
    чтобы узнать о закрытии прогона из того же потока, а не опрашивать доску.
    Payload событий короткие: длинный текст (вопрос, контекст, ответ) в событии обрезан или его нет — полный
    читай командой: `orca-board request get --request <requestId>`, `orca-board question get --question <id>`,
    `orca-board task answer --task <id>`.
    - **Основной путь (Claude Code):** инструмент Monitor с командой
-     `orca-board check --follow --types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified`
+     `orca-board check --follow --types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked`
      и `timeout_ms: 1800000`. Команда держит соединение и печатает по одной JSON-строке на событие, сама не
      завершается. Каждое уведомление монитора — одно событие: обработай его по шагу 4 и продолжай ждать.
      Монитор истёк по таймауту — поставь его заново той же командой.
    - **Запасной путь** (нет инструмента Monitor или ты другой агент):
-     `orca-board check --wait --types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified --timeout-ms 1500000` —
+     `orca-board check --wait --types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked --timeout-ms 1500000` —
      блокируется до первого события. `timedOut: true` — просто вызови ещё раз.
 4. По событию:
    - `worker_done` по **задаче-ответу** (в событии есть `answerFor`, текст — в `answer`; при
@@ -54,13 +60,20 @@
        человек либо принимает его (задача уйдёт в done, придёт `answer_accepted`), либо уточняет (придёт
        `answer_clarified`, воркер перезапустится сам и снова придёт `worker_done`). Ревью не создавай,
        `review accept` не вызывай. Писать тебе в терминал человеку не нужно — жди события.
-   - `worker_done` по **рабочей** задаче A → создай задачу ревью (роли `reviewer` нет — не создавай, см. «Подготовка»):
-     `orca-board task create --title "Ревью: <A.title>" --role reviewer --spec "Проверь ветку orca/<A.id> задачи <A.id>: orca-board review info --task <A.id>, git diff master...orca/<A.id>, прогони pnpm typecheck в своём worktree после git merge --no-commit orca/<A.id> (потом git merge --abort). Критерии: <критерии из спеки A>. Если всё хорошо — orca-board review accept --task <A.id>. Если нет — orca-board review reject --task <A.id> --feedback '<что исправить>'. Затем orca-board done --summary 'принято' или 'отклонено: ...'. Последней командой обязательно вызови orca-board done --summary '...', даже после review accept/reject — без этого твоя задача ревью останется открытой."`
-     и сразу `worker start` на неё. Сам `review info/accept/reject` не вызывай.
-   - `worker_done` по задаче **ревью** → `orca-board review accept --task <id ревью>` (у неё нечего мержить,
-     это просто закрытие). Если ревьюер отклонил, рабочая задача уже в `ready` с замечаниями — `worker start` снова.
-     Если по задаче ревью пришла `escalation` (ревьюер вышел без `done`), а рабочая задача уже в `done` или `ready`, —
-     просто закрой ревью через `orca-board review accept --task <id ревью>`, ревьюера не перезапускай.
+   - `worker_done` по **рабочей** задаче → **ничего не делай**: дальше её ведёт воркфлоу приложения
+     (`workflow show`): запускает проверку, спрашивает человека, сливает ветку, после отказа сам перезапускает
+     воркера с замечаниями. Ты узнаешь о конце по `run_done`, о проблеме — по `workflow_blocked`.
+   - `worker_done` с полем `gateFor` — сдана **задача-проверка** воркфлоу (её создало приложение): ничего не делай,
+     приложение само закроет её. `escalation` по задаче-проверке — как обычная эскалация (ниже): `worker read`,
+     затем `worker start --task <id проверки>`; если проверка уже вынесла решение, приложение закроет её само.
+   - `workflow_blocked` → воркфлоу не может вести задачу `taskId` дальше, причина — в `reason` (там же команда,
+     если её можно выполнить). Этап задачи — `stage` в `orca-board task get --task <taskId>`.
+     - Воркер или проверка не запустились (`worker start --task <id>` в `reason`) — если причина временная,
+       выполни эту команду; если нет (агент роли выключен, роли нет) — это решает человек, скажи в сводке.
+     - Проверка сдана без решения (`task reopen --task <id> --start` в `reason`) — выполни эту команду один раз;
+       повторилось — оставь человеку.
+     - Остальное (нет перехода в графе, мерж не выполнен) — сам не исправляй и `review accept/reject` не вызывай:
+       человек решит в приложении («Принять» / «Вернуть» у задачи). Скажи об этом в сводке.
    - `question` → текст вопроса в событии обрезан до 300 символов, варианты — только метки; полный вопрос, пояснения
      вариантов, рекомендация воркера (`recommended`) и контекст — `orca-board question get --question <questionId>`.
      Есть `forHuman: true` — вопрос уже у человека (тебя не было в живых), ничего не делай. Иначе реши, кому отвечать:
@@ -92,13 +105,15 @@
    - `answer_clarified` → человек уточнил ответ задачи-ответа (текст уточнения — `feedback`, полный —
      `orca-board request get --request <requestId>`). Воркер уже перезапущен приложением: ничего не делай, жди
      его `worker_done`. Не вызывай `worker start` — задача уже в работе.
-   - `request_created` → у человека новый запрос в Инбоксе (`kind`: `question` / `answer` / `escalation`). Ничего
-     не делай: вопрос, ответ и эскалацию ты уже обработал по их собственным событиям. Нужен полный текст —
-     `orca-board request get --request <requestId>`.
+   - `request_created` → у человека новый запрос в Инбоксе (`kind`: `question` / `answer` / `escalation` /
+     `approval`). Ничего не делай: вопрос, ответ и эскалацию ты уже обработал по их собственным событиям, а
+     `approval` — этап воркфлоу «человек»: задачу примет или вернёт человек, дальше её ведёт приложение. Нужен
+     полный текст — `orca-board request get --request <requestId>`.
    - `request_resolved` → человек решил эскалацию. `action: restart` — воркер уже перезапущен приложением,
      ничего не делай. `action: dismiss` — человек убрал эскалацию, задача в `ready`: если без неё цель не
-     достигается — `worker start`, иначе оставь.
-   - `task_ready` → `worker start`.
+     достигается — `worker start`, иначе оставь. `kind: approval` (человек принял или вернул задачу на этапе
+     воркфлоу) — ничего не делай, дальше задачу ведёт приложение.
+   - `task_ready` → `worker start` (по задачам-проверкам `task_ready` не приходит: их запускает приложение).
    - `run_done` → все задачи прогона закрыты: останови монитор (если он есть), дай короткую сводку и
      **последней командой** вызови `orca-board runs finish` — это сигнал приложению, что ты закончил;
      после него твой терминал закроется. `run_done` с `"manual": true` — человек сам перенёс глобальную
@@ -108,7 +123,8 @@
      запуска без новой работы (см. «Повторный запуск»).
    Что сейчас ждёт человека в твоём прогоне — `orca-board request list` (с `--all` — и уже решённое);
    запрос целиком — `orca-board request get --request <id>`. Отвечать за человека (`request resolve`) не нужно.
-5. Повторяй, пока все рабочие задачи не в `done` и все ревью не закрыты (это и есть `run_done`).
+5. Повторяй, пока все задачи прогона не в `done` — рабочие проходят воркфлоу, проверки закрывает приложение
+   (это и есть `run_done`).
    В конце — короткая сводка, затем `orca-board runs finish`.
 
 Повторный запуск:

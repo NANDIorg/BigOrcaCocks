@@ -172,9 +172,8 @@ describe('события после ответа человека в инстр�
     assert.doesNotMatch(worker, /--options a,b/)
   })
 
-  it('координатор берёт роли только из roles list и без reviewer не создаёт ревью', () => {
+  it('координатор берёт роли только из roles list', () => {
     assert.match(skill, /`--role` — только id из `roles list`/)
-    assert.match(skill, /Нет `reviewer` — задачи ревью не создавай/)
   })
 
   it('воркер после done не берёт работу из терминала, а отправляет в приложение', () => {
@@ -193,7 +192,7 @@ describe('команды в инструкциях и документации �
   )
   const flags = new Set([...helpText.matchAll(/--([a-z][a-z-]*)/g)].map((m) => m[1]))
 
-  for (const file of ['skills/coordinator.md', 'skills/worker.md', 'skills/assistant.md', 'docs/human-requests.md', 'docs/architecture.md', 'docs/nested-kanban.md']) {
+  for (const file of ['skills/coordinator.md', 'skills/worker.md', 'skills/assistant.md', 'docs/human-requests.md', 'docs/architecture.md', 'docs/nested-kanban.md', 'docs/workflow.md']) {
     it(file, () => {
       const text = read(file)
       const uses = [...text.matchAll(/orca-board ([a-z][a-z-]*(?: [a-z][a-z-]*)?)([^`\n]*)/g)]
@@ -221,5 +220,38 @@ describe('skill ассистента: все проекты пользовате
   it('нет запрета --project и привязки к ORCA_PROJECT', () => {
     assert.doesNotMatch(text, /--project` не указывай/)
     assert.doesNotMatch(text, /ORCA_PROJECT/)
+  })
+})
+
+describe('воркфлоу в инструкциях: ревью и мерж ведёт приложение', () => {
+  const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+  const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+
+  it('координатор смотрит воркфлоу в «Подготовке» и не создаёт ревью сам', () => {
+    const prep = skill.slice(skill.indexOf('Подготовка:'), skill.indexOf('Цикл:'))
+    assert.match(prep, /orca-board workflow show/)
+    assert.match(prep, /задачи ревью не\s+создавай/)
+    assert.doesNotMatch(skill, /task create --title "Ревью/, 'ручного создания задачи ревью больше нет')
+    assert.doesNotMatch(skill, /pnpm/, 'skills — без специфики этого репозитория')
+  })
+
+  it('workflow_blocked — во всех вариантах check и с обработкой в шаге 4', () => {
+    const types = [...skill.matchAll(/(?:--types|Типы:) `?([a-z_,]+)/g)].map((m) => m[1])
+    assert.equal(types.length, 3, 'общий список, Monitor и запасной путь')
+    for (const t of types) assert.ok(t.split(',').includes('workflow_blocked'), t)
+    assert.doesNotMatch(skill, /`stage_changed`/, 'stage_changed — событие для UI, координатору не нужно')
+    assert.match(skill, /- `workflow_blocked` →[\s\S]*`reason`[\s\S]*worker start --task <id>[\s\S]*task reopen --task <id> --start/)
+  })
+
+  it('worker_done рабочей задачи и проверки — ничего не делать', () => {
+    assert.match(skill, /- `worker_done` по \*\*рабочей\*\* задаче → \*\*ничего не делай\*\*/)
+    assert.match(skill, /- `worker_done` с полем `gateFor`[\s\S]*ничего не делай/)
+    assert.match(skill, /`approval`/)
+  })
+
+  it('воркер: мержит приложение, проверка решает review accept/reject и сдаёт done', () => {
+    assert.match(worker, /ветку сливает приложение/)
+    assert.doesNotMatch(worker, /это делает координатор/)
+    assert.match(worker, /Задача-проверка[\s\S]*orca-board review accept --task <id>[\s\S]*orca-board review reject --task <id> --feedback[\s\S]*orca-board done/)
   })
 })

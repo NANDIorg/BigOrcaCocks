@@ -1,4 +1,4 @@
-import type { TaskStore, HumanRequest, RequestResolution } from '@orca-board/core'
+import type { TaskStore, HumanRequest, RequestResolution, Task } from '@orca-board/core'
 import { reviewInfo, commitWorktree, mergeBranch, removeWorktree, type ReviewInfo } from './git'
 
 export function getReview(store: TaskStore, repoRoot: string, taskId: string): ReviewInfo {
@@ -8,11 +8,38 @@ export function getReview(store: TaskStore, repoRoot: string, taskId: string): R
   return reviewInfo(repoRoot, task.worktree, task.branch)
 }
 
+/** Итог мержа ветки задачи: `conflict` — git не слил ветку (текст ошибки в `error`), ветка и worktree на месте. */
+export type MergeResult = { ok: true } | { ok: false; conflict: true; error: string }
+
 /**
- * Принять: закоммитить хвосты, слить в текущую ветку, убрать worktree, задача → done.
- * Задача-ответ незакоммиченное не коммитит (это черновики воркера), но коммиты в её ветке
- * (например, макеты по заданию) сливает так же, как у рабочей задачи, — иначе они пропали бы с веткой.
+ * Git-часть приёмки рабочей задачи: закоммитить хвосты worktree, слить ветку в текущую ветку репозитория
+ * (если в ней есть коммиты), убрать worktree и ветку. Store не трогает — задачу в done переводит вызывающий
+ * (приёмка вне воркфлоу — `acceptReview`, нода `merge` — исполнитель воркфлоу, `src/main/workflow.ts`).
+ * Не слилось — `conflict`, ничего не удалено: конфликт разрешают в ветке и сливают снова.
+ * Ошибка коммита или удаления worktree — исключение (это не конфликт, повтор мержа не поможет).
+ */
+export function mergeTaskBranch(repoRoot: string, task: Pick<Task, 'title' | 'worktree' | 'branch'>): MergeResult {
+  if (!task.worktree || !task.branch) return { ok: true }
+  commitWorktree(task.worktree, `orca: ${task.title}`)
+  const info = reviewInfo(repoRoot, task.worktree, task.branch)
+  if (info.commits.length > 0) {
+    try {
+      mergeBranch(repoRoot, task.branch, `Merge orca task: ${task.title}`)
+    } catch (e) {
+      return { ok: false, conflict: true, error: (e as Error).message }
+    }
+  }
+  removeWorktree(repoRoot, task.worktree, task.branch)
+  return { ok: true }
+}
+
+/**
+ * Принять вне воркфлоу: задача-ответ или задача без этапа (создана до воркфлоу). Рабочую задачу — слить
+ * (`mergeTaskBranch`), конфликт — ошибка, задача остаётся где была. Задача-ответ незакоммиченное не
+ * коммитит (это черновики воркера), но коммиты в её ветке (например, макеты по заданию) сливает так же,
+ * как у рабочей задачи, — иначе они пропали бы с веткой.
  * `decision` — решение человека по ответу, уходит координатору в answer_accepted.
+ * Задачу на этапе воркфлоу принимает `reviewAccept` (`src/main/workflow.ts`).
  */
 export function acceptReview(store: TaskStore, repoRoot: string, taskId: string, decision?: string): void {
   const task = store.getTask(taskId)
@@ -23,11 +50,9 @@ export function acceptReview(store: TaskStore, repoRoot: string, taskId: string,
     const info = reviewInfo(repoRoot, task.worktree, task.branch)
     if (info.commits.length > 0) mergeBranch(repoRoot, task.branch, `Merge orca answer: ${task.title}`)
     removeWorktree(repoRoot, task.worktree, task.branch)
-  } else if (task.worktree && task.branch) {
-    commitWorktree(task.worktree, `orca: ${task.title}`)
-    const info = reviewInfo(repoRoot, task.worktree, task.branch)
-    if (info.commits.length > 0) mergeBranch(repoRoot, task.branch, `Merge orca task: ${task.title}`)
-    removeWorktree(repoRoot, task.worktree, task.branch)
+  } else {
+    const merged = mergeTaskBranch(repoRoot, task)
+    if (!merged.ok) throw new Error(merged.error)
   }
   // Ответ для человека: store шлёт координатору answer_accepted.
   store.acceptTask(taskId, decision)
@@ -46,6 +71,8 @@ export interface ResolveOutcome {
  * - answer + accept — приёмка с git-частью (acceptReview), решение `text` уходит в answer_accepted;
  * - answer + clarify, escalation + restart — resolveRequest и сразу старт воркера. Упал старт — запрос
  *   всё равно решён (задача в ready с уточнением), координатору — escalation с причиной;
+ * - approval + accept / reject — resolveRequest, затем переход воркфлоу по этому исходу (`approved`:
+ *   мерж, запуск воркера — исполнитель в `src/main/workflow.ts`);
  * - остальное — resolveRequest.
  */
 export function resolveHumanRequest(
@@ -53,7 +80,8 @@ export function resolveHumanRequest(
   repoRoot: string,
   id: string,
   resolution: RequestResolution,
-  startWorker: (taskId: string) => { ptyId: string; dispatchId: string }
+  startWorker: (taskId: string) => { ptyId: string; dispatchId: string },
+  approved?: (request: HumanRequest) => void
 ): ResolveOutcome {
   const pending = store.getRequest(id)
   if (!pending) throw new Error(`request not found: ${id}`)
@@ -63,6 +91,10 @@ export function resolveHumanRequest(
     return { request: store.getRequest(id)! }
   }
   const request = store.resolveRequest(id, resolution)
+  if (request.kind === 'approval') {
+    approved?.(request)
+    return { request: store.getRequest(id)! }
+  }
   if (resolution.action !== 'clarify' && resolution.action !== 'restart') return { request }
   try {
     const w = startWorker(request.taskId)

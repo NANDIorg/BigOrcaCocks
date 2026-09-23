@@ -975,6 +975,7 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .rq-answer { --rq: var(--col-review); }
 .rq-escalation { --rq: var(--danger); }
+.rq-approval { --rq: var(--col-review); }
 .rq.active { border-color: color-mix(in srgb, var(--accent) 70%, transparent); border-left-color: var(--rq); box-shadow: 0 0 0 1px var(--accent) inset; }
 .inbox-item:focus-visible .rq { box-shadow: 0 0 0 2px var(--accent) inset; }
 .rq-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 11px; }

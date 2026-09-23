@@ -64,7 +64,7 @@ function singleOption(v: unknown): string | undefined {
 
 /**
  * Решение запроса из флагов `request resolve`: ровно одно из --option/--text (можно вместе: вариант +
- * комментарий), --accept [--decision], --clarify, --restart, --dismiss.
+ * комментарий), --accept [--decision], --clarify, --reject (approval: вернуть с замечаниями), --restart, --dismiss.
  */
 export function resolutionFromParams(request: Pick<HumanRequest, 'id' | 'options'>, params: Record<string, unknown>): RequestResolution {
   const text = (key: string): string | undefined => {
@@ -76,15 +76,17 @@ export function resolutionFromParams(request: Pick<HumanRequest, 'id' | 'options
   const answer = text('text')
   const decision = text('decision')
   const clarify = text('clarify')
+  const reject = text('reject')
   const actions = [
     option !== undefined || answer !== undefined ? 'answer' : undefined,
     params.accept === true ? 'accept' : undefined,
     clarify !== undefined ? 'clarify' : undefined,
+    reject !== undefined ? 'reject' : undefined,
     params.restart === true ? 'restart' : undefined,
     params.dismiss === true ? 'dismiss' : undefined
   ].filter(Boolean)
   if (actions.length !== 1) {
-    throw new Error('укажи одно: --option <id|метка> и/или --text "...", --accept [--decision "..."], --clarify "...", --restart, --dismiss')
+    throw new Error('укажи одно: --option <id|метка> и/или --text "...", --accept [--decision "..."], --clarify "...", --reject "...", --restart, --dismiss')
   }
   if (decision !== undefined && params.accept !== true) throw new Error('--decision — только вместе с --accept')
   switch (actions[0]) {
@@ -99,6 +101,7 @@ export function resolutionFromParams(request: Pick<HumanRequest, 'id' | 'options
     }
     case 'accept': return { action: 'accept', ...(decision !== undefined ? { text: decision } : {}) }
     case 'clarify': return { action: 'clarify', text: clarify ?? '' }
+    case 'reject': return { action: 'reject', ...(reject?.trim() ? { text: reject } : {}) }
     default: return { action: actions[0] as 'restart' | 'dismiss' }
   }
 }

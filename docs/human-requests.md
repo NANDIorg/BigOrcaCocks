@@ -1,7 +1,7 @@
 # Запросы к человеку (`HumanRequest`)
 
 Всё, что ждёт решения человека, хранится как одна запись `HumanRequest`: вопрос воркера, сданный ответ
-задачи-ответа и упавший воркер. Статус хранится явно (`pending → resolved | cancelled`) и не выводится из колонок,
+задачи-ответа, упавший воркер и этап воркфлоу «человек» (`approval`, `docs/workflow.md`). Статус хранится явно (`pending → resolved | cancelled`) и не выводится из колонок,
 вопросов или живости координатора. Колонка «Нужен ответ» на обеих досках, счётчик `GlobalTask.waiting`,
 уведомления и Инбокс строятся по одному условию: **у прогона или задачи есть `pending`-запрос**
 (`isPendingRequest` / `pendingRequestsOf` / `hasPendingRequest`, `packages/core/src/global-tasks.ts`).
@@ -14,10 +14,10 @@
 ## Модель
 
 ```ts
-type HumanRequestKind = 'question' | 'answer' | 'escalation'
+type HumanRequestKind = 'question' | 'answer' | 'escalation' | 'approval'
 type HumanRequestStatus = 'pending' | 'resolved' | 'cancelled'
 interface RequestOption { id: string; label: string; hint?: string; recommended?: boolean }  // id — номер варианта: "1", "2"…
-interface RequestResolution { action: 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss'; optionId?: string; text?: string }
+interface RequestResolution { action: 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss' | 'reject'; optionId?: string; text?: string }
 
 interface HumanRequest {
   id: string                 // req_…
@@ -26,10 +26,11 @@ interface HumanRequest {
   dispatchId?: string        // запуск, который спросил / сдал ответ / упал
   kind: HumanRequestKind
   status: HumanRequestStatus
-  title: string              // вопрос / summary ответа / причина эскалации
+  title: string              // вопрос / summary ответа / причина эскалации / «<этап>: <задача>»
   body?: string              // markdown: контекст вопроса (+ «**Координатор:** …» из forward --note) или сам ответ
-  options: RequestOption[]   // только у question; у answer/escalation действия встроены
+  options: RequestOption[]   // только у question; у answer/escalation/approval действия встроены
   questionId?: string        // kind=question: исходный Question (ask держит соединение за него)
+  nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача
   resolution?: RequestResolution
   createdAt: number
   resolvedAt?: number        // решён или отменён
@@ -43,6 +44,7 @@ interface HumanRequest {
 | `question` | вопрос воркера (`ask`) адресован человеку | `answer` (вариант `optionId` и/или `text`) |
 | `answer` | задача-ответ `answerFor: 'human'` сдала `done --answer-file` | `accept` (`text` — решение), `clarify` (`text` — уточнение) |
 | `escalation` | PTY текущего запуска закрылся без `orca-board done` | `restart`, `dismiss` |
+| `approval` | рабочая задача пришла на ноду `human` воркфлоу (`docs/workflow.md`): ревью человеком, конфликт мержа | `accept` (`text` — комментарий), `reject` (`text` — замечания воркеру) |
 
 `Question` остаётся: это канал «воркер ↔ отвечающий». Запрос создаётся по нему, только когда адресат — человек
 (`Question.forHuman = true`). Адресат определяется **в момент создания** и потом не пересчитывается.
@@ -61,6 +63,7 @@ interface HumanRequest {
 | Координатор передал вопрос | `forwardQuestion(id, note?)` | вопрос не отвечен; уже переданный — без изменений | `question`, `note` — в `body` |
 | Координатор умер | `escalateOpenQuestions(runId)` | выход PTY координатора (`worker.ts`), загрузка проекта (`projects.ts`) | `question` на каждый его открытый вопрос текущего запуска |
 | Сдан ответ для человека | `finishDispatch` | `task.answerFor === 'human'` | `answer`, `body` — ответ; `request_created` идёт после `worker_done` |
+| Этап воркфлоу «человек» | `requestApproval` (зовёт исполнитель в main) | задача пришла на ноду `human`; ждущий approval задачи не дублируется | `approval`, `body` — инструкция ноды, текст конфликта мержа, итог воркера, ветка |
 | Воркер вышел без `done` | `ptyExited` | запуск текущий, задача не в done и у неё нет pending-вопроса к человеку (ответ сам вернёт её в ready) | `escalation` (вдобавок к событию `escalation` координатору) |
 | Загрузка снапшота | `migrateRequests` | открытые вопросы текущих запусков (PTY после перезапуска нет); снапшот до `HumanRequest` — ещё сданные ответы и упавшие воркеры в needs_input | как выше, без событий |
 
@@ -75,6 +78,8 @@ interface HumanRequest {
 | `answer` + `clarify` | `feedback` = уточнение, задача → ready, **main сразу стартует воркера** | `answer_clarified` |
 | `escalation` + `restart` | задача → ready, **main сразу стартует воркера** | `request_resolved {action: 'restart'}` |
 | `escalation` + `dismiss` | запрос скрыт, задача из needs_input → ready | `request_resolved {action: 'dismiss'}` |
+| `approval` + `accept` | запрос решён, задача из needs_input; **main переводит задачу по исходу accept** (дефолт — мерж и done) | `request_resolved {kind: 'approval', action: 'accept', nodeId}` |
+| `approval` + `reject` | `feedback` = замечания, **main переводит по исходу reject** (дефолт — снова в работу, воркер стартует сразу) | `request_resolved {kind: 'approval', action: 'reject', nodeId}` |
 | не `pending` | ошибка «уже решено: запрос … решён/отменён» | — |
 
 Не удалось стартовать воркера после `clarify`/`restart` — запрос всё равно решён (задача в ready с уточнением),
@@ -82,6 +87,8 @@ interface HumanRequest {
 
 Старые пути ведут в те же переходы: `question answer` и IPC `questions:answer` закрывают запрос вопроса,
 `review accept` — запрос `answer` (с решением `--decision`), `review reject` — это `clarify` (без старта воркера).
+У задачи на ноде `human` `review accept` / `review reject` (и «Принять» / «Вернуть» в модалке задачи) решают её
+запрос `approval` (`reviewAccept` / `reviewReject` в `src/main/workflow.ts`).
 
 ### Отмена (`cancelled`, без события)
 
@@ -102,12 +109,13 @@ Payload короткие: строка события в мониторе коо
 | `question_answered` | `taskId, dispatchId, questionId, requestId?, question, answer, workerLive, status` | — |
 | `answer_accepted` | `taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 | `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId` | `orca-board request get --request <id>` (`resolution.text`) |
-| `request_resolved` | `taskId, action` (`restart`/`dismiss`), `requestId, kind, dispatchId` | — |
-| `worker_done` | `taskId, dispatchId, summary, files, answerFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
+| `request_resolved` | `taskId, action` (`restart`/`dismiss`/`accept`/`reject`), `requestId, kind, dispatchId?, nodeId?` (approval) | — |
+| `worker_done` | `taskId, dispatchId, summary, files, answerFor?, gateFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 
 Уведомление «нужен ваш ответ» (`notifyKind`, `notify.ts`) приходит только на `request_created` (вопрос / ответ
-готов / эскалация); кроме него человеку сообщают лишь `escalation` с `stuck: true`, `worker_done` рабочей задачи и
-`run_done`. Клик по нему открывает Инбокс на этом запросе
+готов / эскалация / approval — вид «Воркер завершил задачу», текст «Ждёт решения»); кроме него человеку сообщают
+лишь `escalation` с `stuck: true`, `workflow_blocked` (вид «Эскалация», «Воркфлоу остановлен»), `worker_done`
+рабочей задачи (не проверки) и `run_done`. Клик по нему открывает Инбокс на этом запросе
 (`requests:focus`). Событие `question`, на которое отвечает координатор, человеку не приходит.
 
 ## Доставка ответа воркеру
@@ -136,8 +144,9 @@ orca-board request get --request <id>
 # человек (или координатор от его имени)
 orca-board request resolve --request <id> --option <id|метка> [--text "..."]
 orca-board request resolve --request <id> --text "..."
-orca-board request resolve --request <id> --accept [--decision "..."]
+orca-board request resolve --request <id> --accept [--decision "..."]   # ответ или approval
 orca-board request resolve --request <id> --clarify "..."
+orca-board request resolve --request <id> --reject "..."                  # approval: вернуть с замечаниями
 orca-board request resolve --request <id> --restart | --dismiss
 ```
 
@@ -146,7 +155,7 @@ orca-board request resolve --request <id> --restart | --dismiss
 принимает строку или массив из одного элемента. У `request resolve` нужно ровно одно
 действие; `--decision` — только с `--accept`. `request get` у вопроса добавляет поле `answer`.
 
-Сокет: `request.list {run?, all?}`, `request.get {request}`, `request.resolve {request, option?|text?|accept|clarify|restart|dismiss, decision?}`,
+Сокет: `request.list {run?, all?}`, `request.get {request}`, `request.resolve {request, option?|text?|accept|clarify|reject|restart|dismiss, decision?}`,
 `question.forward {question, note?}`, `worker.ask {question, option[]|options, recommend?, context?, wait?}`
 (`--context-file` читает CLI и шлёт текст в `context`).
 IPC: `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)`, событие `requests:focus`.

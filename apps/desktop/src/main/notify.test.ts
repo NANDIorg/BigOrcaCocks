@@ -137,6 +137,15 @@ describe('describeEvent', () => {
     assert.deepEqual(kinds, ['question', 'answerReady', 'escalation'])
   })
 
+  it('воркфлоу: этап «человек» — как готовое к ревью, остановка — эскалация, сданная проверка — без уведомления', () => {
+    const approval = describeEvent(ev('request_created', { kind: 'approval', requestId: 'r', title: 'Ревью человеком: Задача' }), task, 'P', true)
+    assert.deepEqual(approval && { kind: approval.kind, body: approval.body, requestId: approval.requestId }, { kind: 'workerDone', body: 'Ждёт решения: Ревью человеком: Задача', requestId: 'r' })
+    const blocked = describeEvent(ev('workflow_blocked', { reason: 'нет роли' }), task, 'P', true)
+    assert.deepEqual(blocked && { kind: blocked.kind, body: blocked.body }, { kind: 'escalation', body: 'Воркфлоу остановлен: нет роли' })
+    assert.equal(describeEvent(ev('worker_done', { summary: 'принято', gateFor: 't0' }), task, 'P', true), null)
+    assert.equal(describeEvent(ev('stage_changed', { to: 'review' }), task, 'P', true), null)
+  })
+
   it('превью: с текстом и без; requestId — для клика', () => {
     const e = ev('request_created', { kind: 'question', requestId: 'req_1', title: 'Какой вариант?' })
     assert.deepEqual(describeEvent(e, task, 'P', true), { kind: 'question', roleId: 'reviewer', title: 'Задача · P', body: 'Вопрос: Какой вариант?', requestId: 'req_1' })

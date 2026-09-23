@@ -514,3 +514,66 @@ export function gateTaskSpec(task: Pick<Task, 'id' | 'title' | 'spec' | 'branch'
   if (own) parts.push(`## Как проверять\n\n${own}`)
   return parts.join('\n\n')
 }
+
+// ---------- описание для CLI ----------
+
+/** Этап графа для `orca-board workflow show`: что делает нода и куда ведёт каждый исход. */
+export interface WfStageInfo {
+  id: string
+  type: WfNodeType
+  title: string
+  /** Роль гейта или работы (у работы без роли — роль задачи). */
+  roleId?: string
+  instructions?: string
+  /** Условие ноды `condition` человеческими словами. */
+  condition?: string
+  /** Исход → «название (id)» ноды, куда он ведёт. */
+  next: Partial<Record<WfOutcome, string>>
+}
+
+/**
+ * Граф в виде, удобном агенту: этапы в порядке обхода от старта (недостижимые — в конце) с переходами.
+ * Координатор читает его, чтобы знать, что приложение сделает с задачей после `worker_done`.
+ */
+export function describeWorkflow(wf: Workflow): WfStageInfo[] {
+  const byId = new Map(wf.nodes.map((n) => [n.id, n]))
+  const order: string[] = []
+  const start = wf.nodes.find((n) => n.type === 'start')
+  const queue = start ? [start.id] : []
+  while (queue.length) {
+    const id = queue.shift()!
+    if (order.includes(id) || !byId.has(id)) continue
+    order.push(id)
+    queue.push(...wf.edges.filter((e) => e.from === id).map((e) => e.to))
+  }
+  for (const n of wf.nodes) if (!order.includes(n.id)) order.push(n.id)
+  const label = (id: string): string => {
+    const n = byId.get(id)
+    return n ? `${wfNodeTitle(n)} (${id})` : id
+  }
+  return order.map((id) => {
+    const n = byId.get(id)!
+    const next: Partial<Record<WfOutcome, string>> = {}
+    for (const e of wf.edges) if (e.from === id) next[e.outcome] = label(e.to)
+    const info: WfStageInfo = { id, type: n.type, title: wfNodeTitle(n), next }
+    if ((n.type === 'gate' || n.type === 'work') && n.roleId) info.roleId = n.roleId
+    if ((n.type === 'gate' || n.type === 'human') && n.instructions?.trim()) info.instructions = n.instructions.trim()
+    if (n.type === 'condition') info.condition = conditionText(n.test, byId)
+    return info
+  })
+}
+
+function conditionText(test: WfCondition, byId: Map<string, WfNode>): string {
+  switch (test.kind) {
+    case 'attempts': {
+      const n = byId.get(test.node)
+      return `задача заходила в «${n ? wfNodeTitle(n) : test.node}» не меньше ${test.atLeast} раз`
+    }
+    case 'role':
+      return `роль задачи — ${test.roleIds.join(', ')}`
+    case 'files':
+      return `все файлы ветки подходят под ${test.glob}`
+    default:
+      return 'неизвестное условие'
+  }
+}

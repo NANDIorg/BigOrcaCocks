@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo, type Role } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, type AgentInfo, type Role, type WfStageInfo } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 
 let tmp: string
@@ -40,6 +40,7 @@ function fakeDeps(): ProjectDeps {
     },
     review: () => ({}),
     accept: () => undefined,
+    reject: (taskId, feedback) => store.rejectReview(taskId, feedback),
     resolveRequest: () => ({}),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
@@ -48,7 +49,8 @@ function fakeDeps(): ProjectDeps {
     setRoles: (next) => (roles = next),
     agentRules: () => '',
     setAgentRules: (text) => text,
-    columns: () => DEFAULT_COLUMNS
+    columns: () => DEFAULT_COLUMNS,
+    workflow: () => ({ workflow: defaultWorkflow(roles), custom: false })
   }
 }
 
@@ -278,5 +280,33 @@ describe('удалённая системная роль', () => {
     assert.equal(res.ok, false)
     assert.match(res.error!, /^воркер не запустится: роли «qa» нет в проекте/)
     assert.deepEqual(calls, [])
+  })
+})
+
+describe('workflow show', () => {
+  type Shown = { source: string; run?: string; stages: WfStageInfo[] }
+  it('без --run — воркфлоу проекта этапами в порядке обхода с переходами', async () => {
+    const res = await call('workflow.show', {})
+    assert.equal(res.ok, true, res.error)
+    const shown = res.result as unknown as Shown
+    assert.equal(shown.source, 'default')
+    assert.deepEqual(shown.stages.map((s) => s.id).slice(0, 4), ['start', 'work', 'review', 'merge'])
+    const review = shown.stages.find((s) => s.id === 'review')!
+    assert.equal(review.type, 'gate')
+    assert.equal(review.roleId, 'reviewer')
+    assert.deepEqual(review.next, { accept: 'Мерж (merge)', reject: 'Работа (work)' })
+  })
+
+  it('с --run — снимок прогона; прогон без снимка — дефолтный граф', async () => {
+    const wf = defaultWorkflow([])
+    const withSnap = store.createGlobalTask({ title: 'Со снимком', workflow: wf })
+    const res = await call('workflow.show', { run: withSnap.id })
+    assert.equal(res.ok, true, res.error)
+    const shown = res.result as unknown as Shown
+    assert.equal(shown.source, 'run')
+    assert.equal(shown.stages.find((s) => s.id === 'review')!.type, 'human', 'снимок без reviewer, а не текущие роли')
+    const old = store.createGlobalTask({ title: 'Старый' })
+    assert.equal(((await call('workflow.show', { run: old.id })).result as unknown as Shown).source, 'default')
+    assert.match((await call('workflow.show', { run: 'run_nope' })).error!, /run not found/)
   })
 })
