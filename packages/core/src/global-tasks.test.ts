@@ -654,12 +654,13 @@ describe('«Проверка»: приёмка глобальной задачи
     assert.equal(store.getGlobalTask(runId).status, 'ai')
   })
 
-  it('«Входящие» никогда не на проверке: автозакрытие — в done, вернуть в работу нельзя', () => {
+  it('«Входящие» никогда не на проверке: автозакрытие — в done, ручной перенос в review и возврат — ошибка', () => {
     const store = newStore()
     store.moveTask(store.createTask({ title: 'во входящие' }).id, 'fin')
     const inbox = store.listGlobalTasks().find((g) => g.inbox)!
     assert.equal(inbox.status, 'fin')
-    store.moveGlobalTask(inbox.id, 'ai')
+    assert.throws(() => store.moveGlobalTask(inbox.id, 'ai'), /«Входящие» не проверяются/)
+    assert.equal(store.getGlobalTask(inbox.id).status, 'fin')
     assert.throws(() => store.returnGlobalTask(inbox.id, 'x'), /«Входящие»/)
   })
 

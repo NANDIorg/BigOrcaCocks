@@ -2,12 +2,13 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run, type Workflow } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleMessage } from './agents'
 import { assistantEnv } from './assistant'
+import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -280,24 +281,6 @@ function writeAttachments(root: string, runId: string, images: ImageAttachment[]
 }
 
 /**
- * Проверка перед повторным запуском координатора на существующей глобальной задаче и его цель:
- * описание (нет — название) плюс список уже созданных подзадач, чтобы координатор продолжил их, а не
- * создал заново. Второй живой координатор на одной глобальной задаче — ошибка.
- */
-export function resumeObjective(store: TaskStore, runId: string): { run: Run; objective: string } {
-  const run = store.getRun(runId)
-  if (!run) throw new Error(`глобальная задача не найдена: ${runId}`)
-  if (run.inbox) throw new Error('«Входящие» — не цель для координатора: создай глобальную задачу')
-  if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
-    throw new Error(`координатор этой глобальной задачи уже работает (терминал ${run.coordinatorPtyId})`)
-  }
-  const goal = run.objective.trim() || globalTaskTitle(run)
-  const title = (status: string): string => store.columns().find((c) => c.id === status)?.title ?? status
-  const tasks = store.listSubtasks(runId).map((t) => ({ id: t.id, title: t.title, status: title(t.status) }))
-  return { run, objective: resumeCoordinatorObjective(goal, tasks, run.returns) }
-}
-
-/**
  * Координатор: агент роли coordinator (нет такой роли — claude без модели) в корне репозитория с инструкцией и целью.
  * Без `runId` запуск создаёт новый прогон = глобальную задачу; с `runId` — повторный запуск на существующей
  * (цель — её описание и список подзадач, см. `resumeObjective`). Id прогона уходит координатору в ORCA_RUN_ID.
@@ -328,7 +311,7 @@ export function startCoordinator(
   if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', ctx.roles)}`)
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
-  const resume = runId !== undefined ? resumeObjective(store, runId) : undefined
+  const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
   if (resume) objective = resume.objective
   const root = images.length > 0 ? attachmentsRoot(repoRoot) : undefined
   if (root) pruneAttachments(store, root)
@@ -376,8 +359,7 @@ export function startCoordinator(
 /**
  * «Вернуть в работу» с «Проверки»: уточнение человека сохраняется в прогоне (`returnGlobalTask`), и координатор
  * запускается повторно — уточнение он получит в цели (`resumeObjective` → `resumeCoordinatorObjective`).
- * Живой координатор проверяется до правки стора: после `runs finish` его терминал закрывается не сразу
- * (`coordinatorsToClose`), и возврат в это окно не должен оставить задачу «В работе» без нового координатора.
+ * Живой координатор проверяется до правки стора (`returnGlobalTaskToWork`).
  * Упал запуск после возврата — карточка остаётся «В работе» с уточнением, «Запустить координатора» его подхватит.
  */
 export function returnToWork(
@@ -389,12 +371,7 @@ export function returnToWork(
   cols = 120,
   rows = 30
 ): { ptyId: string; runId: string } {
-  const run = store.getRun(runId)
-  if (!run) throw new Error(`глобальная задача не найдена: ${runId}`)
-  if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
-    throw new Error('координатор этой глобальной задачи ещё завершается — повторите через несколько секунд')
-  }
-  store.returnGlobalTask(runId, text)
+  returnGlobalTaskToWork(store, runId, text, isAlive)
   return startCoordinator(store, repoRoot, ctx, '', cols, rows, [], runId)
 }
 
