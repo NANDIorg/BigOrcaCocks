@@ -294,6 +294,8 @@ function writeAttachments(root: string, runId: string, images: ImageAttachment[]
 function escalateAfterCoordinator(store: TaskStore, runId: string): void {
   if (!store.getRun(runId)) return
   store.escalateOpenQuestions(runId)
+  // Вышел после run_done без `runs finish` — прогон закрывается, карточка на «Проверку».
+  store.settleIdleRuns(isAlive)
 }
 
 export function startCoordinator(

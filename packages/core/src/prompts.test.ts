@@ -154,7 +154,14 @@ describe('повторный запуск координатора', () => {
     const section = skill.slice(skill.indexOf(`${COORDINATOR_RESUME_SECTION}:`))
     assert.ok(section.includes(`«${COORDINATOR_RETURN_HEADING}»`), 'маркер цели из resumeCoordinatorObjective')
     assert.match(section, /новая\s+работа/)
-    assert.match(skill, /глобальная задача уходит человеку на проверку/)
+    assert.match(skill, /человеку на проверку/)
+  })
+
+  it('run_done не закрывает прогон: на проверку глобальную задачу отправляет только runs finish', () => {
+    const item = skill.slice(skill.indexOf('- `run_done` →'), skill.indexOf('Что сейчас ждёт человека'))
+    assert.match(item, /`run_done` прогон не закрывает/)
+    assert.match(item, /остаётся «В работе»/)
+    assert.match(item, /только `runs finish` отправляет её человеку на проверку/)
   })
 })
 
