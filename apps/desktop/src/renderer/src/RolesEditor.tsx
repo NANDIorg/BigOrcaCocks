@@ -17,7 +17,8 @@ import {
   type BuiltinPromptKind,
   type BuiltinPrompts,
   type AgentKind,
-  type Role
+  type Role,
+  type Workflow
 } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
@@ -33,6 +34,8 @@ interface Props {
   agents: AgentInfo[]
   /** Число задач проекта по id роли; нет — счётчики не показываются (дефолты для новых проектов). */
   taskCounts?: Readonly<Record<string, number>>
+  /** Свой воркфлоу (проекта или дефолта): роль, занятая в графе, — в последствиях удаления. */
+  workflow?: Workflow
   onSave(roles: Role[]): Promise<void>
 }
 
@@ -70,7 +73,7 @@ function newRoleId(): string {
 }
 
 /** Раздел «Роли» («О проекте» и дефолт для новых проектов): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
-export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, onSave }: Props): React.JSX.Element {
+export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, workflow, onSave }: Props): React.JSX.Element {
   const { draft: roles, error, update } = useAutoSave<Role[]>(storageKey, initial, onSave)
   const enabled = agents.filter((a) => a.enabled)
   const builtin = useBuiltinPrompts()
@@ -250,6 +253,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
             agents={agents}
             enabled={enabled}
             count={taskCounts?.[selected.id]}
+            workflow={workflow}
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
             onPatch={(p, debounce) => patch(index, p, debounce)}
@@ -272,6 +276,7 @@ interface PanelProps {
   agents: AgentInfo[]
   enabled: AgentInfo[]
   count: number | undefined
+  workflow: Workflow | undefined
   /** Почему удалить нельзя (последняя роль); undefined — можно. */
   deleteBlocker: string | undefined
   builtin: BuiltinState
@@ -286,7 +291,7 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, deleteBlocker, builtin, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
   const [tab, setTab] = useState<RoleTab>('prompt')
   /** Открыто подтверждение удаления: что сломается без роли. */
@@ -303,7 +308,7 @@ function RolePanel({
   const defaultDescription = defaultRoleDescription(r.id)
   const kind = builtinPromptKind(r.id)
   const builtinText = builtin && 'prompts' in builtin ? builtin.prompts[kind] : undefined
-  const losses = removalConsequences(r.id, count)
+  const losses = removalConsequences(r.id, count, workflow)
   const tabs: { id: RoleTab; label: string }[] = [
     { id: 'prompt', label: r.systemPrompt ? 'Инструкции роли •' : 'Инструкции роли' },
     { id: 'builtin', label: `Встроенная инструкция Orca${builtinText ? ` · ${lineCount(builtinText)} строк` : ''}` },

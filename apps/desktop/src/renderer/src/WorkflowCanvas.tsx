@@ -10,6 +10,7 @@ import {
   WF_ADDABLE_TYPES, WF_OUTCOME_LABELS, addNode, canConnect, connect, issueTargets, moveNode, removeSelected,
   type WfSelection
 } from './workflowEdit'
+import { WF_TYPE_TITLES } from './workflowForm'
 
 interface Props {
   workflow: Workflow
@@ -25,11 +26,6 @@ type Gesture =
   | { kind: 'pan'; start: Point; view: View }
   | { kind: 'drag'; nodeId: string; offset: Point; pos: Point; moved: boolean }
   | { kind: 'connect'; from: string; outcome: WfOutcome; pointer: Point; target?: string }
-
-const TYPE_TITLES: Record<WfNodeType, string> = {
-  start: 'Старт', work: 'Работа', gate: 'Проверка агентом', human: 'Решение человека',
-  condition: 'Условие', merge: 'Мерж', end: 'Конец'
-}
 
 function clip(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s
@@ -243,7 +239,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
           const sub = nodeSubtitle(node)
           return (
             <g key={node.id} className={cls} transform={`translate(${node.x} ${node.y})`}>
-              <title>{[`${wfNodeTitle(node)} — ${TYPE_TITLES[node.type]}`, ...(issue?.messages ?? [])].join('\n')}</title>
+              <title>{[`${wfNodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(issue?.messages ?? [])].join('\n')}</title>
               <rect width={NODE_W} height={NODE_H} rx={10} className="wf-node-box" />
               <g className="wf-node-icon" transform={`translate(10 ${(NODE_H - 20) / 2})`}><NodeIcon /></g>
               <text x={38} y={sub ? 26 : 35} className="wf-node-title">{clip(wfNodeTitle(node), 13)}</text>
@@ -279,7 +275,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
         {WF_ADDABLE_TYPES.map((type) => {
           const NodeIcon = WfNodeIcon[type]
           return (
-            <button key={type} type="button" className="icon-btn" title={`Добавить: ${TYPE_TITLES[type]}`} onClick={() => add(type)}>
+            <button key={type} type="button" className="icon-btn" title={`Добавить: ${WF_TYPE_TITLES[type]}`} onClick={() => add(type)}>
               <NodeIcon />
             </button>
           )

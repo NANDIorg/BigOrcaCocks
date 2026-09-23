@@ -1,0 +1,260 @@
+import {
+  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflow, wfNodeTitle,
+  type Role, type WfCondition, type WfNode, type WfNodeType, type WfOutcome, type Workflow
+} from '@orca-board/core'
+import type { OrcaApi } from '../../shared/ipc'
+import { NODE_H, NODE_W } from './workflowGeometry'
+import { connect, makeNode, uniqueId } from './workflowEdit'
+
+// Логика инспектора ноды и раздела «О проекте → Воркфлоу»: правка полей ноды, переходы портов с клавиатуры,
+// импорт/экспорт JSON, пресет лимита повторов. Как и workflowEdit.ts — чистые функции над графом.
+
+/** Названия типов нод в инспекторе и подсказках холста. */
+export const WF_TYPE_TITLES: Record<WfNodeType, string> = {
+  start: 'Старт', work: 'Работа', gate: 'Проверка агентом', human: 'Решение человека',
+  condition: 'Условие', merge: 'Мерж', end: 'Конец'
+}
+
+/** Порядок типов в select «Тип» инспектора. */
+export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'gate', 'human', 'condition', 'merge', 'end']
+
+/** Роли, которые можно поставить на этап: без служебных (coordinator, assistant) — они задачам не назначаются. */
+export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[] {
+  return roles.filter((r) => isTaskRole(r.id))
+}
+
+/** Ноды, у которых есть поле «Колонка»: start и condition задача проходит насквозь, стоять в них она не может. */
+export function hasColumn(type: WfNodeType): boolean {
+  return type !== 'start' && type !== 'condition'
+}
+
+/** Поля ноды, которые правит инспектор. Пустая строка у необязательного поля — «не задано» (поле удаляется). */
+export interface WfNodePatch {
+  title?: string
+  column?: string
+  roleId?: string
+  instructions?: string
+  merged?: boolean
+  test?: WfCondition
+}
+
+/** Меняет поля ноды; поля, которых у её типа нет, игнорируются. */
+export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Workflow {
+  const cur = wf.nodes.find((n) => n.id === nodeId)
+  if (!cur) return wf
+  const n: WfNode = { ...cur }
+  if (patch.title !== undefined) {
+    if (patch.title.trim()) n.title = patch.title
+    else delete n.title
+  }
+  if (patch.column !== undefined) {
+    if (patch.column) n.column = patch.column
+    else delete n.column
+  }
+  if (patch.roleId !== undefined) {
+    // У гейта роль обязательна (пустую подсветит валидация), у работы пустая — «роль задачи».
+    if (n.type === 'gate') n.roleId = patch.roleId
+    else if (n.type === 'work') {
+      if (patch.roleId) n.roleId = patch.roleId
+      else delete n.roleId
+    }
+  }
+  if (patch.instructions !== undefined && (n.type === 'gate' || n.type === 'human')) {
+    if (patch.instructions.trim()) n.instructions = patch.instructions
+    else delete n.instructions
+  }
+  if (patch.merged !== undefined && n.type === 'end') n.merged = patch.merged
+  if (patch.test !== undefined && n.type === 'condition') n.test = patch.test
+  return { ...wf, nodes: wf.nodes.map((x) => (x.id === nodeId ? n : x)) }
+}
+
+/**
+ * Меняет тип ноды, сохраняя id, позицию, название и колонку; роль и инструкция переносятся, если у нового
+ * типа они есть. Рёбра портов, которых у нового типа нет, удаляются; в старт не может вести переход —
+ * входящие рёбра тоже удаляются.
+ */
+export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): Workflow {
+  const cur = wf.nodes.find((n) => n.id === nodeId)
+  if (!cur || cur.type === type) return wf
+  const others = { ...wf, nodes: wf.nodes.filter((n) => n.id !== nodeId) }
+  const fresh = makeNode(others, type, cur.x, cur.y)
+  const node: WfNode = { ...fresh, id: cur.id }
+  if (cur.title) node.title = cur.title
+  if (cur.column && hasColumn(type)) node.column = cur.column
+  const role = cur.type === 'gate' || cur.type === 'work' ? cur.roleId : undefined
+  const instructions = cur.type === 'gate' || cur.type === 'human' ? cur.instructions : undefined
+  if (role && (node.type === 'gate' || node.type === 'work')) node.roleId = role
+  if (instructions && (node.type === 'gate' || node.type === 'human')) node.instructions = instructions
+  const ports = WF_PORTS[type]
+  return {
+    ...wf,
+    nodes: wf.nodes.map((n) => (n.id === nodeId ? node : n)),
+    edges: wf.edges.filter((e) => (e.from !== nodeId || ports.includes(e.outcome)) && !(type === 'start' && e.to === nodeId))
+  }
+}
+
+/** Куда ведёт порт: id целевой ноды или undefined, если перехода нет. */
+export function portTarget(wf: Workflow, nodeId: string, outcome: WfOutcome): string | undefined {
+  return wf.edges.find((e) => e.from === nodeId && e.outcome === outcome)?.to
+}
+
+/** Select «куда ведёт»: новая цель порта или null — убрать переход. */
+export function setPortTarget(wf: Workflow, nodeId: string, outcome: WfOutcome, to: string | null): Workflow {
+  if (to === null) {
+    if (!wf.edges.some((e) => e.from === nodeId && e.outcome === outcome)) return wf
+    return { ...wf, edges: wf.edges.filter((e) => !(e.from === nodeId && e.outcome === outcome)) }
+  }
+  return connect(wf, nodeId, outcome, to).workflow
+}
+
+/** Варианты цели перехода: все ноды, кроме старта (в него переход вести нельзя). Возврат в себя допустим. */
+export function targetOptions(wf: Workflow): { id: string; label: string }[] {
+  return wf.nodes.filter((n) => n.type !== 'start').map((n) => ({ id: n.id, label: nodeOptionLabel(n) }))
+}
+
+/** Подпись ноды в select'ах: название, а если оно не совпадает с id — ещё и id (названия могут повторяться). */
+export function nodeOptionLabel(n: WfNode): string {
+  const title = wfNodeTitle(n)
+  return title === n.id ? title : `${title} (${n.id})`
+}
+
+/** Новое условие при смене его вида в инспекторе: поля нового вида — по умолчанию. */
+export function conditionOfKind(wf: Workflow, kind: 'attempts' | 'role'): WfCondition {
+  if (kind === 'role') return { kind, roleIds: [] }
+  return { kind, node: wf.nodes.find((n) => n.type === 'work')?.id ?? '', atLeast: 3 }
+}
+
+// ---------- импорт и экспорт ----------
+
+/** JSON для кнопки «Экспорт»: читаемый, с переводом строки в конце. */
+export function exportWorkflowJson(wf: Workflow): string {
+  return `${JSON.stringify(wf, null, 2)}\n`
+}
+
+/** Имя файла экспорта по названию проекта: безопасные для любой ФС символы. */
+export function workflowFileName(projectName: string): string {
+  const slug = projectName.trim().replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '')
+  return `workflow${slug ? `-${slug}` : ''}.json`
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Разбор файла импорта. Проверяется только форма (граф ли это вообще): смысловые ошибки — нет роли, нет
+ * перехода — покажет validateWorkflow в редакторе, и граф можно будет поправить перед сохранением.
+ * Старая версия формата поднимается migrateWorkflow, будущая — ошибка.
+ */
+export function parseWorkflowJson(text: string): { workflow: Workflow } | { error: string } {
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch (e) {
+    return { error: `файл не JSON: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  if (!isObj(data)) return { error: 'в файле не воркфлоу: ожидался объект { version, nodes, edges }' }
+  const { version, nodes, edges } = data
+  if (typeof version !== 'number' || !Array.isArray(nodes) || !Array.isArray(edges)) {
+    return { error: 'в файле не воркфлоу: нужны поля version (число), nodes и edges (массивы)' }
+  }
+  if (version > WORKFLOW_VERSION) {
+    return { error: `воркфлоу в формате версии ${version}, приложение знает только ${WORKFLOW_VERSION} — обновите приложение` }
+  }
+  for (const [i, n] of nodes.entries()) {
+    if (!isObj(n) || typeof n.id !== 'string' || typeof n.type !== 'string' || typeof n.x !== 'number' || typeof n.y !== 'number') {
+      return { error: `нода №${i + 1}: нужны строки id и type и числа x и y` }
+    }
+    if (!(n.type in WF_PORTS)) return { error: `нода «${n.id}»: неизвестный тип «${n.type}»` }
+  }
+  for (const [i, e] of edges.entries()) {
+    if (!isObj(e) || typeof e.id !== 'string' || typeof e.from !== 'string' || typeof e.to !== 'string' || typeof e.outcome !== 'string') {
+      return { error: `переход №${i + 1}: нужны строки id, from, outcome и to` }
+    }
+  }
+  // Форма проверена выше; остальное (порты, ссылки) — дело validateWorkflow.
+  return { workflow: migrateWorkflow(data as unknown as Workflow) }
+}
+
+// ---------- пресет «3 отказа → человек» ----------
+
+/** Место под новую ноду: не ближе ячейки к существующим; сдвигаемся вниз, пока занято. */
+function freeSpot(wf: Workflow, x: number, y: number): { x: number; y: number } {
+  const busy = (px: number, py: number): boolean =>
+    wf.nodes.some((n) => Math.abs(n.x - px) < NODE_W + 20 && Math.abs(n.y - py) < NODE_H + 20)
+  let py = y
+  while (busy(x, py)) py += NODE_H + 40
+  return { x, y: py }
+}
+
+const isAttempts = (n: WfNode | undefined): boolean => n?.type === 'condition' && n.test.kind === 'attempts'
+
+/**
+ * Пресет «N отказов → человек»: каждый отказ проверки агентом, ведущий обратно в работу, идёт через условие
+ * «заходов в работу ≥ N». Да — решает человек: принять (туда же, куда ведёт принятие проверки) или вернуть
+ * в работу ещё раз. Работа при первом запуске уже засчитана, поэтому N-й отказ — ровно N заходов.
+ * Отказы, уже идущие через условие, не трогаются — повторное применение ничего не меняет.
+ */
+export function addRetryLimit(wf: Workflow, limit = 3): { workflow: Workflow; added: number } | { error: string } {
+  const byId = new Map(wf.nodes.map((n) => [n.id, n]))
+  const rejects = wf.edges.filter((e) => e.outcome === 'reject' && byId.get(e.from)?.type === 'gate' && byId.get(e.to)?.type === 'work')
+  if (rejects.length === 0) {
+    const limited = wf.edges.some((e) => e.outcome === 'reject' && byId.get(e.from)?.type === 'gate' && isAttempts(byId.get(e.to)))
+    if (limited) return { error: 'Лимит повторов уже стоит: отказ проверки идёт через условие.' }
+    return { error: 'Нет проверки агентом, отказ которой ведёт прямо в работу, — лимит повторов некуда поставить.' }
+  }
+  let next = wf
+  for (const reject of rejects) {
+    const gate = byId.get(reject.from)!
+    const ids = next.nodes.map((n) => n.id)
+    const condId = uniqueId('limit', ids)
+    const humanId = uniqueId('limit_human', [...ids, condId])
+    const condPos = freeSpot(next, gate.x, gate.y + NODE_H + 60)
+    const cond: WfNode = {
+      id: condId, type: 'condition', title: `Отказов ≥ ${limit}`, ...condPos,
+      test: { kind: 'attempts', node: reject.to, atLeast: limit }
+    }
+    const humanPos = freeSpot({ ...next, nodes: [...next.nodes, cond] }, condPos.x + NODE_W + 70, condPos.y)
+    const human: WfNode = {
+      id: humanId, type: 'human', title: `После ${limit} отказов`, ...humanPos,
+      instructions: `Задачу вернули на доработку столько раз, сколько разрешает лимит (${limit}). Примите работу как есть или верните её в работу ещё раз.`
+    }
+    const accept = portTarget(next, gate.id, 'accept')
+    next = {
+      ...next,
+      nodes: [...next.nodes, cond, human],
+      edges: [
+        ...next.edges.map((e) => (e.id === reject.id ? { ...e, to: condId } : e)),
+        { id: uniqueId(`e_${condId}_yes`, next.edges.map((e) => e.id)), from: condId, outcome: 'yes', to: humanId },
+        { id: uniqueId(`e_${condId}_no`, next.edges.map((e) => e.id)), from: condId, outcome: 'no', to: reject.to },
+        ...(accept ? [{ id: uniqueId(`e_${humanId}_accept`, next.edges.map((e) => e.id)), from: humanId, outcome: 'accept' as const, to: accept }] : []),
+        { id: uniqueId(`e_${humanId}_reject`, next.edges.map((e) => e.id)), from: humanId, outcome: 'reject', to: reject.to }
+      ]
+    }
+  }
+  return { workflow: next, added: rejects.length }
+}
+
+// ---------- старый main/preload ----------
+
+/** Как STALE_APP_MESSAGE в docLinks.ts: renderer обновился по HMR, а main/preload — ещё нет. */
+export const WORKFLOW_STALE_MESSAGE =
+  'Приложение запущено со старой версией main/preload, где ещё нет «Воркфлоу». Перезапустите приложение.'
+
+type WorkflowApi = {
+  setWorkflow: OrcaApi['projects']['setWorkflow']
+  defaultWorkflow: OrcaApi['workflow']['default']
+}
+
+/** Методы воркфлоу из `window.orca` или понятная ошибка: старый preload их не знает. */
+export function workflowApi(
+  api: { projects?: Partial<OrcaApi['projects']>; workflow?: Partial<OrcaApi['workflow']> } | undefined
+): WorkflowApi {
+  const setWorkflow = api?.projects?.setWorkflow
+  const defaultWorkflow = api?.workflow?.default
+  if (!setWorkflow || !defaultWorkflow) throw new Error(WORKFLOW_STALE_MESSAGE)
+  return { setWorkflow, defaultWorkflow }
+}
+
+/** Preload новый, а main старый — invoke падает с «No handler registered for 'projects:setWorkflow'». */
+export function isStaleWorkflowError(message: string): boolean {
+  return /No handler registered for '(projects:setWorkflow|workflow:default)'/.test(message)
+}

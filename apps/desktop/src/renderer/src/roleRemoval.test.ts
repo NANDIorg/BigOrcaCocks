@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_ROLES, type Role } from '@orca-board/core'
-import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
+import { DEFAULT_ROLES, defaultWorkflow, type Role, type Workflow } from '@orca-board/core'
+import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles, workflowNodesWithRole } from './roleRemoval'
 
 const ids = (roles: readonly Role[]): string[] => roles.map((r) => r.id)
 const custom: Role = { id: 'role_x', title: 'Аналитик', agent: 'codex' }
@@ -53,4 +53,21 @@ test('возврат ставит роли на место из дефолта �
 test('без оставшихся системных ролей возвращённые встают в конец в порядке дефолта', () => {
   assert.deepEqual(ids(restoreSystemRoles([custom])), ['role_x', ...ids(DEFAULT_ROLES)])
   assert.deepEqual(ids(restoreSystemRoles(DEFAULT_ROLES)), ids(DEFAULT_ROLES))
+})
+
+test('роль, занятая в своём воркфлоу, попадает в последствия удаления', () => {
+  const wf = defaultWorkflow([{ id: 'reviewer' }])
+  const withCond: Workflow = {
+    ...wf,
+    nodes: [...wf.nodes, { id: 'c', type: 'condition', title: 'Аналитик?', x: 0, y: 0, test: { kind: 'role', roleIds: ['role_x'] } }]
+  }
+  assert.deepEqual(workflowNodesWithRole(withCond, 'reviewer'), ['Ревью'])
+  assert.deepEqual(workflowNodesWithRole(withCond, 'role_x'), ['Аналитик?'])
+  assert.deepEqual(workflowNodesWithRole(undefined, 'reviewer'), [])
+
+  const lines = removalConsequences('reviewer', undefined, withCond)
+  assert.ok(lines.some((l) => l.startsWith('Роль занята в воркфлоу: «Ревью».')), lines.join('\n'))
+  assert.match(removalConsequences(custom.id, 0, withCond).join('\n'), /«Аналитик\?»/)
+  // Дефолтный граф не передаётся: без своего графа строки про воркфлоу нет.
+  assert.ok(!removalConsequences('reviewer').some((l) => l.includes('воркфлоу')))
 })

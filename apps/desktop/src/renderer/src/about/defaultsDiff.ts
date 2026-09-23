@@ -1,8 +1,8 @@
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo, type AgentKind } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, type AgentInfo, type AgentKind } from '@orca-board/core'
 import type { Project, ProjectDefaults } from '../../../shared/ipc'
 
-/** JSON с отсортированными ключами: сравнение ролей/колонок не зависит от порядка полей. */
-function stable(v: unknown): string {
+/** JSON с отсортированными ключами: сравнение ролей/колонок/графа не зависит от порядка полей. */
+export function stable(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(stable).join(',')}]`
   if (v && typeof v === 'object') {
     const obj = v as Record<string, unknown>
@@ -59,5 +59,11 @@ export function defaultsDiff(p: Project, d: ProjectDefaults, agents: AgentInfo[]
   if (columns) out.push(`колонки (${columns})`)
   if ((p.permissionMode ?? 'auto') !== d.permissionMode) out.push('разрешения')
   if ((p.agentRules ?? '').trim() !== (d.agentRules ?? '').trim()) out.push('правила доски')
+  // Без своего графа действует дефолтный по ролям — сравниваем то, что реально исполнится.
+  if (p.workflow || d.workflow) {
+    const mine = p.workflow ?? defaultWorkflow(p.roles ?? DEFAULT_ROLES)
+    const base = d.workflow ?? defaultWorkflow(d.roles)
+    if (stable(mine) !== stable(base)) out.push('воркфлоу')
+  }
   return out
 }
