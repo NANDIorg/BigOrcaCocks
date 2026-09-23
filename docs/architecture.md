@@ -137,6 +137,21 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   стартового промпта (см. таблицу в «Агенты»). Текст идёт отдельным элементом argv, без shell-интерполяции
   (в пути с подготовкой worktree — `sh -c` с `shellQuote`); ограничение Windows-fallback через `cmd.exe`
   (переводы строк → пробел, лимит длины) касается и его. Применяется при следующем запуске, уже идущие агенты не меняются.
+- **Правила агентов доски** (`Project.agentRules?: string`, `withAgentRules` в `packages/core/src/types.ts`):
+  правила, которые получают **только** агенты, запущенные доской (воркеры всех ролей и координатор), — не
+  CLAUDE.md/AGENTS.md и не обычные сессии агента в репозитории. Два уровня:
+  - общие правила проекта — `Project.agentRules` (markdown одной строкой, `ProjectManager.agentRules(id)` / `setAgentRules(id, text)`);
+  - правила роли — **это существующий `Role.systemPrompt`**, отдельного поля нет: он уже доходит и до воркера
+    (роль задачи), и до координатора (роль `coordinator`), редактируется в «О проекте → Роли» и сохраняется через `projects:setRoles`.
+  Системный промпт: служебная инструкция Orca → `# Правила проекта` + текст (если непустой) →
+  `# Инструкции роли «<title>»` (если непустой). Пусто/одни пробелы — блока нет, trim только по краям, текст как есть.
+  Хранится как введено (без trim, как `systemPrompt`); из одних пробелов → поле удаляется; не строка → ошибка
+  `правила проекта должны быть строкой`. Старые `projects.json` без поля читаются как «правил нет», не-строка
+  отбрасывается в `load()`. Правила проекта передаются в `WorkerEnvContext.agentRules` (`ctx()` в `src/main/index.ts`)
+  и применяются при следующем запуске агента. Ассистент их не получает (`AssistantContext` без `agentRules`: он один на
+  приложение и не работает в репозитории проекта); свой `systemPrompt` роли `assistant` — получает, как раньше.
+  Меняются: IPC `projects:getAgentRules` / `projects:setAgentRules`, сокет `rules.get` / `rules.set`,
+  CLI `orca-board rules get|set`. Есть и в глобальном дефолте (`ProjectDefaults.agentRules`, см. «Проекты»).
 - **Встроенные промпты в UI** (`packages/core/src/prompts.ts`, `src/main/prompts.ts`): тексты `skills/*.md` импортирует
   только `src/main/prompts.ts` (`BUILTIN_PROMPTS`); их же берёт `worker.ts` при запуске и отдаёт IPC `prompts:builtin`
   для раздела «Роли». Там по кнопке «Инструкции» (свёрнуто по умолчанию) видны: встроенная инструкция роли только для чтения
@@ -246,6 +261,8 @@ orca-board projects list                    # [{id,name,root,active,inProgress}]
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
 orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
+orca-board rules get [--role <id>]          # правила агентов доски: общие ({rules}) или роли ({role,title,rules})
+orca-board rules set [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator]
 orca-board question answer --question <id> --answer "..."
 orca-board question forward --question <id> [--note "..."]   # вопрос воркера — человеку (запрос в Инбокс, глобальная → «Нужен ответ»)
@@ -362,7 +379,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   нет (`--add-dir` не передаётся) — только CLI.
 - **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext` без `projectId`): роли и режим
   разрешений — из настроек по умолчанию (`projects.defaults()`), агент роли `assistant` (fallback см. «Роли и колонки»),
-  system prompt — `skills/assistant.md` + инструкции роли (`withRoleInstructions`), стартовое сообщение —
+  system prompt — `skills/assistant.md` + инструкции роли (`withRoleInstructions`; правил проекта `agentRules` нет), стартовое сообщение —
   `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — нейтральный
   `userData/assistant` (создаётся при запуске), не репозиторий; `orca-board` без вопросов
   (`--allowedTools Bash(orca-board:*)` у claude), на Windows — `win32Launch`, как у координатора.
@@ -631,6 +648,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 - `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
+  `projects:getAgentRules(id)` → `string` ('' — правил нет), `projects:setAgentRules(id, text)` → `Project` (правила агентов доски, см. «Роли и колонки»),
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
@@ -662,6 +680,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress}]`; без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
+| `rules.get` | `role?` | без `role` — `{rules}` (`Project.agentRules`, нет — `''`); с `role` — `{role, title, rules}` (= `Role.systemPrompt`) |
+| `rules.set` | `text` (строка, обязателен; `''` — очистить), `role?` | то же, что `rules.get`, после сохранения; с `role` — через `setRoles` (валидация ролей) |
 | `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
@@ -738,7 +758,7 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 ## Проекты (`src/main/projects.ts`)
 
 `ProjectManager` хранит список репозиториев в `userData/projects.json` (вместе с `permissionMode`,
-`enabledAgents`, `roles`, `columns`), доску каждого — в `userData/boards/<id>.json`
+`enabledAgents`, `roles`, `columns`, `agentRules`), доску каждого — в `userData/boards/<id>.json`
 (`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board` (на Windows — `%APPDATA%\orca-board`).
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
 UI работает с активным проектом; воркеры и координатор получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
@@ -747,7 +767,7 @@ UI работает с активным проектом; воркеры и ко
 
 **Формат `projects.json`**: `{ projects: Project[], activeId, defaults?: Partial<ProjectDefaults>, settings?: Partial<AppSettings> }`
 (`settings` — глобальные настройки приложения, см. «Фоновый режим»).
-`ProjectDefaults { permissionMode, enabledAgents?, roles, columns }` (`projects.ts`, дубль типа —
+`ProjectDefaults { permissionMode, enabledAgents?, roles, columns, agentRules? }` (`projects.ts`, дубль типа —
 `shared/ipc.ts`). Файл без `defaults` (старый формат) читается как есть; `defaults` не-объект → удаляется при `load()`.
 
 **Настройки по умолчанию**:
@@ -756,13 +776,14 @@ UI работает с активным проектом; воркеры и ко
   `columns` → `DEFAULT_COLUMNS`); массивы и объекты — копии.
 - `setDefaults(patch)` — мерж патча в `data.defaults`: `permissionMode` проверяется по `PERMISSION_MODES`
   (`isPermissionMode`), роли/колонки — `validateRoles` / `validateColumns`, `enabledAgents` фильтруется
-  через `isAgentKind`; явный ключ `enabledAgents: null/undefined` — сброс в «все установленные».
+  через `isAgentKind`; явный ключ `enabledAgents: null/undefined` — сброс в «все установленные»;
+  `agentRules` — строка (пустая/пробелы → поле удаляется), не строка → ошибка.
   Не объект → ошибка. Возвращает `defaults()`.
 - `add(root)`: новый проект получает копию дефолта — `permissionMode`, `enabledAgents` (если задан),
-  `roles`, `columns`. Уже добавленный репозиторий возвращается как есть, дефолт к нему не применяется.
+  `roles`, `columns`, `agentRules` (если заданы). Уже добавленный репозиторий возвращается как есть, дефолт к нему не применяется.
   Проекты, созданные раньше, не меняются при правке дефолта.
 - `applyDefaults(id)` — переписывает настройки существующего проекта дефолтом: `permissionMode`,
-  `enabledAgents` (нет в дефолте → поле удаляется), затем `setRoles` и `setColumns` — последний, как и при
+  `enabledAgents` и `agentRules` (нет в дефолте → поле удаляется), затем `setRoles` и `setColumns` — последний, как и при
   ручной правке, переводит задачи из исчезнувших колонок в колонку `kind=backlog` (`store.reassignColumn`).
   Задачи с `roleId` удалённой роли остаются как есть — `worker.start` для них вернёт ошибку.
 

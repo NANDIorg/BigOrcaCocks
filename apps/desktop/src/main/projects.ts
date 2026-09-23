@@ -30,6 +30,12 @@ export interface Project {
   roles?: Role[]
   /** Колонки доски в порядке показа. undefined — DEFAULT_COLUMNS. */
   columns?: BoardColumn[]
+  /**
+   * Правила проекта для агентов доски (markdown): блок «Правила проекта» в системном промпте воркеров всех ролей
+   * и координатора (`withAgentRules`). Не попадают в CLAUDE.md/AGENTS.md и обычные сессии агентов.
+   * Пусто — поля нет. Правила отдельной роли — её `systemPrompt`.
+   */
+  agentRules?: string
 }
 
 /** Настройки, которые копируются в каждый новый проект. */
@@ -39,6 +45,8 @@ export interface ProjectDefaults {
   enabledAgents?: AgentKind[]
   roles: Role[]
   columns: BoardColumn[]
+  /** Правила проекта для агентов доски, копируются в новый проект; пусто — поля нет. */
+  agentRules?: string
 }
 
 interface ProjectsFile {
@@ -79,6 +87,9 @@ export class ProjectManager {
       // Системные роли без назначения (созданы до появления поля) получают назначение по умолчанию.
       for (const p of data.projects ?? []) if (Array.isArray(p.roles)) p.roles = withDefaultDescriptions(p.roles)
       if (Array.isArray(data.defaults?.roles)) data.defaults.roles = withDefaultDescriptions(data.defaults.roles)
+      // Правила агентов появились позже: у старых конфигов поля нет (= правил нет), не-строку отбрасываем.
+      for (const p of data.projects ?? []) if (p.agentRules !== undefined && typeof p.agentRules !== 'string') delete p.agentRules
+      if (data.defaults && data.defaults.agentRules !== undefined && typeof data.defaults.agentRules !== 'string') delete data.defaults.agentRules
       return data
     } catch {
       return { projects: [], activeId: null }
@@ -131,7 +142,8 @@ export class ProjectManager {
       permissionMode: d.permissionMode,
       ...(d.enabledAgents ? { enabledAgents: d.enabledAgents } : {}),
       roles: d.roles,
-      columns: d.columns
+      columns: d.columns,
+      ...(d.agentRules ? { agentRules: d.agentRules } : {})
     }
     this.data.projects.push(project)
     this.data.activeId = id
@@ -146,7 +158,8 @@ export class ProjectManager {
       permissionMode: d.permissionMode ?? 'auto',
       ...(d.enabledAgents ? { enabledAgents: [...d.enabledAgents] } : {}),
       roles: (d.roles ?? DEFAULT_ROLES).map((r) => ({ ...r })),
-      columns: (d.columns ?? DEFAULT_COLUMNS).map((c) => ({ ...c }))
+      columns: (d.columns ?? DEFAULT_COLUMNS).map((c) => ({ ...c })),
+      ...(d.agentRules ? { agentRules: d.agentRules } : {})
     }
   }
 
@@ -168,6 +181,11 @@ export class ProjectManager {
     }
     if (patch.roles !== undefined) next.roles = validateRoles(patch.roles)
     if (patch.columns !== undefined) next.columns = validateColumns(patch.columns)
+    if ('agentRules' in patch) {
+      const rules = validateAgentRules(patch.agentRules ?? '')
+      if (rules) next.agentRules = rules
+      else delete next.agentRules
+    }
     this.data.defaults = next
     this.save()
     return this.defaults()
@@ -205,6 +223,8 @@ export class ProjectManager {
     p.permissionMode = d.permissionMode
     if (d.enabledAgents) p.enabledAgents = d.enabledAgents
     else delete p.enabledAgents
+    if (d.agentRules) p.agentRules = d.agentRules
+    else delete p.agentRules
     this.setRoles(id, d.roles)
     return this.setColumns(id, d.columns)
   }
@@ -233,6 +253,22 @@ export class ProjectManager {
   /** Колонки доски в порядке показа; не заданы — дефолтные. */
   columns(id: string): BoardColumn[] {
     return this.get(id)?.columns ?? DEFAULT_COLUMNS
+  }
+
+  /** Правила проекта для агентов доски; не заданы — ''. */
+  agentRules(id: string): string {
+    return this.get(id)?.agentRules ?? ''
+  }
+
+  /** Сохранить правила проекта как введены (без trim — иначе автосохранение съедало бы ввод); из одних пробелов — поля нет. */
+  setAgentRules(id: string, text: string): Project {
+    const p = this.get(id)
+    if (!p) throw new Error(`project not found: ${id}`)
+    const rules = validateAgentRules(text)
+    if (rules) p.agentRules = rules
+    else delete p.agentRules
+    this.save()
+    return p
   }
 
   setRoles(id: string, roles: Role[]): Project {
@@ -322,6 +358,12 @@ export class ProjectManager {
 
 function nonEmpty(v: unknown): v is string {
   return typeof v === 'string' && v.trim() !== ''
+}
+
+/** Правила проекта: строка; из одних пробелов — undefined (поля нет). */
+function validateAgentRules(text: unknown): string | undefined {
+  if (typeof text !== 'string') throw new Error('правила проекта должны быть строкой')
+  return text.trim() ? text : undefined
 }
 
 /**

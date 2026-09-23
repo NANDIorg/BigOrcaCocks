@@ -45,6 +45,9 @@ function fakeDeps(): ProjectDeps {
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
     roles: () => roles,
+    setRoles: (next) => (roles = next),
+    agentRules: () => '',
+    setAgentRules: (text) => text,
     columns: () => DEFAULT_COLUMNS
   }
 }

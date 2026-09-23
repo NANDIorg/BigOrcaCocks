@@ -34,6 +34,12 @@ export interface ProjectDeps {
   agents(): AgentInfo[]
   /** Роли проекта. */
   roles(): Role[]
+  /** Сохранить роли проекта (с валидацией); возвращает сохранённые. Для `rules set --role`. */
+  setRoles(roles: Role[]): Role[]
+  /** Правила проекта для агентов доски (`Project.agentRules`); не заданы — ''. */
+  agentRules(): string
+  /** Сохранить правила проекта; возвращает сохранённое ('' — правил нет). */
+  setAgentRules(text: string): string
   /** Колонки доски в порядке показа. */
   columns(): BoardColumn[]
 }
@@ -400,6 +406,27 @@ const handlers: Record<string, Handler> = {
     return deps.roles().map((role) => ({ ...role, agentEnabled: enabled.has(role.agent) }))
   },
   'columns.list': (_r, deps) => deps.columns(),
+  // Правила агентов доски: общие — Project.agentRules, роли — её systemPrompt (оба уходят в системный промпт, withAgentRules).
+  'rules.get': (r, deps) => {
+    const roleId = str(r.params.role)
+    if (r.params.role === true || roleId === '') throw new Error('--role требует id роли')
+    if (roleId === undefined) return { rules: deps.agentRules() }
+    const role = deps.roles().find((x) => x.id === roleId)
+    if (!role) throw new Error(missingRoleMessage(roleId, deps.roles()))
+    return { role: role.id, title: role.title, rules: role.systemPrompt ?? '' }
+  },
+  'rules.set': (r, deps) => {
+    const text = r.params.text
+    if (typeof text !== 'string') throw new Error('нужен текст правил: --text "..." или --file <путь> (пустая строка — очистить)')
+    const roleId = str(r.params.role)
+    if (r.params.role === true || roleId === '') throw new Error('--role требует id роли')
+    if (roleId === undefined) return { rules: deps.setAgentRules(text) }
+    const roles = deps.roles()
+    if (!roles.some((x) => x.id === roleId)) throw new Error(missingRoleMessage(roleId, roles))
+    const saved = deps.setRoles(roles.map((x) => (x.id === roleId ? { ...x, systemPrompt: text } : x)))
+    const role = saved.find((x) => x.id === roleId)
+    return { role: roleId, title: role?.title ?? roleId, rules: role?.systemPrompt ?? '' }
+  },
   // Прогоны с числом задач и числом задач в kind=done.
   'runs.list': (_r, _d, store) => {
     const tasks = store.listTasks()

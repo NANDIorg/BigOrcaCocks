@@ -24,6 +24,12 @@ const HELP = `orca-board — управление доской агентов
   projects list                           все проекты: id, name, root, active (активный в приложении),
                                           inProgress — задач в работе; без проектов — []
 
+Правила агентов доски (попадают только в системный промпт воркеров и координатора, не в CLAUDE.md/AGENTS.md):
+  rules get [--role <id>]                 без --role — общие правила проекта, с --role — правила роли
+                                          (= её системный промпт в «О проекте → Роли»); не заданы — ""
+  rules set [--role <id>] --text "..."    заменить правила; --text "" — очистить
+  rules set [--role <id>] --file rules.md   то же из файла (markdown); применяется при следующем запуске агента
+
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
   global list                             карточки: название, описание, статус-колонка, прогресс подзадач,
                                           coordinatorAlive — жив ли терминал координатора
@@ -172,6 +178,11 @@ function readFileParam(flag, into) {
 }
 if (method === 'worker.done') readFileParam('answer-file', 'answer')
 if (method === 'worker.ask') readFileParam('context-file', 'context')
+if (method === 'rules.set') readFileParam('file', 'text')
+if (method === 'rules.set' && typeof params.text !== 'string') {
+  console.error('ошибка: rules set требует --text "..." или --file <путь>')
+  process.exit(1)
+}
 if (params.option !== undefined && params.option.includes(true)) {
   console.error('ошибка: --option требует текста варианта ("метка|пояснение")')
   process.exit(1)

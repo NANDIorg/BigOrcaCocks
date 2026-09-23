@@ -77,6 +77,22 @@ export function withRoleInstructions(system: string, role: Pick<Role, 'title' | 
   return `${system}\n\n# Инструкции роли «${role!.title}»\n\n${own}`
 }
 
+/**
+ * Системный промпт агента, запущенного доской (воркер любой роли, координатор): служебная инструкция Orca,
+ * затем блок `# Правила проекта` (`Project.agentRules`), затем инструкции роли (`withRoleInstructions`).
+ * Правила проекта живут в конфиге доски, а не в CLAUDE.md/AGENTS.md, поэтому обычные сессии агентов их не видят.
+ * Пустые правила — блока нет; текст вставляется как есть, обрезаются только пробелы по краям.
+ */
+export function withAgentRules(
+  system: string,
+  projectRules: string | undefined,
+  role: Pick<Role, 'title' | 'systemPrompt'> | undefined
+): string {
+  const rules = projectRules?.trim()
+  const base = rules ? `${system}\n\n# Правила проекта\n\n${rules}` : system
+  return withRoleInstructions(base, role)
+}
+
 // ---------- колонки ----------
 
 /** Системные виды колонок: по ним store переводит задачи автоматически. */
