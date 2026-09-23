@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -17,6 +17,8 @@ export interface WorkerEnvContext {
   permissionMode: PermissionMode
   /** Роли проекта: из них берутся агент и модель для задачи и координатора. */
   roles: Role[]
+  /** Правила проекта (`Project.agentRules`): блок «Правила проекта» в системном промпте воркеров и координатора. */
+  agentRules?: string
 }
 
 /** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
@@ -189,7 +191,7 @@ export function startWorker(
   const previousAnswer = snap.dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
   // Ответы на вопросы прошлых запусков: перезапуск после ответа человека не должен спрашивать заново.
   const answers = snap.questions.filter((q) => q.taskId === task.id && q.answeredAt).sort((a, b) => a.createdAt - b.createdAt)
-  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.worker, role), workerTaskPrompt(task, previousAnswer, answers), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.worker, ctx.agentRules, role), workerTaskPrompt(task, previousAnswer, answers), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -334,7 +336,7 @@ export function startCoordinator(
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
     if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
     const paths = root ? writeAttachments(root, run.id, images) : []
-    const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.coordinator, role), coordinatorPrompt(objective, paths), {
+    const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.coordinator, ctx.agentRules, role), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
       shell: defaultShell(),
       model: role.model,
@@ -369,8 +371,11 @@ export function startCoordinator(
   return { ptyId, runId: run.id }
 }
 
-/** Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из настроек по умолчанию. */
-export type AssistantContext = Omit<WorkerEnvContext, 'projectId'>
+/**
+ * Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из настроек по умолчанию.
+ * Правил проекта у него нет: они относятся к агентам, работающим в репозитории проекта.
+ */
+export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules'>
 
 /**
  * Ассистент доски: интерактивный агент роли assistant (нет такой роли — агент роли coordinator, нет и её — claude).

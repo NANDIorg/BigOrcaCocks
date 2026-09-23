@@ -147,7 +147,8 @@ function ctx(projectId: string): WorkerEnvContext {
     socketPath: SOCKET_PATH,
     projectId,
     permissionMode: projects.get(projectId)?.permissionMode ?? 'auto',
-    roles: projects.roles(projectId)
+    roles: projects.roles(projectId),
+    agentRules: projects.agentRules(projectId)
   }
 }
 
@@ -410,6 +411,8 @@ function registerIpc(): void {
   ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   ipcMain.handle('projects:setRoles', (_e, id: string, roles: Role[]) => projects.setRoles(id, roles))
   ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
+  ipcMain.handle('projects:getAgentRules', (_e, id: string) => projects.agentRules(id))
+  ipcMain.handle('projects:setAgentRules', (_e, id: string, text: string) => projects.setAgentRules(id, text))
   ipcMain.handle('projects:getDefaults', () => projects.defaults())
   ipcMain.handle('projects:setDefaults', (_e, patch: Partial<ProjectDefaults>) => projects.setDefaults(patch ?? {}))
   ipcMain.handle('projects:applyDefaults', (_e, id: string) => projects.applyDefaults(id))
@@ -554,6 +557,9 @@ app.whenReady().then(() => {
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
         agents: () => projectAgents(p.id),
         roles: () => projects.roles(p.id),
+        setRoles: (roles) => projects.setRoles(p.id, roles).roles ?? roles,
+        agentRules: () => projects.agentRules(p.id),
+        setAgentRules: (text) => projects.setAgentRules(p.id, text).agentRules ?? '',
         columns: () => projects.columns(p.id)
       }
     },

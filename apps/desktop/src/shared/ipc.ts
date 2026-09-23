@@ -96,6 +96,12 @@ export interface Project {
   roles?: Role[]
   /** Колонки доски в порядке показа. undefined — DEFAULT_COLUMNS. */
   columns?: BoardColumn[]
+  /**
+   * Правила проекта для агентов доски (markdown): блок «Правила проекта» в системном промпте воркеров всех ролей
+   * и координатора (`withAgentRules`). Не попадают в CLAUDE.md/AGENTS.md и обычные сессии агентов.
+   * Пусто — поля нет. Правила отдельной роли — её `systemPrompt`.
+   */
+  agentRules?: string
 }
 
 /** Настройки по умолчанию, копируемые в каждый новый проект. */
@@ -105,6 +111,8 @@ export interface ProjectDefaults {
   enabledAgents?: AgentKind[]
   roles: Role[]
   columns: BoardColumn[]
+  /** Правила проекта для агентов доски, копируются в новый проект; пусто — поля нет. */
+  agentRules?: string
 }
 
 export interface ReviewInfo {
@@ -199,6 +207,10 @@ export interface OrcaApi {
     setRoles(id: string, roles: Role[]): Promise<Project>
     /** Задачи из удалённых колонок переезжают в backlog. */
     setColumns(id: string, columns: BoardColumn[]): Promise<Project>
+    /** Правила проекта для агентов доски (`Project.agentRules`); не заданы — ''. */
+    getAgentRules(id: string): Promise<string>
+    /** Сохранить правила проекта как введены; из одних пробелов — поле удаляется. Применяются при следующем запуске агента. */
+    setAgentRules(id: string, text: string): Promise<Project>
     /** Глобальный дефолт для новых проектов (незаданное — встроенные значения). */
     getDefaults(): Promise<ProjectDefaults>
     /** Мерж патча в дефолт; роли/колонки валидируются, мусор — ошибка. enabledAgents: undefined — «все установленные». */

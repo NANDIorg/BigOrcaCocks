@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION } from './prompts.ts'
 import { getAgent } from './agents.ts'
-import { withRoleInstructions } from './types.ts'
+import { withRoleInstructions, withAgentRules } from './types.ts'
 
 describe('builtinPromptKind', () => {
   it('координаторская инструкция только у роли coordinator', () => {
@@ -62,6 +62,46 @@ describe('встроенная инструкция и дополнения ро
     assert.equal(system.split(builtin).length - 1, 1)
     assert.ok(system.startsWith(builtin))
     assert.ok(system.endsWith('# Инструкции роли «Координатор»\n\nпиши кратко'))
+  })
+})
+
+describe('правила проекта для агентов доски (withAgentRules)', () => {
+  const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+  const coordinator = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+  const rules = 'Не создавать задачи, не писать комментарии и отчёты в ORION.'
+
+  it('без правил и без инструкций роли — служебная инструкция без изменений', () => {
+    for (const builtin of [worker, coordinator]) {
+      assert.equal(withAgentRules(builtin, undefined, undefined), builtin)
+      assert.equal(withAgentRules(builtin, ' \n\t ', { title: 'Р' }), builtin)
+    }
+  })
+
+  it('воркер и координатор: блок «# Правила проекта» после служебной инструкции, текст как есть (trim по краям)', () => {
+    for (const builtin of [worker, coordinator]) {
+      const out = withAgentRules(builtin, `\n${rules}\n\n`, { title: 'Р' })
+      assert.equal(out, `${builtin}\n\n# Правила проекта\n\n${rules}`)
+      assert.equal(out.split('# Правила проекта').length - 1, 1)
+    }
+  })
+
+  it('порядок: служебная инструкция, правила проекта, затем инструкции роли', () => {
+    const out = withAgentRules(coordinator, rules, { title: 'Координатор', systemPrompt: 'пиши кратко' })
+    assert.equal(out, `${coordinator}\n\n# Правила проекта\n\n${rules}\n\n# Инструкции роли «Координатор»\n\nпиши кратко`)
+  })
+
+  it('без общих правил — как withRoleInstructions (поведение роли не меняется)', () => {
+    const role = { title: 'QA', systemPrompt: 'только QA' }
+    assert.equal(withAgentRules(worker, '', role), withRoleInstructions(worker, role))
+  })
+
+  it('claude: правила — внутри --append-system-prompt; остальные агенты — в склейке перед заданием', () => {
+    const system = withAgentRules(worker, rules, undefined)
+    const opts = { permissionMode: 'auto', shell: '/bin/sh' }
+    const claude = getAgent('claude')!.invoke(system, 'задание', opts).args
+    assert.equal(claude[claude.indexOf('--append-system-prompt') + 1], system)
+    assert.ok(!claude.at(-1)!.includes('# Правила проекта'), 'правила не в задании')
+    assert.equal(getAgent('codex')!.invoke(system, 'задание', opts).args.at(-1), `${system}\n\n---\n\nзадание`)
   })
 })
 
