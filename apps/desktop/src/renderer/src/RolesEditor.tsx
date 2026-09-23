@@ -36,6 +36,8 @@ interface Props {
   taskCounts?: Readonly<Record<string, number>>
   /** Свой воркфлоу (проекта или дефолта): роль, занятая в графе, — в последствиях удаления. */
   workflow?: Workflow
+  /** Только просмотр (встроенный шаблон): роли можно выбирать и читать, правки не сохраняются. */
+  readOnly?: boolean
   onSave(roles: Role[]): Promise<void>
 }
 
@@ -73,8 +75,9 @@ function newRoleId(): string {
 }
 
 /** Раздел «Роли» («О проекте» и дефолт для новых проектов): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
-export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, workflow, onSave }: Props): React.JSX.Element {
-  const { draft: roles, error, update } = useAutoSave<Role[]>(storageKey, initial, onSave)
+export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, onSave }: Props): React.JSX.Element {
+  const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
+  const update: typeof save = readOnly ? () => undefined : save
   const enabled = agents.filter((a) => a.enabled)
   const builtin = useBuiltinPrompts()
   const [selectedId, setSelectedId] = useState<string | undefined>(
@@ -174,7 +177,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, wo
       >
         {isService ? (
           <span className={`roles-dot ${state}`} role="img" aria-label={AGENT_STATE_TEXT[state]} title={AGENT_STATE_TEXT[state]} />
-        ) : (
+        ) : readOnly ? null : (
           <span
             className="roles-handle"
             draggable
@@ -235,11 +238,11 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, wo
           )}
           <div className="roles-group">Роли для задач</div>
           <ul>{taskRoles.map(item)}</ul>
-          <button type="button" className="btn-sm roles-add" onClick={add}>＋ Новая роль</button>
+          {!readOnly && <button type="button" className="btn-sm roles-add" onClick={add}>＋ Новая роль</button>}
           <div className="roles-hint">
             Порядок — как в «Новой задаче».{taskCounts ? ' Число — задач проекта на роли.' : ''}
           </div>
-          {missing.length > 0 && (
+          {missing.length > 0 && !readOnly && (
             <div className="roles-hint">
               Удалены системные: {missing.map((r) => r.id).join(', ')}.{' '}
               <button type="button" className="roles-link" onClick={restore}>Вернуть системные роли</button>
@@ -256,6 +259,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, wo
             workflow={workflow}
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
+            readOnly={readOnly}
             onPatch={(p, debounce) => patch(index, p, debounce)}
             onAgent={(agent) => changeAgent(index, agent)}
             onModel={(model, debounce) => changeModel(index, model, debounce)}
@@ -280,6 +284,7 @@ interface PanelProps {
   /** Почему удалить нельзя (последняя роль); undefined — можно. */
   deleteBlocker: string | undefined
   builtin: BuiltinState
+  readOnly: boolean
   onPatch(p: Partial<Role>, debounce?: boolean): void
   onAgent(agent: AgentKind): void
   onModel(model: string, debounce?: boolean): void
@@ -291,7 +296,7 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, readOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
   const [tab, setTab] = useState<RoleTab>('prompt')
   /** Открыто подтверждение удаления: что сломается без роли. */
@@ -317,6 +322,8 @@ function RolePanel({
 
   return (
     <section className="roles-panel" aria-label={`Роль «${r.title}»`}>
+      {/* Только чтение — поля недоступны, а вкладки инструкций ниже остаются кликабельными. */}
+      <fieldset className="roles-fields" disabled={readOnly}>
       <div className="roles-head">
         <div className="roles-head-main">
           <input
@@ -334,7 +341,7 @@ function RolePanel({
               : <span className="chip ok">назначается задачам</span>}
           </div>
         </div>
-        <button type="button" className="btn-sm" onClick={onDuplicate}>Дублировать</button>
+        {!readOnly && <button type="button" className="btn-sm" onClick={onDuplicate}>Дублировать</button>}
       </div>
 
       {state !== 'on' && (
@@ -457,6 +464,7 @@ function RolePanel({
           <span className="k">$</span> {commandPreview(r, kind)}
         </pre>
       </div>
+      </fieldset>
 
       <div className="roles-sec">
         <div className="roles-tabs" role="tablist" aria-label="Инструкции">
@@ -482,6 +490,7 @@ function RolePanel({
                 value={r.systemPrompt ?? ''}
                 placeholder="Например: пиши тесты на каждое изменение. Встроенную инструкцию и правила доски сюда копировать не нужно."
                 rows={5}
+                readOnly={readOnly}
                 aria-label="Инструкции роли"
                 onChange={(e) => onPatch({ systemPrompt: e.target.value }, true)}
               />
@@ -526,7 +535,7 @@ function RolePanel({
         </div>
       </div>
 
-      <div className="roles-foot">
+      {!readOnly && <div className="roles-foot">
         {count !== undefined && (
           <span className="roles-hint">
             {count > 0 ? `Используется в задачах проекта: ${count}` : 'Задач на этой роли нет'}
@@ -542,7 +551,7 @@ function RolePanel({
         >
           <Icon.trash /> Удалить роль
         </button>
-      </div>
+      </div>}
       {confirming && (
         <div className="roles-confirm" role="alertdialog" aria-label={`Удалить роль «${r.title}»?`}>
           <div className="roles-confirm-title">

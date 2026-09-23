@@ -1,27 +1,48 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import { DEFAULT_ROLES, type AgentInfo, type AgentKind, type Role } from '@orca-board/core'
-import type { AppSettings, AppSettingsPatch, PermissionMode, Project } from '../../../shared/ipc'
-import { RolesEditor } from '../RolesEditor'
-import { ColumnsEditor } from '../ColumnsEditor'
+import { DEFAULT_ROLES, type AgentInfo, type ProjectTemplate, type Role } from '@orca-board/core'
+import type { AppSettings, AppSettingsPatch, Project } from '../../../shared/ipc'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
-import { NavItem, SectionHead, storeSection, storedSection, type NavEntry } from '../about/parts'
-import { AgentsSection } from '../about/AgentsSection'
-import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
-import { useProjectDefaults } from '../about/useProjectDefaults'
+import { NavItem, storeSection, type NavEntry } from '../about/parts'
+import {
+  TEMPLATE_TABS, pickTemplateId, resolveTemplateSettings, splitTemplates, templateUsage, type TemplateTab
+} from '../projectTemplates'
 import { GeneralSection } from './GeneralSection'
 import { NotificationsSection } from './NotificationsSection'
+import { TemplatePane } from './TemplatePane'
+import { useTemplates } from './useTemplates'
 
-type Section = 'general' | 'notifications' | 'agents' | 'roles' | 'columns' | 'perm'
+/** Раздел меню: общий, уведомления или шаблон проекта (`tpl:<id>`). */
+type Section = 'general' | 'notifications' | `tpl:${string}`
 
-const SECTIONS: readonly Section[] = ['general', 'notifications', 'agents', 'roles', 'columns', 'perm']
 const SECTION_KEY = 'orca.settingsSection'
-/** Ключ черновиков редакторов ролей/колонок дефолта (не пересекается с id проектов). */
-const DEFAULTS_KEY = 'defaults'
+const TAB_KEY = 'orca.settingsTemplateTab'
+const TPL = 'tpl:'
+
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/** Запомненный раздел. Разделы старого «Для новых проектов» (agents, roles…) ведут в шаблоны. */
+function initialSection(): Section {
+  const v = stored(SECTION_KEY)
+  if (v === 'general' || v === 'notifications') return v
+  if (v?.startsWith(TPL)) return v as Section
+  return v ? `${TPL}` : 'general'
+}
+
+function initialTab(): TemplateTab {
+  const v = stored(TAB_KEY)
+  return TEMPLATE_TABS.find((t) => t === v) ?? 'roles'
+}
 
 interface Props {
-  /** Агенты реестра (enabled — по активному проекту; для дефолта пересчитывается здесь). */
+  /** Агенты реестра (enabled — по активному проекту; для шаблона пересчитывается по нему). */
   agents: AgentInfo[]
   /** Заново просканировать PATH. */
   onRefreshAgents(): Promise<void>
@@ -29,17 +50,17 @@ interface Props {
 }
 
 /**
- * «Настройки» (шестерёнка в rail): общие настройки приложения и дефолт для новых проектов
- * (projects:getDefaults/setDefaults). Вид — как у вкладки «О проекте»: меню разделов слева, раздел справа.
+ * «Настройки» (шестерёнка в rail): общие настройки приложения и шаблоны проектов (templates:*).
+ * Вид — как у вкладки «О проекте»: меню разделов слева (каждый шаблон — пункт), раздел справа.
  */
 export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): React.JSX.Element {
-  const [section, setSection] = useState<Section>(() => storedSection(SECTION_KEY, SECTIONS, 'general'))
-  const { defaults, error: defaultsError, save: saveDefaults } = useProjectDefaults()
+  const [section, setSection] = useState<Section>(initialSection)
+  const [tab, setTab] = useState<TemplateTab>(initialTab)
+  const templates = useTemplates()
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
   const [projectList, setProjectList] = useState<Project[]>([])
-  const [agentsError, setAgentsError] = useState<string | null>(null)
-  const [permError, setPermError] = useState<string | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   useEffect(() => {
     window.orca.app.getSettings().then(setAppSettings, (e) => setAppError(ipcErrorMessage(e)))
@@ -60,6 +81,16 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
     storeSection(SECTION_KEY, s)
   }
 
+  function goTab(t: TemplateTab): void {
+    setTab(t)
+    storeSection(TAB_KEY, t)
+  }
+
+  /** Показать шаблон; null — шаблон по умолчанию. */
+  function selectTemplate(id: string | null): void {
+    go(`${TPL}${id ?? ''}`)
+  }
+
   async function saveApp(patch: AppSettingsPatch): Promise<void> {
     try {
       setAppSettings(await window.orca.app.setSettings(patch))
@@ -69,30 +100,29 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
     }
   }
 
-  // ---------- дефолт ----------
-
-  const allAgents = defaults !== null && defaults.enabledAgents === undefined
-  // «Включённость» агента — по дефолту, а не по активному проекту.
-  const defaultAgents: AgentInfo[] = agents.map((a) => ({
-    ...a,
-    enabled: a.installed && (allAgents || !!defaults?.enabledAgents?.includes(a.id))
-  }))
-  const installed = defaultAgents.filter((a) => a.installed)
-  const agentsOn = installed.filter((a) => a.enabled).length
-  const agentOk = new Set(defaultAgents.filter((a) => a.enabled).map((a) => a.id as string))
-  const roles = defaults?.roles ?? []
-  const columns = defaults?.columns ?? []
-  const rolesOff = roles.filter((r) => !agentOk.has(r.agent)).length
-  const permission: PermissionMode = defaults?.permissionMode ?? 'auto'
-
-  function toggleAgent(id: AgentKind, on: boolean): void {
-    const next = defaultAgents.filter((a) => (a.id === id ? on : a.enabled)).map((a) => a.id)
-    void saveDefaults({ enabledAgents: next }, setAgentsError)
+  async function createTemplate(): Promise<void> {
+    try {
+      const t = await templates.create({ title: 'Новый шаблон', settings: {} })
+      setCreateError(null)
+      selectTemplate(t.id)
+    } catch (e) {
+      setCreateError(ipcErrorMessage(e))
+    }
   }
 
-  // Роли для фильтра уведомлений: дефолт и все проекты, первый встреченный title на id.
+  // ---------- шаблоны ----------
+
+  const state = templates.state
+  const usage = templateUsage(projectList)
+  const currentId = state && section.startsWith(TPL) ? pickTemplateId(state, section.slice(TPL.length)) : null
+  const current: ProjectTemplate | undefined = state?.templates.find((t) => t.id === currentId)
+  const { builtin, own } = splitTemplates(state?.templates ?? [])
+
+  // Роли для фильтра уведомлений: шаблон по умолчанию и все проекты, первый встреченный title на id.
+  const defaultTemplate = state?.templates.find((t) => t.id === state.defaultTemplateId)
   const notifyRoles: Role[] = []
-  for (const r of [...roles, ...projectList.flatMap((p) => p.roles ?? DEFAULT_ROLES)]) {
+  const defaultRoles = defaultTemplate ? resolveTemplateSettings(defaultTemplate.settings).roles : []
+  for (const r of [...defaultRoles, ...projectList.flatMap((p) => p.roles ?? DEFAULT_ROLES)]) {
     if (!notifyRoles.some((x) => x.id === r.id)) notifyRoles.push(r)
   }
 
@@ -104,61 +134,35 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
     id: 'notifications', label: 'Уведомления', icon: Icon.bell,
     count: notifyOn === undefined ? undefined : notifyOn ? 'вкл' : 'выкл'
   }
-  const forNew: NavEntry<Section>[] = [
-    { id: 'agents', label: 'Агенты', icon: Icon.cpu, count: `${agentsOn} из ${installed.length}` },
-    {
-      id: 'roles', label: 'Роли', icon: Icon.users,
-      count: rolesOff ? `${roles.length} · ${rolesOff} !` : String(roles.length),
-      tone: rolesOff ? 'warn' : undefined,
-      title: rolesOff ? `Ролей с выключенным агентом: ${rolesOff}` : undefined
-    },
-    { id: 'columns', label: 'Колонки', icon: Icon.columns, count: String(columns.length) },
-    { id: 'perm', label: 'Разрешения', icon: Icon.shield, count: permissionParts(permission).title }
-  ]
-
-  // ---------- разделы ----------
-
-  function renderDefaults(): React.ReactNode {
-    if (!defaults) {
-      return defaultsError ? <div className="editor-error">{defaultsError}</div> : <div className="muted">Загрузка…</div>
+  /** Текущий пункт меню: у шаблона — с фактическим id (пустой `tpl:` после удаления — шаблон по умолчанию). */
+  const navCurrent: Section = currentId ? `${TPL}${currentId}` : section
+  const templateItem = (t: ProjectTemplate): React.JSX.Element => {
+    const n = usage[t.id] ?? 0
+    const item: NavEntry<Section> = {
+      id: `${TPL}${t.id}`, label: t.title, icon: Icon.layers,
+      count: state?.defaultTemplateId === t.id ? 'по умолч.' : n ? String(n) : undefined,
+      title: [t.description, n ? `Проектов из шаблона: ${n}` : ''].filter(Boolean).join('\n') || undefined
     }
-    switch (section) {
-      case 'agents':
-        return (
-          <AgentsSection
-            agents={defaultAgents}
-            all={{
-              on: allAgents,
-              onChange: (on) => void saveDefaults({ enabledAgents: on ? undefined : installed.map((a) => a.id) }, setAgentsError)
-            }}
-            error={agentsError}
-            onToggle={toggleAgent}
-            onRefresh={() => void onRefreshAgents()}
-          />
-        )
-      case 'roles':
-        return (
-          <>
-            <SectionHead title="Роли" hint="Кто выполняет задачи: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче»." />
-            <RolesEditor
-              storageKey={DEFAULTS_KEY}
-              roles={roles}
-              agents={defaultAgents}
-              workflow={defaults.workflow}
-              onSave={(next) => saveDefaults({ roles: next })}
-            />
-          </>
-        )
-      case 'columns':
-        return (
-          <>
-            <SectionHead title="Колонки" hint="Порядок, название и цвет. Системные нельзя удалить — по ним работает автоматика." />
-            <ColumnsEditor storageKey={DEFAULTS_KEY} columns={columns} onSave={(next) => saveDefaults({ columns: next })} />
-          </>
-        )
-      case 'perm':
-        return <PermissionsSection value={permission} error={permError} onChange={(mode) => void saveDefaults({ permissionMode: mode }, setPermError)} />
+    return <NavItem key={t.id} item={item} current={navCurrent} onGo={go} />
+  }
+
+  function renderTemplates(): React.ReactNode {
+    if (!state || !current) {
+      return templates.error ? <div className="editor-error">{templates.error}</div> : <div className="muted">Загрузка…</div>
     }
+    return (
+      <TemplatePane
+        template={current}
+        state={state}
+        usage={usage[current.id] ?? 0}
+        agents={agents}
+        onRefreshAgents={onRefreshAgents}
+        tab={tab}
+        onTab={goTab}
+        api={templates}
+        onSelect={selectTemplate}
+      />
+    )
   }
 
   return (
@@ -176,8 +180,21 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
             <nav className="about-nav" aria-label="Разделы настроек">
               <NavItem item={general} current={section} onGo={go} />
               <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
-              <div className="about-nav-group">Для новых проектов</div>
-              {forNew.map((item) => <NavItem key={item.id} item={item} current={section} showCount={!!defaults} onGo={go} />)}
+              <div className="about-nav-group">Шаблоны проектов</div>
+              {templates.stale || (!state && templates.error) ? (
+                <NavItem item={{ id: `${TPL}`, label: 'Шаблоны', icon: Icon.layers }} current={navCurrent} onGo={go} />
+              ) : (
+                <div className="tpl-nav">
+                  {builtin.map(templateItem)}
+                  {own.length > 0 && <div className="about-nav-group tpl-nav-sub">Свои</div>}
+                  {own.map(templateItem)}
+                  <button type="button" className="about-nav-item tpl-nav-add" disabled={!state} onClick={() => void createTemplate()}>
+                    <Icon.plus />
+                    <span className="about-nav-label">Новый шаблон</span>
+                  </button>
+                  {createError && <div className="editor-error tpl-nav-error">{createError}</div>}
+                </div>
+              )}
             </nav>
             <div className="about-pane">
               <section className="about-sec">
@@ -191,13 +208,7 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
                     onChange={(p) => void saveApp({ notifications: p })}
                   />
                 ) : (
-                  <>
-                    <div className="about-banner">
-                      Это <b>шаблон для новых проектов</b>: он копируется в проект при добавлении и не меняет
-                      существующие. Применить его к проекту — «О проекте → Обзор → Применить дефолт…».
-                    </div>
-                    {renderDefaults()}
-                  </>
+                  renderTemplates()
                 )}
               </section>
             </div>
