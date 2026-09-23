@@ -9,6 +9,9 @@ import {
 import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
 import {
+  defaultWorkflow, nextStage, startStage, wfNodeTitle, type WfAction, type WfOutcome, type WfStage, type Workflow
+} from './workflow.ts'
+import {
   globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, toGlobalTask, toGlobalTasks,
   type GlobalColumnKind, type GlobalTask
 } from './global-tasks.ts'
@@ -41,6 +44,21 @@ function short(text: string): string {
 /** Поля ответа для payload события: обрезанный текст и признак answerTruncated. Ставить последними. */
 function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
   return text.length > EVENT_ANSWER_LIMIT ? { answer: text.slice(0, EVENT_ANSWER_LIMIT), answerTruncated: true } : { answer: text }
+}
+
+/** Глубокая копия графа: правка графа проекта после создания прогона не должна менять снимок. */
+function snapshotWorkflow(wf: Workflow): Workflow {
+  return JSON.parse(JSON.stringify(wf)) as Workflow
+}
+
+/** Этап первого гейта (gate/human) на пути от старта; дальше исходом next. Нет такого — undefined. */
+function firstGateStage(wf: Workflow, roleId: string): WfStage | undefined {
+  const ctx = { roleId }
+  let step = startStage(wf, ctx)
+  for (let i = 0; i < wf.nodes.length && step.action.type === 'start_worker'; i += 1) {
+    step = nextStage(wf, step.stage, 'next', ctx)
+  }
+  return step.action.type === 'create_gate' || step.action.type === 'request_human' ? step.stage : undefined
 }
 
 let counter = 0
@@ -87,10 +105,11 @@ export class TaskStore {
       const migrated = this.migrateGlobalTasks()
       const stale = this.closeStaleDispatches()
       const requests = this.migrateRequests(snap.requests === undefined)
+      const stages = this.migrateStages()
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
       const synced = this.syncRunActiveTime()
-      if (active || stale || requests || migrated || own || synced) this.persistence?.save(this.snapshot())
+      if (active || stale || requests || stages || migrated || own || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -126,6 +145,24 @@ export class TaskStore {
         } else this.setStatus(task, this.columnId('ready'))
         changed = true
       }
+    }
+    return changed
+  }
+
+  /**
+   * Задачи, сданные в ревью кодом до воркфлоу, встают на первый гейт дефолтного графа — ревью, где они
+   * и ждут. Id ноды ревью в дефолте один и тот же с ролью reviewer и без неё, поэтому роли проекта не нужны.
+   * Задачи-ответы и задачи-гейты идут мимо воркфлоу. Событий нет: это не переход, а восстановление позиции.
+   * Возвращает true, если что-то поменялось.
+   */
+  private migrateStages(): boolean {
+    let changed = false
+    for (const task of this.tasks.values()) {
+      if (task.stage || task.answerFor || task.gateFor || !this.isKind(task, 'review')) continue
+      const stage = firstGateStage(defaultWorkflow([]), task.roleId)
+      if (!stage) continue
+      task.stage = stage
+      changed = true
     }
     return changed
   }
@@ -457,10 +494,54 @@ export class TaskStore {
     return this.runs.get(id)
   }
 
-  createRun(objective: string, coordinatorPtyId?: string): Run {
-    const run = this.addRun({ objective, coordinatorPtyId })
+  /** `workflow` — граф проекта сейчас: прогон хранит его снимок (см. `Run.workflow`). */
+  createRun(objective: string, coordinatorPtyId?: string, workflow?: Workflow): Run {
+    const run = this.addRun({ objective, coordinatorPtyId, ...(workflow ? { workflow: snapshotWorkflow(workflow) } : {}) })
     this.commit()
     return run
+  }
+
+  /**
+   * Граф прогона: снимок, а у прогона без снимка (от кода до воркфлоу, «Входящие») — дефолтный граф по
+   * ролям проекта `roleIds` (их передаёт вызывающий код, как и граф в `createRun`).
+   */
+  runWorkflow(runId: string | undefined, roleIds: readonly string[] = []): Workflow {
+    const run = runId !== undefined ? this.runs.get(runId) : undefined
+    return run?.workflow ?? defaultWorkflow(roleIds.map((id) => ({ id })))
+  }
+
+  /**
+   * Переход задачи по воркфлоу прогона: `nextStage` по исходу `outcome` текущего этапа. Задача без `stage`
+   * входит в граф из старта (только `next`). Меняет только `stage` — колонку, воркера, гейт и мерж по
+   * `action` делает исполнитель в main. Событие `stage_changed`, если этап сменился, и `workflow_blocked`,
+   * если дальше идти нельзя. `roleIds` — роли проекта: для дефолтного графа и проверки роли гейта.
+   */
+  advanceStage(taskId: string, outcome: WfOutcome, opts: { roleIds?: readonly string[] } = {}): { task: Task; action: WfAction } {
+    const task = this.mustTask(taskId)
+    if (task.answerFor) throw new Error(`задача ${taskId} — задача-ответ, она идёт мимо воркфлоу`)
+    if (task.gateFor) throw new Error(`задача ${taskId} — проверка задачи ${task.gateFor.taskId}, у неё нет своего этапа`)
+    if (!task.stage && outcome !== 'next') {
+      throw new Error(`задача ${taskId} ещё не в воркфлоу: войти в него можно только исходом next, получено ${outcome}`)
+    }
+    const wf = this.runWorkflow(task.runId, opts.roleIds)
+    const ctx = { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}) }
+    const step = task.stage ? nextStage(wf, task.stage, outcome, ctx) : startStage(wf, ctx)
+    const from = task.stage?.nodeId
+    const moved = step.stage.nodeId !== from && step.stage.nodeId !== ''
+    if (moved) {
+      task.stage = step.stage
+      task.updatedAt = Date.now()
+      const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
+      this.pushEvent('stage_changed', {
+        taskId, runId: task.runId, ...(from !== undefined ? { from } : {}), to: step.stage.nodeId, outcome,
+        ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
+      })
+    }
+    if (step.action.type === 'blocked') {
+      this.pushEvent('workflow_blocked', { taskId, runId: task.runId, nodeId: step.action.nodeId, reason: short(step.action.reason) })
+    }
+    this.commit()
+    return { task, action: step.action }
   }
 
   /** Новый прогон без commit. Статус по умолчанию — колонка kind=backlog. */
@@ -527,12 +608,17 @@ export class TaskStore {
   }
 
   /** Глобальная задача без координатора. Нужно название или описание; status — id колонки (по умолчанию backlog). */
-  createGlobalTask(input: { title?: string; description?: string; status?: string }): GlobalTask {
+  createGlobalTask(input: { title?: string; description?: string; status?: string; workflow?: Workflow }): GlobalTask {
     const title = input.title?.trim() || undefined
     const objective = input.description ?? ''
     if (!title && !objective.trim()) throw new Error('укажи название или описание глобальной задачи')
     if (input.status !== undefined) this.assertGlobalColumn(input.status)
-    const run = this.addRun({ objective, ...(title ? { title } : {}), ...(input.status !== undefined ? { status: input.status } : {}) })
+    const run = this.addRun({
+      objective,
+      ...(title ? { title } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.workflow ? { workflow: snapshotWorkflow(input.workflow) } : {})
+    })
     this.commit()
     return this.getGlobalTask(run.id)
   }

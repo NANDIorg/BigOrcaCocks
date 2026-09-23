@@ -1,0 +1,217 @@
+// Запуск: node --test (type stripping Node ≥ 22.6). Из tsc исключён — в core нет @types/node.
+// Состояние воркфлоу в store: снимок графа в прогоне, advanceStage, миграция задач в ревью, рестарт.
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
+import { DEFAULT_COLUMNS } from './types.ts'
+import { defaultWorkflow, type Workflow } from './workflow.ts'
+
+/** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
+function memory(initial?: Partial<StoreSnapshot>): Persistence & { data: Partial<StoreSnapshot> | null } {
+  const p = {
+    data: initial ? (JSON.parse(JSON.stringify(initial)) as Partial<StoreSnapshot>) : null,
+    load: () => p.data,
+    save: (s: StoreSnapshot) => { p.data = JSON.parse(JSON.stringify(s)) as StoreSnapshot }
+  }
+  return p
+}
+
+const store = (p?: Persistence) => new TaskStore(p, () => DEFAULT_COLUMNS)
+
+/** Дефолт с ролью reviewer плюс лимит: третий заход в работу уходит человеку. */
+function withLimit(): Workflow {
+  const wf = defaultWorkflow([{ id: 'reviewer' }])
+  wf.nodes.push(
+    { id: 'limit', type: 'condition', test: { kind: 'attempts', node: 'work', atLeast: 3 }, x: 0, y: 0 },
+    { id: 'boss', type: 'human', x: 0, y: 0 }
+  )
+  wf.edges = wf.edges.map((e) => (e.id === 'e_review_reject' ? { ...e, to: 'limit' } : e))
+  wf.edges.push(
+    { id: 'e_limit_yes', from: 'limit', outcome: 'yes', to: 'boss' },
+    { id: 'e_limit_no', from: 'limit', outcome: 'no', to: 'work' },
+    { id: 'e_boss_accept', from: 'boss', outcome: 'accept', to: 'merge' },
+    { id: 'e_boss_reject', from: 'boss', outcome: 'reject', to: 'work' }
+  )
+  return wf
+}
+
+describe('снимок воркфлоу в прогоне', () => {
+  it('createRun хранит копию графа: правка исходника снимок не меняет', () => {
+    const s = store()
+    const wf = defaultWorkflow([{ id: 'reviewer' }])
+    const run = s.createRun('цель', undefined, wf)
+    wf.nodes[0].title = 'изменили'
+    wf.edges.pop()
+    const saved = s.getRun(run.id)!.workflow!
+    assert.deepEqual(saved, defaultWorkflow([{ id: 'reviewer' }]))
+    assert.deepEqual(s.runWorkflow(run.id), saved)
+  })
+
+  it('createGlobalTask тоже снимает граф', () => {
+    const s = store()
+    const g = s.createGlobalTask({ title: 'Фича', workflow: withLimit() })
+    assert.deepEqual(s.getRun(g.id)!.workflow, withLimit())
+  })
+
+  it('прогон без снимка читается как дефолтный граф по ролям проекта', () => {
+    const s = store()
+    const run = s.createRun('цель')
+    assert.equal(s.getRun(run.id)!.workflow, undefined)
+    assert.deepEqual(s.runWorkflow(run.id), defaultWorkflow([]))
+    assert.deepEqual(s.runWorkflow(run.id, ['developer', 'reviewer']), defaultWorkflow([{ id: 'reviewer' }]))
+    assert.deepEqual(s.runWorkflow(undefined), defaultWorkflow([]))
+  })
+})
+
+describe('advanceStage', () => {
+  function setup(wf?: Workflow) {
+    const s = store()
+    const run = s.createRun('цель', undefined, wf)
+    const task = s.createTask({ title: 'Сделай', runId: run.id })
+    return { s, run, task }
+  }
+
+  it('вход из старта в работу, затем в гейт ревью; события stage_changed', () => {
+    const { s, run, task } = setup(defaultWorkflow([{ id: 'reviewer' }]))
+    const entered = s.advanceStage(task.id, 'next')
+    assert.deepEqual(entered.action, { type: 'start_worker', nodeId: 'work' })
+    assert.deepEqual(s.getTask(task.id)!.stage, { nodeId: 'work', visits: { start: 1, work: 1 } })
+
+    const review = s.advanceStage(task.id, 'next')
+    assert.deepEqual(review.action, { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' })
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'review')
+
+    const events = s.listEvents().filter((e) => e.type === 'stage_changed')
+    assert.equal(events.length, 2)
+    assert.deepEqual(events[0].payload, { taskId: task.id, runId: run.id, to: 'work', outcome: 'next', nodeType: 'work', title: 'Работа' })
+    assert.deepEqual(events[1].payload, { taskId: task.id, runId: run.id, from: 'work', to: 'review', outcome: 'next', nodeType: 'gate', title: 'Ревью' })
+    assert.equal(events[1].taskId, task.id)
+  })
+
+  it('reject возвращает в работу, accept ведёт в мерж; visits копятся', () => {
+    const { s, task } = setup(defaultWorkflow([{ id: 'reviewer' }]))
+    s.advanceStage(task.id, 'next')
+    s.advanceStage(task.id, 'next')
+    assert.deepEqual(s.advanceStage(task.id, 'reject').action, { type: 'start_worker', nodeId: 'work' })
+    s.advanceStage(task.id, 'next')
+    assert.deepEqual(s.advanceStage(task.id, 'accept').action, { type: 'merge', nodeId: 'merge' })
+    assert.deepEqual(s.getTask(task.id)!.stage!.visits, { start: 1, work: 2, review: 2, merge: 1 })
+    assert.deepEqual(s.advanceStage(task.id, 'ok').action, { type: 'done', nodeId: 'end', merged: true })
+  })
+
+  it('лимит повторов через условие attempts', () => {
+    const { s, task } = setup(withLimit())
+    s.advanceStage(task.id, 'next')
+    s.advanceStage(task.id, 'next')
+    assert.equal(s.advanceStage(task.id, 'reject').action.type, 'start_worker')
+    s.advanceStage(task.id, 'next')
+    assert.equal(s.advanceStage(task.id, 'reject').action.type, 'start_worker')
+    s.advanceStage(task.id, 'next')
+    assert.deepEqual(s.advanceStage(task.id, 'reject').action, { type: 'request_human', nodeId: 'boss' })
+  })
+
+  it('исход без перехода: этап не меняется, событие workflow_blocked', () => {
+    const { s, task } = setup()
+    s.advanceStage(task.id, 'next')
+    const before = s.getTask(task.id)!.stage
+    const r = s.advanceStage(task.id, 'accept')
+    assert.equal(r.action.type, 'blocked')
+    assert.deepEqual(s.getTask(task.id)!.stage, before)
+    const blocked = s.listEvents().filter((e) => e.type === 'workflow_blocked')
+    assert.equal(blocked.length, 1)
+    assert.equal(blocked[0].payload.nodeId, 'work')
+    assert.match(String(blocked[0].payload.reason), /нет перехода для accept/)
+    assert.equal(s.listEvents().filter((e) => e.type === 'stage_changed').length, 1)
+  })
+
+  it('роль гейта удалена: этап сменился, но дальше blocked', () => {
+    const { s, task } = setup(defaultWorkflow([{ id: 'reviewer' }]))
+    s.advanceStage(task.id, 'next', { roleIds: ['developer'] })
+    const r = s.advanceStage(task.id, 'next', { roleIds: ['developer'] })
+    assert.equal(r.action.type, 'blocked')
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'review')
+    assert.deepEqual(s.listEvents().filter((e) => e.type !== 'task_ready').map((e) => e.type), ['stage_changed', 'stage_changed', 'workflow_blocked'])
+  })
+
+  it('прогон без снимка: дефолт по переданным ролям', () => {
+    const { s, task } = setup()
+    s.advanceStage(task.id, 'next', { roleIds: ['developer'] })
+    assert.deepEqual(s.advanceStage(task.id, 'next', { roleIds: ['developer'] }).action, { type: 'request_human', nodeId: 'review' })
+  })
+
+  it('задача вне воркфлоу входит только исходом next; ответы и гейты — ошибка', () => {
+    const { s, run, task } = setup()
+    assert.throws(() => s.advanceStage(task.id, 'accept'), /только исходом next/)
+    const answer = s.createTask({ title: 'Разберись', runId: run.id, answerFor: 'human' })
+    assert.throws(() => s.advanceStage(answer.id, 'next'), /задача-ответ/)
+    const gate = s.createTask({ title: 'Ревью', runId: run.id, roleId: 'reviewer' })
+    s.updateTask(gate.id, { gateFor: { taskId: task.id, nodeId: 'review' } })
+    assert.throws(() => s.advanceStage(gate.id, 'next'), /проверка задачи/)
+    assert.throws(() => s.advanceStage('task_nope', 'next'))
+  })
+
+  it('колонку и поведение задачи не меняет — исполнитель выключен', () => {
+    const { s, task } = setup()
+    const status = s.getTask(task.id)!.status
+    s.advanceStage(task.id, 'next')
+    s.advanceStage(task.id, 'next')
+    assert.equal(s.getTask(task.id)!.status, status)
+    // Старые переходы идут как раньше и stage не трогают.
+    const d = s.startDispatch(task.id, 'pty_w')
+    s.finishDispatch(d.id, 'сделал', [])
+    assert.equal(s.getTask(task.id)!.status, 'review')
+    s.rejectReview(task.id, 'поправь')
+    assert.equal(s.getTask(task.id)!.status, 'ready')
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'review')
+  })
+})
+
+describe('миграция и рестарт', () => {
+  it('задача в review без stage получает этап ревью дефолтного графа; ответы и гейты — нет', () => {
+    const s = store()
+    const work = s.createTask({ title: 'Код' })
+    const answer = s.createTask({ title: 'Ответ', answerFor: 'coordinator' })
+    const gate = s.createTask({ title: 'Ревью', roleId: 'reviewer' })
+    const ready = s.createTask({ title: 'Ещё не сдана' })
+    s.updateTask(gate.id, { gateFor: { taskId: work.id, nodeId: 'review' } })
+    for (const t of [work, answer, gate]) s.moveTask(t.id, 'review')
+    const p = memory(s.snapshot())
+
+    const loaded = store(p)
+    assert.deepEqual(loaded.getTask(work.id)!.stage, { nodeId: 'review', visits: { start: 1, work: 1, review: 1 } })
+    assert.equal(loaded.getTask(answer.id)!.stage, undefined)
+    assert.equal(loaded.getTask(gate.id)!.stage, undefined)
+    assert.equal(loaded.getTask(ready.id)!.stage, undefined)
+    // Миграция сохранена сразу и событий не шлёт.
+    assert.deepEqual(p.data!.tasks!.find((t) => t.id === work.id)!.stage!.nodeId, 'review')
+    assert.equal(loaded.listEvents().filter((e) => e.type === 'stage_changed').length, 0)
+  })
+
+  it('уже заданный stage миграция не трогает', () => {
+    const s = store()
+    const run = s.createRun('цель', undefined, withLimit())
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    s.advanceStage(t.id, 'next')
+    s.moveTask(t.id, 'review')
+    const loaded = store(memory(s.snapshot()))
+    assert.deepEqual(loaded.getTask(t.id)!.stage, { nodeId: 'work', visits: { start: 1, work: 1 } })
+  })
+
+  it('stage, gateFor и снимок графа переживают рестарт, переходы продолжаются', () => {
+    const p = memory()
+    const s = store(p)
+    const run = s.createRun('цель', undefined, withLimit())
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    const g = s.createTask({ title: 'Проверка', runId: run.id, roleId: 'reviewer' })
+    s.updateTask(g.id, { gateFor: { taskId: t.id, nodeId: 'review' } })
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'next')
+
+    const loaded = store(p)
+    assert.deepEqual(loaded.getRun(run.id)!.workflow, withLimit())
+    assert.deepEqual(loaded.getTask(g.id)!.gateFor, { taskId: t.id, nodeId: 'review' })
+    assert.deepEqual(loaded.getTask(t.id)!.stage, { nodeId: 'review', visits: { start: 1, work: 1, review: 1 } })
+    assert.equal(loaded.advanceStage(t.id, 'reject').action.type, 'start_worker')
+    assert.equal(loaded.getTask(t.id)!.stage!.visits.limit, 1)
+  })
+})

@@ -1,4 +1,5 @@
 import type { AgentKind } from './agents'
+import type { WfStage, Workflow } from './workflow'
 export type { AgentKind }
 
 // ---------- роли ----------
@@ -198,6 +199,12 @@ export interface Run {
   activeMs?: number
   /** Начало текущего отрезка собственного времени; нет — время глобальной задачи стоит. */
   activeSince?: number
+  /**
+   * Снимок воркфлоу проекта на момент создания прогона (граф передаёт main, store в проект не ходит):
+   * правка графа посреди прогона не ломает переходы идущих задач. Нет — прогон от кода до воркфлоу,
+   * читается как дефолтный граф (`TaskStore.runWorkflow`).
+   */
+  workflow?: Workflow
 }
 
 // ---------- задачи ----------
@@ -248,6 +255,13 @@ export interface Task {
   activeSince?: number
   /** Момент попадания в колонку kind=done. */
   doneAt?: number
+  /**
+   * Позиция в воркфлоу прогона (`TaskStore.advanceStage`). Нет — задача вне воркфлоу: задача-ответ,
+   * задача-гейт или ещё не вошедшая в граф.
+   */
+  stage?: WfStage
+  /** Задача-гейт: чью ветку проверяет и на какой ноде `gate` рабочей задачи. */
+  gateFor?: { taskId: string; nodeId: string }
 }
 
 export type DispatchOutcome = 'done' | 'failed' | 'unknown'
@@ -387,6 +401,10 @@ export type EventType =
   | 'request_resolved'
   /** Человек уточнил ответ задачи-ответа: задача в ready с feedback, main стартует воркера. */
   | 'answer_clarified'
+  /** Задача перешла на другой этап воркфлоу (`advanceStage`); в основном для UI. */
+  | 'stage_changed'
+  /** Воркфлоу не может вести задачу дальше (нет перехода, роль гейта удалена) — нужен координатор или человек. */
+  | 'workflow_blocked'
 
 export const EVENT_TYPES: EventType[] = [
   'task_ready',
@@ -398,7 +416,9 @@ export const EVENT_TYPES: EventType[] = [
   'run_done',
   'request_created',
   'request_resolved',
-  'answer_clarified'
+  'answer_clarified',
+  'stage_changed',
+  'workflow_blocked'
 ]
 
 export interface OrcaEvent {
