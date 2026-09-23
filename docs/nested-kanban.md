@@ -94,7 +94,10 @@ needs_input — **вычисляемая** колонка: там карточк
 - Воркер получает в промпте блок «Результат — ответ, а не код» (`workerTaskPrompt`) и сдаёт
   `done --summary "..." --answer-file <файл.md>`: CLI читает файл и шлёт текст в `params.answer`.
   Без ответа `finishDispatch` — ошибка; предел — `MAX_ANSWER_LENGTH` (200 000 символов).
-  Ответ хранится в `Dispatch.answer`, событие `worker_done` несёт `answerFor` и `answer`.
+  Ответ хранится в `Dispatch.answer`, событие `worker_done` несёт `answerFor` и `answer`. В событии
+  `answer` — последнее поле и обрезан до `EVENT_ANSWER_LIMIT` (2000 символов) с `answerTruncated: true`:
+  строка события в мониторе координатора обрезается. Полный текст — `orca-board task answer --task <id>`
+  (`store.taskAnswer`: ответ последнего dispatch и `decision` из последнего `answer_accepted`).
 - `answerFor: 'coordinator'` — координатор читает `answer` из события и сам делает `review accept`.
   `answerFor: 'human'` — координатор ничего не делает; человек в `TaskModal` видит ответ (markdown) и
   **принимает** (`review accept`: у задачи-ответа ничего не сливается, worktree и ветка удаляются —
@@ -119,9 +122,12 @@ needs_input — **вычисляемая** колонка: там карточк
   Сданный ответ для человека (`humanAnswerReady`) остаётся в needs_input.
 - При загрузке снапшота такой ответ, застрявший в review, переезжает в needs_input (`migrateHumanAnswers`):
   `electron-vite dev` не пересобирает main-процесс на лету, и приложение, запущенное до фикса, клало ответ в review.
+- При загрузке снапшота все dispatch без `endedAt` закрываются (`closeStaleDispatches`, outcome `unknown`):
+  PTY не переживают перезапуск, а при quit `ptyExited` может не успеть. Задача в in_progress с таким
+  dispatch → ready; в needs_input с открытым вопросом остаётся, после ответа уходит в ready (`workerLive: false`).
 **Процесс идёт дальше сам** — после ответа человека координатору ничего писать не нужно:
 - **Принял ответ** (`review accept` → `store.acceptTask`): задача → done и событие
-  `answer_accepted {taskId, dispatchId, answerFor, summary, answer, decision?}` в прогон координатора (только для
+  `answer_accepted {taskId, decision?, summary, dispatchId, answerFor, answer, answerTruncated?}` в прогон координатора (только для
   `answerFor: 'human'` и только при первом переходе в done). `decision` — необязательное поле «Решение / что делать
   дальше» у «Принять» (`AnswerBlock`, `review accept --decision`): по нему координатор заводит задачи. Коммиты
   в ветке задачи-ответа при приёмке сливаются, как у рабочей (`acceptReview` в `src/main/review.ts`);

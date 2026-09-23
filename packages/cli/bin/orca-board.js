@@ -41,6 +41,7 @@ const HELP = `orca-board — управление доской агентов
                                           human — ответ читает человек, coordinator — ты сам
   task move --task <id> --status <id колонки из columns list>
   task update --task <id> [--title "..."] [--spec "..."]   правка задачи (не в работе)
+  task answer --task <id>                 полный ответ задачи-ответа и decision (в событиях answer обрезан)
   worker start --task <id>
   worker read --dispatch <id> [--limit 80]
   check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done] [--timeout-ms 900000] [--run <id>]
