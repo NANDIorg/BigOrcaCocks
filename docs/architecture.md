@@ -100,15 +100,15 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 ## Роли и колонки (`src/main/projects.ts`)
 
 - **Хранение**: `Project.roles?: Role[]` и `Project.columns?: BoardColumn[]` в `userData/projects.json`.
-  Новый проект получает копию ролей и колонок из глобального дефолта (`ProjectManager.defaults()`,
-  см. «Проекты»), поэтому у него они всегда заданы. `undefined` остаётся только у старых проектов,
+  Новый проект получает копию ролей и колонок из выбранного шаблона проекта (нет — из шаблона по умолчанию,
+  см. «Проекты → Шаблоны проектов»), поэтому у него они всегда заданы. `undefined` остаётся только у старых проектов,
   созданных до появления дефолта, и читается как встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`
   (`ProjectManager.roles(id)`, `columns(id)`), а не как текущий глобальный дефолт.
-  Меняются через IPC `projects:setRoles` / `projects:setColumns` (вкладка «О проекте») или целиком
-  переписываются дефолтом через `projects:applyDefaults`.
-- **Откуда берётся дефолт**: `projects.json → defaults.roles` / `defaults.columns`; не заданы —
-  встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`. При `setDefaults` роли и колонки проходят те же
-  `validateRoles` / `validateColumns`, что и у проекта.
+  Меняются через IPC `projects:setRoles` / `projects:setColumns` (вкладка «О проекте») или берутся из шаблона
+  через `projects:applyTemplate` (по разделам, роли — и по одной) / `projects:applyDefaults` (всё из шаблона по умолчанию).
+- **Откуда берётся дефолт**: настройки шаблона по умолчанию (`projects.json → templates` / встроенные, см. «Проекты»);
+  незаданные роли/колонки шаблона — встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`. При `saveTemplate` / `setDefaults`
+  роли и колонки проходят те же `validateRoles` / `validateColumns`, что и у проекта.
 - **Шаблоны проектов** (`packages/core/src/templates.ts`, без node-импортов — его импортирует renderer):
   `ProjectTemplate { id, title, description?, builtin?, settings: ProjectTemplateSettings }`, где `settings` —
   те же разделы, что `ProjectDefaults` (роли, колонки, воркфлоу, правила доски, агенты, режим разрешений).
@@ -118,7 +118,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `backend`, человек только для задач `frontend`), «Мобилка» (ревью → человек), «Автотесты» (`autotester`),
   «Документация / аналитика» (`writer`, ревью человеком). У всех `coordinator` и `assistant` из `DEFAULT_ROLES`
   (у Fullstack координатор с инструкцией декомпозировать по слоям); общие куски промптов — константы модуля.
-  Графы собраны `pipelineWorkflow`. Хранение шаблонов в `projects.json` и выбор при добавлении — следующие задачи.
+  Графы собраны `pipelineWorkflow`. Хранение пользовательских шаблонов, миграция и применение — `ProjectManager`,
+  см. «Проекты → Шаблоны проектов».
 - **Дефолтные роли**: `coordinator`, `assistant`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
   `coordinator` и `assistant` — служебные (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
   их нет, в редакторе ролей они в группе «Системная».
@@ -150,7 +151,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет (удалили в «О проекте») — ошибка «координатор не запустится: …» до создания прогона.
-- **Ассистент** (`startAssistant`): роли — из настроек по умолчанию (`projects.defaults()`), не из проекта;
+- **Ассистент** (`startAssistant`): роли — из шаблона по умолчанию (`projects.defaults()`), не из проекта;
   роль `assistant`, без неё — агент, модель и effort роли `coordinator` (без её инструкций, `assistantRole`),
   нет и её — `claude` без модели. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
@@ -440,7 +441,7 @@ Store хранит позицию и решает, куда задача пер�
 
 ```
 orca-board coordinator start --objective "..."   # человек; создаёт прогон (см. «Прогоны»)
-orca-board projects list                    # [{id,name,root,active,inProgress}]; без проектов — []; --project не нужен
+orca-board projects list                    # [{id,name,root,active,inProgress,templateId?,templateTitle?}]; без проектов — []; --project не нужен
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
 orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
@@ -848,11 +849,17 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:add`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:setActive`, `projects:remove`,
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getAgentRules(id)` → `string` ('' — правил нет), `projects:setAgentRules(id, text)` → `Project` (правила агентов доски, см. «Роли и колонки»),
   `projects:setWorkflow(id, wf | null)` → `Project` (ошибки `validateWorkflow` — исключением), `workflow:default(roles)` → `Workflow` (см. «Роли и колонки → Воркфлоу проекта»);
-  `projects:getDefaults`, `projects:setDefaults(patch)` (в т. ч. `workflow`), `projects:applyDefaults(id)`; `agents:list(refresh?)`;
+  `projects:getDefaults`, `projects:setDefaults(patch)` (в т. ч. `workflow`), `projects:applyDefaults(id)` — алиасы шаблона по умолчанию;
+  `projects:add(templateId?, path?)` (без `path` — диалог выбора папки, отмена → `null`), `projects:detectTemplate(path?)` →
+  `TemplateDetection {path, templateId, reason} | null` (без `path` — диалог; проект не добавляет),
+  `projects:applyTemplate(id, templateId, sections, roleIds?)` → `Project`;
+  `templates:list` → `TemplatesState {templates, defaultTemplateId}`, `templates:save(input)` → `ProjectTemplate`,
+  `templates:delete(id)` → `TemplatesState`, `templates:duplicate(id)` → `ProjectTemplate`, `templates:setDefault(id)` → `TemplatesState`
+  (см. «Проекты → Шаблоны проектов»); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.
@@ -880,7 +887,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт) | `Run` с `finishedAt` |
-| `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress}]`; без проектов — `[]` |
+| `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, templateId?, templateTitle?}]` (`templateTitle` — название шаблона, нет — шаблон удалён); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
 | `rules.get` | `role?` | без `role` — `{rules}` (`Project.agentRules`, нет — `''`); с `role` — `{role, title, rules}` (= `Role.systemPrompt`) |
@@ -1004,27 +1011,59 @@ UI работает с активным проектом; воркеры и ко
 поэтому воркер продолжает писать в свою доску, даже если пользователь переключился на другой проект.
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
-**Формат `projects.json`**: `{ projects: Project[], activeId, defaults?: Partial<ProjectDefaults>, settings?: Partial<AppSettings> }`
-(`settings` — глобальные настройки приложения, см. «Фоновый режим»).
-`ProjectDefaults { permissionMode, enabledAgents?, roles, columns, agentRules? }` (`projects.ts`, дубль типа —
-`shared/ipc.ts`). Файл без `defaults` (старый формат) читается как есть; `defaults` не-объект → удаляется при `load()`.
+**Формат `projects.json`**: `{ projects: Project[], activeId, templates?: ProjectTemplate[], defaultTemplateId?, settings?: Partial<AppSettings> }`
+(`settings` — глобальные настройки приложения, см. «Фоновый режим»). `Project.templateId?` — шаблон, из которого проект
+создан или который последним применён целиком. `ProjectDefaults { permissionMode, enabledAgents?, roles, columns, agentRules?, workflow? }`
+(`projects.ts`, дубль типа — `shared/ipc.ts`) — настройки шаблона с подставленными встроенными значениями.
+Мусор при `load()`: `settings` не-объект, пустой `templateId` / `defaultTemplateId`, шаблоны без `id`, названия или объекта
+`settings` — отбрасываются; у шаблонов битый граф удаляется, старая версия графа мигрируется, флаг `builtin` снимается.
 
-**Настройки по умолчанию**:
-- `defaults()` — глобальный дефолт с подстановкой встроенных значений для незаданных полей
-  (`permissionMode` → `auto`, `enabledAgents` → нет поля = все установленные, `roles` → `DEFAULT_ROLES`,
-  `columns` → `DEFAULT_COLUMNS`); массивы и объекты — копии.
-- `setDefaults(patch)` — мерж патча в `data.defaults`: `permissionMode` проверяется по `PERMISSION_MODES`
-  (`isPermissionMode`), роли/колонки — `validateRoles` / `validateColumns`, `enabledAgents` фильтруется
-  через `isAgentKind`; явный ключ `enabledAgents: null/undefined` — сброс в «все установленные»;
-  `agentRules` — строка (пустая/пробелы → поле удаляется), не строка → ошибка.
-  Не объект → ошибка. Возвращает `defaults()`.
-- `add(root)`: новый проект получает копию дефолта — `permissionMode`, `enabledAgents` (если задан),
-  `roles`, `columns`, `agentRules` (если заданы). Уже добавленный репозиторий возвращается как есть, дефолт к нему не применяется.
-  Проекты, созданные раньше, не меняются при правке дефолта.
-- `applyDefaults(id)` — переписывает настройки существующего проекта дефолтом: `permissionMode`,
-  `enabledAgents` и `agentRules` (нет в дефолте → поле удаляется), затем `setRoles` и `setColumns` — последний, как и при
-  ручной правке, переводит задачи из исчезнувших колонок в колонку `kind=backlog` (`store.reassignColumn`).
+**Шаблоны проектов** («типы проектов», вариант A+: копия при создании, живой связи нет):
+- `templates()` — встроенные (`builtinTemplates()` из core, порядок карточек), затем пользовательские из `projects.json`.
+  Встроенные в файле не хранятся и обновляются вместе с приложением. Пользовательский шаблон с id встроенного
+  **подменяет** его в списке — так живёт «Общий» после миграции; удаление такой копии возвращает встроенный.
+- `saveTemplate({id?, title, description?, settings})` — создать (без `id` — `tpl_<hex>`) или целиком заменить
+  пользовательский шаблон; `settings` проверяются как у проекта (`validSettings`: режим разрешений, `validateRoles`,
+  `validateColumns`, агенты через `isAgentKind`, `checkedWorkflow` по ролям и колонкам этого же шаблона).
+  Встроенный id без пользовательской копии → ошибка «шаблон «…» встроенный и только для чтения — сделайте копию».
+  `duplicateTemplate(id)` — копия «<название> (копия)» под новым id; `deleteTemplate(id)` — только пользовательские.
+- `defaultTemplateId()` — заданный и существующий, иначе `general`. `setDefaultTemplate(id)`; удалённый шаблон по
+  умолчанию сбрасывается на «Общий». Шаблон по умолчанию предвыбран при добавлении проекта и даёт роли и режим
+  разрешений ассистенту.
+- `baseTemplate(projectId)` — база сравнения в «Обзоре»: шаблон проекта, а если `templateId` нет (проект старше
+  шаблонов) или он висячий (шаблон удалён) — шаблон по умолчанию.
+- `resolvedSettings(t.settings)` — копия со встроенными значениями (`permissionMode` → `auto`, `roles` → `DEFAULT_ROLES`,
+  `columns` → `DEFAULT_COLUMNS`). Граф, совпадающий с `defaultWorkflow(roles)` шаблона, **не копируется**: у проекта без
+  своего графа он и так дефолтный, но следует за правкой ролей. Поэтому встроенный «Общий» даёт то же, что старый пустой дефолт.
+- **Миграция** (`migrateDefaults` в `load()`): непустой старый `defaults` → пользовательский шаблон «Общий» (`general`,
+  подменяет встроенный) с тем же содержимым и `defaultTemplateId: 'general'`, если он не был задан. Пустой `defaults`
+  шаблона не создаёт. Поле `defaults` из памяти удаляется, из файла — при следующем сохранении. Существующим проектам
+  `templateId` не проставляется: их база — шаблон по умолчанию, как раньше дефолт.
+- `detectTemplate(path)` (`src/main/template-detect.ts`) — подсказка по файлам корня, только предвыбор:
+  `AndroidManifest.xml` (корень, `app/src/main`, `android/app/src/main`), `*.xcodeproj`/`*.xcworkspace` (корень, `ios/`),
+  `pubspec.yaml`, react-native/expo/capacitor в `package.json` → `mobile`; фронтовый фреймворк (react, vue, svelte,
+  `@angular/core`, next, nuxt…) вместе с серверным (express, fastify, `@nestjs/core`…) или файлом языка (`go.mod`,
+  `pom.xml`, `pyproject.toml`, `requirements.txt`, `Cargo.toml`, `Gemfile`, `composer.json`, `mix.exs`) → `fullstack`;
+  только фронт → `frontend`; только сервер → `backend`; playwright/cypress/webdriverio без фреймворка → `autotests`;
+  `mkdocs.yml`/`book.toml`/`antora.yml` → `docs`; иначе (или угаданного шаблона нет) — шаблон по умолчанию.
+
+**Настройки по умолчанию** (старые имена, теперь алиасы шаблона по умолчанию; их использует «Настройки → Для новых проектов»):
+- `defaults()` — `resolvedSettings` шаблона по умолчанию; массивы и объекты — копии.
+- `setDefaults(patch)` — мерж патча в шаблон по умолчанию (`validSettings` поверх его `settings`): явный ключ
+  `enabledAgents: null/undefined` — сброс в «все установленные»; `agentRules` пустые/пробелы → поле удаляется.
+  Встроенный «Общий» при первой правке получает пользовательскую копию с тем же id; другой встроенный шаблон по
+  умолчанию только читается — ошибка. Возвращает `defaults()`.
+- `add(root, templateId?)`: новый проект получает копию `resolvedSettings` шаблона (нет — по умолчанию; неизвестный id —
+  ошибка) и `templateId`. Уже добавленный репозиторий возвращается как есть, шаблон к нему не применяется.
+  Проекты, созданные раньше, не меняются при правке шаблона.
+- `applyTemplate(id, templateId, sections, roleIds?)` — разделы `sections ⊂ TEMPLATE_SECTIONS` (`agents`, `roles`, `columns`,
+  `workflow`, `permissions`, `agentRules`) из `resolvedSettings` шаблона через `applySections` (core): раздела нет в
+  шаблоне → у проекта удаляется; `roleIds` с `roles` — только эти роли (`mergeRole`). Граф проверяется по итоговым
+  ролям и колонкам; ошибка («…примените вместе с разделами: роли») — до записи, проект не меняется. Роли — через
+  `validateRoles`, колонки — через `setColumns` (задачи из исчезнувших колонок → `kind=backlog`, `store.reassignColumn`).
+  Все разделы сразу — «сменить тип»: проект запоминает `templateId`; частичное применение его не меняет.
   Задачи с `roleId` удалённой роли остаются как есть — `worker.start` для них вернёт ошибку.
+- `applyDefaults(id)` = `applyTemplate(id, defaultTemplateId(), все разделы)`.
 
 ## Уведомления
 

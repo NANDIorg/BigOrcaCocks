@@ -1,14 +1,17 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
-  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext
+  BUILTIN_TEMPLATES, GENERAL_TEMPLATE_ID, TEMPLATE_SECTIONS, builtinTemplates, applySections, stableJson,
+  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
+  type ProjectTemplate, type ProjectTemplateSettings, type TemplateSection
 } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
-import type { AppSettings, AppSettingsPatch } from '../shared/ipc'
+import { detectTemplate } from './template-detect'
+import type { AppSettings, AppSettingsPatch, TemplateInput, TemplatesState, TemplateDetection } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -42,6 +45,12 @@ export interface Project {
    * Граф из будущей версии формата хранится как есть, но не исполняется.
    */
   workflow?: Workflow
+  /**
+   * Шаблон («тип проекта»), из которого проект создан или который последним применён целиком. Живой связи нет:
+   * только база для сравнения в «Обзоре». Нет поля (проект до шаблонов) или шаблон удалён — сравнивается
+   * с шаблоном по умолчанию (`baseTemplate`).
+   */
+  templateId?: string
 }
 
 /** Настройки, которые копируются в каждый новый проект. */
@@ -60,8 +69,18 @@ export interface ProjectDefaults {
 interface ProjectsFile {
   projects: Project[]
   activeId: string | null
-  /** Глобальный дефолт для новых проектов; незаданные поля — встроенные значения. */
+  /**
+   * Старый глобальный дефолт для новых проектов. Только читается: `load()` переносит его в пользовательский
+   * шаблон «Общий» (`general`), при следующем сохранении поля в файле уже нет.
+   */
   defaults?: Partial<ProjectDefaults>
+  /**
+   * Пользовательские шаблоны. Встроенные (`BUILTIN_TEMPLATES`) не хранятся — обновляются вместе с приложением.
+   * Пользовательский шаблон с id встроенного подменяет его: так живёт «Общий» после миграции `defaults`.
+   */
+  templates?: ProjectTemplate[]
+  /** Шаблон, предвыбранный при добавлении проекта (и источник ролей ассистента); нет или удалён — `general`. */
+  defaultTemplateId?: string
   /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
   settings?: Partial<AppSettings>
 }
@@ -110,6 +129,11 @@ export class ProjectManager {
         if (wf) data.defaults.workflow = wf
         else delete data.defaults.workflow
       }
+      for (const p of data.projects ?? []) if (p.templateId !== undefined && !nonEmpty(p.templateId)) delete p.templateId
+      if (data.defaultTemplateId !== undefined && !nonEmpty(data.defaultTemplateId)) delete data.defaultTemplateId
+      data.templates = Array.isArray(data.templates) ? data.templates.flatMap(loadedTemplate) : []
+      migrateDefaults(data)
+      if (!data.templates.length) delete data.templates
       return data
     } catch {
       return { projects: [], activeId: null }
@@ -141,8 +165,11 @@ export class ProjectManager {
     return p
   }
 
-  /** Добавить репозиторий. Путь нормализуется до корня git. */
-  add(path: string): Project {
+  /**
+   * Добавить репозиторий. Путь нормализуется до корня git. Новый проект получает копию шаблона `templateId`
+   * (нет — шаблон по умолчанию) и запоминает его. Уже добавленный репозиторий возвращается как есть.
+   */
+  add(path: string, templateId?: string): Project {
     let root: string
     try {
       root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: path, stdio: 'pipe' }).toString().trim()
@@ -155,8 +182,9 @@ export class ProjectManager {
       this.save()
       return existing
     }
+    const template = this.requireTemplate(templateId ?? this.defaultTemplateId())
+    const d = resolvedSettings(template.settings)
     const id = createHash('sha1').update(root).digest('hex').slice(0, 10)
-    const d = this.defaults()
     const project: Project = {
       id, root, name: basename(root),
       permissionMode: d.permissionMode,
@@ -164,7 +192,8 @@ export class ProjectManager {
       roles: d.roles,
       columns: d.columns,
       ...(d.agentRules ? { agentRules: d.agentRules } : {}),
-      ...(d.workflow ? { workflow: d.workflow } : {})
+      ...(d.workflow ? { workflow: d.workflow } : {}),
+      templateId: template.id
     }
     this.data.projects.push(project)
     this.data.activeId = id
@@ -172,50 +201,142 @@ export class ProjectManager {
     return project
   }
 
-  /** Глобальный дефолт; незаданные поля — встроенные значения. Массивы — копии. */
-  defaults(): ProjectDefaults {
-    const d = this.data.defaults ?? {}
-    return {
-      permissionMode: d.permissionMode ?? 'auto',
-      ...(d.enabledAgents ? { enabledAgents: [...d.enabledAgents] } : {}),
-      roles: (d.roles ?? DEFAULT_ROLES).map((r) => ({ ...r })),
-      columns: (d.columns ?? DEFAULT_COLUMNS).map((c) => ({ ...c })),
-      ...(d.agentRules ? { agentRules: d.agentRules } : {}),
-      ...(d.workflow ? { workflow: cloneWorkflow(d.workflow) } : {})
-    }
+  /**
+   * Подсказка типа по файлам репозитория (`detectTemplate`) — только предвыбор в выборе типа.
+   * Нет признаков или угаданного шаблона нет в списке — шаблон по умолчанию.
+   */
+  detectTemplate(path: string): TemplateDetection {
+    const hint = detectTemplate(path)
+    if (hint.templateId && this.template(hint.templateId)) return { path, templateId: hint.templateId, reason: hint.reason }
+    return { path, templateId: this.defaultTemplateId(), reason: '' }
+  }
+
+  // ---------- шаблоны проектов ----------
+
+  /** Встроенные (в их порядке; подменённые пользовательской копией с тем же id — копией), затем пользовательские. */
+  templates(): ProjectTemplate[] {
+    const user = this.data.templates ?? []
+    const builtins = builtinTemplates().map((b) => user.find((t) => t.id === b.id) ?? b)
+    return [...builtins, ...user.filter((t) => !isBuiltinId(t.id))].map(cloneTemplate)
+  }
+
+  template(id: string): ProjectTemplate | undefined {
+    return this.templates().find((t) => t.id === id)
+  }
+
+  /** Шаблоны и id шаблона по умолчанию — то, что нужно выбору типа и редактору шаблонов. */
+  templatesState(): TemplatesState {
+    return { templates: this.templates(), defaultTemplateId: this.defaultTemplateId() }
+  }
+
+  /** Шаблон по умолчанию: заданный и существующий, иначе «Общий» (встроенный есть всегда). */
+  defaultTemplateId(): string {
+    const id = this.data.defaultTemplateId
+    return id && this.template(id) ? id : GENERAL_TEMPLATE_ID
+  }
+
+  setDefaultTemplate(id: string): TemplatesState {
+    this.requireTemplate(id)
+    this.data.defaultTemplateId = id
+    this.save()
+    return this.templatesState()
   }
 
   /**
-   * Смержить патч в дефолт. Роли и колонки проходят ту же валидацию, что у проекта;
-   * enabledAgents: null/undefined в патче с явным ключом — «все установленные».
+   * База сравнения проекта в «Обзоре»: его шаблон, а если поля нет или шаблон удалён — шаблон по умолчанию.
+   */
+  baseTemplate(projectId: string): ProjectTemplate {
+    const p = this.get(projectId)
+    if (!p) throw new Error(`project not found: ${projectId}`)
+    return (p.templateId ? this.template(p.templateId) : undefined) ?? this.requireTemplate(this.defaultTemplateId())
+  }
+
+  /**
+   * Создать (без `id` — новый id) или целиком заменить пользовательский шаблон. Настройки проходят ту же
+   * валидацию, что у проекта. Встроенный шаблон только читается — ошибка с подсказкой «Дублировать».
+   */
+  saveTemplate(input: TemplateInput): ProjectTemplate {
+    if (!isObject(input)) throw new Error('шаблон: ожидается объект')
+    if (input.id !== undefined && !nonEmpty(input.id)) throw new Error('шаблон: пустой id')
+    if (!nonEmpty(input.title)) throw new Error('шаблон: пустое название')
+    if (input.description !== undefined && typeof input.description !== 'string') throw new Error(`шаблон «${input.title}»: описание должно быть строкой`)
+    const user = [...(this.data.templates ?? [])]
+    const id = input.id ?? this.newTemplateId()
+    const i = user.findIndex((t) => t.id === id)
+    if (i === -1 && isBuiltinId(id)) throw new Error(readonlyTemplateMessage(id))
+    const description = input.description?.trim()
+    const template: ProjectTemplate = {
+      id, title: input.title.trim(), ...(description ? { description } : {}),
+      settings: validSettings(input.settings ?? {}, {}, `шаблон «${input.title.trim()}»`)
+    }
+    if (i === -1) user.push(template)
+    else user[i] = template
+    this.data.templates = user
+    this.save()
+    return cloneTemplate(template)
+  }
+
+  /**
+   * Удалить пользовательский шаблон. Удалённый шаблон по умолчанию сбрасывается на «Общий»; `templateId`
+   * проектов остаётся висячим — такие проекты сравниваются с шаблоном по умолчанию (`baseTemplate`).
+   * Удаление копии встроенного (например, «Общего» после миграции) возвращает встроенный.
+   */
+  deleteTemplate(id: string): TemplatesState {
+    const user = this.data.templates ?? []
+    if (!user.some((t) => t.id === id)) {
+      throw new Error(isBuiltinId(id) ? readonlyTemplateMessage(id) : `шаблон не найден: ${id}`)
+    }
+    this.data.templates = user.filter((t) => t.id !== id)
+    if (!this.data.templates.length) delete this.data.templates
+    if (this.data.defaultTemplateId === id && !isBuiltinId(id)) delete this.data.defaultTemplateId
+    this.save()
+    return this.templatesState()
+  }
+
+  /** Копия шаблона (в том числе встроенного) под новым id — так правят встроенные. */
+  duplicateTemplate(id: string): ProjectTemplate {
+    const src = this.requireTemplate(id)
+    return this.saveTemplate({
+      title: `${src.title} (копия)`,
+      ...(src.description ? { description: src.description } : {}),
+      settings: src.settings
+    })
+  }
+
+  private requireTemplate(id: string): ProjectTemplate {
+    const t = this.template(id)
+    if (!t) throw new Error(`шаблон не найден: ${id}`)
+    return t
+  }
+
+  private newTemplateId(): string {
+    let id: string
+    do id = `tpl_${randomBytes(4).toString('hex')}`
+    while (this.template(id))
+    return id
+  }
+
+  /**
+   * Настройки шаблона по умолчанию; незаданные поля — встроенные значения. Массивы — копии.
+   * Старое имя «глобального дефолта»: его читают «Настройки → Для новых проектов» и ассистент (роли и режим разрешений).
+   */
+  defaults(): ProjectDefaults {
+    return resolvedSettings(this.requireTemplate(this.defaultTemplateId()).settings)
+  }
+
+  /**
+   * Смержить патч в шаблон по умолчанию (роли и колонки проходят ту же валидацию, что у проекта;
+   * enabledAgents: null/undefined в патче с явным ключом — «все установленные»). Встроенный «Общий»
+   * при первой правке получает пользовательскую копию с тем же id — как после миграции старого `defaults`;
+   * другой встроенный шаблон по умолчанию только читается.
    */
   setDefaults(patch: Partial<ProjectDefaults>): ProjectDefaults {
-    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw new Error('настройки по умолчанию: ожидается объект')
-    const next: Partial<ProjectDefaults> = { ...(this.data.defaults ?? {}) }
-    if (patch.permissionMode !== undefined) {
-      if (!isPermissionMode(patch.permissionMode)) throw new Error(`неизвестный режим разрешений: ${String(patch.permissionMode)}`)
-      next.permissionMode = patch.permissionMode
-    }
-    if ('enabledAgents' in patch) {
-      if (patch.enabledAgents == null) delete next.enabledAgents
-      else if (!Array.isArray(patch.enabledAgents)) throw new Error('enabledAgents должен быть массивом')
-      else next.enabledAgents = patch.enabledAgents.filter((a) => isAgentKind(a))
-    }
-    if (patch.roles !== undefined) next.roles = validateRoles(patch.roles)
-    if (patch.columns !== undefined) next.columns = validateColumns(patch.columns)
-    if ('agentRules' in patch) {
-      const rules = validateAgentRules(patch.agentRules ?? '')
-      if (rules) next.agentRules = rules
-      else delete next.agentRules
-    }
-    if ('workflow' in patch) {
-      // Граф проверяется по ролям и колонкам дефолта с учётом этого же патча.
-      if (patch.workflow == null) delete next.workflow
-      else next.workflow = checkedWorkflow(patch.workflow, {
-        roles: next.roles ?? DEFAULT_ROLES, columns: next.columns ?? DEFAULT_COLUMNS, enabledAgents: next.enabledAgents
-      })
-    }
-    this.data.defaults = next
+    const id = this.defaultTemplateId()
+    const own = this.data.templates?.find((t) => t.id === id)
+    if (!own && id !== GENERAL_TEMPLATE_ID) throw new Error(readonlyTemplateMessage(id))
+    const base = own ?? { id, title: GENERAL_TITLE, description: GENERAL_DESCRIPTION, settings: {} }
+    const settings = validSettings(patch, base.settings, 'настройки по умолчанию')
+    this.data.templates = [...(this.data.templates ?? []).filter((t) => t.id !== id), { ...base, settings }]
     this.save()
     return this.defaults()
   }
@@ -244,21 +365,39 @@ export class ProjectManager {
     return this.settings()
   }
 
-  /** Переписать настройки проекта дефолтом. Задачи из исчезнувших колонок уходят в backlog. */
-  applyDefaults(id: string): Project {
+  /**
+   * Взять разделы `sections` шаблона `templateId` в проект (`applySections` из core): раздел, которого в шаблоне
+   * нет, заменяется встроенным значением; `roleIds` с разделом `roles` — только эти роли. Граф проверяется по
+   * итоговым ролям и колонкам, при ошибке проект не меняется. Колонки — через `setColumns` (задачи из исчезнувших
+   * колонок уходят в backlog). Все разделы сразу — это «сменить тип»: проект запоминает `templateId`.
+   */
+  applyTemplate(id: string, templateId: string, sections: TemplateSection[], roleIds?: string[]): Project {
     const p = this.get(id)
     if (!p) throw new Error(`project not found: ${id}`)
-    const d = this.defaults()
-    p.permissionMode = d.permissionMode
-    if (d.enabledAgents) p.enabledAgents = d.enabledAgents
-    else delete p.enabledAgents
-    if (d.agentRules) p.agentRules = d.agentRules
-    else delete p.agentRules
-    // Без повторной проверки: граф дефолта проверен по ролям дефолта, а они сейчас же станут ролями проекта.
-    if (d.workflow) p.workflow = d.workflow
-    else delete p.workflow
-    this.setRoles(id, d.roles)
-    return this.setColumns(id, d.columns)
+    const template = this.requireTemplate(templateId)
+    if (!Array.isArray(sections) || !sections.length) throw new Error('применение шаблона: не выбран ни один раздел')
+    for (const s of sections) {
+      if (!TEMPLATE_SECTIONS.includes(s)) throw new Error(`применение шаблона: неизвестный раздел ${String(s)}`)
+    }
+    if (roleIds !== undefined && (!Array.isArray(roleIds) || !roleIds.every(nonEmpty))) {
+      throw new Error('применение шаблона: roleIds должен быть массивом id ролей')
+    }
+    const next = applySections<PermissionMode, Project>(p, resolvedSettings(template.settings), sections, roleIds)
+    // Роли проверяем до записи: после неё откатывать было бы нечего.
+    const roles = sections.includes('roles') ? validateRoles(next.roles ?? DEFAULT_ROLES) : undefined
+    for (const key of ['permissionMode', 'enabledAgents', 'agentRules', 'workflow'] as const) {
+      if (next[key] === undefined) delete p[key]
+      else (p as Record<typeof key, unknown>)[key] = next[key]
+    }
+    if (roles) p.roles = roles
+    if (TEMPLATE_SECTIONS.every((s) => sections.includes(s))) p.templateId = template.id
+    this.save()
+    return sections.includes('columns') ? this.setColumns(id, next.columns ?? DEFAULT_COLUMNS) : p
+  }
+
+  /** Переписать все настройки проекта шаблоном по умолчанию. Задачи из исчезнувших колонок уходят в backlog. */
+  applyDefaults(id: string): Project {
+    return this.applyTemplate(id, this.defaultTemplateId(), [...TEMPLATE_SECTIONS])
   }
 
   setPermissionMode(id: string, mode: PermissionMode): Project {
@@ -530,4 +669,106 @@ function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
   const { errors } = validateWorkflow(wf, ctx)
   if (errors.length) throw new Error(`воркфлоу не сохранён: ${errors.map((e) => e.message).join('; ')}`)
   return wf
+}
+
+// ---------- шаблоны проектов ----------
+
+const GENERAL_TITLE = 'Общий'
+const GENERAL_DESCRIPTION = 'Перенесён из «Настройки → Для новых проектов».'
+
+function isBuiltinId(id: string): boolean {
+  return BUILTIN_TEMPLATES.some((t) => t.id === id)
+}
+
+function readonlyTemplateMessage(id: string): string {
+  const title = BUILTIN_TEMPLATES.find((t) => t.id === id)?.title ?? id
+  return `шаблон «${title}» встроенный и только для чтения — сделайте копию («Дублировать») и правьте её`
+}
+
+function cloneTemplate(t: ProjectTemplate): ProjectTemplate {
+  return JSON.parse(JSON.stringify(t)) as ProjectTemplate
+}
+
+/**
+ * Настройки шаблона с встроенными значениями вместо незаданных (копии). Граф, совпадающий с дефолтным по ролям
+ * шаблона, не копируется: у проекта без своего графа он и так дефолтный, зато следует за правкой ролей
+ * (удалили `reviewer` — ревью человеком). Так «Общий» даёт проекту то же, что старый пустой дефолт.
+ */
+function resolvedSettings(s: ProjectTemplateSettings): ProjectDefaults {
+  const roles = (s.roles ?? DEFAULT_ROLES).map((r) => ({ ...r }))
+  const workflow = s.workflow && stableJson(s.workflow) !== stableJson(defaultWorkflow(roles)) ? cloneWorkflow(s.workflow) : undefined
+  return {
+    permissionMode: s.permissionMode ?? 'auto',
+    ...(s.enabledAgents ? { enabledAgents: [...s.enabledAgents] } : {}),
+    roles,
+    columns: (s.columns ?? DEFAULT_COLUMNS).map((c) => ({ ...c })),
+    ...(s.agentRules ? { agentRules: s.agentRules } : {}),
+    ...(workflow ? { workflow } : {})
+  }
+}
+
+/**
+ * Патч настроек поверх `base`: разрешения — по `PERMISSION_MODES`, роли и колонки — `validateRoles` /
+ * `validateColumns`, агенты фильтруются `isAgentKind` (явный null — «все установленные»), правила из пробелов
+ * удаляют поле, граф проверяется по ролям и колонкам с учётом этого же патча. `label` — начало текста ошибки.
+ */
+function validSettings(patch: unknown, base: ProjectTemplateSettings, label: string): ProjectTemplateSettings {
+  if (!isObject(patch)) throw new Error(`${label}: ожидается объект`)
+  const p = patch as Partial<ProjectDefaults>
+  const next: ProjectTemplateSettings = { ...base }
+  if (p.permissionMode !== undefined) {
+    if (!isPermissionMode(p.permissionMode)) throw new Error(`${label}: неизвестный режим разрешений: ${String(p.permissionMode)}`)
+    next.permissionMode = p.permissionMode
+  }
+  if ('enabledAgents' in p) {
+    if (p.enabledAgents == null) delete next.enabledAgents
+    else if (!Array.isArray(p.enabledAgents)) throw new Error(`${label}: enabledAgents должен быть массивом`)
+    else next.enabledAgents = p.enabledAgents.filter((a) => isAgentKind(a))
+  }
+  if (p.roles !== undefined) next.roles = validateRoles(p.roles)
+  if (p.columns !== undefined) next.columns = validateColumns(p.columns)
+  if ('agentRules' in p) {
+    const rules = validateAgentRules(p.agentRules ?? '')
+    if (rules) next.agentRules = rules
+    else delete next.agentRules
+  }
+  if ('workflow' in p) {
+    if (p.workflow == null) delete next.workflow
+    else next.workflow = checkedWorkflow(p.workflow, {
+      roles: next.roles ?? DEFAULT_ROLES, columns: next.columns ?? DEFAULT_COLUMNS, enabledAgents: next.enabledAgents
+    })
+  }
+  return next
+}
+
+/** Шаблон из projects.json: без id, названия или объекта настроек — отбрасывается, мусорные поля — чистятся. */
+function loadedTemplate(v: unknown): ProjectTemplate[] {
+  if (!isObject(v) || !nonEmpty(v.id) || !nonEmpty(v.title) || !isObject(v.settings)) return []
+  const settings = v.settings as ProjectTemplateSettings
+  if (Array.isArray(settings.roles)) settings.roles = withDefaultDescriptions(settings.roles)
+  if (settings.agentRules !== undefined && typeof settings.agentRules !== 'string') delete settings.agentRules
+  const wf = loadedWorkflow(settings.workflow)
+  if (wf) settings.workflow = wf
+  else delete settings.workflow
+  // Флаг builtin — только у шаблонов из кода; сохранённая копия встроенного — обычный пользовательский шаблон.
+  return [{
+    id: v.id, title: v.title,
+    ...(typeof v.description === 'string' && v.description.trim() ? { description: v.description } : {}),
+    settings
+  }]
+}
+
+/**
+ * Старый `defaults` (единственный дефолт для новых проектов) → пользовательский шаблон «Общий» с тем же
+ * содержимым, он же шаблон по умолчанию. Пустой дефолт ничего не создаёт: встроенный «Общий» равен ему.
+ * Проектам `templateId` не проставляется — без него они сравниваются с шаблоном по умолчанию, как раньше с дефолтом.
+ */
+function migrateDefaults(data: ProjectsFile): void {
+  const d = data.defaults
+  delete data.defaults
+  const templates = data.templates ?? []
+  if (!d || !Object.keys(d).length || templates.some((t) => t.id === GENERAL_TEMPLATE_ID)) return
+  templates.push({ id: GENERAL_TEMPLATE_ID, title: GENERAL_TITLE, description: GENERAL_DESCRIPTION, settings: d })
+  data.templates = templates
+  data.defaultTemplateId ??= GENERAL_TEMPLATE_ID
 }

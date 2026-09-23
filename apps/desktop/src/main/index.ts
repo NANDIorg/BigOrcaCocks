@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type TaskPriority, type Workflow } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type TaskPriority, type Workflow, type TemplateSection } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
@@ -16,7 +16,7 @@ import { ProjectManager, type PermissionMode, type ProjectDefaults } from './pro
 import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
-import type { AppSettingsPatch, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import type { AppSettingsPatch, TemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 
@@ -284,6 +284,7 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
     killPty(assistantPty)
   }
   assistantPty = null
+  // Ассистент один на все проекты: роли и режим разрешений — из шаблона по умолчанию, не из проекта.
   const d = projects.defaults()
   const { ptyId } = startAssistant({ socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles }, cols, rows)
   assistantPty = ptyId
@@ -438,6 +439,13 @@ function docRoot(source: unknown): string {
   return task.worktree
 }
 
+/** Диалог выбора репозитория для «Добавить проект»; отмена — null. */
+async function pickRepoFolder(): Promise<string | null> {
+  if (!win) throw new Error('no window')
+  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Выберите git-репозиторий' })
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:getSettings', () => projects.settings())
   ipcMain.handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
@@ -463,12 +471,22 @@ function registerIpc(): void {
   ipcMain.handle('projects:applyDefaults', (_e, id: string) => projects.applyDefaults(id))
   ipcMain.handle('prompts:builtin', () => BUILTIN_PROMPTS)
   ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
-  ipcMain.handle('projects:add', async () => {
-    if (!win) throw new Error('no window')
-    const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Выберите git-репозиторий' })
-    if (res.canceled || !res.filePaths[0]) return null
-    return projects.add(res.filePaths[0])
+  ipcMain.handle('projects:add', async (_e, templateId?: string, path?: string) => {
+    const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
+    return dir ? projects.add(dir, typeof templateId === 'string' && templateId ? templateId : undefined) : null
   })
+  ipcMain.handle('projects:detectTemplate', async (_e, path?: string) => {
+    const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
+    return dir ? projects.detectTemplate(dir) : null
+  })
+  ipcMain.handle('projects:applyTemplate', (_e, id: string, templateId: string, sections: TemplateSection[], roleIds?: string[]) =>
+    projects.applyTemplate(id, templateId, sections, roleIds ?? undefined)
+  )
+  ipcMain.handle('templates:list', () => projects.templatesState())
+  ipcMain.handle('templates:save', (_e, input: TemplateInput) => projects.saveTemplate(input))
+  ipcMain.handle('templates:delete', (_e, id: string) => projects.deleteTemplate(id))
+  ipcMain.handle('templates:duplicate', (_e, id: string) => projects.duplicateTemplate(id))
+  ipcMain.handle('templates:setDefault', (_e, id: string) => projects.setDefaultTemplate(id))
 
   ipcMain.handle('board:get', () =>
     projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [], runs: [] }
@@ -619,13 +637,18 @@ app.whenReady().then(() => {
     projects: () => {
       const activeId = projects.active()?.id
       const counts = projects.inProgressCounts()
-      return projects.list().map((p) => ({
-        id: p.id,
-        name: p.name,
-        root: p.root,
-        active: p.id === activeId,
-        inProgress: counts[p.id] ?? 0
-      }))
+      return projects.list().map((p) => {
+        const template = p.templateId ? projects.template(p.templateId) : undefined
+        return {
+          id: p.id,
+          name: p.name,
+          root: p.root,
+          active: p.id === activeId,
+          inProgress: counts[p.id] ?? 0,
+          ...(p.templateId ? { templateId: p.templateId } : {}),
+          ...(template ? { templateTitle: template.title } : {})
+        }
+      })
     }
   })
   watchStuck()

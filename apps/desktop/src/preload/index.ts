@@ -17,7 +17,9 @@ const api: OrcaApi = {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
-    add: () => ipcRenderer.invoke('projects:add'),
+    add: (templateId, path) => ipcRenderer.invoke('projects:add', templateId, path),
+    detectTemplate: (path) => ipcRenderer.invoke('projects:detectTemplate', path),
+    applyTemplate: (id, templateId, sections, roleIds) => ipcRenderer.invoke('projects:applyTemplate', id, templateId, sections, roleIds),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setPermissionMode: (id, mode) => ipcRenderer.invoke('projects:setPermissionMode', id, mode),
@@ -31,6 +33,13 @@ const api: OrcaApi = {
     setDefaults: (patch) => ipcRenderer.invoke('projects:setDefaults', patch),
     applyDefaults: (id) => ipcRenderer.invoke('projects:applyDefaults', id),
     onFocus: (cb) => on('projects:focus', cb)
+  },
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    save: (input) => ipcRenderer.invoke('templates:save', input),
+    delete: (id) => ipcRenderer.invoke('templates:delete', id),
+    duplicate: (id) => ipcRenderer.invoke('templates:duplicate', id),
+    setDefault: (id) => ipcRenderer.invoke('templates:setDefault', id)
   },
   workflow: {
     default: (roles) => ipcRenderer.invoke('workflow:default', roles)

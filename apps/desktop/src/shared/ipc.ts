@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, ProjectTemplate, ProjectTemplateSettings, TemplateSection } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -112,6 +112,11 @@ export interface Project {
   agentRules?: string
   /** Воркфлоу задач проекта. undefined — дефолтный граф по ролям проекта (`workflow.default(roles)`). */
   workflow?: Workflow
+  /**
+   * Шаблон («тип проекта»), из которого проект создан или который последним применён целиком; живой связи нет.
+   * Нет поля или шаблон удалён — сравнивать с шаблоном по умолчанию.
+   */
+  templateId?: string
 }
 
 /** Настройки по умолчанию, копируемые в каждый новый проект. */
@@ -125,6 +130,30 @@ export interface ProjectDefaults {
   agentRules?: string
   /** Воркфлоу для новых проектов; нет — дефолтный граф по ролям проекта. В `setDefaults` null удаляет поле. */
   workflow?: Workflow
+}
+
+/** Создать (без `id`) или целиком заменить пользовательский шаблон. */
+export interface TemplateInput {
+  id?: string
+  title: string
+  description?: string
+  settings: ProjectTemplateSettings
+}
+
+/** Все шаблоны (встроенные, затем пользовательские) и шаблон по умолчанию. */
+export interface TemplatesState {
+  templates: ProjectTemplate[]
+  defaultTemplateId: string
+}
+
+/** Подсказка типа для выбранной папки: предвыбор в выборе типа, человек может выбрать другой. */
+export interface TemplateDetection {
+  /** Выбранная папка — её передают в `projects.add(templateId, path)`. */
+  path: string
+  /** Угаданный шаблон; признаков нет — шаблон по умолчанию. */
+  templateId: string
+  /** Почему угадан («package.json: react»); пусто — признаков нет. */
+  reason: string
 }
 
 export interface ReviewInfo {
@@ -211,7 +240,21 @@ export interface OrcaApi {
     list(): Promise<{ active: Project | null; projects: Project[] }>
     /** Задачи в колонках kind=in_progress по id проекта — для бейджа в списке проектов. */
     inProgressCounts(): Promise<Record<string, number>>
-    add(): Promise<Project | null>
+    /**
+     * Добавить репозиторий с копией шаблона `templateId` (нет — шаблон по умолчанию). Без `path` — диалог выбора
+     * папки (отмена — null); с `path` (из `detectTemplate`) — без диалога. Уже добавленный возвращается как есть.
+     */
+    add(templateId?: string, path?: string): Promise<Project | null>
+    /**
+     * Без `path` — диалог выбора папки (отмена — null), затем подсказка типа по файлам репозитория;
+     * с `path` — только подсказка. Проект не добавляется.
+     */
+    detectTemplate(path?: string): Promise<TemplateDetection | null>
+    /**
+     * Взять разделы шаблона в проект; `roleIds` с разделом `roles` — только эти роли. Граф проверяется по итоговым
+     * ролям и колонкам (ошибка — с подсказкой, какой раздел применить вместе); задачи из исчезнувших колонок — в backlog.
+     */
+    applyTemplate(id: string, templateId: string, sections: TemplateSection[], roleIds?: string[]): Promise<Project>
     remove(id: string): Promise<void>
     setActive(id: string): Promise<Project>
     setPermissionMode(id: string, mode: PermissionMode): Promise<Project>
@@ -228,14 +271,28 @@ export interface OrcaApi {
      * `validateWorkflow` отвергается с их текстом, предупреждения не мешают.
      */
     setWorkflow(id: string, wf: Workflow | null): Promise<Project>
-    /** Глобальный дефолт для новых проектов (незаданное — встроенные значения). */
+    /** Настройки шаблона по умолчанию (незаданное — встроенные значения). */
     getDefaults(): Promise<ProjectDefaults>
-    /** Мерж патча в дефолт; роли/колонки валидируются, мусор — ошибка. enabledAgents: undefined — «все установленные». */
+    /**
+     * Мерж патча в шаблон по умолчанию; роли/колонки валидируются, мусор — ошибка. enabledAgents: undefined —
+     * «все установленные». Встроенный шаблон по умолчанию, кроме «Общего», только читается — ошибка.
+     */
     setDefaults(patch: Partial<ProjectDefaults>): Promise<ProjectDefaults>
-    /** Переписать настройки проекта дефолтом; задачи из исчезнувших колонок — в backlog. */
+    /** Переписать все настройки проекта шаблоном по умолчанию; задачи из исчезнувших колонок — в backlog. */
     applyDefaults(id: string): Promise<Project>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
+  }
+  /** Шаблоны проектов («типы проектов»): встроенные только читаются, правят их копию («Дублировать»). */
+  templates: {
+    list(): Promise<TemplatesState>
+    /** Создать или заменить пользовательский шаблон; настройки валидируются как у проекта. */
+    save(input: TemplateInput): Promise<ProjectTemplate>
+    /** Удалить пользовательский шаблон; удалённый шаблон по умолчанию сбрасывается на «Общий». */
+    delete(id: string): Promise<TemplatesState>
+    /** Копия шаблона (в том числе встроенного) под новым id. */
+    duplicate(id: string): Promise<ProjectTemplate>
+    setDefault(id: string): Promise<TemplatesState>
   }
   workflow: {
     /** Дефолтный граф для этих ролей (`defaultWorkflow` в core): показать, когда `Project.workflow` не задан. */
