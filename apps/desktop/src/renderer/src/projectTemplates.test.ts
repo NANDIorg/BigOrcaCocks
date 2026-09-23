@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTemplate, type AgentInfo, type ProjectTemplate } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTemplate, isBuiltinModelEdit, type AgentInfo, type ProjectTemplate } from '@orca-board/core'
 import type { OrcaApi, Project, TemplatesState } from '../../shared/ipc'
 import {
-  TEMPLATES_STALE_MESSAGE, deleteConfirmText, overridesBuiltin, templateEditorKey, patchedTemplate, pickTemplateId, renamedTemplate,
+  BUILTIN_MODELS_STALE_MESSAGE, TEMPLATES_STALE_MESSAGE, deleteConfirmText, modelOnlyPatch, rolesEditorKey, templateRolesMode, overridesBuiltin, templateEditorKey, patchedTemplate, pickTemplateId, renamedTemplate,
   resolveTemplateSettings, splitTemplates, templateAgents, templateUsage, templatesApi, templatesError
 } from './projectTemplates'
 
@@ -53,12 +53,13 @@ test('переименование: пустое название — ошибк
   assert.equal(r.settings, own.settings)
 })
 
-test('встроенные отдельно от своих; копия встроенного «Общего» — своя, но удаление вернёт встроенный', () => {
+test('встроенные отдельно от своих; копия встроенного «Общего» — в группе встроенных, удаление вернёт встроенный', () => {
   const generalCopy: ProjectTemplate = { id: 'general', title: 'Общий', settings: {} }
   const split = splitTemplates([general, frontend, own])
   assert.deepEqual(split.builtin.map((t) => t.id), ['general', 'frontend'])
   assert.deepEqual(split.own.map((t) => t.id), ['tpl_1'])
-  assert.deepEqual(splitTemplates([generalCopy, frontend]).own.map((t) => t.id), ['general'])
+  assert.deepEqual(splitTemplates([generalCopy, frontend, own]).builtin.map((t) => t.id), ['general', 'frontend'])
+  assert.deepEqual(splitTemplates([generalCopy, frontend, own]).own.map((t) => t.id), ['tpl_1'])
   assert.equal(overridesBuiltin(generalCopy), true)
   assert.equal(overridesBuiltin(own), false)
   assert.equal(overridesBuiltin(general), false)
@@ -97,4 +98,41 @@ test('ключ редакторов меняется, когда удалена 
   const copy: ProjectTemplate = { ...general, builtin: undefined }
   assert.notEqual(templateEditorKey(copy), templateEditorKey(general))
   assert.equal(templateEditorKey(copy), templateEditorKey({ ...copy }))
+})
+
+test('встроенный шаблон: роли меняются только моделью и усилием, правка собирается в копию, которую примет main', () => {
+  assert.equal(templateRolesMode(frontend), 'models')
+  assert.equal(templateRolesMode(own), 'full')
+  assert.equal(templateRolesMode({ ...general, builtin: undefined }), 'full')
+  assert.deepEqual(modelOnlyPatch({ title: 'x', agent: 'codex', systemPrompt: 'y', model: 'opus' }), { model: 'opus' })
+  // undefined — сброс в «по умолчанию агента», его терять нельзя.
+  const reset = modelOnlyPatch({ effort: undefined })
+  assert.ok('effort' in reset)
+  assert.deepEqual(modelOnlyPatch({ description: 'x' }), {})
+  for (const t of [general, frontend]) {
+    const roles = (t.settings.roles ?? DEFAULT_ROLES).map((r, i) => (i === 0 ? { ...r, model: 'opus', effort: 'high' } : r))
+    const input = patchedTemplate(t, { roles })
+    assert.equal(input.id, t.id)
+    assert.equal(isBuiltinModelEdit(t, input), true, t.id)
+  }
+})
+
+test('старый main без правки моделей встроенного — «перезапустите»', () => {
+  const old = 'шаблон «Фронтенд» встроенный и только для чтения — сделайте копию («Дублировать») и правьте её'
+  assert.equal(templatesError(old), BUILTIN_MODELS_STALE_MESSAGE)
+  const now = 'шаблон «Фронтенд» встроенный и только для чтения: без копии в нём меняются только модель и усилие ролей, остальное — через «Дублировать»'
+  assert.equal(templatesError(now), now)
+})
+
+test('ключ редактора ролей не меняется, когда встроенный становится изменённым из этого редактора', () => {
+  const copy: ProjectTemplate = { ...frontend, builtin: undefined }
+  // Правка ещё не сохранена и после сохранения — один ключ, черновик не сбрасывается.
+  assert.equal(rolesEditorKey(frontend, 'frontend'), rolesEditorKey(copy, 'frontend'))
+  assert.equal(rolesEditorKey(frontend, 'frontend'), templateEditorKey(frontend))
+  // Копия, открытая не из этого редактора, и после удаления (promoted сброшен) — ключ меняется, как у остальных.
+  assert.equal(rolesEditorKey(copy, null), templateEditorKey(copy))
+  assert.notEqual(rolesEditorKey(copy, null), rolesEditorKey(frontend, null))
+  // Чужой promoted и свои шаблоны не задеваются.
+  assert.equal(rolesEditorKey(copy, 'general'), templateEditorKey(copy))
+  assert.equal(rolesEditorKey(own, own.id), templateEditorKey(own))
 })

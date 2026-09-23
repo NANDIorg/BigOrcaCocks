@@ -24,6 +24,7 @@ import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
 import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
+import { modelOnlyPatch } from './projectTemplates'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -36,8 +37,13 @@ interface Props {
   taskCounts?: Readonly<Record<string, number>>
   /** Свой воркфлоу (проекта или дефолта): роль, занятая в графе, — в последствиях удаления. */
   workflow?: Workflow
-  /** Только просмотр (встроенный шаблон): роли можно выбирать и читать, правки не сохраняются. */
+  /** Только просмотр: роли можно выбирать и читать, правки не сохраняются. */
   readOnly?: boolean
+  /**
+   * Меняются только модель и усилие (встроенный шаблон): состав, порядок, агент, названия и инструкции ролей
+   * заблокированы — их правят в копии шаблона.
+   */
+  modelOnly?: boolean
   onSave(roles: Role[]): Promise<void>
 }
 
@@ -75,9 +81,13 @@ function newRoleId(): string {
 }
 
 /** Раздел «Роли» («О проекте» и дефолт для новых проектов): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
-export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, onSave }: Props): React.JSX.Element {
+export function RolesEditor({
+  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, modelOnly = false, onSave
+}: Props): React.JSX.Element {
   const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
-  const update: typeof save = readOnly ? () => undefined : save
+  /** Состав и порядок ролей: заблокированы и в просмотре, и в режиме «только модель». */
+  const locked = readOnly || modelOnly
+  const update: typeof save = locked ? () => undefined : save
   const enabled = agents.filter((a) => a.enabled)
   const builtin = useBuiltinPrompts()
   const [selectedId, setSelectedId] = useState<string | undefined>(
@@ -89,11 +99,14 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, wo
   const selected: Role | undefined = roles[index]
 
   function patch(i: number, p: Partial<Role>, debounce = false): void {
-    update(roles.map((r, j) => (j === i ? withPatch(r, p) : r)), debounce)
+    if (readOnly) return
+    const allowed = modelOnly ? modelOnlyPatch(p) : p
+    save(roles.map((r, j) => (j === i ? withPatch(r, allowed) : r)), debounce)
   }
 
   /** Смена агента: модель и effort прошлого агента к новому не подходят — сбрасываются в «по умолчанию». */
   function changeAgent(i: number, agent: AgentKind): void {
+    if (locked) return
     patch(i, { agent, model: undefined, effort: undefined })
   }
 
@@ -177,7 +190,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, wo
       >
         {isService ? (
           <span className={`roles-dot ${state}`} role="img" aria-label={AGENT_STATE_TEXT[state]} title={AGENT_STATE_TEXT[state]} />
-        ) : readOnly ? null : (
+        ) : locked ? null : (
           <span
             className="roles-handle"
             draggable
@@ -238,11 +251,11 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, wo
           )}
           <div className="roles-group">Роли для задач</div>
           <ul>{taskRoles.map(item)}</ul>
-          {!readOnly && <button type="button" className="btn-sm roles-add" onClick={add}>＋ Новая роль</button>}
+          {!locked && <button type="button" className="btn-sm roles-add" onClick={add}>＋ Новая роль</button>}
           <div className="roles-hint">
             Порядок — как в «Новой задаче».{taskCounts ? ' Число — задач проекта на роли.' : ''}
           </div>
-          {missing.length > 0 && !readOnly && (
+          {missing.length > 0 && !locked && (
             <div className="roles-hint">
               Удалены системные: {missing.map((r) => r.id).join(', ')}.{' '}
               <button type="button" className="roles-link" onClick={restore}>Вернуть системные роли</button>
@@ -260,6 +273,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, wo
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
             readOnly={readOnly}
+            modelOnly={modelOnly}
             onPatch={(p, debounce) => patch(index, p, debounce)}
             onAgent={(agent) => changeAgent(index, agent)}
             onModel={(model, debounce) => changeModel(index, model, debounce)}
@@ -285,6 +299,7 @@ interface PanelProps {
   deleteBlocker: string | undefined
   builtin: BuiltinState
   readOnly: boolean
+  modelOnly: boolean
   onPatch(p: Partial<Role>, debounce?: boolean): void
   onAgent(agent: AgentKind): void
   onModel(model: string, debounce?: boolean): void
@@ -296,8 +311,9 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, readOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, readOnly, modelOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
+  const locked = readOnly || modelOnly
   const [tab, setTab] = useState<RoleTab>('prompt')
   /** Открыто подтверждение удаления: что сломается без роли. */
   const [confirming, setConfirming] = useState(false)
@@ -331,6 +347,7 @@ function RolePanel({
             value={r.title}
             placeholder="Название роли"
             aria-label="Название роли"
+            disabled={modelOnly}
             onChange={(e) => onPatch({ title: e.target.value }, true)}
           />
           <div className="roles-meta">
@@ -341,7 +358,7 @@ function RolePanel({
               : <span className="chip ok">назначается задачам</span>}
           </div>
         </div>
-        {!readOnly && <button type="button" className="btn-sm" onClick={onDuplicate}>Дублировать</button>}
+        {!locked && <button type="button" className="btn-sm" onClick={onDuplicate}>Дублировать</button>}
       </div>
 
       {state !== 'on' && (
@@ -363,12 +380,13 @@ function RolePanel({
           rows={3}
           placeholder={defaultDescription ?? 'Что делает роль и когда её брать'}
           aria-label="Назначение роли"
+          disabled={modelOnly}
           onChange={(e) => onPatch({ description: e.target.value }, true)}
         />
         {defaultDescription ? (
           <div className="roles-hint">
             Пусто — берётся назначение по умолчанию для <code>{r.id}</code>.{' '}
-            {r.description !== defaultDescription && (
+            {r.description !== defaultDescription && !locked && (
               <button type="button" className="roles-link" onClick={() => onPatch({ description: defaultDescription })}>
                 Вернуть по умолчанию
               </button>
@@ -390,6 +408,7 @@ function RolePanel({
                 value={r.agent}
                 className={state !== 'on' ? 'off' : ''}
                 aria-label="Агент"
+                disabled={modelOnly}
                 onChange={(e) => onAgent(e.target.value as AgentKind)}
               >
                 {enabled.map((a) => (
@@ -490,7 +509,7 @@ function RolePanel({
                 value={r.systemPrompt ?? ''}
                 placeholder="Например: пиши тесты на каждое изменение. Встроенную инструкцию и правила доски сюда копировать не нужно."
                 rows={5}
-                readOnly={readOnly}
+                readOnly={locked}
                 aria-label="Инструкции роли"
                 onChange={(e) => onPatch({ systemPrompt: e.target.value }, true)}
               />
@@ -535,7 +554,7 @@ function RolePanel({
         </div>
       </div>
 
-      {!readOnly && <div className="roles-foot">
+      {!locked && <div className="roles-foot">
         {count !== undefined && (
           <span className="roles-hint">
             {count > 0 ? `Используется в задачах проекта: ${count}` : 'Задач на этой роли нет'}

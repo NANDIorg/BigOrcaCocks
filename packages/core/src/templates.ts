@@ -7,6 +7,7 @@ import type { AgentKind, BoardColumn, Role } from './types'
 import type { Workflow } from './workflow'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES } from './types.ts'
 import { defaultWorkflow, pipelineWorkflow } from './workflow.ts'
+import { stableJson } from './template-sections.ts'
 
 /** Режим разрешений Claude Code; тот же список, что `PermissionMode` в apps/desktop/src/shared/ipc.ts. */
 export type TemplatePermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -37,7 +38,8 @@ export interface ProjectTemplate {
   /** Одна строка в карточке выбора типа. */
   description?: string
   /**
-   * Встроенный шаблон из кода: только для чтения (его можно дублировать) и обновляется вместе с приложением,
+   * Встроенный шаблон из кода: только для чтения (его можно дублировать; без копии меняются лишь модель и усилие
+   * ролей — `isBuiltinModelEdit`) и обновляется вместе с приложением,
    * поэтому в projects.json не хранится.
    */
   builtin?: boolean
@@ -325,4 +327,31 @@ export const BUILTIN_TEMPLATES: readonly ProjectTemplate[] = builtinTemplates()
 /** Встроенный шаблон по id (свежая копия) или undefined. */
 export function builtinTemplate(id: string): ProjectTemplate | undefined {
   return builtinTemplates().find((t) => t.id === id)
+}
+
+/** Поля роли, которые можно менять у встроенного шаблона без «Дублировать»: модель и зависящее от неё усилие. */
+export const BUILTIN_EDITABLE_ROLE_FIELDS = ['model', 'effort'] as const
+
+/** Роль без полей, которые у встроенного шаблона правятся на месте. */
+function lockedRolePart(r: Role): Partial<Role> {
+  const rest: Partial<Role> = { ...r }
+  for (const k of BUILTIN_EDITABLE_ROLE_FIELDS) delete rest[k]
+  return rest
+}
+
+/**
+ * Можно ли сохранить `next` под id встроенного шаблона без его копии: название, описание и все разделы, кроме
+ * ролей, те же, а у ролей (тот же состав и порядок) отличаются только модель и усилие. Так «Настройки» дают
+ * сменить модели встроенного шаблона, не открывая его целиком — остальное правится через «Дублировать».
+ */
+export function isBuiltinModelEdit(
+  builtin: ProjectTemplate,
+  next: Pick<ProjectTemplate, 'title' | 'description' | 'settings'>
+): boolean {
+  if (next.title !== builtin.title || (next.description ?? '') !== (builtin.description ?? '')) return false
+  const { roles: from = DEFAULT_ROLES, ...restFrom } = builtin.settings
+  const { roles: to = DEFAULT_ROLES, ...restTo } = next.settings
+  if (stableJson(restFrom) !== stableJson(restTo)) return false
+  return from.length === to.length &&
+    from.every((r, i) => stableJson(lockedRolePart(r)) === stableJson(lockedRolePart(to[i])))
 }
