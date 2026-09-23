@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, defaultWorkflow, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution, type Workflow } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview, resolveHumanRequest } from './review'
@@ -413,6 +413,11 @@ function registerIpc(): void {
   ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   ipcMain.handle('projects:getAgentRules', (_e, id: string) => projects.agentRules(id))
   ipcMain.handle('projects:setAgentRules', (_e, id: string, text: string) => projects.setAgentRules(id, text))
+  ipcMain.handle('projects:setWorkflow', (_e, id: string, wf: Workflow | null) => projects.setWorkflow(id, wf))
+  ipcMain.handle('workflow:default', (_e, roles: Role[]) => {
+    if (!Array.isArray(roles)) throw new Error('дефолтный воркфлоу: роли должны быть массивом')
+    return defaultWorkflow(roles)
+  })
   ipcMain.handle('projects:getDefaults', () => projects.defaults())
   ipcMain.handle('projects:setDefaults', (_e, patch: Partial<ProjectDefaults>) => projects.setDefaults(patch ?? {}))
   ipcMain.handle('projects:applyDefaults', (_e, id: string) => projects.applyDefaults(id))

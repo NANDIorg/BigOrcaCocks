@@ -277,7 +277,8 @@ describe('миграция времени работы при загрузке',
     clock(t, 100 * MIN)
     const { store, saved } = load({
       runs: [{ id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', updatedAt: 0, activeMs: 7, activeSince: 0 }],
-      tasks: [oldTask('t', 'review', { startedAt: 0, activeMs: 42 })],
+      // stage — задача в review уже на этапе воркфлоу, иначе её мигрирует migrateStages.
+      tasks: [oldTask('t', 'review', { startedAt: 0, activeMs: 42, stage: { nodeId: 'review', visits: { review: 1 } } })],
       dispatches: [{ id: 'd1', taskId: 't', ptyId: 'p1', startedAt: 0, endedAt: 4 * MIN, outcome: 'done' }],
       requests: []
     })
