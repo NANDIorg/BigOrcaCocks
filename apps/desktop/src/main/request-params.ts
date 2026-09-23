@@ -51,6 +51,18 @@ function findOption<T extends RequestOption>(options: T[], key: string): T | und
 }
 
 /**
+ * `--option` в `request resolve`: CLI считает флаг повторяемым (он нужен `ask`) и присылает массив даже
+ * для одного вхождения — принимаем и строку, и массив из одного элемента.
+ */
+function singleOption(v: unknown): string | undefined {
+  if (v === undefined) return undefined
+  const values = Array.isArray(v) ? v : [v]
+  if (values.length > 1) throw new Error('--option — только один вариант (id или метка)')
+  if (typeof values[0] !== 'string') throw new Error('--option требует значения')
+  return values[0]
+}
+
+/**
  * Решение запроса из флагов `request resolve`: ровно одно из --option/--text (можно вместе: вариант +
  * комментарий), --accept [--decision], --clarify, --restart, --dismiss.
  */
@@ -60,7 +72,7 @@ export function resolutionFromParams(request: Pick<HumanRequest, 'id' | 'options
     if (v === true) throw new Error(`--${key} требует значения`)
     return str(v)
   }
-  const option = text('option')
+  const option = singleOption(params.option)
   const answer = text('text')
   const decision = text('decision')
   const clarify = text('clarify')

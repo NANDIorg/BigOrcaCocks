@@ -193,7 +193,8 @@ interface GlobalTask {
   activityAt: number         // max(updatedAt, updatedAt подзадач) — «время» на карточке
   closedAt?: number          // run_done или ручное закрытие
   finishedAt?: number        // координатор прислал runs finish
-  coordinatorPtyId?: string  // живость — по реестру терминалов (TerminalInfo.runId)
+  coordinatorPtyId?: string  // живость — по реестру терминалов (TerminalInfo.runId); в global list/get —
+                             // вычисляемое coordinatorAlive (isAlive в реестре PTY, в store не хранится)
   coordinatorAgent?: AgentKind
   waiting: number            // pending-запросы к человеку этого прогона (HumanRequest)
   progress: {
@@ -232,8 +233,8 @@ interface GlobalTask {
 
 | CLI | Метод сокета | Параметры | Результат |
 |---|---|---|---|
-| `global list` | `global.list` | — | `GlobalTask[]` |
-| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` |
+| `global list` | `global.list` | — | `GlobalTask[]` + `coordinatorAlive` |
+| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` |
 | `global create [--title] [--description] [--status <col>]` | `global.create` | `title?`, `description?`, `status?` | `GlobalTask` |
 | `global update --global <id> [--title] [--description]` | `global.update` | `global`, `title?`, `description?` | `GlobalTask` |
 | `global move --global <id> --status <col>` | `global.move` | `global`, `status` | `GlobalTask` |
