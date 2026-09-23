@@ -64,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, workflow?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, workflow?, ... }` — прогон:
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -72,6 +72,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     открыт, пока карточка показана в `kind=in_progress` (в «Нужен ответ» стоит). Пересчёт — `syncRunActiveTime` в
     `commit()`, миграция — `migrateRunActiveTime`. В `GlobalTask` — `ownActiveMs`/`ownActiveSince`, рядом сумма
     подзадач `subtasksActiveMs`/`subtasksActiveSince` (`docs/nested-kanban.md`, «Тип GlobalTask»).
+  - `priority` — приоритет глобальной задачи, та же шкала `TaskPriority`, что у `Task.priority`. `addRun` ставит
+    `normal`, `createGlobalTask`/`updateGlobalTask` принимают и проверяют (`assertPriority`), миграция —
+    `migrateRunPriority`. В `GlobalTask.priority` всегда есть: `toGlobalTask` читает нет поля как `normal`.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
@@ -199,7 +202,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Сокет**: `roles.list` → роли плюс `agentEnabled` (включён ли агент роли в проекте);
   `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?, priority?}` → `store.editTask`
   (без `--title`/`--spec`/`--priority` — ошибка; см. «Редактирование задачи»). `task.create` и `global.add-task`
-  принимают `priority` (значение проверяет store; `--priority` без значения — ошибка сокета).
+  принимают `priority` (значение проверяет store; `--priority` без значения — ошибка сокета). Так же
+  `global.create` и `global.update` — приоритет самой глобальной задачи (`store.createGlobalTask`/`updateGlobalTask`).
 
 ## Воркфлоу: модель (`packages/core/src/workflow.ts`)
 
@@ -842,7 +846,8 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
   и сокета `task.update` (CLI `orca-board task update`): правка названия/описания задачи в колонке
   `kind=in_progress` отвергается с ошибкой (воркер уже получил задание в промпт), пустое название после trim — тоже.
   Приоритет меняется в любой колонке: в промпт он не попадает. Отдельного IPC для приоритета нет — `tasks:update`
-  и `tasks:create`/`globalTasks:createTask` принимают `priority`. Внутри — `updateTask`,
+  и `tasks:create`/`globalTasks:createTask` принимают `priority`; приоритет самой глобальной задачи —
+  через `globalTasks:create`/`globalTasks:update` (`GlobalTaskInput`/`GlobalTaskPatch`). Внутри — `updateTask`,
   так что `updatedAt` и `board:changed` идут как обычно.
 - **Автозакрытие**: main в `projects.onChange` (любой `commit` store) вызывает `closeDoneWorkers`:
   у задач в колонке `kind=done` закрываются dispatch'и (`store.closeDispatches` ставит `endedAt`/`outcome=unknown`

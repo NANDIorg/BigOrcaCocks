@@ -54,17 +54,22 @@ export interface TaskPatch {
   priority?: TaskPriority
 }
 
-/** Новая глобальная задача: нужно название или описание; status — id колонки (по умолчанию kind=backlog). */
+/**
+ * Новая глобальная задача: нужно название или описание; status — id колонки (по умолчанию kind=backlog),
+ * priority — по умолчанию normal.
+ */
 export interface GlobalTaskInput {
   title?: string
   description?: string
   status?: string
+  priority?: TaskPriority
 }
 
-/** Правка глобальной задачи: название (непустое) и/или описание. */
+/** Правка глобальной задачи: название (непустое), описание и/или приоритет (в любой колонке). */
 export interface GlobalTaskPatch {
   title?: string
   description?: string
+  priority?: TaskPriority
 }
 
 /** Подзадача внутри глобальной задачи. Без roleId — единственная роль проекта, иначе ошибка. */

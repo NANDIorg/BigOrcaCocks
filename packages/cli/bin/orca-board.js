@@ -31,11 +31,13 @@ const HELP = `orca-board — управление доской агентов
   rules set [--role <id>] --file rules.md   то же из файла (markdown); применяется при следующем запуске агента
 
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
-  global list                             карточки: название, описание, статус-колонка, прогресс подзадач,
+  global list                             карточки: название, описание, статус-колонка, priority, прогресс подзадач,
                                           coordinatorAlive — жив ли терминал координатора
   global get [--global <id>]              одна карточка (с coordinatorAlive)
   global create [--title "..."] [--description "..."] [--status <id колонки>]
-  global update --global <id> [--title "..."] [--description "..."]
+                [--priority urgent|high|normal|low]   приоритет глобальной задачи, по умолчанию normal
+  global update --global <id> [--title "..."] [--description "..."] [--priority urgent|high|normal|low]
+                                          приоритет меняется в любой колонке; подзадач не касается
   global move --global <id> --status <id колонки>    только backlog/in_progress/done; подзадачи не трогает; в done — закрывает прогон (run_done)
   global delete --global <id> [--cascade]  с подзадачами — только --cascade (удаляются вместе с ней)
   global tasks [--global <id>]            подзадачи только этой глобальной задачи
