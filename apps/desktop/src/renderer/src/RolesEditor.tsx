@@ -73,7 +73,7 @@ function newRoleId(): string {
   return `role_${Date.now().toString(36)}`
 }
 
-/** Раздел «Роли» («О проекте» и дефолт для новых проектов): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
+/** Вкладка «Роли» типа задачи («Настройки» → «Типы задач»): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
 export function RolesEditor({
   storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, executorOnly = false, ofTaskType = false, onSave
 }: Props): React.JSX.Element {

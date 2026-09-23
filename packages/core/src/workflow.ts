@@ -370,7 +370,7 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       } else if (t.kind === 'role') {
         if (t.roleIds.length === 0) errors.push({ message: `${nodeLabel(n)}: в условии не выбрана ни одна роль`, nodeId: n.id })
         for (const r of t.roleIds) {
-          if (!roleById.has(r)) errors.push({ message: `${nodeLabel(n)}: в условии роль «${r}», которой нет в проекте`, nodeId: n.id })
+          if (!roleById.has(r)) errors.push({ message: `${nodeLabel(n)}: в условии роль «${r}», которой нет в типе задачи`, nodeId: n.id })
         }
       } else if (t.kind === 'files') {
         errors.push({ message: `${nodeLabel(n)}: условие по файлам ветки пока не поддерживается`, nodeId: n.id })

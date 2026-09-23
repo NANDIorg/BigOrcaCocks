@@ -157,6 +157,7 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
     projectId,
     permissionMode: type.permissionMode,
     roles: type.roles,
+    typeTitle: type.title,
     agentRules: type.agentRules
   }
 }
@@ -206,9 +207,9 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
   const task0 = p.store.getTask(taskId)
   if (task0) {
     if (p.store.columnKind(task0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
-    const roles = projects.roles(p.id, task0.runId)
-    const role = roles.find((r) => r.id === task0.roleId)
-    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task0.roleId, roles)}`)
+    const type = projects.resolveRun(p.id, task0.runId)
+    const role = type.roles.find((r) => r.id === task0.roleId)
+    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task0.roleId, type)}`)
     assertAgentUsable(projectAgents(p.id), role.agent)
     // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
     closeTaskWorkers(p.store, taskId)
@@ -293,7 +294,7 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
   assistantPty = null
   // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
   const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
-  const { ptyId } = startAssistant({ socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles }, cols, rows)
+  const { ptyId } = startAssistant({ socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title }, cols, rows)
   assistantPty = ptyId
   return { ptyId }
 }
@@ -492,7 +493,7 @@ function registerIpc(): void {
   ipcMain.handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; roleId?: string; priority?: TaskPriority }) => {
     const p = resolveProject()
     // «Входящие» — по типу проекта по умолчанию.
-    const role = pickRole(projects.roles(p.id), projectAgents(p.id), input.roleId)
+    const role = pickRole(projects.resolveRun(p.id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent })
   })
   ipcMain.handle('tasks:move', (_e, id: string, status: string) => projects.activeStore().moveTask(id, status))
@@ -517,7 +518,7 @@ function registerIpc(): void {
   ipcMain.handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
     if (!input?.title?.trim()) throw new Error('название подзадачи не может быть пустым')
     const p = resolveProject()
-    const role = pickRole(projects.roles(p.id, id), projectAgents(p.id), input.roleId)
+    const role = pickRole(projects.resolveRun(p.id, id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
   })
   ipcMain.handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
@@ -625,7 +626,6 @@ app.whenReady().then(() => {
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
         agents: () => projectAgents(p.id),
-        roles: (runId) => projects.roles(p.id, runId),
         resolveRun: (runId) => projects.resolveRun(p.id, runId),
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),
         runType: (typeId) => projects.runType(p.id, typeId),

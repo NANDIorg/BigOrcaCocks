@@ -45,7 +45,6 @@ function fakeDeps(): ProjectDeps {
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
-    roles: () => roles,
     resolveRun: () => ({ ...resolveTaskType(builtinTaskType('general')!), roles, workflow: defaultWorkflow(roles), source: 'default' }),
     taskTypes: () => ({ taskTypes: builtinTaskTypes(), defaultTypeId: 'general' }),
     runType: () => runTypeInput(builtinTaskType('general')!),
@@ -264,14 +263,14 @@ describe('удалённая системная роль', () => {
     roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
     const res = await call('task.create', { title: 'Ревью', role: 'reviewer' })
     assert.equal(res.ok, false)
-    assert.match(res.error!, /роли «reviewer» нет в проекте\. Роли: coordinator, assistant, developer, qa\./)
+    assert.match(res.error!, /роли «reviewer» нет в типе задачи «Программирование»\. Роли типа: coordinator, assistant, developer, qa \(orca-board roles list\)\./)
     assert.match(res.error!, /Вернуть системные роли/)
     assert.equal(store.listTasks().length, 0)
   })
 
   it('пользовательская роль — без подсказки про системные', async () => {
     const res = await call('task.create', { title: 'X', role: 'role_nope' })
-    assert.equal(res.error, 'роли «role_nope» нет в проекте. Роли: coordinator, assistant, developer, reviewer, qa.')
+    assert.equal(res.error, 'роли «role_nope» нет в типе задачи «Программирование». Роли типа: coordinator, assistant, developer, reviewer, qa (orca-board roles list). Роли типа меняются в «Настройки» → «Типы задач».')
   })
 
   it('worker start задачи на удалённой роли — понятная ошибка, воркер не запускается', async () => {
@@ -279,7 +278,7 @@ describe('удалённая системная роль', () => {
     roles = DEFAULT_ROLES.filter((r) => r.id !== 'qa')
     const res = await call('worker.start', { task: task.id })
     assert.equal(res.ok, false)
-    assert.match(res.error!, /^воркер не запустится: роли «qa» нет в проекте/)
+    assert.match(res.error!, /^воркер не запустится: роли «qa» нет в типе задачи «Программирование»/)
     assert.deepEqual(calls, [])
   })
 })

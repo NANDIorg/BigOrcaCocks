@@ -1230,7 +1230,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .wf-toolbar .icon-btn svg { width: 17px; height: 17px; }
 .wf-toolbar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--chip); }
 
-/* «О проекте → Воркфлоу» (about/WorkflowSection.tsx) и инспектор ноды (WorkflowInspector.tsx) */
+/* «Настройки → Типы задач → Воркфлоу» (settings/TaskTypeWorkflow.tsx) и инспектор ноды (WorkflowInspector.tsx) */
 .wf-section { display: flex; flex-direction: column; gap: 12px; }
 .wf-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
 .wf-count { color: var(--muted); }
