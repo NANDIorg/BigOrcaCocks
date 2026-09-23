@@ -4,6 +4,7 @@
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
 import type { BoardColumn, ColumnKind, HumanRequest, Run, Task } from './types'
+import { taskActiveTime } from './active-time.ts'
 
 /** Название «Входящих» — служебной глобальной задачи для задач без глобальной. */
 export const INBOX_TITLE = 'Входящие'
@@ -57,6 +58,13 @@ export interface GlobalTask {
   coordinatorPtyId?: string
   coordinatorAgent?: Run['coordinatorAgent']
   progress: GlobalTaskProgress
+  /**
+   * Время работы глобальной задачи — сумма времени работы её подзадач (`taskActiveTime`): закрытые отрезки, мс.
+   * Параллельные подзадачи складываются — это трудозатраты агентов, а не календарное время.
+   */
+  activeMs: number
+  /** Начала текущих отрезков подзадач в работе: пусто — время стоит; длительность — `globalActiveDuration`. */
+  activeSince: number[]
 }
 
 /** Название карточки: заданное, иначе первая непустая строка описания (обрезанная), иначе id. */
@@ -84,6 +92,25 @@ export function globalTaskProgress(
     if (kind === 'done') progress.done += 1
   }
   return progress
+}
+
+/** Время работы подзадач прогона: сумма закрытых отрезков и начала идущих. */
+export function globalActiveTime(runId: string, tasks: readonly Task[]): Pick<GlobalTask, 'activeMs' | 'activeSince'> {
+  let activeMs = 0
+  const activeSince: number[] = []
+  for (const t of tasks) {
+    if (t.runId !== runId) continue
+    const a = taskActiveTime(t)
+    if (!a) continue
+    activeMs += a.closedMs
+    if (a.since !== undefined) activeSince.push(a.since)
+  }
+  return { activeMs, activeSince }
+}
+
+/** Длительность глобальной задачи на момент now: закрытое время подзадач плюс идущие отрезки. */
+export function globalActiveDuration(g: Pick<GlobalTask, 'activeMs' | 'activeSince'>, now: number): number {
+  return g.activeSince.reduce((sum, since) => sum + Math.max(0, now - since), g.activeMs)
 }
 
 /** Колонки проекта, которые показывает глобальный канбан (порядок проекта сохраняется), включая needs_input. */
@@ -168,6 +195,7 @@ export function toGlobalTask(
     coordinatorPtyId: run.coordinatorPtyId,
     coordinatorAgent: run.coordinatorAgent,
     progress: globalTaskProgress(run.id, tasks, columnKind),
+    ...globalActiveTime(run.id, tasks),
     waiting
   }
 }

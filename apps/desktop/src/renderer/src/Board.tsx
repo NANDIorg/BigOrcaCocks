@@ -8,7 +8,7 @@ import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { RunBadge, runShortLabel, type RunFilter } from './runs'
 import { BOARD_SORT_KEY, SORT_OPTIONS, compareTasks, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
-import { formatDuration, taskDuration } from './duration'
+import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
 
 interface Props {
@@ -68,9 +68,20 @@ function subtitle(task: Task, role: Role | undefined): string {
 }
 
 /** Живой счётчик задачи в работе: таймер только у таких карточек, доска целиком не перерисовывается. */
-function LiveDuration({ startedAt }: { startedAt: number }): React.JSX.Element {
+function LiveDuration({ task }: { task: Task }): React.JSX.Element {
   const now = useNow()
-  return <div className="stamp">⏱ {formatDuration(taskDuration({ startedAt }, now) ?? 0)}</div>
+  return <div className="stamp" title="Время работы: идёт, пока задача в работе">⏱ {formatDuration(taskDuration(task, now) ?? 0)}</div>
+}
+
+/**
+ * Время работы карточки не из done: в работе — живой счётчик, иначе застывшее накопленное (⏸).
+ * Не бывала в работе — ничего.
+ */
+function CardDuration({ task }: { task: Task }): React.JSX.Element | null {
+  if (taskTicking(task)) return <LiveDuration task={task} />
+  const ms = taskDuration(task, 0)
+  if (ms === undefined) return null
+  return <div className="stamp" title="Время работы: стоит, пока задача не в работе">⏸ {formatDuration(ms)}</div>
 }
 
 export function Board(props: Props): React.JSX.Element {
@@ -251,12 +262,12 @@ export function Board(props: Props): React.JSX.Element {
                       {column.kind === 'done' && task.doneAt !== undefined ? (
                         <div className="stamp">
                           Завершено: {formatStamp(task.doneAt)}
-                          {task.startedAt !== undefined && <> · за {formatDuration(taskDuration(task, task.doneAt) ?? 0)}</>}
+                          {taskDuration(task, task.doneAt) !== undefined && <> · за {formatDuration(taskDuration(task, task.doneAt) ?? 0)}</>}
                         </div>
                       ) : sort === 'updated' ? (
                         <div className="stamp">Обновлено: {formatStamp(task.updatedAt)}</div>
                       ) : null}
-                      {task.startedAt !== undefined && task.doneAt === undefined && <LiveDuration startedAt={task.startedAt} />}
+                      {task.doneAt === undefined && <CardDuration task={task} />}
                       {task.feedback && column.kind !== 'review' && (
                         <div className="card-feedback" title={task.feedback}>↩ {task.feedback}</div>
                       )}

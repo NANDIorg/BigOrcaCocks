@@ -22,7 +22,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, doneAt? }`.
+- `Task { id, title, spec, status, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль проекта (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -30,6 +30,17 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `updateTask` его не меняет. Без прогона задача попадает во «Входящие» (`docs/nested-kanban.md`).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
+  - **Время работы** (`activeMs`, `activeSince`, `packages/core/src/active-time.ts`) копится только пока задача в
+    колонке `kind=in_progress`: `setStatus` → `trackActiveTime` открывает отрезок при входе (`activeSince = now`,
+    `activeMs ??= 0`) и прибавляет его к `activeMs` при выходе в любую другую колонку (review, needs_input, ready,
+    done, backlog — перенос, `done`, падение/остановка воркера, reopen). Повторный вход продолжает от набранного.
+    Нет обоих полей — задача не бывала в работе. `updateTask` их не принимает. Показ — `taskActiveTime` +
+    `activeDuration` (renderer: `taskDuration`/`taskTicking` в `duration.ts`): живой тик только при `activeSince`,
+    иначе застывшее значение. Задача без полей от старого main — прежний расчёт от `startedAt` до `doneAt`/now.
+    Миграция при загрузке (`migrateActiveTime`, до `closeStaleDispatches`): `activeMs` = сумма закрытых dispatch
+    задачи; задача в `in_progress` получает `activeSince` = начало живого dispatch (нет — `updatedAt`), и
+    `closeStaleDispatches` закрывает этот отрезок при возврате в ready. Ограничение: dispatch, не переживший
+    перезапуск приложения, закрывается моментом загрузки — время простоя приложения попадает в отрезок.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель

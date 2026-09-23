@@ -203,11 +203,18 @@ interface GlobalTask {
     byStatus: Record<string, number>          // по id колонки, только непустые
     byKind: Partial<Record<ColumnKind, number>> // по kind колонки
   }
+  activeMs: number           // время работы: сумма закрытых отрезков подзадач (Task.activeMs), мс
+  activeSince: number[]      // начала идущих отрезков подзадач в работе; пусто — время стоит
 }
 ```
 
+Время работы глобальной задачи — сумма времени работы её подзадач (`globalActiveTime`, длительность —
+`globalActiveDuration(g, now)`): тикает, только пока хоть одна подзадача в `kind=in_progress`, параллельные
+подзадачи складываются (трудозатраты агентов, а не календарное время). Статус самой глобальной задачи и
+`createdAt`/`closedAt` на время не влияют.
+
 Чистые функции для renderer (без IPC): `toGlobalTasks(runs, tasks, columns, requests?)`,
-`toGlobalTask`, `globalTaskProgress`, `globalTaskTitle`, `isPendingRequest`, `pendingRequestsOf`, `hasPendingRequest`,
+`toGlobalTask`, `globalTaskProgress`, `globalActiveTime`, `globalActiveDuration`, `globalTaskTitle`, `isPendingRequest`, `pendingRequestsOf`, `hasPendingRequest`,
 `INBOX_TITLE` — экспортируются из `@orca-board/core`. Без `requests` `waiting` = 0.
 Живой UI может строить карточки из `board:changed` (`snapshot.runs` + `snapshot.tasks` + `snapshot.requests`) без лишних запросов.
 

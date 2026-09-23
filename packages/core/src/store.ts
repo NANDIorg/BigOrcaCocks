@@ -7,6 +7,7 @@ import {
   ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, MAX_ANSWER_LENGTH, REQUEST_ACTIONS, normalizeOptions
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
+import { trackActiveTime } from './active-time.ts'
 import {
   globalStoredColumns, globalColumnKind, globalTaskStatus, toGlobalTask, toGlobalTasks,
   type GlobalColumnKind, type GlobalTask
@@ -81,10 +82,12 @@ export class TaskStore {
       snap.runs?.forEach((r) => this.runs.set(r.id, r))
       snap.requests?.forEach((r) => this.requests.set(r.id, r))
       this.events = snap.events ?? []
+      // До closeStaleDispatches: задача «В работе» от старого кода должна войти в него с открытым отрезком.
+      const active = this.migrateActiveTime()
       const migrated = this.migrateGlobalTasks()
       const stale = this.closeStaleDispatches()
       const requests = this.migrateRequests(snap.requests === undefined)
-      if (stale || requests || migrated) this.persistence?.save(this.snapshot())
+      if (active || stale || requests || migrated) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -120,6 +123,29 @@ export class TaskStore {
         } else this.setStatus(task, this.columnId('ready'))
         changed = true
       }
+    }
+    return changed
+  }
+
+  /**
+   * Время работы у задач от кода до `activeMs`/`activeSince`: сумма закрытых запусков воркера (dispatch) —
+   * лучшее, что известно о том, сколько задача была в работе. Задача в kind=in_progress получает открытый
+   * отрезок от начала живого запуска (нет его — от updatedAt, момента переноса). Не бывавшие в работе
+   * (ни startedAt, ни запусков) остаются без полей — «не запускалась». Возвращает true, если что-то поменялось.
+   */
+  private migrateActiveTime(): boolean {
+    let changed = false
+    for (const task of this.tasks.values()) {
+      if (task.activeMs !== undefined || task.activeSince !== undefined) continue
+      const runs = [...this.dispatches.values()].filter((d) => d.taskId === task.id)
+      const inProgress = this.isKind(task, 'in_progress')
+      if (!inProgress && task.startedAt === undefined && runs.length === 0) continue
+      task.activeMs = runs.reduce((sum, d) => sum + (d.endedAt !== undefined ? Math.max(0, d.endedAt - d.startedAt) : 0), 0)
+      if (inProgress) {
+        const live = runs.filter((d) => d.endedAt === undefined).sort((a, b) => b.startedAt - a.startedAt)[0]
+        task.activeSince = live?.startedAt ?? task.updatedAt
+      }
+      changed = true
     }
     return changed
   }
@@ -221,9 +247,13 @@ export class TaskStore {
     return this.columnKind(task.status) === kind
   }
 
-  /** Все смены статуса идут здесь: следим за doneAt при входе/выходе из колонки done. */
+  /**
+   * Все смены статуса идут здесь: следим за doneAt при входе/выходе из колонки done и за временем работы
+   * (отрезок открыт, пока задача в kind=in_progress, — `trackActiveTime`).
+   */
   private setStatus(task: Task, status: TaskStatus): void {
     task.status = status
+    trackActiveTime(task, this.columnKind(status) === 'in_progress', Date.now())
     if (this.columnKind(status) === 'done') {
       // Сделанной задаче ждать от человека нечего (перенесли вручную, приняли).
       this.cancelRequests((r) => r.taskId === task.id)
@@ -298,6 +328,9 @@ export class TaskStore {
     const task = this.mustTask(id)
     const { status, ...rest } = patch as Partial<Task>
     delete rest.runId
+    // Время работы ведёт только setStatus: правка не должна сбить накопленное.
+    delete rest.activeMs
+    delete rest.activeSince
     Object.assign(task, rest, { updatedAt: Date.now() })
     if (status !== undefined) this.setStatus(task, status)
     this.promoteReady()
