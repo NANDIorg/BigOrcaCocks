@@ -4,7 +4,7 @@
 
 ```
 Electron main ───── node-pty ───── PTY: claude (координатор)
-   │                                   └─ bash: orca-board task-create ...
+   │                                   └─ bash: orca-board task create ...
    │                                          │ unix socket (win32: named pipe) / JSON-RPC
    ├── JSON (tasks, runs, events) ◄───────────┘
    ├── node-pty ───── PTY: claude (воркер задачи #12, worktree ../wt/task-12)
@@ -49,14 +49,21 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
-- `Question { id, taskId, dispatchId?, question, options[], answer?, forHuman?, createdAt, answeredAt? }` — `forHuman`:
-  координатор передал вопрос человеку (`question forward`).
+- `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
+  вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
+  адресован человеку и по нему есть `HumanRequest`. Ответить можно один раз, у запуска — не больше одного открытого вопроса.
+- `HumanRequest { id, runId, taskId, dispatchId?, kind, status, title, body?, options[], questionId?, resolution?, createdAt, resolvedAt? }` —
+  запрос к человеку: `kind` `question` | `answer` | `escalation`, `status` `pending` | `resolved` | `cancelled`.
+  Единственный источник «ждёт человека» (колонка «Нужен ответ», Инбокс, уведомления); модель, переходы и события —
+  `docs/human-requests.md`. Хранится в `StoreSnapshot.requests`.
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
-  типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `answer_accepted`, `run_done`.
-  В `worker_done`/`answer_accepted` `answer` — последнее поле, обрезан до 2000 символов (`answerTruncated: true`);
-  полный ответ и `decision` — `orca-board task answer --task <id>`.
+  типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `answer_accepted`, `run_done`,
+  `request_created`, `request_resolved`, `answer_clarified`. Payload короткие: в `worker_done`/`answer_accepted` `answer` —
+  последнее поле, обрезан до 2000 символов (`answerTruncated: true`), полный ответ и `decision` — `orca-board task answer --task <id>`;
+  тексты в `question`/`request_created`/`answer_clarified` — до 300 символов, целиком — `question get` / `request get`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
-  `in_progress` при старте воркера; `review` после `done`; `needs_input` при вопросе или выходе PTY без `done`.
+  `in_progress` при старте воркера; `review` после `done`; `needs_input` — пока у задачи есть `pending` `HumanRequest`
+  (вопрос к человеку, ответ для человека, выход PTY без `done`); решили последний — обратно в поток.
   При загрузке снапшота dispatch без `endedAt` закрываются (`unknown`), их задачи из `in_progress` → `ready`.
 
 ## Роли и колонки (`src/main/projects.ts`)
@@ -192,7 +199,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   одну JSON-строку события на строку вывода и сам не завершается; SIGINT/SIGTERM → код 0,
   ошибка/разрыв → код 1. `--follow` важнее `--wait`.
 - **Monitor** (`skills/coordinator.md`, шаг 3): основной путь для Claude Code — инструмент Monitor с командой
-  `orca-board check --follow --types worker_done,question,escalation,task_ready,question_answered,run_done`
+  `orca-board check --follow --types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified`
   и `timeout_ms: 1800000`; каждое уведомление монитора = одно событие, после таймаута монитор ставится заново.
   На `run_done` координатор останавливает монитор, пишет сводку и вызывает `runs finish`. Исключение —
   раздел «Повторный запуск»: если все подзадачи уже в done и новых не нужно, `run_done` не придёт, и
@@ -209,7 +216,12 @@ orca-board agents list                      # [{id,title,installed,enabled,versi
 orca-board roles list                       # [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator]
-orca-board question forward --question <id>   # вопрос воркера — человеку (глобальная задача → «Нужен ответ»)
+orca-board question answer --question <id> --answer "..."
+orca-board question forward --question <id> [--note "..."]   # вопрос воркера — человеку (запрос в Инбокс, глобальная → «Нужен ответ»)
+orca-board question get --question <id>     # вопрос целиком: варианты с пояснениями, контекст, ответ
+orca-board request list [--run <id>] [--all]   # запросы к человеку (docs/human-requests.md)
+orca-board request get --request <id>
+orca-board task answer --task <id>          # полный ответ задачи-ответа и decision
 orca-board task move --task <id> --status <id колонки>
 orca-board task update --task <id> [--title ...] [--spec ...]   # не для задач в in_progress
 orca-board worker start --task <id>
@@ -220,10 +232,9 @@ orca-board runs close [--run <id>]          # закрыть прогон вру
 orca-board runs finish [--run <id>]         # координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал)
 orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md
 orca-board worker read --dispatch <id>
-orca-board gate create --task <id> --question "..." --options a,b
 ```
 
-`--run` у `task create`, `check`, `runs close` и `runs finish` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
+`--run` у `task create`, `check`, `request list`, `runs close` и `runs finish` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
 `params.run`: задачи (в т.ч. ревью), созданные координатором, наследуют его прогон
 (`packages/cli/bin/orca-board.js`). `runs close`/`runs finish` без прогона — ошибка до обращения к сокету.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
@@ -234,8 +245,13 @@ orca-board gate create --task <id> --question "..." --options a,b
 ```
 orca-board done --summary "..." --files a.ts,b.ts
 orca-board done --summary "..." --answer-file answer.md   # задача-ответ: CLI читает файл, шлёт текст в params.answer
-orca-board ask --question "..." --options a,b      # блокирует до ответа
+orca-board ask --question "..." [--option "метка|пояснение"]... [--recommend <номер|метка>] [--context-file why.md]
+                                                   # блокирует до ответа; оборвался — повтор той же команды переподключается
+orca-board request get --request <id>              # забрать ответ по пинку «[orca] на вопрос … ответили: …»
 ```
+
+`--option` повторяемый (без split по запятой, `|` отделяет пояснение), старое `--options a,b` работает.
+`--context-file` читает CLI и шлёт текст в `params.context`. Подробно — `docs/human-requests.md`.
 
 ## Как воркер получает контекст
 
@@ -529,11 +545,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:setPermissionMode`, `projects:setEnabledAgents`, `projects:setRoles`, `projects:setColumns`,
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
-  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `pty:spawn`;
+  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
-  `projects:focus` (клик по уведомлению), `pty:data:<id>`, `pty:exit:<id>`.
+  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
 - В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.terminals.{list, onChanged}`;
   у `window.orca.worker` остался только `start`.
 
@@ -555,6 +571,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт) | `Run` с `finishedAt` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
+| `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу |
+| `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
+| `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
+| `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
+| `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `restart`, `dismiss` | `{request, worker?, startError?}` |
 
 ## Разрешения Claude Code
 
@@ -573,6 +594,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - `review reject --feedback`: задача → колонка `kind=ready`, `task.feedback` добавляется в промпт при следующем старте.
 - Задача-ответ (`answerFor`): `review accept` ничего не коммитит и не сливает — только удаляет worktree и ветку;
   `reject` — уточнение, при перезапуске промпт получает последний `Dispatch.answer` и уточнение (`workerTaskPrompt`).
+  Для `answerFor: 'human'` приёмка и уточнение — решение запроса `answer` (`resolveHumanRequest`: «Уточнить» сразу
+  стартует воркера, событие `answer_clarified`), см. `docs/human-requests.md`.
 - Ответ рендерится в `TaskModal` (`AnswerBlock`, `Markdown.tsx`: `marked` + `DOMPurify`). Кликабельны только
   `http(s)`-ссылки (открываются во внешнем браузере); остальные схемы и относительные пути — без `href`,
   чтобы `shell.openExternal` не получил `file://` из текста агента.
@@ -640,8 +663,10 @@ UI работает с активным проектом; агенты полу�
 
 ## Уведомления
 
-`ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification`
-для `question`, `escalation`, `worker_done` (в подзаголовке — название колонки задачи).
+`ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification` по `notifyKind` (`src/main/notify.ts`):
+всё, что ждёт человека, — только по `request_created` (вопрос / ответ готов / эскалация; клик открывает Инбокс
+на запросе, `requests:focus`); кроме него — `escalation` с `stuck: true`, `worker_done` рабочей задачи и `run_done`.
+Событие `question`, пока на него отвечает координатор, человека не дёргает (`docs/human-requests.md`).
 Уведомления работают и при закрытом окне (фоновый режим): `notify` живёт в main и от окна не зависит.
 Клик по уведомлению — `showWindow()` (развернуть существующее окно или создать новое) и `projects:focus <projectId>`
 (renderer делает проект активным). Если окно только что создано или ещё грузится, `projects:focus` шлётся

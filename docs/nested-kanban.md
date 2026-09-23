@@ -7,8 +7,8 @@
 Локальный канбан подзадач показывает все колонки проекта; **глобальный — колонки `kind` backlog,
 in_progress, needs_input и done** (`GLOBAL_BOARD_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`).
 Хранится карточка только в backlog / in_progress / done (`GLOBAL_COLUMN_KINDS`, `globalStoredColumns`);
-needs_input — **вычисляемая** колонка: там карточка, пока подзадачи ждут человека (см. «Ответы и ожидание
-человека»). Готовы / Ревью (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
+needs_input — **вычисляемая** колонка: там карточка, пока у прогона есть `pending`-запросы к человеку
+(см. «Ответы и ожидание человека»). Готовы / Ревью (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
 
 ## Модель: глобальная задача = прогон (`Run`)
 
@@ -88,63 +88,69 @@ needs_input — **вычисляемая** колонка: там карточк
 
 ## Ответы и ожидание человека
 
+Всё, что ждёт человека, — запрос `HumanRequest` со статусом `pending` (модель, таблица переходов и события —
+`docs/human-requests.md`). Три вида: вопрос воркера (`question`), сданный ответ задачи-ответа (`answer`) и воркер,
+вышедший без `done` (`escalation`). Адресат фиксируется при создании запроса и не пересчитывается от того,
+жив ли сейчас координатор.
+
 **Задача-ответ** (`Task.answerFor: 'human' | 'coordinator'`) — подзадача, чей результат не код, а текст:
 «посмотри», «разберись», «предложи». Создаётся `task create --answer-for …` / `global add-task --answer-for …`,
 из UI — выбором «Результат: ответ для меня» (`answerFor: 'human'`).
 - Воркер получает в промпте блок «Результат — ответ, а не код» (`workerTaskPrompt`) и сдаёт
   `done --summary "..." --answer-file <файл.md>`: CLI читает файл и шлёт текст в `params.answer`.
   Без ответа `finishDispatch` — ошибка; предел — `MAX_ANSWER_LENGTH` (200 000 символов).
-  Ответ хранится в `Dispatch.answer`, событие `worker_done` несёт `answerFor` и `answer`. В событии
-  `answer` — последнее поле и обрезан до `EVENT_ANSWER_LIMIT` (2000 символов) с `answerTruncated: true`:
-  строка события в мониторе координатора обрезается. Полный текст — `orca-board task answer --task <id>`
-  (`store.taskAnswer`: ответ последнего dispatch и `decision` из последнего `answer_accepted`).
-- `answerFor: 'coordinator'` — координатор читает `answer` из события и сам делает `review accept`.
-  `answerFor: 'human'` — координатор ничего не делает; человек в `TaskModal` видит ответ (markdown) и
-  **принимает** (`review accept`: у задачи-ответа ничего не сливается, worktree и ветка удаляются —
-  `src/main/review.ts`) или **уточняет** (`review reject` + перезапуск воркера; промпт получает прошлый
-  ответ и уточнение).
+  Ответ хранится в `Dispatch.answer`, событие `worker_done` несёт `answerFor` и `answer` — последним полем,
+  обрезанным до `EVENT_ANSWER_LIMIT` (2000 символов) с `answerTruncated: true`: строка события в мониторе
+  координатора обрезается. Полный текст — `orca-board task answer --task <id>` (`store.taskAnswer`).
+- `answerFor: 'coordinator'` — задача уходит в review, координатор читает ответ и сам делает `review accept`.
+- `answerFor: 'human'` — `finishDispatch` создаёт запрос `answer` (`body` — ответ), задача в `kind=needs_input`,
+  событие `request_created` идёт следом за `worker_done`. Координатор ничего не делает. Человек **принимает**
+  (`accept`, необязательное «Решение / что делать дальше» — `decision`) или **уточняет** (`clarify`).
 - Ревью кода задаче-ответу не нужно: ревьюера координатор не создаёт (`skills/coordinator.md`).
 
-**Вопрос человеку.** Вопрос воркера (`ask`) сначала решает координатор: ответить сам или передать
-человеку `question forward --question <id>` (`Question.forHuman = true`, `store.forwardQuestion`).
-Без координатора — «Входящие», нет `coordinatorPtyId` или уже был `runs finish` — вопрос адресован
-человеку сразу (`questionForHuman`).
+**Вопрос воркера** (`orca-board ask`, `store.ask`). Адресат решает main в момент вопроса (`coordinatorAlive`
+в `socket.ts`: PTY координатора жив, прогон не закрыт и нет `runs finish`):
+- координатор жив — вопрос ждёт его, запроса нет, задача остаётся в работе. Координатор отвечает сам
+  (`question answer`) или передаёт человеку (`question forward --question <id> [--note "..."]`: создаётся запрос
+  `question`, `note` попадает в его `body`);
+- координатора нет («Входящие», умер, закончил) — запрос `question` создаётся сразу. Умер позже — его открытые
+  вопросы уходят человеку явным переходом `escalateOpenQuestions(runId)`: по выходу PTY координатора
+  (`worker.ts`) и при открытии проекта после перезапуска приложения (`projects.ts`).
 
-**Колонка «Нужен ответ» глобального канбана.** Подзадача ждёт человека (`waitingForHuman`), если это
-задача-ответ для человека в колонке `kind=needs_input` (`kind=review` — старые данные) или у неё открыт
-вопрос, адресованный человеку.
+**Колонка «Нужен ответ».** Глобальная карточка — в `kind=needs_input`, пока у прогона есть `pending`-запросы
+(`GlobalTask.waiting` = их число, `pendingRequestsOf(requests, {runId})`). Подзадача — в `kind=needs_input`,
+пока `pending`-запрос есть у неё: его ставит `createRequest`, снимает решение последнего запроса (`settleTask`:
+живой воркер → in_progress, иначе ready). Одно условие на обе доски, счётчики и уведомления.
 
-Сама подзадача при этом тоже стоит в `kind=needs_input`, а не в review (`store.ts`):
-- `finishDispatch` задачи-ответа `answerFor: 'human'` → needs_input (остальные — review, как раньше);
-  принять (`review accept`) → done, уточнить (`review reject` + перезапуск) → ready → in_progress.
-- `ask` → needs_input (как и раньше), `forwardQuestion` тоже ставит needs_input (кроме done).
-  `answer` последнего открытого вопроса возвращает в поток: живой dispatch — in_progress, иначе ready.
-  Сданный ответ для человека (`humanAnswerReady`) остаётся в needs_input.
-- При загрузке снапшота такой ответ, застрявший в review, переезжает в needs_input (`migrateHumanAnswers`):
-  `electron-vite dev` не пересобирает main-процесс на лету, и приложение, запущенное до фикса, клало ответ в review.
-- При загрузке снапшота все dispatch без `endedAt` закрываются (`closeStaleDispatches`, outcome `unknown`):
-  PTY не переживают перезапуск, а при quit `ptyExited` может не успеть. Задача в in_progress с таким
-  dispatch → ready; в needs_input с открытым вопросом остаётся, после ответа уходит в ready (`workerLive: false`).
-**Процесс идёт дальше сам** — после ответа человека координатору ничего писать не нужно:
-- **Принял ответ** (`review accept` → `store.acceptTask`): задача → done и событие
-  `answer_accepted {taskId, decision?, summary, dispatchId, answerFor, answer, answerTruncated?}` в прогон координатора (только для
-  `answerFor: 'human'` и только при первом переходе в done). `decision` — необязательное поле «Решение / что делать
-  дальше» у «Принять» (`AnswerBlock`, `review accept --decision`): по нему координатор заводит задачи. Коммиты
-  в ветке задачи-ответа при приёмке сливаются, как у рабочей (`acceptReview` в `src/main/review.ts`);
-  незакоммиченные черновики — нет. Конфликт мержа — ошибка, ветка и worktree остаются. Если это последняя подзадача — `run_done` приходит
-  следом; координатор сначала решает по ответу (новая подзадача переоткрывает прогон, `run_done` не обрабатывается).
-- **Уточнил**: UI делает `review reject` и сразу `worker start`; воркер сдаёт новый ответ → снова `worker_done`.
-- **Ответил на вопрос** (`store.answer`): `question_answered {taskId, questionId, question, answer, workerLive, status}`.
-  Воркер жив и его `ask` ещё держит соединение — ответ уходит через сокет. `ask` уже оборван (таймаут инструмента
-  агента: человек отвечает дольше) или был `--no-wait` — main вписывает ответ одной строкой в терминал живого
-  воркера (`deliverAnswers` в `src/main/index.ts`, `askWaiting` в `socket.ts`, текст — `questionAnswerMessage`).
-  Воркер не жив (`workerLive: false`, задача в ready) — координатор делает `worker start`; ответы на прошлые
-  вопросы задачи попадают в промпт (`workerTaskPrompt`, раздел «Ответы на твои вопросы»).
+**Решение человека** — одна операция `resolveRequest` (из UI — IPC `requests:resolve`, из CLI — `request resolve`,
+в main — `resolveHumanRequest`), процесс идёт дальше сам, координатору ничего писать не нужно:
+- **Ответил на вопрос** (вариант и/или текст) → `question_answered {taskId, questionId, requestId, question, answer, workerLive, status}`.
+  Живой воркер получает ответ через свой `ask` (или повтор той же команды после таймаута инструмента);
+  `ask` уже не ждёт — main пишет в терминал пинок `[orca] на вопрос q_… ответили: orca-board request get --request req_…`
+  (`deliverAnswers`, `answerNudge`). Воркер мёртв (`workerLive: false`, задача в ready) — координатор делает
+  `worker start`, ответы попадают в промпт (раздел «Ответы на твои вопросы»).
+- **Принял ответ** → git-часть приёмки (`acceptReview` в `src/main/review.ts`: коммиты ветки сливаются,
+  worktree и ветка удаляются; конфликт — ошибка, ветка остаётся), задача → done, событие
+  `answer_accepted {taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer, answerTruncated?}`
+  (`decision` сразу после `taskId`, `answer` — последним и обрезанным). Если это последняя подзадача — `run_done`
+  приходит следом; координатор сначала решает по ответу (новая подзадача переоткрывает прогон).
+- **Уточнил** → `feedback`, задача → ready, событие `answer_clarified {taskId, feedback, requestId, dispatchId}`,
+  main сразу стартует воркера; промпт получает прошлый ответ и уточнение. Воркер не стартовал — запрос всё равно
+  решён, координатору `escalation {startFailed: true}`.
+- **Эскалация**: «Перезапустить» (`restart`: задача → ready, main стартует воркера) или «Скрыть» (`dismiss`:
+  задача → ready) → `request_resolved {taskId, action, requestId, kind}`.
 
-`toGlobalTask` считает таких подзадач `GlobalTask.waiting`; если их > 0 и карточка не в `kind=done`,
-её `status` — колонка `kind=needs_input` проекта (если такая колонка есть). `Run.status` при этом **не
-меняется**: человек ответил или принял ответ — карточка сама возвращается в свою колонку. Поставить
-карточку в needs_input вручную нельзя (`moveGlobalTask`/`createGlobalTask` — ошибка «заполняется сама»,
+Решённый или отменённый запрос повторно не решается («уже решено»). Запросы отменяются (`cancelled`) новым
+запуском задачи, сдачей работы, удалением задачи и ручным переносом глобальной карточки в done — тогда
+карточка в «Нужен ответ» не показывается, а отвечать больше не на что.
+
+При загрузке снапшота все dispatch без `endedAt` закрываются (`closeStaleDispatches`, outcome `unknown`): PTY не
+переживают перезапуск. Снапшот до появления запросов мигрирует один раз (`migrateRequests`): сданные ответы для
+человека → запросы `answer`, открытые вопросы текущих запусков → запросы `question`, прочие задачи в needs_input
+с упавшим воркером → `escalation`.
+
+`Run.status` запросы **не меняют**: человек решил последний — карточка сама возвращается в свою колонку.
+Поставить карточку в needs_input вручную нельзя (`moveGlobalTask`/`createGlobalTask` — ошибка «заполняется сама»,
 на `GlobalBoard` колонка не принимает drop).
 
 ## Координатор и повторный запуск
@@ -189,7 +195,7 @@ interface GlobalTask {
   finishedAt?: number        // координатор прислал runs finish
   coordinatorPtyId?: string  // живость — по реестру терминалов (TerminalInfo.runId)
   coordinatorAgent?: AgentKind
-  waiting: number            // подзадачи, ждущие человека (waitingForHuman)
+  waiting: number            // pending-запросы к человеку этого прогона (HumanRequest)
   progress: {
     total: number            // подзадач
     done: number             // из них в kind=done
@@ -199,10 +205,10 @@ interface GlobalTask {
 }
 ```
 
-Чистые функции для renderer (без IPC): `toGlobalTasks(runs, tasks, columns, questions?)`,
-`toGlobalTask`, `globalTaskProgress`, `globalTaskTitle`, `waitingForHuman`, `questionForHuman`, `INBOX_TITLE` —
-экспортируются из `@orca-board/core`. Без `questions` вопросы не учитываются в `waiting`.
-Живой UI может строить карточки из `board:changed` (`snapshot.runs` + `snapshot.tasks`) без лишних запросов.
+Чистые функции для renderer (без IPC): `toGlobalTasks(runs, tasks, columns, requests?)`,
+`toGlobalTask`, `globalTaskProgress`, `globalTaskTitle`, `isPendingRequest`, `pendingRequestsOf`, `hasPendingRequest`,
+`INBOX_TITLE` — экспортируются из `@orca-board/core`. Без `requests` `waiting` = 0.
+Живой UI может строить карточки из `board:changed` (`snapshot.runs` + `snapshot.tasks` + `snapshot.requests`) без лишних запросов.
 
 ### IPC — `window.orca.globalTasks` (активный проект; типы — `apps/desktop/src/shared/ipc.ts`)
 
@@ -241,7 +247,8 @@ interface GlobalTask {
 `--global` у `global get`, `global tasks`, `global add-task` по умолчанию = `$ORCA_RUN_ID` (координатор
 видит свою глобальную задачу); у `update`/`move`/`delete`/`start` — только явно. `--global` без значения —
 ошибка до обращения к сокету. Совместимость: `task create [--run]`, `check`, `runs list/close/finish`,
-`done`, `ask`, `worker start`, `review *` — без изменений (`runs.list` дополнительно покажет «Входящие»,
+`done`, `worker start`, `review *` — без изменений (`ask` расширен, `question forward` получил `--note`, добавлены
+`request list|get|resolve` — `docs/human-requests.md`) (`runs.list` дополнительно покажет «Входящие»,
 если в проекте есть задачи без прогона).
 
 ## Что учесть UI
@@ -263,8 +270,12 @@ interface GlobalTask {
   lifecycle (run_done, повторный запуск с новой подзадачей и без неё → `runs finish` закрывает прогон
   и терминал, ручное закрытие, «Входящие» без run_done), сохранение и миграция старого снапшота.
 - `packages/core/src/coordinator-close.test.ts` — последний `run_done` переоткрытого прогона.
+- `packages/core/src/answers.test.ts`, `requests.test.ts` — задачи-ответы, запросы к человеку: создание, решения,
+  отмена, миграция, колонка «Нужен ответ» только по `pending`.
 - `packages/core/src/prompts.test.ts` — встроенный промпт координатора содержит раздел «Повторный запуск»
-  с исключением для `runs finish`; `resumeCoordinatorObjective` добавляет список и ссылку только при наличии подзадач.
+  с исключением для `runs finish`; `resumeCoordinatorObjective` добавляет список и ссылку только при наличии подзадач;
+  skills описывают события запросов и флаги `ask`; команды `orca-board …` в skills и `docs/human-requests.md`
+  есть в справке CLI.
 - `packages/cli/test/cli.test.js` — запросы CLI к фейковому сокету: старые команды и `global *`.
 - `pnpm typecheck`, `pnpm test`.
 

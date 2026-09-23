@@ -22,7 +22,10 @@ export function builtinPromptKind(roleId: string): BuiltinPromptKind {
 /** Кому адресован ответ — для промпта воркера. */
 const ANSWER_READER = { human: 'человек', coordinator: 'координатор' } as const
 
-/** Вопрос воркера с ответом — для промпта перезапуска и доставки ответа в терминал. */
+/**
+ * Вопрос воркера с ответом — для промпта перезапуска. Живому воркеру ответ приходит через `orca-board ask`
+ * (переподключение к тому же вопросу) или по пинку в терминал с командой `request get` (answerNudge в main).
+ */
 export type AnsweredQuestion = Pick<Question, 'question' | 'answer'>
 
 /** Раздел с ответами на прошлые вопросы: перезапущенный воркер не должен спрашивать заново. */
@@ -63,16 +66,6 @@ export function workerTaskPrompt(
     parts.push('', '# Уточнение к прошлому ответу', '', task.feedback, '', 'Дай новый полный ответ с учётом уточнения.')
   }
   return parts.join('\n')
-}
-
-/**
- * Ответ на вопрос, который приложение вписывает в терминал живого воркера, когда его `orca-board ask`
- * уже не ждёт (инструмент оборвал команду по таймауту или `--no-wait`). Одна строка: перевод строки
- * в терминале агента отправил бы сообщение по частям.
- */
-export function questionAnswerMessage(q: AnsweredQuestion): string {
-  const flat = (s: string): string => s.replace(/\s*\n\s*/g, ' ').trim()
-  return `[orca] Ответ на твой вопрос «${flat(q.question)}»: ${flat(q.answer ?? '')} — продолжай задачу с учётом ответа.`
 }
 
 /**
