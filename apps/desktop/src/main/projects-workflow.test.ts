@@ -73,6 +73,61 @@ describe('ProjectManager.workflow', () => {
     }
   })
 
+  it('каждый вид битого графа (§5 проекта) отвергается, сохранённый граф и projects.json не меняются', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const good = qaWorkflow()
+    pm.setWorkflow(PID, good)
+    const before = readFileSync(path.join(tmp, 'projects.json'), 'utf8')
+    const edit = (f: (wf: Workflow) => void): Workflow => {
+      const wf = JSON.parse(JSON.stringify(defaultWorkflow(DEFAULT_ROLES))) as Workflow
+      f(wf)
+      return wf
+    }
+    const node = (wf: Workflow, id: string) => wf.nodes.find((n) => n.id === id)!
+    const cases: Array<[string, Workflow, RegExp]> = [
+      ['дубль id ноды', edit((wf) => { wf.nodes.push({ ...node(wf, 'merge') }) }), /id «merge» уже занят/],
+      ['ребро в пустоту', edit((wf) => { wf.edges.find((e) => e.id === 'e_merge_ok')!.to = 'ghost' }), /несуществующую ноду «ghost»/],
+      ['нет старта', edit((wf) => { wf.nodes = wf.nodes.filter((n) => n.type !== 'start'); wf.edges = wf.edges.filter((e) => e.from !== 'start') }), /нет ноды «Старт»/],
+      ['вход в старт', edit((wf) => { wf.edges.find((e) => e.id === 'e_review_reject')!.to = 'start' }), /в старт не может вести переход/],
+      ['нет конца', edit((wf) => { wf.nodes = wf.nodes.filter((n) => n.type !== 'end'); wf.edges = wf.edges.filter((e) => e.to !== 'end') }), /нет ноды «Конец»/],
+      ['порт без перехода', edit((wf) => { wf.edges = wf.edges.filter((e) => e.id !== 'e_merge_conflict') }), /нет перехода для conflict/],
+      ['два перехода на порт', edit((wf) => { wf.edges.push({ id: 'dup', from: 'work', outcome: 'next', to: 'merge' }) }), /больше одного перехода для next/],
+      ['выход из конца', edit((wf) => { wf.edges.push({ id: 'x', from: 'end', outcome: 'next', to: 'work' }) }), /из конца переходов быть не может/],
+      ['тупик', edit((wf) => { wf.edges.find((e) => e.id === 'e_merge_ok')!.to = 'conflict' }), /нет пути к концу/],
+      ['цикл из условий', edit((wf) => {
+        wf.nodes.push({ id: 'c1', type: 'condition', test: { kind: 'role', roleIds: ['developer'] }, x: 0, y: 0 },
+          { id: 'c2', type: 'condition', test: { kind: 'role', roleIds: ['qa'] }, x: 0, y: 0 })
+        wf.edges.find((e) => e.id === 'e_review_reject')!.to = 'c1'
+        wf.edges.push({ id: 'c1y', from: 'c1', outcome: 'yes', to: 'work' }, { id: 'c1n', from: 'c1', outcome: 'no', to: 'c2' },
+          { id: 'c2y', from: 'c2', outcome: 'yes', to: 'end' }, { id: 'c2n', from: 'c2', outcome: 'no', to: 'c1' })
+      }), /цикл из одних условий/],
+      ['роли гейта нет', edit((wf) => { Object.assign(node(wf, 'review'), { roleId: 'ghost' }) }), /нет роли «ghost»/],
+      ['служебная роль гейта', edit((wf) => { Object.assign(node(wf, 'review'), { roleId: 'coordinator' }) }), /служебная/],
+      ['attempts на чужую ноду', edit((wf) => {
+        wf.nodes.push({ id: 'lim', type: 'condition', test: { kind: 'attempts', node: 'ghost', atLeast: 3 }, x: 0, y: 0 })
+        wf.edges.find((e) => e.id === 'e_review_reject')!.to = 'lim'
+        wf.edges.push({ id: 'ly', from: 'lim', outcome: 'yes', to: 'conflict' }, { id: 'ln', from: 'lim', outcome: 'no', to: 'work' })
+      }), /несуществующую ноду «ghost»/],
+      ['колонки нет', edit((wf) => { node(wf, 'conflict').column = 'nope' }), /нет колонки «nope»/],
+      ['нет работы', edit((wf) => {
+        wf.nodes = wf.nodes.filter((n) => n.type !== 'work')
+        wf.edges = wf.edges.filter((e) => e.from !== 'work').map((e) => (e.to === 'work' ? { ...e, to: 'review' } : e))
+      }), /ни одна нода «Работа»/]
+    ]
+    for (const [name, wf, re] of cases) {
+      assert.throws(() => pm.setWorkflow(PID, wf), (e: Error) => /^воркфлоу не сохранён: /.test(e.message) && re.test(e.message), name)
+    }
+    assert.deepEqual(pm.workflow(PID), good)
+    assert.equal(readFileSync(path.join(tmp, 'projects.json'), 'utf8'), before)
+  })
+
+  it('предупреждения сохранению не мешают: агент роли гейта выключен', () => {
+    writeConfig({ enabledAgents: ['codex'] })
+    const pm = new ProjectManager(tmp)
+    assert.deepEqual(pm.setWorkflow(PID, qaWorkflow()).workflow, qaWorkflow())
+  })
+
   it('будущая версия при сохранении отвергается', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
