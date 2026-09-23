@@ -1,0 +1,516 @@
+// Воркфлоу: граф этапов, которые проходит одна рабочая задача от первого запуска до мержа.
+// Модуль импортирует renderer (живая валидация в редакторе), поэтому без node-импортов;
+// значения импортируются с расширением .ts — тесты гоняются node --test без бандлера.
+import type { BoardColumn, Role, Task } from './types'
+import { isTaskRole } from './prompts.ts'
+
+/** Версия формата графа. Меняется при несовместимой правке типов ниже, вместе с `migrateWorkflow`. */
+export const WORKFLOW_VERSION = 1
+
+/** Исход этапа: по нему выбирается ребро. У каждого типа ноды — фиксированный набор портов (`WF_PORTS`). */
+export type WfOutcome = 'next' | 'accept' | 'reject' | 'yes' | 'no' | 'ok' | 'conflict'
+
+/**
+ * Условие из закрытого списка предикатов. Произвольных выражений нет намеренно: их не провалидировать
+ * и не показать в редакторе.
+ */
+export type WfCondition =
+  /** Задача заходила в ноду `node` не меньше `atLeast` раз (лимит повторов). */
+  | { kind: 'attempts'; node: string; atLeast: number }
+  /** Роль рабочей задачи — одна из `roleIds`. */
+  | { kind: 'role'; roleIds: string[] }
+  /** Все файлы ветки подходят под маску. Зарезервировано под v2: пока не исполняется и не проходит валидацию. */
+  | { kind: 'files'; glob: string }
+
+interface WfNodeBase {
+  id: string
+  /** Позиция на холсте редактора. */
+  x: number
+  y: number
+  title?: string
+  /** Колонка доски, в которой стоит задача на этом этапе; нет — колонка по умолчанию для этапа. */
+  column?: string
+}
+
+export type WfNode = WfNodeBase &
+  (
+    | { type: 'start' }
+    /** Работа воркера. Без `roleId` — роль задачи (её выбрал координатор). */
+    | { type: 'work'; roleId?: string }
+    /** Гейт-агент: отдельная задача-проверка ветки рабочей задачи; исход — accept/reject. */
+    | { type: 'gate'; roleId: string; instructions?: string }
+    /** Гейт-человек: запрос в Инбоксе «Принять» / «Вернуть». */
+    | { type: 'human'; instructions?: string }
+    | { type: 'condition'; test: WfCondition }
+    | { type: 'merge' }
+    /** Конец. `merged` — для отображения: задача пришла сюда со слитой веткой. */
+    | { type: 'end'; merged?: boolean }
+  )
+
+export type WfNodeType = WfNode['type']
+
+export interface WfEdge {
+  id: string
+  from: string
+  outcome: WfOutcome
+  to: string
+}
+
+export interface Workflow {
+  version: number
+  nodes: WfNode[]
+  edges: WfEdge[]
+}
+
+/** Порты по типу ноды: для каждого исхода из списка должно быть ровно одно исходящее ребро. */
+export const WF_PORTS: Record<WfNodeType, WfOutcome[]> = {
+  start: ['next'],
+  work: ['next'],
+  gate: ['accept', 'reject'],
+  human: ['accept', 'reject'],
+  condition: ['yes', 'no'],
+  merge: ['ok', 'conflict'],
+  end: []
+}
+
+const NODE_TYPE_TITLES: Record<WfNodeType, string> = {
+  start: 'Старт',
+  work: 'Работа',
+  gate: 'Проверка',
+  human: 'Человек',
+  condition: 'Условие',
+  merge: 'Мерж',
+  end: 'Конец'
+}
+
+/** Название ноды для сообщений и UI: заданное пользователем или по типу. */
+export function wfNodeTitle(node: WfNode): string {
+  return node.title?.trim() || NODE_TYPE_TITLES[node.type] || node.id
+}
+
+// ---------- дефолт и миграция ----------
+
+/**
+ * Дефолтный граф, повторяющий поведение до воркфлоу: работа → ревью → мерж → конец, отказ — обратно в работу.
+ * Есть роль `reviewer` — ревью делает агент (гейт), нет — человек. Конфликт мержа уходит человеку:
+ * раньше задача с конфликтом зависала в «Ревью». Лимита повторов нет, как и раньше.
+ */
+export function defaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workflow {
+  const hasReviewer = roles.some((r) => r.id === 'reviewer')
+  const review: WfNode = hasReviewer
+    ? { id: 'review', type: 'gate', roleId: 'reviewer', title: 'Ревью', x: 440, y: 0 }
+    : { id: 'review', type: 'human', title: 'Ревью человеком', x: 440, y: 0 }
+  return {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'work', type: 'work', title: 'Работа', x: 220, y: 0 },
+      review,
+      { id: 'merge', type: 'merge', x: 660, y: 0 },
+      { id: 'end', type: 'end', merged: true, x: 880, y: 0 },
+      { id: 'conflict', type: 'human', title: 'Конфликт мержа', x: 660, y: 180,
+        instructions: 'Ветка не сливается без конфликтов. Разрешите конфликт в ветке задачи и примите её или верните в работу.' }
+    ],
+    edges: [
+      { id: 'e_start', from: 'start', outcome: 'next', to: 'work' },
+      { id: 'e_work', from: 'work', outcome: 'next', to: 'review' },
+      { id: 'e_review_accept', from: 'review', outcome: 'accept', to: 'merge' },
+      { id: 'e_review_reject', from: 'review', outcome: 'reject', to: 'work' },
+      { id: 'e_merge_ok', from: 'merge', outcome: 'ok', to: 'end' },
+      { id: 'e_merge_conflict', from: 'merge', outcome: 'conflict', to: 'conflict' },
+      { id: 'e_conflict_accept', from: 'conflict', outcome: 'accept', to: 'merge' },
+      { id: 'e_conflict_reject', from: 'conflict', outcome: 'reject', to: 'work' }
+    ]
+  }
+}
+
+/**
+ * Приводит граф старой версии формата к `WORKFLOW_VERSION`. Пока версия одна — только проставляет её.
+ * Граф из будущей версии не трогает: его отвергнет `validateWorkflow` («обновите приложение»).
+ */
+export function migrateWorkflow(wf: Workflow): Workflow {
+  if (!(wf.version < WORKFLOW_VERSION)) return wf
+  // Сюда добавлять шаги миграции: if (wf.version < 2) { … }
+  return { ...wf, version: WORKFLOW_VERSION }
+}
+
+// ---------- валидация ----------
+
+/** Проблема графа; `nodeId`/`edgeId` — что подсветить на холсте. */
+export interface WfIssue {
+  message: string
+  nodeId?: string
+  edgeId?: string
+}
+
+export interface WfValidation {
+  /** С ошибками граф не сохраняется. */
+  errors: WfIssue[]
+  /** С предупреждениями сохранить можно. */
+  warnings: WfIssue[]
+}
+
+export interface WfValidationContext {
+  roles: readonly Pick<Role, 'id' | 'title' | 'agent'>[]
+  columns: readonly Pick<BoardColumn, 'id'>[]
+  /** Агенты, включённые в проекте; нет — проверка «агент роли выключен» пропускается. */
+  enabledAgents?: readonly string[]
+}
+
+const KNOWN_TYPES = Object.keys(WF_PORTS) as WfNodeType[]
+
+/**
+ * Проверка графа. Вызывают renderer (подсказки в редакторе) и main (перед сохранением).
+ * Роль могут удалить после сохранения, поэтому исполнитель повторяет проверку роли сам (`nextStage` → blocked).
+ */
+export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfValidation {
+  const errors: WfIssue[] = []
+  const warnings: WfIssue[] = []
+  const nodeLabel = (n: WfNode): string => `нода «${wfNodeTitle(n)}»`
+
+  // 1. Версия, id, ссылки рёбер.
+  if (!Number.isInteger(wf.version) || wf.version < 1) {
+    errors.push({ message: `неизвестная версия формата воркфлоу: ${String(wf.version)}` })
+  } else if (wf.version > WORKFLOW_VERSION) {
+    errors.push({ message: `воркфлоу сохранён в формате версии ${wf.version}, приложение знает только ${WORKFLOW_VERSION} — обновите приложение` })
+  } else if (wf.version < WORKFLOW_VERSION) {
+    errors.push({ message: `воркфлоу в старом формате версии ${wf.version} — нужна миграция (migrateWorkflow)` })
+  }
+
+  const nodes = new Map<string, WfNode>()
+  for (const n of wf.nodes) {
+    if (!n.id || !n.id.trim()) {
+      errors.push({ message: `${nodeLabel(n)}: пустой id` })
+      continue
+    }
+    if (nodes.has(n.id)) {
+      errors.push({ message: `${nodeLabel(n)}: id «${n.id}» уже занят другой нодой`, nodeId: n.id })
+      continue
+    }
+    if (!KNOWN_TYPES.includes(n.type)) {
+      errors.push({ message: `нода «${n.id}»: неизвестный тип «${String(n.type)}»`, nodeId: n.id })
+      continue
+    }
+    nodes.set(n.id, n)
+  }
+
+  const edgeIds = new Set<string>()
+  const edges: WfEdge[] = []
+  for (const e of wf.edges) {
+    if (!e.id || !e.id.trim()) {
+      errors.push({ message: `переход ${e.from} → ${e.to}: пустой id` })
+      continue
+    }
+    if (edgeIds.has(e.id)) {
+      errors.push({ message: `переход «${e.id}»: id уже занят другим переходом`, edgeId: e.id })
+      continue
+    }
+    edgeIds.add(e.id)
+    const from = nodes.get(e.from)
+    const to = nodes.get(e.to)
+    if (!from) {
+      errors.push({ message: `переход «${e.id}»: нет ноды-источника «${e.from}»`, edgeId: e.id })
+      continue
+    }
+    if (!to) {
+      errors.push({ message: `${nodeLabel(from)}: переход «${e.outcome}» ведёт в несуществующую ноду «${e.to}»`, nodeId: from.id, edgeId: e.id })
+      continue
+    }
+    edges.push(e)
+  }
+
+  // 2. Ровно один start без входящих рёбер, хотя бы один end.
+  const starts = [...nodes.values()].filter((n) => n.type === 'start')
+  if (starts.length === 0) errors.push({ message: 'нет ноды «Старт»' })
+  for (const extra of starts.slice(1)) {
+    errors.push({ message: `${nodeLabel(extra)}: нода «Старт» должна быть одна`, nodeId: extra.id })
+  }
+  for (const e of edges) {
+    const to = nodes.get(e.to)!
+    if (to.type === 'start') {
+      errors.push({ message: `${nodeLabel(to)}: в старт не может вести переход (из «${wfNodeTitle(nodes.get(e.from)!)}»)`, nodeId: to.id, edgeId: e.id })
+    }
+  }
+  if (![...nodes.values()].some((n) => n.type === 'end')) errors.push({ message: 'нет ноды «Конец»' })
+
+  // 3. Каждый порт — ровно одно ребро, чужих исходов нет.
+  for (const n of nodes.values()) {
+    const out = edges.filter((e) => e.from === n.id)
+    const ports = WF_PORTS[n.type]
+    for (const e of out) {
+      if (!ports.includes(e.outcome)) {
+        const why = n.type === 'end' ? 'из конца переходов быть не может' : `у ноды этого типа есть только ${ports.join(', ')}`
+        errors.push({ message: `${nodeLabel(n)}: лишний переход «${e.outcome}» — ${why}`, nodeId: n.id, edgeId: e.id })
+      }
+    }
+    for (const port of ports) {
+      const byPort = out.filter((e) => e.outcome === port)
+      if (byPort.length === 0) errors.push({ message: `${nodeLabel(n)}: нет перехода для ${port}`, nodeId: n.id })
+      for (const dup of byPort.slice(1)) {
+        errors.push({ message: `${nodeLabel(n)}: больше одного перехода для ${port}`, nodeId: n.id, edgeId: dup.id })
+      }
+    }
+  }
+
+  const succ = (id: string): string[] => edges.filter((e) => e.from === id).map((e) => e.to)
+  const reach = (from: string[], next: (id: string) => string[], skip?: (id: string) => boolean): Set<string> => {
+    const seen = new Set<string>()
+    const queue = [...from]
+    while (queue.length) {
+      const id = queue.shift()!
+      if (seen.has(id) || skip?.(id)) continue
+      seen.add(id)
+      queue.push(...next(id))
+    }
+    return seen
+  }
+  const start = starts[0]
+  const fromStart = start ? reach([start.id], succ) : new Set<string>()
+
+  // 4. Из каждой достижимой ноды достижим конец (обратный обход от концов).
+  const ends = [...nodes.values()].filter((n) => n.type === 'end').map((n) => n.id)
+  const toEnd = reach(ends, (id) => edges.filter((e) => e.to === id).map((e) => e.from))
+  for (const id of fromStart) {
+    if (!toEnd.has(id)) errors.push({ message: `${nodeLabel(nodes.get(id)!)}: из неё нет пути к концу — задача застрянет`, nodeId: id })
+  }
+
+  // 5. Цикл из одних условий зациклил бы nextStage.
+  const isCondition = (id: string): boolean => nodes.get(id)?.type === 'condition'
+  const inConditionCycle = new Set<string>()
+  for (const n of nodes.values()) {
+    if (n.type !== 'condition') continue
+    const loop = reach(succ(n.id).filter(isCondition), (id) => succ(id).filter(isCondition))
+    if (loop.has(n.id)) inConditionCycle.add(n.id)
+  }
+  for (const id of inConditionCycle) {
+    errors.push({ message: `${nodeLabel(nodes.get(id)!)}: цикл из одних условий — задача никуда не придёт`, nodeId: id })
+  }
+
+  // 6. Ссылки нод на роли, ноды и колонки.
+  const roleById = new Map(ctx.roles.map((r) => [r.id, r]))
+  const checkRole = (n: WfNode, roleId: string): void => {
+    const role = roleById.get(roleId)
+    if (!role) {
+      errors.push({ message: `${nodeLabel(n)}: нет роли «${roleId}» в проекте`, nodeId: n.id })
+    } else if (!isTaskRole(roleId)) {
+      errors.push({ message: `${nodeLabel(n)}: роль «${role.title}» служебная, задачам не назначается`, nodeId: n.id })
+    } else if (ctx.enabledAgents && !ctx.enabledAgents.includes(role.agent)) {
+      warnings.push({ message: `${nodeLabel(n)}: агент роли «${role.title}» (${role.agent}) выключен в проекте — задача остановится на этом этапе`, nodeId: n.id })
+    }
+  }
+  const columnIds = new Set(ctx.columns.map((c) => c.id))
+  for (const n of nodes.values()) {
+    if (n.column !== undefined && !columnIds.has(n.column)) {
+      errors.push({ message: `${nodeLabel(n)}: нет колонки «${n.column}» на доске`, nodeId: n.id })
+    }
+    if (n.type === 'gate') {
+      if (!n.roleId) errors.push({ message: `${nodeLabel(n)}: не выбрана роль проверяющего`, nodeId: n.id })
+      else checkRole(n, n.roleId)
+    }
+    if (n.type === 'work' && n.roleId) checkRole(n, n.roleId)
+    if (n.type === 'condition') {
+      const t = n.test
+      if (t.kind === 'attempts') {
+        if (!nodes.has(t.node)) errors.push({ message: `${nodeLabel(n)}: условие считает заходы в несуществующую ноду «${t.node}»`, nodeId: n.id })
+        if (!Number.isInteger(t.atLeast) || t.atLeast < 1) errors.push({ message: `${nodeLabel(n)}: число заходов должно быть целым и не меньше 1`, nodeId: n.id })
+      } else if (t.kind === 'role') {
+        if (t.roleIds.length === 0) errors.push({ message: `${nodeLabel(n)}: в условии не выбрана ни одна роль`, nodeId: n.id })
+        for (const r of t.roleIds) {
+          if (!roleById.has(r)) errors.push({ message: `${nodeLabel(n)}: в условии роль «${r}», которой нет в проекте`, nodeId: n.id })
+        }
+      } else if (t.kind === 'files') {
+        errors.push({ message: `${nodeLabel(n)}: условие по файлам ветки пока не поддерживается`, nodeId: n.id })
+      } else {
+        errors.push({ message: `${nodeLabel(n)}: неизвестный вид условия`, nodeId: n.id })
+      }
+    }
+  }
+
+  // 7. Хотя бы одна работа на пути от старта.
+  if (start && ![...fromStart].some((id) => nodes.get(id)!.type === 'work')) {
+    errors.push({ message: 'от старта не достижима ни одна нода «Работа» — воркер никогда не запустится', nodeId: start.id })
+  }
+
+  // Предупреждения.
+  for (const n of nodes.values()) {
+    if (start && !fromStart.has(n.id)) warnings.push({ message: `${nodeLabel(n)}: недостижима от старта`, nodeId: n.id })
+  }
+
+  const isAttemptsLimit = (id: string): boolean => {
+    const n = nodes.get(id)
+    return n?.type === 'condition' && n.test.kind === 'attempts'
+  }
+  for (const n of nodes.values()) {
+    if (n.type !== 'work' || !fromStart.has(n.id)) continue
+    // Работа достижима из самой себя в обход лимита повторов — возвраты могут идти бесконечно.
+    if (reach(succ(n.id), succ, isAttemptsLimit).has(n.id)) {
+      warnings.push({ message: `${nodeLabel(n)}: возврат в работу без лимита повторов — отказы могут повторяться бесконечно`, nodeId: n.id })
+    }
+  }
+
+  const isMerge = (id: string): boolean => nodes.get(id)?.type === 'merge'
+  for (const n of nodes.values()) {
+    if ((n.type !== 'gate' && n.type !== 'human') || !fromStart.has(n.id)) continue
+    const accept = edges.find((e) => e.from === n.id && e.outcome === 'accept')
+    if (!accept) continue
+    const endWithoutMerge = [...reach([accept.to], succ, isMerge)].find((id) => nodes.get(id)!.type === 'end')
+    if (endWithoutMerge) {
+      warnings.push({ message: `${nodeLabel(n)}: после accept путь ведёт в «${wfNodeTitle(nodes.get(endWithoutMerge)!)}» без мержа — принятая работа не будет слита`, nodeId: n.id, edgeId: accept.id })
+    }
+  }
+
+  for (const n of nodes.values()) {
+    if (n.type !== 'merge' || !fromStart.has(n.id)) continue
+    const ok = edges.find((e) => e.from === n.id && e.outcome === 'ok')
+    if (!ok) continue
+    const again = [...reach([ok.to], succ, (id) => id === n.id)].find((id) => isMerge(id))
+    if (again) {
+      warnings.push({ message: `${nodeLabel(n)}: после мержа путь снова ведёт в мерж «${wfNodeTitle(nodes.get(again)!)}»`, nodeId: n.id, edgeId: ok.id })
+    }
+  }
+
+  return { errors, warnings }
+}
+
+// ---------- исполнение ----------
+
+/** Позиция задачи в воркфлоу прогона. `visits` — сколько раз задача заходила в каждую ноду (для `attempts`). */
+export interface WfStage {
+  nodeId: string
+  visits: Record<string, number>
+}
+
+/** Что сделать исполнителю (main), когда задача пришла в ноду. */
+export type WfAction =
+  | { type: 'start_worker'; nodeId: string; roleId?: string }
+  | { type: 'create_gate'; nodeId: string; roleId: string }
+  | { type: 'request_human'; nodeId: string }
+  | { type: 'merge'; nodeId: string }
+  | { type: 'done'; nodeId: string; merged: boolean }
+  /** Идти дальше нельзя: задача стоит в `nodeId`, нужен человек или координатор. */
+  | { type: 'blocked'; nodeId: string; reason: string }
+
+export interface WfContext {
+  /** Роль рабочей задачи — для условия `role`. */
+  roleId: string
+  /** Роли проекта сейчас; есть — у гейта проверяется, что его роль не удалили. */
+  roleIds?: readonly string[]
+}
+
+export interface WfStep {
+  stage: WfStage
+  action: WfAction
+}
+
+/**
+ * Действие для ноды, в которой стоит задача. Отдельно от `nextStage` — чтобы повторить эффект после
+ * рестарта или после исправления причины `blocked` (роль гейта вернули).
+ */
+export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAction {
+  const node = wf.nodes.find((n) => n.id === stage.nodeId)
+  if (!node) return { type: 'blocked', nodeId: stage.nodeId, reason: `в воркфлоу нет ноды «${stage.nodeId}»` }
+  switch (node.type) {
+    case 'work':
+      return node.roleId ? { type: 'start_worker', nodeId: node.id, roleId: node.roleId } : { type: 'start_worker', nodeId: node.id }
+    case 'gate':
+      if (ctx.roleIds && !ctx.roleIds.includes(node.roleId)) {
+        return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: нет роли «${node.roleId}» в проекте` }
+      }
+      return { type: 'create_gate', nodeId: node.id, roleId: node.roleId }
+    case 'human':
+      return { type: 'request_human', nodeId: node.id }
+    case 'merge':
+      return { type: 'merge', nodeId: node.id }
+    case 'end':
+      return { type: 'done', nodeId: node.id, merged: node.merged ?? false }
+    default:
+      // start и condition не бывают позицией задачи: nextStage проходит их сразу.
+      return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}» не может быть этапом задачи` }
+  }
+}
+
+/**
+ * Переход задачи по исходу текущего этапа. Чистая функция: побочные эффекты (запуск воркера, создание гейта,
+ * мерж) выполняет main по `action`. Цепочка условий проходится за один вызов; повторный заход в то же условие
+ * за вызов — `blocked` (граф с таким циклом отвергает validateWorkflow, но граф могли сохранить старым кодом).
+ * Каждый заход в ноду, включая условия, увеличивает `visits`. При `blocked` из-за отсутствующего перехода
+ * задача остаётся на прежнем этапе.
+ */
+export function nextStage(wf: Workflow, stage: WfStage, outcome: WfOutcome, ctx: WfContext): WfStep {
+  const blocked = (reason: string): WfStep => ({ stage, action: { type: 'blocked', nodeId: stage.nodeId, reason } })
+  const byId = new Map(wf.nodes.map((n) => [n.id, n]))
+  const from = byId.get(stage.nodeId)
+  if (!from) return blocked(`в воркфлоу нет ноды «${stage.nodeId}»`)
+
+  const visits = { ...stage.visits }
+  const passed = new Set<string>()
+  let current = from
+  let out = outcome
+  for (;;) {
+    const edge = wf.edges.find((e) => e.from === current.id && e.outcome === out)
+    if (!edge) return blocked(`нода «${wfNodeTitle(current)}»: нет перехода для ${out}`)
+    const to = byId.get(edge.to)
+    if (!to) return blocked(`нода «${wfNodeTitle(current)}»: переход ${out} ведёт в несуществующую ноду «${edge.to}»`)
+    visits[to.id] = (visits[to.id] ?? 0) + 1
+    if (to.type !== 'condition') {
+      const next: WfStage = { nodeId: to.id, visits }
+      return { stage: next, action: stageAction(wf, next, ctx) }
+    }
+    if (passed.has(to.id)) return blocked(`нода «${wfNodeTitle(to)}»: цикл из одних условий`)
+    passed.add(to.id)
+    const result = evalCondition(to.test, visits, ctx)
+    if (typeof result === 'string') return blocked(`нода «${wfNodeTitle(to)}»: ${result}`)
+    current = to
+    out = result ? 'yes' : 'no'
+  }
+}
+
+/** Первый этап задачи: переход из старта. */
+export function startStage(wf: Workflow, ctx: WfContext): WfStep {
+  const start = wf.nodes.find((n) => n.type === 'start')
+  if (!start) return { stage: { nodeId: '', visits: {} }, action: { type: 'blocked', nodeId: '', reason: 'в воркфлоу нет ноды «Старт»' } }
+  return nextStage(wf, { nodeId: start.id, visits: { [start.id]: 1 } }, 'next', ctx)
+}
+
+/** Значение условия или текст причины, почему его не посчитать. */
+function evalCondition(test: WfCondition, visits: Record<string, number>, ctx: WfContext): boolean | string {
+  switch (test.kind) {
+    case 'attempts':
+      return (visits[test.node] ?? 0) >= test.atLeast
+    case 'role':
+      return test.roleIds.includes(ctx.roleId)
+    case 'files':
+      return 'условие по файлам ветки пока не поддерживается'
+    default:
+      return 'неизвестный вид условия'
+  }
+}
+
+// ---------- спека задачи-гейта ----------
+
+/** Название задачи-гейта: «<название ноды>: <название рабочей задачи>». */
+export function gateTaskTitle(task: Pick<Task, 'title'>, node: Extract<WfNode, { type: 'gate' }>): string {
+  return `${wfNodeTitle(node)}: ${task.title}`
+}
+
+/**
+ * Спека задачи-гейта: общий шаблон для любого проекта. Как проверять в конкретном репозитории (команды сборки
+ * и тестов, критерии) — в `node.instructions` или в системном промпте роли гейта, не здесь.
+ */
+export function gateTaskSpec(task: Pick<Task, 'id' | 'title' | 'spec' | 'branch'>, node: Extract<WfNode, { type: 'gate' }>): string {
+  const branch = task.branch ?? `orca/${task.id}`
+  const parts = [
+    `Проверь ветку \`${branch}\` задачи ${task.id} «${task.title}».`,
+    [
+      `1. \`orca-board review info --task ${task.id}\` — изменённые файлы и коммиты; сам diff — \`git diff\` основной ветки с \`${branch}\`.`,
+      `2. Проверь работу в своём worktree: слей ветку без коммита (\`git merge --no-commit ${branch}\`), проверь, затем отмени слияние (\`git merge --abort\`).`,
+      `3. Всё хорошо — \`orca-board review accept --task ${task.id}\`. Нет — \`orca-board review reject --task ${task.id} --feedback "что исправить"\`.`,
+      `4. Последней командой обязательно \`orca-board done --summary "принято"\` или \`"отклонено: …"\` — без неё проверка останется открытой.`
+    ].join('\n')
+  ]
+  const spec = task.spec.trim()
+  if (spec) parts.push(`## Задание рабочей задачи — критерии приёмки\n\n${spec}`)
+  const own = node.instructions?.trim()
+  if (own) parts.push(`## Как проверять\n\n${own}`)
+  return parts.join('\n\n')
+}
