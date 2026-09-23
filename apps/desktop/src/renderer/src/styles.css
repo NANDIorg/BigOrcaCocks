@@ -288,6 +288,10 @@ button:disabled { opacity: .45; cursor: default; }
 .roles-item:hover { background: rgba(255,255,255,.03); }
 .roles-item.active { background: var(--side-2); border-left-color: var(--accent); }
 .roles-item.dragging { opacity: .5; }
+/* Колонки заданы явно: у роли для задач в режиме «только чтение» нет ручки, и без grid-column
+   кнопка съезжала в первую колонку 14px — название обрезалось до одной буквы. */
+.roles-item > .roles-pick { grid-column: 2; }
+.roles-item > .chip { grid-column: 3; }
 .roles-pick {
   background: transparent; border: 0; color: var(--text); text-align: left; padding: 9px 0; min-width: 0;
   display: flex; flex-direction: column; gap: 2px;
