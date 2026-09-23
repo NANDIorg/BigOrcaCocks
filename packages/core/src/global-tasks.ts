@@ -12,9 +12,10 @@ export const INBOX_TITLE = 'Входящие'
 
 /**
  * Виды колонок, в которых хранится глобальная задача (`Run.status`): сюда её ставят система и человек.
- * Готовы/Ревью (и пользовательские) — этапы подзадач на локальном канбане; на верхнем уровне их нет.
+ * Системная колонка review на верхнем уровне — «Проверка» (`GLOBAL_REVIEW_TITLE`): работа закрыта и ждёт
+ * приёмки человеком. Готовы (и пользовательские) — этапы подзадач на локальном канбане; на верхнем уровне их нет.
  */
-export const GLOBAL_COLUMN_KINDS = ['backlog', 'in_progress', 'done'] as const
+export const GLOBAL_COLUMN_KINDS = ['backlog', 'in_progress', 'review', 'done'] as const
 export type GlobalColumnKind = (typeof GLOBAL_COLUMN_KINDS)[number]
 
 /**
@@ -22,7 +23,19 @@ export type GlobalColumnKind = (typeof GLOBAL_COLUMN_KINDS)[number]
  * попадает только вычисленно — задача не сделана, и в прогоне есть pending-запрос к человеку
  * (`hasPendingRequest`); человек решил запрос — карточка сама возвращается в свою колонку. Руками туда не ставится.
  */
-export const GLOBAL_BOARD_KINDS: readonly ColumnKind[] = ['backlog', 'in_progress', 'needs_input', 'done']
+export const GLOBAL_BOARD_KINDS: readonly ColumnKind[] = ['backlog', 'in_progress', 'needs_input', 'review', 'done']
+
+/**
+ * Заголовок колонки kind=review на глобальном канбане. У подзадач review — ревью кода агентом, у глобальной
+ * задачи — приёмка результата человеком, поэтому название колонки проекта здесь подменяется.
+ */
+export const GLOBAL_REVIEW_TITLE = 'Проверка'
+
+/** Уточнение человека при возврате глобальной задачи с проверки в работу (`Run.returns`). */
+export interface GlobalTaskReturn {
+  at: number
+  text: string
+}
 
 /** Длина названия, выведенного из описания. */
 const DERIVED_TITLE_MAX = 80
@@ -60,6 +73,8 @@ export interface GlobalTask {
   finishedAt?: number
   coordinatorPtyId?: string
   coordinatorAgent?: Run['coordinatorAgent']
+  /** Уточнения человека при возвратах с проверки в работу, по порядку (`Run.returns`); нет — не возвращали. */
+  returns?: GlobalTaskReturn[]
   progress: GlobalTaskProgress
   /**
    * Основное время — сколько сама глобальная задача была в работе (`Run.activeMs`): закрытые отрезки, мс.
@@ -131,9 +146,14 @@ export function globalOwnDuration(g: Pick<GlobalTask, 'ownActiveMs' | 'ownActive
   return activeDuration({ closedMs: g.ownActiveMs ?? 0, ...(g.ownActiveSince !== undefined ? { since: g.ownActiveSince } : {}) }, now)
 }
 
-/** Колонки проекта, которые показывает глобальный канбан (порядок проекта сохраняется), включая needs_input. */
+/**
+ * Колонки проекта, которые показывает глобальный канбан (порядок проекта сохраняется), включая needs_input.
+ * Колонка review называется «Проверка» (`GLOBAL_REVIEW_TITLE`), id и цвет — от колонки проекта.
+ */
 export function globalBoardColumns(columns: readonly BoardColumn[]): BoardColumn[] {
-  return columns.filter((c) => GLOBAL_BOARD_KINDS.includes(c.kind))
+  return columns
+    .filter((c) => GLOBAL_BOARD_KINDS.includes(c.kind))
+    .map((c) => (c.kind === 'review' ? { ...c, title: GLOBAL_REVIEW_TITLE } : c))
 }
 
 /** Колонки, куда глобальную задачу можно поставить (создание, перенос): без вычисляемой needs_input. */
@@ -161,16 +181,16 @@ export function hasPendingRequest(requests: readonly HumanRequest[], where: { ru
 
 /**
  * Куда встаёт глобальная задача из колонки этого вида: ready — ещё не начата (backlog),
- * needs_input/review/custom — работа идёт (in_progress). Неизвестная колонка — backlog.
+ * needs_input/custom — работа идёт (in_progress). Неизвестная колонка — backlog.
  */
 export function globalColumnKind(kind: ColumnKind | undefined): GlobalColumnKind {
-  if (kind === 'backlog' || kind === 'in_progress' || kind === 'done') return kind
+  if (kind === 'backlog' || kind === 'in_progress' || kind === 'review' || kind === 'done') return kind
   if (kind === 'ready' || kind === undefined) return 'backlog'
   return 'in_progress'
 }
 
 /**
- * Хранимый статус глобальной задачи → id колонки, где она может храниться (backlog / in_progress / done).
+ * Хранимый статус глобальной задачи → id колонки, где она может храниться (backlog / in_progress / review / done).
  * Статус из другой колонки (старые данные, ручная правка, needs_input) сводится к ближайшей — карточка
  * не пропадает с доски. Колонки нужного вида нет — первая подходящая; подходящих нет — статус как есть.
  */
@@ -184,12 +204,13 @@ export function globalTaskStatus(status: string | undefined, columns: readonly B
 /**
  * Колонка, в которой показывается карточка: хранимый статус, сведённый к глобальному канбану (globalTaskStatus);
  * несделанная задача с pending-запросами (`waiting` > 0) — в needs_input, если такая колонка есть в проекте.
+ * Карточка в done или review (работа закрыта) в needs_input не поднимается.
  */
 export function globalDisplayStatus(run: Pick<Run, 'status'>, columns: readonly BoardColumn[], waiting: number): string {
   const stored = globalTaskStatus(run.status, columns) ?? 'backlog'
   const needsInput = columns.find((c) => c.kind === 'needs_input')?.id
   const storedKind = columns.find((c) => c.id === stored)?.kind
-  return waiting > 0 && needsInput && storedKind !== 'done' ? needsInput : stored
+  return waiting > 0 && needsInput && storedKind !== 'done' && storedKind !== 'review' ? needsInput : stored
 }
 
 /**
@@ -228,6 +249,7 @@ export function toGlobalTask(
     finishedAt: run.finishedAt,
     coordinatorPtyId: run.coordinatorPtyId,
     coordinatorAgent: run.coordinatorAgent,
+    ...(run.returns && run.returns.length > 0 ? { returns: run.returns.map((r) => ({ ...r })) } : {}),
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),

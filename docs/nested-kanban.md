@@ -5,10 +5,13 @@
 Обе доски используют **реальные колонки проекта** (`Project.columns`, `columns list`), а не фиксированный
 набор: макет Planning / In Progress / AI Review / Human Review / Done — это просто пример колонок проекта.
 Локальный канбан подзадач показывает все колонки проекта; **глобальный — колонки `kind` backlog,
-in_progress, needs_input и done** (`GLOBAL_BOARD_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`).
-Хранится карточка только в backlog / in_progress / done (`GLOBAL_COLUMN_KINDS`, `globalStoredColumns`);
+in_progress, needs_input, review и done** (`GLOBAL_BOARD_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`).
+Хранится карточка только в backlog / in_progress / review / done (`GLOBAL_COLUMN_KINDS`, `globalStoredColumns`);
 needs_input — **вычисляемая** колонка: там карточка, пока у прогона есть `pending`-запросы к человеку
-(см. «Ответы и ожидание человека»). Готовы / Ревью (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
+(см. «Ответы и ожидание человека»). Системная колонка `review` на глобальном канбане называется
+**«Проверка»** (`GLOBAL_REVIEW_TITLE`; id и цвет — от колонки проекта): работа закрыта и ждёт приёмки человеком
+(см. «Проверка»). Отдельный kind не заводится — `review` есть в каждом проекте (`validateColumns`), миграция
+колонок не нужна. Готовы (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
 
 ## Модель: глобальная задача = прогон (`Run`)
 
@@ -27,7 +30,8 @@ needs_input — **вычисляемая** колонка: там карточк
 |---|---|
 | `objective` | (было) описание глобальной задачи; для координатора — его цель |
 | `title?` | название карточки; нет — первая строка `objective` (≤ 80 символов), у «Входящих» — `Входящие` (`globalTaskTitle`) |
-| `status?` | id колонки глобального канбана (kind backlog / in_progress / done), где стоит карточка. После миграции есть всегда |
+| `status?` | id колонки глобального канбана (kind backlog / in_progress / review / done), где стоит карточка. После миграции есть всегда |
+| `returns?` | уточнения человека при «Вернуть в работу» с «Проверки», по порядку: `{at, text}[]`. `objective` они не меняют — попадают в цель повторного запуска координатора |
 | `inbox?` | служебная глобальная задача «Входящие» (одна на проект) |
 | `priority?` | приоритет карточки — та же шкала, что у подзадач (`TaskPriority`: `urgent` / `high` / `normal` / `low`). Новые — `normal`, после миграции есть всегда. Влияет только на порядок показа, не на цель координатора и не на приоритет подзадач |
 | `updatedAt?` | последняя правка карточки |
@@ -66,19 +70,23 @@ needs_input — **вычисляемая** колонка: там карточк
 ## Жизненный цикл и статус
 
 Статус карточки (`run.status`) и статусы подзадач **независимы**: ручное перемещение карточки не трогает
-подзадачи. Жизненный цикл прогона оно меняет только на границе `kind=done` (см. строку «Ручной перенос» ниже).
+подзадачи. Жизненный цикл прогона оно меняет только на границе закрытых колонок `kind=review` / `kind=done`
+(см. строку «Ручной перенос» ниже).
 Автоматика меняет статус карточки только в этих случаях:
 
 | Событие | Что происходит |
 |---|---|
 | Создание (`createGlobalTask`, `createRun`) | `status` = переданная колонка (только глобального канбана) или первая `kind=backlog` |
 | Координатор запущен на прогоне (`setRunPty`) | закрытый прогон переоткрывается; карточка → `kind=in_progress` |
-| Все подзадачи в `kind=done` (`closeFinishedRuns`) | `closedAt`, событие `run_done` (у «Входящих» — без события: нет координатора), карточка → `kind=done` |
-| `runs finish` на незакрытом прогоне, где все подзадачи в `kind=done` (`finishRun`) | то же закрытие (`closedAt`, `reopenedAt` снят, `run_done` сразу помечен потреблённым) + `finishedAt` |
-| Ручной перенос карточки в `kind=done` (`moveGlobalTask`, UI и `global move`) | открытый прогон закрывается: `closedAt`, `reopenedAt` снят, событие `run_done {runId, objective, manual: true}` (у «Входящих» — без события); подзадачи не трогаются. Уже закрытый — без изменений и без второго события. Координатор получает `run_done`, а `coordinatorsToClose` закрывает его терминал после короткой тишины, даже без `runs finish` |
-| Ручной перенос карточки из `kind=done` в другую колонку (`moveGlobalTask`) | закрытый прогон переоткрывается (как ниже: `reopenedAt`, старые `run_done` погашены), карточка — в выбранную колонку |
-| Ручное закрытие (`closeRun`, `runs close`) | `closedAt` без `run_done`; карточка из `kind=in_progress` → `kind=done`, из других колонок остаётся |
-| Новая подзадача в закрытой глобальной (`createTask`) | прогон переоткрыт (`closedAt`/`finishedAt` сброшены); карточка из `kind=done` → `kind=in_progress`, иначе остаётся |
+| Все подзадачи в `kind=done` (`closeFinishedRuns`) | `closedAt`, событие `run_done`, карточка → **`kind=review` («Проверка»)**. У «Входящих» — без события (нет координатора) и сразу `kind=done` |
+| `runs finish` на незакрытом прогоне, где все подзадачи в `kind=done` (`finishRun`) | то же закрытие (`closedAt`, `reopenedAt` снят, карточка → `kind=review`, `run_done` сразу помечен потреблённым) + `finishedAt` |
+| Ручной перенос карточки в `kind=done` или `kind=review` (`moveGlobalTask`, UI и `global move`) | pending-запросы прогона отменяются; открытый прогон закрывается: `closedAt`, `reopenedAt` снят, событие `run_done {runId, objective, manual: true}` (у «Входящих» — без события); подзадачи не трогаются. Уже закрытый — без изменений и без второго события (review → done = «Подтвердить», done → review — просто перенос). Координатор получает `run_done`, а `coordinatorsToClose` закрывает его терминал после короткой тишины, даже без `runs finish`. В done из backlog/in_progress — сразу «Сделано»: человек сам объявил задачу сделанной, проверка не нужна |
+| Ручной перенос карточки из `kind=done`/`kind=review` в backlog или in_progress (`moveGlobalTask`) | закрытый прогон переоткрывается (как ниже: `reopenedAt`, старые `run_done` погашены), карточка — в выбранную колонку. Координатор не запускается, уточнения нет — для этого «Вернуть в работу» |
+| «Подтвердить» (`acceptGlobalTask`) | только из `kind=review` → `kind=done`; `closedAt` не меняется, событий нет |
+| «Вернуть в работу» (`returnGlobalTask` + запуск координатора в main) | только из `kind=review`, не «Входящие», текст обязателен: уточнение → `returns`, прогон переоткрыт (`reopenRun`), карточка → `kind=in_progress`; см. «Проверка» |
+| Ручное закрытие (`closeRun`, `runs close`) | `closedAt` без `run_done`; карточка из `kind=in_progress` → `kind=done` (явное закрытие, не результат работы — проверять нечего), из других колонок остаётся |
+| Новая подзадача в закрытой глобальной (`createTask`) | прогон переоткрыт (`closedAt`/`finishedAt` сброшены); карточка из `kind=done`/`kind=review` → `kind=in_progress`, иначе остаётся |
+| Запуск координатора (`setRunPty`) | закрытый прогон переоткрыт, карточка → `kind=in_progress` (в том числе из «Проверки») |
 
 Переоткрытие ставит `reopenedAt`: пока ни одна подзадача не вошла в done после этого, прогон не
 закрывается автоматически — иначе повторный запуск координатора на полностью готовой глобальной задаче
@@ -174,9 +182,40 @@ needs_input — **вычисляемая** колонка: там карточк
   автозакрытия не будет (`reopenedAt`), `run_done` не придёт. Поэтому раздел «Повторный запуск»
   `skills/coordinator.md` (исключение из «не вызывай runs finish до run_done») и цель велят в этом случае
   не ставить монитор, написать сводку и выполнить `orca-board runs finish`: `finishRun` сам закроет прогон
-  (`closedAt`, карточка → done, новый `run_done`, `finishedAt`), и `coordinatorsToClose` закроет терминал
+  (`closedAt`, карточка → «Проверка», новый `run_done`, `finishedAt`), и `coordinatorsToClose` закроет терминал
   Codex. То же, если новую подзадачу удалили. `runs finish` на прогоне с незавершёнными подзадачами или
   на свежем прогоне без подзадач — по-прежнему ошибка `run not closed … — дождись run_done`.
+
+## Проверка
+
+После закрытия по итогам работы (автозакрытие или `runs finish`) глобальная задача стоит в колонке
+«Проверка» (`kind=review`): человек принимает результат. Состояние задаёт хранимый `Run.status` — механизм
+запросов к человеку (`HumanRequest`) не используется: pending-запрос прогона сам переводит карточку в «Нужен
+ответ», а у приёмки нет подзадачи для обязательного `taskId`. Карточка в «Проверке» (как и в done) в «Нужен ответ»
+не поднимается (`globalDisplayStatus`), основное время в ней стоит. Уведомление — `run_done` («Ждёт проверки: …»,
+у `manual` — «Прогон завершён», `apps/desktop/src/main/notify.ts`).
+
+- **Подтвердить** — IPC `globalTasks.accept(id)` → `TaskStore.acceptGlobalTask`: `kind=review` → `kind=done`,
+  без событий. Не на проверке — ошибка «глобальная задача … не на проверке».
+- **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows)` → `ptyId` координатора
+  (`returnToWork` в `apps/desktop/src/main/worker.ts`):
+  1. жив прежний координатор (окно после `runs finish`, пока `coordinatorsToClose` не закрыл терминал) —
+     ошибка «координатор … ещё завершается — повторите через несколько секунд», стор не меняется;
+  2. `TaskStore.returnGlobalTask(id, text)`: пустой текст, «Входящие», не на проверке — ошибка; иначе
+     `returns.push({at, text})`, `reopenRun` (гасит старые `run_done`, ставит `reopenedAt`), карточка → in_progress;
+  3. повторный запуск координатора (`startCoordinator(..., runId)`), как `globalTasks.startCoordinator`.
+
+  Упал запуск после шага 2 — карточка остаётся «В работе» с уточнением, отката нет: «Запустить координатора»
+  подхватит его из `Run.returns`. Отдельного события координатору нет — старый уже завершился, новый получает
+  уточнение в цели: `resumeCoordinatorObjective(goal, subtasks, returns)` добавляет блок «Уточнение после
+  проверки: …» (`COORDINATOR_RETURN_HEADING`) с последним уточнением полностью и прошлыми списком — **даже без
+  подзадач**. Раздел «Повторный запуск» `skills/coordinator.md` велит считать уточнение новой работой; если
+  координатор решил, что работы нет, `runs finish` снова ставит карточку на проверку.
+- CLI для приёмки нет намеренно: подтверждать — дело человека, не координатора. Перенос скриптом —
+  `global move --status <id колонки review|done>` по правилам таблицы выше.
+- **Совместимость.** Миграции `Run` нет: до «Проверки» глобальная задача в `review` стоять не могла (старый
+  `migrateGlobalTasks` сводил её к in_progress), старые закрытые остаются в «Сделано». Откат на старую версию
+  сведёт `review` к in_progress — данные не теряются, `returns` просто игнорируется.
 
 ## API
 
@@ -211,6 +250,7 @@ interface GlobalTask {
   ownActiveSince?: number    // начало идущего отрезка основного времени (= Run.activeSince); нет — стоит
   subtasksActiveMs: number   // сумма закрытых отрезков подзадач (Task.activeMs), мс
   subtasksActiveSince: number[] // начала идущих отрезков подзадач в работе; пусто — сумма стоит
+  returns?: { at: number; text: string }[] // уточнения при возвратах с «Проверки» (= Run.returns)
 }
 ```
 
@@ -257,11 +297,13 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 | `get(id)` | `globalTasks:get` | `GlobalTask` | `run not found` |
 | `create({title?, description?, status?, priority?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана; неизвестный приоритет |
 | `update(id, {title?, description?, priority?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название; неизвестный приоритет (карточка не меняется) |
-| `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / review / custom) |
+| `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |
 | `tasks(id)` | `globalTasks:tasks` | `Task[]` только этой глобальной | `run not found` |
 | `createTask(id, {title, spec?, deps?, roleId?})` | `globalTasks:createTask` | `Task` (`runId = id`) | пустое название; роль (`pickRole`); deps из другой глобальной; `run not found` |
 | `startCoordinator(id, cols, rows, images?)` | `globalTasks:startCoordinator` | `ptyId` | см. «Повторный запуск» |
+| `accept(id)` | `globalTasks:accept` | `GlobalTask` | не на проверке; `run not found` |
+| `returnToWork(id, text, cols, rows)` | `globalTasks:returnToWork` | `ptyId` координатора | пустой текст; «Входящие»; не на проверке; координатор ещё жив; ошибки запуска (см. «Проверка») |
 
 Изменения приходят как раньше в `board.onChange` (`board:changed {projectId, snapshot}`). Старые
 `tasks.*`, `runs.*`, `coordinator.start`, `worker.start` не менялись (кроме: `tasks.create` → во «Входящие»).
@@ -295,7 +337,7 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 ## Что учесть UI
 
 - Колонки внутренней доски — `Project.columns` (порядок, `title`, `color`, `kind`); верхнего уровня —
-  `globalBoardColumns(Project.columns)` (только backlog / in_progress / done). Счётчик колонки верхнего
+  `globalBoardColumns(Project.columns)` (backlog / in_progress / needs_input / review — «Проверка» / done). Счётчик колонки верхнего
   уровня — число карточек с `status === column.id` (`GlobalTask.status` уже сведён к видимой колонке).
 - Карточка: `title`, `description` (кратко), статус, `progress.done/total`, `activityAt`.
 - Внутренняя доска — `tasks(id)` или `snapshot.tasks.filter(t => t.runId === id)`; создание — только
@@ -310,11 +352,14 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
   статусов из скрытых колонок, прогресс, изоляция, удаление,
   lifecycle (run_done, повторный запуск с новой подзадачей и без неё → `runs finish` закрывает прогон
   и терминал, ручное закрытие, «Входящие» без run_done), сохранение и миграция старого снапшота.
+  «Проверка»: автозакрытие и `runs finish` → review, «Подтвердить», «Вернуть в работу» (уточнения, погашенные
+  `run_done`, повторный цикл), ручные переносы в/из review, «Входящие» не на проверке, рестарт с review.
 - `packages/core/src/coordinator-close.test.ts` — последний `run_done` переоткрытого прогона.
 - `packages/core/src/answers.test.ts`, `requests.test.ts` — задачи-ответы, запросы к человеку: создание, решения,
   отмена, миграция, колонка «Нужен ответ» только по `pending`.
 - `packages/core/src/prompts.test.ts` — встроенный промпт координатора содержит раздел «Повторный запуск»
-  с исключением для `runs finish`; `resumeCoordinatorObjective` добавляет список и ссылку только при наличии подзадач;
+  с исключением для `runs finish` и пунктом об «Уточнении после проверки»; `resumeCoordinatorObjective` добавляет
+  список и ссылку при наличии подзадач, уточнение — всегда;
   skills описывают события запросов и флаги `ask`; команды `orca-board …` в skills и `docs/human-requests.md`
   есть в справке CLI.
 - `packages/cli/test/cli.test.js` — запросы CLI к фейковому сокету: старые команды и `global *`.

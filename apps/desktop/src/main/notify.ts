@@ -68,7 +68,8 @@ export function describeEvent(e: OrcaEvent, task: Task | undefined, projectName:
     case 'escalation': body = withDetail(e.type === 'workflow_blocked' ? 'Воркфлоу остановлен' : 'Эскалация', text('reason')); break
     case 'answerReady': body = withDetail('Ответ готов', text('summary')); break
     case 'workerDone': body = requestId ? withDetail('Ждёт решения', text('summary')) : withDetail('Готово к ревью', detail('summary')); break
-    case 'runDone': body = withDetail('Прогон завершён', detail('objective')); break
+    // Автозакрытие ставит глобальную задачу на «Проверку» — человеку её принимать; ручной перенос сделал он сам.
+    case 'runDone': body = withDetail(e.payload.manual === true ? 'Прогон завершён' : 'Ждёт проверки', detail('objective')); break
   }
   return { kind, roleId, title, body: body.slice(0, 200), ...(requestId ? { requestId } : {}) }
 }

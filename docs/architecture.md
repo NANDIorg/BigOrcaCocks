@@ -353,12 +353,14 @@ Store хранит позицию и решает, куда задача пер�
   consumer = `params.consumer ?? runId ?? 'coordinator'`, поэтому прогоны не «съедают» события друг друга
   (`consumedBy` у события один). Без `runId` — старое поведение: все события, consumer `coordinator`.
 - **Автозакрытие** (`closeFinishedRuns`, вызывается из каждого `commit()`): открытый прогон, у которого есть
-  задачи и все они в колонке `kind=done`, получает `closedAt` и событие `run_done {runId, objective}`.
+  задачи и все они в колонке `kind=done`, получает `closedAt` и событие `run_done {runId, objective}`, а
+  карточка глобальной задачи встаёт на «Проверку» (`kind=review`; «Входящие» — в done), см. `docs/nested-kanban.md`.
   Ловит любой путь в done и удаление задач. Прогон без задач автоматически не закрывается; закрытый —
   повторно не закрывается и `run_done` не шлёт.
-- **Ручной done** (`moveGlobalTask` в колонку `kind=done`: IPC `globalTasks:move`, сокет `global.move`): открытый
-  прогон закрывается так же, но событие — `run_done {runId, objective, manual: true}`, подзадачи не трогаются.
-  Повтор — без изменений и без второго события; перенос из done в другую колонку переоткрывает прогон (`reopenRun`).
+- **Ручной done** (`moveGlobalTask` в колонку `kind=done` или `kind=review`: IPC `globalTasks:move`, сокет
+  `global.move`): открытый прогон закрывается так же, но событие — `run_done {runId, objective, manual: true}`,
+  подзадачи не трогаются. Повтор — без изменений и без второго события; перенос из done/review в backlog или
+  in_progress переоткрывает прогон (`reopenRun`).
 - **Закрытие терминала координатора** (`coordinatorsToClose` в `packages/core/src/coordinator-close.ts`,
   опрос раз в 5 с — `watchFinishedCoordinators` в `apps/desktop/src/main/index.ts`): интерактивный CLI
   координатора (Claude Code и Codex) после финальной сводки ждёт ввода и сам не выходит.
@@ -826,7 +828,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:setWorkflow(id, wf | null)` → `Project` (ошибки `validateWorkflow` — исключением), `workflow:default(roles)` → `Workflow` (см. «Роли и колонки → Воркфлоу проекта»);
   `projects:getDefaults`, `projects:setDefaults(patch)` (в т. ч. `workflow`), `projects:applyDefaults(id)`; `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
-  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
+  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),

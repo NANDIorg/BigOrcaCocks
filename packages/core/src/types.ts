@@ -211,6 +211,12 @@ export interface Run {
    * читается как дефолтный граф (`TaskStore.runWorkflow`).
    */
   workflow?: Workflow
+  /**
+   * Уточнения человека при возвратах с «Проверки» в работу (`TaskStore.returnGlobalTask`), по порядку.
+   * Описание (`objective`) не трогают: уточнения попадают в цель повторного запуска координатора
+   * (`resumeCoordinatorObjective`), в том числе при ручном «Запустить координатора», если старт упал.
+   */
+  returns?: Array<{ at: number; text: string }>
 }
 
 // ---------- задачи ----------
