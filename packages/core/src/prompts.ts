@@ -1,12 +1,12 @@
 // Только type-импорты: модуль тестируется node --test без бандлера.
 import type { AgentSpec } from './agents'
-import type { Question, Task } from './types'
+import type { Question, Role, Task } from './types'
 
 /**
  * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
- * (skills/coordinator.md), `worker` — при старте задачи (skills/worker.md).
+ * (skills/coordinator.md), `assistant` — ассистент доски (skills/assistant.md), `worker` — при старте задачи (skills/worker.md).
  */
-export type BuiltinPromptKind = 'coordinator' | 'worker'
+export type BuiltinPromptKind = 'coordinator' | 'assistant' | 'worker'
 
 /** Тексты служебных инструкций. Источник — skills/*.md, их отдаёт main-процесс (тот же текст, что при запуске). */
 export type BuiltinPrompts = Record<BuiltinPromptKind, string>
@@ -14,10 +14,41 @@ export type BuiltinPrompts = Record<BuiltinPromptKind, string>
 /** Роль, которой запускается координатор. */
 export const COORDINATOR_ROLE_ID = 'coordinator'
 
-/** Служебная инструкция роли: у coordinator — координаторская, у остальных — воркерская. */
-export function builtinPromptKind(roleId: string): BuiltinPromptKind {
-  return roleId === COORDINATOR_ROLE_ID ? 'coordinator' : 'worker'
+/** Роль, которой запускается ассистент доски. */
+export const ASSISTANT_ROLE_ID = 'assistant'
+
+/** Служебные роли: запускают агента вне задач (координатор, ассистент), задачам не назначаются. */
+export const SERVICE_ROLE_IDS: readonly string[] = [COORDINATOR_ROLE_ID, ASSISTANT_ROLE_ID]
+
+/** Роль можно назначить задаче: не служебная. */
+export function isTaskRole(roleId: string): boolean {
+  return !SERVICE_ROLE_IDS.includes(roleId)
 }
+
+/** Служебная инструкция роли: у coordinator — координаторская, у assistant — ассистента, у остальных — воркерская. */
+export function builtinPromptKind(roleId: string): BuiltinPromptKind {
+  if (roleId === COORDINATOR_ROLE_ID) return 'coordinator'
+  if (roleId === ASSISTANT_ROLE_ID) return 'assistant'
+  return 'worker'
+}
+
+/**
+ * Роль запуска ассистента: роль assistant; в проектах, созданных до неё, — агент, модель и effort роли
+ * coordinator (без её инструкций — они координаторские); нет и её — undefined (claude без модели).
+ */
+export function assistantRole(roles: readonly Role[]): Role | undefined {
+  const own = roles.find((r) => r.id === ASSISTANT_ROLE_ID)
+  if (own) return own
+  const c = roles.find((r) => r.id === COORDINATOR_ROLE_ID)
+  if (!c) return undefined
+  return {
+    id: ASSISTANT_ROLE_ID, title: 'Ассистент', agent: c.agent,
+    ...(c.model ? { model: c.model } : {}), ...(c.effort ? { effort: c.effort } : {})
+  }
+}
+
+/** Стартовое сообщение ассистента: задание приходит от человека в терминале, не при запуске. */
+export const ASSISTANT_START_PROMPT = 'Поздоровайся одной строкой и жди запроса человека.'
 
 /** Кому адресован ответ — для промпта воркера. */
 const ANSWER_READER = { human: 'человек', coordinator: 'координатор' } as const

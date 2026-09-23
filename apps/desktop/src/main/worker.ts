@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, coordinatorPrompt, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, resumeCoordinatorObjective, imageAttachmentFileName, globalTaskTitle, type TaskStore, type Role, type ImageAttachment, type Run } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -364,4 +364,32 @@ export function startCoordinator(
   }
   store.setRunPty(run.id, ptyId, role?.agent ?? 'claude')
   return { ptyId, runId: run.id }
+}
+
+/**
+ * Ассистент доски: интерактивный агент роли assistant (нет такой роли — агент роли coordinator, нет и её — claude)
+ * в корне репозитория. Прогон не создаётся и ORCA_RUN_ID нет: ассистент действует на всём проекте через
+ * orca-board по просьбам человека в терминале (skills/assistant.md).
+ */
+export function startAssistant(repoRoot: string, ctx: WorkerEnvContext, cols = 120, rows = 30): { ptyId: string } {
+  const role = assistantRole(ctx.roles)
+  const spec = getAgent(role?.agent ?? 'claude')
+  if (!spec) throw new Error(`неизвестный агент: ${role?.agent}`)
+  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.assistant, role), ASSISTANT_START_PROMPT, {
+    permissionMode: ctx.permissionMode,
+    shell: defaultShell(),
+    model: role?.model,
+    effort: role?.effort
+  })
+  const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
+  const ptyId = spawnPty({
+    meta: { role: 'assistant', label: 'ассистент', projectId: ctx.projectId },
+    cwd: repoRoot,
+    command: launch.command,
+    args: launch.args,
+    cols,
+    rows,
+    env: { ...baseEnv(ctx), ...launch.env, ORCA_ROLE: 'assistant' }
+  })
+  return { ptyId }
 }

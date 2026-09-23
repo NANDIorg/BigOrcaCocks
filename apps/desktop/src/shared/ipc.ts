@@ -14,7 +14,7 @@ export interface PtySpawnOptions {
   label?: string
 }
 
-export type TerminalRole = 'coordinator' | 'worker' | 'shell'
+export type TerminalRole = 'coordinator' | 'worker' | 'assistant' | 'shell'
 
 /** Живой PTY в реестре main (src/main/pty.ts). Источник правды для вкладок «Терминалы». */
 export interface TerminalInfo {
@@ -283,6 +283,13 @@ export interface OrcaApi {
      * Пустая цель допустима только с изображениями (тогда цель — `DEFAULT_IMAGE_OBJECTIVE`).
      */
     start(objective: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
+  }
+  /** Ассистент доски активного проекта (skills/assistant.md): интерактивный агент, действует через orca-board. */
+  assistant: {
+    /** Терминал ассистента: живой — тот же, иначе запускается новый. */
+    open(cols: number, rows: number): Promise<{ ptyId: string }>
+    /** Закрыть терминал ассистента (если жив) и запустить новый — чистый контекст. */
+    reset(cols: number, rows: number): Promise<{ ptyId: string }>
   }
   /** .md-файлы активного проекта и worktree его задач в работе. Путь — только относительный, внутри источника. */
   docs: {

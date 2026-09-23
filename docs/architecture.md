@@ -78,7 +78,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Откуда берётся дефолт**: `projects.json → defaults.roles` / `defaults.columns`; не заданы —
   встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`. При `setDefaults` роли и колонки проходят те же
   `validateRoles` / `validateColumns`, что и у проекта.
-- **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
+- **Дефолтные роли**: `coordinator`, `assistant`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
+  `coordinator` и `assistant` — служебные (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
+  их нет, в редакторе ролей они в группе «Системная».
 - **Валидация ролей** (`validateRoles`): хотя бы одна роль; непустые уникальные `id`, непустые
   `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются);
   `description` и `systemPrompt` — строки или отсутствуют, хранятся как введены (без trim), из одних пробелов → удаляются;
@@ -97,6 +99,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет — `claude` без модели.
+- **Ассистент** (`startAssistant`): роль `assistant`; в старых проектах без неё — агент, модель и effort роли
+  `coordinator` (без её инструкций, `assistantRole`), нет и её — `claude` без модели. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
   при старте воркера и координатора к служебной инструкции Orca (`skills/worker.md` / `coordinator.md`)
   дописывается блок `# Инструкции роли «<title>»` с текстом роли (trim по краям, внутри — как есть).
@@ -316,6 +320,29 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Покрытие**: только UI-форма. `orca-board coordinator start --objective` (сокет `coordinator.start`)
   изображений не принимает. Миниатюры — `blob:` URL (CSP в `renderer/index.html`: `img-src 'self' blob:`).
 
+## Ассистент (`src/main/worker.ts` `startAssistant`, `src/main/index.ts` `openAssistant`, `skills/assistant.md`)
+
+Третий тип агента рядом с воркером и координатором: интерактивный агент в PTY, которому человек пишет
+естественным языком («создай задачу», «верни в работу», «перенеси», «закрой», «перезапусти воркера»),
+а он выполняет это командами `orca-board`. Код не пишет и не читает.
+
+- **Запуск** (`startAssistant(repoRoot, ctx, cols, rows)`): агент роли `assistant` (fallback см. «Роли и колонки»),
+  system prompt — `skills/assistant.md` + инструкции роли (`withRoleInstructions`), стартовое сообщение —
+  `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — корень репозитория
+  проекта, режим разрешений — проекта, `orca-board` без вопросов (`--allowedTools Bash(orca-board:*)` у claude),
+  на Windows — `win32Launch`, как у координатора.
+- **Окружение**: `ORCA_SOCKET`, `ORCA_PROJECT`, `PATH` с bin CLI (`baseEnv`) и `ORCA_ROLE=assistant`.
+  **Нет** `ORCA_RUN_ID`: прогон не создаётся, ассистент работает со всей доской проекта (задачи без `--run`
+  попадают во «Входящие», глобальные задачи он называет явно через `--global`/`--run`).
+- **IPC**: `assistant:open(cols, rows) → { ptyId }` — один ассистент на проект (`Map<projectId, ptyId>`):
+  живой PTY возвращается как есть, иначе запускается новый; `assistant:reset(cols, rows) → { ptyId }` — живой
+  закрывается (`killPty`), запускается новый с чистым контекстом. Проект — активный (`resolveProject()`),
+  как у `coordinator:start`. В renderer — `window.orca.assistant.open/reset`.
+- **Правила поведения** — в `skills/assistant.md`: сначала найти объект (`task list`/`global list`, при неоднозначности —
+  кандидаты с id и вопрос), колонки — из `columns list`, роли — из `roles list`; словарь намерений → команды;
+  без подтверждения — создать/перенести/запустить, после явного «да» — `task delete`, `global delete`,
+  закрыть без мержа, `worker stop`; после действия — одна строка с id; долгих ожиданий (`check --wait/--follow`) нет.
+
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
 - **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся
@@ -487,8 +514,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `tail` (сырой вывод, до 256 КБ), `lastOutputAt` (детектор тишины) и текущий размер.
 - **Регистрация** — `spawnPty({ meta })`, метаданные передаёт вызывающий: IPC `pty:spawn` из UI
   (`role: 'shell'`, `label` или «терминал», проект из параметра или активный; `index.ts`), `startWorker`
-  (`role: 'worker'`, `label` = название задачи, `taskId`) и `startCoordinator` (`role: 'coordinator'`,
-  `label` «координатор», `runId`; `worker.ts`). После вставки — `terminals:changed`.
+  (`role: 'worker'`, `label` = название задачи, `taskId`), `startCoordinator` (`role: 'coordinator'`,
+  `label` «координатор», `runId`) и `startAssistant` (`role: 'assistant'`, `label` «ассистент», без `runId`; `worker.ts`). После вставки — `terminals:changed`.
 - **Удаление**: процесс вышел (`onExit`) или `killPty` (крестик, `closeTaskWorkers`, `killAll` при выходе).
   `killPty` удаляет запись и шлёт `terminals:changed` сразу, до `kill()`; последующий `onExit` видит, что
   записи уже нет, и `terminals:changed` повторно не шлёт. Шаг `before` (setup на Windows) выходом не считается —
@@ -546,7 +573,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
-  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `review:info`, `review:accept`, `review:reject`.
+  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.

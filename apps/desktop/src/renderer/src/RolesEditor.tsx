@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
-  COORDINATOR_ROLE_ID,
+  ASSISTANT_START_PROMPT,
   DEFAULT_ROLES,
   builtinPromptKind,
   coordinatorPrompt,
@@ -9,6 +9,7 @@ import {
   effortOptions,
   effortOptionsFor,
   getAgent,
+  isTaskRole,
   modelLabel,
   modelOptions,
   promptChannel,
@@ -77,7 +78,7 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
   const enabled = agents.filter((a) => a.enabled)
   const builtin = useBuiltinPrompts()
   const [selectedId, setSelectedId] = useState<string | undefined>(
-    () => (initial.find((r) => r.id !== COORDINATOR_ROLE_ID) ?? initial[0])?.id
+    () => (initial.find((r) => isTaskRole(r.id)) ?? initial[0])?.id
   )
   /** Id перетаскиваемой роли (drag-ручка в списке). */
   const [dragId, setDragId] = useState<string | undefined>()
@@ -131,20 +132,20 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
     update(next)
   }
 
-  /** Сдвиг роли с клавиатуры (Alt+↑/↓) — альтернатива перетаскиванию; координатор в списке задач не участвует. */
+  /** Сдвиг роли с клавиатуры (Alt+↑/↓) — альтернатива перетаскиванию; служебные роли в списке задач не участвуют. */
   function shift(id: string, delta: -1 | 1): void {
-    const list = roles.filter((r) => r.id !== COORDINATOR_ROLE_ID)
+    const list = roles.filter((r) => isTaskRole(r.id))
     const target = list[list.findIndex((r) => r.id === id) + delta]
     if (target) move(id, target.id)
   }
 
-  const system = roles.filter((r) => r.id === COORDINATOR_ROLE_ID)
-  const taskRoles = roles.filter((r) => r.id !== COORDINATOR_ROLE_ID)
+  const system = roles.filter((r) => !isTaskRole(r.id))
+  const taskRoles = roles.filter((r) => isTaskRole(r.id))
 
   function item(r: Role): React.JSX.Element {
     const info = agents.find((a) => a.id === r.agent)
     const state = agentState(info)
-    const isCoordinator = r.id === COORDINATOR_ROLE_ID
+    const isService = !isTaskRole(r.id)
     const summary = [
       info?.title ?? r.agent,
       state === 'on' ? modelLabel(info, r.model) : state === 'off' ? 'выключен' : 'неизвестен',
@@ -155,14 +156,14 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
       <li
         key={r.id}
         className={`roles-item${r.id === selected?.id ? ' active' : ''}${dragId === r.id ? ' dragging' : ''}`}
-        onDragOver={isCoordinator || !dragId ? undefined : (e) => e.preventDefault()}
-        onDrop={isCoordinator || !dragId ? undefined : (e) => {
+        onDragOver={isService || !dragId ? undefined : (e) => e.preventDefault()}
+        onDrop={isService || !dragId ? undefined : (e) => {
           e.preventDefault()
           move(dragId, r.id)
           setDragId(undefined)
         }}
       >
-        {isCoordinator ? (
+        {isService ? (
           <span className={`roles-dot ${state}`} role="img" aria-label={AGENT_STATE_TEXT[state]} title={AGENT_STATE_TEXT[state]} />
         ) : (
           <span
@@ -186,14 +187,14 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
           aria-current={r.id === selected?.id ? 'true' : undefined}
           onClick={() => setSelectedId(r.id)}
           onKeyDown={(e) => {
-            if (isCoordinator || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
+            if (isService || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
             e.preventDefault()
             shift(r.id, e.key === 'ArrowUp' ? -1 : 1)
           }}
         >
           <span className="roles-title">
             <span className="roles-name">{r.title || 'Без названия'}</span>
-            {!isCoordinator && state !== 'on' && (
+            {!isService && state !== 'on' && (
               <span className={`roles-dot ${state}`} role="img" aria-label={AGENT_STATE_TEXT[state]} title={AGENT_STATE_TEXT[state]} />
             )}
           </span>
@@ -202,8 +203,8 @@ export function RolesEditor({ storageKey, roles: initial, agents, taskCounts, on
             <span className="roles-name">{summary}</span>
           </span>
         </button>
-        {isCoordinator ? (
-          <span className="chip sys" title="Запускает прогон, задачам не назначается">запуск</span>
+        {isService ? (
+          <span className="chip sys" title={`${SERVICE_TEXT[builtinPromptKind(r.id)]}, задачам не назначается`}>запуск</span>
         ) : state !== 'on' ? (
           <span className="chip warn" title={AGENT_STATE_TEXT[state]}>!</span>
         ) : count !== undefined ? (
@@ -283,7 +284,7 @@ function RolePanel({
   const defaultModel = modelLabel(current, defaults?.model)
   const efforts = effortsOf(current, r.agent, r.model)
   const isSystem = SYSTEM_ROLE_IDS.has(r.id)
-  const isCoordinator = r.id === COORDINATOR_ROLE_ID
+  const isService = !isTaskRole(r.id)
   const defaultDescription = defaultRoleDescription(r.id)
   const kind = builtinPromptKind(r.id)
   const builtinText = builtin && 'prompts' in builtin ? builtin.prompts[kind] : undefined
@@ -310,8 +311,8 @@ function RolePanel({
           <div className="roles-meta">
             <span className="chip mono" title="id роли (для CLI: --role)">{r.id}</span>
             {isSystem && <span className="chip sys">системная · нельзя удалить</span>}
-            {isCoordinator
-              ? <span className="chip sys">запускает прогон · задачам не назначается</span>
+            {isService
+              ? <span className="chip sys">{SERVICE_TEXT[kind].toLowerCase()} · задачам не назначается</span>
               : <span className="chip ok">назначается задачам</span>}
           </div>
         </div>
@@ -496,7 +497,9 @@ function RolePanel({
                 {current?.title ?? r.agent} {CHANNEL_TEXT[promptChannel(getAgent(r.agent))]}. В ‹…› подставляются данные{' '}
                 {kind === 'coordinator'
                   ? 'прогона; если к цели приложены изображения, добавляется блок с путями к ним.'
-                  : 'задачи; после возврата с ревью добавляется блок «Замечания после ревью».'}
+                  : kind === 'assistant'
+                    ? 'не нужны: сообщение постоянное, запросы человек пишет в терминал ассистента.'
+                    : 'задачи; после возврата с ревью добавляется блок «Замечания после ревью».'}
               </div>
               <pre className="role-text short">{startTemplate(kind)}</pre>
             </>
@@ -535,7 +538,7 @@ function commandPreview(r: Role, kind: BuiltinPromptKind): string {
   const spec = getAgent(r.agent)
   if (!spec) return `${r.agent}: агент неизвестен`
   const system = `‹skills/${kind}.md${r.systemPrompt ? ' + инструкции роли' : ''}›`
-  const prompt = kind === 'coordinator' ? '‹цель прогона›' : '‹задание›'
+  const prompt = kind === 'coordinator' ? '‹цель прогона›' : kind === 'assistant' ? ASSISTANT_START_PROMPT : '‹задание›'
   const { command, args } = spec.invoke(system, prompt, {
     permissionMode: '‹режим разрешений›', shell: '$SHELL', model: r.model, effort: r.effort
   })
@@ -562,9 +565,16 @@ function useBuiltinPrompts(): BuiltinState {
 
 /** Стартовое сообщение с ‹плейсхолдерами› — собирается теми же функциями, что и при запуске. */
 function startTemplate(kind: BuiltinPromptKind): string {
-  return kind === 'coordinator'
-    ? coordinatorPrompt('‹цель прогона›')
-    : workerTaskPrompt({ title: '‹название задачи›', spec: '‹описание задачи›' })
+  if (kind === 'coordinator') return coordinatorPrompt('‹цель прогона›')
+  if (kind === 'assistant') return ASSISTANT_START_PROMPT
+  return workerTaskPrompt({ title: '‹название задачи›', spec: '‹описание задачи›' })
+}
+
+/** Что запускает служебная роль (у воркерской kind — не используется). */
+const SERVICE_TEXT: Record<BuiltinPromptKind, string> = {
+  coordinator: 'Запускает прогон',
+  assistant: 'Ассистент доски',
+  worker: 'Выполняет задачу'
 }
 
 const CHANNEL_TEXT = {
