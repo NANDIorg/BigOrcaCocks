@@ -19,6 +19,7 @@ import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
+import { InboxPanel, pendingRequests } from './InboxPanel'
 
 type Tab = 'board' | 'terminals' | 'info'
 
@@ -146,6 +147,10 @@ export function App(): React.JSX.Element {
   /** Хвост вывода из terminals:list по ptyId — начальное содержимое xterm после перезагрузки окна. */
   const [tails, setTails] = useState<Record<string, string>>({})
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  /** Инбокс — панель запросов к человеку (⌘J, бейдж «Входящие» в шапке, клик по уведомлению). */
+  const [showInbox, setShowInbox] = useState(false)
+  /** Запрос, на котором открыть Инбокс (уведомление); nonce — повторный клик по тому же уведомлению. */
+  const [inboxFocus, setInboxFocus] = useState<{ requestId: string; nonce: number } | null>(null)
   const tasks = snap.tasks
   const openTask = openTaskId ? tasks.find((t) => t.id === openTaskId) : undefined
 
@@ -224,10 +229,26 @@ export function App(): React.JSX.Element {
       await window.orca.projects.setActive(projectId)
       await refreshProjects()
     })
+    // Клик по уведомлению о запросе: проект переключает projects:focus, здесь — открыть Инбокс на запросе.
+    const offRequestFocus = window.orca.requests.onFocus(({ requestId }) => {
+      setInboxFocus((prev) => ({ requestId, nonce: (prev?.nonce ?? 0) + 1 }))
+      setShowInbox(true)
+    })
+    // ⌘J / Ctrl+J — Инбокс; в фазе захвата, чтобы сработало и из терминала (xterm).
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === 'KeyJ') {
+        e.preventDefault()
+        e.stopPropagation()
+        setShowInbox((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
     return () => {
       offBoard()
       offTerminals()
       offFocus()
+      offRequestFocus()
+      window.removeEventListener('keydown', onKey, true)
     }
   }, [])
 
@@ -280,6 +301,7 @@ export function App(): React.JSX.Element {
   for (const q of snap.questions) if (!q.answeredAt) bump(taskRun.get(q.taskId), 'questions')
   // Задача-ответ в review — не ревью кода: она считается в GlobalTask.waiting.
   for (const t of tasks) if (kindById.get(t.status) === 'review' && !t.answerFor) bump(t.runId, 'review')
+  const inboxCount = pendingRequests(snap.requests).length
   const editingGlobal = globalModal?.mode === 'edit' ? globals.find((g) => g.id === globalModal.id) : undefined
 
   function openGlobalTask(g: GlobalTask): void {
@@ -558,6 +580,14 @@ export function App(): React.JSX.Element {
         <div className="main-head">
           <div className="row">
             <h1>{active?.name ?? 'orca-board'}</h1>
+            <button
+              className={`inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
+              onClick={() => setShowInbox((v) => !v)}
+              disabled={!active}
+              title="Запросы, которые ждут вашего ответа (⌘J)"
+            >
+              Входящие{inboxCount > 0 && <><span className="dot" /> {inboxCount}</>}
+            </button>
             <button className="round-btn" title="Открыть новый терминал" onClick={openShell} disabled={!active}><Icon.terminal /></button>
             {/* Создание через координатора доступно вне глобальной задачи; её координатор — в GlobalTaskView.
                 Контекст задачи сохраняется и при переходе к терминалам. */}
@@ -705,6 +735,18 @@ export function App(): React.JSX.Element {
         </div>
       </main>
 
+      {active && (
+        <InboxPanel
+          key={active.id}
+          open={showInbox}
+          requests={snap.requests ?? []}
+          tasks={tasks}
+          runs={snap.runs}
+          focus={inboxFocus}
+          onClose={() => setShowInbox(false)}
+          onOpenTerminal={openTerminalForTask}
+        />
+      )}
       {showSettings && (
         <SettingsModal agents={agents} onRefreshAgents={() => refreshAgents(true)} onClose={() => setShowSettings(false)} />
       )}
