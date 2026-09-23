@@ -164,3 +164,17 @@ describe('команды в инструкциях и документации �
     })
   }
 })
+
+describe('skill ассистента: все проекты пользователя', () => {
+  const text = readFileSync(new URL('../../../skills/assistant.md', import.meta.url), 'utf8')
+  it('начинает с projects list и выбирает проект через --project', () => {
+    assert.match(text, /orca-board projects list/)
+    assert.match(text, /orca-board columns list --project <id>/)
+    assert.match(text, /orca-board roles list --project <id>/)
+    assert.match(text, /active: true/)
+  })
+  it('нет запрета --project и привязки к ORCA_PROJECT', () => {
+    assert.doesNotMatch(text, /--project` не указывай/)
+    assert.doesNotMatch(text, /ORCA_PROJECT/)
+  })
+})
