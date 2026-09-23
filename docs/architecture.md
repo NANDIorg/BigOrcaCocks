@@ -109,6 +109,16 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Откуда берётся дефолт**: `projects.json → defaults.roles` / `defaults.columns`; не заданы —
   встроенные `DEFAULT_ROLES` / `DEFAULT_COLUMNS`. При `setDefaults` роли и колонки проходят те же
   `validateRoles` / `validateColumns`, что и у проекта.
+- **Шаблоны проектов** (`packages/core/src/templates.ts`, без node-импортов — его импортирует renderer):
+  `ProjectTemplate { id, title, description?, builtin?, settings: ProjectTemplateSettings }`, где `settings` —
+  те же разделы, что `ProjectDefaults` (роли, колонки, воркфлоу, правила доски, агенты, режим разрешений).
+  Встроенные (`BUILTIN_TEMPLATES`; свежие копии — `builtinTemplates()`, `builtinTemplate(id)`): «Общий»
+  (`general` = `DEFAULT_ROLES` / `DEFAULT_COLUMNS` / `defaultWorkflow`), «Фронтенд» (ревью → человек «посмотреть
+  глазами»), «Бэкенд» (ревьюер на `opus`, ревью → прогон тестов ролью `qa`), «Fullstack» (роли `frontend` /
+  `backend`, человек только для задач `frontend`), «Мобилка» (ревью → человек), «Автотесты» (`autotester`),
+  «Документация / аналитика» (`writer`, ревью человеком). У всех `coordinator` и `assistant` из `DEFAULT_ROLES`
+  (у Fullstack координатор с инструкцией декомпозировать по слоям); общие куски промптов — константы модуля.
+  Графы собраны `pipelineWorkflow`. Хранение шаблонов в `projects.json` и выбор при добавлении — следующие задачи.
 - **Дефолтные роли**: `coordinator`, `assistant`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
   `coordinator` и `assistant` — служебные (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
   их нет, в редакторе ролей они в группе «Системная».
@@ -227,6 +237,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
   ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
   ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).
+- **`pipelineWorkflow(checks)`** — конструктор типового графа: `start → work → проверки по порядку → merge → end`,
+  проверка — `gate` (роль) или `human`, reject любой — в `work`, конфликт мержа — `human`. `onlyForRoles` ставит
+  перед проверкой `condition` по роли (`<id>_if`), остальные задачи её пропускают. Из него собраны
+  `defaultWorkflow` и графы встроенных шаблонов проектов; id нод и рёбер стабильны (`work`, `merge`, `end`,
+  `conflict`, `e_<нода>_<исход>`).
 - **`migrateWorkflow(wf)`** — старую версию поднимает до текущей (пока без шагов), будущую не трогает.
 - **`validateWorkflow(wf, {roles, columns, enabledAgents?})` → `{errors, warnings}`**, у каждой проблемы
   `message` по-русски и `nodeId`/`edgeId` для подсветки. Ошибки: версия не текущая; пустые/дублирующиеся id,

@@ -91,37 +91,87 @@ export function wfNodeTitle(node: WfNode): string {
 // ---------- дефолт и миграция ----------
 
 /**
+ * Проверка в линейном графе (`pipelineWorkflow`): гейт-агент или человек. Отказ всегда возвращает в работу.
+ * `onlyForRoles` — проверка только для задач этих ролей: перед ней ставится условие по роли, остальные задачи
+ * её пропускают.
+ */
+export type WfPipelineCheck =
+  | { type: 'gate'; id: string; roleId: string; title?: string; instructions?: string; onlyForRoles?: string[] }
+  | { type: 'human'; id: string; title?: string; instructions?: string; onlyForRoles?: string[] }
+
+const PIPELINE_STEP_X = 220
+const CONFLICT_INSTRUCTIONS =
+  'Ветка не сливается без конфликтов. Разрешите конфликт в ветке задачи и примите её или верните в работу.'
+
+/**
+ * Конструктор типового графа: старт → работа → проверки по порядку → мерж → конец. Отказ любой проверки
+ * возвращает в работу, конфликт мержа уходит человеку (принять — снова мерж, вернуть — в работу).
+ * Из него собраны `defaultWorkflow` и графы встроенных шаблонов проектов (templates.ts), поэтому id нод
+ * и рёбер стабильны: `work`, `merge`, `end`, `conflict`, `e_<нода>_<исход>`; условие роли — `<id проверки>_if`.
+ */
+export function pipelineWorkflow(checks: readonly WfPipelineCheck[]): Workflow {
+  const nodes: WfNode[] = [
+    { id: 'start', type: 'start', x: 0, y: 0 },
+    { id: 'work', type: 'work', title: 'Работа', x: PIPELINE_STEP_X, y: 0 }
+  ]
+  const edges: WfEdge[] = [{ id: 'e_start', from: 'start', outcome: 'next', to: 'work' }]
+  let x = PIPELINE_STEP_X
+  // Куда ведёт выход предыдущего шага: его выход задаётся, когда известен следующий шаг.
+  let link: (to: string) => void = (to) => edges.push({ id: 'e_work', from: 'work', outcome: 'next', to })
+  for (const c of checks) {
+    let entry: string = c.id
+    let skip: string | undefined
+    if (c.onlyForRoles?.length) {
+      skip = `${c.id}_if`
+      entry = skip
+      x += PIPELINE_STEP_X
+      nodes.push({ id: skip, type: 'condition', title: c.title ? `${c.title}?` : 'Условие по роли', test: { kind: 'role', roleIds: [...c.onlyForRoles] }, x, y: 0 })
+    }
+    link(entry)
+    if (skip) edges.push({ id: `e_${skip}_yes`, from: skip, outcome: 'yes', to: c.id })
+    x += PIPELINE_STEP_X
+    const text = { ...(c.title ? { title: c.title } : {}), ...(c.instructions ? { instructions: c.instructions } : {}) }
+    nodes.push(c.type === 'gate'
+      ? { id: c.id, type: 'gate', roleId: c.roleId, ...text, x, y: 0 }
+      : { id: c.id, type: 'human', ...text, x, y: 0 })
+    const from = c.id
+    const skipFrom = skip
+    link = (to) => {
+      edges.push(
+        { id: `e_${from}_accept`, from, outcome: 'accept', to },
+        { id: `e_${from}_reject`, from, outcome: 'reject', to: 'work' }
+      )
+      if (skipFrom) edges.push({ id: `e_${skipFrom}_no`, from: skipFrom, outcome: 'no', to })
+    }
+  }
+  x += PIPELINE_STEP_X
+  link('merge')
+  nodes.push(
+    { id: 'merge', type: 'merge', x, y: 0 },
+    { id: 'end', type: 'end', merged: true, x: x + PIPELINE_STEP_X, y: 0 },
+    { id: 'conflict', type: 'human', title: 'Конфликт мержа', x, y: 180, instructions: CONFLICT_INSTRUCTIONS }
+  )
+  edges.push(
+    { id: 'e_merge_ok', from: 'merge', outcome: 'ok', to: 'end' },
+    { id: 'e_merge_conflict', from: 'merge', outcome: 'conflict', to: 'conflict' },
+    { id: 'e_conflict_accept', from: 'conflict', outcome: 'accept', to: 'merge' },
+    { id: 'e_conflict_reject', from: 'conflict', outcome: 'reject', to: 'work' }
+  )
+  return { version: WORKFLOW_VERSION, nodes, edges }
+}
+
+/**
  * Дефолтный граф, повторяющий поведение до воркфлоу: работа → ревью → мерж → конец, отказ — обратно в работу.
  * Есть роль `reviewer` — ревью делает агент (гейт), нет — человек. Конфликт мержа уходит человеку:
  * раньше задача с конфликтом зависала в «Ревью». Лимита повторов нет, как и раньше.
  */
 export function defaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workflow {
   const hasReviewer = roles.some((r) => r.id === 'reviewer')
-  const review: WfNode = hasReviewer
-    ? { id: 'review', type: 'gate', roleId: 'reviewer', title: 'Ревью', x: 440, y: 0 }
-    : { id: 'review', type: 'human', title: 'Ревью человеком', x: 440, y: 0 }
-  return {
-    version: WORKFLOW_VERSION,
-    nodes: [
-      { id: 'start', type: 'start', x: 0, y: 0 },
-      { id: 'work', type: 'work', title: 'Работа', x: 220, y: 0 },
-      review,
-      { id: 'merge', type: 'merge', x: 660, y: 0 },
-      { id: 'end', type: 'end', merged: true, x: 880, y: 0 },
-      { id: 'conflict', type: 'human', title: 'Конфликт мержа', x: 660, y: 180,
-        instructions: 'Ветка не сливается без конфликтов. Разрешите конфликт в ветке задачи и примите её или верните в работу.' }
-    ],
-    edges: [
-      { id: 'e_start', from: 'start', outcome: 'next', to: 'work' },
-      { id: 'e_work', from: 'work', outcome: 'next', to: 'review' },
-      { id: 'e_review_accept', from: 'review', outcome: 'accept', to: 'merge' },
-      { id: 'e_review_reject', from: 'review', outcome: 'reject', to: 'work' },
-      { id: 'e_merge_ok', from: 'merge', outcome: 'ok', to: 'end' },
-      { id: 'e_merge_conflict', from: 'merge', outcome: 'conflict', to: 'conflict' },
-      { id: 'e_conflict_accept', from: 'conflict', outcome: 'accept', to: 'merge' },
-      { id: 'e_conflict_reject', from: 'conflict', outcome: 'reject', to: 'work' }
-    ]
-  }
+  return pipelineWorkflow([
+    hasReviewer
+      ? { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }
+      : { type: 'human', id: 'review', title: 'Ревью человеком' }
+  ])
 }
 
 /**
