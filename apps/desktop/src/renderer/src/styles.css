@@ -1053,3 +1053,12 @@ button:disabled { opacity: .45; cursor: default; }
 .rules-editor-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rules-status { flex: 1; min-width: 200px; color: var(--muted); font-size: 12px; }
 .rules-status.dirty { color: var(--col-input); }
+
+/* «О проекте → Правила доски» */
+.agent-rules { display: flex; flex-direction: column; gap: 10px; }
+.agent-rules textarea {
+  min-height: 240px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.55; tab-size: 2;
+  background: var(--side);
+}
+.agent-rules .editor-error { margin-top: 0; }
+.about-sec .agent-rules-notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }

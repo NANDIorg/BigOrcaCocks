@@ -28,3 +28,8 @@ test('изменённая роль и порядок колонок', () => {
   const diff = defaultsDiff({ ...project, roles, columns: [...DEFAULT_COLUMNS].reverse() }, defaults, agents)
   assert.deepEqual(diff, ['роли (изменено 1)', 'колонки (порядок)'])
 })
+
+test('правила доски: отличие по тексту без пробелов по краям', () => {
+  assert.deepEqual(defaultsDiff({ ...project, agentRules: '- без ORION' }, defaults, agents), ['правила доски'])
+  assert.deepEqual(defaultsDiff({ ...project, agentRules: '- без ORION\n' }, { ...defaults, agentRules: '- без ORION' }, agents), [])
+})

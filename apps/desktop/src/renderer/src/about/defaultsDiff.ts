@@ -58,5 +58,6 @@ export function defaultsDiff(p: Project, d: ProjectDefaults, agents: AgentInfo[]
   const columns = listDiff(p.columns ?? DEFAULT_COLUMNS, d.columns)
   if (columns) out.push(`колонки (${columns})`)
   if ((p.permissionMode ?? 'auto') !== d.permissionMode) out.push('разрешения')
+  if ((p.agentRules ?? '').trim() !== (d.agentRules ?? '').trim()) out.push('правила доски')
   return out
 }
