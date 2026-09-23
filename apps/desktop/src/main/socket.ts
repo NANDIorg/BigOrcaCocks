@@ -6,7 +6,7 @@ import {
   type RequestResolution, type Question, type GlobalTask
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
-import { assertAgentUsable, pickRole } from './agents'
+import { assertAgentUsable, missingRoleMessage, pickRole } from './agents'
 import { askOptions, resolutionFromParams } from './request-params'
 
 /**
@@ -146,7 +146,7 @@ export function answerQuestion(store: TaskStore, questionId: string, answer: str
 /** Роль задачи существует в проекте и её агент можно запускать. */
 function assertRoleUsable(roles: Role[], agents: AgentInfo[], roleId: string): void {
   const role = roles.find((r) => r.id === roleId)
-  if (!role) throw new Error(`роль ${roleId} не найдена в проекте`)
+  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(roleId, roles)}`)
   assertAgentUsable(agents, role.agent)
 }
 

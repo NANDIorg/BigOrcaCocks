@@ -11,7 +11,7 @@ import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } 
 import { currentBranch } from './git'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
-import { agentInfos, assertAgentUsable, pickRole } from './agents'
+import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import type { AppSettingsPatch, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
@@ -195,8 +195,9 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
   const task0 = p.store.getTask(taskId)
   if (task0) {
     if (p.store.columnKind(task0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
-    const role = projects.roles(p.id).find((r) => r.id === task0.roleId)
-    if (!role) throw new Error(`роль ${task0.roleId} не найдена в проекте`)
+    const roles = projects.roles(p.id)
+    const role = roles.find((r) => r.id === task0.roleId)
+    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task0.roleId, roles)}`)
     assertAgentUsable(projectAgents(p.id), role.agent)
     // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
     closeTaskWorkers(p.store, taskId)

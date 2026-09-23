@@ -6,7 +6,7 @@ import { newId, getAgent, withRoleInstructions, coordinatorPrompt, assistantRole
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
-import { extraPathDirs, findBin, isCmdScript } from './agents'
+import { extraPathDirs, findBin, isCmdScript, missingRoleMessage } from './agents'
 import { assistantEnv } from './assistant'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -167,7 +167,7 @@ export function startWorker(
   }
   if (store.columnKind(task.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
   const role = ctx.roles.find((r) => r.id === task.roleId)
-  if (!role) throw new Error(`роль ${task.roleId} не найдена в проекте`)
+  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task.roleId, ctx.roles)}`)
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
 
@@ -319,9 +319,11 @@ export function startCoordinator(
   images: ImageAttachment[] = [],
   runId?: string
 ): { ptyId: string; runId: string } {
+  // Роль coordinator можно удалить в «О проекте»; молча запускать claude вместо неё нельзя — человек её убрал.
   const role = ctx.roles.find((r) => r.id === 'coordinator')
-  const spec = role ? getAgent(role.agent) : undefined
-  if (role && !spec) throw new Error(`неизвестный агент: ${role.agent}`)
+  if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', ctx.roles)}`)
+  const spec = getAgent(role.agent)
+  if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
   const resume = runId !== undefined ? resumeObjective(store, runId) : undefined
   if (resume) objective = resume.objective
   const root = images.length > 0 ? attachmentsRoot(repoRoot) : undefined
@@ -332,11 +334,11 @@ export function startCoordinator(
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
     if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
     const paths = root ? writeAttachments(root, run.id, images) : []
-    const inv = (spec ?? getAgent('claude')!).invoke(withRoleInstructions(BUILTIN_PROMPTS.coordinator, role), coordinatorPrompt(objective, paths), {
+    const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.coordinator, role), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
       shell: defaultShell(),
-      model: role?.model,
-      effort: role?.effort
+      model: role.model,
+      effort: role.effort
     })
     const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
     ptyId = spawnPty({
@@ -363,7 +365,7 @@ export function startCoordinator(
     if (root) rmSync(join(root, run.id), { recursive: true, force: true })
     throw e
   }
-  store.setRunPty(run.id, ptyId, role?.agent ?? 'claude')
+  store.setRunPty(run.id, ptyId, role.agent)
   return { ptyId, runId: run.id }
 }
 

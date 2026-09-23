@@ -46,7 +46,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
-  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
+  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `assistant`, `developer`, `reviewer`, `qa`
   (с заполненным `description`; пустое назначение системной роли — в т.ч. у ролей, созданных до появления поля, —
   подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`);
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
@@ -98,6 +98,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Дефолтные роли**: `coordinator`, `assistant`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
   `coordinator` и `assistant` — служебные (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
   их нет, в редакторе ролей они в группе «Системная».
+- **Удаление системных ролей**: любую роль, в том числе из `DEFAULT_ROLES`, можно удалить, кроме последней
+  (`validateRoles`). Удалённая роль не возвращается сама: `?? DEFAULT_ROLES` срабатывает только у проекта без поля
+  `roles`, а сохранённый массив всегда непустой. Редактор ролей (`RolesEditor.tsx`, логика — `renderer/src/roleRemoval.ts`)
+  перед удалением системной роли или роли с задачами показывает подтверждение со списком последствий
+  (`removalConsequences`); под списком ролей — «Вернуть системные роли» (`restoreSystemRoles`: недостающие из
+  `DEFAULT_ROLES` с настройками по умолчанию, на свои места). Без роли: `task create --role <id>` и `worker start` —
+  ошибка `missingRoleMessage` (`src/main/agents.ts`: список ролей и, для системной, как её вернуть); координатор
+  не запускается (см. ниже); без `reviewer` координатор не создаёт задачи ревью (`skills/coordinator.md`).
 - **Валидация ролей** (`validateRoles`): хотя бы одна роль; непустые уникальные `id`, непустые
   `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются);
   `description` и `systemPrompt` — строки или отсутствуют, хранятся как введены (без trim), из одних пробелов → удаляются;
@@ -111,11 +119,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **Удаление кастомной колонки**: `setColumns` сначала сохраняет новый набор, затем все задачи
   из исчезнувших колонок переводит в колонку `kind=backlog` (`store.reassignColumn(fromId, toId)`),
   чтобы на доске не осталось задач с несуществующим статусом.
-- **Воркер** (`worker.ts`, `startWorker`): роль ищется по `task.roleId` в `ctx.roles` (нет → ошибка),
+- **Воркер** (`worker.ts`, `startWorker`): роль ищется по `task.roleId` в `ctx.roles` (нет → ошибка `missingRoleMessage`),
   агент — `getAgent(role.agent)`, модель и усилие — `role.model` / `role.effort` уходят в `invoke(..., { model, effort })`.
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
-  если такой роли нет — `claude` без модели.
+  если такой роли нет (удалили в «О проекте») — ошибка «координатор не запустится: …» до создания прогона.
 - **Ассистент** (`startAssistant`): роли — из настроек по умолчанию (`projects.defaults()`), не из проекта;
   роль `assistant`, без неё — агент, модель и effort роли `coordinator` (без её инструкций, `assistantRole`),
   нет и её — `claude` без модели. См. «Ассистент».
@@ -313,7 +321,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `goose` | `goose` | `run --interactive --text <склейка>` | нет |
 | `shell` | `$SHELL` (для детекта — `sh`) | ничего: пустой терминал в worktree | нет |
 
-Координатор запускается агентом роли `coordinator` (fallback — `claude` без модели)
+Координатор запускается агентом роли `coordinator` (нет роли — ошибка, см. «Роли и колонки»)
 с `skills/coordinator.md` и целью.
 
 ### Изображения в цели координатора
