@@ -151,8 +151,8 @@ export function resumeCoordinatorObjective(
       `${COORDINATOR_RESUME_SECTION}: у этой глобальной задачи уже есть подзадачи — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции (сверься с \`orca-board global tasks\`, не создавай дубли):`,
       ...subtasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`),
       last
-        ? 'Уточнение — новая работа: создай подзадачи по нему. Если оно правда не требует работы — сводка с объяснением и сразу `orca-board runs finish`.'
-        : 'Если все они в done и новых подзадач не нужно — run_done не придёт: сводка и сразу `orca-board runs finish`.'
+        ? 'Уточнение — новая работа: создай подзадачи по нему. Если оно правда не требует работы — сразу `orca-board runs finish --summary "..."` со сводкой и объяснением.'
+        : 'Если все они в done и новых подзадач не нужно — run_done не придёт: сразу `orca-board runs finish --summary "..."` с итоговой сводкой.'
     )
   }
   return parts.join('\n')

@@ -903,8 +903,10 @@ export class TaskStore {
    * подзадачу удалили) — автозакрытие ждёт новой подзадачи в done и само не сработает. У свежего прогона
    * нужна хотя бы одна подзадача.
    * Иначе ошибка: до run_done координатору ещё есть что делать. Повторный вызов обновляет время.
+   * `summary` — итоговая сводка координатора (markdown): непустая заменяет прежнюю `Run.summary`,
+   * пустая или её нет — прежняя остаётся. При ошибке сводка не сохраняется.
    */
-  finishRun(id: string): Run {
+  finishRun(id: string, summary?: string): Run {
     const run = this.mustRun(id)
     if (run.closedAt === undefined) {
       const tasks = [...this.tasks.values()].filter((t) => t.runId === run.id)
@@ -915,6 +917,8 @@ export class TaskStore {
       if (done) done.consumedBy = 'runs finish'
     }
     run.finishedAt = Date.now()
+    const text = summary?.trim()
+    if (text) run.summary = { at: run.finishedAt, text }
     this.commit()
     return run
   }

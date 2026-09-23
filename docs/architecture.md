@@ -469,7 +469,7 @@ orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run 
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
 orca-board runs list                        # [{...Run, tasks, done}]
 orca-board runs close [--run <id>]          # закрыть прогон вручную
-orca-board runs finish [--run <id>]         # координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал)
+orca-board runs finish [--run <id>] [--summary "..." | --summary-file summary.md]   # координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал); сводка — Run.summary
 orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md
 orca-board worker read --dispatch <id>
 ```
@@ -477,6 +477,8 @@ orca-board worker read --dispatch <id>
 `--run` у `task create`, `check`, `request list`, `workflow show`, `runs close` и `runs finish` по умолчанию берётся из `$ORCA_RUN_ID` и уходит как
 `params.run`: задачи, созданные координатором, наследуют его прогон, а `workflow show` показывает снимок графа его прогона
 (`packages/cli/bin/orca-board.js`). `runs close`/`runs finish` без прогона — ошибка до обращения к сокету.
+`runs finish --summary-file` CLI читает сам (он в cwd координатора) и шлёт текст в `params.summary`, как
+`done --answer-file`; нет файла или `--summary` без текста — ошибка до сокета.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
 каждую строку ответа; SIGINT/SIGTERM → закрыть сокет, код 0; ошибка сервера или разрыв соединения → код 1.
 
@@ -953,7 +955,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `runs.list` | — | `[{...Run, tasks, done}]` |
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
-| `runs.finish` | `run` (обязателен; прогон должен быть закрыт) | `Run` с `finishedAt` |
+| `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`) |
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, templateId?, templateTitle?}]` (`templateTitle` — название шаблона, нет — шаблон удалён); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `roles.list` | — | `[{...Role, agentEnabled}]` |
