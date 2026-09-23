@@ -32,6 +32,9 @@ const SYSTEM_ROLE_LOSSES: Readonly<Record<string, readonly string[]>> = {
   ]
 }
 
+/** Удаление роли из типа задачи: роли прогона не копируются, а читаются из библиотеки при каждом запуске агента. */
+export const TASK_TYPE_RUNS_LOSS = 'Незакрытые глобальные задачи этого типа потеряют роль со следующего запуска агента.'
+
 /** Почему роль нельзя удалить; undefined — можно. Последнюю роль не пропускает и main (`validateRoles`). */
 export function removeBlocker(roles: readonly Role[]): string | undefined {
   return roles.length > 1 ? undefined : 'Нельзя удалить последнюю роль'
@@ -50,17 +53,21 @@ export function workflowNodesWithRole(wf: Workflow | undefined, roleId: string):
 /**
  * Последствия удаления роли для подтверждения. Пусто — подтверждать нечего (пользовательская роль без задач).
  * `taskCount` — задач проекта на роли (undefined — счётчиков нет, как в дефолте для новых проектов).
- * `workflow` — свой воркфлоу проекта; дефолтный не передаётся: он строится по ролям и сам обходится без
+ * `workflow` — свой воркфлоу типа; дефолтный не передаётся: он строится по ролям и сам обходится без
  * удалённой (нет reviewer — ревью делает человек).
+ * `ofTaskType` — роль удаляют из типа задачи: прогоны берут роли из библиотеки при каждом запуске агента, поэтому
+ * удаление задевает и уже идущие глобальные задачи. Счётчика незакрытых прогонов по типу в «Настройках» нет —
+ * предупреждаем всегда.
  */
-export function removalConsequences(roleId: string, taskCount?: number, workflow?: Workflow): string[] {
+export function removalConsequences(roleId: string, taskCount?: number, workflow?: Workflow, ofTaskType = false): string[] {
   const out = [...(SYSTEM_ROLE_LOSSES[roleId] ?? [])]
+  if (ofTaskType) out.push(TASK_TYPE_RUNS_LOSS)
   if (taskCount) out.push(`Задачи на этой роли (${taskCount}) не запустятся, пока роль не вернут.`)
   const stages = workflowNodesWithRole(workflow, roleId)
   if (stages.length) {
     out.push(
       `Роль занята в воркфлоу: ${stages.map((t) => `«${t}»`).join(', ')}. Задачи остановятся на этих этапах, ` +
-        'а граф не сохранится, пока роль не заменят в «О проекте → Воркфлоу».'
+        'а граф не сохранится, пока роль не заменят во вкладке «Воркфлоу» типа (Настройки → Типы задач).'
     )
   }
   if (isSystemRole(roleId)) out.push('Вернуть роль можно кнопкой «Вернуть системные роли» под списком — с настройками по умолчанию.')

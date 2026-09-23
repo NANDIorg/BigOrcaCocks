@@ -45,6 +45,8 @@ interface Props {
    * названия и назначение ролей заблокированы — их правят в копии типа.
    */
   executorOnly?: boolean
+  /** Роли типа задачи: в последствиях удаления — незакрытые глобальные задачи этого типа. */
+  ofTaskType?: boolean
   onSave(roles: Role[]): Promise<void>
 }
 
@@ -73,7 +75,7 @@ function newRoleId(): string {
 
 /** Раздел «Роли» («О проекте» и дефолт для новых проектов): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
 export function RolesEditor({
-  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, executorOnly = false, onSave
+  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, executorOnly = false, ofTaskType = false, onSave
 }: Props): React.JSX.Element {
   const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
   /** Состав и порядок ролей: заблокированы и в просмотре, и в режиме «только исполнитель». */
@@ -260,6 +262,7 @@ export function RolesEditor({
             enabled={enabled}
             count={taskCounts?.[selected.id]}
             workflow={workflow}
+            ofTaskType={ofTaskType}
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
             readOnly={readOnly}
@@ -285,6 +288,7 @@ interface PanelProps {
   enabled: AgentInfo[]
   count: number | undefined
   workflow: Workflow | undefined
+  ofTaskType: boolean
   /** Почему удалить нельзя (последняя роль); undefined — можно. */
   deleteBlocker: string | undefined
   builtin: BuiltinState
@@ -301,7 +305,7 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, readOnly, executorOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, ofTaskType, deleteBlocker, builtin, readOnly, executorOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
   const locked = readOnly || executorOnly
   const [tab, setTab] = useState<RoleTab>('prompt')
@@ -319,7 +323,7 @@ function RolePanel({
   const defaultDescription = defaultRoleDescription(r.id)
   const kind = builtinPromptKind(r.id)
   const builtinText = builtin && 'prompts' in builtin ? builtin.prompts[kind] : undefined
-  const losses = removalConsequences(r.id, count, workflow)
+  const losses = removalConsequences(r.id, count, workflow, ofTaskType)
   const tabs: { id: RoleTab; label: string }[] = [
     { id: 'prompt', label: r.systemPrompt ? 'Инструкции роли •' : 'Инструкции роли' },
     { id: 'builtin', label: `Встроенная инструкция Orca${builtinText ? ` · ${lineCount(builtinText)} строк` : ''}` },

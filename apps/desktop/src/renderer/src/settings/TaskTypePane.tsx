@@ -125,6 +125,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
               agents={typeAgents}
               workflow={s.workflow}
               executorOnly={builtinLike}
+              ofTaskType
               onSave={(next) => api.patch(t.id, { roles: next })}
             />
           </>
