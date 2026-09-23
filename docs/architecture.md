@@ -179,6 +179,45 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?}` → `store.editTask`
   (без `--title`/`--spec` — ошибка; см. «Редактирование задачи»).
 
+## Воркфлоу: модель (`packages/core/src/workflow.ts`)
+
+Граф этапов, которые проходит **одна рабочая задача** от первого запуска до мержа. Декомпозиция цели остаётся
+за координатором, задачи-ответы (`answerFor`) идут мимо воркфлоу. Сейчас в core есть только модель и чистые
+функции; хранение (`Project.workflow`), снимок в прогоне и исполнитель в main — следующие шаги.
+Модуль без node-импортов: его импортирует renderer ради живой валидации в редакторе.
+
+- **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 1`. Ноды (`WfNode`): `start`, `work`
+  (без `roleId` — роль задачи), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
+  (закрытый список предикатов `WfCondition`: `attempts` — сколько раз задача заходила в ноду, `role` — роль
+  задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `end` (`merged`). У каждой ноды
+  опциональные `title` и `column`. Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
+  `WF_PORTS` (gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
+- **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
+  ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
+  ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).
+- **`migrateWorkflow(wf)`** — старую версию поднимает до текущей (пока без шагов), будущую не трогает.
+- **`validateWorkflow(wf, {roles, columns, enabledAgents?})` → `{errors, warnings}`**, у каждой проблемы
+  `message` по-русски и `nodeId`/`edgeId` для подсветки. Ошибки: версия не текущая; пустые/дублирующиеся id,
+  ребро в несуществующую ноду; не ровно один `start`, ребро в `start`, нет `end`; порт без ребра, два ребра на
+  порт, исход не из `WF_PORTS`, выход из `end`; из достижимой ноды нет пути к `end`; цикл из одних условий;
+  роль гейта (и `work.roleId`) не существует или служебная (`isTaskRole`), `attempts` на несуществующую ноду
+  или `atLeast < 1`, роль из условия `role` не существует, условие `files`, несуществующая колонка; от старта
+  недостижима ни одна `work`. Предупреждения: агент роли гейта выключен (только если передан `enabledAgents`),
+  нода недостижима, возврат в `work` в обход `attempts`, путь accept ведёт в `end` без `merge`, после `merge ok`
+  путь снова приходит в `merge`.
+- **`nextStage(wf, stage, outcome, ctx)` → `{stage, action}`** — чистая функция перехода. `stage =
+  {nodeId, visits}`, `visits` считает заходы в ноды (включая условия) и нужен `attempts`. Цепочка `condition`
+  проходится за один вызов; повторный заход в то же условие за вызов → `blocked` (граф мог сохранить старый
+  код без проверки). `action`: `start_worker` / `create_gate` / `request_human` / `merge` / `done` /
+  `blocked {reason}`; при `blocked` из-за нет ребра/ноды задача остаётся на прежнем этапе. `ctx.roleIds` —
+  текущие роли проекта: роль гейта удалили → `blocked` на ноде гейта. `startStage(wf, ctx)` — переход из
+  старта, `stageAction(wf, stage, ctx)` — действие для текущего этапа (повтор эффекта после рестарта или
+  после исправления причины `blocked`).
+- **`gateTaskSpec(task, node)` / `gateTaskTitle`** — общий шаблон задачи-гейта: ветка, `review info`,
+  проверка через `git merge --no-commit`/`--abort`, `review accept` / `review reject`, обязательный `done`,
+  спека рабочей задачи как критерии. Команды сборки и тестов конкретного репозитория в шаблон не входят —
+  они берутся из `node.instructions` (раздел «Как проверять») или системного промпта роли.
+
 ## Прогоны (`packages/core/src/store.ts`, `src/main/worker.ts`, `src/main/socket.ts`)
 
 Прогон (`Run`) отделяет задачи и события одного координатора от других: в проекте может одновременно
