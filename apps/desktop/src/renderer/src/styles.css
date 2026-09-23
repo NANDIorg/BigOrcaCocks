@@ -18,6 +18,9 @@
   --col-review: #b57bee;
   --col-done: #5ad1cc;
   --danger: #ef6b6b;
+  /* Исходы переходов воркфлоу: принять — зелёный, вернуть — красный. */
+  --wf-accept: #8fd16a;
+  --wf-reject: var(--danger);
   --radius: 14px;
   /* Фон терминала — совпадает с theme.background xterm в Terminal.tsx. */
   --term-bg: #1b1c21;
@@ -1062,3 +1065,64 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .agent-rules .editor-error { margin-top: 0; }
 .about-sec .agent-rules-notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+/* Нодовый редактор воркфлоу (WorkflowCanvas.tsx). Цвета исходов — --wf-accept / --wf-reject. */
+.wf-canvas {
+  position: relative; min-height: 360px; height: 100%; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--side); overflow: hidden;
+}
+.wf-svg { display: block; width: 100%; height: 100%; position: absolute; inset: 0; touch-action: none; user-select: none; cursor: grab; }
+.wf-svg:focus { outline: none; }
+.wf-svg:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.wf-svg.panning { cursor: grabbing; }
+.wf-svg.connecting { cursor: crosshair; }
+.wf-grid-dot { fill: rgba(255,255,255,.07); }
+
+.wf-node { cursor: move; }
+.wf-node-box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
+.wf-node:hover .wf-node-box { fill: var(--card-hover); }
+.wf-node.selected .wf-node-box { stroke: var(--accent); stroke-width: 2; }
+.wf-node.wf-issue--warning .wf-node-box { stroke: var(--col-input); stroke-dasharray: 5 3; }
+.wf-node.wf-issue--error .wf-node-box { stroke: var(--danger); stroke-width: 2; stroke-dasharray: none; }
+.wf-node.drop-ok .wf-node-box { stroke: var(--wf-accept); stroke-width: 2.5; }
+.wf-node.drop-bad .wf-node-box { stroke: var(--danger); stroke-width: 2.5; stroke-dasharray: 3 3; }
+.wf-node-icon { color: var(--muted); }
+.wf-node--start .wf-node-icon, .wf-node--end .wf-node-icon { color: var(--col-done); }
+.wf-node--work .wf-node-icon { color: var(--col-progress); }
+.wf-node--gate .wf-node-icon { color: var(--col-review); }
+.wf-node--human .wf-node-icon { color: var(--col-input); }
+.wf-node--merge .wf-node-icon { color: var(--accent); }
+.wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
+.wf-node-sub { fill: var(--muted); font-size: 11px; }
+.wf-node text { pointer-events: none; }
+
+.wf-port { cursor: crosshair; }
+.wf-port circle { fill: var(--side); stroke: var(--muted); stroke-width: 2; }
+.wf-port:hover circle { fill: var(--muted); }
+.wf-port-label { fill: var(--muted); font-size: 10px; }
+.wf-port--accept circle, .wf-port--ok circle { stroke: var(--wf-accept); }
+.wf-port--accept .wf-port-label, .wf-port--ok .wf-port-label { fill: var(--wf-accept); }
+.wf-port--reject circle, .wf-port--conflict circle { stroke: var(--wf-reject); }
+.wf-port--reject .wf-port-label, .wf-port--conflict .wf-port-label { fill: var(--wf-reject); }
+.wf-port-in { fill: var(--chip); }
+
+.wf-edge { --edge: var(--muted); cursor: pointer; }
+.wf-edge--accept, .wf-edge--ok { --edge: var(--wf-accept); }
+.wf-edge--reject, .wf-edge--conflict { --edge: var(--wf-reject); }
+.wf-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.8; opacity: .75; }
+.wf-edge-arrow { fill: var(--edge); opacity: .75; }
+.wf-edge:hover .wf-edge-line, .wf-edge:hover .wf-edge-arrow { opacity: 1; }
+.wf-edge.selected .wf-edge-line { stroke-width: 3; opacity: 1; }
+.wf-edge.selected .wf-edge-arrow { opacity: 1; }
+.wf-edge.wf-issue--warning .wf-edge-line { stroke-dasharray: 6 4; }
+.wf-edge.wf-issue--error .wf-edge-line { stroke: var(--danger); stroke-dasharray: 6 4; opacity: 1; }
+.wf-edge-draft { fill: none; stroke: var(--edge, var(--accent)); stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; }
+.wf-edge-draft.wf-edge--next, .wf-edge-draft.wf-edge--yes, .wf-edge-draft.wf-edge--no { --edge: var(--accent); }
+
+.wf-toolbar {
+  position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 2px; padding: 3px;
+  background: var(--frame); border: 1px solid var(--line); border-radius: 10px;
+}
+.wf-toolbar .icon-btn { width: 30px; height: 30px; font-size: 16px; }
+.wf-toolbar .icon-btn svg { width: 17px; height: 17px; }
+.wf-toolbar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--chip); }
