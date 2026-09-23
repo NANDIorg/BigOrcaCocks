@@ -41,7 +41,7 @@ const toOpenTerminal = (t: TerminalInfo): OpenTerminal => ({
   runId: t.runId
 })
 
-const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [], runs: [] }
+const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [], runs: [], requests: [] }
 
 /** Что открыто у проекта: вкладка, выбранный терминал и открытая глобальная задача. У каждого проекта своё. */
 interface ProjectView {
@@ -261,7 +261,7 @@ export function App(): React.JSX.Element {
   // Глобальный канбан — Бэклог / В работе / Нужен ответ / Сделано; локальный канбан подзадач — все колонки.
   // «Нужен ответ» вычисляется (подзадачи ждут человека), поэтому в создание и перенос она не попадает.
   const globalColumns = globalBoardColumns(columns)
-  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.questions)
+  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.requests ?? [])
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
   const subtasks = openGlobal ? tasks.filter((t) => t.runId === openGlobal.id) : []

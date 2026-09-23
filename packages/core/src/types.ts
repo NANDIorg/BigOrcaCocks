@@ -230,20 +230,109 @@ export interface Dispatch {
   stuckNotified?: boolean
 }
 
+/** Вариант ответа на вопрос: кнопка в UI. `id` — что уходит в `resolution.optionId`. */
+export interface RequestOption {
+  id: string
+  label: string
+  /** Пояснение к варианту («проще, без сервера»). */
+  hint?: string
+  /** Вариант, который советует спросивший. */
+  recommended?: boolean
+}
+
+/**
+ * Варианты из старых данных и `--options a,b` — строки: превращаются в RequestOption с id по номеру
+ * (`'1'`, `'2'`, …). Готовые RequestOption проверяются: непустая метка, уникальный id.
+ */
+export function normalizeOptions(options: readonly (string | RequestOption)[] | undefined): RequestOption[] {
+  const out: RequestOption[] = []
+  for (const [i, o] of (options ?? []).entries()) {
+    const opt: RequestOption = typeof o === 'string' ? { id: String(i + 1), label: o } : { ...o, id: o.id?.trim() || String(i + 1) }
+    opt.label = opt.label?.trim() ?? ''
+    if (!opt.label) throw new Error(`вариант ${i + 1}: пустая метка`)
+    if (out.some((x) => x.id === opt.id)) throw new Error(`вариант с id «${opt.id}» повторяется`)
+    if (!opt.hint?.trim()) delete opt.hint
+    if (!opt.recommended) delete opt.recommended
+    out.push(opt)
+  }
+  return out
+}
+
 export interface Question {
   id: string
   taskId: string
   dispatchId?: string
   question: string
-  options: string[]
+  options: RequestOption[]
+  /** Контекст вопроса (markdown): почему спрашивает, что уже выяснил. */
+  context?: string
   answer?: string
   /**
-   * Координатор решил, что ответить должен человек (`orca-board question forward`). Вопросы задач без
-   * координатора (см. `questionForHuman`) адресованы человеку и без этой метки.
+   * Вопрос адресован человеку: по нему создан HumanRequest (`questionId`). Ставится при создании
+   * (координатора нет) или явным переходом — `forwardQuestion`, `escalateOpenQuestions`. Без метки вопрос
+   * ждёт координатора.
    */
   forHuman?: boolean
   createdAt: number
   answeredAt?: number
+}
+
+// ---------- запросы к человеку ----------
+
+/**
+ * Что ждёт человека: `question` — вопрос воркера (адресован человеку сразу или передан координатором),
+ * `answer` — сданный ответ задачи `answerFor: 'human'` («Принять» / «Уточнить»), `escalation` — воркер
+ * вышел без `orca-board done` («Перезапустить» / «Скрыть»).
+ */
+export type HumanRequestKind = 'question' | 'answer' | 'escalation'
+
+export const HUMAN_REQUEST_KINDS: HumanRequestKind[] = ['question', 'answer', 'escalation']
+
+/** `pending` — единственный признак «ждёт человека» (колонка «Нужен ответ»). */
+export type HumanRequestStatus = 'pending' | 'resolved' | 'cancelled'
+
+export type ResolutionAction = 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss'
+
+/** Какие решения допустимы для вида запроса. */
+export const REQUEST_ACTIONS: Record<HumanRequestKind, ResolutionAction[]> = {
+  question: ['answer'],
+  answer: ['accept', 'clarify'],
+  escalation: ['restart', 'dismiss']
+}
+
+export interface RequestResolution {
+  action: ResolutionAction
+  /** Выбранный вариант вопроса (RequestOption.id). */
+  optionId?: string
+  /** Свободный текст: ответ на вопрос, решение при «Принять», уточнение при «Уточнить». */
+  text?: string
+}
+
+/**
+ * Запрос к человеку (docs/nested-kanban.md). Создаётся одним переходом store, закрывается одним —
+ * `resolveRequest` (или `cancelled`, когда запрос потерял смысл: задача сделана, воркер перезапущен).
+ * Адресат фиксируется при создании и не пересчитывается от состояния прогона.
+ */
+export interface HumanRequest {
+  id: string
+  runId: string
+  taskId: string
+  /** Dispatch, который спросил / сдал ответ / упал. */
+  dispatchId?: string
+  kind: HumanRequestKind
+  status: HumanRequestStatus
+  /** Вопрос / summary ответа / причина эскалации. */
+  title: string
+  /** Markdown: контекст вопроса (+ заметка координатора) или сам ответ задачи-ответа. */
+  body?: string
+  /** Варианты вопроса; у answer/escalation пусто — их действия встроены (REQUEST_ACTIONS). */
+  options: RequestOption[]
+  /** Вопрос, из которого создан запрос (kind=question): сокет `ask` держится за него. */
+  questionId?: string
+  resolution?: RequestResolution
+  createdAt: number
+  /** Решён или отменён. */
+  resolvedAt?: number
 }
 
 export type EventType =
@@ -255,6 +344,12 @@ export type EventType =
   /** Человек принял ответ задачи-ответа `answerFor: 'human'` — координатор решает, что делать дальше. */
   | 'answer_accepted'
   | 'run_done'
+  /** Появился запрос к человеку (HumanRequest pending) — по нему уведомление. */
+  | 'request_created'
+  /** Эскалацию решил человек: `restart` (main стартует воркера) или `dismiss`. */
+  | 'request_resolved'
+  /** Человек уточнил ответ задачи-ответа: задача в ready с feedback, main стартует воркера. */
+  | 'answer_clarified'
 
 export const EVENT_TYPES: EventType[] = [
   'task_ready',
@@ -263,7 +358,10 @@ export const EVENT_TYPES: EventType[] = [
   'escalation',
   'question_answered',
   'answer_accepted',
-  'run_done'
+  'run_done',
+  'request_created',
+  'request_resolved',
+  'answer_clarified'
 ]
 
 export interface OrcaEvent {
