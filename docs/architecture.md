@@ -516,7 +516,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   проект всё ещё активен (`activeIdRef`).
 - **«О проекте»** (`about/AboutProject.tsx`): только настройки активного проекта (`projects:set*`, после —
   `refreshProjects`); без активного проекта вкладка показывает заглушку. Слева меню разделов (Обзор, Агенты, Роли,
-  Колонки, Разрешения, Прогоны), справа один раздел (выбранный хранится в `localStorage` `orca.aboutSection`).
+  Колонки, Разрешения, Правила, Прогоны), справа один раздел (выбранный хранится в `localStorage` `orca.aboutSection`).
   У пунктов меню счётчики: агенты «N из M» (включено из установленных), роли (+ «k !» — роли с выключенным
   агентом), колонки, режим разрешений, прогоны («N идёт» или всего). Пункт меню — общий `NavItem`, заголовки
   разделов — `SectionHead` (`about/parts.tsx`). Узкая вкладка (`@container about`, ≤ 900px) — меню становится
@@ -542,6 +542,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog).
     Сохраняется через `projects:setColumns` (в дефолте — `setDefaults({ columns })`).
   - «Разрешения» (`PermissionsSection.tsx`) — `permissionMode` карточками-радио (см. «Разрешения Claude Code»).
+  - «Правила» (`about/RulesSection.tsx`, логика — `renderer/src/rules.ts`) — `CLAUDE.md` и `AGENTS.md` из **корня
+    репозитория** проекта (`Project.root`, не worktree задач), вкладки между ними (выбор — `localStorage` `orca.rulesFile`).
+    Просмотр — `Markdown variant="doc"`; «Редактировать» — textarea с исходником, «Сохранить» (⌘S/Ctrl+S) / «Отмена»
+    (Esc), признак несохранённых изменений (`isDirty` без учёта CRLF/LF), уход с черновика — через `confirm`.
+    Нет файла — «Создать» открывает редактор с заготовкой `RULE_TEMPLATES` (CLAUDE.md — каркас «Нельзя / Обязательно /
+    Стиль кода / Проверки перед сдачей / Git и ветки», AGENTS.md — отсылка к CLAUDE.md). Пишет main (`src/main/rules.ts`):
+    имя только из белого списка `RULE_FILE_NAMES` (`shared/ipc.ts`), симлинк — только внутрь проекта (пишется цель),
+    запись атомарная (tmp рядом + `rename`, права сохраняются), перевод строк — как в файле (renderer получает `\n` и
+    `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `RULES_STALE_MESSAGE`.
   - «Прогоны» (`RunsSection` в `runs.tsx`) — свежие сверху: метка, дата создания, «задач N / закрыто M»
     (задачи с этим `runId`, закрыто — в колонках `kind=done`), статус «идёт» / «закрыт <дата>», полная цель.
     У идущего прогона кнопка «Закрыть» (`confirm` → IPC `runs:close`). Пусто — заглушка.
@@ -625,7 +634,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:getDefaults`, `projects:setDefaults(patch)`, `projects:applyDefaults(id)`; `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator` (`docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
-  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `review:info`, `review:accept`, `review:reject`.
+  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.

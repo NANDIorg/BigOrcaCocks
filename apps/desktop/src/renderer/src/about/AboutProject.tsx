@@ -14,12 +14,13 @@ import { NavItem, SectionHead, storeSection, storedSection, type NavEntry } from
 import { OverviewSection } from './OverviewSection'
 import { AgentsSection } from './AgentsSection'
 import { PermissionsSection, permissionParts } from './PermissionsSection'
+import { RulesSection } from './RulesSection'
 import { defaultsDiff } from './defaultsDiff'
 import { useProjectDefaults } from './useProjectDefaults'
 
-type Section = 'overview' | 'agents' | 'roles' | 'columns' | 'perm' | 'runs'
+type Section = 'overview' | 'agents' | 'roles' | 'columns' | 'perm' | 'rules' | 'runs'
 
-const SECTIONS: readonly Section[] = ['overview', 'agents', 'roles', 'columns', 'perm', 'runs']
+const SECTIONS: readonly Section[] = ['overview', 'agents', 'roles', 'columns', 'perm', 'rules', 'runs']
 const SECTION_KEY = 'orca.aboutSection'
 
 interface Props {
@@ -139,6 +140,7 @@ export function AboutProject(props: Props): React.JSX.Element {
     },
     { id: 'columns', label: 'Колонки', icon: Icon.columns, count: String(columns.length) },
     { id: 'perm', label: 'Разрешения', icon: Icon.shield, count: permissionParts(permission).title },
+    { id: 'rules', label: 'Правила', icon: Icon.doc, title: 'CLAUDE.md и AGENTS.md в корне репозитория' },
     {
       id: 'runs', label: 'Прогоны', icon: Icon.runs,
       count: liveRuns ? `${liveRuns} идёт` : String(runs.filter((r) => !r.inbox).length),
@@ -219,6 +221,8 @@ export function AboutProject(props: Props): React.JSX.Element {
             onChange={(mode) => void saveProject(() => window.orca.projects.setPermissionMode(project.id, mode), setPermError)}
           />
         )
+      case 'rules':
+        return <RulesSection key={project.id} root={project.root} />
       case 'runs':
         return (
           <>

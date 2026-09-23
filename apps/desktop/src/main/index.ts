@@ -8,6 +8,7 @@ import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivit
 import { startWorker, startCoordinator, startAssistant, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview, resolveHumanRequest } from './review'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
+import { listRules, writeRule } from './rules'
 import { currentBranch } from './git'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, type PermissionMode, type ProjectDefaults } from './projects'
@@ -506,6 +507,9 @@ function registerIpc(): void {
     if (err) throw new Error(err)
   })
   ipcMain.handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
+  ipcMain.handle('rules:list', () => listRules(resolveProject().root))
+  ipcMain.handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
   ipcMain.handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)

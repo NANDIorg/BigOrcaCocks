@@ -1019,3 +1019,32 @@ button:disabled { opacity: .45; cursor: default; }
 .g-requests-list { display: flex; flex-direction: column; gap: 8px; max-height: 45vh; overflow: auto; }
 .task-modal-requests { display: flex; flex-direction: column; gap: 8px; }
 .task-modal-requests h4 { color: var(--col-input); }
+
+/* «О проекте → Правила» (about/RulesSection.tsx) */
+.rules-actions { display: flex; gap: 8px; }
+.rules-actions .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
+.rules-tabs { display: flex; flex-wrap: wrap; gap: 4px 20px; border-bottom: 1px solid var(--line); }
+.rules-tabs button {
+  background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+  padding: 6px 0; font-family: ui-monospace, Menlo, monospace; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;
+}
+.rules-tabs button:hover { color: var(--text); }
+.rules-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.rules-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rules-tab-note { font-family: inherit; font-size: 11px; color: var(--muted); background: var(--chip); border-radius: 6px; padding: 0 5px; }
+.rules-dirty { color: var(--col-input); font-size: 10px; }
+.about-sec .rules-hint { margin: 8px 0 14px; }
+.rules-error { margin: 0 0 12px; }
+.rules-loading { color: var(--muted); font-size: 13px; }
+.rules-view { padding: 22px 26px; }
+.rules-empty p { margin: 0 0 8px; }
+.rules-empty .btn-sm { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; }
+.rules-empty .btn-sm svg { width: 14px; height: 14px; }
+.rules-editor { display: flex; flex-direction: column; gap: 10px; }
+.rules-editor textarea {
+  min-height: 55vh; font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.55; tab-size: 2;
+  background: var(--side);
+}
+.rules-editor-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rules-status { flex: 1; min-width: 200px; color: var(--muted); font-size: 12px; }
+.rules-status.dirty { color: var(--col-input); }
