@@ -24,7 +24,7 @@ import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
 import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
-import { executorOnlyPatch } from './projectTemplates'
+import { executorOnlyPatch } from './taskTypeEdit'
 import { agentChangePatch, withPatch } from './roleEdit'
 
 interface Props {
@@ -41,10 +41,12 @@ interface Props {
   /** Только просмотр: роли можно выбирать и читать, правки не сохраняются. */
   readOnly?: boolean
   /**
-   * Меняется только исполнитель — агент, модель и усилие (встроенный шаблон): состав, порядок, названия и инструкции
-   * ролей заблокированы — их правят в копии шаблона.
+   * Встроенный тип задачи: меняются только исполнитель (агент, модель, усилие) и инструкции роли; состав, порядок,
+   * названия и назначение ролей заблокированы — их правят в копии типа.
    */
   executorOnly?: boolean
+  /** Роли типа задачи: в последствиях удаления — незакрытые глобальные задачи этого типа. */
+  ofTaskType?: boolean
   onSave(roles: Role[]): Promise<void>
 }
 
@@ -73,7 +75,7 @@ function newRoleId(): string {
 
 /** Раздел «Роли» («О проекте» и дефолт для новых проектов): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
 export function RolesEditor({
-  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, executorOnly = false, onSave
+  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, executorOnly = false, ofTaskType = false, onSave
 }: Props): React.JSX.Element {
   const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
   /** Состав и порядок ролей: заблокированы и в просмотре, и в режиме «только исполнитель». */
@@ -95,7 +97,7 @@ export function RolesEditor({
     save(roles.map((r, j) => (j === i ? withPatch(r, allowed) : r)), debounce)
   }
 
-  /** Смена агента (и во встроенном шаблоне): модель и effort сбрасываются — `agentChangePatch`. */
+  /** Смена агента (и во встроенном типе): модель и effort сбрасываются — `agentChangePatch`. */
   function changeAgent(i: number, agent: AgentKind): void {
     patch(i, agentChangePatch(agent))
   }
@@ -260,6 +262,7 @@ export function RolesEditor({
             enabled={enabled}
             count={taskCounts?.[selected.id]}
             workflow={workflow}
+            ofTaskType={ofTaskType}
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
             readOnly={readOnly}
@@ -285,6 +288,7 @@ interface PanelProps {
   enabled: AgentInfo[]
   count: number | undefined
   workflow: Workflow | undefined
+  ofTaskType: boolean
   /** Почему удалить нельзя (последняя роль); undefined — можно. */
   deleteBlocker: string | undefined
   builtin: BuiltinState
@@ -301,7 +305,7 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, workflow, deleteBlocker, builtin, readOnly, executorOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, ofTaskType, deleteBlocker, builtin, readOnly, executorOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
   const locked = readOnly || executorOnly
   const [tab, setTab] = useState<RoleTab>('prompt')
@@ -319,7 +323,7 @@ function RolePanel({
   const defaultDescription = defaultRoleDescription(r.id)
   const kind = builtinPromptKind(r.id)
   const builtinText = builtin && 'prompts' in builtin ? builtin.prompts[kind] : undefined
-  const losses = removalConsequences(r.id, count, workflow)
+  const losses = removalConsequences(r.id, count, workflow, ofTaskType)
   const tabs: { id: RoleTab; label: string }[] = [
     { id: 'prompt', label: r.systemPrompt ? 'Инструкции роли •' : 'Инструкции роли' },
     { id: 'builtin', label: `Встроенная инструкция Orca${builtinText ? ` · ${lineCount(builtinText)} строк` : ''}` },
@@ -498,12 +502,12 @@ function RolePanel({
                 value={r.systemPrompt ?? ''}
                 placeholder="Например: пиши тесты на каждое изменение. Встроенную инструкцию и правила доски сюда копировать не нужно."
                 rows={5}
-                readOnly={locked}
+                readOnly={readOnly}
                 aria-label="Инструкции роли"
                 onChange={(e) => onPatch({ systemPrompt: e.target.value }, true)}
               />
               <div className="roles-hint">
-                Правила роли для агентов доски: дописываются после встроенной инструкции и «Правил доски» проекта блоком
+                Правила роли для агентов доски: дописываются после встроенной инструкции и «Правил доски» типа блоком
                 «# Инструкции роли «{r.title}»» и не заменяют их. Получает только агент, запущенный доской на этой роли, — не
                 CLAUDE.md и не обычные сессии. Пусто — агент получает только встроенную инструкцию.
               </div>

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_ROLES, defaultWorkflow, type Role, type Workflow } from '@orca-board/core'
-import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles, workflowNodesWithRole } from './roleRemoval'
+import { TASK_TYPE_RUNS_LOSS, isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles, workflowNodesWithRole } from './roleRemoval'
 
 const ids = (roles: readonly Role[]): string[] => roles.map((r) => r.id)
 const custom: Role = { id: 'role_x', title: 'Аналитик', agent: 'codex' }
@@ -70,4 +70,18 @@ test('роль, занятая в своём воркфлоу, попадает 
   assert.match(removalConsequences(custom.id, 0, withCond).join('\n'), /«Аналитик\?»/)
   // Дефолтный граф не передаётся: без своего графа строки про воркфлоу нет.
   assert.ok(!removalConsequences('reviewer').some((l) => l.includes('воркфлоу')))
+})
+
+test('граф с ролью отправляет во вкладку «Воркфлоу» типа, а не в удалённый раздел «О проекте»', () => {
+  const lines = removalConsequences('reviewer', undefined, defaultWorkflow([{ id: 'reviewer' }])).join('\n')
+  assert.match(lines, /вкладке «Воркфлоу» типа \(Настройки → Типы задач\)/)
+  assert.ok(!lines.includes('О проекте'), lines)
+})
+
+test('удаление роли из типа задачи предупреждает про незакрытые глобальные задачи', () => {
+  assert.deepEqual(removalConsequences(custom.id, undefined, undefined, true), [TASK_TYPE_RUNS_LOSS])
+  assert.match(TASK_TYPE_RUNS_LOSS, /^Незакрытые глобальные задачи этого типа потеряют роль со следующего запуска агента\.$/)
+  assert.ok(removalConsequences('developer', undefined, undefined, true).includes(TASK_TYPE_RUNS_LOSS))
+  // Без типа (роль не из библиотеки) строки нет.
+  assert.ok(!removalConsequences('developer').includes(TASK_TYPE_RUNS_LOSS))
 })

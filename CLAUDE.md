@@ -60,7 +60,7 @@
 - **Тесты — рядом с кодом, `*.test.ts`, `node:test` + `node:assert`.** В desktop запускаются только
   `src/main/*.test.ts` и `src/renderer/src/*.test.ts` (скрипт `test` в `apps/desktop/package.json`):
   тест в подпапке (`about/`, `settings/`) не выполнится, клади его в `renderer/src/`
-  (как `defaultsDiff.test.ts`). Логику из компонентов выноси в `.ts`-модуль и тестируй его
+  (как `taskTypeEdit.test.ts`). Логику из компонентов выноси в `.ts`-модуль и тестируй его
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).
 - **Обновляй docs в том же коммите:** `docs/architecture.md` (модель, IPC, сокет, CLI),
   `docs/nested-kanban.md` (глобальные задачи), `docs/human-requests.md` (запросы к человеку),

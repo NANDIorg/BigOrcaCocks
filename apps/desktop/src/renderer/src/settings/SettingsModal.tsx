@@ -1,24 +1,25 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import { DEFAULT_ROLES, type AgentInfo, type ProjectTemplate, type Role } from '@orca-board/core'
+import type { AgentInfo, Role, TaskType } from '@orca-board/core'
 import type { AppSettings, AppSettingsPatch, Project } from '../../../shared/ipc'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
 import { NavItem, storeSection, type NavEntry } from '../about/parts'
 import {
-  TEMPLATE_TABS, pickTemplateId, resolveTemplateSettings, splitTemplates, templateUsage, type TemplateTab
-} from '../projectTemplates'
+  SETTINGS_SECTION_KEY, TASK_TYPE_TABS, libraryRoles, settingsTypeSection, pickTaskTypeId, splitTaskTypes, taskTypeUsage, type TaskTypeTab
+} from '../taskTypeEdit'
 import { GeneralSection } from './GeneralSection'
 import { NotificationsSection } from './NotificationsSection'
-import { TemplatePane } from './TemplatePane'
-import { useTemplates } from './useTemplates'
+import { TaskTypePane } from './TaskTypePane'
+import { useTaskTypes } from './useTaskTypes'
 
-/** Раздел меню: общий, уведомления или шаблон проекта (`tpl:<id>`). */
-type Section = 'general' | 'notifications' | `tpl:${string}`
+/** Раздел меню: общий, уведомления или тип задачи (`type:<id>`). */
+type Section = 'general' | 'notifications' | `type:${string}`
 
-const SECTION_KEY = 'orca.settingsSection'
-const TAB_KEY = 'orca.settingsTemplateTab'
-const TPL = 'tpl:'
+const TAB_KEY = 'orca.settingsTypeTab'
+const TYPE = 'type:'
+/** Префикс разделов шаблонов проектов до типов задач: id встроенных и перенесённых шаблонов совпадают с id типов. */
+const OLD_TPL = 'tpl:'
 
 function stored(key: string): string | null {
   try {
@@ -28,40 +29,41 @@ function stored(key: string): string | null {
   }
 }
 
-/** Запомненный раздел. Разделы старого «Для новых проектов» (agents, roles…) ведут в шаблоны. */
+/** Запомненный раздел. Старые разделы шаблонов (`tpl:<id>`) и «Для новых проектов» ведут в типы задач. */
 function initialSection(): Section {
-  const v = stored(SECTION_KEY)
+  const v = stored(SETTINGS_SECTION_KEY)
   if (v === 'general' || v === 'notifications') return v
-  if (v?.startsWith(TPL)) return v as Section
-  return v ? `${TPL}` : 'general'
+  if (v?.startsWith(TYPE)) return v as Section
+  if (v?.startsWith(OLD_TPL)) return `${TYPE}${v.slice(OLD_TPL.length)}`
+  return v ? `${TYPE}` : 'general'
 }
 
-function initialTab(): TemplateTab {
+function initialTab(): TaskTypeTab {
   const v = stored(TAB_KEY)
-  return TEMPLATE_TABS.find((t) => t === v) ?? 'roles'
+  return TASK_TYPE_TABS.find((t) => t === v) ?? 'roles'
 }
 
 interface Props {
-  /** Агенты реестра (enabled — по активному проекту; для шаблона пересчитывается по нему). */
+  /** Агенты реестра; у типа своих агентов нет — в выборе все установленные. */
   agents: AgentInfo[]
   /** Заново просканировать PATH. */
   onRefreshAgents(): Promise<void>
-  /** Проекты изменились («Применить к проектам…»): перечитать их в приложении. */
+  /** Типы изменились: перечитать проекты в приложении (роли типа по умолчанию, выбор типов в «О проекте»). */
   onProjectsChanged(): Promise<void>
   onClose(): void
 }
 
 /**
- * «Настройки» (шестерёнка в rail): общие настройки приложения и шаблоны проектов (templates:*).
- * Вид — как у вкладки «О проекте»: меню разделов слева (каждый шаблон — пункт), раздел справа.
+ * «Настройки» (шестерёнка в rail): общие настройки приложения и библиотека типов задач (taskTypes:*).
+ * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
  */
-export function SettingsModal({ agents, onRefreshAgents, onProjectsChanged, onClose }: Props): React.JSX.Element {
+export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): React.JSX.Element {
   const [section, setSection] = useState<Section>(initialSection)
-  const [tab, setTab] = useState<TemplateTab>(initialTab)
-  const templates = useTemplates()
+  const [tab, setTab] = useState<TaskTypeTab>(initialTab)
+  const [projectList, setProjectList] = useState<Project[]>([])
+  const types = useTaskTypes(reloadProjects)
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
-  const [projectList, setProjectList] = useState<Project[]>([])
   const [createError, setCreateError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -80,20 +82,20 @@ export function SettingsModal({ agents, onRefreshAgents, onProjectsChanged, onCl
 
   function go(s: Section): void {
     setSection(s)
-    storeSection(SECTION_KEY, s)
+    storeSection(SETTINGS_SECTION_KEY, s)
   }
 
-  function goTab(t: TemplateTab): void {
+  function goTab(t: TaskTypeTab): void {
     setTab(t)
     storeSection(TAB_KEY, t)
   }
 
-  /** Показать шаблон; null — шаблон по умолчанию. */
-  function selectTemplate(id: string | null): void {
-    go(`${TPL}${id ?? ''}`)
+  /** Показать тип; null — тип по умолчанию. */
+  function selectType(id: string | null): void {
+    go(settingsTypeSection(id ?? ''))
   }
 
-  /** После массового применения: свой список (счётчики, отличия) и список приложения (доска, «О проекте»). */
+  /** После записи в библиотеку: свой список проектов (использование) и список приложения (доска, «О проекте»). */
   async function reloadProjects(): Promise<void> {
     setProjectList((await window.orca.projects.list()).projects)
     await onProjectsChanged()
@@ -108,31 +110,28 @@ export function SettingsModal({ agents, onRefreshAgents, onProjectsChanged, onCl
     }
   }
 
-  async function createTemplate(): Promise<void> {
+  async function createType(): Promise<void> {
     try {
-      const t = await templates.create({ title: 'Новый шаблон', settings: {} })
+      const t = await types.create({ title: 'Новый тип', settings: {} })
       setCreateError(null)
-      selectTemplate(t.id)
+      selectType(t.id)
     } catch (e) {
       setCreateError(ipcErrorMessage(e))
     }
   }
 
-  // ---------- шаблоны ----------
+  // ---------- типы ----------
 
-  const state = templates.state
-  const usage = templateUsage(projectList)
-  const currentId = state && section.startsWith(TPL) ? pickTemplateId(state, section.slice(TPL.length)) : null
-  const current: ProjectTemplate | undefined = state?.templates.find((t) => t.id === currentId)
-  const { builtin, own } = splitTemplates(state?.templates ?? [])
+  const state = types.state
+  const usage = state ? taskTypeUsage(projectList, state) : {}
+  const currentId = state && section.startsWith(TYPE) ? pickTaskTypeId(state, section.slice(TYPE.length)) : null
+  const current: TaskType | undefined = state?.taskTypes.find((t) => t.id === currentId)
+  const { builtin, own } = splitTaskTypes(state?.taskTypes ?? [])
 
-  // Роли для фильтра уведомлений: шаблон по умолчанию и все проекты, первый встреченный title на id.
-  const defaultTemplate = state?.templates.find((t) => t.id === state.defaultTemplateId)
-  const notifyRoles: Role[] = []
-  const defaultRoles = defaultTemplate ? resolveTemplateSettings(defaultTemplate.settings).roles : []
-  for (const r of [...defaultRoles, ...projectList.flatMap((p) => p.roles ?? DEFAULT_ROLES)]) {
-    if (!notifyRoles.some((x) => x.id === r.id)) notifyRoles.push(r)
-  }
+  // Роли для фильтра уведомлений: роли всех типов библиотеки; старый main без типов — роли проектов.
+  const notifyRoles: Role[] = state
+    ? libraryRoles(state.taskTypes)
+    : libraryRoles(projectList.flatMap((p) => (p.roles ? [{ id: p.id, title: p.name, settings: { roles: p.roles } }] : [])))
 
   // ---------- меню ----------
 
@@ -142,35 +141,33 @@ export function SettingsModal({ agents, onRefreshAgents, onProjectsChanged, onCl
     id: 'notifications', label: 'Уведомления', icon: Icon.bell,
     count: notifyOn === undefined ? undefined : notifyOn ? 'вкл' : 'выкл'
   }
-  /** Текущий пункт меню: у шаблона — с фактическим id (пустой `tpl:` после удаления — шаблон по умолчанию). */
-  const navCurrent: Section = currentId ? `${TPL}${currentId}` : section
-  const templateItem = (t: ProjectTemplate): React.JSX.Element => {
-    const n = usage[t.id] ?? 0
+  /** Текущий пункт меню: у типа — с фактическим id (пустой `type:` после удаления — тип по умолчанию). */
+  const navCurrent: Section = currentId ? `${TYPE}${currentId}` : section
+  const typeItem = (t: TaskType): React.JSX.Element => {
+    const u = usage[t.id]
     const item: NavEntry<Section> = {
-      id: `${TPL}${t.id}`, label: t.title, icon: Icon.layers,
-      count: state?.defaultTemplateId === t.id ? 'по умолч.' : n ? String(n) : undefined,
-      title: [t.description, n ? `Проектов из шаблона: ${n}` : ''].filter(Boolean).join('\n') || undefined
+      id: `${TYPE}${t.id}`, label: t.title, icon: Icon.layers,
+      count: state?.defaultTaskTypeId === t.id ? 'по умолч.' : u?.asDefault ? String(u.asDefault) : undefined,
+      title: [t.description, u?.asDefault ? `Тип по умолчанию в проектах: ${u.asDefault}` : ''].filter(Boolean).join('\n') || undefined
     }
     return <NavItem key={t.id} item={item} current={navCurrent} onGo={go} />
   }
 
-  function renderTemplates(): React.ReactNode {
+  function renderType(): React.ReactNode {
     if (!state || !current) {
-      return templates.error ? <div className="editor-error">{templates.error}</div> : <div className="muted">Загрузка…</div>
+      return types.error ? <div className="editor-error">{types.error}</div> : <div className="muted">Загрузка…</div>
     }
     return (
-      <TemplatePane
-        template={current}
+      <TaskTypePane
+        type={current}
         state={state}
-        usage={usage[current.id] ?? 0}
+        usage={usage[current.id]}
         agents={agents}
-        onRefreshAgents={onRefreshAgents}
         tab={tab}
         onTab={goTab}
-        api={templates}
-        onSelect={selectTemplate}
+        api={types}
+        onSelect={selectType}
         projects={projectList}
-        onProjectsChanged={reloadProjects}
       />
     )
   }
@@ -190,17 +187,17 @@ export function SettingsModal({ agents, onRefreshAgents, onProjectsChanged, onCl
             <nav className="about-nav" aria-label="Разделы настроек">
               <NavItem item={general} current={section} onGo={go} />
               <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
-              <div className="about-nav-group">Шаблоны проектов</div>
-              {templates.stale || (!state && templates.error) ? (
-                <NavItem item={{ id: `${TPL}`, label: 'Шаблоны', icon: Icon.layers }} current={navCurrent} onGo={go} />
+              <div className="about-nav-group">Типы задач</div>
+              {types.stale || (!state && types.error) ? (
+                <NavItem item={{ id: `${TYPE}`, label: 'Типы задач', icon: Icon.layers }} current={navCurrent} onGo={go} />
               ) : (
                 <div className="tpl-nav">
-                  {builtin.map(templateItem)}
+                  {builtin.map(typeItem)}
                   {own.length > 0 && <div className="about-nav-group tpl-nav-sub">Свои</div>}
-                  {own.map(templateItem)}
-                  <button type="button" className="about-nav-item tpl-nav-add" disabled={!state} onClick={() => void createTemplate()}>
+                  {own.map(typeItem)}
+                  <button type="button" className="about-nav-item tpl-nav-add" disabled={!state} onClick={() => void createType()}>
                     <Icon.plus />
-                    <span className="about-nav-label">Новый шаблон</span>
+                    <span className="about-nav-label">Новый тип</span>
                   </button>
                   {createError && <div className="editor-error tpl-nav-error">{createError}</div>}
                 </div>
@@ -218,7 +215,7 @@ export function SettingsModal({ agents, onRefreshAgents, onProjectsChanged, onCl
                     onChange={(p) => void saveApp({ notifications: p })}
                   />
                 ) : (
-                  renderTemplates()
+                  renderType()
                 )}
               </section>
             </div>

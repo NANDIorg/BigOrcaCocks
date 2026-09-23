@@ -27,7 +27,7 @@ function SwitchRow({ title, hint, on, disabled, onChange }: {
 
 /**
  * Раздел «Настройки → Уведомления»: системные уведомления приложения (main/index.ts notify, фильтр
- * shared/notifications.ts shouldNotify). `roles` — роли всех проектов и дефолта, без повторов по id.
+ * shared/notifications.ts shouldNotify). `roles` — роли всех типов задач библиотеки, без повторов по id.
  */
 export function NotificationsSection({ settings, roles, error, onChange }: {
   settings: AppSettings | null
