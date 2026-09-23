@@ -11,7 +11,7 @@ import { SectionHead, plural } from '../about/parts'
 import { AgentsSection } from '../about/AgentsSection'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import {
-  TEMPLATE_TABS, deleteConfirmText, overridesBuiltin, resolveTemplateSettings, templateAgents, type TemplateTab
+  TEMPLATE_TABS, deleteConfirmText, overridesBuiltin, templateEditorKey, resolveTemplateSettings, templateAgents, type TemplateTab
 } from '../projectTemplates'
 import { TemplateWorkflow } from './TemplateWorkflow'
 import type { TemplatesHook } from './useTemplates'
@@ -46,6 +46,7 @@ const TAB_LABELS: Record<TemplateTab, string> = {
  */
 export function TemplatePane({ template: t, state, usage, agents, onRefreshAgents, tab, onTab, api, onSelect }: Props): React.JSX.Element {
   const readOnly = !!t.builtin
+  const editorKey = templateEditorKey(t)
   const isDefault = state.defaultTemplateId === t.id
   const s = resolveTemplateSettings(t.settings)
   const tplAgents = templateAgents(agents, s.enabledAgents)
@@ -129,7 +130,7 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
           <>
             <SectionHead title="Роли" hint="Кто выполняет задачи: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче»." />
             <RolesEditor
-              storageKey={`tpl:${t.id}`}
+              storageKey={editorKey}
               roles={s.roles}
               agents={tplAgents}
               workflow={s.workflow}
@@ -143,7 +144,7 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
           <>
             <SectionHead title="Колонки" hint="Порядок, название и цвет. Системные нельзя удалить — по ним работает автоматика." />
             <ColumnsEditor
-              storageKey={`tpl:${t.id}`}
+              storageKey={editorKey}
               columns={s.columns}
               readOnly={readOnly}
               onSave={(next) => api.patch(t.id, { columns: next })}
@@ -153,7 +154,7 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
       case 'workflow':
         return (
           <TemplateWorkflow
-            key={t.id}
+            key={editorKey}
             title={t.title}
             workflow={s.workflow}
             roles={s.roles}
@@ -172,8 +173,8 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
       case 'rules':
         return (
           <TemplateRules
-            key={t.id}
-            id={t.id}
+            key={editorKey}
+            storageKey={editorKey}
             text={s.agentRules}
             readOnly={readOnly}
             onSave={(text) => api.patch(t.id, { agentRules: text })}
@@ -300,13 +301,13 @@ function RenameForm({ template, onCancel, onSave }: {
 }
 
 /** «Правила доски» шаблона: копируются в `Project.agentRules` нового проекта. Сохраняются автоматически. */
-function TemplateRules({ id, text, readOnly, onSave }: {
-  id: string
+function TemplateRules({ storageKey, text, readOnly, onSave }: {
+  storageKey: string
   text: string
   readOnly: boolean
   onSave(text: string): Promise<void>
 }): React.JSX.Element {
-  const { draft, error, update } = useAutoSave(`tpl:${id}`, text, onSave)
+  const { draft, error, update } = useAutoSave(storageKey, text, onSave)
   return (
     <>
       <SectionHead

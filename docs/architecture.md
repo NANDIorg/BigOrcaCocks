@@ -824,7 +824,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     включённость агентов по шаблону.
   - Старый main/preload: нет `window.orca.templates` или хендлера `templates:*` → `TEMPLATES_STALE_MESSAGE`
     («перезапустите приложение») вместо списка (`templatesApi()` / `isStaleTemplatesError()`).
-- **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» `storageKey = active.id`, в «Настройках» — `tpl:<id шаблона>`.
+- **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» `storageKey = active.id`, в «Настройках» — `templateEditorKey()`: `tpl:<id>:b|u` (признак встроенного — чтобы после удаления изменённого встроенного шаблона редакторы сбросили черновик удалённой копии).
 
 ## Реестр терминалов (`src/main/pty.ts`)
 

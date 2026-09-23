@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTemplate, type AgentInfo, type ProjectTemplate } from '@orca-board/core'
 import type { OrcaApi, Project, TemplatesState } from '../../shared/ipc'
 import {
-  TEMPLATES_STALE_MESSAGE, deleteConfirmText, overridesBuiltin, patchedTemplate, pickTemplateId, renamedTemplate,
+  TEMPLATES_STALE_MESSAGE, deleteConfirmText, overridesBuiltin, templateEditorKey, patchedTemplate, pickTemplateId, renamedTemplate,
   resolveTemplateSettings, splitTemplates, templateAgents, templateUsage, templatesApi, templatesError
 } from './projectTemplates'
 
@@ -89,4 +89,12 @@ test('подтверждение удаления говорит о шаблон
   assert.match(asDefault, /проекты \(2\)/)
   assert.match(deleteConfirmText(own, state, 0), /Существующие проекты не изменятся/)
   assert.match(deleteConfirmText({ id: 'general', title: 'Общий', settings: {} }, state, 0), /вернётся встроенный/)
+})
+
+test('ключ редакторов меняется, когда удалена своя копия встроенного шаблона', () => {
+  const general = builtinTemplate('general')
+  assert.ok(general)
+  const copy: ProjectTemplate = { ...general, builtin: undefined }
+  assert.notEqual(templateEditorKey(copy), templateEditorKey(general))
+  assert.equal(templateEditorKey(copy), templateEditorKey({ ...copy }))
 })
