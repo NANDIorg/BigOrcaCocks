@@ -221,6 +221,14 @@ describe('add и applyTemplate', () => {
     assert.ok(DEFAULT_COLUMNS.some((c) => c.id === status && (c.kind === 'backlog' || c.kind === 'ready')), String(status))
   })
 
+  it('taskRefs — колонка и роль задач любого проекта; неизвестный проект — ошибка', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const task = pm.store(PID).createTask({ title: 't', roleId: 'reviewer' })
+    assert.deepEqual(pm.taskRefs(PID), [{ status: pm.store(PID).getTask(task.id)?.status, roleId: 'reviewer' }])
+    assert.throws(() => pm.taskRefs('нет'), /project not found/)
+  })
+
   it('все разделы — смена типа: templateId меняется; applyDefaults — то же с шаблоном по умолчанию', () => {
     writeConfig({}, { templateId: 'удалённый' })
     const pm = new ProjectManager(tmp)

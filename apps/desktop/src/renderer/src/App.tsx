@@ -931,7 +931,12 @@ export function App(): React.JSX.Element {
         />
       )}
       {showSettings && (
-        <SettingsModal agents={agents} onRefreshAgents={() => refreshAgents(true)} onClose={() => setShowSettings(false)} />
+        <SettingsModal
+          agents={agents}
+          onRefreshAgents={() => refreshAgents(true)}
+          onProjectsChanged={refreshProjects}
+          onClose={() => setShowSettings(false)}
+        />
       )}
       {showDocs && active && <DocsModal key={active.id} projectName={active.name} tasks={tasks} columns={columns} onClose={() => setShowDocs(false)} />}
       {showCoord && active && (

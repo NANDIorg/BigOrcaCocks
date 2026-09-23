@@ -11,7 +11,7 @@ import {
 } from '@orca-board/core'
 import { jsonPersistence } from './persistence'
 import { detectTemplate } from './template-detect'
-import type { AppSettings, AppSettingsPatch, TemplateInput, TemplatesState, TemplateDetection } from '../shared/ipc'
+import type { AppSettings, AppSettingsPatch, TaskRef, TemplateInput, TemplatesState, TemplateDetection } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -531,6 +531,14 @@ export class ProjectManager {
   }
 
   /** Число задач в работе (kind=in_progress) по id каждого проекта, включая неактивные. */
+  /**
+   * Статус и роль каждой задачи проекта — для последствий применения шаблона к неактивному проекту
+   * («Применить к проектам…» в настройках): сколько задач уедет в backlog и останется без роли.
+   */
+  taskRefs(id: string): TaskRef[] {
+    return this.store(id).listTasks().map((t) => ({ status: t.status, roleId: t.roleId }))
+  }
+
   inProgressCounts(): Record<string, number> {
     return Object.fromEntries(this.list().map((p) => [p.id, this.store(p.id).inProgressCount()]))
   }

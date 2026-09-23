@@ -46,6 +46,8 @@ interface Props {
   agents: AgentInfo[]
   /** Заново просканировать PATH. */
   onRefreshAgents(): Promise<void>
+  /** Проекты изменились («Применить к проектам…»): перечитать их в приложении. */
+  onProjectsChanged(): Promise<void>
   onClose(): void
 }
 
@@ -53,7 +55,7 @@ interface Props {
  * «Настройки» (шестерёнка в rail): общие настройки приложения и шаблоны проектов (templates:*).
  * Вид — как у вкладки «О проекте»: меню разделов слева (каждый шаблон — пункт), раздел справа.
  */
-export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): React.JSX.Element {
+export function SettingsModal({ agents, onRefreshAgents, onProjectsChanged, onClose }: Props): React.JSX.Element {
   const [section, setSection] = useState<Section>(initialSection)
   const [tab, setTab] = useState<TemplateTab>(initialTab)
   const templates = useTemplates()
@@ -89,6 +91,12 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
   /** Показать шаблон; null — шаблон по умолчанию. */
   function selectTemplate(id: string | null): void {
     go(`${TPL}${id ?? ''}`)
+  }
+
+  /** После массового применения: свой список (счётчики, отличия) и список приложения (доска, «О проекте»). */
+  async function reloadProjects(): Promise<void> {
+    setProjectList((await window.orca.projects.list()).projects)
+    await onProjectsChanged()
   }
 
   async function saveApp(patch: AppSettingsPatch): Promise<void> {
@@ -161,6 +169,8 @@ export function SettingsModal({ agents, onRefreshAgents, onClose }: Props): Reac
         onTab={goTab}
         api={templates}
         onSelect={selectTemplate}
+        projects={projectList}
+        onProjectsChanged={reloadProjects}
       />
     )
   }

@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import type { AgentInfo, AgentKind, ProjectTemplate } from '@orca-board/core'
-import type { TemplatesState } from '../../../shared/ipc'
+import type { Project, TemplatesState } from '../../../shared/ipc'
 import { RolesEditor } from '../RolesEditor'
 import { ColumnsEditor } from '../ColumnsEditor'
 import { Icon } from '../icons'
@@ -13,6 +13,9 @@ import { PermissionsSection, permissionParts } from '../about/PermissionsSection
 import {
   TEMPLATE_TABS, deleteConfirmText, overridesBuiltin, templateEditorKey, resolveTemplateSettings, templateAgents, type TemplateTab
 } from '../projectTemplates'
+import { bulkCandidates, usageHint, usageSummary } from '../bulkApply'
+import { templatesApi as applyApi } from '../projectType'
+import { BulkApplyModal } from './BulkApplyModal'
 import { TemplateWorkflow } from './TemplateWorkflow'
 import type { TemplatesHook } from './useTemplates'
 
@@ -29,6 +32,10 @@ interface Props {
   api: TemplatesHook
   /** Показать другой шаблон (после «Дублировать» — копию, после удаления — шаблон по умолчанию). */
   onSelect(id: string | null): void
+  /** Все проекты — для «Применить к проектам…». */
+  projects: Project[]
+  /** Перечитать проекты после массового применения. */
+  onProjectsChanged(): Promise<void>
 }
 
 const TAB_LABELS: Record<TemplateTab, string> = {
@@ -44,7 +51,9 @@ const TAB_LABELS: Record<TemplateTab, string> = {
  * Один шаблон в «Настройки → Шаблоны проектов»: шапка (название, отметки, действия) и те же редакторы разделов,
  * что в «О проекте», но пишут они в шаблон (templates:save). Встроенный шаблон — только просмотр и «Дублировать».
  */
-export function TemplatePane({ template: t, state, usage, agents, onRefreshAgents, tab, onTab, api, onSelect }: Props): React.JSX.Element {
+export function TemplatePane({
+  template: t, state, usage, agents, onRefreshAgents, tab, onTab, api, onSelect, projects, onProjectsChanged
+}: Props): React.JSX.Element {
   const readOnly = !!t.builtin
   const editorKey = templateEditorKey(t)
   const isDefault = state.defaultTemplateId === t.id
@@ -58,10 +67,16 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)
+  const [bulk, setBulk] = useState(false)
+  // Старый preload без applyTemplate — массового применения нет, шапка как раньше.
+  const canBulk = !!applyApi(window.orca) && projects.length > 0
+  const candidates = bulkCandidates(projects, t, agents)
+  const hint = usageHint(usageSummary(candidates))
 
   // Ошибки и форма переименования относятся к одному шаблону.
   useEffect(() => {
     setRenaming(false)
+    setBulk(false)
     setError(null)
     setSectionError(null)
   }, [t.id])
@@ -194,12 +209,18 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
             {isDefault && <span className="chip ok">по умолчанию</span>}
           </h2>
           {t.description && <p>{t.description}</p>}
-          {/* Место под массовое применение: «Применить к проектам…» появится рядом с этим счётчиком. */}
-          <p className="tpl-usage">
-            {usage > 0
-              ? `Используют ${usage} ${plural(usage, 'проект', 'проекта', 'проектов')}: правка шаблона их не меняет.`
-              : 'Проектов из этого шаблона нет.'}
-          </p>
+          {canBulk && hint ? (
+            <p className="tpl-usage tpl-usage-lag">
+              {hint}{' '}
+              <button type="button" className="btn-link" onClick={() => setBulk(true)}>Применить к ним…</button>
+            </p>
+          ) : (
+            <p className="tpl-usage">
+              {usage > 0
+                ? `Используют ${usage} ${plural(usage, 'проект', 'проекта', 'проектов')}: правка шаблона их не меняет${canBulk ? ', все совпадают с ним' : ''}.`
+                : 'Проектов из этого шаблона нет.'}
+            </p>
+          )}
         </div>
         <div className="tpl-actions">
           {!isDefault && (
@@ -208,6 +229,11 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
             </button>
           )}
           <button type="button" className="btn-sm" disabled={busy} onClick={() => void duplicate()}>Дублировать</button>
+          {canBulk && (
+            <button type="button" className="btn-sm" disabled={busy} onClick={() => setBulk(true)} title="Взять разделы шаблона в выбранные проекты">
+              Применить к проектам…
+            </button>
+          )}
           {!readOnly && (
             <>
               <button type="button" className="btn-sm" disabled={busy || renaming} onClick={() => setRenaming(true)}>
@@ -257,6 +283,17 @@ export function TemplatePane({ template: t, state, usage, agents, onRefreshAgent
         ))}
       </div>
       <div className="tpl-tabpanel" role="tabpanel">{renderTab()}</div>
+
+      {bulk && (
+        <BulkApplyModal
+          key={t.id}
+          template={t}
+          state={state}
+          candidates={candidates}
+          onClose={() => setBulk(false)}
+          onApplied={onProjectsChanged}
+        />
+      )}
     </>
   )
 }
