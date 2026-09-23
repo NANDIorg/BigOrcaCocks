@@ -21,6 +21,8 @@ import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
 import { ReturnGlobalModal } from './ReturnGlobalModal'
+import { ProjectTypeModal } from './ProjectTypeModal'
+import { startAddProject, type AddProjectStart } from './projectAdd'
 import { globalReviewApi, reviewErrorMessage } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
@@ -129,6 +131,8 @@ export function App(): React.JSX.Element {
   const [terminals, setTerminals] = useState<OpenTerminal[]>([])
   const [showNew, setShowNew] = useState(false)
   /** Модалка глобальной задачи: создание или правка (по id — берётся актуальная из снимка). */
+  /** Выбор типа для только что выбранной папки (новый main с шаблонами проектов). */
+  const [addPick, setAddPick] = useState<Extract<AddProjectStart, { kind: 'pick' }> | null>(null)
   const [globalModal, setGlobalModal] = useState<{ mode: 'create' } | { mode: 'edit'; id: string } | null>(null)
   /** Глобальная задача, которую возвращают с «Проверки» в работу (модалка уточнения). */
   const [returnGlobalId, setReturnGlobalId] = useState<string | null>(null)
@@ -492,8 +496,21 @@ export function App(): React.JSX.Element {
     await refreshProjects()
   }
 
+  /**
+   * «Добавить репозиторий»: папка → подсказка типа → модалка «Тип проекта». Уже добавленный репозиторий
+   * открывается без модалки; со старым main/preload — прежний `projects.add()` с шаблоном по умолчанию.
+   */
   async function addProject(): Promise<void> {
-    const p = await window.orca.projects.add()
+    const start = await startAddProject(window.orca, projects)
+    if (start.kind === 'pick') return setAddPick(start)
+    if (start.kind === 'cancel') return
+    const p = start.kind === 'legacy' ? await window.orca.projects.add() : await window.orca.projects.add(undefined, start.path)
+    if (p) await refreshProjects()
+  }
+
+  async function addProjectWithTemplate(path: string, templateId: string): Promise<void> {
+    const p = await window.orca.projects.add(templateId, path)
+    setAddPick(null)
     if (p) await refreshProjects()
   }
 
@@ -962,6 +979,17 @@ export function App(): React.JSX.Element {
             await window.orca.globalTasks.createTask(openGlobal.id, input)
             setShowNew(false)
           }}
+        />
+      )}
+      {addPick && (
+        <ProjectTypeModal
+          key={addPick.detection.path}
+          detection={addPick.detection}
+          templates={addPick.templates}
+          defaultTemplateId={addPick.defaultTemplateId}
+          selected={addPick.selected}
+          onClose={() => setAddPick(null)}
+          onSubmit={(templateId) => addProjectWithTemplate(addPick.detection.path, templateId)}
         />
       )}
       {globalModal && active && (globalModal.mode === 'create' || editingGlobal) && (

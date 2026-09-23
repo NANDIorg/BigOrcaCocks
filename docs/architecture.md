@@ -657,6 +657,14 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
 - **Смена проекта** (`useEffect` по `active?.id`: сайдбар или `projects:focus`) сбрасывает выбранную
   задачу и закрывает модалку задачи (`openTaskId = null`) — чужая задача в модалке не остаётся.
+- **Добавление проекта** (`addProject` в `App.tsx`, логика — `renderer/src/projectAdd.ts` `startAddProject`,
+  модалка — `ProjectTypeModal.tsx`): «+» в сайдбаре → `projects.detectTemplate()` (диалог выбора папки в main +
+  подсказка типа) → модалка «Тип проекта» с карточками `templates.list()` (название, описание, бейджи
+  «по умолчанию» / «подходит» / «свой»); предвыбран угаданный тип, иначе шаблон по умолчанию → `projects.add(templateId, path)`.
+  Enter или двойной клик по карточке — добавить сразу. Папка совпадает с корнем уже добавленного проекта или лежит
+  внутри него (`findProjectForPath`; renderer git не запускает) — модалки нет, `projects.add(undefined, path)`
+  переключает на существующий проект. Старый preload без `detectTemplate`/`templates` или старый main
+  («No handler registered for 'projects:detectTemplate'») — прежний `projects.add()` без выбора типа.
 - **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет заголовка, иконка по `kind`).
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
 - **Карточка** компактная: слева `AgentLogo` (28), справа заголовок (до 2 строк, `-webkit-line-clamp: 2`)
