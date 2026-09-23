@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, globalBoardColumns, globalStoredColumns, toGlobalTasks,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution
 } from '@orca-board/core'
 import type { Project, TerminalInfo } from '../../shared/ipc'
@@ -537,6 +537,10 @@ export function App(): React.JSX.Element {
       const role = roles.find((r) => r.id === 'coordinator')
       const global = t.projectId === active?.id && t.runId ? globals.find((g) => g.id === t.runId) : undefined
       return { name: global?.title ?? 'координатор', role: role?.title ?? 'Координатор', agent: role?.agent ?? 'claude' }
+    }
+    if (t.role === 'assistant') {
+      const role = assistantRole(roles)
+      return { name: 'ассистент', role: role?.title ?? 'Ассистент', agent: role?.agent ?? 'claude' }
     }
     if (t.role === 'shell') return { name: t.label, role: 'оболочка', agent: 'shell' }
     const task = t.projectId === active?.id ? tasks.find((x) => x.id === t.taskId) : undefined

@@ -86,6 +86,10 @@ const api: OrcaApi = {
   coordinator: {
     start: (objective, cols, rows, images) => ipcRenderer.invoke('coordinator:start', objective, cols, rows, images)
   },
+  assistant: {
+    open: (cols, rows) => ipcRenderer.invoke('assistant:open', cols, rows),
+    reset: (cols, rows) => ipcRenderer.invoke('assistant:reset', cols, rows)
+  },
   docs: {
     list: () => ipcRenderer.invoke('docs:list'),
     read: (source, path) => ipcRenderer.invoke('docs:read', source, path),

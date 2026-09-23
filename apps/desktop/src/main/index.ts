@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type Role, type BoardColumn, type RequestResolution } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
-import { startWorker, startCoordinator, workerPath, type WorkerEnvContext } from './worker'
+import { startWorker, startCoordinator, startAssistant, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, acceptReview, resolveHumanRequest } from './review'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { currentBranch } from './git'
@@ -226,6 +226,26 @@ function runCoordinator(
 ): string {
   const p = resolveProject(projectId)
   return startCoordinator(p.store, p.root, ctx(p.id), objective, cols, rows, images, runId).ptyId
+}
+
+/** Живой терминал ассистента по проекту: один ассистент на проект, повторное открытие — тот же PTY. */
+const assistants = new Map<string, string>()
+
+/**
+ * Терминал ассистента активного проекта: живой — возвращается как есть, иначе (или при `reset` — всегда,
+ * старый закрывается) запускается новый.
+ */
+function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: string } {
+  const p = resolveProject()
+  const current = assistants.get(p.id)
+  if (current && isAlive(current)) {
+    if (!reset) return { ptyId: current }
+    killPty(current)
+  }
+  assistants.delete(p.id)
+  const { ptyId } = startAssistant(p.root, ctx(p.id), cols, rows)
+  assistants.set(p.id, ptyId)
+  return { ptyId }
 }
 
 /**
@@ -472,6 +492,8 @@ function registerIpc(): void {
     if (!text && valid.length === 0) throw new Error('цель не задана')
     return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
   })
+  ipcMain.handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
+  ipcMain.handle('assistant:reset', (_e, cols: number, rows: number) => openAssistant(cols, rows, true))
   ipcMain.handle('docs:list', () => {
     if (!projects.active()) return []
     const p = resolveProject()

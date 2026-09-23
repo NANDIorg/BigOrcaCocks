@@ -2,14 +2,39 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { builtinPromptKind, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION } from './prompts.ts'
+import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION } from './prompts.ts'
 import { getAgent } from './agents.ts'
 import { withRoleInstructions } from './types.ts'
 
 describe('builtinPromptKind', () => {
   it('координаторская инструкция только у роли coordinator', () => {
     assert.equal(builtinPromptKind('coordinator'), 'coordinator')
-    for (const id of ['developer', 'reviewer', 'qa', 'role_x', 'Coordinator']) assert.equal(builtinPromptKind(id), 'worker')
+    for (const id of ['developer', 'reviewer', 'qa', 'role_x', 'Coordinator', 'Assistant']) assert.equal(builtinPromptKind(id), 'worker')
+  })
+  it('инструкция ассистента — у роли assistant', () => {
+    assert.equal(builtinPromptKind('assistant'), 'assistant')
+  })
+})
+
+describe('служебные роли', () => {
+  it('coordinator и assistant задачам не назначаются', () => {
+    assert.equal(isTaskRole('coordinator'), false)
+    assert.equal(isTaskRole('assistant'), false)
+    for (const id of ['developer', 'reviewer', 'qa', 'role_x']) assert.equal(isTaskRole(id), true)
+  })
+})
+
+describe('assistantRole', () => {
+  const coordinator = { id: 'coordinator', title: 'К', agent: 'codex' as const, model: 'm', effort: 'high', systemPrompt: 'только координатору' }
+  it('своя роль assistant — как есть', () => {
+    const own = { id: 'assistant', title: 'А', agent: 'gemini' as const, systemPrompt: 'p' }
+    assert.equal(assistantRole([coordinator, own]), own)
+  })
+  it('старый проект без assistant — агент, модель и effort координатора, без его инструкций', () => {
+    assert.deepEqual(assistantRole([coordinator]), { id: 'assistant', title: 'Ассистент', agent: 'codex', model: 'm', effort: 'high' })
+  })
+  it('нет ни assistant, ни coordinator — undefined (claude по умолчанию)', () => {
+    assert.equal(assistantRole([{ id: 'developer', title: 'D', agent: 'claude' }]), undefined)
   })
 })
 

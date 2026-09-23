@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { AGENT_TITLES, DEFAULT_ROLE_ID, modelLabel, type AgentInfo, type Role, type Task } from '@orca-board/core'
+import { AGENT_TITLES, DEFAULT_ROLE_ID, isTaskRole, modelLabel, type AgentInfo, type Role, type Task } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
 
@@ -20,7 +20,8 @@ interface Props {
 
 export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCreate }: Props): React.JSX.Element {
   const enabledAgents = new Set(agents.filter((a) => a.enabled).map((a) => a.id))
-  const available = roles.filter((r) => enabledAgents.has(r.agent))
+  // Служебные роли (координатор, ассистент) задачам не назначаются.
+  const available = roles.filter((r) => isTaskRole(r.id) && enabledAgents.has(r.agent))
   const noRoles = available.length === 0
   const [title, setTitle] = useState('')
   const [spec, setSpec] = useState('')
