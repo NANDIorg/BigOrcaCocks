@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ColumnKind, Dispatch, HumanRequest, Question, Task } from '@orca-board/core'
 import {
-  ATTENTION_NARROW_LIMIT, attentionLabel, attentionSummary, attentionTaskIds, buildAttention, defaultCollapsed, questionAnswerText,
+  ATTENTION_NARROW_LIMIT, attentionCountTitle, attentionLabel, attentionSummary, attentionTaskIds, buildAttention, defaultCollapsed, feedItemOfTask, questionAnswerText,
   questionAsRequest, readCollapsed, writeCollapsed, type AttentionInput
 } from './attention'
 
@@ -174,6 +174,40 @@ test('задачи с пунктами — для фильтра «Ждут ва
     questions: [question('q1', 'b')]
   }))
   assert.deepEqual([...attentionTaskIds(items)].sort(), ['a', 'b'])
+})
+
+test('«в ленте ↑»: первый пункт задачи в порядке ленты; у задачи без пунктов — ничего', () => {
+  const items = buildAttention(input({
+    tasks: [task('a', 'needs_input'), task('b', 'in_progress')],
+    requests: [request('r1', 'a', 'answer', { createdAt: 90 }), request('r2', 'a', 'question', { createdAt: 95 })]
+  }))
+  // Вопрос идёт раньше ответа (порядок видов), хотя запрос младше.
+  assert.equal(feedItemOfTask(items, 'a')?.id, 'req:r2')
+  assert.equal(feedItemOfTask(items, 'b'), undefined)
+  assert.equal(feedItemOfTask([], 'a'), undefined)
+})
+
+test('счётчик ленты и счётчик фильтра «Ждут вас» на доске: одно число, пока у задачи один пункт', () => {
+  const items = buildAttention(input({
+    tasks: [task('a', 'needs_input'), task('b', 'in_progress'), task('c', 'review'), task('d', 'ready')],
+    requests: [request('r1', 'a', 'question')],
+    dispatches: [dispatch('d1', 'b', { outcome: 'failed', endedAt: 1 })]
+  }))
+  assert.equal(attentionTaskIds(items).size, items.length)
+  assert.equal(attentionCountTitle(items), undefined)
+  // Обычное ревью кода — тоже пункт ленты, а значит, и «ждёт вас» на доске.
+  assert.ok(attentionTaskIds(items).has('c'))
+  assert.ok(!attentionTaskIds(items).has('d'))
+})
+
+test('несколько пунктов у одной задачи: подсказка к счётчику ленты объясняет разницу с доской', () => {
+  const items = buildAttention(input({
+    tasks: [task('a', 'needs_input'), task('b', 'needs_input')],
+    requests: [request('r1', 'a', 'question'), request('r2', 'a', 'approval'), request('r3', 'b', 'question')]
+  }))
+  assert.equal(items.length, 3)
+  assert.equal(attentionTaskIds(items).size, 2)
+  assert.match(attentionCountTitle(items) ?? '', /^3 пункта у 2 задач/)
 })
 
 test('сводка свёрнутой ленты: склонения, порядок, нули не пишутся', () => {

@@ -70,7 +70,7 @@ export function writeRoles(roleIds: readonly string[]): void {
 /** Что фильтр знает о карточке. */
 export interface FilterSubject {
   state: CardState
-  /** Ждёт человека — то же, что лента «Ждут вас» (`waitsForYou`). */
+  /** Ждёт человека — задача есть в ленте «Ждут вас» (`attentionTaskIds`). */
   waits: boolean
   roleId: string
 }

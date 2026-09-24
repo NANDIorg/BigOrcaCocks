@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Workflow } from '@orca-board/core'
 import {
-  cardEssence, cardState, depsLabel, filesLabel, shortText, stageLabel, waitsForYou, wfNodeTitles,
+  cardEssence, cardState, depsLabel, filesLabel, shortText, stageLabel, wfNodeTitles,
   type CardStateInput
 } from './cardState'
 
@@ -56,16 +56,6 @@ test('cardState: готовый ответ задачи-ответа — human �
   // Обычная задача с полем answer не бывает, но и без answerFor ответ не считается готовым.
   assert.equal(cardState(base({ kind: 'review', dispatch })), 'review')
   assert.equal(cardState(base({ kind: 'in_progress', task: { answerFor: 'human' }, dispatch })), 'live')
-})
-
-test('waitsForYou: human и bad — да; ревью — только с показом или ответом', () => {
-  const human = base({ kind: 'needs_input' })
-  assert.equal(waitsForYou(human), true)
-  assert.equal(waitsForYou(base({ kind: 'in_progress', dispatch: { outcome: 'failed' } })), true)
-  assert.equal(waitsForYou(base({ kind: 'review' })), false)
-  assert.equal(waitsForYou(base({ kind: 'review', dispatch: { showcase: { files: ['a.html'] } } })), true)
-  assert.equal(waitsForYou(base({ kind: 'in_progress' })), false)
-  assert.equal(waitsForYou(base({ waitingDeps: 1 })), false)
 })
 
 test('cardEssence: сбои', () => {

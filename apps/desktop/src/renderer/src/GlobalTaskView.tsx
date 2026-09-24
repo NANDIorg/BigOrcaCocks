@@ -1,9 +1,11 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, Question, RequestResolution, Task } from '@orca-board/core'
+import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { AttentionFeed } from './AttentionFeed'
-import { buildAttention } from './attention'
+import type { AttentionItem } from './attention'
+import { focusBoard, focusFeed } from './feedLink'
+import { screenKey } from './hotkeys'
 import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
 import { PriorityBadge } from './Priority'
@@ -25,10 +27,11 @@ interface Props {
   onAccept(): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
   onReturn(): void
-  /** Запросы к человеку проекта: pending этой глобальной задачи — в ленте «Ждут вас». */
-  requests: HumanRequest[]
-  /** Вопросы воркеров проекта: открытые без запроса тоже попадают в ленту. */
-  questions: Question[]
+  /**
+   * Пункты ленты «Ждут вас» (`buildAttention`). Считает `App` и отдаёт и сюда, и доске (`attentionTaskIds`):
+   * лента и фильтр «Ждут вас» на доске берут один и тот же список.
+   */
+  attention: AttentionItem[]
   /** Подзадачи этой глобальной задачи — подпись, чей запрос. */
   tasks: Task[]
   /** Колонки проекта (доски подзадач): какие подзадачи сделаны — для фоллбэка «Что сделал». */
@@ -46,10 +49,6 @@ interface Props {
   onRejectTask(taskId: string, feedback: string): Promise<void>
   /** «↻ Перезапустить» упавшего воркера в ленте. */
   onStartTask(task: Task): void | Promise<void>
-  /** Клик по имени задачи в ленте: выделить карточку на доске. */
-  onSelectTask?(taskId: string): void
-  /** Задачи с открытым терминалом: сбой их прошлого запуска в ленту не идёт. */
-  runningTaskIds?: Set<string>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
@@ -60,11 +59,7 @@ interface Props {
 export function GlobalTaskView(props: Props): React.JSX.Element {
   const { global, statusKind, coordinatorPty, onBack, onEdit, onStartCoordinator, onShowCoordinator, onAccept, onReturn, children } = props
   const { columns, onResolveRequest, onOpenTask, onOpenTerminal, typeTitle } = props
-  const { requests, questions, tasks, dispatches } = props
-  const attention = buildAttention({
-    tasks, requests, questions, dispatches, runId: global.id, running: props.runningTaskIds,
-    kindOf: (status) => columns.find((c) => c.id === status)?.kind
-  })
+  const { attention, tasks, dispatches } = props
   const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
   const [expanded, setExpanded] = useState(false)
   const backRef = useRef<HTMLButtonElement>(null)
@@ -75,18 +70,25 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
     setExpanded(false)
   }, [global.id])
 
-  // Escape — назад к общей доске, если фокус не в поле ввода и не открыта модалка (они ловят Escape сами).
+  // Клавиши экрана (`screenKey`): Esc — назад к общей доске, G — фокус между лентой «Ждут вас» и доской. Один
+  // обработчик на всё: поля ввода, модалки и уже обработанные клавиши (меню «Переместить в…», Esc в подробностях
+  // ленты) `screenKey` отсекает. G с фокусом в ленте возвращает на доску, откуда бы ни пришли.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      const el = e.target as HTMLElement | null
-      if (el && (el.closest('input, textarea, select, [contenteditable]') || el.closest('.modal-backdrop'))) return
-      if (document.querySelector('.modal-backdrop')) return
-      onBack()
+      const key = screenKey(e, document.querySelector('.modal-backdrop') !== null)
+      if (!key) return
+      if (key === 'back') {
+        onBack()
+        return
+      }
+      if (attention.length === 0) return
+      e.preventDefault()
+      if ((document.activeElement as HTMLElement | null)?.closest('.attn')) focusBoard()
+      else focusFeed()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onBack])
+  }, [onBack, attention.length])
 
   const description = global.description.trim()
   const long = description.length > 220 || description.split('\n').length > 3
@@ -163,7 +165,6 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         onStartTask={props.onStartTask}
         onOpenTask={onOpenTask}
         onOpenTerminal={onOpenTerminal}
-        onSelectTask={props.onSelectTask}
       />
       {children}
     </div>

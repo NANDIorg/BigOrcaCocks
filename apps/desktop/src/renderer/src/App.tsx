@@ -7,6 +7,8 @@ import {
 } from '@orca-board/core'
 import type { GlobalTaskPatch, Project, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
+import { attentionTaskIds, buildAttention } from './attention'
+import { revealInFeed } from './feedLink'
 import { wfNodeTitles } from './cardState'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -333,6 +335,14 @@ export function App(): React.JSX.Element {
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
   const subtasks = openGlobal ? tasks.filter((t) => t.runId === openGlobal.id) : []
+  // Лента «Ждут вас» открытой глобальной задачи. Список один на ленту и на доску: фильтр «Ждут вас» и ссылки
+  // «в ленте ↑» на карточках берут те же задачи (`attentionTaskIds`), а не считают состояние заново.
+  const feedItems = openGlobal
+    ? buildAttention({
+        tasks: subtasks, requests: snap.requests ?? [], questions: snap.questions, dispatches: snap.dispatches,
+        runId: openGlobal.id, running: runningTaskIds, kindOf: (status) => kindById.get(status)
+      })
+    : []
   /** Роли задач прогона — по типу его глобальной задачи; нет прогона — тип проекта по умолчанию. */
   const rolesFor = (runId: string | undefined): Role[] => rolesForRun(runId, snap.runs, active, taskTypes)
   const openGlobalRoles = rolesFor(openGlobal?.id)
@@ -837,12 +847,10 @@ export function App(): React.JSX.Element {
               onShowCoordinator={(ptyId) => showTerminal(ptyId)}
               onAccept={() => void acceptGlobalTask(openGlobal)}
               onReturn={() => setReturnGlobalId(openGlobal.id)}
-              requests={requests}
-              questions={snap.questions}
+              attention={feedItems}
               tasks={subtasks}
               columns={columns}
               dispatches={snap.dispatches}
-              runningTaskIds={runningTaskIds}
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
@@ -862,6 +870,8 @@ export function App(): React.JSX.Element {
                 dispatches={snap.dispatches}
                 selectedId={selected?.id}
                 runningTaskIds={runningTaskIds}
+                waitingTaskIds={attentionTaskIds(feedItems)}
+                onRevealInFeed={revealInFeed}
                 onSelect={selectTask}
                 onOpenTask={(task) => setOpenTaskId(task.id)}
                 onMove={(id, status) => window.orca.tasks.move(id, status)}

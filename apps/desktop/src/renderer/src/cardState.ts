@@ -58,15 +58,6 @@ export function cardState(i: CardStateInput): CardState {
   return 'idle'
 }
 
-/**
- * Ждёт ли карточка человека — то же, что покажет лента «Ждут вас»: вопрос, ответ, сбой, а на ревью — только когда
- * есть что смотреть (показ или ответ). Ревью, которое проверяет гейт-агент, человека не ждёт.
- */
-export function waitsForYou(i: CardStateInput, state: CardState = cardState(i)): boolean {
-  if (state === 'human' || state === 'bad') return true
-  return state === 'review' && (!!i.dispatch?.showcase || (!!i.task.answerFor && !!i.dispatch?.answer))
-}
-
 /** Сжать текст до одной строки не длиннее `max` символов (с «…»): для пунктирной строки сути. */
 export function shortText(text: string, max = 48): string {
   const line = text.replace(/\s+/g, ' ').trim()
