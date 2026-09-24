@@ -68,6 +68,23 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
 (`docs/human-requests.md`). Валидация: пустой `what` — ошибка; показ, после которого до следующей «Работы» или
 мержа нет ноды `human`, — предупреждение «показ никто не увидит».
 
+Путь показа от воркера до человека (main, `apps/desktop/src/main`):
+
+- **Промпт.** `startWorker` (`worker.ts`) берёт этап `store.taskWorkStage(task.id, {roleIds, workflow})` (граф типа —
+  запасной для прогона без снимка, `WorkerEnvContext.workflow`) и передаёт его в `workerTaskPrompt`. У задачи-ответа
+  этапа нет.
+- **Сдача.** `orca-board done --show-file <описание.md> --show <путь>...`: CLI читает файл и шлёт
+  `params.showcase {text?, files}`; сокет `worker.done` передаёт его в `finishDispatch` вместе с запасным графом
+  типа прогона — чтобы проверка `required` видела тот же этап, что и промпт.
+- **Запрос человеку.** `requestHuman` (`workflow.ts`) берёт показ из последнего запуска задачи (`task.dispatchId`,
+  `outcome: 'done'`): в `body` approval — раздел «## Показ» (текст и список файлов, `showcaseMarkdown`) после итога
+  воркера, а `HumanRequest.showcaseDispatchId` — id этого запуска. Гейт между «Работой» и «человеком» — отдельная
+  задача и показ не подменяет. После «Вернуть» новый `done` даёт новый approval с новым показом.
+- **Файлы.** Renderer читает их из worktree задачи через IPC `showcase:read` / `showcase:open` / `showcase:reveal`
+  (`main/showcase.ts`): путь только внутри worktree (симлинки наружу — отказ), расширения — белый список
+  `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/svg` и `md` превьюятся, `html/htm/pdf` —
+  только «Открыть»). После мержа worktree убран — файлы остаются в ветке, IPC отвечает ошибкой с её именем.
+
 Колонка этапа: `node.column` учитывается у `gate` и `human`; `work` — всегда «В работе» (пока работает воркер),
 `end` — колонка `kind=done` (иначе прогон не закроется).
 

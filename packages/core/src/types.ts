@@ -577,6 +577,11 @@ export interface HumanRequest {
   questionId?: string
   /** Нода `human` воркфлоу, на которой задача ждёт решения (kind=approval). */
   nodeId?: string
+  /**
+   * Dispatch, чей показ (`Dispatch.showcase`) выведен в approval: renderer берёт из него файлы и читает их
+   * из worktree задачи (IPC `showcase:*`). Отдельно от `dispatchId`: тот — «кто спросил / упал».
+   */
+  showcaseDispatchId?: string
   resolution?: RequestResolution
   createdAt: number
   /** Решён или отменён. */

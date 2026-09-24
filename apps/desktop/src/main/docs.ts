@@ -22,7 +22,7 @@ function gitPaths(cwd: string, [cmd, ...args]: string[]): string[] {
   return git(cwd, [cmd, '-z', ...args]).split('\0').filter(Boolean)
 }
 
-const isInside = (root: string, target: string): boolean => {
+export const isInside = (root: string, target: string): boolean => {
   const rel = relative(root, target)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }

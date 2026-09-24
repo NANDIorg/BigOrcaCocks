@@ -7,6 +7,7 @@ import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAg
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
+import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, writeRule } from './rules'
@@ -159,7 +160,8 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
     permissionMode: type.permissionMode,
     roles: type.roles,
     typeTitle: type.title,
-    agentRules: type.agentRules
+    agentRules: type.agentRules,
+    ...(runnableWorkflow(type.workflow) ? { workflow: runnableWorkflow(type.workflow) } : {})
   }
 }
 
@@ -619,6 +621,15 @@ function registerIpc(): void {
     if (err) throw new Error(err)
   })
   handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  // Показ человеку: файлы из worktree задачи активного проекта, белый список расширений — main/showcase.ts.
+  handle('showcase:read', (_e, taskId: unknown, path: unknown) => readShowcaseFile(showcaseRoot(resolveProject().store, taskId), path))
+  handle('showcase:open', async (_e, taskId: unknown, path: unknown) => {
+    const err = await shell.openPath(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+    if (err) throw new Error(err)
+  })
+  handle('showcase:reveal', (_e, taskId: unknown, path: unknown) =>
+    shell.showItemInFolder(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+  )
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))

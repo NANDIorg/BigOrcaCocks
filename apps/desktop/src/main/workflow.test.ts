@@ -299,6 +299,83 @@ describe('свой граф прогона', () => {
   })
 })
 
+/** start → «Дизайн» (work с обязательным показом) → «Выбрать вариант» (human) → merge → end. */
+const design: Workflow = {
+  version: WORKFLOW_VERSION,
+  nodes: [
+    { id: 'start', type: 'start', x: 0, y: 0 },
+    { id: 'work', type: 'work', title: 'Дизайн', x: 0, y: 0, instructions: 'Сделай макеты', showcase: { what: '2 варианта макета', required: true } },
+    { id: 'pick', type: 'human', title: 'Выбрать вариант', x: 0, y: 0 },
+    { id: 'merge', type: 'merge', x: 0, y: 0 },
+    { id: 'end', type: 'end', merged: true, x: 0, y: 0 }
+  ],
+  edges: [
+    { id: 'e1', from: 'start', outcome: 'next', to: 'work' },
+    { id: 'e2', from: 'work', outcome: 'next', to: 'pick' },
+    { id: 'e3', from: 'pick', outcome: 'accept', to: 'merge' },
+    { id: 'e4', from: 'pick', outcome: 'reject', to: 'work' },
+    { id: 'e5', from: 'merge', outcome: 'ok', to: 'end' }
+  ]
+}
+
+describe('показ человеку: «Работа» с showcase → «человек»', () => {
+  /** `done` с показом, как `orca-board done --show-file … --show …`. */
+  function doneWithShowcase(taskId: string, showcase: { text?: string; files: string[] }): string {
+    const before = store.listEvents().length
+    const dispatchId = task(taskId).dispatchId!
+    store.finishDispatch(dispatchId, 'макеты готовы', [], undefined, { showcase })
+    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    return dispatchId
+  }
+
+  it('показ последнего done — в body approval и showcaseDispatchId; «Принять» с выбором — decision в событии, мерж', () => {
+    const run = store.createRun('цель', undefined, design)
+    const a = workTask('Лендинг', run.id)
+    assert.throws(() => store.finishDispatch(task(a.id).dispatchId!, 'без показа', []), /требует показ человеку/)
+    commit(a, 'a.html', '<p>A</p>\n')
+    const dispatchId = doneWithShowcase(a.id, { text: '## Варианты\n\nA — строгий, B — яркий', files: ['a.html', 'b.png'] })
+
+    const [request] = store.pendingRequests()
+    assert.equal(request.kind, 'approval')
+    assert.equal(request.nodeId, 'pick')
+    assert.equal(request.showcaseDispatchId, dispatchId)
+    const body = request.body ?? ''
+    assert.match(body, /## Показ/)
+    assert.match(body, /A — строгий, B — яркий/)
+    assert.match(body, /- `a\.html`\n- `b\.png`/)
+    assert.ok(body.indexOf('макеты готовы') < body.indexOf('## Показ'), 'итог воркера — перед показом')
+
+    resolve(request.id, 'accept', 'вариант B')
+    const resolved = events('request_resolved', a.id).at(-1)!
+    assert.equal(resolved.payload.decision, 'вариант B')
+    assert.equal(task(a.id).status, 'done')
+    assert.equal(existsSync(path.join(repo, 'a.html')), true, 'ветка слита')
+  })
+
+  it('«Вернуть» → новый done: в новом approval показ нового запуска', () => {
+    const run = store.createRun('цель', undefined, design)
+    const a = workTask('Лендинг', run.id)
+    doneWithShowcase(a.id, { files: ['v1.png'] })
+    const [first] = store.pendingRequests()
+    resolve(first.id, 'reject', 'ярче')
+    const second = doneWithShowcase(a.id, { files: ['v2.png'] })
+    const [request] = store.pendingRequests()
+    assert.notEqual(request.id, first.id)
+    assert.equal(request.showcaseDispatchId, second)
+    assert.match(request.body ?? '', /v2\.png/)
+    assert.doesNotMatch(request.body ?? '', /v1\.png/)
+  })
+
+  it('без показа (нода без showcase) — body как раньше, showcaseDispatchId нет', () => {
+    roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
+    const a = workTask('Логин')
+    done(a.id, 'логин готов')
+    const [request] = store.pendingRequests()
+    assert.equal(request.showcaseDispatchId, undefined)
+    assert.doesNotMatch(request.body ?? '', /## Показ/)
+  })
+})
+
 describe('мимо воркфлоу и возвраты', () => {
   it('задача-ответ: done не трогает воркфлоу, review accept — прежняя приёмка', () => {
     const t = store.createTask({ title: 'Разберись', answerFor: 'coordinator' })

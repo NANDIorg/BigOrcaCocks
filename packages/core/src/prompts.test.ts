@@ -244,6 +244,20 @@ describe('события после ответа человека в инстр�
     assert.doesNotMatch(prep, /роли есть в проекте/, 'роли больше не у проекта')
   })
 
+  it('request_resolved у approval с decision — выбор человека, учесть в следующих задачах', () => {
+    assert.match(skill, /- `request_resolved` →[\s\S]*`kind: approval`[\s\S]*`decision`[\s\S]*учти его в следующих задачах/)
+    assert.match(skill, /`decisionTruncated: true`[\s\S]*request get --request <requestId>[\s\S]*`resolution\.text`/)
+  })
+
+  it('воркер сдаёт показ человеку через done --show-file / --show, как подсказывает промпт этапа', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    assert.match(worker, /«Результат для показа человеку»/)
+    assert.match(worker, /orca-board done --summary "\.\.\." --show-file <описание\.md> --show <путь> --show <путь>/)
+    assert.match(worker, /без него `done` не пройдёт/)
+    // Заголовок в skill совпадает с разделом промпта этапа (workerTaskPrompt).
+    assert.match(workerTaskPrompt({ title: 't', spec: 's' }, undefined, [], { nodeId: 'w', title: 'Дизайн', showcase: { what: 'макеты' } }), /## Результат для показа человеку/)
+  })
+
   it('воркер после done не берёт работу из терминала, а отправляет в приложение', () => {
     const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
     assert.match(worker, /После `orca-board done` новую работу не бери[\s\S]*Решение \/ что делать дальше/)
