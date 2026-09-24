@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AgentSession, ColumnKind, GlobalTask } from '@orca-board/core'
 import { Icon } from './icons'
 import { globalTaskActions } from './globalReview'
-import { COORD_STATE_TEXT, coordState, sessionRows } from './coordPanel'
+import { COORD_STATE_TEXT, coordState, knownSessions, sessionRows } from './coordPanel'
 import { appendTail, COORD_TAIL_LINES, mergeTail, tailFromRegistry, tailLines } from './coordTail'
 
 export interface CoordinatorPanelProps {
@@ -14,7 +14,8 @@ export interface CoordinatorPanelProps {
   coordinatorPty?: string
   /**
    * `Run.coordinatorSessions` этой задачи. Необязательное поле снапшота: нет — запуски неизвестны
-   * (старый main или прогон до учёта запусков), это не то же самое, что «запусков не было» (`[]`).
+   * (старый main или прогон до учёта запусков), это не то же самое, что «запусков не было» (`[]`). Координатор
+   * ни разу не запускался — запусков нет и без поля (`knownSessions`).
    */
   sessions?: AgentSession[]
   onStartCoordinator(): void
@@ -124,7 +125,7 @@ export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Elemen
 
   const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
   const state = coordState(coordinatorPty !== undefined, global.waiting, statusKind)
-  const rows = sessionRows(sessions, coordinatorPty, now)
+  const rows = sessionRows(knownSessions(sessions, coordinatorPty !== undefined || global.coordinatorPtyId !== undefined), coordinatorPty, now)
   const stopping = coordinatorPty !== undefined && confirmingStop === coordinatorPty
 
   return (

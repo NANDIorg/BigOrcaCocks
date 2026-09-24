@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AgentSession } from '@orca-board/core'
-import { coordState, sessionRows } from './coordPanel'
+import { coordState, knownSessions, sessionRows } from './coordPanel'
 
 const H = 3_600_000
 const session = (extra: Partial<AgentSession> = {}): AgentSession => ({ ptyId: 'p1', roleId: 'coordinator', agent: 'claude', startedAt: 1_000_000, ...extra })
@@ -46,4 +46,19 @@ test('sessionRows: живой запуск идёт до «сейчас», мё�
   assert.match(crashed?.period ?? '', /конец неизвестен$/)
   // живой PTY другого запуска не делает этот запуск живым
   assert.equal(sessionRows([session({ ptyId: 'old' })], 'p9', 0)?.[0].live, false)
+})
+
+test('knownSessions: поле есть — оно; поля нет — «не было» без запусков и «неизвестны» с запуском', () => {
+  const list = [session()]
+  assert.equal(knownSessions(list, true), list)
+  assert.deepEqual(knownSessions(undefined, false), [])
+  assert.equal(knownSessions(undefined, true), undefined)
+})
+
+test('sessionRows: конец в тот же день — только время, в другой день — с датой', () => {
+  const day = new Date(2026, 8, 24, 10, 5).getTime()
+  const same = sessionRows([session({ startedAt: day, endedAt: day + 2 * H })], undefined, day)?.[0]
+  assert.match(same?.period ?? '', /^24\.09, 10:05 — 12:05$/)
+  const next = sessionRows([session({ startedAt: day, endedAt: day + 30 * H })], undefined, day)?.[0]
+  assert.match(next?.period ?? '', /^24\.09, 10:05 — 25\.09, 16:05$/)
 })

@@ -37,6 +37,21 @@ function stamp(ts: number): string {
   return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+/** Конец периода в тот же день, что и начало, — только время: «24.09, 10:05 — 14:33». */
+function endStamp(start: number, end: number): string {
+  const day = (t: number): string => new Date(t).toDateString()
+  return day(start) === day(end) ? new Date(end).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : stamp(end)
+}
+
+/**
+ * Список запусков для показа. Поля `Run.coordinatorSessions` нет: если координатор ни разу не запускался
+ * (нет `coordinatorPtyId` и живого PTY), запусков и правда не было; иначе они остались неизвестны — старый main
+ * или прогон до учёта запусков.
+ */
+export function knownSessions(sessions: AgentSession[] | undefined, launched: boolean): AgentSession[] | undefined {
+  return sessions ?? (launched ? undefined : [])
+}
+
 /**
  * Запуски координатора, новые сверху. `sessions` — `Run.coordinatorSessions`: undefined — поля нет (старый main или
  * прогон до учёта запусков), это «неизвестно», а не «не запускался». Живым считается запуск без `endedAt` с ptyId
@@ -54,7 +69,7 @@ export function sessionRows(sessions: readonly AgentSession[] | undefined, liveP
         key: `${s.ptyId}:${s.startedAt}`,
         title: `Запуск ${i + 1}`,
         agent: s.model ? `${title} · ${s.model}` : title,
-        period: `${stamp(s.startedAt)} — ${s.endedAt !== undefined ? stamp(s.endedAt) : live ? 'сейчас' : 'конец неизвестен'}`,
+        period: `${stamp(s.startedAt)} — ${s.endedAt !== undefined ? endStamp(s.startedAt, s.endedAt) : live ? 'сейчас' : 'конец неизвестен'}`,
         ...(end !== undefined ? { duration: formatDuration(Math.max(0, end - s.startedAt)) } : {}),
         live
       }
