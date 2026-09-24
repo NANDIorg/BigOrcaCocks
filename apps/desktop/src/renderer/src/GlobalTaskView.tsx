@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Run, Task } from '@orca-board/core'
+import type { AgentSession, BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
 import { AttentionFeed } from './AttentionFeed'
 import type { AttentionItem } from './attention'
 import { focusBoard, focusFeed, onRevealOnBoard } from './feedLink'
@@ -20,12 +20,20 @@ interface Props {
   statusKind?: ColumnKind
   /** Живой координатор этой глобальной задачи (ptyId), если есть. */
   coordinatorPty?: string
+  /** Запуски координатора (`Run.coordinatorSessions`) — пилюля в шапке и события «Истории». Со старым main поля нет. */
+  coordinatorSessions?: AgentSession[]
+  /** Колонки глобального канбана (`globalBoardColumns`) — шаги степпера статуса в шапке. */
+  globalColumns?: BoardColumn[]
   onBack(): void
   onEdit(): void
+  /** Клик по шагу степпера: перенести задачу в колонку. */
+  onMove(status: string): void
   onStartCoordinator(): void
   onShowCoordinator(ptyId: string): void
-  /** «■ Остановить» на вкладке «Координатор» (после подтверждения там же): закрыть PTY координатора. */
+  /** «■ Остановить» координатора (после подтверждения в шапке и на вкладке «Координатор»): закрыть его PTY. */
   onStopCoordinator(ptyId: string): void
+  /** «⋯ → Удалить задачу…». */
+  onRemove?(): void
   /** «Подтвердить» на «Проверке». */
   onAccept(): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
@@ -39,8 +47,6 @@ interface Props {
   tasks: Task[]
   /** Колонки проекта (доски подзадач): какие подзадачи сделаны — для фоллбэка «Что сделал». */
   columns: BoardColumn[]
-  /** Прогоны (`snap.runs`): оттуда вкладка «Координатор» берёт `coordinatorSessions` — поля может не быть (старый main). */
-  runs?: Run[]
   /** Запуски воркеров: сводка последнего запуска сделанной подзадачи — фоллбэк «Что сделал». */
   dispatches: Dispatch[]
   onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
@@ -155,12 +161,18 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       <GlobalTaskHeader
         global={global}
         statusKind={statusKind}
+        columns={props.globalColumns}
         coordinatorPty={coordinatorPty}
+        coordinatorSessions={props.coordinatorSessions}
+        attentionCount={attention.length}
         typeTitle={typeTitle}
         onBack={onBack}
         onEdit={props.onEdit}
+        onMove={props.onMove}
         onStartCoordinator={props.onStartCoordinator}
         onShowCoordinator={props.onShowCoordinator}
+        onStopCoordinator={props.onStopCoordinator}
+        onRemove={props.onRemove}
         onAccept={props.onAccept}
         onReturn={props.onReturn}
       />
@@ -226,7 +238,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
             global={global}
             statusKind={statusKind}
             coordinatorPty={coordinatorPty}
-            sessions={props.runs?.find((r) => r.id === global.id)?.coordinatorSessions}
+            sessions={props.coordinatorSessions}
             onStartCoordinator={props.onStartCoordinator}
             onShowCoordinator={props.onShowCoordinator}
             onStopCoordinator={props.onStopCoordinator}
@@ -236,7 +248,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       )}
       {tab === 'history' && (
         <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
-          <GlobalHistory global={global} />
+          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} />
         </div>
       )}
     </div>

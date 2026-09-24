@@ -39,6 +39,7 @@ function useCoordTail(ptyId: string | undefined): { lines: string[]; loading: bo
   useEffect(() => {
     if (!ptyId) return
     const api = window.orca
+    let cancelled = false
     let raw = ''
     let ready = false
     let dirty = false
@@ -61,12 +62,15 @@ function useCoordTail(ptyId: string | undefined): { lines: string[]; loading: bo
     void Promise.resolve(api?.terminals?.list?.())
       .catch(() => undefined)
       .then((list) => {
+        // Поздний ответ для прежнего PTY не должен перезаписать состояние нового.
+        if (cancelled) return
         raw = mergeTail(tailFromRegistry(list, ptyId) ?? '', early)
         early.length = 0
         ready = true
         publish()
       })
     return () => {
+      cancelled = true
       window.clearInterval(timer)
       off?.()
     }
