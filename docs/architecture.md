@@ -1237,6 +1237,8 @@ UI работает с активным проектом; воркеры и ко
 Renderer вызывает канал через проверку наличия API (старый preload — «перезапустите приложение», см. «Грабли разработки»).
 
 Где что:
+- `packages/core/src/stats-acc.ts` — общие `Acc` / `Group` / `sessionSpan` проекта и задачи (внутренний, не в `index.ts`);
+  `task-stats.ts` — статистика задачи, см. «Статистика задачи».
 - `packages/core/src/stats.ts` (без Node) — `statsSessions(snapshot)`: сессии агентов (`StatsSession`: dispatch и запуски
   координатора, ключ — id dispatch или `coord:<runId>:<ptyId>`); `buildProjectStats(input)` — вся агрегация по снапшоту,
   расход сессий приходит функцией `usage(session) → SessionUsage { records: UsageRecord[], lastAt? }` (нет — «неизвестно»),
@@ -1338,6 +1340,57 @@ Renderer вызывает канал через проверку наличия 
 считается как 5 мин). Модель не найдена в таблице — её токены идут в `unpricedTokens`, id — в `unpricedModels`,
 в `costUsd` не входят; итог UI помечает как «не менее $X». Алиасы роли (`opus`, `sonnet`) в таблицу не нужны:
 в транскрипте всегда полный id модели.
+
+### Статистика задачи (`packages/core/src/task-stats.ts`, типы `TaskStats` / `GlobalTaskStats`)
+
+Статистика одной задачи и одной глобальной задачи: сколько на неё потрачено — время, агенты, ожидание человека, токены.
+Период не выбирается — всё время жизни. Чистые функции без Node: `buildTaskStats(input)` и `buildGlobalTaskStats(input)`
+(`input`: `now`, снапшот `tasks/runs/dispatches/requests/questions`, `columns`, `workflow?` для названий этапов и те же
+`usage` / `isAlive` / `roleTitle` / `prices`, что у проекта). Транскрипты читает main и отдаёт через `usage`; без `usage`
+(renderer при старом main) время считается, а токенов нет — «неизвестно», не ноль. Неизвестная задача — ошибка
+«статистика: задачи <id> нет в проекте». Общие с проектом кирпичи — `stats-acc.ts` (внутренний модуль: `Acc`, `Group`,
+`sessionSpan` — длительность сессии, `sessionModel`); `buildProjectStats` считает через них же, цифры проекта не менялись.
+
+Оговорки:
+- **«Ждала вас», а не «вы потратили».** Время самого человека приложению неизвестно; `human.waitingMs` — сколько у задачи был
+  pending-запрос к человеку (интервалы `createdAt → resolvedAt`, для идущего — до `generatedAt`, параллельные объединяются
+  `mergeSpans`), `reaction*` — как быстро человек реагировал (`resolvedAt − createdAt` по решённым).
+- **Гейты учитываются в проверяемой задаче:** сессии, запросы и вопросы задач `Task.gateFor.taskId = <задача>` входят в её
+  `usage`, `dispatches` и `human` (`dispatches.total === usage.sessions`). В глобальной задаче проверка идёт строкой той подзадачи,
+  которую проверяет (`byTask`), и не считается в `subtasks.count`.
+- **Приближённость (`approx`).** История статусов хранит не больше `STATUS_HISTORY_LIMIT` записей и может начинаться с записи
+  миграции (`migrated`: `at` — последняя правка, а не вход в колонку). Колонка/этап с такой записью и все колонки/этапы
+  обрезанной истории помечаются `approx: true`; жизнь done-задачи, у которой вход в done известен только по `doneAt` (миграция), — тоже.
+- **Время в done не считается:** интервал последней записи `done` обрезан входом в done (`ms: 0`), иначе он рос бы вечно.
+- **Dispatch, закрытый миграцией** (`outcome: 'unknown'`, `endedAt` = момент загрузки приложения, завышен на простой): в статистике
+  задачи конец — `min(endedAt, usage.lastAt)`, если транскрипт найден (`trimUnknownEnd`). В статистике проекта это **пока не меняется**
+  (`StatsSession.outcome` для этого уже есть) — предложение на отдельное согласование: изменит цифры `agentMs` проекта.
+
+Откуда каждая метрика:
+
+| Метрика | Источник |
+|---|---|
+| `lifetime` | `Task.createdAt` → последний вход в kind=done по `statusHistory` (запись `migrated` — `doneAt`, `approx`); не done — до `generatedAt`, `running: true` |
+| `leadMs` | первый непереходный вход в kind=in_progress → вход в done (как `taskTime.avgLeadMs`); не done или нет честной истории — поля нет |
+| `activeMs` | `Task.activeMs` + идущий отрезок `activeSince` до `generatedAt` (`taskActiveTime`); не бывала в работе — поля нет |
+| `columns` | `historySpans(statusHistory, конец жизни)`: запись живёт до следующей; сумма и число заходов по колонке, порядок колонок доски |
+| `stages` | то же по `Task.stageHistory`; название — `StageChange.title`, иначе из `workflow`, иначе `nodeId`; нет `stageHistory` — поля нет |
+| `usage`, `byRole`, `byModel` | сессии dispatch задачи и её гейтов (`statsSessions`), транскрипты через `usage`; время сессии — `sessionSpan` |
+| `dispatches` | `Dispatch` задачи и её гейтов: `outcome` done / failed / unknown, `running` — без `endedAt` |
+| `rejections.gate` | записи `stageHistory` с `outcome: 'reject'` минус отказы человека на approval (те тоже идут исходом reject) |
+| `rejections.approval` | `HumanRequest` kind=approval, решён с `action: 'reject'` |
+| `rejections.clarify` | `HumanRequest` kind=answer, решён с `action: 'clarify'` |
+| `rejections.manual` | в воркфлоу — записи `stageHistory` с `outcome: 'restart'` (`enterWork`: возврат с ревью / из done); вне воркфлоу — переходы ревью → ready по `statusHistory` (у задачи-ответа за вычетом `clarify`) |
+| `human` | `HumanRequest` задачи и её гейтов (у глобальной — все запросы прогона по `runId`) |
+| `coordinatorQuestions` | `Question` задачи и её гейтов без `forHuman`; медиана `answeredAt − createdAt` по отвеченным |
+
+`GlobalTaskStats` — то же по `Run` (`statusHistory`, `closedAt` вместо `doneAt`, «Входящие» не считаются) плюс `ownActiveMs`
+(`Run.activeMs` с идущим отрезком), `coordinator` (сессии `Run.coordinatorSessions` и `launches`), `subtasks` (расход
+подзадач вместе с проверками, `count` / `done` — рабочие подзадачи), `returns` (`Run.returns.length`), `byTask` (строки
+подзадач, сортировка как в проекте). Своих `stages`, `dispatches`, `rejections`, `coordinatorQuestions` у глобальной задачи нет.
+
+IPC `stats:task` / `stats:global` и вкладка в UI — отдельные задачи (main собирает `usage` только по сессиям задачи).
+Команды CLI для статистики задачи по-прежнему нет: тот же довод, что для проекта.
 
 ### Интерфейс — вкладка «Статистика» (вариант B)
 

@@ -2,10 +2,11 @@
  * Статистика проекта (docs/architecture.md, «Статистика»): чистые функции без Node — их использует main
  * (сбор) и renderer (пустое состояние, подписи периода).
  */
-import type { BoardColumn, ColumnKind, Dispatch, ModelPrice, ProjectStats, Run, StatsRange, StatsRow, StatsUsage, StatusChange, Task, TokenUsage } from './types.ts'
+import type { BoardColumn, ColumnKind, Dispatch, DispatchOutcome, ModelPrice, ProjectStats, Run, StatsRange, StatsUsage, StatusChange, Task } from './types.ts'
 import { AGENT_TITLES } from './agents.ts'
 import { globalTaskStatus, globalTaskTitle } from './global-tasks.ts'
 import { MODEL_PRICES, tokensCost, type PricedTokens } from './pricing.ts'
+import { Acc, Group, UNKNOWN_MODEL, modelTitle, sessionModel, sessionSpan } from './stats-acc.ts'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -80,9 +81,9 @@ export interface StatsSession {
   runId?: string
   startedAt: number
   endedAt?: number
+  /** Исход dispatch (`Dispatch.outcome`); у запусков координатора нет. `unknown` — закрыт миграцией, `endedAt` завышен. */
+  outcome?: DispatchOutcome
 }
-
-const UNKNOWN_MODEL = 'unknown'
 
 /**
  * Сессии агентов проекта из снапшота store. dispatch без снимка роли (от кода до статистики) берёт роль и агента
@@ -104,7 +105,8 @@ export function statsSessions(data: { tasks: Task[]; runs: Run[]; dispatches: Di
       taskId: d.taskId,
       ...(task?.runId ? { runId: task.runId } : {}),
       startedAt: d.startedAt,
-      ...(d.endedAt !== undefined ? { endedAt: d.endedAt } : {})
+      ...(d.endedAt !== undefined ? { endedAt: d.endedAt } : {}),
+      ...(d.outcome ? { outcome: d.outcome } : {})
     })
   }
   for (const run of data.runs) {
@@ -151,89 +153,6 @@ export function localDayKey(ms: number): string {
   const d = new Date(ms)
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-/** Накопитель среза: токены «неизвестны», пока не добавили сессию с данными или запись. */
-class Acc {
-  tokens?: TokenUsage
-  cost?: number
-  unpricedTokens = 0
-  unpricedModels = new Set<string>()
-  sessions = 0
-  sessionsWithUsage = 0
-  agentMs = 0
-
-  known(): TokenUsage {
-    this.tokens ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-    return this.tokens
-  }
-
-  record(r: UsageRecord, cost: number | undefined): void {
-    const t = this.known()
-    t.input += r.input
-    t.output += r.output
-    t.cacheRead += r.cacheRead
-    t.cacheWrite += r.cacheWrite5m + r.cacheWrite1h
-    if (cost === undefined) {
-      this.unpricedTokens += recordTotal(r)
-      this.unpricedModels.add(r.model)
-    } else this.cost = (this.cost ?? 0) + cost
-  }
-
-  session(withUsage: boolean, ms: number): void {
-    this.sessions++
-    if (withUsage) {
-      this.sessionsWithUsage++
-      this.known()
-    }
-    this.agentMs += ms
-  }
-
-  usage(): StatsUsage {
-    return {
-      ...(this.tokens ? { tokens: { ...this.tokens } } : {}),
-      ...(this.cost !== undefined ? { costUsd: this.cost } : {}),
-      unpricedTokens: this.unpricedTokens,
-      unpricedModels: [...this.unpricedModels].sort(),
-      sessions: this.sessions,
-      sessionsWithUsage: this.sessionsWithUsage,
-      agentMs: this.agentMs
-    }
-  }
-}
-
-function recordTotal(r: PricedTokens): number {
-  return r.input + r.output + r.cacheRead + r.cacheWrite5m + r.cacheWrite1h
-}
-
-function tokensTotal(t: TokenUsage | undefined): number {
-  return t ? t.input + t.output + t.cacheRead + t.cacheWrite : -1
-}
-
-/** Порядок строк разбивок: стоимость → токены → время агентов, по убыванию; при равенстве — по ключу. */
-function compareRows(a: StatsRow, b: StatsRow): number {
-  return (b.costUsd ?? -1) - (a.costUsd ?? -1) ||
-    tokensTotal(b.tokens) - tokensTotal(a.tokens) ||
-    b.agentMs - a.agentMs ||
-    a.key.localeCompare(b.key)
-}
-
-/** Группа накопителей по ключу (роль, модель…) с подписью. */
-class Group {
-  private accs = new Map<string, { acc: Acc; title: string }>()
-
-  get(key: string, title: () => string): Acc {
-    let e = this.accs.get(key)
-    if (!e) {
-      e = { acc: new Acc(), title: title() }
-      this.accs.set(key, e)
-    }
-    return e.acc
-  }
-
-  rows(): StatsRow[] {
-    return [...this.accs].map(([key, e]) => ({ key, title: e.title, ...e.acc.usage() })).sort(compareRows)
-  }
 }
 
 /**
@@ -334,14 +253,11 @@ export function buildProjectStats(input: ProjectStatsInput): ProjectStats {
   const byAgent = new Group()
   const byGlobal = new Group()
   const byTask = new Group()
-  const modelTitle = (m: string): string => (m === UNKNOWN_MODEL ? 'Модель неизвестна' : m)
   for (const s of statsSessions(input)) {
     if (s.kind === 'coordinator' && inPeriod(s.startedAt)) stats.coordinatorLaunches++
     const usage = input.usage?.(s)
-    const end = s.endedAt ?? (isAlive(s.ptyId) ? now : usage?.lastAt)
-    const clippedEnd = Math.min(end ?? s.startedAt, now)
     // Агент мог писать и после `endedAt` (dispatch закрыт `done`, а терминал жив) — такие записи тоже в периоде.
-    const lastActivity = Math.max(clippedEnd, Math.min(usage?.lastAt ?? -Infinity, now))
+    const { end, clippedEnd, lastActivity } = sessionSpan(s, usage, now, isAlive)
     if (s.startedAt > now || lastActivity < from) continue
     const ms = end === undefined ? 0 : Math.max(0, clippedEnd - Math.max(s.startedAt, from))
     const task = s.taskId ? tasks.get(s.taskId) : undefined
@@ -354,16 +270,14 @@ export function buildProjectStats(input: ProjectStatsInput): ProjectStats {
       ...(s.taskId ? [byTask.get(s.taskId, () => task?.title ?? s.taskId ?? '')] : [])
     ]
     // Модель сессии для счётчика и времени — та, что потратила больше всего токенов; транскрипта нет — снимок роли.
-    const perModel = new Map<string, number>()
-    for (const r of usage?.records ?? []) perModel.set(r.model || UNKNOWN_MODEL, (perModel.get(r.model || UNKNOWN_MODEL) ?? 0) + recordTotal(r))
-    const sessionModel = [...perModel].sort((a, b) => b[1] - a[1])[0]?.[0] ?? s.model ?? UNKNOWN_MODEL
+    const mainModel = sessionModel(usage, s.model)
     const startDay = day(dayKey(Math.max(s.startedAt, from)))
     const dayModel = (m: string): Acc => {
       let a = startDay.models.get(m)
       if (!a) startDay.models.set(m, (a = new Acc()))
       return a
     }
-    for (const a of [...slices, byModel.get(sessionModel, () => modelTitle(sessionModel)), startDay.acc, dayModel(sessionModel)]) {
+    for (const a of [...slices, byModel.get(mainModel, () => modelTitle(mainModel)), startDay.acc, dayModel(mainModel)]) {
       a.session(usage !== undefined, ms)
     }
     for (const r of usage?.records ?? []) {

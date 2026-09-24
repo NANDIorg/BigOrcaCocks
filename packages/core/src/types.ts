@@ -794,3 +794,101 @@ export interface ProjectStats {
   /** По дням, от старых к новым. */
   byDay: StatsDay[]
 }
+
+// ---------- статистика задачи ----------
+
+/**
+ * Интервал времени в статистике задачи: `approx` — начало неточное. Это запись миграции (`StatusChange.migrated`:
+ * реальный вход в колонку неизвестен) или история обрезана до `STATUS_HISTORY_LIMIT`, ранние переходы потеряны.
+ */
+export interface StatsSpan {
+  ms: number
+  approx?: true
+}
+
+/** Время в колонке доски: сумма по всем заходам. `entries` — сколько раз задача заходила в колонку. */
+export interface TaskColumnTime {
+  status: TaskStatus
+  ms: number
+  entries: number
+  approx?: true
+}
+
+/** Время на этапе воркфлоу: сумма по всем заходам (возврат `work → work` — отдельный заход). */
+export interface TaskStageTime {
+  nodeId: string
+  title: string
+  ms: number
+  entries: number
+  approx?: true
+}
+
+/**
+ * Ожидание человека: сколько у задачи (или её проверок) был pending-запрос. Это время, которое задача **ждала**
+ * человека, а не время самого человека — оно приложению неизвестно.
+ */
+export interface TaskWaitStats {
+  /** Объединённое время, когда был хотя бы один pending-запрос, мс (параллельные запросы не складываются; идущий — до generatedAt). */
+  waitingMs: number
+  byKind: Record<HumanRequestKind, { count: number; waitingMs: number }>
+  resolved: number
+  cancelled: number
+  pending: number
+  /** Реакция по решённым запросам: `resolvedAt − createdAt`. Решённых нет — полей нет. */
+  reactionMedianMs?: number
+  reactionMaxMs?: number
+}
+
+/**
+ * Статистика одной задачи (`stats:task`): время жизни и по колонкам/этапам, расход агентов, возвраты, ожидание
+ * человека. Считается `buildTaskStats` (task-stats.ts); токены приходят из main (транскрипты), время — из снапшота.
+ * «Неизвестно ≠ 0»: нет данных — поля нет (`leadMs`, `activeMs`, `stages`, `usage.tokens`).
+ */
+export interface TaskStats {
+  taskId: string
+  /** Момент расчёта: «сейчас» для идущих интервалов и сессий. */
+  generatedAt: number
+  /** Создана → последний вход в done; не done — до `generatedAt` и `running: true`. */
+  lifetime: StatsSpan & { running?: true }
+  /** Первый вход в in_progress → вход в done по истории статусов; нет честной истории или не done — поля нет. */
+  leadMs?: number
+  /** `Task.activeMs` на момент `generatedAt` (с идущим отрезком). Не бывала в работе — поля нет. */
+  activeMs?: number
+  /** Время по колонкам, порядок колонок доски; колонки без заходов не включаются. */
+  columns: TaskColumnTime[]
+  /** Время по этапам воркфлоу, в порядке первого захода. Нет `stageHistory` (задача вне воркфлоу, старый код) — поля нет. */
+  stages?: TaskStageTime[]
+  /** Расход: сессии задачи и её задач-гейтов (`Task.gateFor`). Та же семантика «неизвестно ≠ 0», что у проекта. */
+  usage: StatsUsage
+  byRole: StatsRow[]
+  byModel: StatsRow[]
+  /** Прогоны агентов на задаче и её проверках; `total` = `usage.sessions`. */
+  dispatches: { total: number; done: number; failed: number; unknown: number; running: number }
+  /**
+   * Возвраты на доработку: `gate` — отказы проверок (`stageHistory` с исходом reject, без отказов человека),
+   * `approval` — «Вернуть» по approval, `clarify` — «Уточнить» по ответу задачи-ответа, `manual` — возврат
+   * вручную (ревью → ready вне воркфлоу, `enterWork` с этапа не «Работа» в воркфлоу).
+   */
+  rejections: { gate: number; approval: number; clarify: number; manual: number }
+  human: TaskWaitStats
+  /** Вопросы координатору (не адресованные человеку): число и медиана ответа по отвеченным. */
+  coordinatorQuestions: { count: number; answerMedianMs?: number }
+}
+
+/**
+ * Статистика глобальной задачи (`stats:global`): то же по времени и ожиданию человека, расход — координатора и
+ * подзадач раздельно. Проверки подзадач учитываются в подзадаче, которую они проверяют.
+ */
+export interface GlobalTaskStats extends Omit<TaskStats, 'taskId' | 'activeMs' | 'stages' | 'dispatches' | 'rejections' | 'coordinatorQuestions'> {
+  runId: string
+  /** `Run.activeMs` на момент `generatedAt` — собственное время глобальной задачи; нет — неизвестно. */
+  ownActiveMs?: number
+  /** Расход координатора; `launches` — запуски (`Run.coordinatorSessions`). */
+  coordinator: StatsUsage & { launches: number }
+  /** Сумма по подзадачам (без координатора); `count` / `done` — рабочие подзадачи без проверок. */
+  subtasks: StatsUsage & { count: number; done: number }
+  /** Возвраты человеком с «Проверки» в работу (`Run.returns`). */
+  returns: number
+  /** Строки по подзадачам, сортировка как в `ProjectStats` (стоимость → токены → время агентов). */
+  byTask: StatsRow[]
+}
