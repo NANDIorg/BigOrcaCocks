@@ -1446,7 +1446,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .stats-table td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
 .stats-table .r { text-align: right; font-variant-numeric: tabular-nums; }
 .stats-table td.t { white-space: normal; min-width: 160px; width: 100%; }
-.stats-table td.t .x { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.stats-table td.t .x { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: break-word; }
 .stats-table .share-col { width: 18%; min-width: 70px; }
 .stats-table tbody tr:hover td { background: rgba(255,255,255,.02); }
 
@@ -1454,7 +1454,12 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .stats-state b { color: var(--text); font-size: 16px; font-weight: 600; }
 .stats-state-icon { width: 32px; height: 32px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-@container stats (max-width: 1000px) { .stats-grid3 { grid-template-columns: 1fr 1fr; } }
+/* Две таблицы топа рядом умещаются с колонкой «доля» только от ~1000px: уже — одна под другой, иначе доля обрезается. */
+@container stats (max-width: 1000px) {
+  .stats-grid3 { grid-template-columns: 1fr 1fr; }
+  .stats-grid3 > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .stats-grid2 { grid-template-columns: minmax(0, 1fr); }
+}
 @container stats (max-width: 760px) {
   .stats-hero, .stats-grid3, .stats-grid2 { grid-template-columns: minmax(0, 1fr); }
   .stats-dash { padding: 18px 16px 32px; }
