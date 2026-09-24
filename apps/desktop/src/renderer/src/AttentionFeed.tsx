@@ -83,6 +83,8 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
     if (!item) return
     setCollapsed(false)
     setHighlight(item.id)
+    // Табуляция и клавиша G после этого ведут к тому же пункту, а не к прежнему.
+    setTabIndex(itemsRef.current.indexOf(item))
     later(() => {
       const card = cardOf(item.id)
       card?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: scrollBehavior() })

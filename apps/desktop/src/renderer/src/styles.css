@@ -223,6 +223,8 @@ button.column.collapsed:focus-visible { outline: 2px solid var(--accent); outlin
 .card:hover { background: var(--card-hover); }
 .card:active { cursor: grabbing; }
 .card.selected { box-shadow: 0 0 0 2px var(--accent) inset; }
+/* Карточка, к которой прокрутили из ленты, не прижимается к краю колонки. */
+.card { scroll-margin: 10px; }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Полоса состояния слева: цвет — что с задачей сейчас, а не в какой она колонке. Текст состояния — в aria-label и в строке сути. */
 .card::before {
@@ -1321,6 +1323,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 }
 .attn-head .grow { flex: 1; }
 .attn-sum { min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Сводка нужна только свёрнутой ленте (макет variant-ab): у развёрнутой все пункты перед глазами. */
+.attn:not(.collapsed) .attn-sum { display: none; }
 .attn-hint { flex-shrink: 0; font-size: 11.5px; }
 .attn-head .btn-sm { flex-shrink: 0; height: 26px; padding: 0 12px; font-size: 12px; }
 .attn-list { display: flex; gap: 10px; overflow-x: auto; padding: 0 12px 12px; scroll-snap-type: x proximity; }
@@ -1332,6 +1336,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   overflow-wrap: anywhere;
 }
 .act-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.act-card { scroll-margin-inline: 12px; }
 .act-card.hl { box-shadow: 0 0 0 2px var(--accent); }
 .act-kind { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--k); }
 .act-kind .grow { flex: 1; }
