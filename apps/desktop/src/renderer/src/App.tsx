@@ -32,6 +32,7 @@ import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
+import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
 import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
@@ -358,6 +359,8 @@ export function App(): React.JSX.Element {
     attention.set(t.runId, { review: (attention.get(t.runId)?.review ?? 0) + 1 })
   }
   const requests = snap.requests ?? []
+  /** Для «Статистики» задач: ключ перечитывания и запасной расчёт времени при старом main. */
+  const statsSnapshot: StatsSnapshot = { tasks, runs: snap.runs, dispatches: snap.dispatches, requests, questions: snap.questions, columns }
 
   // ---------- ассистент ----------
   /** Терминалы ассистента: по реестру (роль) плюс только что запущенный, которого там ещё нет. */
@@ -841,6 +844,8 @@ export function App(): React.JSX.Element {
           )}
           {tab === 'board' && openGlobal && (
             <GlobalTaskView
+              projectId={active?.id ?? ''}
+              statsSnapshot={statsSnapshot}
               global={openGlobal}
               statusKind={globalKindById.get(openGlobal.status)}
               coordinatorPty={coordinatorPtys.get(openGlobal.id)}
@@ -1009,6 +1014,8 @@ export function App(): React.JSX.Element {
       )}
       {openTask && active && (
         <TaskModal
+          projectId={active.id}
+          statsSnapshot={statsSnapshot}
           task={openTask}
           tasks={tasks}
           columns={active.columns ?? DEFAULT_COLUMNS}

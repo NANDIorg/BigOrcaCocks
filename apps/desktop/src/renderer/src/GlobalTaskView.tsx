@@ -10,11 +10,15 @@ import { GlobalTaskHeader } from './GlobalTaskHeader'
 import { GlobalOverview } from './GlobalOverview'
 import { CoordinatorPanel } from './CoordinatorPanel'
 import { GlobalHistory } from './GlobalHistory'
+import { GlobalStatsPanel } from './GlobalStatsPanel'
+import type { StatsSnapshot } from './taskStatsFormat'
 import {
   defaultTab, readTabChoice, resolveTab, stepTab, tabAt, tabTitle, visibleTabs, writeTabChoice, type GlobalTabId
 } from './globalScreen'
 
 interface Props {
+  /** Проект: id для `stats:global`. */
+  projectId: string
   global: GlobalTask
   /** Вид колонки глобального канбана, где сейчас задача (review — «Проверка»). */
   statusKind?: ColumnKind
@@ -49,6 +53,8 @@ interface Props {
   columns: BoardColumn[]
   /** Запуски воркеров: сводка последнего запуска сделанной подзадачи — фоллбэк «Что сделал». */
   dispatches: Dispatch[]
+  /** Снимок проекта для вкладки «Статистика»: когда её перечитывать и запасной расчёт при старом main. */
+  statsSnapshot: StatsSnapshot
   onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
   /** «Открыть полностью» у ответа — модалка подзадачи. */
   onOpenTask(taskId: string): void
@@ -76,7 +82,7 @@ function browserStorage(): Storage | undefined {
 
 /**
  * Экран глобальной задачи: шапка, лента «Ждут вас» (видна на любой вкладке) и вкладки «Доска · Итог и цель ·
- * Координатор · История». Вкладка по умолчанию зависит от состояния (`defaultTab`), выбор человека запоминается
+ * Координатор · История · Статистика». Вкладка по умолчанию зависит от состояния (`defaultTab`), выбор человека запоминается
  * по id задачи. Доска остаётся смонтированной и на чужих вкладках (только скрыта): фильтры и выделение
  * не пропадают, а события ленты (`feedLink`) находят получателя.
  */
@@ -112,7 +118,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
   }
 
   // Клавиши экрана (`screenKey`, `tabKey`): Esc — назад к общей доске, G — фокус между лентой «Ждут вас» и доской
-  // (на доске сперва открывается её вкладка), Alt+1…4 и 1…4 вне доски — вкладки. Один обработчик на всё: поля ввода,
+  // (на доске сперва открывается её вкладка), Alt+1…5 и 1…5 вне доски — вкладки. Один обработчик на всё: поля ввода,
   // модалки и уже обработанные клавиши (меню «Переместить в…», Esc в подробностях ленты) `hotkeys` отсекает.
   const keys = useRef({ onBack, attention: attention.length, tabs, selectTab, showBoard })
   keys.current = { onBack, attention: attention.length, tabs, selectTab, showBoard }
@@ -249,6 +255,21 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       {tab === 'history' && (
         <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
           <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} />
+        </div>
+      )}
+      {tab === 'stats' && (
+        <div id="gt-panel-stats" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-stats">
+          <GlobalStatsPanel
+            key={global.id}
+            projectId={props.projectId}
+            global={global}
+            columns={props.globalColumns ?? columns}
+            tasks={tasks}
+            dispatches={dispatches}
+            coordinatorLive={coordinatorPty !== undefined}
+            snapshot={props.statsSnapshot}
+            onOpenTask={props.onOpenTask}
+          />
         </div>
       )}
     </div>
