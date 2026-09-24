@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран задачи — B: инспектор</title>
+<!--
+  Вариант B «Доска + инспектор справа». Слева — рабочая зона: однострочная шапка, лента «Ждут вас», тулбар и
+  доска на всю высоту. Справа — панель 340 px со всем, что про задачу целиком: статус и главное действие,
+  координатор (живой хвост вывода), цель, итог, уточнения, история. Всё видно одновременно, без вкладок.
+  На «Проверке» верх панели — решение: сводка и «Подтвердить / Вернуть». В узком окне (≤ 900 px) панель —
+  выезжающий слой поверх доски по кнопке «Детали» (клавиша I).
+  Статичный макет: данные выдуманы, кнопки не работают (кроме переключателей). Сверху — состояние глобальной
+  задачи и ширина окна (860 px — минимальная ширина окна приложения). Доска подзадач и лента «Ждут вас» —
+  как в master (docs/design/local-board/variant-ab.html), здесь упрощены.
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --chip-text: #c9ccd6;
+  --line: rgba(255,255,255,.06); --text: #ecedf1; --muted: #9ea1ad;
+  --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b; --ok: #8fd16a;
+  --term-bg: #1b1c21;
+  --shadow: 0 1px 0 rgba(0,0,0,.25);
+  --radius: 14px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.muted { color: var(--muted); }
+.grow { flex: 1; }
+kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--chip); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--chip-text); }
+
+/* ---------- панель макета (не часть дизайна) ---------- */
+.mock-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mock-bar b { font-size: 14px; }
+.seg-group { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.seg-group button { background: transparent; border: 0; padding: 4px 12px; color: var(--muted); white-space: nowrap; }
+.seg-group button + button { border-left: 1px solid var(--chip); }
+.seg-group button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.mock-note { padding: 8px 16px 0; font-size: 12.5px; color: var(--muted); max-width: 1440px; margin: 0 auto; }
+.stage { padding: 16px; overflow-x: auto; }
+.win { margin: 0 auto; width: 1440px; max-width: none; height: 820px; display: grid; grid-template-columns: 64px minmax(0,1fr); background: var(--frame); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.25); transition: width .2s; }
+.rail { border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 0; }
+.rail i { width: 36px; height: 36px; border-radius: 10px; background: var(--side-2); display: block; opacity: .6; }
+.rail i.on { background: var(--accent); opacity: 1; }
+.app { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Шапка приложения (main-head) — как сейчас, в макете для контекста. */
+.app-head { display: flex; align-items: center; gap: 10px; padding: 12px 24px 0; }
+.app-head h1 { margin: 0; font-size: 18px; }
+.app-tabs { display: flex; gap: 18px; padding: 8px 24px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.app-tabs span { padding: 6px 0 8px; color: var(--muted); }
+.app-tabs span.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.pill-btn { height: 28px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--chip); background: transparent; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted); }
+.pill-btn.prim { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------- кнопки, чипы ---------- */
+.btn { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--chip); background: transparent; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn:hover { border-color: var(--text); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-2); }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #1d1f24; }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.btn.ghost { border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { color: var(--text); background: var(--side-2); }
+.btn.sm { height: 24px; padding: 0 9px; font-size: 12px; border-radius: 12px; }
+.btn.lg { height: 36px; padding: 0 16px; font-size: 14px; border-radius: 18px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 6px; white-space: nowrap; }
+.chip.prio-high { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
+.chip.type { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.chip.st { color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); font-weight: 600; }
+.chip.st::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-done); box-shadow: 0 0 0 3px color-mix(in srgb, var(--col-done) 25%, transparent); flex: 0 0 auto; }
+.live-dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--col-done) 0%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .live-dot.pulse { animation: none; } }
+.off-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--chip); flex: 0 0 auto; }
+.st-backlog { --c: var(--col-backlog); } .st-work { --c: var(--col-progress); } .st-input { --c: var(--col-input); }
+.st-review { --c: var(--col-review); } .st-done { --c: var(--col-done); }
+
+/* ---------- прогресс ---------- */
+.prog { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 160px; }
+.bar { flex: 1; height: 6px; border-radius: 3px; background: var(--side-2); overflow: hidden; display: flex; min-width: 60px; }
+.bar span { display: block; height: 100%; }
+
+/* ---------- степпер статусов глобальной задачи ---------- */
+.steps { display: flex; align-items: center; gap: 0; font-size: 12px; min-width: 0; }
+.step { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; padding: 3px 8px; border-radius: 999px; border: 0; background: transparent; }
+.step i { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--chip); flex: 0 0 auto; }
+.step.past i { background: var(--chip); }
+.step.now { color: var(--text); font-weight: 600; background: color-mix(in srgb, var(--c) 16%, transparent); }
+.step.now i { border-color: var(--c); background: var(--c); }
+.step-sep { width: 14px; height: 1px; background: var(--chip); flex: 0 0 auto; }
+.step:hover:not(.now) { color: var(--text); background: var(--side-2); }
+
+/* ---------- markdown ---------- */
+.md { font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.md h4 { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.md h4:first-child { margin-top: 0; }
+.md p { margin: 0 0 8px; }
+.md ul, .md ol { margin: 0 0 8px; padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md code { font: 12px ui-monospace, Menlo, monospace; background: var(--side-2); padding: 1px 5px; border-radius: 4px; }
+.md.clamp { max-height: 7.8em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+
+/* ---------- лента «Ждут вас» (как в master, AttentionFeed) ---------- */
+.attn { border-radius: var(--radius); background: color-mix(in srgb, var(--col-input) 7%, var(--side)); border: 1px solid color-mix(in srgb, var(--col-input) 30%, transparent); }
+.attn-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; }
+.attn-head h3 { margin: 0; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.attn-head .n { background: var(--col-input); color: #1d1f24; border-radius: 999px; padding: 0 7px; font-size: 12px; font-weight: 700; }
+.attn-list { display: flex; gap: 10px; overflow-x: auto; padding: 0 12px 12px; }
+.act-card { flex: 0 0 290px; background: var(--card); border-radius: 12px; padding: 9px 12px; display: flex; flex-direction: column; gap: 7px; border-left: 3px solid var(--k); box-shadow: var(--shadow); min-width: 0; }
+.act-card .kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--k); display: flex; gap: 6px; align-items: center; }
+.act-card .kind .ago { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: auto; }
+.act-card .task { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-card .q { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.act-card .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: auto; }
+.opt { border: 1px solid var(--chip); background: transparent; border-radius: 8px; padding: 2px 9px; font-size: 12.5px; }
+.opt.rec { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.k-q { --k: var(--col-input); } .k-bad { --k: var(--danger); } .k-rev { --k: var(--col-review); } .k-coord { --k: var(--accent); }
+
+/* ---------- тулбар и доска (как в master, Board) ---------- */
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; font-size: 12px; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter { border: 1px solid var(--chip); background: transparent; border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--chip-text); display: inline-flex; gap: 6px; }
+.filter[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); color: var(--text); }
+.filter .n { font-weight: 600; }
+.filter.wait .n { color: var(--col-input); }
+.sort { background: var(--side); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 3px 8px; font-size: 12px; }
+.board { display: flex; gap: 12px; overflow-x: auto; min-height: 0; }
+.column { flex: 1 1 240px; min-width: 220px; max-width: 340px; display: flex; flex-direction: column; min-height: 0; background: var(--side); border-radius: var(--radius); }
+.col-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; font-size: 13px; font-weight: 600; border-top: 3px solid var(--c); border-radius: var(--radius) var(--radius) 0 0; }
+.col-head .count { color: var(--muted); font-weight: 500; }
+.col-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.column.collapsed { flex: 0 0 44px; min-width: 44px; align-items: center; }
+.column.collapsed .col-head { flex-direction: column; border-top: 0; padding: 12px 0; width: 100%; }
+.column.collapsed .vtitle { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 13px; font-weight: 600; margin-top: 8px; }
+.column.collapsed .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.col-empty { color: var(--muted); font-size: 12px; padding: 8px 6px; }
+.card { position: relative; background: var(--card); border-radius: 10px; padding: 9px 10px 9px 13px; box-shadow: var(--shadow); overflow-wrap: anywhere; }
+.card::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--state, transparent); }
+.card.s-live { --state: var(--col-progress); } .card.s-human { --state: var(--col-input); }
+.card.s-review { --state: var(--col-review); } .card.s-bad { --state: var(--danger); }
+.card.s-blocked .name { color: var(--muted); }
+.card .line1 { display: flex; gap: 6px; align-items: flex-start; }
+.prio { flex: 0 0 auto; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 5px; border-radius: 4px; color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
+.name { font-size: 13px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex: 1; min-width: 0; }
+.meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.agent { flex: 0 0 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; font-size: 9px; font-weight: 700; color: #fff; background: #d97757; }
+.agent.codex { background: #10a37f; }
+.meta .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.meta .time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.meta .time.live { color: var(--col-progress); font-weight: 600; }
+.stage-pill { display: inline-flex; font-size: 11px; color: var(--chip-text); border: 1px solid var(--chip); border-radius: 6px; padding: 0 6px; white-space: nowrap; margin-top: 6px; }
+.tag.dep { display: inline-block; margin-top: 6px; font-size: 11.5px; color: var(--muted); border: 1px dashed var(--chip); border-radius: 999px; padding: 0 8px; }
+.act { margin-top: 8px; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; font-size: 12px; background: transparent; border: 1px dashed color-mix(in srgb, var(--state) 50%, transparent); }
+.act .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act .to-feed { color: var(--accent); white-space: nowrap; }
+.board-empty { flex: 1; display: grid; place-items: center; text-align: center; color: var(--muted); border: 1px dashed var(--chip); border-radius: var(--radius); padding: 24px; font-size: 13px; }
+.board-empty b { color: var(--text); display: block; margin-bottom: 4px; font-size: 14px; }
+
+/* ---------- хвост терминала координатора (только чтение) ---------- */
+.tail { background: var(--term-bg); border-radius: 10px; padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; color: #c9ccd6; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tail .d { color: var(--muted); }
+.tail .g { color: var(--ok); }
+.tail .y { color: var(--col-input); }
+.tail .cursor { display: inline-block; width: 7px; height: 13px; background: var(--muted); vertical-align: -2px; }
+
+/* ---------- история ---------- */
+.tl { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.tl li { display: grid; grid-template-columns: 86px 14px minmax(0,1fr); gap: 8px; padding: 5px 0; align-items: start; }
+.tl .at { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; padding-top: 1px; }
+.tl .pt { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--c, var(--chip)); }
+.tl .what b { font-weight: 600; }
+.tl .what .sub { display: block; color: var(--muted); font-size: 12px; }
+.tl .day { display: block; grid-column: 1 / -1; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 8px 0 2px; }
+
+/* ---------- мелочи ---------- */
+.kv { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 12px; font-size: 12.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.branch { font: 11.5px ui-monospace, Menlo, monospace; color: var(--chip-text); }
+.ret { border-left: 3px solid var(--col-review); padding: 4px 10px; font-size: 13px; background: color-mix(in srgb, var(--col-review) 7%, transparent); border-radius: 0 8px 8px 0; }
+.ret .at { font-size: 11.5px; color: var(--muted); display: block; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.view-root { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+
+/* ================= вариант B ================= */
+.vb { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; position: relative; }
+.vb-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px 20px 16px 24px; gap: 10px; }
+.vb-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.icon-back { width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--chip); background: transparent; color: var(--muted); flex: 0 0 auto; }
+.icon-back:hover { color: var(--text); border-color: var(--text); }
+.vb-title { min-width: 0; flex: 1; }
+.vb-title .crumb { font-size: 11.5px; color: var(--muted); display: block; }
+.vb-title h2 { margin: 0; font-size: 18px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vb-main .board { flex: 1; min-height: 260px; }
+.vb-side { border-left: 1px solid var(--line); background: color-mix(in srgb, var(--side) 55%, var(--frame)); overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
+.sec { border-bottom: 1px solid var(--line); padding: 12px 16px; }
+.sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.sec > summary::-webkit-details-marker { display: none; }
+.sec > summary::after { content: "▾"; margin-left: auto; font-size: 11px; }
+.sec:not([open]) > summary::after { content: "▸"; }
+.sec > summary .n { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.sec-body { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.sec.decide { background: color-mix(in srgb, var(--col-review) 9%, transparent); border-bottom-color: color-mix(in srgb, var(--col-review) 35%, transparent); }
+.sec.decide > summary { color: var(--col-review); }
+.sec.wait { background: color-mix(in srgb, var(--col-input) 8%, transparent); }
+.sec.wait > summary { color: var(--col-input); }
+.status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dots { display: flex; gap: 4px; align-items: center; }
+.dots i { width: 22px; height: 4px; border-radius: 2px; background: var(--chip); }
+.dots i.on { background: var(--c); }
+.side-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.side-actions .btn { flex: 1 1 auto; justify-content: center; }
+.link-btn { border: 0; background: transparent; color: var(--accent); padding: 0; font-size: 12.5px; text-align: left; }
+.link-btn:hover { text-decoration: underline; }
+.vb-side .tail { max-height: 140px; font-size: 11.5px; }
+.vb-side .tl li { grid-template-columns: 44px 12px minmax(0,1fr); }
+.vb-side .md { font-size: 13px; }
+/* Узкое окно: панель — слой поверх доски. */
+.win[data-narrow="true"] .vb { grid-template-columns: minmax(0, 1fr); }
+.win[data-narrow="true"] .vb-main { padding: 12px 16px 16px; }
+.win[data-narrow="true"] .vb-side { position: absolute; right: 0; top: 0; bottom: 0; width: 340px; box-shadow: -20px 0 40px rgba(0,0,0,.35); background: var(--side); z-index: 4; transform: translateX(100%); visibility: hidden; transition: transform .18s; }
+.win[data-narrow="true"] .vb.open .vb-side { transform: none; visibility: visible; }
+.side-top.side-close { display: none; }
+.win[data-narrow="true"] .side-top.side-close { display: flex; }
+.details-btn { display: none; }
+.win[data-narrow="true"] .details-btn { display: inline-flex; }
+.side-top { display: flex; align-items: center; gap: 8px; padding: 10px 16px 0; }
+
+</style>
+</head>
+<body>
+<div class="mock-bar"><b>Экран задачи — B: инспектор</b><span>Состояние:</span><div class="seg-group" id="states"></div><span>Окно:</span><div class="seg-group" id="widths"></div></div>
+<p class="mock-note">B — инспектор. Секции панели сворачиваются (выбор запоминается). В 860 px нажмите «Детали» в шапке — панель выедет поверх доски.</p>
+<div class="stage">
+  <div class="win" id="win">
+    <nav class="rail" aria-label="Проекты"><i class="on"></i><i></i><i></i></nav>
+    <div class="app">
+      <div class="app-head"><h1>reports-service</h1><span class="grow"></span><span class="pill-btn">Входящие · 3</span><span class="pill-btn">⌨</span><span class="pill-btn prim">+ Новая подзадача</span></div>
+      <div class="app-tabs"><span class="on">Канбан</span><span>Терминалы 4</span><span>Статистика</span><span>О проекте</span></div>
+      <div id="view" class="view-root"></div>
+    </div>
+  </div>
+</div>
+<script>
+/* ---------- данные макета (выдуманные) ---------- */
+const STATES = [
+  { id: 'draft', title: 'Черновик' },
+  { id: 'work', title: 'В работе' },
+  { id: 'input', title: 'Нужен ответ' },
+  { id: 'review', title: 'Проверка' },
+  { id: 'done', title: 'Сделано' }
+]
+const STEP_DEFS = [
+  { id: 'draft', label: 'Бэклог', cls: 'st-backlog' },
+  { id: 'work', label: 'В работе', cls: 'st-work' },
+  { id: 'input', label: 'Нужен ответ', cls: 'st-input' },
+  { id: 'review', label: 'Проверка', cls: 'st-review' },
+  { id: 'done', label: 'Сделано', cls: 'st-done' }
+]
+const TITLE = 'Экспорт отчётов в PDF и CSV из карточки отчёта'
+const GOAL = `<p>Пользователи просят выгружать отчёт целиком: сейчас можно только скопировать таблицу. Нужна кнопка <b>«Экспорт»</b> в карточке отчёта с форматами PDF и CSV.</p>
+<h4>Требования</h4>
+<ul><li>CSV — потоком, без загрузки всего отчёта в память (отчёты бывают по 200 000 строк).</li>
+<li>PDF — с кириллицей, шапкой и таблицами, как на экране; A4, альбомная ориентация для широких таблиц.</li>
+<li>Лимит: 50 МБ и 2 минуты на файл, дальше — понятная ошибка, а не зависшая кнопка.</li>
+<li>Права — те же, что на просмотр отчёта.</li></ul>
+<h4>Не делаем</h4>
+<ul><li>XLSX и расписание рассылок — отдельной задачей.</li></ul>
+<p class="muted">Макеты кнопки — в Figma «Отчёты / v3», API — <code>docs/api/reports.md</code>.</p>`
+const SUMMARY = `<h4>Что сделано</h4>
+<ul><li>Эндпоинт <code>POST /reports/:id/export</code> с форматами <code>csv</code> и <code>pdf</code>, права как у просмотра.</li>
+<li>CSV отдаётся потоком: отчёт на 200 000 строк — 38 МБ, память сервера не растёт.</li>
+<li>PDF — headless Chromium в очереди, шрифт PT Sans (кириллица), альбомная ориентация при &gt; 8 колонках.</li>
+<li>Кнопка «Экспорт» в карточке отчёта, по умолчанию PDF (ваше решение от 24.09, 11:52).</li>
+<li>Лимит 50 МБ / 2 мин: ошибка «Отчёт слишком большой — сузьте период».</li></ul>
+<h4>Что проверить</h4>
+<ol><li>Отчёт «Продажи 2025» → Экспорт → CSV: файл скачивается, открывается в Excel с кириллицей.</li>
+<li>Тот же отчёт → PDF: таблица не обрезана справа.</li>
+<li>Отчёт за 5 лет → PDF: через ~2 мин понятная ошибка.</li></ol>
+<h4>Ветки</h4>
+<p>7 веток слиты в <code>master</code>, 2 задачи-ответа без кода. E2E-тест <code>export.spec.ts</code> зелёный.</p>`
+const RETURNS = [{ at: '23.09, 18:10', text: 'Кириллица в PDF превращается в квадраты — проверь шрифты в контейнере рендера.' }]
+
+// Подзадачи по состояниям глобальной задачи. col — колонка локальной доски.
+const T = (id, title, col, o = {}) => ({ id, title, col, ...o })
+const SUBTASKS = {
+  work: [
+    T(1, 'Модель ReportExport и миграция', 'done', { role: 'Бэкенд', time: '24 м' }),
+    T(2, 'Эндпоинт POST /reports/:id/export', 'done', { role: 'Бэкенд', time: '41 м' }),
+    T(3, 'CSV потоком без загрузки в память', 'done', { role: 'Бэкенд', time: '33 м' }),
+    T(4, 'PDF через headless Chromium: очередь и шрифты', 'in_progress', { role: 'Бэкенд', time: '18 м', live: true, stage: 'Реализация', prio: true }),
+    T(5, 'Кнопка «Экспорт» в карточке отчёта', 'in_progress', { role: 'Фронтенд', time: '12 м', live: true, stage: 'Реализация', human: '? Какой формат по умолчанию?' }),
+    T(6, 'Лимиты размера и таймаут экспорта', 'review', { role: 'Бэкенд', time: '27 м', review: true, stage: 'Ревью кода' }),
+    T(7, 'Ответ: где хранить готовые файлы — S3 или диск', 'done', { role: 'Аналитик', time: '9 м', agent: 'codex' }),
+    T(8, 'E2E-тест экспорта', 'ready', { role: 'Тестировщик', dep: 'ждёт #4, #5', blocked: true }),
+    T(9, 'Документация API экспорта', 'backlog', { role: 'Техписатель' })
+  ]
+}
+SUBTASKS.input = SUBTASKS.work.map((t) => t.id === 4 ? { ...t, live: false, bad: '✕ Воркер упал: exit 137 (OOM)' } : t)
+SUBTASKS.review = SUBTASKS.work.map((t) => ({ ...t, col: 'done', live: false, human: undefined, review: false, blocked: false, stage: undefined, dep: undefined, time: t.time || '15 м' }))
+SUBTASKS.done = SUBTASKS.review
+SUBTASKS.draft = []
+
+const COLS = [
+  { id: 'backlog', title: 'Бэклог', c: 'var(--col-backlog)' },
+  { id: 'ready', title: 'Готовы', c: 'var(--col-ready)' },
+  { id: 'in_progress', title: 'В работе', c: 'var(--col-progress)' },
+  { id: 'review', title: 'Ревью', c: 'var(--col-review)' },
+  { id: 'done', title: 'Сделано', c: 'var(--col-done)' }
+]
+
+const FEED = {
+  draft: [], review: [], done: [],
+  work: [
+    { k: 'k-q', kind: 'Вопрос воркера', ago: '4 мин', task: '#5 Кнопка «Экспорт» в карточке отчёта', q: 'Какой формат выбран по умолчанию в кнопке?', opts: [['PDF', true], ['CSV'], ['Последний выбранный']] },
+    { k: 'k-rev', kind: 'Ждёт ревью', ago: '11 мин', task: '#6 Лимиты размера и таймаут экспорта', q: '+184 −12 в 6 файлах · тесты зелёные', btns: ['Открыть', 'Принять', 'Вернуть…'] }
+  ],
+  input: [
+    { k: 'k-bad', kind: 'Воркер упал', ago: '2 мин', task: '#4 PDF через headless Chromium', q: 'exit 137 — не хватило памяти контейнеру рендера', btns: ['↻ Перезапустить', 'Терминал'] },
+    { k: 'k-coord', kind: 'Координатор спрашивает', ago: '6 мин', task: 'Координатор', q: 'PDF-рендер не помещается в 512 МБ. Поднять лимит контейнера до 1 ГБ или рендерить постранично?', opts: [['Поднять до 1 ГБ', true], ['Постранично'], ['Своё…']] },
+    { k: 'k-q', kind: 'Вопрос воркера', ago: '14 мин', task: '#5 Кнопка «Экспорт» в карточке отчёта', q: 'Какой формат выбран по умолчанию в кнопке?', opts: [['PDF', true], ['CSV'], ['Последний выбранный']] }
+  ]
+}
+
+const TAIL = {
+  work: `<span class="d">● orca-board events --wait --types task_done,question,request_resolved…</span>
+  ⎿ <span class="g">task_done</span> task_3 «CSV потоком без загрузки в память»
+● Проверяю ветку orca/task_3: pnpm test — 212 passed
+● orca-board review accept --task task_3
+  ⎿ смержено в master (a1f93c0)
+● Запускаю #8 E2E-тест, когда #4 и #5 дойдут до ревью. Жду событий…
+<span class="cursor"></span>`,
+  input: `  ⎿ <span class="y">dispatch_failed</span> task_4 exit 137
+● Воркер #4 упал по памяти. Спрашиваю человека, что делать с лимитом.
+● orca-board ask --question "PDF-рендер не помещается в 512 МБ…" --option "Поднять до 1 ГБ|…"
+  ⎿ <span class="d">ждёт ответа человека… (время задачи стоит)</span>
+<span class="cursor"></span>`,
+  review: `● Все 9 подзадач в «Сделано». Проверил master: сборка и e2e зелёные.
+● orca-board runs finish --summary-file /tmp/summary.md
+  ⎿ <span class="g">задача на «Проверке»</span>
+<span class="d">[процесс завершён]</span>`,
+  done: `<span class="d">[процесс завершён · 24.09, 14:33]</span>`
+}
+
+const HISTORY = [
+  { day: '24 сентября' },
+  { at: '15:02', c: 'var(--col-done)', what: '<b>Подтверждена</b> — в «Сделано»', sub: 'вы', only: ['done'] },
+  { at: '14:33', c: 'var(--col-review)', what: '<b>На проверке</b> — координатор оставил сводку', sub: 'runs finish', only: ['review', 'done'] },
+  { at: '14:30', c: 'var(--col-done)', what: 'Все 9 подзадач сделаны', only: ['review', 'done'] },
+  { at: '13:10', c: 'var(--danger)', what: '#6 вернули с ревью: «нет теста на таймаут»', only: ['review', 'done'] },
+  { at: '11:52', c: 'var(--col-input)', what: 'Вы ответили: <b>PDF по умолчанию</b>', sub: '#5 Кнопка «Экспорт»', only: ['review', 'done'] },
+  { at: '11:44', c: 'var(--col-input)', what: '<b>Нужен ответ</b> — вопрос координатора', sub: 'время задачи стоит', only: ['input'] },
+  { at: '11:40', c: 'var(--danger)', what: '#4 воркер упал: exit 137', only: ['input'] },
+  { at: '10:12', c: 'var(--muted)', what: 'Координатор создал 9 подзадач', only: ['work', 'input', 'review', 'done'] },
+  { at: '10:05', c: 'var(--col-progress)', what: '<b>В работе</b> — повторный запуск координатора с уточнением', sub: 'Claude Opus · вы', only: ['work', 'input', 'review', 'done'] },
+  { day: '23 сентября', only: ['work', 'input', 'review', 'done'] },
+  { at: '18:10', c: 'var(--col-review)', what: 'Вернули с проверки: «Кириллица в PDF…»', only: ['work', 'input', 'review', 'done'] },
+  { at: '17:40', c: 'var(--col-review)', what: '<b>На проверке</b> — первый цикл', only: ['work', 'input', 'review', 'done'] },
+  { at: '09:30', c: 'var(--col-backlog)', what: '<b>Создана</b> в «Бэклог»', sub: 'тип «Фича», приоритет высокий' }
+]
+const HISTORY_DRAFT = [{ day: '24 сентября' }, { at: '09:30', c: 'var(--col-backlog)', what: '<b>Создана</b> в «Бэклог»', sub: 'тип «Фича», приоритет высокий' }]
+
+/* ---------- производные по состоянию ---------- */
+function stepOf(s) { return STEP_DEFS.find((d) => d.id === s) }
+function progressOf(s) {
+  const tasks = SUBTASKS[s]
+  const done = tasks.filter((t) => t.col === 'done').length
+  return { done, total: tasks.length, pct: tasks.length ? Math.round(done / tasks.length * 100) : 0 }
+}
+/** Координатор: жив / ждёт человека / завершил / не запускался. */
+function coordOf(s) {
+  return {
+    draft: { live: false, text: 'Не запускался', sub: 'Запустите — он разобьёт цель на подзадачи' },
+    work: { live: true, text: 'Координатор работает', sub: 'Claude Opus · 2-й запуск · 1 ч 12 м' },
+    input: { live: true, wait: true, text: 'Координатор ждёт вас', sub: 'Claude Opus · вопрос 6 мин назад' },
+    review: { live: false, text: 'Координатор завершил', sub: '14:33 · 2 запуска · 3 ч 40 м · 1,9 млн токенов' },
+    done: { live: false, text: 'Координатор завершил', sub: '14:33 · 2 запуска · 3 ч 40 м · 1,9 млн токенов' }
+  }[s]
+}
+function timeOf(s) {
+  return { draft: 'не начата', work: '2 ч 05 м · подзадачи 3 ч 20 м', input: '2 ч 05 м (стоит) · подзадачи 3 ч 20 м', review: '4 ч 31 м · подзадачи 5 ч 02 м', done: '4 ч 31 м · подзадачи 5 ч 02 м' }[s]
+}
+
+/* ---------- рендер общих частей ---------- */
+function stepsHTML(s, opts = {}) {
+  const i = STEP_DEFS.findIndex((d) => d.id === s)
+  return `<div class="steps" role="group" aria-label="Статус: ${stepOf(s).label}">` + STEP_DEFS.map((d, j) =>
+    (j ? '<span class="step-sep" aria-hidden="true"></span>' : '') +
+    `<button class="step ${d.cls} ${j < i ? 'past' : ''} ${j === i ? 'now' : ''}" ${j === i ? 'aria-current="step"' : ''} title="${j === i ? 'Текущий статус' : 'Перенести в «' + d.label + '»'}"><i></i>${opts.short && j !== i ? '' : d.label}</button>`
+  ).join('') + '</div>'
+}
+function progHTML(s) {
+  const p = progressOf(s)
+  if (!p.total) return '<div class="prog muted">Подзадач пока нет</div>'
+  const t = SUBTASKS[s]
+  const n = (c) => t.filter((x) => x.col === c).length / p.total * 100
+  return `<div class="prog"><span>${p.done} / ${p.total}</span><div class="bar" role="progressbar" aria-valuenow="${p.done}" aria-valuemax="${p.total}">
+    <span style="width:${n('done')}%;background:var(--col-done)"></span><span style="width:${n('review')}%;background:var(--col-review)"></span><span style="width:${n('in_progress')}%;background:var(--col-progress)"></span></div><span class="muted">${p.pct}%</span></div>`
+}
+function coordLineHTML(s) {
+  const c = coordOf(s)
+  const dot = c.live ? `<span class="live-dot ${c.wait ? '' : 'pulse'}" ${c.wait ? 'style="background:var(--col-input)"' : ''}></span>` : '<span class="off-dot"></span>'
+  return `${dot}<span><b>${c.text}</b> <span class="muted">· ${c.sub}</span></span>`
+}
+function feedHTML(s, opts = {}) {
+  const items = FEED[s]
+  if (!items.length) return ''
+  return `<section class="attn" aria-label="Ждут вас"><div class="attn-head"><h3>Ждут вас <span class="n">${items.length}</span></h3><span class="grow"></span><span class="muted" style="font-size:12px"><kbd>G</kbd> к ленте</span><button class="btn ghost sm">Свернуть</button></div>
+  <div class="attn-list">` + items.map((it) => `<article class="act-card ${it.k}"><div class="kind">${it.kind}<span class="ago">${it.ago}</span></div><div class="task">${it.task}</div><div class="q">${it.q}</div>
+  <div class="row">${(it.opts || []).map(([o, r]) => `<button class="opt ${r ? 'rec' : ''}">${r ? '★ ' : ''}${o}</button>`).join('')}${(it.btns || []).map((b, i) => `<button class="btn sm ${i === 1 ? 'primary' : ''}">${b}</button>`).join('')}</div></article>`).join('') + '</div></section>'
+}
+function cardHTML(t) {
+  const st = t.bad ? 's-bad' : t.human ? 's-human' : t.review ? 's-review' : t.live ? 's-live' : t.blocked ? 's-blocked' : ''
+  const act = t.bad || t.human || (t.review ? '◉ Ждёт ревью' : '')
+  return `<article class="card ${st}" tabindex="0"><div class="line1">${t.prio ? '<span class="prio">↑</span>' : ''}<div class="name">${t.title}</div></div>
+  <div class="meta"><span class="agent ${t.agent || ''}">${t.agent === 'codex' ? 'Cx' : 'C'}</span><span class="who">${t.role}</span>${t.time ? `<span class="time ${t.live ? 'live' : ''}">${t.time}</span>` : ''}</div>
+  ${t.stage ? `<span class="stage-pill">${t.stage}</span>` : ''}${t.dep ? `<span class="tag dep">${t.dep}</span>` : ''}
+  ${act ? `<div class="act"><span class="txt">${act}</span><span class="to-feed">в ленте ↑</span></div>` : ''}</article>`
+}
+function boardHTML(s, opts = {}) {
+  const tasks = SUBTASKS[s]
+  if (!tasks.length) return `<div class="board-empty"><div><b>Подзадач пока нет</b>Их создаст координатор после запуска — или добавьте вручную: «Новая подзадача».</div></div>`
+  return '<div class="board">' + COLS.map((c) => {
+    const list = tasks.filter((t) => t.col === c.id)
+    if (c.id === 'done' && opts.doneCollapsed !== false && list.length < tasks.length)
+      return `<div class="column collapsed" style="--c:${c.c}" title="Показать «Сделано»"><div class="col-head"><span class="dot"></span><span class="count">${list.length}</span><span class="vtitle">${c.title}</span></div></div>`
+    return `<div class="column" style="--c:${c.c}"><div class="col-head">${c.title}<span class="count">${list.length}</span></div><div class="col-body">${list.map(cardHTML).join('') || '<div class="col-empty">Пусто</div>'}</div></div>`
+  }).join('') + '</div>'
+}
+function toolbarHTML(s) {
+  const n = FEED[s].length
+  return `<div class="toolbar">${progHTML(s)}<div class="filters"><button class="filter" aria-pressed="true">Все <span class="n">${SUBTASKS[s].length}</span></button><button class="filter wait" aria-pressed="false">Ждут вас <span class="n">${n}</span></button><button class="filter" aria-pressed="false">Проблемы <span class="n">${s === 'input' ? 1 : 0}</span></button><button class="filter" aria-pressed="false">Мои роли</button></div><span class="grow"></span><select class="sort" aria-label="Сортировка"><option>По приоритету</option></select></div>`
+}
+function historyHTML(s, limit) {
+  let list = (s === 'draft' ? HISTORY_DRAFT : HISTORY).filter((h) => !h.only || h.only.includes(s))
+  if (limit) list = list.slice(0, limit)
+  return '<ol class="tl">' + list.map((h) => h.day ? `<li><span class="day">${h.day}</span></li>` :
+    `<li><span class="at">${h.at}</span><span class="pt" style="--c:${h.c}"></span><span class="what">${h.what}${h.sub ? `<span class="sub">${h.sub}</span>` : ''}</span></li>`).join('') + '</ol>'
+}
+function returnsHTML(s) {
+  if (s === 'draft') return ''
+  return RETURNS.map((r) => `<div class="ret"><span class="at">Уточнение после проверки · ${r.at}</span>${r.text}</div>`).join('')
+}
+
+/* ---------- каркас макета: переключатели состояния и ширины ---------- */
+function mountMock(render, defaultState) {
+  let state = defaultState || 'work'
+  let width = 1440
+  const bar = document.getElementById('states')
+  const wbar = document.getElementById('widths')
+  const win = document.getElementById('win')
+  bar.innerHTML = STATES.map((s) => `<button data-s="${s.id}">${s.title}</button>`).join('')
+  wbar.innerHTML = [1440, 1100, 860].map((w) => `<button data-w="${w}">${w} px</button>`).join('')
+  const draw = () => {
+    bar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.s === state)))
+    wbar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.w === width)))
+    win.style.width = width + 'px'
+    win.dataset.narrow = String(width <= 900)
+    document.getElementById('view').innerHTML = render(state, width)
+    if (window.afterRender) window.afterRender(state, width)
+  }
+  bar.onclick = (e) => { const b = e.target.closest('button'); if (b) { state = b.dataset.s; draw() } }
+  wbar.onclick = (e) => { const b = e.target.closest('button'); if (b) { width = +b.dataset.w; draw() } }
+  window.redraw = draw
+  draw()
+}
+
+/* ================= вариант B ================= */
+let open = false
+function headCTA(s) {
+  return {
+    draft: '<button class="btn primary">▶ Запустить координатора</button>',
+    work: '',
+    input: '<button class="btn primary">Ответить · 3</button>',
+    review: '<button class="btn ok">✓ Подтвердить</button>',
+    done: ''
+  }[s]
+}
+function statusSec(s) {
+  const st = stepOf(s)
+  const i = STEP_DEFS.indexOf(st)
+  const dots = '<span class="dots" aria-hidden="true">' + STEP_DEFS.map((d, j) => `<i class="${j <= i ? 'on' : ''}" style="--c:var(--${['col-backlog','col-progress','col-input','col-review','col-done'][i]})"></i>`).join('') + '</span>'
+  let extra = ''
+  if (s === 'draft') extra = '<div class="side-actions"><button class="btn primary">▶ Запустить координатора</button></div><span class="muted" style="font-size:12px">Координатор разобьёт цель на подзадачи. Тип можно сменить до запуска.</span>'
+  if (s === 'done') extra = '<span class="muted" style="font-size:12px">Подтверждена 24.09, 15:02. Нужна доработка — перенесите в «В работе» или «Вернуть в работу…».</span>'
+  return `<details class="sec" open><summary>Статус</summary><div class="sec-body">
+    <div class="status-row"><button class="chip st ${st.cls}" style="border:0" title="Перенести в…">${st.label} ▾</button>${dots}</div>
+    <dl class="kv"><dt>Приоритет</dt><dd><span class="chip prio-high">↑ Высокий</span></dd><dt>Тип</dt><dd><span class="chip type">Фича</span></dd><dt>Время</dt><dd>${timeOf(s)}</dd><dt>Создана</dt><dd>23.09, 09:30</dd>
+    ${s === 'draft' ? '' : `<dt>Ветки</dt><dd>${s === 'review' || s === 'done' ? '7 слиты в master' : '3 слиты · 1 на ревью'}</dd>`}</dl>${extra}</div></details>`
+}
+function decideSec(s) {
+  if (s !== 'review' && s !== 'done') return ''
+  return `<details class="sec ${s === 'review' ? 'decide' : ''}" open><summary>${s === 'review' ? 'Проверка · что сделал координатор' : 'Итог координатора'}</summary><div class="sec-body">
+    <span class="muted" style="font-size:12px">Сводка · 24.09, 14:33</span><div class="md clamp">${SUMMARY}</div><button class="link-btn">Читать полностью ↗</button>
+    ${s === 'review' ? '<div class="side-actions"><button class="btn ok">✓ Подтвердить</button><button class="btn">Вернуть в работу…</button></div>' : ''}</div></details>`
+}
+function coordSec(s) {
+  const c = coordOf(s)
+  if (s === 'draft') return ''
+  const btns = c.live ? '<div class="side-actions"><button class="btn sm">Терминал →</button><button class="btn sm danger">■ Остановить</button></div>' : ''
+  return `<details class="sec ${s === 'input' ? 'wait' : ''}" open><summary>Координатор</summary><div class="sec-body">
+    <div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px">${coordLineHTML(s)}</div>
+    <div class="tail">${TAIL[s]}</div>${btns}${c.live ? '' : '<button class="link-btn">2 запуска · лог последнего →</button>'}</div></details>`
+}
+function goalSec(s) {
+  return `<details class="sec" ${s === 'draft' ? 'open' : s === 'review' || s === 'done' ? '' : 'open'}><summary>Цель</summary><div class="sec-body"><div class="md ${s === 'draft' ? '' : 'clamp'}">${GOAL}</div>${s === 'draft' ? '' : '<button class="link-btn">Развернуть</button>'}</div></details>`
+}
+function returnsSec(s) {
+  if (s === 'draft') return ''
+  return `<details class="sec"><summary>Уточнения после проверки <span class="n">· 1</span></summary><div class="sec-body">${returnsHTML(s)}</div></details>`
+}
+function historySec(s) {
+  return `<details class="sec" open><summary>История</summary><div class="sec-body">${historyHTML(s, 6)}<button class="link-btn">Вся история →</button></div></details>`
+}
+function render(s, w) {
+  const narrow = w <= 900
+  const side = `<aside class="vb-side" aria-label="Детали задачи"><div class="side-top side-close"><b style="font-size:13px">Детали</b><span class="grow"></span><button class="btn ghost sm" id="close">✕ <kbd>I</kbd></button></div>
+    ${s === 'review' ? decideSec(s) + statusSec(s) : statusSec(s) + decideSec(s)}${coordSec(s)}${goalSec(s)}${returnsSec(s)}${historySec(s)}</aside>`
+  const st = stepOf(s)
+  const coordPill = coordOf(s).live ? `<span class="chip" style="background:var(--side);gap:6px"><span class="live-dot ${s === 'input' ? '' : 'pulse'}" ${s === 'input' ? 'style="background:var(--col-input)"' : ''}></span>${s === 'input' ? 'ждёт вас' : 'координатор'}</span>` : ''
+  return `<div class="vb ${open ? 'open' : ''}"><div class="vb-main">
+    <div class="vb-head"><button class="icon-back" title="К общей доске (Esc)" aria-label="Назад к глобальным задачам">←</button>
+      <div class="vb-title"><span class="crumb">Глобальные задачи /</span><h2 title="${TITLE}">${TITLE}</h2></div>
+      ${narrow ? `<span class="chip st ${st.cls}">${st.label}</span>` : ''}${coordPill}${headCTA(s)}
+      <button class="btn details-btn" id="det">ⓘ Детали</button><button class="btn ghost" aria-label="Ещё">⋯</button></div>
+    ${feedHTML(s)}${toolbarHTML(s)}${boardHTML(s)}</div>${side}</div>`
+}
+window.afterRender = () => {
+  const d = document.getElementById('det'); if (d) d.onclick = () => { open = true; window.redraw() }
+  const c = document.getElementById('close'); if (c) c.onclick = () => { open = false; window.redraw() }
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'i' || e.key === 'ш') { open = !open; window.redraw() } })
+
+mountMock(render, 'work')
+</script>
+</body>
+</html>
