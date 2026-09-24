@@ -807,7 +807,6 @@ button:disabled { opacity: .45; cursor: default; }
 @media (max-width: 900px) {
   .g-board, .board { padding-left: 16px; padding-right: 16px; }
   .g-view-head, .board-toolbar, .lb-toolbar, .kbd-hint { padding-left: 16px; padding-right: 16px; }
-  .gt-tabs, .gt-panel { padding-left: 16px; padding-right: 16px; }
   .g-column { flex-basis: 260px; width: 260px; }
 }
 /* Узкое окно: кнопки шапки переносятся, а не выталкивают страницу за край */
@@ -1738,4 +1737,5 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .gt-box .g-returns { max-width: none; }
 @media (max-width: 900px) {
   .gt-grid { grid-template-columns: minmax(0, 1fr); }
+  .gt-tabs, .gt-panel:not(.gt-panel-board) { padding-left: 16px; padding-right: 16px; }
 }
