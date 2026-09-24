@@ -4,7 +4,7 @@
 задачи**, внутри каждой — своя доска **подзадач** (обычных `Task`, на которых работают воркеры).
 Обе доски используют **реальные колонки проекта** (`Project.columns`, `columns list`), а не фиксированный
 набор: макет Planning / In Progress / AI Review / Human Review / Done — это просто пример колонок проекта.
-Локальный канбан подзадач показывает все колонки проекта; **глобальный — колонки `kind` backlog,
+Локальный канбан подзадач показывает все колонки проекта, кроме «Готовы» (kind ready): её карточки лежат в «Бэклоге» — готовые к запуску сверху, ждущие зависимостей ниже с чипом «ждёт зависимостей: N» (`localBoardColumns`, `renderer/src/boardColumns.ts`; статус ready в модели остаётся, см. «UI: доска» в `docs/architecture.md`); **глобальный — колонки `kind` backlog,
 in_progress, needs_input, review и done** (`GLOBAL_BOARD_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`).
 Хранится карточка только в backlog / in_progress / review / done (`GLOBAL_COLUMN_KINDS`, `globalStoredColumns`);
 needs_input — **вычисляемая** колонка: там карточка, пока у прогона есть `pending`-запросы к человеку

@@ -227,6 +227,8 @@ textarea { min-height: 96px; resize: vertical; }
 /* ---------- вопросы и итоги ---------- */
 .chip.live { border-color: var(--col-progress); color: var(--col-progress); }
 .chip.warn { border-color: #ef6b6b; color: #ef6b6b; }
+/* Бэклог локальной доски: задача ждёт зависимостей — приглушённо, это не проблема, а очередь. */
+.chip.wait { border-style: dashed; color: var(--muted); }
 /* Приоритет: normal бейджа не имеет; low — приглушённый, чтобы не спорить с важными. */
 .chip.priority.urgent { border-color: var(--danger); color: var(--danger); font-weight: 600; }
 .chip.priority.high { border-color: var(--col-progress); color: var(--col-progress); }
