@@ -1,6 +1,6 @@
 /**
  * Клавиши экрана глобальной задачи (`GlobalTaskView`): Esc — назад к общей доске, G — переход между лентой
- * «Ждут вас» и доской. Решение «наша ли это клавиша» — здесь, чистой функцией: один обработчик на экран, а не
+ * «Ждут вас» и доской, Alt+1…4 (и 1…4 вне доски) — вкладки экрана. Решение «наша ли это клавиша» — здесь, чистой функцией: один обработчик на экран, а не
  * по своему в ленте и на доске. Клавиши доски (стрелки, Enter, M, S) — отдельно, в `boardNav.ts`.
  */
 
@@ -49,4 +49,26 @@ export function screenKey(e: HotkeyEvent, modalOpen: boolean): ScreenKey | undef
   if (e.key === 'Escape') return e.shiftKey ? undefined : 'back'
   if (e.code === 'KeyG' && !e.shiftKey) return 'feed'
   return undefined
+}
+
+/** Где цифры — не про вкладки: доска и лента (свои клавиши) и меню «Переместить в…» (цифра = номер колонки). */
+const DIGIT_OWNERS = '.board-wrap, .attn, [role="menu"]'
+
+/** Число вкладок экрана, на которые есть цифра (1–4). */
+export const TAB_HOTKEYS = 4
+
+/**
+ * Номер вкладки (с 0) по клавише или `undefined`. Alt+1…4 работает везде, кроме полей ввода и модалок; голые 1…4 —
+ * только когда фокус не на доске, не в ленте и не в меню «Переместить в…»: там цифры принадлежат им (M → 1–9).
+ * Цифру берём по физической клавише (`code`): с Alt на macOS `key` — другой символ, а в русской раскладке цифры те же.
+ */
+export function tabKey(e: HotkeyEvent, modalOpen: boolean): number | undefined {
+  if (e.defaultPrevented || modalOpen || e.ctrlKey || e.metaKey || e.shiftKey || isTypingTarget(e.target)) return undefined
+  const m = /^Digit([1-9])$/.exec(e.code)
+  if (!m) return undefined
+  const index = Number(m[1]) - 1
+  if (index >= TAB_HOTKEYS) return undefined
+  if (e.altKey) return index
+  const owned = e.target !== null && 'tagName' in e.target && !!e.target.closest?.(DIGIT_OWNERS)
+  return owned ? undefined : index
 }

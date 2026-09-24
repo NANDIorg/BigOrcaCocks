@@ -1,17 +1,18 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
-import { Icon } from './icons'
 import { AttentionFeed } from './AttentionFeed'
 import type { AttentionItem } from './attention'
-import { focusBoard, focusFeed } from './feedLink'
-import { screenKey } from './hotkeys'
-import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
-import { formatStamp } from './boardSort'
-import { PriorityBadge } from './Priority'
-import { globalTaskActions, returnsNewestFirst } from './globalReview'
-import { globalDoneReport } from './globalDoneReport'
-import { Markdown } from './Markdown'
+import { focusBoard, focusFeed, onRevealOnBoard } from './feedLink'
+import { screenKey, tabKey } from './hotkeys'
+import { GlobalTaskHeader } from './GlobalTaskHeader'
+import { GlobalOverview } from './GlobalOverview'
+import { CoordinatorPanel } from './CoordinatorPanel'
+import { GlobalHistory } from './GlobalHistory'
+import {
+  defaultTab, readTabChoice, resolveTab, stepTab, tabAt, tabTitle, visibleTabs, writeTabChoice, type GlobalTabId
+} from './globalScreen'
 
 interface Props {
   global: GlobalTask
@@ -55,179 +56,182 @@ interface Props {
   children: React.ReactNode
 }
 
-/** Экран глобальной задачи: хлебные крошки, заголовок, описание и канбан только её подзадач. */
+function browserStorage(): Storage | undefined {
+  try {
+    return typeof localStorage === 'undefined' ? undefined : localStorage
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Экран глобальной задачи: шапка, лента «Ждут вас» (видна на любой вкладке) и вкладки «Доска · Итог и цель ·
+ * Координатор · История». Вкладка по умолчанию зависит от состояния (`defaultTab`), выбор человека запоминается
+ * по id задачи. Доска остаётся смонтированной и на чужих вкладках (только скрыта): фильтры и выделение
+ * не пропадают, а события ленты (`feedLink`) находят получателя.
+ */
 export function GlobalTaskView(props: Props): React.JSX.Element {
-  const { global, statusKind, coordinatorPty, onBack, onEdit, onStartCoordinator, onShowCoordinator, onAccept, onReturn, children } = props
-  const { columns, onResolveRequest, onOpenTask, onOpenTerminal, typeTitle } = props
-  const { attention, tasks, dispatches } = props
-  const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
-  const [expanded, setExpanded] = useState(false)
-  const backRef = useRef<HTMLButtonElement>(null)
+  const { global, statusKind, coordinatorPty, onBack, children } = props
+  const { attention, tasks, dispatches, columns, typeTitle } = props
+  const tabs = visibleTabs(global)
+  const initial = (): GlobalTabId => resolveTab(readTabChoice(browserStorage(), global.id), statusKind, tabs)
 
-  // Открыли с клавиатуры/мышью — фокус на «назад», чтобы Enter/Escape сразу вели обратно.
-  useEffect(() => {
-    backRef.current?.focus({ preventScroll: true })
-    setExpanded(false)
-  }, [global.id])
+  // Вкладка привязана к задаче: при смене `global.id` пересчитываем при рендере, а не в эффекте — иначе один кадр
+  // покажет вкладку прежней задачи. Живая смена статуса вкладку не трогает: экран не должен прыгать под рукой.
+  const [shown, setShown] = useState<{ id: string; tab: GlobalTabId }>(() => ({ id: global.id, tab: initial() }))
+  let tab = shown.tab
+  if (shown.id !== global.id) {
+    tab = initial()
+    setShown({ id: global.id, tab })
+  }
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+  const tablistRef = useRef<HTMLDivElement>(null)
 
-  // Клавиши экрана (`screenKey`): Esc — назад к общей доске, G — фокус между лентой «Ждут вас» и доской. Один
-  // обработчик на всё: поля ввода, модалки и уже обработанные клавиши (меню «Переместить в…», Esc в подробностях
-  // ленты) `screenKey` отсекает. G с фокусом в ленте возвращает на доску, откуда бы ни пришли.
+  /** Выбор человека: показать вкладку и запомнить его по id задачи (с вкладкой по умолчанию того момента). */
+  const selectTab = (id: GlobalTabId, focusTab = false): void => {
+    setShown({ id: global.id, tab: id })
+    writeTabChoice(browserStorage(), global.id, { tab: id, base: defaultTab(statusKind) })
+    if (focusTab) tablistRef.current?.querySelector<HTMLElement>(`[data-tab="${id}"]`)?.focus({ preventScroll: true })
+  }
+
+  /** Показать доску сразу, синхронно: следом ей шлют фокус и выделение карточки, а скрытая доска их не примет. */
+  const showBoard = (): void => {
+    if (tabRef.current === 'board') return
+    flushSync(() => setShown({ id: global.id, tab: 'board' }))
+  }
+
+  // Клавиши экрана (`screenKey`, `tabKey`): Esc — назад к общей доске, G — фокус между лентой «Ждут вас» и доской
+  // (на доске сперва открывается её вкладка), Alt+1…4 и 1…4 вне доски — вкладки. Один обработчик на всё: поля ввода,
+  // модалки и уже обработанные клавиши (меню «Переместить в…», Esc в подробностях ленты) `hotkeys` отсекает.
+  const keys = useRef({ onBack, attention: attention.length, tabs, selectTab, showBoard })
+  keys.current = { onBack, attention: attention.length, tabs, selectTab, showBoard }
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const key = screenKey(e, document.querySelector('.modal-backdrop') !== null)
-      if (!key) return
-      if (key === 'back') {
-        onBack()
+      const modal = document.querySelector('.modal-backdrop') !== null
+      const k = keys.current
+      const index = tabKey(e, modal)
+      if (index !== undefined) {
+        const id = tabAt(k.tabs, index)
+        if (id) {
+          e.preventDefault()
+          k.selectTab(id, true)
+        }
         return
       }
-      if (attention.length === 0) return
+      const key = screenKey(e, modal)
+      if (!key) return
+      if (key === 'back') {
+        k.onBack()
+        return
+      }
+      if (k.attention === 0) return
       e.preventDefault()
-      if ((document.activeElement as HTMLElement | null)?.closest('.attn')) focusBoard()
-      else focusFeed()
+      if ((document.activeElement as HTMLElement | null)?.closest('.attn')) {
+        k.showBoard()
+        focusBoard()
+      } else focusFeed()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onBack, attention.length])
+  }, [])
 
-  const description = global.description.trim()
-  const long = description.length > 220 || description.split('\n').length > 3
+  // Имя задачи в карточке ленты выделяет карточку на доске: доска в этот момент может быть на скрытой вкладке.
+  useEffect(() => onRevealOnBoard(() => keys.current.showBoard()), [])
+
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const next = stepTab(tabs, tab, e.key)
+    if (!next) return
+    e.preventDefault()
+    selectTab(next, true)
+  }
 
   return (
-    <div className="g-view">
-      <div className="g-view-head">
-        <nav className="g-crumbs" aria-label="Навигация">
-          <button ref={backRef} type="button" className="g-back" onClick={onBack} title="К общей доске (Esc)">
-            <span aria-hidden>←</span> Глобальные задачи
-          </button>
-          <span className="g-crumb-sep" aria-hidden>/</span>
-          <span className="g-crumb-current" title={global.title}>{global.title}</span>
-        </nav>
-        <div className="g-view-title-row">
-          <h2 className="g-view-title" title={global.title}>{global.title}</h2>
-          <div className="g-view-actions">
-            <button type="button" className="btn-sm" onClick={onEdit}><Icon.edit /> Изменить</button>
-            {actions.accept && (
-              <button type="button" className="btn-sm primary" onClick={onAccept} title="Результат принят — в «Сделано»">Подтвердить</button>
-            )}
-            {actions.returnToWork && (
-              <button type="button" className="btn-sm" title="Написать, что доделать, и перезапустить координатора" onClick={onReturn}>
-                Вернуть в работу…
-              </button>
-            )}
-            {!global.inbox && coordinatorPty && (
-              <button type="button" className="btn-sm" onClick={() => onShowCoordinator(coordinatorPty)}>
-                <span className="g-live-dot" aria-hidden /> Координатор работает
-              </button>
-            )}
-            {actions.startCoordinator && (
-              <button type="button" className="btn-sm" onClick={onStartCoordinator}><Icon.play /> Запустить координатора</button>
-            )}
-          </div>
-        </div>
-        {description && description !== global.title && (
-          <div className={`g-view-desc ${long && !expanded ? 'clamped' : ''}`}>{description}</div>
-        )}
-        {long && (
-          <button type="button" className="btn-text g-more" onClick={() => setExpanded((v) => !v)}>
-            {expanded ? 'Свернуть' : 'Показать полностью'}
-          </button>
-        )}
-        <div className="g-view-meta">
-          <div className="g-view-progress"><GlobalProgress global={global} /></div>
-          {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
-          <PriorityBadge item={global} className="g-chip" />
-          {typeTitle && <span className="g-chip task-type-chip" title="Тип задачи: роли, воркфлоу и правила агентов">{typeTitle}</span>}
-          <span className="muted">Обновлено {relativeTime(global.activityAt)}</span>
-          {!global.inbox && (
-            <span className="muted" title={`Создана ${formatStamp(global.createdAt)}${global.closedAt !== undefined ? `, закрыта ${formatStamp(global.closedAt)}` : ''}`}>
-              · <GlobalDuration global={global} variant="line" />
-            </span>
-          )}
-          {global.closedAt !== undefined && <span className="muted">· закрыта</span>}
-          {global.inbox && <span className="muted">· сюда попадают задачи без глобальной</span>}
-        </div>
-        {statusKind === 'review' && <div className="g-review-note">Все подзадачи сделаны — проверьте результат: подтвердите или верните в работу с уточнением.</div>}
-        {statusKind === 'review' && (
-          <GlobalDoneReportBlock global={global} tasks={tasks} columns={columns} dispatches={dispatches} onOpenTask={onOpenTask} />
-        )}
-        <GlobalReturns global={global} />
-      </div>
+    <div className="gt-view">
+      <GlobalTaskHeader
+        global={global}
+        statusKind={statusKind}
+        coordinatorPty={coordinatorPty}
+        typeTitle={typeTitle}
+        onBack={onBack}
+        onEdit={props.onEdit}
+        onStartCoordinator={props.onStartCoordinator}
+        onShowCoordinator={props.onShowCoordinator}
+        onAccept={props.onAccept}
+        onReturn={props.onReturn}
+      />
       <AttentionFeed
         items={attention}
         tasks={tasks}
         runId={global.id}
         dispatches={dispatches}
-        onResolveRequest={onResolveRequest}
+        onResolveRequest={props.onResolveRequest}
         onAnswerQuestion={props.onAnswerQuestion}
         onAcceptTask={props.onAcceptTask}
         onRejectTask={props.onRejectTask}
         onStartTask={props.onStartTask}
-        onOpenTask={onOpenTask}
-        onOpenTerminal={onOpenTerminal}
+        onOpenTask={props.onOpenTask}
+        onOpenTerminal={props.onOpenTerminal}
       />
-      {children}
-    </div>
-  )
-}
-
-/** История уточнений при возвратах с «Проверки» в работу (`GlobalTask.returns`), новые сверху. */
-export function GlobalReturns({ global }: { global: GlobalTask }): React.JSX.Element | null {
-  const returns = returnsNewestFirst(global)
-  if (returns.length === 0) return null
-  return (
-    <details className="g-returns" open={returns.length === 1}>
-      <summary>Возвращали с проверки: {returns.length}</summary>
-      <ol className="g-returns-list">
-        {returns.map((r) => (
-          <li key={`${r.at}-${r.text}`}>
-            <span className="muted g-returns-at">{formatStamp(r.at)}</span>
-            <div className="g-returns-text">{r.text}</div>
-          </li>
-        ))}
-      </ol>
-    </details>
-  )
-}
-
-/**
- * «Что сделал» на «Проверке»: итоговая сводка координатора (`runs finish --summary`), а без неё — сделанные
- * подзадачи со сводками воркеров (`globalDoneReport`).
- */
-function GlobalDoneReportBlock(props: {
-  global: GlobalTask
-  tasks: Task[]
-  columns: BoardColumn[]
-  dispatches: Dispatch[]
-  onOpenTask(taskId: string): void
-}): React.JSX.Element {
-  const { global, tasks, columns, dispatches, onOpenTask } = props
-  const isDone = (status: string): boolean => columns.find((c) => c.id === status)?.kind === 'done'
-  const report = globalDoneReport(global, tasks, dispatches, isDone)
-  return (
-    <section className="g-done-report" aria-label="Что сделал">
-      <h3 className="g-done-report-title">
-        Что сделал
-        {report.kind === 'coordinator' ? (
-          <span className="muted g-done-report-sub">сводка координатора · {formatStamp(report.at)}</span>
-        ) : (
-          <span className="muted g-done-report-sub">координатор не оставил сводку — сделанные подзадачи</span>
-        )}
-      </h3>
-      {report.kind === 'coordinator' && <Markdown text={report.text} className="g-done-report-md" />}
-      {report.kind === 'subtasks' && report.items.length === 0 && <div className="muted">Сделанных подзадач нет.</div>}
-      {report.kind === 'subtasks' && report.items.length > 0 && (
-        <ul className="g-done-report-list">
-          {report.items.map((item) => (
-            <li key={item.taskId}>
-              <button type="button" className="btn-text g-done-report-task" onClick={() => onOpenTask(item.taskId)} title="Открыть подзадачу">
-                {item.title}
-              </button>
-              {item.summary ? <div className="g-done-report-text">{item.summary}</div> : <div className="muted">без сводки</div>}
-            </li>
+      {tabs.length > 1 && (
+        <div ref={tablistRef} className="gt-tabs" role="tablist" aria-label="Разделы задачи" onKeyDown={onTabKeyDown}>
+          {tabs.map((id, i) => (
+            <button
+              key={id}
+              id={`gt-tab-${id}`}
+              type="button"
+              role="tab"
+              data-tab={id}
+              className="gt-tab"
+              aria-selected={tab === id}
+              aria-controls={`gt-panel-${id}`}
+              tabIndex={tab === id ? 0 : -1}
+              title={`Alt+${i + 1}`}
+              onClick={() => selectTab(id)}
+            >
+              {id === 'coordinator' && coordinatorPty && <span className="g-live-dot" aria-label="работает" />}
+              {tabTitle(id, statusKind)}
+              {id === 'board' && tasks.length > 0 && <span className="gt-tab-n">{tasks.length}</span>}
+            </button>
           ))}
-        </ul>
+        </div>
       )}
-    </section>
+      <div id="gt-panel-board" className="gt-panel gt-panel-board" role="tabpanel" aria-labelledby="gt-tab-board" hidden={tab !== 'board'}>
+        {children}
+      </div>
+      {tab === 'overview' && (
+        <div id="gt-panel-overview" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-overview">
+          <GlobalOverview
+            global={global}
+            statusKind={statusKind}
+            coordinatorPty={coordinatorPty}
+            typeTitle={typeTitle}
+            tasks={tasks}
+            columns={columns}
+            dispatches={dispatches}
+            onAccept={props.onAccept}
+            onReturn={props.onReturn}
+            onStartCoordinator={props.onStartCoordinator}
+            onOpenTask={props.onOpenTask}
+          />
+        </div>
+      )}
+      {tab === 'coordinator' && (
+        <div id="gt-panel-coordinator" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-coordinator">
+          <CoordinatorPanel
+            global={global}
+            statusKind={statusKind}
+            coordinatorPty={coordinatorPty}
+            onStartCoordinator={props.onStartCoordinator}
+            onShowCoordinator={props.onShowCoordinator}
+          />
+        </div>
+      )}
+      {tab === 'history' && (
+        <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
+          <GlobalHistory global={global} />
+        </div>
+      )}
+    </div>
   )
 }
