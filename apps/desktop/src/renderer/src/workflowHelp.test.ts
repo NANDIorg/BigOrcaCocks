@@ -27,3 +27,12 @@ test('исходы в справке совпадают с портами тип
 test('палитра и select «Тип» покрыты справкой', () => {
   for (const type of [...WF_ADDABLE_TYPES, ...WF_TYPE_ORDER]) assert.ok(WF_NODE_HELP[type], type)
 })
+
+test('справка «Работы» описывает поля этапа и показа из инспектора', () => {
+  const { fields, details } = WF_NODE_HELP.work
+  for (const label of ['Что сделать на этапе', 'Показать человеку', 'Показ обязателен']) {
+    assert.ok(fields.some((f) => f.startsWith(`${label} — `)), `нет описания поля «${label}»`)
+  }
+  assert.match(details, /показ/i)
+  assert.match(WF_NODE_HELP.human.details, /показ/i)
+})

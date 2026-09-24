@@ -2,6 +2,8 @@
 // приложения. Чистый модуль: белый список проверяет main (IPC showcase:*), а renderer по нему решает, что
 // превьюить, — без electron и node.
 
+import type { DispatchShowcase } from '@orca-board/core'
+
 /** Как renderer показывает файл: `image` — превью по байтам (blob), `markdown` — текстом, `open` — только кнопкой. */
 export type ShowcasePreview = 'image' | 'markdown' | 'open'
 
@@ -35,4 +37,15 @@ export const SHOWCASE_READ_MAX_BYTES = 10 * 1024 * 1024
 export function showcaseFileType(path: string): ShowcaseFileType | undefined {
   const m = /\.[^./\\]+$/.exec(path)
   return m ? SHOWCASE_FILE_TYPES[m[0].toLowerCase()] : undefined
+}
+
+/**
+ * Показ в body approval (`requestHuman`, main/workflow.ts): описание воркера и список файлов текстом. Превью
+ * и кнопки «Открыть» рисует renderer по `showcaseDispatchId`; этот текст — для старого renderer и для
+ * `orca-board request get`. Новый renderer вычитает его из body (`bodyWithoutShowcase`, renderer/src/showcase.ts),
+ * чтобы не показывать дважды, — поэтому функция общая, а не копия.
+ */
+export function showcaseMarkdown(showcase: DispatchShowcase): string {
+  const files = showcase.files.length ? ['**Файлы показа** (в worktree задачи):', ...showcase.files.map((f) => `- \`${f}\``)].join('\n') : undefined
+  return ['## Показ', showcase.text?.trim(), files].filter(Boolean).join('\n\n')
 }

@@ -937,6 +937,7 @@ export function App(): React.JSX.Element {
           requests={snap.requests ?? []}
           tasks={tasks}
           runs={snap.runs}
+          dispatches={snap.dispatches}
           focus={inboxFocus}
           onClose={() => setShowInbox(false)}
           onOpenTerminal={openTerminalForTask}

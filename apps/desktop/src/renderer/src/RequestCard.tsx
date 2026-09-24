@@ -1,7 +1,9 @@
 import type React from 'react'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
-import type { HumanRequest, HumanRequestKind, RequestResolution } from '@orca-board/core'
+import type { DispatchShowcase, HumanRequest, HumanRequestKind, RequestResolution } from '@orca-board/core'
 import { Markdown } from './Markdown'
+import { ShowcaseBlock } from './ShowcaseBlock'
+import { bodyWithoutShowcase } from './showcase'
 import { ipcErrorMessage } from './useAutoSave'
 
 /** Подпись вида запроса в заголовке карточки. */
@@ -46,6 +48,11 @@ interface Props {
   onEscape?(): void
   /** Клик по карточке (Инбокс: выбрать её). */
   onSelect?(): void
+  /**
+   * Показ человеку у approval (`requestShowcase` из showcase.ts по `showcaseDispatchId`): блок «Показ» развёрнут,
+   * его раздел убирается из body. Нет — показ остаётся только текстом в body (старый запрос, нет снимка dispatch).
+   */
+  showcase?: DispatchShowcase
 }
 
 /** Enter — отправить, Shift+Enter — перенос строки, Esc — выйти из поля. */
@@ -76,7 +83,7 @@ function Kbd({ show, k }: { show: boolean; k: string }): React.JSX.Element | nul
  * Поля ввода — свои у каждой карточки. Один компонент для Инбокса, карточки на доске и модалки задачи.
  */
 export const RequestCard = forwardRef<RequestCardHandle, Props>(function RequestCard(props, ref) {
-  const { request: r, onResolve, compact = false, where, active = false, onOpenFull, onOpenTerminal, onEscape, onSelect } = props
+  const { request: r, onResolve, compact = false, where, active = false, onOpenFull, onOpenTerminal, onEscape, onSelect, showcase } = props
   const [text, setText] = useState('')
   const [decision, setDecision] = useState('')
   const [clarifying, setClarifying] = useState(false)
@@ -137,6 +144,8 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
     }
   }))
 
+  const shownShowcase = r.kind === 'approval' && !compact ? showcase : undefined
+  const body = bodyWithoutShowcase(r.body, shownShowcase)
   const bodyLabel = r.kind === 'answer' ? 'ответ' : r.kind === 'question' ? 'контекст' : r.kind === 'approval' ? 'что проверить' : 'подробности'
 
   return (
@@ -147,12 +156,14 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
       </div>
       <div className="rq-title">{r.title}</div>
 
-      {r.body && !compact && (
+      {shownShowcase && <ShowcaseBlock taskId={r.taskId} showcase={shownShowcase} />}
+
+      {body && !compact && (
         <div className="rq-body">
           <button className="rq-toggle" onClick={() => setShowBody((v) => !v)} aria-expanded={showBody}>
             {showBody ? '▾' : '▸'} {bodyLabel}
           </button>
-          {showBody && <Markdown text={r.body} className="rq-md" />}
+          {showBody && <Markdown text={body} className="rq-md" />}
         </div>
       )}
 
@@ -265,14 +276,30 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
               </div>
             </>
           ) : (
-            <div className="rq-actions">
-              <button className="btn-sm primary" disabled={busy} onClick={accept} title="Дальше по воркфлоу проекта (обычно мерж)">
-                <Kbd show={hints} k="A" />{busy ? '…' : 'Принять'}
-              </button>
-              <button className="btn-sm" disabled={busy} onClick={openClarify}>
-                <Kbd show={hints} k="C" />Вернуть…
-              </button>
-            </div>
+            <>
+              {!compact && (
+                <textarea
+                  ref={inputRef}
+                  rows={1}
+                  className="rq-decision"
+                  value={decision}
+                  placeholder="Решение / вариант (необязательно)"
+                  title="Текст решения получит координатор (request_resolved.decision)"
+                  aria-label="Решение"
+                  disabled={busy}
+                  onChange={(e) => setDecision(e.target.value)}
+                  onKeyDown={submitKeys(accept, onEscape)}
+                />
+              )}
+              <div className="rq-actions">
+                <button className="btn-sm primary" disabled={busy} onClick={accept} title="Дальше по воркфлоу проекта (обычно мерж)">
+                  <Kbd show={hints} k="A" />{busy ? '…' : 'Принять'}
+                </button>
+                <button className="btn-sm" disabled={busy} onClick={openClarify}>
+                  <Kbd show={hints} k="C" />Вернуть…
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}

@@ -12,6 +12,10 @@ const roleOf = (w: Workflow, id: string): string | undefined => {
   const n = node(w, id)
   return n && 'roleId' in n ? n.roleId : undefined
 }
+const showcaseOf = (w: Workflow): unknown => {
+  const n = node(w, 'work')
+  return n?.type === 'work' ? n.showcase : undefined
+}
 const ctx = { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }
 
 test('роли для этапов — без служебных coordinator и assistant', () => {
@@ -23,7 +27,7 @@ test('роли для этапов — без служебных coordinator и 
 test('patchNode: пустые необязательные поля удаляются, чужие для типа — игнорируются', () => {
   let next = patchNode(wf, 'work', { title: '', roleId: 'developer', column: 'review' })
   assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, roleId: 'developer', column: 'review' })
-  next = patchNode(next, 'work', { roleId: '', column: '', instructions: 'не для работы' })
+  next = patchNode(next, 'work', { roleId: '', column: '', merged: true, test: { kind: 'role', roleIds: [] } })
   assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0 })
 
   next = patchNode(wf, 'review', { roleId: '', instructions: '  ' })
@@ -32,6 +36,24 @@ test('patchNode: пустые необязательные поля удаляю
 
   assert.equal(patchNode(wf, 'нет', { title: 'x' }), wf)
   assert.equal(node(wf, 'work')?.title, 'Работа', 'исходный граф не меняется')
+})
+
+test('patchNode: инструкция и показ у «Работы»', () => {
+  let next = patchNode(wf, 'work', { instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
+  next = patchNode(next, 'work', { showcase: { required: true } })
+  assert.deepEqual(showcaseOf(next), { what: 'макеты', required: true }, 'флажок не стирает текст')
+  next = patchNode(next, 'work', { showcase: { what: '' } })
+  assert.deepEqual(showcaseOf(next), { what: '', required: true }, 'обязательный показ с пустым «что» остаётся — его подсветит валидация')
+  assert.ok(validateWorkflow(next, ctx).errors.some((e) => e.nodeId === 'work'))
+  next = patchNode(next, 'work', { showcase: { required: false }, instructions: ' ' })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа' }, 'пустой показ и инструкция удаляются')
+  assert.deepEqual(patchNode(wf, 'review', { showcase: { what: 'x' } }), wf, 'показ только у «Работы»')
+
+  const human = changeNodeType(patchNode(wf, 'work', { instructions: 'этап', showcase: { what: 'макеты' } }), 'work', 'human')
+  const h = node(human, 'work')
+  assert.equal(h?.type === 'human' ? h.instructions : undefined, 'этап', 'инструкция переносится')
+  assert.ok(!(h && 'showcase' in h), 'показа у человека нет')
 })
 
 test('changeNodeType: сохраняет id, позицию и роль, убирает рёбра лишних портов', () => {

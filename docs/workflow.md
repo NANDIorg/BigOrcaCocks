@@ -77,13 +77,20 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   `params.showcase {text?, files}`; сокет `worker.done` передаёт его в `finishDispatch` вместе с запасным графом
   типа прогона — чтобы проверка `required` видела тот же этап, что и промпт.
 - **Запрос человеку.** `requestHuman` (`workflow.ts`) берёт показ из последнего запуска задачи (`task.dispatchId`,
-  `outcome: 'done'`): в `body` approval — раздел «## Показ» (текст и список файлов, `showcaseMarkdown`) после итога
+  `outcome: 'done'`): в `body` approval — раздел «## Показ» (текст и список файлов, `showcaseMarkdown` из `shared/showcase.ts`) после итога
   воркера, а `HumanRequest.showcaseDispatchId` — id этого запуска. Гейт между «Работой» и «человеком» — отдельная
   задача и показ не подменяет. После «Вернуть» новый `done` даёт новый approval с новым показом.
 - **Файлы.** Renderer читает их из worktree задачи через IPC `showcase:read` / `showcase:open` / `showcase:reveal`
   (`main/showcase.ts`): путь только внутри worktree (симлинки наружу — отказ), расширения — белый список
   `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/svg` и `md` превьюятся, `html/htm/pdf` —
   только «Открыть»). После мержа worktree убран — файлы остаются в ветке, IPC отвечает ошибкой с её именем.
+- **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval (Инбокс,
+  лента глобальной задачи, модалка задачи) и отдельным разделом в модалке задачи (последний `done` с показом, если его
+  не выводит ждущий approval). Markdown — через `Markdown.tsx`; первые 6 картинок превьюятся сразу (blob-URL, CSP
+  `img-src blob:`), остальные и `.md` — по кнопке; у каждого файла «Открыть» / «В папке». Раздел «## Показ» из
+  `body` вычитается (`bodyWithoutShowcase`), чтобы не дублировать. Логика — `renderer/src/showcase.ts`: старые
+  main/preload — «Перезапустите приложение» (`showcaseApi`, `SHOWCASE_STALE_MESSAGE`). У «Принять» approval — поле
+  «Решение / вариант» (`resolution.text` → `request_resolved.decision`).
 
 Колонка этапа: `node.column` учитывается у `gate` и `human`; `work` — всегда «В работе» (пока работает воркер),
 `end` — колонка `kind=done` (иначе прогон не закроется).
