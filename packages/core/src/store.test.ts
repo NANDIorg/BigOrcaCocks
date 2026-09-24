@@ -2,7 +2,7 @@
 // Состояние воркфлоу в store: снимок графа в прогоне, advanceStage, миграция задач в ревью, рестарт.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
+import { TaskStore, EVENT_ANSWER_LIMIT, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
 import { defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
 import { presetTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
@@ -389,6 +389,65 @@ describe('исполнитель: переходы store', () => {
     s.blockStage(t.id, 'воркер не запустился')
     const e = s.listEvents().find((x) => x.type === 'workflow_blocked')!
     assert.deepEqual([e.taskId, e.payload.nodeId, e.payload.reason], [t.id, 'work', 'воркер не запустился'])
+  })
+})
+
+describe('показ человеку: finishDispatch и решение approval', () => {
+  /** Прогон с графом «Работа (показ) → человек → мерж». */
+  function showcaseRun(required: boolean) {
+    const s = store()
+    const wf = pipelineWorkflow([{ type: 'human', id: 'pick', title: 'Выбрать вариант' }])
+    Object.assign(wf.nodes.find((n) => n.id === 'work')!, { title: 'Дизайн', showcase: { what: 'варианты макета', ...(required ? { required } : {}) } })
+    const run = s.createRun('цель', undefined, wf)
+    const t = s.createTask({ title: 'A', runId: run.id })
+    s.enterWork(t.id)
+    return { s, t, d: s.startDispatch(t.id, 'pty') }
+  }
+
+  it('обязательный показ: done без него — ошибка с подсказкой, dispatch не закрыт', () => {
+    const { s, t, d } = showcaseRun(true)
+    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'work', title: 'Дизайн', showcase: { what: 'варианты макета', required: true } })
+    assert.throws(() => s.finishDispatch(d.id, 'готово'), /этап «Дизайн» требует показ человеку: варианты макета[\s\S]*--show-file[\s\S]*--show/)
+    assert.equal(s.getDispatch(d.id)!.endedAt, undefined)
+    s.finishDispatch(d.id, 'готово', ['a.html'], undefined, { showcase: { text: '# Варианты', files: [' design\\a.html ', 'design/a.html', '', 'design/a.png'] } })
+    assert.deepEqual(s.getDispatch(d.id)!.showcase, { text: '# Варианты', files: ['design/a.html', 'design/a.png'] })
+  })
+
+  it('необязательный показ и задача вне воркфлоу: done без показа проходит, поля нет', () => {
+    const { s, d } = showcaseRun(false)
+    assert.equal(s.finishDispatch(d.id, 'готово').showcase, undefined)
+    const plain = store()
+    const t = plain.createTask({ title: 'B' })
+    const d2 = plain.startDispatch(t.id, 'pty')
+    assert.equal(plain.taskWorkStage(t.id), undefined)
+    assert.equal(plain.finishDispatch(d2.id, 'ok', [], undefined, { showcase: { text: '  ', files: [] } }).showcase, undefined)
+  })
+
+  it('файлы показа: абсолютный путь и выход из репозитория — ошибка', () => {
+    const { s, d } = showcaseRun(false)
+    assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['/etc/passwd'] } }), /не абсолютный/)
+    assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['C:\\x.png'] } }), /не абсолютный/)
+    assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['a/../../x.png'] } }), /выходить из репозитория/)
+  })
+
+  it('approval: текст решения — decision в request_resolved, длинный обрезан; без текста поля нет', () => {
+    const s = store()
+    const t = s.createTask({ title: 'A' })
+    const r1 = s.requestApproval(t.id, { nodeId: 'pick', title: 'A' })
+    s.resolveRequest(r1.id, { action: 'accept', text: '  вариант 2  ' })
+    let e = s.listEvents().filter((x) => x.type === 'request_resolved').at(-1)!
+    assert.equal(e.payload.decision, 'вариант 2')
+    assert.equal(Object.keys(e.payload).at(-1), 'decision', 'решение — последним полем')
+    const r2 = s.requestApproval(t.id, { nodeId: 'pick', title: 'A' })
+    s.resolveRequest(r2.id, { action: 'reject', text: 'x'.repeat(EVENT_ANSWER_LIMIT + 10) })
+    e = s.listEvents().filter((x) => x.type === 'request_resolved').at(-1)!
+    assert.equal((e.payload.decision as string).length, EVENT_ANSWER_LIMIT)
+    assert.equal(e.payload.decisionTruncated, true)
+    assert.equal(s.getRequest(r2.id)!.resolution!.text!.length, EVENT_ANSWER_LIMIT + 10, 'полный текст — в запросе')
+    const r3 = s.requestApproval(t.id, { nodeId: 'pick', title: 'A' })
+    s.resolveRequest(r3.id, { action: 'accept' })
+    e = s.listEvents().filter((x) => x.type === 'request_resolved').at(-1)!
+    assert.equal('decision' in e.payload, false)
   })
 })
 

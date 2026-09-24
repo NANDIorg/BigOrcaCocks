@@ -44,6 +44,29 @@ describe('workerTaskPrompt', () => {
     assert.equal(workerTaskPrompt({ title: 'T', spec: '' }), '# Задача: T\n\n(описание не задано)\n')
     assert.equal(workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'F' }), '# Задача: T\n\nS\n\n\n# Замечания после ревью\n\nF')
   })
+
+  it('этап без инструкции и показа — промпт как без этапа', () => {
+    assert.equal(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'work', title: 'Работа' }), '# Задача: T\n\nS\n')
+  })
+
+  it('раздел «Этап»: инструкция и обязательный показ с флагами done, до замечаний ревью', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'F' }, undefined, [], {
+      nodeId: 'design', title: 'Дизайн', instructions: 'Сделай макеты.', showcase: { what: '2–3 варианта: HTML и скриншоты', required: true }
+    })
+    assert.match(text, /# Этап: Дизайн\n\nСделай макеты\./)
+    assert.match(text, /## Результат для показа человеку \(обязательно\)\n\n2–3 варианта: HTML и скриншоты/)
+    assert.match(text, /orca-board done --summary "\.\.\." --show-file <описание\.md> --show <путь>/)
+    assert.match(text, /Без показа done не пройдёт\./)
+    assert.ok(text.indexOf('# Этап:') < text.indexOf('# Замечания после ревью'))
+  })
+
+  it('необязательный показ — без «(обязательно)»; у задачи-ответа этапа нет', () => {
+    const stage = { nodeId: 'w', title: 'Работа', showcase: { what: 'скриншот' } }
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], stage)
+    assert.match(text, /## Результат для показа человеку\n/)
+    assert.doesNotMatch(text, /не пройдёт/)
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S', answerFor: 'human' }, undefined, [], stage), /# Этап:/)
+  })
 })
 
 describe('promptChannel', () => {

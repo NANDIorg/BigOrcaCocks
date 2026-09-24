@@ -5,7 +5,7 @@ import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
   WORKFLOW_VERSION, WF_PORTS, defaultWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, nextStage, pipelineWorkflow,
-  startStage, stageAction, validateWorkflow, stableJson
+  startStage, stageAction, validateWorkflow, stableJson, wfWorkStage, describeWorkflow
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfValidation, Workflow } from './workflow.ts'
 
@@ -450,5 +450,56 @@ describe('stableJson', () => {
     assert.equal(stableJson({ b: 1, a: { d: [1, 2], c: undefined } }), stableJson({ a: { d: [1, 2] }, b: 1 }))
     assert.notEqual(stableJson({ a: [1, 2] }), stableJson({ a: [2, 1] }))
     assert.equal(stableJson({ b: 'x', a: null }), '{"a":null,"b":"x"}')
+  })
+})
+
+describe('показ человеку на «Работе»', () => {
+  /** Дефолт без reviewer (ревью — человек) с показом на работе. */
+  const withShowcase = (showcase: unknown, instructions?: unknown): Workflow => {
+    const wf = structuredClone(defaultWorkflow([]))
+    Object.assign(node(wf, 'work'), { showcase, ...(instructions !== undefined ? { instructions } : {}) })
+    return wf
+  }
+  const c = { ...ctx, roles: noReviewer }
+
+  it('wfWorkStage: тексты обрезаны, пустой показ — нет показа, required только true', () => {
+    const wf = withShowcase({ what: '  макеты  ', required: true }, '  сделай  ')
+    assert.deepEqual(wfWorkStage(wf, 'work'), { nodeId: 'work', title: 'Работа', instructions: 'сделай', showcase: { what: 'макеты', required: true } })
+    assert.deepEqual(wfWorkStage(withShowcase({ what: ' ' }), 'work'), { nodeId: 'work', title: 'Работа' })
+    assert.deepEqual(wfWorkStage(withShowcase({ what: 'x', required: false }), 'work')!.showcase, { what: 'x' })
+    assert.equal(wfWorkStage(wf, 'review'), undefined)
+    assert.equal(wfWorkStage(wf, 'nope'), undefined)
+  })
+
+  it('старый граф без полей валиден и без предупреждения о показе', () => {
+    const { errors, warnings } = validateWorkflow(defaultWorkflow([]), c)
+    assert.deepEqual(errors, [])
+    assert.ok(!warnings.some((w) => w.message.includes('показ')))
+    assert.deepEqual(validateWorkflow(withShowcase({ what: 'макеты', required: true }, 'сделай'), c).errors, [])
+  })
+
+  it('ошибки: пустой what, не объект, required не boolean, instructions не строка', () => {
+    hasError(withShowcase({ what: '  ' }), 'не задано, что показать человеку', { nodeId: 'work' }, c)
+    hasError(withShowcase('макеты'), 'не задано, что показать человеку', { nodeId: 'work' }, c)
+    hasError(withShowcase({ what: 'x', required: 'да' }), 'показ обязателен', { nodeId: 'work' }, c)
+    hasError(withShowcase(undefined, 42), 'должно быть строкой', { nodeId: 'work' }, c)
+  })
+
+  it('предупреждение: после работы с показом нет человека до мержа; гейт по пути не мешает', () => {
+    const gated = structuredClone(defaultWorkflow(DEFAULT_ROLES))
+    Object.assign(node(gated, 'work'), { showcase: { what: 'макеты' } })
+    hasWarning(gated, 'показ никто не увидит', 'work')
+    const withHuman = structuredClone(pipelineWorkflow([
+      { type: 'gate', id: 'review', roleId: 'reviewer' }, { type: 'human', id: 'eyes' }
+    ]))
+    Object.assign(node(withHuman, 'work'), { showcase: { what: 'макеты' } })
+    assert.ok(!validateWorkflow(withHuman, ctx).warnings.some((w) => w.message.includes('показ')))
+  })
+
+  it('describeWorkflow отдаёт instructions и showcase у работы', () => {
+    const work = describeWorkflow(withShowcase({ what: 'макеты', required: true }, 'сделай')).find((x) => x.id === 'work')!
+    assert.equal(work.instructions, 'сделай')
+    assert.deepEqual(work.showcase, { what: 'макеты', required: true })
+    assert.equal(describeWorkflow(defaultWorkflow([])).find((x) => x.id === 'work')!.showcase, undefined)
   })
 })

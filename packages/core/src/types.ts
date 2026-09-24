@@ -320,6 +320,46 @@ export const ANSWER_AUDIENCES: AnswerAudience[] = ['human', 'coordinator']
 export const MAX_ANSWER_LENGTH = 200_000
 
 /**
+ * Показ человеку, который воркер сдал с `done` (нода «Работа» с `showcase`, workflow.ts): `text` — markdown
+ * с описанием, `files` — пути файлов в ветке задачи от корня worktree (макеты, скриншоты). Сами файлы не
+ * копируются: их читает main из worktree задачи.
+ */
+export interface DispatchShowcase {
+  text?: string
+  files: string[]
+}
+
+/** Предел длины текста показа (символов): он хранится в снапшоте доски, как ответ. */
+export const MAX_SHOWCASE_LENGTH = MAX_ANSWER_LENGTH
+
+/** Сколько файлов можно сдать на показ. */
+export const MAX_SHOWCASE_FILES = 50
+
+/**
+ * Показ из `done` в сохраняемый вид: текст без пустоты, пути без пробелов по краям, без повторов, `\` → `/`.
+ * Пустой показ — undefined. Путь должен быть относительным и не выходить из worktree (`..`): иначе ошибка
+ * с подсказкой. Есть ли файл в ветке, core не знает — это проверяет main при чтении.
+ */
+export function normalizeShowcase(input: { text?: string; files?: readonly string[] } | undefined): DispatchShowcase | undefined {
+  if (!input) return undefined
+  const text = input.text?.trim() ? input.text : undefined
+  if (text && text.length > MAX_SHOWCASE_LENGTH) throw new Error(`текст показа длиннее ${MAX_SHOWCASE_LENGTH} символов — сократи его`)
+  const files: string[] = []
+  for (const raw of input.files ?? []) {
+    const file = raw.trim().replace(/\\/g, '/')
+    if (!file) continue
+    if (file.startsWith('/') || /^[a-zA-Z]:/.test(file)) {
+      throw new Error(`файл показа «${raw}»: нужен путь от корня репозитория задачи, а не абсолютный`)
+    }
+    if (file.split('/').includes('..')) throw new Error(`файл показа «${raw}»: путь не должен выходить из репозитория задачи (..)`)
+    if (!files.includes(file)) files.push(file)
+  }
+  if (files.length > MAX_SHOWCASE_FILES) throw new Error(`файлов показа больше ${MAX_SHOWCASE_FILES} — оставь главные`)
+  if (!text && files.length === 0) return undefined
+  return { ...(text ? { text } : {}), files }
+}
+
+/**
  * Приоритет задачи: влияет только на порядок показа и выбора, не на промпт воркера. Порядок в
  * `TASK_PRIORITIES` — от высшего к низшему, на нём держится `priorityRank`.
  */
@@ -414,6 +454,8 @@ export interface Dispatch {
   files?: string[]
   /** Ответ задачи-ответа (markdown), `orca-board done --answer-file`. */
   answer?: string
+  /** Показ человеку (`normalizeShowcase`). Нет — воркер ничего не показывал или dispatch от кода до показа. */
+  showcase?: DispatchShowcase
   /** Уже отправили эскалацию «нет вывода». */
   stuckNotified?: boolean
   /**

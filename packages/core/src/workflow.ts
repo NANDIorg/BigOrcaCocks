@@ -22,6 +22,16 @@ export type WfCondition =
   /** Все файлы ветки подходят под маску. Зарезервировано под v2: пока не исполняется и не проходит валидацию. */
   | { kind: 'files'; glob: string }
 
+/**
+ * Что воркер этапа «Работа» сдаёт на показ человеку (макеты, скриншоты, описание вариантов): текст задания
+ * и обязателен ли показ. Смотрит показ человек на следующей ноде `human` (запрос approval).
+ */
+export interface WfShowcase {
+  what: string
+  /** Без показа `orca-board done` не пройдёт (`TaskStore.finishDispatch`). */
+  required?: boolean
+}
+
 interface WfNodeBase {
   id: string
   /** Позиция на холсте редактора. */
@@ -35,8 +45,11 @@ interface WfNodeBase {
 export type WfNode = WfNodeBase &
   (
     | { type: 'start' }
-    /** Работа воркера. Без `roleId` — роль задачи (её выбрал координатор). */
-    | { type: 'work'; roleId?: string }
+    /**
+     * Работа воркера. Без `roleId` — роль задачи (её выбрал координатор). `instructions` и `showcase` попадают
+     * в промпт воркера разделом «Этап» (`workerTaskPrompt`); нормализованный вид — `wfWorkStage`.
+     */
+    | { type: 'work'; roleId?: string; instructions?: string; showcase?: WfShowcase }
     /** Гейт-агент: отдельная задача-проверка ветки рабочей задачи; исход — accept/reject. */
     | { type: 'gate'; roleId: string; instructions?: string }
     /** Гейт-человек: запрос в Инбоксе «Принять» / «Вернуть». */
@@ -86,6 +99,38 @@ const NODE_TYPE_TITLES: Record<WfNodeType, string> = {
 /** Название ноды для сообщений и UI: заданное пользователем или по типу. */
 export function wfNodeTitle(node: WfNode): string {
   return node.title?.trim() || NODE_TYPE_TITLES[node.type] || node.id
+}
+
+/** Этап «Работа» для промпта воркера и проверки `done`: без пустых полей, тексты обрезаны по краям. */
+export interface WfWorkStage {
+  nodeId: string
+  title: string
+  instructions?: string
+  showcase?: WfShowcase
+}
+
+/**
+ * Нормализованный показ ноды: `what` без пробелов по краям, `required` только `true`. Пустой `what` — показа нет:
+ * граф с такой нодой отвергает `validateWorkflow`, но старый или битый граф исполнитель не должен ронять.
+ */
+export function wfShowcase(node: WfNode): WfShowcase | undefined {
+  if (node.type !== 'work' || !node.showcase || typeof node.showcase !== 'object') return undefined
+  const what = typeof node.showcase.what === 'string' ? node.showcase.what.trim() : ''
+  if (!what) return undefined
+  return node.showcase.required === true ? { what, required: true } : { what }
+}
+
+/** Этап `nodeId`, если это нода «Работа»; иначе (нет ноды, другой тип) — undefined. */
+export function wfWorkStage(wf: Workflow, nodeId: string): WfWorkStage | undefined {
+  const node = wf.nodes.find((n) => n.id === nodeId)
+  if (!node || node.type !== 'work') return undefined
+  const instructions = typeof node.instructions === 'string' ? node.instructions.trim() : ''
+  const showcase = wfShowcase(node)
+  return {
+    nodeId: node.id, title: wfNodeTitle(node),
+    ...(instructions ? { instructions } : {}),
+    ...(showcase ? { showcase } : {})
+  }
 }
 
 // ---------- дефолт и миграция ----------
@@ -362,6 +407,20 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       else checkRole(n, n.roleId)
     }
     if (n.type === 'work' && n.roleId) checkRole(n, n.roleId)
+    if (n.type === 'work') {
+      if (n.instructions !== undefined && typeof n.instructions !== 'string') {
+        errors.push({ message: `${nodeLabel(n)}: «Что сделать на этапе» должно быть строкой`, nodeId: n.id })
+      }
+      const sc: unknown = n.showcase
+      if (sc !== undefined) {
+        const obj = sc && typeof sc === 'object' ? (sc as Record<string, unknown>) : undefined
+        if (!obj || typeof obj.what !== 'string' || !obj.what.trim()) {
+          errors.push({ message: `${nodeLabel(n)}: не задано, что показать человеку`, nodeId: n.id })
+        } else if (obj.required !== undefined && typeof obj.required !== 'boolean') {
+          errors.push({ message: `${nodeLabel(n)}: «показ обязателен» должен быть да/нет`, nodeId: n.id })
+        }
+      }
+    }
     if (n.type === 'condition') {
       const t = n.test
       if (t.kind === 'attempts') {
@@ -402,6 +461,20 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
     // Работа достижима из самой себя в обход лимита повторов и человека — возвраты могут идти бесконечно.
     if (reach(succ(n.id), succ, stopsLoop).has(n.id)) {
       warnings.push({ message: `${nodeLabel(n)}: возврат в работу без лимита повторов — отказы могут повторяться бесконечно`, nodeId: n.id })
+    }
+  }
+
+  // Показ смотрит человек на следующей ноде `human`. Другая «Работа» сдаст свой done, а человек после мержа
+  // (конфликт) смотрит уже не показ — дальше них не идём.
+  const passesShowcase = (id: string): boolean => {
+    const t = nodes.get(id)?.type
+    return t === 'work' || t === 'merge'
+  }
+  for (const n of nodes.values()) {
+    if (n.type !== 'work' || !fromStart.has(n.id) || !wfShowcase(n)) continue
+    const after = reach(succ(n.id), succ, passesShowcase)
+    if (![...after].some((id) => nodes.get(id)!.type === 'human')) {
+      warnings.push({ message: `${nodeLabel(n)}: показ человеку задан, но дальше нет ноды «Человек» до следующей работы или мержа — показ никто не увидит`, nodeId: n.id })
     }
   }
 
@@ -584,6 +657,8 @@ export interface WfStageInfo {
   instructions?: string
   /** Условие ноды `condition` человеческими словами. */
   condition?: string
+  /** Что воркер «Работы» сдаёт на показ человеку. */
+  showcase?: WfShowcase
   /** Исход → «название (id)» ноды, куда он ведёт. */
   next: Partial<Record<WfOutcome, string>>
 }
@@ -615,6 +690,11 @@ export function describeWorkflow(wf: Workflow): WfStageInfo[] {
     const info: WfStageInfo = { id, type: n.type, title: wfNodeTitle(n), next }
     if ((n.type === 'gate' || n.type === 'work') && n.roleId) info.roleId = n.roleId
     if ((n.type === 'gate' || n.type === 'human') && n.instructions?.trim()) info.instructions = n.instructions.trim()
+    if (n.type === 'work') {
+      const stage = wfWorkStage(wf, n.id)
+      if (stage?.instructions) info.instructions = stage.instructions
+      if (stage?.showcase) info.showcase = stage.showcase
+    }
     if (n.type === 'condition') info.condition = conditionText(n.test, byId)
     return info
   })
