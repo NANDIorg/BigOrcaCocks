@@ -28,10 +28,11 @@ import { globalReviewApi, reviewErrorMessage } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
+import { StatsView } from './StatsView'
 import { pickAssistant } from './assistantPty'
 import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun } from './taskTypes'
 
-type Tab = 'board' | 'terminals' | 'info'
+type Tab = 'board' | 'terminals' | 'stats' | 'info'
 
 interface OpenTerminal {
   ptyId: string
@@ -62,7 +63,7 @@ interface ProjectView {
   globalId: string | null
 }
 
-const TABS: Tab[] = ['board', 'terminals', 'info']
+const TABS: Tab[] = ['board', 'terminals', 'stats', 'info']
 const tabKey = (projectId: string): string => `orca.tab.${projectId}`
 const globalKey = (projectId: string): string => `orca.global.${projectId}`
 
@@ -791,6 +792,7 @@ export function App(): React.JSX.Element {
               Терминалы
               {projectTerminals.length > 0 && <span className="tab-badge">{projectTerminals.length}</span>}
             </button>
+            <button className={`tab ${tab === 'stats' ? 'active' : ''}`} onClick={() => setTab('stats')}>Статистика</button>
             <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>О проекте</button>
           </div>
         </div>
@@ -863,6 +865,8 @@ export function App(): React.JSX.Element {
               />
             </GlobalTaskView>
           )}
+          {tab === 'stats' && !active && <div className="empty">Нет активного проекта — добавьте git-репозиторий.</div>}
+          {tab === 'stats' && active && <StatsView key={active.id} projectId={active.id} columns={columns} />}
           {tab === 'info' && !active && <div className="empty">Нет активного проекта — добавьте git-репозиторий.</div>}
           {tab === 'info' && active && (
             <AboutProject
