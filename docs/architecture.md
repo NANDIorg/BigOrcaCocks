@@ -705,7 +705,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## UI: доска и «О проекте»
 
-- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `О проекте`) и выбранный
+- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Статистика` / `О проекте`) и выбранный
   терминал — свои у каждого проекта: `views: Record<projectId, ProjectView { tab, activePty }>`,
   запись через `updateView(projectId, patch)` (функциональный апдейтер, безопасен из обработчиков событий).
   Вкладка дублируется в `localStorage` ключом `orca.tab.<projectId>` (`storedTab` / `storeTab`,
@@ -1309,6 +1309,14 @@ Renderer вызывает канал через проверку наличия 
 пустой проект (`emptyProjectStats`) — заглушка «статистики пока нет». `byAgent` на вкладке не выводится
 (в контракте остаётся — для подсказки и будущих разбивок). На узком окне сетки блоков перестраиваются в одну колонку.
 
+Код: `renderer/src/StatsView.tsx` (вкладка, `App.tsx` → `tab === 'stats'`), логика — `renderer/src/statsFormat.ts`
+(тест `statsFormat.test.ts`): форматирование (`formatTokens` «1,2 млн», `formatUsd`, `formatAgentTime` — в часах, не в днях),
+`costCell` («нет данных» / «без цены» / «не менее»), `buildChart` — столбцы периода: 7 / 30 дней до даты `generatedAt`,
+«всё время» — от первого дня `byDay`, длиннее 62 дней — по неделям, длиннее 420 — по месяцам. Цвет модели и роли —
+`seriesColor` по месту строки в `byModel` / `byRole` (`--s1`…`--s5`, `unknown` — `--s-unknown`, дальше — `--s-other`).
+Старый preload без `stats` — `statsApi()` бросает `STATS_STALE_MESSAGE`, старый main — `isStaleStatsError` (как `docsApi`).
+Период и метрика графика запоминаются в `localStorage` (`orca.stats.range`, `orca.stats.metric`), общие для проектов.
+
 ## Уведомления
 
 `ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification` по `notifyKind` (`src/main/notify.ts`):
@@ -1465,6 +1473,9 @@ ad-hoc, и приложение падает при запуске. Провер
   каждом чтении, удалить их было нельзя: удалённый вернулся бы после рестарта. Теперь заготовки лежат в projects.json,
   а флаг не даёт засеять их снова. Id заготовок менять нельзя: по ним засев старого файла находит сохранённые правки
   встроенных, а старые проекты и прогоны — свой тип.
+- **Компонент и его модуль логики не называть одним словом в разном регистре** (`StatsView.tsx` + `statsView.ts`).
+  На macOS и Windows ФС без учёта регистра: `import './StatsView'` находит `statsView.ts`, tsc падает с TS1261
+  «differs only in casing». Модуль логики — другим словом: `StatsView.tsx` + `statsFormat.ts`.
 
 ## Открытые вопросы
 

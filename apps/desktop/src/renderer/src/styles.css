@@ -24,6 +24,14 @@
   --radius: 14px;
   /* Фон терминала — совпадает с theme.background xterm в Terminal.tsx. */
   --term-bg: #1b1c21;
+  /* Серии статистики (модели, роли): фиксированный порядок, цвет следует за местом строки в разбивке. */
+  --s1: #7b86f5;
+  --s2: #5ad1cc;
+  --s3: #f08a3a;
+  --s4: #b57bee;
+  --s5: #e8b04a;
+  --s-other: #8a8d98;
+  --s-unknown: #5b5e68;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -96,9 +104,10 @@ button { font: inherit; cursor: pointer; }
   border-radius: 22px; border: 0; background: var(--accent); color: #fff; font-weight: 500; font-size: 15px;
 }
 .btn-primary:hover { background: #8791f7; }
-.tabs { display: flex; gap: 32px; margin-top: 22px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 22px; }
+/* Вкладка не ломается на две строки («О проекте»): на узком окне переносится целиком. */
 .tab {
-  background: transparent; border: 0; color: var(--muted); font-size: 16px; padding: 0 0 14px;
+  background: transparent; border: 0; color: var(--muted); font-size: 16px; padding: 0 0 14px; white-space: nowrap;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
@@ -1341,3 +1350,126 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .tt-roles { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .tt-warn { font-size: 12px; color: var(--col-input); }
 .tt-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; flex-shrink: 0; }
+
+/* ---------- вкладка «Статистика» (StatsView.tsx, вариант B макета docs/mockups/project-stats) ---------- */
+.stats-page { container: stats / inline-size; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.stats-dash { padding: 22px 32px 40px; display: flex; flex-direction: column; gap: 14px; min-width: 0; max-width: 1400px; }
+.stats-dash.refreshing > :not(.stats-top) { opacity: .55; transition: opacity .15s; }
+.stats-page .grow { flex: 1; }
+.stats-page .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+.stats-page code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.stats-top { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.stats-muted { color: var(--muted); font-size: 13px; }
+.stats-muted b { color: var(--text); font-weight: 600; }
+.stats-hint { color: var(--muted); font-size: 12px; }
+.stats-unknown { color: var(--muted); font-style: italic; font-weight: 400; }
+.stats-error { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+.stats-refresh svg { width: 16px; height: 16px; }
+.stats-chip { font-size: 11px; padding: 1px 8px; }
+.stats-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.stats-period { display: inline-flex; background: var(--frame); border-radius: 18px; padding: 3px; gap: 2px; box-shadow: inset 0 0 0 1px var(--line); }
+.stats-period button { border: 0; background: transparent; color: var(--muted); height: 28px; padding: 0 12px; border-radius: 14px; font-size: 13px; white-space: nowrap; }
+.stats-period button:hover { color: var(--text); }
+.stats-period button.on { background: var(--side-2); color: var(--text); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); }
+.stats-subtabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.stats-subtabs button { border: 1px solid transparent; background: transparent; color: var(--muted); height: 28px; padding: 0 12px; border-radius: 14px; font-size: 13px; white-space: nowrap; }
+.stats-subtabs button:hover { color: var(--text); }
+.stats-subtabs button.on { border-color: var(--chip); color: var(--text); }
+.stats-period button:focus-visible, .stats-subtabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.stats-panel { background: var(--side); border-radius: var(--radius); padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.stats-panel h3 { margin: 0; font-size: 15px; font-weight: 600; }
+
+.stats-hero { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 20px; }
+.stats-big { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.stats-big-value { font-size: 44px; font-weight: 600; letter-spacing: -.02em; line-height: 1.05; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stats-big-value small { font-size: 16px; color: var(--muted); font-weight: 500; }
+.stats-big-value .stats-unknown { font-size: 28px; }
+.stats-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 10px; }
+.stats-facts > div { display: flex; flex-direction: column; min-width: 0; }
+.stats-facts span { font-size: 12px; color: var(--muted); }
+.stats-facts b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stats-facts em { font-style: normal; font-size: 11px; color: var(--muted); }
+.stats-chart-box { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.stats-chart-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.stats-chart { position: relative; }
+.stats-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.stats-chart .ax { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.stats-chart .grid { stroke: rgba(255,255,255,.1); stroke-width: 1; }
+.stats-chart .base { stroke: var(--chip); stroke-width: 1; }
+.stats-chart .hit { fill: transparent; }
+.stats-chart .day.on .hit { fill: rgba(255,255,255,.04); }
+.stats-tip {
+  position: absolute; top: 0; transform: translateX(8px); pointer-events: none; z-index: 5; min-width: 160px;
+  background: var(--term-bg); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 8px 10px;
+  font-size: 12px; white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.stats-tip.left { transform: translateX(calc(-100% - 8px)); }
+.stats-tip b { display: block; margin-bottom: 4px; }
+.stats-tip .r { display: flex; gap: 12px; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.stats-tip .r span:first-child { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.stats-legend { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.stats-legend > span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+
+.stats-notice {
+  display: flex; gap: 10px; align-items: flex-start; background: rgba(232,176,74,.08); border: 1px solid rgba(232,176,74,.25);
+  border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--text); overflow-wrap: anywhere;
+}
+.stats-notice > svg { color: var(--col-input); flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; }
+.stats-notice p { margin: 0; }
+.stats-notice p + p { margin-top: 6px; }
+
+.stats-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.stats-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+.stats-split { display: flex; flex-direction: column; gap: 10px; }
+.stats-split .it { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; font-size: 13px; }
+.stats-split .it .n { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.stats-split .it .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats-split .it b { font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stats-split .it .stats-share { grid-column: 1 / -1; }
+.stats-share { position: relative; height: 6px; background: var(--frame); border-radius: 3px; min-width: 60px; }
+.stats-share i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
+
+.stats-stackbar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--frame); }
+.stats-stackbar i { display: block; height: 100%; min-width: 3px; }
+.stats-cols-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; font-size: 13px; }
+.stats-cols-legend > span { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.stats-cols-legend .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats-cols-legend b { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.stats-tbl-wrap { overflow-x: auto; display: flex; flex-direction: column; gap: 8px; }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.stats-table th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.1); white-space: nowrap; }
+.stats-table td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+.stats-table .r { text-align: right; font-variant-numeric: tabular-nums; }
+.stats-table td.t { white-space: normal; min-width: 160px; width: 100%; }
+.stats-table td.t .x { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: break-word; }
+.stats-table .share-col { width: 18%; min-width: 70px; }
+.stats-table tbody tr:hover td { background: rgba(255,255,255,.02); }
+
+.stats-state { text-align: center; padding: 48px 16px; color: var(--muted); display: flex; flex-direction: column; gap: 8px; align-items: center; font-size: 13px; }
+.stats-state b { color: var(--text); font-size: 16px; font-weight: 600; }
+.stats-state-icon { width: 32px; height: 32px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Две таблицы топа рядом умещаются с колонкой «доля» только от ~1000px: уже — одна под другой, иначе доля обрезается. */
+@container stats (max-width: 1000px) {
+  .stats-grid3 { grid-template-columns: 1fr 1fr; }
+  .stats-grid3 > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .stats-grid2 { grid-template-columns: minmax(0, 1fr); }
+}
+@container stats (max-width: 760px) {
+  .stats-hero, .stats-grid3, .stats-grid2 { grid-template-columns: minmax(0, 1fr); }
+  .stats-dash { padding: 18px 16px 32px; }
+  .stats-big-value { font-size: 36px; }
+}
+/* На узком окне полоска доли не помещается рядом с суммами — без неё таблица не уходит в горизонтальный скролл. */
+@container stats (max-width: 560px) {
+  .stats-table .share-col { display: none; }
+  .stats-table th { white-space: normal; }
+  .stats-table td.t { min-width: 120px; }
+  .stats-table .stats-sess { display: block; }
+}
+@media (prefers-reduced-motion: reduce) { .stats-dash.refreshing > :not(.stats-top) { transition: none; } }
