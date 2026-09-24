@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
@@ -457,93 +457,101 @@ async function pickRepoFolder(): Promise<string | null> {
   return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
 }
 
+/**
+ * `ipcMain.handle` для вызовов renderer: всё, что они меняют на доске, сделал человек в UI — так переходы
+ * попадают в историю статусов с `human` (`withStatusSource`, действует до первого await обработчика).
+ */
+function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent, ...args: A) => unknown): void {
+  ipcMain.handle(channel, (e, ...args: unknown[]) => withStatusSource('human', () => fn(e, ...(args as A))))
+}
+
 function registerIpc(): void {
-  ipcMain.handle('app:getSettings', () => projects.settings())
-  ipcMain.handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
-  ipcMain.handle('app:testNotification', () => testNotification())
-  ipcMain.handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
-  ipcMain.handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
-  ipcMain.handle('projects:inProgressCounts', () => projects.inProgressCounts())
-  ipcMain.handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  ipcMain.handle('projects:remove', (_e, id: string) => projects.remove(id))
-  ipcMain.handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
-  ipcMain.handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
-  ipcMain.handle('prompts:builtin', () => BUILTIN_PROMPTS)
-  ipcMain.handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
-  ipcMain.handle('projects:add', async (_e, typeId?: string, path?: string) => {
+  handle('app:getSettings', () => projects.settings())
+  handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
+  handle('app:testNotification', () => testNotification())
+  handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
+  handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
+  handle('projects:inProgressCounts', () => projects.inProgressCounts())
+  handle('projects:setActive', (_e, id: string) => projects.setActive(id))
+  handle('projects:remove', (_e, id: string) => projects.remove(id))
+  handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
+  handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
+  handle('prompts:builtin', () => BUILTIN_PROMPTS)
+  handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
+  handle('projects:add', async (_e, typeId?: string, path?: string) => {
     const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
     return dir ? projects.add(dir, typeof typeId === 'string' && typeId ? typeId : undefined) : null
   })
-  ipcMain.handle('projects:detectTaskType', async (_e, path?: string) => {
+  handle('projects:detectTaskType', async (_e, path?: string) => {
     const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
     return dir ? projects.detectTaskType(dir) : null
   })
-  ipcMain.handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.setProjectTaskTypes(id, input))
-  ipcMain.handle('taskTypes:list', () => projects.taskTypesState())
-  ipcMain.handle('taskTypes:save', (_e, input: TaskTypeInput) => projects.saveTaskType(input))
-  ipcMain.handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
-  ipcMain.handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
-  ipcMain.handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
+  handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.setProjectTaskTypes(id, input))
+  handle('taskTypes:list', () => projects.taskTypesState())
+  handle('taskTypes:save', (_e, input: TaskTypeInput) => projects.saveTaskType(input))
+  handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
+  handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
+  handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
 
-  ipcMain.handle('board:get', () =>
+  handle('board:get', () =>
     projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [], runs: [] }
   )
-  ipcMain.handle('runs:list', () => (projects.active() ? projects.activeStore().listRuns() : []))
-  ipcMain.handle('runs:close', (_e, runId: string) => projects.activeStore().closeRun(runId))
-  ipcMain.handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; roleId?: string; priority?: TaskPriority }) => {
+  handle('runs:list', () => (projects.active() ? projects.activeStore().listRuns() : []))
+  handle('runs:close', (_e, runId: string) => projects.activeStore().closeRun(runId))
+  handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; roleId?: string; priority?: TaskPriority }) => {
     const p = resolveProject()
     // «Входящие» — по типу проекта по умолчанию.
     const role = pickRole(projects.resolveRun(p.id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent })
   })
-  ipcMain.handle('tasks:move', (_e, id: string, status: string) => projects.activeStore().moveTask(id, status))
-  ipcMain.handle('tasks:update', (_e, id: string, patch: TaskPatch) => projects.activeStore().editTask(id, patch ?? {}))
-  ipcMain.handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
+  handle('tasks:move', (_e, id: string, status: string) => projects.activeStore().moveTask(id, status))
+  handle('tasks:update', (_e, id: string, patch: TaskPatch) => projects.activeStore().editTask(id, patch ?? {}))
+  handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
 
   // Глобальные задачи активного проекта (docs/nested-kanban.md). Изменения — в board:changed.
-  ipcMain.handle('globalTasks:list', () => (projects.active() ? projects.activeStore().listGlobalTasks() : []))
-  ipcMain.handle('globalTasks:get', (_e, id: string) => projects.activeStore().getGlobalTask(id))
-  ipcMain.handle('globalTasks:create', (_e, input: GlobalTaskInput) => {
+  handle('globalTasks:list', () => (projects.active() ? projects.activeStore().listGlobalTasks() : []))
+  handle('globalTasks:get', (_e, id: string) => projects.activeStore().getGlobalTask(id))
+  handle('globalTasks:create', (_e, input: GlobalTaskInput) => {
     const p = resolveProject()
     const { typeId, ...rest } = input ?? {}
     // Тип проверяется до создания: недоступный проекту — ошибка, задача не создаётся.
     return p.store.createGlobalTask({ ...rest, type: projects.runType(p.id, typeof typeId === 'string' && typeId ? typeId : undefined) })
   })
-  ipcMain.handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
-  ipcMain.handle('globalTasks:changeType', (_e, id: string, typeId: string) => {
+  handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
+  handle('globalTasks:changeType', (_e, id: string, typeId: string) => {
     if (typeof typeId !== 'string' || !typeId) throw new Error('укажи тип задачи')
     const p = resolveProject()
     // Тип — из библиотеки проекта, как при создании: недоступный проекту — ошибка, тип не меняется.
     return p.store.changeGlobalTaskType(id, projects.runType(p.id, typeId))
   })
-  ipcMain.handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
-  ipcMain.handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
+  handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
+  handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
     removeGlobalTask(projects.activeStore(), id, opts?.cascade === true)
   )
-  ipcMain.handle('globalTasks:tasks', (_e, id: string) => projects.activeStore().listSubtasks(id))
-  ipcMain.handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
+  handle('globalTasks:tasks', (_e, id: string) => projects.activeStore().listSubtasks(id))
+  handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
     if (!input?.title?.trim()) throw new Error('название подзадачи не может быть пустым')
     const p = resolveProject()
     const role = pickRole(projects.resolveRun(p.id, id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
   })
-  ipcMain.handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
+  handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
     runCoordinator('', undefined, cols, rows, validateImageAttachments(images), id)
   )
-  ipcMain.handle('globalTasks:accept', (_e, id: string) => projects.activeStore().acceptGlobalTask(id))
-  ipcMain.handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number) => {
+  handle('globalTasks:accept', (_e, id: string) => projects.activeStore().acceptGlobalTask(id))
+  handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number) => {
     const p = resolveProject()
     return returnToWork(p.store, p.root, ctx(p.id, id), id, typeof text === 'string' ? text : '', cols, rows).ptyId
   })
-  ipcMain.handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
-  ipcMain.handle('requests:list', (_e, opts?: RequestListOptions) => {
+  handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
+  handle('requests:list', (_e, opts?: RequestListOptions) => {
     if (!projects.active()) return []
     const store = projects.activeStore()
     return store.listRequests().filter((r) => (!opts?.runId || r.runId === opts.runId) && (!opts?.pending || r.status === 'pending'))
   })
-  ipcMain.handle('requests:resolve', (_e, id: string, resolution: RequestResolution) => resolveRequest(undefined, id, resolution))
+  handle('requests:resolve', (_e, id: string, resolution: RequestResolution) => resolveRequest(undefined, id, resolution))
 
-  ipcMain.handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
+  handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
     const p = projectId ? projects.get(projectId) : projects.active()
     return spawnPty(
       {
@@ -564,38 +572,38 @@ function registerIpc(): void {
   ipcMain.on('pty:write', (_e, id: string, data: string) => writePty(id, data))
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => resizePty(id, cols, rows))
   ipcMain.on('pty:kill', (_e, id: string) => killPty(id))
-  ipcMain.handle('terminals:list', () => terminalSnapshots())
+  handle('terminals:list', () => terminalSnapshots())
 
-  ipcMain.handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
-  ipcMain.handle('coordinator:start', (_e, objective: unknown, cols: number, rows: number, images?: unknown) => {
+  handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
+  handle('coordinator:start', (_e, objective: unknown, cols: number, rows: number, images?: unknown) => {
     // Данные из renderer не доверенные: изображения проверяются по сигнатуре и лимитам.
     const valid = validateImageAttachments(images)
     const text = typeof objective === 'string' ? objective.trim() : ''
     if (!text && valid.length === 0) throw new Error('цель не задана')
     return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
   })
-  ipcMain.handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
-  ipcMain.handle('assistant:reset', (_e, cols: number, rows: number) => openAssistant(cols, rows, true))
-  ipcMain.handle('docs:list', () => {
+  handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
+  handle('assistant:reset', (_e, cols: number, rows: number) => openAssistant(cols, rows, true))
+  handle('docs:list', () => {
     if (!projects.active()) return []
     const p = resolveProject()
     return listDocGroups(p.root, currentBranch(p.root), docTasks(p.store))
   })
-  ipcMain.handle('docs:read', (_e, source: unknown, path: unknown) => readDoc(docRoot(source), path))
-  ipcMain.handle('docs:open', async (_e, source: unknown, path: unknown) => {
+  handle('docs:read', (_e, source: unknown, path: unknown) => readDoc(docRoot(source), path))
+  handle('docs:open', async (_e, source: unknown, path: unknown) => {
     const err = await shell.openPath(resolveDocPath(docRoot(source), path))
     if (err) throw new Error(err)
   })
-  ipcMain.handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
-  ipcMain.handle('rules:list', () => listRules(resolveProject().root))
-  ipcMain.handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
-  ipcMain.handle('review:info', (_e, taskId: string) => {
+  handle('rules:list', () => listRules(resolveProject().root))
+  handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
+  handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)
   })
-  ipcMain.handle('review:accept', (_e, taskId: string, decision?: string) => reviewAccept(workflowDeps(resolveProject().id), taskId, decision))
-  ipcMain.handle('review:reject', (_e, taskId: string, feedback: string) => reviewReject(workflowDeps(resolveProject().id), taskId, feedback))
+  handle('review:accept', (_e, taskId: string, decision?: string) => reviewAccept(workflowDeps(resolveProject().id), taskId, decision))
+  handle('review:reject', (_e, taskId: string, feedback: string) => reviewReject(workflowDeps(resolveProject().id), taskId, feedback))
 }
 
 app.whenReady().then(() => {

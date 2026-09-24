@@ -68,12 +68,13 @@ interface Reply {
   }
 }
 
-function call(method: string, params: Record<string, unknown>): Promise<Reply> {
+/** `extra` — поля запроса вне params, как их шлёт CLI (dispatchId из ORCA_DISPATCH_ID). */
+function call(method: string, params: Record<string, unknown>, extra: { dispatchId?: string } = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const sock = connect(sockPath)
     let buf = ''
     sock.setEncoding('utf8')
-    sock.on('connect', () => sock.write(JSON.stringify({ id: '1', method, params }) + '\n'))
+    sock.on('connect', () => sock.write(JSON.stringify({ id: '1', method, params, ...extra }) + '\n'))
     sock.on('data', (chunk: string) => {
       buf += chunk
       const nl = buf.indexOf('\n')
@@ -339,5 +340,19 @@ describe('приоритет задачи через сокет', () => {
     assert.match((await call('global.update', { global: g.id, priority: true })).error!, /--priority требует значения/)
     assert.match((await call('global.create', { title: 'z', priority: 'asap' })).error!, /приоритет: ожидается/)
     assert.equal(((await call('global.get', { global: g.id })).result as GlobalTask).priority, 'low')
+  })
+})
+
+describe('история статусов через сокет', () => {
+  it('команда без ORCA_DISPATCH_ID — cli, с ним — worker; task get отдаёт историю', async () => {
+    const task = store.createTask({ title: 'Логин', roleId: 'developer' })
+    assert.equal((await call('task.move', { task: task.id, status: 'in_progress' })).ok, true)
+    assert.equal((await call('task.move', { task: task.id, status: 'review' }, { dispatchId: 'disp_x' })).ok, true)
+    const got = await call('task.get', { task: task.id })
+    assert.equal(got.ok, true, got.error)
+    const history = (got.result as Task).statusHistory!
+    assert.deepEqual(history.map((e) => [e.status, e.by]), [
+      ['backlog', 'app'], ['ready', 'app'], ['in_progress', 'cli'], ['review', 'worker']
+    ])
   })
 })

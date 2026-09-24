@@ -22,7 +22,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor?, statusHistory? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль типа задачи прогона (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -43,6 +43,28 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     задачи; задача в `in_progress` получает `activeSince` = начало живого dispatch (нет — `updatedAt`), и
     `closeStaleDispatches` закрывает этот отрезок при возврате в ready. Ограничение: dispatch, не переживший
     перезапуск приложения, закрывается моментом загрузки — время простоя приложения попадает в отрезок.
+  - **История статусов** (`statusHistory: StatusChange[]`, `packages/core/src/status-history.ts`) — переходы между
+    колонками от старых к новым: `{ status, at, by, stage?, migrated? }`. `status` — id колонки, `at` — epoch ms,
+    `stage` — нода воркфлоу (`stage.nodeId`) на момент перехода. Пишется в одной точке — `setStatus` (у `Run` —
+    `setRunStatus`) через `recordStatus`: тот же статус подряд не пишется, хранятся последние `STATUS_HISTORY_LIMIT`
+    (200) записей. Первая запись — при `createTask`/`addRun`. В renderer история приходит в снапшоте доски и в
+    `GlobalTask.statusHistory`, в CLI — в JSON `task get` (и `global get`), отдельных команд нет.
+    `by` (`StatusSource`) store сам не знает — его задаёт вызывающий код через `withStatusSource(source, fn)`
+    (одна переменная на процесс, вложенный вызов перекрывает внешний, вне вызова — `app`):
+
+    | `by` | Где задаётся |
+    |---|---|
+    | `human` | `handle()` в `registerIpc` (`src/main/index.ts`) — любой IPC-вызов renderer |
+    | `cli` | `handle()` в `src/main/socket.ts` — запрос без `dispatchId` (координатор или человек в терминале) |
+    | `worker` | там же — запрос с `dispatchId` (ORCA_DISPATCH_ID воркера) |
+    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts` — колонку двигает граф |
+    | `app` | всё остальное: `promoteReady` (backlog → ready), автозакрытие в `commit`, смерть PTY, миграции |
+
+    Ограничение: источник действует только в синхронной части вызова — смены статуса после `await` пишутся как `app`.
+    Миграция `migrateStatusHistory` (первой в конструкторе, чтобы переходы остальных миграций легли после неё):
+    задаче и прогону без истории — одна запись текущей колонки с `migrated: true` и `at = updatedAt`. Прошлые
+    переходы не восстановить, а пустая история читалась бы как «статус не менялся»; прогон без `status` получает
+    колонку в `migrateGlobalTasks` обычным переходом.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
   - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
@@ -64,7 +86,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, ... }` — прогон:
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -72,6 +94,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     открыт, пока карточка показана в `kind=in_progress` (в «Нужен ответ» стоит). Пересчёт — `syncRunActiveTime` в
     `commit()`, миграция — `migrateRunActiveTime`. В `GlobalTask` — `ownActiveMs`/`ownActiveSince`, рядом сумма
     подзадач `subtasksActiveMs`/`subtasksActiveSince` (`docs/nested-kanban.md`, «Тип GlobalTask»).
+  - `statusHistory` — история хранимых колонок карточки, как у `Task` (без `stage`). «Нужен ответ» карточка получает
+    на лету по запросам (`globalDisplayStatus`), в историю он не попадает.
   - `startedAt` — первый вход в работу: ставится в `syncRunActiveTime` при открытии отрезка и не снимается; миграция
     `migrateRunStarted` помечает прогоны от старого кода с координатором, подзадачами, своим временем или не в бэклоге.
     По нему `canChangeRunType` решает, можно ли сменить тип (`changeGlobalTaskType`, `docs/nested-kanban.md` → «Смена типа»).
@@ -469,7 +493,7 @@ orca-board types list                       # типы задач, доступ�
 orca-board roles list [--run <id>] [--type <id>]   # роли типа прогона: [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board workflow show [--run <id>] [--type <id>]   # {source: run|type, run?, typeId, typeTitle, stages: WfStageInfo[]} — этапы задачи после worker_done
-orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor
+orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor, statusHistory
 orca-board rules get [--type <id>] [--run <id>] [--role <id>]   # правила агентов типа: общие ({typeId,typeTitle,rules}) или роли (+ role, title)
 orca-board rules set [--type <id>] [--run <id>] [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]

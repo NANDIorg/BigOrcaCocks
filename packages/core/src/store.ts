@@ -9,6 +9,7 @@ import {
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
+import { recordStatus, withStatusSource } from './status-history.ts'
 import {
   defaultWorkflow, nextStage, startStage, wfNodeTitle, type WfAction, type WfOutcome, type WfStage, type Workflow
 } from './workflow.ts'
@@ -134,6 +135,8 @@ export class TaskStore {
       snap.runs?.forEach((r) => this.runs.set(r.id, r))
       snap.requests?.forEach((r) => this.requests.set(r.id, r))
       this.events = snap.events ?? []
+      // Первой: переходы остальных миграций (воркер умер — задача в ready) ложатся в историю после стартовой записи.
+      const history = this.migrateStatusHistory()
       // До closeStaleDispatches: задача «В работе» от старого кода должна войти в него с открытым отрезком.
       const active = this.migrateActiveTime()
       const priority = this.migrateTaskPriority()
@@ -146,8 +149,27 @@ export class TaskStore {
       const own = this.migrateRunActiveTime()
       const started = this.migrateRunStarted()
       const synced = this.syncRunActiveTime()
-      if (active || priority || runPriority || stale || requests || stages || migrated || own || started || synced) this.persistence?.save(this.snapshot())
+      if (history || active || priority || runPriority || stale || requests || stages || migrated || own || started || synced) this.persistence?.save(this.snapshot())
     }
+  }
+
+  /**
+   * Задачи и глобальные задачи от кода до истории статусов получают стартовую запись: текущая колонка с
+   * `migrated: true` на момент последней правки (`updatedAt`). Прошлые переходы не восстановить — они нигде не
+   * журналировались, а пустая история выглядела бы как «статус не менялся с создания». Запись с отметкой
+   * честно говорит «была в этой колонке уже тогда», и следующий переход ляжет после неё. Прогон без status
+   * (снапшот до глобальных задач) пропускается: колонку ему даёт `migrateGlobalTasks`, и она попадёт в историю
+   * обычным переходом. Возвращает true, если что-то поменялось.
+   */
+  private migrateStatusHistory(): boolean {
+    let changed = false
+    const start = (entity: Task | Run, status: TaskStatus): void => {
+      entity.statusHistory = [{ status, at: entity.updatedAt ?? entity.createdAt, by: 'app', migrated: true }]
+      changed = true
+    }
+    for (const task of this.tasks.values()) if (task.statusHistory === undefined) start(task, task.status)
+    for (const run of this.runs.values()) if (run.statusHistory === undefined && run.status !== undefined) start(run, run.status)
+    return changed
   }
 
   /**
@@ -345,7 +367,7 @@ export class TaskStore {
     let changed = false
     for (const run of this.runs.values()) {
       if (run.status === undefined) {
-        run.status = this.columnId(run.closedAt !== undefined ? 'done' : 'in_progress')
+        this.setRunStatus(run, this.columnId(run.closedAt !== undefined ? 'done' : 'in_progress'))
         run.updatedAt ??= run.createdAt
         changed = true
         continue
@@ -353,7 +375,7 @@ export class TaskStore {
       // Глобальная задача из колонки подзадач (ready/needs_input/review/custom) — в ближайшую колонку глобального канбана.
       const status = globalTaskStatus(run.status, this.columns())
       if (status !== undefined && status !== run.status) {
-        run.status = status
+        this.setRunStatus(run, status)
         changed = true
       }
     }
@@ -364,7 +386,7 @@ export class TaskStore {
       const tasks = [...this.tasks.values()].filter((t) => t.runId === inbox.id)
       const allDone = tasks.every((t) => this.isKind(t, 'done'))
       if (allDone) inbox.closedAt ??= Date.now()
-      inbox.status = this.columnId(allDone ? 'done' : 'in_progress')
+      this.setRunStatus(inbox, this.columnId(allDone ? 'done' : 'in_progress'))
       changed = true
     }
     return changed
@@ -376,7 +398,8 @@ export class TaskStore {
   }
 
   private commit(): void {
-    this.closeFinishedRuns()
+    // Автозакрытие прогона — решение приложения, а не того, чья команда закрыла последнюю подзадачу.
+    withStatusSource('app', () => this.closeFinishedRuns())
     this.syncRunActiveTime()
     this.persistence?.save(this.snapshot())
     this.listeners.forEach((fn) => fn())
@@ -413,11 +436,13 @@ export class TaskStore {
   }
 
   /**
-   * Все смены статуса идут здесь: следим за doneAt при входе/выходе из колонки done и за временем работы
+   * Все смены статуса идут здесь: пишем историю (`recordStatus`, источник — `withStatusSource` вызывающего кода),
+   * следим за doneAt при входе/выходе из колонки done и за временем работы
    * (отрезок открыт, пока задача в kind=in_progress, — `trackActiveTime`).
    */
   private setStatus(task: Task, status: TaskStatus): void {
     task.status = status
+    recordStatus(task, status, Date.now(), task.stage ? { stage: task.stage.nodeId } : {})
     trackActiveTime(task, this.columnKind(status) === 'in_progress', Date.now())
     if (this.columnKind(status) === 'done') {
       // Сделанной задаче ждать от человека нечего (перенесли вручную, приняли).
@@ -428,6 +453,15 @@ export class TaskStore {
       task.doneAt ??= Date.now()
     } else task.doneAt = undefined
     task.updatedAt = Date.now()
+  }
+
+  /**
+   * Все смены колонки глобальной задачи идут здесь — ради истории статусов (`recordStatus`). Время работы
+   * прогона считается не тут, а одним проходом в commit (`syncRunActiveTime`): «Нужен ответ» зависит ещё и от запросов.
+   */
+  private setRunStatus(run: Run, status: TaskStatus): void {
+    run.status = status
+    recordStatus(run, status, Date.now())
   }
 
   // ---------- tasks ----------
@@ -488,6 +522,7 @@ export class TaskStore {
       createdAt: now,
       updatedAt: now
     }
+    recordStatus(task, task.status, now)
     this.tasks.set(task.id, task)
     // Новая работа в закрытой глобальной задаче (или после run_done, пока координатор решал): прогон снова открыт,
     // run_done придёт по её завершении.
@@ -554,7 +589,7 @@ export class TaskStore {
     }
     for (const run of this.runs.values()) {
       if (run.status !== fromId) continue
-      run.status = toId
+      this.setRunStatus(run, toId)
       run.updatedAt = Date.now()
       moved += 1
     }
@@ -577,6 +612,11 @@ export class TaskStore {
    * её воркера запускает исполнитель воркфлоу сразу после создания, координатору делать нечего.
    */
   private promoteReady(): void {
+    // Задачу двигают закрытые зависимости, а не тот, чей вызов их закрыл.
+    withStatusSource('app', () => this.promoteReadyTasks())
+  }
+
+  private promoteReadyTasks(): void {
     for (const task of this.tasks.values()) {
       if (!this.isKind(task, 'backlog')) continue
       const depsDone = task.deps.every((d) => {
@@ -737,6 +777,7 @@ export class TaskStore {
   /** Новый прогон без commit. Статус по умолчанию — колонка kind=backlog. */
   private addRun(fields: Partial<Omit<Run, 'id' | 'createdAt'>> & { objective: string }, createdAt = Date.now()): Run {
     const run: Run = { status: this.columnId('backlog'), priority: DEFAULT_TASK_PRIORITY, ...fields, id: newId('run'), createdAt, updatedAt: createdAt }
+    if (run.status !== undefined) recordStatus(run, run.status, createdAt)
     this.runs.set(run.id, run)
     return run
   }
@@ -769,7 +810,7 @@ export class TaskStore {
     run.runDoneAt = undefined
     run.finishedAt = undefined
     run.reopenedAt = Date.now()
-    if (run.status === undefined || this.isClosedKind(run)) run.status = this.columnId('in_progress')
+    if (run.status === undefined || this.isClosedKind(run)) this.setRunStatus(run, this.columnId('in_progress'))
     run.updatedAt = Date.now()
   }
 
@@ -782,7 +823,7 @@ export class TaskStore {
     if (run.closedAt !== undefined || run.runDoneAt !== undefined) this.reopenRun(run)
     run.coordinatorPtyId = ptyId
     run.coordinatorAgent = agent
-    run.status = this.columnId('in_progress')
+    this.setRunStatus(run, this.columnId('in_progress'))
     run.updatedAt = Date.now()
     this.commit()
     return run
@@ -890,7 +931,7 @@ export class TaskStore {
     } else if (run.closedAt !== undefined) {
       this.reopenRun(run)
     }
-    run.status = status
+    this.setRunStatus(run, status)
     run.updatedAt = Date.now()
     this.commit()
     return this.getGlobalTask(id)
@@ -903,7 +944,7 @@ export class TaskStore {
   acceptGlobalTask(id: string): GlobalTask {
     const run = this.mustRun(id)
     if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — подтвердить можно только из колонки «Проверка»`)
-    run.status = this.columnId('done')
+    this.setRunStatus(run, this.columnId('done'))
     run.updatedAt = Date.now()
     this.commit()
     return this.getGlobalTask(id)
@@ -924,7 +965,7 @@ export class TaskStore {
     const at = Date.now()
     run.returns = [...(run.returns ?? []), { at, text: clarification }]
     this.reopenRun(run)
-    run.status = this.columnId('in_progress')
+    this.setRunStatus(run, this.columnId('in_progress'))
     this.commit()
     return this.getGlobalTask(id)
   }
@@ -983,7 +1024,7 @@ export class TaskStore {
     if (run.closedAt === undefined) {
       run.closedAt = Date.now()
       run.runDoneAt = undefined
-      if (run.status !== undefined && this.globalKind(run) === 'in_progress') run.status = this.columnId('done')
+      if (run.status !== undefined && this.globalKind(run) === 'in_progress') this.setRunStatus(run, this.columnId('done'))
       run.updatedAt = run.closedAt
       this.commit()
     }
@@ -1086,7 +1127,7 @@ export class TaskStore {
     run.closedAt = Date.now()
     run.reopenedAt = undefined
     run.runDoneAt = undefined
-    run.status = status
+    this.setRunStatus(run, status)
     run.updatedAt = run.closedAt
     if (run.inbox || !notify) return undefined
     return this.pushEvent('run_done', { runId: run.id, objective: run.objective, ...(manual ? { manual: true } : {}) })

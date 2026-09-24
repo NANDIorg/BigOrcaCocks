@@ -3,7 +3,7 @@
  * Глобальная задача — это прогон (`Run`), её подзадачи — задачи с `Task.runId === run.id`.
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
-import type { BoardColumn, ColumnKind, HumanRequest, Run, Task, TaskPriority } from './types'
+import type { BoardColumn, ColumnKind, HumanRequest, Run, StatusChange, Task, TaskPriority } from './types'
 import { DEFAULT_TASK_PRIORITY, isTaskPriority } from './types.ts'
 import { activeDuration, taskActiveTime } from './active-time.ts'
 
@@ -91,6 +91,11 @@ export interface GlobalTask {
   returns?: GlobalTaskReturn[]
   /** Итоговая сводка координатора (`Run.summary`); нет — не передавал. */
   summary?: GlobalTaskSummary
+  /**
+   * История смены колонки (`Run.statusHistory`, копия): хранимые статусы — «Нужен ответ» карточка получает на лету
+   * по запросам, в истории его нет. Нет — прогон от старого main (renderer обновился по HMR раньше).
+   */
+  statusHistory?: StatusChange[]
   progress: GlobalTaskProgress
   /**
    * Основное время — сколько сама глобальная задача была в работе (`Run.activeMs`): закрытые отрезки, мс.
@@ -303,6 +308,7 @@ export function toGlobalTask(
     coordinatorAgent: run.coordinatorAgent,
     ...(run.returns && run.returns.length > 0 ? { returns: run.returns.map((r) => ({ ...r })) } : {}),
     ...(run.summary ? { summary: { ...run.summary } } : {}),
+    ...(run.statusHistory ? { statusHistory: run.statusHistory.map((h) => ({ ...h })) } : {}),
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),
