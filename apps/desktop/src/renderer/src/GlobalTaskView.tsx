@@ -20,10 +20,20 @@ interface Props {
   statusKind?: ColumnKind
   /** Живой координатор этой глобальной задачи (ptyId), если есть. */
   coordinatorPty?: string
+  /** Запуски координатора (`Run.coordinatorSessions`) — пилюля в шапке и события «Истории». Со старым main поля нет. */
+  coordinatorSessions?: AgentSession[]
+  /** Колонки глобального канбана (`globalBoardColumns`) — шаги степпера статуса в шапке. */
+  globalColumns?: BoardColumn[]
   onBack(): void
   onEdit(): void
+  /** Клик по шагу степпера: перенести задачу в колонку. */
+  onMove(status: string): void
   onStartCoordinator(): void
   onShowCoordinator(ptyId: string): void
+  /** «■ Остановить» координатора (после подтверждения в шапке). */
+  onStopCoordinator(ptyId: string): void
+  /** «⋯ → Удалить задачу…». */
+  onRemove?(): void
   /** «Подтвердить» на «Проверке». */
   onAccept(): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
@@ -52,8 +62,6 @@ interface Props {
   onStartTask(task: Task): void | Promise<void>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
-  /** Запуски координатора (`Run.coordinatorSessions`) — события вкладки «История»; нет — запусков в ленте нет. */
-  coordinatorSessions?: AgentSession[]
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
   children: React.ReactNode
 }
@@ -153,12 +161,18 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       <GlobalTaskHeader
         global={global}
         statusKind={statusKind}
+        columns={props.globalColumns}
         coordinatorPty={coordinatorPty}
+        coordinatorSessions={props.coordinatorSessions}
+        attentionCount={attention.length}
         typeTitle={typeTitle}
         onBack={onBack}
         onEdit={props.onEdit}
+        onMove={props.onMove}
         onStartCoordinator={props.onStartCoordinator}
         onShowCoordinator={props.onShowCoordinator}
+        onStopCoordinator={props.onStopCoordinator}
+        onRemove={props.onRemove}
         onAccept={props.onAccept}
         onReturn={props.onReturn}
       />
