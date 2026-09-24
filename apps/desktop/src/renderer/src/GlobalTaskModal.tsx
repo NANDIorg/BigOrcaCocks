@@ -6,7 +6,7 @@ import {
 } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { GlobalDuration } from './GlobalBoard'
-import { GlobalReturns } from './GlobalTaskView'
+import { GlobalReturns } from './GlobalOverview'
 import { globalTaskActions } from './globalReview'
 import { formatStamp } from './boardSort'
 import { PriorityOptions } from './Priority'
