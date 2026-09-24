@@ -859,6 +859,7 @@ export function App(): React.JSX.Element {
               onRejectTask={(id, fb) => window.orca.review.reject(id, fb)}
               onStartTask={startTask}
               typeTitle={globalTypeTitle(openGlobal, taskTypes)}
+              coordinatorSessions={snap.runs.find((r) => r.id === openGlobal.id)?.coordinatorSessions}
             >
               <Board
                 columns={columns}
