@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTaskType, defaultWorkflow,
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, defaultWorkflow,
   type Role, type Task, type Workflow
 } from '@orca-board/core'
 import { enterWork, handleWorkflowEvents, reviewAccept, reviewReject, approvalResolved, type WorkflowDeps } from './workflow'
@@ -320,7 +320,7 @@ describe('сценарий 2: один проект, две глобальные
     const pm = newProjectManager()
     const pid = pm.add(repo).id
     // Исполнителя встроенного типа меняют на месте, без копии.
-    const docs = builtinTaskType('docs')!
+    const docs = presetTaskType('docs')!
     pm.saveTaskType({
       id: 'docs', title: docs.title, description: docs.description,
       settings: {
@@ -329,7 +329,7 @@ describe('сценарий 2: один проект, две глобальные
           r.id === 'coordinator' ? { ...r, agent: 'codex', model: 'gpt-5.5' } : r.id === 'writer' ? { ...r, model: 'haiku' } : r)
       }
     })
-    const backend = builtinTaskType('backend')!
+    const backend = presetTaskType('backend')!
     pm.saveTaskType({
       id: 'backend', title: backend.title, description: backend.description,
       settings: { ...backend.settings, roles: backend.settings.roles!.map((r) => (r.id === 'coordinator' ? { ...r, model: 'opus' } : r)) }
@@ -467,16 +467,16 @@ describe('сценарий 3: тип удалён посреди прогона'
   })
 })
 
-describe('сценарий 3а: встроенный тип изменили и сбросили посреди прогона', () => {
-  it('снимок типа и граф запущенной задачи не меняются; новая задача берёт правку, после сброса — дефолт', () => {
+describe('сценарий 3а: заготовку типа изменили и удалили посреди прогона', () => {
+  it('снимок типа и граф запущенной задачи не меняются; новая задача берёт правку; после удаления задачи идут по снимку', () => {
     const pm = newProjectManager()
     const pid = pm.add(repo).id
     const h = appHarness(pm, pid)
-    const backend = builtinTaskType('backend')!
+    const backend = presetTaskType('backend')!
     const runOld = startCoordinator(pm, h, pid, 'До правки', 'backend')
     const before = structuredClone(h.store.getRun(runOld)!)
 
-    // Полная правка встроенного: название, состав ролей (без qa), граф без гейта тестов, разрешения.
+    // Полная правка заготовки: название, состав ролей (без qa), граф без гейта тестов, разрешения.
     const roles = (backend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa')
     pm.saveTaskType({ id: 'backend', title: 'Бэкенд без QA', settings: { roles, workflow: defaultWorkflow(roles), permissionMode: 'acceptEdits' } })
     const after = h.store.getRun(runOld)!
@@ -489,13 +489,19 @@ describe('сценарий 3а: встроенный тип изменили и 
     assert.deepEqual(h.store.getRun(runNew)?.taskType?.roles.map((r) => r.id), roles.map((r) => r.id))
     assert.equal(h.store.getRun(runNew)?.taskType?.permissionMode, 'acceptEdits')
 
-    // «Сбросить к системному»: снимки обеих задач не трогаются, тип снова из кода.
+    // Удаление заготовки: снимки обеих задач не трогаются, тип из кода не возвращается, название — из снимка.
     const newBefore = structuredClone(h.store.getRun(runNew)!)
     pm.deleteTaskType('backend')
-    assert.deepEqual(pm.taskType('backend'), builtinTaskType('backend'))
+    assert.equal(pm.taskType('backend'), undefined)
     assert.deepEqual(h.store.getRun(runOld)?.taskType, before.taskType)
     assert.deepEqual(h.store.getRun(runNew)?.taskType, newBefore.taskType)
     assert.deepEqual(h.store.getRun(runNew)?.workflow, newBefore.workflow)
+    const resolved = pm.resolveRun(pid, runNew)
+    assert.equal(resolved.source, 'snapshot')
+    assert.equal(resolved.title, 'Бэкенд без QA')
+    assert.deepEqual(resolved.roles.map((r) => r.id), roles.map((r) => r.id))
+    assert.equal(h.store.getGlobalTask(runOld).typeTitle, backend.title, 'карточка показывает название из снимка')
+    assert.throws(() => pm.runType(pid, 'backend'), /не найден/)
   })
 })
 

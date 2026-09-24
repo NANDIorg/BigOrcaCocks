@@ -1,18 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, type AgentInfo, type Role, type TaskType
+  DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, type AgentInfo, type Role, type TaskType
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 import {
   TASK_TYPES_STALE_MESSAGE, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
-  hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, overridesBuiltinType, patchedTaskType, pickTaskTypeId,
-  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, splitTaskTypes, taskTypeLibraryApi,
+  hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, patchedTaskType, pickTaskTypeId,
+  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi,
   taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey
 } from './taskTypeEdit'
 
-const general = builtinTaskType('general')!
-const frontend = builtinTaskType('frontend')!
+const general = presetTaskType('general')!
+const frontend = presetTaskType('frontend')!
 const own: TaskType = {
   id: 'type_1', title: 'Мой', description: 'для сервисов',
   settings: { permissionMode: 'acceptEdits', agentRules: 'правило' }
@@ -55,23 +55,13 @@ test('переименование: пустое название — ошибк
   assert.equal('description' in r, false)
 })
 
-test('встроенные отдельно от своих; изменённый встроенный — среди встроенных, удаление сбросит к системному', () => {
-  const generalCopy: TaskType = { ...general, builtin: undefined }
-  assert.deepEqual(splitTaskTypes([generalCopy, frontend, own]).builtin.map((t) => t.id), ['general', 'frontend'])
-  assert.deepEqual(splitTaskTypes([generalCopy, frontend, own]).own.map((t) => t.id), ['type_1'])
-  assert.equal(overridesBuiltinType(generalCopy), true)
-  assert.equal(overridesBuiltinType(general), false)
-  assert.equal(overridesBuiltinType(own), false)
-})
-
-test('ключ редакторов не меняется, когда встроенный становится изменённым, и меняется по rev', () => {
-  const copy: TaskType = { ...frontend, builtin: undefined }
-  assert.equal(typeEditorKey(copy), typeEditorKey(frontend))
-  assert.notEqual(typeEditorKey(frontend, 1), typeEditorKey(frontend, 0))
+test('ключ редакторов — по id типа: правка типа его не меняет, у разных типов разный', () => {
+  const renamed: TaskType = { ...frontend, title: 'Другое' }
+  assert.equal(typeEditorKey(renamed), typeEditorKey(frontend))
   assert.notEqual(typeEditorKey(own), typeEditorKey(frontend))
 })
 
-test('встроенный тип правится целиком: patchedTaskType и renamedTaskType сохраняют его id', () => {
+test('заготовка правится целиком: patchedTaskType и renamedTaskType сохраняют его id', () => {
   const roles = [...(frontend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa'), { id: 'designer', title: 'Дизайнер', agent: 'claude' as const }]
   const input = patchedTaskType(frontend, { roles, permissionMode: 'acceptEdits', workflow: null })
   assert.equal(input.id, 'frontend')
@@ -145,17 +135,18 @@ test('подтверждение удаления говорит о проект
   assert.equal(c.title, 'Удалить тип «Мой»?')
   assert.equal(c.action, 'Удалить')
   const text = c.lines.join('\n')
-  assert.ok(text.includes(`им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title}»`))
+  assert.ok(text.includes(`им станет «${general.title}»`))
   assert.match(text, /проектах \(2\)/)
   assert.match(text, /по снимку/)
+  assert.match(text, /не вернётся/)
 })
 
-test('изменённый встроенный: вместо удаления — «Сбросить к системному», проекты остаются на типе', () => {
-  const c = typeRemovalConfirm({ ...general, builtin: undefined, title: 'Мой общий' }, state, { asDefault: 2, available: 3 })
-  assert.equal(c.title, 'Сбросить «Мой общий» к системному?')
-  assert.equal(c.action, 'Сбросить')
+test('заготовка удаляется так же, как свой тип; удалили тип по умолчанию «Программирование» — им станет первый оставшийся', () => {
+  const c = typeRemovalConfirm(general, state, { asDefault: 2, available: 3 })
+  assert.equal(c.title, `Удалить тип «${general.title}»?`)
+  assert.equal(c.action, 'Удалить')
   const text = c.lines.join('\n')
-  assert.match(text, new RegExp(`к встроенному типу «${general.title}»`))
-  assert.match(text, /останутся на нём/)
-  assert.doesNotMatch(text, /перейдут на тип библиотеки/)
+  assert.ok(text.includes(`им станет «${frontend.title}»`))
+  assert.match(text, /перейдут на тип библиотеки/)
+  assert.doesNotMatch(text, /к системному/)
 })

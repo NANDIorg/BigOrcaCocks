@@ -6,7 +6,7 @@ import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
 import { NavItem, storeSection, type NavEntry } from '../about/parts'
 import {
-  SETTINGS_SECTION_KEY, TASK_TYPE_TABS, libraryRoles, settingsTypeSection, pickTaskTypeId, splitTaskTypes, taskTypeUsage, type TaskTypeTab
+  SETTINGS_SECTION_KEY, TASK_TYPE_TABS, libraryRoles, settingsTypeSection, pickTaskTypeId, taskTypeUsage, type TaskTypeTab
 } from '../taskTypeEdit'
 import { GeneralSection } from './GeneralSection'
 import { NotificationsSection } from './NotificationsSection'
@@ -126,7 +126,6 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
   const usage = state ? taskTypeUsage(projectList, state) : {}
   const currentId = state && section.startsWith(TYPE) ? pickTaskTypeId(state, section.slice(TYPE.length)) : null
   const current: TaskType | undefined = state?.taskTypes.find((t) => t.id === currentId)
-  const { builtin, own } = splitTaskTypes(state?.taskTypes ?? [])
 
   // Роли для фильтра уведомлений: роли всех типов библиотеки; старый main без типов — встроенные.
   const notifyRoles: Role[] = state ? libraryRoles(state.taskTypes) : DEFAULT_ROLES
@@ -190,9 +189,7 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
                 <NavItem item={{ id: `${TYPE}`, label: 'Типы задач', icon: Icon.layers }} current={navCurrent} onGo={go} />
               ) : (
                 <div className="tpl-nav">
-                  {builtin.map(typeItem)}
-                  {own.length > 0 && <div className="about-nav-group tpl-nav-sub">Свои</div>}
-                  {own.map(typeItem)}
+                  {state?.taskTypes.map(typeItem)}
                   <button type="button" className="about-nav-item tpl-nav-add" disabled={!state} onClick={() => void createType()}>
                     <Icon.plus />
                     <span className="about-nav-label">Новый тип</span>

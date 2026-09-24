@@ -6,7 +6,7 @@ import { ipcErrorMessage } from '../useAutoSave'
 import { SectionHead, Switch, storeSection } from './parts'
 import {
   SETTINGS_SECTION_KEY, TASK_TYPES_STALE_MESSAGE, allTypesInput, defaultTypeInput, hasProjectTaskTypes, isTypeAvailable,
-  overridesBuiltinType, projectDefaultTypeId, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi, taskTypesError,
+  projectDefaultTypeId, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi, taskTypesError,
   settingsTypeSection, toggledProjectTypes
 } from '../taskTypeEdit'
 
@@ -118,8 +118,6 @@ export function TaskTypesSection({ project, agents, onProjectChanged }: Props): 
               <div className="tt-text">
                 <div className="tt-title">
                   <b>{t.title}</b>
-                  {t.builtin && <span className="chip sys">встроенный</span>}
-                  {overridesBuiltinType(t) && <span className="chip sys">изменённый встроенный</span>}
                   {isDef && <span className="chip ok">по умолчанию</span>}
                 </div>
                 {t.description && <span className="hint">{t.description}</span>}

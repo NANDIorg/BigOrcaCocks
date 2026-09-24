@@ -26,7 +26,7 @@ interface Props {
 
 /**
  * «Типы задач → Воркфлоу»: холст и инспектор графа типа. Сохраняется кнопкой: промежуточный граф почти всегда
- * невалиден. Встроенный тип — только просмотр: холст не меняет граф, инспектор недоступен. Компонент монтируется
+ * невалиден. `readOnly` — только просмотр: холст не меняет граф, инспектор недоступен. Компонент монтируется
  * с `key` по id типа, поэтому черновик другого типа сюда не протекает.
  */
 export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, onSave }: Props): React.JSX.Element {
@@ -147,7 +147,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
             onSelect={setSelection}
             issues={issues}
           />
-          {/* Встроенный тип: инспектор показывает выбранную ноду, но поля недоступны. */}
+          {/* Только просмотр: инспектор показывает выбранную ноду, но поля недоступны. */}
           <fieldset className="tpl-fieldset" disabled={readOnly}>
             <WorkflowInspector
               workflow={draft}

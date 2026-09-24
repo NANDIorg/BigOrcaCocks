@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, LEGACY_TASK_TYPE_DESCRIPTION, TaskStore, builtinTaskTypes,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, LEGACY_TASK_TYPE_DESCRIPTION, TaskStore, presetTaskTypes,
   defaultWorkflow, type Role, type Workflow
 } from '@orca-board/core'
 import { PROJECTS_FILE_VERSION, legacyTaskTypeId, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
@@ -63,7 +63,7 @@ describe('migrateProjectsFile', () => {
     const title = (id: string): string => data.taskTypes!.find((t) => t.id === legacyTaskTypeId(id))!.title
     assert.equal(title('a'), 'api')
     assert.equal(title('c'), 'api (2)')
-    assert.ok(builtinTaskTypes().some((t) => t.title === 'Программирование'))
+    assert.ok(presetTaskTypes().some((t) => t.title === 'Программирование'))
     assert.equal(title('b'), 'Программирование (2)')
   })
 
@@ -121,9 +121,8 @@ describe('миграция в ProjectManager', () => {
     assert.equal(r.agentRules, 'свои')
     assert.equal(r.permissionMode, 'bypassPermissions')
     assert.deepEqual(pm.taskTypeWorkflow(pm.projectDefaultTypeId(PID)).workflow, qaWorkflow())
-    // Старый `defaults` → копия встроенного `general` (без колонок и агентов), он же тип библиотеки по умолчанию.
+    // Старый `defaults` → тип `general` (без колонок и агентов), он же тип библиотеки по умолчанию.
     const general = pm.taskType(GENERAL_TASK_TYPE_ID)!
-    assert.equal(general.builtin, undefined)
     assert.deepEqual(general.settings, { agentRules: 'общие' })
     assert.equal(pm.defaultTaskTypeId(), GENERAL_TASK_TYPE_ID)
   })

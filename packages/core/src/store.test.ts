@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
 import { defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
-import { builtinTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
+import { presetTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
 
 /** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
 function memory(initial?: Partial<StoreSnapshot>): Persistence & { data: Partial<StoreSnapshot> | null } {
@@ -102,7 +102,7 @@ describe('тип задачи в прогоне', () => {
 
   it('две задачи разных прогонов идут разными графами', () => {
     const s = store()
-    const review = s.createRun('код', undefined, runTypeInput(builtinTaskType('general')!))
+    const review = s.createRun('код', undefined, runTypeInput(presetTaskType('general')!))
     const eyes = s.createRun('доки', undefined, runTypeInput(docs))
     const a = s.createTask({ title: 'Код', runId: review.id })
     const b = s.createTask({ title: 'Доки', runId: eyes.id })
@@ -125,7 +125,7 @@ describe('тип задачи в прогоне', () => {
     const s = store(p)
     const old = s.createRun('старый', undefined, withLimit())
     const bare = s.createRun('до воркфлоу')
-    const typed = s.createRun('с типом', undefined, runTypeInput(builtinTaskType('backend')!))
+    const typed = s.createRun('с типом', undefined, runTypeInput(presetTaskType('backend')!))
     const task = s.createTask({ title: 'Во «Входящих»' })
     const legacy = { typeId: 'type_p1', snapshot: snapshotTaskType(docs) }
 

@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, builtinTaskType, builtinTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 
 let tmp: string
@@ -45,9 +45,9 @@ function fakeDeps(): ProjectDeps {
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
-    resolveRun: () => ({ ...resolveTaskType(builtinTaskType('general')!), roles, workflow: defaultWorkflow(roles), source: 'default' }),
-    taskTypes: () => ({ taskTypes: builtinTaskTypes(), defaultTypeId: 'general' }),
-    runType: () => runTypeInput(builtinTaskType('general')!),
+    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: defaultWorkflow(roles), source: 'default' }),
+    taskTypes: () => ({ taskTypes: presetTaskTypes(), defaultTypeId: 'general' }),
+    runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
     workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: defaultWorkflow(roles), custom: false })

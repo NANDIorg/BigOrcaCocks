@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
-  GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypeFingerprint, builtinTaskTypes,
+  GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
@@ -60,11 +60,16 @@ export interface ProjectsFile {
   /** Версия формата (`PROJECTS_FILE_VERSION`); нет — файл до типов задач, его переводит миграция в `load()`. */
   version?: number
   /**
-   * Пользовательские типы. Встроенные (`builtinTaskTypes`) не хранятся — обновляются вместе с приложением.
-   * Пользовательский тип с id встроенного подменяет его целиком («изменённый встроенный», с `builtinBase`).
+   * Библиотека типов задач — вся, в порядке показа. Заготовки (`presetTaskTypes`) попадают сюда один раз
+   * (`seededTaskTypes`) и дальше ничем не отличаются от созданных человеком. Пустой после загрузки не бывает.
    */
   taskTypes?: TaskType[]
-  /** Тип библиотеки по умолчанию (новые проекты, ассистент); нет или удалён — `general`. */
+  /**
+   * Заготовки типов уже положены в библиотеку. Без флага засев повторялся бы при каждой загрузке, и удалённая
+   * заготовка возвращалась бы после рестарта. Нет флага — файл от версии, где встроенные типы жили в коде.
+   */
+  taskTypesSeeded?: boolean
+  /** Тип библиотеки по умолчанию (новые проекты, ассистент); нет или удалён — `general`, иначе первый тип. */
   defaultTaskTypeId?: string
   /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
   settings?: Partial<AppSettings>
@@ -72,7 +77,7 @@ export interface ProjectsFile {
 
 /** projects.json до типов задач: поля, которые читает только миграция. */
 interface RawProjectsFile extends Omit<LegacyProjectsFile, 'templates'> {
-  /** Старый глобальный дефолт для новых проектов — переносится в копию встроенного `general` (`normalizeLegacy`). */
+  /** Старый глобальный дефолт для новых проектов — переносится в тип `general` (`normalizeLegacy`). */
   defaults?: Record<string, unknown>
   /** Шаблоны проектов: в файле — с колонками и агентами, после `normalizeLegacy` — уже типы. */
   templates?: unknown
@@ -109,7 +114,7 @@ export class ProjectManager {
 
   /** Файл целиком; `legacyText` — исходный текст, если файл был старого формата и его перевели на типы задач. */
   private load(): { data: ProjectsFile; legacyText?: string } {
-    if (!existsSync(this.file)) return { data: { projects: [], activeId: null, version: PROJECTS_FILE_VERSION } }
+    if (!existsSync(this.file)) return { data: emptyProjectsFile() }
     try {
       const text = readFileSync(this.file, 'utf8')
       const raw = JSON.parse(text) as RawProjectsFile
@@ -120,13 +125,14 @@ export class ProjectManager {
       const { data, changed } = migrateProjectsFile(raw as LegacyProjectsFile)
       // Типы чистятся при каждой загрузке по разделам (`loadedTaskType`): битый раздел не уносит тип целиком,
       // иначе проект молча уехал бы на тип по умолчанию, а его роли и правила пропали бы при первой же записи.
-      data.taskTypes = Array.isArray(data.taskTypes) ? data.taskTypes.flatMap(loadedTaskType).map(migratedBuiltinOverride) : []
-      if (!data.taskTypes.length) delete data.taskTypes
+      const rawTypes: unknown[] = Array.isArray(data.taskTypes) ? data.taskTypes : []
+      data.taskTypes = seededTaskTypes(rawTypes.flatMap(loadedTaskType), data.taskTypesSeeded === true ? undefined : rawTypes)
+      data.taskTypesSeeded = true
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
       return { data, ...(changed ? { legacyText: text } : {}) }
     } catch {
-      return { data: { projects: [], activeId: null, version: PROJECTS_FILE_VERSION } }
+      return { data: emptyProjectsFile() }
     }
   }
 
@@ -199,11 +205,9 @@ export class ProjectManager {
 
   // ---------- библиотека типов задач ----------
 
-  /** Встроенные (в их порядке; подменённые пользовательской копией с тем же id — копией), затем пользовательские. */
+  /** Библиотека в порядке хранения (заготовки после засева — такие же типы, как созданные человеком). */
   taskTypes(): TaskType[] {
-    const user = this.data.taskTypes ?? []
-    const builtins = builtinTaskTypes().map((b) => user.find((t) => t.id === b.id) ?? b)
-    return [...builtins, ...user.filter((t) => !isBuiltinId(t.id))].map(clone)
+    return (this.data.taskTypes ?? []).map(clone)
   }
 
   taskType(id: string): TaskType | undefined {
@@ -221,10 +225,15 @@ export class ProjectManager {
     return { taskTypes: this.taskTypes(), defaultTaskTypeId: this.defaultTaskTypeId() }
   }
 
-  /** Тип библиотеки по умолчанию: заданный и существующий, иначе «Программирование» (встроенный есть всегда). */
+  /**
+   * Тип библиотеки по умолчанию: заданный и существующий, иначе «Программирование», а если и его удалили — первый
+   * тип библиотеки (она не бывает пустой: последний тип не удаляется, пустая при загрузке засевается).
+   */
   defaultTaskTypeId(): string {
+    const types = this.data.taskTypes ?? []
     const id = this.data.defaultTaskTypeId
-    return id && this.taskType(id) ? id : GENERAL_TASK_TYPE_ID
+    if (id && types.some((t) => t.id === id)) return id
+    return (types.find((t) => t.id === GENERAL_TASK_TYPE_ID) ?? types[0])?.id ?? GENERAL_TASK_TYPE_ID
   }
 
   setDefaultTaskType(id: string): TaskTypesState {
@@ -236,8 +245,7 @@ export class ProjectManager {
 
   /**
    * Создать (без `id` — новый id) или целиком заменить тип. Граф проверяется по ролям типа, колонки доски — нет:
-   * тип общий для проектов с разными колонками. Встроенный тип правится целиком, как пользовательский: сохраняется
-   * копия с его id («изменённый встроенный»), которая подменяет дефолт из кода, пока её не сбросят (`deleteTaskType`).
+   * тип общий для проектов с разными колонками.
    */
   saveTaskType(input: TaskTypeInput): TaskType {
     if (!isObject(input)) throw new Error('тип задачи: ожидается объект')
@@ -250,11 +258,8 @@ export class ProjectManager {
     const description = input.description?.trim()
     const type: TaskType = {
       id, title: input.title.trim(), ...(description ? { description } : {}),
-      settings: savedTypeSettings(input.settings ?? {}, i === -1 ? builtinTaskType(id) : user[i], `тип «${input.title.trim()}»`)
+      settings: savedTypeSettings(input.settings ?? {}, i === -1 ? undefined : user[i], `тип «${input.title.trim()}»`)
     }
-    // Версия дефолта, поверх которой сделана правка, фиксируется при первой правке и дальше не меняется: иначе
-    // любая следующая правка прятала бы то, что системный тип с тех пор обновился (`builtinTypeOutdated`).
-    if (isBuiltinId(id)) type.builtinBase = (i === -1 ? undefined : user[i].builtinBase) ?? builtinTaskTypeFingerprint(id)
     if (i !== -1) this.settleLegacyRuns(id)
     if (i === -1) user.push(type)
     else user[i] = type
@@ -265,7 +270,7 @@ export class ProjectManager {
 
   /**
    * Смержить патч в настройки типа (`validTypeSettings`: null у графа и разрешений — встроенное значение,
-   * правила из пробелов — нет правил) и сохранить через `saveTaskType` с его правилами для встроенных.
+   * правила из пробелов — нет правил) и сохранить через `saveTaskType`.
    */
   patchTaskType(id: string, patch: Partial<Record<keyof TaskTypeSettings, unknown>>): TaskType {
     const t = this.requireType(id)
@@ -274,20 +279,19 @@ export class ProjectManager {
   }
 
   /**
-   * Удалить пользовательский тип. Удалённый тип библиотеки по умолчанию сбрасывается на «Программирование»;
+   * Удалить тип — любой, в том числе заготовку; после рестарта он не вернётся (`taskTypesSeeded`). Удалённый тип
+   * библиотеки по умолчанию сбрасывается (`defaultTaskTypeId` выберет «Программирование» или первый тип);
    * ссылки проектов (`defaultTaskTypeId`, `taskTypeIds`) остаются висячими и при чтении пропускаются, прогоны
-   * этого типа дорабатывают по снимку (`resolveRunType`). Встроенный тип не удаляется: для изменённого встроенного
-   * это «Сбросить к системному» — правка удаляется, возвращается дефолт из кода с тем же id, ссылки на него живы.
+   * этого типа дорабатывают по снимку (`resolveRunType`). Последний тип не удаляется: глобальной задаче нужен тип.
    */
   deleteTaskType(id: string): TaskTypesState {
-    const user = this.data.taskTypes ?? []
-    if (!user.some((t) => t.id === id)) {
-      throw new Error(isBuiltinId(id) ? undeletableTypeMessage(id) : `тип задачи не найден: ${id}`)
-    }
+    const types = this.data.taskTypes ?? []
+    const t = types.find((x) => x.id === id)
+    if (!t) throw new Error(`тип задачи не найден: ${id}`)
+    if (types.length === 1) throw new Error(`тип «${t.title}» последний в библиотеке — его нельзя удалить: сначала создайте другой тип`)
     this.settleLegacyRuns(id)
-    this.data.taskTypes = user.filter((t) => t.id !== id)
-    if (!this.data.taskTypes.length) delete this.data.taskTypes
-    if (this.data.defaultTaskTypeId === id && !isBuiltinId(id)) delete this.data.defaultTaskTypeId
+    this.data.taskTypes = types.filter((x) => x.id !== id)
+    if (this.data.defaultTaskTypeId === id) delete this.data.defaultTaskTypeId
     this.save()
     return this.taskTypesState()
   }
@@ -303,7 +307,7 @@ export class ProjectManager {
     for (const p of this.data.projects) if (p.legacyTypeId === typeId) this.store(p.id)
   }
 
-  /** Копия типа (в том числе встроенного) под новым id: отдельный тип рядом с исходным. */
+  /** Копия типа под новым id: отдельный тип рядом с исходным. */
   duplicateTaskType(id: string): TaskType {
     const src = this.requireType(id)
     return this.saveTaskType({
@@ -321,8 +325,7 @@ export class ProjectManager {
   }
 
   /**
-   * Правила агентов типа (`roleId` нет) или системный промпт его роли — `rules set`. Встроенный тип правится на
-   * месте, как любой другой: первая правка делает его «изменённым встроенным».
+   * Правила агентов типа (`roleId` нет) или системный промпт его роли — `rules set`.
    */
   saveTaskTypeRules(typeId: string, roleId: string | undefined, text: string): TaskType {
     const t = this.requireType(typeId)
@@ -689,15 +692,28 @@ function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
 
 const GENERAL_DESCRIPTION = 'Перенесён из «Настройки → Для новых проектов».'
 
-const BUILTIN_TYPE_IDS = builtinTaskTypes().map((t) => t.id)
-
-function isBuiltinId(id: string): boolean {
-  return BUILTIN_TYPE_IDS.includes(id)
+function emptyProjectsFile(): ProjectsFile {
+  return { projects: [], activeId: null, version: PROJECTS_FILE_VERSION, taskTypes: presetTaskTypes(), taskTypesSeeded: true }
 }
 
-function undeletableTypeMessage(id: string): string {
-  const title = builtinTaskType(id)?.title ?? id
-  return `тип «${title}» встроенный, его нельзя удалить: он и так в системной версии; свою копию сделайте «Дублировать»`
+/**
+ * Засев заготовок в библиотеку. `raw` (исходные типы из файла) передаётся только для файла без `taskTypesSeeded`:
+ * это файл от версии, где встроенные типы жили в коде, а в projects.json лежали лишь их правки («изменённые
+ * встроенные» — типы с id заготовки). Такой файл получает заготовки один раз: в их порядке, правка побеждает
+ * заготовку со всем содержимым, дальше — остальные типы. Правка от версии до полной правки встроенных (без
+ * `builtinBase`) не могла менять название — ей даётся название заготовки («Общий» → «Программирование»).
+ * Уже засеянный файл не трогается: удалённая заготовка не возвращается. Пустая библиотека (все типы битые) — тоже
+ * засев: без типа нельзя создать ни проект, ни глобальную задачу.
+ */
+function seededTaskTypes(types: TaskType[], raw: readonly unknown[] | undefined): TaskType[] {
+  if (raw === undefined && types.length) return types
+  const renamedByUser = new Set(raw?.flatMap((v) => (isObject(v) && nonEmpty(v.builtinBase) ? [v.id] : [])))
+  const presets = presetTaskTypes().map((preset) => {
+    const own = types.find((t) => t.id === preset.id)
+    if (!own) return preset
+    return renamedByUser.has(own.id) ? own : { ...own, title: preset.title }
+  })
+  return [...presets, ...types.filter((t) => !presets.some((p) => p.id === t.id))]
 }
 
 function clone<T>(v: T): T {
@@ -755,8 +771,8 @@ function savedTypeSettings(settings: unknown, existing: TaskType | undefined, la
  * по одному, и битый раздел не уносит с собой остальные (роли, правила и разрешения — то, что человек настраивал
  * руками, и копии в другом месте у них нет). Граф — как в `savedTypeSettings`: только форма и миграция версии, без
  * сверки с ролями. Ссылку на удалённую роль (её пропускал `setRoles` до типов, и её переносит миграция проекта)
- * исполнитель встретит в рантайме, а графа будущей версии он не возьмёт. Флаг builtin — только у типов из кода;
- * сохранённая копия встроенного — обычный пользовательский тип с `builtinBase` (его доводит `migratedBuiltinOverride`).
+ * исполнитель встретит в рантайме, а графа будущей версии он не возьмёт. Поля старых версий (`builtin`,
+ * `builtinBase`) отбрасываются: особых типов больше нет.
  */
 function loadedTaskType(v: unknown): TaskType[] {
   if (!isObject(v) || !nonEmpty(v.id) || !nonEmpty(v.title) || !isObject(v.settings)) return []
@@ -771,25 +787,8 @@ function loadedTaskType(v: unknown): TaskType[] {
   return [{
     id: v.id, title: v.title,
     ...(typeof v.description === 'string' && v.description.trim() ? { description: v.description } : {}),
-    ...(nonEmpty(v.builtinBase) ? { builtinBase: v.builtinBase } : {}),
     settings
   }]
-}
-
-/**
- * Миграция изменённого встроенного (пользовательский тип с id встроенного) при загрузке. До полной правки встроенных
- * копия не могла сменить название и не хранила `builtinBase`: такой копии даётся название встроенного (оно могло
- * смениться в новой версии — «Общий» → «Программирование») и отпечаток текущей системной версии. С `builtinBase`
- * название — правка пользователя, его не трогаем. У пользовательских типов поля быть не может — снимается.
- */
-function migratedBuiltinOverride(t: TaskType): TaskType {
-  const builtin = builtinTaskType(t.id)
-  if (!builtin) {
-    const { builtinBase: _base, ...rest } = t
-    return rest
-  }
-  if (t.builtinBase !== undefined) return t
-  return { ...t, title: builtin.title, builtinBase: builtinTaskTypeFingerprint(t.id)! }
 }
 
 /**
@@ -842,11 +841,11 @@ function normalizeLegacy(raw: RawProjectsFile): void {
   const templates = Array.isArray(raw.templates) ? raw.templates.flatMap(loadedTaskType) : []
   if (raw.defaultTemplateId !== undefined && !nonEmpty(raw.defaultTemplateId)) delete raw.defaultTemplateId
   // Старый `defaults` (единственный дефолт для новых проектов) → пользовательский тип «Программирование», он же тип по
-  // умолчанию. Пустой дефолт ничего не создаёт: встроенный «Программирование» равен ему. Битый — тоже.
+  // умолчанию. Пустой дефолт ничего не создаёт: заготовка «Программирование» равна ему. Битый — тоже.
   const d = raw.defaults
   delete raw.defaults
   if (d && Object.keys(d).length && !templates.some((t) => t.id === GENERAL_TASK_TYPE_ID)) {
-    const general = loadedTaskType({ id: GENERAL_TASK_TYPE_ID, title: builtinTaskType(GENERAL_TASK_TYPE_ID)!.title, description: GENERAL_DESCRIPTION, settings: d })
+    const general = loadedTaskType({ id: GENERAL_TASK_TYPE_ID, title: presetTaskType(GENERAL_TASK_TYPE_ID)!.title, description: GENERAL_DESCRIPTION, settings: d })
     if (general.length) {
       templates.push(...general)
       raw.defaultTemplateId ??= GENERAL_TASK_TYPE_ID
