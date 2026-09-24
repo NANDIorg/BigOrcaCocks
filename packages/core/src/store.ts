@@ -2,7 +2,7 @@ import type {
   AgentSession,
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
-  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase
+  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, StageChange
 } from './types.ts'
 import {
   ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, MAX_ANSWER_LENGTH, REQUEST_ACTIONS,
@@ -10,7 +10,7 @@ import {
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
-import { recordStatus, withStatusSource } from './status-history.ts'
+import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
   defaultWorkflow, nextStage, startStage, wfNodeTitle, wfWorkStage,
   type WfAction, type WfOutcome, type WfStage, type WfWorkStage, type Workflow
@@ -170,11 +170,13 @@ export class TaskStore {
       const stale = this.closeStaleDispatches()
       const requests = this.migrateRequests(snap.requests === undefined)
       const stages = this.migrateStages()
+      // После migrateStages: задача, вставшая на гейт миграцией, тоже получает запись.
+      const stageHistory = this.migrateStageHistory()
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
       const started = this.migrateRunStarted()
       const synced = this.syncRunActiveTime()
-      if (history || active || priority || runPriority || stale || requests || stages || migrated || own || started || synced) this.persistence?.save(this.snapshot())
+      if (history || active || priority || runPriority || stale || requests || stages || stageHistory || migrated || own || started || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -246,6 +248,44 @@ export class TaskStore {
       const stage = firstGateStage(defaultWorkflow([]), task.roleId)
       if (!stage) continue
       task.stage = stage
+      changed = true
+    }
+    return changed
+  }
+
+  /**
+   * Задачи в воркфлоу от кода до `stageHistory` получают историю из лога событий `stage_changed` (он не
+   * обрезается, поэтому восстановление полное, пока лог жив; `by` неизвестен). Событий нет — одна запись
+   * `migrated: true` на текущий этап с `at = updatedAt`. Задачи без `stage` (ответ, гейт, ещё не вошедшие
+   * в граф) поле не получают. Возвращает true, если что-то поменялось.
+   */
+  private migrateStageHistory(): boolean {
+    let changed = false
+    const byTask = new Map<string, OrcaEvent[]>()
+    for (const e of this.events) {
+      if (e.type !== 'stage_changed' || !e.taskId) continue
+      const list = byTask.get(e.taskId)
+      if (list) list.push(e)
+      else byTask.set(e.taskId, [e])
+    }
+    for (const task of this.tasks.values()) {
+      if (!task.stage || task.stageHistory !== undefined) continue
+      const built: { stageHistory?: StageChange[] } = {}
+      for (const e of byTask.get(task.id) ?? []) {
+        const p = e.payload
+        if (typeof p.to !== 'string') continue
+        recordStage(built, {
+          nodeId: p.to, at: e.createdAt, by: 'app',
+          ...(typeof p.title === 'string' ? { title: p.title } : {}),
+          ...(typeof p.outcome === 'string' ? { outcome: p.outcome as WfOutcome | 'restart' } : {}),
+          ...(typeof p.from === 'string' ? { from: p.from } : {})
+        })
+      }
+      // Лога нет или он не досказал текущий этап (позицию задаче вернула `migrateStages`, события не писались) — стартовая запись.
+      if (built.stageHistory?.at(-1)?.nodeId !== task.stage.nodeId) {
+        recordStage(built, { nodeId: task.stage.nodeId, at: task.updatedAt, by: 'app', migrated: true })
+      }
+      task.stageHistory = built.stageHistory
       changed = true
     }
     return changed
@@ -726,6 +766,10 @@ export class TaskStore {
       task.stage = step.stage
       task.updatedAt = Date.now()
       const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
+      recordStage(task, {
+        nodeId: step.stage.nodeId, at: task.updatedAt, outcome, ...(node ? { title: wfNodeTitle(node) } : {}),
+        ...(from !== undefined ? { from } : {})
+      })
       this.pushEvent('stage_changed', {
         taskId, runId: task.runId, ...(from !== undefined ? { from } : {}), to: step.stage.nodeId, outcome,
         ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
@@ -765,6 +809,7 @@ export class TaskStore {
     task.stage = { nodeId: step.stage.nodeId, visits }
     task.updatedAt = Date.now()
     const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
+    recordStage(task, { nodeId: step.stage.nodeId, at: task.updatedAt, outcome: 'restart', from, ...(node ? { title: wfNodeTitle(node) } : {}) })
     this.pushEvent('stage_changed', {
       taskId, runId: task.runId, from, to: step.stage.nodeId, outcome: 'restart',
       ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})

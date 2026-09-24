@@ -284,9 +284,10 @@ describe('миграция времени работы при загрузке',
         statusHistory: [{ status: 'in_progress', at: 0, by: 'app' }]
       }],
       // stage — задача в review уже на этапе воркфлоу, иначе её мигрирует migrateStages.
-      // priority — иначе задачу мигрирует migrateTaskPriority.
+      // priority — иначе задачу мигрирует migrateTaskPriority; stageHistory — иначе migrateStageHistory.
       tasks: [oldTask('t', 'review', {
         startedAt: 0, activeMs: 42, priority: 'normal', stage: { nodeId: 'review', visits: { review: 1 } },
+        stageHistory: [{ nodeId: 'review', at: 0, by: 'app', migrated: true }],
         statusHistory: [{ status: 'review', at: 0, by: 'worker' }]
       })],
       dispatches: [{ id: 'd1', taskId: 't', ptyId: 'p1', startedAt: 0, endedAt: 4 * MIN, outcome: 'done' }],

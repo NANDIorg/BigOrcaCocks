@@ -2,6 +2,7 @@
 // Состояние воркфлоу в store: снимок графа в прогоне, advanceStage, миграция задач в ревью, рестарт.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { STATUS_HISTORY_LIMIT } from './status-history.ts'
 import { TaskStore, EVENT_ANSWER_LIMIT, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
 import { defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
@@ -309,6 +310,105 @@ describe('миграция и рестарт', () => {
     assert.deepEqual(loaded.getTask(t.id)!.stage, { nodeId: 'review', visits: { start: 1, work: 1, review: 1 } })
     assert.equal(loaded.advanceStage(t.id, 'reject').action.type, 'start_worker')
     assert.equal(loaded.getTask(t.id)!.stage!.visits.limit, 1)
+  })
+})
+
+describe('stageHistory', () => {
+  const history = (s: TaskStore, id: string) => s.getTask(id)!.stageHistory!.map((e) => [e.nodeId, e.outcome, e.from])
+  /** Снапшот «от старого кода»: у задач нет stageHistory. */
+  function legacy(s: TaskStore, p: Persistence & { data: Partial<StoreSnapshot> | null }) {
+    const snap = s.snapshot()
+    for (const t of snap.tasks) delete t.stageHistory
+    p.save(snap)
+  }
+
+  it('advanceStage и enterWork пишут вход в этап с исходом; reject и restart различимы', () => {
+    const s = store()
+    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'reject')
+    s.advanceStage(t.id, 'next')
+    s.moveTask(t.id, 'review')
+    s.enterWork(t.id)
+    assert.deepEqual(history(s, t.id), [
+      ['work', 'next', undefined], ['review', 'next', 'work'], ['work', 'reject', 'review'],
+      ['review', 'next', 'work'], ['work', 'restart', 'review']
+    ])
+    const first = s.getTask(t.id)!.stageHistory![0]
+    assert.equal(first.title, 'Работа')
+    assert.equal(first.by, 'app')
+  })
+
+  it('этап не сменился — записи нет; задачи-ответы и гейты без истории', () => {
+    const s = store()
+    const t = s.createTask({ title: 'Код' })
+    s.enterWork(t.id)
+    s.enterWork(t.id)
+    assert.equal(t.stageHistory?.length, 1)
+    const ans = s.createTask({ title: 'Q', answerFor: 'human' })
+    assert.equal(s.getTask(ans.id)!.stageHistory, undefined)
+  })
+
+  it(`хранится не больше ${STATUS_HISTORY_LIMIT} последних`, () => {
+    const s = store()
+    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    s.advanceStage(t.id, 'next')
+    for (let i = 0; i < STATUS_HISTORY_LIMIT; i += 1) {
+      s.advanceStage(t.id, 'next')
+      s.advanceStage(t.id, 'reject')
+    }
+    const h = s.getTask(t.id)!.stageHistory!
+    assert.equal(h.length, STATUS_HISTORY_LIMIT)
+    assert.equal(h.at(-1)!.outcome, 'reject')
+  })
+
+  it('миграция: история восстанавливается из событий stage_changed', () => {
+    const p = memory()
+    const s = store(p)
+    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'reject')
+    const expected = s.getTask(t.id)!.stageHistory!.map((e) => ({ nodeId: e.nodeId, outcome: e.outcome, from: e.from, title: e.title }))
+    legacy(s, p)
+
+    const loaded = store(p)
+    const got = loaded.getTask(t.id)!.stageHistory!
+    assert.deepEqual(got.map((e) => ({ nodeId: e.nodeId, outcome: e.outcome, from: e.from, title: e.title })), expected)
+    assert.ok(got.every((e) => e.migrated === undefined))
+    assert.equal(p.data!.tasks!.find((x) => x.id === t.id)!.stageHistory!.length, 3, 'миграция сохранена сразу')
+    // Повторная загрузка ничего не дописывает.
+    assert.equal(store(p).getTask(t.id)!.stageHistory!.length, 3)
+  })
+
+  it('миграция: событий нет — одна запись migrated; без stage поля нет', () => {
+    const p = memory()
+    const s = store(p)
+    const t = s.createTask({ title: 'Код' })
+    s.moveTask(t.id, 'review')
+    const ans = s.createTask({ title: 'Q', answerFor: 'human' })
+    const idle = s.createTask({ title: 'Ещё не в графе' })
+    legacy(s, p)
+
+    const loaded = store(p)
+    const got = loaded.getTask(t.id)!
+    assert.equal(got.stageHistory!.length, 1)
+    assert.deepEqual([got.stageHistory![0].nodeId, got.stageHistory![0].migrated, got.stageHistory![0].at], ['review', true, got.updatedAt])
+    assert.equal(loaded.getTask(ans.id)!.stageHistory, undefined)
+    assert.equal(loaded.getTask(idle.id)!.stageHistory, undefined)
+  })
+
+  it('уже записанная история миграцией не трогается', () => {
+    const p = memory()
+    const s = store(p)
+    const t = s.createTask({ title: 'Код' })
+    s.enterWork(t.id)
+    p.save(s.snapshot())
+    assert.deepEqual(history(store(p), t.id), [['work', 'next', undefined]])
   })
 })
 

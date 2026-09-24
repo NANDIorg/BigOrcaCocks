@@ -4,9 +4,32 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS, type Task } from './types.ts'
-import { STATUS_HISTORY_LIMIT, recordStatus, statusSource, withStatusSource } from './status-history.ts'
+import { STATUS_HISTORY_LIMIT, recordStage, recordStatus, statusSource, withStatusSource } from './status-history.ts'
 
 const statuses = (h: { statusHistory?: { status: string }[] }): string[] => (h.statusHistory ?? []).map((e) => e.status)
+
+describe('recordStage', () => {
+  it('пишет вход в этап; та же нода подряд — отдельная запись', () => {
+    const e: Parameters<typeof recordStage>[0] = {}
+    recordStage(e, { nodeId: 'work', at: 1, outcome: 'next' })
+    recordStage(e, { nodeId: 'work', at: 2, outcome: 'restart', from: 'work' })
+    assert.deepEqual(e.stageHistory!.map((x) => [x.nodeId, x.outcome]), [['work', 'next'], ['work', 'restart']])
+  })
+
+  it('источник — из withStatusSource, вне — app', () => {
+    const e: Parameters<typeof recordStage>[0] = {}
+    recordStage(e, { nodeId: 'a', at: 1 })
+    withStatusSource('workflow', () => recordStage(e, { nodeId: 'b', at: 2 }))
+    assert.deepEqual(e.stageHistory!.map((x) => x.by), ['app', 'workflow'])
+  })
+
+  it(`хранится не больше ${STATUS_HISTORY_LIMIT} последних`, () => {
+    const e: Parameters<typeof recordStage>[0] = {}
+    for (let i = 0; i < STATUS_HISTORY_LIMIT + 5; i += 1) recordStage(e, { nodeId: 'n', at: i })
+    assert.equal(e.stageHistory!.length, STATUS_HISTORY_LIMIT)
+    assert.equal(e.stageHistory![0].at, 5)
+  })
+})
 
 describe('recordStatus', () => {
   it('тот же статус подряд не пишется', () => {
