@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Workflow } from '@orca-board/core'
 import {
-  cardEssence, cardState, depsLabel, filesLabel, shortText, stageLabel, wfNodeTitles,
+  cardEssence, cardEssenceFor, cardState, depsLabel, filesLabel, shortText, stageLabel, wfNodeTitles,
   type CardStateInput
 } from './cardState'
 
@@ -155,4 +155,14 @@ test('depsLabel: одна — с названием, несколько — сч
   assert.deepEqual(l(['a', 'done1', 'b']), { text: '⧗ ждёт 2 задачи', title: 'Ждёт: Миграция store; Иконки' })
   assert.equal(l(['a', 'b', 'c', 'x', 'y'])?.text, '⧗ ждёт 5 задач')
   assert.equal(l(['gone'])?.text, '⧗ ждёт: gone')
+})
+
+test('cardEssenceFor: задача из ленты без своей сути получает запасную — иначе не было бы «в ленте ↑»', () => {
+  const live = base({ kind: 'in_progress' })
+  assert.equal(cardEssence(live), null)
+  assert.equal(cardEssenceFor(live, cardState(live), false), null)
+  assert.equal(cardEssenceFor(live, cardState(live), true)?.text, '✋ Ждёт вас')
+  // своя суть важнее запасной
+  const review = base({ kind: 'review' })
+  assert.equal(cardEssenceFor(review, cardState(review), true)?.text, 'Ждёт ревью')
 })

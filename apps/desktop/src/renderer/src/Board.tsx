@@ -10,7 +10,7 @@ import {
 } from './boardView'
 import { isArrowKey, isEditableTarget, moveFocus } from './boardNav'
 import {
-  CARD_STATE_LABEL, cardEssence, cardState, depsLabel, stageLabel, type CardEssence, type CardState, type CardStateInput
+  CARD_STATE_LABEL, cardEssenceFor, cardState, depsLabel, stageLabel, type CardEssence, type CardState, type CardStateInput
 } from './cardState'
 import { BoardCard } from './BoardCard'
 import { MoveMenu, type MoveTarget } from './MoveMenu'
@@ -153,7 +153,8 @@ export function Board(props: Props): React.JSX.Element {
       waitingDeps: kind === 'backlog' ? pendingDeps(t, (dep) => byId.get(dep)?.status, kindOf) : 0
     }
     const state = cardState(input)
-    info.set(t.id, { input, state, essence: cardEssence(input, state), waits: waitingTaskIds.has(t.id) })
+    const waits = waitingTaskIds.has(t.id)
+    info.set(t.id, { input, state, essence: cardEssenceFor(input, state, waits), waits })
   }
   const canStart = (t: Task): boolean => {
     const kind = kindOf(t.status)

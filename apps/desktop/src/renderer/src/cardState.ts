@@ -107,6 +107,18 @@ export function cardEssence(i: CardStateInput, state: CardState = cardState(i)):
   return null
 }
 
+/**
+ * Суть для задачи, которая есть в ленте «Ждут вас», но по состоянию карточки строки сути не получила (например,
+ * воркфлоу держит задачу в «В работе» и ждёт решения по запросу): без неё у карточки не было бы ссылки «в ленте ↑»,
+ * хотя фильтр «Ждут вас» и счётчик ленты её считают.
+ */
+const WAITING_ESSENCE: CardEssence = { text: '✋ Ждёт вас', title: 'Есть пункт в ленте «Ждут вас»' }
+
+/** Суть карточки: по её состоянию, а если её нет, но задача в ленте «Ждут вас» (`waits`) — запасная. */
+export function cardEssenceFor(i: CardStateInput, state: CardState, waits: boolean): CardEssence | null {
+  return cardEssence(i, state) ?? (waits ? WAITING_ESSENCE : null)
+}
+
 /** Что показать в пилюле этапа: `gate` — задача-гейт (другая иконка и цвет). */
 export interface StageLabel {
   kind: 'stage' | 'gate'
