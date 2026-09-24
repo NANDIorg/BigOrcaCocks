@@ -13,7 +13,8 @@ import {
   defaultWorkflow, nextStage, startStage, wfNodeTitle, type WfAction, type WfOutcome, type WfStage, type Workflow
 } from './workflow.ts'
 import {
-  globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, toGlobalTask, toGlobalTasks,
+  globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, globalTaskTitle, runTypeLockReason,
+  toGlobalTask, toGlobalTasks,
   type GlobalColumnKind, type GlobalTask
 } from './global-tasks.ts'
 import type { RunTypeInput, TaskTypeSnapshot } from './task-types.ts'
@@ -143,8 +144,9 @@ export class TaskStore {
       const stages = this.migrateStages()
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
+      const started = this.migrateRunStarted()
       const synced = this.syncRunActiveTime()
-      if (active || priority || runPriority || stale || requests || stages || migrated || own || synced) this.persistence?.save(this.snapshot())
+      if (active || priority || runPriority || stale || requests || stages || migrated || own || started || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -246,6 +248,26 @@ export class TaskStore {
   }
 
   /**
+   * `Run.startedAt` у прогонов от кода до поля: прогон, у которого есть координатор, подзадачи, своё время
+   * или карточка не в бэклоге, считается уже бывшим в работе (точный момент неизвестен — берём `updatedAt`).
+   * Остальные (в бэклоге, без координатора и подзадач) остаются без поля — тип им ещё можно сменить.
+   * «Входящие» не трогаем: их тип не меняется в любом случае. Возвращает true, если что-то поменялось.
+   */
+  private migrateRunStarted(): boolean {
+    let changed = false
+    for (const run of this.runs.values()) {
+      if (run.startedAt !== undefined || run.inbox) continue
+      const hasSubtasks = [...this.tasks.values()].some((t) => t.runId === run.id)
+      const worked = run.coordinatorPtyId !== undefined || hasSubtasks || run.activeMs !== undefined ||
+        run.activeSince !== undefined || run.closedAt !== undefined || this.globalKind(run) !== 'backlog'
+      if (!worked) continue
+      run.startedAt = run.updatedAt ?? run.createdAt
+      changed = true
+    }
+    return changed
+  }
+
+  /**
    * Собственное время глобальных задач: отрезок открыт, пока карточка показана в kind=in_progress
    * (`globalTaskInProgress` — хранимый статус и pending-запросы). Статус прогона меняется во многих местах,
    * а «Нужен ответ» зависит ещё и от запросов, поэтому пересчёт — одним проходом из commit(), а не в каждом
@@ -258,6 +280,8 @@ export class TaskStore {
       const before = run.activeSince
       trackActiveTime(run, globalTaskInProgress(run, this.columns(), requests), now)
       if (run.activeSince !== before) changed = true
+      // Первый вход в работу — отметка навсегда: после неё тип задачи не меняется (`canChangeRunType`).
+      if (run.activeSince !== undefined && run.startedAt === undefined) run.startedAt = run.activeSince
     }
     return changed
   }
@@ -820,6 +844,26 @@ export class TaskStore {
     if (title) run.title = title
     if (patch.description !== undefined) run.objective = patch.description
     if (patch.priority !== undefined) run.priority = patch.priority
+    run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /**
+   * Сменить тип глобальной задачи до начала работы (`runTypeLockReason`): `typeId`, снимок типа и снимок графа
+   * пересобираются из `type` так же, как при создании (`runTypeFields`); граф старого типа не остаётся, даже если
+   * у нового графа нет (прогон пойдёт по графу типа из библиотеки). Тип берёт main из библиотеки проекта.
+   */
+  changeGlobalTaskType(id: string, type: RunTypeInput): GlobalTask {
+    const run = this.mustRun(id)
+    const subtasks = [...this.tasks.values()].filter((t) => t.runId === id).length
+    const statusKind = run.status === undefined ? undefined : this.columnKind(run.status)
+    const reason = runTypeLockReason({ ...run, subtasks, statusKind })
+    if (reason) throw new Error(`тип глобальной задачи «${globalTaskTitle(run)}» (${id}) нельзя сменить: ${reason}`)
+    delete run.typeId
+    delete run.taskType
+    delete run.workflow
+    Object.assign(run, runTypeFields(type))
     run.updatedAt = Date.now()
     this.commit()
     return this.getGlobalTask(id)

@@ -101,6 +101,8 @@ export interface GlobalTask {
   ownActiveMs?: number
   /** Начало текущего отрезка основного времени; нет — стоит. */
   ownActiveSince?: number
+  /** Когда задача впервые вошла в работу (`Run.startedAt`); нет — ещё не была «В работе» (или карточка от старого main). */
+  startedAt?: number
   /**
    * Сумма времени работы подзадач (`taskActiveTime`): закрытые отрезки, мс. Параллельные подзадачи
    * складываются — это трудозатраты агентов, а не календарное время.
@@ -238,6 +240,38 @@ export function globalTaskInProgress(run: Pick<Run, 'id' | 'status'>, columns: r
   return columns.find((c) => c.id === status)?.kind === 'in_progress'
 }
 
+/** Что нужно знать о глобальной задаче, чтобы решить, можно ли сменить её тип. */
+export interface RunTypeLockInput {
+  inbox?: boolean
+  /** `Run.startedAt` / `GlobalTask.startedAt`. */
+  startedAt?: number
+  coordinatorPtyId?: string
+  /** Число подзадач. */
+  subtasks: number
+  /** Вид колонки, где стоит карточка. */
+  statusKind: ColumnKind | undefined
+}
+
+/**
+ * Почему тип глобальной задачи сменить нельзя; undefined — можно. Тип задаёт роли, правила и граф прогона,
+ * поэтому он меняется только до начала работы: карточка в бэклоге, ни разу не была «В работе» (`startedAt`),
+ * координатор не запускался и подзадач нет — иначе идущие подзадачи остались бы с ролями и этапами старого типа.
+ * «Входящие» — служебная задача без типа.
+ */
+export function runTypeLockReason(x: RunTypeLockInput): string | undefined {
+  if (x.inbox) return '«Входящие» — служебная задача, у неё нет своего типа'
+  if (x.startedAt !== undefined) return 'задача уже была «В работе»'
+  if (x.coordinatorPtyId !== undefined) return 'по задаче уже запускался координатор'
+  if (x.subtasks > 0) return `у задачи уже есть подзадачи (${x.subtasks})`
+  if (x.statusKind !== 'backlog') return 'тип меняется только, пока задача в бэклоге'
+  return undefined
+}
+
+/** Можно ли сменить тип глобальной задачи (`runTypeLockReason`). */
+export function canChangeRunType(x: RunTypeLockInput): boolean {
+  return runTypeLockReason(x) === undefined
+}
+
 /** Прогон → карточка; колонка — `globalDisplayStatus`. */
 export function toGlobalTask(
   run: Run,
@@ -272,6 +306,7 @@ export function toGlobalTask(
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),
+    ...(run.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
     ...globalSubtasksTime(run.id, tasks),
     waiting
   }

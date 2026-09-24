@@ -20,6 +20,7 @@ import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
+import { changeTypeApi } from './globalTypeChange'
 import { ReturnGlobalModal } from './ReturnGlobalModal'
 import { ProjectTypeModal } from './ProjectTypeModal'
 import { startAddProject, type AddProjectStart } from './projectAdd'
@@ -490,6 +491,8 @@ export function App(): React.JSX.Element {
       if (input.description !== cur.description.trim()) patch.description = input.description
       if (input.priority !== undefined && input.priority !== cur.priority) patch.priority = input.priority
       if (Object.keys(patch).length > 0) await window.orca.globalTasks.update(cur.id, patch)
+      // Тип модалка присылает, только пока его можно сменить; неизменённый не трогаем.
+      if (input.typeId !== undefined && input.typeId !== cur.typeId) await changeTypeApi(window.orca)(cur.id, input.typeId)
     } else {
       await window.orca.globalTasks.create({
         title: input.title || undefined,

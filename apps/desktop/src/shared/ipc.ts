@@ -306,6 +306,11 @@ export interface OrcaApi {
     get(id: string): Promise<GlobalTask>
     create(input: GlobalTaskInput): Promise<GlobalTask>
     update(id: string, patch: GlobalTaskPatch): Promise<GlobalTask>
+    /**
+     * Сменить тип задачи (`typeId` из типов проекта) — только до начала работы (`canChangeRunType` из core):
+     * в бэклоге, ни разу не была «В работе», без координатора и подзадач; иначе и для «Входящих» — ошибка.
+     */
+    changeType(id: string, typeId: string): Promise<GlobalTask>
     /** status — id колонки проекта. Подзадачи не трогает. */
     move(id: string, status: string): Promise<GlobalTask>
     /**

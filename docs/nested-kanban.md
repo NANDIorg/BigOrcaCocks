@@ -37,6 +37,7 @@ needs_input — **вычисляемая** колонка: там карточк
 | `typeId?` | тип задачи (`TaskType`, `packages/core/src/task-types.ts`): роли, граф, правила агентов доски и разрешения прогона. Роли берутся из библиотеки по `typeId` «вживую» (`resolveRunType`). Нет — «Входящие» или прогон до типов: тип проекта по умолчанию. У «Входящих» типа нет никогда |
 | `taskType?` | снимок типа при создании `{id, title, roles, agentRules?, permissionMode?}` — если тип удалят, прогон доработает на нём |
 | `workflow?` | снимок графа типа при создании; правка типа идущие задачи не ломает |
+| `startedAt?` | первый вход карточки в работу (`kind=in_progress`: перенос, запуск координатора) — ставится в `commit()` вместе с открытием отрезка времени (`syncRunActiveTime`) и не снимается. Прогоны от кода до поля — миграция `migrateRunStarted`: есть координатор, подзадачи, своё время, `closedAt` или карточка не в бэклоге → `startedAt = updatedAt` |
 | `priority?` | приоритет карточки — та же шкала, что у подзадач (`TaskPriority`: `urgent` / `high` / `normal` / `low`). Новые — `normal`, после миграции есть всегда. Влияет только на порядок показа, не на цель координатора и не на приоритет подзадач |
 | `updatedAt?` | последняя правка карточки |
 | `reopenedAt?` | прогон переоткрыт и ещё ни одна подзадача не дошла до done после этого (см. «Жизненный цикл») |
@@ -283,6 +284,7 @@ interface GlobalTask {
   inbox: boolean
   typeId?: string            // = Run.typeId; нет — «Входящие» или прогон до типов (тип проекта по умолчанию)
   typeTitle?: string         // название типа из снимка Run.taskType; живое — из библиотеки по typeId
+  startedAt?: number         // = Run.startedAt; нет — ещё не была «В работе» (или карточка от старого main)
   createdAt: number
   updatedAt: number          // правка карточки
   activityAt: number         // max(updatedAt, updatedAt подзадач) — «время» на карточке
@@ -342,6 +344,18 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 `INBOX_TITLE` — экспортируются из `@orca-board/core`. Без `requests` `waiting` = 0.
 Живой UI может строить карточки из `board:changed` (`snapshot.runs` + `snapshot.tasks` + `snapshot.requests`) без лишних запросов.
 
+### Смена типа
+
+Тип задаёт роли, граф и правила прогона, поэтому меняется только **до начала работы** — иначе идущие подзадачи
+остались бы с ролями и этапами старого типа. Правило — чистая `runTypeLockReason` / `canChangeRunType`
+(`packages/core/src/global-tasks.ts`, её же зовёт renderer): можно, если это не «Входящие», нет `startedAt`
+(ни разу не была в `kind=in_progress`), не запускался координатор (`coordinatorPtyId`), нет подзадач и карточка
+в колонке `kind=backlog`. Возврат из работы в бэклог тип не размораживает — `startedAt` остаётся.
+`TaskStore.changeGlobalTaskType(id, type)` пересобирает `typeId`, `taskType` и `workflow` через `runTypeFields`, как при
+создании (граф старого типа не остаётся, даже если у нового снимка графа нет); тип берёт main из библиотеки проекта
+(`projects.runType`). Запрещённый случай — ошибка `тип глобальной задачи «…» (run_…) нельзя сменить: <причина>`.
+CLI этой команды нет: координатор тип не меняет.
+
 ### IPC — `window.orca.globalTasks` (активный проект; типы — `apps/desktop/src/shared/ipc.ts`)
 
 | Метод | Канал | Результат | Ошибки |
@@ -350,6 +364,7 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 | `get(id)` | `globalTasks:get` | `GlobalTask` | `run not found` |
 | `create({title?, description?, status?, priority?, typeId?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана; неизвестный приоритет; тип не найден или недоступен проекту (`Project.taskTypeIds`). Без `typeId` — тип проекта по умолчанию |
 | `update(id, {title?, description?, priority?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название; неизвестный приоритет (карточка не меняется) |
+| `changeType(id, typeId)` | `globalTasks:changeType` | `GlobalTask` | тип не найден или недоступен проекту; тип сменить нельзя (`runTypeLockReason`, см. «Смена типа») |
 | `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |
 | `tasks(id)` | `globalTasks:tasks` | `Task[]` только этой глобальной | `run not found` |
@@ -454,7 +469,9 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
   При создании — селект «Тип задачи»: типы, доступные проекту (`availableTypes`), предвыбран тип проекта по умолчанию
   (`projectDefaultTypeId` — то же правило, что в main), под ним описание типа и предупреждение, если у какой-то роли
   типа агент в проекте выключен или не установлен (`rolesWithDisabledAgent`: тип создастся, но воркер этой роли не
-  стартует). При правке тип только показывается бейджем — в v1 он задаётся один раз, при создании.
+  стартует). При правке, пока задача не начата (`typeChangeOptions` в `renderer/src/globalTypeChange.ts` → `canChangeRunType`),
+  тип — такой же селект (текущий тип вне проекта остаётся первым вариантом); выбранный другой тип уходит в
+  `globalTasks.changeType` (`changeTypeApi`: старый preload/main → «перезапустите приложение»). После старта — только бейдж.
   Старый main (прогоны в снимке без `priority`, `runsKnowPriority` в `taskPriority.ts`) приоритет не сохранит:
   вместо выбора — текущий приоритет и просьба перезапустить приложение, в `create`/`update` поле не уходит.
   «Новая подзадача» в шапке открыта задачей → `NewTaskModal` с зависимостями только из её подзадач и приоритетом (по умолчанию «обычный») → `globalTasks.createTask`.

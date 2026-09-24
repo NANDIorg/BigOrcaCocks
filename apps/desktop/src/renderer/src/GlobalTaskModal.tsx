@@ -12,6 +12,7 @@ import { formatStamp } from './boardSort'
 import { PriorityOptions } from './Priority'
 import { STALE_PRIORITY_MESSAGE, taskPriorityOf } from './taskPriority'
 import { rolesWithDisabledAgent } from './taskTypes'
+import { typeChangeOptions } from './globalTypeChange'
 
 interface Props {
   /** Правка существующей; без неё — создание новой. */
@@ -27,7 +28,10 @@ interface Props {
   defaultTypeId?: string
   /** Агенты активного проекта: предупреждение, если у роли выбранного типа агент выключен. */
   agents?: AgentInfo[]
-  /** Название типа правимой задачи — только бейдж: в v1 тип задаётся при создании. */
+  /**
+   * Название типа правимой задачи. Пока задача не начата (`typeChangeOptions`) тип при правке — селект из `types`,
+   * после — только бейдж.
+   */
   typeTitle?: string
   /** main знает приоритет глобальных задач (`runsKnowPriority`); старый main его не сохранит — выбор не даём. */
   priorityEditable: boolean
@@ -43,7 +47,7 @@ interface Props {
   onSave(input: { title: string; description: string; status?: string; priority?: TaskPriority; typeId?: string }): Promise<void>
 }
 
-/** Создание и правка глобальной задачи: название, описание, приоритет и (при создании) тип и колонка. */
+/** Создание и правка глобальной задачи: название, описание, приоритет, тип (при правке — пока не начата) и колонка (при создании). */
 export function GlobalTaskModal(props: Props): React.JSX.Element {
   const { global, columns, types, defaultTypeId, agents = [], typeTitle, priorityEditable, statusKind, live = false, onAccept, onReturn, onClose, onSave } = props
   const [title, setTitle] = useState(global?.title ?? '')
@@ -60,6 +64,10 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
   const actions = global ? globalTaskActions(global, statusKind, live) : undefined
   const selectedType = editing ? undefined
     : types?.find((t) => t.id === pickedTypeId) ?? types?.find((t) => t.id === defaultTypeId) ?? types?.[0]
+  // Правка: варианты смены типа, пока задача не начата; undefined — тип только бейджем.
+  const editTypes = global ? typeChangeOptions(global, statusKind, types, typeTitle) : undefined
+  const editTypeId = pickedTypeId ?? global?.typeId ?? defaultTypeId ?? editTypes?.[0]?.id
+  const editType = editTypes ? types?.find((t) => t.id === editTypeId) : undefined
   const offAgentRoles = selectedType ? rolesWithDisabledAgent(selectedType, agents) : []
   // У «Входящих» название фиксированное и описания нет — правится только то, что задано явно.
   const canSave = !busy && (title.trim() !== '' || (!editing && description.trim() !== ''))
@@ -90,6 +98,8 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
         description: description.trim(),
         status: editing ? undefined : status,
         ...(selectedType ? { typeId: selectedType.id } : {}),
+        // Только явный выбор человека: у прогона без typeId подставленный по умолчанию тип не должен записаться сам.
+        ...(editTypes && pickedTypeId !== null ? { typeId: pickedTypeId } : {}),
         ...(priorityEditable ? { priority } : {})
       })
     } catch (e) {
@@ -110,7 +120,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             {global.closedAt !== undefined && <> · закрыта {formatStamp(global.closedAt)}</>} · <GlobalDuration global={global} variant="line" />
           </p>
         )}
-        {global && typeTitle && (
+        {global && typeTitle && !editTypes && (
           <p className="muted modal-sub task-type-line">Тип задачи: <span className="task-type-badge">{typeTitle}</span></p>
         )}
         {global && <GlobalReturns global={global} />}
@@ -169,11 +179,30 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
               ))}
             </select>
             <span className="muted task-type-hint">
-              {selectedType?.description ? `${selectedType.description}. ` : ''}Тип задаёт роли, воркфлоу и правила агентов этой задачи; потом его не сменить.
+              {selectedType?.description ? `${selectedType.description}. ` : ''}Тип задаёт роли, воркфлоу и правила агентов этой задачи; сменить его можно, пока задача не была «В работе».
             </span>
             {offAgentRoles.length > 0 && (
               <span className="task-type-warn" role="status">
                 В проекте выключен агент у ролей: {offAgentRoles.map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ')} —
+                их подзадачи не запустятся. Включите агента в «О проекте → Агенты» или выберите другой тип.
+              </span>
+            )}
+          </label>
+        )}
+        {editTypes && (
+          <label>
+            Тип задачи
+            <select value={editTypeId ?? ''} onChange={(e) => setTypeId(e.target.value)}>
+              {editTypes.map((t) => (
+                <option key={t.id} value={t.id}>{t.title}{t.id === defaultTypeId ? ' (по умолчанию)' : ''}</option>
+              ))}
+            </select>
+            <span className="muted task-type-hint">
+              {editType?.description ? `${editType.description}. ` : ''}Тип можно сменить, пока задача не была «В работе»: после запуска он фиксируется.
+            </span>
+            {editType && rolesWithDisabledAgent(editType, agents).length > 0 && (
+              <span className="task-type-warn" role="status">
+                В проекте выключен агент у ролей: {rolesWithDisabledAgent(editType, agents).map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ')} —
                 их подзадачи не запустятся. Включите агента в «О проекте → Агенты» или выберите другой тип.
               </span>
             )}

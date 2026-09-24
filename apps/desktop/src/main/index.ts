@@ -510,6 +510,12 @@ function registerIpc(): void {
     return p.store.createGlobalTask({ ...rest, type: projects.runType(p.id, typeof typeId === 'string' && typeId ? typeId : undefined) })
   })
   ipcMain.handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
+  ipcMain.handle('globalTasks:changeType', (_e, id: string, typeId: string) => {
+    if (typeof typeId !== 'string' || !typeId) throw new Error('укажи тип задачи')
+    const p = resolveProject()
+    // Тип — из библиотеки проекта, как при создании: недоступный проекту — ошибка, тип не меняется.
+    return p.store.changeGlobalTaskType(id, projects.runType(p.id, typeId))
+  })
   ipcMain.handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
   ipcMain.handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
     removeGlobalTask(projects.activeStore(), id, opts?.cascade === true)
