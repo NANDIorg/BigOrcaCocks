@@ -49,8 +49,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `setRunStatus`) через `recordStatus`: тот же статус подряд не пишется, хранятся последние `STATUS_HISTORY_LIMIT`
     (200) записей. Первая запись — при `createTask`/`addRun`. В renderer история приходит в снапшоте доски и в
     `GlobalTask.statusHistory`, в CLI — в JSON `task get` (и `global get`), отдельных команд нет.
-    В UI — блок «История статуса» в `TaskModal` и `GlobalTaskModal` (`renderer/src/StatusHistoryBlock.tsx`, логика —
-    `statusHistory.ts`): колонка, время, источник и сколько задача пробыла в статусе; без поля — только текущий статус.
+    В UI — блок «История статуса» в `TaskModal` (`renderer/src/StatusHistoryBlock.tsx`, логика — `statusHistory.ts`):
+    колонка, время, источник и сколько задача пробыла в статусе; без поля — только текущий статус. У глобальной задачи
+    история — событие общей ленты вкладки «История» (`GlobalHistory.tsx`, `globalTimeline.ts`); из `GlobalTaskModal` блок убран.
     `by` (`StatusSource`) store сам не знает — его задаёт вызывающий код через `withStatusSource(source, fn)`
     (одна переменная на процесс, вложенный вызов перекрывает внешний, вне вызова — `app`):
 

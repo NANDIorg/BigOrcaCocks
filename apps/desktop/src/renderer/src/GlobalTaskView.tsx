@@ -20,7 +20,7 @@ interface Props {
   statusKind?: ColumnKind
   /** Живой координатор этой глобальной задачи (ptyId), если есть. */
   coordinatorPty?: string
-  /** Запуски координатора (`Run.coordinatorSessions`) — пилюля в шапке. Со старым main поля нет. */
+  /** Запуски координатора (`Run.coordinatorSessions`) — пилюля в шапке и события «Истории». Со старым main поля нет. */
   coordinatorSessions?: AgentSession[]
   /** Колонки глобального канбана (`globalBoardColumns`) — шаги степпера статуса в шапке. */
   globalColumns?: BoardColumn[]
@@ -245,7 +245,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       )}
       {tab === 'history' && (
         <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
-          <GlobalHistory global={global} />
+          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} />
         </div>
       )}
     </div>
