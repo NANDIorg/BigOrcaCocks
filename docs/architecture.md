@@ -64,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, typeId?, taskType?, workflow?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, ... }` — прогон:
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -72,6 +72,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     открыт, пока карточка показана в `kind=in_progress` (в «Нужен ответ» стоит). Пересчёт — `syncRunActiveTime` в
     `commit()`, миграция — `migrateRunActiveTime`. В `GlobalTask` — `ownActiveMs`/`ownActiveSince`, рядом сумма
     подзадач `subtasksActiveMs`/`subtasksActiveSince` (`docs/nested-kanban.md`, «Тип GlobalTask»).
+  - `startedAt` — первый вход в работу: ставится в `syncRunActiveTime` при открытии отрезка и не снимается; миграция
+    `migrateRunStarted` помечает прогоны от старого кода с координатором, подзадачами, своим временем или не в бэклоге.
+    По нему `canChangeRunType` решает, можно ли сменить тип (`changeGlobalTaskType`, `docs/nested-kanban.md` → «Смена типа»).
   - `priority` — приоритет глобальной задачи, та же шкала `TaskPriority`, что у `Task.priority`. `addRun` ставит
     `normal`, `createGlobalTask`/`updateGlobalTask` принимают и проверяют (`assertPriority`), миграция —
     `migrateRunPriority`. В `GlobalTask.priority` всегда есть: `toGlobalTask` читает нет поля как `normal`.
@@ -914,7 +917,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
   `projects:add(typeId?, path?)` (без `path` — диалог выбора папки, отмена → `null`),
   `projects:detectTaskType(path?)` → `TaskTypeDetection {path, typeId, reason} | null` (без `path` — диалог; проект не добавляет);
-  `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `agents:list(refresh?)`;
+  `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `globalTasks:changeType(id, typeId)` → `GlobalTask`
+  (смена типа до начала работы: `TaskStore.changeGlobalTaskType`, правило — `canChangeRunType`, см. `docs/nested-kanban.md`); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.

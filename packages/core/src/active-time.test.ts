@@ -277,8 +277,8 @@ describe('миграция времени работы при загрузке',
   it('уже мигрированные данные не трогаются', (t) => {
     clock(t, 100 * MIN)
     const { store, saved } = load({
-      // priority у прогона — иначе его мигрирует migrateRunPriority.
-      runs: [{ id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', priority: 'normal', updatedAt: 0, activeMs: 7, activeSince: 0 }],
+      // priority и startedAt у прогона — иначе его мигрируют migrateRunPriority и migrateRunStarted.
+      runs: [{ id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', priority: 'normal', updatedAt: 0, activeMs: 7, activeSince: 0, startedAt: 0 }],
       // stage — задача в review уже на этапе воркфлоу, иначе её мигрирует migrateStages.
       // priority — иначе задачу мигрирует migrateTaskPriority.
       tasks: [oldTask('t', 'review', { startedAt: 0, activeMs: 42, priority: 'normal', stage: { nodeId: 'review', visits: { review: 1 } } })],
