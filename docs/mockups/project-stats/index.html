@@ -1,0 +1,622 @@
+<meta charset="utf-8">
+<title>Статистика orca-board</title>
+<style>
+/* Токены — из apps/desktop/src/renderer/src/styles.css. Приложение только тёмное, макет тоже. */
+:root {
+  color-scheme: dark;
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --chip: #5b5e68; --line: rgba(255,255,255,.06); --line-2: rgba(255,255,255,.1);
+  --text: #ecedf1; --text-2: #c9ccd6; --muted: #9ea1ad; --accent: #7b86f5;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b; --ok: #8fd16a;
+  /* Серии разбивок: фиксированный порядок, цвет следует за сущностью. */
+  --s1: #7b86f5; --s2: #5ad1cc; --s3: #f08a3a; --s4: #b57bee; --s5: #e8b04a; --s-unknown: #5b5e68;
+  --radius: 14px; --mono: ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: #1c1d22; color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+button { font: inherit; cursor: pointer; color: inherit; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--mono); font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+
+/* ---------- полоса макета (не часть приложения) ---------- */
+.mock-bar { display: flex; align-items: center; gap: 10px 16px; padding: 10px 16px; background: #15161a; color: var(--muted); font-size: 12px; flex-wrap: wrap; border-bottom: 1px solid #000; }
+.mock-bar b { color: var(--text); font-weight: 600; font-size: 13px; }
+.mock-bar .grp { display: flex; align-items: center; gap: 6px; }
+.seg { display: inline-flex; }
+.seg button { background: transparent; border: 1px solid #3a3c44; color: var(--muted); padding: 3px 10px; font-size: 12px; margin-left: -1px; }
+.seg button:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 8px 8px 0; }
+.seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); position: relative; }
+.variant-note { padding: 12px 16px; background: #202127; border-bottom: 1px solid #000; color: var(--text-2); font-size: 13px; display: flex; gap: 8px 24px; flex-wrap: wrap; }
+.variant-note b { color: var(--text); }
+.variant-note .pro { color: var(--ok); } .variant-note .con { color: var(--col-input); }
+.variant-note > div { max-width: 60ch; }
+
+/* ---------- хром приложения ---------- */
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; overflow: auto; }
+.app { width: 100%; max-width: var(--w, 100%); min-height: 640px; display: grid; grid-template-columns: 72px 240px minmax(0, 1fr); background: var(--frame); }
+.rail { display: flex; flex-direction: column; align-items: center; padding: 22px 0; gap: 8px; border-right: 1px solid var(--line); }
+.rail .icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; color: var(--muted); }
+.rail .icon.active { color: var(--accent); }
+.sidebar { background: var(--side); border-right: 1px solid var(--line); min-width: 0; }
+.sidebar .head { display: flex; align-items: center; padding: 22px 20px 18px; border-bottom: 1px solid var(--line); }
+.sidebar .head h2 { margin: 0; font-size: 20px; font-weight: 600; flex: 1; }
+.sidebar .item { padding: 14px 20px; border-left: 3px solid transparent; }
+.sidebar .item .name { font-size: 16px; font-weight: 500; }
+.sidebar .item .sub { color: var(--muted); font-size: 13px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar .item.active { background: var(--side-2); border-left-color: var(--accent); }
+.main { display: flex; flex-direction: column; min-width: 0; container-type: inline-size; container-name: main; }
+.main-head { padding: 24px 32px 0; border-bottom: 1px solid var(--line); }
+.main-head .row { display: flex; align-items: center; gap: 12px; }
+.main-head h1 { margin: 0; font-size: 26px; font-weight: 600; flex: 1; letter-spacing: -.01em; }
+.btn-primary { display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 22px; border-radius: 22px; border: 0; background: var(--accent); color: #fff; font-weight: 500; font-size: 15px; white-space: nowrap; }
+.tabs { display: flex; gap: 32px; margin-top: 22px; }
+.tab { background: transparent; border: 0; color: var(--muted); font-size: 16px; padding: 0 0 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab-badge { display: inline-block; margin-left: 6px; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--chip); color: var(--text); font-size: 11px; line-height: 18px; text-align: center; }
+.content { flex: 1; min-height: 0; display: flex; min-width: 0; }
+@container main (max-width: 720px) { .main-head .btn-primary .lbl { display: none; } .main-head .btn-primary { padding: 0 14px; } .tabs { gap: 20px; } }
+
+/* ---------- общие элементы статистики ---------- */
+.period { display: inline-flex; background: var(--frame); border-radius: 18px; padding: 3px; gap: 2px; }
+.period button { border: 0; background: transparent; color: var(--muted); height: 28px; padding: 0 12px; border-radius: 14px; font-size: 13px; white-space: nowrap; }
+.period button.on { background: var(--side-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
+.muted { color: var(--muted); font-size: 13px; }
+.hint { color: var(--muted); font-size: 12px; }
+.chip { border: 1px solid var(--chip); color: var(--text-2); border-radius: 999px; padding: 2px 10px; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+.chip.warn { border-color: rgba(232,176,74,.55); color: var(--col-input); }
+.chip.run { border-color: var(--col-progress); color: var(--col-progress); }
+.chip.ok { border-color: rgba(90,209,204,.5); color: var(--col-done); }
+.chip.bad { border-color: rgba(239,107,107,.5); color: var(--danger); }
+.swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+.unknown { color: var(--muted); font-style: italic; }
+.logo { width: 18px; height: 18px; border-radius: 5px; display: inline-grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.lg-claude { background: #d97757; } .lg-codex { background: #10a37f; } .lg-gemini { background: #4f7df3; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.kpi { background: var(--side); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.kpi .lbl { font-size: 12px; color: var(--muted); }
+.kpi .val { font-size: 24px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
+.kpi .val small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.kpi .sub { font-size: 12px; color: var(--muted); }
+.kpi .sub .chip { font-size: 11px; padding: 0 7px; white-space: normal; }
+@container main (max-width: 820px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.panel { background: var(--side); border-radius: var(--radius); padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.panel h3 { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+.panel h3 .grow { flex: 1; }
+
+.subtabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.subtabs button { border: 1px solid transparent; background: transparent; color: var(--muted); height: 28px; padding: 0 12px; border-radius: 14px; font-size: 13px; }
+.subtabs button.on { border-color: var(--chip); color: var(--text); }
+
+.tbl-wrap { overflow-x: auto; }
+table.st { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.st th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+table.st td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+table.st th.r, table.st td.r { text-align: right; font-variant-numeric: tabular-nums; }
+table.st td.t { white-space: normal; min-width: 180px; }
+table.st td.t .nm { display: flex; align-items: center; gap: 8px; }
+table.st td.t .nm span.x { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+table.st tr:hover td { background: rgba(255,255,255,.02); }
+.share { position: relative; height: 6px; background: var(--frame); border-radius: 3px; min-width: 80px; }
+.share i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
+
+/* столбики по дням */
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .ax { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.chart .grid { stroke: var(--line-2); stroke-width: 1; }
+.chart .bar { transition: opacity .1s; }
+.chart .hit { fill: transparent; }
+.chart .hit:hover + .bar, .chart g.d:hover .bar { opacity: 1; }
+.chart g.d:hover .hover-bg { fill: rgba(255,255,255,.04); }
+.tip { position: absolute; pointer-events: none; background: #1b1c21; border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; font-size: 12px; white-space: nowrap; z-index: 5; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.tip b { display: block; margin-bottom: 4px; }
+.tip .r { display: flex; gap: 12px; justify-content: space-between; }
+.tip .r span:first-child { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.legend { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+.stackbar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--frame); }
+.stackbar i { display: block; height: 100%; min-width: 3px; }
+.notice { display: flex; gap: 10px; align-items: flex-start; background: rgba(232,176,74,.08); border: 1px solid rgba(232,176,74,.25); border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--text-2); }
+.notice svg { color: var(--col-input); margin-top: 1px; }
+.empty-state { text-align: center; padding: 48px 16px; color: var(--muted); display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.empty-state b { color: var(--text); font-size: 16px; font-weight: 600; }
+
+/* ---------- вариант A: раздел в «О проекте» ---------- */
+.about { flex: 1; min-width: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+.about-nav { border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; }
+.about-nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 14px 10px 6px; }
+.about-nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; color: var(--muted); border-left: 3px solid transparent; font-size: 14px; }
+.about-nav-item .cnt { margin-left: auto; font-size: 12px; color: var(--muted); }
+.about-nav-item.on { background: var(--side-2); color: var(--text); border-left-color: var(--accent); }
+.about-sec { padding: 22px 28px 40px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.sec-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.sec-head .t { flex: 1; min-width: 220px; }
+.sec-head h2 { margin: 0; font-size: 22px; font-weight: 600; }
+.sec-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; max-width: 64ch; }
+.two { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 14px; }
+@container main (max-width: 1000px) { .two { grid-template-columns: 1fr; } .about { grid-template-columns: 180px minmax(0, 1fr); } }
+@container main (max-width: 700px) { .about { grid-template-columns: 1fr; } .about-nav { display: none; } }
+
+/* ---------- вариант B: вкладка-дашборд ---------- */
+.dash { flex: 1; padding: 22px 32px 40px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.dash-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dash-top .grow { flex: 1; }
+.hero { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+.hero .big { display: flex; flex-direction: column; gap: 6px; }
+.hero .big .v { font-size: 44px; font-weight: 600; letter-spacing: -.02em; line-height: 1.05; }
+.hero .big .v small { font-size: 16px; color: var(--muted); font-weight: 500; }
+.hero .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-top: 10px; }
+.hero .facts div { display: flex; flex-direction: column; }
+.hero .facts span { font-size: 12px; color: var(--muted); }
+.hero .facts b { font-size: 17px; font-weight: 600; }
+.metric-sw { display: inline-flex; gap: 4px; }
+.grid-b { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.grid-b2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.split-list { display: flex; flex-direction: column; gap: 10px; }
+.split-list .it { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; font-size: 13px; }
+.split-list .it .n { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.split-list .it .n span.x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-list .it .share { grid-column: 1 / -1; }
+.cols-bar { display: flex; flex-direction: column; gap: 10px; }
+.cols-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; font-size: 13px; }
+.cols-legend span { display: flex; align-items: center; gap: 8px; }
+.cols-legend b { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; }
+@container main (max-width: 1000px) { .grid-b { grid-template-columns: 1fr 1fr; } }
+@container main (max-width: 760px) { .hero, .grid-b, .grid-b2 { grid-template-columns: 1fr; } .dash { padding: 18px 16px 32px; } }
+
+/* ---------- вариант C: сводка над доской + панель ---------- */
+.board-wrap { flex: 1; display: flex; min-width: 0; position: relative; }
+.board-area { flex: 1; min-width: 0; padding: 16px 24px; display: flex; flex-direction: column; gap: 14px; }
+.stat-strip { display: flex; align-items: center; gap: 4px 18px; flex-wrap: wrap; background: var(--side); border-radius: 12px; padding: 8px 8px 8px 16px; font-size: 13px; color: var(--muted); }
+.stat-strip b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat-strip .grow { flex: 1; }
+.stat-strip .open { border: 1px solid var(--chip); background: transparent; height: 30px; padding: 0 12px; border-radius: 15px; font-size: 13px; color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+.stat-strip .open.on { border-color: var(--accent); color: var(--accent); }
+.spark { width: 90px; height: 22px; }
+.board { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); gap: 12px; min-width: 0; overflow-x: auto; padding-bottom: 6px; }
+.col h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.col h4 .dot { width: 8px; height: 8px; border-radius: 50%; }
+.col h4 span.c { color: var(--muted); font-weight: 400; }
+.tcard { background: var(--card); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.tcard .ttl { font-weight: 500; line-height: 1.35; }
+.tcard .meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.tcard .cost { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-2); }
+.drawer { width: 400px; flex-shrink: 0; background: var(--side); border-left: 1px solid var(--line-2); padding: 18px 18px 28px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.drawer .dh { display: flex; align-items: center; gap: 8px; }
+.drawer .dh h3 { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
+.drawer .x { width: 30px; height: 30px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.drawer .panel { background: var(--frame); padding: 12px 14px; }
+.drawer .kpis { grid-template-columns: 1fr 1fr; }
+.drawer .kpi { background: var(--frame); padding: 10px 12px; }
+.drawer .kpi .val { font-size: 20px; }
+.acc { border-top: 1px solid var(--line-2); }
+.acc summary { list-style: none; cursor: pointer; padding: 10px 0; display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.acc summary::-webkit-details-marker { display: none; }
+.acc summary::before { content: '›'; color: var(--muted); transition: transform .15s; display: inline-block; width: 10px; }
+.acc[open] summary::before { transform: rotate(90deg); }
+.acc summary .hint { margin-left: auto; font-weight: 400; }
+@container main (max-width: 960px) { .drawer { position: absolute; right: 0; top: 0; bottom: 0; width: min(400px, 100%); box-shadow: -12px 0 32px rgba(0,0,0,.4); } }
+
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; }
+  .rail, .sidebar { display: none; }
+  .main-head { padding: 18px 16px 0; }
+  .about-sec { padding: 18px 16px 32px; }
+  .board-area { padding: 14px 16px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="mock-bar" role="toolbar" aria-label="Управление макетом">
+  <b>Статистика проекта — макеты</b>
+  <div class="grp">Вариант <div class="seg" id="sw-variant"></div></div>
+  <div class="grp">Данные <div class="seg" id="sw-state"></div></div>
+  <div class="grp">Ширина окна <div class="seg" id="sw-width"></div></div>
+  <span style="flex:1"></span>
+  <span>Пример данных, форма — <code>ProjectStats</code> из <code>packages/core/src/types.ts</code></span>
+</div>
+<div class="variant-note" id="note"></div>
+
+<div class="stage"><div class="app" id="app">
+  <nav class="rail" aria-label="Разделы приложения">
+    <div class="icon active" title="Проекты"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="16" rx="2"/><rect x="14" y="4" width="7" height="10" rx="2"/></svg></div>
+    <div class="icon" title="Документы"><svg class="i" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg></div>
+    <div class="icon" title="Входящие"><svg class="i" viewBox="0 0 24 24"><path d="M4 13l3-8h10l3 8v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/></svg></div>
+  </nav>
+  <aside class="sidebar" aria-label="Проекты">
+    <div class="head"><h2>Проекты</h2></div>
+    <div class="item active"><div class="name">orca-board</div><div class="sub">~/project/orca-board</div></div>
+    <div class="item"><div class="name">md-audit</div><div class="sub">~/project/md-audit</div></div>
+  </aside>
+  <main class="main" id="main"></main>
+</div></div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+// ---------- пример данных в форме ProjectStats (контракт dee2db9) ----------
+const DAY = 86400000;
+const NOW = new Date('2026-09-24T15:00:00').getTime();
+const SERIES = { 'claude-opus-5-5': 'var(--s1)', 'claude-sonnet-5': 'var(--s2)', 'gpt-5.5-codex': 'var(--s3)', 'claude-haiku-4-5': 'var(--s4)', unknown: 'var(--s-unknown)' };
+const ROLE_C = { coordinator: 'var(--s1)', developer: 'var(--s2)', designer: 'var(--s4)', reviewer: 'var(--s3)', qa: 'var(--s5)' };
+
+function rnd(seed) { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+const r = rnd(7);
+// 30 дней по дням; нескольких дней нет — в byDay их нет (контракт)
+const DAYS = [];
+for (let i = 29; i >= 0; i--) {
+  const d = new Date(NOW - i * DAY);
+  const wd = d.getDay();
+  if ((wd === 0 || wd === 6) && r() < .75) continue;
+  const act = .35 + r() * 1.1 + (i < 6 ? .5 : 0);
+  const opus = +(act * (8 + r() * 6)).toFixed(2), sonnet = +(act * (2 + r() * 3)).toFixed(2), codex = +(act * r() * 2.2).toFixed(2);
+  DAYS.push({ date: d.toISOString().slice(0, 10), byModel: { 'claude-opus-5-5': opus, 'claude-sonnet-5': sonnet, 'gpt-5.5-codex': codex },
+    tokens: Math.round((opus + sonnet + codex) * 520000), agentMs: Math.round(act * (3.2 + r() * 2) * 3600000), tasksDone: Math.round(act * 2.4 * r() + (r() > .5 ? 1 : 0)) });
+}
+
+const ROWS = {
+  role: [
+    { key: 'developer', title: 'Разработчик', cost: 212.4, tokens: 118.2e6, sessions: 61, withUsage: 58, agentMs: 71.5 * 3600000 },
+    { key: 'coordinator', title: 'Координатор', cost: 96.1, tokens: 64.8e6, sessions: 23, withUsage: 21, agentMs: 38.2 * 3600000 },
+    { key: 'designer', title: 'Дизайнер', cost: 54.9, tokens: 29.1e6, sessions: 17, withUsage: 17, agentMs: 16.4 * 3600000 },
+    { key: 'reviewer', title: 'Ревьюер', cost: 31.7, tokens: 22.6e6, sessions: 28, withUsage: 25, agentMs: 11.9 * 3600000 },
+    { key: 'qa', title: 'Тестировщик', cost: 17.3, tokens: 9.4e6, sessions: 9, withUsage: 6, agentMs: 6.1 * 3600000, unpriced: 1.2e6 },
+  ],
+  model: [
+    { key: 'claude-opus-5-5', title: 'claude-opus-5-5', agent: 'claude', cost: 301.2, tokens: 148.9e6, sessions: 84, withUsage: 84, agentMs: 101.3 * 3600000 },
+    { key: 'claude-sonnet-5', title: 'claude-sonnet-5', agent: 'claude', cost: 71.5, tokens: 61.7e6, sessions: 31, withUsage: 31, agentMs: 24.6 * 3600000 },
+    { key: 'gpt-5.5-codex', title: 'gpt-5.5-codex', agent: 'codex', cost: 39.7, tokens: 32.3e6, sessions: 12, withUsage: 12, agentMs: 11.4 * 3600000 },
+    { key: 'deepseek-v4', title: 'deepseek-v4', agent: 'codex', cost: null, tokens: 1.2e6, sessions: 1, withUsage: 1, agentMs: .9 * 3600000, unpriced: 1.2e6 },
+    { key: 'unknown', title: 'модель неизвестна', agent: 'gemini', cost: null, tokens: null, sessions: 10, withUsage: 0, agentMs: 5.9 * 3600000 },
+  ],
+  agent: [
+    { key: 'claude', title: 'Claude Code', cost: 372.7, tokens: 210.6e6, sessions: 115, withUsage: 115, agentMs: 125.9 * 3600000 },
+    { key: 'codex', title: 'Codex', cost: 39.7, tokens: 33.5e6, sessions: 13, withUsage: 13, agentMs: 12.3 * 3600000, unpriced: 1.2e6 },
+    { key: 'gemini', title: 'Gemini CLI', cost: null, tokens: null, sessions: 10, withUsage: 0, agentMs: 5.9 * 3600000 },
+  ],
+  global: [
+    { key: 'r1', title: 'Статистика проекта', status: 'progress', cost: 64.2, tokens: 37.9e6, sessions: 14, withUsage: 14, agentMs: 12.1 * 3600000 },
+    { key: 'r2', title: 'История статусов задач', status: 'done', cost: 88.5, tokens: 51.2e6, sessions: 21, withUsage: 20, agentMs: 19.8 * 3600000 },
+    { key: 'r3', title: 'Редизайн окна «Документы»', status: 'done', cost: 121.3, tokens: 70.4e6, sessions: 34, withUsage: 31, agentMs: 33.5 * 3600000 },
+    { key: 'r4', title: 'Вкладка «О проекте»', status: 'done', cost: 79.9, tokens: 43.6e6, sessions: 27, withUsage: 25, agentMs: 26.2 * 3600000 },
+    { key: 'r5', title: 'Запросы к человеку и вопросы воркеров', status: 'review', cost: 58.5, tokens: 41.0e6, sessions: 42, withUsage: 37, agentMs: 52.5 * 3600000, unpriced: 1.2e6 },
+  ],
+  task: [
+    { key: 't1', title: 'Окно «Документы»: дерево файлов и оглавление по концепции A', status: 'done', role: 'designer', cost: 38.6, tokens: 21.7e6, sessions: 4, withUsage: 4, agentMs: 7.2 * 3600000 },
+    { key: 't2', title: 'Вопросы воркеров: команда ask и переподключение по таймауту', status: 'done', role: 'developer', cost: 31.2, tokens: 19.9e6, sessions: 5, withUsage: 5, agentMs: 6.8 * 3600000 },
+    { key: 't3', title: 'История статусов задачи: модель и запись в core', status: 'done', role: 'developer', cost: 27.4, tokens: 15.8e6, sessions: 3, withUsage: 3, agentMs: 5.1 * 3600000 },
+    { key: 't4', title: 'Статистика проекта: контракт (типы, IPC, источники данных)', status: 'review', role: 'developer', cost: 22.9, tokens: 13.1e6, sessions: 2, withUsage: 2, agentMs: 3.4 * 3600000 },
+    { key: 't5', title: 'История статусов задачи: блок в карточке (renderer)', status: 'done', role: 'designer', cost: 16.3, tokens: 8.6e6, sessions: 2, withUsage: 2, agentMs: 2.9 * 3600000 },
+    { key: 't6', title: 'Проверка ветки: запросы к человеку в «Входящих»', status: 'done', role: 'qa', cost: null, tokens: null, sessions: 3, withUsage: 0, agentMs: 1.7 * 3600000 },
+  ],
+};
+const TOTALS = { cost: 412.4, unpricedTokens: 1.2e6, unpricedModels: ['deepseek-v4'], tokens: { input: 2.1e6, output: 5.8e6, cacheRead: 219.4e6, cacheWrite: 16.8e6 }, sessions: 138, withUsage: 128, agentMs: 144.1 * 3600000 };
+const TASKS = { total: 164, created: 41, done: 37, byStatus: { backlog: 18, ready: 6, progress: 4, input: 1, review: 3, done: 132 } };
+const GLOBAL = { total: 23, created: 6, done: 5 };
+const DISP = { total: 97, done: 81, failed: 6, unknown: 3, running: 4 };
+const TASKTIME = { avgActiveMs: 52 * 60000, avgLeadMs: 3.6 * 3600000, samples: 37 };
+const COLS = [['backlog', 'Бэклог'], ['ready', 'Готово к работе'], ['progress', 'В работе'], ['input', 'Нужен ввод'], ['review', 'На проверке'], ['done', 'Готово']];
+
+// ---------- состояние макета ----------
+const S = { variant: 'a', range: '30d', state: 'full', width: 'full', breakdown: 'role', metric: 'cost', drawer: true };
+try { const v = location.hash.slice(1); if (['a', 'b', 'c'].includes(v)) S.variant = v; } catch (e) {}
+
+const RANGE_K = { '7d': .27, '30d': 1, all: 2.35 };
+const k = () => RANGE_K[S.range];
+const noTokens = () => S.state === 'notokens';
+const isEmpty = () => S.state === 'empty';
+
+function money(v) { if (v == null) return null; const x = v * k(); return '$' + (x >= 100 ? Math.round(x).toLocaleString('ru-RU') : x.toFixed(2).replace('.', ',')); }
+function tok(v) { if (v == null) return null; const x = v * k(); if (x >= 1e9) return (x / 1e9).toFixed(2).replace('.', ',') + ' млрд'; if (x >= 1e6) return (x / 1e6).toFixed(1).replace('.', ',') + ' млн'; if (x >= 1e3) return Math.round(x / 1e3) + ' тыс'; return String(Math.round(x)); }
+function dur(ms, scale = true) { const x = scale ? ms * k() : ms; const h = Math.floor(x / 3600000), m = Math.round((x % 3600000) / 60000); if (h >= 100) return h + ' ч'; return h ? `${h} ч ${m} мин` : `${m} мин`; }
+function cnt(n) { return Math.round(n * k()); }
+const NA = '<span class="unknown" title="Нет транскриптов этих сессий — агент не пишет токены или файл удалён">нет данных</span>';
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+const RANGE_LABEL = { '7d': '7 дней', '30d': '30 дней', all: 'всё время' };
+
+function days() {
+  const n = S.range === '7d' ? 7 : 30;
+  const from = new Date(NOW - (n - 1) * DAY).toISOString().slice(0, 10);
+  return DAYS.filter((d) => d.date >= from);
+}
+
+function rowUsage(row) { return noTokens() ? { ...row, cost: null, tokens: null, withUsage: 0 } : row; }
+// main сортирует строки: стоимость → токены → время агентов, по убыванию
+function rowsOf(kind) { return ROWS[kind].map(rowUsage).sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1) || (b.tokens ?? -1) - (a.tokens ?? -1) || b.agentMs - a.agentMs); }
+
+// ---------- элементы ----------
+function periodCtl() {
+  return `<div class="period" role="radiogroup" aria-label="Период">${['7d', '30d', 'all'].map((x) =>
+    `<button role="radio" aria-checked="${S.range === x}" class="${S.range === x ? 'on' : ''}" data-range="${x}">${x === 'all' ? 'Всё время' : RANGE_LABEL[x]}</button>`).join('')}</div>`;
+}
+
+function costCell() {
+  if (noTokens()) return { v: NA, sub: `${cnt(TOTALS.sessions)} сессий без транскриптов` };
+  return { v: `<span class="num">${money(TOTALS.cost)}</span>`, sub: `<span style="color:var(--col-input)" title="Модели нет в таблице цен MODEL_PRICES: ${tok(TOTALS.unpricedTokens)} токенов не оценены">не менее: у deepseek-v4 нет цены</span>` };
+}
+
+function kpis() {
+  const c = costCell();
+  const t = TOTALS.tokens;
+  return `<div class="kpis">
+    <div class="kpi"><span class="lbl">Стоимость</span><span class="val">${c.v}</span><span class="sub">${c.sub}</span></div>
+    <div class="kpi"><span class="lbl">Токены</span><span class="val">${noTokens() ? NA : `<span class="num">${tok(t.input + t.output + t.cacheRead + t.cacheWrite)}</span>`}</span>
+      <span class="sub">${noTokens() ? '—' : `из кэша ${Math.round(t.cacheRead / (t.input + t.output + t.cacheRead + t.cacheWrite) * 100)}% · ответ ${tok(t.output)}`}</span></div>
+    <div class="kpi"><span class="lbl">Время агентов</span><span class="val num">${dur(TOTALS.agentMs)}</span><span class="sub">${cnt(TOTALS.sessions)} сессий · ${cnt(DISP.total)} прогонов</span></div>
+    <div class="kpi"><span class="lbl">Задач завершено</span><span class="val num">${cnt(TASKS.done)}<small>из ${cnt(TASKS.created)} созданных</small></span><span class="sub">в среднем ${dur(TASKTIME.avgActiveMs, false)} в работе</span></div>
+  </div>`;
+}
+
+function unknownNotice() {
+  const miss = noTokens() ? cnt(TOTALS.sessions) : cnt(TOTALS.sessions - TOTALS.withUsage);
+  const why = noTokens() ? 'Агенты проекта не оставляют транскриптов с токенами (например, Gemini CLI) — время и прогоны считаются, токены и стоимость нет.'
+    : 'Gemini CLI не пишет токены, у двух старых прогонов транскрипт удалён. В итоги они входят временем, но не токенами.';
+  return `<div class="notice" role="note"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg>
+    <div><b>Нет данных о токенах по ${miss} из ${cnt(TOTALS.sessions)} сессий.</b> ${why}</div></div>`;
+}
+
+// столбики по дням: стек по моделям (стоимость) или одна серия (токены / время / задачи)
+function dayChart(metric = 'cost', h = 170) {
+  const ds = days();
+  if (noTokens() && (metric === 'cost' || metric === 'tokens')) metric = 'time';
+  const W = 640, H = h, pl = 44, pr = 8, pt = 8, pb = 22;
+  const n = S.range === '7d' ? 7 : 30;
+  const val = (d) => metric === 'cost' ? Object.values(d.byModel).reduce((a, b) => a + b, 0) : metric === 'tokens' ? d.tokens : metric === 'time' ? d.agentMs / 3600000 : d.tasksDone;
+  const max = Math.max(...ds.map(val), 1);
+  const step = niceStep(max / 4);
+  const top = Math.ceil(max / step) * step;
+  const y = (v) => pt + (H - pt - pb) * (1 - v / top);
+  const slot = (W - pl - pr) / n, bw = Math.max(4, Math.min(22, slot - 6));
+  const fmtAx = (v) => metric === 'cost' ? '$' + v : metric === 'tokens' ? (v / 1e6) + ' млн' : metric === 'time' ? v + ' ч' : v;
+  let g = '';
+  for (let v = 0; v <= top + 1e-9; v += step) g += `<line class="grid" x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}"/><text class="ax" x="${pl - 6}" y="${y(v) + 4}" text-anchor="end">${fmtAx(+v.toFixed(2))}</text>`;
+  const start = NOW - (n - 1) * DAY;
+  let bars = '';
+  for (let i = 0; i < n; i++) {
+    const date = new Date(start + i * DAY).toISOString().slice(0, 10);
+    const d = ds.find((x) => x.date === date);
+    const x = pl + i * slot + (slot - bw) / 2;
+    if ((n === 7 || i % 5 === 4 || i === n - 1)) bars += `<text class="ax" x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${+date.slice(8)}.${date.slice(5, 7)}</text>`;
+    if (!d) continue;
+    let inner = `<rect class="hover-bg" x="${pl + i * slot}" y="${pt}" width="${slot}" height="${H - pt - pb}" fill="transparent"/>`;
+    if (metric === 'cost') {
+      let acc = 0;
+      const parts = Object.entries(d.byModel);
+      parts.forEach(([m, v], j) => {
+        const y0 = y(acc), y1 = y(acc + v); acc += v;
+        const gap = j > 0 ? 1 : 0;
+        const hh = Math.max(0, y0 - y1 - gap);
+        const last = j === parts.length - 1;
+        inner += last ? `<path class="bar" fill="${SERIES[m]}" d="${roundTop(x, y0 - gap - hh, bw, hh)}"/>` : `<rect class="bar" fill="${SERIES[m]}" x="${x}" y="${y0 - gap - hh}" width="${bw}" height="${hh}"/>`;
+      });
+    } else {
+      const v = val(d); const hh = y(0) - y(v);
+      inner += `<path class="bar" fill="var(--accent)" d="${roundTop(x, y(v), bw, hh)}"/>`;
+    }
+    bars += `<g class="d" data-day="${date}" data-metric="${metric}">${inner}</g>`;
+  }
+  const legend = metric === 'cost' ? `<div class="legend">${Object.keys(DAYS[0].byModel).map((m) => `<span><i class="swatch" style="background:${SERIES[m]}"></i>${m}</span>`).join('')}</div>` : '';
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="По дням: ${metric}">${g}<line x1="${pl}" x2="${W - pr}" y1="${y(0)}" y2="${y(0)}" stroke="var(--chip)"/>${bars}</svg></div>${legend}`;
+}
+function roundTop(x, y, w, h) { const r = Math.min(4, h, w / 2); if (h <= 0) return ''; return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`; }
+function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(raw))); const f = raw / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; }
+
+const BREAKDOWNS = [['role', 'Роли'], ['model', 'Модели'], ['agent', 'Агенты'], ['global', 'Глобальные задачи'], ['task', 'Задачи']];
+function breakdownTabs() { return `<div class="subtabs" role="tablist">${BREAKDOWNS.map(([id, l]) => `<button role="tab" aria-selected="${S.breakdown === id}" class="${S.breakdown === id ? 'on' : ''}" data-bd="${id}">${l}</button>`).join('')}</div>`; }
+
+function nameCell(kind, row) {
+  let lead = '';
+  if (kind === 'role') lead = `<i class="swatch" style="background:${ROLE_C[row.key]}"></i>`;
+  if (kind === 'model') lead = `<i class="swatch" style="background:${SERIES[row.key] || 'var(--s-unknown)'}"></i>`;
+  if (kind === 'agent') lead = `<span class="logo lg-${row.key}">${row.key[0].toUpperCase()}</span>`;
+  if (kind === 'global' || kind === 'task') lead = `<i class="swatch" style="background:var(--col-${row.status});border-radius:50%" title="${COLS.find((c) => c[0] === row.status)[1]}"></i>`;
+  const cls = row.key === 'unknown' ? ' unknown' : '';
+  const sub = kind === 'model' ? ` <span class="hint">${row.agent}</span>` : '';
+  return `<div class="nm">${lead}<span class="x${cls}">${esc(row.title)}</span>${sub}</div>`;
+}
+
+const COL_HEAD = { role: 'Роль', model: 'Модель', agent: 'Агент', global: 'Глобальная задача', task: 'Задача' };
+function breakdownTable(kind, compact = false) {
+  const rows = rowsOf(kind);
+  const maxCost = Math.max(...rows.map((x) => x.cost || 0), 1);
+  const maxT = Math.max(...rows.map((x) => x.agentMs));
+  const byCost = !noTokens();
+  const body = rows.map((row) => {
+    const share = byCost ? (row.cost || 0) / maxCost : row.agentMs / maxT;
+    const cost = row.cost == null ? (row.tokens != null && row.unpriced ? '<span class="chip warn" title="Модели нет в таблице цен">цена неизвестна</span>' : NA) : money(row.cost) + (row.unpriced ? ' <span class="hint" title="Часть токенов — модели без цены">+?</span>' : '');
+    const partial = row.withUsage < row.sessions && row.withUsage > 0 ? ` <span class="hint" title="Сессий с данными о токенах">(${row.withUsage}/${row.sessions})</span>` : '';
+    return `<tr><td class="t">${nameCell(kind, row)}</td>
+      <td class="r">${cost}</td>
+      ${compact ? '' : `<td class="r">${row.tokens == null ? NA : tok(row.tokens)}${partial}</td>`}
+      <td class="r">${dur(row.agentMs)}</td>
+      ${compact ? '' : `<td class="r">${cnt(row.sessions)}</td>`}
+      <td style="width:18%"><div class="share" aria-hidden="true"><i style="width:${Math.max(2, share * 100)}%"></i></div></td></tr>`;
+  }).join('');
+  return `<div class="tbl-wrap"><table class="st"><thead><tr><th>${COL_HEAD[kind]}</th>
+    <th class="r">Стоимость</th>${compact ? '' : '<th class="r">Токены</th>'}<th class="r">Время агентов</th>${compact ? '' : '<th class="r">Сессии</th>'}<th title="Доля ${byCost ? 'стоимости' : 'времени агентов'}">доля</th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function statusBar() {
+  const total = Object.values(TASKS.byStatus).reduce((a, b) => a + b, 0);
+  return `<div class="cols-bar"><div class="stackbar" role="img" aria-label="Задачи по колонкам">${COLS.map(([id]) => `<i style="width:${TASKS.byStatus[id] / total * 100}%;background:var(--col-${id})"></i>`).join('')}</div>
+    <div class="cols-legend">${COLS.map(([id, l]) => `<span><i class="swatch" style="background:var(--col-${id})"></i>${l}<b>${TASKS.byStatus[id]}</b></span>`).join('')}</div></div>`;
+}
+
+function dispatchFacts() {
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap">
+    <span class="chip ok">сдано ${cnt(DISP.done)}</span><span class="chip bad">упало ${cnt(DISP.failed)}</span>
+    <span class="chip" title="Сессия закрылась без orca-board done">исход неизвестен ${Math.max(1, cnt(DISP.unknown))}</span><span class="chip run">идут сейчас ${DISP.running}</span></div>`;
+}
+
+function emptyState() {
+  return `<div class="empty-state"><svg class="i" viewBox="0 0 24 24" style="width:32px;height:32px"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+    <b>За ${RANGE_LABEL[S.range]} агенты не запускались</b>
+    <span>Статистика появится после первого прогона координатора или воркера. Выберите период побольше.</span>${periodCtl()}</div>`;
+}
+
+// ---------- варианты ----------
+function head(tab) {
+  const tabs = [['board', 'Доска'], ['terminals', 'Терминалы'], ...(S.variant === 'b' ? [['stats', 'Статистика']] : []), ['info', 'О проекте']];
+  return `<div class="main-head"><div class="row"><h1>orca-board</h1><button class="btn-primary"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">Новая задача</span></button></div>
+    <div class="tabs" role="tablist">${tabs.map(([id, l]) => `<button class="tab ${tab === id ? 'active' : ''}" role="tab" aria-selected="${tab === id}">${l}${id === 'terminals' ? '<span class="tab-badge">3</span>' : ''}</button>`).join('')}</div></div>`;
+}
+
+function variantA() {
+  const nav = [['Обзор', ''], ['Агенты', '4 из 9'], ['Колонки', '6'], ['Типы задач', 'все'], ['Правила', ''], ['Прогоны', '23'], ['Статистика', RANGE_LABEL[S.range]]];
+  const body = isEmpty() ? emptyState() : `
+    ${kpis()}
+    ${!isEmpty() ? unknownNotice() : ''}
+    <div class="two">
+      <section class="panel"><h3>По дням<span class="grow"></span><span class="hint">${noTokens() ? 'время агентов, ч' : 'стоимость, $ по моделям'}</span></h3>${dayChart('cost')}</section>
+      <section class="panel"><h3>Задачи и прогоны</h3>${statusBar()}
+        <div class="hint">Прогоны агентов за период</div>${dispatchFacts()}
+        <div class="muted">Глобальных задач: <b class="num">${GLOBAL.total}</b>, закрыто за период ${cnt(GLOBAL.done)} · запусков координатора ${cnt(31)}</div>
+        <div class="muted">От взятия в работу до «Готово» — в среднем <b>${dur(TASKTIME.avgLeadMs, false)}</b> (${cnt(TASKTIME.samples)} задач)</div></section>
+    </div>
+    <section class="panel"><h3>Разбивка<span class="grow"></span>${breakdownTabs()}</h3>${breakdownTable(S.breakdown)}</section>`;
+  return head('info') + `<div class="content"><div class="about">
+    <nav class="about-nav" aria-label="Разделы проекта"><div class="about-nav-group">Проект</div>
+      ${nav.map(([l, c]) => `<div class="about-nav-item ${l === 'Статистика' ? 'on' : ''}">${l}<span class="cnt">${c}</span></div>`).join('')}</nav>
+    <section class="about-sec">
+      <div class="sec-head"><div class="t"><h2>Статистика</h2><p>Токены и стоимость — из транскриптов агентов в worktree задач, время и счётчики — из доски. Цены моделей — таблица <code>MODEL_PRICES</code>.</p></div>${periodCtl()}</div>
+      ${body}
+    </section></div></div>`;
+}
+
+function variantB() {
+  if (isEmpty()) return head('stats') + `<div class="content"><div class="dash">${emptyState()}</div></div>`;
+  const c = costCell();
+  const t = TOTALS.tokens;
+  const metrics = [['cost', 'Стоимость'], ['tokens', 'Токены'], ['time', 'Время агентов'], ['done', 'Задачи']].filter(([id]) => !(noTokens() && (id === 'cost' || id === 'tokens')));
+  const metric = noTokens() && (S.metric === 'cost' || S.metric === 'tokens') ? 'time' : S.metric;
+  const split = (kind, n = 5) => {
+    const rows = rowsOf(kind).slice(0, n);
+    const key = noTokens() ? 'agentMs' : 'cost';
+    const max = Math.max(...rows.map((x) => x[key] || 0), 1);
+    return `<div class="split-list">${rows.map((row) => `<div class="it"><div class="n">${nameCell(kind, row).replace('<div class="nm">', '').replace(/<\/div>$/, '')}</div>
+      <b class="num" style="font-weight:500">${noTokens() ? dur(row.agentMs) : row.cost == null ? (row.unpriced ? '<span class="chip warn">без цены</span>' : NA) : money(row.cost)}</b>
+      <div class="share"><i style="width:${Math.max(2, (row[key] || 0) / max * 100)}%;background:${kind === 'model' ? SERIES[row.key] || 'var(--s-unknown)' : kind === 'role' ? ROLE_C[row.key] : 'var(--accent)'}"></i></div></div>`).join('')}</div>`;
+  };
+  return head('stats') + `<div class="content"><div class="dash">
+    <div class="dash-top"><span class="muted">Обновлено в 15:00 · считается по запросу, не хранится</span><span class="grow"></span>${periodCtl()}</div>
+    <section class="panel"><div class="hero">
+      <div class="big"><span class="muted">Потрачено за ${RANGE_LABEL[S.range]}</span><span class="v">${c.v}</span><span class="hint">${c.sub}</span>
+        <div class="facts">
+          <div><span>Токены</span><b class="num">${noTokens() ? NA : tok(t.input + t.output + t.cacheRead + t.cacheWrite)}</b></div>
+          <div><span>Время агентов</span><b class="num">${dur(TOTALS.agentMs)}</b></div>
+          <div><span>Задач завершено</span><b class="num">${cnt(TASKS.done)}</b></div>
+          <div><span>Цена задачи</span><b class="num">${noTokens() ? NA : money(TOTALS.cost / TASKS.done / k())}</b></div>
+        </div></div>
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="muted" style="flex:1">По дням</span>
+          <div class="subtabs">${metrics.map(([id, l]) => `<button class="${metric === id ? 'on' : ''}" data-metric="${id}">${l}</button>`).join('')}</div></div>
+        ${dayChart(metric, 190)}</div>
+    </div></section>
+    ${unknownNotice()}
+    <div class="grid-b">
+      <section class="panel"><h3>Модели</h3>${split('model')}</section>
+      <section class="panel"><h3>Роли</h3>${split('role')}</section>
+      <section class="panel"><h3>Задачи на доске</h3>${statusBar()}<div class="hint">Прогоны за период</div>${dispatchFacts()}
+        <div class="muted">В работе в среднем <b>${dur(TASKTIME.avgActiveMs, false)}</b>, от старта до «Готово» — <b>${dur(TASKTIME.avgLeadMs, false)}</b></div></section>
+    </div>
+    <div class="grid-b2">
+      <section class="panel"><h3>Самые дорогие глобальные задачи</h3>${breakdownTable('global', true)}</section>
+      <section class="panel"><h3>Самые дорогие задачи</h3>${breakdownTable('task', true)}</section>
+    </div>
+  </div></div>`;
+}
+
+function variantC() {
+  const ds = days();
+  const sp = ds.map((d) => noTokens() ? d.agentMs : Object.values(d.byModel).reduce((a, b) => a + b, 0));
+  const mx = Math.max(...sp, 1);
+  const spark = sp.length ? `<svg class="spark" viewBox="0 0 90 22" aria-hidden="true"><polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" points="${sp.map((v, i) => `${(i / Math.max(1, sp.length - 1) * 86 + 2).toFixed(1)},${(20 - v / mx * 17).toFixed(1)}`).join(' ')}"/></svg>` : '';
+  const cards = {
+    progress: [['Статистика проекта: сбор токенов из транскриптов', 'developer', 'claude', 4.1], ['Статистика проекта: раздел в UI', 'designer', 'claude', null]],
+    review: [['Статистика проекта: контракт (типы, IPC, источники данных)', 'developer', 'claude', 22.9]],
+    ready: [['Таблица цен MODEL_PRICES и неизвестные модели', 'developer', 'codex', null]],
+    done: [['История статусов задачи: блок в карточке (renderer)', 'designer', 'claude', 16.3], ['Проверка ветки: запросы к человеку', 'qa', 'gemini', 'na']],
+  };
+  const colTitle = { ready: 'Готово к работе', progress: 'В работе', review: 'На проверке', done: 'Готово' };
+  const card = ([t, role, ag, cost]) => `<div class="tcard"><div class="ttl">${esc(t)}</div><div class="meta"><span class="logo lg-${ag}">${ag[0].toUpperCase()}</span>${role}
+    <span class="cost" title="Расход агентов на задаче за всё время">${cost === 'na' || (noTokens() && cost) ? '<span class="unknown">$ —</span>' : cost == null ? '' : '$' + cost.toFixed(2).replace('.', ',')}</span></div></div>`;
+  const strip = isEmpty() ? `<div class="stat-strip">За ${RANGE_LABEL[S.range]} агенты не запускались<span class="grow"></span>${periodCtl()}</div>` : `<div class="stat-strip" role="group" aria-label="Статистика за период">
+      <span>За ${RANGE_LABEL[S.range]}</span>
+      <span>${noTokens() ? 'стоимость ' + NA : `<b>${money(TOTALS.cost)}</b><span title="Не менее: у deepseek-v4 нет цены">+</span>`}</span>
+      <span>${noTokens() ? '' : `<b>${tok(TOTALS.tokens.input + TOTALS.tokens.output + TOTALS.tokens.cacheRead + TOTALS.tokens.cacheWrite)}</b> ток.`}</span>
+      <span>агенты <b>${dur(TOTALS.agentMs)}</b></span>
+      <span>готово <b>${cnt(TASKS.done)}</b></span>${spark}
+      <span class="grow"></span>
+      <button class="open ${S.drawer ? 'on' : ''}" data-drawer aria-expanded="${S.drawer}"><svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M4 20V10M10 20V4M16 20v-7"/></svg>Подробнее</button></div>`;
+  const drawer = S.drawer && !isEmpty() ? `<aside class="drawer" aria-label="Статистика проекта">
+    <div class="dh"><h3>Статистика</h3><button class="x" data-drawer aria-label="Закрыть"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    ${periodCtl()}
+    ${kpis()}
+    ${unknownNotice()}
+    <section class="panel"><h3>По дням</h3>${dayChart('cost', 150)}</section>
+    ${BREAKDOWNS.map(([id, l], i) => `<details class="acc" ${i < 2 ? 'open' : ''}><summary>${l}<span class="hint">${ROWS[id].length}</span></summary>${breakdownTable(id, true)}</details>`).join('')}
+    <details class="acc"><summary>Задачи и прогоны</summary>${statusBar()}${dispatchFacts()}</details>
+  </aside>` : '';
+  return head('board') + `<div class="content"><div class="board-wrap"><div class="board-area">${strip}
+    <div class="board">${['ready', 'progress', 'review', 'done'].map((c) => `<div class="col"><h4><span class="dot" style="background:var(--col-${c})"></span>${colTitle[c]}<span class="c">${cards[c].length}</span></h4>${cards[c].map(card).join('')}</div>`).join('')}</div>
+    <div class="hint">Стоимость на карточке — сумма <code>byTask</code> за всё время; в карточке задачи — блок «Расход» с разбивкой по прогонам.</div>
+    </div>${drawer}</div></div>`;
+}
+
+const NOTES = {
+  a: `<div><b>A · Раздел «Статистика» в «О проекте».</b> Ещё один пункт в меню разделов рядом с «Прогонами». Итоги плитками, график по дням, разбивка таблицей с переключателем «Роли / Модели / Агенты / Глобальные / Задачи».</div>
+      <div><span class="pro">+</span> ни одной новой вкладки, тот же каркас, что у соседних разделов; все пять разбивок контракта в одной таблице.<br><span class="con">−</span> статистику надо искать; на узком окне меню разделов прячется.</div>`,
+  b: `<div><b>B · Вкладка «Статистика» у проекта.</b> Отдельная вкладка рядом с «Доской» и «Терминалами» — дашборд на всю ширину: главная цифра, график с выбором метрики, доли моделей и ролей, топ дорогих задач.</div>
+      <div><span class="pro">+</span> видно с первого взгляда, место под графики и «куда ушли деньги».<br><span class="con">−</span> новая вкладка в шапке; разбивки по агентам и дням — только частично, остальное — в таблицах ниже.</div>`,
+  c: `<div><b>C · По месту: полоса над доской + панель.</b> Строка-сводка над доской (стоимость, токены, время, готово, тренд) и выезжающая справа панель с деталями; расход задачи — прямо на её карточке.</div>
+      <div><span class="pro">+</span> цифры всегда на глазах, цена видна у каждой задачи; доска не уходит.<br><span class="con">−</span> панель тесная для таблиц; полоса занимает высоту доски.</div>`,
+};
+
+// ---------- отрисовка и события ----------
+function seg(id, key, opts) {
+  document.getElementById(id).innerHTML = opts.map(([v, l]) => `<button class="${S[key] === v ? 'on' : ''}" aria-pressed="${S[key] === v}" data-k="${key}" data-v="${v}">${l}</button>`).join('');
+}
+function render() {
+  seg('sw-variant', 'variant', [['a', 'A · раздел'], ['b', 'B · вкладка'], ['c', 'C · над доской']]);
+  seg('sw-state', 'state', [['full', 'обычные'], ['notokens', 'без токенов'], ['empty', 'пусто']]);
+  seg('sw-width', 'width', [['full', 'широкое'], ['narrow', '860 px']]);
+  document.getElementById('note').innerHTML = NOTES[S.variant];
+  document.getElementById('app').style.setProperty('--w', S.width === 'narrow' ? '860px' : '100%');
+  document.getElementById('main').innerHTML = S.variant === 'a' ? variantA() : S.variant === 'b' ? variantB() : variantC();
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.k) { S[b.dataset.k] = b.dataset.v; if (b.dataset.k === 'variant') { try { history.replaceState(null, '', '#' + b.dataset.v); } catch (er) {} } }
+  else if (b.dataset.range) S.range = b.dataset.range;
+  else if (b.dataset.bd) S.breakdown = b.dataset.bd;
+  else if (b.dataset.metric) S.metric = b.dataset.metric;
+  else if ('drawer' in b.dataset) S.drawer = !S.drawer;
+  else return;
+  render();
+});
+// подсказка по дню
+const tip = document.getElementById('tip');
+document.addEventListener('mousemove', (e) => {
+  const g = e.target.closest && e.target.closest('g.d');
+  if (!g) { tip.hidden = true; return; }
+  const d = DAYS.find((x) => x.date === g.dataset.day);
+  const dt = new Date(d.date + 'T12:00:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' });
+  const cost = Object.values(d.byModel).reduce((a, b) => a + b, 0);
+  const rows = g.dataset.metric === 'cost' ? Object.entries(d.byModel).map(([m, v]) => `<div class="r"><span><i class="swatch" style="background:${SERIES[m]}"></i>${m}</span><span class="num">$${v.toFixed(2).replace('.', ',')}</span></div>`).join('') : '';
+  tip.innerHTML = `<b>${dt}</b>${rows}<div class="r"><span>Всего</span><span class="num">$${cost.toFixed(2).replace('.', ',')}</span></div>
+    <div class="r"><span>Токены</span><span class="num">${(d.tokens / 1e6).toFixed(1).replace('.', ',')} млн</span></div>
+    <div class="r"><span>Время агентов</span><span class="num">${dur(d.agentMs, false)}</span></div><div class="r"><span>Задач готово</span><span class="num">${d.tasksDone}</span></div>`;
+  tip.hidden = false;
+  const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  tip.style.left = x + 'px'; tip.style.top = (e.clientY + 14) + 'px';
+  tip.style.position = 'fixed';
+});
+render();
+</script>
