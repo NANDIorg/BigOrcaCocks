@@ -664,6 +664,11 @@ export interface StatsDay extends StatsUsage {
   date: string
   /** Задач, вошедших в kind=done в этот день. */
   tasksDone: number
+  /**
+   * Расход дня по моделям — сегменты столбца графика «Стоимость» на вкладке «Статистика» (вариант B);
+   * те же ключи, что в `ProjectStats.byModel`, порядок тот же. Сессии без данных о модели — строка `unknown`.
+   */
+  byModel: StatsRow[]
 }
 
 /** Счётчики задач или глобальных задач. */

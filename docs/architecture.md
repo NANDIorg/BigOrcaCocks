@@ -1183,8 +1183,9 @@ UI работает с активным проектом; воркеры и ко
 - `ProjectStats { projectId, range, from?, generatedAt, totals, tasks, globalTasks, dispatches, coordinatorLaunches, taskTime,
   byRole, byModel, byAgent, byGlobalTask, byTask, byDay }`.
 - `StatsUsage { tokens?, costUsd?, unpricedTokens, unpricedModels, sessions, sessionsWithUsage, agentMs }` — расход среза;
-  `StatsRow = StatsUsage + { key, title }` (строки разбивок), `StatsDay = StatsUsage + { date: 'YYYY-MM-DD', tasksDone }`
-  (дни без активности не попадают, порядок — от старых к новым).
+  `StatsRow = StatsUsage + { key, title }` (строки разбивок), `StatsDay = StatsUsage + { date: 'YYYY-MM-DD', tasksDone, byModel }`
+  (дни без активности не попадают, порядок — от старых к новым; `byModel` дня — ключи и порядок как у `ProjectStats.byModel`,
+  чтобы цвет модели на графике совпадал с блоком «Модели»).
 - `TokenUsage { input, output, cacheRead, cacheWrite }` — `input` без кэша (семантика API Anthropic), рассуждения — в `output`.
 - **«Неизвестно» ≠ 0.** `tokens` нет, если ни у одной сессии среза не нашлось данных; `costUsd` нет, если токенов нет или
   ни одна модель не известна таблице цен. `sessions - sessionsWithUsage` — сессии без данных: UI показывает «нет данных
@@ -1253,6 +1254,28 @@ UI работает с активным проектом; воркеры и ко
 считается как 5 мин). Модель не найдена в таблице — её токены идут в `unpricedTokens`, id — в `unpricedModels`,
 в `costUsd` не входят; итог UI помечает как «не менее $X». Алиасы роли (`opus`, `sonnet`) в таблицу не нужны:
 в транскрипте всегда полный id модели.
+
+### Интерфейс — вкладка «Статистика» (вариант B)
+
+Выбран вариант B из макетов `docs/mockups/project-stats/index.html` (A — раздел в «О проекте», C — полоса над доской —
+отклонены): отдельная вкладка проекта «Статистика» рядом с «Доской» и «Терминалами», дашборд на всю ширину.
+Данные — один вызов `stats.project(projectId, range)` при открытии вкладки и смене периода; не хранится и не
+обновляется по событиям (подпись «Обновлено в HH:MM» — `generatedAt`).
+
+| Блок | Поля `ProjectStats` |
+|---|---|
+| Период «7 дней / 30 дней / всё время» | параметр `range` |
+| Главная цифра «Потрачено за период» | `totals.costUsd`; `unpricedTokens > 0` — «не менее $X», `sessions − sessionsWithUsage > 0` — «нет данных по N сессиям» |
+| Факты: токены, время агентов, задач завершено, цена задачи | сумма `totals.tokens`, `totals.agentMs`, `tasks.done`; цена задачи = `totals.costUsd / tasks.done` (считает renderer, нет стоимости или `done = 0` — «нет данных») |
+| График по дням, метрика «Стоимость / Токены / Время агентов / Задачи» | `byDay[]`: стоимость — стопкой по `byDay[].byModel[].costUsd`, токены — `tokens`, время — `agentMs`, задачи — `tasksDone`; дни без записи — пустой столбец |
+| Предупреждение о неизвестном | `totals.unpricedModels` (дописать в `MODEL_PRICES`), `sessions − sessionsWithUsage` |
+| «Модели», «Роли» — доли | первые 5 строк `byModel` / `byRole`, полоса доли — `costUsd` (нет токенов — `agentMs`) |
+| «Задачи на доске» | `tasks.byStatus` (полоса по колонкам), `dispatches`, `taskTime.avgActiveMs` / `avgLeadMs` |
+| «Самые дорогие глобальные задачи», «Самые дорогие задачи» | первые строки `byGlobalTask` / `byTask` (уже отсортированы main) |
+
+Состояния: нет ни одной сессии с токенами — метрики «Стоимость» и «Токены» скрыты, доли и график — по `agentMs`;
+пустой проект (`emptyProjectStats`) — заглушка «статистики пока нет». `byAgent` на вкладке не выводится
+(в контракте остаётся — для подсказки и будущих разбивок). На узком окне сетки блоков перестраиваются в одну колонку.
 
 ## Уведомления
 
