@@ -134,7 +134,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
-- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа;
+- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files}` — показ человеку с «Работы» (`docs/workflow.md`);
   `roleId`/`agent`/`model` — снимок роли на момент запуска, `sessionId` — сессия агента для поиска транскрипта (см. «Статистика»).
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
@@ -353,7 +353,7 @@ Store хранит позицию и решает, куда задача пер�
   `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
 - **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
   задача в `needs_input`; ждущий approval той же задачи не дублируется. Решение — `resolveRequest` с `accept` /
-  `reject` (`text` при reject → `task.feedback`), `request_resolved {kind: 'approval', action, nodeId}`.
+  `reject` (`text` при reject → `task.feedback`), `request_resolved {kind: 'approval', action, nodeId, decision?}` (`decision` — текст решения, ≤ 2000).
 - **Задача-гейт** — `createTask({…, gateFor: {taskId, nodeId}})` (проверяемая задача должна существовать): `task_ready`
   по ней не шлётся (воркера запускает исполнитель), `worker_done` несёт `gateFor: <id рабочей задачи>`.
 - **Миграция при загрузке** (`migrateStages`): задача в колонке kind=review без `stage` (сдана кодом до воркфлоу),

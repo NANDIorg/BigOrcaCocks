@@ -2,17 +2,18 @@ import type {
   AgentSession,
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
-  HumanRequest, RequestOption, RequestResolution, TaskPriority
+  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase
 } from './types.ts'
 import {
   ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, MAX_ANSWER_LENGTH, REQUEST_ACTIONS,
-  TASK_PRIORITIES, isTaskPriority, normalizeOptions
+  TASK_PRIORITIES, isTaskPriority, normalizeOptions, normalizeShowcase
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
 import { recordStatus, withStatusSource } from './status-history.ts'
 import {
-  defaultWorkflow, nextStage, startStage, wfNodeTitle, type WfAction, type WfOutcome, type WfStage, type Workflow
+  defaultWorkflow, nextStage, startStage, wfNodeTitle, wfWorkStage,
+  type WfAction, type WfOutcome, type WfStage, type WfWorkStage, type Workflow
 } from './workflow.ts'
 import {
   globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, globalTaskTitle, runTypeLockReason,
@@ -62,6 +63,11 @@ function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
   return text.length > EVENT_ANSWER_LIMIT ? { answer: text.slice(0, EVENT_ANSWER_LIMIT), answerTruncated: true } : { answer: text }
 }
 
+/** Текст решения человека для payload события: как `eventAnswer`, но поля `decision` / `decisionTruncated`. */
+function eventDecision(text: string): { decision: string; decisionTruncated?: true } {
+  return text.length > EVENT_ANSWER_LIMIT ? { decision: text.slice(0, EVENT_ANSWER_LIMIT), decisionTruncated: true } : { decision: text }
+}
+
 /** Глубокая копия графа: правка графа проекта после создания прогона не должна менять снимок. */
 /**
  * Запасной граф для `runWorkflow`, если у прогона нет снимка: граф типа прогона (или типа проекта по умолчанию
@@ -71,6 +77,13 @@ function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
 export interface RunWorkflowFallback {
   roleIds?: readonly string[]
   workflow?: Workflow
+}
+
+/** Необязательная часть `finishDispatch`: показ человеку и запасной граф прогона (как у `advanceStage`). */
+export interface FinishDispatchOptions {
+  /** Показ из `orca-board done`: `text` — markdown, `files` — пути в ветке задачи. Проверяет `normalizeShowcase`. */
+  showcase?: { text?: string; files?: readonly string[] }
+  fallback?: RunWorkflowFallback
 }
 
 /** Старая форма запасного графа — только роли (`runWorkflow(runId, roleIds)`). */
@@ -1183,11 +1196,22 @@ export class TaskStore {
   }
 
   /**
+   * Этап «Работа», на котором стоит задача (`wfWorkStage` по графу прогона): для раздела «Этап» в промпте воркера
+   * и проверки показа в `finishDispatch`. Задача вне воркфлоу или не на «Работе» — undefined.
+   */
+  taskWorkStage(taskId: string, fallback: RunWorkflowFallback = {}): WfWorkStage | undefined {
+    const task = this.mustTask(taskId)
+    if (!task.stage) return undefined
+    return wfWorkStage(this.runWorkflow(task.runId, fallback), task.stage.nodeId)
+  }
+
+  /**
    * Явное завершение воркером через `orca-board done`. У задачи-ответа ответ обязателен и уходит
    * в событие worker_done вместе с `answerFor` — координатор решает по нему, принимать ли ответ сам.
    * Ответ для человека (`answerFor: 'human'`) — запрос answer к человеку (needs_input), остальное — в review.
+   * Показ (`opts.showcase`) сохраняется в `Dispatch.showcase`; на «Работе» с обязательным показом без него — ошибка.
    */
-  finishDispatch(dispatchId: string, summary: string, files: string[] = [], answer?: string): Dispatch {
+  finishDispatch(dispatchId: string, summary: string, files: string[] = [], answer?: string, opts: FinishDispatchOptions = {}): Dispatch {
     const dispatch = this.mustDispatch(dispatchId)
     const task = this.mustTask(dispatch.taskId)
     const text = answer?.trim() ? answer : undefined
@@ -1197,11 +1221,20 @@ export class TaskStore {
     if (text && text.length > MAX_ANSWER_LENGTH) {
       throw new Error(`ответ длиннее ${MAX_ANSWER_LENGTH} символов — сократи его`)
     }
+    const showcase: DispatchShowcase | undefined = normalizeShowcase(opts.showcase)
+    const stage = this.taskWorkStage(task.id, opts.fallback)
+    if (!showcase && stage?.showcase?.required) {
+      throw new Error(
+        `этап «${stage.title}» требует показ человеку: ${stage.showcase.what}\n` +
+        'Сдай его вместе с done: описание — --show-file <файл.md>, файлы из ветки — --show <путь> (флаг на каждый файл).'
+      )
+    }
     dispatch.endedAt = Date.now()
     dispatch.outcome = 'done'
     dispatch.summary = summary
     dispatch.files = files
     if (text) dispatch.answer = text
+    if (showcase) dispatch.showcase = showcase
     // Запуск сдал работу: его вопрос и прошлый ответ человека больше не ждут (сам вопрос остаётся открытым).
     this.cancelRequests((r) => r.taskId === task.id)
     let request: HumanRequest | undefined
@@ -1417,6 +1450,8 @@ export class TaskStore {
   /**
    * Решение по approval без commit: запрос закрыт, при «Вернуть» замечания — в feedback для следующего запуска.
    * Колонку не трогает, кроме выхода из «Нужен ответ» (settleTask): дальше задачу ведёт исполнитель воркфлоу.
+   * Текст решения («вариант 2») — в `decision` события, последним и обрезанным: координатор учтёт выбор человека,
+   * полный текст — `resolution.text` запроса (`orca-board request get`).
    */
   private applyApproval(task: Task, request: HumanRequest, action: 'accept' | 'reject', text?: string): void {
     this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}) })
@@ -1424,7 +1459,8 @@ export class TaskStore {
     this.settleTask(task)
     task.updatedAt = Date.now()
     this.pushEvent('request_resolved', {
-      taskId: task.id, action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {})
+      taskId: task.id, action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {}),
+      ...(text ? eventDecision(text) : {})
     })
   }
 
