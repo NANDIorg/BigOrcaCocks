@@ -7,30 +7,15 @@ import { relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
 import { ipcErrorMessage } from './useAutoSave'
 import { useNow } from './useNow'
+import { isTypingTarget } from './hotkeys'
+import { onFocusFeed, onRevealInFeed, revealOnBoard, scrollBehavior } from './feedLink'
 import {
-  ATTENTION_COLOR, ATTENTION_GLYPH, attentionLabel, attentionSummary, defaultCollapsed, questionAnswerText, questionAsRequest,
+  ATTENTION_COLOR, ATTENTION_GLYPH, attentionCountTitle, attentionLabel, attentionSummary, defaultCollapsed, feedItemOfTask, questionAnswerText, questionAsRequest,
   readCollapsed, writeCollapsed, type AttentionItem
 } from './attention'
 
-/** Событие «показать пункт задачи в ленте»: его шлёт `revealAttention`, слушает открытая лента. */
-const REVEAL_EVENT = 'orca:attention-reveal'
-
 /** Сколько подсвечен пункт, к которому прокрутили с доски (мс). */
 const HIGHLIGHT_MS = 2500
-
-/**
- * Прокрутить ленту «Ждут вас» к пункту задачи и подсветить его (ссылка «в ленте ↑» на карточке доски). Свёрнутая
- * лента разворачивается, но выбор «свёрнуто» в localStorage не меняется. Ленты нет (пунктов 0) — ничего не происходит.
- */
-export function revealAttention(taskId: string): void {
-  window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: { taskId } }))
-}
-
-/** Горячие клавиши не перехватываются, пока ввод идёт в поле или поверх открыта модалка. */
-function typingTarget(t: EventTarget | null): boolean {
-  const el = t as HTMLElement | null
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
-}
 
 interface Props {
   items: AttentionItem[]
@@ -48,8 +33,6 @@ interface Props {
   onStartTask(task: Task): void | Promise<void>
   onOpenTask(taskId: string): void
   onOpenTerminal(taskId: string): void
-  /** Клик по имени задачи в карточке ленты: выделить её на доске. Нет — имя обычным текстом. */
-  onSelectTask?(taskId: string): void
 }
 
 /**
@@ -58,7 +41,7 @@ interface Props {
  * localStorage. Пунктов нет — компонент ничего не рисует. Клавиша G — фокус в ленту, стрелки — между карточками.
  */
 export function AttentionFeed(props: Props): React.JSX.Element | null {
-  const { items, tasks, runId, dispatches, onResolveRequest, onAnswerQuestion, onAcceptTask, onRejectTask, onStartTask, onOpenTask, onOpenTerminal, onSelectTask } = props
+  const { items, tasks, runId, dispatches, onResolveRequest, onAnswerQuestion, onAcceptTask, onRejectTask, onStartTask, onOpenTask, onOpenTerminal } = props
   const now = useNow()
   const headId = useId()
   const listId = useId()
@@ -95,36 +78,31 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
   }
 
   // «в ленте ↑» на доске: развернуть (не запоминая), прокрутить, подсветить и дать фокус карточке.
-  useEffect(() => {
-    const onReveal = (e: Event): void => {
-      const taskId = (e as CustomEvent<{ taskId: string }>).detail?.taskId
-      const item = itemsRef.current.find((i) => i.taskId === taskId)
-      if (!item) return
-      setCollapsed(false)
-      setHighlight(item.id)
-      later(() => {
-        const card = cardOf(item.id)
-        card?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
-        card?.focus({ preventScroll: true })
-      })
-      later(() => setHighlight((cur) => (cur === item.id ? null : cur)), HIGHLIGHT_MS)
-    }
-    window.addEventListener(REVEAL_EVENT, onReveal)
-    return () => window.removeEventListener(REVEAL_EVENT, onReveal)
-  }, [cardOf, later])
+  useEffect(() => onRevealInFeed((taskId) => {
+    const item = feedItemOfTask(itemsRef.current, taskId)
+    if (!item) return
+    setCollapsed(false)
+    setHighlight(item.id)
+    // Табуляция и клавиша G после этого ведут к тому же пункту, а не к прежнему.
+    setTabIndex(itemsRef.current.indexOf(item))
+    later(() => {
+      const card = cardOf(item.id)
+      card?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: scrollBehavior() })
+      card?.focus({ preventScroll: true })
+    })
+    later(() => setHighlight((cur) => (cur === item.id ? null : cur)), HIGHLIGHT_MS)
+  }), [cardOf, later])
 
-  // G — фокус в ленту (развернуть, если свёрнута).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.code !== 'KeyG' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.defaultPrevented) return
-      if (typingTarget(e.target) || document.querySelector('.modal-backdrop')) return
-      e.preventDefault()
-      setCollapsed(false)
-      later(() => (cardOf(itemsRef.current[tabIndexRef.current]?.id) ?? cardOf())?.focus())
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [cardOf, later])
+  // Клавиша G (её ловит экран глобальной задачи): фокус в ленту, развернув её, если свёрнута.
+  useEffect(() => onFocusFeed(() => {
+    if (itemsRef.current.length === 0) return
+    setCollapsed(false)
+    later(() => {
+      const card = cardOf(itemsRef.current[tabIndexRef.current]?.id) ?? cardOf()
+      card?.focus({ preventScroll: true })
+      card?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: scrollBehavior() })
+    })
+  }), [cardOf, later])
 
   // Подробности закрытого (решённого) пункта не остаются висеть.
   const detail = items.find((i) => i.id === detailId && i.request)
@@ -152,7 +130,7 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
   return (
     <section className={`attn${collapsed ? ' collapsed' : ''}`} aria-labelledby={headId}>
       <div className="attn-head">
-        <h3 id={headId}>Ждут вас <span className="attn-n">{items.length}</span></h3>
+        <h3 id={headId}>Ждут вас <span className="attn-n" title={attentionCountTitle(items)}>{items.length}</span></h3>
         <span className="attn-sum" aria-live="polite">{sum}</span>
         <span className="grow" />
         <span className="muted attn-hint"><kbd className="rq-kbd">G</kbd> к ленте</span>
@@ -181,7 +159,6 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
             onStartTask={onStartTask}
             onOpenTask={onOpenTask}
             onOpenTerminal={onOpenTerminal}
-            onSelectTask={onSelectTask}
           />
         ))}
       </div>
@@ -191,7 +168,7 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
           role="region"
           aria-label={`Подробно: ${detailTask?.title ?? detail.taskId}`}
           onKeyDown={(e) => {
-            if (e.key !== 'Escape' || typingTarget(e.target)) return
+            if (e.key !== 'Escape' || isTypingTarget(e.target)) return
             e.preventDefault()
             setDetailId(null)
             cardOf(detail.id)?.focus()
@@ -233,14 +210,13 @@ interface CardProps {
   onStartTask: Props['onStartTask']
   onOpenTask: Props['onOpenTask']
   onOpenTerminal: Props['onOpenTerminal']
-  onSelectTask?: Props['onSelectTask']
 }
 
 /** Сколько подписей файлов показа на карточке: остальные — «+N». */
 const THUMBS = 3
 
 function FeedCard(props: CardProps): React.JSX.Element {
-  const { item, task, runId, now, highlighted, detailOpen, onToggleDetail, onResolveRequest, onAnswerQuestion, onAcceptTask, onRejectTask, onStartTask, onOpenTask, onOpenTerminal, onSelectTask } = props
+  const { item, task, runId, now, highlighted, detailOpen, onToggleDetail, onResolveRequest, onAnswerQuestion, onAcceptTask, onRejectTask, onStartTask, onOpenTask, onOpenTerminal } = props
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [clarifying, setClarifying] = useState(false)
@@ -305,11 +281,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
         <span className="grow" />
         <span className="act-ago" title={formatStamp(item.at)}>{relativeTime(item.at, now)}</span>
       </div>
-      {onSelectTask ? (
-        <button type="button" className="act-task" title={`${taskTitle} — показать на доске`} onClick={() => onSelectTask(item.taskId)}>{taskTitle}</button>
-      ) : (
-        <span className="act-task" title={taskTitle}>{taskTitle}</span>
-      )}
+      <button type="button" className="act-task" title={`${taskTitle} — показать на доске`} onClick={() => revealOnBoard(item.taskId)}>{taskTitle}</button>
 
       {(item.kind === 'question' || (item.kind === 'failure' && request)) && (
         <RequestCard

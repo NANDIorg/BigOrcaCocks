@@ -58,15 +58,6 @@ export function cardState(i: CardStateInput): CardState {
   return 'idle'
 }
 
-/**
- * Ждёт ли карточка человека — то же, что покажет лента «Ждут вас»: вопрос, ответ, сбой, а на ревью — только когда
- * есть что смотреть (показ или ответ). Ревью, которое проверяет гейт-агент, человека не ждёт.
- */
-export function waitsForYou(i: CardStateInput, state: CardState = cardState(i)): boolean {
-  if (state === 'human' || state === 'bad') return true
-  return state === 'review' && (!!i.dispatch?.showcase || (!!i.task.answerFor && !!i.dispatch?.answer))
-}
-
 /** Сжать текст до одной строки не длиннее `max` символов (с «…»): для пунктирной строки сути. */
 export function shortText(text: string, max = 48): string {
   const line = text.replace(/\s+/g, ' ').trim()
@@ -114,6 +105,18 @@ export function cardEssence(i: CardStateInput, state: CardState = cardState(i)):
     return { text: d?.files && d.files.length > 0 ? `Ждёт ревью: ${filesLabel(d.files.length)}` : 'Ждёт ревью', title: d?.summary }
   }
   return null
+}
+
+/**
+ * Суть для задачи, которая есть в ленте «Ждут вас», но по состоянию карточки строки сути не получила (например,
+ * воркфлоу держит задачу в «В работе» и ждёт решения по запросу): без неё у карточки не было бы ссылки «в ленте ↑»,
+ * хотя фильтр «Ждут вас» и счётчик ленты её считают.
+ */
+const WAITING_ESSENCE: CardEssence = { text: '✋ Ждёт вас', title: 'Есть пункт в ленте «Ждут вас»' }
+
+/** Суть карточки: по её состоянию, а если её нет, но задача в ленте «Ждут вас» (`waits`) — запасная. */
+export function cardEssenceFor(i: CardStateInput, state: CardState, waits: boolean): CardEssence | null {
+  return cardEssence(i, state) ?? (waits ? WAITING_ESSENCE : null)
 }
 
 /** Что показать в пилюле этапа: `gate` — задача-гейт (другая иконка и цвет). */

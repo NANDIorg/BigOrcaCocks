@@ -146,9 +146,27 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
   return items.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || a.at - b.at || a.id.localeCompare(b.id))
 }
 
-/** Задачи, у которых есть пункт ленты: фильтр «Ждут вас» на доске считает то же самое. */
+/**
+ * Задачи, у которых есть пункт ленты. Единственный источник «ждёт человека» для доски: фильтр «Ждут вас», его
+ * счётчик и ссылка «в ленте ↑» на карточке берут именно этот набор, а не пересчитывают состояние карточки сами.
+ */
 export function attentionTaskIds(items: readonly AttentionItem[]): Set<string> {
   return new Set(items.map((i) => i.taskId))
+}
+
+/** Пункт ленты, к которому ведёт «в ленте ↑» с карточки: первый по порядку ленты (самый срочный вид). */
+export function feedItemOfTask(items: readonly AttentionItem[], taskId: string): AttentionItem | undefined {
+  return items.find((i) => i.taskId === taskId)
+}
+
+/**
+ * Подсказка к счётчику ленты, когда пунктов больше, чем задач: у одной задачи бывает несколько пунктов (два запроса),
+ * а фильтр «Ждут вас» на доске считает задачи. Иначе (обычно) числа совпадают и пояснять нечего.
+ */
+export function attentionCountTitle(items: readonly AttentionItem[]): string | undefined {
+  const tasks = attentionTaskIds(items).size
+  if (tasks === items.length) return undefined
+  return `${items.length} ${plural(items.length, 'пункт', 'пункта', 'пунктов')} у ${tasks} ${plural(tasks, 'задачи', 'задач', 'задач')} — на доске фильтр «Ждут вас» считает задачи`
 }
 
 /** Подпись вида пункта (текстовый сигнал рядом с цветной кромкой). */

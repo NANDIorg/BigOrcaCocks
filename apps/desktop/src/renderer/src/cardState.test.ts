@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Workflow } from '@orca-board/core'
 import {
-  cardEssence, cardState, depsLabel, filesLabel, shortText, stageLabel, waitsForYou, wfNodeTitles,
+  cardEssence, cardEssenceFor, cardState, depsLabel, filesLabel, shortText, stageLabel, wfNodeTitles,
   type CardStateInput
 } from './cardState'
 
@@ -56,16 +56,6 @@ test('cardState: готовый ответ задачи-ответа — human �
   // Обычная задача с полем answer не бывает, но и без answerFor ответ не считается готовым.
   assert.equal(cardState(base({ kind: 'review', dispatch })), 'review')
   assert.equal(cardState(base({ kind: 'in_progress', task: { answerFor: 'human' }, dispatch })), 'live')
-})
-
-test('waitsForYou: human и bad — да; ревью — только с показом или ответом', () => {
-  const human = base({ kind: 'needs_input' })
-  assert.equal(waitsForYou(human), true)
-  assert.equal(waitsForYou(base({ kind: 'in_progress', dispatch: { outcome: 'failed' } })), true)
-  assert.equal(waitsForYou(base({ kind: 'review' })), false)
-  assert.equal(waitsForYou(base({ kind: 'review', dispatch: { showcase: { files: ['a.html'] } } })), true)
-  assert.equal(waitsForYou(base({ kind: 'in_progress' })), false)
-  assert.equal(waitsForYou(base({ waitingDeps: 1 })), false)
 })
 
 test('cardEssence: сбои', () => {
@@ -165,4 +155,14 @@ test('depsLabel: одна — с названием, несколько — сч
   assert.deepEqual(l(['a', 'done1', 'b']), { text: '⧗ ждёт 2 задачи', title: 'Ждёт: Миграция store; Иконки' })
   assert.equal(l(['a', 'b', 'c', 'x', 'y'])?.text, '⧗ ждёт 5 задач')
   assert.equal(l(['gone'])?.text, '⧗ ждёт: gone')
+})
+
+test('cardEssenceFor: задача из ленты без своей сути получает запасную — иначе не было бы «в ленте ↑»', () => {
+  const live = base({ kind: 'in_progress' })
+  assert.equal(cardEssence(live), null)
+  assert.equal(cardEssenceFor(live, cardState(live), false), null)
+  assert.equal(cardEssenceFor(live, cardState(live), true)?.text, '✋ Ждёт вас')
+  // своя суть важнее запасной
+  const review = base({ kind: 'review' })
+  assert.equal(cardEssenceFor(review, cardState(review), true)?.text, 'Ждёт ревью')
 })

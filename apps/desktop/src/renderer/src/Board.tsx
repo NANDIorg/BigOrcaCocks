@@ -10,10 +10,11 @@ import {
 } from './boardView'
 import { isArrowKey, isEditableTarget, moveFocus } from './boardNav'
 import {
-  CARD_STATE_LABEL, cardEssence, cardState, depsLabel, stageLabel, waitsForYou, type CardEssence, type CardState, type CardStateInput
+  CARD_STATE_LABEL, cardEssenceFor, cardState, depsLabel, stageLabel, type CardEssence, type CardState, type CardStateInput
 } from './cardState'
 import { BoardCard } from './BoardCard'
 import { MoveMenu, type MoveTarget } from './MoveMenu'
+import { onFocusBoard, onRevealOnBoard, scrollBehavior } from './feedLink'
 import { Icon } from './icons'
 
 interface Props {
@@ -49,8 +50,15 @@ interface Props {
   /** Открыть карточку целиком (модалка задачи): клик по карточке и кнопка «Открыть». */
   onOpenTask?: (task: Task) => void
   /**
+   * Задачи, у которых есть пункт в ленте «Ждут вас» (`attentionTaskIds`). Единственный источник «ждёт человека»:
+   * по нему работает фильтр «Ждут вас», его счётчик и ссылка «в ленте ↑» — состояние карточки для этого не
+   * пересчитывается, иначе доска и лента разошлись бы.
+   */
+  waitingTaskIds: ReadonlySet<string>
+  /**
    * Показать в ленте «Ждут вас» карточку этой задачи (ссылка «в ленте ↑»). Нет — ленты нет, ссылки на карточке
-   * тоже: строка сути остаётся, вести ей некуда.
+   * тоже: строка сути остаётся, вести ей некуда. Ссылка только у карточек из `waitingTaskIds`: у остальных в
+   * ленте ничего нет.
    */
   onRevealInFeed?(taskId: string): void
 }
@@ -71,7 +79,7 @@ function cardElement(root: HTMLElement | null, id: string): HTMLElement | null {
 const FILTER_TITLES: Record<Exclude<BoardFilter, 'roles'>, string> = { all: 'Все', wait: 'Ждут вас', bad: 'Проблемы' }
 
 export function Board(props: Props): React.JSX.Element {
-  const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText = 'Пусто', questions, dispatches, selectedId, runningTaskIds, stageTitles, onSelect, onMove, onStart, onRemove, onOpenTask, onRevealInFeed } = props
+  const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText = 'Пусто', questions, dispatches, selectedId, runningTaskIds, stageTitles, waitingTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask, onRevealInFeed } = props
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [sort, setSort] = useState<BoardSort>(() => readSort(BOARD_SORT_KEY))
@@ -88,6 +96,9 @@ export function Board(props: Props): React.JSX.Element {
    * позже — новым элементом, уже без фокуса. `from` — колонка, из которой её перенесли.
    */
   const pendingFocus = useRef<{ id: string; from: string } | null>(null)
+  /** Карточка, к которой просили прокрутить из ленты: показываем, как только она оказалась на доске. */
+  const pendingReveal = useRef<string | null>(null)
+  const [, setRevealTick] = useState(0)
 
   const changeSort = (next: BoardSort): void => {
     setSort(next)
@@ -142,7 +153,8 @@ export function Board(props: Props): React.JSX.Element {
       waitingDeps: kind === 'backlog' ? pendingDeps(t, (dep) => byId.get(dep)?.status, kindOf) : 0
     }
     const state = cardState(input)
-    info.set(t.id, { input, state, essence: cardEssence(input, state), waits: waitsForYou(input, state) })
+    const waits = waitingTaskIds.has(t.id)
+    info.set(t.id, { input, state, essence: cardEssenceFor(input, state, waits), waits })
   }
   const canStart = (t: Task): boolean => {
     const kind = kindOf(t.status)
@@ -192,6 +204,46 @@ export function Board(props: Props): React.JSX.Element {
     setFocusedId(id)
     cardElement(boardRef.current, id)?.focus()
   }
+
+  // Связка с лентой: имя задачи в карточке ленты выделяет карточку здесь, клавиша G возвращает фокус на доску.
+  // Подписка одна на всё время жизни доски, а обработчики свежие на каждый рендер — через ref.
+  const link = useRef({ reveal: (_id: string): void => undefined, focusBoard: (): void => undefined })
+  link.current = {
+    reveal: (id) => {
+      const task = byId.get(id)
+      if (!task) return
+      // Фильтр («Проблемы», «Мои роли») мог спрятать карточку — выделять было бы нечего.
+      if (!visible(task)) changeFilter('all')
+      setFocusedId(id)
+      onSelect(task)
+      pendingReveal.current = id
+      setRevealTick((n) => n + 1)
+    },
+    focusBoard: () => {
+      const id = selectedId !== undefined && flatIds.includes(selectedId) ? selectedId : tabStopId
+      if (id) focusCard(id)
+    }
+  }
+  useEffect(() => {
+    const offReveal = onRevealOnBoard((id) => link.current.reveal(id))
+    const offFocus = onFocusBoard(() => link.current.focusBoard())
+    return () => {
+      offReveal()
+      offFocus()
+    }
+  }, [])
+
+  // Выделенную из ленты карточку прокручиваем в видимую область и берём в фокус, когда она уже на доске: после
+  // смены фильтра она появляется только в этом рендере. Не нашли (например, в свёрнутом «Сделано») — просто забываем.
+  useLayoutEffect(() => {
+    const id = pendingReveal.current
+    if (!id) return
+    pendingReveal.current = null
+    const el = cardElement(boardRef.current, id)
+    if (!el) return
+    el.focus({ preventScroll: true })
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: scrollBehavior() })
+  })
 
   // Меню «Переместить в…»: цели — колонки доски; там, где карточка уже лежит, пункт отключён.
   const menuTask = menu ? byId.get(menu.taskId) : undefined
@@ -467,7 +519,7 @@ export function Board(props: Props): React.JSX.Element {
                           terminalOpen={runningTaskIds.has(task.id)}
                           canStart={canStart(task)}
                           showFeedback={kind !== 'review'}
-                          revealable={!!onRevealInFeed}
+                          revealable={!!onRevealInFeed && ci.waits}
                           onOpen={() => open(task)}
                           onStart={() => onStart(task)}
                           onRemove={() => remove(task)}
@@ -497,6 +549,7 @@ export function Board(props: Props): React.JSX.Element {
         <span><kbd>Enter</kbd> открыть</span>
         <span><kbd>M</kbd> переместить</span>
         <span><kbd>S</kbd> запустить</span>
+        {onRevealInFeed && waitingTaskIds.size > 0 && <span><kbd>G</kbd> к ленте</span>}
         <span><kbd>Esc</kbd> к глобальным</span>
       </div>
       {menu && menuTask && (
