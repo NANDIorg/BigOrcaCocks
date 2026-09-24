@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Локальная доска — вариант C</title>
+<!--
+  Вариант C «Конвейер этапов»: колонки — ноды воркфлоу типа задачи (Очередь → Работа → Ревью кода → Показ → Мерж → Готово),
+  а не колонки статусов. Состояние внутри этапа — бейдж на карточке. Гейт вложен в карточку рабочей задачи.
+  Задачи-ответы (вне воркфлоу) — отдельной дорожкой. Наведение/фокус подсвечивает цепочку зависимостей.
+  Статичный макет, данные выдуманы.
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --chip-text: #c9ccd6;
+  --line: rgba(255,255,255,.06); --text: #ecedf1; --muted: #9ea1ad;
+  --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b; --ok: #8fd16a;
+  --shadow: 0 1px 0 rgba(0,0,0,.25);
+  --radius: 14px;
+  color-scheme: dark;
+}
+/* Светлой темы в приложении пока нет — это предлагаемые токены с той же ролью переменных. */
+:root[data-theme="light"] {
+  --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+  --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+  --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+  --accent: #5a63c8; --accent-2: #4850b0;
+  --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+  --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c; --ok: #3f8a1f;
+  --shadow: 0 1px 2px rgba(20,24,40,.08);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+    --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+    --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+    --accent: #5a63c8; --accent-2: #4850b0;
+    --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+    --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c; --ok: #3f8a1f;
+    --shadow: 0 1px 2px rgba(20,24,40,.08);
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- панель макета (не часть дизайна) ---------- */
+.mock-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mock-bar b { font-size: 14px; }
+.mock-bar .grow { flex: 1; }
+.seg-group { display: inline-flex; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.seg-group button { background: transparent; border: 0; padding: 4px 12px; color: var(--muted); white-space: nowrap; }
+.seg-group button + button { border-left: 1px solid var(--chip); }
+.seg-group button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.stage { padding: 16px; overflow-x: auto; }
+.win { margin: 0 auto; width: 1440px; max-width: 100%; height: 780px; display: grid; grid-template-columns: 72px minmax(0,1fr); background: var(--frame); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.25); transition: width .2s; }
+.rail { border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 0; }
+.rail i { width: 40px; height: 40px; border-radius: 12px; background: var(--side-2); display: block; opacity: .6; }
+.rail i.on { background: var(--accent); opacity: 1; }
+
+.view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.head { padding: 14px 24px 0; display: flex; flex-direction: column; gap: 6px; }
+.crumbs { font-size: 12px; color: var(--muted); display: flex; gap: 6px; min-width: 0; }
+.crumbs span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.title-row h2 { margin: 0; font-size: 20px; font-weight: 600; flex: 1 1 300px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--chip); background: transparent; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn:hover { border-color: var(--text); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.sm { height: 24px; padding: 0 9px; font-size: 12px; border-radius: 12px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-progress); display: inline-block; }
+.muted { color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); padding: 8px 24px 0; align-items: center; }
+.legend .grow { flex: 1; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+.sel { background: var(--side); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 3px 8px; font-size: 12px; }
+
+/* ---------- конвейер ---------- */
+.pipe-wrap { flex: 1; min-height: 0; overflow: auto; padding: 12px 24px 20px; }
+.pipe { display: grid; grid-template-columns: minmax(220px, 1.1fr) repeat(4, minmax(210px, 1fr)) minmax(180px, .8fr); gap: 0 10px; min-width: 1180px; }
+/* Шапка этапа — шеврон: читается как поток слева направо. */
+.st-head { position: sticky; top: 0; z-index: 2; background: var(--frame); padding-bottom: 8px; }
+.chev { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px 0 18px; font-size: 13px; font-weight: 600; background: var(--side-2); clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 12px 50%); }
+.st-head:first-child .chev { clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%); border-radius: 10px 0 0 10px; }
+.st-head:last-child .chev { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 12px 50%); border-radius: 0 10px 10px 0; }
+.chev .ic { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; background: color-mix(in srgb, var(--c) 25%, transparent); color: var(--c); }
+.chev .n { margin-left: auto; color: var(--muted); font-weight: 500; }
+.chev.hot { background: color-mix(in srgb, var(--col-input) 22%, var(--side-2)); }
+.st-sub { font-size: 11px; color: var(--muted); padding: 4px 4px 0 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.lane-title { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 12px 2px 6px; border-top: 1px solid var(--line); }
+.lane-title:first-of-type { border-top: 0; padding-top: 2px; }
+.cell { display: flex; flex-direction: column; gap: 8px; padding: 6px; border-radius: 12px; background: var(--side); min-height: 72px; }
+.cell.empty-cell { background: transparent; border: 1px dashed var(--line); justify-content: center; align-items: center; color: var(--muted); font-size: 12px; text-align: center; padding: 10px; }
+
+/* ---------- карточка ---------- */
+.card { background: var(--card); border-radius: 10px; padding: 9px 10px; box-shadow: var(--shadow); overflow-wrap: anywhere; cursor: pointer; transition: opacity .12s, box-shadow .12s; }
+.card:hover, .card:focus-visible { background: var(--card-hover); }
+.card .top { display: flex; gap: 6px; align-items: flex-start; }
+.name { font-size: 13px; font-weight: 600; line-height: 1.35; flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.prio { flex: 0 0 auto; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 5px; border-radius: 4px; }
+.prio.urgent { color: #fff; background: var(--danger); }
+.prio.high { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
+.prio.low { color: var(--muted); border: 1px dashed var(--chip); line-height: 16px; }
+.who { margin-top: 5px; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; min-width: 0; }
+.who span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent { flex: 0 0 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; font-size: 9px; font-weight: 700; color: #fff; }
+.agent.claude { background: #d97757; }
+.agent.codex { background: #10a37f; }
+/* Бейдж состояния внутри этапа — главный сигнал карточки. */
+.state { margin-top: 7px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--k); min-width: 0; }
+.state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--k); flex-shrink: 0; }
+.state .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.state .t { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--muted); }
+.state.live { --k: var(--col-progress); }
+.state.live .t { color: var(--col-progress); font-weight: 600; }
+.state.human { --k: var(--col-input); }
+.state.bad { --k: var(--danger); }
+.state.wait { --k: var(--muted); font-weight: 500; }
+.state.ready { --k: var(--col-ready); }
+.state.ok { --k: var(--col-done); font-weight: 500; }
+.card.k-human { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--col-input) 55%, transparent), var(--shadow); }
+.card.k-bad { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent), var(--shadow); }
+.card.done { background: transparent; box-shadow: none; border: 1px solid var(--line); padding: 7px 10px; }
+.card.done .name { font-weight: 500; color: var(--muted); -webkit-line-clamp: 1; }
+.visits { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.visits b { color: var(--danger); font-weight: 600; }
+/* Гейт — вложенная строка рабочей карточки, а не отдельная карточка. */
+.gate { margin-top: 8px; padding: 6px 8px; border-radius: 8px; background: color-mix(in srgb, var(--col-review) 10%, transparent); border: 1px solid color-mix(in srgb, var(--col-review) 35%, transparent); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.gate .g { color: var(--col-review); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gate .t { margin-left: auto; color: var(--col-progress); font-variant-numeric: tabular-nums; font-weight: 600; }
+.cta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.deps { margin-top: 6px; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Подсветка цепочки зависимостей: при фокусе/наведении остальные карточки гаснут. */
+.pipe.tracing .card { opacity: .28; }
+.pipe.tracing .card.chain { opacity: 1; }
+.pipe.tracing .card.chain-self { opacity: 1; box-shadow: 0 0 0 2px var(--accent); }
+.pipe.tracing .card.chain:not(.chain-self) { box-shadow: 0 0 0 1px var(--accent); }
+
+.kbd-hint { font-size: 11.5px; color: var(--muted); padding: 0 24px 10px; display: flex; gap: 14px; flex-wrap: wrap; }
+kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--chip); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--chip-text); }
+.win.narrow .kbd-hint { display: none; }
+
+.notes { max-width: 1100px; margin: 8px auto 40px; padding: 0 16px; color: var(--muted); font-size: 13px; }
+.notes h3 { color: var(--text); font-size: 15px; margin: 18px 0 6px; }
+.notes li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <b>Вариант C — «Конвейер этапов»</b>
+  <span class="muted">колонки — ноды воркфлоу типа задачи; наведите на карточку — подсветится цепочка зависимостей</span>
+  <span class="grow"></span>
+  <span>Тема</span>
+  <div class="seg-group" id="theme">
+    <button data-v="auto" aria-pressed="true">авто</button><button data-v="dark" aria-pressed="false">тёмная</button><button data-v="light" aria-pressed="false">светлая</button>
+  </div>
+  <span>Окно</span>
+  <div class="seg-group" id="width">
+    <button data-v="1440" aria-pressed="true">1440</button><button data-v="1180" aria-pressed="false">1180</button><button data-v="860" aria-pressed="false">860</button>
+  </div>
+</div>
+
+<div class="stage">
+<div class="win" id="win">
+  <nav class="rail" aria-label="Разделы"><i class="on"></i><i></i><i></i><i></i></nav>
+  <main class="view">
+    <div class="head">
+      <nav class="crumbs" aria-label="Навигация"><span>← Глобальные задачи</span><span>/</span><span>Показ человеку: макеты и выбор варианта</span></nav>
+      <div class="title-row">
+        <h2>Показ человеку: макеты и выбор варианта</h2>
+        <button class="btn">✎ Изменить</button>
+        <button class="btn"><span class="live-dot"></span> Координатор работает</button>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--col-progress)"></i>идёт работа</span>
+      <span><i style="background:var(--col-input)"></i>ждёт вас</span>
+      <span><i style="background:var(--danger)"></i>сбой</span>
+      <span><i style="background:var(--col-ready)"></i>готова к запуску</span>
+      <span><i style="background:var(--muted)"></i>ждёт зависимостей</span>
+      <span class="grow"></span>
+      <span>Тип: <b style="color:var(--text)">Фича с показом</b> · 3 из 12 сделано</span>
+      <label>Вид <select class="sel"><option>по этапам</option><option>по статусам</option></select></label>
+    </div>
+
+    <div class="pipe-wrap">
+      <div class="pipe" id="pipe">
+        <!-- Шапки этапов -->
+        <div class="st-head" style="--c: var(--col-backlog)"><div class="chev"><span class="ic">≡</span>Очередь<span class="n">4</span></div><div class="st-sub">до входа в воркфлоу</div></div>
+        <div class="st-head" style="--c: var(--col-progress)"><div class="chev"><span class="ic">◆</span>Работа<span class="n">3</span></div><div class="st-sub">воркер · роль задачи</div></div>
+        <div class="st-head" style="--c: var(--col-review)"><div class="chev"><span class="ic">⛉</span>Ревью кода<span class="n">1</span></div><div class="st-sub">гейт · Ревьюер · ↩ в «Работу»</div></div>
+        <div class="st-head" style="--c: var(--col-input)"><div class="chev hot"><span class="ic">◉</span>Показ человеку<span class="n">1</span></div><div class="st-sub">вы выбираете вариант</div></div>
+        <div class="st-head" style="--c: var(--accent)"><div class="chev"><span class="ic">⇲</span>Мерж<span class="n">0</span></div><div class="st-sub">приложение сливает ветку</div></div>
+        <div class="st-head" style="--c: var(--col-done)"><div class="chev"><span class="ic">✓</span>Готово<span class="n">3</span></div><div class="st-sub">&nbsp;</div></div>
+
+        <div class="lane-title">Код по воркфлоу · 11</div>
+        <!-- Очередь -->
+        <div class="cell">
+          <article class="card" tabindex="0" data-id="docs">
+            <div class="top"><span class="prio low" title="Низкий">низ</span><div class="name">docs: раздел «Показ человеку» в workflow.md</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Техписатель · sonnet</span></div>
+            <div class="state ready"><span class="dot"></span><span class="txt">готова к запуску</span></div>
+            <div class="cta"><button class="btn sm primary">▶ Запустить</button></div>
+          </article>
+          <article class="card" tabindex="0" data-id="tests" data-deps="mig">
+            <div class="top"><div class="name">Тесты showcase.test.ts для requestShowcase</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Тестировщик · sonnet</span></div>
+            <div class="state wait"><span class="dot"></span><span class="txt">ждёт: Миграция store</span></div>
+          </article>
+          <article class="card" tabindex="0" data-id="e2e" data-deps="mig,icons">
+            <div class="top"><div class="name">E2E: approval с показом в Инбоксе</div></div>
+            <div class="who"><span class="agent codex">X</span><span>Тестировщик · gpt-5</span></div>
+            <div class="state wait"><span class="dot"></span><span class="txt">ждёт 2: Миграция, Иконки</span></div>
+          </article>
+          <article class="card" tabindex="0" data-id="changelog" data-deps="tests,e2e,preview,showlayout">
+            <div class="top"><div class="name">Changelog и заметка к релизу</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Техписатель · sonnet</span></div>
+            <div class="state wait"><span class="dot"></span><span class="txt">ждёт 4 задачи</span></div>
+          </article>
+        </div>
+        <!-- Работа -->
+        <div class="cell">
+          <article class="card" tabindex="0" data-id="mig" data-deps="types">
+            <div class="top"><span class="prio urgent" title="Срочный">!!</span><div class="name">Миграция store — showcase в старых dispatch</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Разработчик · opus</span></div>
+            <div class="state live"><span class="dot"></span><span class="txt">работает</span><span class="t">12:34</span></div>
+            <div class="visits">заход <b>2</b> · вернул ревью: «нет миграции для закрытых dispatch»</div>
+          </article>
+          <article class="card k-human" tabindex="0" data-id="preview">
+            <div class="top"><div class="name">Превью файлов показа в модалке задачи</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Разработчик · opus</span></div>
+            <div class="state human"><span class="dot"></span><span class="txt">вопрос: PDF — iframe или картинка?</span></div>
+            <div class="cta"><button class="btn sm primary">Ответить</button></div>
+          </article>
+          <article class="card k-bad" tabindex="0" data-id="icons">
+            <div class="top"><span class="prio high" title="Высокий">выс</span><div class="name">Иконки для типов файлов показа (PDF, HTML, PNG)</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Дизайнер · opus</span></div>
+            <div class="state bad"><span class="dot"></span><span class="txt">упал, код 1</span><span class="t">21 мин</span></div>
+            <div class="cta"><button class="btn sm primary">↻ Перезапустить</button><button class="btn sm">Терминал</button></div>
+          </article>
+        </div>
+        <!-- Ревью кода -->
+        <div class="cell">
+          <article class="card" tabindex="0" data-id="inspector" data-deps="types">
+            <div class="top"><div class="name">renderer — инспектор ноды и блок «Показ»</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Разработчик · opus · сдал 3 файла</span></div>
+            <div class="gate"><span class="agent codex">X</span><span class="g">Ревьюер проверяет</span><span class="t">● 03:10</span></div>
+          </article>
+        </div>
+        <!-- Показ человеку -->
+        <div class="cell">
+          <article class="card k-human" tabindex="0" data-id="showlayout">
+            <div class="top"><span class="prio high" title="Высокий">выс</span><div class="name">Показ: вёрстка файла в узком Инбоксе, короткие подписи поля решения и флажка у approval при длинных названиях вариантов</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Дизайнер · opus</span></div>
+            <div class="state human"><span class="dot"></span><span class="txt">выберите вариант: 2 макета</span></div>
+            <div class="cta"><button class="btn sm primary">Смотреть</button></div>
+          </article>
+        </div>
+        <!-- Мерж -->
+        <div class="cell empty-cell">Пусто — сюда задача попадает после принятого ревью</div>
+        <!-- Готово -->
+        <div class="cell">
+          <article class="card done" tabindex="0" data-id="types"><div class="top"><div class="name">core: тип WfShowcase и этап в промпте</div></div><div class="state ok"><span class="dot"></span><span class="txt">смержено · 42 мин</span></div></article>
+          <article class="card done" tabindex="0" data-id="cli"><div class="top"><div class="name">main, сокет, CLI done --show</div></div><div class="state ok"><span class="dot"></span><span class="txt">смержено · 1 ч 05 мин</span></div></article>
+          <article class="card done" tabindex="0" data-id="ipc"><div class="top"><div class="name">IPC showcase:* и preload</div></div><div class="state ok"><span class="dot"></span><span class="txt">смержено · 18 мин</span></div></article>
+        </div>
+
+        <div class="lane-title">Задачи-ответы · вне воркфлоу · 1</div>
+        <div class="cell" style="grid-column: 1 / span 2">
+          <article class="card k-human" tabindex="0" data-id="analysis">
+            <div class="top"><div class="name">Разбор: где показывать «Показ» в Инбоксе</div></div>
+            <div class="who"><span class="agent claude">C</span><span>Аналитик · opus · ответ для человека</span></div>
+            <div class="state human"><span class="dot"></span><span class="txt">ответ готов: в карточке запроса, свёрнуто</span></div>
+            <div class="cta"><button class="btn sm primary">Прочитать</button><button class="btn sm">Принять</button></div>
+          </article>
+        </div>
+      </div>
+    </div>
+    <div class="kbd-hint" aria-hidden="true"><span><kbd>←</kbd><kbd>→</kbd> этапы</span><span><kbd>↑</kbd><kbd>↓</kbd> карточки</span><span><kbd>Enter</kbd> открыть</span><span><kbd>D</kbd> подсветить зависимости</span><span><kbd>V</kbd> вид по статусам</span></div>
+  </main>
+</div>
+</div>
+
+<div class="notes">
+  <h3>Что видно на макете</h3>
+  <ul>
+    <li>Колонки — ноды воркфлоу типа глобальной задачи (<code>Task.stage.nodeId</code>): видно, на каком шаге конвейера каждая подзадача и где скапливается работа.</li>
+    <li>Состояние внутри этапа — цветной бейдж («работает 12:34», «вопрос», «упал», «ждёт: …»), а не колонка. Возврат с ревью — «заход 2» с причиной.</li>
+    <li>Гейт «Ревью кода» — строка внутри карточки рабочей задачи, отдельной карточки ревьюера нет.</li>
+    <li>Задачи-ответы вне графа — своей дорожкой. «Готово» — облегчённые строки.</li>
+    <li>Наведите или сфокусируйте карточку в «Очереди» (например, «Changelog») — подсветится цепочка зависимостей.</li>
+    <li>Перетаскивания между этапами нет: этапы двигает воркфлоу. Ручная смена статуса — из меню карточки, классический вид — переключателем «по статусам».</li>
+  </ul>
+</div>
+
+<script>
+  const root = document.documentElement
+  const win = document.getElementById('win')
+  function bind(id, apply) {
+    const group = document.getElementById(id)
+    group.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return
+      group.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      apply(b.dataset.v)
+    })
+  }
+  bind('theme', (v) => { if (v === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', v) })
+  bind('width', (v) => { win.style.width = v + 'px'; win.classList.toggle('narrow', v === '860') })
+  // ?theme=light&w=860 — открыть макет сразу в нужной теме и ширине.
+  const q = new URLSearchParams(location.search)
+  if (q.get('theme')) document.querySelector(`#theme [data-v="${q.get('theme')}"]`)?.click()
+  if (q.get('w')) document.querySelector(`#width [data-v="${q.get('w')}"]`)?.click()
+
+  // Подсветка цепочки зависимостей: предки (data-deps, рекурсивно) и те, кто ждёт эту карточку.
+  const pipe = document.getElementById('pipe')
+  const cards = [...pipe.querySelectorAll('.card[data-id]')]
+  const byId = new Map(cards.map((c) => [c.dataset.id, c]))
+  const depsOf = (c) => (c.dataset.deps ? c.dataset.deps.split(',') : [])
+  function chain(id) {
+    const seen = new Set([id])
+    const up = (x) => depsOf(byId.get(x) || { dataset: {} }).forEach((d) => { if (!seen.has(d)) { seen.add(d); up(d) } })
+    const down = (x) => cards.forEach((c) => { if (depsOf(c).includes(x) && !seen.has(c.dataset.id)) { seen.add(c.dataset.id); down(c.dataset.id) } })
+    up(id); down(id)
+    return seen
+  }
+  function trace(card) {
+    const ids = chain(card.dataset.id)
+    if (ids.size < 2) return clear()
+    pipe.classList.add('tracing')
+    cards.forEach((c) => { c.classList.toggle('chain', ids.has(c.dataset.id)); c.classList.toggle('chain-self', c === card) })
+  }
+  function clear() { pipe.classList.remove('tracing'); cards.forEach((c) => c.classList.remove('chain', 'chain-self')) }
+  cards.forEach((c) => {
+    c.addEventListener('mouseenter', () => trace(c)); c.addEventListener('mouseleave', clear)
+    c.addEventListener('focus', () => trace(c)); c.addEventListener('blur', clear)
+  })
+</script>
+</body>
+</html>
