@@ -22,7 +22,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor?, statusHistory? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor?, statusHistory?, stageHistory? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль типа задачи прогона (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -68,6 +68,18 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     задаче и прогону без истории — одна запись текущей колонки с `migrated: true` и `at = updatedAt`. Прошлые
     переходы не восстановить, а пустая история читалась бы как «статус не менялся»; прогон без `status` получает
     колонку в `migrateGlobalTasks` обычным переходом.
+  - **История этапов** (`stageHistory: StageChange[]`, `recordStage` в `status-history.ts`) — входы задачи в ноды
+    воркфлоу от старых к новым: `{ nodeId, title?, at, outcome?, from?, by?, migrated? }`. `StatusChange.stage`
+    фиксирует этап лишь при смене колонки, а переход внутри колонки (`review → work` при `reject`) жил только в
+    событии `stage_changed`. `outcome` — исход, с которым пришли (`next`/`accept`/`reject`/`yes`/`no`/`ok`/`conflict`
+    или `restart` — `enterWork` вернул на первый этап), `from` — предыдущая нода (у входа из старта нет), `title` —
+    название ноды на тот момент, `by` — источник (`withStatusSource`, как у `StatusChange.by`). Пишется рядом с
+    `stage_changed` — в `advanceStage` и `enterWork`, только когда этап сменился; ту же ноду подряд записи не
+    склеивают (`work → work` — отдельный заход). Хранятся последние `STATUS_HISTORY_LIMIT` (200). У задач вне
+    воркфлоу (ответ, гейт, ещё не вошедшая в граф) поля нет. Миграция `migrateStageHistory` (после `migrateStages`):
+    задача с `stage`, но без `stageHistory`, восстанавливается из событий `stage_changed` по `taskId` (лог не
+    обрезается; `by: 'app'`), а если лога нет или он не доходит до текущего этапа — добавляется запись
+    `migrated: true` на текущую ноду с `at = updatedAt`.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
   - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
@@ -344,7 +356,8 @@ Store хранит позицию и решает, куда задача пер�
   `commit` только при изменениях; возвращает число изменённых прогонов.
 - **`advanceStage(taskId, outcome, {roleIds?, workflow?})` → `{task, action}`** — `nextStage` по графу прогона; задача без
   `stage` входит в граф из старта (`startStage`, только исход `next`). Задачи-ответы и задачи-гейты (`gateFor`) —
-  ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}`;
+  ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}` и запись в
+  `Task.stageHistory` (то же самое в `enterWork`);
   `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
   гейта удалена). Эффекты `action` выполнит main.
 - **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,

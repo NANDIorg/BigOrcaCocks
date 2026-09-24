@@ -1,5 +1,5 @@
 import type { AgentKind } from './agents'
-import type { WfStage, Workflow } from './workflow'
+import type { WfOutcome, WfStage, Workflow } from './workflow'
 import type { TaskTypeSnapshot } from './task-types'
 export type { AgentKind }
 
@@ -167,6 +167,30 @@ export interface StatusChange {
   /**
    * Стартовая запись миграции у задачи от кода до истории: реального перехода не было, это статус на момент
    * обновления, а `at` — последняя правка задачи (`updatedAt`), не точный момент входа в колонку.
+   */
+  migrated?: true
+}
+
+/**
+ * Запись истории этапов воркфлоу задачи (`Task.stageHistory`). `StatusChange.stage` фиксирует этап только при
+ * смене колонки, а переходы внутри колонки (ревью → работа при reject) оставались лишь в событиях `stage_changed`.
+ */
+export interface StageChange {
+  /** Нода, в которую вошла задача. */
+  nodeId: string
+  /** Название ноды на момент перехода (граф прогона может измениться позже). */
+  title?: string
+  /** Момент перехода, epoch ms. */
+  at: number
+  /** Исход, с которым задача пришла в ноду: порт предыдущей ноды или `restart` (`enterWork` — возврат на первый этап). */
+  outcome?: WfOutcome | 'restart'
+  /** Откуда пришла (нет — вход в граф из старта). */
+  from?: string
+  /** Кто двигал (источник как у `StatusChange.by`). */
+  by?: StatusSource
+  /**
+   * Запись миграции у задачи от кода до истории этапов, которой нет в логе событий: реального перехода не
+   * восстановить, это этап на момент обновления (`at` — `updatedAt`).
    */
   migrated?: true
 }
@@ -439,6 +463,11 @@ export interface Task {
    * миграцию (renderer мог получить его от старого main).
    */
   statusHistory?: StatusChange[]
+  /**
+   * История этапов воркфлоу, от старых к новым (`recordStage`, status-history.ts): не длиннее
+   * `STATUS_HISTORY_LIMIT`. Нет у задач вне воркфлоу (ответ, гейт) и у снапшота от кода до истории этапов.
+   */
+  stageHistory?: StageChange[]
 }
 
 export type DispatchOutcome = 'done' | 'failed' | 'unknown'
