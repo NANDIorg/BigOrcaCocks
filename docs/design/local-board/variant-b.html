@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Локальная доска — вариант B</title>
+<!--
+  Вариант B «Сначала — что ждёт вас»: сверху лента действий человека (вопросы, ответы, ревью, показ, сбои)
+  с кнопками прямо на карточке; ниже — подзадачи списком, сгруппированным по статусам (свёртываемые группы).
+  Канбан остаётся вторым видом (переключатель «Список / Доска»). Статичный макет, данные выдуманы.
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --chip-text: #c9ccd6;
+  --line: rgba(255,255,255,.06); --text: #ecedf1; --muted: #9ea1ad;
+  --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b; --ok: #8fd16a;
+  --shadow: 0 1px 0 rgba(0,0,0,.25);
+  --radius: 14px;
+  color-scheme: dark;
+}
+/* Светлой темы в приложении пока нет — это предлагаемые токены с той же ролью переменных. */
+:root[data-theme="light"] {
+  --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+  --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+  --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+  --accent: #5a63c8; --accent-2: #4850b0;
+  --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+  --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c; --ok: #3f8a1f;
+  --shadow: 0 1px 2px rgba(20,24,40,.08);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+    --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+    --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+    --accent: #5a63c8; --accent-2: #4850b0;
+    --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+    --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c; --ok: #3f8a1f;
+    --shadow: 0 1px 2px rgba(20,24,40,.08);
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- панель макета (не часть дизайна) ---------- */
+.mock-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mock-bar b { font-size: 14px; }
+.mock-bar .grow { flex: 1; }
+.seg-group { display: inline-flex; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.seg-group button { background: transparent; border: 0; padding: 4px 12px; color: var(--muted); white-space: nowrap; }
+.seg-group button + button { border-left: 1px solid var(--chip); }
+.seg-group button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.stage { padding: 16px; overflow-x: auto; }
+.win { margin: 0 auto; width: 1440px; max-width: 100%; height: 780px; display: grid; grid-template-columns: 72px minmax(0,1fr); background: var(--frame); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.25); transition: width .2s; }
+.rail { border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 0; }
+.rail i { width: 40px; height: 40px; border-radius: 12px; background: var(--side-2); display: block; opacity: .6; }
+.rail i.on { background: var(--accent); opacity: 1; }
+
+.view { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; }
+.head { padding: 14px 24px 0; display: flex; flex-direction: column; gap: 6px; }
+.crumbs { font-size: 12px; color: var(--muted); display: flex; gap: 6px; min-width: 0; }
+.crumbs span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.title-row h2 { margin: 0; font-size: 20px; font-weight: 600; flex: 1 1 300px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--chip); background: transparent; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn:hover { border-color: var(--text); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.ok { border-color: var(--ok); color: var(--ok); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 13px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-progress); display: inline-block; }
+.muted { color: var(--muted); }
+.meta-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; color: var(--muted); }
+.bar { width: 200px; max-width: 40vw; height: 6px; border-radius: 3px; background: var(--side-2); overflow: hidden; display: inline-flex; vertical-align: middle; }
+.bar span { height: 100%; }
+
+/* ---------- лента «Ждут вас» ---------- */
+.attn { margin: 14px 24px 0; padding: 12px; border-radius: var(--radius); background: color-mix(in srgb, var(--col-input) 7%, var(--side)); border: 1px solid color-mix(in srgb, var(--col-input) 30%, transparent); }
+.attn h3 { margin: 0 0 10px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.attn h3 .n { background: var(--col-input); color: #1d1f24; border-radius: 999px; padding: 0 7px; font-size: 12px; }
+.attn h3 .grow { flex: 1; }
+/* Карточки действия в ряд; в узком окне — столбиком. */
+.attn-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.act-card { background: var(--card); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; border-left: 3px solid var(--k); box-shadow: var(--shadow); min-width: 0; }
+.act-card .kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--k); display: flex; gap: 6px; align-items: center; }
+.act-card .kind .grow { flex: 1; }
+.act-card .kind .ago { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
+.act-card .task { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-card .q { font-size: 13.5px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.opt { border: 1px solid var(--chip); background: transparent; border-radius: 8px; padding: 3px 9px; font-size: 12.5px; text-align: left; }
+.opt.rec { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.opt.rec::after { content: " · совет"; color: var(--muted); font-size: 11px; }
+.act-card .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.act-card .row .grow { flex: 1; }
+.thumbs { display: flex; gap: 6px; }
+.thumb { width: 64px; height: 40px; border-radius: 6px; background: linear-gradient(135deg, var(--side-2), var(--chip)); display: grid; place-items: end start; padding: 2px 4px; font-size: 9px; color: var(--text); }
+
+/* ---------- панель вида ---------- */
+.viewbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 16px 24px 6px; font-size: 12.5px; }
+.viewbar .grow { flex: 1; }
+.search { background: var(--side); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; min-width: 160px; flex: 0 1 240px; color: var(--muted); font-size: 12.5px; }
+.sel { background: var(--side); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 4px 8px; font-size: 12px; }
+
+/* ---------- список по статусам ---------- */
+.list { padding: 0 24px 24px; display: flex; flex-direction: column; gap: 6px; }
+.group { background: var(--side); border-radius: var(--radius); overflow: hidden; }
+.group > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::before { content: "▸"; color: var(--muted); font-size: 11px; transition: transform .12s; }
+.group[open] > summary::before { transform: rotate(90deg); }
+.group > summary .sw { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+.group > summary .count { color: var(--muted); font-weight: 500; }
+.group > summary .grow { flex: 1; }
+.group > summary .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+.rows { border-top: 1px solid var(--line); }
+/* Строка подзадачи: сетка колонок, на узкой ширине часть колонок уходит во вторую строку. */
+.row-t { display: grid; grid-template-columns: 18px 36px minmax(0, 1fr) 150px 140px 120px 74px 30px; align-items: center; gap: 10px; padding: 7px 14px; font-size: 13px; border-top: 1px solid var(--line); }
+.rows .row-t:first-child { border-top: 0; }
+.row-t:hover { background: var(--side-2); }
+.row-t.focused { box-shadow: inset 2px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--side)); }
+.row-t.sub { padding-left: 42px; }
+.st { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--c); }
+.st.live { background: var(--col-progress); border-color: var(--col-progress); box-shadow: 0 0 0 3px color-mix(in srgb, var(--col-progress) 25%, transparent); }
+.st.half { background: linear-gradient(90deg, var(--c) 50%, transparent 50%); }
+.st.done { background: var(--col-done); border-color: var(--col-done); }
+.st.bad { background: var(--danger); border-color: var(--danger); }
+.st.blocked { border-style: dashed; }
+.prio { font-size: 11px; font-weight: 700; text-align: center; border-radius: 4px; line-height: 18px; }
+.prio.urgent { color: #fff; background: var(--danger); }
+.prio.high { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
+.prio.low { color: var(--muted); border: 1px dashed var(--chip); line-height: 16px; }
+.t { min-width: 0; display: flex; flex-direction: column; }
+.t .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t .sub2 { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t .sub2.bad { color: var(--danger); }
+.t .sub2.warn { color: var(--col-input); }
+.cell { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.agent { flex: 0 0 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; font-size: 9px; font-weight: 700; color: #fff; }
+.agent.claude { background: #d97757; }
+.agent.codex { background: #10a37f; }
+.pill { font-size: 11px; color: var(--chip-text); border: 1px solid var(--chip); border-radius: 6px; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill.gate { color: var(--col-review); border-color: color-mix(in srgb, var(--col-review) 60%, transparent); }
+.time { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+.time.live { color: var(--col-progress); font-weight: 600; }
+.tool { width: 26px; height: 26px; border-radius: 6px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0; }
+.tool:hover { background: var(--card); color: var(--text); }
+.colhdr { display: grid; grid-template-columns: 18px 36px minmax(0, 1fr) 150px 140px 120px 74px 30px; gap: 10px; padding: 0 14px 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+.kbd-hint { font-size: 11.5px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; padding: 0 24px 16px; }
+kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--chip); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--chip-text); }
+
+/* Узкое окно: зависимость и роль уходят под заголовок, остаются статус, приоритет, заголовок, время. */
+.win.narrow .row-t, .win.narrow .colhdr { grid-template-columns: 18px 36px minmax(0, 1fr) 64px 26px; }
+.win.narrow .row-t .c-role, .win.narrow .row-t .c-stage, .win.narrow .row-t .c-dep,
+.win.narrow .colhdr .c-role, .win.narrow .colhdr .c-stage, .win.narrow .colhdr .c-dep { display: none; }
+.win.narrow .attn-list { grid-template-columns: 1fr; }
+.win.narrow .kbd-hint { display: none; }
+
+.notes { max-width: 1100px; margin: 8px auto 40px; padding: 0 16px; color: var(--muted); font-size: 13px; }
+.notes h3 { color: var(--text); font-size: 15px; margin: 18px 0 6px; }
+.notes li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <b>Вариант B — «Сначала — что ждёт вас»</b>
+  <span class="muted">лента действий + список по статусам; доска — вторым видом</span>
+  <span class="grow"></span>
+  <span>Тема</span>
+  <div class="seg-group" id="theme">
+    <button data-v="auto" aria-pressed="true">авто</button><button data-v="dark" aria-pressed="false">тёмная</button><button data-v="light" aria-pressed="false">светлая</button>
+  </div>
+  <span>Окно</span>
+  <div class="seg-group" id="width">
+    <button data-v="1440" aria-pressed="true">1440</button><button data-v="1180" aria-pressed="false">1180</button><button data-v="860" aria-pressed="false">860</button>
+  </div>
+</div>
+
+<div class="stage">
+<div class="win" id="win">
+  <nav class="rail" aria-label="Разделы"><i class="on"></i><i></i><i></i><i></i></nav>
+  <main class="view">
+    <div class="head">
+      <nav class="crumbs" aria-label="Навигация"><span>← Глобальные задачи</span><span>/</span><span>Показ человеку: макеты и выбор варианта</span></nav>
+      <div class="title-row">
+        <h2>Показ человеку: макеты и выбор варианта</h2>
+        <button class="btn">✎ Изменить</button>
+        <button class="btn"><span class="live-dot"></span> Координатор работает</button>
+      </div>
+      <div class="meta-line">
+        <span><span class="bar" aria-hidden="true"><span style="width:27%;background:var(--col-done)"></span><span style="width:9%;background:var(--col-review)"></span><span style="width:18%;background:var(--col-input)"></span><span style="width:27%;background:var(--col-progress)"></span></span> 3 из 11 сделано</span>
+        <span>Тип: Фича с показом</span><span>· обновлено 2 мин назад</span><span>· идёт 3 ч 12 мин</span>
+      </div>
+    </div>
+
+    <!-- Лента действий: объединяет запросы к человеку (сейчас g-requests) и карточки из «Нужен ответ»/«Ревью»/сбои. -->
+    <section class="attn" aria-labelledby="attn-h">
+      <h3 id="attn-h">Ждут вас <span class="n">4</span><span class="grow"></span><button class="btn sm">Свернуть</button></h3>
+      <div class="attn-list">
+        <article class="act-card" style="--k: var(--col-input)">
+          <div class="kind">? Вопрос воркера<span class="grow"></span><span class="ago">8 мин</span></div>
+          <div class="task">Превью файлов показа в модалке задачи · Разработчик</div>
+          <div class="q">PDF показывать через iframe или рендерить первую страницу картинкой?</div>
+          <div class="opts"><button class="opt rec">iframe</button><button class="opt">картинка</button><button class="opt">свой ответ…</button></div>
+        </article>
+        <article class="act-card" style="--k: var(--col-review)">
+          <div class="kind">◉ Показ · выбрать вариант<span class="grow"></span><span class="ago">15 мин</span></div>
+          <div class="task">Показ: вёрстка файла в узком Инбоксе, короткие подписи… · Дизайнер</div>
+          <div class="thumbs"><div class="thumb">A.html</div><div class="thumb">B.html</div><div class="thumb">inbox.png</div></div>
+          <div class="row"><button class="btn sm primary">Смотреть и решить</button><span class="grow"></span><span class="muted" style="font-size:12px">выс. приоритет</span></div>
+        </article>
+        <article class="act-card" style="--k: var(--col-input)">
+          <div class="kind">✎ Ответ готов<span class="grow"></span><span class="ago">22 мин</span></div>
+          <div class="task">Разбор: где показывать «Показ» в Инбоксе · Аналитик</div>
+          <div class="q">В карточке запроса, свёрнуто; превью — по клику, не в ленте</div>
+          <div class="row"><button class="btn sm primary">Прочитать</button><button class="btn sm ok">Принять</button><button class="btn sm">Уточнить…</button></div>
+        </article>
+        <article class="act-card" style="--k: var(--danger)">
+          <div class="kind">✕ Воркер упал<span class="grow"></span><span class="ago">14:02</span></div>
+          <div class="task">Иконки для типов файлов показа (PDF, HTML, PNG) · Дизайнер</div>
+          <div class="q">Процесс завершился с кодом 1 без <code>done</code></div>
+          <div class="row"><button class="btn sm primary">↻ Перезапустить</button><button class="btn sm">Терминал</button></div>
+        </article>
+      </div>
+    </section>
+
+    <div class="viewbar">
+      <div class="seg-group" role="group" aria-label="Вид"><button aria-pressed="true">☰ Список</button><button aria-pressed="false">▦ Доска</button></div>
+      <input class="search" placeholder="Найти подзадачу…  /" aria-label="Найти подзадачу">
+      <span class="grow"></span>
+      <label class="muted">Группы <select class="sel"><option>по статусу</option><option>по роли</option><option>по этапу</option></select></label>
+      <label class="muted">Сортировка <select class="sel"><option>по приоритету</option><option>по созданию</option><option>по обновлению</option></select></label>
+      <button class="btn sm">＋ Подзадача</button>
+    </div>
+
+    <div class="colhdr" aria-hidden="true" style="margin:0 24px"><span></span><span></span><span>Подзадача</span><span class="c-role">Роль</span><span class="c-stage">Этап</span><span class="c-dep">Зависит от</span><span style="text-align:right">Время</span><span></span></div>
+    <div class="list" role="tree" aria-label="Подзадачи по статусам">
+      <details class="group" open style="--c: var(--col-progress)">
+        <summary><span class="sw"></span>В работе <span class="count">3</span><span class="grow"></span><span class="hint">1 упала</span></summary>
+        <div class="rows">
+          <div class="row-t focused" tabindex="0" role="treeitem">
+            <span class="st live" title="Идёт работа"></span><span class="prio urgent" title="Срочный">!!</span>
+            <div class="t"><span class="name">Миграция store — showcase в старых dispatch</span><span class="sub2">orca/task_k2m9 · 2-й заход после ревью</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Разработчик · opus</span>
+            <span class="cell c-stage"><span class="pill">Работа</span></span>
+            <span class="cell c-dep">—</span>
+            <span class="time live">● 12:34</span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+          <div class="row-t sub" tabindex="0" role="treeitem">
+            <span class="st live" title="Идёт работа"></span><span></span>
+            <div class="t"><span class="name">Ревью ветки: renderer — инспектор ноды и блок «Показ»</span><span class="sub2">гейт проверяет задачу «Инспектор ноды»</span></div>
+            <span class="cell c-role"><span class="agent codex">X</span>Ревьюер · gpt-5</span>
+            <span class="cell c-stage"><span class="pill gate">⛉ Ревью кода</span></span>
+            <span class="cell c-dep">—</span>
+            <span class="time live">● 03:10</span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st bad" title="Упал"></span><span class="prio high" title="Высокий">выс</span>
+            <div class="t"><span class="name">Иконки для типов файлов показа (PDF, HTML, PNG)</span><span class="sub2 bad">упал, код 1 · в «Ждут вас»</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Дизайнер · opus</span>
+            <span class="cell c-stage"><span class="pill">Работа</span></span>
+            <span class="cell c-dep">—</span>
+            <span class="time">⏸ 21 мин</span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="group" open style="--c: var(--col-input)">
+        <summary><span class="sw"></span>Нужен ответ <span class="count">2</span><span class="grow"></span><span class="hint">оба — в «Ждут вас»</span></summary>
+        <div class="rows">
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st half" title="Ждёт ответа"></span><span></span>
+            <div class="t"><span class="name">Превью файлов показа в модалке задачи</span><span class="sub2 warn">? PDF показывать через iframe или картинкой?</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Разработчик · opus</span>
+            <span class="cell c-stage"><span class="pill">Работа</span></span>
+            <span class="cell c-dep">—</span>
+            <span class="time">⏸ 8 мин</span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st half" title="Ответ готов"></span><span></span>
+            <div class="t"><span class="name">Разбор: где показывать «Показ» в Инбоксе</span><span class="sub2 warn">ответ готов · задача-ответ</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Аналитик · opus</span>
+            <span class="cell c-stage"><span class="muted">вне воркфлоу</span></span>
+            <span class="cell c-dep">—</span>
+            <span class="time">⏸ 5 мин</span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="group" open style="--c: var(--col-review)">
+        <summary><span class="sw"></span>Ревью <span class="count">1</span></summary>
+        <div class="rows">
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st half" title="На ревью"></span><span class="prio high" title="Высокий">выс</span>
+            <div class="t"><span class="name">Показ: вёрстка файла в узком Инбоксе, короткие подписи поля решения и флажка у approval при длинных названиях вариантов</span><span class="sub2">3 файла · показ человеку</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Дизайнер · opus</span>
+            <span class="cell c-stage"><span class="pill">Показ человеку</span></span>
+            <span class="cell c-dep">—</span>
+            <span class="time">⏸ 47 мин</span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="group" open style="--c: var(--col-backlog)">
+        <summary><span class="sw"></span>Бэклог <span class="count">4</span><span class="grow"></span><span class="hint">1 готова к запуску · 3 ждут зависимостей</span></summary>
+        <div class="rows">
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st" style="--c: var(--col-ready)" title="Готова к запуску"></span><span class="prio low" title="Низкий">низ</span>
+            <div class="t"><span class="name">docs: раздел «Показ человеку» в workflow.md</span><span class="sub2">готова к запуску</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Техписатель · sonnet</span>
+            <span class="cell c-stage"><span class="pill">Работа</span></span>
+            <span class="cell c-dep">—</span>
+            <span class="time"></span><button class="tool" aria-label="Запустить" title="Запустить">▶</button>
+          </div>
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st blocked" title="Ждёт зависимостей"></span><span></span>
+            <div class="t"><span class="name">Тесты showcase.test.ts для requestShowcase</span><span class="sub2">ждёт 1 задачу</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Тестировщик · sonnet</span>
+            <span class="cell c-stage"><span class="muted">—</span></span>
+            <span class="cell c-dep" title="Миграция store — showcase в старых dispatch">⧗ Миграция store…</span>
+            <span class="time"></span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st blocked" title="Ждёт зависимостей"></span><span></span>
+            <div class="t"><span class="name">E2E: approval с показом в Инбоксе</span><span class="sub2">ждёт 2 задачи</span></div>
+            <span class="cell c-role"><span class="agent codex">X</span>Тестировщик · gpt-5</span>
+            <span class="cell c-stage"><span class="muted">—</span></span>
+            <span class="cell c-dep">⧗ Миграция, Иконки</span>
+            <span class="time"></span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+          <div class="row-t" tabindex="0" role="treeitem">
+            <span class="st blocked" title="Ждёт зависимостей"></span><span></span>
+            <div class="t"><span class="name">Changelog и заметка к релизу</span><span class="sub2">ждёт 4 задачи</span></div>
+            <span class="cell c-role"><span class="agent claude">C</span>Техписатель · sonnet</span>
+            <span class="cell c-stage"><span class="muted">—</span></span>
+            <span class="cell c-dep">⧗ 4 задачи</span>
+            <span class="time"></span><button class="tool" aria-label="Действия">⋯</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="group" style="--c: var(--col-done)">
+        <summary><span class="sw"></span>Сделано <span class="count">3</span><span class="grow"></span><span class="hint">за 2 ч 05 мин</span></summary>
+      </details>
+    </div>
+    <div class="kbd-hint" aria-hidden="true"><span><kbd>J</kbd><kbd>K</kbd> строки</span><span><kbd>Enter</kbd> открыть</span><span><kbd>Space</kbd> свернуть группу</span><span><kbd>M</kbd> сменить статус</span><span><kbd>/</kbd> поиск</span><span><kbd>G</kbd><kbd>A</kbd> к «Ждут вас»</span></div>
+  </main>
+</div>
+</div>
+
+<div class="notes">
+  <h3>Что видно на макете</h3>
+  <ul>
+    <li>«Ждут вас» — одно место для всего, что требует человека: вопросы воркеров (с вариантами и советом), показ, готовые ответы, упавшие воркеры. Отвечать можно прямо в ленте.</li>
+    <li>Ниже — компактный список: одна строка на подзадачу, группы по статусу сворачиваются; «Сделано» свёрнуто по умолчанию. 30+ подзадач помещаются без скролла по горизонтали.</li>
+    <li>Гейт-задача показана вложенной строкой под рабочей (ревью ветки не выглядит самостоятельной работой).</li>
+    <li>Канбан остаётся вторым видом («▦ Доска») для перетаскивания; группировка — по статусу, роли или этапу.</li>
+    <li>На 860 px в строке остаются статус, приоритет, заголовок и время; роль/этап/зависимости — во второй строке заголовка.</li>
+  </ul>
+</div>
+
+<script>
+  const root = document.documentElement
+  const win = document.getElementById('win')
+  function bind(id, apply) {
+    const group = document.getElementById(id)
+    group.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return
+      group.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      apply(b.dataset.v)
+    })
+  }
+  bind('theme', (v) => { if (v === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', v) })
+  bind('width', (v) => { win.style.width = v + 'px'; win.classList.toggle('narrow', v === '860') })
+  // ?theme=light&w=860 — открыть макет сразу в нужной теме и ширине.
+  const q = new URLSearchParams(location.search)
+  if (q.get('theme')) document.querySelector(`#theme [data-v="${q.get('theme')}"]`)?.click()
+  if (q.get('w')) document.querySelector(`#width [data-v="${q.get('w')}"]`)?.click()
+</script>
+</body>
+</html>
