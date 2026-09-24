@@ -1137,6 +1137,27 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .rq.compact .btn-sm, .rq.compact .rq-option { height: 26px; min-height: 26px; padding: 0 10px; font-size: 12px; }
 .rq.compact .rq-free.rq-stack textarea, .rq.compact .rq-free textarea { min-height: 30px; padding: 5px 8px; }
 
+.rq-free.rq-stack textarea.rq-decision { min-height: 36px; }
+
+/* Показ человеку (ShowcaseBlock): описание воркера и файлы из ветки — в approval и модалке задачи. */
+.showcase { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--frame); border-radius: 10px; min-width: 0; }
+.showcase.bare { padding: 0; background: transparent; }
+.showcase-head { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.showcase-md { max-height: 360px; overflow: auto; }
+.showcase-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.showcase-file { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); min-width: 0; }
+.showcase-file:first-child { padding-top: 0; border-top: 0; }
+.showcase-file-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.showcase-file-head .grow { flex: 1; }
+.showcase-file-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.showcase-file-path { color: var(--muted); font-size: 11px; font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.showcase-file-head .btn-text { font-size: 12px; color: var(--accent); padding: 0 4px; }
+.showcase-file-head .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.showcase-note { font-size: 12px; }
+.showcase-img { display: block; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--page); overflow: hidden; cursor: zoom-in; max-width: 100%; align-self: flex-start; }
+.showcase-img img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
+.showcase-file-md { padding: 8px 10px; background: var(--page); border-radius: 8px; max-height: 320px; }
+
 /* «Открыть полностью»: ответ во всю ширину поверх Инбокса. */
 .inbox-full-backdrop { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }
 .modal.inbox-full { width: 880px; max-width: calc(100vw - 48px); height: 88vh; padding: 0; gap: 0; overflow: hidden; }

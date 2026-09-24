@@ -1,8 +1,9 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { globalTaskTitle, type HumanRequest, type RequestResolution, type Run, type Task } from '@orca-board/core'
+import { globalTaskTitle, type Dispatch, type HumanRequest, type RequestResolution, type Run, type Task } from '@orca-board/core'
 import { RequestCard, REQUEST_KIND_TITLE, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
+import { requestShowcase } from './showcase'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
 
@@ -12,6 +13,8 @@ interface Props {
   requests: HumanRequest[]
   tasks: Task[]
   runs: Run[]
+  /** Запуски воркеров: показ человеку у approval (`showcaseDispatchId`). */
+  dispatches: Dispatch[]
   /** Открыть на этом запросе (клик по уведомлению); nonce — чтобы повторный клик по тому же сработал. */
   focus: { requestId: string; nonce: number } | null
   onClose(): void
@@ -34,7 +37,7 @@ function typingTarget(t: EventTarget | null): boolean {
  * возвращает карточку с текстом ошибки. Панель остаётся смонтированной и когда закрыта — черновики
  * ответов в карточках не теряются. Клавиши: j/k, 1–9, A, C, R, Enter — в поле, Esc.
  */
-export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
+export function InboxPanel({ open, requests, tasks, runs, dispatches, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
   const pending = pendingRequests(requests)
   /** Отправленные, но ещё не подтверждённые снимком: карточка скрыта, но смонтирована (черновик, откат). */
   const [sent, setSent] = useState<Set<string>>(() => new Set())
@@ -202,6 +205,7 @@ export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpen
                   else cards.current.delete(r.id)
                 }}
                 request={r}
+                showcase={requestShowcase(r, dispatches)}
                 where={where(r)}
                 active={open && current?.id === r.id}
                 onSelect={() => setActiveId(r.id)}

@@ -33,6 +33,8 @@ export interface WfNodePatch {
   column?: string
   roleId?: string
   instructions?: string
+  /** Показ человеку у «Работы»: меняются только переданные поля. Пустое «что» без «обязательно» — показа нет. */
+  showcase?: { what?: string; required?: boolean }
   merged?: boolean
   test?: WfCondition
 }
@@ -58,9 +60,16 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
       else delete n.roleId
     }
   }
-  if (patch.instructions !== undefined && (n.type === 'gate' || n.type === 'human')) {
+  if (patch.instructions !== undefined && (n.type === 'gate' || n.type === 'human' || n.type === 'work')) {
     if (patch.instructions.trim()) n.instructions = patch.instructions
     else delete n.instructions
+  }
+  if (patch.showcase !== undefined && n.type === 'work') {
+    const what = patch.showcase.what ?? n.showcase?.what ?? ''
+    const required = patch.showcase.required ?? n.showcase?.required ?? false
+    // «Обязательно» с пустым «что» остаётся: валидация подсветит пустое поле, а не потеряет флажок молча.
+    if (what.trim() || required) n.showcase = required ? { what, required } : { what }
+    else delete n.showcase
   }
   if (patch.merged !== undefined && n.type === 'end') n.merged = patch.merged
   if (patch.test !== undefined && n.type === 'condition') n.test = patch.test
@@ -81,9 +90,9 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
   if (cur.title) node.title = cur.title
   if (cur.column && hasColumn(type)) node.column = cur.column
   const role = cur.type === 'gate' || cur.type === 'work' ? cur.roleId : undefined
-  const instructions = cur.type === 'gate' || cur.type === 'human' ? cur.instructions : undefined
+  const instructions = cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' ? cur.instructions : undefined
   if (role && (node.type === 'gate' || node.type === 'work')) node.roleId = role
-  if (instructions && (node.type === 'gate' || node.type === 'human')) node.instructions = instructions
+  if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work')) node.instructions = instructions
   const ports = WF_PORTS[type]
   return {
     ...wf,

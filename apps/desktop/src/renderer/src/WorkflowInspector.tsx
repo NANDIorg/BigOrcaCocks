@@ -197,10 +197,38 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
       </label>
 
       {node.type === 'work' && (
-        <label className="wf-field">
-          <span>Роль</span>
-          <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty="Роль задачи (выбрал координатор)" onChange={(roleId) => patch({ roleId })} />
-        </label>
+        <>
+          <label className="wf-field">
+            <span>Роль</span>
+            <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty="Роль задачи (выбрал координатор)" onChange={(roleId) => patch({ roleId })} />
+          </label>
+          <label className="wf-field">
+            <span>Что сделать на этапе</span>
+            <textarea
+              rows={3}
+              value={node.instructions ?? ''}
+              placeholder="Уйдёт воркеру в задание, раздел «Этап». Пусто — только задача"
+              onChange={(e) => patch({ instructions: e.target.value })}
+            />
+          </label>
+          <label className="wf-field">
+            <span>Показать человеку</span>
+            <textarea
+              rows={3}
+              value={node.showcase?.what ?? ''}
+              placeholder="Что воркер сдаёт на показ, например: 2–3 варианта макета — HTML и скриншоты, плюсы и минусы каждого"
+              onChange={(e) => patch({ showcase: { what: e.target.value } })}
+            />
+          </label>
+          <label className="wf-check">
+            <input
+              type="checkbox"
+              checked={node.showcase?.required ?? false}
+              onChange={(e) => patch({ showcase: { required: e.target.checked } })}
+            />
+            <span>Показ обязателен: без него done не пройдёт</span>
+          </label>
+        </>
       )}
       {node.type === 'gate' && (
         <label className="wf-field">

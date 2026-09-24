@@ -1,9 +1,10 @@
 import {
   gateTaskSpec, gateTaskTitle, wfNodeTitle, withStatusSource,
-  type DispatchShowcase, type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
+  type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
   type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { acceptReview, mergeTaskBranch } from './review'
+import { showcaseMarkdown } from '../shared/showcase'
 import { commitWorktree, removeWorktree, removeWorktreeKeepBranch } from './git'
 
 // Исполнитель воркфлоу (docs/workflow.md): store решает, куда задача переходит (`advanceStage`, чистый
@@ -161,15 +162,6 @@ function createGate(deps: WorkflowDeps, task: Task, node: Extract<WfNode, { type
   } catch (e) {
     store.blockStage(task.id, `проверка ${gate.id} «${gate.title}» не запустилась: ${message(e)}. Запустить заново: orca-board worker start --task ${gate.id}`)
   }
-}
-
-/**
- * Показ в body approval: описание воркера и список файлов текстом. Превью и кнопки «Открыть» рисует renderer
- * по `showcaseDispatchId`; этот текст — для старого renderer и для `orca-board request get`.
- */
-export function showcaseMarkdown(showcase: DispatchShowcase): string {
-  const files = showcase.files.length ? ['**Файлы показа** (в worktree задачи):', ...showcase.files.map((f) => `- \`${f}\``)].join('\n') : undefined
-  return ['## Показ', showcase.text?.trim(), files].filter(Boolean).join('\n\n')
 }
 
 /** Нода human: запрос approval в Инбокс; задача — в «Нужен ответ» (или в колонку этапа, если она задана). */

@@ -5,6 +5,7 @@ import {
 } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
+import { requestShowcase } from './showcase'
 import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
 import { PriorityBadge } from './Priority'
@@ -144,6 +145,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
               <RequestCard
                 key={r.id}
                 request={r}
+                showcase={requestShowcase(r, dispatches)}
                 where={taskTitle.get(r.taskId) ?? r.taskId}
                 onResolve={(res) => onResolveRequest(r, res)}
                 onOpenFull={(req) => onOpenTask(req.taskId)}

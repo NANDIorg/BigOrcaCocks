@@ -11,6 +11,8 @@ import { ReviewBlock } from './ReviewBlock'
 import { AnswerBlock } from './AnswerBlock'
 import { RequestCard, REQUEST_KIND_TITLE } from './RequestCard'
 import { Markdown } from './Markdown'
+import { ShowcaseBlock } from './ShowcaseBlock'
+import { latestShowcase, requestShowcase } from './showcase'
 import { Icon } from './icons'
 import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
@@ -119,6 +121,9 @@ export function TaskModal(props: Props): React.JSX.Element {
     .filter((q) => q.taskId === task.id && !withRequest.has(q.id))
     .sort((a, b) => a.createdAt - b.createdAt)
   const answerPending = pending.some((r) => r.kind === 'answer')
+  /** Последний показ задачи; если его уже выводит ждущий approval — второй раз не нужен. */
+  const showcased = latestShowcase(dispatches, task.id)
+  const showcaseInRequest = pending.some((r) => r.showcaseDispatchId === showcased?.id && requestShowcase(r, dispatches))
   const editable = kind !== 'in_progress'
   const canStart =
     (kind === 'ready' || kind === 'backlog' || last?.outcome === 'unknown' || last?.outcome === 'failed') && !running
@@ -229,6 +234,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                 <RequestCard
                   key={r.id}
                   request={r}
+                  showcase={requestShowcase(r, dispatches)}
                   onResolve={(res) => onResolveRequest(r, res)}
                   onOpenTerminal={(taskId) => {
                     onOpenTerminal(taskId)
@@ -422,6 +428,13 @@ export function TaskModal(props: Props): React.JSX.Element {
             <h4>История статуса</h4>
             <StatusHistoryBlock history={task.statusHistory} columns={columns} status={task.status} />
           </section>
+
+          {showcased?.showcase && !showcaseInRequest && (
+            <section className="task-modal-section">
+              <h4>Показ <span className="muted">· запуск {formatDate(showcased.startedAt)}</span></h4>
+              <ShowcaseBlock taskId={task.id} showcase={showcased.showcase} bare />
+            </section>
+          )}
 
           <section className="task-modal-section">
             <h4>История запусков</h4>
