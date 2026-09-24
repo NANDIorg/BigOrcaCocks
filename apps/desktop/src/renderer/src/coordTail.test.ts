@@ -24,6 +24,15 @@ test('tailLines: возврат каретки затирает строку, п
   assert.deepEqual(tailLines('строка   \x1b[0m'), ['строка'])
 })
 
+test('tailLines: позиционирование курсора TUI не склеивает слова и не сливает строки', () => {
+  // Claude Code: «⏺», колонка 3, слово, колонка 10, слово; затем «вниз» и следующий кадр после `ESC[H`
+  const frame = '\x1b[?2026h\x1b[H\r\x1b[2B⏺\x1b[3G\x1b[39mПривет\x1b[10Gмир\r\x1b[2C\x1b[15Bготово\x1b[50;1H\x1b[?25h'
+  assert.deepEqual(tailLines(frame), ['⏺ Привет мир', 'готово'])
+  assert.deepEqual(tailLines('a\x1b[5Gb'), ['a b'])
+  // колонка 1 — возврат каретки: спиннер затирает себя
+  assert.deepEqual(tailLines('⠋ думаю\x1b[1G⠙ думаю'), ['⠙ думаю'])
+})
+
 test('tailFromRegistry: хвост нужного PTY; нет терминала или списка — undefined', () => {
   const list = [{ ptyId: 'p1', tail: 'один' }, { ptyId: 'p2', tail: 'два' }]
   assert.equal(tailFromRegistry(list, 'p2'), 'два')
@@ -38,6 +47,8 @@ test('mergeTail: куски после хвоста дописываются, у
   assert.equal(mergeTail('a\nb', ['b\r']), 'a\nb')
   assert.equal(mergeTail('a', ['\x1b[32mx\x1b[0m', 'y']), 'a\x1b[32mx\x1b[0my')
   assert.equal(mergeTail('a', []), 'a')
+  // хвост из main без CSI и пробелов от позиционирования: живой кусок с ними всё равно распознаётся как уже вошедший
+  assert.equal(mergeTail('⏺Привет', ['⏺\x1b[3GПривет']), '⏺Привет')
 })
 
 test('appendTail и mergeTail не растут бесконечно', () => {

@@ -26,6 +26,21 @@ export function stripAnsi(text: string): string {
 }
 
 /**
+ * Позиционирование курсора в TUI (Claude Code рисует экран именно им, а не пробелами и переводами строк): «в колонку n»
+ * (`ESC[nG`) и «вправо» — между словами, «вниз», «в позицию» (`ESC[n;mH`) — на другой строке. Без замены слова слипаются
+ * («Привет\x1b[10Gмир» → «Приветмир»). Колонка 1 — возврат каретки. Настоящую раскладку экрана это не восстанавливает
+ * (для неё нужен эмулятор терминала, а он был бы вторым xterm), но текст остаётся читаемым.
+ */
+const CURSOR_COLUMN = /\x1b\[(\d*)G/g
+const CURSOR_LINE = /\x1b\[\d*(?:;\d*)?[BEHfF]/g
+
+function layoutToText(text: string): string {
+  return text
+    .replace(CURSOR_COLUMN, (_m, n: string) => (n === '' || n === '1' ? '\r' : ' '))
+    .replace(CURSOR_LINE, '\n')
+}
+
+/**
  * Строки для показа. `\r\n` — обычный перевод строки; одиночный `\r` возвращает каретку, и новый текст затирает
  * прежний (прогресс, спиннеры), поэтому берём то, что после последнего `\r` строки. Подряд идущие пустые и
  * одинаковые строки схлопываем: перерисовки TUI иначе забивают весь хвост копиями одного кадра.
@@ -33,8 +48,8 @@ export function stripAnsi(text: string): string {
  */
 export function tailLines(raw: string, limit = COORD_TAIL_LINES): string[] {
   const lines: string[] = []
-  for (const source of stripAnsi(raw).replace(/\r\n/g, '\n').split('\n')) {
-    const line = (source.includes('\r') ? (source.split('\r').filter((p) => p !== '').pop() ?? '') : source).trimEnd()
+  for (const source of stripAnsi(layoutToText(raw)).replace(/\r\n/g, '\n').split('\n')) {
+    const line = (source.includes('\r') ? (source.split('\r').filter((p) => p.trim() !== '').pop() ?? '') : source).trimEnd()
     const prev = lines[lines.length - 1]
     if (prev !== undefined && line === prev) continue
     lines.push(line)
@@ -55,7 +70,8 @@ export function tailFromRegistry(list: readonly { ptyId: string; tail?: string }
  * пропускаем. Совпадение сравниваем по очищенному тексту: `ptyTail` в main выкидывает `\r`.
  */
 export function mergeTail(base: string, chunks: readonly string[]): string {
-  const comparable = (s: string): string => stripAnsi(s).replace(/\r/g, '')
+  // Хвост из main очищен от CSI целиком (без замены на пробелы) — сравниваем в том же виде.
+  const comparable = (s: string): string => s.replace(OSC, '').replace(CSI, '').replace(ESC_OTHER, '').replace(CONTROLS, '').replace(/\r/g, '')
   let out = base
   for (const chunk of chunks) {
     const c = comparable(chunk)
