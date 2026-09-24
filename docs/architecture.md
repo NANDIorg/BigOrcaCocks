@@ -88,7 +88,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, ... }` — прогон
+  (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»):
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -133,7 +134,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
-- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
+- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа;
+  `roleId`/`agent`/`model` — снимок роли на момент запуска, `sessionId` — сессия агента для поиска транскрипта (см. «Статистика»).
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
   адресован человеку и по нему есть `HumanRequest`. Ответить можно один раз, у запуска — не больше одного открытого вопроса.
@@ -943,7 +945,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   (смена типа до начала работы: `TaskStore.changeGlobalTaskType`, правило — `canChangeRunType`, см. `docs/nested-kanban.md`); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
-  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.
+  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`;
+  `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
@@ -1170,6 +1173,117 @@ UI работает с активным проектом; воркеры и ко
 проекта. Незакрытый dispatch и задача на гейте после миграции продолжают: граф — из `Run.workflow`, роли — из типа
 «<имя проекта>» = бывших ролей проекта. Правка или удаление этого типа (`saveTaskType`, `deleteTaskType`) сначала
 загружает доски проектов с таким `legacyTypeId` (`settleLegacyRuns`): старые прогоны получают снимок прежнего типа.
+
+## Статистика (`packages/core/src/stats.ts`, типы — `types.ts`, IPC `stats:project`)
+
+Статистика проекта: токены и стоимость, задачи и глобальные задачи, прогоны агентов, время работы агентов и задач —
+за период `StatsRange` (`all` | `7d` | `30d`, скользящее окно от момента запроса, `statsRangeStart`). Считается в main
+по запросу `stats:project(projectId, range)` → `ProjectStats` из снапшота store проекта и транскриптов агентов на диске;
+в состоянии store хранятся только ссылки на сессии (`Dispatch.sessionId`, `Run.coordinatorSessions`), не токены.
+Сейчас в `registerIpc` заглушка — `emptyProjectStats` (сбор — отдельная задача). Renderer вызывает канал через проверку
+наличия API (старый preload — «перезапустите приложение», см. «Грабли разработки»).
+
+Команды CLI для статистики нет: агентам она не нужна, человек смотрит её в UI. Понадобится — полная цепочка
+«метод сокета → команда и `HELP` → docs» (см. CLAUDE.md), тот же `ProjectStats`.
+
+### Контракт
+
+- `ProjectStats { projectId, range, from?, generatedAt, totals, tasks, globalTasks, dispatches, coordinatorLaunches, taskTime,
+  byRole, byModel, byAgent, byGlobalTask, byTask, byDay }`.
+- `StatsUsage { tokens?, costUsd?, unpricedTokens, unpricedModels, sessions, sessionsWithUsage, agentMs }` — расход среза;
+  `StatsRow = StatsUsage + { key, title }` (строки разбивок), `StatsDay = StatsUsage + { date: 'YYYY-MM-DD', tasksDone, byModel }`
+  (дни без активности не попадают, порядок — от старых к новым; `byModel` дня — ключи и порядок как у `ProjectStats.byModel`,
+  чтобы цвет модели на графике совпадал с блоком «Модели»).
+- `TokenUsage { input, output, cacheRead, cacheWrite }` — `input` без кэша (семантика API Anthropic), рассуждения — в `output`.
+- **«Неизвестно» ≠ 0.** `tokens` нет, если ни у одной сессии среза не нашлось данных; `costUsd` нет, если токенов нет или
+  ни одна модель не известна таблице цен. `sessions - sessionsWithUsage` — сессии без данных: UI показывает «нет данных
+  по N сессиям», а не занижает итог молча. Строки разбивок сортирует main: стоимость → токены → `agentMs`, по убыванию.
+
+### Откуда каждая метрика
+
+| Метрика | Источник |
+|---|---|
+| `tasks.total`, `tasks.byStatus` | текущие `Task.status` (без периода) |
+| `tasks.created` / `tasks.done` | `Task.createdAt` / вход в колонку kind=done по `statusHistory` (нет истории — `doneAt`) в периоде |
+| `globalTasks.*` | то же по `Run` («Входящие» не считаются); `done` — вход в kind=done по `Run.statusHistory`, иначе `closedAt` |
+| `dispatches` | `Dispatch` с `startedAt` в периоде: `outcome` done / failed / unknown, `running` — без `endedAt` |
+| `coordinatorLaunches` | `Run.coordinatorSessions` с `startedAt` в периоде (у старых прогонов — неизвестно, 0) |
+| `agentMs` | сумма `(endedAt ?? generatedAt) − startedAt` по dispatch и запускам координатора, обрезанная границами периода; `endedAt` нет, а PTY мёртв (упало приложение) — конец неизвестен, сессия берётся по последнему сообщению транскрипта, иначе не считается |
+| `taskTime.avgActiveMs` | среднее `Task.activeMs` задач, вошедших в done в периоде |
+| `taskTime.avgLeadMs` | среднее «первый вход в kind=in_progress → вход в done» по `statusHistory`, записи `migrated` не считаются |
+| `tokens`, `costUsd`, `byModel` | транскрипты агентов (ниже), по времени сообщения в периоде |
+| `byRole` / `byAgent` | `Dispatch.roleId` / `agent` (нет — `Task.roleId` / `Task.agent`); координатор — `AgentSession.roleId` |
+| `byGlobalTask` / `byTask` | `Task.runId` / `Dispatch.taskId`; запуски координатора — в свою глобальную задачу |
+| `byDay` | те же данные по локальной дате main: токены — по времени сообщения, время — по дню начала сессии |
+
+Ассистент (cwd `userData/assistant`, без проекта) в статистику проекта не входит.
+
+### Транскрипты и сопоставление с задачами
+
+**Claude Code** пишет сессию в `<конфиг>/projects/<slug cwd>/<sessionId>.jsonl`, где `<конфиг>` — `CLAUDE_CONFIG_DIR`
+или `~/.claude`, а slug — cwd, в котором каждый символ не из `[A-Za-z0-9]` заменён на `-`
+(`/…/.orca-worktrees/task_x` → `-…--orca-worktrees-task-x`; очень длинные пути Claude Code укорачивает — поэтому ищем
+по имени файла `<sessionId>.jsonl` во всех папках `projects/`, а slug — только быстрый путь).
+- **Надёжная привязка — `--session-id`.** main генерирует uuid, передаёт его в `claude --session-id <uuid>`
+  (`AgentSpec.invoke`, новая опция) и пишет в `Dispatch.sessionId` / `AgentSession.sessionId`. Файл сессии — ровно этот dispatch.
+- **Запасной путь для dispatch без `sessionId`** (от кода до статистики): cwd worktree уникален для задачи
+  (`.orca-worktrees/<taskId>`), поэтому все сессии его slug — сессии задачи; сессия относится к dispatch, в окно
+  `[startedAt, endedAt ?? старт следующего dispatch]` которого попадает её первое сообщение (поле `timestamp`, cwd
+  дополнительно сверяется с полем `cwd` записей). Координатор без `sessionId` не сопоставляется: его cwd — корень
+  репозитория, там же обычные сессии человека; его токены — «неизвестно».
+- **Разбор:** учитываются записи `type: "assistant"` с `message.usage`; одна ответная реплика API пишется несколькими
+  строками (по блоку контента) с одинаковыми `message.id`/`requestId` — считать один раз. `input_tokens`,
+  `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` → `TokenUsage`; `usage.cache_creation`
+  делит запись по TTL (`ephemeral_5m_input_tokens`, `ephemeral_1h_input_tokens`) — для цены. Модель — `message.model`
+  каждой записи (модель может смениться посреди сессии); `<synthetic>` — локальные сообщения без расхода, пропускаются.
+  Сабагенты (Task/Agent) пишут `<sessionId>/subagents/agent-*.jsonl` рядом с файлом сессии — это расход той же сессии.
+- **Кэш:** разобранные итоги файла кэшируются в main по `(путь, размер, mtime)` — транскрипты большие и дописываются.
+
+**Codex** id сессии задать нельзя. Сессии — `<CODEX_HOME или ~/.codex>/sessions/YYYY/MM/DD/rollout-*.jsonl`;
+первая запись `session_meta` содержит `payload.cwd` и `payload.timestamp`, модель — `turn_context.payload.model`,
+токены — последнее событие `event_msg` с `payload.type: "token_count"`, поле `info.total_token_usage` (накопительное:
+`input_tokens` включает `cached_input_tokens`, `cacheRead` = cached, `input` = разность, `cacheWrite` = 0,
+`output` = `output_tokens`, reasoning в нём). Привязка — как запасной путь Claude: cwd = worktree задачи и старт
+в окне dispatch; найденный id пишется в `Dispatch.sessionId`, чтобы не искать повторно. Файлы ищутся только
+в папках дат окна dispatch.
+
+**Остальные агенты** (opencode, gemini, cursor, amp, copilot, goose, shell) — данных о токенах не читаем: их сессии
+учитываются в `sessions` и `agentMs`, но не в `sessionsWithUsage` («неизвестно»). Новый источник — функция чтения
+по `AgentKind` в main рядом с существующими, контракт не меняется.
+
+### Стоимость
+
+Таблица цен — одна: `MODEL_PRICES: ModelPrice[]` в `packages/core/src/pricing.ts` (core, без Node — её же может
+показать renderer), $ за миллион токенов, значения — с официальных страниц цен провайдера, с датой проверки в комментарии.
+`ModelPrice { match[], input, output, cacheRead, cacheWrite5m, cacheWrite1h }`: `match` — префиксы id модели из
+транскрипта, выигрывает самый длинный (`claude-opus-5` покрывает датированные версии). Стоимость считается по каждой
+записи с её моделью: `input·input + output·output + cacheRead·cacheRead + write5m·cacheWrite5m + write1h·cacheWrite1h`
+(у Anthropic запись в кэш 5 мин — 1,25× входа, 1 час — 2×, чтение — 0,1×; если транскрипт не делит запись по TTL —
+считается как 5 мин). Модель не найдена в таблице — её токены идут в `unpricedTokens`, id — в `unpricedModels`,
+в `costUsd` не входят; итог UI помечает как «не менее $X». Алиасы роли (`opus`, `sonnet`) в таблицу не нужны:
+в транскрипте всегда полный id модели.
+
+### Интерфейс — вкладка «Статистика» (вариант B)
+
+Выбран вариант B из макетов `docs/mockups/project-stats/index.html` (A — раздел в «О проекте», C — полоса над доской —
+отклонены): отдельная вкладка проекта «Статистика» рядом с «Доской» и «Терминалами», дашборд на всю ширину.
+Данные — один вызов `stats.project(projectId, range)` при открытии вкладки и смене периода; не хранится и не
+обновляется по событиям (подпись «Обновлено в HH:MM» — `generatedAt`).
+
+| Блок | Поля `ProjectStats` |
+|---|---|
+| Период «7 дней / 30 дней / всё время» | параметр `range` |
+| Главная цифра «Потрачено за период» | `totals.costUsd`; `unpricedTokens > 0` — «не менее $X», `sessions − sessionsWithUsage > 0` — «нет данных по N сессиям» |
+| Факты: токены, время агентов, задач завершено, цена задачи | сумма `totals.tokens`, `totals.agentMs`, `tasks.done`; цена задачи = `totals.costUsd / tasks.done` (считает renderer, нет стоимости или `done = 0` — «нет данных») |
+| График по дням, метрика «Стоимость / Токены / Время агентов / Задачи» | `byDay[]`: стоимость — стопкой по `byDay[].byModel[].costUsd`, токены — `tokens`, время — `agentMs`, задачи — `tasksDone`; дни без записи — пустой столбец |
+| Предупреждение о неизвестном | `totals.unpricedModels` (дописать в `MODEL_PRICES`), `sessions − sessionsWithUsage` |
+| «Модели», «Роли» — доли | первые 5 строк `byModel` / `byRole`, полоса доли — `costUsd` (нет токенов — `agentMs`) |
+| «Задачи на доске» | `tasks.byStatus` (полоса по колонкам), `dispatches`, `taskTime.avgActiveMs` / `avgLeadMs` |
+| «Самые дорогие глобальные задачи», «Самые дорогие задачи» | первые строки `byGlobalTask` / `byTask` (уже отсортированы main) |
+
+Состояния: нет ни одной сессии с токенами — метрики «Стоимость» и «Токены» скрыты, доли и график — по `agentMs`;
+пустой проект (`emptyProjectStats`) — заглушка «статистики пока нет». `byAgent` на вкладке не выводится
+(в контракте остаётся — для подсказки и будущих разбивок). На узком окне сетки блоков перестраиваются в одну колонку.
 
 ## Уведомления
 

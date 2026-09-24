@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, emptyProjectStats, STATS_RANGES, type StatsRange, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
@@ -598,6 +598,11 @@ function registerIpc(): void {
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
+  // Заглушка контракта: сбор токенов и времени (docs/architecture.md, «Статистика») — отдельная задача.
+  handle('stats:project', (_e, projectId: string, range: StatsRange) => {
+    if (!STATS_RANGES.includes(range)) throw new Error(`статистика: неизвестный период «${String(range)}», ожидается ${STATS_RANGES.join(' | ')}`)
+    return emptyProjectStats(resolveProject(projectId).id, range, Date.now())
+  })
   handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)
