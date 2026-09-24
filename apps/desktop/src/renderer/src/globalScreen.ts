@@ -1,4 +1,6 @@
-import type { ColumnKind } from '@orca-board/core'
+import { AGENT_TITLES, type AgentSession, type BoardColumn, type ColumnKind } from '@orca-board/core'
+import { formatDuration } from './duration'
+import { globalTaskActions } from './globalReview'
 
 /** Вкладки экрана глобальной задачи (`GlobalTaskView`), в порядке показа: номер вкладки = клавиша 1–4. */
 export type GlobalTabId = 'board' | 'overview' | 'coordinator' | 'history'
@@ -143,4 +145,132 @@ export function stepTab(visible: readonly GlobalTabId[], current: GlobalTabId, k
   if (key === 'Home') return visible[0]
   if (key === 'End') return visible[visible.length - 1]
   return undefined
+}
+
+// ---------- шапка: степпер статуса, главное действие, пилюля координатора ----------
+
+/** Шаг степпера статуса: колонка глобального канбана (`globalBoardColumns`) и её положение относительно текущей. */
+export interface StatusStep {
+  id: string
+  title: string
+  kind: ColumnKind
+  /** Цвет колонки (hex) — им подсвечивается текущий шаг. */
+  color: string
+  /** `past` — левее текущей, `now` — текущая, `next` — правее. Текущая неизвестна (старый main) — все `next`. */
+  state: 'past' | 'now' | 'next'
+  /**
+   * Клик переносит задачу сюда (`globalTasks.move`). «Нужен ответ» вычисляется по запросам человеку, а не хранится,
+   * поэтому в неё не переносят — как и на общей доске, куда её колонку не берут целью перетаскивания.
+   */
+  movable: boolean
+}
+
+/**
+ * Шаги степпера: колонки глобального канбана в порядке проекта, как на общей доске. `columns` — уже
+ * `globalBoardColumns(...)`; `status` — `GlobalTask.status` (для карточки в «Нужен ответ» это id её колонки).
+ */
+export function statusSteps(columns: readonly Pick<BoardColumn, 'id' | 'title' | 'kind' | 'color'>[], status: string): StatusStep[] {
+  const current = columns.findIndex((c) => c.id === status)
+  return columns.map((c, i) => ({
+    id: c.id,
+    title: c.title,
+    kind: c.kind,
+    color: c.color,
+    state: current < 0 ? 'next' : i < current ? 'past' : i === current ? 'now' : 'next',
+    movable: i !== current && c.kind !== 'needs_input'
+  }))
+}
+
+/** Текущий шаг степпера — для чипа «Проверка ▾» в узком окне. */
+export function currentStep(steps: readonly StatusStep[]): StatusStep | undefined {
+  return steps.find((s) => s.state === 'now')
+}
+
+/** Главное действие шапки: акцентная кнопка, одна на состояние. */
+export type HeaderPrimary =
+  | { kind: 'start'; label: string }
+  /** «Ответить · N (G)»: N — пункты ленты «Ждут вас»; клик переводит фокус в ленту (как клавиша G). */
+  | { kind: 'answer'; label: string; count: number }
+  | { kind: 'accept'; label: string }
+
+export interface HeaderActions {
+  primary?: HeaderPrimary
+  /** «Вернуть в работу…» рядом с «Подтвердить» (только «Проверка»). */
+  returnToWork: boolean
+  /** Запуск координатора без акцента: «Сделано» — решать нечего, но запуск и раньше был доступен. */
+  quietStart: boolean
+}
+
+/**
+ * Что показать в шапке. «Проверка» — «Подтвердить» + «Вернуть в работу…». «Нужен ответ» — «Ответить · N», N берётся
+ * из ленты «Ждут вас» (`attentionCount`), а нет её — из `GlobalTask.waiting`; нечего отвечать (запрос успели
+ * закрыть) — как обычное состояние. Координатор не запущен — «Запустить координатора»; живой координатор работает сам,
+ * поэтому кнопки нет — он в пилюле меты. Условия «можно ли» — `globalTaskActions`, чтобы шапка и доска не расходились.
+ */
+export function headerActions(
+  g: { inbox?: boolean; waiting?: number },
+  kind: ColumnKind | undefined,
+  live: boolean,
+  attentionCount?: number
+): HeaderActions {
+  const actions = globalTaskActions(g, kind, live)
+  if (actions.accept) return { primary: { kind: 'accept', label: 'Подтвердить' }, returnToWork: actions.returnToWork, quietStart: false }
+  const waiting = attentionCount ?? g.waiting ?? 0
+  if (!g.inbox && kind === 'needs_input' && waiting > 0) {
+    return { primary: { kind: 'answer', label: `Ответить · ${waiting}`, count: waiting }, returnToWork: false, quietStart: actions.startCoordinator }
+  }
+  if (actions.startCoordinator) {
+    return kind === 'done'
+      ? { returnToWork: false, quietStart: true }
+      : { primary: { kind: 'start', label: 'Запустить координатора' }, returnToWork: false, quietStart: false }
+  }
+  return { returnToWork: false, quietStart: false }
+}
+
+/** Состояние координатора для пилюли меты. */
+export type CoordinatorState = 'working' | 'waiting' | 'finished' | 'idle'
+
+export interface CoordinatorPillInfo {
+  state: CoordinatorState
+  /** «Координатор работает» / «ждёт вас» / «завершил» / «не запущен». */
+  title: string
+  /** Уточнения после заголовка, по порядку: модель, «N-й запуск», время. Что неизвестно — пропущено. */
+  parts: string[]
+  /** Есть живой терминал: можно «Терминал →» и «Остановить». */
+  live: boolean
+}
+
+export interface CoordinatorPillInput {
+  live: boolean
+  /** Ждёт человека: карточка в «Нужен ответ». */
+  waiting: boolean
+  /** `Run.coordinatorSessions`; со старым main поля нет. */
+  sessions?: readonly AgentSession[]
+  /** Агент последнего запуска (`GlobalTask.coordinatorAgent`) — если запусков не прислали. */
+  agent?: AgentSession['agent']
+  /** Живой терминал (`coordinatorPty`): по нему находится текущий запуск среди `sessions`. */
+  ptyId?: string
+}
+
+/**
+ * Пилюля координатора: «● Координатор работает · Claude Opus · 2-й запуск · 1 ч 12 мин». Запуск текущий — с ptyId
+ * живого терминала, иначе последний. Живой — время идёт с его начала; завершённый — сколько он работал.
+ * Запусков нет и координатор не жив — «не запущен» без подробностей (в «Сделано» без сессий — тоже: они неизвестны).
+ */
+export function coordinatorPill(input: CoordinatorPillInput, now: number): CoordinatorPillInfo {
+  const { live, waiting, sessions, agent, ptyId } = input
+  const list = sessions ?? []
+  const last = list.length > 0 ? list[list.length - 1] : undefined
+  const session = (live && ptyId ? list.find((s) => s.ptyId === ptyId) : undefined) ?? last
+  const model = session?.model ?? (session ? AGENT_TITLES[session.agent] : agent ? AGENT_TITLES[agent] : undefined)
+  const parts: string[] = []
+  if (model) parts.push(model)
+  if (list.length > 0 && session) parts.push(`${list.indexOf(session) + 1}-й запуск`)
+  if (session) {
+    const end = live ? now : session.endedAt
+    if (end !== undefined && end >= session.startedAt) parts.push(formatDuration(end - session.startedAt))
+  }
+  if (live) return { state: waiting ? 'waiting' : 'working', title: waiting ? 'Координатор ждёт вас' : 'Координатор работает', parts, live }
+  if (session) return { state: 'finished', title: 'Координатор завершил', parts, live }
+  return { state: 'idle', title: 'Координатор не запущен', parts: [], live }
 }

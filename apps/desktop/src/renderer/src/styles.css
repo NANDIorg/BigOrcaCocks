@@ -743,31 +743,8 @@ button:disabled { opacity: .45; cursor: default; }
 .g-duration-line .g-duration-own + .g-duration-sum::before { content: '· '; }
 
 /* ---------- глобальная задача: экран подзадач ---------- */
-.g-view-head { flex-shrink: 0; }
 .segmented .seg { white-space: nowrap; }
-.g-view-head { padding: 18px 32px 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.g-crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--muted); }
-.g-back {
-  flex: 0 0 auto; background: transparent; border: 0; color: var(--muted); padding: 4px 8px; margin-left: -8px; border-radius: 8px;
-  display: inline-flex; align-items: center; gap: 6px;
-}
-.g-back:hover { color: var(--text); background: var(--side-2); }
-.g-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--text); }
-.g-crumb-sep { opacity: .5; }
-.g-crumb-current { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-.g-view-title-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; min-width: 0; }
-.g-view-title {
-  flex: 1 1 320px; min-width: 0; margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.g-view-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.g-view-actions svg { width: 14px; height: 14px; }
 .g-live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-done); box-shadow: 0 0 0 3px rgba(90,209,204,.18); }
-.g-view-desc { color: var(--muted); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 110ch; max-height: 30vh; overflow-y: auto; }
-.g-view-desc.clamped { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.g-more { align-self: flex-start; padding: 0; font-size: 12px; }
-.g-view-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; }
-.g-view-progress { width: 240px; max-width: 100%; }
 .modal-sub { margin: -8px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Модалка «Тип проекта» при добавлении репозитория: карточки шаблонов как радиогруппа */
 .modal.project-type-modal { width: 560px; max-width: calc(100vw - 48px); max-height: 90vh; }
@@ -789,12 +766,8 @@ button:disabled { opacity: .45; cursor: default; }
 /* ---------- глобальная задача: «Проверка» (приёмка человеком) ---------- */
 .g-card-review { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; cursor: default; }
 .g-card-review .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; }
-.g-card-review .btn-sm:disabled, .g-view-actions .btn-sm:disabled, .g-modal-review .btn-sm:disabled { opacity: .5; cursor: default; }
+.g-card-review .btn-sm:disabled, .gt-head-actions .btn-sm:disabled, .g-modal-review .btn-sm:disabled { opacity: .5; cursor: default; }
 .g-card-returns { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
-.g-review-note {
-  align-self: flex-start; max-width: 110ch; padding: 6px 10px; border-radius: 8px; font-size: 12px;
-  color: var(--col-review); background: color-mix(in srgb, var(--col-review) 12%, transparent);
-}
 .g-returns { max-width: 110ch; font-size: 12px; }
 .g-returns > summary { cursor: pointer; color: var(--muted); }
 .g-returns > summary:hover { color: var(--text); }
@@ -806,7 +779,7 @@ button:disabled { opacity: .45; cursor: default; }
 
 @media (max-width: 900px) {
   .g-board, .board { padding-left: 16px; padding-right: 16px; }
-  .g-view-head, .board-toolbar, .lb-toolbar, .kbd-hint { padding-left: 16px; padding-right: 16px; }
+  .board-toolbar, .lb-toolbar, .kbd-hint { padding-left: 16px; padding-right: 16px; }
   .g-column { flex-basis: 260px; width: 260px; }
 }
 /* Узкое окно: кнопки шапки переносятся, а не выталкивают страницу за край */
@@ -1738,4 +1711,84 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 @media (max-width: 900px) {
   .gt-grid { grid-template-columns: minmax(0, 1fr); }
   .gt-tabs, .gt-panel:not(.gt-panel-board) { padding-left: 16px; padding-right: 16px; }
+}
+
+/* ---------- экран глобальной задачи: шапка (GlobalTaskHeader) — три строки, высота не зависит от состояния ---------- */
+.gt-head { flex-shrink: 0; padding: 12px 32px 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gt-head-row1 { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; font-size: 12.5px; }
+.gt-back {
+  flex: 0 0 auto; background: transparent; border: 0; color: var(--muted); padding: 3px 8px; margin-left: -8px; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+}
+.gt-back:hover { color: var(--text); background: var(--side-2); }
+.gt-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--text); }
+.gt-head-row2 { display: flex; align-items: center; gap: 8px 12px; min-width: 0; flex-wrap: wrap; }
+.gt-head-title {
+  flex: 1 1 300px; min-width: 0; margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gt-head-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.gt-head-actions svg { width: 14px; height: 14px; }
+.gt-head-actions .gt-cta { height: 30px; padding: 0 14px; font-size: 13px; }
+.gt-cta.ok { background: var(--col-done); border-color: var(--col-done); color: #1d1f24; }
+.gt-cta.ok:hover { border-color: var(--col-done); filter: brightness(1.08); }
+.gt-quiet { border-color: transparent; color: var(--muted); }
+.gt-quiet:hover { color: var(--text); background: var(--side-2); border-color: transparent; }
+.gt-more { position: relative; display: inline-flex; }
+.gt-more-menu {
+  position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; min-width: 180px; padding: 4px; border-radius: 10px;
+  background: var(--side); border: 1px solid var(--chip); box-shadow: 0 8px 24px rgba(0,0,0,.35); display: flex; flex-direction: column;
+}
+.gt-more-item { text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 6px 10px; font-size: 13px; color: var(--text); cursor: pointer; }
+.gt-more-item:hover, .gt-more-item:focus-visible { background: var(--side-2); outline: none; }
+.gt-more-item.danger { color: var(--danger); }
+.gt-head-row3 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-width: 0; font-size: 12.5px; }
+.gt-time { white-space: nowrap; }
+
+/* Степпер статуса: клик по шагу переносит задачу. Текущий шаг — цвет колонки (--c из style). */
+.gt-steps { display: flex; align-items: center; min-width: 0; font-size: 12px; }
+.gt-step-wrap { display: inline-flex; align-items: center; }
+.gt-step-sep { width: 14px; height: 1px; background: var(--chip); flex: 0 0 auto; }
+.gt-step {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+.gt-step i { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--chip); flex: 0 0 auto; }
+.gt-step.past i { background: var(--chip); }
+.gt-step.now { color: var(--text); font-weight: 600; background: color-mix(in srgb, var(--c) 16%, transparent); cursor: default; }
+.gt-step.now i { border-color: var(--c); background: var(--c); }
+.gt-step:hover:not(.now):not(:disabled) { color: var(--text); background: var(--side-2); }
+.gt-step:disabled:not(.now) { cursor: default; opacity: .6; }
+.gt-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Узкое окно: вместо ленты шагов — чип с меню «Переместить в…». */
+.gt-status-chip {
+  display: none; align-items: center; gap: 6px; flex: 0 0 auto; border: 0; border-radius: 6px; padding: 0 8px; line-height: 22px; font-size: 12px; font-weight: 600;
+  color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); cursor: pointer;
+}
+.gt-status-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Пилюля координатора. */
+.gt-coord {
+  display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; padding: 3px 10px 3px 8px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--side);
+}
+.gt-coord-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--chip); }
+.gt-coord-dot.working { background: var(--col-done); box-shadow: 0 0 0 3px rgba(90,209,204,.25); animation: gt-pulse 1.6s ease-in-out infinite; }
+.gt-coord-dot.waiting { background: var(--col-input); box-shadow: 0 0 0 3px rgba(232,176,74,.25); }
+@keyframes gt-pulse { 50% { box-shadow: 0 0 0 6px rgba(90,209,204,0); } }
+@media (prefers-reduced-motion: reduce) { .gt-coord-dot.working { animation: none; } }
+.gt-coord-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gt-link { border: 0; background: transparent; padding: 0; font-size: 12.5px; color: var(--accent); cursor: pointer; white-space: nowrap; }
+.gt-link:hover { text-decoration: underline; }
+.gt-link.danger { color: var(--danger); }
+.gt-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.gt-stop-confirm { display: inline-flex; align-items: center; gap: 6px; }
+.gt-stop-confirm .btn-sm { height: 22px; padding: 0 9px; }
+.gt-stop-confirm .btn-sm.danger-fill { background: #d9534f; border-color: #d9534f; color: #fff; }
+.gt-stop-confirm .btn-sm.danger-fill:hover { background: var(--danger); border-color: var(--danger); }
+@media (max-width: 900px) {
+  .gt-head { padding-left: 16px; padding-right: 16px; }
+  .gt-steps { display: none; }
+  .gt-status-chip { display: inline-flex; }
+  .gt-head-title { flex-basis: 100%; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 18px; }
 }

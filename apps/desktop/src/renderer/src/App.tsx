@@ -480,6 +480,15 @@ export function App(): React.JSX.Element {
     }
   }
 
+  /** Перенос глобальной задачи в колонку: с общей доски (перетаскивание) и из степпера шапки. */
+  async function moveGlobalTask(id: string, status: string): Promise<void> {
+    try {
+      await window.orca.globalTasks.move(id, status)
+    } catch (e) {
+      alert(`Не удалось переместить: ${ipcErrorMessage(e)}`)
+    }
+  }
+
   async function removeGlobalTask(g: GlobalTask): Promise<void> {
     const n = g.progress.total
     const text = n
@@ -821,13 +830,7 @@ export function App(): React.JSX.Element {
               onOpenInbox={openInboxAt}
               focusId={lastGlobal}
               onOpen={openGlobalTask}
-              onMove={async (id, status) => {
-                try {
-                  await window.orca.globalTasks.move(id, status)
-                } catch (e) {
-                  alert(`Не удалось переместить: ${ipcErrorMessage(e)}`)
-                }
-              }}
+              onMove={(id, status) => moveGlobalTask(id, status)}
               onEdit={(g) => setGlobalModal({ mode: 'edit', id: g.id })}
               onRemove={(g) => void removeGlobalTask(g)}
               onStartCoordinator={(g) => void startGlobalCoordinator(g)}
@@ -841,8 +844,13 @@ export function App(): React.JSX.Element {
               global={openGlobal}
               statusKind={globalKindById.get(openGlobal.status)}
               coordinatorPty={coordinatorPtys.get(openGlobal.id)}
+              coordinatorSessions={snap.runs.find((r) => r.id === openGlobal.id)?.coordinatorSessions}
+              globalColumns={globalColumns}
               onBack={closeGlobalTask}
               onEdit={() => setGlobalModal({ mode: 'edit', id: openGlobal.id })}
+              onMove={(status) => void moveGlobalTask(openGlobal.id, status)}
+              onStopCoordinator={closeTerminal}
+              onRemove={() => void removeGlobalTask(openGlobal)}
               onStartCoordinator={() => void startGlobalCoordinator(openGlobal)}
               onShowCoordinator={(ptyId) => showTerminal(ptyId)}
               onAccept={() => void acceptGlobalTask(openGlobal)}
