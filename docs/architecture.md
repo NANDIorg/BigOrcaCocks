@@ -999,7 +999,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `showcase:read(taskId, path)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ),
   `showcase:open(taskId, path)`, `showcase:reveal(taskId, path)` — файлы показа из worktree задачи активного проекта
   (`main/showcase.ts`, белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»);
-  `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»).
+  `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»),
+  `stats:task(projectId, taskId)` → `TaskStats`, `stats:global(projectId, runId)` → `GlobalTaskStats` (за всё время жизни; неизвестная задача или прогон —
+  ошибка по-русски; см. «Статистика задачи»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
@@ -1389,7 +1391,12 @@ Renderer вызывает канал через проверку наличия 
 подзадач вместе с проверками, `count` / `done` — рабочие подзадачи), `returns` (`Run.returns.length`), `byTask` (строки
 подзадач, сортировка как в проекте). Своих `stages`, `dispatches`, `rejections`, `coordinatorQuestions` у глобальной задачи нет.
 
-IPC `stats:task` / `stats:global` и вкладка в UI — отдельные задачи (main собирает `usage` только по сессиям задачи).
+IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, runId)` → `GlobalTaskStats`
+(`OrcaApi.stats.task` / `.global`; `taskStats` / `globalTaskStats` в `apps/desktop/src/main/stats.ts`, обвязка — `collectTaskStats` /
+`collectGlobalTaskStats` в `main/index.ts`). Собираются как `stats:project`, но `include` в `collectSessionUsage` отбирает только
+сессии задачи и её проверок (для глобальной — подзадач прогона и его координатора): транскрипты других задач не читаются.
+Кэш транскриптов общий с проектом, найденные id сессий codex пишутся в store (`setDispatchSessionId`). Граф для названий этапов
+(`workflow`) main берёт из типа прогона задачи. Вкладка в UI — отдельная задача.
 Команды CLI для статистики задачи по-прежнему нет: тот же довод, что для проекта.
 
 ### Интерфейс — вкладка «Статистика» (вариант B)

@@ -113,7 +113,9 @@ const api: OrcaApi = {
     save: (name, text) => ipcRenderer.invoke('rules:save', name, text)
   },
   stats: {
-    project: (projectId, range) => ipcRenderer.invoke('stats:project', projectId, range)
+    project: (projectId, range) => ipcRenderer.invoke('stats:project', projectId, range),
+    task: (projectId, taskId) => ipcRenderer.invoke('stats:task', projectId, taskId),
+    global: (projectId, runId) => ipcRenderer.invoke('stats:global', projectId, runId)
   },
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),
