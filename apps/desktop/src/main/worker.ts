@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -24,6 +24,11 @@ export interface WorkerEnvContext {
   typeTitle: string
   /** Правила агентов типа задачи прогона: блок «Правила проекта» в системном промпте воркеров и координатора. */
   agentRules?: string
+  /**
+   * Граф типа прогона, который исполнитель может выполнить (`runnableWorkflow`): запасной для прогона без снимка
+   * графа — по нему ищется этап «Работа» для промпта воркера. Нет — дефолтный по ролям.
+   */
+  workflow?: Workflow
   /** Тип нового прогона координатора: id, снимок и граф уходят в `Run.typeId`, `Run.taskType`, `Run.workflow`. */
   type?: RunTypeInput
 }
@@ -206,8 +211,12 @@ export function startWorker(
   const previousAnswer = snap.dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
   // Ответы на вопросы прошлых запусков: перезапуск после ответа человека не должен спрашивать заново.
   const answers = snap.questions.filter((q) => q.taskId === task.id && q.answeredAt).sort((a, b) => a.createdAt - b.createdAt)
+  // Этап «Работа» графа: его инструкция и требование показа человеку — раздел «Этап» в задании.
+  const stage = task.answerFor
+    ? undefined
+    : store.taskWorkStage(task.id, { roleIds: ctx.roles.map((r) => r.id), ...(ctx.workflow ? { workflow: ctx.workflow } : {}) })
   const sessionId = agentSessionId(spec)
-  const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.worker, ctx.agentRules, role), workerTaskPrompt(task, previousAnswer, answers), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
+  const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.worker, ctx.agentRules, role), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null

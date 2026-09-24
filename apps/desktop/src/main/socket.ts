@@ -4,11 +4,12 @@ import { dirname } from 'node:path'
 import {
   EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
+  type RequestResolution, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams } from './request-params'
+import { runnableWorkflow } from './projects'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -128,6 +129,21 @@ function list(v: unknown): string[] {
 function num(v: unknown, def: number): number {
   const n = Number(v)
   return Number.isFinite(n) ? n : def
+}
+
+/** Показ из `done` (CLI шлёт `{text?, files}`): чужая форма — ошибка, а не молча пропавший показ. */
+function showcaseParam(v: unknown): { showcase?: { text?: string; files: string[] } } {
+  if (v === undefined) return {}
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('showcase: нужен объект {text?, files}')
+  const o = v as Record<string, unknown>
+  if (o.text !== undefined && typeof o.text !== 'string') throw new Error('showcase.text должен быть строкой')
+  return { showcase: { ...(typeof o.text === 'string' ? { text: o.text } : {}), files: list(o.files) } }
+}
+
+/** Запасной граф store (`RunWorkflowFallback`) по типу прогона: граф будущей версии не исполняется. */
+function runFallback(t: ResolvedRunType): RunWorkflowFallback {
+  const workflow = runnableWorkflow(t.workflow)
+  return { roleIds: t.roles.map((r) => r.id), ...(workflow ? { workflow } : {}) }
 }
 
 /** Координатор прогона задачи жив (PTY в реестре) и не закончил работу — вопрос адресуется ему. */
@@ -383,11 +399,17 @@ const handlers: Record<string, Handler> = {
     if (!d) throw new Error(`dispatch not found: ${id}`)
     return { ...d, alive: isAlive(d.ptyId), tail: ptyTail(d.ptyId, num(r.params.limit, 80)) }
   },
-  'worker.done': (r, _d, store) => {
+  'worker.done': (r, deps, store) => {
     const id = str(r.params.dispatch) ?? r.dispatchId
     if (!id) throw new Error('нет dispatch: укажи --dispatch или запусти из воркера (ORCA_DISPATCH_ID)')
-    // CLI читает --answer-file сам и присылает текст в answer.
-    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer))
+    // CLI читает --answer-file и --show-file сам и присылает текст в answer и showcase.text.
+    const dispatch = store.getDispatch(id)
+    const task = dispatch ? store.getTask(dispatch.taskId) : undefined
+    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer), {
+      ...showcaseParam(r.params.showcase),
+      // Граф прогона без снимка — по типу прогона, как у исполнителя воркфлоу (workflowDeps в index.ts).
+      ...(task ? { fallback: runFallback(deps.resolveRun(task.runId)) } : {})
+    })
   },
   'worker.ask': async (r, _d, store, stream) => {
     const dispatchId = str(r.params.dispatch) ?? r.dispatchId

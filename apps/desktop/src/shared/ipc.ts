@@ -192,6 +192,12 @@ export interface DocFile {
   untracked: boolean
 }
 
+/** Файл показа для превью (`showcase:read`): mime по расширению и содержимое. */
+export interface ShowcaseFileData {
+  mime: string
+  bytes: Uint8Array
+}
+
 /** Группа документов: проект (`source: 'project'`) или worktree задачи в работе (`source` — id задачи). */
 export interface DocGroup {
   source: string
@@ -401,6 +407,19 @@ export interface OrcaApi {
     open(source: string, path: string): Promise<void>
     /** Показать файл в Finder/Проводнике. */
     reveal(source: string, path: string): Promise<void>
+  }
+  /**
+   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId`) из worktree задачи `taskId`
+   * активного проекта. `path` — как в `showcase.files` (от корня репозитория). Путь вне worktree, симлинк наружу,
+   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), нет worktree — ошибка.
+   */
+  showcase: {
+    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. */
+    read(taskId: string, path: string): Promise<ShowcaseFileData>
+    /** Открыть файл приложением системы по умолчанию (HTML — в браузере). */
+    open(taskId: string, path: string): Promise<void>
+    /** Показать файл в Finder/Проводнике. */
+    reveal(taskId: string, path: string): Promise<void>
   }
   /** Правила активного проекта: CLAUDE.md и AGENTS.md в его корне (не в worktree задач). */
   rules: {

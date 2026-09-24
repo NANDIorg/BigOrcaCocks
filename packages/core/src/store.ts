@@ -788,13 +788,16 @@ export class TaskStore {
 
   /**
    * Нода `human`: запрос approval к человеку («Принять» / «Вернуть»), задача — в «Нужен ответ».
-   * Ждущий approval той же задачи не дублируется — возвращается он.
+   * Ждущий approval той же задачи не дублируется — возвращается он. `showcaseDispatchId` — чей показ в `body`.
    */
-  requestApproval(taskId: string, fields: { nodeId: string; title: string; body?: string }): HumanRequest {
+  requestApproval(taskId: string, fields: { nodeId: string; title: string; body?: string; showcaseDispatchId?: string }): HumanRequest {
     const task = this.mustTask(taskId)
     const existing = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'approval')
     if (existing) return existing
-    const request = this.createRequest(task, { kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}) })
+    const request = this.createRequest(task, {
+      kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}),
+      ...(fields.showcaseDispatchId ? { showcaseDispatchId: fields.showcaseDispatchId } : {})
+    })
     this.commit()
     return request
   }
@@ -1681,7 +1684,7 @@ export class TaskStore {
    */
   private createRequest(
     task: Task,
-    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId'>>,
+    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId' | 'showcaseDispatchId'>>,
     emit = true
   ): HumanRequest {
     const request: HumanRequest = {
@@ -1696,6 +1699,7 @@ export class TaskStore {
       options: fields.options ?? [],
       ...(fields.questionId !== undefined ? { questionId: fields.questionId } : {}),
       ...(fields.nodeId !== undefined ? { nodeId: fields.nodeId } : {}),
+      ...(fields.showcaseDispatchId !== undefined ? { showcaseDispatchId: fields.showcaseDispatchId } : {}),
       createdAt: Date.now()
     }
     this.requests.set(request.id, request)

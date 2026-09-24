@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 
 let tmp: string
@@ -18,6 +18,8 @@ let roles: Role[]
 let agents: AgentInfo[]
 /** Порядок вызовов фейков: restart должен сначала остановить, потом запустить. */
 let calls: string[]
+/** Граф типа проекта в `resolveRun`; нет — дефолтный по ролям. */
+let typeWorkflow: Workflow | undefined
 
 function fakeDeps(): ProjectDeps {
   let pty = 0
@@ -45,7 +47,7 @@ function fakeDeps(): ProjectDeps {
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
-    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: defaultWorkflow(roles), source: 'default' }),
+    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? defaultWorkflow(roles), source: 'default' }),
     taskTypes: () => ({ taskTypes: presetTaskTypes(), defaultTypeId: 'general' }),
     runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
@@ -64,6 +66,7 @@ interface Reply {
     stopped?: string[]
     dispatchId?: string
     task?: { status: string; feedback?: string }
+    showcase?: { text?: string; files: string[] }
     worker?: { dispatchId: string }
   }
 }
@@ -93,6 +96,7 @@ beforeEach(async () => {
   roles = DEFAULT_ROLES
   agents = [{ id: 'claude', title: 'Claude Code', installed: true, enabled: true, models: [], defaults: {} }]
   calls = []
+  typeWorkflow = undefined
   server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [] })
   await new Promise((r) => server.once('listening', r))
 })
@@ -354,5 +358,54 @@ describe('история статусов через сокет', () => {
     assert.deepEqual(history.map((e) => [e.status, e.by]), [
       ['backlog', 'app'], ['ready', 'app'], ['in_progress', 'cli'], ['review', 'worker']
     ])
+  })
+})
+
+describe('worker done: показ человеку', () => {
+  /** «Работа» с обязательным показом → человек: граф типа проекта, задача без прогона берёт его через resolveRun. */
+  const design: Workflow = {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'work', type: 'work', title: 'Дизайн', x: 0, y: 0, showcase: { what: 'варианты макета', required: true } },
+      { id: 'pick', type: 'human', x: 0, y: 0 },
+      { id: 'end', type: 'end', x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e1', from: 'start', outcome: 'next', to: 'work' },
+      { id: 'e2', from: 'work', outcome: 'next', to: 'pick' },
+      { id: 'e3', from: 'pick', outcome: 'accept', to: 'end' },
+      { id: 'e4', from: 'pick', outcome: 'reject', to: 'work' }
+    ]
+  }
+
+  it('showcase из CLI сохраняется в Dispatch.showcase (пути нормализованы)', async () => {
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const res = await call('worker.done', { summary: 's', showcase: { text: '## A и B', files: ['design\\a.png', ' b.html '] } }, { dispatchId: d.id })
+    assert.equal(res.ok, true, res.error)
+    assert.deepEqual(store.getDispatch(d.id)!.showcase, { text: '## A и B', files: ['design/a.png', 'b.html'] })
+  })
+
+  it('обязательный показ по графу типа (прогона без снимка): без него — ошибка с подсказкой, с ним — done', async () => {
+    typeWorkflow = design
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    store.enterWork(task.id, { roleIds: roles.map((r) => r.id), workflow: design })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const bare = await call('worker.done', { summary: 's' }, { dispatchId: d.id })
+    assert.equal(bare.ok, false)
+    assert.match(bare.error!, /этап «Дизайн» требует показ человеку: варианты макета/)
+    assert.match(bare.error!, /--show-file/)
+    assert.equal(store.getDispatch(d.id)!.outcome, undefined, 'dispatch не закрыт')
+    const ok = await call('worker.done', { summary: 's', showcase: { files: ['a.png'] } }, { dispatchId: d.id })
+    assert.equal(ok.ok, true, ok.error)
+    assert.equal(store.getDispatch(d.id)!.outcome, 'done')
+  })
+
+  it('чужая форма showcase — ошибка, а не молча пропавший показ', async () => {
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    assert.match((await call('worker.done', { summary: 's', showcase: 'a.png' }, { dispatchId: d.id })).error!, /showcase: нужен объект/)
+    assert.match((await call('worker.done', { summary: 's', showcase: { text: 1 } }, { dispatchId: d.id })).error!, /showcase.text/)
   })
 })

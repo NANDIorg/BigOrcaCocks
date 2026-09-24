@@ -1,6 +1,6 @@
 import {
   gateTaskSpec, gateTaskTitle, wfNodeTitle, withStatusSource,
-  type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
+  type DispatchShowcase, type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
   type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { acceptReview, mergeTaskBranch } from './review'
@@ -163,18 +163,34 @@ function createGate(deps: WorkflowDeps, task: Task, node: Extract<WfNode, { type
   }
 }
 
+/**
+ * Показ в body approval: описание воркера и список файлов текстом. Превью и кнопки «Открыть» рисует renderer
+ * по `showcaseDispatchId`; этот текст — для старого renderer и для `orca-board request get`.
+ */
+export function showcaseMarkdown(showcase: DispatchShowcase): string {
+  const files = showcase.files.length ? ['**Файлы показа** (в worktree задачи):', ...showcase.files.map((f) => `- \`${f}\``)].join('\n') : undefined
+  return ['## Показ', showcase.text?.trim(), files].filter(Boolean).join('\n\n')
+}
+
 /** Нода human: запрос approval в Инбокс; задача — в «Нужен ответ» (или в колонку этапа, если она задана). */
 function requestHuman(deps: WorkflowDeps, task: Task, node: Extract<WfNode, { type: 'human' }>, note?: string): void {
   const { store } = deps
-  const summary = task.dispatchId ? store.getDispatch(task.dispatchId)?.summary?.trim() : undefined
+  const dispatch = task.dispatchId ? store.getDispatch(task.dispatchId) : undefined
+  const summary = dispatch?.summary?.trim()
+  // Показ последнего done рабочей задачи (нода «Работа» с showcase): гейт между ними — отдельная задача, не мешает.
+  const showcase = dispatch?.outcome === 'done' ? dispatch.showcase : undefined
   const body = [
     node.instructions?.trim(),
     note ? `**Мерж не удался:**\n\n\`\`\`\n${note}\n\`\`\`` : undefined,
     summary ? `**Итог воркера:** ${summary}` : undefined,
+    showcase ? showcaseMarkdown(showcase) : undefined,
     task.branch ? `Ветка: \`${task.branch}\`${task.worktree ? `, worktree: \`${task.worktree}\`` : ''}` : undefined,
     '«Принять» — дальше по воркфлоу (обычно мерж), «Вернуть» — с замечаниями.'
   ].filter(Boolean).join('\n\n')
-  store.requestApproval(task.id, { nodeId: node.id, title: `${wfNodeTitle(node)}: ${task.title}`, body })
+  store.requestApproval(task.id, {
+    nodeId: node.id, title: `${wfNodeTitle(node)}: ${task.title}`, body,
+    ...(showcase && dispatch ? { showcaseDispatchId: dispatch.id } : {})
+  })
   if (node.column) moveTo(deps, task.id, node.column)
 }
 
