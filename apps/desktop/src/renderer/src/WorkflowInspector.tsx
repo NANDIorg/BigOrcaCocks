@@ -220,13 +220,13 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
               onChange={(e) => patch({ showcase: { what: e.target.value } })}
             />
           </label>
-          <label className="wf-check">
+          <label className="wf-check" title="Без показа orca-board done не пройдёт: воркер получит подсказку">
             <input
               type="checkbox"
               checked={node.showcase?.required ?? false}
               onChange={(e) => patch({ showcase: { required: e.target.checked } })}
             />
-            <span>Показ обязателен: без него done не пройдёт</span>
+            <span>Показ обязателен</span>
           </label>
         </>
       )}

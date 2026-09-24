@@ -1147,15 +1147,16 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .showcase-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .showcase-file { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); min-width: 0; }
 .showcase-file:first-child { padding-top: 0; border-top: 0; }
-.showcase-file-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
-.showcase-file-head .grow { flex: 1; }
-.showcase-file-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.showcase-file-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.showcase-file-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.showcase-file-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .showcase-file-path { color: var(--muted); font-size: 11px; font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .showcase-file-head .btn-text { font-size: 12px; color: var(--accent); padding: 0 4px; }
+.showcase-file-head .btn-sm, .showcase-file-head .btn-text { flex-shrink: 0; white-space: nowrap; }
 .showcase-file-head .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; }
 .showcase-note { font-size: 12px; }
 .showcase-img { display: block; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--page); overflow: hidden; cursor: zoom-in; max-width: 100%; align-self: flex-start; }
-.showcase-img img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
+.showcase-img img { display: block; max-width: 100%; max-height: 240px; object-fit: contain; }
 .showcase-file-md { padding: 8px 10px; background: var(--page); border-radius: 8px; max-height: 320px; }
 
 /* «Открыть полностью»: ответ во всю ширину поверх Инбокса. */

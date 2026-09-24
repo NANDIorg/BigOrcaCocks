@@ -283,7 +283,8 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
                   rows={1}
                   className="rq-decision"
                   value={decision}
-                  placeholder="Решение / вариант (необязательно) — например, «вариант B» — получит координатор"
+                  placeholder="Решение / вариант (необязательно)"
+                  title="Текст решения получит координатор (request_resolved.decision)"
                   aria-label="Решение"
                   disabled={busy}
                   onChange={(e) => setDecision(e.target.value)}

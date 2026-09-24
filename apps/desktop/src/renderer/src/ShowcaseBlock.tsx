@@ -55,9 +55,10 @@ function ShowcaseFile({ taskId, file, autoPreview }: { taskId: string; file: Sho
   return (
     <li className="showcase-file">
       <div className="showcase-file-head">
-        <span className="showcase-file-name" title={file.path}>{file.name}</span>
-        {file.name !== file.path && <span className="showcase-file-path">{file.path}</span>}
-        <span className="grow" />
+        <div className="showcase-file-title" title={file.path}>
+          <span className="showcase-file-name">{file.name}</span>
+          {file.name !== file.path && <span className="showcase-file-path">{file.path}</span>}
+        </div>
         {canPreview && (
           <button className="btn-text" onClick={() => setShown((v) => !v)} aria-expanded={shown}>
             {shown ? 'Скрыть' : file.view === 'image' ? 'Превью' : 'Текст'}
