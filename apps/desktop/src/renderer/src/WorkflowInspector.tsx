@@ -118,7 +118,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
             return (
               <div key={t}>
                 <dt><span className={`wf-insp-icon wf-node--${t}`}><NodeIcon /></span>{WF_TYPE_TITLES[t]}</dt>
-                <dd>{WF_NODE_HELP[t].summary} {WF_NODE_HELP[t].actor}</dd>
+                <dd>{WF_NODE_HELP[t].summary}<br /><i>Кто: {WF_NODE_HELP[t].actor}</i></dd>
               </div>
             )
           })}
