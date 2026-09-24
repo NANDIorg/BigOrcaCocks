@@ -1,5 +1,5 @@
 import {
-  gateTaskSpec, gateTaskTitle, wfNodeTitle,
+  gateTaskSpec, gateTaskTitle, wfNodeTitle, withStatusSource,
   type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
   type WfOutcome, type Workflow
 } from '@orca-board/core'
@@ -83,6 +83,11 @@ export function advance(deps: WorkflowDeps, taskId: string, outcome: WfOutcome):
  * действия ждут воркера, проверку или человека. Любая ошибка эффекта — `workflow_blocked`, задача остаётся на этапе.
  */
 function execute(deps: WorkflowDeps, taskId: string, first: WfAction): void {
+  // Колонку дальше двигает граф, а не тот, чья команда дала исход: в истории статусов — workflow.
+  withStatusSource('workflow', () => executeSteps(deps, taskId, first))
+}
+
+function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction): void {
   const { store } = deps
   let action = first
   // Текст конфликта мержа — в запрос человеку, если следующий этап — человек.
@@ -260,6 +265,10 @@ function workDone(deps: WorkflowDeps, task: Task, dispatchId: string | undefined
  * они становятся `workflow_blocked`.
  */
 export function handleWorkflowEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
+  withStatusSource('workflow', () => handleEvents(deps, events))
+}
+
+function handleEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
   for (const e of events) {
     if (!e.taskId || (e.type !== 'worker_done' && e.type !== 'escalation')) continue
     const task = deps.store.getTask(e.taskId)

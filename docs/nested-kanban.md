@@ -306,6 +306,7 @@ interface GlobalTask {
   subtasksActiveSince: number[] // начала идущих отрезков подзадач в работе; пусто — сумма стоит
   returns?: { at: number; text: string }[] // уточнения при возвратах с «Проверки» (= Run.returns)
   summary?: { at: number; text: string }   // итоговая сводка координатора, markdown (= Run.summary, runs finish --summary)
+  statusHistory?: StatusChange[] // копия Run.statusHistory: хранимые колонки (без вычисляемого needs_input); нет — старый main
 }
 ```
 

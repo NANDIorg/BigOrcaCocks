@@ -145,6 +145,32 @@ export const DEFAULT_COLUMNS: BoardColumn[] = [
 /** Статус задачи — id колонки доски (см. BoardColumn). */
 export type TaskStatus = string
 
+/**
+ * Кто перевёл задачу в колонку: `human` — человек в UI (IPC renderer), `cli` — команда `orca-board` без
+ * ORCA_DISPATCH_ID (координатор или человек в терминале — сокет их не различает), `worker` — команда воркера
+ * (есть ORCA_DISPATCH_ID), `workflow` — исполнитель воркфлоу в main двигает задачу по графу, `app` — само
+ * приложение: зависимости закрыты (backlog → ready), воркер умер, миграция, автозакрытие прогона.
+ */
+export type StatusSource = 'human' | 'cli' | 'worker' | 'workflow' | 'app'
+
+export const STATUS_SOURCES: StatusSource[] = ['human', 'cli', 'worker', 'workflow', 'app']
+
+/** Запись истории статусов задачи или глобальной задачи (`Task.statusHistory`, `Run.statusHistory`). */
+export interface StatusChange {
+  /** Колонка, в которую перешла задача (id колонки). */
+  status: TaskStatus
+  /** Момент перехода, epoch ms. */
+  at: number
+  by: StatusSource
+  /** Нода воркфлоу (`WfStage.nodeId`), на которой стояла задача при переходе; у глобальных задач нет. */
+  stage?: string
+  /**
+   * Стартовая запись миграции у задачи от кода до истории: реального перехода не было, это статус на момент
+   * обновления, а `at` — последняя правка задачи (`updatedAt`), не точный момент входа в колонку.
+   */
+  migrated?: true
+}
+
 /** @deprecated Колонки берутся из настроек проекта, это только дефолт. */
 export const TASK_STATUSES: TaskStatus[] = DEFAULT_COLUMNS.map((c) => c.id)
 
@@ -253,6 +279,12 @@ export interface Run {
    * Нет — координатор сводку не передавал (старый код, ручной перенос): UI показывает сводки подзадач.
    */
   summary?: { at: number; text: string }
+  /**
+   * История смены колонки, от старых к новым (`recordStatus`, status-history.ts): не длиннее
+   * `STATUS_HISTORY_LIMIT`, подряд одинаковых статусов нет. Нет — снапшот от кода до истории, ещё не прошедший
+   * миграцию (renderer мог получить его от старого main).
+   */
+  statusHistory?: StatusChange[]
 }
 
 // ---------- задачи ----------
@@ -342,6 +374,12 @@ export interface Task {
   stage?: WfStage
   /** Задача-гейт: чью ветку проверяет и на какой ноде `gate` рабочей задачи. */
   gateFor?: { taskId: string; nodeId: string }
+  /**
+   * История смены колонки, от старых к новым (`recordStatus`, status-history.ts): не длиннее
+   * `STATUS_HISTORY_LIMIT`, подряд одинаковых статусов нет. Нет — снапшот от кода до истории, ещё не прошедший
+   * миграцию (renderer мог получить его от старого main).
+   */
+  statusHistory?: StatusChange[]
 }
 
 export type DispatchOutcome = 'done' | 'failed' | 'unknown'

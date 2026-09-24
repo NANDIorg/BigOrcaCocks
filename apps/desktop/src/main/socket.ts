@@ -2,7 +2,7 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
   type RequestResolution, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
@@ -657,7 +657,9 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       }
       if (!handler) throw new Error(`неизвестная команда: ${req.method}`)
       const deps = socketDeps.resolve(req.projectId || undefined)
-      const result = await handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream)
+      // Источник для истории статусов: команда воркера (есть ORCA_DISPATCH_ID) или прочий CLI — координатор, человек.
+      const source = req.dispatchId ? 'worker' : 'cli'
+      const result = await withStatusSource(source, () => handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream))
       if (result === STREAM) return
       sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
     } catch (e) {
