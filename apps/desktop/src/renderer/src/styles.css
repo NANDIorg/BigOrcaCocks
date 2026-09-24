@@ -104,9 +104,10 @@ button { font: inherit; cursor: pointer; }
   border-radius: 22px; border: 0; background: var(--accent); color: #fff; font-weight: 500; font-size: 15px;
 }
 .btn-primary:hover { background: #8791f7; }
-.tabs { display: flex; gap: 32px; margin-top: 22px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 22px; }
+/* Вкладка не ломается на две строки («О проекте»): на узком окне переносится целиком. */
 .tab {
-  background: transparent; border: 0; color: var(--muted); font-size: 16px; padding: 0 0 14px;
+  background: transparent; border: 0; color: var(--muted); font-size: 16px; padding: 0 0 14px; white-space: nowrap;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
@@ -1458,5 +1459,12 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   .stats-hero, .stats-grid3, .stats-grid2 { grid-template-columns: minmax(0, 1fr); }
   .stats-dash { padding: 18px 16px 32px; }
   .stats-big-value { font-size: 36px; }
+}
+/* На узком окне полоска доли не помещается рядом с суммами — без неё таблица не уходит в горизонтальный скролл. */
+@container stats (max-width: 560px) {
+  .stats-table .share-col { display: none; }
+  .stats-table th { white-space: normal; }
+  .stats-table td.t { min-width: 120px; }
+  .stats-table .stats-sess { display: block; }
 }
 @media (prefers-reduced-motion: reduce) { .stats-dash.refreshing > :not(.stats-top) { transition: none; } }

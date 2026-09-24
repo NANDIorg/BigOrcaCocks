@@ -357,6 +357,15 @@ export function axisLabelIndexes(count: number, maxLabels = 8): number[] {
   return out
 }
 
+/**
+ * Сколько подписей дат влезет под графиком шириной `plotWidth` px: подпись «24.09» — около 40px, между ними
+ * нужен зазор. Не больше 7 для недели и 8 для длинных периодов — иначе ось рябит даже на широком окне.
+ */
+export function axisLabelBudget(count: number, plotWidth: number): number {
+  const cap = count <= 7 ? 7 : 8
+  return Math.max(2, Math.min(cap, Math.floor(plotWidth / 56)))
+}
+
 /** Подпись значения по метрике — для оси и подсказки. */
 export function formatMetric(v: number, metric: ChartMetric): string {
   if (metric === 'cost') return formatUsd(v)

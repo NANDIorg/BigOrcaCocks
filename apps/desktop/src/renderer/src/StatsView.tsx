@@ -7,6 +7,7 @@ import {
   CHART_METRICS,
   RANGE_OPTIONS,
   STATS_STALE_MESSAGE,
+  axisLabelBudget,
   axisLabelIndexes,
   buildChart,
   chartMetrics,
@@ -304,24 +305,44 @@ function UnknownNotice({ stats }: { stats: ProjectStats }): React.JSX.Element | 
 
 const CH = { W: 640, H: 190, pl: 52, pr: 8, pt: 8, pb: 22 }
 
+/**
+ * Ширина контейнера графика. viewBox совпадает с ней в px, чтобы подписи осей оставались 11px:
+ * при фиксированном viewBox и width: 100% SVG ужимался целиком и на узком окне текст становился нечитаемым.
+ */
+function useWidth(fallback: number): [React.RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(fallback)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = (): void => { if (el.clientWidth > 0) setWidth(el.clientWidth) }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, width]
+}
+
 /** Столбики по периоду простым SVG: стоимость — стопкой по моделям, остальное — одной серией. */
 function DayChart({ stats, metric }: { stats: ProjectStats; metric: ChartMetric }): React.JSX.Element {
   const [hover, setHover] = useState<number | null>(null)
   const chart = buildChart(stats, metric)
-  const { W, H, pl, pr, pt, pb } = CH
+  const [boxRef, W] = useWidth(CH.W)
+  const { H, pl, pr, pt, pb } = CH
   const n = chart.columns.length
   const slot = (W - pl - pr) / n
   const bw = Math.max(3, Math.min(22, slot - (slot > 8 ? 6 : 1)))
   const y = (v: number): number => pt + (H - pt - pb) * (1 - v / chart.top)
   const ticks: number[] = []
   for (let v = 0; v <= chart.top + chart.step / 1000; v += chart.step) ticks.push(v)
-  const labels = new Set(axisLabelIndexes(n, n <= 7 ? 7 : 8))
+  const labels = new Set(axisLabelIndexes(n, axisLabelBudget(n, W - pl - pr)))
   const color = (key: string): string => (metric === 'cost' ? seriesColor(stats.byModel, key) : 'var(--accent)')
   const hovered = hover === null ? null : chart.columns[hover]
   const legend = metric === 'cost' ? stats.byModel.filter((r) => chart.columns.some((c) => c.segments.some((s) => s.key === r.key))) : []
 
   return (
-    <div className="stats-chart" onMouseLeave={() => setHover(null)}>
+    <div className="stats-chart" ref={boxRef} onMouseLeave={() => setHover(null)}>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${CHART_METRICS.find((x) => x.value === metric)?.label ?? ''} по ${chart.bucket === 'day' ? 'дням' : chart.bucket === 'week' ? 'неделям' : 'месяцам'}`}>
         {ticks.map((v) => (
           <g key={v}>
@@ -480,7 +501,7 @@ function TopTable({ rows, head, usage }: { rows: StatsRow[]; head: string; usage
                 <td className="r">
                   <Cost usage={row} />
                   {row.sessionsWithUsage > 0 && row.sessionsWithUsage < row.sessions && (
-                    <span className="stats-hint" title="Сессий с данными о токенах"> ({row.sessionsWithUsage}/{row.sessions})</span>
+                    <span className="stats-hint stats-sess" title="Сессий с данными о токенах"> ({row.sessionsWithUsage}/{row.sessions})</span>
                   )}
                 </td>
               )}

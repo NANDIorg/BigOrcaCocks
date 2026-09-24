@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { emptyProjectStats, emptyStatsUsage, type ProjectStats, type StatsDay, type StatsRow } from '@orca-board/core'
 import {
   STATS_STALE_MESSAGE,
+  axisLabelBudget,
   axisLabelIndexes,
   buildChart,
   chartMetrics,
@@ -206,6 +207,11 @@ test('niceStep, axisLabelIndexes, formatAxis', () => {
   assert.equal(i30.at(-1), 29)
   assert.ok(i30.length <= 8)
   assert.deepEqual(axisLabelIndexes(0), [])
+  // Широкий график — потолок 7 для недели и 8 для длинных периодов; узкий — сколько влезет, но не меньше двух.
+  assert.equal(axisLabelBudget(7, 900), 7)
+  assert.equal(axisLabelBudget(30, 900), 8)
+  assert.equal(axisLabelBudget(30, 300), 5)
+  assert.equal(axisLabelBudget(30, 60), 2)
   assert.equal(formatAxis(0, 'cost'), '0')
   assert.equal(formatAxis(2.5, 'cost'), '$2,5')
   assert.equal(formatAxis(10, 'cost'), '$10')
