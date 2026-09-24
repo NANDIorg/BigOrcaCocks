@@ -63,7 +63,13 @@ export function ColumnsEditor({ storageKey, columns: initial, readOnly = false, 
                 <option value={c.color}>{c.color}</option>
               )}
             </select>
-            <span className="editor-kind">{c.kind === 'custom' ? 'своя' : `системная: ${c.kind}`}</span>
+            <span
+              className="editor-kind"
+              title={c.kind === 'ready' ? 'На локальной доске показывается вместе с Бэклогом: готовые к запуску — сверху' : undefined}
+            >
+              {c.kind === 'custom' ? 'своя' : `системная: ${c.kind}`}
+              {c.kind === 'ready' && ' · на доске вместе с Бэклогом'}
+            </span>
             <div className="editor-btns">
               <button className="btn-sm" title="Выше" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
               <button className="btn-sm" title="Ниже" disabled={i === columns.length - 1} onClick={() => move(i, 1)}>↓</button>
@@ -88,6 +94,8 @@ export function ColumnsEditor({ storageKey, columns: initial, readOnly = false, 
       )}
       <p className="editor-hint">
         Системные колонки нельзя удалить: по ним работает автоматика (ready, in_progress, review, done …).
+        «Готовы» (ready) на локальной доске показывается вместе с Бэклогом: готовые к запуску задачи — сверху,
+        ждущие зависимостей — ниже.
         Для CLI: <code>orca-board task move --status &lt;id колонки&gt;</code>.
       </p>
     </fieldset>

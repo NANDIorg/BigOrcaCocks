@@ -10,10 +10,11 @@ import { RunBadge, runShortLabel, type RunFilter } from './runs'
 import { PriorityBadge } from './Priority'
 import { BOARD_SORT_KEY, BOARD_SORT_OPTIONS, compareTasks, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 import { formatDuration, taskDuration, taskTicking } from './duration'
+import { compareInColumn, dropStatus, localBoardColumns, pendingDeps } from './boardColumns'
 import { useNow } from './useNow'
 
 interface Props {
-  /** Колонки доски в порядке показа; статус задачи — id колонки. */
+  /** Колонки проекта в порядке показа; статус задачи — id колонки. «Готовы» показывается внутри «Бэклога» (`localBoardColumns`). */
   columns: BoardColumn[]
   /** Роли типа глобальной задачи этих карточек (`rolesForRun`) — для подписи на карточке. */
   roles: Role[]
@@ -154,9 +155,13 @@ export function Board(props: Props): React.JSX.Element {
         </div>
       </div>
       <div className="board">
-        {columns.map((column) => {
+        {localBoardColumns(columns).map((view) => {
+          const { column, statuses } = view
           const status = column.id
-          const items = tasks.filter((t) => t.status === status).sort((a, b) => compareTasks(sort, a, b))
+          const merged = statuses.length > 1
+          const items = tasks
+            .filter((t) => statuses.includes(t.status))
+            .sort(compareInColumn(kindOf, (a, b) => compareTasks(sort, a, b)))
           const ColIcon = COLUMN_ICON[column.kind]
           return (
             <div
@@ -171,12 +176,18 @@ export function Board(props: Props): React.JSX.Element {
               onDrop={(e) => {
                 e.preventDefault()
                 const id = e.dataTransfer.getData('text/task-id')
-                if (id && byId.get(id)?.status !== status) onMove(id, status)
+                const from = id ? byId.get(id)?.status : undefined
+                const to = from === undefined ? undefined : dropStatus(view, from)
+                if (id && to !== undefined) onMove(id, to)
                 setDragOver(null)
                 setDragging(null)
               }}
             >
-              <div className="col-head" style={{ background: column.color }}>
+              <div
+                className="col-head"
+                style={{ background: column.color }}
+                title={merged ? 'Вместе с «Готовы»: готовые к запуску — сверху, ждущие зависимостей — ниже' : undefined}
+              >
                 <div className="label">
                   <ColIcon />
                   {column.title}
@@ -186,7 +197,7 @@ export function Board(props: Props): React.JSX.Element {
                 </div>
               </div>
               <div className="col-body">
-                {dragOver === status && dragging && byId.get(dragging)?.status !== status && (
+                {dragOver === status && dragging && !statuses.includes(byId.get(dragging)?.status ?? status) && (
                   <div className="placeholder" />
                 )}
                 {items.length === 0 && dragOver !== status && <div className="empty">{emptyText}</div>}
@@ -194,6 +205,7 @@ export function Board(props: Props): React.JSX.Element {
                   const qs = openQ.get(task.id) ?? []
                   const d = lastDispatch.get(task.id)
                   const kind = kindOf(task.status)
+                  const waiting = kind === 'backlog' ? pendingDeps(task, (dep) => byId.get(dep)?.status, kindOf) : 0
                   const canStart =
                     (kind === 'ready' || kind === 'backlog' || d?.outcome === 'unknown' || d?.outcome === 'failed') &&
                     !runningTaskIds.has(task.id)
@@ -256,6 +268,11 @@ export function Board(props: Props): React.JSX.Element {
                             ← {byId.get(dep)?.title ?? dep}
                           </span>
                         ))}
+                        {waiting > 0 && (
+                          <span className="chip wait" title="Задача в бэклоге: станет готовой, когда закроются зависимости">
+                            ждёт зависимостей: {waiting}
+                          </span>
+                        )}
                         {runningTaskIds.has(task.id) && <span className="chip live">● терминал</span>}
                         {kind !== 'done' && d?.outcome === 'unknown' && <span className="chip warn">вышел без done</span>}
                         {kind !== 'done' && d?.outcome === 'failed' && <span className="chip warn">упал</span>}

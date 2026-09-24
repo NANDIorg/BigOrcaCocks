@@ -720,6 +720,14 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   («No handler registered for 'projects:detectTaskType'») — прежний `projects.add()` без выбора типа.
 - **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет заголовка, иконка по `kind`).
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
+  Колонку «Готовы» (kind `ready`) локальная доска отдельно не показывает: её карточки лежат в колонке kind `backlog`
+  (`localBoardColumns` в `renderer/src/boardColumns.ts`, счётчик — сумма, подсказка на заголовке). Модель не меняется:
+  статус `ready`, событие `task_ready` и `promoteReady` работают как раньше, в истории статусов «Готовы» остаётся.
+  Внутри колонки задачи со статусом ready — выше backlog, дальше обычная сортировка (`compareInColumn`); у карточки
+  в backlog с незакрытыми зависимостями — чип «ждёт зависимостей: N» (`pendingDeps`: не в done или неизвестна —
+  как считает core). Drag внутри объединённой колонки статус не трогает, из других колонок — ставит `backlog`
+  (`dropStatus`), core сам поднимет в ready при закрытых зависимостях. Бэклога в проекте нет — «Готовы» показывается
+  как обычная колонка. В редакторе колонок у ready — пометка «на доске вместе с Бэклогом».
 - **Карточка** компактная: слева `AgentLogo` (28), справа заголовок (до 2 строк, `-webkit-line-clamp: 2`)
   и строка «роль · агент · модель» (`role.title` по `task.roleId`, `AGENT_TITLES[task.agent]`, `role.model`
   если задана). Ниже чипы: приоритет (`priorityBadge` из `renderer/src/taskPriority.ts`: для `normal` и задач без
