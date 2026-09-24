@@ -28,3 +28,14 @@ export const STALE_PRIORITY_MESSAGE = 'Приложение запущено с�
 export function runsKnowPriority(runs: readonly { priority?: unknown }[]): boolean {
   return runs.length === 0 || runs.some(priorityEditable)
 }
+
+/**
+ * Короткая метка приоритета перед заголовком карточки локальной доски: «!!», «выс», «низ». Полное название —
+ * в подсказке и `aria-label`. normal и старые без поля — без метки.
+ */
+export function priorityMark(t: { priority?: unknown }): { priority: TaskPriority; mark: string; title: string } | null {
+  const badge = priorityBadge(t)
+  if (!badge) return null
+  const mark = { urgent: '!!', high: 'выс', normal: '', low: 'низ' }[badge.priority]
+  return { ...badge, mark }
+}
