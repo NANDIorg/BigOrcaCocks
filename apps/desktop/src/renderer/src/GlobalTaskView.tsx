@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
+import type { AgentSession, BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
 import { AttentionFeed } from './AttentionFeed'
 import type { AttentionItem } from './attention'
 import { focusBoard, focusFeed, onRevealOnBoard } from './feedLink'
@@ -52,6 +52,8 @@ interface Props {
   onStartTask(task: Task): void | Promise<void>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
+  /** Запуски координатора (`Run.coordinatorSessions`) — события вкладки «История»; нет — запусков в ленте нет. */
+  coordinatorSessions?: AgentSession[]
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
   children: React.ReactNode
 }
@@ -229,7 +231,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       )}
       {tab === 'history' && (
         <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
-          <GlobalHistory global={global} />
+          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} />
         </div>
       )}
     </div>

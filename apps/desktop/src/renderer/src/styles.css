@@ -661,8 +661,6 @@ button:disabled { opacity: .45; cursor: default; }
 .status-history-dur { color: var(--muted); white-space: nowrap; }
 .status-history-toggle { align-self: flex-start; padding: 0; font-size: 12px; }
 .status-history-empty { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
-.g-modal-history > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
-.g-modal-history > .status-history, .g-modal-history > .status-history-empty { margin-top: 8px; }
 .dispatch-summary { max-height: 160px; font-size: 12px; }
 .dispatch-files { margin: 0; padding-left: 18px; font-size: 12px; font-family: ui-monospace, Menlo, monospace; color: var(--muted); }
 .chip.ok { border-color: var(--col-done); color: var(--col-done); }
@@ -1735,6 +1733,29 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .gt-checks li.todo::before { content: "○ "; color: var(--muted); }
 .gt-checks li.todo { color: var(--muted); }
 .gt-box .g-returns { max-width: none; }
+/* Вкладка «История»: лента по дням, новые сверху; уточнения после проверки — врезка цвета «Проверки» */
+.gt-hist { max-width: 860px; }
+.gt-hist-day + .gt-hist-day { margin-top: 10px; }
+.gt-hist-day-title { margin: 0; padding: 8px 0 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.gt-hist-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.gt-hist-row { display: grid; grid-template-columns: 48px 10px minmax(0, 1fr); gap: 4px 10px; padding: 5px 0; align-items: start; }
+.gt-hist-at { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; padding-top: 1px; white-space: nowrap; }
+.gt-hist-pt { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--c, var(--muted)); }
+.gt-hist-created .gt-hist-pt { background: var(--c, var(--col-backlog)); }
+.gt-hist-return .gt-hist-pt, .gt-hist-summary .gt-hist-pt { background: var(--col-review); }
+.gt-hist-coordinator .gt-hist-pt { background: var(--col-progress); }
+.gt-hist-closed .gt-hist-pt { background: var(--col-done); }
+.gt-hist-what { min-width: 0; overflow-wrap: anywhere; }
+.gt-hist-what b { font-weight: 600; }
+.gt-hist-sub { font-size: 12px; }
+.gt-hist-excerpt { margin-top: 2px; font-size: 12.5px; }
+.gt-hist-quote {
+  margin-top: 4px; padding: 5px 10px; font-size: 13px; white-space: pre-wrap;
+  border-left: 3px solid var(--col-review); border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--col-review) 8%, transparent);
+}
+.gt-hist-return .gt-hist-what > div:first-child { color: var(--col-review); }
+.gt-hist-more { margin-top: 8px; padding: 0; font-size: 12.5px; }
 @media (max-width: 900px) {
   .gt-grid { grid-template-columns: minmax(0, 1fr); }
   .gt-tabs, .gt-panel:not(.gt-panel-board) { padding-left: 16px; padding-right: 16px; }
