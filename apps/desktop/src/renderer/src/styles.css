@@ -813,7 +813,6 @@ button:disabled { opacity: .45; cursor: default; }
 /* Название типа бывает длинным («Фронтенд и бэкенд»): сжимается с многоточием, а не вылезает из меню. */
 .tpl-nav .about-nav-label { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tpl-nav .about-nav-count { flex-shrink: 0; }
-.tpl-nav-sub { padding-top: 10px; }
 .tpl-nav-add:disabled { opacity: .5; cursor: default; }
 .tpl-nav-error { margin: 4px 10px 0; font-size: 12px; }
 .tpl-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }

@@ -106,7 +106,7 @@ const CONFLICT_INSTRUCTIONS =
 /**
  * Конструктор типового графа: старт → работа → проверки по порядку → мерж → конец. Отказ любой проверки
  * возвращает в работу, конфликт мержа уходит человеку (принять — снова мерж, вернуть — в работу).
- * Из него собраны `defaultWorkflow` и графы встроенных типов задач (task-types.ts), поэтому id нод
+ * Из него собраны `defaultWorkflow` и графы заготовок типов задач (task-types.ts), поэтому id нод
  * и рёбер стабильны: `work`, `merge`, `end`, `conflict`, `e_<нода>_<исход>`; условие роли — `<id проверки>_if`.
  */
 export function pipelineWorkflow(checks: readonly WfPipelineCheck[]): Workflow {

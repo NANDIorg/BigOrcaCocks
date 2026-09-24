@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import { builtinTypeOutdated, type AgentInfo, type TaskType } from '@orca-board/core'
+import type { AgentInfo, TaskType } from '@orca-board/core'
 import type { Project, TaskTypesState } from '../../../shared/ipc'
 import { RolesEditor } from '../RolesEditor'
 import { Icon } from '../icons'
@@ -9,7 +9,7 @@ import { AGENT_RULES_PLACEHOLDER } from '../agentRules'
 import { SectionHead, plural } from '../about/parts'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import {
-  TASK_TYPE_TABS, isBuiltinLike, libraryAgents, overridesBuiltinType, resolveTypeSettings, typeColumnChoices,
+  TASK_TYPE_TABS, libraryAgents, resolveTypeSettings, typeColumnChoices,
   typeEditorKey, typeRemovalConfirm, type TaskTypeTab, type TypeUsage
 } from '../taskTypeEdit'
 import { TaskTypeWorkflow } from './TaskTypeWorkflow'
@@ -25,7 +25,7 @@ interface Props {
   tab: TaskTypeTab
   onTab(tab: TaskTypeTab): void
   api: TaskTypesHook
-  /** Показать другой тип (после «Дублировать» — копию, после удаления — тип по умолчанию, после сброса — его же). */
+  /** Показать другой тип (после «Дублировать» — копию, после удаления — тип по умолчанию). */
   onSelect(id: string | null): void
   /** Все проекты — колонки для нод графа. */
   projects: Project[]
@@ -40,15 +40,12 @@ const TAB_LABELS: Record<TaskTypeTab, string> = {
 
 /**
  * Один тип в «Настройки → Типы задач»: шапка (название, отметки, действия) и редакторы разделов типа. Связь живая:
- * глобальные задачи берут роли и правила типа при каждом запуске агента. Встроенный тип правится целиком, как свой:
- * первая правка сохраняет «изменённый встроенный» с тем же id, «Сбросить к системному» удаляет правку. Удалить
- * встроенный нельзя; отдельный тип рядом с ним — «Дублировать».
+ * глобальные задачи берут роли и правила типа при каждом запуске агента. Все типы равны — и созданные человеком,
+ * и заготовки, с которыми приходит приложение: любой правится, переименовывается и удаляется (кроме последнего).
  */
 export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, onSelect, projects }: Props): React.JSX.Element {
-  const builtinLike = isBuiltinLike(t)
-  /** Растёт после «Сбросить к системному»: id тот же, а редакторы должны взять системные значения. */
-  const [rev, setRev] = useState(0)
-  const editorKey = typeEditorKey(t, rev)
+  const editorKey = typeEditorKey(t)
+  const isLast = state.taskTypes.length <= 1
   const isDefault = state.defaultTaskTypeId === t.id
   const s = resolveTypeSettings(t.settings)
   const typeAgents = libraryAgents(agents)
@@ -56,7 +53,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
   const rolesOff = s.roles.filter((r) => !agentOk.has(r.agent)).length
 
   const [renaming, setRenaming] = useState(false)
-  /** Открыто подтверждение удаления (у изменённого встроенного — сброса к системному). */
+  /** Открыто подтверждение удаления. */
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -95,13 +92,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
     act(async () => {
       await api.remove(t.id)
       setConfirming(false)
-      // Сброс изменённого встроенного: снова встроенный тип с тем же id — остаёмся на нём.
-      if (overridesBuiltinType(t)) {
-        setRev((r) => r + 1)
-        onSelect(t.id)
-      } else {
-        onSelect(null)
-      }
+      onSelect(null)
     })
 
   const counts: Record<TaskTypeTab, string> = {
@@ -164,8 +155,6 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
         <div className="tpl-head-text">
           <h2>
             {t.title}
-            {t.builtin && <span className="chip sys">встроенный</span>}
-            {overridesBuiltinType(t) && <span className="chip sys" title="Своя версия встроенного типа: «Сбросить к системному» удалит правки">изменённый встроенный</span>}
             {isDefault && <span className="chip ok">по умолчанию</span>}
           </h2>
           {t.description && <p>{t.description}</p>}
@@ -181,16 +170,15 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
           <button type="button" className="btn-sm" disabled={busy || renaming} onClick={() => setRenaming(true)}>
             <Icon.edit /> Переименовать
           </button>
-          {overridesBuiltinType(t) && (
-            <button type="button" className="btn-sm danger" disabled={busy || confirming} onClick={() => setConfirming(true)} title="Удалить свои правки — вернётся встроенный тип из текущей версии приложения">
-              Сбросить к системному
-            </button>
-          )}
-          {!builtinLike && (
-            <button type="button" className="btn-sm danger" disabled={busy || confirming} onClick={() => setConfirming(true)}>
-              <Icon.trash /> Удалить
-            </button>
-          )}
+          <button
+            type="button"
+            className="btn-sm danger"
+            disabled={busy || confirming || isLast}
+            title={isLast ? 'Последний тип удалить нельзя — сначала создайте другой' : undefined}
+            onClick={() => setConfirming(true)}
+          >
+            <Icon.trash /> Удалить
+          </button>
         </div>
       </div>
 
@@ -218,23 +206,8 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
       {error && <div className="editor-error">{error}</div>}
 
       <div className="about-banner">
-        {builtinLike ? (
-          <>
-            {t.builtin
-              ? 'Встроенный тип из приложения. Правьте любое поле — тип станет «изменённым встроенным»: ваша версия переживёт обновления приложения, а «Сбросить к системному» вернёт встроенную.'
-              : 'Изменённый встроенный: действует ваша версия, обновления приложения её не перетирают. «Сбросить к системному» вернёт встроенную.'}{' '}
-            Правка действует <b>во всех проектах</b>, где тип доступен, со следующего запуска агента; воркфлоу глобальная задача
-            берёт при создании.
-            {builtinTypeOutdated(t) && (
-              <> <b>Встроенная версия этого типа обновилась</b> после ваших правок — чтобы взять её, сбросьте тип к системному.</>
-            )}
-          </>
-        ) : (
-          <>
-            Правка типа действует <b>во всех проектах</b>, где он доступен, со следующего запуска агента. Воркфлоу глобальная
-            задача берёт при создании — уже созданные идут по своему графу.
-          </>
-        )}
+        Правка типа действует <b>во всех проектах</b>, где он доступен, со следующего запуска агента. Воркфлоу глобальная
+        задача берёт при создании — уже созданные идут по своему графу.
       </div>
 
       <div className="tpl-tabs" role="tablist" aria-label="Разделы типа">

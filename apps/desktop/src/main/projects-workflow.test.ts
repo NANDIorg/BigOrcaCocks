@@ -168,16 +168,15 @@ describe('воркфлоу типа задачи', () => {
     assert.throws(() => saveWorkflow(pm, { ...qaWorkflow(), version: WORKFLOW_VERSION + 1 }), /обновите приложение/)
   })
 
-  it('встроенный тип: граф меняется на месте и так же проверяется по ролям; сброс возвращает системный', () => {
+  it('заготовка типа: граф меняется на месте и так же проверяется по ролям; удалённая не возвращается', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
-    const system = pm.taskTypeWorkflow('general').workflow
     pm.patchTaskType('general', { workflow: qaWorkflow() })
     assert.deepEqual(savedType('general')?.settings.workflow, qaWorkflow())
     assert.equal(pm.taskTypeWorkflow('general').custom, true)
     assert.throws(() => pm.patchTaskType('general', { roles: DEFAULT_ROLES.filter((r) => r.id !== 'qa'), workflow: qaWorkflow() }), /воркфлоу не сохранён/)
     pm.deleteTaskType('general')
-    assert.deepEqual(pm.taskTypeWorkflow('general').workflow, system)
+    assert.throws(() => pm.taskTypeWorkflow('general'), /тип задачи не найден/)
   })
 })
 

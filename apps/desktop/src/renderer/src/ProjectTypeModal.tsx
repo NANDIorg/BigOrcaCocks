@@ -93,7 +93,6 @@ export function ProjectTypeModal({ detection, types, defaultTypeId, selected: in
                 {t.title}
                 {t.id === defaultTypeId && <span className="project-type-badge">по умолчанию</span>}
                 {t.id === detected?.id && <span className="project-type-badge accent">подходит</span>}
-                {!t.builtin && <span className="project-type-badge">свой</span>}
               </span>
               {t.description && <span className="project-type-desc">{t.description}</span>}
             </button>

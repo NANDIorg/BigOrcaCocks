@@ -1,12 +1,12 @@
 // Типы задач (TaskType, docs/architecture.md → «Типы задач»): тип выбирается у глобальной задачи и задаёт её
 // роли, воркфлоу, правила агентов доски и режим разрешений. У проекта остаются колонки и агенты.
-// Здесь — модель типа, встроенные типы и единое правило «какой тип у прогона» (`resolveRunType`);
+// Здесь — модель типа, заготовки типов и единое правило «какой тип у прогона» (`resolveRunType`);
 // хранение библиотеки и миграция projects.json — в main.
 // Модуль импортирует renderer, поэтому без node-импортов; значения импортируются с расширением .ts.
 import type { Role, Run } from './types'
 import type { Workflow } from './workflow'
 import { DEFAULT_ROLES } from './types.ts'
-import { defaultWorkflow, pipelineWorkflow, stableJson } from './workflow.ts'
+import { defaultWorkflow, pipelineWorkflow } from './workflow.ts'
 
 /** Режим разрешений Claude Code; тот же список, что `PermissionMode` в apps/desktop/src/shared/ipc.ts. */
 export type TaskTypePermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -33,23 +33,13 @@ export interface TaskTypeSettings {
  */
 export interface TaskType {
   /**
-   * Встроенные — осмысленные ('frontend'; совпадают с id бывших встроенных шаблонов проектов, поэтому старые
-   * проекты мигрируют без таблицы соответствий), пользовательские — сгенерированные.
+   * У заготовок (`presetTaskTypes`) — осмысленные ('frontend'; совпадают с id бывших встроенных шаблонов проектов,
+   * поэтому старые проекты мигрируют без таблицы соответствий), у созданных человеком — сгенерированные.
    */
   id: string
   title: string
   /** Одна строка в списке выбора типа. */
   description?: string
-  /**
-   * Встроенный тип из кода, без правок пользователя; обновляется вместе с приложением. Правка встроенного
-   * (любого поля) сохраняется в main пользовательским типом с тем же id — «изменённый встроенный», флага нет.
-   */
-  builtin?: boolean
-  /**
-   * Только у изменённого встроенного: отпечаток системной версии (`builtinTaskTypeFingerprint`), поверх
-   * которой сделана правка. Ставит main; новая версия дефолта правку не трогает (`builtinTypeOutdated`).
-   */
-  builtinBase?: string
   settings: TaskTypeSettings
 }
 
@@ -94,7 +84,10 @@ export interface ResolvedRunType extends ResolvedTaskType {
   source: 'type' | 'snapshot' | 'default'
 }
 
-/** Id встроенного типа «Программирование» — последний запасной тип, если тип проекта по умолчанию не найден. */
+/**
+ * Id заготовки «Программирование»: предпочтительный запасной тип, если тип по умолчанию удалён. Сам тип тоже
+ * можно удалить — тогда запасной тип первый в библиотеке (`resolveRunType`, `defaultTaskTypeId` в main).
+ */
 export const GENERAL_TASK_TYPE_ID = 'general'
 
 /** Описание типа, созданного миграцией из настроек проекта (`taskTypeFromLegacyProject`). */
@@ -114,7 +107,7 @@ function role(id: string, patch: Partial<Role> = {}): Role {
   return { ...baseRole(id), ...patch }
 }
 
-/** Служебные роли: у всех встроенных типов одинаковые, из DEFAULT_ROLES. */
+/** Служебные роли: у всех заготовок одинаковые, из DEFAULT_ROLES. */
 const serviceRoles = (): Role[] => [baseRole('coordinator'), baseRole('assistant')]
 
 /** Общее для всех рабочих ролей: как сдавать работу. */
@@ -176,7 +169,7 @@ const reviewer = (prompt = REVIEW_PROMPT, patch: Partial<Role> = {}): Role =>
 
 const EYES_CHECK = 'Посмотрите результат глазами: запустите ветку и проверьте интерфейс, затем примите или верните в работу.'
 
-// ---------- встроенные типы ----------
+// ---------- заготовки типов ----------
 
 function generalType(): TaskType {
   const roles = DEFAULT_ROLES.map((r) => ({ ...r }))
@@ -184,7 +177,6 @@ function generalType(): TaskType {
     id: GENERAL_TASK_TYPE_ID,
     title: 'Программирование',
     description: 'Программист, ревьюер и QA; ревью агентом, затем мерж.',
-    builtin: true,
     settings: { roles, workflow: defaultWorkflow(roles) }
   }
 }
@@ -194,7 +186,6 @@ function frontendType(): TaskType {
     id: 'frontend',
     title: 'Фронтенд',
     description: 'Фронтендер и UI-ревьюер; после ревью агентом — проверка человеком глазами.',
-    builtin: true,
     settings: {
       roles: [
         ...serviceRoles(),
@@ -225,7 +216,6 @@ function backendType(): TaskType {
     id: 'backend',
     title: 'Бэкенд',
     description: 'Бэкендер, ревьюер на сильной модели и QA с прогоном тестов перед мержем.',
-    builtin: true,
     settings: {
       roles: [
         ...serviceRoles(),
@@ -248,7 +238,6 @@ function fullstackType(): TaskType {
     id: 'fullstack',
     title: 'Фронтенд и бэкенд',
     description: 'Отдельные роли фронтенда и бэкенда; задачи фронтенда дополнительно смотрит человек.',
-    builtin: true,
     settings: {
       roles: [
         role('coordinator', {
@@ -274,7 +263,6 @@ function mobileType(): TaskType {
     id: 'mobile',
     title: 'Мобильная разработка',
     description: 'Мобильный разработчик и QA на эмуляторе; перед мержем — проверка человеком.',
-    builtin: true,
     settings: {
       roles: [
         ...serviceRoles(),
@@ -300,7 +288,6 @@ function autotestsType(): TaskType {
     id: 'autotests',
     title: 'QA: автотесты',
     description: 'Автотестер вместо программиста и ревьюер с фокусом на стабильность тестов.',
-    builtin: true,
     settings: {
       roles: [
         ...serviceRoles(),
@@ -329,7 +316,6 @@ function docsType(): TaskType {
     id: 'docs',
     title: 'Документация',
     description: 'Автор на быстрой модели; результат принимает человек, без агентного ревью.',
-    builtin: true,
     settings: {
       roles: [
         ...serviceRoles(),
@@ -351,45 +337,19 @@ function docsType(): TaskType {
 }
 
 /**
- * Встроенные типы. Функция, а не константа: каждый вызов отдаёт свежие объекты, и вызывающий код может
- * править копию, не портя встроенные. Порядок — порядок в списке выбора типа. Id менять нельзя: на них
- * ссылаются проекты (`defaultTaskTypeId`, `taskTypeIds`), прогоны (`Run.typeId`) и копии встроенных в projects.json.
+ * Заготовки типов — обычные типы, которые main один раз кладёт в библиотеку нового пользователя (`seededTaskTypes`
+ * в apps/desktop/src/main/projects.ts). Дальше они живут в projects.json наравне с созданными человеком: правятся,
+ * удаляются и не возвращаются после удаления; новая версия приложения их не перетирает. Функция, а не константа:
+ * каждый вызов отдаёт свежие объекты. Порядок — порядок в библиотеке после засева. Id менять нельзя: на них
+ * ссылаются старые проекты и прогоны, а засев сверяет по ним уже существующие типы.
  */
-export function builtinTaskTypes(): TaskType[] {
+export function presetTaskTypes(): TaskType[] {
   return [generalType(), frontendType(), backendType(), fullstackType(), mobileType(), autotestsType(), docsType()]
 }
 
-/** Встроенный тип по id (свежая копия) или undefined. */
-export function builtinTaskType(id: string): TaskType | undefined {
-  return builtinTaskTypes().find((t) => t.id === id)
-}
-
-/**
- * Отпечаток системной версии встроенного типа `id` (название, описание, настройки из кода) или undefined, если
- * такого встроенного нет. Меняется, когда новая версия приложения меняет дефолт типа; хранится в изменённом
- * встроенном (`TaskType.builtinBase`), чтобы UI мог сказать «системная версия обновилась после ваших правок».
- * FNV-1a, а не crypto: модуль импортирует renderer.
- */
-export function builtinTaskTypeFingerprint(id: string): string | undefined {
-  const t = builtinTaskType(id)
-  if (!t) return undefined
-  const text = stableJson({ title: t.title, description: t.description ?? '', settings: t.settings })
-  let h = 0x811c9dc5
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i)
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h.toString(16).padStart(8, '0')
-}
-
-/**
- * Системная версия встроенного типа обновилась после правки: изменённый встроенный `t` сделан поверх другой
- * версии дефолта, чем в текущем приложении. Правка всё равно побеждает — это только повод предложить сброс.
- */
-export function builtinTypeOutdated(t: Pick<TaskType, 'id' | 'builtin' | 'builtinBase'>): boolean {
-  if (t.builtin || t.builtinBase === undefined) return false
-  const current = builtinTaskTypeFingerprint(t.id)
-  return current !== undefined && current !== t.builtinBase
+/** Заготовка по id (свежая копия) или undefined. */
+export function presetTaskType(id: string): TaskType | undefined {
+  return presetTaskTypes().find((t) => t.id === id)
 }
 
 /** Тип с раскрытыми значениями по умолчанию; роли и граф — копии, их можно править. */
@@ -424,8 +384,9 @@ export function runTypeInput(t: TaskType): RunTypeInput {
 
 /**
  * Какой тип у прогона — единственное место этого правила (его зовут main и renderer):
- * `run.typeId` → тип из библиотеки `types` → снимок `run.taskType` → тип проекта по умолчанию → «Программирование».
- * `types` — вся библиотека (встроенные и пользовательские); «Программирование» берётся из кода, если его там нет.
+ * `run.typeId` → тип из библиотеки `types` → снимок `run.taskType` → тип проекта по умолчанию → «Программирование»
+ * → первый тип библиотеки. Заготовка «Программирование» из кода — только если библиотека пуста (main этого не
+ * допускает, но renderer со старым main может передать пустой список).
  * Нет прогона («Входящие», задача без глобальной) — тип проекта по умолчанию.
  */
 export function resolveRunType(
@@ -453,7 +414,8 @@ export function resolveRunType(
   const fallback =
     (projectDefaultTypeId !== undefined ? types.find((t) => t.id === projectDefaultTypeId) : undefined) ??
     types.find((t) => t.id === GENERAL_TASK_TYPE_ID) ??
-    builtinTaskType(GENERAL_TASK_TYPE_ID)!
+    types[0] ??
+    presetTaskType(GENERAL_TASK_TYPE_ID)!
   return { ...resolveTaskType(fallback), source: 'default' }
 }
 

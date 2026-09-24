@@ -45,7 +45,7 @@ export interface ProjectDeps {
   taskTypes(): { taskTypes: TaskType[]; defaultTypeId: string }
   /** Тип нового прогона для store (`createGlobalTask`): без `typeId` — тип по умолчанию, недоступный — ошибка. */
   runType(typeId?: string): RunTypeInput
-  /** `rules set` по типу: правила агентов (`roleId` нет) или системный промпт роли; встроенный правится на месте. */
+  /** `rules set` по типу: правила агентов (`roleId` нет) или системный промпт роли. */
   saveTaskTypeRules(typeId: string, roleId: string | undefined, text: string): TaskType
   /** Колонки доски в порядке показа. */
   columns(): BoardColumn[]
@@ -231,7 +231,6 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
     title: t.title,
     ...(t.description ? { description: t.description } : {}),
     ...(t.id === defaultTypeId ? { default: true } : {}),
-    ...(t.builtin ? { builtin: true } : {}),
     permissionMode: resolved.permissionMode,
     roles: resolved.roles.map((role) => ({
       id: role.id,
@@ -520,7 +519,7 @@ const handlers: Record<string, Handler> = {
   },
   'columns.list': (_r, deps) => deps.columns(),
   // Правила агентов доски — типа задачи (typeOf): общие — agentRules типа, роли — её systemPrompt (оба уходят в
-  // системный промпт, withAgentRules). У встроенного типа они правятся на месте, копия не нужна.
+  // системный промпт, withAgentRules).
   'rules.get': (r, deps, store) => {
     const type = typeOf(r, deps, store)
     const role = ruleRole(r, type)
