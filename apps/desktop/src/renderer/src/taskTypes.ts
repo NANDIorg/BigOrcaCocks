@@ -1,6 +1,6 @@
 import {
   DEFAULT_ROLES, resolveRunType,
-  type AgentInfo, type GlobalTask, type Role, type Run, type TaskType
+  type AgentInfo, type GlobalTask, type Role, type Run, type TaskType, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 
@@ -85,6 +85,23 @@ export function rolesForRun(
   const run = runId ? runs.find((r) => r.id === runId) : undefined
   const defaultId = project ? projectDefaultTypeId(project, state) : state.defaultTaskTypeId
   return resolveRunType(run, state.taskTypes, defaultId).roles
+}
+
+/**
+ * Воркфлоу прогона `runId` — для названий этапов на карточках: снимок графа прогона (`Run.workflow`), а без него
+ * граф типа по тому же правилу, что и роли. Нет типов (старый main) и нет снимка — undefined: этапы не подписываем.
+ */
+export function workflowForRun(
+  runId: string | undefined,
+  runs: readonly Pick<Run, 'id' | 'typeId' | 'taskType' | 'workflow'>[],
+  project: Pick<Project, 'defaultTaskTypeId' | 'taskTypeIds'> | null | undefined,
+  state: TaskTypesState | null
+): Workflow | undefined {
+  const run = runId ? runs.find((r) => r.id === runId) : undefined
+  if (run?.workflow) return run.workflow
+  if (!state) return undefined
+  const defaultId = project ? projectDefaultTypeId(project, state) : state.defaultTaskTypeId
+  return resolveRunType(run, state.taskTypes, defaultId).workflow
 }
 
 /** Роли типа библиотеки по умолчанию — с ними main запускает ассистента приложения. */

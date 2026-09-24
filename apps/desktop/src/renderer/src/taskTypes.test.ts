@@ -4,7 +4,7 @@ import { DEFAULT_ROLES, presetTaskType, type Role, type TaskType } from '@orca-b
 import type { TaskTypesState } from '../../shared/ipc'
 import {
   availableTypes, globalTypeTitle, isStaleTaskTypesError, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId,
-  rolesForRun, rolesWithDisabledAgent, taskTypesApi
+  rolesForRun, rolesWithDisabledAgent, taskTypesApi, workflowForRun
 } from './taskTypes'
 
 const role = (id: string, agent: Role['agent'] = 'claude'): Role => ({ id, title: id, agent })
@@ -89,4 +89,15 @@ test('rolesWithDisabledAgent — роли, чей агент выключен и
   assert.deepEqual(rolesWithDisabledAgent(BACK, agents), [])
   assert.deepEqual(ids(rolesWithDisabledAgent(DOCS, [{ id: 'claude', installed: false, enabled: true }])), ['coordinator', 'writer'])
   assert.deepEqual(rolesWithDisabledAgent(DOCS, []), [])
+})
+
+test('workflowForRun — снимок графа прогона, иначе граф типа; нет типов и снимка — undefined', () => {
+  const snapshot = { version: 1, nodes: [{ id: 'n1', type: 'start' as const, x: 0, y: 0 }], edges: [] }
+  const withSnapshot = { id: 'r1', typeId: 'docs', workflow: snapshot }
+  const byType = { id: 'r2', typeId: 'docs' }
+  assert.equal(workflowForRun('r1', [withSnapshot], {}, STATE), snapshot)
+  // Снимок есть — типы не нужны (старый main).
+  assert.equal(workflowForRun('r1', [withSnapshot], {}, null), snapshot)
+  assert.ok(workflowForRun('r2', [byType], {}, STATE)?.nodes.some((n) => n.type === 'work'))
+  assert.equal(workflowForRun('r2', [byType], {}, null), undefined)
 })

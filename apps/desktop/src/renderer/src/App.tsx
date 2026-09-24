@@ -7,6 +7,7 @@ import {
 } from '@orca-board/core'
 import type { GlobalTaskPatch, Project, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
+import { wfNodeTitles } from './cardState'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
@@ -30,7 +31,7 @@ import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
 import { pickAssistant } from './assistantPty'
-import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun } from './taskTypes'
+import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
 type Tab = 'board' | 'terminals' | 'stats' | 'info'
 
@@ -848,6 +849,7 @@ export function App(): React.JSX.Element {
               <Board
                 columns={columns}
                 roles={openGlobalRoles}
+                stageTitles={wfNodeTitles(workflowForRun(openGlobal.id, snap.runs, active, taskTypes))}
                 tasks={subtasks}
                 emptyText="Нет подзадач"
                 questions={snap.questions}

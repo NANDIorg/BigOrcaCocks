@@ -117,49 +117,197 @@ button { font: inherit; cursor: pointer; }
 /* ---------- board ---------- */
 /* Цепочка высоты: .content (grid, min-height 0) → .board-wrap → .board → .column → .col-body.
    Каждое звено с min-height: 0, чтобы колонки упирались в окно, а скроллилось только .col-body. */
-.board { display: flex; align-items: stretch; gap: 20px; padding: 28px 32px; overflow-x: auto; overflow-y: hidden; min-height: 0; flex: 1; }
-.column { flex: 0 0 300px; width: 300px; max-width: 300px; min-width: 0; display: flex; flex-direction: column; min-height: 0; gap: 16px; }
-.col-head {
-  display: flex; height: 56px; border-radius: 12px; overflow: hidden; color: #fff; font-weight: 600; font-size: 16px;
-}
-.col-head .label { flex: 1; display: flex; align-items: center; gap: 12px; padding: 0 18px; }
-.col-head .count { width: 64px; display: grid; place-items: center; font-weight: 500; font-size: 15px; }
-.col-body {
-  flex: 1 1 0; min-height: 120px; overflow-y: auto; overflow-x: hidden; padding: 16px;
-  display: flex; flex-direction: column; gap: 14px;
+.board { display: flex; align-items: stretch; gap: 12px; padding: 12px 32px 12px; overflow-x: auto; overflow-y: hidden; min-height: 0; flex: 1; }
+/* Гибкая ширина: 4–5 колонок влезают в обычное окно без горизонтального скролла, в узком — прокручиваются. */
+.column {
+  flex: 1 1 250px; min-width: 232px; max-width: 340px; display: flex; flex-direction: column; min-height: 0;
   background: var(--side); border-radius: var(--radius);
 }
+/* Заголовок — строка 36 px с цветной кромкой (цвет колонки в --c); название и счётчик — текстом. */
+.col-head {
+  display: flex; align-items: center; gap: 8px; height: 36px; flex: 0 0 auto; padding: 0 8px 0 12px;
+  font-size: 13px; font-weight: 600; border-top: 3px solid var(--c); border-radius: var(--radius) var(--radius) 0 0;
+}
+.col-head .count { color: var(--muted); font-weight: 500; }
+.col-head .grow { flex: 1; }
+.col-head .flag {
+  font-size: 11px; font-weight: 600; color: var(--col-input); border-radius: 999px; padding: 1px 8px;
+  background: color-mix(in srgb, var(--col-input) 16%, transparent);
+}
+.col-body {
+  flex: 1 1 0; min-height: 120px; overflow-y: auto; overflow-x: hidden; padding: 4px 8px 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
 .col-body > * { flex-shrink: 0; }
-.column.drag-over .col-body { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.card-group { display: flex; flex-direction: column; gap: 8px; }
+.group-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 4px 0; }
+.column.drag-over { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .placeholder {
   height: 110px; border-radius: 12px;
   background: repeating-linear-gradient(135deg, #3a3d45 0 10px, #33363e 10px 20px);
 }
+.column .placeholder { height: 72px; border-radius: 10px; }
+/* Свёрнутое «Сделано»: полоса 44 px с вертикальной подписью; раскрывается кликом или Enter. */
+button.column.collapsed {
+  flex: 0 0 44px; min-width: 44px; max-width: 44px; align-items: center; cursor: pointer; border: 0; color: inherit;
+  font: inherit; padding: 0;
+}
+button.column.collapsed:hover { background: var(--side-2); }
+button.column.collapsed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.column.collapsed .col-head { flex-direction: column; height: auto; border-top: 0; padding: 12px 0; width: 100%; gap: 8px; }
+.column.collapsed .vtitle { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 13px; font-weight: 600; }
+.column.collapsed .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.chev-left { display: inline-flex; transform: rotate(180deg); }
+
+/* Малая кнопка-иконка на карточке и в заголовке колонки. */
+.lb-tool {
+  width: 22px; height: 22px; border-radius: 6px; border: 0; background: transparent; color: var(--muted);
+  display: grid; place-items: center; padding: 0;
+}
+.lb-tool:hover { background: var(--side-2); color: var(--text); }
+.lb-tool.danger:hover { color: var(--danger); }
+.lb-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lb-tool svg { width: 14px; height: 14px; }
+
+/* ---------- тулбар доски ---------- */
+/* Одна строка: прогресс, фильтры состояния, сортировка. */
+.lb-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 12px 32px 0; font-size: 12px; }
+.lb-toolbar .grow { flex: 1; }
+.lb-progress { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.lb-progress .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--side-2); overflow: hidden; display: flex; }
+.lb-progress .bar span { display: block; height: 100%; }
+.lb-progress .seg-done { background: var(--col-done); }
+.lb-progress .seg-review { background: var(--col-review); }
+.lb-progress .seg-input { background: var(--col-input); }
+.lb-progress .seg-progress { background: var(--col-progress); }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter {
+  border: 1px solid var(--chip); background: transparent; color: #c9ccd6; border-radius: 999px; padding: 2px 10px;
+  font-size: 12px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap;
+}
+.filter:hover { border-color: var(--text); }
+.filter[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); color: var(--text); }
+.filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.filter .n { font-weight: 600; }
+.filter.wait .n { color: var(--col-input); }
+.filter.bad .n { color: var(--danger); }
+.roles-filter { position: relative; }
+.roles-pop {
+  position: absolute; z-index: 6; top: calc(100% + 6px); left: 0; min-width: 200px; max-height: 260px; overflow-y: auto;
+  background: var(--side-2); border: 1px solid var(--line); border-radius: 10px; padding: 6px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.35); display: flex; flex-direction: column; gap: 2px;
+}
+.roles-pop-item { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 13px; color: var(--text); }
+.roles-pop-item:hover { background: rgba(255,255,255,.05); }
+.roles-pop-hint { padding: 4px 6px 2px; font-size: 11px; }
+.lb-select { display: inline-flex; align-items: center; gap: 6px; }
+.lb-toolbar select { width: auto; max-width: 240px; padding: 3px 8px; font-size: 12px; border-radius: 8px; background: var(--side); border-color: var(--line); margin: 0; }
+.lb-toolbar .board-sort-label { font-size: 12px; }
+
+.kbd-hint { font-size: 11.5px; color: var(--muted); padding: 0 32px 10px; display: flex; gap: 14px; flex-wrap: wrap; }
+.kbd-hint kbd, .move-menu kbd {
+  font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--chip); border-bottom-width: 2px; border-radius: 4px;
+  padding: 0 4px; color: #c9ccd6; margin-right: 2px;
+}
+@media (max-width: 1000px) { .kbd-hint { display: none; } }
+/* Окно уже — подпись «Сортировка» не нужна (у select есть aria-label), тулбар остаётся в одну строку. */
+@media (max-width: 1400px) { .lb-toolbar .board-sort-label { display: none; } }
 
 /* ---------- card ---------- */
 .card {
   position: relative; min-width: 0; max-width: 100%; flex-shrink: 0;
-  background: var(--card); border-radius: 12px; padding: 14px 16px; cursor: grab; user-select: none;
-  overflow-wrap: anywhere; word-break: break-word;
-  transition: background .12s, transform .12s;
+  background: var(--card); border-radius: 10px; padding: 9px 10px 9px 13px; cursor: grab; user-select: none;
+  overflow-wrap: anywhere; word-break: break-word; box-shadow: 0 1px 0 rgba(0,0,0,.25);
+  transition: background .12s;
 }
 .card:hover { background: var(--card-hover); }
-.card.selected { box-shadow: 0 0 0 2px var(--accent) inset; }
 .card:active { cursor: grabbing; }
-.card .top { display: flex; gap: 12px; align-items: flex-start; padding-right: 52px; }
-.card .who { min-width: 0; flex: 1; }
+.card.selected { box-shadow: 0 0 0 2px var(--accent) inset; }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Полоса состояния слева: цвет — что с задачей сейчас, а не в какой она колонке. Текст состояния — в aria-label и в строке сути. */
+.card::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0;
+  background: var(--state, transparent);
+}
+.card.s-live { --state: var(--col-progress); }
+.card.s-human { --state: var(--col-input); }
+.card.s-review { --state: var(--col-review); }
+.card.s-bad { --state: var(--danger); }
+/* Ждущие зависимостей приглушены: это очередь, а не проблема. */
+.card.s-blocked { background: color-mix(in srgb, var(--card) 70%, var(--side)); }
+.card.s-blocked .name { color: var(--muted); }
+.card .line1 { display: flex; gap: 6px; align-items: flex-start; }
 .card .name {
-  font-size: 15px; font-weight: 600; line-height: 1.3;
+  flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; line-height: 1.35;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.card .role { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* кнопки «Запустить»/«Удалить»: правый верхний угол, видны при наведении, фокусе и на touch */
-.card .card-tools {
-  position: absolute; top: 10px; right: 10px; display: flex; gap: 4px;
-  opacity: 0; transition: opacity .12s;
+.card .prio { flex: 0 0 auto; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 5px; border-radius: 4px; margin-top: 1px; }
+.card .prio.urgent { color: #fff; background: var(--danger); }
+.card .prio.high { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
+.card .prio.low { color: var(--muted); border: 1px dashed var(--chip); line-height: 16px; }
+/* Кнопки «Запустить» / «Переместить» / «Удалить»: правый верхний угол поверх заголовка, видны при наведении и фокусе. */
+.card .tools {
+  position: absolute; top: 5px; right: 6px; display: flex; gap: 2px; padding: 1px; border-radius: 8px;
+  background: var(--card-hover); box-shadow: 0 0 0 1px var(--line); opacity: 0; transition: opacity .12s;
 }
-.card:hover .card-tools, .card:focus-within .card-tools, .card.selected .card-tools { opacity: 1; }
-@media (hover: none) { .card .card-tools { opacity: 1; } }
+.card:hover .tools, .card:focus-within .tools { opacity: 1; }
+@media (hover: none) { .card .tools { opacity: 1; } }
+.card .meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.card .meta > svg { flex: 0 0 auto; }
+.card .meta .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.card .meta .grow { flex: 1; }
+.card .meta .time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.card .meta .time.live { color: var(--col-progress); font-weight: 600; }
+.card .tags { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; min-width: 0; }
+.card .tags:empty { display: none; }
+/* Этап воркфлоу (Task.stage) и гейт (Task.gateFor): где задача в графе типа. */
+.stage-pill {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #c9ccd6; border: 1px solid var(--chip);
+  border-radius: 6px; padding: 0 6px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.stage-pill.gate { border-color: color-mix(in srgb, var(--col-review) 60%, transparent); color: var(--col-review); }
+.card .tag {
+  font-size: 11.5px; color: #c9ccd6; border: 1px solid var(--chip); border-radius: 999px; padding: 0 8px; white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.card .tag.dep { border-style: dashed; color: var(--muted); }
+.card .tag.answer { border-color: var(--col-input); color: var(--col-input); }
+.card .tag.live { border-color: var(--col-progress); color: var(--col-progress); }
+.card .tag.mono { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; }
+.card .stamp { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.g-card .stamp { color: var(--muted); font-size: 12px; }
+.card .card-feedback {
+  margin-top: 6px; color: var(--muted); font-size: 12px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* Пунктирная строка сути вместо кнопки действия: ответить можно в ленте «Ждут вас», карточка лишь говорит, в чём дело. */
+.card .act {
+  margin-top: 8px; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; font-size: 12.5px;
+  background: transparent; border: 1px dashed color-mix(in srgb, var(--state, var(--chip)) 55%, transparent); cursor: default;
+}
+.card .act .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .act .to-feed { border: 0; background: transparent; color: var(--accent); font-size: 12px; padding: 0; white-space: nowrap; flex-shrink: 0; }
+.card .act .to-feed:hover { text-decoration: underline; }
+.card .act .to-feed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* Меню «Переместить в…»: рисуется порталом в body с position: fixed (см. MoveMenu.tsx). */
+.move-menu {
+  position: fixed; z-index: 30; background: var(--side-2); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.35); padding: 4px; font-size: 13px; outline: none;
+}
+.move-menu:focus-visible { border-color: var(--accent); }
+.move-menu-title { padding: 4px 8px; font-size: 11px; color: var(--muted); }
+.move-menu-item {
+  width: 100%; display: flex; gap: 8px; align-items: center; padding: 6px 8px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text); text-align: left;
+}
+.move-menu-item.on { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.move-menu-item[aria-disabled='true'] { color: var(--muted); cursor: default; }
+.move-menu .sw { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.move-menu-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.move-menu .k { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+/* кнопки «Запустить»/«Удалить» на карточках глобального канбана (GlobalBoard) */
 .card-tool {
   width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--chip);
   background: var(--card); color: var(--muted); display: grid; place-items: center; padding: 0;
@@ -167,27 +315,12 @@ button { font: inherit; cursor: pointer; }
 .card-tool svg { width: 14px; height: 14px; }
 .card-tool:hover { color: var(--text); border-color: var(--text); }
 .card-tool.danger:hover { color: #ef6b6b; border-color: #ef6b6b; }
-.card .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; min-width: 0; }
-.card .chips:empty { display: none; }
 .chip {
   border: 1px solid var(--chip); color: #c9ccd6; border-radius: 999px; padding: 2px 10px; font-size: 12px;
   white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 .chip.mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
-.card .actions { display: flex; gap: 8px; margin-top: 14px; }
-.card .stamp { margin-top: 8px; color: var(--muted); font-size: 12px; }
-.g-card .stamp { color: var(--muted); font-size: 12px; }
-.card .card-feedback {
-  margin-top: 8px; color: var(--muted); font-size: 12px;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-/* краткие блоки вопроса и ревью: одна строка + «Открыть» (полная форма — в модалке задачи) */
-.card .card-brief {
-  margin-top: 10px; padding: 8px 10px; border-radius: 10px; display: flex; align-items: center; gap: 8px;
-  cursor: default; min-width: 0;
-}
-.card .card-brief .brief-text { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card .card-brief .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; flex-shrink: 0; }
+.btn-sm { height: 26px; padding: 0 10px; font-size: 12px; flex-shrink: 0; }
 .card .question-brief { background: rgba(232,176,74,.08); border: 1px solid rgba(232,176,74,.35); }
 .card .review-brief { background: rgba(120,140,250,.08); border: 1px solid rgba(120,140,250,.35); }
 .btn-sm {
@@ -685,7 +818,7 @@ button:disabled { opacity: .45; cursor: default; }
 
 @media (max-width: 900px) {
   .g-board, .board { padding-left: 16px; padding-right: 16px; }
-  .g-view-head, .board-toolbar { padding-left: 16px; padding-right: 16px; }
+  .g-view-head, .board-toolbar, .lb-toolbar, .kbd-hint { padding-left: 16px; padding-right: 16px; }
   .g-column { flex-basis: 260px; width: 260px; }
 }
 /* Узкое окно: кнопки шапки переносятся, а не выталкивают страницу за край */

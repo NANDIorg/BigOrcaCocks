@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { priorityBadge, priorityEditable, runsKnowPriority, taskPriorityOf } from './taskPriority'
+import { priorityBadge, priorityEditable, priorityMark, runsKnowPriority, taskPriorityOf } from './taskPriority'
 
 test('taskPriorityOf: нет поля или мусор — normal', () => {
   assert.equal(taskPriorityOf({}), 'normal')
@@ -24,4 +24,13 @@ test('runsKnowPriority: старый main не проставляет priority �
   assert.equal(runsKnowPriority([{}, {}]), false)
   assert.equal(runsKnowPriority([{ priority: 'normal' }, { priority: 'high' }]), true)
   assert.equal(runsKnowPriority([]), true)
+})
+
+test('priorityMark: короткая метка для карточки доски, normal без метки', () => {
+  assert.equal(priorityMark({ priority: 'urgent' })?.mark, '!!')
+  assert.equal(priorityMark({ priority: 'high' })?.mark, 'выс')
+  assert.equal(priorityMark({ priority: 'low' })?.mark, 'низ')
+  assert.equal(priorityMark({ priority: 'low' })?.title, 'низкий')
+  assert.equal(priorityMark({ priority: 'normal' }), null)
+  assert.equal(priorityMark({}), null)
 })
