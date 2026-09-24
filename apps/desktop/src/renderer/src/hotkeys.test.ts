@@ -44,12 +44,12 @@ test('уже обработанная клавиша, модификаторы, 
 const digit = (n: number, over: Partial<HotkeyEvent> = {}): HotkeyEvent => key({ key: String(n), code: `Digit${n}`, ...over })
 const inside = (selector: string): HotkeyTarget => ({ tagName: 'BUTTON', closest: (sel) => (sel.includes(selector) ? {} : null) })
 
-test('вкладки: Alt+1…4 и голые 1…4 вне доски; цифры выше 4 не трогаем', () => {
-  for (let n = 1; n <= 4; n++) {
+test('вкладки: Alt+1…5 и голые 1…5 вне доски; цифры выше 5 не трогаем', () => {
+  for (let n = 1; n <= 5; n++) {
     assert.equal(tabKey(digit(n), false), n - 1)
     assert.equal(tabKey(digit(n, { altKey: true }), false), n - 1)
   }
-  assert.equal(tabKey(digit(5), false), undefined)
+  assert.equal(tabKey(digit(6), false), undefined)
   assert.equal(tabKey(digit(9, { altKey: true }), false), undefined)
   // Alt на macOS меняет key (¡™£¢), физическая клавиша та же.
   assert.equal(tabKey(key({ key: '¡', code: 'Digit1', altKey: true }), false), 0)

@@ -2,10 +2,10 @@ import { AGENT_TITLES, type AgentSession, type BoardColumn, type ColumnKind } fr
 import { formatDuration } from './duration'
 import { globalTaskActions } from './globalReview'
 
-/** Вкладки экрана глобальной задачи (`GlobalTaskView`), в порядке показа: номер вкладки = клавиша 1–4. */
-export type GlobalTabId = 'board' | 'overview' | 'coordinator' | 'history'
+/** Вкладки экрана глобальной задачи (`GlobalTaskView`), в порядке показа: номер вкладки = клавиша 1–5. */
+export type GlobalTabId = 'board' | 'overview' | 'coordinator' | 'history' | 'stats'
 
-export const GLOBAL_TAB_IDS: readonly GlobalTabId[] = ['board', 'overview', 'coordinator', 'history']
+export const GLOBAL_TAB_IDS: readonly GlobalTabId[] = ['board', 'overview', 'coordinator', 'history', 'stats']
 
 export function isGlobalTabId(value: unknown): value is GlobalTabId {
   return typeof value === 'string' && (GLOBAL_TAB_IDS as readonly string[]).includes(value)
@@ -33,6 +33,7 @@ export function tabTitle(id: GlobalTabId, kind: ColumnKind | undefined): string 
     case 'overview': return isFinished(kind) ? 'Итог и цель' : 'Цель и детали'
     case 'coordinator': return 'Координатор'
     case 'history': return 'История'
+    case 'stats': return 'Статистика'
   }
 }
 

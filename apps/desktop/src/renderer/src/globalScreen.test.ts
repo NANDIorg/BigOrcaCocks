@@ -21,12 +21,20 @@ test('заголовок второй вкладки: «Итог и цель» �
   assert.equal(tabTitle('overview', 'done'), 'Итог и цель')
   assert.equal(tabTitle('overview', 'backlog'), 'Цель и детали')
   assert.equal(tabTitle('overview', 'in_progress'), 'Цель и детали')
-  assert.deepEqual(['board', 'coordinator', 'history'].map((id) => tabTitle(id as GlobalTabId, 'review')), ['Доска', 'Координатор', 'История'])
+  assert.deepEqual(['board', 'coordinator', 'history', 'stats'].map((id) => tabTitle(id as GlobalTabId, 'review')), ['Доска', 'Координатор', 'История', 'Статистика'])
+})
+
+test('вкладка «Статистика» — последняя, у «Входящих» её нет', () => {
+  assert.equal(ALL[ALL.length - 1], 'stats')
+  assert.equal(visibleTabs({ inbox: true }).includes('stats'), false)
+  // Выбор «Статистики» переживает смену колонки: вкладка по умолчанию та же.
+  assert.equal(resolveTab({ tab: 'stats', base: 'board' }, 'needs_input', ALL), 'stats')
+  assert.equal(resolveTab({ tab: 'stats', base: 'board' }, 'in_progress', ['board']), 'board')
 })
 
 test('«Входящие» — одна доска без вкладок', () => {
   assert.deepEqual(visibleTabs({ inbox: true }), ['board'])
-  assert.deepEqual(visibleTabs({ inbox: false }), ['board', 'overview', 'coordinator', 'history'])
+  assert.deepEqual(visibleTabs({ inbox: false }), ['board', 'overview', 'coordinator', 'history', 'stats'])
   assert.equal(resolveTab({ tab: 'history', base: 'board' }, undefined, ['board']), 'board')
 })
 
@@ -86,13 +94,14 @@ test('чек-лист перед запуском', () => {
 test('переключение вкладок: по индексу и стрелками по кругу', () => {
   assert.equal(tabAt(ALL, 0), 'board')
   assert.equal(tabAt(ALL, 3), 'history')
-  assert.equal(tabAt(ALL, 4), undefined)
+  assert.equal(tabAt(ALL, 4), 'stats')
+  assert.equal(tabAt(ALL, 5), undefined)
   assert.equal(tabAt(['board'], 1), undefined)
   assert.equal(stepTab(ALL, 'board', 'ArrowRight'), 'overview')
-  assert.equal(stepTab(ALL, 'history', 'ArrowRight'), 'board')
-  assert.equal(stepTab(ALL, 'board', 'ArrowLeft'), 'history')
+  assert.equal(stepTab(ALL, 'stats', 'ArrowRight'), 'board')
+  assert.equal(stepTab(ALL, 'board', 'ArrowLeft'), 'stats')
   assert.equal(stepTab(ALL, 'overview', 'Home'), 'board')
-  assert.equal(stepTab(ALL, 'overview', 'End'), 'history')
+  assert.equal(stepTab(ALL, 'overview', 'End'), 'stats')
   assert.equal(stepTab(ALL, 'overview', 'Enter'), undefined)
   assert.equal(stepTab(['board'], 'history', 'ArrowRight'), undefined)
 })

@@ -19,8 +19,12 @@ import { useNow } from './useNow'
 import { STALE_PRIORITY_MESSAGE, priorityEditable, taskPriorityOf } from './taskPriority'
 import { PriorityOptions } from './Priority'
 import { StatusHistoryBlock } from './StatusHistoryBlock'
+import { TaskStatsBlock } from './TaskStatsBlock'
+import type { StatsSnapshot } from './taskStatsFormat'
 
 interface Props {
+  /** Проект: id для `stats:task`. */
+  projectId: string
   /** Актуальная задача из снимка: App находит её по id при каждом обновлении. */
   task: Task
   tasks: Task[]
@@ -33,6 +37,8 @@ interface Props {
   questions: Question[]
   /** Запросы к человеку проекта: pending этой задачи — «Нужен ваш ответ», решённые — история. */
   requests: HumanRequest[]
+  /** Снимок проекта для «Статистики»: когда её перечитывать и запасной расчёт при старом main. */
+  statsSnapshot: StatsSnapshot
   /** У задачи есть живой терминал. */
   running: boolean
   onClose(): void
@@ -99,7 +105,7 @@ function errorText(e: unknown): string {
 
 export function TaskModal(props: Props): React.JSX.Element {
   const {
-    task, tasks, columns, roles, agents, dispatches, questions, requests, running,
+    projectId, task, tasks, columns, roles, agents, dispatches, questions, requests, statsSnapshot, running,
     onClose, onUpdate, onStart, onOpenTerminal, onRemove, onResolveRequest, onAccept, onReject
   } = props
   const column = columns.find((c) => c.id === task.status)
@@ -423,6 +429,11 @@ export function TaskModal(props: Props): React.JSX.Element {
               </div>
             </section>
           )}
+
+          <section className="task-modal-section" id="task-stats">
+            <h4>Статистика</h4>
+            <TaskStatsBlock key={task.id} projectId={projectId} task={task} columns={columns} snapshot={statsSnapshot} />
+          </section>
 
           <section className="task-modal-section">
             <h4>История статуса</h4>
