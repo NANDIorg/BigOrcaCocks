@@ -5,7 +5,7 @@ import type { Project, ProjectTaskTypesInput, TaskTypesState } from '../../../sh
 import { ipcErrorMessage } from '../useAutoSave'
 import { SectionHead, Switch, storeSection } from './parts'
 import {
-  SETTINGS_SECTION_KEY, TASK_TYPES_STALE_MESSAGE, allTypesInput, defaultTypeInput, hasProjectTaskTypes, isBuiltinLike, isTypeAvailable,
+  SETTINGS_SECTION_KEY, TASK_TYPES_STALE_MESSAGE, allTypesInput, defaultTypeInput, hasProjectTaskTypes, isTypeAvailable,
   overridesBuiltinType, projectDefaultTypeId, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi, taskTypesError,
   settingsTypeSection, toggledProjectTypes
 } from '../taskTypeEdit'
@@ -145,7 +145,7 @@ export function TaskTypesSection({ project, agents, onProjectChanged }: Props): 
                 <button
                   type="button"
                   className="btn-sm"
-                  title={isBuiltinLike(t) ? 'Исполнители, инструкции ролей и правила доски — на месте, остальное — в копии' : 'Роли, воркфлоу, разрешения и правила доски'}
+                  title="Роли, воркфлоу, разрешения и правила доски"
                   onClick={() => showInSettings(t)}
                 >
                   Изменить в Настройках

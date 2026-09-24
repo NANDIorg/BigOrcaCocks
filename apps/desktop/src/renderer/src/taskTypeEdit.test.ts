@@ -1,16 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, isBuiltinTypeInPlaceEdit, type AgentInfo, type Role, type TaskType
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, type AgentInfo, type Role, type TaskType
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 import {
-  TASK_TYPES_STALE_MESSAGE, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, deleteTypeConfirmText, executorOnlyPatch,
+  TASK_TYPES_STALE_MESSAGE, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
   hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, overridesBuiltinType, patchedTaskType, pickTaskTypeId,
   projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, splitTaskTypes, taskTypeLibraryApi,
   taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey
 } from './taskTypeEdit'
-import { agentChangePatch, withPatch } from './roleEdit'
 
 const general = builtinTaskType('general')!
 const frontend = builtinTaskType('frontend')!
@@ -56,7 +55,7 @@ test('переименование: пустое название — ошибк
   assert.equal('description' in r, false)
 })
 
-test('встроенные отдельно от своих; изменённый встроенный — среди встроенных, удаление вернёт встроенный', () => {
+test('встроенные отдельно от своих; изменённый встроенный — среди встроенных, удаление сбросит к системному', () => {
   const generalCopy: TaskType = { ...general, builtin: undefined }
   assert.deepEqual(splitTaskTypes([generalCopy, frontend, own]).builtin.map((t) => t.id), ['general', 'frontend'])
   assert.deepEqual(splitTaskTypes([generalCopy, frontend, own]).own.map((t) => t.id), ['type_1'])
@@ -72,22 +71,17 @@ test('ключ редакторов не меняется, когда встро
   assert.notEqual(typeEditorKey(own), typeEditorKey(frontend))
 })
 
-test('встроенный тип: у ролей меняются исполнитель и системный промпт, правку примет main', () => {
-  assert.deepEqual(
-    executorOnlyPatch({ title: 'x', agent: 'codex', systemPrompt: 'y', model: 'opus', description: 'z' }),
-    { agent: 'codex', systemPrompt: 'y', model: 'opus' }
-  )
-  assert.ok('effort' in executorOnlyPatch({ effort: undefined }))
-  for (const t of [general, frontend]) {
-    const base = t.settings.roles ?? DEFAULT_ROLES
-    const i = base.findIndex((r) => r.id === 'developer')
-    const agent = base[i].agent === 'claude' ? 'codex' : 'claude'
-    const changed: Role = withPatch(withPatch(base[i], executorOnlyPatch(agentChangePatch(agent))), executorOnlyPatch({ systemPrompt: 'пиши тесты', title: 'x' }))
-    assert.equal(changed.title, base[i].title)
-    const roles = base.map((r, j) => (j === i ? changed : r))
-    // Правила доски у встроенного тоже правятся на месте.
-    assert.equal(isBuiltinTypeInPlaceEdit(t, patchedTaskType(t, { roles, agentRules: '# свои правила' })), true, t.id)
-  }
+test('встроенный тип правится целиком: patchedTaskType и renamedTaskType сохраняют его id', () => {
+  const roles = [...(frontend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa'), { id: 'designer', title: 'Дизайнер', agent: 'claude' as const }]
+  const input = patchedTaskType(frontend, { roles, permissionMode: 'acceptEdits', workflow: null })
+  assert.equal(input.id, 'frontend')
+  assert.deepEqual(input.settings.roles?.map((r) => r.id), roles.map((r) => r.id))
+  assert.equal(input.settings.permissionMode, 'acceptEdits')
+  assert.equal('workflow' in input.settings, false)
+  const renamed = renamedTaskType(frontend, 'Мой фронт', 'своё')
+  assert.ok(!('error' in renamed))
+  assert.equal(renamed.id, 'frontend')
+  assert.equal(renamed.title, 'Мой фронт')
 })
 
 test('использование: тип по умолчанию и доступность по проектам', () => {
@@ -147,9 +141,21 @@ test('колонки для графа типа — встроенные плю�
 })
 
 test('подтверждение удаления говорит о проектах и снимке глобальных задач', () => {
-  const text = deleteTypeConfirmText(own, { ...state, defaultTaskTypeId: 'type_1' }, { asDefault: 2, available: 3 })
+  const c = typeRemovalConfirm(own, { ...state, defaultTaskTypeId: 'type_1' }, { asDefault: 2, available: 3 })
+  assert.equal(c.title, 'Удалить тип «Мой»?')
+  assert.equal(c.action, 'Удалить')
+  const text = c.lines.join('\n')
   assert.ok(text.includes(`им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title}»`))
   assert.match(text, /проектах \(2\)/)
   assert.match(text, /по снимку/)
-  assert.match(deleteTypeConfirmText({ ...general, builtin: undefined }, state, undefined), /вернётся встроенный/)
+})
+
+test('изменённый встроенный: вместо удаления — «Сбросить к системному», проекты остаются на типе', () => {
+  const c = typeRemovalConfirm({ ...general, builtin: undefined, title: 'Мой общий' }, state, { asDefault: 2, available: 3 })
+  assert.equal(c.title, 'Сбросить «Мой общий» к системному?')
+  assert.equal(c.action, 'Сбросить')
+  const text = c.lines.join('\n')
+  assert.match(text, new RegExp(`к встроенному типу «${general.title}»`))
+  assert.match(text, /останутся на нём/)
+  assert.doesNotMatch(text, /перейдут на тип библиотеки/)
 })

@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
-  GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes, isBuiltinTypeInPlaceEdit,
+  GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypeFingerprint, builtinTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
@@ -61,7 +61,7 @@ export interface ProjectsFile {
   version?: number
   /**
    * Пользовательские типы. Встроенные (`builtinTaskTypes`) не хранятся — обновляются вместе с приложением.
-   * Пользовательский тип с id встроенного подменяет его («изменённый встроенный»).
+   * Пользовательский тип с id встроенного подменяет его целиком («изменённый встроенный», с `builtinBase`).
    */
   taskTypes?: TaskType[]
   /** Тип библиотеки по умолчанию (новые проекты, ассистент); нет или удалён — `general`. */
@@ -120,7 +120,7 @@ export class ProjectManager {
       const { data, changed } = migrateProjectsFile(raw as LegacyProjectsFile)
       // Типы чистятся при каждой загрузке по разделам (`loadedTaskType`): битый раздел не уносит тип целиком,
       // иначе проект молча уехал бы на тип по умолчанию, а его роли и правила пропали бы при первой же записи.
-      data.taskTypes = Array.isArray(data.taskTypes) ? data.taskTypes.flatMap(loadedTaskType).map(withBuiltinTitle) : []
+      data.taskTypes = Array.isArray(data.taskTypes) ? data.taskTypes.flatMap(loadedTaskType).map(migratedBuiltinOverride) : []
       if (!data.taskTypes.length) delete data.taskTypes
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
@@ -236,9 +236,8 @@ export class ProjectManager {
 
   /**
    * Создать (без `id` — новый id) или целиком заменить тип. Граф проверяется по ролям типа, колонки доски — нет:
-   * тип общий для проектов с разными колонками. У встроенного типа на месте меняются только исполнители ролей,
-   * их системные промпты и правила агентов (`isBuiltinTypeInPlaceEdit`) — сохраняется копия с его id, удаление
-   * которой вернёт встроенный; остальное — ошибка с подсказкой «Дублировать».
+   * тип общий для проектов с разными колонками. Встроенный тип правится целиком, как пользовательский: сохраняется
+   * копия с его id («изменённый встроенный»), которая подменяет дефолт из кода, пока её не сбросят (`deleteTaskType`).
    */
   saveTaskType(input: TaskTypeInput): TaskType {
     if (!isObject(input)) throw new Error('тип задачи: ожидается объект')
@@ -253,10 +252,9 @@ export class ProjectManager {
       id, title: input.title.trim(), ...(description ? { description } : {}),
       settings: savedTypeSettings(input.settings ?? {}, i === -1 ? builtinTaskType(id) : user[i], `тип «${input.title.trim()}»`)
     }
-    // Встроенный и его копия с тем же id («изменённый встроенный») правятся на месте только в разрешённых полях;
-    // сравнение с копией, а не с кодом — копия могла прийти из миграции старого `defaults` с другими ролями.
-    const base = isBuiltinId(id) ? (i === -1 ? builtinTaskType(id) : user[i]) : undefined
-    if (base && !isBuiltinTypeInPlaceEdit(base, type)) throw new Error(readonlyTypeMessage(id))
+    // Версия дефолта, поверх которой сделана правка, фиксируется при первой правке и дальше не меняется: иначе
+    // любая следующая правка прятала бы то, что системный тип с тех пор обновился (`builtinTypeOutdated`).
+    if (isBuiltinId(id)) type.builtinBase = (i === -1 ? undefined : user[i].builtinBase) ?? builtinTaskTypeFingerprint(id)
     if (i !== -1) this.settleLegacyRuns(id)
     if (i === -1) user.push(type)
     else user[i] = type
@@ -278,12 +276,13 @@ export class ProjectManager {
   /**
    * Удалить пользовательский тип. Удалённый тип библиотеки по умолчанию сбрасывается на «Программирование»;
    * ссылки проектов (`defaultTaskTypeId`, `taskTypeIds`) остаются висячими и при чтении пропускаются, прогоны
-   * этого типа дорабатывают по снимку (`resolveRunType`). Удаление копии встроенного возвращает встроенный.
+   * этого типа дорабатывают по снимку (`resolveRunType`). Встроенный тип не удаляется: для изменённого встроенного
+   * это «Сбросить к системному» — правка удаляется, возвращается дефолт из кода с тем же id, ссылки на него живы.
    */
   deleteTaskType(id: string): TaskTypesState {
     const user = this.data.taskTypes ?? []
     if (!user.some((t) => t.id === id)) {
-      throw new Error(isBuiltinId(id) ? readonlyTypeMessage(id) : `тип задачи не найден: ${id}`)
+      throw new Error(isBuiltinId(id) ? undeletableTypeMessage(id) : `тип задачи не найден: ${id}`)
     }
     this.settleLegacyRuns(id)
     this.data.taskTypes = user.filter((t) => t.id !== id)
@@ -304,7 +303,7 @@ export class ProjectManager {
     for (const p of this.data.projects) if (p.legacyTypeId === typeId) this.store(p.id)
   }
 
-  /** Копия типа (в том числе встроенного) под новым id — так правят встроенные. */
+  /** Копия типа (в том числе встроенного) под новым id: отдельный тип рядом с исходным. */
   duplicateTaskType(id: string): TaskType {
     const src = this.requireType(id)
     return this.saveTaskType({
@@ -323,7 +322,7 @@ export class ProjectManager {
 
   /**
    * Правила агентов типа (`roleId` нет) или системный промпт его роли — `rules set`. Встроенный тип правится на
-   * месте: правила и промпты ролей — то, что человек подгоняет под себя, не меняя устройство типа.
+   * месте, как любой другой: первая правка делает его «изменённым встроенным».
    */
   saveTaskTypeRules(typeId: string, roleId: string | undefined, text: string): TaskType {
     const t = this.requireType(typeId)
@@ -696,9 +695,9 @@ function isBuiltinId(id: string): boolean {
   return BUILTIN_TYPE_IDS.includes(id)
 }
 
-function readonlyTypeMessage(id: string): string {
+function undeletableTypeMessage(id: string): string {
   const title = builtinTaskType(id)?.title ?? id
-  return `тип «${title}» встроенный: без копии в нём меняются только исполнители ролей (агент, модель, усилие), их системные промпты и правила агентов, остальное — через «Дублировать»`
+  return `тип «${title}» встроенный, его нельзя удалить: он и так в системной версии; свою копию сделайте «Дублировать»`
 }
 
 function clone<T>(v: T): T {
@@ -757,7 +756,7 @@ function savedTypeSettings(settings: unknown, existing: TaskType | undefined, la
  * руками, и копии в другом месте у них нет). Граф — как в `savedTypeSettings`: только форма и миграция версии, без
  * сверки с ролями. Ссылку на удалённую роль (её пропускал `setRoles` до типов, и её переносит миграция проекта)
  * исполнитель встретит в рантайме, а графа будущей версии он не возьмёт. Флаг builtin — только у типов из кода;
- * сохранённая копия встроенного — обычный пользовательский тип.
+ * сохранённая копия встроенного — обычный пользовательский тип с `builtinBase` (его доводит `migratedBuiltinOverride`).
  */
 function loadedTaskType(v: unknown): TaskType[] {
   if (!isObject(v) || !nonEmpty(v.id) || !nonEmpty(v.title) || !isObject(v.settings)) return []
@@ -772,18 +771,25 @@ function loadedTaskType(v: unknown): TaskType[] {
   return [{
     id: v.id, title: v.title,
     ...(typeof v.description === 'string' && v.description.trim() ? { description: v.description } : {}),
+    ...(nonEmpty(v.builtinBase) ? { builtinBase: v.builtinBase } : {}),
     settings
   }]
 }
 
 /**
- * Копия встроенного типа (тот же id) носит название встроенного. Без копии название встроенного не меняется
- * (`isBuiltinTypeInPlaceEdit`), так что расходиться оно может только после переименования встроенных в новой
- * версии — например, «Общий» → «Программирование»; иначе копия осталась бы под старым названием.
+ * Миграция изменённого встроенного (пользовательский тип с id встроенного) при загрузке. До полной правки встроенных
+ * копия не могла сменить название и не хранила `builtinBase`: такой копии даётся название встроенного (оно могло
+ * смениться в новой версии — «Общий» → «Программирование») и отпечаток текущей системной версии. С `builtinBase`
+ * название — правка пользователя, его не трогаем. У пользовательских типов поля быть не может — снимается.
  */
-function withBuiltinTitle(t: TaskType): TaskType {
+function migratedBuiltinOverride(t: TaskType): TaskType {
   const builtin = builtinTaskType(t.id)
-  return builtin && builtin.title !== t.title ? { ...t, title: builtin.title } : t
+  if (!builtin) {
+    const { builtinBase: _base, ...rest } = t
+    return rest
+  }
+  if (t.builtinBase !== undefined) return t
+  return { ...t, title: builtin.title, builtinBase: builtinTaskTypeFingerprint(t.id)! }
 }
 
 /**

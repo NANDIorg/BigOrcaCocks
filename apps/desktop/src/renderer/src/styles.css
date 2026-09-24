@@ -382,6 +382,7 @@ button:disabled { opacity: .45; cursor: default; }
 .roles-confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
 .roles-confirm .btn-sm.danger-fill { background: #d9534f; border-color: #d9534f; color: #fff; }
 .roles-confirm .btn-sm.danger-fill:hover { background: #ef6b6b; border-color: #ef6b6b; }
+.tpl-confirm { margin-bottom: 14px; max-width: 80ch; }
 .role-text {
   margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--page); color: var(--text);
   font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;

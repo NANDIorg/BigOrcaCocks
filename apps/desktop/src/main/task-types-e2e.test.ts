@@ -319,7 +319,7 @@ describe('сценарий 2: один проект, две глобальные
   it('«Документация» и «Бэкенд»: у координаторов и воркеров свои агенты и модели, у задач свои графы', () => {
     const pm = newProjectManager()
     const pid = pm.add(repo).id
-    // Исполнителя встроенного типа меняют на месте (решение 1 координатора).
+    // Исполнителя встроенного типа меняют на месте, без копии.
     const docs = builtinTaskType('docs')!
     pm.saveTaskType({
       id: 'docs', title: docs.title, description: docs.description,
@@ -464,6 +464,38 @@ describe('сценарий 3: тип удалён посреди прогона'
 
     // Новую глобальную задачу удалённого типа не создать.
     assert.throws(() => pm.runType(pid, t.id), /не найден/)
+  })
+})
+
+describe('сценарий 3а: встроенный тип изменили и сбросили посреди прогона', () => {
+  it('снимок типа и граф запущенной задачи не меняются; новая задача берёт правку, после сброса — дефолт', () => {
+    const pm = newProjectManager()
+    const pid = pm.add(repo).id
+    const h = appHarness(pm, pid)
+    const backend = builtinTaskType('backend')!
+    const runOld = startCoordinator(pm, h, pid, 'До правки', 'backend')
+    const before = structuredClone(h.store.getRun(runOld)!)
+
+    // Полная правка встроенного: название, состав ролей (без qa), граф без гейта тестов, разрешения.
+    const roles = (backend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa')
+    pm.saveTaskType({ id: 'backend', title: 'Бэкенд без QA', settings: { roles, workflow: defaultWorkflow(roles), permissionMode: 'acceptEdits' } })
+    const after = h.store.getRun(runOld)!
+    assert.deepEqual(after.taskType, before.taskType, 'снимок типа у запущенной задачи прежний')
+    assert.deepEqual(after.workflow, before.workflow, 'граф запущенной задачи прежний')
+    assert.equal(h.store.getGlobalTask(runOld).typeTitle, backend.title)
+
+    const runNew = startCoordinator(pm, h, pid, 'После правки', 'backend')
+    assert.equal(h.store.getRun(runNew)?.taskType?.title, 'Бэкенд без QA')
+    assert.deepEqual(h.store.getRun(runNew)?.taskType?.roles.map((r) => r.id), roles.map((r) => r.id))
+    assert.equal(h.store.getRun(runNew)?.taskType?.permissionMode, 'acceptEdits')
+
+    // «Сбросить к системному»: снимки обеих задач не трогаются, тип снова из кода.
+    const newBefore = structuredClone(h.store.getRun(runNew)!)
+    pm.deleteTaskType('backend')
+    assert.deepEqual(pm.taskType('backend'), builtinTaskType('backend'))
+    assert.deepEqual(h.store.getRun(runOld)?.taskType, before.taskType)
+    assert.deepEqual(h.store.getRun(runNew)?.taskType, newBefore.taskType)
+    assert.deepEqual(h.store.getRun(runNew)?.workflow, newBefore.workflow)
   })
 })
 
