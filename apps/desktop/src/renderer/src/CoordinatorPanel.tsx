@@ -120,7 +120,7 @@ export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Elemen
 
   if (global.inbox) {
     return (
-      <section className="gt-box gt-coord" aria-label="Координатор">
+      <section className="gt-box gt-coord-panel" aria-label="Координатор">
         <h3>Координатор</h3>
         <p className="muted">У «Входящих» нет координатора.</p>
       </section>
@@ -133,7 +133,7 @@ export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Elemen
   const stopping = coordinatorPty !== undefined && confirmingStop === coordinatorPty
 
   return (
-    <div className="gt-grid gt-coord">
+    <div className="gt-grid gt-coord-panel">
       <div className="gt-stack">
         <section className="gt-box" aria-label="Состояние координатора">
           <h3 className={`gt-coord-state gt-coord-${state}`} role="status">
