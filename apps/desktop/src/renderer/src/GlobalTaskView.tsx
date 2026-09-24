@@ -30,7 +30,7 @@ interface Props {
   onMove(status: string): void
   onStartCoordinator(): void
   onShowCoordinator(ptyId: string): void
-  /** «■ Остановить» координатора (после подтверждения в шапке). */
+  /** «■ Остановить» координатора (после подтверждения в шапке и на вкладке «Координатор»): закрыть его PTY. */
   onStopCoordinator(ptyId: string): void
   /** «⋯ → Удалить задачу…». */
   onRemove?(): void
@@ -238,8 +238,11 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
             global={global}
             statusKind={statusKind}
             coordinatorPty={coordinatorPty}
+            sessions={props.coordinatorSessions}
             onStartCoordinator={props.onStartCoordinator}
             onShowCoordinator={props.onShowCoordinator}
+            onStopCoordinator={props.onStopCoordinator}
+            onReturn={props.onReturn}
           />
         </div>
       )}
