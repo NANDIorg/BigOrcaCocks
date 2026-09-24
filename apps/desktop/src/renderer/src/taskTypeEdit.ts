@@ -1,5 +1,5 @@
 import {
-  BUILTIN_EDITABLE_TYPE_ROLE_FIELDS, DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes,
   type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState } from '../../shared/ipc'
@@ -92,20 +92,20 @@ export function renamedTaskType(t: TaskType, title: string, description: string)
 const BUILTIN_IDS = builtinTaskTypes().map((t) => t.id)
 
 /**
- * Пользовательская копия встроенного с тем же id («изменённый встроенный» — после правки исполнителя, промпта или
- * правил): удаление вернёт встроенный, а не уберёт тип из списка.
+ * Пользовательская копия встроенного с тем же id («изменённый встроенный» — после любой правки встроенного):
+ * удаление — «Сбросить к системному», оно вернёт встроенный, а не уберёт тип из списка.
  */
 export function overridesBuiltinType(t: Pick<TaskType, 'id' | 'builtin'>): boolean {
   return !t.builtin && BUILTIN_IDS.includes(t.id)
 }
 
-/** Встроенный или его изменённая копия: устройство типа (состав ролей, граф, разрешения) правится только в дубле. */
+/** Встроенный или его изменённая копия: удалить нельзя, можно сбросить к системному. */
 export function isBuiltinLike(t: Pick<TaskType, 'id' | 'builtin'>): boolean {
   return !!t.builtin || overridesBuiltinType(t)
 }
 
 /**
- * Группы меню: встроенные (и изменённые встроенные — на своём месте, чтобы правка исполнителя не уносила пункт
+ * Группы меню: встроенные (и изменённые встроенные — на своём месте, чтобы правка встроенного не уносила пункт
  * в «Свои») и свои. Порядок внутри групп — как отдал main.
  */
 export function splitTaskTypes(types: readonly TaskType[]): { builtin: TaskType[]; own: TaskType[] } {
@@ -114,24 +114,11 @@ export function splitTaskTypes(types: readonly TaskType[]): { builtin: TaskType[
 
 /**
  * Ключ черновиков редакторов типа (`useAutoSave`, `key` компонентов). Для встроенного и его изменённой копии
- * ключ один: первая правка исполнителя или промпта превращает встроенный в копию с тем же id, и черновик не должен
- * сбрасываться посреди быстрых кликов. После «Вернуть встроенный» редакторы пересоздаёт `rev` (см. TaskTypePane).
+ * ключ один: первая правка превращает встроенный в копию с тем же id, и черновик не должен сбрасываться посреди
+ * быстрых кликов. После «Сбросить к системному» редакторы пересоздаёт `rev` (см. TaskTypePane).
  */
 export function typeEditorKey(t: Pick<TaskType, 'id' | 'builtin'>, rev = 0): string {
   return `type:${t.id}:${isBuiltinLike(t) ? 'b' : 'u'}:${rev}`
-}
-
-/**
- * Правка роли встроенного типа: проходят только поля, которые main примет без копии (исполнитель и системный
- * промпт — `BUILTIN_EDITABLE_TYPE_ROLE_FIELDS`); undefined в них — сброс, сохраняется. Смена агента приходит сюда
- * уже со сброшенными моделью и усилием (`changeAgent` в RolesEditor).
- */
-export function executorOnlyPatch(p: Partial<Role>): Partial<Role> {
-  const next: Partial<Role> = {}
-  // Отдельная функция с ключом-параметром: для объединения ключей TS не сводит типы полей `agent` и `model`.
-  const copy = <K extends keyof Role>(k: K): void => { next[k] = p[k] }
-  for (const k of BUILTIN_EDITABLE_TYPE_ROLE_FIELDS) if (k in p) copy(k)
-  return next
 }
 
 /** Где тип используется: по умолчанию в проектах и доступен в проектах (`taskTypeIds` нет — доступны все). */
@@ -176,16 +163,37 @@ export function typeColumnChoices(projects: readonly Project[]): BoardColumn[] {
   return out
 }
 
-/** Текст подтверждения удаления: что станет с проектами и глобальными задачами этого типа. */
-export function deleteTypeConfirmText(t: TaskType, state: TaskTypesState, usage: TypeUsage | undefined): string {
-  const lines = [`Удалить тип «${t.title}»?`, '']
-  if (overridesBuiltinType(t)) lines.push('Ваши правки пропадут — вернётся встроенный тип с этим именем.')
-  else if (state.defaultTaskTypeId === t.id) lines.push(`Это тип по умолчанию библиотеки — им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title ?? GENERAL_TASK_TYPE_ID}».`)
-  if (!overridesBuiltinType(t) && usage?.asDefault) {
-    lines.push(`Он тип по умолчанию в проектах (${usage.asDefault}): они перейдут на тип библиотеки по умолчанию.`)
+/** Подтверждение удаления типа или сброса изменённого встроенного — панель в шапке типа, не `confirm()`. */
+export interface TypeRemovalConfirm {
+  title: string
+  /** Последствия, по пункту на строку. */
+  lines: string[]
+  /** Надпись кнопки подтверждения. */
+  action: string
+}
+
+/**
+ * Что станет с проектами и глобальными задачами после удаления типа. Для изменённого встроенного это «Сбросить
+ * к системному»: id тот же, проекты остаются на нём, а задачи сразу получают системные роли — тип-то жив.
+ */
+export function typeRemovalConfirm(t: TaskType, state: TaskTypesState, usage: TypeUsage | undefined): TypeRemovalConfirm {
+  if (overridesBuiltinType(t)) {
+    const system = builtinTaskType(t.id)?.title ?? t.id
+    return {
+      title: `Сбросить «${t.title}» к системному?`,
+      lines: [
+        `Ваши правки пропадут: название, описание, роли, воркфлоу, разрешения и правила вернутся к встроенному типу «${system}» из текущей версии приложения.`,
+        'Проекты, где он доступен или выбран по умолчанию, останутся на нём.',
+        'Уже созданные глобальные задачи идут по своему воркфлоу, а роли и правила возьмут системные со следующего запуска агента.'
+      ],
+      action: 'Сбросить'
+    }
   }
+  const lines: string[] = []
+  if (state.defaultTaskTypeId === t.id) lines.push(`Это тип по умолчанию библиотеки — им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title ?? GENERAL_TASK_TYPE_ID}».`)
+  if (usage?.asDefault) lines.push(`Он тип по умолчанию в проектах (${usage.asDefault}): они перейдут на тип библиотеки по умолчанию.`)
   lines.push('Уже созданные глобальные задачи этого типа доработают по снимку ролей, сохранённому при создании.')
-  return lines.join('\n')
+  return { title: `Удалить тип «${t.title}»?`, lines, action: 'Удалить' }
 }
 
 // ---------- «О проекте → Типы задач» ----------

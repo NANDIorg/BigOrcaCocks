@@ -1,5 +1,5 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Типы задач в ProjectManager: библиотека (встроенные и
-// пользовательские, правка встроенного на месте), типы проекта, тип нового прогона и роли по прогону,
+// пользовательские, полная правка встроенного и сброс к системному), типы проекта, тип нового прогона и роли по прогону,
 // колонки проекта. Миграция — task-types-migration.test.ts.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes, defaultWorkflow,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypeFingerprint, builtinTaskTypes, defaultWorkflow,
   type BoardColumn, type Role
 } from '@orca-board/core'
 import { ProjectManager } from './projects'
@@ -56,37 +56,72 @@ describe('библиотека типов', () => {
     assert.deepEqual(new ProjectManager(tmp).taskType(own.id), own, 'переживает перезапуск')
   })
 
-  it('копия встроенного под старым названием получает новое: встроенные переименовали («Общий» → «Программирование»)', () => {
+  it('копия встроенного от старой версии (без builtinBase) получает новое название встроенного и отпечаток', () => {
     const general = builtinTaskType(GENERAL_TASK_TYPE_ID)!
     const docs = builtinTaskType('docs')!
     writeConfig({ taskTypes: [
       { id: GENERAL_TASK_TYPE_ID, title: 'Общий', description: 'Перенесён из «Настройки → Для новых проектов».', settings: { agentRules: 'r' } },
-      { ...docs, builtin: undefined, title: 'Документация / аналитика' }
+      { ...docs, builtin: undefined, title: 'Документация / аналитика' },
+      { id: 'type_own', title: 'Свой', builtinBase: 'мусор', settings: {} }
     ] })
     const pm = new ProjectManager(tmp)
     assert.equal(pm.taskType(GENERAL_TASK_TYPE_ID)?.title, general.title)
     assert.equal(pm.taskType(GENERAL_TASK_TYPE_ID)?.settings.agentRules, 'r', 'настройки копии не трогаются')
+    assert.equal(pm.taskType(GENERAL_TASK_TYPE_ID)?.builtinBase, builtinTaskTypeFingerprint(GENERAL_TASK_TYPE_ID))
     assert.equal(pm.taskType('docs')?.title, docs.title)
-    // Правка на месте сверяется с копией — после переименования она по-прежнему проходит.
-    assert.equal(pm.saveTaskTypeRules('docs', undefined, 'правила').title, docs.title)
+    assert.equal(pm.taskType('type_own')?.builtinBase, undefined, 'у пользовательского типа отпечатка нет')
+    // После миграции название — уже правка пользователя: переименование переживает перезапуск.
+    pm.saveTaskType({ id: 'docs', title: 'Аналитика', settings: docs.settings })
+    assert.equal(new ProjectManager(tmp).taskType('docs')?.title, 'Аналитика')
   })
 
-  it('встроенный на месте: исполнитель, системный промпт роли и правила — да, остальное — «Дублировать»', () => {
+  it('встроенный правится целиком: название, описание, роли, граф, разрешения, правила — и переживает перезапуск', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
+    const backend = builtinTaskType('backend')!
+    const roles = [...(backend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa'), DESIGNER]
+      .map((r) => (r.id === 'developer' ? { ...r, title: 'Сеньор', description: 'Пишет всё', agent: 'codex' as const, model: 'gpt' } : r))
+    const edited = pm.saveTaskType({
+      id: 'backend', title: 'Мой бэкенд', description: 'своё описание',
+      settings: { roles, workflow: defaultWorkflow(roles), permissionMode: 'bypassPermissions', agentRules: 'правила' }
+    })
+    assert.equal(edited.builtin, undefined, 'изменённый встроенный — пользовательская копия с его id')
+    assert.equal(edited.builtinBase, builtinTaskTypeFingerprint('backend'))
+    assert.equal(pm.taskTypes().filter((t) => t.id === 'backend').length, 1)
+    assert.equal(pm.taskTypes().findIndex((t) => t.id === 'backend'), builtinTaskTypes().findIndex((t) => t.id === 'backend'), 'на месте встроенного')
+    const again = new ProjectManager(tmp).taskType('backend')!
+    assert.deepEqual(again, edited, 'правка переживает перезапуск')
+    assert.equal(again.title, 'Мой бэкенд')
+    assert.deepEqual(again.settings.roles?.map((r) => r.id), roles.map((r) => r.id))
+    assert.equal(again.settings.permissionMode, 'bypassPermissions')
+    // Патч отдельного раздела — тоже на месте; отпечаток версии, поверх которой сделана правка, не меняется.
+    const patched = pm.patchTaskType('frontend', { permissionMode: 'acceptEdits' })
+    assert.equal(patched.settings.permissionMode, 'acceptEdits')
+    assert.equal(pm.saveTaskType({ ...edited, builtinBase: 'подмена' } as never).builtinBase, builtinTaskTypeFingerprint('backend'))
+  })
+
+  it('отпечаток старой системной версии сохраняется: правка побеждает, дефолт из кода её не перетирает', () => {
     const docs = builtinTaskType('docs')!
-    const roles = (docs.settings.roles ?? DEFAULT_ROLES).map((r, i) => (i === 0 ? { ...r, agent: 'codex' as const, model: 'gpt', systemPrompt: 'свой' } : r))
-    const edited = pm.saveTaskType({ id: 'docs', title: docs.title, description: docs.description, settings: { ...docs.settings, roles, agentRules: 'правила' } })
-    assert.equal(edited.settings.roles![0].agent, 'codex')
-    assert.equal(pm.taskType('docs')?.builtin, undefined, 'изменённый встроенный — пользовательская копия с его id')
-    assert.equal(pm.taskTypes().filter((t) => t.id === 'docs').length, 1)
-    assert.throws(() => pm.saveTaskType({ id: 'docs', title: 'Другое', settings: docs.settings }), /Дублировать/)
-    assert.throws(() => pm.patchTaskType('backend', { roles: [...(builtinTaskType('backend')!.settings.roles ?? DEFAULT_ROLES), DESIGNER] }), /Дублировать/)
-    assert.throws(() => pm.patchTaskType('backend', { permissionMode: 'bypassPermissions' }), /Дублировать/)
-    // Удаление копии возвращает встроенный; сам встроенный не удаляется.
-    pm.deleteTaskType('docs')
-    assert.equal(pm.taskType('docs')?.builtin, true)
-    assert.throws(() => pm.deleteTaskType('docs'), /встроенный/)
+    writeConfig({ taskTypes: [{ ...docs, builtin: undefined, title: 'Моя документация', builtinBase: '00000000', settings: { agentRules: 'моё' } }] })
+    const pm = new ProjectManager(tmp)
+    const t = pm.taskType('docs')!
+    assert.equal(t.title, 'Моя документация')
+    assert.equal(t.settings.agentRules, 'моё')
+    assert.equal(t.builtinBase, '00000000')
+    assert.equal(pm.patchTaskType('docs', { agentRules: 'ещё' }).builtinBase, '00000000')
+  })
+
+  it('«Сбросить к системному» — удаление правки; сам встроенный не удаляется', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    pm.setDefaultTaskType('docs')
+    pm.saveTaskType({ id: 'docs', title: 'Другое', settings: { agentRules: 'r' } })
+    const state = pm.deleteTaskType('docs')
+    assert.equal(state.defaultTaskTypeId, 'docs', 'ссылки на id встроенного живы')
+    assert.deepEqual(pm.taskType('docs'), builtinTaskType('docs'))
+    assert.deepEqual(new ProjectManager(tmp).taskType('docs'), builtinTaskType('docs'), 'сброс переживает перезапуск')
+    assert.throws(() => pm.deleteTaskType('docs'), /встроенный, его нельзя удалить/)
+    assert.equal(pm.taskTypes().length, builtinTaskTypes().length)
   })
 
   it('дублирование: копия под новым id, редактируется целиком', () => {

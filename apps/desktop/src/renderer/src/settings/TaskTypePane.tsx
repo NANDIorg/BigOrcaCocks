@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { AgentInfo, TaskType } from '@orca-board/core'
+import { builtinTypeOutdated, type AgentInfo, type TaskType } from '@orca-board/core'
 import type { Project, TaskTypesState } from '../../../shared/ipc'
 import { RolesEditor } from '../RolesEditor'
 import { Icon } from '../icons'
@@ -9,8 +9,8 @@ import { AGENT_RULES_PLACEHOLDER } from '../agentRules'
 import { SectionHead, plural } from '../about/parts'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import {
-  TASK_TYPE_TABS, deleteTypeConfirmText, isBuiltinLike, libraryAgents, overridesBuiltinType, resolveTypeSettings,
-  typeColumnChoices, typeEditorKey, type TaskTypeTab, type TypeUsage
+  TASK_TYPE_TABS, isBuiltinLike, libraryAgents, overridesBuiltinType, resolveTypeSettings, typeColumnChoices,
+  typeEditorKey, typeRemovalConfirm, type TaskTypeTab, type TypeUsage
 } from '../taskTypeEdit'
 import { TaskTypeWorkflow } from './TaskTypeWorkflow'
 import type { TaskTypesHook } from './useTaskTypes'
@@ -25,7 +25,7 @@ interface Props {
   tab: TaskTypeTab
   onTab(tab: TaskTypeTab): void
   api: TaskTypesHook
-  /** Показать другой тип (после «Дублировать» — копию, после удаления — тип по умолчанию). */
+  /** Показать другой тип (после «Дублировать» — копию, после удаления — тип по умолчанию, после сброса — его же). */
   onSelect(id: string | null): void
   /** Все проекты — колонки для нод графа. */
   projects: Project[]
@@ -40,13 +40,13 @@ const TAB_LABELS: Record<TaskTypeTab, string> = {
 
 /**
  * Один тип в «Настройки → Типы задач»: шапка (название, отметки, действия) и редакторы разделов типа. Связь живая:
- * глобальные задачи берут роли и правила типа при каждом запуске агента. У встроенного типа (и его изменённой
- * копии) на месте меняются исполнитель ролей, их системные промпты и правила доски — первая такая правка
- * сохраняет «изменённый встроенный» с тем же id; состав ролей, граф и разрешения — только в дубле.
+ * глобальные задачи берут роли и правила типа при каждом запуске агента. Встроенный тип правится целиком, как свой:
+ * первая правка сохраняет «изменённый встроенный» с тем же id, «Сбросить к системному» удаляет правку. Удалить
+ * встроенный нельзя; отдельный тип рядом с ним — «Дублировать».
  */
 export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, onSelect, projects }: Props): React.JSX.Element {
   const builtinLike = isBuiltinLike(t)
-  /** Растёт после «Вернуть встроенный»: id тот же, а редакторы должны взять встроенные значения. */
+  /** Растёт после «Сбросить к системному»: id тот же, а редакторы должны взять системные значения. */
   const [rev, setRev] = useState(0)
   const editorKey = typeEditorKey(t, rev)
   const isDefault = state.defaultTaskTypeId === t.id
@@ -56,6 +56,8 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
   const rolesOff = s.roles.filter((r) => !agentOk.has(r.agent)).length
 
   const [renaming, setRenaming] = useState(false)
+  /** Открыто подтверждение удаления (у изменённого встроенного — сброса к системному). */
+  const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)
@@ -63,6 +65,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
   // Ошибки и форма переименования относятся к одному типу.
   useEffect(() => {
     setRenaming(false)
+    setConfirming(false)
     setError(null)
     setSectionError(null)
   }, [t.id])
@@ -87,11 +90,12 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
 
   const duplicate = (): Promise<void> => act(async () => onSelect((await api.duplicate(t.id)).id))
   const makeDefault = (): Promise<void> => act(() => api.setDefault(t.id))
-  const remove = (): Promise<void> => {
-    if (!confirm(deleteTypeConfirmText(t, state, usage))) return Promise.resolve()
-    return act(async () => {
+  const removal = typeRemovalConfirm(t, state, usage)
+  const remove = (): Promise<void> =>
+    act(async () => {
       await api.remove(t.id)
-      // Копия встроенного после удаления снова встроенный тип с тем же id — остаёмся на нём.
+      setConfirming(false)
+      // Сброс изменённого встроенного: снова встроенный тип с тем же id — остаёмся на нём.
       if (overridesBuiltinType(t)) {
         setRev((r) => r + 1)
         onSelect(t.id)
@@ -99,7 +103,6 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
         onSelect(null)
       }
     })
-  }
 
   const counts: Record<TaskTypeTab, string> = {
     roles: rolesOff ? `${s.roles.length} · ${rolesOff} !` : String(s.roles.length),
@@ -115,16 +118,13 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
           <>
             <SectionHead
               title="Роли"
-              hint={builtinLike
-                ? 'Во встроенном типе у ролей меняются агент, модель, усилие и инструкции роли. Состав и назначение ролей — через «Дублировать».'
-                : 'Кто выполняет подзадачи глобальной задачи этого типа: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче».'}
+              hint="Кто выполняет подзадачи глобальной задачи этого типа: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче»."
             />
             <RolesEditor
               storageKey={editorKey}
               roles={s.roles}
               agents={typeAgents}
               workflow={s.workflow}
-              executorOnly={builtinLike}
               ofTaskType
               onSave={(next) => api.patch(t.id, { roles: next })}
             />
@@ -138,15 +138,13 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
             workflow={s.workflow}
             roles={s.roles}
             columns={typeColumnChoices(projects)}
-            readOnly={builtinLike}
+            readOnly={false}
             onSave={(wf) => api.patch(t.id, { workflow: wf })}
           />
         )
       case 'perm':
         return (
-          <fieldset className="tpl-fieldset" disabled={builtinLike}>
-            <PermissionsSection value={s.permissionMode} error={sectionError} onChange={(mode) => patchSection({ permissionMode: mode })} />
-          </fieldset>
+          <PermissionsSection value={s.permissionMode} error={sectionError} onChange={(mode) => patchSection({ permissionMode: mode })} />
         )
       case 'rules':
         return (
@@ -167,7 +165,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
           <h2>
             {t.title}
             {t.builtin && <span className="chip sys">встроенный</span>}
-            {overridesBuiltinType(t) && <span className="chip sys" title="Своя версия встроенного типа: «Вернуть встроенный» удалит правки">изменённый встроенный</span>}
+            {overridesBuiltinType(t) && <span className="chip sys" title="Своя версия встроенного типа: «Сбросить к системному» удалит правки">изменённый встроенный</span>}
             {isDefault && <span className="chip ok">по умолчанию</span>}
           </h2>
           {t.description && <p>{t.description}</p>}
@@ -180,22 +178,32 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
             </button>
           )}
           <button type="button" className="btn-sm" disabled={busy} onClick={() => void duplicate()}>Дублировать</button>
-          {!t.builtin && (overridesBuiltinType(t) ? (
-            <button type="button" className="btn-sm danger" disabled={busy} onClick={() => void remove()} title="Удалить свои правки — вернётся встроенный тип">
-              <Icon.trash /> Вернуть встроенный
+          <button type="button" className="btn-sm" disabled={busy || renaming} onClick={() => setRenaming(true)}>
+            <Icon.edit /> Переименовать
+          </button>
+          {overridesBuiltinType(t) && (
+            <button type="button" className="btn-sm danger" disabled={busy || confirming} onClick={() => setConfirming(true)} title="Удалить свои правки — вернётся встроенный тип из текущей версии приложения">
+              Сбросить к системному
             </button>
-          ) : (
-            <>
-              <button type="button" className="btn-sm" disabled={busy || renaming} onClick={() => setRenaming(true)}>
-                <Icon.edit /> Переименовать
-              </button>
-              <button type="button" className="btn-sm danger" disabled={busy} onClick={() => void remove()}>
-                <Icon.trash /> Удалить
-              </button>
-            </>
-          ))}
+          )}
+          {!builtinLike && (
+            <button type="button" className="btn-sm danger" disabled={busy || confirming} onClick={() => setConfirming(true)}>
+              <Icon.trash /> Удалить
+            </button>
+          )}
         </div>
       </div>
+
+      {confirming && (
+        <div className="roles-confirm tpl-confirm" role="alertdialog" aria-label={removal.title}>
+          <div className="roles-confirm-title">{removal.title}</div>
+          <ul>{removal.lines.map((l) => <li key={l}>{l}</li>)}</ul>
+          <div className="roles-confirm-btns">
+            <button type="button" className="btn-sm" autoFocus onClick={() => setConfirming(false)}>Отмена</button>
+            <button type="button" className="btn-sm danger-fill" disabled={busy} onClick={() => void remove()}>{removal.action}</button>
+          </div>
+        </div>
+      )}
 
       {renaming && (
         <RenameForm
@@ -212,9 +220,14 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
       <div className="about-banner">
         {builtinLike ? (
           <>
-            Встроенный тип обновляется вместе с приложением. Прямо здесь меняются <b>агент, модель, усилие и инструкции
-            ролей</b> и <b>правила доски</b>{t.builtin ? ' — тип станет «изменённым встроенным»' : ''}. Состав ролей, воркфлоу
-            и разрешения — «Дублировать» и правьте копию.
+            {t.builtin
+              ? 'Встроенный тип из приложения. Правьте любое поле — тип станет «изменённым встроенным»: ваша версия переживёт обновления приложения, а «Сбросить к системному» вернёт встроенную.'
+              : 'Изменённый встроенный: действует ваша версия, обновления приложения её не перетирают. «Сбросить к системному» вернёт встроенную.'}{' '}
+            Правка действует <b>во всех проектах</b>, где тип доступен, со следующего запуска агента; воркфлоу глобальная задача
+            берёт при создании.
+            {builtinTypeOutdated(t) && (
+              <> <b>Встроенная версия этого типа обновилась</b> после ваших правок — чтобы взять её, сбросьте тип к системному.</>
+            )}
           </>
         ) : (
           <>

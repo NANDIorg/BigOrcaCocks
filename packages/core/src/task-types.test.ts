@@ -1,10 +1,10 @@
 // Запуск: node --test (type stripping Node ≥ 22.6). Из tsc исключён — в core нет @types/node.
-// Типы задач: встроенные типы, правка встроенного на месте, правило разрешения типа прогона.
+// Типы задач: встроенные типы, отпечаток системной версии, правило разрешения типа прогона.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  BUILTIN_EDITABLE_TYPE_ROLE_FIELDS, GENERAL_TASK_TYPE_ID, LEGACY_TASK_TYPE_DESCRIPTION, builtinTaskType,
-  builtinTaskTypes, isBuiltinTypeInPlaceEdit, resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
+  GENERAL_TASK_TYPE_ID, LEGACY_TASK_TYPE_DESCRIPTION, builtinTaskType,
+  builtinTaskTypeFingerprint, builtinTaskTypes, builtinTypeOutdated, resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
   taskTypeFromLegacyProject, type TaskType
 } from './task-types.ts'
 import { DEFAULT_ROLES, type Role } from './types.ts'
@@ -117,31 +117,22 @@ describe('встроенные типы', () => {
   })
 })
 
-describe('правка встроенного типа на месте (isBuiltinTypeInPlaceEdit)', () => {
-  const base = (): TaskType => builtinTaskType('backend')!
-  const edited = (patch: (t: TaskType) => void): TaskType => {
-    const t = base()
-    patch(t)
-    return t
-  }
-
-  it('исполнитель, системный промпт ролей и правила — на месте', () => {
-    assert.deepEqual([...BUILTIN_EDITABLE_TYPE_ROLE_FIELDS], ['agent', 'model', 'effort', 'systemPrompt'])
-    assert.ok(isBuiltinTypeInPlaceEdit(base(), base()))
-    assert.ok(isBuiltinTypeInPlaceEdit(base(), edited((t) => {
-      t.settings.roles![2] = { ...t.settings.roles![2], agent: 'codex', model: 'gpt-5', effort: 'high', systemPrompt: 'Свой промпт' }
-    })))
-    assert.ok(isBuiltinTypeInPlaceEdit(base(), edited((t) => { t.settings.agentRules = 'Свои правила' })))
-    assert.ok(isBuiltinTypeInPlaceEdit(base(), edited((t) => { delete t.settings.agentRules })))
+describe('отпечаток системной версии встроенного типа', () => {
+  it('стабилен между вызовами, разный у разных типов, нет у пользовательских', () => {
+    assert.match(builtinTaskTypeFingerprint('backend')!, /^[0-9a-f]{8}$/)
+    assert.equal(builtinTaskTypeFingerprint('backend'), builtinTaskTypeFingerprint('backend'))
+    const all = builtinTaskTypes().map((t) => builtinTaskTypeFingerprint(t.id))
+    assert.equal(new Set(all).size, all.length)
+    assert.equal(builtinTaskTypeFingerprint('type_docs'), undefined)
   })
 
-  it('название, состав ролей, граф и разрешения — только через копию', () => {
-    assert.equal(isBuiltinTypeInPlaceEdit(base(), edited((t) => { t.title = 'Мой бэкенд' })), false)
-    assert.equal(isBuiltinTypeInPlaceEdit(base(), edited((t) => { t.description = 'другое' })), false)
-    assert.equal(isBuiltinTypeInPlaceEdit(base(), edited((t) => { t.settings.roles![2].title = 'Сеньор' })), false)
-    assert.equal(isBuiltinTypeInPlaceEdit(base(), edited((t) => { t.settings.roles!.pop() })), false)
-    assert.equal(isBuiltinTypeInPlaceEdit(base(), edited((t) => { t.settings.workflow = defaultWorkflow([]) })), false)
-    assert.equal(isBuiltinTypeInPlaceEdit(base(), edited((t) => { t.settings.permissionMode = 'bypassPermissions' })), false)
+  it('изменённый встроенный устарел, только если сделан поверх другой системной версии', () => {
+    const own = { ...builtinTaskType('backend')!, builtin: undefined, title: 'Мой бэкенд' }
+    assert.equal(builtinTypeOutdated({ ...own, builtinBase: builtinTaskTypeFingerprint('backend') }), false)
+    assert.equal(builtinTypeOutdated({ ...own, builtinBase: '00000000' }), true)
+    assert.equal(builtinTypeOutdated(own), false, 'без отпечатка — неизвестно, не предупреждаем')
+    assert.equal(builtinTypeOutdated(builtinTaskType('backend')!), false)
+    assert.equal(builtinTypeOutdated({ id: 'type_x', builtinBase: '00000000' }), false)
   })
 })
 

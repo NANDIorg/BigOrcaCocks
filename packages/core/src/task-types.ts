@@ -41,10 +41,15 @@ export interface TaskType {
   /** Одна строка в списке выбора типа. */
   description?: string
   /**
-   * Встроенный тип из кода: без копии меняются только поля `BUILTIN_EDITABLE_TYPE_ROLE_FIELDS` и правила
-   * (`isBuiltinTypeInPlaceEdit`); обновляется вместе с приложением.
+   * Встроенный тип из кода, без правок пользователя; обновляется вместе с приложением. Правка встроенного
+   * (любого поля) сохраняется в main пользовательским типом с тем же id — «изменённый встроенный», флага нет.
    */
   builtin?: boolean
+  /**
+   * Только у изменённого встроенного: отпечаток системной версии (`builtinTaskTypeFingerprint`), поверх
+   * которой сделана правка. Ставит main; новая версия дефолта правку не трогает (`builtinTypeOutdated`).
+   */
+  builtinBase?: string
   settings: TaskTypeSettings
 }
 
@@ -360,33 +365,31 @@ export function builtinTaskType(id: string): TaskType | undefined {
 }
 
 /**
- * Поля роли, которые у встроенного типа правятся на месте, без «Дублировать»: исполнитель (агент, модель,
- * усилие) и системный промпт роли. Вместе с правилами агентов доски это то, что человек подгоняет под себя,
- * не меняя устройство типа (состав ролей, граф, разрешения) — поэтому `rules set` на встроенном типе не ошибка.
+ * Отпечаток системной версии встроенного типа `id` (название, описание, настройки из кода) или undefined, если
+ * такого встроенного нет. Меняется, когда новая версия приложения меняет дефолт типа; хранится в изменённом
+ * встроенном (`TaskType.builtinBase`), чтобы UI мог сказать «системная версия обновилась после ваших правок».
+ * FNV-1a, а не crypto: модуль импортирует renderer.
  */
-export const BUILTIN_EDITABLE_TYPE_ROLE_FIELDS = ['agent', 'model', 'effort', 'systemPrompt'] as const
-
-/** Роль без полей, которые у встроенного типа правятся на месте. */
-function lockedTypeRolePart(r: Role): Partial<Role> {
-  const rest: Partial<Role> = { ...r }
-  for (const k of BUILTIN_EDITABLE_TYPE_ROLE_FIELDS) delete rest[k]
-  return rest
+export function builtinTaskTypeFingerprint(id: string): string | undefined {
+  const t = builtinTaskType(id)
+  if (!t) return undefined
+  const text = stableJson({ title: t.title, description: t.description ?? '', settings: t.settings })
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
 }
 
 /**
- * Можно ли сохранить `next` под id встроенного типа без копии: название, описание, граф и разрешения те же,
- * у ролей (тот же состав и порядок) отличаются только `BUILTIN_EDITABLE_TYPE_ROLE_FIELDS`, правила — любые.
+ * Системная версия встроенного типа обновилась после правки: изменённый встроенный `t` сделан поверх другой
+ * версии дефолта, чем в текущем приложении. Правка всё равно побеждает — это только повод предложить сброс.
  */
-export function isBuiltinTypeInPlaceEdit(
-  builtin: TaskType,
-  next: Pick<TaskType, 'title' | 'description' | 'settings'>
-): boolean {
-  if (next.title !== builtin.title || (next.description ?? '') !== (builtin.description ?? '')) return false
-  const { roles: from = DEFAULT_ROLES, agentRules: _fromRules, ...restFrom } = builtin.settings
-  const { roles: to = DEFAULT_ROLES, agentRules: _toRules, ...restTo } = next.settings
-  if (stableJson(restFrom) !== stableJson(restTo)) return false
-  return from.length === to.length &&
-    from.every((r, i) => stableJson(lockedTypeRolePart(r)) === stableJson(lockedTypeRolePart(to[i])))
+export function builtinTypeOutdated(t: Pick<TaskType, 'id' | 'builtin' | 'builtinBase'>): boolean {
+  if (t.builtin || t.builtinBase === undefined) return false
+  const current = builtinTaskTypeFingerprint(t.id)
+  return current !== undefined && current !== t.builtinBase
 }
 
 /** Тип с раскрытыми значениями по умолчанию; роли и граф — копии, их можно править. */
