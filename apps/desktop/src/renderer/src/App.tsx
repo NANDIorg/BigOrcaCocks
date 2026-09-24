@@ -838,12 +838,18 @@ export function App(): React.JSX.Element {
               onAccept={() => void acceptGlobalTask(openGlobal)}
               onReturn={() => setReturnGlobalId(openGlobal.id)}
               requests={requests}
+              questions={snap.questions}
               tasks={subtasks}
               columns={columns}
               dispatches={snap.dispatches}
+              runningTaskIds={runningTaskIds}
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
+              onAnswerQuestion={(qid, a) => window.orca.questions.answer(qid, a)}
+              onAcceptTask={(id) => window.orca.review.accept(id)}
+              onRejectTask={(id, fb) => window.orca.review.reject(id, fb)}
+              onStartTask={startTask}
               typeTitle={globalTypeTitle(openGlobal, taskTypes)}
             >
               <Board
