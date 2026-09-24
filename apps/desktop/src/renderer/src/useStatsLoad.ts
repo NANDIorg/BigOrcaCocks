@@ -56,7 +56,8 @@ export function useStatsLoad<T>(options: Options<T>): StatsLoad<T> {
       done(opts.current.fallback(), true)
       return
     }
-    opts.current.load().then(
+    // `load` может бросить синхронно (старый preload без `stats.task`) — тоже ошибка запроса, а не падение.
+    Promise.resolve().then(() => opts.current.load()).then(
       (s) => done(s, false),
       (e: unknown) => {
         if (id !== req.current) return

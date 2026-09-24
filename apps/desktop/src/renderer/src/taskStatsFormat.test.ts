@@ -239,8 +239,8 @@ test('taskCounters: отказы ревью — сумма возвратов с
   assert.equal(rej.tone, 'warn')
   assert.equal(rej.title, 'отказов проверок 2, «Вернуть» по решению 1, возвратов вручную 1')
   const q = c.find((x) => x.id === 'questions')!
-  assert.equal(q.text, 'вопросов 4')
-  assert.match(q.title ?? '', /медиана ответа 5 мин/)
+  assert.equal(q.text, 'вопросов координатору 4')
+  assert.match(q.title ?? '', /Медиана ответа координатора 5 мин/)
   assert.equal(taskCounters(taskStats()).find((x) => x.id === 'rejections')?.tone, undefined)
   assert.equal(rejectionsTitle({ gate: 0, approval: 0, clarify: 0, manual: 0 }), 'Возвратов на доработку не было')
 })

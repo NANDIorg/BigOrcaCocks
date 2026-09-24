@@ -308,8 +308,9 @@ export function stageParts(stages: readonly TaskStageTime[] | undefined): TimePa
   })))
 }
 
-/** Значение части полосы: «2 ч 10 мин · 3 захода». */
+/** Значение части полосы: «2 ч 10 мин · 3 захода»; ноль — «—» (в done время не считается, а не «<1 мин»). */
 export function partValue(p: TimePart): string {
+  if (p.ms === 0) return '—'
   const times = p.entries > 1 ? ` · ${p.entries} ${plural(p.entries, 'заход', 'захода', 'заходов')}` : ''
   return `${spanLabel(p)}${times}`
 }
@@ -377,8 +378,8 @@ export function taskCounters(s: TaskStats): StatCounter[] {
     ...dispatchCounters(s.dispatches),
     { id: 'rejections', text: `отказов ревью ${back}`, tone: back > 0 ? 'warn' : undefined, title: rejectionsTitle(s.rejections) },
     {
-      id: 'questions', text: `вопросов ${q.count}`,
-      title: q.answerMedianMs !== undefined ? `Вопросы координатору; медиана ответа ${formatDuration(q.answerMedianMs)}` : 'Вопросы координатору'
+      id: 'questions', text: `вопросов координатору ${q.count}`,
+      title: q.answerMedianMs !== undefined ? `Медиана ответа координатора ${formatDuration(q.answerMedianMs)}` : 'Вопросы воркера, на которые отвечает координатор (не вы)'
     }
   ]
 }
