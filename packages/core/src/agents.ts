@@ -17,6 +17,11 @@ export interface AgentInvokeOptions {
   model?: string
   /** Уровень рассуждений (effort); пусто — по умолчанию у агента. Учитывают только claude и codex. */
   effort?: string
+  /**
+   * Id сессии, который приложение задаёт агенту заранее (uuid): по нему main находит транскрипт с токенами
+   * для статистики. Учитывают только агенты с `acceptsSessionId`.
+   */
+  sessionId?: string
 }
 
 /** Подсказка модели для UI: значение для CLI и необязательная подпись. */
@@ -55,6 +60,8 @@ export interface AgentSpec {
    * (см. `coordinatorsToClose`; с сигналом или при ручном done закрывается терминал любого агента).
    */
   lingersAfterAnswer?: boolean
+  /** Агент принимает id сессии от приложения (`AgentInvokeOptions.sessionId`); остальным main его не генерирует. */
+  acceptsSessionId?: boolean
   /** Как передать системную инструкцию (system) и задание (prompt). */
   invoke(system: string, prompt: string, opts: AgentInvokeOptions): AgentInvocation
 }
@@ -93,6 +100,7 @@ export const AGENTS = [
       { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5' }
     ],
     effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'],
+    acceptsSessionId: true,
     // Режим разрешений проекта + orca-board всегда без вопросов.
     invoke: (system, prompt, opts) => ({
       command: 'claude',
@@ -101,6 +109,7 @@ export const AGENTS = [
         '--allowedTools', 'Bash(orca-board:*)',
         ...modelFlag('--model', opts.model),
         ...modelFlag('--effort', opts.effort),
+        ...modelFlag('--session-id', opts.sessionId),
         '--append-system-prompt', system,
         prompt
       ]
