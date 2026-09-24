@@ -845,6 +845,8 @@ export function App(): React.JSX.Element {
               onEdit={() => setGlobalModal({ mode: 'edit', id: openGlobal.id })}
               onStartCoordinator={() => void startGlobalCoordinator(openGlobal)}
               onShowCoordinator={(ptyId) => showTerminal(ptyId)}
+              onStopCoordinator={closeTerminal}
+              runs={snap.runs}
               onAccept={() => void acceptGlobalTask(openGlobal)}
               onReturn={() => setReturnGlobalId(openGlobal.id)}
               attention={feedItems}

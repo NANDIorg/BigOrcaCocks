@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
+import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Run, Task } from '@orca-board/core'
 import { AttentionFeed } from './AttentionFeed'
 import type { AttentionItem } from './attention'
 import { focusBoard, focusFeed, onRevealOnBoard } from './feedLink'
@@ -24,6 +24,8 @@ interface Props {
   onEdit(): void
   onStartCoordinator(): void
   onShowCoordinator(ptyId: string): void
+  /** «■ Остановить» на вкладке «Координатор» (после подтверждения там же): закрыть PTY координатора. */
+  onStopCoordinator(ptyId: string): void
   /** «Подтвердить» на «Проверке». */
   onAccept(): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
@@ -37,6 +39,8 @@ interface Props {
   tasks: Task[]
   /** Колонки проекта (доски подзадач): какие подзадачи сделаны — для фоллбэка «Что сделал». */
   columns: BoardColumn[]
+  /** Прогоны (`snap.runs`): оттуда вкладка «Координатор» берёт `coordinatorSessions` — поля может не быть (старый main). */
+  runs?: Run[]
   /** Запуски воркеров: сводка последнего запуска сделанной подзадачи — фоллбэк «Что сделал». */
   dispatches: Dispatch[]
   onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
@@ -222,8 +226,11 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
             global={global}
             statusKind={statusKind}
             coordinatorPty={coordinatorPty}
+            sessions={props.runs?.find((r) => r.id === global.id)?.coordinatorSessions}
             onStartCoordinator={props.onStartCoordinator}
             onShowCoordinator={props.onShowCoordinator}
+            onStopCoordinator={props.onStopCoordinator}
+            onReturn={props.onReturn}
           />
         </div>
       )}
