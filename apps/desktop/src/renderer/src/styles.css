@@ -1171,9 +1171,70 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .g-card-request { display: flex; flex-direction: column; gap: 4px; cursor: default; }
 .g-card-inbox { align-self: flex-start; padding: 0; font-size: 12px; color: var(--accent); }
 .g-card-inbox:hover { color: #8791f7; }
-.g-requests { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 14px 32px 0; }
-.g-requests-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 600; color: var(--col-input); }
-.g-requests-list { display: flex; flex-direction: column; gap: 8px; max-height: 45vh; overflow: auto; }
+
+/*
+ * Лента «Ждут вас» (AttentionFeed.tsx) на экране глобальной задачи: одна строка карточек с прокруткой вбок,
+ * поэтому высота ленты не растёт при 10+ пунктах. Цвет кромки — вид пункта (`--k`), но вид всегда подписан текстом.
+ */
+.attn {
+  flex-shrink: 0; margin: 12px 32px 0; border-radius: var(--radius); min-width: 0;
+  background: color-mix(in srgb, var(--col-input) 7%, var(--side)); border: 1px solid color-mix(in srgb, var(--col-input) 30%, transparent);
+}
+.attn-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 13px; min-width: 0; }
+.attn-head h3 { flex-shrink: 0; margin: 0; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.attn-n {
+  min-width: 22px; height: 20px; padding: 0 7px; border-radius: 10px; display: inline-grid; place-items: center;
+  background: var(--col-input); color: #1d1f24; font-size: 12px; font-weight: 700;
+}
+.attn-head .grow { flex: 1; }
+.attn-sum { min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attn-hint { flex-shrink: 0; font-size: 11.5px; }
+.attn-head .btn-sm { flex-shrink: 0; height: 26px; padding: 0 12px; font-size: 12px; }
+.attn-list { display: flex; gap: 10px; overflow-x: auto; padding: 0 12px 12px; scroll-snap-type: x proximity; }
+.attn-list[hidden] { display: none; }
+.act-card {
+  --k: var(--col-input);
+  flex: 0 0 300px; scroll-snap-align: start; min-width: 0; display: flex; flex-direction: column; gap: 7px; padding: 9px 12px;
+  background: var(--card); border-radius: 12px; border-left: 3px solid var(--k); box-shadow: 0 2px 8px rgba(0,0,0,.18);
+  overflow-wrap: anywhere;
+}
+.act-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.act-card.hl { box-shadow: 0 0 0 2px var(--accent); }
+.act-kind { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--k); }
+.act-kind .grow { flex: 1; }
+.act-ago { color: var(--muted); font-weight: 500; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.act-task {
+  align-self: flex-start; max-width: 100%; padding: 0; border: 0; background: transparent; text-align: left;
+  color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+button.act-task:hover { color: var(--text); text-decoration: underline; }
+.act-q { font-size: 13px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.act-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: auto; }
+.act-row .btn-sm, .act-clarify .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.act-row .btn-text { padding: 0 6px; font-size: 12px; }
+.btn-sm.ok { border-color: color-mix(in srgb, var(--wf-accept) 55%, transparent); color: var(--wf-accept); }
+.btn-sm.ok:hover:not(:disabled) { border-color: var(--wf-accept); }
+.act-clarify { display: flex; flex-direction: column; gap: 6px; }
+.act-clarify textarea { min-height: 44px; padding: 6px 8px; font-size: 12.5px; }
+.act-thumbs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.act-thumb {
+  max-width: 100%; padding: 2px 8px; border-radius: 6px; font-size: 11px; color: var(--text); background: var(--side-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.act-thumb.more { color: var(--muted); }
+/* Запрос внутри карточки ленты: рамку и заголовок рисует сама карточка, остаётся тело — вопрос, варианты, ввод. */
+.act-card .rq { padding: 0; gap: 7px; background: transparent; border: 0; border-radius: 0; }
+.act-card .rq-head { display: none; }
+.act-card .rq-title { font-size: 13px; line-height: 1.35; white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.act-card .error-text { font-size: 12px; }
+.attn-detail { display: flex; flex-direction: column; gap: 8px; margin: 0 12px 12px; padding: 10px 12px; max-height: 50vh; overflow: auto; background: var(--frame); border-radius: 12px; }
+.attn-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; font-size: 12px; }
+.attn-detail-head .muted { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 900px) {
+  .attn { margin-left: 16px; margin-right: 16px; }
+  .act-card { flex-basis: 260px; }
+  .attn-hint { display: none; }
+}
 .task-modal-requests { display: flex; flex-direction: column; gap: 8px; }
 .task-modal-requests h4 { color: var(--col-input); }
 

@@ -1,11 +1,9 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import {
-  pendingRequestsOf, type BoardColumn, type ColumnKind, type Dispatch, type GlobalTask, type HumanRequest, type RequestResolution, type Task
-} from '@orca-board/core'
+import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, Question, RequestResolution, Task } from '@orca-board/core'
 import { Icon } from './icons'
-import { RequestCard } from './RequestCard'
-import { requestShowcase } from './showcase'
+import { AttentionFeed } from './AttentionFeed'
+import { buildAttention } from './attention'
 import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
 import { PriorityBadge } from './Priority'
@@ -27,8 +25,10 @@ interface Props {
   onAccept(): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
   onReturn(): void
-  /** Запросы к человеку проекта: pending этой глобальной задачи — лента «Ждут вашего ответа». */
+  /** Запросы к человеку проекта: pending этой глобальной задачи — в ленте «Ждут вас». */
   requests: HumanRequest[]
+  /** Вопросы воркеров проекта: открытые без запроса тоже попадают в ленту. */
+  questions: Question[]
   /** Подзадачи этой глобальной задачи — подпись, чей запрос. */
   tasks: Task[]
   /** Колонки проекта (доски подзадач): какие подзадачи сделаны — для фоллбэка «Что сделал». */
@@ -39,6 +39,17 @@ interface Props {
   /** «Открыть полностью» у ответа — модалка подзадачи. */
   onOpenTask(taskId: string): void
   onOpenTerminal(taskId: string): void
+  /** Ответ на вопрос воркера без запроса (лента, как у карточки доски). */
+  onAnswerQuestion(questionId: string, answer: string): Promise<void>
+  /** «Принять» / «Вернуть» / «Уточнить» готовой задачи прямо в ленте (`review.accept` / `review.reject`). */
+  onAcceptTask(taskId: string): Promise<void>
+  onRejectTask(taskId: string, feedback: string): Promise<void>
+  /** «↻ Перезапустить» упавшего воркера в ленте. */
+  onStartTask(task: Task): void | Promise<void>
+  /** Клик по имени задачи в ленте: выделить карточку на доске. */
+  onSelectTask?(taskId: string): void
+  /** Задачи с открытым терминалом: сбой их прошлого запуска в ленту не идёт. */
+  runningTaskIds?: Set<string>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
@@ -48,9 +59,12 @@ interface Props {
 /** Экран глобальной задачи: хлебные крошки, заголовок, описание и канбан только её подзадач. */
 export function GlobalTaskView(props: Props): React.JSX.Element {
   const { global, statusKind, coordinatorPty, onBack, onEdit, onStartCoordinator, onShowCoordinator, onAccept, onReturn, children } = props
-  const { requests, tasks, columns, dispatches, onResolveRequest, onOpenTask, onOpenTerminal, typeTitle } = props
-  const pending = pendingRequestsOf(requests, { runId: global.id }).sort((a, b) => a.createdAt - b.createdAt)
-  const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
+  const { columns, onResolveRequest, onOpenTask, onOpenTerminal, typeTitle } = props
+  const { requests, questions, tasks, dispatches } = props
+  const attention = buildAttention({
+    tasks, requests, questions, dispatches, runId: global.id, running: props.runningTaskIds,
+    kindOf: (status) => columns.find((c) => c.id === status)?.kind
+  })
   const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
   const [expanded, setExpanded] = useState(false)
   const backRef = useRef<HTMLButtonElement>(null)
@@ -137,24 +151,20 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         )}
         <GlobalReturns global={global} />
       </div>
-      {pending.length > 0 && (
-        <section className="g-requests" aria-label={`Ждут вашего ответа: ${pending.length}`}>
-          <h3 className="g-requests-title">Ждут вашего ответа <span className="g-col-count">{pending.length}</span></h3>
-          <div className="g-requests-list">
-            {pending.map((r) => (
-              <RequestCard
-                key={r.id}
-                request={r}
-                showcase={requestShowcase(r, dispatches)}
-                where={taskTitle.get(r.taskId) ?? r.taskId}
-                onResolve={(res) => onResolveRequest(r, res)}
-                onOpenFull={(req) => onOpenTask(req.taskId)}
-                onOpenTerminal={onOpenTerminal}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+      <AttentionFeed
+        items={attention}
+        tasks={tasks}
+        runId={global.id}
+        dispatches={dispatches}
+        onResolveRequest={onResolveRequest}
+        onAnswerQuestion={props.onAnswerQuestion}
+        onAcceptTask={props.onAcceptTask}
+        onRejectTask={props.onRejectTask}
+        onStartTask={props.onStartTask}
+        onOpenTask={onOpenTask}
+        onOpenTerminal={onOpenTerminal}
+        onSelectTask={props.onSelectTask}
+      />
       {children}
     </div>
   )
