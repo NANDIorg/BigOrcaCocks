@@ -164,7 +164,8 @@ function StatusSteps({ steps, onMove }: { steps: StatusStep[]; onMove(status: st
       {menu && (
         <MoveMenu
           anchor={menu}
-          targets={steps.map((s) => ({ id: s.id, title: s.title, color: s.color, disabled: !s.movable }))}
+          // «Нужен ответ» ставится сама — переносить в неё нельзя, и подпись «здесь» у неё была бы неверной: в меню только текущая и доступные.
+          targets={steps.filter((s) => s.movable || s.state === 'now').map((s) => ({ id: s.id, title: s.title, color: s.color, disabled: !s.movable }))}
           onPick={(id) => {
             setMenu(null)
             onMove(id)
