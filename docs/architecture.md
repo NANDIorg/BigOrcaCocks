@@ -669,9 +669,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `model`/`model_reasoning_effort` — из `~/.codex/config.toml`, дефолтная модель в списке помечена «(по умолчанию)».
     Нет кэша — в списке только модель из `config.toml`. Чтение обоих файлов кэшируется на 60 с, `refresh` сбрасывает.
   - остальные — `models = []`, в UI модель вводится свободным текстом.
-- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?})`: модель — флагом агента;
+- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
+  `sessionId` — uuid сессии для статистики: `worker.ts` генерирует его (`agentSessionId`) только агентам с
+  `acceptsSessionId` (сейчас claude → `--session-id <uuid>`), ассистенту не передаётся.
 - **Дефолты и модели агента** (`agentConfig` в `src/main/agents.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
   всегда (`[]` / `{}`). codex: `config.toml` читается построчно, только ключи верхнего уровня до первой секции `[..]`;
   разбор кэша — чистая `parseCodexModelsCache(text, defaultModel?)` в core (`visibility: "hide"` пропускаются,
@@ -1180,8 +1182,23 @@ UI работает с активным проектом; воркеры и ко
 за период `StatsRange` (`all` | `7d` | `30d`, скользящее окно от момента запроса, `statsRangeStart`). Считается в main
 по запросу `stats:project(projectId, range)` → `ProjectStats` из снапшота store проекта и транскриптов агентов на диске;
 в состоянии store хранятся только ссылки на сессии (`Dispatch.sessionId`, `Run.coordinatorSessions`), не токены.
-Сейчас в `registerIpc` заглушка — `emptyProjectStats` (сбор — отдельная задача). Renderer вызывает канал через проверку
-наличия API (старый preload — «перезапустите приложение», см. «Грабли разработки»).
+Renderer вызывает канал через проверку наличия API (старый preload — «перезапустите приложение», см. «Грабли разработки»).
+
+Где что:
+- `packages/core/src/stats.ts` (без Node) — `statsSessions(snapshot)`: сессии агентов (`StatsSession`: dispatch и запуски
+  координатора, ключ — id dispatch или `coord:<runId>:<ptyId>`); `buildProjectStats(input)` — вся агрегация по снапшоту,
+  расход сессий приходит функцией `usage(session) → SessionUsage { records: UsageRecord[], lastAt? }` (нет — «неизвестно»),
+  плюс `isAlive`, `roleTitle`, `dayKey` (по умолчанию `localDayKey`). `packages/core/src/pricing.ts` — `MODEL_PRICES`,
+  `findModelPrice`, `tokensCost`.
+- `src/main/transcripts.ts` — поиск и разбор транскриптов (`collectSessionUsage`, `parseClaudeLine`, `parseCodexLine`),
+  кэш `TranscriptCache`; `src/main/stats.ts` — `projectStats(deps)`: снапшот → транскрипты → `buildProjectStats`,
+  найденные id сессий codex → `store.setDispatchSessionId`. `registerIpc` (`collectProjectStats` в `src/main/index.ts`)
+  добавляет названия ролей из типов всех глобальных задач проекта и `isAlive` из `pty.ts`.
+- Запись сессий: `startWorker` → `store.startDispatch(taskId, ptyId, id, {roleId, agent, model, sessionId})`;
+  `startCoordinator` → `store.setRunPty(runId, ptyId, agent, {roleId, agent, model, sessionId})` добавляет `AgentSession`
+  в `Run.coordinatorSessions`, выход PTY — `store.coordinatorExited(runId, ptyId)` (`endedAt`).
+- Транскрипты сессий, закрытых до начала периода (PTY мёртв), не читаются: в период они всё равно не попадут.
+  Первый расчёт по проекту с сотнями сессий — доли секунды на чтение; повторный — из кэша (десятки мс).
 
 Команды CLI для статистики нет: агентам она не нужна, человек смотрит её в UI. Понадобится — полная цепочка
 «метод сокета → команда и `HELP` → docs» (см. CLAUDE.md), тот же `ProjectStats`.
@@ -1225,7 +1242,8 @@ UI работает с активным проектом; воркеры и ко
 (`/…/.orca-worktrees/task_x` → `-…--orca-worktrees-task-x`; очень длинные пути Claude Code укорачивает — поэтому ищем
 по имени файла `<sessionId>.jsonl` во всех папках `projects/`, а slug — только быстрый путь).
 - **Надёжная привязка — `--session-id`.** main генерирует uuid, передаёт его в `claude --session-id <uuid>`
-  (`AgentSpec.invoke`, новая опция) и пишет в `Dispatch.sessionId` / `AgentSession.sessionId`. Файл сессии — ровно этот dispatch.
+  (`AgentInvokeOptions.sessionId`, агенты с `AgentSpec.acceptsSessionId`) и пишет в `Dispatch.sessionId` /
+  `AgentSession.sessionId`. Файл сессии — ровно этот dispatch.
 - **Запасной путь для dispatch без `sessionId`** (от кода до статистики): cwd worktree уникален для задачи
   (`.orca-worktrees/<taskId>`), поэтому все сессии его slug — сессии задачи; сессия относится к dispatch, в окно
   `[startedAt, endedAt ?? старт следующего dispatch]` которого попадает её первое сообщение (поле `timestamp`, cwd
@@ -1238,14 +1256,20 @@ UI работает с активным проектом; воркеры и ко
   каждой записи (модель может смениться посреди сессии); `<synthetic>` — локальные сообщения без расхода, пропускаются.
   Сабагенты (Task/Agent) пишут `<sessionId>/subagents/agent-*.jsonl` рядом с файлом сессии — это расход той же сессии.
 - **Кэш:** разобранные итоги файла кэшируются в main по `(путь, размер, mtime)` — транскрипты большие и дописываются.
+  Файл вырос — дочитывается хвост с прошлого смещения (граница — конец последней полной строки: недописанная строка
+  ждёт следующего запроса), стал меньше — разбирается заново. Битые строки (обрыв записи, чужой формат) пропускаются.
+- **Время сессии для статистики** — `Dispatch.endedAt` (момент `done`), хотя терминал воркера может жить дольше:
+  записи транскрипта после `endedAt` всё равно считаются в токенах (по времени сообщения).
 
 **Codex** id сессии задать нельзя. Сессии — `<CODEX_HOME или ~/.codex>/sessions/YYYY/MM/DD/rollout-*.jsonl`;
 первая запись `session_meta` содержит `payload.cwd` и `payload.timestamp`, модель — `turn_context.payload.model`,
-токены — последнее событие `event_msg` с `payload.type: "token_count"`, поле `info.total_token_usage` (накопительное:
-`input_tokens` включает `cached_input_tokens`, `cacheRead` = cached, `input` = разность, `cacheWrite` = 0,
-`output` = `output_tokens`, reasoning в нём). Привязка — как запасной путь Claude: cwd = worktree задачи и старт
-в окне dispatch; найденный id пишется в `Dispatch.sessionId`, чтобы не искать повторно. Файлы ищутся только
-в папках дат окна dispatch.
+токены — события `event_msg` с `payload.type: "token_count"`, поле `info.total_token_usage` (накопительное:
+`input_tokens` включает `cached_input_tokens`, `cacheRead` = cached, `input` = разность, `cacheWrite` =
+`cache_write_input_tokens` (обычно 0), `output` = `output_tokens`, reasoning в нём). Запись расхода — прирост счётчика
+с прошлого события со временем события (так токены делятся по периоду и дням); счётчик уменьшился — прирост от нуля.
+Привязка — как запасной путь Claude: cwd = worktree задачи и старт в окне dispatch; найденный id пишется в
+`Dispatch.sessionId` (`store.setDispatchSessionId`), чтобы не сверять cwd повторно. Файлы ищутся только в папках дат
+окна dispatch — по **локальной** дате (папка `2026/09/24` у сессии, начатой 23-го в 22:49 UTC), с запасом в день.
 
 **Остальные агенты** (opencode, gemini, cursor, amp, copilot, goose, shell) — данных о токенах не читаем: их сессии
 учитываются в `sessions` и `agentMs`, но не в `sessionsWithUsage` («неизвестно»). Новый источник — функция чтения

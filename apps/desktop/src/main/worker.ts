@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment, type RunTypeInput } from '@orca-board/core'
+import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
@@ -156,6 +157,14 @@ function baseEnv(ctx: WorkerEnvContext): Record<string, string> {
 }
 
 /**
+ * Id сессии агента для статистики (docs/architecture.md → «Статистика»): uuid задаётся агенту при запуске, и
+ * main находит его транскрипт без догадок. Агент, которому id не задать, — `undefined` (codex ищется по cwd).
+ */
+function agentSessionId(spec: AgentSpec): string | undefined {
+  return spec.acceptsSessionId ? randomUUID() : undefined
+}
+
+/**
  * Старт воркера: git worktree на ветке задачи → подготовка → PTY с агентом → dispatch.
  * Worktree создаётся рядом с репозиторием: <repo>/../.orca-worktrees/<taskId>.
  */
@@ -197,7 +206,8 @@ export function startWorker(
   const previousAnswer = snap.dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
   // Ответы на вопросы прошлых запусков: перезапуск после ответа человека не должен спрашивать заново.
   const answers = snap.questions.filter((q) => q.taskId === task.id && q.answeredAt).sort((a, b) => a.createdAt - b.createdAt)
-  const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.worker, ctx.agentRules, role), workerTaskPrompt(task, previousAnswer, answers), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  const sessionId = agentSessionId(spec)
+  const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.worker, ctx.agentRules, role), workerTaskPrompt(task, previousAnswer, answers), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -224,7 +234,7 @@ export function startWorker(
     },
     (id, code) => store.ptyExited(id, code)
   )
-  store.startDispatch(task.id, ptyId, dispatchId)
+  store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, dispatchId, worktree, branch }
 }
 
@@ -322,6 +332,7 @@ export function startCoordinator(
   if (root) pruneAttachments(store, root)
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
+  const sessionId = agentSessionId(spec)
   try {
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
     if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
@@ -330,7 +341,8 @@ export function startCoordinator(
       permissionMode: ctx.permissionMode,
       shell: defaultShell(),
       model: role.model,
-      effort: role.effort
+      effort: role.effort,
+      sessionId
     })
     const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
     ptyId = spawnPty({
@@ -349,7 +361,10 @@ export function startCoordinator(
         BASH_DEFAULT_TIMEOUT_MS: '1800000',
         BASH_MAX_TIMEOUT_MS: '3600000'
       }
-    }, () => escalateAfterCoordinator(store, run.id))
+    }, (id) => {
+      store.coordinatorExited(run.id, id)
+      escalateAfterCoordinator(store, run.id)
+    })
   } catch (e) {
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
@@ -357,7 +372,7 @@ export function startCoordinator(
     if (root) rmSync(join(root, run.id), { recursive: true, force: true })
     throw e
   }
-  store.setRunPty(run.id, ptyId, role.agent)
+  store.setRunPty(run.id, ptyId, role.agent, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, runId: run.id }
 }
 

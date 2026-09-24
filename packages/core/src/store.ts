@@ -1,4 +1,5 @@
 import type {
+  AgentSession,
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
   HumanRequest, RequestOption, RequestResolution, TaskPriority
@@ -28,6 +29,17 @@ export interface StoreSnapshot {
   runs: Run[]
   /** Запросы к человеку. Нет в снапшотах до их появления — тогда при загрузке идёт миграция. */
   requests: HumanRequest[]
+}
+
+/** Снимок запуска воркера для `startDispatch`: поля `Dispatch` для статистики, все необязательные. */
+export type DispatchLaunch = Partial<Pick<Dispatch, 'roleId' | 'agent' | 'model' | 'sessionId'>>
+
+/** Запуск координатора для `setRunPty`: сессия без времени и PTY — их ставит store. */
+export type CoordinatorLaunch = Omit<AgentSession, 'ptyId' | 'startedAt' | 'endedAt'>
+
+/** Объект без полей со значением `undefined`: в сохранённом состоянии пустые поля не пишутся. */
+function definedFields<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
 }
 
 export interface Persistence {
@@ -818,15 +830,28 @@ export class TaskStore {
    * Координатор запущен на прогоне (новом или повторно на существующей глобальной задаче):
    * закрытый прогон переоткрывается, карточка — в колонку kind=in_progress.
    */
-  setRunPty(runId: string, ptyId: string, agent?: AgentKind): Run {
+  setRunPty(runId: string, ptyId: string, agent?: AgentKind, session?: CoordinatorLaunch): Run {
     const run = this.mustRun(runId)
     if (run.closedAt !== undefined || run.runDoneAt !== undefined) this.reopenRun(run)
     run.coordinatorPtyId = ptyId
     run.coordinatorAgent = agent
+    // Каждый запуск — отдельная сессия: время и токены координатора складываются по всем его перезапускам.
+    if (session) (run.coordinatorSessions ??= []).push({ ptyId, startedAt: Date.now(), ...definedFields(session) })
     this.setRunStatus(run, this.columnId('in_progress'))
     run.updatedAt = Date.now()
     this.commit()
     return run
+  }
+
+  /**
+   * PTY координатора закрылся: конец его сессии для статистики. Прогон могли удалить, пока терминал жил, —
+   * тогда нечего отмечать.
+   */
+  coordinatorExited(runId: string, ptyId: string): void {
+    const session = this.runs.get(runId)?.coordinatorSessions?.find((s) => s.ptyId === ptyId && s.endedAt === undefined)
+    if (!session) return
+    session.endedAt = Date.now()
+    this.commit()
   }
 
   // ---------- global tasks ----------
@@ -1139,9 +1164,13 @@ export class TaskStore {
     return this.dispatches.get(id)
   }
 
-  startDispatch(taskId: string, ptyId: string, dispatchId = newId('disp')): Dispatch {
+  /**
+   * `launch` — снимок роли, агента, модели и id сессии агента на момент запуска (статистика: разбивки и поиск
+   * транскрипта, docs/architecture.md → «Статистика»); без него dispatch статистика считает по задаче.
+   */
+  startDispatch(taskId: string, ptyId: string, dispatchId = newId('disp'), launch: DispatchLaunch = {}): Dispatch {
     const task = this.mustTask(taskId)
-    const dispatch: Dispatch = { id: dispatchId, taskId, ptyId, startedAt: Date.now() }
+    const dispatch: Dispatch = { id: dispatchId, taskId, ptyId, startedAt: Date.now(), ...definedFields(launch) }
     this.dispatches.set(dispatch.id, dispatch)
     // Новый запуск начинает с чистого листа: запросы прошлых запусков (сданный ответ, эскалация, вопрос
     // умершего воркера) больше не ждут человека. Ответы на прошлые вопросы — в промпте запуска.
@@ -1215,6 +1244,17 @@ export class TaskStore {
       changed = true
     }
     if (changed) this.commit()
+  }
+
+  /**
+   * Id сессии агента, найденный статистикой после запуска (codex не даёт задать его заранее): следующий расчёт
+   * читает транскрипт сразу, без поиска по cwd и времени. Уже заданный id не меняется.
+   */
+  setDispatchSessionId(dispatchId: string, sessionId: string): void {
+    const d = this.dispatches.get(dispatchId)
+    if (!d || d.sessionId) return
+    d.sessionId = sessionId
+    this.commit()
   }
 
   /**

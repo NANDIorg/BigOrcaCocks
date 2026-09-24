@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, emptyProjectStats, STATS_RANGES, type StatsRange, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
@@ -16,6 +16,7 @@ import { ProjectManager, runnableWorkflow } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
+import { projectStats } from './stats'
 import type { AppSettingsPatch, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
@@ -165,6 +166,29 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
 /** Агенты с учётом настроек проекта; refresh — пересканировать PATH. */
 function projectAgents(projectId: string, refresh = false): AgentInfo[] {
   return agentInfos(projects.get(projectId)?.enabledAgents, refresh)
+}
+
+/**
+ * Статистика проекта `projectId` за период. Названия ролей — из типов всех его глобальных задач и типа по
+ * умолчанию: роль удалённого типа остаётся в снимке прогона.
+ */
+function collectProjectStats(projectId: string, range: StatsRange): Promise<ProjectStats> {
+  const p = resolveProject(projectId)
+  const titles = new Map<string, string>()
+  const addRoles = (runId?: string): void => {
+    for (const r of projects.roles(p.id, runId)) if (!titles.has(r.id)) titles.set(r.id, r.title)
+  }
+  addRoles()
+  for (const run of p.store.snapshot().runs) addRoles(run.id)
+  return projectStats({
+    projectId: p.id,
+    range,
+    store: p.store,
+    repoRoot: p.root,
+    columns: projects.columns(p.id),
+    roleTitle: (id) => titles.get(id),
+    isAlive
+  })
 }
 
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
@@ -598,10 +622,10 @@ function registerIpc(): void {
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
-  // Заглушка контракта: сбор токенов и времени (docs/architecture.md, «Статистика») — отдельная задача.
+  // Сбор по запросу: снапшот store + транскрипты агентов (docs/architecture.md, «Статистика»).
   handle('stats:project', (_e, projectId: string, range: StatsRange) => {
     if (!STATS_RANGES.includes(range)) throw new Error(`статистика: неизвестный период «${String(range)}», ожидается ${STATS_RANGES.join(' | ')}`)
-    return emptyProjectStats(resolveProject(projectId).id, range, Date.now())
+    return collectProjectStats(projectId, range)
   })
   handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
