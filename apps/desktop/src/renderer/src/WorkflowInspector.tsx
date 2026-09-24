@@ -5,6 +5,7 @@ import {
 } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import { WF_OUTCOME_LABELS, issueTargets, removeSelected, type WfSelection } from './workflowEdit'
+import { WF_NODE_HELP } from './workflowHelp'
 import {
   WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, conditionOfKind, hasColumn, nodeOptionLabel, patchNode, portTarget,
   setPortTarget, stageRoles, targetOptions, type WfNodePatch
@@ -40,6 +41,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
     return (
       <aside className="wf-insp" aria-label={`Нода «${wfNodeTitle(node)}»`}>
         <NodeHead node={node} />
+        <NodeHelp type={node.type} />
         <NodeForm node={node} workflow={workflow} roles={roles} columns={columns} onChange={onChange} />
         {WF_PORTS[node.type].length > 0 && (
           <fieldset className="wf-ports">
@@ -108,7 +110,54 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
           )
         })}
       </ul>
+      <details className="wf-help">
+        <summary>Типы нод: за что отвечает каждая</summary>
+        <dl className="wf-legend">
+          {WF_TYPE_ORDER.map((t) => {
+            const NodeIcon = WfNodeIcon[t]
+            return (
+              <div key={t}>
+                <dt><span className={`wf-insp-icon wf-node--${t}`}><NodeIcon /></span>{WF_TYPE_TITLES[t]}</dt>
+                <dd>{WF_NODE_HELP[t].summary}<br /><i>Кто: {WF_NODE_HELP[t].actor}</i></dd>
+              </div>
+            )
+          })}
+        </dl>
+      </details>
     </aside>
+  )
+}
+
+/**
+ * Назначение выбранной ноды: одна фраза видна всегда, остальное — в раскрывашке, чтобы не вытеснять форму.
+ * `<details>` раскрывается с клавиатуры и не зависит от наведения мыши.
+ */
+function NodeHelp({ type }: { type: WfNode['type'] }): React.JSX.Element {
+  const help = WF_NODE_HELP[type]
+  const ports = WF_PORTS[type]
+  return (
+    <div className="wf-help">
+      <p className="wf-help-summary">{help.summary}</p>
+      <details>
+        <summary>Как работает этап</summary>
+        <dl className="wf-help-body">
+          <dt>Кто выполняет</dt>
+          <dd>{help.actor}</dd>
+          <dt>Что происходит</dt>
+          <dd>{help.details}</dd>
+          <dt>Исходы</dt>
+          <dd>
+            {ports.length === 0 ? 'Нет: этап последний.' : (
+              <ul>
+                {ports.map((o) => <li key={o}><b className={`wf-help-port wf-port--${o}`}>{WF_OUTCOME_LABELS[o]}</b> — {help.outcomes[o]}</li>)}
+              </ul>
+            )}
+          </dd>
+          <dt>Настройки</dt>
+          <dd><ul>{help.fields.map((f) => <li key={f}>{f}</li>)}</ul></dd>
+        </dl>
+      </details>
+    </div>
   )
 }
 

@@ -11,6 +11,7 @@ import {
   type WfSelection
 } from './workflowEdit'
 import { WF_TYPE_TITLES } from './workflowForm'
+import { WF_NODE_HELP } from './workflowHelp'
 
 interface Props {
   workflow: Workflow
@@ -275,7 +276,15 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
         {WF_ADDABLE_TYPES.map((type) => {
           const NodeIcon = WfNodeIcon[type]
           return (
-            <button key={type} type="button" className="icon-btn" title={`Добавить: ${WF_TYPE_TITLES[type]}`} onClick={() => add(type)}>
+            <button
+              key={type}
+              type="button"
+              className="icon-btn"
+              title={`Добавить: ${WF_TYPE_TITLES[type]}. ${WF_NODE_HELP[type].summary}`}
+              aria-label={`Добавить: ${WF_TYPE_TITLES[type]}`}
+              aria-description={WF_NODE_HELP[type].summary}
+              onClick={() => add(type)}
+            >
               <NodeIcon />
             </button>
           )
