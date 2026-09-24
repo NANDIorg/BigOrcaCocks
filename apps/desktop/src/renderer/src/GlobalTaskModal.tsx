@@ -13,6 +13,7 @@ import { PriorityOptions } from './Priority'
 import { STALE_PRIORITY_MESSAGE, taskPriorityOf } from './taskPriority'
 import { rolesWithDisabledAgent } from './taskTypes'
 import { typeChangeOptions } from './globalTypeChange'
+import { StatusHistoryBlock } from './StatusHistoryBlock'
 
 interface Props {
   /** Правка существующей; без неё — создание новой. */
@@ -124,6 +125,12 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
           <p className="muted modal-sub task-type-line">Тип задачи: <span className="task-type-badge">{typeTitle}</span></p>
         )}
         {global && <GlobalReturns global={global} />}
+        {global && !global.inbox && (
+          <details className="g-modal-history">
+            <summary>История статуса{global.statusHistory ? ` (${global.statusHistory.length})` : ''}</summary>
+            <StatusHistoryBlock history={global.statusHistory} columns={columns} status={global.status} />
+          </details>
+        )}
         {actions && (actions.accept || actions.returnToWork) && (
           <div className="g-modal-review">
             <span className="muted">На проверке</span>

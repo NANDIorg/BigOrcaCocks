@@ -16,6 +16,7 @@ import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
 import { STALE_PRIORITY_MESSAGE, priorityEditable, taskPriorityOf } from './taskPriority'
 import { PriorityOptions } from './Priority'
+import { StatusHistoryBlock } from './StatusHistoryBlock'
 
 interface Props {
   /** Актуальная задача из снимка: App находит её по id при каждом обновлении. */
@@ -416,6 +417,11 @@ export function TaskModal(props: Props): React.JSX.Element {
               </div>
             </section>
           )}
+
+          <section className="task-modal-section">
+            <h4>История статуса</h4>
+            <StatusHistoryBlock history={task.statusHistory} columns={columns} status={task.status} />
+          </section>
 
           <section className="task-modal-section">
             <h4>История запусков</h4>

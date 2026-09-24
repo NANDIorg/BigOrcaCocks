@@ -504,6 +504,19 @@ button:disabled { opacity: .45; cursor: default; }
 .q-answer { font-size: 13px; white-space: pre-wrap; }
 .dispatch { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.03); border: 1px solid var(--line); }
 .dispatch-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.status-history { display: flex; flex-direction: column; gap: 4px; }
+.status-history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; }
+.status-history-row {
+  display: grid; grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  font-size: 12px; padding: 3px 0;
+}
+.status-history-row.current .status-history-dur { color: var(--text); font-weight: 500; }
+.status-history-at { font-size: 11px; }
+.status-history-dur { color: var(--muted); white-space: nowrap; }
+.status-history-toggle { align-self: flex-start; padding: 0; font-size: 12px; }
+.status-history-empty { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.g-modal-history > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.g-modal-history > .status-history, .g-modal-history > .status-history-empty { margin-top: 8px; }
 .dispatch-summary { max-height: 160px; font-size: 12px; }
 .dispatch-files { margin: 0; padding-left: 18px; font-size: 12px; font-family: ui-monospace, Menlo, monospace; color: var(--muted); }
 .chip.ok { border-color: var(--col-done); color: var(--col-done); }
