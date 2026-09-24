@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
@@ -17,7 +17,7 @@ import { ProjectManager, runnableWorkflow } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
-import { projectStats } from './stats'
+import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import type { AppSettingsPatch, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
@@ -174,7 +174,7 @@ function projectAgents(projectId: string, refresh = false): AgentInfo[] {
  * Статистика проекта `projectId` за период. Названия ролей — из типов всех его глобальных задач и типа по
  * умолчанию: роль удалённого типа остаётся в снимке прогона.
  */
-function collectProjectStats(projectId: string, range: StatsRange): Promise<ProjectStats> {
+function statsDeps(projectId: string): StatsDeps & { projectId: string } {
   const p = resolveProject(projectId)
   const titles = new Map<string, string>()
   const addRoles = (runId?: string): void => {
@@ -182,15 +182,29 @@ function collectProjectStats(projectId: string, range: StatsRange): Promise<Proj
   }
   addRoles()
   for (const run of p.store.snapshot().runs) addRoles(run.id)
-  return projectStats({
+  return {
     projectId: p.id,
-    range,
     store: p.store,
     repoRoot: p.root,
     columns: projects.columns(p.id),
     roleTitle: (id) => titles.get(id),
     isAlive
-  })
+  }
+}
+
+function collectProjectStats(projectId: string, range: StatsRange): Promise<ProjectStats> {
+  return projectStats({ ...statsDeps(projectId), range })
+}
+
+function collectTaskStats(projectId: string, taskId: string): Promise<TaskStats> {
+  const deps = statsDeps(projectId)
+  // Граф прогона задачи — только для названий этапов; без прогона («Входящие») берётся граф типа по умолчанию.
+  const workflow = runnableWorkflow(projects.resolveRun(deps.projectId, deps.store.getTask(taskId)?.runId).workflow)
+  return taskStats({ ...deps, taskId, ...(workflow ? { workflow } : {}) })
+}
+
+function collectGlobalTaskStats(projectId: string, runId: string): Promise<GlobalTaskStats> {
+  return globalTaskStats({ ...statsDeps(projectId), runId })
 }
 
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
@@ -638,6 +652,8 @@ function registerIpc(): void {
     if (!STATS_RANGES.includes(range)) throw new Error(`статистика: неизвестный период «${String(range)}», ожидается ${STATS_RANGES.join(' | ')}`)
     return collectProjectStats(projectId, range)
   })
+  handle('stats:task', (_e, projectId: string, taskId: string) => collectTaskStats(projectId, taskId))
+  handle('stats:global', (_e, projectId: string, runId: string) => collectGlobalTaskStats(projectId, runId))
   handle('review:info', (_e, taskId: string) => {
     const p = resolveProject()
     return getReview(p.store, p.root, taskId)
