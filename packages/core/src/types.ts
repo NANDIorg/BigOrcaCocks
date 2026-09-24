@@ -285,6 +285,25 @@ export interface Run {
    * миграцию (renderer мог получить его от старого main).
    */
   statusHistory?: StatusChange[]
+  /**
+   * Запуски координатора на этой глобальной задаче, от старых к новым (статистика: время и токены координатора).
+   * `coordinatorPtyId` — только последний, а глобальную задачу перезапускают («Вернуть в работу», повторный старт).
+   * Нет — прогон от кода до статистики: время и токены координатора неизвестны.
+   */
+  coordinatorSessions?: AgentSession[]
+}
+
+/** Запуск агента вне dispatch (координатор): для статистики времени и токенов. */
+export interface AgentSession {
+  ptyId: string
+  roleId: string
+  agent: AgentKind
+  model?: string
+  /** Как `Dispatch.sessionId`. */
+  sessionId?: string
+  startedAt: number
+  /** Выход PTY; нет — агент ещё работает (или приложение упало до выхода — тогда конец неизвестен). */
+  endedAt?: number
 }
 
 // ---------- задачи ----------
@@ -397,6 +416,20 @@ export interface Dispatch {
   answer?: string
   /** Уже отправили эскалацию «нет вывода». */
   stuckNotified?: boolean
+  /**
+   * Снимок роли, агента и модели на момент запуска (статистика: разбивки по роли и модели). Роль задачи и её
+   * модель могут перенастроить позже, а прогон агента уже потратил токены на ту модель. Нет — dispatch от кода
+   * до статистики: берутся `Task.roleId` / `Task.agent`, модель — из транскрипта или неизвестна.
+   */
+  roleId?: string
+  agent?: AgentKind
+  model?: string
+  /**
+   * Id сессии агента: по нему main находит транскрипт с токенами (docs/architecture.md, «Статистика»).
+   * Claude Code — uuid, который main генерирует и передаёт в `--session-id`; у агентов, которым id задать нельзя,
+   * — найденный по cwd и времени (codex) или нет.
+   */
+  sessionId?: string
 }
 
 /** Вариант ответа на вопрос: кнопка в UI. `id` — что уходит в `resolution.optionId`. */
@@ -551,4 +584,132 @@ export interface OrcaEvent {
   payload: Record<string, unknown>
   createdAt: number
   consumedBy?: string
+}
+
+// ---------- статистика ----------
+
+/**
+ * Период статистики проекта: всё время или последние 7 / 30 суток от момента запроса (скользящее окно, а не
+ * календарные недели). Границу считает `statsRangeStart` (stats.ts).
+ */
+export type StatsRange = 'all' | '7d' | '30d'
+
+export const STATS_RANGES: StatsRange[] = ['all', '7d', '30d']
+
+/**
+ * Токены по видам — как их считает API Anthropic: `input` — только некэшированный вход, кэш отдельно.
+ * У codex `input_tokens` включает кэш, при чтении из него вычитается `cached_input_tokens`. Рассуждения
+ * (reasoning) входят в `output`: отдельно их даёт не каждый агент.
+ */
+export interface TokenUsage {
+  input: number
+  output: number
+  /** Чтение из кэша промпта (`cache_read_input_tokens`, у codex — `cached_input_tokens`). */
+  cacheRead: number
+  /** Запись в кэш промпта (`cache_creation_input_tokens`); у codex — 0. */
+  cacheWrite: number
+}
+
+/**
+ * Цена модели, $ за миллион токенов. Таблица цен — одна, `MODEL_PRICES` в `packages/core/src/pricing.ts`
+ * (docs/architecture.md, «Статистика → Стоимость»).
+ */
+export interface ModelPrice {
+  /** Префиксы id модели из транскрипта (`claude-opus-5` покрывает `claude-opus-5-20260101`); самый длинный выигрывает. */
+  match: string[]
+  input: number
+  output: number
+  cacheRead: number
+  /** Запись в кэш с TTL 5 минут. */
+  cacheWrite5m: number
+  /** Запись в кэш с TTL 1 час; транскрипт Claude Code делит запись по TTL (`usage.cache_creation`). */
+  cacheWrite1h: number
+}
+
+/**
+ * Расход за срез статистики (весь проект, роль, модель, задача, день). «Неизвестно» и «ноль» различаются:
+ * `tokens` нет, если ни для одной сессии среза не нашлось данных (агент без транскриптов, транскрипт удалён,
+ * dispatch от кода до статистики); тогда UI пишет «нет данных», а не 0.
+ */
+export interface StatsUsage {
+  tokens?: TokenUsage
+  /**
+   * Стоимость токенов моделей из `MODEL_PRICES`, $. Нет — токенов нет или ни одна их модель не известна таблице.
+   * Токены неизвестных моделей в неё не входят — см. `unpricedTokens`.
+   */
+  costUsd?: number
+  /** Токены (все виды) моделей, которых нет в таблице цен: стоимость по ним неизвестна. */
+  unpricedTokens: number
+  /** Id таких моделей — чтобы UI подсказал, что дописать в таблицу. */
+  unpricedModels: string[]
+  /** Сессии агентов в срезе (dispatch + запуски координатора). */
+  sessions: number
+  /** Из них — с найденными данными о токенах. `sessions - sessionsWithUsage` — «неизвестно». */
+  sessionsWithUsage: number
+  /** Время работы агентов: сумма длительностей сессий, мс (идущая — до момента запроса). */
+  agentMs: number
+}
+
+/** Строка разбивки: роль, модель, агент, глобальная задача или задача. */
+export interface StatsRow extends StatsUsage {
+  /** Id роли / модели / агента / глобальной задачи / задачи; `unknown` — модель неизвестна. */
+  key: string
+  /** Подпись для UI: название роли, задачи; для модели и агента — их id и название агента. */
+  title: string
+}
+
+/** День в разбивке по дням (локальная дата main). Дни без активности в массив не попадают. */
+export interface StatsDay extends StatsUsage {
+  /** `YYYY-MM-DD`. */
+  date: string
+  /** Задач, вошедших в kind=done в этот день. */
+  tasksDone: number
+}
+
+/** Счётчики задач или глобальных задач. */
+export interface StatsCounts {
+  /** Всего сейчас на доске (без учёта периода). */
+  total: number
+  /** Сейчас по колонкам: id колонки → число. */
+  byStatus: Record<string, number>
+  /** Созданы в периоде. */
+  created: number
+  /** Вошли в kind=done в периоде (по `StatusChange`; у записей без истории — `doneAt` / `closedAt`). */
+  done: number
+}
+
+/**
+ * Статистика проекта (`stats:project`). Период задаёт `range`: токены — по времени сообщений в транскрипте,
+ * сессии и время агентов — по пересечению сессии с периодом, счётчики `created` / `done` — по моменту события.
+ * Пустой проект или стаб main — `emptyProjectStats` (stats.ts).
+ */
+export interface ProjectStats {
+  projectId: string
+  range: StatsRange
+  /** Начало периода, epoch ms; нет — всё время. */
+  from?: number
+  /** Момент расчёта: конец периода и «сейчас» для идущих сессий. */
+  generatedAt: number
+  /** Итог по проекту за период. */
+  totals: StatsUsage
+  tasks: StatsCounts
+  globalTasks: StatsCounts
+  /** Прогоны агентов на задачах (`Dispatch`) за период: по исходу и ещё идущие. */
+  dispatches: { total: number; done: number; failed: number; unknown: number; running: number }
+  /** Запуски координатора (`Run.coordinatorSessions`) за период. */
+  coordinatorLaunches: number
+  /**
+   * Время задач, вошедших в done в периоде. `avgActiveMs` — среднее `Task.activeMs` (время в kind=in_progress);
+   * `avgLeadMs` — среднее от первого входа в kind=in_progress до входа в done по истории статусов (записи
+   * миграции `migrated` не считаются). Нет выборки — поля нет; `samples` — сколько задач вошло в среднее.
+   */
+  taskTime: { avgActiveMs?: number; avgLeadMs?: number; samples: number }
+  /** Разбивки; строки отсортированы по стоимости, затем по токенам, затем по времени агентов — по убыванию. */
+  byRole: StatsRow[]
+  byModel: StatsRow[]
+  byAgent: StatsRow[]
+  byGlobalTask: StatsRow[]
+  byTask: StatsRow[]
+  /** По дням, от старых к новым. */
+  byDay: StatsDay[]
 }

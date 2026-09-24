@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -408,6 +408,14 @@ export interface OrcaApi {
     list(): Promise<RuleFile[]>
     /** Записать файл (создать, если нет) атомарно; имя не из белого списка — ошибка. */
     save(name: RuleFileName, text: string): Promise<RuleFile>
+  }
+  /** Статистика проекта (docs/architecture.md, «Статистика»): токены, стоимость, задачи, время агентов. */
+  stats: {
+    /**
+     * Статистика проекта `projectId` (не обязательно активного) за период. Считается по запросу: снапшот store +
+     * транскрипты агентов на диске. Неизвестный проект — ошибка. Токены, которых не нашли, — «неизвестно», не 0.
+     */
+    project(projectId: string, range: StatsRange): Promise<ProjectStats>
   }
   review: {
     info(taskId: string): Promise<ReviewInfo>
