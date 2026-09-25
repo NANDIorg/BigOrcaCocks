@@ -1521,7 +1521,7 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 Решение (вариант B, «гибрид»): Windows NSIS — electron-updater; macOS (ad-hoc подпись, Squirrel.Mac не работает) — свой установщик:
 скачать zip из GitHub Releases (репозиторий NANDIorg/BigOrcaCocks) по `latest-mac.yml`, проверить sha512 и codesign, после выхода
 подменить `.app` detached-скриптом и перезапустить; portable Windows — только «скачать новый exe». Каналов (бета) нет; в dev
-(`!app.isPackaged`) обновление выключено. **Сейчас в коде — только контракт и заглушка**: `Updater` держит состояние, методы ничего не делают.
+(`!app.isPackaged`) обновление выключено. **Общая часть (`Updater`) пока заглушка**: держит состояние, методы ничего не делают; macOS-бэкенд написан отдельно (см. ниже) и подключается в ветке `darwin`.
 
 **Настройки** (`AppSettings.updates`, `UpdateSettings`; дефолты — `DEFAULT_UPDATE_SETTINGS`): `autoCheck` (true) — проверять в фоне,
 `autoDownload` (true) — скачивать сразу, `installWhenIdle` (false) — ставить, когда у агентов не осталось живых сессий.
@@ -1548,8 +1548,40 @@ unsupported — терминальное состояние: check/download/inst
 **Платформенный бэкенд** — интерфейс `PlatformUpdater` (`updater.ts`): `check(): Promise<UpdateInfo | null>` (`UpdateInfo {version,
 releaseNotes, releaseUrl}`), `download(onProgress): Promise<void>` (скачать + проверить целостность), `install(): Promise<void>`
 (подготовить замену и выйти). Бэкенд знает только «как» на своей ОС и бросает ошибки; расписание, состояния, отложенную установку и
-настройки ведёт `Updater`. Windows- и macOS-бэкенды — отдельные задачи. `Updater` не импортирует electron (версия и `isPackaged`
+настройки ведёт `Updater`. Windows- и macOS-бэкенды — отдельные модули (`winUpdater.ts`, `macUpdater.ts`). `Updater` не импортирует electron (версия и `isPackaged`
 приходят в `createUpdater`), поэтому тестируется в `node:test` (`updater.test.ts`).
+
+### macOS-бэкенд (`src/main/macUpdater.ts`, чистая логика — `macUpdateLogic.ts`)
+
+Реализует `PlatformUpdater` без Squirrel.Mac. `macUpdater.ts` electron не импортирует: окружение (`MacUpdaterEnv`: версия, `process.arch`,
+путь к `.app`, userData, `fetch`, `run` = `execFile`, `spawnDetached`) приходит снаружи, `createMacUpdater({ app, net })` собирает его из
+electron (`net.fetch` учитывает системный прокси). `macUpdateSupport({ isPackaged })` — `detectMacSupport` на настоящей ФС. Подключение к
+`Updater` — ветка `darwin` в `createUpdater` (поддержка → `UpdateSupport`, бэкенд → `createMacUpdater`); после старта `getJustUpdated()`
+берёт версию из `MacUpdater.consumeJustUpdated()`.
+
+- **check**: `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml` → `parseUpdateManifest` (свой разбор плоского
+  yml, без зависимостей) → `pickMacZip` (arm64 — файл с «arm64», x64 — zip без «arm64»; dmg игнорируется) → `isNewerVersion` (semver) против
+  `app.getVersion()`. Заметки и ссылка — публичный API `releases/tags/v<версия>`; его ошибка не валит проверку (пустые заметки, ссылка
+  на `releases/tag/v<версия>`). Сетевые ошибки — исключение по-русски, `Updater` переводит в `error`; приложение не падает.
+- **download** → `userData/updates/<версия>-<arch>/`: скачивание в `update.zip.part` (таймаут 60 с без данных, прогресс — целые %),
+  sha512 (base64) и размер из yml → `ditto -x -k` → `codesign --verify --deep --strict` → `CFBundleIdentifier` равен текущему, а
+  `CFBundleShortVersionString` — версии релиза (`plutil -extract`). Любой сбой стирает каталог загрузки. Проверки сделаны здесь, а не в `install()`:
+  человек видит ошибку сразу, а не в момент выхода из приложения. Имя файла из yml — только простое (`assetUrl`: без `/`, `..`), адрес — всегда
+  `releases/latest/download/`. sha512 из того же релиза защищает от битой загрузки, но не от подмены самого релиза: доверие — к аккаунту GitHub.
+- **install**: `validateInstallPaths` (абсолютные пути, `.app`, ничего внутри заменяемого приложения) → пишет `updates/install.sh` (текст —
+  `INSTALL_SCRIPT`) и маркер `updates/pending.json` → запускает `/bin/sh install.sh PID TARGET NEW STAGE PREVIOUS LOG` detached. Внешние
+  команды — только `execFile`/`spawn` с массивом аргументов, пути в скрипт идут позиционными аргументами, а не текстом. Сам выход из приложения
+  делает `Updater` (обычное подтверждение). Скрипт ждёт выхода PID (не дольше 10 минут — если выход отменили, молча завершается), переносит
+  старый `.app` в `updates/previous/`, копирует новый `ditto`, снимает `com.apple.quarantine`, чистит каталог загрузки, `open`. Любая ошибка —
+  откат: старый `.app` возвращается на место и запускается. Повторный запуск скрипта безвреден (нового `.app` уже нет). Лог — `updates/install.log`;
+  `previous/` хранит одну прошлую версию для ручного отката.
+- **Предусловия** (`detectMacSupport`, определяются при старте): `!isPackaged` или запуск не из бандла — `dev`; путь в `/Volumes/` (смонтированный
+  dmg) — `not-in-applications`; путь с `/AppTranslocation/` — `translocated`; нет права записи в бандл или его папку — `no-write-access`. Во
+  всех трёх случаях `mode: 'manual-download'`, `status: 'unsupported'`; текст для человека — «переместите приложение в „Программы“» (UI берёт
+  его по `unsupportedReason`, для логов main — `macUnsupportedMessage`).
+- **Грабли.** Ad-hoc подпись новой сборки другая — macOS может заново спросить разрешения (доступ к папкам и т. п.), это ожидаемо.
+  Настоящую подмену на установленном приложении в тестах не проверить: `macUpdater.test.ts` гоняет настоящий `install.sh` (успех, откат при
+  падении `ditto`, повторный запуск, пути с пробелами и кавычками) на подставных каталогах, `open` и `ditto` подменяются через PATH.
 
 ## Уведомления
 
@@ -1640,6 +1672,7 @@ skills, тексты main (уведомления, диалоги, ошибки 
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
+| Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | electron-updater (NSIS); portable — только ссылка на релиз | `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`; раздел «Обновление» |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
 `node`/Node из Electron прямо из `Resources/cli` без сборки и без `node_modules`, поэтому импортировать
