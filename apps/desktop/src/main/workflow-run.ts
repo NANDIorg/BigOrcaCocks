@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
-  globalTaskTitle, renderGitTemplate, runGateTaskSpec, runGateTaskTitle, wfGitVars, wfNodeTitle, withStatusSource,
-  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunBranchSettings, type RunStageOptions, type Task,
+  globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runGateTaskSpec, runGateTaskTitle, wfGitVars, wfNodeTitle, withStatusSource,
+  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunBranchSettings, type RunStageOptions, type RunTaskContext, type Task,
   type TaskStore, type WfAction, type WfNode, type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { gitCommit, gitPush, isBranchNameAcceptedByGit, removeWorktree } from './git'
@@ -112,22 +112,37 @@ export function startRunWorkflow(deps: RunWorkflowDeps, runId: string): void {
   })
 }
 
+/**
+ * Эффекты новой ноды после перехода, сделанного store. Ошибка эффекта не откатывает переход (позиция уже новая), а
+ * становится `workflow_blocked`: вызывающий (сокет, IPC) не должен видеть провал перехода, которого не было.
+ */
+function runEffects(deps: RunWorkflowDeps, runId: string, action: WfAction): void {
+  try {
+    executeSteps(deps, runId, action)
+  } catch (e) {
+    deps.store.blockRunStage(runId, `ошибка исполнителя воркфлоу: ${message(e)}`)
+  }
+}
+
 /** Исход текущей ноды прогона → переход по графу и эффекты новых нод. */
 export function advanceRun(deps: RunWorkflowDeps, runId: string, outcome: WfOutcome, extra: Pick<RunStageOptions, 'feedback' | 'decision' | 'answers'> = {}): void {
   withStatusSource('workflow', () => {
     const { action } = deps.store.advanceRunStage(runId, outcome, stageOpts(deps, runId, extra))
-    executeSteps(deps, runId, action)
+    runEffects(deps, runId, action)
   })
 }
 
 /**
- * `stage finish` координатора: этап «Работа» закрыт — переход по `next` и эффекты следующей ноды (проверка, человек,
- * git…). Ошибки store (не все подзадачи закрыты, не «Работа») — с подсказкой, как есть.
+ * `stage finish` координатора (сокет `stage.finish`): этап «Работа» закрыт — переход по `next` и эффекты следующей ноды
+ * (проверка, человек, git, мерж, конец). Единственный путь закрытия этапа: сам store эффектов не делает, поэтому сокет
+ * не вызывает `store.finishStage` напрямую. Ошибки store (не все подзадачи закрыты, не «Работа») — с подсказкой, как есть.
+ * Возвращает то, что сделал store: обновлённый прогон и действие новой ноды.
  */
-export function finishRunStage(deps: RunWorkflowDeps, runId: string, summary?: string): void {
-  withStatusSource('workflow', () => {
-    const { action } = deps.store.finishStage(runId, { ...stageOpts(deps, runId), ...(summary?.trim() ? { summary } : {}) })
-    executeSteps(deps, runId, action)
+export function finishRunStage(deps: RunWorkflowDeps, runId: string, summary?: string): { run: Run; action: WfAction } {
+  return withStatusSource('workflow', () => {
+    const result = deps.store.finishStage(runId, { ...stageOpts(deps, runId), ...(summary?.trim() ? { summary } : {}) })
+    runEffects(deps, runId, result.action)
+    return result
   })
 }
 
@@ -270,6 +285,22 @@ function needsStart(deps: RunWorkflowDeps, task: Task): boolean {
   return kind !== 'in_progress' && kind !== 'done' && kind !== 'review' && kind !== 'needs_input'
 }
 
+/** Что известно приложению о прогоне для спеки проверки и вопроса (`RunTaskContext`): цель, ветка с базой и сводки этапов. */
+function taskContext(deps: RunWorkflowDeps, run: Run, instructions: string | undefined): RunTaskContext {
+  const nodes = graphOf(deps, run.id).nodes
+  const stages = (run.stageHistory ?? []).flatMap((h) => {
+    const node = nodes.find((n) => n.id === h.nodeId)
+    return node && h.summary?.trim() ? [{ title: wfNodeTitle(node), summary: h.summary }] : []
+  })
+  return {
+    title: globalTaskTitle(run),
+    goal: run.objective,
+    ...(run.git ? { branch: run.git.branch, base: run.git.base } : {}),
+    ...(stages.length > 0 ? { stages } : {}),
+    ...(instructions?.trim() ? { instructions } : {})
+  }
+}
+
 /**
  * Нода `ask`: одна задача роли ноды с `stageOf` — её вопросы идут человеку (`worker.ask` по типу ноды), координатор не
  * участвует. Повтор эффекта задачу этого захода не дублирует.
@@ -285,8 +316,8 @@ function createAsk(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { type
   let task = store.listTasks().find((t) => t.runId === run.id && !t.gateFor && t.stageOf?.nodeId === node.id && t.stageOf.visit === visit)
   if (task && !needsStart(deps, task)) return
   task ??= store.createTask({
-    title: `${wfNodeTitle(node)}: ${globalTaskTitle(run)}`,
-    spec: run.objective,
+    title: runAskTaskTitle(wfNodeTitle(node), globalTaskTitle(run)),
+    spec: runAskTaskSpec(taskContext(deps, run, node.instructions)),
     roleId: role.id,
     agent: role.agent,
     runId: run.id,
@@ -296,9 +327,8 @@ function createAsk(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { type
 }
 
 /**
- * Нода `gate`: задача-проверка роли ноды на ветку прогона целиком против `RunGit.base`. Спека называет её id (решение —
- * `review accept|reject --task <id проверки>`), поэтому создаётся с временной, а потом дополняется. Повтор эффекта проверку
- * этого захода не дублирует.
+ * Нода `gate`: задача-проверка роли ноды на ветку прогона целиком против `RunGit.base`. Решение проверяющий выносит
+ * `review accept|reject --task "$ORCA_TASK_ID"` (спека `runGateTaskSpec`). Повтор эффекта проверку этого захода не дублирует.
  */
 function createGate(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { type: 'gate' }>, roleId: string): void {
   const { store } = deps
@@ -314,28 +344,14 @@ function createGate(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { typ
   const { at } = currentEntry(run)
   let gate = store.listTasks().find((t) => t.gateFor?.runId === run.id && t.gateFor.nodeId === node.id && t.createdAt >= at)
   if (gate && !needsStart(deps, gate)) return
-  if (!gate) {
-    const title = globalTaskTitle(run)
-    const created = store.createTask({
-      title: runGateTaskTitle(title, node),
-      spec: node.instructions ?? '',
-      roleId: role.id,
-      agent: role.agent,
-      runId: run.id,
-      gateFor: { runId: run.id, nodeId: node.id }
-    })
-    gate = store.updateTask(created.id, {
-      spec: runGateTaskSpec({
-        gateId: created.id,
-        title,
-        objective: run.objective,
-        branch: run.git.branch,
-        base: run.git.base,
-        summaries: (run.stageHistory ?? []).flatMap((h) => (h.summary ? [h.summary] : [])),
-        returns: (run.returns ?? []).map((r) => r.text)
-      }, node)
-    })
-  }
+  gate ??= store.createTask({
+    title: runGateTaskTitle(wfNodeTitle(node), globalTaskTitle(run)),
+    spec: runGateTaskSpec(taskContext(deps, run, node.instructions)),
+    roleId: role.id,
+    agent: role.agent,
+    runId: run.id,
+    gateFor: { runId: run.id, nodeId: node.id }
+  })
   startStageWorker(deps, run, gate, 'проверка')
 }
 
@@ -508,9 +524,11 @@ function gatePending(deps: RunWorkflowDeps, gate: Task): boolean {
 }
 
 /**
- * Решение по проверке ветки прогона — `review accept|reject --task <id проверки>` (агент-проверяющий или человек в
- * приложении): исход `accept` / `reject` ноды `gate`. Замечания `reject` уходят координатору в `stage_started`
- * (`Run.returns`). Проверка уже не актуальна (граф ушёл дальше) — ошибка.
+ * Решение по проверке ветки прогона — `review accept|reject --task <id проверки>` (агент-проверяющий по сокету или человек
+ * в приложении, IPC `review:*`): исход `accept` / `reject` ноды `gate` и эффекты следующей ноды. Единственный путь такого
+ * решения — `reviewDecision` в index.ts, сокет и IPC ходят через него. Замечания `reject` уходят координатору в
+ * `stage_started` (`Run.returns`). Проверка уже не актуальна (граф ушёл дальше) — ошибка. Задача-проверка закрывается здесь,
+ * если её воркер уже сдал `done` (решение человека в приложении); у живого проверяющего — по его `done` (`settleGate`).
  */
 export function runGateDecision(deps: RunWorkflowDeps, gateTaskId: string, outcome: 'accept' | 'reject', text?: string): void {
   const gate = mustTask(deps, gateTaskId)
@@ -519,10 +537,12 @@ export function runGateDecision(deps: RunWorkflowDeps, gateTaskId: string, outco
   if (!gatePending(deps, gate)) {
     const run = mustRun(deps, runId)
     const node = run.stage ? graphOf(deps, runId).nodes.find((n) => n.id === run.stage!.nodeId) : undefined
-    throw new Error(`проверка ${gateTaskId} уже не актуальна: глобальная задача ${runId} ${node ? `сейчас на этапе «${wfNodeTitle(node)}»` : 'вне воркфлоу'}, решение по этой проверке принято или заменено новой`)
+    const where = node ? `на этапе «${wfNodeTitle(node)}»` : 'не на этапе проверки'
+    throw new Error(`проверка ${gateTaskId} уже не актуальна: глобальная задача ${runId} сейчас ${where} — решение по ней принято или проверка заменена новой`)
   }
   const comment = text?.trim() || undefined
-  advanceRun(deps, runId, outcome, outcome === 'reject' && comment ? { feedback: comment } : {})
+  advanceRun(deps, runId, outcome, comment ? (outcome === 'reject' ? { feedback: comment } : { decision: comment }) : {})
+  if (deps.store.columnKind(mustTask(deps, gateTaskId).status) === 'review') closeStageTask(deps, gate)
 }
 
 /** Закрыть служебную задачу этапа (проверку, вопрос): worktree и ветка — удалить (сливать нечего), задача — в done. */

@@ -181,7 +181,7 @@ describe('дефолтный граф: работа → ревью → пров�
     assert.equal(gate.roleId, 'reviewer')
     assert.deepEqual(gate.gateFor, { runId, nodeId: 'review' })
     assert.equal(gate.title, 'Ревью: Фича')
-    assert.match(gate.spec, new RegExp(`review accept --task ${gate.id}`))
+    assert.match(gate.spec, /review accept --task "\$ORCA_TASK_ID"/, 'решение — по id самой проверки из окружения')
     assert.match(gate.spec, new RegExp(`git diff master\\.\\.\\.${run(runId).git!.branch}`))
     assert.match(gate.spec, /логин сделан/, 'сводка этапа — в спеке проверки')
     assert.equal(started.at(-1), gate.id, 'воркер проверки запущен приложением')
@@ -209,6 +209,15 @@ describe('дефолтный граф: работа → ревью → пров�
     assert.equal(store.columnKind(run(runId).status!), 'done')
   })
 
+  it('finishRunStage возвращает переход store и делает эффект новой ноды', () => {
+    const runId = newRun()
+    work(runId, 'login.ts')
+    const { run: after, action } = finishRunStage(deps, runId, 'готово')
+    assert.deepEqual([action.type, action.nodeId], ['create_gate', 'review'])
+    assert.equal(after.stage!.nodeId, 'review')
+    assert.equal(gateOf(runId).gateFor!.nodeId, 'review', 'проверка создана тем же вызовом')
+  })
+
   it('reject проверки → stage_started с замечаниями и новым заходом; старая проверка закрывается по done и не решает', () => {
     const runId = newRun()
     work(runId, 'login.ts')
@@ -234,7 +243,7 @@ describe('дефолтный граф: работа → ревью → пров�
     finishRunStage(deps, runId, 'v2')
     const second = gateOf(runId)
     assert.notEqual(second.id, first.id)
-    assert.match(second.spec, /нет тестов/, 'прошлые замечания видны новой проверке')
+    assert.match(second.spec, /### «Реализация»\n\nv1\n\n### «Реализация»\n\nv2/, 'сводки обоих заходов видны новой проверке')
     runGateDecision(deps, second.id, 'accept')
     assert.equal(stageId(runId), 'check')
   })
@@ -474,6 +483,9 @@ describe('нода ask: одна задача роли, вопросы идут 
     assert.equal(stageId(runId), 'ask')
     const asker = store.listTasks().find((t) => t.stageOf?.nodeId === 'ask')!
     assert.equal(asker.roleId, 'reviewer')
+    assert.equal(asker.title, 'Вопрос человеку: Фича')
+    assert.match(asker.spec, /## Что нужно выяснить\n\nСпроси про сроки/, 'спека ask — из runAskTaskSpec с инструкциями ноды')
+    assert.match(asker.spec, /## Как спрашивать/)
     assert.equal(started.at(-1), asker.id)
     assert.equal(events('stage_started').length, 0, 'координатору вопрос человеку не адресован')
 
@@ -614,36 +626,37 @@ describe('advanceRun: смена этапов и легаси-граф без р
 })
 
 describe('цель перезапущенного координатора: блок «# Этап»', () => {
-  it('на «Работе»: роли, инструкции, замечания, подзадачи захода и stage finish; на проверке — «жди stage_started»', () => {
+  it('на «Работе»: роли, инструкции, замечания, подзадачи захода и stage finish; на проверке — цель без блока', () => {
     const wf = pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }], { work: [{ id: 'work', title: 'Реализация', roleIds: ['developer', 'qa'], instructions: 'Сделай логин' }] })
     const runId = newRun(wf)
     const t = spawn(runId, 'Форма логина')
     alive.clear()
 
     let objective = resumeObjective(store, runId, deps.isAlive).objective
-    assert.match(objective, /^сделать фичу\n\n# Этап «Реализация»/)
-    assert.match(objective, /Роли подзадач: `developer`, `qa`/)
-    assert.match(objective, /Что сделать на этапе:\nСделай логин/)
+    assert.match(objective, /^сделать фичу\n\n# Этап: Реализация\n/)
+    assert.match(objective, /Роли этапа: developer, qa — подзадачи создавай только с ними/)
+    assert.match(objective, /## Инструкции этапа\n\nСделай логин/)
     assert.match(objective, new RegExp(`- ${t.id} \\[[^\\]]+\\] Форма логина`))
-    assert.match(objective, /не создавай дубли/)
-    assert.match(objective, /придёт `stage_tasks_done`[\s\S]*stage finish/)
+    assert.match(objective, /дождись `stage_tasks_done`/)
+    assert.doesNotMatch(objective, /runs finish/, 'схема «Повторный запуск» по runs finish прогону нового формата не относится')
 
     commit(t, 'a.ts')
     done(t.id)
     objective = resumeObjective(store, runId, deps.isAlive).objective
-    assert.match(objective, /Все подзадачи захода уже закрыты/, 'stage_tasks_done ушёл прошлому координатору — новому сказано в цели')
+    assert.match(objective, /`stage_tasks_done` уже отправлен[\s\S]*stage finish/, 'stage_tasks_done ушёл прошлому координатору — новому сказано в цели')
 
     finishRunStage(deps, runId, 'ok')
     objective = resumeObjective(store, runId, deps.isAlive).objective
-    assert.match(objective, /# Этап «Ревью»/)
-    assert.match(objective, /подзадачи не создавай[\s\S]*Жди `stage_started`/)
+    assert.equal(objective, 'сделать фичу', 'на проверке блока этапа нет: координатору делать нечего, он ждёт stage_started')
 
     runGateDecision(deps, gateOf(runId).id, 'reject', 'нет тестов')
     assert.deepEqual(coordinatorStarts, [runId], 'координатор мёртв — reject вернул в «Работу» и запустил его заново')
     alive.clear()
     objective = resumeObjective(store, runId, deps.isAlive).objective
-    assert.match(objective, /# Этап «Реализация» \(заход 2\)/)
-    assert.match(objective, /Замечания проверки или человека[\s\S]*нет тестов/)
+    assert.match(objective, /# Этап: Реализация/)
+    assert.match(objective, /заход 2/)
+    assert.match(objective, /## Замечания проверки или человека\n\nнет тестов/)
+    assert.match(objective, new RegExp(`Подзадачи прошлых заходов и этапов[^\\n]*\\n- ${t.id} `), 'подзадачи прошлого захода — списком, заново не создавать')
   })
 
   it('жив прежний координатор — ошибка; граф не начат — цель без изменений', () => {

@@ -462,11 +462,21 @@ function decide(deps: WorkflowDeps, task: Task, outcome: 'accept' | 'reject', te
 }
 
 /**
+ * Проверка ветки глобальной задачи (`gateFor.runId`) — не этого движка: её решение двигает граф прогона и делает эффекты
+ * следующей ноды (`runGateDecision` в `workflow-run.ts`; вход — `reviewDecision` в index.ts). Тихо закрыть её прежней
+ * приёмкой — потерять решение, поэтому вызов сюда — ошибка вызывающего.
+ */
+function assertNotRunGate(task: Task): void {
+  if (task.gateFor?.runId !== undefined) throw new Error(`задача ${task.id} — проверка ветки глобальной задачи: решение по ней принимает движок прогона (workflow-run.ts)`)
+}
+
+/**
  * `review accept` / «Принять»: задача на этапе проверки — исход accept (дальше по графу, обычно мерж);
  * задача-проверка — её закрытие; задача-ответ и задача вне воркфлоу — прежняя приёмка (`acceptReview`).
  */
 export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: string): void {
   const task = mustTask(deps, taskId)
+  assertNotRunGate(task)
   if (task.answerFor || !task.stage) {
     if (task.gateFor) closeGate(deps, task)
     else acceptReview(deps.store, deps.repoRoot, taskId, decision, deps.mergeTarget)
@@ -481,6 +491,7 @@ export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: stri
  */
 export function reviewReject(deps: WorkflowDeps, taskId: string, feedback: string): Task {
   const task = mustTask(deps, taskId)
+  assertNotRunGate(task)
   if (task.answerFor || task.gateFor || !task.stage) return deps.store.rejectReview(taskId, feedback)
   decide(deps, task, 'reject', feedback)
   return mustTask(deps, taskId)

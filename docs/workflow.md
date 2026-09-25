@@ -27,8 +27,7 @@
 Каждая нода отвечает за свою часть; **координатор — один на всю глобальную задачу и только диспетчер агентов на этапах
 `work`**: он не проверяет, не сливает и не решает, куда идти по графу. Подзадачи по графу не ходят: воркер → `done` →
 автомерж в ветку глобальной задачи (конфликт — запрос человеку). Раздел описывает контракт слоя `packages/core` и, ниже, движок
-main (`apps/desktop/src/main/workflow-run.ts`, «Движок main»); сокет/CLI, renderer и skills строятся поверх них отдельными задачами
-(см. «Что остаётся за пределами main»).
+main (`apps/desktop/src/main/workflow-run.ts`, «Движок main, промпты и skills прогона»); сокет/CLI, skills и промпты уже сделаны поверх контракта, renderer — отдельная задача.
 
 ### Кто за что отвечает
 
@@ -144,22 +143,43 @@ start → «Реализация» (work, без роли) ──next──▶ �
   (обычно в `end`), ноды, потерявшие вход («Конфликт мержа»), снимаются; `condition: role` снимается с переходом по `yes`; `git create_branch/checkout` снимаются с
   переходом по `ok`; роль `work` (`roleId`) переносится в `roleIds`, `work` без роли остаётся без роли и замечания не даёт (роль подзадач выберет координатор); `ask` без роли получает `defaultWorkRole(roles)` (нет `roles` — `developer`). Замечания (`WfMigrationNote`, по-русски) человеку показывает вызывающий код;
   если после миграции путь к концу идёт без `human`, замечание `noHumanBeforeEnd`. Граф будущей версии не трогается (`versionFuture`).
+- **Графы сохранённых типов** мигрируют при загрузке `projects.json` (main: `migrateTypeWorkflows`, docs/architecture.md → «Типы задач»): граф v2 записывается в тип, а замечания
+  миграции — в `TaskType.workflowNotes`, откуда их показывает редактор типа; исходный файл копируется в `projects.workflow-v1.bak.json`.
 - **Идущие прогоны** без `workflowScope` доживают на движке подзадач со своим снимком `Run.workflow` (версия 1) — его миграция не касается. Прогон без снимка
   и «Входящие» берут граф типа: `TaskStore.runWorkflow` переводит его обратно в граф подзадач — `toTaskScopeWorkflow` (работа без роли, финальная «Проверка человеком»
   снимается, перед концом появляются `merge` и «Конфликт мержа»); типа с графом нет — `legacyDefaultWorkflow`. Прежние конструкторы остались как `legacyPipelineWorkflow` и
   `legacyDefaultWorkflow` (версия 1, `WORKFLOW_VERSION_TASK_SCOPE`).
 
-### Движок main (`apps/desktop/src/main/workflow-run.ts`)
+### Движок main, промпты и skills прогона
 
 Store двигает граф и возвращает `WfAction`, **эффекты выполняет main**: модуль `workflow-run.ts` со своими `RunWorkflowDeps` (store, корень репозитория,
 `run(runId)` — роли и граф типа, `startWorker`, `isAlive`, `startCoordinator(runId)`, `gitSettings()`, `mergeTarget`). Подключение — `runWorkflowDeps` в `index.ts`.
-Прогоны без `workflowScope: 'run'` идут прежним `workflow.ts`: `handleEvents` там пропускает задачи прогонов нового формата, а новый движок — старого.
+Прогоны без `workflowScope: 'run'` идут прежним `workflow.ts`: `handleEvents` там пропускает задачи прогонов нового формата, а новый движок — старого. Решения проверки прогона в `workflow.ts` нет: `reviewAccept`/`reviewReject` для `gateFor.runId` бросают ошибку, единственный путь — `runGateDecision`.
+
+**Промпты и skills.** Код — `packages/core/src/prompts.ts`, инструкции — `skills/coordinator.md` и `skills/worker.md`; проверки — `prompts.test.ts`. Единственный источник текстов — core: main их только вызывает.
+
+- **`skills/coordinator.md`.** Координатор — диспетчер этапов `work`: этап начинается с `stage_started` (роли `roleIds` — пусто значит любые рабочие роли типа по
+  описанию, инструкции, `feedback`/`decision`/`answers`), он создаёт подзадачи и запускает воркеров; `stage_tasks_done` — нужны ли ещё задачи, иначе `stage finish --summary`
+  (сигнал «набор закончен», а не отчёт); на `gate`/`human`/`ask`/`git`/`merge` ждёт; `run_done` (с `nodeId`) — граф дошёл до `end`, выход без `runs finish`.
+  `stage_started` и `stage_tasks_done` — в трёх местах `--types` шага 3 (после `workflow_blocked`). `workflow_blocked` может быть без `taskId`. Прогоны старого формата
+  (`workflow show` → `scope: task`) описаны отдельным разделом в конце: `run_done` «все подзадачи закрыты» и `runs finish`.
+- **Повторный запуск координатора.** Цель (`resumeCoordinatorObjective(goal, subtasks, returns, stage?)`) с `stage` (`CoordinatorStage` — то, что отдаёт `TaskStore.runStage`, плюс
+  `tasksDone`) несёт блок `# Этап: <название>` (`COORDINATOR_STAGE_HEADING`): роли, инструкции, замечания, решение, ответы и подзадачи захода / прошлых заходов, а в конце — что делать
+  (нет подзадач — как `stage_started`; есть незакрытые — цикл; все закрыты — `stage finish`). «Уточнение после проверки» в этом режиме не добавляется: замечания уже в `feedback`.
+  Собирает `stage` main (`workStage` в `coordinator-resume.ts` из `TaskStore.runStage`); на этапе не «Работа» блока нет, цель — как есть (координатору делать нечего, он ждёт `stage_started`), а «Повторный запуск» по `runs finish` прогону нового формата не применяется.
+- **Задачи прогона.** `runGateTaskSpec` / `runGateTaskTitle` — спека задачи `gate`: ветка глобальной задачи целиком против `RunGit.base` (`git log`/`git diff base...branch`, пробный
+  `merge --no-commit`), цель, сводки этапов (`StageChange.summary`), `instructions` ноды; решение — `review accept|reject --task "$ORCA_TASK_ID"` (id задачи до создания неизвестен, воркер
+  берёт свой из окружения). `runAskTaskSpec` / `runAskTaskTitle` — спека задачи `ask`: цель, сводки, ветка (только чтение), что выяснить и общие с этапом «Вопрос человеку» правила
+  (`ASK_STAGE_RULES`), поэтому раздел «# Этап» к ней добавлять не нужно. Контекст — `RunTaskContext` (`taskContext` в `workflow-run.ts`: цель, ветка и база прогона, сводки закрытых этапов с названиями нод, `instructions`); задачи создаёт движок main.
+- **`skills/worker.md`.** Задача-проверка глобальной задачи проверяет ветку целиком, `review accept|reject --task` — свой id проверки.
+
+**Движок.**
 
 | Нода | Эффект (`executeSteps`) |
 |---|---|
-| `work` (`start_stage`) | `stage_started` координатору уже отправил store; движок проверяет, что координатор жив (`Run.coordinatorPtyId` + `isAlive`), иначе **запускает заново** тем же запуском, что «Запустить координатора» (`startCoordinator` → `resumeObjective`). Цель перезапущенного координатора — исходная цель и блок «# Этап «…»» (`coordinatorStageSection` в `packages/core/src/prompts.ts`): роли, инструкции ноды, `feedback`/`decision`/`answers`, подзадачи захода, что делать по `stage_tasks_done`. Не запустился — `workflow_blocked` по `runId` с командой `orca-board global start --global <id>` |
-| `ask` (`create_ask`) | одна задача роли ноды (`createTask` с `stageOf {nodeId, visit}`) и сразу её воркер; вопросы идут человеку (`worker.ask` узнаёт ноду по `stageOf`), координатор не участвует. Сдала `done` → задача закрывается, переход по `next` с `answers` (вопросы и ответы человека) в `stage_started` следующей «Работы». Агент упал, человек ответил — воркер стартует сам |
-| `gate` (`create_gate`) | одна задача-проверка роли ноды с `gateFor {runId, nodeId}` и спекой `runGateTaskSpec`: ветка прогона целиком против `RunGit.base` (`git log`/`git diff base...ветка`), цель прогона, сводки этапов (`stage finish`), прошлые замечания, «Как проверять». Её id стоит в командах спеки: решение — `orca-board review accept|reject --task <id проверки>`. Нет ветки у прогона или роли в типе — `workflow_blocked` |
+| `work` (`start_stage`) | `stage_started` координатору уже отправил store; движок проверяет, что координатор жив (`Run.coordinatorPtyId` + `isAlive`), иначе **запускает заново** тем же запуском, что «Запустить координатора» (`startCoordinator` → `resumeObjective`). Цель перезапущенного координатора — исходная цель и блок «# Этап: …» (`resumeCoordinatorObjective` со `stage` в `packages/core/src/prompts.ts`): роли, инструкции ноды, `feedback`/`decision`/`answers`, подзадачи захода, что делать по `stage_tasks_done`. Не запустился — `workflow_blocked` по `runId` с командой `orca-board global start --global <id>` |
+| `ask` (`create_ask`) | одна задача роли ноды (`createTask` со спекой `runAskTaskSpec` и `stageOf {nodeId, visit}`) и сразу её воркер; вопросы идут человеку (`worker.ask` узнаёт ноду по `stageOf`), координатор не участвует. Сдала `done` → задача закрывается, переход по `next` с `answers` (вопросы и ответы человека) в `stage_started` следующей «Работы». Агент упал, человек ответил — воркер стартует сам |
+| `gate` (`create_gate`) | одна задача-проверка роли ноды с `gateFor {runId, nodeId}` и спекой `runGateTaskSpec` (title — `runGateTaskTitle`): ветка прогона целиком против `RunGit.base` (`git log`/`git diff base...ветка`), цель прогона, сводки этапов (`stage finish`), «Как проверять». Решение — `orca-board review accept|reject --task "$ORCA_TASK_ID"` (id проверки воркер берёт из окружения). Нет ветки у прогона или роли в типе — `workflow_blocked` |
 | `human` (`request_human`) | `requestRunApproval`: approval уровня прогона. Тело — инструкция ноды, конфликт мержа/отказ git (если пришли оттуда), сводка этапа (нет — итоги подзадач последней «Работы»), показ их последних `done` (`showcaseDispatchId` — последний с показом), ветка и база |
 | `git` | `commit` / `push` в worktree ветки прогона (`ensureRunBranch` восстанавливает убранный); шаблоны `{taskId}` — id прогона, `{title}`/`{slug}` — его название. Исход `ok`/`error`, текст отказа git — в approval, если `error` ведёт к человеку, и в `feedback` следующей «Работы», если в неё. Успешный `push` пишет `Run.git.pushedAt`, неудачный — `pushError`. `create_branch`/`checkout` — `workflow_blocked` (валидация их запрещает) |
 | `merge` | `mergeRunBranch` (`run-branch.ts`): ветку прогона в базу `RunGit.base` локально, см. ниже. Исход `ok` / `conflict` |
@@ -182,8 +202,8 @@ Store двигает граф и возвращает `WfAction`, **эффект
 
 | Что пришло | Откуда | Что делает движок |
 |---|---|---|
-| `stage finish` | сокет (отдельная задача) → `finishRunStage(runId, summary)` | `TaskStore.finishStage` → эффект следующей ноды |
-| Решение проверки | `review accept|reject --task <id проверки>` (сокет, IPC `review:*`, «Принять»/«Вернуть» на задаче-проверке) → `reviewDecision` в `index.ts` → `runGateDecision` | `advanceRunStage` по `accept` / `reject` (замечания — в `Run.returns` и `stage_started`); проверка уже не актуальна (граф ушёл дальше, есть новая) — ошибка |
+| `stage finish` | сокет `stage.finish` → `ProjectDeps.finishStage` → `finishRunStage(runId, summary)` (сокет не зовёт `store.finishStage` напрямую: `stage_changed` эффектов не запускает) | `TaskStore.finishStage` → эффект следующей ноды; ошибка эффекта — `workflow_blocked`, а не провал команды |
+| Решение проверки | `review accept|reject --task <id проверки>` (сокет, IPC `review:*`, «Принять»/«Вернуть» на задаче-проверке) → `reviewDecision` в `index.ts` → `runGateDecision` (единственный путь) | `advanceRunStage` по `accept` / `reject` (замечания — в `Run.returns` и `stage_started`, комментарий `accept` — `decision`) и эффект следующей ноды; проверка уже сдала `done` — закрывается сразу; не актуальна (граф ушёл дальше, есть новая) — ошибка |
 | `worker_done` проверки | `handleRunWorkflowEvents` | проверка закрывается (worktree и ветка удалены, задача в done); решения не было и граф всё ещё на её ноде — `workflow_blocked` «сдана без решения» |
 | `escalation` проверки | то же | решение уже есть — проверка закрывается; иначе остаётся эскалация store |
 | `worker_done` задачи `ask` | то же | закрыть, `advanceRunStage(next, {answers})`, если прогон стоит на этом заходе ноды |
@@ -197,16 +217,9 @@ Store двигает граф и возвращает `WfAction`, **эффект
 человек разрешает его в ветке задачи и жмёт «Принять» — слияние повторяется; «Вернуть» — замечания в `feedback`, воркер стартует заново. Ошибка не конфликтом (защищённая ветка корня у прогона
 без ветки) — `workflow_blocked` по задаче: её принимает человек вручную (прежняя приёмка `review accept`). Задачи-ответы (`answerFor`) идут своим циклом «Принять» / «Уточнить».
 
-**Ограничения.** Эффект, не доведённый до конца из-за выхода приложения, повторяется при следующем запуске координатора (`startRunWorkflow`) или, для закрытия этапа, фолбэком. Файлы показа
+**Ограничения.** Renderer (редактор графа, этап на карточке, approval без задачи в Инбоксе) — отдельные задачи по этому контракту. Эффект, не доведённый до конца из-за выхода приложения, повторяется при следующем запуске координатора (`startRunWorkflow`) или, для закрытия этапа, фолбэком. Файлы показа
 читаются из worktree задачи, а после автомержа он убран — файлы остаются в ветке прогона (IPC отвечает ошибкой с её именем). `RunBranchSync`: если в графе есть `git push`, авто-push при закрытии
 для прогона выключен (`workflowPushes`).
-
-### Что остаётся за пределами main
-
-Сокет и CLI (`stage finish` → `finishRunStage`, `workflow show` по прогону, `review` по проверке прогона в `HELP`, ошибки `task create` вне этапа), renderer (редактор, этап на карточке, approval без задачи
-в Инбоксе) и промпты и skills координатора и воркера (`skills/coordinator.md`: роль диспетчера, `stage_started`/`stage_tasks_done`, новый `run_done`; блок «# Этап» доработает задача skills) —
-отдельные задачи. До их выхода координатору в блоке «# Этап» уже назван `stage finish`, а команды в CLI ещё нет; renderer работает со старым форматом, а там, где запрос или проверка могут не иметь
-задачи, стоят только защитные проверки типов.
 
 ## Кто в воркфлоу (версия 1, по подзадачам)
 

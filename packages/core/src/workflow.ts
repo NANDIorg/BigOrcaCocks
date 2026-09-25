@@ -1347,55 +1347,6 @@ export function gateTaskSpec(task: Pick<Task, 'id' | 'title' | 'spec' | 'branch'
   return parts.join('\n\n')
 }
 
-/** Название задачи-проверки ветки глобальной задачи: «<название ноды>: <название глобальной задачи>». */
-export function runGateTaskTitle(title: string, node: Extract<WfNode, { type: 'gate' }>): string {
-  return `${wfNodeTitle(node)}: ${title}`
-}
-
-/** Что известно проверяющему о ветке глобальной задачи и её этапах (`runGateTaskSpec`). */
-export interface RunGateSpecInput {
-  /** Id самой задачи-проверки: `review accept|reject --task` по ней — решение ноды. */
-  gateId: string
-  /** Название глобальной задачи. */
-  title: string
-  /** Описание (цель) глобальной задачи. */
-  objective: string
-  /** Ветка глобальной задачи и база, от которой она ответвлена. */
-  branch: string
-  base: string
-  /** Сводки закрытых этапов «Работа» (`stage finish --summary`), от старых к новым. */
-  summaries?: readonly string[]
-  /** Замечания прошлых отказов (`Run.returns`), от старых к новым: не повторить уже отклонённое. */
-  returns?: readonly string[]
-}
-
-/**
- * Спека задачи-проверки ветки глобальной задачи целиком (нода `gate` воркфлоу прогона): что накопилось в ветке
- * относительно базы, как проверить и как вынести решение. Решение — `review accept|reject --task <id самой проверки>`:
- * приложение находит по ней глобальную задачу и ноду. Как проверять в конкретном репозитории — в `node.instructions`.
- */
-export function runGateTaskSpec(input: RunGateSpecInput, node: Extract<WfNode, { type: 'gate' }>): string {
-  const { gateId, branch, base } = input
-  const parts = [
-    `Проверь ветку \`${branch}\` глобальной задачи «${input.title}» целиком — против базы \`${base}\`.`,
-    [
-      `1. Что изменилось: \`git log --oneline ${base}..${branch}\` и \`git diff ${base}...${branch}\`. Твой worktree ответвлён от \`${branch}\`: код и тесты запускай в нём.`,
-      '2. Сверь результат с целью глобальной задачи (ниже) и сводками этапов.',
-      `3. Всё хорошо — \`orca-board review accept --task ${gateId}\`. Нет — \`orca-board review reject --task ${gateId} --feedback "что исправить"\`: замечания получит координатор, агенты доработают ветку.`,
-      '4. Последней командой обязательно `orca-board done --summary "принято"` или `"отклонено: …"` — без неё проверка останется открытой.'
-    ].join('\n')
-  ]
-  const objective = input.objective.trim()
-  if (objective) parts.push(`## Цель глобальной задачи — критерии приёмки\n\n${objective}`)
-  const summaries = (input.summaries ?? []).map((s) => s.trim()).filter(Boolean)
-  if (summaries.length > 0) parts.push(`## Что сделано по этапам\n\n${summaries.map((s) => `- ${s}`).join('\n')}`)
-  const returns = (input.returns ?? []).map((s) => s.trim()).filter(Boolean)
-  if (returns.length > 0) parts.push(`## Прошлые замечания — проверь, что они учтены\n\n${returns.map((s) => `- ${s}`).join('\n')}`)
-  const own = node.instructions?.trim()
-  if (own) parts.push(`## Как проверять\n\n${own}`)
-  return parts.join('\n\n')
-}
-
 // ---------- описание для CLI ----------
 
 /** Этап графа для `orca-board workflow show`: что делает нода и куда ведёт каждый исход. */

@@ -136,6 +136,7 @@ describe('сокет: правила, роли и типы задач', () => {
         review: () => ({}),
         accept: () => undefined,
         reject: () => undefined,
+        finishStage: () => { throw new Error('не нужен') },
         resolveRequest: () => ({}),
         startCoordinator: () => '',
         deleteGlobalTask: () => ({ deleted: '', tasks: [] }),

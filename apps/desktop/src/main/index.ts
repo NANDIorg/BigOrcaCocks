@@ -10,7 +10,7 @@ import { getReview, resolveHumanRequest } from './review'
 import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
-  acceptRun, handleRunApproval, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runGateDecision, settleIdleRunStages, startRunWorkflow,
+  acceptRun, finishRunStage, handleRunApproval, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runGateDecision, settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
@@ -912,6 +912,7 @@ app.whenReady().then(() => {
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId, decision) => void reviewDecision(p.id, taskId, 'accept', decision),
         reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),
+        finishStage: (runId, summary) => finishRunStage(runWorkflowDeps(p.id), runId, summary),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),

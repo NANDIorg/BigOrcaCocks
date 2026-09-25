@@ -1,4 +1,4 @@
-import { resumeCoordinatorObjective, runResumeCoordinatorObjective, globalTaskTitle, type CoordinatorStageInfo, type TaskStore, type Run } from '@orca-board/core'
+import { resumeCoordinatorObjective, globalTaskTitle, type CoordinatorStage, type TaskStore, type Run } from '@orca-board/core'
 import { OrcaError } from './i18n'
 
 /**
@@ -13,7 +13,8 @@ export type PtyAlive = (ptyId: string) => boolean
  * описание (нет — название) плюс уточнения человека после проверки и список уже созданных подзадач,
  * чтобы координатор продолжил их, а не создал заново. Второй живой координатор на одной глобальной
  * задаче — ошибка. Воркфлоу прогона (`workflowScope: 'run'`): вместо «Повторного запуска» — блок «# Этап»
- * (`runResumeCoordinatorObjective`): координатор — диспетчер и продолжает с того этапа, где стоит граф.
+ * (`resumeCoordinatorObjective` со `stage`): координатор — диспетчер и продолжает с того этапа «Работа», где стоит граф.
+ * На остальных этапах (проверка, человек, git…) координатору делать нечего — цель без блока: он ждёт `stage_started`.
  */
 export function resumeObjective(store: TaskStore, runId: string, alive: PtyAlive): { run: Run; objective: string } {
   const run = store.getRun(runId)
@@ -24,27 +25,27 @@ export function resumeObjective(store: TaskStore, runId: string, alive: PtyAlive
   }
   const goal = run.objective.trim() || globalTaskTitle(run)
   const title = (status: string): string => store.columns().find((c) => c.id === status)?.title ?? status
-  if (run.workflowScope === 'run') return { run, objective: runResumeCoordinatorObjective(goal, stageInfo(store, run, title)) }
   const tasks = store.listSubtasks(runId).map((t) => ({ id: t.id, title: t.title, status: title(t.status) }))
+  if (run.workflowScope === 'run') {
+    // Без блока этапа «Повторный запуск» по старой схеме (`runs finish`) прогону не подходит — цель как есть.
+    const stage = workStage(store, run.id)
+    return { run, objective: stage ? resumeCoordinatorObjective(goal, tasks, [], stage) : goal }
+  }
   return { run, objective: resumeCoordinatorObjective(goal, tasks, run.returns) }
 }
 
-/** Где стоит граф глобальной задачи и какие подзадачи есть в текущем заходе — для блока «# Этап» цели координатора. */
-function stageInfo(store: TaskStore, run: Run, columnTitle: (status: string) => string): CoordinatorStageInfo | undefined {
-  const stage = store.runStage(run.id)
-  if (!stage) return undefined
-  const tasks = stage.tasks.flatMap((id) => {
-    const t = store.getTask(id)
-    return t ? [{ id: t.id, title: t.title, status: columnTitle(t.status) }] : []
-  })
+/** Этап «Работа», на котором стоит граф глобальной задачи, — для блока «# Этап» цели координатора. Другая нода или нет позиции — undefined. */
+function workStage(store: TaskStore, runId: string): CoordinatorStage | undefined {
+  const stage = store.runStage(runId)
+  if (stage?.type !== 'work') return undefined
   return {
-    nodeId: stage.nodeId, type: stage.type, title: stage.title, visit: stage.visit,
+    title: stage.title, visit: stage.visit,
     ...(stage.roleIds ? { roleIds: stage.roleIds } : {}),
     ...(stage.instructions ? { instructions: stage.instructions } : {}),
     ...(stage.feedback ? { feedback: stage.feedback } : {}),
     ...(stage.decision ? { decision: stage.decision } : {}),
     ...(stage.answers ? { answers: stage.answers } : {}),
-    tasks,
+    tasks: stage.tasks,
     tasksDone: stage.tasksDoneAt !== undefined
   }
 }

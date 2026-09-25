@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
-  WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, WF_PORTS, defaultWorkflow, defaultWorkRole, legacyDefaultWorkflow, legacyPipelineWorkflow, gateTaskSpec, gateTaskTitle, runGateTaskSpec, runGateTaskTitle, migrateWorkflow, migrateWorkflowReport, nextStage, nextRunStage, startRunStage, wfNodeTitle, pipelineWorkflow,
+  WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, WF_PORTS, defaultWorkflow, defaultWorkRole, legacyDefaultWorkflow, legacyPipelineWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, migrateWorkflowReport, nextStage, nextRunStage, startRunStage, wfNodeTitle, pipelineWorkflow,
   startStage, stageAction, runStageAction, validateWorkflow, stableJson, wfWorkStage, wfWorkRoleIds, describeWorkflow, WF_ISSUE_TEXTS,
   WF_GIT_OPERATIONS, WF_GIT_FIELD_USE, wfGitSlug, wfGitVars, renderGitTemplate, isValidGitBranchName, isValidGitRemoteName
 } from './workflow.ts'
@@ -1104,34 +1104,5 @@ describe('нода «Git»', () => {
       assert.deepEqual(info.git, { operation: 'push', remote: 'origin' })
       assert.ok(info.next.ok && info.next.error)
     })
-  })
-})
-
-describe('runGateTaskSpec: проверка ветки глобальной задачи', () => {
-  const gate = { id: 'review', type: 'gate', roleId: 'reviewer', x: 0, y: 0 } as Extract<WfNode, { type: 'gate' }>
-  const input = { gateId: 'task_gate1', title: 'Логин', objective: 'Сделать вход', branch: 'feature/run_1-login', base: 'origin/develop' }
-
-  it('ветка целиком против базы, решение — по id самой проверки, обязательный done', () => {
-    const spec = runGateTaskSpec(input, gate)
-    assert.match(spec, /ветку `feature\/run_1-login` глобальной задачи «Логин» целиком — против базы `origin\/develop`/)
-    assert.match(spec, /git log --oneline origin\/develop\.\.feature\/run_1-login/)
-    assert.match(spec, /git diff origin\/develop\.\.\.feature\/run_1-login/)
-    assert.match(spec, /orca-board review accept --task task_gate1/)
-    assert.match(spec, /orca-board review reject --task task_gate1 --feedback "что исправить"/)
-    assert.match(spec, /orca-board done --summary/)
-    assert.match(spec, /## Цель глобальной задачи[\s\S]*Сделать вход/)
-  })
-
-  it('сводки этапов, прошлые замечания и «Как проверять» — только когда они есть', () => {
-    const bare = runGateTaskSpec({ ...input, objective: '  ' }, gate)
-    assert.doesNotMatch(bare, /## Цель|## Что сделано|## Прошлые замечания|## Как проверять/)
-    const full = runGateTaskSpec({ ...input, summaries: ['логин готов', ' '], returns: ['нет тестов'] }, { ...gate, instructions: 'Запусти тесты' })
-    assert.match(full, /## Что сделано по этапам\n\n- логин готов\n\n/)
-    assert.match(full, /## Прошлые замечания[^\n]*\n\n- нет тестов/)
-    assert.match(full, /## Как проверять\n\nЗапусти тесты$/)
-  })
-
-  it('название — «<нода>: <глобальная задача>»', () => {
-    assert.equal(runGateTaskTitle('Логин', { ...gate, title: 'Ревью' }), 'Ревью: Логин')
   })
 })
