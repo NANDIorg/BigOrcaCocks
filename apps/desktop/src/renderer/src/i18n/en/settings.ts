@@ -19,6 +19,9 @@ export default {
   'general.languageHint': 'Interface language. Agent prompts and names you entered are not translated.',
   'general.background': 'Keep running when the window is closed',
   'general.backgroundHint': 'Agents keep working; the app stays in the menu bar / tray icon.',
+  'general.onboarding': 'First-run wizard',
+  'general.onboardingHint': 'Language, agent check and your first project — the same steps as on first launch.',
+  'general.onboardingRerun': 'Run again',
 
   'notify.title': 'Notifications',
   'notify.hint': 'System notifications about events waiting for a human. Apply to all projects.',

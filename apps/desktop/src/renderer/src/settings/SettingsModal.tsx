@@ -13,7 +13,8 @@ import { NotificationsSection } from './NotificationsSection'
 import { UpdatesSection } from './UpdatesSection'
 import { TaskTypePane } from './TaskTypePane'
 import { useTaskTypes } from './useTaskTypes'
-import { setLocale, useT } from '../i18n'
+import { useT } from '../i18n'
+import { saveAppSettings } from '../appSettingsSave'
 import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
@@ -57,6 +58,8 @@ interface Props {
   updates: UpdatesController
   /** Типы изменились: перечитать проекты в приложении (роли типа по умолчанию, выбор типов в «О проекте»). */
   onProjectsChanged(): Promise<void>
+  /** «Пройти заново» в «Общие»: закрыть настройки и открыть мастер первого запуска. */
+  onRunOnboarding(): void
   onClose(): void
 }
 
@@ -64,7 +67,7 @@ interface Props {
  * «Настройки» (шестерёнка в rail): общие настройки приложения и библиотека типов задач (taskTypes:*).
  * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
  */
-export function SettingsModal({ agents, updates, onProjectsChanged, onClose }: Props): React.JSX.Element {
+export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboarding, onClose }: Props): React.JSX.Element {
   const t = useT()
   const [section, setSection] = useState<Section>(initialSection)
   const [tab, setTab] = useState<TaskTypeTab>(initialTab)
@@ -110,18 +113,9 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onClose }: P
   }
 
   async function saveApp(patch: AppSettingsPatch): Promise<void> {
-    // Язык меняется сразу, не дожидаясь main: окно переводится мгновенно.
-    if (patch.language) setLocale(patch.language)
-    try {
-      const next = await window.orca.app.setSettings(patch)
-      setAppSettings(next)
-      // Старый main не знает поля language и молча его отбросит — выбор не переживёт перезапуск.
-      // Так же с updates: без поля в ответе main не сохранил патч.
-      const dropped = (patch.language && next.language !== patch.language) || (patch.updates && !next.updates)
-      setAppError(dropped ? t('common.staleApp') : null)
-    } catch (e) {
-      setAppError(ipcErrorMessage(e))
-    }
+    const res = await saveAppSettings(window.orca.app, patch)
+    if (res.settings) setAppSettings(res.settings)
+    setAppError(res.error)
   }
 
   async function createType(): Promise<void> {
@@ -222,7 +216,7 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onClose }: P
             <div className="about-pane">
               <section className="about-sec">
                 {section === 'general' ? (
-                  <GeneralSection settings={appSettings} error={appError} onChange={(p) => void saveApp(p)} />
+                  <GeneralSection settings={appSettings} error={appError} onChange={(p) => void saveApp(p)} onRunOnboarding={onRunOnboarding} />
                 ) : section === 'notifications' ? (
                   <NotificationsSection
                     settings={appSettings}
