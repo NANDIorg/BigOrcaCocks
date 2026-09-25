@@ -365,8 +365,9 @@ function runWorkflowDeps(projectId: string): RunWorkflowDeps {
 
 /**
  * Шаги воркфлоу по событиям store. Не внутри commit, где пришло событие: иначе `orca-board done` ждал бы мержа
- * и запуска проверки, а вложенные commit перемешали бы порядок событий у подписчиков. Прогоны нового формата ведёт
- * `workflow-run.ts`, старого — `workflow.ts` (каждый сам пропускает чужие задачи).
+ * и запуска проверки, а вложенные commit перемешали бы порядок событий у подписчиков. Каждое событие обрабатывает ровно один
+ * исполнитель: граф прогона (проверки и вопросы этапов) — `workflow-run.ts`, старый формат и путь подзадачи — `workflow.ts`;
+ * чужие задачи каждый пропускает по `taskEngine`.
  */
 function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
   if (!events.some((e) => e.type === 'worker_done' || e.type === 'escalation' || e.type === 'question_answered')) return
@@ -592,7 +593,8 @@ function resolveRequest(projectId: string | undefined, id: string, resolution: R
   if (request?.taskId) syncWorkerLiveness(p.store, request.taskId)
   const deps = workflowDeps(p.id)
   const runDeps = runWorkflowDeps(p.id)
-  // Approval прогона (нода `human`, «Конфликт мержа» подзадачи) ведёт `workflow-run.ts`, остальные — прежний движок.
+  // Approval прогона (нода `human`, без задачи) ведёт `workflow-run.ts`; запрос на задаче (нода `human` пути подзадачи, в том числе
+  // «Конфликт мержа») — движок по подзадачам (`workflow.ts`).
   return resolveHumanRequest(p.store, p.root, id, resolution, deps.startWorker, (r) => {
     if (!handleRunApproval(runDeps, r)) approvalResolved(deps, r)
   }, deps.mergeTarget)

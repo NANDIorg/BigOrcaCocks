@@ -6,15 +6,18 @@ import {
   type TaskStore, type WfAction, type WfNode, type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { gitCommit, gitPush, isBranchNameAcceptedByGit, removeWorktree } from './git'
-import { mergeTaskBranch, type MergeTargetOf } from './review'
+import type { MergeTargetOf } from './review'
 import { ensureRunBranch, mergeRunBranch } from './run-branch'
+import { advance, enterWork, taskEngine } from './workflow'
 import { showcaseMarkdown } from '../shared/showcase'
 
 // Исполнитель воркфлоу глобальной задачи (docs/workflow.md → «Воркфлоу глобальной задачи»): позицию на графе хранит
 // `Run.stage`, переходы делает store (`advanceRunStage`, `finishStage`), здесь выполняются эффекты нод — событие и
 // перезапуск координатора на «Работе», задачи проверки и вопроса, approval человека, git, слияние ветки прогона в базу.
-// Подзадачи по графу не ходят: воркер → `done` → автомерж в ветку прогона. Прогоны без `Run.workflowScope: 'run'` идут
-// прежним движком по подзадачам (`workflow.ts`); этот модуль их не трогает.
+// Подзадачи по графу прогона не ходят: каждая идёт по пути своей ноды «Работа» (`work.subflow`, по умолчанию
+// `defaultSubflow()`: воркер → мерж в ветку прогона → конец), его исполняет движок по подзадачам (`workflow.ts`, `Task.stage`).
+// Событие и задачу делят по `taskEngine`: здесь — только то, что он отдаёт прогону (проверки и вопросы этапов, подзадачи вне
+// этапа). Прогоны без `Run.workflowScope: 'run'` идут прежним движком (`workflow.ts`); этот модуль их не трогает.
 
 export interface RunWorkflowDeps {
   store: TaskStore
@@ -40,8 +43,9 @@ export interface RunWorkflowDeps {
 const MAX_STEPS = 50
 
 /**
- * Id ноды в approval «Конфликт мержа» подзадачи (запрос на задаче, а не на прогоне): его решает `subtaskConflictResolved`,
- * а не переход по графу — у подзадач своего этапа нет.
+ * Id ноды в approval «Конфликт мержа» подзадачи, созданном сборкой до пути подзадачи (тогда автомерж был зашит в движок
+ * прогона). Новые конфликты — нода `conflict` пути (`defaultSubflow()`), но запрос, ждавший человека при обновлении,
+ * дорешивает `legacyConflictResolved`: задача входит в путь и идёт к ноде `merge`.
  */
 export const SUBTASK_MERGE_NODE = 'subtask-merge'
 
@@ -452,25 +456,28 @@ function runApprovalResolved(deps: RunWorkflowDeps, request: HumanRequest): void
 }
 
 /**
- * Approval «Конфликт мержа» подзадачи (`SUBTASK_MERGE_NODE`): «Принять» — человек разрешил конфликт в ветке задачи,
- * мерж повторяется; «Вернуть» — замечания уже в `feedback` задачи, воркер стартует заново.
+ * Approval «Конфликт мержа» от сборки без пути подзадачи (`SUBTASK_MERGE_NODE`): «Принять» — человек разрешил конфликт в
+ * ветке задачи, задача входит в путь и идёт от «Работы» к мержу, как после `done`; «Вернуть» — замечания уже в
+ * `feedback` задачи, воркер стартует заново (запуск сам вводит задачу в путь).
  */
-function subtaskConflictResolved(deps: RunWorkflowDeps, request: HumanRequest): void {
+function legacyConflictResolved(deps: RunWorkflowDeps, request: HumanRequest): void {
   const task = request.taskId !== undefined ? deps.store.getTask(request.taskId) : undefined
   const action = request.resolution?.action
-  if (!task || (action !== 'accept' && action !== 'reject')) return
+  if (!task || task.stage || (action !== 'accept' && action !== 'reject')) return
   try {
-    if (action === 'accept') mergeSubtask(deps, task.id)
-    else deps.startWorker(task.id)
+    if (action === 'accept') {
+      enterWork(deps, task.id)
+      advance(deps, task.id, 'next')
+    } else deps.startWorker(task.id)
   } catch (e) {
-    deps.store.blockStage(task.id, `воркер не запустился после отказа: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`)
+    deps.store.blockStage(task.id, `не удалось продолжить после конфликта мержа: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`)
   }
 }
 
 /**
  * Решён запрос approval (IPC `requests:resolve`, `request resolve`, «Подтвердить»/«Вернуть» на карточке): прогон идёт по
- * исходу ноды `human`, подзадача — по решению о конфликте мержа. `false` — запрос не из воркфлоу прогона: его ведёт
- * прежний движок (`approvalResolved` в `workflow.ts`).
+ * исходу ноды `human`. `false` — запрос на задаче: его ведёт движок по подзадачам (`approvalResolved` в `workflow.ts`:
+ * нода `human` пути подзадачи, в том числе «Конфликт мержа»), кроме устаревшего `SUBTASK_MERGE_NODE`.
  */
 export function handleRunApproval(deps: RunWorkflowDeps, request: HumanRequest): boolean {
   if (request.kind !== 'approval') return false
@@ -479,7 +486,7 @@ export function handleRunApproval(deps: RunWorkflowDeps, request: HumanRequest):
     return true
   }
   if (request.nodeId !== SUBTASK_MERGE_NODE || !isRunScope(deps.store, request.runId)) return false
-  withStatusSource('workflow', () => subtaskConflictResolved(deps, request))
+  withStatusSource('workflow', () => legacyConflictResolved(deps, request))
   return true
 }
 
@@ -612,53 +619,24 @@ function restartAsk(deps: RunWorkflowDeps, task: Task, workerLive: boolean): voi
   }
 }
 
-// ---------- подзадачи: автомерж ----------
-
 /**
- * Слить ветку подзадачи в ветку прогона и закрыть задачу. Не слилось (конфликт) — approval «Конфликт мержа» на самой
- * задаче: человек разрешает конфликт в её ветке и жмёт «Принять» (мерж повторяется) или «Вернуть». Ошибка не конфликтом
- * (защищённая ветка корня у прогона без ветки, не удалось убрать worktree) — `workflow_blocked` по задаче: вручную её
- * принимает человек («Принять» — прежняя приёмка).
+ * Подзадача, не привязанная к этапу «Работа» (заготовлена до входа в граф), сдала `done`: пути у неё нет, а сливать в
+ * ветку прогона по графу нечем — задача ждёт ручной приёмки («Принять»: прежняя приёмка с мержем).
  */
-function mergeSubtask(deps: RunWorkflowDeps, taskId: string): void {
-  const { store } = deps
-  const task = mustTask(deps, taskId)
-  if (store.columnKind(task.status) === 'done') return
-  let result: ReturnType<typeof mergeTaskBranch>
-  try {
-    // Цель — только когда есть что сливать: защищённая ветка корня не должна останавливать задачу без ветки.
-    const target = task.worktree && task.branch ? deps.mergeTarget?.(task) : undefined
-    result = mergeTaskBranch(deps.repoRoot, task, target)
-  } catch (e) {
-    store.blockStage(taskId, `мерж подзадачи не выполнен: ${message(e)}. Принять вручную: «Принять» в приложении или orca-board review accept --task ${taskId}`)
-    return
-  }
-  if (result.ok) {
-    store.acceptTask(taskId)
-    return
-  }
-  store.requestApproval(taskId, {
-    nodeId: SUBTASK_MERGE_NODE,
-    title: `Конфликт мержа: ${task.title}`,
-    body: [
-      `Ветка \`${task.branch}\` не слилась в ветку глобальной задачи.`,
-      `**Мерж не удался:**\n\n\`\`\`\n${result.error}\n\`\`\``,
-      `Разрешите конфликт в ветке задачи${task.worktree ? ` (worktree \`${task.worktree}\`)` : ''} и нажмите «Принять» — мерж повторится; «Вернуть» — воркер продолжит с вашими замечаниями.`
-    ].join('\n\n')
-  })
-}
-
-/** Подзадача сдала `done`: автомерж в ветку прогона (сданный прошлый запуск, задача уже в done — пропуск). */
-function subtaskDone(deps: RunWorkflowDeps, task: Task, dispatchId: string | undefined): void {
-  if (dispatchId !== undefined && task.dispatchId !== dispatchId) return
-  mergeSubtask(deps, task.id)
+function unboundSubtaskDone(deps: RunWorkflowDeps, task: Task): void {
+  deps.store.blockStage(
+    task.id,
+    `подзадача не привязана к этапу «Работа» (создана до входа глобальной задачи в граф) — пути подзадачи у неё нет. ` +
+      `Принять вручную: «Принять» в приложении или orca-board review accept --task ${task.id}`
+  )
 }
 
 /**
- * События store → шаги воркфлоу прогона (подписка `projects.onEvents` в index.ts): `worker_done` подзадачи — автомерж,
- * задачи `ask` — переход дальше, проверки — закрытие; `escalation` проверки — закрытие, если решение уже есть;
- * `question_answered` на этапе `ask` без живого воркера — автоперезапуск. Задачи-ответы идут мимо воркфлоу, задачи
- * прогонов старого формата — на прежнем движке (`handleWorkflowEvents`). Ошибки не выбрасываются из подписки — они
+ * События store → шаги воркфлоу прогона (подписка `projects.onEvents` в index.ts): `worker_done` задачи `ask` — переход
+ * дальше, проверки ветки прогона — закрытие; `escalation` проверки — закрытие, если решение уже есть;
+ * `question_answered` на этапе `ask` без живого воркера — автоперезапуск. Задачи-ответы идут мимо воркфлоу; подзадачи
+ * этапа «Работа» (их путь) и проверки их веток, как и прогоны старого формата, — на движке по подзадачам
+ * (`handleWorkflowEvents`): `taskEngine` отдаёт каждую задачу ровно одному. Ошибки не выбрасываются из подписки — они
  * становятся `workflow_blocked`.
  */
 export function handleRunWorkflowEvents(deps: RunWorkflowDeps, events: readonly OrcaEvent[]): void {
@@ -666,7 +644,7 @@ export function handleRunWorkflowEvents(deps: RunWorkflowDeps, events: readonly 
     for (const e of events) {
       if (!e.taskId || (e.type !== 'worker_done' && e.type !== 'escalation' && e.type !== 'question_answered')) continue
       const task = deps.store.getTask(e.taskId)
-      if (!task || task.answerFor || !isRunScope(deps.store, task.runId)) continue
+      if (!task || task.answerFor || taskEngine(deps, task) !== 'run') continue
       try {
         if (e.type === 'question_answered') {
           restartAsk(deps, task, e.payload.workerLive === true)
@@ -675,7 +653,7 @@ export function handleRunWorkflowEvents(deps: RunWorkflowDeps, events: readonly 
           else if (!task.gateFor) {
             const node = task.stageOf ? deps.store.taskStageNode(task.id, { roleIds: deps.run(task.runId).roles.map((r) => r.id) }) : undefined
             if (node?.type === 'ask') askDone(deps, task, e.dispatchId)
-            else subtaskDone(deps, task, e.dispatchId)
+            else if (e.dispatchId === undefined || task.dispatchId === e.dispatchId) unboundSubtaskDone(deps, task)
           }
         } else if (isRunGate(task) && e.payload.stuck !== true) {
           settleGate(deps, task, 'exit')

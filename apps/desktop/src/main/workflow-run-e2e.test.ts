@@ -14,12 +14,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   DEFAULT_ROLES, normalizeRunBranchSettings,
-  type OrcaEvent, type Role, type RunBranchSettings, type Task, type TaskStore, type WfEdge, type WfNode, type Workflow
+  type OrcaEvent, type Role, type RunBranchSettings, type Task, type TaskStore, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
 import {
   finishRunStage, handleRunApproval, handleRunWorkflowEvents, runGateDecision, startRunWorkflow, type RunWorkflowDeps
 } from './workflow-run'
-import { handleWorkflowEvents, type WorkflowDeps } from './workflow'
+import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, type WorkflowDeps } from './workflow'
 import { resolveHumanRequest } from './review'
 import { ensureRunBranch, mergeTarget } from './run-branch'
 import { taskWorktreePath } from './git'
@@ -35,14 +35,14 @@ const node = (n: Partial<WfNode> & { id: string; type: WfNode['type'] }): WfNode
 const edge = (from: string, outcome: WfEdge['outcome'], to: string): WfEdge => ({ id: `e_${from}_${outcome}`, from, outcome, to })
 
 /** Граф из задания: Анализ (planner) → human → Реализация (без ролей) → gate (reject → Реализация) → human → merge → end. */
-function featureWorkflow(): Workflow {
+function featureWorkflow(implPath?: WfSubflow): Workflow {
   return {
     version: 2,
     nodes: [
       node({ id: 'start', type: 'start' }),
       node({ id: 'analysis', type: 'work', title: 'Анализ', roleIds: ['planner'], instructions: 'Опиши варианты решения в analysis.md' }),
       node({ id: 'choice', type: 'human', title: 'Выбор варианта', instructions: 'Выберите вариант реализации' }),
-      node({ id: 'impl', type: 'work', title: 'Реализация', instructions: 'Реализуй выбранный вариант' }),
+      node({ id: 'impl', type: 'work', title: 'Реализация', instructions: 'Реализуй выбранный вариант', ...(implPath ? { subflow: implPath } : {}) } as Partial<WfNode> & { id: string; type: 'work' }),
       node({ id: 'review', type: 'gate', title: 'Ревью', roleId: 'reviewer' }),
       node({ id: 'check', type: 'human', title: 'Проверка', instructions: 'Проверьте результат' }),
       node({ id: 'merge', type: 'merge' }),
@@ -93,11 +93,11 @@ beforeEach(() => {
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 /** Приложение над каталогом данных `tmp/user`: повторный вызов — «перезапуск» (тот же projects.json и доска, новые объекты). */
-function startApp(settings: RunBranchSettings = normalizeRunBranchSettings(undefined)): App {
+function startApp(settings: RunBranchSettings = normalizeRunBranchSettings(undefined), implPath?: WfSubflow): App {
   const pm = new ProjectManager(path.join(tmp, 'user'))
   if (pid === undefined || !pm.get(pid)) {
     pid = pm.add(repo).id
-    typeId = pm.saveTaskType({ title: 'Фича', settings: { roles: ROLES, workflow: featureWorkflow() } }).id
+    typeId = pm.saveTaskType({ title: 'Фича', settings: { roles: ROLES, workflow: featureWorkflow(implPath) } }).id
   }
   const store = pm.store(pid)
   const app: App = { pm, store, launches: [], coordinatorStarts: [], alive: new Set(), settings, deps: undefined as never }
@@ -112,6 +112,7 @@ function startApp(settings: RunBranchSettings = normalizeRunBranchSettings(undef
     },
     // Как runWorker + startWorker: роль задачи должна быть в типе, ветка задачи — от ветки прогона, dispatch с ролью.
     startWorker(taskId) {
+      enterWork(app.deps as unknown as WorkflowDeps, taskId)
       const t = store.getTask(taskId)!
       const role = app.deps.run(t.runId).roles.find((r) => r.id === t.roleId)
       if (!role) throw new Error(`воркер не запустится: роли «${t.roleId}» нет в типе задачи`)
@@ -184,7 +185,26 @@ function deliverFile(app: App, t: Task, file: string): void {
 
 /** Решение запроса человеком (Инбокс / `request resolve`), как `resolveRequest` в index.ts. */
 function resolve(app: App, requestId: string, action: 'accept' | 'reject', text?: string): void {
-  resolveHumanRequest(app.store, repo, requestId, { action, ...(text ? { text } : {}) }, app.deps.startWorker, (r) => handleRunApproval(app.deps, r), app.deps.mergeTarget)
+  resolveHumanRequest(app.store, repo, requestId, { action, ...(text ? { text } : {}) }, app.deps.startWorker, (r) => {
+    if (!handleRunApproval(app.deps, r)) approvalResolved(app.deps as unknown as WorkflowDeps, r)
+  }, app.deps.mergeTarget)
+}
+
+/** Путь подзадачи: работа → проверка → приёмка человеком → мерж (конфликт → человек) → конец. */
+function reviewedPath(): WfSubflow {
+  return {
+    nodes: [
+      node({ id: 'start', type: 'start' }), node({ id: 'w', type: 'work' }),
+      node({ id: 'rev', type: 'gate', title: 'Ревью подзадачи', roleId: 'reviewer' }),
+      node({ id: 'ok', type: 'human', title: 'Приёмка подзадачи' }), node({ id: 'm', type: 'merge' }),
+      node({ id: 'c', type: 'human', title: 'Конфликт мержа' }), node({ id: 'end', type: 'end', merged: true })
+    ],
+    edges: [
+      edge('start', 'next', 'w'), edge('w', 'next', 'rev'), edge('rev', 'accept', 'ok'), edge('rev', 'reject', 'w'),
+      edge('ok', 'accept', 'm'), edge('ok', 'reject', 'w'), edge('m', 'ok', 'end'), edge('m', 'conflict', 'c'),
+      edge('c', 'accept', 'm'), edge('c', 'reject', 'w')
+    ]
+  }
 }
 
 describe('воркфлоу глобальной задачи: сквозной сценарий', () => {
@@ -352,5 +372,51 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.deepEqual(again.coordinatorStarts, [runId])
     assert.equal(lastEvent(again, 'stage_started').payload.decision, 'вариант A')
     assert.equal(inRunBranch(again, runId, 'analysis.md'), true)
+  })
+
+  it('перезапуск приложения: подзадачи на gate и human пути — Run.stage и Task.stage восстанавливаются вместе и путь продолжается', () => {
+    const app = startApp(undefined, reviewedPath())
+    const runId = startRun(app, 'Фича')
+    const plan = spawn(app, runId, 'План')
+    deliverFile(app, plan, 'analysis.md')
+    finishRunStage(app.deps, runId, 'варианты')
+    resolve(app, approvalOf(app, runId)!.id, 'accept')
+    assert.equal(stageId(app, runId), 'impl')
+
+    // A прошла проверку и ждёт человека на своём пути, B ждёт решения проверки (её воркер убит перезапуском).
+    const a = spawn(app, runId, 'A')
+    deliverFile(app, a, 'a.ts')
+    reviewAccept(app.deps as unknown as WorkflowDeps, a.id)
+    const b = spawn(app, runId, 'B')
+    deliverFile(app, b, 'b.ts')
+    assert.equal(task(app, a.id).stage?.nodeId, 'ok')
+    assert.equal(task(app, b.id).stage?.nodeId, 'rev')
+    const request = app.store.pendingRequests(runId).find((r) => r.taskId === a.id)!
+    assert.equal(request.nodeId, 'ok')
+    const gateB = app.store.listTasks().find((t) => t.gateFor?.taskId === b.id)!
+
+    const again = startApp()
+    assert.equal(stageId(again, runId), 'impl', 'позиция прогона пережила перезапуск')
+    assert.equal(task(again, a.id).stage?.nodeId, 'ok', 'позиция подзадачи на пути — тоже')
+    assert.equal(task(again, b.id).stage?.nodeId, 'rev')
+    assert.deepEqual(task(again, a.id).stage?.visits, task(app, a.id).stage?.visits)
+    assert.equal(again.store.pendingRequests(runId).find((r) => r.taskId === a.id)?.id, request.id, 'approval пути пережил перезапуск')
+    assert.equal(again.store.getTask(gateB.id)?.gateFor?.taskId, b.id)
+    // Путь восстановился из графа прогона: подзадача видит свой subflow, а не путь по умолчанию.
+    assert.ok(again.store.taskWorkflow(task(again, a.id)).nodes.some((n) => n.id === 'rev'))
+
+    // Решения после перезапуска ведут обе подзадачи по путям; этап держат обе до конца.
+    const tasksDone = events(again, 'stage_tasks_done').length // один — от этапа «Анализ»
+    resolve(again, request.id, 'accept')
+    assert.equal(task(again, a.id).status, 'done')
+    assert.equal(task(again, a.id).stage?.nodeId, 'end')
+    assert.equal(inRunBranch(again, runId, 'a.ts'), true)
+    assert.equal(events(again, 'stage_tasks_done').length, tasksDone, 'B ещё на проверке')
+    reviewAccept(again.deps as unknown as WorkflowDeps, b.id)
+    assert.equal(task(again, b.id).stage?.nodeId, 'ok')
+    resolve(again, again.store.pendingRequests(runId).find((r) => r.taskId === b.id)!.id, 'accept')
+    assert.equal(task(again, b.id).status, 'done')
+    assert.equal(events(again, 'stage_tasks_done').length, tasksDone + 1)
+    assert.equal(stageId(again, runId), 'impl')
   })
 })

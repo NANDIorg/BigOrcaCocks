@@ -1244,9 +1244,9 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
 Это движок по подзадачам (версия 1: старые прогоны и «Входящие»); воркфлоу **глобальной задачи** (`Run.workflowScope: 'run'`) исполняет
-`src/main/workflow-run.ts` — эффекты нод прогона, слияние ветки прогона в базу (`mergeRunBranch` в `run-branch.ts`), автомерж подзадач,
-подписки на решения (`docs/workflow.md`, «Движок main»). `review accept|reject` по задаче-проверке ветки прогона (`gateFor.runId`) идёт в
-`runGateDecision` через `reviewDecision` в `index.ts`; `globalTasks:accept` / `globalTasks:returnToWork` прогона нового формата — `acceptRun` / `returnRun`.
+`src/main/workflow-run.ts` — эффекты нод прогона, слияние ветки прогона в базу (`mergeRunBranch` в `run-branch.ts`), подписки на решения (`docs/workflow.md`, «Движок main»). `review accept|reject` по задаче-проверке ветки прогона (`gateFor.runId`) идёт в
+`runGateDecision` через `reviewDecision` в `index.ts`. Подзадачи этапа «Работа» идут по своему пути (`work.subflow` / `defaultSubflow()`) в движке по подзадачам: делит их с движком прогона
+`taskEngine` (`workflow.ts`), событие обрабатывает ровно один исполнитель; `globalTasks:accept` / `globalTasks:returnToWork` прогона нового формата — `acceptRun` / `returnRun`.
 
 - **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
   старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
@@ -2290,7 +2290,10 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
   в Monitor; «Вернуть» — это `returnRun` (approval `reject`, координатор жив — получает событие, мёртв — запускается на входе в «Работу»). **`startCoordinator` из движка не зовёт `startRunWorkflow`**
   (это делает только `runCoordinator` после запуска человеком): иначе повторный вход в «Работу» зациклил бы `ensureCoordinator`. Решение approval прогона (`requests:resolve`, «Подтвердить»,
   «Вернуть») ведёт **одна** цепочка вызовов — `handleRunApproval`, а не событие `request_resolved`: подписка на событие дублировала бы переход.
-  Автомерж закрывает подзадачу только после слияния: закрыть её раньше значило бы дать `stage_tasks_done` по коду, которого ещё нет в ветке прогона.
+  Подзадачу закрывает нода `end` пути только после `merge`: закрыть её раньше значило бы дать `stage_tasks_done` по коду, которого ещё нет в ветке прогона.
+- **Событие и задача — ровно одному исполнителю** (`taskEngine` в `main/workflow.ts`): `handleWorkflowEvents` берёт `legacy` и `path`, `handleRunWorkflowEvents` — `run`. Новый вид задачи в прогоне
+  сначала получает ветку в `taskEngine`, иначе её либо не поведёт никто, либо поведут оба (двойной мерж, двойная проверка). Ноду задачи в путях ищи через `taskWorkflow` — `stageNode`/`graphOf`
+  в `workflow.ts`, не через `runWorkflow`.
 - Путь подзадачи (`work.subflow`): **id нод пути живут в своём пространстве** — `work`, `merge`, `end` внутри пути и в графе прогона могут совпасть. `Task.stage.nodeId` подзадачи прогона —
   нода **пути**, а `Task.stageOf.nodeId` — нода **графа прогона**; искать ноду по `stage` в `runWorkflow(...)` нельзя, только в `taskWorkflow(task)` (или `taskNodeGraph`, если задача ещё не вошла в путь).
   Новый код в `WF_ISSUE_TEXTS` сразу требует ключ `wf.issue.<код>` в `i18n/ru/config.ts` и `en/config.ts` (`defaultTitles.test.ts` сверяет их с core).
