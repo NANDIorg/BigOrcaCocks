@@ -1819,7 +1819,9 @@ export class TaskStore {
    * Этап «Работа» или «Вопрос человеку», на котором стоит задача (`wfWorkStage` по графу прогона): для раздела
    * «Этап» в промпте воркера и проверки показа в `finishDispatch`. Задача вне воркфлоу или на другом этапе —
    * undefined. Подзадача на пути ноды «Работа» (`taskWorkflow`) наследует инструкции, показ и роли этой ноды: ноде пути
-   * их задавать необязательно, а заданные перекрывают внешние.
+   * их задавать необязательно, а заданные перекрывают внешние. Заголовок — тоже: своим считается только явный
+   * `title` ноды пути, иначе остаётся название внешней «Работы» (в `defaultSubflow()` у ноды его нет — раздел «Этап»
+   * в промпте не должен превращаться в «Работа»).
    */
   taskWorkStage(taskId: string, fallback: RunWorkflowFallback = {}): WfWorkStage | undefined {
     const task = this.mustTask(taskId)
@@ -1833,8 +1835,10 @@ export class TaskStore {
     const instructions = stage.instructions ?? outer.instructions
     const showcase = stage.showcase ?? outer.showcase
     const roleIds = stage.roleIds ?? outer.roleIds
+    const ownTitle = this.taskNodeGraph(task, fallback).nodes.find((n) => n.id === nodeId)?.title?.trim()
     return {
       ...stage,
+      title: ownTitle || outer.title,
       ...(instructions ? { instructions } : {}),
       ...(showcase ? { showcase } : {}),
       ...(roleIds ? { roleIds } : {})

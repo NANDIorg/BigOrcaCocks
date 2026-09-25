@@ -780,6 +780,31 @@ describe('путь подзадачи: подзадача прогона ход�
     const def = started()
     def.s.advanceStage(def.task.id, 'next', opts)
     assert.equal(def.s.taskWorkStage(def.task.id, opts)!.instructions, 'снаружи')
+
+    // Заголовок: путь по умолчанию без title у ноды — название внешней «Работы», а не «Работа».
+    assert.equal(def.s.taskWorkStage(def.task.id, opts)!.title, outer.title)
+    assert.notEqual(outer.title, 'Работа')
+    assert.equal(def.s.taskWorkStage(def.task.id, opts)!.nodeId, 'work')
+  })
+
+  it('taskWorkStage: заголовок пути — явный title ноды пути, иначе название внешней «Работы»', () => {
+    const before = started()
+    const outerTitle = before.s.taskWorkStage(before.task.id, opts)!.title
+    assert.equal(outerTitle, 'Реализация')
+    before.s.enterWork(before.task.id, opts)
+    assert.equal(before.s.taskWorkStage(before.task.id, opts)!.title, outerTitle, 'путь по умолчанию: заголовок не меняется на «Работа»')
+
+    const path = reviewPath()
+    Object.assign(path.nodes.find((n) => n.id === 'impl')!, { title: 'Кодинг' })
+    const own = started(path)
+    assert.equal(own.s.taskWorkStage(own.task.id, opts)!.title, outerTitle)
+    own.s.advanceStage(own.task.id, 'next', opts)
+    assert.equal(own.s.taskWorkStage(own.task.id, opts)!.title, 'Кодинг', 'явный title ноды пути перекрывает внешний')
+
+    // Нода пути без title при заданном пути: заголовок внешней «Работы».
+    const noTitle = started(reviewPath())
+    noTitle.s.advanceStage(noTitle.task.id, 'next', opts)
+    assert.equal(noTitle.s.taskWorkStage(noTitle.task.id, opts)!.title, outerTitle)
   })
 
   it('рестарт: Task.stage и Run.stage переживают перезагрузку, путь продолжается', () => {
