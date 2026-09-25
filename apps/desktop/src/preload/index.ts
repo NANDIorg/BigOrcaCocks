@@ -43,6 +43,7 @@ const api: OrcaApi = {
     setGroupCollapsed: (id, collapsed) => ipcRenderer.invoke('projects:setGroupCollapsed', id, collapsed),
     setProjectGroup: (projectId, groupId) => ipcRenderer.invoke('projects:setProjectGroup', projectId, groupId),
     reorderGroups: (ids) => ipcRenderer.invoke('projects:reorderGroups', ids),
+    setGit: (id, patch) => ipcRenderer.invoke('projects:setGit', id, patch),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {

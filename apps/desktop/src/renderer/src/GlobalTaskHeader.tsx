@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { AgentSession, BoardColumn, ColumnKind, GlobalTask } from '@orca-board/core'
+import type { AgentSession, BoardColumn, ColumnKind, GlobalTask, RunGit } from '@orca-board/core'
 import { Icon } from './icons'
 import { GlobalDuration } from './GlobalBoard'
 import { PriorityBadge } from './Priority'
@@ -9,6 +9,7 @@ import { focusFeed } from './feedLink'
 import { useNow } from './useNow'
 import { formatStamp } from './boardSort'
 import { useT } from './i18n'
+import { branchChip } from './runBranch'
 import { coordinatorPill, currentStep, headerActions, statusSteps, type StatusStep } from './globalScreen'
 
 interface Props {
@@ -105,6 +106,7 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
         {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
         <PriorityBadge item={global} className="g-chip" />
         {typeTitle && <span className="g-chip task-type-chip" title={t('global.header.typeTitle')}>{typeTitle}</span>}
+        {global.git && <BranchChip git={global.git} />}
         {!global.inbox && (
           <CoordinatorPill
             global={global}
@@ -124,6 +126,28 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
         {global.inbox && <span className="muted">{t('global.header.inbox')}</span>}
       </div>
     </header>
+  )
+}
+
+/** Ветка глобальной задачи: имя, тон по итогу push; клик копирует имя (для PR и `git switch`). */
+function BranchChip({ git }: { git: RunGit }): React.JSX.Element {
+  const t = useT()
+  const chip = branchChip(git)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1500)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+  return (
+    <button
+      type="button"
+      className={`g-chip gt-branch ${chip.tone}`}
+      title={chip.title}
+      onClick={() => void navigator.clipboard.writeText(git.branch).then(() => setCopied(true), () => undefined)}
+    >
+      <Icon.branch /> {copied ? t('global.branch.copied') : chip.label}
+    </button>
   )
 }
 
