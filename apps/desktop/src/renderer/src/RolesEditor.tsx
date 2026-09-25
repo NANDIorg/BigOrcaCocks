@@ -27,7 +27,7 @@ import { useAutoSave } from './useAutoSave'
 import { agentChangePatch, withPatch } from './roleEdit'
 import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
-import { agentTitle, builtinText, modelTitle } from './defaultTitles'
+import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
 import { ipcErrorMessage } from './ipcError'
 
 interface Props {
@@ -331,7 +331,7 @@ function RolePanel({
   ]
 
   return (
-    <section className="roles-panel" aria-label={t('config.roles.panelAria', { title: r.title })}>
+    <section className="roles-panel" aria-label={t('config.roles.panelAria', { title: roleTitle(r) })}>
       {/* Только чтение — поля недоступны, а вкладки инструкций ниже остаются кликабельными. */}
       <fieldset className="roles-fields" disabled={readOnly}>
       <div className="roles-head">

@@ -9,6 +9,7 @@ import {
 } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
+import { builtinText } from './defaultTitles'
 
 interface Props {
   onClose(): void
@@ -120,7 +121,7 @@ export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element
           />
         </label>
         <span className="muted coord-hint">
-          {t('shell.coordModal.pasteHint', { keys: navigator.platform.startsWith('Mac') ? '⌘V' : 'Ctrl+V', goal: DEFAULT_IMAGE_OBJECTIVE })}
+          {t('shell.coordModal.pasteHint', { keys: navigator.platform.startsWith('Mac') ? '⌘V' : 'Ctrl+V', goal: builtinText(DEFAULT_IMAGE_OBJECTIVE) })}
         </span>
         {(images.length > 0 || reading > 0) && (
           <div className="coord-images">

@@ -2,7 +2,7 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GLOBAL_REVIEW_TITLE, INBOX_TITLE, WF_ISSUE_TEXTS, defaultWorkflow, presetTaskTypes,
+  DEFAULT_COLUMNS, DEFAULT_IMAGE_OBJECTIVE, DEFAULT_ROLES, GLOBAL_REVIEW_TITLE, INBOX_TITLE, WF_ISSUE_TEXTS, defaultWorkflow, presetTaskTypes,
   resolveTaskType, validateWorkflow, wfNodeTitle, type WfIssueCode
 } from '@orca-board/core'
 import { RU } from './i18n/dict'
@@ -13,7 +13,7 @@ afterEach(() => setLocale('ru'))
 
 /** Все встроенные русские тексты, которые core кладёт в данные. */
 function coreTexts(): Set<string> {
-  const out = new Set<string>([INBOX_TITLE, GLOBAL_REVIEW_TITLE, 'Оболочка', 'Модель неизвестна', 'Opus (актуальный)', 'Sonnet (актуальный)', 'Haiku (актуальный)', 'Условие по роли'])
+  const out = new Set<string>([DEFAULT_IMAGE_OBJECTIVE, INBOX_TITLE, GLOBAL_REVIEW_TITLE, 'Оболочка', 'Модель неизвестна', 'Opus (актуальный)', 'Sonnet (актуальный)', 'Haiku (актуальный)', 'Условие по роли'])
   const add = (s?: string): void => { if (s) out.add(s) }
   DEFAULT_COLUMNS.forEach((c) => add(c.title))
   DEFAULT_ROLES.forEach((r) => { add(r.title); add(r.description) })
