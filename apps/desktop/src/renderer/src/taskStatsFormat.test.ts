@@ -4,7 +4,8 @@ import {
   DEFAULT_COLUMNS, emptyStatsUsage, type Dispatch, type GlobalTaskStats, type HumanRequest, type Run, type StatsRow, type StatsUsage, type Task, type TaskStats,
   type TaskWaitStats
 } from '@orca-board/core'
-import { STATS_STALE_MESSAGE } from './statsFormat'
+import { statsStaleMessage } from './statsFormat'
+import { setLocale } from './i18n'
 import {
   advanceGlobalStats, advanceTaskStats, columnParts, dispatchCounters, fallbackGlobalStats, fallbackTaskStats, globalFacts, globalSides, globalStatsKey,
   humanLine, isStatsRunning, isStatsStale, partLabel, rejectionsTitle, returnsCounter, roleRows, spanLabel, stageParts, taskCounters, taskFacts,
@@ -48,16 +49,28 @@ function globalStats(p: Partial<GlobalTaskStats> = {}): GlobalTaskStats {
 // ---------- API и старый main ----------
 
 test('taskStatsApi: старый preload — понятная ошибка, а не «undefined is not a function»', () => {
-  assert.throws(() => taskStatsApi(undefined), { message: STATS_STALE_MESSAGE })
-  assert.throws(() => taskStatsApi({ stats: { project: async () => { throw new Error('x') } } } as never), { message: STATS_STALE_MESSAGE })
+  assert.throws(() => taskStatsApi(undefined), { message: statsStaleMessage() })
+  assert.throws(() => taskStatsApi({ stats: { project: async () => { throw new Error('x') } } } as never), { message: statsStaleMessage() })
   const stats = { project: async () => { throw new Error('x') }, task: async () => { throw new Error('x') }, global: async () => { throw new Error('x') } }
   assert.equal(taskStatsApi({ stats } as never), stats)
 })
 
 test('isStatsStale: нет API в preload или обработчика в main', () => {
-  assert.equal(isStatsStale(STATS_STALE_MESSAGE), true)
+  assert.equal(isStatsStale(statsStaleMessage()), true)
   assert.equal(isStatsStale("No handler registered for 'stats:task'"), true)
   assert.equal(isStatsStale('статистика: задачи t9 нет в проекте'), false)
+})
+
+test('taskStatsApi: на английском ошибка старого preload — английская и узнаётся после смены языка', () => {
+  setLocale('en')
+  try {
+    assert.throws(() => taskStatsApi(undefined), (e: Error) => /Restart the app/.test(e.message) && isStatsStale(e.message))
+    const english = statsStaleMessage()
+    setLocale('ru')
+    assert.equal(isStatsStale(english), true)
+  } finally {
+    setLocale('ru')
+  }
 })
 
 // ---------- бегущие значения ----------

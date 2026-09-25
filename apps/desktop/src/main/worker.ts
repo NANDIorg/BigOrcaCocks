@@ -7,7 +7,8 @@ import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPromp
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
-import { extraPathDirs, findBin, isCmdScript, missingRoleMessage } from './agents'
+import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
+import { OrcaError } from './i18n'
 import { assistantEnv } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 
@@ -192,7 +193,7 @@ export function startWorker(
   // Роль этапа «Вопрос человеку» — только на этот запуск: задача сохраняет свою роль (`store.updateTask` ниже).
   const runRoleId = roleId ?? task.roleId
   const role = ctx.roles.find((r) => r.id === runRoleId)
-  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(runRoleId, { title: ctx.typeTitle, roles: ctx.roles })}`)
+  if (!role) throw new OrcaError('worker.cannotStart', { reason: missingRoleText(runRoleId, { title: ctx.typeTitle, roles: ctx.roles }) })
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
 
@@ -336,7 +337,7 @@ export function startCoordinator(
 ): { ptyId: string; runId: string } {
   // Роль coordinator можно удалить из типа задачи («Настройки» → «Типы задач»); молча запускать claude вместо неё нельзя — человек её убрал.
   const role = ctx.roles.find((r) => r.id === 'coordinator')
-  if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', { title: ctx.typeTitle, roles: ctx.roles })}`)
+  if (!role) throw new OrcaError('coordinator.cannotStart', { reason: missingRoleText('coordinator', { title: ctx.typeTitle, roles: ctx.roles }) })
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined

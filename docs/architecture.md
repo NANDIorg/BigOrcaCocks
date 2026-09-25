@@ -1487,7 +1487,7 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 `costCell` («нет данных» / «без цены» / «не менее»), `buildChart` — столбцы периода: 7 / 30 дней до даты `generatedAt`,
 «всё время» — от первого дня `byDay`, длиннее 62 дней — по неделям, длиннее 420 — по месяцам. Цвет модели и роли —
 `seriesColor` по месту строки в `byModel` / `byRole` (`--s1`…`--s5`, `unknown` — `--s-unknown`, дальше — `--s-other`).
-Старый preload без `stats` — `statsApi()` бросает `STATS_STALE_MESSAGE`, старый main — `isStaleStatsError` (как `docsApi`).
+Старый preload без `stats` — `statsApi()` бросает `statsStaleMessage()`, старый main — `isStaleStatsError` (как `docsApi`).
 Период и метрика графика запоминаются в `localStorage` (`orca.stats.range`, `orca.stats.metric`), общие для проектов.
 
 ### Интерфейс — статистика задачи и глобальной задачи
@@ -1511,7 +1511,7 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
   `useNow` раз в 30 с): время жизни, «в работе» (пока открыт отрезок — `taskTicking` / `globalTaskTicking('own')`), колонка задачи, ожидание
   человека (пока есть pending), время агентов идущих сессий (у глобальной — координатор по живому PTY и подзадачи по их незавершённым
   `Dispatch`). Роли и этапы не тикают — обновляются при перечитывании.
-- **Старый main/preload** (HMR: renderer новый, main — нет). Нет `stats.task` в preload (`taskStatsApi` бросает `STATS_STALE_MESSAGE`) или нет
+- **Старый main/preload** (HMR: renderer новый, main — нет). Нет `stats.task` в preload (`taskStatsApi` бросает `statsStaleMessage()`) или нет
   обработчика в main (`isStaleStatsError`) — время считается в renderer теми же `buildTaskStats` / `buildGlobalTaskStats` по снимку доски
   (`StatsSnapshot`, собирает `App.tsx`) без `usage`: токенов и стоимости нет, над секцией — «перезапустите приложение».
 - Карточка на доске статистику не показывает: стоимость потребовала бы читать транскрипты для всей доски.

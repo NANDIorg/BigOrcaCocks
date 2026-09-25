@@ -1,6 +1,7 @@
 import type { ColumnKind, GlobalTaskReturn } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { t } from './i18n'
+import { ipcErrorCode, ipcErrorMessage } from './ipcError'
 
 /**
  * Что можно сделать с глобальной задачей на карточке и в деталях. «Проверка» — колонка kind=review
@@ -70,12 +71,15 @@ export function staleReturnLiveMessage(): string {
 }
 
 /**
- * Ошибка IPC для человека: preload новый, а main старый — «No handler registered» → «перезапустите».
- * Старый main отказывает в возврате при живом координаторе («ещё завершается») — объясняем, как обойти. Текст ошибки
- * main не переводится (main пишет по-русски), поэтому сверяем с ним как есть.
+ * Ошибка IPC для человека (`e` — ошибка invoke или её текст): preload новый, а main старый — «No handler registered»
+ * → «перезапустите». Отказ в возврате при живом координаторе («ещё завершается») — объясняем, как обойти. Main
+ * с переводом присылает код `coordinator.finishing`; main до перевода — только русский текст, его сверяем как есть.
  */
-export function reviewErrorMessage(message: string): string {
-  if (/No handler registered for 'globalTasks:(accept|returnToWork)'/.test(message)) return staleReviewMessage()
-  if (/координатор этой глобальной задачи ещё завершается/.test(message)) return staleReturnLiveMessage()
-  return message
+export function reviewErrorMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e)
+  if (/No handler registered for 'globalTasks:(accept|returnToWork)'/.test(raw)) return staleReviewMessage()
+  if (ipcErrorCode(e) === 'coordinator.finishing' || /координатор этой глобальной задачи ещё завершается/.test(raw)) {
+    return staleReturnLiveMessage()
+  }
+  return ipcErrorMessage(e)
 }

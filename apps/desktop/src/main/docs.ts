@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { DocFile, DocGroup } from '../shared/ipc'
+import { OrcaError, mt } from './i18n'
 
 /** Больше не читаем: просмотрщик не для логов и дампов. */
 export const DOC_MAX_BYTES = 2 * 1024 * 1024
@@ -33,22 +34,22 @@ export const isInside = (root: string, target: string): boolean => {
  * реальные пути), не файл или больше DOC_MAX_BYTES.
  */
 export function resolveDocPath(root: string, relPath: unknown): string {
-  if (typeof relPath !== 'string' || relPath.trim() === '' || relPath.includes('\0')) throw new Error('путь к документу не задан')
-  if (isAbsolute(relPath)) throw new Error(`путь должен быть относительным: ${relPath}`)
-  if (!MD.test(relPath)) throw new Error(`не markdown-файл: ${relPath}`)
+  if (typeof relPath !== 'string' || relPath.trim() === '' || relPath.includes('\0')) throw new OrcaError('docs.noPath')
+  if (isAbsolute(relPath)) throw new OrcaError('docs.notRelative', { path: relPath })
+  if (!MD.test(relPath)) throw new OrcaError('docs.notMarkdown', { path: relPath })
   const abs = resolve(root, relPath)
-  if (!isInside(resolve(root), abs)) throw new Error(`путь вне проекта: ${relPath}`)
+  if (!isInside(resolve(root), abs)) throw new OrcaError('docs.outside', { path: relPath })
   let real: string
   try {
     real = realpathSync(abs)
   } catch {
-    throw new Error(`файл не найден: ${relPath}`)
+    throw new OrcaError('docs.notFound', { path: relPath })
   }
-  if (!isInside(realpathSync(root), real)) throw new Error(`путь вне проекта: ${relPath}`)
-  if (!MD.test(real)) throw new Error(`не markdown-файл: ${relPath}`)
+  if (!isInside(realpathSync(root), real)) throw new OrcaError('docs.outside', { path: relPath })
+  if (!MD.test(real)) throw new OrcaError('docs.notMarkdown', { path: relPath })
   const st = statSync(real)
-  if (!st.isFile()) throw new Error(`не файл: ${relPath}`)
-  if (st.size > DOC_MAX_BYTES) throw new Error(`файл больше ${DOC_MAX_BYTES / 1024 / 1024} МБ: ${relPath}`)
+  if (!st.isFile()) throw new OrcaError('docs.notFile', { path: relPath })
+  if (st.size > DOC_MAX_BYTES) throw new OrcaError('docs.tooBig', { mb: DOC_MAX_BYTES / 1024 / 1024, path: relPath })
   return real
 }
 
@@ -111,7 +112,7 @@ export interface DocTask {
  * Ошибка git в worktree одной задачи не ломает список — задача пропускается.
  */
 export function listDocGroups(root: string, base: string, tasks: DocTask[]): DocGroup[] {
-  const groups: DocGroup[] = [{ source: PROJECT_SOURCE, title: 'Проект', files: listProjectDocs(root) }]
+  const groups: DocGroup[] = [{ source: PROJECT_SOURCE, title: mt('docs.project'), files: listProjectDocs(root) }]
   for (const t of tasks) {
     try {
       const files = listWorktreeDocs(t.worktree, base)

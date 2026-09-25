@@ -11,6 +11,7 @@ import {
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
+import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
 import { DEFAULT_UPDATE_SETTINGS } from '../shared/ipc'
@@ -226,7 +227,7 @@ export class ProjectManager {
     try {
       root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: path, stdio: 'pipe' }).toString().trim()
     } catch {
-      throw new Error(`${path} — не git-репозиторий`)
+      throw new OrcaError('projects.notGit', { path })
     }
     const existing = this.data.projects.find((p) => p.root === root)
     if (existing) {
@@ -266,7 +267,7 @@ export class ProjectManager {
 
   private requireType(id: string): TaskType {
     const t = this.taskType(id)
-    if (!t) throw new Error(`тип задачи не найден: ${id}`)
+    if (!t) throw new OrcaError('type.notFound', { id })
     return t
   }
 
@@ -298,17 +299,17 @@ export class ProjectManager {
    * тип общий для проектов с разными колонками.
    */
   saveTaskType(input: TaskTypeInput): TaskType {
-    if (!isObject(input)) throw new Error('тип задачи: ожидается объект')
-    if (input.id !== undefined && !nonEmpty(input.id)) throw new Error('тип задачи: пустой id')
-    if (!nonEmpty(input.title)) throw new Error('тип задачи: пустое название')
-    if (input.description !== undefined && typeof input.description !== 'string') throw new Error(`тип «${input.title}»: описание должно быть строкой`)
+    if (!isObject(input)) throw new OrcaError('type.notObject')
+    if (input.id !== undefined && !nonEmpty(input.id)) throw new OrcaError('type.emptyId')
+    if (!nonEmpty(input.title)) throw new OrcaError('type.emptyTitle')
+    if (input.description !== undefined && typeof input.description !== 'string') throw new OrcaError('type.descriptionNotString', { title: input.title })
     const user = [...(this.data.taskTypes ?? [])]
     const id = input.id ?? this.newTypeId()
     const i = user.findIndex((t) => t.id === id)
     const description = input.description?.trim()
     const type: TaskType = {
       id, title: input.title.trim(), ...(description ? { description } : {}),
-      settings: savedTypeSettings(input.settings ?? {}, i === -1 ? undefined : user[i], `тип «${input.title.trim()}»`)
+      settings: savedTypeSettings(input.settings ?? {}, i === -1 ? undefined : user[i], typeLabel(input.title.trim()))
     }
     if (i !== -1) this.settleLegacyRuns(id)
     if (i === -1) user.push(type)
@@ -324,7 +325,7 @@ export class ProjectManager {
    */
   patchTaskType(id: string, patch: Partial<Record<keyof TaskTypeSettings, unknown>>): TaskType {
     const t = this.requireType(id)
-    const settings = validTypeSettings(patch, t.settings, `тип «${t.title}»`)
+    const settings = validTypeSettings(patch, t.settings, typeLabel(t.title))
     return this.saveTaskType({ id: t.id, title: t.title, ...(t.description ? { description: t.description } : {}), settings })
   }
 
@@ -337,8 +338,8 @@ export class ProjectManager {
   deleteTaskType(id: string): TaskTypesState {
     const types = this.data.taskTypes ?? []
     const t = types.find((x) => x.id === id)
-    if (!t) throw new Error(`тип задачи не найден: ${id}`)
-    if (types.length === 1) throw new Error(`тип «${t.title}» последний в библиотеке — его нельзя удалить: сначала создайте другой тип`)
+    if (!t) throw new OrcaError('type.notFound', { id })
+    if (types.length === 1) throw new OrcaError('type.lastOne', { title: t.title })
     this.settleLegacyRuns(id)
     this.data.taskTypes = types.filter((x) => x.id !== id)
     if (this.data.defaultTaskTypeId === id) delete this.data.defaultTaskTypeId
@@ -361,7 +362,7 @@ export class ProjectManager {
   duplicateTaskType(id: string): TaskType {
     const src = this.requireType(id)
     return this.saveTaskType({
-      title: `${src.title} (копия)`,
+      title: mt('type.copyTitle', { title: src.title }),
       ...(src.description ? { description: src.description } : {}),
       settings: src.settings
     })
@@ -380,9 +381,9 @@ export class ProjectManager {
   saveTaskTypeRules(typeId: string, roleId: string | undefined, text: string): TaskType {
     const t = this.requireType(typeId)
     if (roleId === undefined) return this.patchTaskType(typeId, { agentRules: text })
-    if (typeof text !== 'string') throw new Error('правила роли должны быть строкой')
+    if (typeof text !== 'string') throw new OrcaError('rules.roleNotString')
     const roles = t.settings.roles ?? DEFAULT_ROLES
-    if (!roles.some((r) => r.id === roleId)) throw new Error(`в типе «${t.title}» нет роли «${roleId}»`)
+    if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
     return this.patchTaskType(typeId, { roles: roles.map((r) => (r.id === roleId ? { ...r, systemPrompt: text } : r)) })
   }
 
@@ -393,7 +394,7 @@ export class ProjectManager {
   taskTypeWorkflow(typeId: string): { typeId: string; title: string; workflow: Workflow; custom: boolean } {
     const t = this.requireType(typeId)
     const own = t.settings.workflow
-    if (own && own.version > WORKFLOW_VERSION) throw new Error(futureWorkflowMessage(own.version))
+    if (own && own.version > WORKFLOW_VERSION) throw futureWorkflowError(own.version)
     return { typeId: t.id, title: t.title, workflow: own ? clone(own) : resolveTaskType(t).workflow, custom: own !== undefined }
   }
 
@@ -428,19 +429,19 @@ export class ProjectManager {
   /** Доступные проекту типы (null — все) и тип по умолчанию, который должен быть среди них. */
   setProjectTaskTypes(projectId: string, input: ProjectTaskTypesInput): Project {
     const p = this.mustGet(projectId)
-    if (!isObject(input)) throw new Error('типы проекта: ожидается объект')
+    if (!isObject(input)) throw new OrcaError('projectTypes.notObject')
     const exists = (id: string): boolean => this.taskType(id) !== undefined
     let typeIds: string[] | undefined
     if (input.typeIds != null) {
-      if (!Array.isArray(input.typeIds) || !input.typeIds.every(nonEmpty)) throw new Error('типы проекта: typeIds должен быть массивом id типов')
+      if (!Array.isArray(input.typeIds) || !input.typeIds.every(nonEmpty)) throw new OrcaError('projectTypes.badIds')
       typeIds = [...new Set(input.typeIds)]
-      if (!typeIds.length) throw new Error('типы проекта: нужен хотя бы один доступный тип')
+      if (!typeIds.length) throw new OrcaError('projectTypes.empty')
       const missing = typeIds.find((id) => !exists(id))
-      if (missing) throw new Error(`тип задачи не найден: ${missing}`)
+      if (missing) throw new OrcaError('type.notFound', { id: missing })
     }
-    if (!nonEmpty(input.defaultTypeId) || !exists(input.defaultTypeId)) throw new Error(`тип задачи не найден: ${String(input.defaultTypeId)}`)
+    if (!nonEmpty(input.defaultTypeId) || !exists(input.defaultTypeId)) throw new OrcaError('type.notFound', { id: String(input.defaultTypeId) })
     if (typeIds && !typeIds.includes(input.defaultTypeId)) {
-      throw new Error(`тип по умолчанию «${this.requireType(input.defaultTypeId).title}» должен быть среди доступных проекту`)
+      throw new OrcaError('projectTypes.defaultNotAvailable', { title: this.requireType(input.defaultTypeId).title })
     }
     if (typeIds) p.taskTypeIds = typeIds
     else delete p.taskTypeIds
@@ -474,9 +475,9 @@ export class ProjectManager {
     const type = typeId === undefined ? this.taskType(id) : this.projectTaskTypes(projectId).find((t) => t.id === id)
     if (!type) {
       const known = this.taskType(id)
-      throw new Error(known
-        ? `тип «${known.title}» недоступен в проекте «${p.name}» (доступные: orca-board types list)`
-        : `тип задачи не найден: ${id} (доступные: orca-board types list)`)
+      throw known
+        ? new OrcaError('type.unavailable', { title: known.title, project: p.name })
+        : new OrcaError('type.notFoundHint', { id })
     }
     const input = runTypeInput(type)
     if (input.workflow && input.workflow.version > WORKFLOW_VERSION) delete input.workflow
@@ -605,7 +606,7 @@ export class ProjectManager {
 
   activeStore(): TaskStore {
     const p = this.active()
-    if (!p) throw new Error('нет проектов: добавьте репозиторий')
+    if (!p) throw new OrcaError('projects.none')
     return this.store(p.id)
   }
 
@@ -653,7 +654,7 @@ function nonEmpty(v: unknown): v is string {
 
 /** Правила агентов: строка; из одних пробелов — undefined (поля нет). */
 function validateAgentRules(text: unknown): string | undefined {
-  if (typeof text !== 'string') throw new Error('правила агентов должны быть строкой')
+  if (typeof text !== 'string') throw new OrcaError('rules.agentNotString')
   return text.trim() ? text : undefined
 }
 
@@ -662,18 +663,18 @@ function validateAgentRules(text: unknown): string | undefined {
  * строки или отсутствуют. Пустое назначение системной роли заменяется назначением по умолчанию.
  */
 function validateRoles(roles: Role[]): Role[] {
-  if (!Array.isArray(roles) || roles.length === 0) throw new Error('нужна хотя бы одна роль')
+  if (!Array.isArray(roles) || roles.length === 0) throw new OrcaError('role.noneLeft')
   const seen = new Set<string>()
   return withDefaultDescriptions(roles.map((r, i) => {
-    if (!nonEmpty(r.id)) throw new Error(`роль №${i + 1}: пустой id`)
-    if (seen.has(r.id)) throw new Error(`роль «${r.id}» указана дважды`)
+    if (!nonEmpty(r.id)) throw new OrcaError('role.emptyId', { n: i + 1 })
+    if (seen.has(r.id)) throw new OrcaError('role.duplicate', { id: r.id })
     seen.add(r.id)
-    if (!nonEmpty(r.title)) throw new Error(`роль «${r.id}»: пустое название`)
-    if (r.description !== undefined && typeof r.description !== 'string') throw new Error(`роль «${r.id}»: назначение должно быть строкой`)
-    if (!isAgentKind(r.agent)) throw new Error(`роль «${r.id}»: неизвестный агент ${String(r.agent)}`)
-    if (r.model !== undefined && typeof r.model !== 'string') throw new Error(`роль «${r.id}»: модель должна быть строкой`)
-    if (r.effort !== undefined && typeof r.effort !== 'string') throw new Error(`роль «${r.id}»: effort должен быть строкой`)
-    if (r.systemPrompt !== undefined && typeof r.systemPrompt !== 'string') throw new Error(`роль «${r.id}»: системный промпт должен быть строкой`)
+    if (!nonEmpty(r.title)) throw new OrcaError('role.emptyTitle', { id: r.id })
+    if (r.description !== undefined && typeof r.description !== 'string') throw new OrcaError('role.descriptionNotString', { id: r.id })
+    if (!isAgentKind(r.agent)) throw new OrcaError('role.unknownAgent', { id: r.id, agent: String(r.agent) })
+    if (r.model !== undefined && typeof r.model !== 'string') throw new OrcaError('role.modelNotString', { id: r.id })
+    if (r.effort !== undefined && typeof r.effort !== 'string') throw new OrcaError('role.effortNotString', { id: r.id })
+    if (r.systemPrompt !== undefined && typeof r.systemPrompt !== 'string') throw new OrcaError('role.promptNotString', { id: r.id })
     const model = r.model?.trim()
     const effort = r.effort?.trim()
     // Назначение и промпт хранятся как введены (многострочные, без trim — иначе автосохранение съедало бы ввод); из одних пробелов — поля нет.
@@ -691,30 +692,35 @@ function validateRoles(roles: Role[]): Role[] {
  * остальные — custom. Порядок массива = порядок на доске.
  */
 function validateColumns(columns: BoardColumn[]): BoardColumn[] {
-  if (!Array.isArray(columns) || columns.length === 0) throw new Error('нужна хотя бы одна колонка')
+  if (!Array.isArray(columns) || columns.length === 0) throw new OrcaError('column.noneLeft')
   const ids = new Set<string>()
   const kinds = new Map<string, number>()
   const result = columns.map((c, i) => {
-    if (!nonEmpty(c.id)) throw new Error(`колонка №${i + 1}: пустой id`)
-    if (ids.has(c.id)) throw new Error(`колонка «${c.id}» указана дважды`)
+    if (!nonEmpty(c.id)) throw new OrcaError('column.emptyId', { n: i + 1 })
+    if (ids.has(c.id)) throw new OrcaError('column.duplicate', { id: c.id })
     ids.add(c.id)
-    if (!nonEmpty(c.title)) throw new Error(`колонка «${c.id}»: пустое название`)
+    if (!nonEmpty(c.title)) throw new OrcaError('column.emptyTitle', { id: c.id })
     const system = (SYSTEM_COLUMN_KINDS as string[]).includes(c.kind)
-    if (!system && c.kind !== 'custom') throw new Error(`колонка «${c.id}»: неизвестный вид ${String(c.kind)}`)
+    if (!system && c.kind !== 'custom') throw new OrcaError('column.unknownKind', { id: c.id, kind: String(c.kind) })
     if (system) kinds.set(c.kind, (kinds.get(c.kind) ?? 0) + 1)
     const color = nonEmpty(c.color) ? c.color.trim() : COLUMN_COLORS[0].value
     return { id: c.id, title: c.title.trim(), color, kind: c.kind }
   })
   for (const kind of SYSTEM_COLUMN_KINDS) {
     const n = kinds.get(kind) ?? 0
-    if (n === 0) throw new Error(`нет системной колонки «${kind}» — её нельзя удалить`)
-    if (n > 1) throw new Error(`системная колонка «${kind}» должна быть одна, а их ${n}`)
+    if (n === 0) throw new OrcaError('column.systemMissing', { kind })
+    if (n > 1) throw new OrcaError('column.systemDuplicate', { kind, n })
   }
   return result
 }
 
-function futureWorkflowMessage(version: number): string {
-  return `воркфлоу сохранён в формате версии ${version}, приложение знает только ${WORKFLOW_VERSION} — обновите приложение`
+function futureWorkflowError(version: number): OrcaError {
+  return new OrcaError('workflow.future', { version, known: WORKFLOW_VERSION })
+}
+
+/** Начало текста ошибок настроек типа: «тип «Бэкенд»». */
+function typeLabel(title: string): MText {
+  return { key: 'type.label', params: { title } }
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -763,7 +769,8 @@ function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
   const wf = migrateWorkflow(parseWorkflow(v))
   // Будущую версию validateWorkflow тоже отвергает («обновите приложение»).
   const { errors } = validateWorkflow(wf, ctx)
-  if (errors.length) throw new Error(`воркфлоу не сохранён: ${errors.map((e) => e.message).join('; ')}`)
+  // Тексты проблем — из core, по-русски: renderer проверяет граф сам и переводит их по коду до сохранения.
+  if (errors.length) throw new OrcaError('workflow.notSaved', { errors: errors.map((e) => e.message).join('; ') })
   return wf
 }
 
@@ -805,8 +812,8 @@ function clone<T>(v: T): T {
  * учётом этого же патча, колонки нод — нет. Посторонние поля (колонки и агенты старого формата) отбрасываются.
  * `label` — начало текста ошибки.
  */
-function validTypeSettings(patch: unknown, base: TaskTypeSettings, label: string): TaskTypeSettings {
-  if (!isObject(patch)) throw new Error(`${label}: ожидается объект`)
+function validTypeSettings(patch: unknown, base: TaskTypeSettings, label: MText): TaskTypeSettings {
+  if (!isObject(patch)) throw new OrcaError('type.settingsNotObject', { label })
   const next: TaskTypeSettings = {
     ...(base.permissionMode ? { permissionMode: base.permissionMode } : {}),
     ...(base.roles ? { roles: base.roles } : {}),
@@ -815,7 +822,7 @@ function validTypeSettings(patch: unknown, base: TaskTypeSettings, label: string
   }
   if ('permissionMode' in patch) {
     if (patch.permissionMode == null) delete next.permissionMode
-    else if (!isPermissionMode(patch.permissionMode)) throw new Error(`${label}: неизвестный режим разрешений: ${String(patch.permissionMode)}`)
+    else if (!isPermissionMode(patch.permissionMode)) throw new OrcaError('type.unknownPermission', { label, mode: String(patch.permissionMode) })
     else next.permissionMode = patch.permissionMode
   }
   if (patch.roles !== undefined) next.roles = validateRoles(patch.roles as Role[])
@@ -836,7 +843,7 @@ function validTypeSettings(patch: unknown, base: TaskTypeSettings, label: string
  * ролей, чей граф ссылается на удалённую роль, или любая правка типа с графом будущей версии падала бы. Такой
  * граф исполнитель встретит в рантайме — `workflow_blocked` или дефолтный граф (как у проекта до типов).
  */
-function savedTypeSettings(settings: unknown, existing: TaskType | undefined, label: string): TaskTypeSettings {
+function savedTypeSettings(settings: unknown, existing: TaskType | undefined, label: MText): TaskTypeSettings {
   const own = existing?.settings.workflow
   if (!isObject(settings) || !own || JSON.stringify(settings.workflow) !== JSON.stringify(own)) {
     return validTypeSettings(settings, {}, label)

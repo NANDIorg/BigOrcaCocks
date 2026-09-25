@@ -46,7 +46,7 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, 
     try {
       await onSubmit(text.trim())
     } catch (e) {
-      setError(reviewErrorMessage(ipcErrorMessage(e)))
+      setError(reviewErrorMessage(e))
     } finally {
       busyRef.current = false
       setBusy(false)

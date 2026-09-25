@@ -14,7 +14,7 @@ import { listRules, writeRule } from './rules'
 import { currentBranch } from './git'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
-import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './agents'
+import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
@@ -24,6 +24,8 @@ import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTy
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
+import { OrcaError, ipcError, mt, setMainLocale } from './i18n'
+import { columnTitle } from './defaultTitles'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -136,8 +138,8 @@ async function requestQuit(): Promise<void> {
   try {
     const opts = {
       type: 'warning' as const,
-      message: `${n} ${tasksWord(n)} в работе, агенты будут остановлены. Выйти?`,
-      buttons: ['Выйти', 'Отмена'],
+      message: mt('dialog.quit.message', { count: n }),
+      buttons: [mt('dialog.quit.quit'), mt('dialog.cancel')],
       defaultId: 1,
       cancelId: 1,
       noLink: true
@@ -163,16 +165,16 @@ async function confirmInstall(req: InstallRequest): Promise<InstallChoice> {
       req.reason === 'idle-reached'
         ? {
             type: 'question' as const,
-            message: `Агенты закончили работу. Перезапустить и обновить до ${req.version}?`,
-            buttons: ['Перезапустить и обновить', 'Позже'],
+            message: mt('dialog.update.idleReached', { version: req.version }),
+            buttons: [mt('dialog.update.restart'), mt('dialog.update.later')],
             defaultId: 0,
             cancelId: 1,
             noLink: true
           }
         : {
             type: 'warning' as const,
-            message: `${req.workers} ${tasksWord(req.workers)} в работе: обновить до ${req.version} сейчас (агенты остановятся) или когда агенты закончат?`,
-            buttons: ['Обновить сейчас', 'Когда агенты закончат', 'Отмена'],
+            message: mt('dialog.update.busy', { count: req.workers, version: req.version }),
+            buttons: [mt('dialog.update.now'), mt('dialog.update.whenIdle'), mt('dialog.cancel')],
             defaultId: 1,
             cancelId: 2,
             noLink: true
@@ -188,14 +190,6 @@ async function confirmInstall(req: InstallRequest): Promise<InstallChoice> {
 /** Версия, с которой приложение только что обновилось («Обновлено до …»): итог бэкапа при смене версии (`backup.ts`). */
 function takeJustUpdated(): string | null {
   return getJustUpdatedFrom()
-}
-
-function tasksWord(n: number): string {
-  const m10 = n % 10
-  const m100 = n % 100
-  if (m10 === 1 && m100 !== 11) return 'задача'
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'задачи'
-  return 'задач'
 }
 
 /**
@@ -262,7 +256,7 @@ function collectGlobalTaskStats(projectId: string, runId: string): Promise<Globa
 
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
   const p = projectId ? projects.get(projectId) : projects.active()
-  if (!p) throw new Error(projectId ? `project not found: ${projectId}` : 'нет проектов: добавьте репозиторий')
+  if (!p) throw projectId ? new Error(`project not found: ${projectId}`) : new OrcaError('projects.none')
   return { id: p.id, root: p.root, store: projects.store(p.id) }
 }
 
@@ -311,7 +305,7 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
     const stageRoleId = opts.roleId ?? entered.roleId
     const roleId = stageRoleId ?? p.store.getTask(taskId)?.roleId ?? task0.roleId
     const role = type.roles.find((r) => r.id === roleId)
-    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(roleId, type)}`)
+    if (!role) throw new OrcaError('worker.cannotStart', { reason: missingRoleText(roleId, type) })
     assertAgentUsable(projectAgents(p.id), role.agent)
     // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
     closeTaskWorkers(p.store, taskId)
@@ -408,7 +402,7 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
 function removeGlobalTask(store: TaskStore, runId: string, cascade: boolean): { deleted: string; tasks: string[] } {
   const run = store.getRun(runId)
   if (run?.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
-    throw new Error('координатор этой глобальной задачи ещё работает — сначала закрой его терминал')
+    throw new OrcaError('global.coordinatorAlive')
   }
   const ptyIds = store.snapshot().dispatches.filter((d) => store.getTask(d.taskId)?.runId === runId && isAlive(d.ptyId)).map((d) => d.ptyId)
   const result = store.deleteGlobalTask(runId, { cascade })
@@ -507,7 +501,7 @@ function notify(projectId: string, events: OrcaEvent[]): void {
     const content = describeEvent(e, task, project?.name ?? 'orca-board', settings.showPreview)
     if (!content || !shouldNotify(content, settings, new Date(), focused)) continue
     const column = task && settings.showPreview ? projects.columns(projectId).find((c) => c.id === task.status) : undefined
-    const n = new Notification({ title: content.title, body: content.body, subtitle: column?.title, silent: !settings.sound })
+    const n = new Notification({ title: content.title, body: content.body, subtitle: column ? columnTitle(column) : undefined, silent: !settings.sound })
     n.on('click', () => focusProject(projectId, content.requestId))
     n.show()
   }
@@ -524,9 +518,9 @@ function resolveRequest(projectId: string | undefined, id: string, resolution: R
 
 /** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */
 function testNotification(): void {
-  if (!Notification.isSupported()) throw new Error('системные уведомления не поддерживаются')
+  if (!Notification.isSupported()) throw new OrcaError('notify.unsupported')
   const s = projects.settings().notifications
-  const body = s.showPreview ? 'Вопрос: так уведомления и будут выглядеть' : 'Вопрос'
+  const body = s.showPreview ? mt('notify.testPreview') : mt('notify.question')
   new Notification({ title: 'orca-board', body, silent: !s.sound }).show()
 }
 
@@ -547,14 +541,14 @@ function docRoot(source: unknown): string {
   const p = resolveProject()
   if (source === PROJECT_SOURCE) return p.root
   const task = docTasks(p.store).find((t) => t.id === source)
-  if (!task) throw new Error(`задача не в работе или без worktree: ${String(source)}`)
+  if (!task) throw new OrcaError('docs.noTaskSource', { id: String(source) })
   return task.worktree
 }
 
 /** Диалог выбора репозитория для «Добавить проект»; отмена — null. */
 async function pickRepoFolder(): Promise<string | null> {
   if (!win) throw new Error('no window')
-  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Выберите git-репозиторий' })
+  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: mt('dialog.pickRepo') })
   return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
 }
 
@@ -563,13 +557,22 @@ async function pickRepoFolder(): Promise<string | null> {
  * попадают в историю статусов с `human` (`withStatusSource`, действует до первого await обработчика).
  */
 function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent, ...args: A) => unknown): void {
-  ipcMain.handle(channel, (e, ...args: unknown[]) => withStatusSource('human', () => fn(e, ...(args as A))))
+  ipcMain.handle(channel, async (e, ...args: unknown[]) => {
+    try {
+      return await withStatusSource('human', () => fn(e, ...(args as A)))
+    } catch (err) {
+      throw ipcError(err)
+    }
+  })
 }
 
 function registerIpc(): void {
   handle('app:getSettings', () => projects.settings())
   handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
     const settings = projects.setSettings(patch ?? {})
+    // Язык меняется без перезапуска: трей пересобирается сразу, диалоги и уведомления берут его при показе.
+    setMainLocale(settings.language)
+    refreshTray()
     updater.settingsChanged()
     return settings
   })
@@ -630,7 +633,7 @@ function registerIpc(): void {
   })
   handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
   handle('globalTasks:changeType', (_e, id: string, typeId: string) => {
-    if (typeof typeId !== 'string' || !typeId) throw new Error('укажи тип задачи')
+    if (typeof typeId !== 'string' || !typeId) throw new OrcaError('global.typeRequired')
     const p = resolveProject()
     // Тип — из библиотеки проекта, как при создании: недоступный проекту — ошибка, тип не меняется.
     return p.store.changeGlobalTaskType(id, projects.runType(p.id, typeId))
@@ -641,7 +644,7 @@ function registerIpc(): void {
   )
   handle('globalTasks:tasks', (_e, id: string) => projects.activeStore().listSubtasks(id))
   handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
-    if (!input?.title?.trim()) throw new Error('название подзадачи не может быть пустым')
+    if (!input?.title?.trim()) throw new OrcaError('global.subtaskTitleEmpty')
     const p = resolveProject()
     const role = pickRole(projects.resolveRun(p.id, id), projectAgents(p.id), input.roleId)
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
@@ -690,7 +693,7 @@ function registerIpc(): void {
     // Данные из renderer не доверенные: изображения проверяются по сигнатуре и лимитам.
     const valid = validateImageAttachments(images)
     const text = typeof objective === 'string' ? objective.trim() : ''
-    if (!text && valid.length === 0) throw new Error('цель не задана')
+    if (!text && valid.length === 0) throw new OrcaError('coordinator.noObjective')
     return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
   })
   handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
@@ -720,7 +723,7 @@ function registerIpc(): void {
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
   // Сбор по запросу: снапшот store + транскрипты агентов (docs/architecture.md, «Статистика»).
   handle('stats:project', (_e, projectId: string, range: StatsRange) => {
-    if (!STATS_RANGES.includes(range)) throw new Error(`статистика: неизвестный период «${String(range)}», ожидается ${STATS_RANGES.join(' | ')}`)
+    if (!STATS_RANGES.includes(range)) throw new OrcaError('stats.badRange', { range: String(range), expected: STATS_RANGES.join(' | ') })
     return collectProjectStats(projectId, range)
   })
   handle('stats:task', (_e, projectId: string, taskId: string) => collectTaskStats(projectId, taskId))
@@ -739,6 +742,7 @@ app.whenReady().then(() => {
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
+  setMainLocale(projects.settings().language)
   projects.markRun(app.getVersion())
   if (process.env.ORCA_REPO) {
     try {

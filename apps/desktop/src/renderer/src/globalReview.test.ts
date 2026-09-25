@@ -89,6 +89,12 @@ test('reviewErrorMessage: нет хендлера в старом main — «п�
   )
 })
 
+test('reviewErrorMessage: main с переводом — по коду coordinator.finishing на любом языке, текст без обёртки', () => {
+  const coded = new Error("Error invoking remote method 'globalTasks:returnToWork': OrcaError[coordinator.finishing]: the coordinator is still finishing")
+  assert.equal(reviewErrorMessage(coded), staleReturnLiveMessage())
+  assert.equal(reviewErrorMessage(new Error("Error invoking remote method 'globalTasks:accept': OrcaError[global.notFound]: global task not found: g1")), 'global task not found: g1')
+})
+
 test('английский интерфейс: подсказка возврата и ошибки старого main', () => {
   inEnglish(() => {
     assert.equal(returnHint(false), 'The task moves to In progress, and a coordinator terminal opens with this note.')

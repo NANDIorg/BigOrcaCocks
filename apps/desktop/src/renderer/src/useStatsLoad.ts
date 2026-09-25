@@ -15,7 +15,7 @@ export interface StatsLoad<T> {
 }
 
 interface Options<T> {
-  /** Вызов IPC; бросает `STATS_STALE_MESSAGE` при старом preload. */
+  /** Вызов IPC; бросает `statsStaleMessage()` при старом preload. */
   load(): Promise<T>
   /** Запасной расчёт без токенов — при старом main. */
   fallback(): T

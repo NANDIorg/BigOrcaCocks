@@ -5,7 +5,7 @@ import { setLocale } from './i18n'
 import { BOARD_SORT_OPTIONS, formatStamp } from './boardSort'
 import { columnColorTitle } from './boardColumns'
 import { cardEssence, cardEssenceFor, cardState, cardStateLabel, depsLabel, filesLabel, stageLabel, type CardStateInput } from './cardState'
-import { priorityMark, priorityTitle, STALE_PRIORITY_MESSAGE, stalePriorityMessage } from './taskPriority'
+import { priorityMark, priorityTitle, stalePriorityMessage } from './taskPriority'
 import { STATUS_SOURCE_TITLES, statusDurationLabel } from './statusHistory'
 import { showcaseStaleMessage } from './showcase'
 import { answerForTitle, outcomeLabel, resolutionText } from './taskModalText'
@@ -59,14 +59,14 @@ test('BOARD_SORT_OPTIONS и STATUS_SOURCE_TITLES: подпись берётся 
   assert.deepEqual(Object.keys(STATUS_SOURCE_TITLES), ['human', 'cli', 'worker', 'workflow', 'app'])
 })
 
-test('приоритет: название и метка карточки по языку; константа для чужих модулей — русская', () => {
+test('приоритет: название, метка карточки и подсказка «перезапустите» по языку', () => {
   setLocale('en')
   assert.equal(priorityTitle('urgent'), 'urgent')
   assert.equal(priorityMark({ priority: 'high' })?.mark, 'high')
   assert.equal(priorityMark({ priority: 'urgent' })?.mark, '!!')
   assert.match(stalePriorityMessage(), /Restart the app/)
-  assert.match(STALE_PRIORITY_MESSAGE, /Перезапустите приложение/)
   setLocale('ru')
+  assert.match(stalePriorityMessage(), /Перезапустите приложение/)
   assert.equal(priorityMark({ priority: 'low' })?.mark, 'низ')
 })
 

@@ -10,7 +10,7 @@ import { GlobalReturns } from './GlobalOverview'
 import { globalTaskActions } from './globalReview'
 import { formatStamp } from './boardSort'
 import { PriorityOptions } from './Priority'
-import { STALE_PRIORITY_MESSAGE, taskPriorityOf } from './taskPriority'
+import { stalePriorityMessage, taskPriorityOf } from './taskPriority'
 import { rolesWithDisabledAgent } from './taskTypes'
 import { typeChangeOptions } from './globalTypeChange'
 import { useT } from './i18n'
@@ -168,7 +168,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
               </select>
             ) : (
               // main старый: приоритет не сохранится — показываем текущий и просим перезапустить.
-              <span className="muted" title={STALE_PRIORITY_MESSAGE}>{PRIORITY_TITLES[priority]} · {t('global.modal.priorityStale')}</span>
+              <span className="muted" title={stalePriorityMessage()}>{PRIORITY_TITLES[priority]} · {t('global.modal.priorityStale')}</span>
             )}
           </label>
         )}

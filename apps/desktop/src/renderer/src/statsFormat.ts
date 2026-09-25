@@ -13,12 +13,6 @@ export function statsStaleMessage(): string {
   return t('global.stats.stale')
 }
 
-/**
- * Русский текст той же ошибки — для `isStatsStale` в `taskStatsFormat.ts`, который сверяет сообщение с константой.
- * Показывать — `statsStaleMessage()`: она на языке интерфейса.
- */
-export const STATS_STALE_MESSAGE = translate('ru', 'global.stats.stale')
-
 /** `window.orca.stats` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function statsApi(api: Partial<OrcaApi> | undefined): OrcaApi['stats'] {
   if (!api?.stats) throw new Error(statsStaleMessage())

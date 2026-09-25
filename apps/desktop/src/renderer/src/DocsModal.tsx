@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { BoardColumn, Task } from '@orca-board/core'
 import type { DocGroup } from '../../shared/ipc'
 import { Markdown } from './Markdown'
-import { ipcErrorMessage } from './useAutoSave'
+import { ipcErrorCode, ipcErrorMessage } from './ipcError'
 import { docLinkHash, docsApi, isStaleDocsError, resolveDocLink, staleAppMessage } from './docLinks'
 import { alsoIn, buildTree, dirAncestors, excerpt, sameDoc, type DocRef, type TaskMark } from './docTree'
 import { clearMatches, findInDoc, paintMatches, scrollToRange, type TextMatch } from './docFind'
@@ -164,8 +164,8 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
     } catch (e) {
       if (seq !== navSeq.current) return
       const msg = errorMessage(e)
-      // «не найден» — текст ошибки main: тексты main не переводятся.
-      if (opts.link && current && /не найден/i.test(msg)) {
+      // Файла нет: main с переводом присылает код docs.notFound, main до перевода — только русский текст.
+      if (opts.link && current && (ipcErrorCode(e) === 'docs.notFound' || /не найден/i.test(msg))) {
         setDocError({
           title: t('config.docs.err.notFound', { path: doc.path }),
           detail: `${t('config.docs.err.deletedLink', { name: nameOf(current.path) })} ${t('config.docs.err.stay')}`

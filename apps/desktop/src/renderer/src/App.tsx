@@ -461,7 +461,7 @@ export function App(): React.JSX.Element {
     try {
       await globalReviewApi(window.orca).accept(g.id)
     } catch (e) {
-      alert(t('shell.app.acceptError', { error: reviewErrorMessage(ipcErrorMessage(e)) }))
+      alert(t('shell.app.acceptError', { error: reviewErrorMessage(e) }))
     }
   }
 
@@ -477,7 +477,7 @@ export function App(): React.JSX.Element {
       setReturnGlobalId(null)
       showTerminal(ptyId, projectId)
     } catch (e) {
-      const message = reviewErrorMessage(ipcErrorMessage(e))
+      const message = reviewErrorMessage(e)
       // Задача могла уже уйти в работу, а упал запуск координатора: уточнение сохранено в ней, повторный
       // возврат не пройдёт — закрываем модалку, «Запустить координатора» подхватит уточнение.
       setReturnGlobalId(null)
