@@ -1,5 +1,5 @@
 import { isPendingRequest, type ColumnKind, type Dispatch, type HumanRequest, type Question, type RequestResolution, type Task } from '@orca-board/core'
-import { plural } from './plural'
+import { t, type TKey } from './i18n'
 import { requestShowcase } from './showcase'
 
 // Лента «Ждут вас» на экране глобальной задачи (AttentionFeed.tsx): всё, что ждёт человека, одним списком.
@@ -68,15 +68,10 @@ export function failureOf(d: Dispatch | undefined): AttentionFailure | undefined
   return undefined
 }
 
-const FAILURE_TITLE: Record<AttentionFailure, string> = {
-  failed: 'Процесс воркера упал',
-  unknown: 'Процесс завершился без orca-board done',
-  stuck: 'Нет вывода — воркер не подаёт признаков жизни'
-}
-
-/** «3 файла»: подпись ревью. */
-function filesText(n: number): string {
-  return `${n} ${plural(n, 'файл', 'файла', 'файлов')}`
+const FAILURE_TITLE: Record<AttentionFailure, TKey> = {
+  failed: 'shell.attention.failure.failed',
+  unknown: 'shell.attention.failure.unknown',
+  stuck: 'shell.attention.failure.stuck'
 }
 
 /**
@@ -132,14 +127,14 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
     const d = lastDispatch.get(task.id)
     const failure = failureOf(d)
     if (d && failure && !running?.has(task.id) && !hasPending(task.id, 'escalation')) {
-      items.push({ id: `fail:${task.id}`, kind: 'failure', source: 'task', taskId: task.id, at: d.endedAt ?? d.startedAt, title: FAILURE_TITLE[failure], dispatch: d, failure })
+      items.push({ id: `fail:${task.id}`, kind: 'failure', source: 'task', taskId: task.id, at: d.endedAt ?? d.startedAt, title: t(FAILURE_TITLE[failure]), dispatch: d, failure })
     }
     if (task.answerFor === 'human' && (kind === 'needs_input' || kind === 'review') && d?.outcome === 'done' && d.answer !== undefined && !hasPending(task.id, 'answer')) {
-      items.push({ id: `ans:${task.id}`, kind: 'answer', source: 'task', taskId: task.id, at: d.endedAt ?? task.updatedAt, title: d.summary || 'Ответ готов', dispatch: d })
+      items.push({ id: `ans:${task.id}`, kind: 'answer', source: 'task', taskId: task.id, at: d.endedAt ?? task.updatedAt, title: d.summary || t('shell.attention.answerReady'), dispatch: d })
     }
     if (kind === 'review' && !task.answerFor && !task.gateFor && !hasPending(task.id)) {
       const files = d?.files?.length ?? 0
-      items.push({ id: `rev:${task.id}`, kind: 'review', source: 'task', taskId: task.id, at: d?.endedAt ?? task.updatedAt, title: files > 0 ? `Ждёт ревью: ${filesText(files)}` : 'Ждёт ревью', ...(d ? { dispatch: d } : {}) })
+      items.push({ id: `rev:${task.id}`, kind: 'review', source: 'task', taskId: task.id, at: d?.endedAt ?? task.updatedAt, title: files > 0 ? t('shell.attention.reviewFiles', { count: files }) : t('shell.attention.review'), ...(d ? { dispatch: d } : {}) })
     }
   }
 
@@ -166,19 +161,22 @@ export function feedItemOfTask(items: readonly AttentionItem[], taskId: string):
 export function attentionCountTitle(items: readonly AttentionItem[]): string | undefined {
   const tasks = attentionTaskIds(items).size
   if (tasks === items.length) return undefined
-  return `${items.length} ${plural(items.length, 'пункт', 'пункта', 'пунктов')} у ${tasks} ${plural(tasks, 'задачи', 'задач', 'задач')} — на доске фильтр «Ждут вас» считает задачи`
+  return t('shell.attention.countTitle', {
+    items: t('shell.attention.countItems', { count: items.length }),
+    tasks: t('shell.attention.countTasks', { count: tasks })
+  })
 }
 
 /** Подпись вида пункта (текстовый сигнал рядом с цветной кромкой). */
 export function attentionLabel(item: Pick<AttentionItem, 'kind' | 'failure' | 'question'>): string {
   switch (item.kind) {
     case 'failure':
-      return item.failure === 'failed' ? 'Воркер упал' : item.failure === 'unknown' ? 'Вышел без done' : item.failure === 'stuck' ? 'Воркер молчит' : 'Сбой воркера'
-    case 'question': return 'Вопрос воркера'
-    case 'showcase': return 'Показ'
-    case 'approval': return 'Нужно решение'
-    case 'answer': return 'Ответ готов'
-    case 'review': return 'Ждёт ревью'
+      return t(item.failure ? `shell.attention.label.${item.failure}` : 'shell.attention.label.failure')
+    case 'question': return t('shell.attention.label.question')
+    case 'showcase': return t('shell.attention.label.showcase')
+    case 'approval': return t('shell.attention.label.approval')
+    case 'answer': return t('shell.attention.answerReady')
+    case 'review': return t('shell.attention.review')
   }
 }
 
@@ -195,21 +193,15 @@ export const ATTENTION_COLOR: Record<AttentionKind, string> = {
   review: 'var(--col-review)'
 }
 
-const SUMMARY_FORMS: [AttentionKind, [string, string, string]][] = [
-  ['failure', ['сбой', 'сбоя', 'сбоев']],
-  ['question', ['вопрос', 'вопроса', 'вопросов']],
-  ['showcase', ['показ', 'показа', 'показов']],
-  ['approval', ['решение', 'решения', 'решений']],
-  ['answer', ['ответ', 'ответа', 'ответов']],
-  ['review', ['ревью', 'ревью', 'ревью']]
-]
+/** Порядок видов в сводке: сбои — первыми, как в ленте. */
+const SUMMARY_KINDS: AttentionKind[] = ['failure', 'question', 'showcase', 'approval', 'answer', 'review']
 
 /** Сводка свёрнутой ленты: «1 вопрос · 1 показ · 1 ответ · 1 сбой» (сбои — первыми, как в ленте). */
 export function attentionSummary(items: readonly AttentionItem[]): string {
-  return SUMMARY_FORMS
-    .map(([kind, forms]) => ({ n: items.filter((i) => i.kind === kind).length, forms }))
-    .filter((p) => p.n > 0)
-    .map((p) => `${p.n} ${plural(p.n, ...p.forms)}`)
+  return SUMMARY_KINDS
+    .map((kind) => ({ kind, count: items.filter((i) => i.kind === kind).length }))
+    .filter((p) => p.count > 0)
+    .map((p) => t(`shell.attention.sum.${p.kind}`, { count: p.count }))
     .join(' · ')
 }
 
@@ -267,13 +259,13 @@ export function questionAsRequest(q: Question, runId: string): HumanRequest {
 
 /** Текст ответа на вопрос (`questions.answer`) из решения RequestCard: вариант — его метка, свой ответ — как есть. */
 export function questionAnswerText(q: Question, resolution: RequestResolution): string {
-  if (resolution.action !== 'answer') throw new Error('на вопрос можно только ответить')
+  if (resolution.action !== 'answer') throw new Error(t('shell.attention.error.answerOnly'))
   if (resolution.optionId !== undefined) {
     const o = q.options.find((opt) => opt.id === resolution.optionId)
-    if (!o) throw new Error(`вопрос «${q.question}»: нет варианта ${resolution.optionId}`)
+    if (!o) throw new Error(t('shell.attention.error.noOption', { question: q.question, option: resolution.optionId }))
     return o.label
   }
   const text = resolution.text?.trim()
-  if (!text) throw new Error('пустой ответ')
+  if (!text) throw new Error(t('shell.attention.error.empty'))
   return text
 }

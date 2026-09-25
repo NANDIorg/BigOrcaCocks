@@ -8,6 +8,7 @@ import { formatStamp } from './boardSort'
 import { ipcErrorMessage } from './useAutoSave'
 import { useNow } from './useNow'
 import { isTypingTarget } from './hotkeys'
+import { useT } from './i18n'
 import { onFocusFeed, onRevealInFeed, revealOnBoard, scrollBehavior } from './feedLink'
 import {
   ATTENTION_COLOR, ATTENTION_GLYPH, attentionCountTitle, attentionLabel, attentionSummary, defaultCollapsed, feedItemOfTask, questionAnswerText, questionAsRequest,
@@ -42,6 +43,7 @@ interface Props {
  */
 export function AttentionFeed(props: Props): React.JSX.Element | null {
   const { items, tasks, runId, dispatches, onResolveRequest, onAnswerQuestion, onAcceptTask, onRejectTask, onStartTask, onOpenTask, onOpenTerminal } = props
+  const t = useT()
   const now = useNow()
   const headId = useId()
   const listId = useId()
@@ -56,9 +58,9 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
   const tabIndexRef = useRef(tabIndex)
   tabIndexRef.current = tabIndex
   const timers = useRef<number[]>([])
-  const taskById = new Map(tasks.map((t) => [t.id, t]))
+  const taskById = new Map(tasks.map((task) => [task.id, task]))
 
-  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), [])
+  useEffect(() => () => timers.current.forEach((id) => window.clearTimeout(id)), [])
   const later = useCallback((fn: () => void, ms = 0): void => {
     timers.current.push(window.setTimeout(fn, ms))
   }, [])
@@ -130,12 +132,12 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
   return (
     <section className={`attn${collapsed ? ' collapsed' : ''}`} aria-labelledby={headId}>
       <div className="attn-head">
-        <h3 id={headId}>Ждут вас <span className="attn-n" title={attentionCountTitle(items)}>{items.length}</span></h3>
+        <h3 id={headId}>{t('shell.feed.title')} <span className="attn-n" title={attentionCountTitle(items)}>{items.length}</span></h3>
         <span className="attn-sum" aria-live="polite">{sum}</span>
         <span className="grow" />
-        <span className="muted attn-hint"><kbd className="rq-kbd">G</kbd> к ленте</span>
+        <span className="muted attn-hint"><kbd className="rq-kbd">G</kbd> {t('shell.feed.keyHint')}</span>
         <button type="button" className="btn-sm" aria-expanded={!collapsed} aria-controls={listId} onClick={toggle}>
-          {collapsed ? 'Развернуть' : 'Свернуть'}
+          {collapsed ? t('shell.feed.expand') : t('shell.feed.collapse')}
         </button>
       </div>
       <div id={listId} ref={listRef} className="attn-list" role="list" hidden={collapsed}>
@@ -166,7 +168,7 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
         <div
           className="attn-detail"
           role="region"
-          aria-label={`Подробно: ${detailTask?.title ?? detail.taskId}`}
+          aria-label={t('shell.feed.detailLabel', { title: detailTask?.title ?? detail.taskId })}
           onKeyDown={(e) => {
             if (e.key !== 'Escape' || isTypingTarget(e.target)) return
             e.preventDefault()
@@ -175,8 +177,8 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
           }}
         >
           <div className="attn-detail-head">
-            <span className="muted">Подробно · {detailTask?.title ?? detail.taskId}</span>
-            <button type="button" className="btn-text" onClick={() => { setDetailId(null); cardOf(detail.id)?.focus() }}>Закрыть</button>
+            <span className="muted">{t('shell.feed.detailHead', { title: detailTask?.title ?? detail.taskId })}</span>
+            <button type="button" className="btn-text" onClick={() => { setDetailId(null); cardOf(detail.id)?.focus() }}>{t('common.close')}</button>
           </div>
           <RequestCard
             request={detailRequest}
@@ -221,6 +223,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [clarifying, setClarifying] = useState(false)
   const [text, setText] = useState('')
+  const t = useT()
   const taskTitle = task?.title ?? item.taskId
   const label = attentionLabel(item)
   const request = item.request
@@ -248,11 +251,11 @@ function FeedCard(props: CardProps): React.JSX.Element {
   }
 
   const sendClarify = (): void => {
-    const t = text.trim()
-    if (!t) return
+    const note = text.trim()
+    if (!note) return
     void run(async () => {
-      if (request) await onResolveRequest(request, { action: 'clarify', text: t })
-      else await onRejectTask(item.taskId, t)
+      if (request) await onResolveRequest(request, { action: 'clarify', text: note })
+      else await onRejectTask(item.taskId, note)
       setClarifying(false)
       setText('')
     })
@@ -260,7 +263,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
   const accept = (): void => void run(() => (request ? onResolveRequest(request, { action: 'accept' }) : onAcceptTask(item.taskId)))
 
   const isReview = item.kind === 'review'
-  const clarifyLabel = isReview ? 'Вернуть…' : 'Уточнить…'
+  const clarifyLabel = t(isReview ? 'shell.request.rejectMore' : 'shell.request.clarify')
   const shownFiles = item.showcaseFiles ?? []
 
   return (
@@ -281,7 +284,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
         <span className="grow" />
         <span className="act-ago" title={formatStamp(item.at)}>{relativeTime(item.at, now)}</span>
       </div>
-      <button type="button" className="act-task" title={`${taskTitle} — показать на доске`} onClick={() => revealOnBoard(item.taskId)}>{taskTitle}</button>
+      <button type="button" className="act-task" title={t('shell.feed.showOnBoard', { title: taskTitle })} onClick={() => revealOnBoard(item.taskId)}>{taskTitle}</button>
 
       {(item.kind === 'question' || (item.kind === 'failure' && request)) && (
         <RequestCard
@@ -295,7 +298,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
       {!(item.kind === 'question' || (item.kind === 'failure' && request)) && <div className="act-q" title={item.title}>{item.title}</div>}
 
       {item.kind === 'showcase' && shownFiles.length > 0 && (
-        <ul className="act-thumbs" aria-label="Файлы показа">
+        <ul className="act-thumbs" aria-label={t('shell.feed.files')}>
           {shownFiles.slice(0, THUMBS).map((f) => <li key={f} className="act-thumb" title={f}>{f.split('/').pop()}</li>)}
           {shownFiles.length > THUMBS && <li className="act-thumb more">+{shownFiles.length - THUMBS}</li>}
         </ul>
@@ -308,8 +311,8 @@ function FeedCard(props: CardProps): React.JSX.Element {
             autoFocus
             value={text}
             disabled={busy}
-            aria-label={isReview ? 'Замечания' : 'Уточнение'}
-            placeholder={isReview ? 'Что исправить. Воркер получит замечания.' : 'Что уточнить. Воркер получит прошлый ответ и это уточнение.'}
+            aria-label={t(isReview ? 'shell.request.rejectLabel' : 'shell.request.clarifyLabel')}
+            placeholder={t(isReview ? 'shell.feed.rejectPlaceholder' : 'shell.feed.clarifyPlaceholder')}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing) return
@@ -323,33 +326,33 @@ function FeedCard(props: CardProps): React.JSX.Element {
             }}
           />
           <div className="act-row">
-            <button type="button" className="btn-sm primary" disabled={busy || !text.trim()} onClick={sendClarify}>{busy ? '…' : 'Отправить'}</button>
-            <button type="button" className="btn-text" disabled={busy} onClick={() => setClarifying(false)}>Отмена</button>
+            <button type="button" className="btn-sm primary" disabled={busy || !text.trim()} onClick={sendClarify}>{busy ? '…' : t('shell.feed.send')}</button>
+            <button type="button" className="btn-text" disabled={busy} onClick={() => setClarifying(false)}>{t('shell.cancel')}</button>
           </div>
         </div>
       ) : (
         <>
           {item.kind === 'failure' && !request && task && (
             <div className="act-row">
-              <button type="button" className="btn-sm primary" disabled={busy} onClick={() => void run(() => onStartTask(task))}>↻ Перезапустить</button>
-              <button type="button" className="btn-sm" onClick={() => onOpenTerminal(item.taskId)}>Терминал</button>
+              <button type="button" className="btn-sm primary" disabled={busy} onClick={() => void run(() => onStartTask(task))}>{t('shell.feed.restart')}</button>
+              <button type="button" className="btn-sm" onClick={() => onOpenTerminal(item.taskId)}>{t('shell.request.terminal')}</button>
             </div>
           )}
           {(item.kind === 'showcase' || item.kind === 'approval') && (
             <div className="act-row">
               <button type="button" className="btn-sm primary" aria-expanded={detailOpen} onClick={onToggleDetail}>
-                {detailOpen ? 'Скрыть' : item.kind === 'showcase' ? 'Смотреть и решить' : 'Открыть и решить'}
+                {detailOpen ? t('shell.feed.hide') : t(item.kind === 'showcase' ? 'shell.feed.viewDecide' : 'shell.feed.openDecide')}
               </button>
             </div>
           )}
           {(item.kind === 'answer' || isReview) && (
             <div className="act-row">
               {request ? (
-                <button type="button" className="btn-sm primary" aria-expanded={detailOpen} onClick={onToggleDetail}>{detailOpen ? 'Скрыть' : 'Прочитать'}</button>
+                <button type="button" className="btn-sm primary" aria-expanded={detailOpen} onClick={onToggleDetail}>{detailOpen ? t('shell.feed.hide') : t('shell.feed.read')}</button>
               ) : (
-                <button type="button" className="btn-sm primary" onClick={() => onOpenTask(item.taskId)}>{isReview ? 'Открыть' : 'Прочитать'}</button>
+                <button type="button" className="btn-sm primary" onClick={() => onOpenTask(item.taskId)}>{t(isReview ? 'shell.feed.open' : 'shell.feed.read')}</button>
               )}
-              <button type="button" className="btn-sm ok" disabled={busy} onClick={accept}>{busy ? '…' : 'Принять'}</button>
+              <button type="button" className="btn-sm ok" disabled={busy} onClick={accept}>{busy ? '…' : t('shell.request.accept')}</button>
               <button type="button" className="btn-sm" disabled={busy} onClick={() => setClarifying(true)}>{clarifyLabel}</button>
             </div>
           )}

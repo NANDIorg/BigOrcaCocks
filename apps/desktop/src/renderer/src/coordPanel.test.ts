@@ -1,7 +1,10 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AgentSession } from '@orca-board/core'
-import { coordState, knownSessions, sessionRows } from './coordPanel'
+import { coordState, coordStateText, knownSessions, sessionRows } from './coordPanel'
+import { setLocale } from './i18n'
+
+afterEach(() => setLocale('ru'))
 
 const H = 3_600_000
 const session = (extra: Partial<AgentSession> = {}): AgentSession => ({ ptyId: 'p1', roleId: 'coordinator', agent: 'claude', startedAt: 1_000_000, ...extra })
@@ -61,4 +64,17 @@ test('sessionRows: конец в тот же день — только врем�
   assert.match(same?.period ?? '', /^24\.09, 10:05 — 12:05$/)
   const next = sessionRows([session({ startedAt: day, endedAt: day + 30 * H })], undefined, day)?.[0]
   assert.match(next?.period ?? '', /^24\.09, 10:05 — 25\.09, 16:05$/)
+})
+
+test('английский интерфейс: состояние, номер запуска, «now» и формат даты — по языку', () => {
+  assert.equal(coordStateText('waiting'), 'Координатор ждёт вас')
+  setLocale('en')
+  assert.equal(coordStateText('stopped'), 'Coordinator is not running')
+  const day = new Date(2026, 8, 24, 10, 5).getTime()
+  const live = sessionRows([session({ startedAt: day })], 'p1', day + H)?.[0]
+  assert.equal(live?.title, 'Session 1')
+  assert.equal(live?.duration, '1 h')
+  assert.match(live?.period ?? '', /^09\/24, 10:05 AM — now$/)
+  const crashed = sessionRows([session({ startedAt: day })], undefined, day)?.[0]
+  assert.match(crashed?.period ?? '', /end unknown$/)
 })
