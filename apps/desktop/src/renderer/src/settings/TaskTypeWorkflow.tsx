@@ -10,6 +10,7 @@ import { SectionHead } from '../about/parts'
 import { useLocale, useT } from '../i18n'
 import { nodeTitle, wfIssueText } from '../defaultTitles'
 import { ipcErrorMessage } from '../ipcError'
+import { storedWorkflowNotes } from '../taskTypeEdit'
 
 interface Props {
   /** Название типа — имя файла экспорта. */
@@ -57,6 +58,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
   const dirty = stableJson(draft) !== stableJson(saved)
   const custom = workflow !== undefined
   const { errors, warnings } = issues
+  const stored = storedWorkflowNotes(notes, readOnly, onDismissNotes !== undefined)
 
   function edit(wf: Workflow): void {
     if (readOnly) return
@@ -166,6 +168,20 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
           {errors.length === 0 && warnings.length === 0 && <span className="wf-count">{t('config.wf.tab.clean')}</span>}
         </div>
 
+        {stored && (
+          <div className="wf-migration wf-migration--stored" role="alert">
+            <b>{t('config.wf.tab.storedMigrated')}</b>
+            <ul>{stored.messages.map((m, i) => <li key={i}>{m}</li>)}</ul>
+            {stored.dismissable && onDismissNotes && (
+              <div>
+                <button type="button" className="btn-sm" disabled={busy} onClick={() => void dismissNotes(onDismissNotes)}>
+                  {t('config.wf.tab.storedMigratedDismiss')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="wf-editor">
           <WorkflowCanvas
             key={canvasRev}
@@ -193,20 +209,6 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
           <div className="wf-migration" role="status">
             <span>{t('config.wf.tab.importMigrated', { version: migration.fromVersion })}</span>
             {migration.notes.length > 0 && <ul>{migration.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
-          </div>
-        )}
-
-        {notes && notes.length > 0 && (
-          <div className="wf-migration" role="status">
-            <span>{t('config.wf.tab.storedMigrated')}</span>
-            <ul>{notes.map((n, i) => <li key={i}>{n.message}</li>)}</ul>
-            {!readOnly && onDismissNotes && (
-              <div>
-                <button type="button" className="btn-sm" disabled={busy} onClick={() => void dismissNotes(onDismissNotes)}>
-                  {t('config.wf.tab.storedMigratedDismiss')}
-                </button>
-              </div>
-            )}
           </div>
         )}
 

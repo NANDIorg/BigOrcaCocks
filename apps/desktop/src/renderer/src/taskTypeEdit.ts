@@ -89,6 +89,24 @@ export function patchedTaskType(t: TaskType, patch: TaskTypePatch): TaskTypeInpu
   }
 }
 
+/** Замечания автомиграции графа, как их показывает редактор типа. */
+export interface StoredWorkflowNotes {
+  messages: string[]
+  /** «Понятно» доступно: не просмотр и main умеет закрывать замечания (в старом кнопки нет — уйдут с правкой графа). */
+  dismissable: boolean
+}
+
+/**
+ * Что показать из `TaskType.workflowNotes`. Поле необязательное (старый main его не присылает), а записи приходят
+ * из файла — пустые и повторяющиеся тексты отбрасываем. Нечего показывать — null.
+ */
+export function storedWorkflowNotes(
+  notes: readonly WfMigrationNote[] | undefined, readOnly: boolean, canDismiss: boolean
+): StoredWorkflowNotes | null {
+  const messages = [...new Set((notes ?? []).map((n) => (typeof n?.message === 'string' ? n.message.trim() : '')).filter(Boolean))]
+  return messages.length ? { messages, dismissable: !readOnly && canDismiss } : null
+}
+
 /** Переименование: пустое название — ошибка (текст для формы), пустое описание убирает поле. */
 export function renamedTaskType(type: TaskType, title: string, description: string): TaskTypeInput | { error: string } {
   const name = title.trim()

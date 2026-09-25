@@ -2060,3 +2060,5 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .g-accept-title { font-weight: 600; }
 .wf-migration { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 8px; background: var(--side); font-size: 12.5px; }
 .wf-migration ul { margin: 0; padding-left: 18px; }
+/* Замечания автомиграции сохранённого типа: до «Понятно» стоят над холстом и бросаются в глаза. */
+.wf-migration--stored { border: 1px solid var(--col-input); padding: 10px 12px; }
