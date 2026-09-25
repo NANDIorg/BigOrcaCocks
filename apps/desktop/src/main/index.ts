@@ -11,7 +11,7 @@ import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, writeRule } from './rules'
-import { currentBranch } from './git'
+import { currentBranch, projectBranchInfo } from './git'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
@@ -588,6 +588,7 @@ function registerIpc(): void {
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
   handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   handle('projects:inProgressCounts', () => projects.inProgressCounts())
+  handle('projects:branch', (_e, id: string) => projectBranchInfo(resolveProject(id).root))
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))

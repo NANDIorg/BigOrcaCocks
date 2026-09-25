@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { mt } from './i18n'
+import type { ProjectBranchInfo } from '../shared/ipc'
 
 // git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
 // сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
@@ -11,6 +12,26 @@ function git(cwd: string, args: string[]): string {
 
 export function currentBranch(repoRoot: string): string {
   return git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])
+}
+
+/** Состояние HEAD корня проекта для UI; см. `ProjectBranchInfo` в `shared/ipc.ts`. */
+export function projectBranchInfo(repoRoot: string): ProjectBranchInfo {
+  try {
+    if (git(repoRoot, ['rev-parse', '--is-inside-work-tree']) !== 'true') return { isGitRepo: false, branch: null, detached: false }
+  } catch {
+    return { isGitRepo: false, branch: null, detached: false }
+  }
+  try {
+    // symbolic-ref, а не `rev-parse --abbrev-ref`: в репозитории без коммитов последний падает, а этот отдаёт имя ветки.
+    return { isGitRepo: true, branch: git(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD']), detached: false }
+  } catch {
+    // код 1 у symbolic-ref — HEAD не на ветке (detached)
+    try {
+      return { isGitRepo: true, branch: null, detached: true, sha: git(repoRoot, ['rev-parse', '--short', 'HEAD']) }
+    } catch {
+      return { isGitRepo: true, branch: null, detached: true }
+    }
+  }
 }
 
 export interface ReviewInfo {

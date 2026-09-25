@@ -204,6 +204,20 @@ export const PERMISSION_MODES: Record<PermissionMode, string> = {
 }
 
 /**
+ * Текущая git-ветка корня проекта (`projects:branch`). Ровно одно из состояний:
+ * `isGitRepo: false` — не репозиторий (или git недоступен), `branch`/`detached` пусты;
+ * `detached: true` — detached HEAD, `branch: null`, `sha` — короткий хеш коммита;
+ * иначе `branch` — имя ветки (у репозитория без коммитов — имя будущей ветки).
+ */
+export interface ProjectBranchInfo {
+  isGitRepo: boolean
+  branch: string | null
+  detached: boolean
+  /** Короткий sha HEAD; только при `detached`. */
+  sha?: string
+}
+
+/**
  * Проект в renderer. Свои у проекта только колонки, агенты и типы задач; роли, воркфлоу, правила агентов
  * и разрешения — у типа задачи (`TaskType`, «Настройки → Типы задач»).
  */
@@ -399,6 +413,12 @@ export interface OrcaApi {
     list(): Promise<{ active: Project | null; projects: Project[] }>
     /** Задачи в колонках kind=in_progress по id проекта — для бейджа в списке проектов. */
     inProgressCounts(): Promise<Record<string, number>>
+    /**
+     * Текущая git-ветка корня проекта `id` (не обязательно активного). Не бросает для не-репозитория —
+     * это `{isGitRepo: false}`; неизвестный id — ошибка. Читается по запросу: ветку меняют снаружи приложения,
+     * поэтому renderer перезапрашивает её при смене проекта и фокусе окна.
+     */
+    branch(id: string): Promise<ProjectBranchInfo>
     /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из
