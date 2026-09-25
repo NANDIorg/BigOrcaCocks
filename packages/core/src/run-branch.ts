@@ -13,6 +13,8 @@ export interface RunBranchSettings {
   template: string
   /** Отправлять ветку на remote, когда глобальная задача закрыта (ушла на «Проверку»). */
   push: boolean
+  /** Открывать PR ветки в базу после успешного push через gh CLI; нужны enabled и push. */
+  pr: boolean
   /** Remote для push и для `git fetch` перед ответвлением. */
   remote: string
   /**
@@ -27,6 +29,7 @@ export const DEFAULT_RUN_BRANCH_SETTINGS: Readonly<RunBranchSettings> = Object.f
   base: '',
   template: 'feature/{runId}-{slug}',
   push: false,
+  pr: false,
   remote: 'origin',
   protected: ['master', 'main', 'develop', 'release/*', 'hotfix/*']
 })
@@ -46,6 +49,10 @@ export interface RunGit {
   pushedAt?: number
   /** Ошибка последнего push; снимается успешным. */
   pushError?: string
+  /** Ссылка на открытый PR ветки. */
+  prUrl?: string
+  /** Ошибка последней попытки открыть PR; снимается успешной. Урезается, как `pushError`. */
+  prError?: string
 }
 
 const TRANSLIT: Record<string, string> = {
@@ -114,6 +121,7 @@ export function normalizeRunBranchSettings(raw: unknown): RunBranchSettings {
     base: str(r.base, d.base),
     template: str(r.template, d.template) || d.template,
     push: typeof r.push === 'boolean' ? r.push : d.push,
+    pr: typeof r.pr === 'boolean' ? r.pr : d.pr,
     remote: str(r.remote, d.remote) || d.remote,
     protected: Array.isArray(r.protected)
       ? [...new Set(r.protected.filter((p): p is string => typeof p === 'string').map((p) => p.trim()).filter(Boolean))]
@@ -123,7 +131,7 @@ export function normalizeRunBranchSettings(raw: unknown): RunBranchSettings {
 
 /** Проблема настроек веток: `code` — для перевода в renderer, `text` — по-русски для main, сокета и CLI. */
 export interface RunBranchIssue {
-  code: 'templateName' | 'templateRunId' | 'base' | 'remote'
+  code: 'templateName' | 'templateRunId' | 'base' | 'remote' | 'prNeedsPush'
   text: string
 }
 
@@ -141,5 +149,21 @@ export function runBranchSettingsProblems(s: RunBranchSettings): RunBranchIssue[
   const base = s.base ? branchNameProblem(s.base) : undefined
   if (base) issues.push({ code: 'base', text: `база: ${base}` })
   if (/[\s/]/.test(s.remote)) issues.push({ code: 'remote', text: `remote «${s.remote}»: имя без пробелов и «/»` })
+  if (s.enabled && s.pr && !s.push) {
+    issues.push({ code: 'prNeedsPush', text: 'PR создаётся после push: включите «Отправлять ветку на remote»' })
+  }
   return issues
+}
+
+/**
+ * База PR для `gh pr create --base`: gh ждёт имя ветки на remote без префикса `<remote>/` (`origin/develop` → `develop`).
+ * Локальная ветка — как есть. Пустая база (текущая ветка корня) и коммит (7–40 hex) — `undefined`: у коммита нет
+ * ветки, в которую можно открыть PR, тогда gh берёт ветку по умолчанию.
+ */
+export function prBaseBranch(base: string, remote: string): string | undefined {
+  const b = base.trim()
+  if (!b || /^[0-9a-f]{7,40}$/i.test(b)) return undefined
+  const prefix = `${remote}/`
+  if (b.startsWith(prefix)) return b.slice(prefix.length) || undefined
+  return b
 }
