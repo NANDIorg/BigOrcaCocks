@@ -18,9 +18,11 @@ import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './a
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
-import type { AppSettingsPatch, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import { createUpdater, type Updater } from './updater'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
+import { backupOnVersionChange, rememberUpdate } from './backup'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -47,8 +49,16 @@ const userPath = shellPath()
 if (userPath) process.env.PATH = userPath
 app.setPath('userData', join(app.getPath('appData'), 'orca-board'))
 
+// Второй экземпляр отобрал бы у первого сокет и писал бы в те же файлы состояния — он фокусирует первый и выходит.
+// Блокировка привязана к userData, поэтому изолированный `pnpm dev` со своим userData живёт рядом с основным.
+// `app.exit`, а не `quit`: before-quit → requestQuit трогает то, что у второго экземпляра не создано.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) app.exit(0)
+else app.on('second-instance', () => { if (app.isReady()) showWindow() })
+
 let win: BrowserWindow | null = null
 let projects: ProjectManager
+let updater: Updater
 /** Выход подтверждён (или подтверждать нечего) — before-quit больше не перехватываем. */
 let quitting = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
@@ -241,22 +251,30 @@ function closeDoneWorkers(store: TaskStore): void {
   for (const taskId of doneTasks) closeTaskWorkers(store, taskId)
 }
 
-function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number): ReturnType<typeof startWorker> {
+/**
+ * Запуск воркера с проверками роли и агента. `opts.roleId` — роль этапа «Вопрос человеку» (`WorkflowDeps.startWorker`);
+ * без неё роль этапа берётся из графа (`worker start`, перезапуск), иначе — роль задачи.
+ */
+function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number, opts: { roleId?: string } = {}): ReturnType<typeof startWorker> {
   const p = resolveProject(projectId)
   // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
   const task0 = p.store.getTask(taskId)
   if (task0) {
     if (p.store.columnKind(task0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
     const type = projects.resolveRun(p.id, task0.runId)
-    const role = type.roles.find((r) => r.id === task0.roleId)
-    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task0.roleId, type)}`)
+    // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды «Работа» становится ролью
+    // задачи). Роль этапа «Вопрос человеку» на задачу не переносится: она едет в запуск отдельным параметром.
+    const entered = enterWork(workflowDeps(p.id), taskId)
+    const stageRoleId = opts.roleId ?? entered.roleId
+    const roleId = stageRoleId ?? p.store.getTask(taskId)?.roleId ?? task0.roleId
+    const role = type.roles.find((r) => r.id === roleId)
+    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(roleId, type)}`)
     assertAgentUsable(projectAgents(p.id), role.agent)
     // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
     closeTaskWorkers(p.store, taskId)
-    // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды может сменить роль задачи).
-    enterWork(workflowDeps(p.id), taskId)
+    return startWorker(p.store, p.root, ctx(p.id, task0.runId), taskId, cols, rows, stageRoleId)
   }
-  return startWorker(p.store, p.root, ctx(p.id, task0?.runId), taskId, cols, rows)
+  return startWorker(p.store, p.root, ctx(p.id, undefined), taskId, cols, rows)
 }
 
 /**
@@ -273,7 +291,7 @@ function workflowDeps(projectId: string): WorkflowDeps {
       const workflow = runnableWorkflow(t.workflow)
       return { roles: t.roles, ...(workflow ? { workflow } : {}) }
     },
-    startWorker: (taskId) => runWorker(taskId, p.id)
+    startWorker: (taskId, opts) => runWorker(taskId, p.id, undefined, undefined, opts)
   }
 }
 
@@ -282,7 +300,7 @@ function workflowDeps(projectId: string): WorkflowDeps {
  * и запуска проверки, а вложенные commit перемешали бы порядок событий у подписчиков.
  */
 function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
-  if (!events.some((e) => e.type === 'worker_done' || e.type === 'escalation')) return
+  if (!events.some((e) => e.type === 'worker_done' || e.type === 'escalation' || e.type === 'question_answered')) return
   setImmediate(() => {
     if (!projects.get(projectId)) return
     handleWorkflowEvents(workflowDeps(projectId), events)
@@ -509,6 +527,12 @@ function registerIpc(): void {
   handle('app:getSettings', () => projects.settings())
   handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
   handle('app:testNotification', () => testNotification())
+  handle('updates:getState', () => updater.getState())
+  handle('updates:check', () => updater.check())
+  handle('updates:download', () => updater.download())
+  handle('updates:install', (_e, opts: { when: UpdateInstallWhen }) => updater.install(opts))
+  handle('updates:cancelPending', () => updater.cancelPending())
+  handle('updates:getJustUpdated', () => updater.getJustUpdated())
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
   handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   handle('projects:inProgressCounts', () => projects.inProgressCounts())
@@ -663,8 +687,12 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return
   app.setAppUserModelId('orca-board')
+  // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
+  rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
+  projects.markRun(app.getVersion())
   if (process.env.ORCA_REPO) {
     try {
       projects.add(process.env.ORCA_REPO)
@@ -681,6 +709,10 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
+  updater = createUpdater({ version: app.getVersion(), isPackaged: app.isPackaged })
+  updater.onChanged((state) => {
+    if (win && !win.isDestroyed()) win.webContents.send('updates:changed', state)
+  })
   registerIpc()
   startSocketServer(SOCKET_PATH, {
     resolve: (projectId) => {

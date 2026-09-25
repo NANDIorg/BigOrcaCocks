@@ -1,9 +1,10 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { globalTaskTitle, type Dispatch, type HumanRequest, type RequestResolution, type Run, type Task } from '@orca-board/core'
+import { globalTaskTitle, type Dispatch, type HumanRequest, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
 import { RequestCard, requestKindTitle, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
 import { requestShowcase } from './showcase'
+import { requestStageLabel, wfNodeTitles } from './cardState'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
@@ -16,6 +17,8 @@ interface Props {
   runs: Run[]
   /** Запуски воркеров: показ человеку у approval (`showcaseDispatchId`). */
   dispatches: Dispatch[]
+  /** Граф воркфлоу прогона (`workflowForRun`) — для метки этапа у вопросов с этапа «Вопрос человеку»; нет — метки нет. */
+  workflowOf?(runId: string): Workflow | undefined
   /** Открыть на этом запросе (клик по уведомлению); nonce — чтобы повторный клик по тому же сработал. */
   focus: { requestId: string; nonce: number } | null
   onClose(): void
@@ -38,7 +41,7 @@ function typingTarget(t: EventTarget | null): boolean {
  * возвращает карточку с текстом ошибки. Панель остаётся смонтированной и когда закрыта — черновики
  * ответов в карточках не теряются. Клавиши: j/k, 1–9, A, C, R, Enter — в поле, Esc.
  */
-export function InboxPanel({ open, requests, tasks, runs, dispatches, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
+export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
   const t = useT()
   const pending = pendingRequests(requests)
   /** Отправленные, но ещё не подтверждённые снимком: карточка скрыта, но смонтирована (черновик, откат). */
@@ -58,6 +61,9 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, focus, onC
     const task = taskById.get(r.taskId)
     return [run ? globalTaskTitle(run) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
   }
+
+  const stageOf = (r: HumanRequest): string | undefined =>
+    r.nodeId && r.kind === 'question' ? requestStageLabel(r, wfNodeTitles(workflowOf?.(r.runId))) : undefined
 
   // Выбранная карточка пропала (решена, отменена) — выбор на первую видимую.
   const current = visible.find((r) => r.id === activeId) ?? visible[0]
@@ -209,6 +215,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, focus, onC
                 request={r}
                 showcase={requestShowcase(r, dispatches)}
                 where={where(r)}
+                stage={stageOf(r)}
                 active={open && current?.id === r.id}
                 onSelect={() => setActiveId(r.id)}
                 onResolve={(res) => resolve(r, res)}

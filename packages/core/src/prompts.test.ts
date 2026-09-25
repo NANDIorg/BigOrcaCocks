@@ -69,6 +69,57 @@ describe('workerTaskPrompt', () => {
   })
 })
 
+describe('workerTaskPrompt: этап «Вопрос человеку»', () => {
+  const ask = { nodeId: 'ask', type: 'ask' as const, title: 'Уточнить', instructions: 'Выясни, какую БД брать.' }
+
+  it('раздел «Этап»: инструкция ноды, цель — спросить, код не менять, done после ответов', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], ask)
+    assert.match(text, /# Этап: Уточнить\n\nВыясни, какую БД брать\./)
+    assert.match(text, /задать вопрос\(ы\) человеку\. Код не меняй/)
+    assert.match(text, /orca-board ask --question "\.\.\."/)
+    assert.match(text, /отвечает человек, а не координатор/)
+    assert.match(text, /orca-board done --summary "что выяснил"/)
+    assert.doesNotMatch(text, /уже получены/, 'ответов нет — пометки нет')
+  })
+
+  it('раздел есть и без инструкции (у «Работы» без инструкции его нет)', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'ask', type: 'ask', title: 'Вопрос человеку' })
+    assert.match(text, /# Этап: Вопрос человеку\n\nТвоя цель на этом этапе/)
+  })
+
+  it('повторный заход: ответы под нейтральным заголовком и пометка «уже получены»', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: 'Какую БД?', answer: 'sqlite' }, { question: 'Ещё?' }], ask)
+    assert.match(text, /# Ответы на вопросы по задаче\n\n- Какую БД\?\n {2}Ответ: sqlite/)
+    assert.doesNotMatch(text, /Ещё\?/, 'вопрос без ответа в промпт не попадает')
+    assert.match(text, /Ответы выше уже получены[\s\S]*спрашивай только новое/)
+    assert.ok(text.indexOf('# Ответы на вопросы по задаче') < text.indexOf('# Этап:'))
+  })
+
+  it('следующая «Работа» получает ответы человека автоматически, без пометки про повтор', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: 'Какую БД?', answer: 'sqlite' }], { nodeId: 'work', type: 'work', title: 'Работа', instructions: 'Реализуй.' })
+    assert.match(text, /# Ответы на вопросы по задаче/)
+    assert.doesNotMatch(text, /Ответы на твои вопросы|уже получены/)
+  })
+
+  it('у задачи-ответа этапа ask нет', () => {
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S', answerFor: 'human' }, undefined, [], ask), /# Этап:/)
+  })
+
+  it('skills/worker.md описывает этап: только ask, код не менять, done после ответов, отвечает человек', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    assert.match(worker, /целью\s+задать\s+вопросы\s+человеку:\s+код\s+не\s+меняй[\s\S]*orca-board ask[\s\S]*отвечает\s+человек,\s+а\s+не\s+координатор[\s\S]*orca-board done --summary "что выяснил"/)
+    assert.match(worker, /на\s+этапе\s+«Вопрос\s+человеку»\s+—\s+всегда\s+человек/)
+    assert.match(worker, /раздел\s+«Ответы\s+на\s+вопросы\s+по\s+задаче»/)
+  })
+
+  it('skills/coordinator.md: этап ask, вопросы с него не обрабатываются, воркера перезапускает приложение', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /`ask` — агент спрашивает человека/)
+    assert.match(skill, /- `question_answered` →[\s\S]*этапе\s+`ask`[\s\S]*`worker start` не нужен/)
+    assert.match(skill, /- `request_created` →[\s\S]*`question`\s+с этапа `ask`[\s\S]*обрабатывать не нужно/)
+  })
+})
+
 describe('promptChannel', () => {
   it('выводится из invoke реестра', () => {
     assert.equal(promptChannel(getAgent('claude')), 'system')

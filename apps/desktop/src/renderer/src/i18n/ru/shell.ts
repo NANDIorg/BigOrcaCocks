@@ -85,6 +85,7 @@ export default {
   'request.body.check': 'что проверить',
   'request.body.details': 'подробности',
   'request.recommended': 'Рекомендует спросивший',
+  'request.stageHint': 'Вопрос задан на этапе воркфлоу',
   'request.ownAnswer': 'Свой ответ…',
   'request.answerPlaceholder': 'Ответ…',
   'request.ownAnswerLabel': 'Свой ответ',

@@ -47,6 +47,8 @@ interface Props {
   compact?: boolean
   /** Где запрос: «глобальная › подзадача». */
   where?: string
+  /** Метка этапа воркфлоу («Этап «Уточнение»», `requestStageLabel`): вопрос задан агентом на этапе «Вопрос человеку». */
+  stage?: string
   /** Карточка выбрана (Инбокс): подсветка и подписи горячих клавиш. */
   active?: boolean
   /** Ответ целиком (answer): без колбэка кнопки «Открыть полностью» нет. */
@@ -92,7 +94,7 @@ function Kbd({ show, k }: { show: boolean; k: string }): React.JSX.Element | nul
  * Поля ввода — свои у каждой карточки. Один компонент для Инбокса, карточки на доске и модалки задачи.
  */
 export const RequestCard = forwardRef<RequestCardHandle, Props>(function RequestCard(props, ref) {
-  const { request: r, onResolve, compact = false, where, active = false, onOpenFull, onOpenTerminal, onEscape, onSelect, showcase } = props
+  const { request: r, onResolve, compact = false, where, stage, active = false, onOpenFull, onOpenTerminal, onEscape, onSelect, showcase } = props
   const [text, setText] = useState('')
   const [decision, setDecision] = useState('')
   const [clarifying, setClarifying] = useState(false)
@@ -163,6 +165,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
       <div className="rq-head">
         <span className="rq-kind">{KIND_ICON[r.kind]} {requestKindTitle(r.kind)}</span>
         {where && <span className="rq-where" title={where}>· {where}</span>}
+        {stage && <span className="rq-stage" title={t('shell.request.stageHint')}>{stage}</span>}
       </div>
       <div className="rq-title">{r.title}</div>
 

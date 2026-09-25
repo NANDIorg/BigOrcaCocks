@@ -78,6 +78,7 @@ export default {
   'request.body.check': 'what to check',
   'request.body.details': 'details',
   'request.recommended': 'Recommended by the asker',
+  'request.stageHint': 'Asked at a workflow stage',
   'request.ownAnswer': 'Your answer…',
   'request.answerPlaceholder': 'Answer…',
   'request.ownAnswerLabel': 'Your answer',

@@ -179,7 +179,8 @@ export function startWorker(
   ctx: WorkerEnvContext,
   taskId: string,
   cols = 120,
-  rows = 30
+  rows = 30,
+  roleId?: string
 ): { ptyId: string; dispatchId: string; worktree: string; branch: string } {
   const task = store.getTask(taskId)
   if (!task) {
@@ -188,8 +189,10 @@ export function startWorker(
     throw new Error(`task not found: ${taskId}`)
   }
   if (store.columnKind(task.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
-  const role = ctx.roles.find((r) => r.id === task.roleId)
-  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task.roleId, { title: ctx.typeTitle, roles: ctx.roles })}`)
+  // Роль этапа «Вопрос человеку» — только на этот запуск: задача сохраняет свою роль (`store.updateTask` ниже).
+  const runRoleId = roleId ?? task.roleId
+  const role = ctx.roles.find((r) => r.id === runRoleId)
+  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(runRoleId, { title: ctx.typeTitle, roles: ctx.roles })}`)
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
 
@@ -202,8 +205,9 @@ export function startWorker(
     execFileSync('git', args, { cwd: repoRoot, stdio: 'pipe' })
     fresh = true
   }
-  // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи.
-  store.updateTask(task.id, { agent: role.agent, worktree, branch })
+  // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи. Роль этапа «Вопрос
+  // человеку» задачу не меняет (агент задачи остаётся прежним).
+  store.updateTask(task.id, { ...(roleId ? {} : { agent: role.agent }), worktree, branch })
 
   const dispatchId = newId('disp')
   // Уточнение к задаче-ответу идёт вместе с прошлым ответом: воркер отвечает заново, а не с нуля.

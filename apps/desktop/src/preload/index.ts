@@ -14,6 +14,15 @@ const api: OrcaApi = {
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
     testNotification: () => ipcRenderer.invoke('app:testNotification')
   },
+  updates: {
+    getState: () => ipcRenderer.invoke('updates:getState'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    download: () => ipcRenderer.invoke('updates:download'),
+    install: (opts) => ipcRenderer.invoke('updates:install', opts),
+    cancelPending: () => ipcRenderer.invoke('updates:cancelPending'),
+    getJustUpdated: () => ipcRenderer.invoke('updates:getJustUpdated'),
+    onChanged: (cb) => on('updates:changed', cb)
+  },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),

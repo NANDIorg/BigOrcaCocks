@@ -44,14 +44,111 @@ export interface AppSettings {
   language?: AppLanguage
   /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
   notifications: NotificationSettings
+  /** Автообновление приложения (docs/architecture.md → «Обновление»). */
+  updates: UpdateSettings
 }
 
-/** Патч настроек приложения: notifications мержится по полям. */
+/** Настройки автообновления. Дефолты — `DEFAULT_UPDATE_SETTINGS`. */
+export interface UpdateSettings {
+  /** Проверять наличие новой версии в фоне (при старте и раз в несколько часов). По умолчанию true. */
+  autoCheck: boolean
+  /** Скачивать найденную версию сразу, без клика. По умолчанию true. */
+  autoDownload: boolean
+  /**
+   * Ставить скачанное обновление, когда у агентов не осталось живых сессий (а не только при выходе).
+   * По умолчанию false: без явного решения человека приложение само не перезапускается.
+   */
+  installWhenIdle: boolean
+}
+
+export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = { autoCheck: true, autoDownload: true, installWhenIdle: false }
+
+/** Патч настроек приложения: notifications и updates мержатся по полям. */
 export interface AppSettingsPatch {
   keepInBackground?: boolean
   language?: AppLanguage
   notifications?: NotificationSettingsPatch
+  updates?: Partial<UpdateSettings>
 }
+
+/** Способ обновления на этой платформе. */
+export type UpdateMode =
+  /** Скачивание и установка внутри приложения (Windows NSIS — electron-updater, macOS — свой установщик). */
+  | 'auto'
+  /** Установить не можем (portable Windows): показываем версию и ссылку `releaseUrl`, человек скачивает сам. */
+  | 'manual-download'
+
+/** Почему обновление недоступно (`UpdateState.status === 'unsupported'`). */
+export type UpdateUnsupportedReason =
+  /** Запуск из исходников/`pnpm dev` (`!app.isPackaged`). */
+  | 'dev'
+  /** Portable-сборка Windows: заменить exe на ходу нельзя. Состояние — `unsupported`, `mode: 'manual-download'`. */
+  | 'portable'
+  /** macOS: приложение запущено не из /Applications (например, прямо из dmg или Загрузок). */
+  | 'not-in-applications'
+  /** macOS: у пользователя нет прав на запись в папку с приложением. */
+  | 'no-write-access'
+  /** macOS: App Translocation — система запустила копию из read-only образа, подменять нечего. */
+  | 'translocated'
+
+/** Что известно о новой версии; отдаёт `PlatformUpdater.check()`. */
+export interface UpdateInfo {
+  /** Версия без префикса `v` (semver), например `0.4.2`. */
+  version: string
+  /** Заметки релиза, markdown (тело GitHub Release); нет — пустая строка. */
+  releaseNotes: string
+  /** Страница релиза на GitHub — для «что нового» и для `manual-download`. */
+  releaseUrl: string
+}
+
+/**
+ * Состояние обновления — машина состояний в main (`main/updater.ts`), единственный источник правды.
+ * Переходы: idle → checking → (idle | available | error); available → downloading → (ready | error);
+ * ready → installing → перезапуск. `unsupported` — терминальное: проверки и загрузка ничего не делают.
+ */
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'installing'
+  | 'error'
+  | 'unsupported'
+
+export interface UpdateState {
+  status: UpdateStatus
+  /** Версия запущенного приложения (`app.getVersion()`). */
+  currentVersion: string
+  /** Найденная версия; null, пока проверка не нашла новой. Сохраняется в downloading/ready/installing/error после находки. */
+  availableVersion: string | null
+  /** Заметки найденной версии, markdown; null, если версии нет. */
+  releaseNotes: string | null
+  /** Страница релиза; null, если версии нет. */
+  releaseUrl: string | null
+  /** Прогресс скачивания 0–100; только при `downloading`, иначе null. */
+  percent: number | null
+  /**
+   * Отложенная установка: `'quit'` — при выходе из приложения, `'idle'` — когда у агентов не останется живых сессий
+   * (ставит `install({when})` или `settings.updates.installWhenIdle`); null — ничего не запланировано.
+   */
+  installPending: 'idle' | 'quit' | null
+  /** Способ обновления на этой платформе. */
+  mode: UpdateMode
+  /** Причина, только при `status === 'unsupported'`. */
+  unsupportedReason: UpdateUnsupportedReason | null
+  /** Текст ошибки по-русски, только при `status === 'error'`; иначе null. */
+  error: string | null
+}
+
+/** Когда ставить скачанное обновление (`updates.install`). */
+export type UpdateInstallWhen =
+  /** Выйти и установить сейчас (с обычным подтверждением выхода, если работают агенты). */
+  | 'now'
+  /** Когда у агентов не останется живых сессий. */
+  | 'idle'
+  /** При следующем выходе из приложения. */
+  | 'quit'
 
 /** Правка задачи из UI/CLI: название, описание, приоритет (приоритет — в любой колонке). */
 export interface TaskPatch {
@@ -244,6 +341,29 @@ export interface OrcaApi {
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
+  }
+  /**
+   * Обновление приложения (docs/architecture.md → «Обновление»). Состояние живёт в main; renderer читает
+   * `getState()` при старте и дальше подписывается на `onChanged`. Все методы, кроме `getState`, возвращают
+   * состояние после действия. В `unsupported` действия ничего не меняют (не бросают).
+   */
+  updates: {
+    getState(): Promise<UpdateState>
+    /** Проверить наличие новой версии сейчас (кнопка «Проверить»). Во время проверки/скачивания — no-op. */
+    check(): Promise<UpdateState>
+    /** Скачать найденную версию (нужна при `autoDownload: false`). Не в `available` — no-op. */
+    download(): Promise<UpdateState>
+    /** Установить скачанное: `now` — выйти и заменить, `idle` / `quit` — отложить (`installPending`). Не в `ready` — ошибка. */
+    install(opts: { when: UpdateInstallWhen }): Promise<UpdateState>
+    /** Снять отложенную установку (`installPending` → null). */
+    cancelPending(): Promise<UpdateState>
+    /**
+     * Версия, с которой приложение только что обновилось, — чтобы показать «Обновлено до …»; null, если старт
+     * обычный. Отдаётся один раз после старта: повторный вызов вернёт null.
+     */
+    getJustUpdated(): Promise<string | null>
+    /** Состояние изменилось (в том числе прогресс скачивания). Всегда полное состояние. */
+    onChanged(cb: (state: UpdateState) => void): () => void
   }
   projects: {
     list(): Promise<{ active: Project | null; projects: Project[] }>

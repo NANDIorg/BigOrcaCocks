@@ -15,16 +15,19 @@ export const WF_TYPE_TITLES: Record<WfNodeType, string> = {
 }
 
 /** Порядок типов в select «Тип» инспектора. */
-export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'gate', 'human', 'condition', 'merge', 'end']
+export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'human', 'condition', 'merge', 'end']
 
 /** Роли, которые можно поставить на этап: без служебных (coordinator, assistant) — они задачам не назначаются. */
 export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[] {
   return roles.filter((r) => isTaskRole(r.id))
 }
 
-/** Ноды, у которых есть поле «Колонка»: start и condition задача проходит насквозь, стоять в них она не может. */
+/**
+ * Ноды, у которых есть поле «Колонка»: start и condition задача проходит насквозь, стоять в них она не может.
+ * У ask колонку не задают: пока агент работает, задача в «В работе», а при вопросе store сам держит её в «Нужен ответ».
+ */
 export function hasColumn(type: WfNodeType): boolean {
-  return type !== 'start' && type !== 'condition'
+  return type !== 'start' && type !== 'condition' && type !== 'ask'
 }
 
 /** Поля ноды, которые правит инспектор. Пустая строка у необязательного поля — «не задано» (поле удаляется). */
@@ -53,9 +56,9 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     else delete n.column
   }
   if (patch.roleId !== undefined) {
-    // У гейта роль обязательна (пустую подсветит валидация), у работы пустая — «роль задачи».
+    // У гейта роль обязательна (пустую подсветит валидация), у работы и вопроса пустая — «роль задачи».
     if (n.type === 'gate') n.roleId = patch.roleId
-    else if (n.type === 'work') {
+    else if (n.type === 'work' || n.type === 'ask') {
       if (patch.roleId) n.roleId = patch.roleId
       else delete n.roleId
     }
@@ -64,6 +67,8 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     if (patch.instructions.trim()) n.instructions = patch.instructions
     else delete n.instructions
   }
+  // У ask инструкция обязательна: пустая остаётся строкой — поле не пропадает, а валидация подсвечивает его.
+  if (patch.instructions !== undefined && n.type === 'ask') n.instructions = patch.instructions
   if (patch.showcase !== undefined && n.type === 'work') {
     const what = patch.showcase.what ?? n.showcase?.what ?? ''
     const required = patch.showcase.required ?? n.showcase?.required ?? false
@@ -89,10 +94,13 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
   const node: WfNode = { ...fresh, id: cur.id }
   if (cur.title) node.title = cur.title
   if (cur.column && hasColumn(type)) node.column = cur.column
-  const role = cur.type === 'gate' || cur.type === 'work' ? cur.roleId : undefined
-  const instructions = cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' ? cur.instructions : undefined
-  if (role && (node.type === 'gate' || node.type === 'work')) node.roleId = role
-  if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work')) node.instructions = instructions
+  const role = cur.type === 'gate' || cur.type === 'work' || cur.type === 'ask' ? cur.roleId : undefined
+  const instructions =
+    cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' || cur.type === 'ask' ? cur.instructions : undefined
+  if (role && (node.type === 'gate' || node.type === 'work' || node.type === 'ask')) node.roleId = role
+  if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work' || node.type === 'ask')) {
+    node.instructions = instructions
+  }
   const ports = WF_PORTS[type]
   return {
     ...wf,

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { writeFileSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -10,11 +10,13 @@ import {
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
-import { jsonPersistence } from './persistence'
+import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
+import { DEFAULT_UPDATE_SETTINGS } from '../shared/ipc'
 import type {
-  AppLanguage, AppSettings, AppSettingsPatch, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput, TaskTypesState
+  AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
+  TaskTypesState
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
@@ -73,6 +75,11 @@ export interface ProjectsFile {
   defaultTaskTypeId?: string
   /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
   settings?: Partial<AppSettings>
+  /**
+   * Версия приложения последнего запуска. По ней `backupOnVersionChange` (`backup.ts`) решает, делать ли бэкап
+   * состояния перед миграциями. Лежит здесь, а не в `settings`: это не настройка человека и в renderer не уходит.
+   */
+  lastRunVersion?: string
 }
 
 /** projects.json до типов задач: поля, которые читает только миграция. */
@@ -87,7 +94,21 @@ function isAppLanguage(v: unknown): v is AppLanguage {
   return v === 'ru' || v === 'en'
 }
 
-export const DEFAULT_APP_SETTINGS: AppSettings = { keepInBackground: true, notifications: DEFAULT_NOTIFICATION_SETTINGS }
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  keepInBackground: true,
+  notifications: DEFAULT_NOTIFICATION_SETTINGS,
+  updates: DEFAULT_UPDATE_SETTINGS
+}
+
+const UPDATE_SETTING_KEYS = Object.keys(DEFAULT_UPDATE_SETTINGS) as (keyof UpdateSettings)[]
+
+/** Настройки обновления из файла: незаданные и не-boolean поля — дефолты. */
+function normalizeUpdateSettings(raw: unknown): UpdateSettings {
+  const r = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+  const out = { ...DEFAULT_UPDATE_SETTINGS }
+  for (const k of UPDATE_SETTING_KEYS) if (typeof r[k] === 'boolean') out[k] = r[k] as boolean
+  return out
+}
 
 /** Имя бэкапа projects.json старого формата: откат на старую версию приложения прочтёт проекты без ролей. */
 export const PROJECTS_BACKUP_NAME = 'projects.v1.bak.json'
@@ -103,6 +124,7 @@ export class ProjectManager {
   private listeners = new Set<(projectId: string, store: TaskStore) => void>()
   private eventListeners = new Set<(projectId: string, events: OrcaEvent[]) => void>()
   private seenEvents = new Map<string, number>()
+  private warnings: StateWarning[] = []
 
   constructor(private userData: string) {
     this.file = join(userData, 'projects.json')
@@ -118,10 +140,17 @@ export class ProjectManager {
 
   /** Файл целиком; `legacyText` — исходный текст, если файл был старого формата и его перевели на типы задач. */
   private load(): { data: ProjectsFile; legacyText?: string } {
-    if (!existsSync(this.file)) return { data: emptyProjectsFile() }
+    const read = readJsonFile<RawProjectsFile>(this.file, 'проекты')
+    if (read.status === 'missing') return { data: emptyProjectsFile() }
+    // Битый projects.json — не «нет проектов»: файл отложен в .corrupt-<ts>, предупреждение ждёт `stateWarnings()`.
+    if (read.status === 'corrupt') {
+      this.warnings.push(read.warning)
+      return { data: emptyProjectsFile() }
+    }
     try {
-      const text = readFileSync(this.file, 'utf8')
-      const raw = JSON.parse(text) as RawProjectsFile
+      const text = read.text
+      const raw = read.value
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('ожидается объект')
       if (!Array.isArray(raw.projects)) raw.projects = []
       if (raw.settings !== undefined && !isObject(raw.settings)) delete raw.settings
       const legacy = !(typeof raw.version === 'number' && raw.version >= PROJECTS_FILE_VERSION)
@@ -135,14 +164,31 @@ export class ProjectManager {
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
       return { data, ...(changed ? { legacyText: text } : {}) }
-    } catch {
+    } catch (e) {
+      // JSON разобрался, но содержимое не годится для нормализации — то же, что битый файл.
+      const movedTo = quarantineCorrupt(this.file)
+      this.warnings.push({
+        kind: 'corrupt', file: this.file, movedTo,
+        message: `проекты: файл ${this.file} не прочитан (${(e as Error).message})${movedTo ? ` — сохранён как ${movedTo}` : ''}, начато с пустого состояния`
+      })
       return { data: emptyProjectsFile() }
     }
   }
 
   private save(): void {
-    mkdirSync(this.userData, { recursive: true })
-    writeFileSync(this.file, JSON.stringify(this.data, null, 2))
+    writeFileAtomic(this.file, JSON.stringify(this.data, null, 2))
+  }
+
+  /** Предупреждения о файлах, которые не прочитались при загрузке (проекты и уже открытые доски). Каналов в renderer пока нет. */
+  stateWarnings(): StateWarning[] {
+    return [...this.warnings]
+  }
+
+  /** Запоминает версию приложения, которая работает с файлами сейчас (`backupOnVersionChange` сверяет с ней при запуске). */
+  markRun(version: string): void {
+    if (this.data.lastRunVersion === version) return
+    this.data.lastRunVersion = version
+    this.save()
   }
 
   list(): Project[] {
@@ -455,7 +501,8 @@ export class ProjectManager {
     return {
       keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground,
       ...(isAppLanguage(s.language) ? { language: s.language } : {}),
-      notifications: normalizeNotificationSettings(s.notifications)
+      notifications: normalizeNotificationSettings(s.notifications),
+      updates: normalizeUpdateSettings(s.updates)
     }
   }
 
@@ -472,6 +519,17 @@ export class ProjectManager {
     }
     if (patch.notifications !== undefined) {
       next.notifications = mergeNotificationSettings(this.settings().notifications, patch.notifications)
+    }
+    if (patch.updates !== undefined) {
+      if (typeof patch.updates !== 'object' || patch.updates === null || Array.isArray(patch.updates)) throw new Error('updates: ожидается объект')
+      const merged = this.settings().updates
+      for (const k of UPDATE_SETTING_KEYS) {
+        const v = patch.updates[k]
+        if (v === undefined) continue
+        if (typeof v !== 'boolean') throw new Error(`updates.${k} должен быть boolean`)
+        merged[k] = v
+      }
+      next.updates = merged
     }
     this.data.settings = next
     this.save()
@@ -523,7 +581,7 @@ export class ProjectManager {
     let s = this.stores.get(id)
     if (!s) {
       const project = this.mustGet(id)
-      const created = new TaskStore(jsonPersistence(join(this.userData, 'boards', `${id}.json`)), () => this.columns(id))
+      const created = new TaskStore(jsonPersistence(join(this.userData, 'boards', `${id}.json`), (w) => this.warnings.push(w)), () => this.columns(id))
       this.seenEvents.set(id, created.listEvents().length)
       created.subscribe(() => {
         this.listeners.forEach((fn) => fn(id, created))
@@ -551,9 +609,21 @@ export class ProjectManager {
     return this.store(p.id)
   }
 
-  /** Число задач в работе (kind=in_progress) по id каждого проекта, включая неактивные. */
+  /**
+   * Число задач в работе (kind=in_progress) по id каждого проекта, включая неактивные. Проект, доска которого не
+   * открылась (например, сохранена более новой версией), пропускается: одна такая доска не должна ронять счётчики
+   * остальных. Ошибка остаётся там, где открывают именно эту доску (`store(id)`).
+   */
   inProgressCounts(): Record<string, number> {
-    return Object.fromEntries(this.list().map((p) => [p.id, this.store(p.id).inProgressCount()]))
+    const counts: Record<string, number> = {}
+    for (const p of this.list()) {
+      try {
+        counts[p.id] = this.store(p.id).inProgressCount()
+      } catch {
+        // доска не открылась — счётчика нет
+      }
+    }
+    return counts
   }
 
   /** Все загруженные store — для детектора тишины. */
