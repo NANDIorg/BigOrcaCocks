@@ -61,6 +61,14 @@ export default {
   'tab.stats': 'Статистика',
 
   // Шапка экрана.
+  'branch.base': 'Ответвлена от {base}',
+  'branch.worktree': 'Папка: {path}',
+  'branch.noWorktree': 'Папка убрана после «Сделано», ветка осталась в репозитории',
+  'branch.pushed': 'Отправлена на remote {date}',
+  'branch.notPushed': 'На remote не отправлялась',
+  'branch.pushError': 'Push не удался: {error}',
+  'branch.copyHint': 'Клик — скопировать имя ветки',
+  'branch.copied': 'Скопировано',
   'header.back': 'Глобальные задачи',
   'header.backTitle': 'К общей доске (Esc)',
   'header.answer': 'Ответить · {count}',

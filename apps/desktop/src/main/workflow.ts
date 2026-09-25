@@ -3,7 +3,7 @@ import {
   type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
   type WfOutcome, type Workflow
 } from '@orca-board/core'
-import { acceptReview, mergeTaskBranch } from './review'
+import { acceptReview, mergeTaskBranch, type MergeTargetOf } from './review'
 import { showcaseMarkdown } from '../shared/showcase'
 import { commitWorktree, removeWorktree, removeWorktreeKeepBranch } from './git'
 
@@ -24,6 +24,11 @@ export interface WorkflowDeps {
    * человеку»: она только на этот запуск, роль задачи не меняется (в отличие от роли «Работы»).
    */
   startWorker(taskId: string, opts?: { roleId?: string }): { ptyId: string; dispatchId: string }
+  /**
+   * Куда сливать ветку задачи на ноде `merge` и при приёмке вне графа (`mergeTarget` в `run-branch.ts`): ветка
+   * глобальной задачи или текущая ветка корня, если она не защищённая. Нет — текущая ветка корня (тесты).
+   */
+  mergeTarget?: MergeTargetOf
 }
 
 /** Сколько переходов подряд без ожидания (мерж → условие → мерж…) допускается, прежде чем считать граф зациклившимся. */
@@ -127,7 +132,9 @@ function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction): void
       case 'merge': {
         let result: ReturnType<typeof mergeTaskBranch>
         try {
-          result = mergeTaskBranch(deps.repoRoot, task)
+          // Цель — только когда есть что сливать: защищённая ветка корня не должна останавливать задачу без ветки.
+          const target = task.worktree && task.branch ? deps.mergeTarget?.(task) : undefined
+          result = mergeTaskBranch(deps.repoRoot, task, target)
         } catch (e) {
           store.blockStage(taskId, `мерж не выполнен: ${message(e)}`)
           return
@@ -351,7 +358,7 @@ export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: stri
   const task = mustTask(deps, taskId)
   if (task.answerFor || !task.stage) {
     if (task.gateFor) closeGate(deps, task)
-    else acceptReview(deps.store, deps.repoRoot, taskId, decision)
+    else acceptReview(deps.store, deps.repoRoot, taskId, decision, deps.mergeTarget)
     return
   }
   decide(deps, task, 'accept', decision)

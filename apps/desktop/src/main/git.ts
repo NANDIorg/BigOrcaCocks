@@ -21,9 +21,11 @@ export interface ReviewInfo {
   dirty: boolean
 }
 
-/** Что накопилось в ветке задачи относительно базовой ветки. */
-export function reviewInfo(repoRoot: string, worktree: string, branch: string): ReviewInfo {
-  const base = currentBranch(repoRoot)
+/**
+ * Что накопилось в ветке задачи относительно базовой ветки: ветки глобальной задачи (`reviewBase`) или, без неё,
+ * текущей ветки корня. Refs у всех worktree общие, поэтому diff считается из корня.
+ */
+export function reviewInfo(repoRoot: string, worktree: string, branch: string, base = currentBranch(repoRoot)): ReviewInfo {
   const dirty = existsSync(worktree) && git(worktree, ['status', '--porcelain']) !== ''
   let stat = ''
   let commits: string[] = []
@@ -52,14 +54,17 @@ export function commitWorktree(worktree: string, message: string): void {
   })
 }
 
-/** Слить ветку задачи в текущую ветку репозитория. Бросает с текстом конфликта. */
-export function mergeBranch(repoRoot: string, branch: string, message: string): void {
+/**
+ * Слить ветку задачи в ветку, выбранную в каталоге `cwd`: worktree глобальной задачи или корень (`mergeTarget`).
+ * Бросает с текстом конфликта.
+ */
+export function mergeBranch(cwd: string, branch: string, message: string): void {
   try {
-    execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' })
+    execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd, stdio: 'pipe', encoding: 'utf8' })
   } catch (e) {
     const err = e as { stdout?: string; stderr?: string }
     try {
-      execFileSync('git', ['merge', '--abort'], { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' })
+      execFileSync('git', ['merge', '--abort'], { cwd, stdio: 'pipe', encoding: 'utf8' })
     } catch {
       /* нечего отменять */
     }

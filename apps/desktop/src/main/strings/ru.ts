@@ -149,6 +149,10 @@ export default {
 
   'review.noBranch': 'у задачи нет ветки',
   'review.untracked': 'новые файлы:',
+  'git.protectedBranch': 'мерж в «{branch}» запрещён: это общая ветка (настройка «О проекте → Git → Защищённые ветки»). Запустите задачу из глобальной задачи с веткой фичи или откройте в Orca worktree рабочей ветки',
+  'git.runBranchFailed': 'не удалось завести ветку «{branch}» глобальной задачи от «{base}»: {error}',
+  'git.runBranchMissing': 'ветки «{branch}» глобальной задачи больше нет в репозитории — восстановите её или снимите ветку с задачи',
+  'git.badSettings': 'настройки Git проекта: {problems}',
   'request.alreadyCancelled': 'уже решено: запрос {id} отменён',
   'request.alreadyResolved': 'уже решено: запрос {id} решён',
 
