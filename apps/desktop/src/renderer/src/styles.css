@@ -150,6 +150,7 @@ button { font: inherit; cursor: pointer; }
 .popup-menu-item[aria-disabled='true'] { color: var(--muted); cursor: default; }
 .popup-menu-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .popup-menu-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
+.modal-backdrop.group-backdrop { z-index: 40; }
 .modal.group-modal { width: 420px; }
 .btn-primary.danger { background: var(--danger); }
 .btn-primary.danger:hover { background: #f38181; }

@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useT } from './i18n'
 import { ipcErrorMessage } from './ipcError'
 import { normalizeGroupName } from './projectGroups'
@@ -28,6 +29,20 @@ interface NameProps {
   onClose(): void
   /** Ошибка (в том числе «перезапустите приложение») остаётся в диалоге. */
   onSubmit(name: string): Promise<void>
+}
+
+/**
+ * Диалоги рисуются порталом в `body`: `ProjectList` живёт в сайдбаре, а `position: fixed` внутри него всё равно
+ * участвует в порядке слоёв по месту в DOM — позже идущие позиционированные блоки основной области (глобальные
+ * задачи и их панели) ложились поверх бэкдропа. `z-index` — выше меню (30) и панели входящих (21), ниже тоста (50).
+ */
+function ModalPortal({ onBackdrop, children }: { onBackdrop(): void; children: React.ReactNode }): React.JSX.Element {
+  return createPortal(
+    <div className="modal-backdrop group-backdrop" onClick={onBackdrop}>
+      {children}
+    </div>,
+    document.body
+  )
 }
 
 /** Имя новой или переименованной группы. Пустое имя не отправляется — main всё равно бросил бы `groupNameEmpty`. */
@@ -61,7 +76,7 @@ export function GroupNameModal({ initialName, forProject, onClose, onSubmit }: N
   }
 
   return (
-    <div className="modal-backdrop" onClick={close}>
+    <ModalPortal onBackdrop={close}>
       <form
         className="modal group-modal"
         role="dialog"
@@ -95,7 +110,7 @@ export function GroupNameModal({ initialName, forProject, onClose, onSubmit }: N
           </button>
         </div>
       </form>
-    </div>
+    </ModalPortal>
   )
 }
 
@@ -134,7 +149,7 @@ export function ConfirmModal({ title, text, confirmLabel, onClose, onConfirm }: 
   }
 
   return (
-    <div className="modal-backdrop" onClick={close}>
+    <ModalPortal onBackdrop={close}>
       <div className="modal group-modal" role="alertdialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
         <p className="muted modal-sub">{text}</p>
@@ -144,6 +159,6 @@ export function ConfirmModal({ title, text, confirmLabel, onClose, onConfirm }: 
           <button type="button" className="btn-primary danger" onClick={() => void confirm()} disabled={busy}>{confirmLabel}</button>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   )
 }
