@@ -231,6 +231,82 @@ export interface ProjectBranchInfo {
   sha?: string
 }
 
+/** Локальная ветка в `ProjectBranchList.local`. */
+export interface ProjectLocalBranch {
+  /** Короткое имя (`feature/x`). */
+  name: string
+  /** Ветка, на которой стоит корень проекта. */
+  current: boolean
+  /** Ветка уже checked out в другом worktree (в том числе воркера Orca): `checkoutBranch` откажет `git.branchBusy`. У текущей — false. */
+  busy: boolean
+}
+
+/** Upstream текущей ветки корня и расхождение с ним (по уже полученным refs — без сети). */
+export interface ProjectBranchUpstream {
+  /** Полное имя upstream: `origin/main`. */
+  name: string
+  /** Коммитов в локальной ветке, которых нет в upstream. */
+  ahead: number
+  /** Коммитов в upstream, которых нет в локальной ветке. */
+  behind: number
+  /** Upstream настроен, но ветки на remote больше нет (после `fetch --prune`): ahead/behind — 0. */
+  gone: boolean
+}
+
+/**
+ * Ветки корня проекта (`projects:branches`). Не репозиторий (или git недоступен) — `isGitRepo: false`,
+ * `current` — как у `projects.branch`, списки пусты, `dirty: false`; метод для этого случая не бросает.
+ */
+export interface ProjectBranchList {
+  isGitRepo: boolean
+  /** Текущее состояние HEAD корня — то же, что вернул бы `projects.branch(id)`. */
+  current: ProjectBranchInfo
+  /** Локальные ветки, отсортированные по имени. */
+  local: ProjectLocalBranch[]
+  /**
+   * Удалённые ветки по последнему `fetch`, полные имена `origin/x`, отсортированные; без `<remote>/HEAD`.
+   * Их же принимает `checkoutBranch` (создаст локальную `x` с tracking).
+   */
+  remote: string[]
+  /** Upstream текущей ветки; нет — ветка без upstream, detached HEAD или репозиторий без коммитов. */
+  upstream?: ProjectBranchUpstream
+  /** Есть незакоммиченные изменения в корне (`git status --porcelain` не пуст, untracked тоже): checkout откажет `git.dirtyTree`. */
+  dirty: boolean
+}
+
+/** Итог `projects:gitFetch` / `projects:gitPull`. */
+export interface ProjectGitResult {
+  /** Краткий вывод git (stdout + stderr, без ANSI, обрезан до ~4000 символов); пустой, если git ничего не написал. */
+  output: string
+  /** Состояние HEAD корня после операции (pull двигает ветку, но не переключает её). */
+  branch: ProjectBranchInfo
+}
+
+/**
+ * Коды `OrcaError` (`ipcErrorCode`) git-операций корня проекта: `projects:branches`, `gitFetch`, `gitPull`,
+ * `checkoutBranch`. Тексты — `main/strings/{ru,en}.ts`, ключи те же. Ожидаемые отказы, не сбои: UI показывает
+ * сообщение и не считает приложение сломанным. Любой другой отказ git — `git.opFailed`.
+ */
+export const PROJECT_GIT_ERROR_CODES = [
+  /** Корень проекта — не git-репозиторий (или git недоступен); параметр — `path`. Кроме `branches`, который отдаёт `isGitRepo: false`. */
+  'git.notRepo',
+  /** Есть незакоммиченные изменения — `checkoutBranch` не выполняется, чтобы не унести правки на другую ветку. */
+  'git.dirtyTree',
+  /** `gitPull`: ветка разошлась с upstream, `--ff-only` не может её обновить. Мерж и rebase — вручную в терминале; параметры — `branch`, `upstream`. */
+  'git.notFastForward',
+  /** `gitPull`: у текущей ветки нет upstream (или она на detached HEAD — pull негде брать); параметр — `branch` (при detached — `HEAD`). */
+  'git.noUpstream',
+  /** `checkoutBranch`: ветка checked out в другом worktree; параметры сообщения — `branch`, `path`. */
+  'git.branchBusy',
+  /** `checkoutBranch`: в проекте есть живые воркеры или координаторы Orca — корень переключать нельзя; параметр — `count`. */
+  'git.workersActive',
+  /** `checkoutBranch`: такой ветки нет ни локально, ни среди remote-веток; параметр — `branch`. */
+  'git.branchNotFound',
+  /** Прочий отказ git (сеть, права, конфликт при pull, зависший remote): параметры — `command`, `error` (stderr git). */
+  'git.opFailed'
+] as const
+export type ProjectGitErrorCode = (typeof PROJECT_GIT_ERROR_CODES)[number]
+
 /**
  * Проект в renderer. Свои у проекта только колонки, агенты и типы задач; роли, воркфлоу, правила агентов
  * и разрешения — у типа задачи (`TaskType`, «Настройки → Типы задач»).
@@ -438,6 +514,33 @@ export interface OrcaApi {
      * поэтому renderer перезапрашивает её при смене проекта и фокусе окна.
      */
     branch(id: string): Promise<ProjectBranchInfo>
+    /**
+     * Git корня проекта `id`: канал `projects:branches`. Ветки, текущая, upstream с ahead/behind и «грязное дерево» —
+     * всё локально, без сети (remote-ветки — по последнему `fetch`). Не репозиторий — `isGitRepo: false`, не бросает;
+     * неизвестный проект — ошибка. Нет у старого main/preload — renderer показывает «перезапустите приложение».
+     */
+    branches?(id: string): Promise<ProjectBranchList>
+    /**
+     * `git fetch --all --prune` в корне проекта: канал `projects:gitFetch`. Рабочее дерево и HEAD не меняет, поэтому
+     * доступен и при живых воркерах и грязном дереве. Ошибки — `git.notRepo`, `git.opFailed` (нет сети, remote
+     * не отвечает, таймаут). Нет у старого main/preload — «перезапустите приложение».
+     */
+    gitFetch?(id: string): Promise<ProjectGitResult>
+    /**
+     * `git pull --ff-only` текущей ветки корня: канал `projects:gitPull`. Ошибки — `git.notRepo`, `git.noUpstream`,
+     * `git.notFastForward`, `git.opFailed` (в том числе когда правки в дереве мешают обновлению). Живых воркеров не
+     * проверяет: ветку корня двигают вперёд, worktree'ы воркеров не затрагиваются. Нет у старого main/preload —
+     * «перезапустите приложение».
+     */
+    gitPull?(id: string): Promise<ProjectGitResult>
+    /**
+     * Переключить корень проекта на ветку: канал `projects:checkoutBranch`. `branch` — локальная (`main`) или
+     * удалённая из `ProjectBranchList.remote` (`origin/x`: создаётся локальная `x` с tracking; локальная `x` уже есть —
+     * переключение на неё). Возвращает состояние HEAD после переключения. Ошибки — `git.notRepo`, `git.branchNotFound`,
+     * `git.dirtyTree`, `git.branchBusy`, `git.workersActive`, `git.opFailed`. Ветка та же, что текущая, — не ошибка.
+     * Нет у старого main/preload — «перезапустите приложение».
+     */
+    checkoutBranch?(id: string, branch: string): Promise<ProjectBranchInfo>
     /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из
