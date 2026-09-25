@@ -3,7 +3,8 @@ import type { StatsRow } from '@orca-board/core'
 import { Icon } from './icons'
 import { Cost, NoData } from './StatsCells'
 import { formatAgentTime, formatTokens } from './statsFormat'
-import { APPROX_TITLE, TASK_STATS_STALE_HINT, partLabel, partValue, roleRows, type StatCounter, type StatFact, type TimePart } from './taskStatsFormat'
+import { useT } from './i18n'
+import { approxTitle, partLabel, partValue, roleRows, type StatCounter, type StatFact, type TimePart } from './taskStatsFormat'
 
 /** Строка фактов: значение крупно, подпись над ним, пояснение под ним. Неизвестное — приглушённо курсивом. */
 export function StatFacts({ facts }: { facts: StatFact[] }): React.JSX.Element {
@@ -39,7 +40,7 @@ export function TimeBar({ title, parts, empty }: { title: string; parts: TimePar
       {parts.length > 0 && (
         <ul className="ts-legend">
           {parts.map((p) => (
-            <li key={p.key} className={p.ms === 0 ? 'zero' : undefined} title={p.approx ? APPROX_TITLE : undefined}>
+            <li key={p.key} className={p.ms === 0 ? 'zero' : undefined} title={p.approx ? approxTitle() : undefined}>
               <i className="swatch" style={{ background: p.color }} />
               <span className="x">{p.title}</span>
               <b>{p.entries > 0 ? partValue(p) : '—'}</b>
@@ -53,16 +54,17 @@ export function TimeBar({ title, parts, empty }: { title: string; parts: TimePar
 
 /** Таблица ролей: время агентов, токены, стоимость. Нет строк — заглушка. */
 export function RolesTable({ rows }: { rows: StatsRow[] }): React.JSX.Element {
-  if (rows.length === 0) return <div className="stats-hint">Агенты не запускались</div>
+  const t = useT()
+  if (rows.length === 0) return <div className="stats-hint">{t('board.stats.agentsNone')}</div>
   return (
     <div className="ts-table-wrap">
       <table className="stats-table ts-table">
         <thead>
           <tr>
-            <th>Роль</th>
-            <th className="r">Время</th>
-            <th className="r">Токены</th>
-            <th className="r">Стоимость</th>
+            <th>{t('board.task.role')}</th>
+            <th className="r">{t('board.stats.colTime')}</th>
+            <th className="r">{t('board.stats.colTokens')}</th>
+            <th className="r">{t('board.stats.cost')}</th>
           </tr>
         </thead>
         <tbody>
@@ -93,10 +95,11 @@ export function Counters({ items }: { items: StatCounter[] }): React.JSX.Element
 
 /** Плашка «старый main»: время посчитано в приложении, токенов нет. */
 export function StaleNote(): React.JSX.Element {
+  const t = useT()
   return (
     <div className="ts-note" role="note">
       <Icon.info />
-      <span>{TASK_STATS_STALE_HINT}</span>
+      <span>{t('board.stats.staleHint')}</span>
     </div>
   )
 }

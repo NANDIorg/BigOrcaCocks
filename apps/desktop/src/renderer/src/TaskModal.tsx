@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
-  AGENT_TITLES, PRIORITY_TITLES, isTaskPriority, modelLabel,
+  AGENT_TITLES, isTaskPriority, modelLabel,
   type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
   type RequestResolution
 } from '@orca-board/core'
@@ -16,11 +16,13 @@ import { latestShowcase, requestShowcase } from './showcase'
 import { Icon } from './icons'
 import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
-import { STALE_PRIORITY_MESSAGE, priorityEditable, taskPriorityOf } from './taskPriority'
+import { priorityEditable, priorityTitle, stalePriorityMessage, taskPriorityOf } from './taskPriority'
 import { PriorityOptions } from './Priority'
 import { StatusHistoryBlock } from './StatusHistoryBlock'
 import { TaskStatsBlock } from './TaskStatsBlock'
 import type { StatsSnapshot } from './taskStatsFormat'
+import { answerForTitle, formatTaskDate as formatDate, outcomeLabel, resolutionText } from './taskModalText'
+import { useT } from './i18n'
 
 interface Props {
   /** Проект: id для `stats:task`. */
@@ -53,52 +55,6 @@ interface Props {
   onReject(taskId: string, feedback: string): Promise<void>
 }
 
-function formatDate(ts: number): string {
-  return new Date(ts).toLocaleString('ru-RU', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-  })
-}
-
-/** Подпись исхода dispatch'а. Без outcome: ещё работает, если не завершён, иначе неизвестно. */
-function outcomeLabel(d: Dispatch): { text: string; cls: string } {
-  switch (d.outcome) {
-    case 'done':
-      return { text: 'готово', cls: 'ok' }
-    case 'failed':
-      return { text: 'упал', cls: 'warn' }
-    case 'unknown':
-      return { text: 'вышел без done', cls: 'warn' }
-    default:
-      return d.endedAt ? { text: 'без исхода', cls: '' } : { text: 'работает', cls: 'live' }
-  }
-}
-
-/** Подпись задачи-ответа: кто читает ответ. */
-export const ANSWER_FOR_TITLE = { human: 'ответ для человека', coordinator: 'ответ для координатора' } as const
-
-/** Чем закончился запрос: выбранный вариант / текст ответа, «принят» с решением, уточнение, отмена. */
-function resolutionText(r: HumanRequest): string {
-  if (r.status === 'cancelled') return 'Отменён — стал не нужен'
-  const res = r.resolution
-  if (!res) return 'Решён'
-  switch (res.action) {
-    case 'answer': {
-      const option = res.optionId ? r.options.find((o) => o.id === res.optionId)?.label ?? res.optionId : undefined
-      return [option, res.text].filter(Boolean).join(' — ') || 'Отвечен'
-    }
-    case 'accept':
-      return res.text ? `Принят. Решение: ${res.text}` : 'Принят'
-    case 'clarify':
-      return `Уточнение: ${res.text ?? ''}`
-    case 'restart':
-      return 'Воркер перезапущен'
-    case 'dismiss':
-      return 'Скрыт'
-    case 'reject':
-      return res.text ? `Возвращён: ${res.text}` : 'Возвращён'
-  }
-}
-
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
@@ -108,6 +64,7 @@ export function TaskModal(props: Props): React.JSX.Element {
     projectId, task, tasks, columns, roles, agents, dispatches, questions, requests, statsSnapshot, running,
     onClose, onUpdate, onStart, onOpenTerminal, onRemove, onResolveRequest, onAccept, onReject
   } = props
+  const t = useT()
   const column = columns.find((c) => c.id === task.status)
   const kind = column?.kind
   const role = roles.find((r) => r.id === task.roleId)
@@ -195,7 +152,7 @@ export function TaskModal(props: Props): React.JSX.Element {
   }
 
   async function remove(): Promise<void> {
-    if (!window.confirm(`Удалить задачу «${task.title}»?`)) return
+    if (!window.confirm(t('board.confirmRemove', { title: task.title }))) return
     await run(async () => {
       await onRemove(task.id)
       onClose()
@@ -221,13 +178,13 @@ export function TaskModal(props: Props): React.JSX.Element {
               className="task-modal-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Название задачи"
-              aria-label="Название"
+              placeholder={t('board.task.titlePlaceholder')}
+              aria-label={t('board.task.titleAria')}
             />
           ) : (
             <h3 className="task-modal-title" title={task.title}>{task.title}</h3>
           )}
-          <button className="icon-btn task-modal-close" title="Закрыть" aria-label="Закрыть" onClick={onClose}>
+          <button className="icon-btn task-modal-close" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}>
             <Icon.close />
           </button>
         </div>
@@ -235,7 +192,7 @@ export function TaskModal(props: Props): React.JSX.Element {
         <div className="task-modal-body">
           {pending.length > 0 && (
             <section className="task-modal-section task-modal-requests">
-              <h4>Нужен ваш ответ</h4>
+              <h4>{t('board.task.needsYou')}</h4>
               {pending.map((r) => (
                 <RequestCard
                   key={r.id}
@@ -253,47 +210,47 @@ export function TaskModal(props: Props): React.JSX.Element {
 
           <div className="task-modal-meta">
             <div className="meta-row">
-              <span className="meta-key">Роль</span>
+              <span className="meta-key">{t('board.task.role')}</span>
               <span className="meta-val">
                 {role?.title ?? task.roleId} · {AGENT_TITLES[task.agent]}{role?.model ? ` · ${modelLabel(agents?.find((a) => a.id === role.agent), role.model)}` : ''}
               </span>
             </div>
             {task.answerFor && (
               <div className="meta-row">
-                <span className="meta-key">Результат</span>
-                <span className="meta-val"><span className="chip answer">{ANSWER_FOR_TITLE[task.answerFor]}</span></span>
+                <span className="meta-key">{t('board.task.result')}</span>
+                <span className="meta-val"><span className="chip answer">{answerForTitle(task.answerFor)}</span></span>
               </div>
             )}
             <div className="meta-row">
-              <span className="meta-key">Приоритет</span>
+              <span className="meta-key">{t('board.task.priority')}</span>
               <span className="meta-val">
                 {priorityEditable(task) ? (
                   <select
                     className="task-modal-priority"
                     value={priority}
                     disabled={prioritySaving}
-                    aria-label="Приоритет"
+                    aria-label={t('board.task.priority')}
                     onChange={(e) => void changePriority(e.target.value)}
                   >
                     <PriorityOptions />
                   </select>
                 ) : (
                   // Задача без поля — main старый и приоритет не сохранит.
-                  <span className="muted" title={STALE_PRIORITY_MESSAGE}>{PRIORITY_TITLES[priority]}</span>
+                  <span className="muted" title={stalePriorityMessage()}>{priorityTitle(priority)}</span>
                 )}
                 {priorityError && <span className="error-text">{priorityError}</span>}
               </span>
             </div>
             <div className="meta-row">
-              <span className="meta-key">Колонка</span>
+              <span className="meta-key">{t('board.task.column')}</span>
               <span className="meta-val">
                 {column ? <span className="chip" style={{ borderColor: column.color, color: column.color }}>{column.title}</span> : task.status}
               </span>
             </div>
             <div className="meta-row">
-              <span className="meta-key">Зависимости</span>
+              <span className="meta-key">{t('board.task.deps')}</span>
               <span className="meta-val chips">
-                {task.deps.length === 0 && <span className="muted">нет</span>}
+                {task.deps.length === 0 && <span className="muted">{t('board.task.noDeps')}</span>}
                 {task.deps.map((dep) => (
                   <span key={dep} className="chip" title={byId.get(dep)?.title ?? dep}>← {byId.get(dep)?.title ?? dep}</span>
                 ))}
@@ -301,14 +258,14 @@ export function TaskModal(props: Props): React.JSX.Element {
             </div>
             {duration !== undefined && (
               <div className="meta-row">
-                <span className="meta-key">Время работы</span>
-                <span className="meta-val" title="Копится, только пока задача в работе">
+                <span className="meta-key">{t('board.task.workTime')}</span>
+                <span className="meta-val" title={t('board.task.workTimeTitle')}>
                   {taskTicking(task) ? `⏱ ${formatDuration(duration)}` : formatDuration(duration)}
                 </span>
               </div>
             )}
             <div className="meta-row">
-              <span className="meta-key">Ветка</span>
+              <span className="meta-key">{t('board.task.branch')}</span>
               <span className="meta-val mono">{task.branch ?? '—'}</span>
             </div>
             <div className="meta-row">
@@ -317,68 +274,68 @@ export function TaskModal(props: Props): React.JSX.Element {
             </div>
             {running && (
               <div className="meta-row">
-                <span className="meta-key">Терминал</span>
-                <span className="meta-val"><span className="chip live">● открыт</span></span>
+                <span className="meta-key">{t('board.task.terminal')}</span>
+                <span className="meta-val"><span className="chip live">● {t('board.task.terminalOpen')}</span></span>
               </div>
             )}
           </div>
 
           {task.answerFor && (
             <section className="task-modal-section">
-              <h4>Ответ</h4>
+              <h4>{t('board.task.answer')}</h4>
               {answered?.answer ? (
                 <AnswerBlock
                   answer={answered.answer}
                   summary={answered.summary}
                   note={
                     answerPending
-                      ? 'Принять или уточнить — в блоке «Нужен ваш ответ» выше.'
+                      ? t('board.task.answerAcceptNote')
                       : task.answerFor === 'coordinator' && (kind === 'needs_input' || kind === 'review')
-                        ? 'Ответ предназначен координатору — он примет его сам.'
+                        ? t('board.task.answerCoordNote')
                         : undefined
                   }
                 />
               ) : (
-                <div className="muted">{kind === 'in_progress' ? 'Воркер готовит ответ…' : 'Ответа ещё нет'}</div>
+                <div className="muted">{kind === 'in_progress' ? t('board.task.answerPreparing') : t('board.task.noAnswer')}</div>
               )}
             </section>
           )}
 
           <section className="task-modal-section">
-            <h4>Задание для агента</h4>
+            <h4>{t('board.task.spec')}</h4>
             {editable ? (
               <textarea
                 className="task-modal-spec"
                 value={spec}
                 onChange={(e) => setSpec(e.target.value)}
-                placeholder="Подробное описание, критерии готовности"
-                aria-label="Задание для агента"
+                placeholder={t('board.task.specPlaceholder')}
+                aria-label={t('board.task.spec')}
               />
             ) : (
-              <pre className="task-modal-spec-view">{task.spec || 'Описания нет'}</pre>
+              <pre className="task-modal-spec-view">{task.spec || t('board.task.noSpec')}</pre>
             )}
             {editable ? (
               <div className="task-modal-save">
                 {saveError && <span className="error-text">{saveError}</span>}
                 <button className="btn-sm primary" disabled={!dirty || saving || !title.trim()} onClick={() => void save()}>
-                  {saving ? '…' : 'Сохранить'}
+                  {saving ? '…' : t('board.task.save')}
                 </button>
               </div>
             ) : (
-              <div className="muted">Задача в работе — название и описание редактировать нельзя.</div>
+              <div className="muted">{t('board.task.lockedNote')}</div>
             )}
           </section>
 
           {task.feedback && (
             <section className="task-modal-section">
-              <h4>{task.answerFor ? 'Уточнение' : 'Замечания после ревью'}</h4>
+              <h4>{task.answerFor ? t('board.task.clarification') : t('board.task.reviewNotes')}</h4>
               <pre className="task-modal-feedback">{task.feedback}</pre>
             </section>
           )}
 
           {kind === 'review' && !task.answerFor && (
             <section className="task-modal-section">
-              <h4>Ревью</h4>
+              <h4>{t('board.task.review')}</h4>
               <ReviewBlock
                 taskId={task.id}
                 summary={last?.summary}
@@ -396,7 +353,7 @@ export function TaskModal(props: Props): React.JSX.Element {
 
           {resolved.length > 0 && (
             <section className="task-modal-section">
-              <h4>Ваши ответы</h4>
+              <h4>{t('board.task.yourAnswers')}</h4>
               <div className="task-modal-questions">
                 {resolved.map((r) => (
                   <div key={r.id} className="question answered">
@@ -412,17 +369,17 @@ export function TaskModal(props: Props): React.JSX.Element {
 
           {coordinatorQuestions.length > 0 && (
             <section className="task-modal-section">
-              <h4>Вопросы координатору</h4>
+              <h4>{t('board.task.coordQuestions')}</h4>
               <div className="task-modal-questions">
                 {coordinatorQuestions.map((q) => (
                   <div key={q.id} className={`question ${q.answeredAt ? 'answered' : ''}`}>
                     <div className="q-text">{q.question}</div>
                     {q.answeredAt ? (
                       <div className="q-answer">
-                        <span className="muted">Ответ ({formatDate(q.answeredAt)}):</span> {q.answer}
+                        <span className="muted">{t('board.task.coordAnswer', { at: formatDate(q.answeredAt) })}</span> {q.answer}
                       </div>
                     ) : (
-                      <div className="muted">Ждёт ответа координатора. Если нужен вы — он передаст вопрос во Входящие.</div>
+                      <div className="muted">{t('board.task.coordWaiting')}</div>
                     )}
                   </div>
                 ))}
@@ -431,25 +388,25 @@ export function TaskModal(props: Props): React.JSX.Element {
           )}
 
           <section className="task-modal-section" id="task-stats">
-            <h4>Статистика</h4>
+            <h4>{t('board.task.stats')}</h4>
             <TaskStatsBlock key={task.id} projectId={projectId} task={task} columns={columns} snapshot={statsSnapshot} />
           </section>
 
           <section className="task-modal-section">
-            <h4>История статуса</h4>
+            <h4>{t('board.task.statusHistory')}</h4>
             <StatusHistoryBlock history={task.statusHistory} columns={columns} status={task.status} />
           </section>
 
           {showcased?.showcase && !showcaseInRequest && (
             <section className="task-modal-section">
-              <h4>Показ <span className="muted">· запуск {formatDate(showcased.startedAt)}</span></h4>
+              <h4>{t('board.showcase.title')} <span className="muted">· {t('board.task.showcaseRun', { at: formatDate(showcased.startedAt) })}</span></h4>
               <ShowcaseBlock taskId={task.id} showcase={showcased.showcase} bare />
             </section>
           )}
 
           <section className="task-modal-section">
-            <h4>История запусков</h4>
-            {history.length === 0 && <div className="muted">Задача ещё не запускалась</div>}
+            <h4>{t('board.task.runs')}</h4>
+            {history.length === 0 && <div className="muted">{t('board.task.noRuns')}</div>}
             {history.map((d) => {
               const o = outcomeLabel(d)
               return (
@@ -459,12 +416,12 @@ export function TaskModal(props: Props): React.JSX.Element {
                     {d.endedAt && <span className="muted">→ {formatDate(d.endedAt)}</span>}
                     <span className="muted">{d.endedAt ? '' : '⏱ '}{formatDuration((d.endedAt ?? now) - d.startedAt)}</span>
                     <span className={`chip ${o.cls}`}>{o.text}</span>
-                    {d.stuckNotified && !d.endedAt && <span className="chip warn">молчит</span>}
+                    {d.stuckNotified && !d.endedAt && <span className="chip warn">{t('board.task.stuck')}</span>}
                   </div>
                   {d.summary && <pre className="dispatch-summary">{d.summary}</pre>}
                   {d.answer && d !== answered && (
                     <details className="dispatch-answer">
-                      <summary>Прошлый ответ</summary>
+                      <summary>{t('board.task.prevAnswer')}</summary>
                       <Markdown text={d.answer} />
                     </details>
                   )}
@@ -483,14 +440,14 @@ export function TaskModal(props: Props): React.JSX.Element {
           {actionError && <span className="error-text">{actionError}</span>}
           <div className="grow" />
           <button className="btn-sm danger" disabled={busy} onClick={() => void remove()}>
-            Удалить
+            {t('board.remove')}
           </button>
           <button className="btn-sm" disabled={busy} onClick={() => { onOpenTerminal(task.id); onClose() }}>
-            Открыть терминал
+            {t('board.task.openTerminal')}
           </button>
           {canStart && (
             <button className="btn-sm primary" disabled={busy} onClick={() => void run(async () => { await onStart(task); onClose() })}>
-              {busy ? '…' : 'Запустить'}
+              {busy ? '…' : t('board.card.start')}
             </button>
           )}
         </div>

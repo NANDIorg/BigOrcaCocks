@@ -6,7 +6,7 @@ import type { UpdateState } from '../../shared/ipc'
 import { setLocale } from './i18n'
 import { formatPercent } from './i18n/format'
 import {
-  bannerView, canCheck, isReleaseUrl, isStaleUpdatesError, liveAgentCount, needsAttention, pendingText, statusLine, unsupportedText,
+  bannerView, canCheck, isReleaseUrl, isStaleUpdatesError, needsAttention, pendingText, statusLine, unsupportedText,
   updatesApi, versionLabel
 } from './updateState'
 
@@ -145,20 +145,6 @@ describe('statusLine', () => {
 
   it('неизвестная причина (новый main) — общий текст, а не «undefined»', () => {
     assert.match(unsupportedText(null), /недоступно/)
-  })
-})
-
-describe('liveAgentCount', () => {
-  const list = [
-    { ptyId: 'a', role: 'worker' as const },
-    { ptyId: 'b', role: 'coordinator' as const },
-    { ptyId: 'c', role: 'shell' as const },
-    { ptyId: 'd', role: 'worker' as const }
-  ]
-  it('оболочки и завершённые не считаются', () => {
-    assert.equal(liveAgentCount(list, new Set()), 3)
-    assert.equal(liveAgentCount(list, new Set(['a', 'c'])), 2)
-    assert.equal(liveAgentCount([], new Set()), 0)
   })
 })
 

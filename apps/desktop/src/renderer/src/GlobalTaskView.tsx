@@ -15,6 +15,7 @@ import type { StatsSnapshot } from './taskStatsFormat'
 import {
   defaultTab, readTabChoice, resolveTab, stepTab, tabAt, tabTitle, visibleTabs, writeTabChoice, type GlobalTabId
 } from './globalScreen'
+import { useT } from './i18n'
 
 interface Props {
   /** Проект: id для `stats:global`. */
@@ -87,6 +88,7 @@ function browserStorage(): Storage | undefined {
  * не пропадают, а события ленты (`feedLink`) находят получателя.
  */
 export function GlobalTaskView(props: Props): React.JSX.Element {
+  const t = useT()
   const { global, statusKind, coordinatorPty, onBack, children } = props
   const { attention, tasks, dispatches, columns, typeTitle } = props
   const tabs = visibleTabs(global)
@@ -196,7 +198,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         onOpenTerminal={props.onOpenTerminal}
       />
       {tabs.length > 1 && (
-        <div ref={tablistRef} className="gt-tabs" role="tablist" aria-label="Разделы задачи" onKeyDown={onTabKeyDown}>
+        <div ref={tablistRef} className="gt-tabs" role="tablist" aria-label={t('global.tabs.aria')} onKeyDown={onTabKeyDown}>
           {tabs.map((id, i) => (
             <button
               key={id}
@@ -211,7 +213,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
               title={`Alt+${i + 1}`}
               onClick={() => selectTab(id)}
             >
-              {id === 'coordinator' && coordinatorPty && <span className="g-live-dot" aria-label="работает" />}
+              {id === 'coordinator' && coordinatorPty && <span className="g-live-dot" aria-label={t('global.tabs.live')} />}
               {tabTitle(id, statusKind)}
               {id === 'board' && tasks.length > 0 && <span className="gt-tab-n">{tasks.length}</span>}
             </button>

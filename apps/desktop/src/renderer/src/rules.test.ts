@@ -1,14 +1,15 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Логика раздела «Правила» (about/RulesSection.tsx).
-import { describe, it } from 'node:test'
+import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { OrcaApi, RuleFile } from '../../shared/ipc'
-import { isDirty, isStaleRulesError, pickRule, ruleByName, rulesApi, RULES_STALE_MESSAGE, RULE_TEMPLATES } from './rules'
+import { setLocale } from './i18n'
+import { isDirty, isStaleRulesError, pickRule, ruleByName, rulesApi, rulesStaleMessage, RULE_HINTS, RULE_TEMPLATES } from './rules'
 
 const file = (name: RuleFile['name'], exists: boolean, text = ''): RuleFile => ({ name, exists, text, eol: 'lf' })
 
 describe('rulesApi', () => {
   it('без rules в window.orca — ошибка «перезапустите приложение»', () => {
-    assert.throws(() => rulesApi(undefined), { message: RULES_STALE_MESSAGE })
+    assert.throws(() => rulesApi(undefined), { message: rulesStaleMessage() })
     assert.throws(() => rulesApi({}), /Перезапустите приложение/)
   })
 
@@ -62,5 +63,18 @@ describe('ruleByName', () => {
   it('файла нет в списке — как отсутствующий', () => {
     assert.deepEqual(ruleByName([], 'AGENTS.md'), file('AGENTS.md', false))
     assert.deepEqual(ruleByName([file('AGENTS.md', true, 'x')], 'AGENTS.md'), file('AGENTS.md', true, 'x'))
+  })
+})
+
+describe('язык интерфейса', () => {
+  afterEach(() => setLocale('ru'))
+
+  it('шаблоны, подписи и ошибка — на текущем языке', () => {
+    setLocale('en')
+    const heads = RULE_TEMPLATES['CLAUDE.md'].split('\n').filter((l) => l.startsWith('## ')).map((l) => l.slice(3))
+    assert.deepEqual(heads, ['Don’t', 'Always', 'Code style', 'Checks before handoff', 'Git and branches'])
+    assert.match(RULE_TEMPLATES['AGENTS.md'], /^# Project rules\n/)
+    assert.match(RULE_HINTS['CLAUDE.md'], /^Read by Claude Code/)
+    assert.throws(() => rulesApi(undefined), /Restart the app/)
   })
 })

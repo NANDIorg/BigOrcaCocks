@@ -1,4 +1,4 @@
-import type { OrcaApi, TerminalInfo, UpdateState, UpdateUnsupportedReason } from '../../shared/ipc'
+import type { OrcaApi, UpdateState, UpdateUnsupportedReason } from '../../shared/ipc'
 import { t } from './i18n'
 import { formatPercent } from './i18n/format'
 
@@ -122,11 +122,6 @@ export function statusLine(s: UpdateState): string {
     default:
       return t('settings.updates.status.idle')
   }
-}
-
-/** Живые сессии агентов: терминалы-«оболочки» и завершённые не считаются. `exited` — id завершённых PTY. */
-export function liveAgentCount(terminals: Pick<TerminalInfo, 'ptyId' | 'role'>[], exited: ReadonlySet<string>): number {
-  return terminals.filter((x) => x.role !== 'shell' && !exited.has(x.ptyId)).length
 }
 
 /** Плашка или настройки просят внимания человека (точка на шестерёнке, когда сайдбар скрыт). */

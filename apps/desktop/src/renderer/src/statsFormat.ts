@@ -1,8 +1,7 @@
 import type { BoardColumn, ProjectStats, StatsDay, StatsRange, StatsRow, StatsUsage, TokenUsage } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
-import { plural } from './plural'
-import { t } from './i18n'
-import { formatFixed, formatInteger, formatShort, joinUnits } from './i18n/format'
+import { LOCALES, t, translate } from './i18n'
+import { formatDateTime, formatFixed, formatInteger, formatShort, joinUnits } from './i18n/format'
 
 /**
  * Логика вкладки «Статистика» (вариант B, docs/architecture.md → «Статистика → Интерфейс»): форматирование чисел
@@ -10,29 +9,41 @@ import { formatFixed, formatInteger, formatShort, joinUnits } from './i18n/forma
  */
 
 /** Как `STALE_APP_MESSAGE` в docLinks.ts, но про статистику: renderer пришёл по HMR, а main/preload старые. */
-export const STATS_STALE_MESSAGE = 'Приложение запущено со старой версией main/preload, где ещё нет «Статистики». Перезапустите приложение.'
+export function statsStaleMessage(): string {
+  return t('global.stats.stale')
+}
+
+/**
+ * Русский текст той же ошибки — для `isStatsStale` в `taskStatsFormat.ts`, который сверяет сообщение с константой.
+ * Показывать — `statsStaleMessage()`: она на языке интерфейса.
+ */
+export const STATS_STALE_MESSAGE = translate('ru', 'global.stats.stale')
 
 /** `window.orca.stats` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function statsApi(api: Partial<OrcaApi> | undefined): OrcaApi['stats'] {
-  if (!api?.stats) throw new Error(STATS_STALE_MESSAGE)
+  if (!api?.stats) throw new Error(statsStaleMessage())
   return api.stats
 }
 
-/** Preload новый, а main старый — invoke падает с «No handler registered for 'stats:…'». */
+/**
+ * main/preload старые: preload новый, а main старый — invoke падает с «No handler registered for 'stats:…'»;
+ * нет `window.orca.stats` — наша же ошибка `statsStaleMessage()` на любом языке (язык могли сменить после запроса).
+ */
 export function isStaleStatsError(message: string): boolean {
-  return /No handler registered for 'stats:/.test(message)
+  return /No handler registered for 'stats:/.test(message) || LOCALES.some((l) => message === translate(l, 'global.stats.stale'))
 }
 
 /** Порядок кнопок периода — как в макете: от короткого к длинному. */
-export const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
-  { value: '7d', label: '7 дней' },
-  { value: '30d', label: '30 дней' },
-  { value: 'all', label: 'Всё время' }
-]
+export const RANGE_OPTIONS: readonly StatsRange[] = ['7d', '30d', 'all']
 
-/** «Потрачено за …», «За … агенты не запускались». */
+/** Подпись кнопки периода: «7 дней», «Всё время». */
+export function rangeLabel(range: StatsRange): string {
+  return t(`global.stats.range.${range}`)
+}
+
+/** Период внутри фразы: «Потрачено за …», «За … агенты не запускались». */
 export function rangePhrase(range: StatsRange): string {
-  return range === '7d' ? '7 дней' : range === '30d' ? '30 дней' : 'всё время'
+  return t(`global.stats.phrase.${range}`)
 }
 
 /** Дробная часть — по языку интерфейса: «1,2» / «1.2». */
@@ -79,8 +90,10 @@ export function totalTokens(t: TokenUsage | undefined): number | undefined {
 }
 
 /** Разбивка токенов для подписи под итогом: «вход 2,1 млн · ответ 5,8 млн · кэш: чтение 219 млн, запись 17 млн». */
-export function tokenBreakdown(t: TokenUsage): string {
-  return `вход ${formatTokens(t.input)} · ответ ${formatTokens(t.output)} · кэш: чтение ${formatTokens(t.cacheRead)}, запись ${formatTokens(t.cacheWrite)}`
+export function tokenBreakdown(u: TokenUsage): string {
+  return t('global.stats.breakdown', {
+    input: formatTokens(u.input), output: formatTokens(u.output), read: formatTokens(u.cacheRead), write: formatTokens(u.cacheWrite)
+  })
 }
 
 /** Есть ли в периоде хоть одна сессия с токенами. Нет — метрики «Стоимость» и «Токены» скрыты (docs). */
@@ -118,12 +131,12 @@ export function taskCost(s: ProjectStats): number | undefined {
 
 /** «5 сессий», «1 сессия» — для подписей. */
 export function sessionsLabel(n: number): string {
-  return `${n} ${plural(n, 'сессия', 'сессии', 'сессий')}`
+  return t('global.stats.sessions', { count: n })
 }
 
 /** «нет данных по 3 сессиям», «по 1 сессии». */
 export function missingLabel(n: number): string {
-  return `нет данных по ${n} ${plural(n, 'сессии', 'сессиям', 'сессиям')}`
+  return t('global.stats.missing', { count: n })
 }
 
 // ---------- цвета серий ----------
@@ -175,7 +188,7 @@ export function statusParts(byStatus: Record<string, number>, columns: Pick<Boar
   const known = new Set(columns.map((c) => c.id))
   const parts = columns.map((c) => ({ id: c.id, title: c.title, color: c.color, count: byStatus[c.id] ?? 0 }))
   const other = Object.entries(byStatus).reduce((sum, [id, n]) => (known.has(id) ? sum : sum + n), 0)
-  if (other > 0) parts.push({ id: '', title: 'Другие', color: 'var(--s-other)', count: other })
+  if (other > 0) parts.push({ id: '', title: t('global.stats.other'), color: 'var(--s-other)', count: other })
   return parts
 }
 
@@ -183,16 +196,16 @@ export function statusParts(byStatus: Record<string, number>, columns: Pick<Boar
 
 export type ChartMetric = 'cost' | 'tokens' | 'time' | 'done'
 
-export const CHART_METRICS: { value: ChartMetric; label: string }[] = [
-  { value: 'cost', label: 'Стоимость' },
-  { value: 'tokens', label: 'Токены' },
-  { value: 'time', label: 'Время агентов' },
-  { value: 'done', label: 'Задачи' }
-]
+export const CHART_METRICS: readonly ChartMetric[] = ['cost', 'tokens', 'time', 'done']
+
+/** Подпись метрики: вкладка над графиком, подсказка столбца. */
+export function metricLabel(metric: ChartMetric): string {
+  return t(`global.stats.metric.${metric}`)
+}
 
 /** Метрики графика для периода: без токенов «Стоимость» и «Токены» скрыты. */
 export function chartMetrics(usage: boolean): ChartMetric[] {
-  return CHART_METRICS.map((m) => m.value).filter((m) => usage || (m !== 'cost' && m !== 'tokens'))
+  return CHART_METRICS.filter((m) => usage || (m !== 'cost' && m !== 'tokens'))
 }
 
 /** Выбранная метрика, если она доступна, иначе первая доступная (без токенов «Стоимость» → «Время агентов»). */
@@ -262,7 +275,10 @@ function weekStart(key: string): string {
   return addDays(key, -wd)
 }
 
-const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
+/** Месяц столбца: «сентябрь 2026» / «September 2026». Месяц отдельно от года — у `Intl` в ru это именительный падеж. */
+function monthTitle(key: string): string {
+  return `${formatDateTime(parseDate(key), { month: 'long' })} ${key.slice(0, 4)}`
+}
 
 const dm = (key: string): string => `${key.slice(8)}.${key.slice(5, 7)}`
 
@@ -323,7 +339,7 @@ export function buildChart(s: Pick<ProjectStats, 'range' | 'generatedAt' | 'byDa
       label: bucket === 'month' ? `${key.slice(5, 7)}.${key.slice(2, 4)}` : dm(key),
       title: bucket === 'day' ? dm(key)
         : bucket === 'week' ? `${dm(key)}–${dm(addDays(key, 6))}`
-          : `${MONTHS[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`,
+          : monthTitle(key),
       active: false,
       total: 0,
       segments: [],

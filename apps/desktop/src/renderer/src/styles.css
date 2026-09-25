@@ -1891,7 +1891,6 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .update-percent { margin-left: auto; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .update-detail { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .update-problem { color: var(--danger); }
-.update-confirm { display: flex; flex-direction: column; gap: 8px; }
 .update-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .update-actions .btn-sm { height: 28px; padding: 0 12px; text-decoration: none; }
 .update-progress { height: 6px; border-radius: 3px; background: var(--frame); overflow: hidden; }

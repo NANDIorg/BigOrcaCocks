@@ -7,6 +7,7 @@ import { Icon } from '../icons'
 import type { WfSelection } from '../workflowEdit'
 import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName } from '../workflowForm'
 import { SectionHead } from '../about/parts'
+import { useT } from '../i18n'
 
 interface Props {
   /** Название типа — имя файла экспорта. */
@@ -30,6 +31,7 @@ interface Props {
  * с `key` по id типа, поэтому черновик другого типа сюда не протекает.
  */
 export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, onSave }: Props): React.JSX.Element {
+  const t = useT()
   const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
   const [draft, setDraft] = useState<Workflow>(saved)
   const [selection, setSelection] = useState<WfSelection>(null)
@@ -73,16 +75,16 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   }
 
   const save = (): Promise<void> =>
-    run(() => onSave(draft), 'Сохранено. Граф получат новые глобальные задачи этого типа; уже созданные идут по своему снимку графа.')
+    run(() => onSave(draft), t('config.wf.tab.saved'))
 
   const reset = (): Promise<void> => {
-    if (!confirm(`Вернуть типу «${title}» дефолтный воркфлоу?\n\nДефолт строится по ролям: есть роль reviewer — ревью делает агент, нет — человек.`)) {
+    if (!confirm(t('config.wf.tab.resetConfirm', { title }))) {
       return Promise.resolve()
     }
     return run(async () => {
       await onSave(null)
       replace(defaultWorkflow(roles), null)
-    }, 'Тип снова на дефолтном воркфлоу.')
+    }, t('config.wf.tab.resetDone'))
   }
 
   function exportJson(): void {
@@ -97,11 +99,11 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   async function importJson(file: File): Promise<void> {
     const res = parseWorkflowJson(await file.text())
     if ('error' in res) {
-      setError(`Импорт «${file.name}»: ${res.error}`)
+      setError(t('config.wf.tab.importError', { file: file.name, error: res.error }))
       return
     }
     setError(null)
-    replace(res.workflow, `Импортирован «${file.name}». Проверьте граф и нажмите «Сохранить».`)
+    replace(res.workflow, t('config.wf.tab.imported', { file: file.name }))
   }
 
   function presetLimit(): void {
@@ -111,7 +113,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
       return
     }
     edit(res.workflow)
-    setNotice('Добавлен лимит: после третьего отказа проверки решает человек. Проверьте граф и нажмите «Сохранить».')
+    setNotice(t('config.wf.tab.limitAdded'))
   }
 
   const selectIssue = (nodeId?: string, edgeId?: string): void => {
@@ -122,20 +124,19 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   return (
     <>
       <SectionHead
-        title="Воркфлоу"
-        hint="Этапы подзадачи глобальной задачи этого типа: работа, проверки, решение человека, мерж. Роли в графе — роли этого типа."
+        title={t('config.wf.tab.title')}
+        hint={t('config.wf.tab.hint')}
       />
       <div className="about-banner">
-        Колонки в нодах графа <b>проверяются по доске конкретного проекта</b>: тип общий для проектов с разными колонками.
-        Если колонки нет на доске проекта, задача в неё не переедет — этап пройдёт без смены колонки.
+        {t('config.wf.tab.bannerBefore')} <b>{t('config.wf.tab.bannerStrong')}</b>{t('config.wf.tab.bannerAfter')}
       </div>
       <div className="wf-section">
         <div className="wf-status">
-          <span className={`chip ${custom ? 'ok' : 'sys'}`}>{custom ? 'свой граф типа' : 'дефолтный граф'}</span>
-          {dirty && <span className="chip warn">есть несохранённые изменения</span>}
-          {errors.length > 0 && <span className="wf-count wf-count--error">ошибок: {errors.length}</span>}
-          {warnings.length > 0 && <span className="wf-count wf-count--warning">предупреждений: {warnings.length}</span>}
-          {errors.length === 0 && warnings.length === 0 && <span className="wf-count">граф без замечаний</span>}
+          <span className={`chip ${custom ? 'ok' : 'sys'}`}>{custom ? t('config.wf.tab.custom') : t('config.wf.tab.default')}</span>
+          {dirty && <span className="chip warn">{t('config.wf.tab.dirty')}</span>}
+          {errors.length > 0 && <span className="wf-count wf-count--error">{t('config.wf.tab.errors', { count: errors.length })}</span>}
+          {warnings.length > 0 && <span className="wf-count wf-count--warning">{t('config.wf.tab.warnings', { count: warnings.length })}</span>}
+          {errors.length === 0 && warnings.length === 0 && <span className="wf-count">{t('config.wf.tab.clean')}</span>}
         </div>
 
         <div className="wf-editor">
@@ -171,7 +172,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
                 disabled={!i.nodeId && !i.edgeId}
                 onClick={() => selectIssue(i.nodeId, i.edgeId)}
               >
-                <span className="wf-problem-kind">{i.level === 'error' ? 'Ошибка' : 'Внимание'}</span>
+                <span className="wf-problem-kind">{i.level === 'error' ? t('config.wf.tab.problemError') : t('config.wf.tab.problemWarning')}</span>
                 {i.message}
               </button>
             ))}
@@ -185,25 +186,25 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
                 type="button"
                 className="btn-sm primary"
                 disabled={busy || !dirty || errors.length > 0}
-                title={errors.length > 0 ? 'Сначала исправьте ошибки графа' : !dirty ? 'Изменений нет' : undefined}
+                title={errors.length > 0 ? t('config.wf.tab.fixFirst') : !dirty ? t('config.wf.tab.noChanges') : undefined}
                 onClick={() => void save()}
               >
-                Сохранить
+                {t('config.wf.tab.save')}
               </button>
               <button type="button" className="btn-sm" disabled={!dirty || busy} onClick={() => replace(saved, null)}>
-                Отменить правки
+                {t('config.wf.tab.revert')}
               </button>
               <span className="wf-actions-sep" />
-              <button type="button" className="btn-sm" onClick={presetLimit} title="Отказ проверки идёт через условие «заходов в работу ≥ 3»: на третьем решает человек">
-                3 отказа → человек
+              <button type="button" className="btn-sm" onClick={presetLimit} title={t('config.wf.tab.limitHint')}>
+                {t('config.wf.tab.limit')}
               </button>
               <span className="wf-actions-sep" />
             </>
           )}
-          <button type="button" className="btn-sm" onClick={exportJson}>Экспорт JSON</button>
+          <button type="button" className="btn-sm" onClick={exportJson}>{t('config.wf.tab.export')}</button>
           {!readOnly && (
             <>
-              <button type="button" className="btn-sm" onClick={() => fileRef.current?.click()}>Импорт JSON</button>
+              <button type="button" className="btn-sm" onClick={() => fileRef.current?.click()}>{t('config.wf.tab.import')}</button>
               <input
                 ref={fileRef}
                 type="file"
@@ -217,7 +218,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
               />
               <span className="wf-actions-sep" />
               <button type="button" className="btn-sm" disabled={busy || (!custom && !dirty)} onClick={() => void reset()}>
-                <Icon.refresh /> Сбросить к дефолтному
+                <Icon.refresh /> {t('config.wf.tab.reset')}
               </button>
             </>
           )}

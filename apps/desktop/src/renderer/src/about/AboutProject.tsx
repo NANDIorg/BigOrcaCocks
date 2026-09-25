@@ -6,6 +6,7 @@ import { ColumnsEditor } from '../ColumnsEditor'
 import { RunsSection } from '../runs'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
+import { useT } from '../i18n'
 import { NavItem, SectionHead, storeSection, storedSection, type NavEntry } from './parts'
 import { OverviewSection } from './OverviewSection'
 import { AgentsSection } from './AgentsSection'
@@ -53,6 +54,7 @@ interface Props {
  */
 export function AboutProject(props: Props): React.JSX.Element {
   const { project, agents, tasks, runs, terminals, socketPath, onProjectChanged, onRefreshAgents, onRemoveProject } = props
+  const t = useT()
   const [section, setSection] = useState<Section>(initialSection)
   const [agentsError, setAgentsError] = useState<string | null>(null)
 
@@ -78,7 +80,7 @@ export function AboutProject(props: Props): React.JSX.Element {
   }
 
   async function removeProject(): Promise<void> {
-    if (!confirm(`Убрать проект «${project.name}» из списка?\n\nРепозиторий и worktree на диске не удаляются.`)) return
+    if (!confirm(t('config.about.removeConfirm', { name: project.name }))) return
     await onRemoveProject(project)
   }
 
@@ -98,17 +100,21 @@ export function AboutProject(props: Props): React.JSX.Element {
   // ---------- меню ----------
 
   const nav: NavEntry<Section>[] = [
-    { id: 'overview', label: 'Обзор', icon: Icon.info },
-    { id: 'agents', label: 'Агенты', icon: Icon.cpu, count: `${agentsOn} из ${installed.length}` },
-    { id: 'columns', label: 'Колонки', icon: Icon.columns, count: String(columns.length) },
+    { id: 'overview', label: t('config.about.nav.overview'), icon: Icon.info },
     {
-      id: 'types', label: 'Типы задач', icon: Icon.layers, count: project.taskTypeIds ? String(project.taskTypeIds.length) : 'все',
-      title: 'Какие типы глобальных задач доступны в проекте и какой по умолчанию'
+      id: 'agents', label: t('config.about.nav.agents'), icon: Icon.cpu,
+      count: t('config.about.nav.agentsCount', { on: agentsOn, total: installed.length })
     },
-    { id: 'rules', label: 'Правила', icon: Icon.doc, title: 'CLAUDE.md и AGENTS.md в корне репозитория' },
+    { id: 'columns', label: t('config.about.nav.columns'), icon: Icon.columns, count: String(columns.length) },
     {
-      id: 'runs', label: 'Прогоны', icon: Icon.runs,
-      count: liveRuns ? `${liveRuns} идёт` : String(runs.filter((r) => !r.inbox).length),
+      id: 'types', label: t('config.about.nav.types'), icon: Icon.layers,
+      count: project.taskTypeIds ? String(project.taskTypeIds.length) : t('config.about.nav.typesAll'),
+      title: t('config.about.nav.typesTitle')
+    },
+    { id: 'rules', label: t('config.about.nav.rules'), icon: Icon.doc, title: t('config.about.nav.rulesTitle') },
+    {
+      id: 'runs', label: t('config.about.nav.runs'), icon: Icon.runs,
+      count: liveRuns ? t('config.about.nav.runsLive', { count: liveRuns }) : String(runs.filter((r) => !r.inbox).length),
       tone: liveRuns ? 'live' : undefined
     }
   ]
@@ -124,7 +130,7 @@ export function AboutProject(props: Props): React.JSX.Element {
             socketPath={socketPath}
             stats={{
               tasks: tasks.length,
-              openTasks: tasks.filter((t) => !doneIds.has(t.status)).length,
+              openTasks: tasks.filter((task) => !doneIds.has(task.status)).length,
               terminals,
               liveRuns,
               agentsOn
@@ -144,7 +150,7 @@ export function AboutProject(props: Props): React.JSX.Element {
       case 'columns':
         return (
           <>
-            <SectionHead title="Колонки" hint="Порядок, название и цвет. Системные нельзя удалить — по ним работает автоматика." />
+            <SectionHead title={t('config.about.nav.columns')} hint={t('config.about.columns.hint')} />
             <ColumnsEditor
               key={project.id}
               storageKey={project.id}
@@ -163,7 +169,7 @@ export function AboutProject(props: Props): React.JSX.Element {
       case 'runs':
         return (
           <>
-            <SectionHead title="Прогоны" hint="Появляются при запуске координатора. Закрытый прогон остаётся в истории." />
+            <SectionHead title={t('config.about.nav.runs')} hint={t('config.about.runs.hint')} />
             <RunsSection
               runs={runs}
               tasks={tasks}
@@ -185,7 +191,7 @@ export function AboutProject(props: Props): React.JSX.Element {
     // Обёртка — контейнер для @container about: сетку .about меняет узкая ширина вкладки, а не окна.
     <div className="about-host">
       <div className="about">
-        <nav className="about-nav" aria-label="Разделы">
+        <nav className="about-nav" aria-label={t('config.about.navAria')}>
           {nav.map((item) => <NavItem key={item.id} item={item} current={section} onGo={go} />)}
         </nav>
         <div className="about-pane">

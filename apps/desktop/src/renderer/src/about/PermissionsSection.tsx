@@ -1,12 +1,15 @@
 import type React from 'react'
 import { useId } from 'react'
 import { PERMISSION_MODES, type PermissionMode } from '../../../shared/ipc'
-import { SectionHead } from './parts'
+import { t, useT } from '../i18n'
+import { SectionHead, withCode } from './parts'
 
-/** «Авто — Claude сам решает…» → название и пояснение режима. */
+/**
+ * Название и пояснение режима на языке интерфейса. `PERMISSION_MODES` из shared — русские строки для main,
+ * поэтому переводим по ключу режима.
+ */
 export function permissionParts(mode: PermissionMode): { title: string; desc: string } {
-  const [title, ...rest] = PERMISSION_MODES[mode].split(' — ')
-  return { title, desc: rest.join(' — ') }
+  return { title: t(`config.about.perm.${mode}`), desc: t(`config.about.perm.${mode}Desc`) }
 }
 
 /** Раздел «Разрешения агентов»: режим подтверждений Claude Code карточками-радио. */
@@ -17,9 +20,10 @@ export function PermissionsSection({ value, error, onChange }: {
 }): React.JSX.Element {
   // Уникальное имя группы: раздел бывает открыт сразу во вкладке «О проекте» и в «Настройках».
   const name = useId()
+  const t = useT()
   return (
     <>
-      <SectionHead title="Разрешения агентов" hint="Как Claude Code (координатор и воркеры) обращается с подтверждениями." />
+      <SectionHead title={t('config.about.perm.title')} hint={t('config.about.perm.hint')} />
       <div className="perm-cards" role="radiogroup">
         {(Object.keys(PERMISSION_MODES) as PermissionMode[]).map((m) => {
           const { title, desc } = permissionParts(m)
@@ -39,7 +43,7 @@ export function PermissionsSection({ value, error, onChange }: {
           )
         })}
       </div>
-      <p className="hint">Команда <code>orca-board</code> разрешена всегда. Действует на новые терминалы.</p>
+      <p className="hint">{withCode(t('config.about.perm.note'), 'orca-board')}</p>
       {error && <div className="editor-error">{error}</div>}
     </>
   )

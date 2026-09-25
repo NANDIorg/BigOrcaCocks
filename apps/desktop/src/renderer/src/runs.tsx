@@ -1,5 +1,7 @@
 import type React from 'react'
 import type { BoardColumn, Run, Task } from '@orca-board/core'
+import { useT } from './i18n'
+import { formatDateTime } from './i18n/format'
 
 /** Число цветов палитры прогонов: классы `.run-c0` … `.run-c7` в styles.css. */
 const RUN_COLORS = 8
@@ -25,16 +27,17 @@ export function runColorIndex(runs: Run[], runId: string): number {
 }
 
 function formatDate(ts: number): string {
-  return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return formatDateTime(ts, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 /** Метка прогона на карточке: цвет из палитры, закрытый прогон — приглушённый. */
 export function RunBadge({ run, runs }: { run: Run; runs: Run[] }): React.JSX.Element {
+  const t = useT()
   const closed = run.closedAt !== undefined
   return (
     <span
       className={`chip run-badge run-c${runColorIndex(runs, run.id)} ${closed ? 'closed' : ''}`}
-      title={`Прогон${closed ? ' (закрыт)' : ''}: ${run.objective}`}
+      title={t(closed ? 'shell.runs.badgeClosed' : 'shell.runs.badge', { objective: run.objective })}
     >
       {runShortLabel(run)}
     </span>
@@ -49,34 +52,35 @@ export function RunsSection(props: {
   onClose(id: string): Promise<void>
 }): React.JSX.Element {
   const { runs, tasks, columns, onClose } = props
+  const t = useT()
   const doneIds = new Set(columns.filter((c) => c.kind === 'done').map((c) => c.id))
   const sorted = [...runs].sort((a, b) => b.createdAt - a.createdAt)
   return (
     <>
       {sorted.length === 0 ? (
-        <p className="muted">Прогонов пока нет — они появляются при запуске координатора.</p>
+        <p className="muted">{t('shell.runs.empty')}</p>
       ) : (
         <div className="runs-list">
           {sorted.map((run) => {
-            const own = tasks.filter((t) => t.runId === run.id)
-            const done = own.filter((t) => doneIds.has(t.status)).length
+            const own = tasks.filter((task) => task.runId === run.id)
+            const done = own.filter((task) => doneIds.has(task.status)).length
             return (
               <div key={run.id} className="run-row">
                 <div className="run-row-head">
                   <RunBadge run={run} runs={runs} />
                   <span className="run-meta">{formatDate(run.createdAt)}</span>
-                  <span className="run-meta">задач {own.length} / закрыто {done}</span>
+                  <span className="run-meta">{t('shell.runs.meta', { total: own.length, done })}</span>
                   <span className={`run-status ${run.closedAt !== undefined ? 'closed' : 'live'}`}>
-                    {run.closedAt !== undefined ? `закрыт ${formatDate(run.closedAt)}` : 'идёт'}
+                    {run.closedAt !== undefined ? t('shell.runs.closedAt', { date: formatDate(run.closedAt) }) : t('shell.runs.live')}
                   </span>
                   {run.closedAt === undefined && (
                     <button
                       className="btn-sm"
                       onClick={() => {
-                        if (confirm(`Закрыть прогон «${runShortLabel(run)}»?`)) void onClose(run.id)
+                        if (confirm(t('shell.runs.confirmClose', { label: runShortLabel(run) }))) void onClose(run.id)
                       }}
                     >
-                      Закрыть
+                      {t('common.close')}
                     </button>
                   )}
                 </div>

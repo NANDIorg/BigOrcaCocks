@@ -44,7 +44,7 @@ UI — на русском и английском через i18n (`renderer/sr
   `docs/architecture.md`.
 - **Renderer должен работать со старыми main и preload.** В `pnpm dev` renderer обновляется по HMR, а
   main и preload — только после перезапуска. Перед вызовом нового API проверяй, что он есть, и показывай
-  «перезапустите приложение» вместо падения (фикс 086a654: `docsApi()` и `STALE_APP_MESSAGE` в
+  «перезапустите приложение» вместо падения (фикс 086a654: `docsApi()` и `staleAppMessage()` в
   `renderer/src/docLinks.ts`).
 - **Новая команда или метод CLI проходит всю цепочку:** store (core) → метод сокета
   (`src/main/socket.ts`) → команда и `HELP` в `packages/cli/bin/orca-board.js` → разделы «Протокол

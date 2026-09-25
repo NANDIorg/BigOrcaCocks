@@ -1,6 +1,8 @@
 import { AGENT_TITLES, type AgentSession, type BoardColumn, type ColumnKind, type GlobalTask } from '@orca-board/core'
 import { formatDuration } from './duration'
 import { STATUS_SOURCE_TITLES, statusDurationLabel } from './statusHistory'
+import { t } from './i18n'
+import { formatDateTime } from './i18n/format'
 
 /**
  * Вид события ленты «История». От порядка зависит разбор записей с одинаковой меткой времени — см. `KIND_RANK`.
@@ -113,8 +115,8 @@ export function globalTimeline(g: TimelineSource, columns: readonly BoardColumn[
       key: 'created',
       kind: 'created',
       at: g.createdAt,
-      title: 'Создана',
-      ...(foldFirst ? { detail: `в «${columnTitle(first.status)}»` } : {}),
+      title: t('global.timeline.created'),
+      ...(foldFirst ? { detail: t('global.timeline.createdIn', { column: columnTitle(first.status) }) } : {}),
       ...(column ? { color: column.color, columnKind: column.kind } : {})
     })
   }
@@ -131,8 +133,8 @@ export function globalTimeline(g: TimelineSource, columns: readonly BoardColumn[
       key: `status-${i}`,
       kind: 'status',
       at: h.at,
-      title: migrated ? `Статус «${columnTitle(h.status)}»` : `Переход в «${columnTitle(h.status)}»`,
-      ...(migrated ? { detail: 'на момент обновления приложения' } : {}),
+      title: t(migrated ? 'global.timeline.statusMigrated' : 'global.timeline.status', { column: columnTitle(h.status) }),
+      ...(migrated ? { detail: t('global.timeline.migrated') } : {}),
       sub: [source, duration].filter(Boolean).join(' · '),
       ...(column ? { color: column.color, columnKind: column.kind } : {}),
       ...(migrated ? { approx: true } : {})
@@ -141,7 +143,7 @@ export function globalTimeline(g: TimelineSource, columns: readonly BoardColumn[
 
   ;(g.returns ?? []).forEach((r, i) => {
     if (!isTime(r.at)) return
-    events.push({ key: `return-${i}`, kind: 'return', at: r.at, title: 'Вернули с проверки', detail: 'уточнение', text: r.text, highlight: true })
+    events.push({ key: `return-${i}`, kind: 'return', at: r.at, title: t('global.timeline.returned'), detail: t('global.timeline.returnDetail'), text: r.text, highlight: true })
   })
 
   if (g.summary && isTime(g.summary.at)) {
@@ -150,27 +152,27 @@ export function globalTimeline(g: TimelineSource, columns: readonly BoardColumn[
       key: 'summary',
       kind: 'summary',
       at: g.summary.at,
-      title: 'Координатор оставил сводку',
-      sub: 'полностью — на вкладке «Итог и цель»',
+      title: t('global.timeline.summary'),
+      sub: t('global.timeline.summarySub'),
       ...(excerpt ? { text: excerpt } : {})
     })
   }
 
   const sessions = (g.coordinatorSessions ?? []).filter((s) => isTime(s.startedAt))
   sessions.forEach((s, i) => {
-    const worked = isTime(s.endedAt) && s.endedAt >= s.startedAt ? `работал ${formatDuration(s.endedAt - s.startedAt)}` : undefined
-    const nth = sessions.length > 1 ? `${i + 1}-й запуск` : undefined
+    const worked = isTime(s.endedAt) && s.endedAt >= s.startedAt ? t('global.timeline.worked', { duration: formatDuration(s.endedAt - s.startedAt) }) : undefined
+    const nth = sessions.length > 1 ? t('global.run.nth', { n: i + 1 }) : undefined
     events.push({
       key: `coordinator-${i}`,
       kind: 'coordinator',
       at: s.startedAt,
-      title: 'Запущен координатор',
+      title: t('global.timeline.coordinator'),
       detail: agentLabel(s),
       sub: [nth, worked].filter(Boolean).join(' · ') || undefined
     })
   })
 
-  if (isTime(g.closedAt)) events.push({ key: 'closed', kind: 'closed', at: g.closedAt, title: 'Работа закрыта' })
+  if (isTime(g.closedAt)) events.push({ key: 'closed', kind: 'closed', at: g.closedAt, title: t('global.timeline.closed') })
 
   return events
     .map((e, seq) => ({ e, seq }))
@@ -191,21 +193,21 @@ function dayKey(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-/** Подпись дня: «Сегодня», «Вчера», иначе «23 сентября» (с годом, если он не текущий). */
+/** Подпись дня: «Сегодня», «Вчера», иначе «23 сентября» / «September 23» (с годом, если он не текущий). */
 export function dayLabel(at: number, now: number): string {
   const d = new Date(at)
   const today = new Date(now)
-  if (dayKey(d) === dayKey(today)) return 'Сегодня'
+  if (dayKey(d) === dayKey(today)) return t('global.history.today')
   const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)
-  if (dayKey(d) === dayKey(yesterday)) return 'Вчера'
-  return d.toLocaleDateString('ru-RU', d.getFullYear() === today.getFullYear()
+  if (dayKey(d) === dayKey(yesterday)) return t('global.history.yesterday')
+  return formatDateTime(d, d.getFullYear() === today.getFullYear()
     ? { day: 'numeric', month: 'long' }
     : { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
-/** Время внутри дня: «14:33». */
+/** Время внутри дня: «14:33» / «02:33 PM». */
 export function formatClock(at: number): string {
-  return new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  return formatDateTime(at, { hour: '2-digit', minute: '2-digit' })
 }
 
 /** Группы по локальным дням в порядке событий (новые сверху); внутри группы порядок сохраняется. */

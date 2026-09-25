@@ -49,20 +49,14 @@ export function UpdateNotesModal({ version, notes, releaseUrl, onClose }: {
 
 /**
  * Плашка обновления внизу сайдбара: состояние берёт из `bannerView` (updateState.ts), здесь — только отрисовка и вызовы.
- * `liveAgents` — сколько сессий агентов работает: перезапуск при них сначала спрашивает «Сейчас / Когда закончат / Отмена».
+ * «Перезапустить и обновить» просто зовёт `install('now')`: при живых воркерах выбор «Сейчас / Когда агенты закончат / Отмена»
+ * предлагает диалог main (`confirmInstall`), считая по своим воркерам, — второго вопроса в плашке нет.
  */
-export function UpdateBanner({ updates, liveAgents }: { updates: UpdatesController; liveAgents: number }): React.JSX.Element | null {
+export function UpdateBanner({ updates }: { updates: UpdatesController }): React.JSX.Element | null {
   const t = useT()
   const [notesOpen, setNotesOpen] = useState(false)
-  const [confirming, setConfirming] = useState(false)
   const { state } = updates
   const view = bannerView(state)
-  const status = state?.status
-
-  // Состояние ушло из «готово» (ошибка, установка уже идёт) — вопрос про агентов больше не к месту.
-  useEffect(() => {
-    if (status !== 'ready') setConfirming(false)
-  }, [status])
 
   const problem = updatesProblem(updates)
   if (!view) return problem ? <div className="update-banner error" role="alert"><div className="update-detail">{problem}</div></div> : null
@@ -75,11 +69,7 @@ export function UpdateBanner({ updates, liveAgents }: { updates: UpdatesControll
       case 'download': return updates.download()
       case 'retry': return updates.check()
       case 'cancelPending': return updates.cancelPending()
-      case 'install':
-        // Живые агенты — сначала выбор; main при 'now' ещё раз спросит обычное подтверждение выхода.
-        if (liveAgents > 0) setConfirming(true)
-        else updates.install('now')
-        return
+      case 'install': return updates.install('now')
       case 'openRelease': return
     }
   }
@@ -113,37 +103,22 @@ export function UpdateBanner({ updates, liveAgents }: { updates: UpdatesControll
         </div>
       )}
       {view.detail && <div className="update-detail">{view.detail}</div>}
-      {confirming ? (
-        <div className="update-confirm">
-          <div className="update-detail">{t('shell.update.confirm.text', { count: liveAgents })}</div>
-          <div className="update-actions">
-            <button type="button" className="btn-sm primary" onClick={() => { setConfirming(false); updates.install('now') }}>
-              {t('shell.update.confirm.now')}
-            </button>
-            <button type="button" className="btn-sm" onClick={() => { setConfirming(false); updates.install('idle') }}>
-              {t('shell.update.confirm.idle')}
-            </button>
-            <button type="button" className="btn-sm" onClick={() => setConfirming(false)}>{t('shell.update.confirm.cancel')}</button>
-          </div>
-        </div>
-      ) : (
-        view.actions.length > 0 && (
-          <div className="update-actions">
-            {view.actions.map((a) =>
-              a === 'openRelease' ? (
-                isReleaseUrl(releaseUrl) && (
-                  <a key={a} className={`btn-sm ${a === primary ? 'primary' : ''}`} href={releaseUrl} target="_blank" rel="noreferrer">
-                    {label[a]}
-                  </a>
-                )
-              ) : (
-                <button key={a} type="button" className={`btn-sm ${a === primary ? 'primary' : ''}`} onClick={() => onAction(a)}>
+      {view.actions.length > 0 && (
+        <div className="update-actions">
+          {view.actions.map((a) =>
+            a === 'openRelease' ? (
+              isReleaseUrl(releaseUrl) && (
+                <a key={a} className={`btn-sm ${a === primary ? 'primary' : ''}`} href={releaseUrl} target="_blank" rel="noreferrer">
                   {label[a]}
-                </button>
+                </a>
               )
-            )}
-          </div>
-        )
+            ) : (
+              <button key={a} type="button" className={`btn-sm ${a === primary ? 'primary' : ''}`} onClick={() => onAction(a)}>
+                {label[a]}
+              </button>
+            )
+          )}
+        </div>
       )}
       {problem && <div className="update-detail update-problem">{problem}</div>}
       {notesOpen && state?.availableVersion && (

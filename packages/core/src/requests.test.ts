@@ -4,6 +4,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, EVENT_TITLE_LIMIT, type StoreSnapshot } from './store.ts'
+import { WORKFLOW_VERSION, type Workflow } from './workflow.ts'
 import { DEFAULT_COLUMNS, REQUEST_ACTIONS, type HumanRequest, type ResolutionAction } from './types.ts'
 
 /** Глобальная задача с двумя подзадачами (вторая не даёт прогону закрыться) и живым воркером первой. */
@@ -149,6 +150,42 @@ describe('HumanRequest: таблица переходов', () => {
     const e = store.listEvents().find((x) => x.type === 'question')!
     assert.equal('forHuman' in e.payload, false)
     assert.equal(store.listEvents().some((x) => x.type === 'request_created'), false)
+  })
+
+  it('forceHuman (этап «Вопрос человеку»): вопрос человеку даже при живом координаторе, нода этапа — в вопросе и запросе', () => {
+    const { store, g, task, dispatch } = setup()
+    const wf: Workflow = {
+      version: WORKFLOW_VERSION,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'ask', type: 'ask', instructions: 'Спроси', x: 0, y: 0 },
+        { id: 'end', type: 'end', x: 0, y: 0 }
+      ],
+      edges: [{ id: 'e1', from: 'start', outcome: 'next', to: 'ask' }, { id: 'e2', from: 'ask', outcome: 'next', to: 'end' }]
+    }
+    store.enterWork(task.id, { workflow: wf })
+    assert.equal(store.getTask(task.id)!.stage!.nodeId, 'ask')
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: 'Какую БД?' }, { coordinatorAlive: true, forceHuman: true })
+    assert.equal(q.forHuman, true)
+    assert.equal(q.nodeId, 'ask')
+    const [request] = pending(store, g.id)
+    assert.equal(request.kind, 'question')
+    assert.equal(request.nodeId, 'ask')
+    assert.equal(request.questionId, q.id)
+    assertWaiting(store, g.id, task.id, true)
+    assert.equal(store.listEvents().find((x) => x.type === 'question')!.payload.forHuman, true)
+    assert.equal(store.listEvents().filter((x) => x.type === 'request_created').length, 1)
+    store.resolveRequest(request.id, { action: 'answer', text: 'sqlite' })
+    assert.equal(store.getQuestion(q.id)!.answer, 'sqlite')
+  })
+
+  it('без forceHuman вопрос обычного воркера не получает nodeId, даже если у задачи есть этап', () => {
+    const { store, task, dispatch } = setup()
+    store.enterWork(task.id)
+    const q = store.ask({ taskId: task.id, dispatchId: dispatch.id, question: '?' }, { coordinatorAlive: true })
+    assert.equal(q.nodeId, undefined)
+    assert.equal(q.forHuman, undefined)
+    assert.equal(store.listRequests().length, 0)
   })
 
   it('ответ координатора на свой вопрос: запроса не было — событий запроса нет', () => {

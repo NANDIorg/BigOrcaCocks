@@ -2,10 +2,10 @@
 // дефолт по ролям типа, валидация при сохранении, миграция графа проекта в его тип и будущая версия формата.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_ROLES, WORKFLOW_VERSION, defaultWorkflow, type TaskType, type Workflow } from '@orca-board/core'
+import { DEFAULT_ROLES, STORE_FORMAT_VERSION, WORKFLOW_VERSION, defaultWorkflow, type TaskType, type Workflow } from '@orca-board/core'
 import { ProjectManager } from './projects'
 
 const PID = 'p1'
@@ -214,5 +214,25 @@ describe('граф и роли в одном патче типа', () => {
     const roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
     const t = pm.patchTaskType(TID, { roles, workflow: qaWorkflow() })
     assert.deepEqual(t.settings.workflow, qaWorkflow())
+  })
+})
+
+describe('доска из будущего формата', () => {
+  it('inProgressCounts пропускает такой проект, store(id) бросает по-русски', () => {
+    writeFileSync(path.join(tmp, 'projects.json'), JSON.stringify({
+      projects: [
+        { id: 'ok', root: path.join(tmp, 'ok'), name: 'ok', roles: DEFAULT_ROLES },
+        { id: 'future', root: path.join(tmp, 'future'), name: 'future', roles: DEFAULT_ROLES }
+      ],
+      activeId: 'ok'
+    }))
+    mkdirSync(path.join(tmp, 'boards'), { recursive: true })
+    const future = path.join(tmp, 'boards', 'future.json')
+    writeFileSync(future, JSON.stringify({ formatVersion: STORE_FORMAT_VERSION + 1, tasks: [], dispatches: [], events: [] }))
+    const before = readFileSync(future, 'utf8')
+    const pm = new ProjectManager(tmp)
+    assert.deepEqual(pm.inProgressCounts(), { ok: 0 })
+    assert.throws(() => pm.store('future'), /более новой версией.*обновите приложение/)
+    assert.equal(readFileSync(future, 'utf8'), before, 'файл будущего формата не перезаписан')
   })
 })
