@@ -1,5 +1,5 @@
 import { wfNodeTitle, type ColumnKind, type Dispatch, type HumanRequest, type Question, type Task, type Workflow } from '@orca-board/core'
-import { plural } from './plural'
+import { t } from './i18n'
 
 /**
  * Состояние карточки локальной доски — что с задачей сейчас, а не в какой она колонке. От него зависят полоса
@@ -7,14 +7,12 @@ import { plural } from './plural'
  */
 export type CardState = 'live' | 'human' | 'review' | 'bad' | 'blocked' | 'idle'
 
-/** Текст состояния для `aria-label` и подсказок: цвет полосы не должен быть единственным сигналом. */
-export const CARD_STATE_LABEL: Record<CardState, string> = {
-  live: 'в работе',
-  human: 'ждёт вас',
-  review: 'на ревью',
-  bad: 'сбой',
-  blocked: 'ждёт зависимостей',
-  idle: ''
+/**
+ * Текст состояния для `aria-label` и подсказок: цвет полосы не должен быть единственным сигналом.
+ * Функция, а не таблица: текст — на текущем языке интерфейса.
+ */
+export function cardStateLabel(state: CardState): string {
+  return state === 'idle' ? '' : t(`board.state.${state}`)
 }
 
 /** Всё, что нужно знать о карточке, чтобы определить состояние. Данные — из снимка доски, без побочных запросов. */
@@ -64,9 +62,9 @@ export function shortText(text: string, max = 48): string {
   return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line
 }
 
-/** «3 файла», «5 файлов», «21 файл». */
+/** «3 файла», «5 файлов», «21 файл» / «3 files». */
 export function filesLabel(n: number): string {
-  return `${n} ${plural(n, 'файл', 'файла', 'файлов')}`
+  return t('board.card.files', { count: n })
 }
 
 /** Что написать в пунктирной строке карточки; `title` — полный текст для подсказки. */
@@ -83,9 +81,9 @@ export interface CardEssence {
 export function cardEssence(i: CardStateInput, state: CardState = cardState(i)): CardEssence | null {
   const d = i.dispatch
   if (state === 'bad') {
-    if (d?.outcome === 'failed') return { text: '✕ Упал' }
-    if (d?.outcome === 'unknown') return { text: '✕ Вышел без done' }
-    return { text: '✕ Молчит', title: 'Воркер давно ничего не выводил' }
+    if (d?.outcome === 'failed') return { text: t('board.essence.failed') }
+    if (d?.outcome === 'unknown') return { text: t('board.essence.noDone') }
+    return { text: t('board.essence.stuck'), title: t('board.essence.stuckTitle') }
   }
   if (state === 'human') {
     const [first] = i.questions
@@ -93,16 +91,17 @@ export function cardEssence(i: CardStateInput, state: CardState = cardState(i)):
       const more = i.questions.length > 1 ? ` (+${i.questions.length - 1})` : ''
       return { text: `? ${shortText(first.question)}${more}`, title: i.questions.map((q) => q.question).join('\n\n') }
     }
-    if (isAnswerReady(i)) return { text: '✎ Ответ готов', title: d?.summary }
-    return { text: '? Нужен ответ' }
+    if (isAnswerReady(i)) return { text: t('board.essence.answerReady'), title: d?.summary }
+    return { text: t('board.essence.needsAnswer') }
   }
   if (state === 'review') {
-    if (i.task.answerFor && d?.answer) return { text: '✎ Ответ готов', title: d.summary }
+    if (i.task.answerFor && d?.answer) return { text: t('board.essence.answerReady'), title: d.summary }
     if (d?.showcase) {
       const n = d.showcase.files.length
-      return { text: n > 0 ? `◉ Показ: ${filesLabel(n)}` : '◉ Показ', title: d.summary }
+      return { text: n > 0 ? t('board.essence.showcaseFiles', { files: filesLabel(n) }) : t('board.essence.showcase'), title: d.summary }
     }
-    return { text: d?.files && d.files.length > 0 ? `Ждёт ревью: ${filesLabel(d.files.length)}` : 'Ждёт ревью', title: d?.summary }
+    const files = d?.files?.length ?? 0
+    return { text: files > 0 ? t('board.essence.reviewFiles', { files: filesLabel(files) }) : t('board.essence.review'), title: d?.summary }
   }
   return null
 }
@@ -112,11 +111,13 @@ export function cardEssence(i: CardStateInput, state: CardState = cardState(i)):
  * воркфлоу держит задачу в «В работе» и ждёт решения по запросу): без неё у карточки не было бы ссылки «в ленте ↑»,
  * хотя фильтр «Ждут вас» и счётчик ленты её считают.
  */
-const WAITING_ESSENCE: CardEssence = { text: '✋ Ждёт вас', title: 'Есть пункт в ленте «Ждут вас»' }
+function waitingEssence(): CardEssence {
+  return { text: t('board.essence.waiting'), title: t('board.essence.waitingTitle') }
+}
 
 /** Суть карточки: по её состоянию, а если её нет, но задача в ленте «Ждут вас» (`waits`) — запасная. */
 export function cardEssenceFor(i: CardStateInput, state: CardState, waits: boolean): CardEssence | null {
-  return cardEssence(i, state) ?? (waits ? WAITING_ESSENCE : null)
+  return cardEssence(i, state) ?? (waits ? waitingEssence() : null)
 }
 
 /** Что показать в пилюле этапа: `gate` — задача-гейт (другая иконка и цвет). */
@@ -147,15 +148,15 @@ export function stageLabel(
   if (task.gateFor) {
     const node = titles?.[task.gateFor.nodeId]
     const target = taskTitle(task.gateFor.taskId)
-    const text = `⛉ Гейт${node ? ` «${node}»` : ''}${target ? ` → ${target}` : ''}`
-    return { kind: 'gate', text, title: 'Задача-гейт: проверяет ветку рабочей задачи' }
+    const text = `${node ? t('board.stage.gateNode', { node }) : t('board.stage.gate')}${target ? ` → ${target}` : ''}`
+    return { kind: 'gate', text, title: t('board.stage.gateTitle') }
   }
   const stage = task.stage
   const name = stage ? titles?.[stage.nodeId] : undefined
   if (!stage || !name) return null
   const visits = stage.visits?.[stage.nodeId] ?? 1
-  const text = visits > 1 ? `${name} · ${visits}-й заход` : name
-  return { kind: 'stage', text, title: `Этап воркфлоу: ${text}` }
+  const text = visits > 1 ? t('board.stage.visit', { name, n: visits }) : name
+  return { kind: 'stage', text, title: t('board.stage.title', { text }) }
 }
 
 /**
@@ -169,7 +170,7 @@ export function requestStageLabel(
 ): string | undefined {
   if (request.kind !== 'question' || !request.nodeId) return undefined
   const name = titles?.[request.nodeId]
-  return name ? `Этап «${name}»` : undefined
+  return name ? t('board.stage.request', { name }) : undefined
 }
 
 /** Свёрнутые зависимости: одна пунктирная метка вместо чипа на каждую; полный список — в подсказке. */
@@ -190,7 +191,7 @@ export function depsLabel(
   const open = deps.filter((d) => !isClosed(d))
   if (open.length === 0) return null
   const names = open.map((d) => titleOf(d) ?? d)
-  const title = `Ждёт: ${names.join('; ')}`
-  if (names.length === 1) return { text: `⧗ ждёт: ${names[0]}`, title }
-  return { text: `⧗ ждёт ${names.length} ${plural(names.length, 'задачу', 'задачи', 'задач')}`, title }
+  const title = t('board.deps.title', { names: names.join('; ') })
+  if (names.length === 1) return { text: t('board.deps.one', { name: names[0] }), title }
+  return { text: t('board.deps.many', { count: names.length }), title }
 }

@@ -7,6 +7,7 @@ import {
 import { AgentLogo } from './AgentLogo'
 import { PriorityOptions } from './Priority'
 import { ipcErrorMessage } from './useAutoSave'
+import { useT } from './i18n'
 
 interface Props {
   /** Глобальная задача, куда попадёт подзадача, — для заголовка. */
@@ -23,6 +24,7 @@ interface Props {
 }
 
 export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCreate }: Props): React.JSX.Element {
+  const t = useT()
   const enabledAgents = new Set(agents.filter((a) => a.enabled).map((a) => a.id))
   // Служебные роли (координатор, ассистент) задачам не назначаются.
   const available = roles.filter((r) => isTaskRole(r.id) && enabledAgents.has(r.agent))
@@ -70,19 +72,19 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
 
   return (
     <div className="modal-backdrop" onClick={close}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label="Новая подзадача" onClick={(e) => e.stopPropagation()}>
-        <h3>Новая подзадача</h3>
-        {globalTitle && <p className="muted modal-sub" title={globalTitle}>в «{globalTitle}»</p>}
+      <div className="modal" role="dialog" aria-modal="true" aria-label={t('board.newTask.title')} onClick={(e) => e.stopPropagation()}>
+        <h3>{t('board.newTask.title')}</h3>
+        {globalTitle && <p className="muted modal-sub" title={globalTitle}>{t('board.newTask.in', { title: globalTitle })}</p>}
         <label>
-          Название
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Что нужно сделать" />
+          {t('board.newTask.name')}
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('board.newTask.namePlaceholder')} />
         </label>
         <label>
-          Задание для агента
-          <textarea value={spec} onChange={(e) => setSpec(e.target.value)} placeholder="Подробное описание, критерии готовности" />
+          {t('board.task.spec')}
+          <textarea value={spec} onChange={(e) => setSpec(e.target.value)} placeholder={t('board.task.specPlaceholder')} />
         </label>
         <label>
-          Роль
+          {t('board.task.role')}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {selectedRole && <AgentLogo agent={selectedRole.agent} size={20} />}
             <select
@@ -98,44 +100,44 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
               ))}
             </select>
           </div>
-          {noRoles && <span>У типа этой задачи нет ролей с включённым агентом — включите агента в „О проекте“ или смените исполнителя роли в „Настройках → Типы задач“</span>}
+          {noRoles && <span>{t('board.newTask.noRoles')}</span>}
         </label>
         <label>
-          Приоритет
+          {t('board.task.priority')}
           <select value={priority} onChange={(e) => isTaskPriority(e.target.value) && setPriority(e.target.value)}>
             <PriorityOptions />
           </select>
         </label>
         <label>
-          Результат
+          {t('board.task.result')}
           <select value={answer ? 'answer' : 'code'} onChange={(e) => setAnswer(e.target.value === 'answer')}>
-            <option value="code">Изменения в коде — ревью и слияние ветки</option>
-            <option value="answer">Ответ для меня — посмотреть, разобраться, предложить</option>
+            <option value="code">{t('board.newTask.resultCode')}</option>
+            <option value="answer">{t('board.newTask.resultAnswer')}</option>
           </select>
         </label>
         {tasks.length > 0 && (
         <label>
-          Зависит от
+          {t('board.newTask.deps')}
           <select
             multiple
             value={deps}
             onChange={(e) => setDeps([...e.target.selectedOptions].map((o) => o.value))}
           >
-            {tasks.map((t) => (
-              <option key={t.id} value={t.id}>{t.title}</option>
+            {tasks.map((task) => (
+              <option key={task.id} value={task.id}>{task.title}</option>
             ))}
           </select>
         </label>
         )}
         {error && <span className="error-text">{error}</span>}
         <div className="row">
-          <button className="btn-text" onClick={close} disabled={busy}>Отмена</button>
+          <button className="btn-text" onClick={close} disabled={busy}>{t('board.cancel')}</button>
           <button
             className="btn-primary"
             disabled={!title.trim() || noRoles || busy}
             onClick={() => void create()}
           >
-            Создать
+            {t('board.newTask.create')}
           </button>
         </div>
       </div>

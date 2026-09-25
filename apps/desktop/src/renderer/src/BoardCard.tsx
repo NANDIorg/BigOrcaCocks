@@ -6,8 +6,9 @@ import { RunBadge } from './runs'
 import { priorityMark } from './taskPriority'
 import { formatStamp } from './boardSort'
 import { formatDuration, taskDuration, taskTicking } from './duration'
-import { CARD_STATE_LABEL, type CardEssence, type CardState, type DepsLabel, type StageLabel } from './cardState'
+import { cardStateLabel, type CardEssence, type CardState, type DepsLabel, type StageLabel } from './cardState'
 import { useNow } from './useNow'
+import { useT } from './i18n'
 
 /** «роль · модель» в мета-строке; модели нет — «роль · агент». Полная строка «роль · агент · модель» — в подсказке. */
 function who(task: Task, role: Role | undefined): { short: string; full: string } {
@@ -22,7 +23,8 @@ function who(task: Task, role: Role | undefined): { short: string; full: string 
 /** Живой счётчик задачи в работе: таймер только у таких карточек, доска целиком не перерисовывается. */
 function LiveTime({ task }: { task: Task }): React.JSX.Element {
   const now = useNow()
-  return <span className="time live" title="Время работы: идёт, пока задача в работе">● {formatDuration(taskDuration(task, now) ?? 0)}</span>
+  const t = useT()
+  return <span className="time live" title={t('board.card.timeLive')}>● {formatDuration(taskDuration(task, now) ?? 0)}</span>
 }
 
 /**
@@ -30,10 +32,11 @@ function LiveTime({ task }: { task: Task }): React.JSX.Element {
  * Не бывала в работе — ничего.
  */
 function CardTime({ task }: { task: Task }): React.JSX.Element | null {
+  const t = useT()
   if (taskTicking(task)) return <LiveTime task={task} />
   const ms = taskDuration(task, 0)
   if (ms === undefined) return null
-  return <span className="time" title="Время работы: стоит, пока задача не в работе">⏸ {formatDuration(ms)}</span>
+  return <span className="time" title={t('board.card.timePaused')}>⏸ {formatDuration(ms)}</span>
 }
 
 export interface BoardCardProps {
@@ -77,6 +80,7 @@ export interface BoardCardProps {
  */
 export function BoardCard(props: BoardCardProps): React.JSX.Element {
   const { task, state, isDone, role, stage, deps, essence, run, runs } = props
+  const t = useT()
   const prio = priorityMark(task)
   const w = who(task, role)
   return (
@@ -92,26 +96,26 @@ export function BoardCard(props: BoardCardProps): React.JSX.Element {
       onFocus={props.onFocus}
     >
       <div className="line1">
-        {prio && <span className={`prio ${prio.priority}`} title={`Приоритет: ${prio.title}`} aria-label={`Приоритет: ${prio.title}`}>{prio.mark}</span>}
+        {prio && <span className={`prio ${prio.priority}`} title={t('board.card.priority', { title: prio.title })} aria-label={t('board.card.priority', { title: prio.title })}>{prio.mark}</span>}
         <div className="name" title={task.title}>{task.title}</div>
       </div>
       <div className="tools" onClick={(e) => e.stopPropagation()}>
         {props.canStart && (
-          <button type="button" className="lb-tool" title="Запустить (S)" aria-label="Запустить" onClick={props.onStart}>
+          <button type="button" className="lb-tool" title={t('board.card.startTitle')} aria-label={t('board.card.start')} onClick={props.onStart}>
             <Icon.play />
           </button>
         )}
         <button
           type="button"
           className="lb-tool"
-          title="Переместить в… (M)"
-          aria-label="Переместить в…"
+          title={t('board.card.moveTitle')}
+          aria-label={t('board.move.title')}
           aria-haspopup="menu"
           onClick={(e) => props.onMenu(e.currentTarget.closest<HTMLElement>('.card') ?? e.currentTarget)}
         >
           <Icon.more />
         </button>
-        <button type="button" className="lb-tool danger" title="Удалить" aria-label="Удалить" onClick={props.onRemove}>
+        <button type="button" className="lb-tool danger" title={t('board.remove')} aria-label={t('board.remove')} onClick={props.onRemove}>
           <Icon.trash />
         </button>
       </div>
@@ -124,22 +128,22 @@ export function BoardCard(props: BoardCardProps): React.JSX.Element {
       <div className="tags">
         {stage && <span className={`stage-pill ${stage.kind}`} title={stage.title}>{stage.text}</span>}
         {task.answerFor && (
-          <span className="tag answer" title={task.answerFor === 'human' ? 'Результат — ответ для человека' : 'Результат — ответ для координатора'}>
-            {task.answerFor === 'human' ? 'ответ' : 'ответ координатору'}
+          <span className="tag answer" title={task.answerFor === 'human' ? t('board.card.answerHumanTitle') : t('board.card.answerCoordTitle')}>
+            {task.answerFor === 'human' ? t('board.card.answerHuman') : t('board.card.answerCoord')}
           </span>
         )}
         {run && <RunBadge run={run} runs={runs} />}
         {task.branch && !task.answerFor && <span className="tag mono" title={task.branch}>{task.branch}</span>}
         {deps && <span className="tag dep" title={deps.title}>{deps.text}</span>}
-        {props.terminalOpen && <span className="tag live" title="У задачи открыт терминал воркера">● терминал</span>}
+        {props.terminalOpen && <span className="tag live" title={t('board.card.terminalTitle')}>● {t('board.card.terminal')}</span>}
       </div>
       {isDone && task.doneAt !== undefined ? (
         <div className="stamp">
-          Завершено: {formatStamp(task.doneAt)}
-          {taskDuration(task, task.doneAt) !== undefined && <> · за {formatDuration(taskDuration(task, task.doneAt) ?? 0)}</>}
+          {t('board.card.doneAt', { at: formatStamp(task.doneAt) })}
+          {taskDuration(task, task.doneAt) !== undefined && <> · {t('board.card.took', { value: formatDuration(taskDuration(task, task.doneAt) ?? 0) })}</>}
         </div>
       ) : props.showUpdated ? (
-        <div className="stamp">Обновлено: {formatStamp(task.updatedAt)}</div>
+        <div className="stamp">{t('board.card.updatedAt', { at: formatStamp(task.updatedAt) })}</div>
       ) : null}
       {props.showFeedback && task.feedback && <div className="card-feedback" title={task.feedback}>↩ {task.feedback}</div>}
       {essence && (
@@ -149,13 +153,13 @@ export function BoardCard(props: BoardCardProps): React.JSX.Element {
             <button
               type="button"
               className="to-feed"
-              aria-label={`Показать в ленте «Ждут вас»: ${CARD_STATE_LABEL[state] || task.title}`}
+              aria-label={t('board.card.revealAria', { what: cardStateLabel(state) || task.title })}
               onClick={(e) => {
                 e.stopPropagation()
                 props.onReveal()
               }}
             >
-              в ленте ↑
+              {t('board.card.reveal')}
             </button>
           )}
         </div>

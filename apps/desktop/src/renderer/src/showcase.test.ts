@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { Dispatch, HumanRequest } from '@orca-board/core'
 import { showcaseMarkdown } from '../../shared/showcase'
 import {
-  SHOWCASE_STALE_MESSAGE, autoPreviewPaths, bodyWithoutShowcase, latestShowcase, requestShowcase, showcaseApi,
+  showcaseStaleMessage, autoPreviewPaths, bodyWithoutShowcase, latestShowcase, requestShowcase, showcaseApi,
   showcaseErrorText, showcaseFiles
 } from './showcase'
 
@@ -61,8 +61,8 @@ test('из body approval вычитается раздел «## Показ» с 
 })
 
 test('старые main/preload — понятная ошибка «перезапустите приложение»', () => {
-  assert.throws(() => showcaseApi({}), { message: SHOWCASE_STALE_MESSAGE })
-  assert.throws(() => showcaseApi(undefined), { message: SHOWCASE_STALE_MESSAGE })
-  assert.equal(showcaseErrorText("No handler registered for 'showcase:read'"), SHOWCASE_STALE_MESSAGE)
+  assert.throws(() => showcaseApi({}), { message: showcaseStaleMessage() })
+  assert.throws(() => showcaseApi(undefined), { message: showcaseStaleMessage() })
+  assert.equal(showcaseErrorText("No handler registered for 'showcase:read'"), showcaseStaleMessage())
   assert.equal(showcaseErrorText('показ: файл не найден: a.png'), 'показ: файл не найден: a.png')
 })

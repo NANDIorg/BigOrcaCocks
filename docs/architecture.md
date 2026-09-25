@@ -1629,6 +1629,14 @@ skills, тексты main (уведомления, диалоги, ошибки 
   (`coordStateText`, `requestKindTitle`) или объект с геттерами, если константу читают чужие экраны
   (`REQUEST_KIND_TITLE` в `RequestCard.tsx` — его берёт `TaskModal`). Строка, вычисленная при импорте, останется
   на языке старта.
+- **Подписи в модулях логики — функции, а не константы:** константа посчиталась бы один раз при загрузке модуля
+  на языке по умолчанию. Доска так и сделана: `cardStateLabel()`, `priorityTitle()`, `approxTitle()`,
+  `showcaseStaleMessage()`. Таблица, которую чужие модули читают как есть, отдаёт текст геттером:
+  `BOARD_SORT_OPTIONS[].title` (`boardSort.ts`, берёт и GlobalBoard), `STATUS_SOURCE_TITLES` (`statusHistory.ts`,
+  берёт globalTimeline). Подписи из core только русские: они нужны CLI и промптам (`PRIORITY_TITLES`,
+  `COLUMN_COLORS[].title`). В renderer их заменяют `priorityTitle()` (`taskPriority.ts`) и `columnColorTitle()`
+  (`boardColumns.ts`). Названия колонок доски — данные проекта, их не переводим, как и дефолтные «Бэклог»,
+  «Готовы» из `DEFAULT_COLUMNS`.
 - **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
   (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
   `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык
