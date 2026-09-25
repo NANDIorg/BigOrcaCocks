@@ -14,7 +14,7 @@ import { jsonPersistence } from './persistence'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
 import type {
-  AppSettings, AppSettingsPatch, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput, TaskTypesState
+  AppLanguage, AppSettings, AppSettingsPatch, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput, TaskTypesState
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
@@ -81,6 +81,10 @@ interface RawProjectsFile extends Omit<LegacyProjectsFile, 'templates'> {
   defaults?: Record<string, unknown>
   /** Шаблоны проектов: в файле — с колонками и агентами, после `normalizeLegacy` — уже типы. */
   templates?: unknown
+}
+
+function isAppLanguage(v: unknown): v is AppLanguage {
+  return v === 'ru' || v === 'en'
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = { keepInBackground: true, notifications: DEFAULT_NOTIFICATION_SETTINGS }
@@ -450,6 +454,7 @@ export class ProjectManager {
     const s = this.data.settings ?? {}
     return {
       keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground,
+      ...(isAppLanguage(s.language) ? { language: s.language } : {}),
       notifications: normalizeNotificationSettings(s.notifications)
     }
   }
@@ -460,6 +465,10 @@ export class ProjectManager {
     if (patch.keepInBackground !== undefined) {
       if (typeof patch.keepInBackground !== 'boolean') throw new Error('keepInBackground должен быть boolean')
       next.keepInBackground = patch.keepInBackground
+    }
+    if (patch.language !== undefined) {
+      if (!isAppLanguage(patch.language)) throw new Error(`language: неизвестный язык «${String(patch.language)}», ожидается ru или en`)
+      next.language = patch.language
     }
     if (patch.notifications !== undefined) {
       next.notifications = mergeNotificationSettings(this.settings().notifications, patch.notifications)

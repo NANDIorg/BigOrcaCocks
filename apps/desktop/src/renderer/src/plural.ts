@@ -1,4 +1,8 @@
-/** Склонение по числу: plural(3, 'агент', 'агента', 'агентов'). */
+/**
+ * Склонение по-русски: plural(3, 'агент', 'агента', 'агентов'). Только для строк, ещё не переведённых в i18n;
+ * в новом коде — plural-сообщение словаря (`{ one, few, many }` в ru, `{ one, other }` в en) и `t(key, { count })`,
+ * формы выбирает `Intl.PluralRules` текущего языка (`pluralCategory` в i18n/index.ts).
+ */
 export function plural(n: number, one: string, few: string, many: string): string {
   const m10 = n % 10
   const m100 = n % 100
