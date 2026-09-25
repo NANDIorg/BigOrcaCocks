@@ -594,7 +594,13 @@ function registerIpc(): void {
   handle('updates:cancelPending', () => updater.cancelPending())
   handle('updates:getJustUpdated', () => updater.getJustUpdated())
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
-  handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
+  handle('projects:list', () => ({ active: projects.active(), projects: projects.list(), groups: projects.groups() }))
+  handle('projects:createGroup', (_e, name: string) => projects.createGroup(name))
+  handle('projects:renameGroup', (_e, id: string, name: string) => projects.renameGroup(id, name))
+  handle('projects:removeGroup', (_e, id: string) => projects.removeGroup(id))
+  handle('projects:setGroupCollapsed', (_e, id: string, collapsed: boolean) => projects.setGroupCollapsed(id, collapsed))
+  handle('projects:setProjectGroup', (_e, projectId: string, groupId: string | null) => projects.setProjectGroup(projectId, groupId))
+  handle('projects:reorderGroups', (_e, ids: string[]) => projects.reorderGroups(ids))
   handle('projects:inProgressCounts', () => projects.inProgressCounts())
   // Неизвестный проект (удалён, устаревший id в renderer) — не ошибка IPC, а «не репозиторий»: бейдж просто скрывается.
   handle('projects:branch', (_e, id: string): ProjectBranchInfo => {
