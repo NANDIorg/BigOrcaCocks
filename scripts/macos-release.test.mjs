@@ -224,31 +224,88 @@ test('отклоняются устаревшие хеши/размеры, DMG m
   }
 })
 
-test('проверка вложенного native-кода, entitlements, Gatekeeper и ticket не заменяется codesign verify', t => {
+function appFixture(t) {
   const app = join(temporary(t), 'orca-board.app')
   for (const path of ['Contents/MacOS/orca-board', 'Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework',
+    'Contents/Frameworks/libEGL.dylib',
     'Contents/Frameworks/orca-board Helper.app/Contents/MacOS/orca-board Helper', 'Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node',
     'Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper']) {
     mkdirSync(dirname(join(app, path)), { recursive: true })
     writeFileSync(join(app, path), Buffer.from('cffaedfe', 'hex'))
   }
-  let failure = ''
-  const execute = (file, args) => {
+  return app
+}
+
+const jitEntitlements = JSON.stringify({ 'com.apple.security.cs.allow-jit': true })
+
+function appCommands({ failure = '', entitlements } = {}) {
+  return (file, args, options) => {
     if (file.endsWith('PlistBuddy')) return success(args[1].includes('Identifier') ? 'dev.orca-board' : args[1].includes('Version') ? '1.0.0' : 'orca-board')
     if (file.endsWith('lipo')) return success(failure === 'arch' ? 'arm64' : 'x86_64')
-    if (file.endsWith('plutil')) return success(JSON.stringify({ 'com.apple.security.cs.allow-jit': failure !== 'jit', 'com.apple.security.get-task-allow': failure === 'debug' }))
+    if (args.includes('--entitlements')) return success(entitlements ? entitlements(args.at(-1)) :
+      JSON.stringify({ 'com.apple.security.cs.allow-jit': failure !== 'jit', 'com.apple.security.get-task-allow': failure === 'debug' }))
+    // На macOS используем настоящий парсер; на остальных ОС пустой/повреждённый ввод тоже обязан падать.
+    if (file.endsWith('plutil')) return process.platform === 'darwin' ? run(file, args, options) : success(JSON.stringify(JSON.parse(options.input)))
     if (file.endsWith('spctl')) return failure === 'spctl' ? { status: 3, stdout: '', stderr: 'rejected' } : success('', 'accepted\nsource=Notarized Developer ID')
     if (args[0] === '--display' && args[1] === '--verbose=4') return success('', failure === 'native' && args.at(-1).endsWith('pty.node') ? 'Signature=adhoc' : signature)
     if (file.endsWith('xcrun') && failure === 'ticket') throw new Error('ticket отсутствует')
     return success()
   }
-  verifyApp(app, 'x64', '1.0.0', team, execute)
-  for (failure of ['arch', 'debug', 'jit', 'spctl', 'native', 'ticket']) assert.throws(() => verifyApp(app, 'x64', '1.0.0', team, execute))
-  failure = 'spctl'
-  assert.throws(() => verifyDmg('/fixture.dmg', team, execute), /проверка не пройдена/)
+}
+
+test('проверка вложенного native-кода, entitlements, Gatekeeper и ticket не заменяется codesign verify', t => {
+  const app = appFixture(t)
+  verifyApp(app, 'x64', '1.0.0', team, appCommands())
+  for (const failure of ['arch', 'debug', 'jit', 'spctl', 'native', 'ticket']) assert.throws(() => verifyApp(app, 'x64', '1.0.0', team, appCommands({ failure })))
+  assert.throws(() => verifyDmg('/fixture.dmg', team, appCommands({ failure: 'spctl' })), /проверка не пройдена/)
   for (const key of ['get-task-allow', 'com.apple.security.get-task-allow', 'com.apple.security.app-sandbox']) {
     assert.throws(() => validateEntitlements({ [key]: true }), /entitlement/)
   }
+})
+
+test('пустые entitlements библиотек Framework/dylib/node не блокируют проверку приложения', t => {
+  const app = appFixture(t)
+  verifyApp(app, 'x64', '1.0.0', team, appCommands({ entitlements: path =>
+    path.includes('.framework/') || path.endsWith('.dylib') || path.endsWith('.node') ? '' : jitEntitlements }))
+})
+
+test('основной Electron executable и helpers по-прежнему требуют allow-jit', t => {
+  const app = appFixture(t)
+  for (const target of [app, join(app, 'Contents/MacOS/orca-board'),
+    join(app, 'Contents/Frameworks/orca-board Helper.app/Contents/MacOS/orca-board Helper')]) {
+    for (const missing of ['', '{}', JSON.stringify({ 'com.apple.security.cs.allow-jit': false })]) {
+      assert.throws(() => verifyApp(app, 'x64', '1.0.0', team,
+        appCommands({ entitlements: path => path === target ? missing : jitEntitlements })), /allow-jit/)
+    }
+  }
+})
+
+test('непустые запрещённые или повреждённые entitlements библиотек отклоняются', t => {
+  const app = appFixture(t)
+  for (const forbidden of ['get-task-allow', 'com.apple.security.get-task-allow', 'com.apple.security.app-sandbox']) {
+    assert.throws(() => verifyApp(app, 'x64', '1.0.0', team,
+      appCommands({ entitlements: path => path.endsWith('pty.node') ? JSON.stringify({ [forbidden]: true }) : jitEntitlements })), /entitlement/)
+  }
+  assert.throws(() => verifyApp(app, 'x64', '1.0.0', team,
+    appCommands({ entitlements: path => path.endsWith('.dylib') ? 'invalid plist' : jitEntitlements })))
+  const execute = appCommands()
+  assert.throws(() => verifyApp(app, 'x64', '1.0.0', team, (file, args, options) => {
+    if (args.includes('--entitlements') && args.at(-1).endsWith('.dylib')) throw new Error('codesign failed')
+    return execute(file, args, options)
+  }), /codesign failed/)
+})
+
+test('macOS: verifyApp читает entitlements подписанной dylib настоящими codesign/plutil', { skip: process.platform !== 'darwin' }, t => {
+  const app = appFixture(t)
+  const library = join(app, 'Contents/Frameworks/libEGL.dylib')
+  run('/usr/bin/xcrun', ['clang', '-dynamiclib', '-x', 'c', '-', '-o', library], { input: 'int fixture(void) { return 0; }\n' })
+  run('/usr/bin/codesign', ['--force', '--sign', '-', '--options', 'runtime', '--entitlements',
+    join(desktop, 'build/entitlements.mac.inherit.plist'), library])
+  const execute = appCommands()
+  verifyApp(app, 'x64', '1.0.0', team, (file, args, options) => {
+    if (args.includes('--entitlements') && args.at(-1) === library) return run(file, args, options)
+    return execute(file, args, options)
+  })
 })
 
 test('CI не загружает установщики до проверки macOS; Apple secrets ограничены mac-шагом', () => {

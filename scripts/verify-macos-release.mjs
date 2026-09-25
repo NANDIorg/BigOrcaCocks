@@ -13,6 +13,9 @@ export function validateEntitlements(entitlements) {
 
 function verifyEntitlements(path, execute) {
   const { stdout } = execute('/usr/bin/codesign', ['--display', '--entitlements', ':-', path])
+  // С macOS 15 codesign по умолчанию не встраивает entitlements в библиотеки.
+  // Пустой успешный вывод означает отсутствие прав; Electron проверяется на allow-jit ниже.
+  if (!stdout.trim()) return {}
   const entitlements = JSON.parse(execute('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '--', '-'], { input: stdout }).stdout)
   validateEntitlements(entitlements)
   return entitlements
@@ -46,8 +49,8 @@ export function verifyApp(app, arch, version, teamId, execute = run) {
   for (const path of binaries) {
     verifySignature(path, teamId, {}, execute)
     const entitlements = verifyEntitlements(path, execute)
-    if (path.includes(' Helper') && path.includes('.app/Contents/MacOS/')) {
-      requireRelease(entitlements['com.apple.security.cs.allow-jit'] === true, 'Electron Helper требует allow-jit')
+    if (path === main || (path.includes(' Helper') && path.includes('.app/Contents/MacOS/'))) {
+      requireRelease(entitlements['com.apple.security.cs.allow-jit'] === true, 'Electron executable или Helper требует allow-jit')
     }
     // Prebuilds других архитектур могут оставаться в node-pty; выполняется пересобранный build/Release.
     if (path.includes('/node-pty/build/Release/')) {

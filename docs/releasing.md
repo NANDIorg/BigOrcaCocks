@@ -211,6 +211,10 @@ notary/timestamp/ticket-сервисам и Xcode с `notarytool`/`stapler`.
    node-pty, Developer ID/Team/runtime/timestamp всех Mach-O, entitlements, `codesign --verify
    --deep --strict`, `spctl` и stapled tickets. Native prebuilds других архитектур тоже проверяются
    по подписи; используемые `build/Release` должны поддерживать архитектуру контейнера.
+   На macOS 15+ `codesign` по умолчанию не встраивает entitlements в библиотеки: пустой успешный
+   вывод для Framework/dylib/`.node` допустим. Главный Electron executable и helpers обязаны иметь
+   `allow-jit`; непустые entitlements любого Mach-O проверяются на запрет debug/App Sandbox.
+   Отсутствие entitlements не отменяет проверки Developer ID, runtime и timestamp.
    Проверяет ровно два ZIP в manifest, SHA-512/size, верхнеуровневые path/sha512 и комплект blockmap.
 5. Только затем upload установщиков и job `draft`: SHA256SUMS по окончательным байтам.
    `dmg.writeUpdateInfo: false` поддерживается схемой v26.15.3, но в типах помечено private;
@@ -244,6 +248,7 @@ ZIP/DMG и для самих DMG. Проверь SHA256SUMS скачанного
 patch-версией по отдельному поручению; существующие v1.0.0, тег и файлы не заменяются.
 
 Источники: [Apple — Developer ID](https://developer.apple.com/developer-id/),
+[подпись и entitlements библиотек](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/),
 [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
 [порядок stapling](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
 [системные диалоги macOS](https://support.apple.com/en-us/102445).
