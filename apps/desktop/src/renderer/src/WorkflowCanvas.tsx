@@ -7,9 +7,10 @@ import {
   portPoint, screenToWorld, snap, viewBox, zoomAt, type Point, type View
 } from './workflowGeometry'
 import {
-  WF_ADDABLE_TYPES, addNode, canConnect, connect, issueTargets, moveNode, removeSelected, wfOutcomeLabel,
+  addNode, canConnect, connect, issueTargets, moveNode, removeSelected, wfAddableTypes, wfOutcomeLabel,
   type WfSelection
 } from './workflowEdit'
+import { canOpenPath, subflowSummary, type WfScope } from './workflowNav'
 import { WF_TYPE_TITLES } from './workflowForm'
 import { WF_NODE_HELP } from './workflowHelp'
 import { gitNodeSubtitle } from './workflowGit'
@@ -23,6 +24,13 @@ interface Props {
   onSelect: (sel: WfSelection) => void
   /** Результат validateWorkflow: ноды и рёбра с проблемами подсвечиваются, тексты — во всплывающей подсказке. */
   issues?: WfValidation
+  /**
+   * Что редактируется: граф типа (`'run'`, по умолчанию) или путь подзадачи (`'subtask'`). В пути палитра без нод,
+   * которых там нельзя (`ask`), и без входа в ноду.
+   */
+  scope?: WfScope
+  /** Двойной клик по ноде «Работа»: открыть путь её подзадачи. Нет — двойной клик ничего не делает. */
+  onOpenNode?: (nodeId: string) => void
 }
 
 /** Текущий жест мышью. Перетаскивание ноды живёт локально и уходит в onChange одним изменением на отпускании. */
@@ -39,6 +47,8 @@ function clip(s: string, max: number): string {
 function nodeSubtitle(node: WfNode, t: TFunction): string {
   switch (node.type) {
     case 'work': {
+      // Со своим путём подзадачи вторая строка — что путь делает («ревью + мерж»); роли видны в инспекторе.
+      if (node.subflow !== undefined) return subflowSummary(node.subflow)
       const roleIds = wfWorkRoleIds(node)
       return roleIds.length > 0 ? t('config.wf.sub.roles', { roles: roleIds.join(', ') }) : t('config.wf.sub.anyRole')
     }
@@ -63,7 +73,7 @@ function nodeSubtitle(node: WfNode, t: TFunction): string {
  * (workflowGeometry.ts), а не по DOM-событиям элементов: при захвате указателя (setPointerCapture)
  * элемент под курсором события не получает.
  */
-export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues }: Props): React.JSX.Element {
+export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues, scope = 'run', onOpenNode }: Props): React.JSX.Element {
   const t = useT()
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -190,6 +200,14 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
     onSelect({ kind: 'node', id: res.nodeId })
   }
 
+  // Двойной клик по ноде «Работа» — вход в её путь подзадачи. Попадание считаем по геометрии, как и остальные жесты.
+  const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>): void => {
+    if (!onOpenNode || scope !== 'run') return
+    const r = svgRef.current!.getBoundingClientRect()
+    const nodeId = hitNode(workflow, screenToWorld(view, { x: e.clientX - r.left, y: e.clientY - r.top }))
+    if (nodeId && canOpenPath(workflow, [], nodeId)) onOpenNode(nodeId)
+  }
+
   const zoomCenter = (factor: number): void => setView((v) => zoomAt(v, { x: size.w / 2, y: size.h / 2 }, factor))
 
   const shown = gesture?.kind === 'drag' ? moveNode(workflow, gesture.nodeId, gesture.pos.x, gesture.pos.y) : workflow
@@ -210,6 +228,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onKeyDown={onKeyDown}
+        onDoubleClick={onDoubleClick}
       >
         <defs>
           <pattern id={gridId} width={20} height={20} patternUnits="userSpaceOnUse">
@@ -247,13 +266,20 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
           ].filter(Boolean).join(' ')
           const NodeIcon = WfNodeIcon[node.type]
           const sub = nodeSubtitle(node, t)
+          const ownPath = node.type === 'work' && node.subflow !== undefined
           return (
             <g key={node.id} className={cls} transform={`translate(${node.x} ${node.y})`}>
-              <title>{[`${nodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(issue?.messages ?? [])].join('\n')}</title>
+              <title>{[`${nodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(ownPath ? [t('config.wf.path.nodeHint', { steps: sub })] : []), ...(issue?.messages ?? [])].join('\n')}</title>
               <rect width={NODE_W} height={NODE_H} rx={10} className="wf-node-box" />
               <g className="wf-node-icon" transform={`translate(10 ${(NODE_H - 20) / 2})`}><NodeIcon /></g>
               <text x={38} y={sub ? 26 : 35} className="wf-node-title">{clip(nodeTitle(node), 13)}</text>
-              {sub && <text x={38} y={43} className="wf-node-sub">{clip(sub, 19)}</text>}
+              {sub && <text x={38} y={43} className="wf-node-sub">{clip(sub, ownPath ? 17 : 19)}</text>}
+              {ownPath && (
+                <g className="wf-node-path" transform={`translate(${NODE_W - 22} 5)`}>
+                  <rect width={17} height={17} rx={5} />
+                  <g transform="translate(3.5 3.5) scale(0.5)"><Icon.subflow /></g>
+                </g>
+              )}
               {node.type !== 'start' && <circle cx={0} cy={NODE_H / 2} r={4} className="wf-port-in" />}
               {WF_PORTS[node.type].map((outcome) => {
                 const p = portPoint(node, outcome)
@@ -282,7 +308,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
       </svg>
 
       <div className="wf-toolbar">
-        {WF_ADDABLE_TYPES.map((type) => {
+        {wfAddableTypes(scope).map((type) => {
           const NodeIcon = WfNodeIcon[type]
           return (
             <button

@@ -1,10 +1,11 @@
 import type React from 'react'
 import {
   WF_PORTS, wfNodeTitle, wfWorkRoleIds,
-  type BoardColumn, type Role, type WfCondition, type WfNode, type WfOutcome, type WfValidation, type Workflow
+  type BoardColumn, type Role, type WfCondition, type WfNode, type WfOutcome, type WfSubflow, type WfValidation, type Workflow
 } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
-import { issueTargets, removeSelected, wfOutcomeLabel, type WfSelection } from './workflowEdit'
+import { WF_SUBTASK_FORBIDDEN_TYPES, issueTargets, removeSelected, wfOutcomeLabel, type WfSelection } from './workflowEdit'
+import { isDefaultLike, resetSubflow, startCustomSubflow, subflowSummary, type WfScope } from './workflowNav'
 import { WF_NODE_HELP } from './workflowHelp'
 import {
   GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, isGitOperation, isUnavailableGitOperation, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
@@ -24,13 +25,17 @@ interface Props {
   roles: readonly Role[]
   columns: readonly BoardColumn[]
   issues?: WfValidation
+  /** Граф типа (`'run'`, по умолчанию) или путь подзадачи (`'subtask'`): в пути нет `ask` и вложенного пути. */
+  scope?: WfScope
+  /** Открыть путь подзадачи ноды «Работа» (только из графа типа). Нет — кнопки «Открыть» нет. */
+  onOpenPath?(nodeId: string): void
 }
 
 /**
  * Инспектор воркфлоу — форма выбранной ноды или перехода. Каждый порт ноды — select «куда ведёт», поэтому
  * весь граф можно собрать с клавиатуры, не трогая холст; без выделения — список нод для выбора.
  */
-export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues }: Props): React.JSX.Element {
+export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues, scope = 'run', onOpenPath }: Props): React.JSX.Element {
   const t = useT()
   const targets = issueTargets(issues)
   const node = selection?.kind === 'node' ? workflow.nodes.find((n) => n.id === selection.id) : undefined
@@ -46,8 +51,8 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
     return (
       <aside className="wf-insp" aria-label={t('config.wf.insp.nodeAria', { title: wfNodeTitle(node) })}>
         <NodeHead node={node} />
-        <NodeHelp type={node.type} />
-        <NodeForm node={node} workflow={workflow} roles={roles} columns={columns} onChange={onChange} />
+        <NodeHelp type={node.type} scope={scope} />
+        <NodeForm node={node} workflow={workflow} roles={roles} columns={columns} onChange={onChange} scope={scope} onOpenPath={onOpenPath} />
         {WF_PORTS[node.type].length > 0 && (
           <fieldset className="wf-ports">
             <legend>{t('config.wf.insp.ports')}</legend>
@@ -137,13 +142,17 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
  * Назначение выбранной ноды: одна фраза видна всегда, остальное — в раскрывашке, чтобы не вытеснять форму.
  * `<details>` раскрывается с клавиатуры и не зависит от наведения мыши.
  */
-function NodeHelp({ type }: { type: WfNode['type'] }): React.JSX.Element {
+function NodeHelp({ type, scope }: { type: WfNode['type']; scope: WfScope }): React.JSX.Element {
   const t = useT()
   const help = WF_NODE_HELP[type]
   const ports = WF_PORTS[type]
+  // Справка типа написана для графа глобальной задачи; в пути подзадачи у части нод другой смысл — говорим об этом отдельно.
+  const noteKey = `config.wf.path.note.${type}` as TKey
+  const note = scope === 'subtask' ? t(noteKey) : ''
   return (
     <div className="wf-help">
       <p className="wf-help-summary">{help.summary}</p>
+      {note && note !== noteKey && <p className="hint wf-path-note">{note}</p>}
       <details>
         <summary>{t('config.wf.insp.howItWorks')}</summary>
         <dl className="wf-help-body">
@@ -180,12 +189,14 @@ function NodeHead({ node }: { node: WfNode }): React.JSX.Element {
 }
 
 /** Поля ноды по её типу. */
-function NodeForm({ node, workflow, roles, columns, onChange }: {
+function NodeForm({ node, workflow, roles, columns, onChange, scope, onOpenPath }: {
   node: WfNode
   workflow: Workflow
   roles: readonly Role[]
   columns: readonly BoardColumn[]
   onChange(wf: Workflow): void
+  scope: WfScope
+  onOpenPath?(nodeId: string): void
 }): React.JSX.Element {
   const t = useT()
   const patch = (p: WfNodePatch): void => onChange(patchNode(workflow, node.id, p))
@@ -196,7 +207,10 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
       <label className="wf-field">
         <span>{t('config.wf.insp.type')}</span>
         <select value={node.type} onChange={(e) => onChange(changeNodeType(workflow, node.id, e.target.value as WfNode['type']))}>
-          {WF_TYPE_ORDER.map((type) => <option key={type} value={type}>{WF_TYPE_TITLES[type]}</option>)}
+          {/* В пути подзадачи «Вопрос человеку» недоступен; у уже стоящей там ноды тип остаётся виден (её подсветит валидация). */}
+          {WF_TYPE_ORDER.filter((type) => scope === 'run' || !WF_SUBTASK_FORBIDDEN_TYPES.includes(type) || type === node.type).map((type) => (
+            <option key={type} value={type}>{WF_TYPE_TITLES[type]}</option>
+          ))}
         </select>
       </label>
       <label className="wf-field">
@@ -206,8 +220,9 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
 
       {node.type === 'work' && (
         <>
-          <fieldset className="wf-roles" title={t('config.wf.insp.workRolesHint')}>
-            <legend>{t('config.wf.insp.workRolesLegend')}</legend>
+          {scope === 'run' && <SubflowBlock node={node} workflow={workflow} onChange={onChange} onOpenPath={onOpenPath} />}
+          <fieldset className="wf-roles" title={scope === 'subtask' ? t('config.wf.insp.pathRolesHint') : t('config.wf.insp.workRolesHint')}>
+            <legend>{scope === 'subtask' ? t('config.wf.insp.pathRolesLegend') : t('config.wf.insp.workRolesLegend')}</legend>
             {taskRoles.map((r) => {
               const chosen = wfWorkRoleIds(node)
               return (
@@ -284,7 +299,7 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
           />
         </label>
       )}
-      {node.type === 'condition' && <ConditionFields node={node} workflow={workflow} roles={taskRoles} onChange={(test) => patch({ test })} />}
+      {node.type === 'condition' && <ConditionFields node={node} workflow={workflow} roles={taskRoles} scope={scope} onChange={(test) => patch({ test })} />}
       {node.type === 'git' && <GitFields node={node} onChange={(git) => patch({ git })} />}
       {node.type === 'end' && (
         <label className="wf-check">
@@ -305,6 +320,51 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
         </label>
       )}
     </>
+  )
+}
+
+/**
+ * Путь подзадачи ноды «Работа»: «по умолчанию» (воркер → мерж) или «свой» — отдельный граф, который проходит каждая
+ * подзадача этапа. Выбор «Свой» заводит копию пути по умолчанию и сразу открывает её; возврат к умолчанию удаляет
+ * собственный путь (с подтверждением, если он чем-то отличается от умолчания).
+ */
+function SubflowBlock({ node, workflow, onChange, onOpenPath }: {
+  node: Extract<WfNode, { type: 'work' }>
+  workflow: Workflow
+  onChange(wf: Workflow): void
+  onOpenPath?(nodeId: string): void
+}): React.JSX.Element {
+  const t = useT()
+  const own: WfSubflow | undefined = node.subflow
+  const custom = own !== undefined
+  const summary = custom ? subflowSummary(own) : ''
+
+  const setMode = (mode: 'default' | 'custom'): void => {
+    if (mode === 'custom' && !custom) {
+      onChange(startCustomSubflow(workflow, node.id))
+      onOpenPath?.(node.id)
+    } else if (mode === 'default' && custom) {
+      if (!isDefaultLike(own) && !confirm(t('config.wf.path.resetConfirm', { title: wfNodeTitle(node) }))) return
+      onChange(resetSubflow(workflow, node.id))
+    }
+  }
+
+  return (
+    <fieldset className="wf-subflow">
+      <legend>{t('config.wf.path.legend')}</legend>
+      <label className="wf-field">
+        <select value={custom ? 'custom' : 'default'} onChange={(e) => setMode(e.target.value as 'default' | 'custom')}>
+          <option value="default">{t('config.wf.path.modeDefault')}</option>
+          <option value="custom">{t('config.wf.path.modeCustom')}</option>
+        </select>
+      </label>
+      <p className="hint">{custom ? t('config.wf.path.customHint', { steps: summary }) : t('config.wf.path.defaultHint')}</p>
+      {onOpenPath && (
+        <button type="button" className="btn-sm" onClick={() => onOpenPath(node.id)}>
+          <Icon.subflow /> {custom ? t('config.wf.path.open') : t('config.wf.path.view')}
+        </button>
+      )}
+    </fieldset>
   )
 }
 
@@ -371,10 +431,11 @@ function RoleSelect({ value, roles, empty, onChange }: {
   )
 }
 
-function ConditionFields({ node, workflow, roles, onChange }: {
+function ConditionFields({ node, workflow, roles, scope, onChange }: {
   node: Extract<WfNode, { type: 'condition' }>
   workflow: Workflow
   roles: readonly Role[]
+  scope: WfScope
   onChange(test: WfCondition): void
 }): React.JSX.Element {
   const t = useT()
@@ -385,8 +446,10 @@ function ConditionFields({ node, workflow, roles, onChange }: {
         <span>{t('config.wf.insp.condition')}</span>
         <select value={c.kind} onChange={(e) => onChange(conditionOfKind(workflow, e.target.value as 'attempts' | 'role'))}>
           <option value="attempts">{t('config.wf.insp.condAttempts')}</option>
-          {/* Условие по роли в воркфлоу глобальной задачи не работает: новое не предлагаем, старое (из файла) остаётся видно. */}
-          {c.kind === 'role' && <option value="role" disabled>{t('config.wf.insp.condRoleLegacy')}</option>}
+          {/* Условие по роли в воркфлоу глобальной задачи не работает: новое не предлагаем, старое (из файла) остаётся видно.
+              В пути подзадачи у подзадачи роль есть — условие работает. */}
+          {scope === 'subtask' && <option value="role">{t('config.wf.insp.condRole')}</option>}
+          {scope === 'run' && c.kind === 'role' && <option value="role" disabled>{t('config.wf.insp.condRoleLegacy')}</option>}
           {c.kind === 'files' && <option value="files" disabled>{t('config.wf.insp.condFiles')}</option>}
         </select>
       </label>

@@ -1566,8 +1566,8 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-row .wf-field { flex: 1; }
 .wf-row .wf-num { flex: 0 0 90px; }
 .wf-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.wf-ports, .wf-roles { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
-.wf-ports legend, .wf-roles legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+.wf-ports, .wf-roles, .wf-subflow { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.wf-ports legend, .wf-roles legend, .wf-subflow legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
 .wf-port-field > span { font-weight: 600; }
 .wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
 .wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span, .wf-port-field.wf-port--error > span { color: var(--wf-reject); }
@@ -2062,3 +2062,14 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-migration ul { margin: 0; padding-left: 18px; }
 /* Замечания автомиграции сохранённого типа: до «Понятно» стоят над холстом и бросаются в глаза. */
 .wf-migration--stored { border: 1px solid var(--col-input); padding: 10px 12px; }
+
+/* Вход в ноду «Работа»: крошки, пояснение к пути подзадачи, значок на ноде (WorkflowCanvas.tsx, TaskTypeWorkflow.tsx) */
+.wf-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+.wf-crumb { padding: 2px 6px; border-radius: 6px; background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; }
+.wf-crumb:hover { background: var(--card-hover); }
+.wf-crumb.current { color: var(--text); padding: 2px 6px; }
+.wf-crumb-sep { color: var(--muted); }
+.wf-path-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 8px; background: var(--side); font-size: 12.5px; }
+.wf-node-path rect { fill: var(--chip); }
+.wf-node-path { color: var(--accent); pointer-events: none; }
+.wf-subflow .hint { margin: 0; }
