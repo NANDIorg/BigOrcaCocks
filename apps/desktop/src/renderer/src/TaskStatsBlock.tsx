@@ -18,13 +18,15 @@ interface Props {
   columns: BoardColumn[]
   /** Снимок проекта: ключ перечитывания и запасной расчёт при старом main. */
   snapshot: StatsSnapshot
+  /** Названия нод пути подзадачи по id (`pathNodeTitles`) — для полосы «По этапам»; нет — как отдал main. */
+  stageTitles?: Readonly<Record<string, string>>
 }
 
 /**
  * Секция «Статистика» карточки задачи: факты, полосы по колонкам и этапам, роли, счётчики. Данные — `stats:task`
  * (перечитываются при смене статуса, запусков и запросов задачи), идущие значения досчитываются по `generatedAt`.
  */
-export function TaskStatsBlock({ projectId, task, columns, snapshot }: Props): React.JSX.Element {
+export function TaskStatsBlock({ projectId, task, columns, snapshot, stageTitles }: Props): React.JSX.Element {
   const t = useT()
   const now = useNow()
   const snap = useRef(snapshot)
@@ -49,7 +51,7 @@ export function TaskStatsBlock({ projectId, task, columns, snapshot }: Props): R
 
   const stats = advanceTaskStats(load.stats, now, { activeTicking: taskTicking(task), status: task.status })
   const human = humanLine(stats.human)
-  const stages = stageParts(stats.stages)
+  const stages = stageParts(stats.stages, stageTitles)
   return (
     <div className={`ts${load.loading ? ' refreshing' : ''}`}>
       {load.stale && <StaleNote />}

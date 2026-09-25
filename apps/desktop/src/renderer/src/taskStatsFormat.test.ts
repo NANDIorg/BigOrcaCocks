@@ -208,6 +208,12 @@ test('columnParts: цвета и названия колонок доски, д�
   assert.equal(columnParts([{ status: 'ready', ms: 0, entries: 1 }], DEFAULT_COLUMNS)[0].share, 0, 'нулевое время — без деления на ноль')
 })
 
+test('stageParts: названия из titles перекрывают отданные main; без titles — как отдал main', () => {
+  const stages = [{ nodeId: 'w', title: 'w', ms: H, entries: 1 }, { nodeId: 'x', title: 'Икс', ms: H, entries: 1 }]
+  assert.deepEqual(stageParts(stages, { w: 'Реализация' }).map((p) => p.title), ['Реализация', 'Икс'])
+  assert.deepEqual(stageParts(stages).map((p) => p.title), ['w', 'Икс'])
+})
+
 test('stageParts: цвета по кругу палитры серий; нет этапов — пусто', () => {
   assert.deepEqual(stageParts(undefined), [])
   const parts = stageParts(Array.from({ length: 6 }, (_, i) => ({ nodeId: `n${i}`, title: `Этап ${i}`, ms: H, entries: 1 })))
