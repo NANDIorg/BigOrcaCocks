@@ -1,5 +1,35 @@
 import type { AreaDict } from '../types'
 
-/** Оболочка: App, инбокс, лента внимания, координатор, ассистент, терминал. */
+/** Оболочка: App, инбокс, лента внимания, координатор, ассистент, терминал; плашка и тост обновлений. */
 export default {
+  'update.aria': 'Обновление приложения',
+  'update.railHint': 'Есть обновление приложения',
+  'update.available': 'Доступна {version}',
+  'update.downloading': 'Скачиваем {version}',
+  'update.ready': '{version} готова',
+  'update.installing': 'Устанавливаем {version}…',
+  'update.error': 'Не удалось обновиться',
+  'update.manualHint': 'Установить её из приложения нельзя — скачайте вручную.',
+  'update.whatsNew': 'Что нового',
+  'update.download': 'Скачать',
+  'update.restart': 'Перезапустить и обновить',
+  'update.retry': 'Повторить',
+  'update.cancel': 'Отменить',
+  'update.pending.quit': 'Установится при выходе из приложения',
+  'update.pending.idle': 'Установится, когда агенты закончат',
+  'update.confirm.text': 'Сейчас работают агенты: {count}. Перезапуск прервёт их сессии.',
+  'update.confirm.now': 'Сейчас',
+  'update.confirm.idle': 'Когда агенты закончат',
+  'update.confirm.cancel': 'Отмена',
+  'update.reason.dev': 'Обновление отключено при запуске из исходников.',
+  'update.reason.portable': 'Portable-версия не обновляется сама: скачайте новый exe со страницы релиза.',
+  'update.reason.not-in-applications': 'Приложение запущено не из «Программ». Переместите его туда — тогда оно сможет обновляться само.',
+  'update.reason.no-write-access': 'Нет прав на запись в папку с приложением, поэтому установить обновление сами мы не можем.',
+  'update.reason.translocated': 'macOS запустила копию приложения из образа диска, подменять нечего. Перетащите его в «Программы» и откройте оттуда.',
+  'update.reason.other': 'Автоматическое обновление на этой сборке недоступно.',
+  'update.notes.title': 'Что нового в {version}',
+  'update.notes.empty': 'К релизу нет описания.',
+  'update.notes.open': 'Открыть релиз на GitHub',
+  'update.toast': 'Обновлено до {version}',
+  'update.toastClose': 'Закрыть уведомление'
 } satisfies AreaDict

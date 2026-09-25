@@ -26,6 +26,12 @@ export function formatShort(n: number, digits = 2): string {
   return n.toLocaleString(intlLocale(), { maximumFractionDigits: digits, useGrouping: false })
 }
 
+/** Процент из числа 0–100 («42 %» / «42%»); вне диапазона обрезается. */
+export function formatPercent(percent: number): string {
+  const fraction = Math.min(100, Math.max(0, Number.isFinite(percent) ? percent : 0)) / 100
+  return new Intl.NumberFormat(intlLocale(), { style: 'percent', maximumFractionDigits: 0 }).format(fraction)
+}
+
 /** Дата и/или время по текущему языку; по умолчанию — «25.09.2026, 14:05» / «9/25/2026, 2:05 PM». */
 export function formatDateTime(ts: number | Date, opts: Intl.DateTimeFormatOptions = { dateStyle: 'short', timeStyle: 'short' }): string {
   return new Intl.DateTimeFormat(intlLocale(), opts).format(ts)
