@@ -110,8 +110,22 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Тесты делают реальные git-коммиты и проверяют отказ git на «чужом» каталоге. На runner нет git-identity
+      # (на Windows коммит падает: «unable to auto-detect email address»), а в глобальном конфиге стоит
+      # safe.directory=* — git не отказывает, и тест «dubious ownership» краснеет. Переопределяем через
+      # GIT_CONFIG_* только на этот шаг: конфиг runner не трогаем. Пустое значение safe.directory сбрасывает список.
       - name: Тесты
         run: pnpm test
+        env:
+          GIT_CONFIG_COUNT: '4'
+          GIT_CONFIG_KEY_0: user.name
+          GIT_CONFIG_VALUE_0: orca-board CI
+          GIT_CONFIG_KEY_1: user.email
+          GIT_CONFIG_VALUE_1: ci@orca-board.invalid
+          GIT_CONFIG_KEY_2: core.autocrlf
+          GIT_CONFIG_VALUE_2: 'false'
+          GIT_CONFIG_KEY_3: safe.directory
+          GIT_CONFIG_VALUE_3: ''
 
       - name: Сборка
         run: pnpm --filter @orca-board/desktop run build

@@ -195,7 +195,8 @@ describe('MacUpdater.download', () => {
   })
 })
 
-describe('MacUpdater.install', () => {
+// install проверяет POSIX-пути (validateInstallPaths) и запускает /bin/sh: на Windows этого пути нет, обновляется winUpdater.
+describe('MacUpdater.install', { skip: process.platform === 'win32' }, () => {
   async function ready(): Promise<{ u: MacUpdater; env: MacUpdaterEnv }> {
     const env = makeEnv({ manifest: yml(), notes: '', zip: ZIP_BYTES })
     const u = new MacUpdater(env)

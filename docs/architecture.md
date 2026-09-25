@@ -1950,7 +1950,7 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
 | Джоба | Раннер | Что делает |
 |---|---|---|
 | `prepare` | ubuntu | версии в двух `package.json` совпадают, тег = `v<version>`; создаёт черновик `gh release create --draft`, если его нет. Уже опубликованный релиз с таким тегом — ошибка |
-| `build (mac)` | macos-14 | `pnpm install`, `typecheck`, `test`, сборка, `electron-builder --mac --publish always` (arm64 **и** x64), `codesign --verify` обоих `.app` |
+| `build (mac)` | macos-14 | `pnpm install`, `typecheck`, `test` (с `GIT_CONFIG_*`: git-identity, `autocrlf=false`, сброс `safe.directory=*` runner — иначе тесты коммитов и «dubious ownership» краснеют), сборка, `electron-builder --mac --publish always` (arm64 **и** x64), `codesign --verify` обоих `.app` |
 | `build (win)` | windows-latest | то же с `--win`: nsis + portable x64, node-pty пересобирается нативно |
 | `verify` | ubuntu | в черновике ровно один релиз с тегом и есть `latest.yml`, `latest-mac.yml`, zip и blockmap обеих архитектур, dmg, nsis-exe + blockmap, portable; `latest-mac.yml` описывает и arm64, и x64 zip. Иначе — красный |
 
