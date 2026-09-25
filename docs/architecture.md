@@ -769,6 +769,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
   Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
+- **Меню веток у бейджа ветки** (`BranchMenu.tsx`, логика — `renderer/src/projectGit.ts`, ветка — `useProjectBranch.ts`):
+  бейдж текущей ветки в шапке — кнопка; по клику поповер с «Fetch», «Pull» (у Pull — ↑ahead ↓behind текущей ветки),
+  поиском и списками локальных / удалённых веток (текущая отмечена, занятая другим worktree недоступна, удалённые без
+  дублей локальных); выбор ветки — `projects.checkoutBranch`. Пока идёт операция, всё заблокировано; её состояние живёт
+  в `BranchMenu`, а не в поповере, поэтому закрытое меню не теряет идущий fetch/pull. Ошибки — по `ipcErrorCode`
+  (`gitErrorMessage`): у кодов `PROJECT_GIT_ERROR_CODES` свой текст в `i18n/*/shell.ts` (`branch.err.*`), у `git.opFailed`
+  и неизвестных — сообщение main (в нём stderr git). Нет git-методов в preload или канала в main
+  (`No handler registered for 'projects:…'`) — «перезапустите приложение» (`projectGitApi`, `isStaleGitError`).
+  После checkout и pull бейдж обновляется сразу (`useProjectBranch().update`), затем перечитывается.
 - **Смена проекта** (`useEffect` по `active?.id`: сайдбар или `projects:focus`) сбрасывает выбранную
   задачу и закрывает модалку задачи (`openTaskId = null`) — чужая задача в модалке не остаётся.
 - **Добавление проекта** (`addProject` в `App.tsx`, логика — `renderer/src/projectAdd.ts` `startAddProject`,
@@ -1060,7 +1069,23 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
   (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
+  `projects:gitFetch(id)` (`git fetch --all --prune`) и `projects:gitPull(id)` (`git pull --ff-only` текущей ветки) → `ProjectGitResult {output, branch: ProjectBranchInfo}`,
+  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking); все четыре — опциональные методы `OrcaApi.projects`
+  (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
+  `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
+  воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
+  Реализация — `src/main/git.ts` («git корня проекта»): все вызовы через `execFile('git', [...])` без shell, **асинхронные** (`fetch` идёт до 120 с,
+  синхронный вызов заморозил бы окно и терминалы), `GIT_TERMINAL_PROMPT=0`, таймаут 120 с для сети и 30 с для локальных команд; операции над одним
+  корнем идут по очереди (`serial`). `projectBranches` — `for-each-ref` (локальные, `refs/remotes` без `*/HEAD`), `worktree list --porcelain`
+  (`busy`), `for-each-ref %(upstream:short/track)` + `rev-list --left-right --count` (upstream, ahead/behind, `[gone]`), `status --porcelain` (`dirty`).
+  `projectPull` — не голый `git pull`, а `fetch <remote upstream>` + `merge --ff-only`: `git.notFastForward` определяется по факту (HEAD — не предок
+  upstream), а не по тексту git, зависящему от локали; правки в дереве, мешающие обновлению, дают `git.opFailed`. `checkoutProjectBranch` проверяет по порядку:
+  репозиторий → та же ветка (успех без остальных проверок) → ветка есть (`git.branchNotFound`; имена вроде `--orphan` сюда не доходят) →
+  `liveAgents > 0` (`git.workersActive`; `liveAgentCount(projectId)` в `index.ts` — активные dispatch с живым PTY + координаторы прогонов с живым PTY) →
+  ветка в другом worktree (`git.branchBusy`) → грязное дерево, включая untracked (`git.dirtyTree`); удалённая `origin/x` без локальной `x` —
+  `checkout --track -b x origin/x`. Отдельного события «ветка сменилась» нет: `ProjectGitResult.branch` и результат `checkoutBranch` уже несут новую ветку;
+  `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
   веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
   **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
