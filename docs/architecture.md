@@ -444,17 +444,20 @@ Store хранит позицию и решает, куда задача пер�
   (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS` и `wfOutcomeLabel(тип, исход)`. Недопустимая операция возвращает граф как есть.
 - **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
-  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы и «Вопроса человеку» пустое значение — «роль задачи»,
-  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
+  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у «Вопроса человеку» роль обязательна (`askNoRole`), у гейта тоже,
+  роль не из типа — пунктом «(нет в типе задачи)»; у **«Работы»** — мультивыбор `roleIds` (`wfWorkRoleIds`): ничего не отмечено — роли
+  подзадач выберет координатор из рабочих ролей типа), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
   валидация, поэтому `patchNode` не удаляет пустую строку), у работы — «Показать человеку»
-  (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N или роль
-  рабочей задачи), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
+  (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N; «роль рабочей задачи» не предлагается —
+  у глобальной задачи роли нет, `conditionRoleRun`; условие по роли из файла остаётся видно отключённым пунктом), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
   (`setPortTarget`: пусто — снять переход), поэтому граф собирается с клавиатуры без холста. Выбран переход — его цель
   и удаление; ничего не выбрано — список нод кнопками. Проблемы валидации ноды — списком под формой.
 - **`workflowForm.ts`** — логика инспектора и раздела: `patchNode` (пустые необязательные поля удаляются),
   `changeNodeType` (роль и инструкция переносятся между `work`/`gate`/`human`/`ask`, где они есть), `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
   (`exportWorkflowJson`, `parseWorkflowJson` — проверяет только форму `{version, nodes[], edges[]}`, смысл —
-  `validateWorkflow`; старую версию поднимает `migrateWorkflow`, будущую отвергает), пресет `addRetryLimit(wf, 3)`
+  `validateWorkflow`; старую версию (v1) поднимает `migrateWorkflowReport` до v2 — `parseWorkflowJson` отдаёт ещё и `migration {fromVersion, notes}`:
+  замечания на языке интерфейса по `WfMigrationNote.code` (`migrationNoteTexts`, ключи `config.wf.migration.*`; названия снятых нод — из исходного графа), их
+  показывает `TaskTypeWorkflow` врезкой над проблемами, пока граф не заменён или не сохранён; будущую версию отвергает), пресет `addRetryLimit(wf, 3)`
   и проверка старого main/preload (`workflowApi`, `WORKFLOW_STALE_MESSAGE`, `isStaleWorkflowError`).
 - **Вопрос человеку в редакторе**: `ask` — в палитре (`WF_ADDABLE_TYPES`, сразу после «Работы»), в select «Тип»
   (`WF_TYPE_ORDER`), в легенде («Вопрос человеку», `WF_NODE_HELP.ask`), иконка-«облачко» и цвет «Нужен ответ»
@@ -464,9 +467,10 @@ Store хранит позицию и решает, куда задача пер�
   `workflowOf` → `workflowForRun`; нода пропала из графа — метки нет). Пилюля этапа на карточке доски для `ask` та же,
   что у `work` (`stageLabel`).
 - **Нода Git в редакторе** (`workflowGit.ts`): в палитре после «Мержа» (`WF_ADDABLE_TYPES`), в select «Тип» и легенде
-  (`WF_NODE_HELP.git`), иконка `WfNodeIcon.git`. Инспектор (`GitFields`) показывает операцию и **только её поля**
-  (`gitFieldsFor` по `WF_GIT_FIELD_USE` из core): ветка — `create_branch`/`checkout`, база — `create_branch`,
-  сообщение — `commit`, remote — `push`. Под веткой и сообщением — подстановки (`gitPlaceholdersHint`: у ветки без
+  (`WF_NODE_HELP.git`), иконка `WfNodeIcon.git`. Новая нода — `commit` с пустым сообщением. В select операций только `commit` и `push`
+  (`GIT_OPERATIONS`): у глобальной задачи одна ветка, `create_branch`/`checkout` запрещает `gitRunOperation`; такая операция из импортированного
+  графа остаётся отключённым пунктом (`isUnavailableGitOperation`). Инспектор (`GitFields`) показывает операцию и **только её поля**
+  (`gitFieldsFor` по `WF_GIT_FIELD_USE` из core): сообщение — `commit`, remote — `push` (поля ветки и базы у `create_branch`/`checkout` показываются, если такая нода пришла из файла). Под веткой и сообщением — подстановки (`gitPlaceholdersHint`: у ветки без
   `{title}`) и превью на образцовой задаче (`gitPreview`; красное — имя недопустимо для git). `patchGit` при смене
   операции убирает поля, которых у новой операции нет (иначе невидимое значение давало бы предупреждение
   `gitParamIgnored`), пустое необязательное поле удаляет, пустое обязательное оставляет строкой — его подсветит
@@ -850,6 +854,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   последний dispatch `unknown`/`failed`, и нет живого терминала), «Переместить в…» и «Удалить» (с `confirm`) — поверх
   правого верхнего угла, видны при наведении/фокусе, на touch — всегда. Клик по карточке → `onSelect` + `onOpenTask` (модалка).
   Полные формы ревью и ответа на вопрос живут в модалке задачи.
+- **Этап воркфлоу глобальной задачи** (`Run.workflowScope: 'run'`, `renderer/src/runStage.ts`, чистые функции): `runStageLabel(global, workflow)` — пилюля
+  «где граф» (название ноды из `workflowForRun` и «N-й заход» со второго; подсказка по типу ноды `global.stage.hint.*`; на старте, конце, без позиции,
+  без графа и у прогона старого формата — `null`). Она — чип `g-chip stage` на карточке глобальной доски (`GlobalBoard.stageLabel`, кроме колонки «Сделано») и
+  в шапке экрана (`GlobalTaskHeader.stage`, «Этап: …»). Подзадача этапа (`Task.stageOf`) получает пилюлю в `stageLabel` (`cardState.ts`), а задача-гейт
+  по ветке прогона (`gateFor.runId`, без `taskId`) — «⛉ Гейт «нода» → ветка задачи». **Группировка подзадач по этапам**: `stageGroups` считает по всем
+  подзадачам доски подписи «Реализация · 2/3» (сделано / всего; заход со второго) и порядок (по времени создания первой подзадачи), `splitByStage` режет
+  ими каждую колонку (`Board`, метка `.group-label`); этапов меньше двух или нет названий нод — колонки как раньше. Порядок карточек в колонке при
+  группировке — как на экране, по нему ходят стрелки. **История этапов** — события `stage` в `globalTimeline` (`Run.stageHistory`: «Этап «…»», заход, исход
+  `reject`/`accept`/`conflict`/`error`/`restart`, коммит входа, выдержка сводки закрытия; `GlobalHistory` получает `workflow`). Всё — необязательные поля: со старым main
+  пилюль, групп и записей истории просто нет.
 - **Названия этапов**: `Board` принимает опциональный `stageTitles` (`nodeId → название`, `wfNodeTitles` из `cardState.ts`);
   `App` строит его по `workflowForRun` (`taskTypes.ts`: снимок `Run.workflow`, иначе граф типа прогона). Нет типов (старый
   main) или нода неизвестна — пилюли этапа нет (id ноды человеку ничего не говорит), гейт подписывается и без неё.
@@ -1106,7 +1120,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `globalTasks:changeType(id, typeId)` → `GlobalTask`
   (смена типа до начала работы: `TaskStore.changeGlobalTaskType`, правило — `canChangeRunType`, см. `docs/nested-kanban.md`); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
-  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
+  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id, decision?)` → `GlobalTask` (`decision` — решение при «Подтвердить» у прогона с воркфлоу) и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`;
   `showcase:read(taskId, path)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ),
   `showcase:open(taskId, path)`, `showcase:reveal(taskId, path)` — файлы показа из worktree задачи активного проекта

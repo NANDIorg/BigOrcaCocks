@@ -1,4 +1,4 @@
-import type { ColumnKind, GlobalTaskReturn } from '@orca-board/core'
+import { isPendingRequest, type ColumnKind, type GlobalTask, type GlobalTaskReturn, type HumanRequest } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { t } from './i18n'
 import { ipcErrorCode, ipcErrorMessage } from './ipcError'
@@ -43,8 +43,25 @@ export function returnsNewestFirst(g: { returns?: GlobalTaskReturn[] }): GlobalT
   return [...(g.returns ?? [])].sort((a, b) => b.at - a.at)
 }
 
+/**
+ * Прогон с воркфлоу глобальной задачи (`workflowScope: 'run'`): «Проверка» — это approval ноды `human`. «Подтвердить»
+ * у него с полем «Решение / что делать дальше», «Вернуть» идёт по переходу графа, а не перезапуском координатора.
+ * Нет поля (прогон старого формата, «Входящие», старый main) — прежняя «Проверка».
+ */
+export function isRunWorkflow(g: Partial<Pick<GlobalTask, 'workflowScope' | 'inbox'>>): boolean {
+  return g.workflowScope === 'run' && g.inbox !== true
+}
+
+/** Ждущий approval уровня прогона (нода `human`, без задачи): что человек подтверждает. Нет — undefined. */
+export function runApprovalRequest(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest | undefined {
+  return (requests ?? [])
+    .filter((r) => r.runId === runId && r.taskId === undefined && r.kind === 'approval' && isPendingRequest(r))
+    .sort((a, b) => a.createdAt - b.createdAt)[0]
+}
+
 /** Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. */
-export function returnHint(closesCoordinator: boolean): string {
+export function returnHint(closesCoordinator: boolean, runWorkflow = false): string {
+  if (runWorkflow) return t('global.return.hintRun')
   return t(closesCoordinator ? 'global.return.hintCloses' : 'global.return.hint')
 }
 
@@ -62,7 +79,7 @@ export function globalReviewApi(api: Partial<OrcaApi> | undefined): Pick<OrcaApi
   const accept = g?.accept
   const returnToWork = g?.returnToWork
   if (typeof accept !== 'function' || typeof returnToWork !== 'function') throw new Error(staleReviewMessage())
-  return { accept: (id) => accept(id), returnToWork: (id, text, cols, rows) => returnToWork(id, text, cols, rows) }
+  return { accept: (id, decision) => accept(id, decision), returnToWork: (id, text, cols, rows) => returnToWork(id, text, cols, rows) }
 }
 
 /** Старый main отказал в возврате при живом координаторе — как обойти, на текущем языке. */

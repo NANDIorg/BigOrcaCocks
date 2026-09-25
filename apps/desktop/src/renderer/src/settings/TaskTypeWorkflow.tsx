@@ -5,7 +5,7 @@ import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
 import type { WfSelection } from '../workflowEdit'
-import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName } from '../workflowForm'
+import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, type WorkflowMigrationInfo } from '../workflowForm'
 import { SectionHead } from '../about/parts'
 import { useLocale, useT } from '../i18n'
 import { nodeTitle, wfIssueText } from '../defaultTitles'
@@ -41,6 +41,8 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** Что изменила миграция графа старого формата при импорте: показывается, пока граф не заменили или не сохранили. */
+  const [migration, setMigration] = useState<WorkflowMigrationInfo | null>(null)
   /** Растёт при замене графа целиком (импорт, сброс): холст заново вписывает граф в окно. */
   const [canvasRev, setCanvasRev] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -59,6 +61,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   }
 
   function replace(wf: Workflow, message: string | null): void {
+    setMigration(null)
     setDraft(wf)
     setSelection(null)
     setCanvasRev((r) => r + 1)
@@ -79,7 +82,10 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   }
 
   const save = (): Promise<void> =>
-    run(() => onSave(draft), t('config.wf.tab.saved'))
+    run(async () => {
+      await onSave(draft)
+      setMigration(null)
+    }, t('config.wf.tab.saved'))
 
   const reset = (): Promise<void> => {
     if (!confirm(t('config.wf.tab.resetConfirm', { title }))) {
@@ -108,6 +114,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
     }
     setError(null)
     replace(res.workflow, t('config.wf.tab.imported', { file: file.name }))
+    if (res.migration) setMigration(res.migration)
   }
 
   function presetLimit(): void {
@@ -165,6 +172,13 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
             />
           </fieldset>
         </div>
+
+        {migration && (
+          <div className="wf-migration" role="status">
+            <span>{t('config.wf.tab.importMigrated', { version: migration.fromVersion })}</span>
+            {migration.notes.length > 0 && <ul>{migration.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+          </div>
+        )}
 
         {(errors.length > 0 || warnings.length > 0) && (
           <div className="wf-problems">

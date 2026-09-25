@@ -6,6 +6,7 @@ import {
 } from './workflowForm'
 import { setLocale } from './i18n'
 import { graphWithMerge } from './workflowFixture'
+import { legacyDefaultWorkflow } from '@orca-board/core'
 
 const wf = graphWithMerge(DEFAULT_ROLES)
 const node = (w: Workflow, id: string) => w.nodes.find((n) => n.id === id)
@@ -192,4 +193,37 @@ test('changeNodeType в ask и из него: роль и инструкция �
   // Гейт с двумя портами → ask с одним: лишние рёбра уходят.
   const fromGate = changeNodeType(wf, 'review', 'ask')
   assert.equal(fromGate.edges.filter((e) => e.from === 'review').every((e) => e.outcome === 'next'), true)
+})
+
+test('импорт графа версии 1: миграция в версию 2 и замечания на языке интерфейса — что снято и почему', () => {
+  const v1 = legacyDefaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
+  const res = parseWorkflowJson(JSON.stringify(v1))
+  assert.ok('workflow' in res)
+  assert.equal(res.workflow.version, 2)
+  assert.ok(!res.workflow.nodes.some((n) => n.type === 'merge'), 'merge версии 1 снят')
+  assert.equal(res.migration?.fromVersion, 1)
+  assert.ok(res.migration!.notes.some((n) => /снята: подзадачи теперь сливаются в ветку глобальной задачи сами/.test(n) && n.includes('«Мерж')), res.migration!.notes.join('\n'))
+  assert.ok(res.migration!.notes.every((n) => !n.includes('config.wf.migration')), 'ни одного ключа словаря вместо текста')
+  setLocale('en')
+  try {
+    const en = parseWorkflowJson(JSON.stringify(v1))
+    assert.ok('workflow' in en)
+    assert.ok(en.migration!.notes.every((n) => !/[А-Яа-яЁё]/.test(n)), en.migration!.notes.join('\n'))
+    assert.ok(en.migration!.notes.some((n) => /removed: subtasks now merge into the global task branch/.test(n)))
+  } finally {
+    setLocale('ru')
+  }
+})
+
+test('импорт: условие по роли снимается с пометкой; граф версии 2 приходит без замечаний', () => {
+  const v1 = legacyDefaultWorkflow([{ id: 'developer' }])
+  v1.nodes.push({ id: 'byrole', type: 'condition', title: 'Фронт?', x: 0, y: 0, test: { kind: 'role', roleIds: ['frontend'] } })
+  v1.edges = v1.edges.map((e) => (e.from === 'work' ? { ...e, to: 'byrole' } : e))
+  v1.edges.push({ id: 'e_yes', from: 'byrole', outcome: 'yes', to: 'end' }, { id: 'e_no', from: 'byrole', outcome: 'no', to: 'end' })
+  const res = parseWorkflowJson(JSON.stringify(v1))
+  assert.ok('workflow' in res)
+  assert.ok(!res.workflow.nodes.some((n) => n.id === 'byrole'))
+  assert.ok(res.migration?.notes.some((n) => n === 'условие по роли «Фронт?» снято: у глобальной задачи нет роли, путь идёт по «Да»'), res.migration?.notes.join('\n'))
+  const v2 = parseWorkflowJson(exportWorkflowJson(wf))
+  assert.ok('workflow' in v2 && v2.migration === undefined)
 })

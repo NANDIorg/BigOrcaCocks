@@ -2049,3 +2049,14 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
   .onboarding-foot .btn-primary { flex: 1 0 100%; order: -1; }
   .onboarding-foot-gap { display: none; }
 }
+
+/* Воркфлоу глобальной задачи: этап на карточке и в шапке, история этапов, группы подзадач, окно «Подтвердить». */
+.g-chip.stage { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-chip.stage.gate { color: var(--col-review); background: rgba(181,123,238,.12); }
+.gt-hist-stage .gt-hist-pt { background: var(--accent); }
+.gt-hist-stage .gt-hist-what > div:first-child { color: var(--text); }
+.g-accept-check { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 8px; background: var(--side); max-height: 220px; overflow: auto; }
+.g-accept-what { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.g-accept-title { font-weight: 600; }
+.wf-migration { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 8px; background: var(--side); font-size: 12.5px; }
+.wf-migration ul { margin: 0; padding-left: 18px; }

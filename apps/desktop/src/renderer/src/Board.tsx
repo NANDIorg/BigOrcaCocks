@@ -13,6 +13,7 @@ import {
   cardEssenceFor, cardStateLabel, cardState, depsLabel, stageLabel, type CardEssence, type CardState, type CardStateInput
 } from './cardState'
 import { BoardCard } from './BoardCard'
+import { splitByStage, stageGroups } from './runStage'
 import { MoveMenu, type MoveTarget } from './MoveMenu'
 import { onFocusBoard, onRevealOnBoard, scrollBehavior } from './feedLink'
 import { Icon } from './icons'
@@ -173,15 +174,16 @@ export function Board(props: Props): React.JSX.Element {
   const badCount = tasks.filter((t) => info.get(t.id)?.state === 'bad').length
   const progress = boardProgress(tasks.map((t) => kindOf(t.status)))
 
+  // Подзадачи воркфлоу глобальной задачи (`Task.stageOf`) внутри колонки идут группами по этапам; этапов меньше двух — как раньше.
+  const stageInfo = stageGroups(tasks, stageTitles, (status) => kindOf(status) === 'done')
   const views = localBoardColumns(columns)
   const columnItems = new Map<string, Task[]>()
   for (const view of views) {
-    columnItems.set(
-      view.column.id,
-      tasks
-        .filter((t) => view.statuses.includes(t.status) && visible(t))
-        .sort(compareInColumn(kindOf, (a, b) => compareTasks(sort, a, b)))
-    )
+    const inColumn = tasks
+      .filter((t) => view.statuses.includes(t.status) && visible(t))
+      .sort(compareInColumn(kindOf, (a, b) => compareTasks(sort, a, b)))
+    // Порядок карточек — как на экране (по группам этапов): по нему ходят стрелки.
+    columnItems.set(view.column.id, stageInfo ? splitByStage(inColumn, stageInfo).flatMap((g) => g.items) : inColumn)
   }
   const isCollapsed = (view: DisplayColumn): boolean => view.column.kind === 'done' && doneCollapsed
   // Сетка для стрелок: только развёрнутые колонки, слева направо.
@@ -453,7 +455,9 @@ export function Board(props: Props): React.JSX.Element {
           }
           const ready = items.filter((t) => kindOf(t.status) === 'ready')
           const groups: { label?: string; items: Task[] }[] =
-            merged && ready.length > 0 && ready.length < items.length
+            stageInfo
+              ? splitByStage(items, stageInfo)
+              : merged && ready.length > 0 && ready.length < items.length
               ? [
                   { label: t('board.column.ready', { n: ready.length }), items: ready },
                   { label: t('board.column.waitingDeps', { n: items.length - ready.length }), items: items.filter((task) => kindOf(task.status) !== 'ready') }
@@ -494,7 +498,7 @@ export function Board(props: Props): React.JSX.Element {
                 )}
                 {groups.map((g) => (
                   <div key={g.label ?? 'all'} className="card-group">
-                    {g.label && <div className="group-label">{g.label}</div>}
+                    {g.label && <div className="group-label" title={stageInfo ? t('board.stage.groupTitle') : undefined}>{g.label}</div>}
                     {g.items.map((task) => {
                       const ci = info.get(task.id)
                       if (!ci) return null

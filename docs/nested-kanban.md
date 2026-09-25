@@ -237,8 +237,10 @@ needs_input — **вычисляемая** колонка: там карточк
 не поднимается (`globalDisplayStatus`), основное время в ней стоит. Уведомление — `run_done` («Подзадачи сделаны, скоро проверка: …»,
 у `manual` — «Прогон завершён», `apps/desktop/src/main/notify.ts`).
 
-- **Подтвердить** — IPC `globalTasks.accept(id)` → `TaskStore.acceptGlobalTask`: `kind=review` → `kind=done`,
-  без событий. Не на проверке — ошибка «глобальная задача … не на проверке».
+- **Подтвердить** — IPC `globalTasks.accept(id, decision?)` → `TaskStore.acceptGlobalTask`: `kind=review` → `kind=done`,
+  без событий. Не на проверке — ошибка «глобальная задача … не на проверке». У прогона с воркфлоу (`workflowScope: 'run'`)
+  это решение по approval ноды `human` (`docs/workflow.md`), а `decision` — поле «Решение / что делать дальше»: renderer
+  открывает для такого прогона окно с этим полем (`AcceptGlobalModal`), оно уходит в `stage_started` следующего этапа.
 - **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows)` → `ptyId` координатора
   (`returnToWork` в `apps/desktop/src/main/worker.ts`; шаги 1–2 — `returnGlobalTaskToWork` в `coordinator-resume.ts`):
   1. `TaskStore.returnGlobalTask(id, text)`: пустой текст, «Входящие», не на проверке — ошибка, терминалы не трогаются;
@@ -377,7 +379,7 @@ CLI этой команды нет: координатор тип не меня�
 | `tasks(id)` | `globalTasks:tasks` | `Task[]` только этой глобальной | `run not found` |
 | `createTask(id, {title, spec?, deps?, roleId?})` | `globalTasks:createTask` | `Task` (`runId = id`) | пустое название; роль (`pickRole`); deps из другой глобальной; `run not found` |
 | `startCoordinator(id, cols, rows, images?)` | `globalTasks:startCoordinator` | `ptyId` | см. «Повторный запуск» |
-| `accept(id)` | `globalTasks:accept` | `GlobalTask` | не на проверке; `run not found` |
+| `accept(id, decision?)` | `globalTasks:accept` | `GlobalTask` | не на проверке; `run not found`; у прогона с воркфлоу — нет ждущего approval |
 | `returnToWork(id, text, cols, rows)` | `globalTasks:returnToWork` | `ptyId` координатора | пустой текст; «Входящие»; не на проверке; ошибки запуска (см. «Проверка»). Живой прежний координатор — не ошибка: его терминал закрывается |
 
 Изменения приходят как раньше в `board.onChange` (`board:changed {projectId, snapshot}`). Старые
@@ -428,6 +430,13 @@ CLI этой команды нет: координатор тип не меня�
   `GlobalReturns` (новые сверху; `GlobalOverview.tsx`). Старый preload без методов — «перезапустите приложение» (`globalReviewApi`),
   старый main («No handler registered») — то же, его отказ «ещё завершается» — «закройте терминал координатора
   или перезапустите» (`reviewErrorMessage`).
+- **«Проверка» прогона с воркфлоу** (`workflowScope: 'run'`, `isRunWorkflow`) — approval ноды `human` (`docs/workflow.md`). Кнопки те же, но «Подтвердить»
+  открывает окно `AcceptGlobalModal` с необязательным полем «Решение / что делать дальше» и тем, что подтверждается (заголовок и текст ждущего
+  approval — `runApprovalRequest` по `HumanRequest` без `taskId`); решение уходит в `accept(id, decision)` и координатору — в `stage_started` следующего
+  этапа. «Вернуть в работу…» — то же окно замечаний, но с другой подсказкой (`returnHint(…, true)`: граф вернётся по переходу «Вернуть», а не перезапуском
+  координатора; терминал не закрывается, и если main не открыл терминал — `returnToWork` вернул пустой `ptyId` — App его не показывает). Где стоит граф —
+  чип «Этап: …» на карточке и в шапке (`runStageLabel`), входы в этапы — в «Истории», подзадачи в колонках доски — группами по этапам (`stageGroups`).
+  Запрос не в «Проверке» (нода `human` с другой колонкой) виден в Инбоксе и на карточке в «Нужен ответ» (`RequestCard`, `where` — «прогон › нода»).
 
 ## Проверки
 
@@ -511,6 +520,7 @@ CLI этой команды нет: координатор тип не меня�
       Ограничение: `tail` из реестра main уже очищен от CSI целиком (`ptyTail` в `main/pty.ts`), поэтому часть, взятая из
       реестра, у TUI-агентов идёт со слипшимися словами; куски `pty.onData` после открытия вкладки — с пробелами.
   - `GlobalHistory.tsx` («История»): единая лента по дням, новые сверху (`groupByDay`), строки — время, точка цвета колонки и текст.
+    Для прогона с воркфлоу в ленте есть и входы в этапы (`stageHistory`, `workflow` — граф прогона: живые названия и скрытые старт/условие).
     События собирает `globalTimeline.ts` (`globalTimeline`): «Создана» (`createdAt`; первая запись `statusHistory` в пределах 2 с от
     создания сливается с ней и даёт «в «Бэклог»»), «Переход в «колонку»» (`statusHistory`: источник и сколько пробыла в статусе; стартовая
     запись миграции — «≈», это не настоящий переход), «Вернули с проверки» (`returns` — **выделено**: цитата с полосой цвета «Проверки»,

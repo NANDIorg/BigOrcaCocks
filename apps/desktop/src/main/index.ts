@@ -674,7 +674,8 @@ function registerIpc(): void {
   handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
     runCoordinator('', undefined, cols, rows, validateImageAttachments(images), id)
   )
-  handle('globalTasks:accept', (_e, id: string) => projects.activeStore().acceptGlobalTask(id))
+  handle('globalTasks:accept', (_e, id: string, decision?: string) =>
+    projects.activeStore().acceptGlobalTask(id, typeof decision === 'string' ? decision : undefined))
   handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number) => {
     const p = resolveProject()
     return returnToWork(p.store, p.root, ctx(p.id, id), id, typeof text === 'string' ? text : '', cols, rows).ptyId

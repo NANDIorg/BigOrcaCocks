@@ -555,8 +555,12 @@ export interface OrcaApi {
      * Новые подзадачи координатора попадают в неё же. Второй живой координатор — ошибка.
      */
     startCoordinator(id: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
-    /** «Подтвердить» на «Проверке»: из колонки kind=review в done, событий нет. Не на проверке — ошибка. */
-    accept(id: string): Promise<GlobalTask>
+    /**
+     * «Подтвердить» на «Проверке»: из колонки kind=review в done, событий нет. Не на проверке — ошибка.
+     * У прогона с воркфлоу (`workflowScope: 'run'`) это решение по approval ноды `human`, а `decision` — поле
+     * «Решение / что делать дальше» (получит координатор в следующем этапе); у прогона старого формата не используется.
+     */
+    accept(id: string, decision?: string): Promise<GlobalTask>
     /**
      * «Вернуть в работу» с «Проверки» с уточнением (`text` обязателен): задача — в работу, координатор
      * запускается повторно и получает уточнение в цели. Возвращает ptyId координатора.

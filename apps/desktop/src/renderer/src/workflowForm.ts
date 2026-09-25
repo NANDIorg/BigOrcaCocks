@@ -1,10 +1,10 @@
 import {
-  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflow, wfWorkRoleIds,
-  type Role, type WfCondition, type WfNode, type WfNodeType, type WfOutcome, type Workflow
+  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflowReport, wfWorkRoleIds,
+  type Role, type WfCondition, type WfMigrationNote, type WfNode, type WfNodeType, type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { NODE_H, NODE_W } from './workflowGeometry'
 import { connect, makeNode, uniqueId } from './workflowEdit'
-import { t } from './i18n'
+import { t, type TKey } from './i18n'
 import { nodeTitle } from './defaultTitles'
 import { patchGit, type WfGitPatch } from './workflowGit'
 
@@ -178,12 +178,40 @@ export function workflowFileName(projectName: string): string {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** Что показать человеку после импорта графа старой версии: версия файла и что миграция в нём изменила. */
+export interface WorkflowMigrationInfo {
+  fromVersion: number
+  /** Тексты на языке интерфейса (по коду замечания `WfMigrationNote.code`, а не по русскому тексту core). */
+  notes: string[]
+}
+
+/**
+ * Замечания миграции v1 → v2 на языке интерфейса. Снятые ноды есть только в исходном графе (`before`), поэтому названия
+ * берутся из него, а роль вопроса — из результата (`after`). `noHumanBeforeEnd` не дублируем: его показывает валидация графа.
+ */
+export function migrationNoteTexts(notes: readonly WfMigrationNote[], before: Workflow, after: Workflow): string[] {
+  const nameOf = (id: string | undefined): string => {
+    const node = before.nodes.find((n) => n.id === id) ?? after.nodes.find((n) => n.id === id)
+    return node ? nodeTitle(node) : id ?? ''
+  }
+  return notes
+    .filter((n) => n.code !== 'noHumanBeforeEnd')
+    .map((n) => {
+      const old = before.nodes.find((x) => x.id === n.nodeId)
+      const current = after.nodes.find((x) => x.id === n.nodeId)
+      const params: Record<string, string> = { node: nameOf(n.nodeId) }
+      if (n.code === 'askRoleSet' && current?.type === 'ask') params.role = current.roleId ?? ''
+      if (n.code === 'attemptsTargetRemoved' && old?.type === 'condition' && old.test.kind === 'attempts') params.target = nameOf(old.test.node)
+      return t(`config.wf.migration.${n.code}` as TKey, params)
+    })
+}
+
 /**
  * Разбор файла импорта. Проверяется только форма (граф ли это вообще): смысловые ошибки — нет роли, нет
  * перехода — покажет validateWorkflow в редакторе, и граф можно будет поправить перед сохранением.
  * Старая версия формата поднимается migrateWorkflow, будущая — ошибка.
  */
-export function parseWorkflowJson(text: string): { workflow: Workflow } | { error: string } {
+export function parseWorkflowJson(text: string): { workflow: Workflow; migration?: WorkflowMigrationInfo } | { error: string } {
   let data: unknown
   try {
     data = JSON.parse(text)
@@ -210,7 +238,10 @@ export function parseWorkflowJson(text: string): { workflow: Workflow } | { erro
     }
   }
   // Форма проверена выше; остальное (порты, ссылки) — дело validateWorkflow.
-  return { workflow: migrateWorkflow(data as unknown as Workflow) }
+  const raw = data as unknown as Workflow
+  const { workflow, notes } = migrateWorkflowReport(raw)
+  const texts = migrationNoteTexts(notes, raw, workflow)
+  return raw.version < WORKFLOW_VERSION ? { workflow, migration: { fromVersion: raw.version, notes: texts } } : { workflow }
 }
 
 // ---------- пресет «3 отказа → человек» ----------

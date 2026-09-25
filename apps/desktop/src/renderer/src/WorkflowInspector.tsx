@@ -7,7 +7,7 @@ import { Icon, WfNodeIcon } from './icons'
 import { issueTargets, removeSelected, wfOutcomeLabel, type WfSelection } from './workflowEdit'
 import { WF_NODE_HELP } from './workflowHelp'
 import {
-  GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, isGitOperation, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
+  GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, isGitOperation, isUnavailableGitOperation, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
 } from './workflowGit'
 import {
   WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, conditionOfKind, hasColumn, nodeOptionLabel, patchNode, portTarget,
@@ -320,6 +320,9 @@ function GitFields({ node, onChange }: { node: WfGitNode; onChange(patch: WfGitP
         <span>{t('config.wf.git.operation')}</span>
         <select value={node.operation ?? ''} onChange={(e) => onChange({ operation: e.target.value as WfGitNode['operation'] })}>
           {GIT_OPERATIONS.map((op) => <option key={op} value={op}>{gitOperationTitle(op)}</option>)}
+          {isUnavailableGitOperation(node.operation) && (
+            <option value={node.operation} disabled>{t('config.wf.git.opUnavailable', { op: gitOperationTitle(node.operation) })}</option>
+          )}
           {!isGitOperation(node.operation) && <option value={node.operation ?? ''}>{gitOperationTitle(node.operation)}</option>}
         </select>
       </label>
@@ -382,7 +385,8 @@ function ConditionFields({ node, workflow, roles, onChange }: {
         <span>{t('config.wf.insp.condition')}</span>
         <select value={c.kind} onChange={(e) => onChange(conditionOfKind(workflow, e.target.value as 'attempts' | 'role'))}>
           <option value="attempts">{t('config.wf.insp.condAttempts')}</option>
-          <option value="role">{t('config.wf.insp.condRole')}</option>
+          {/* Условие по роли в воркфлоу глобальной задачи не работает: новое не предлагаем, старое (из файла) остаётся видно. */}
+          {c.kind === 'role' && <option value="role" disabled>{t('config.wf.insp.condRoleLegacy')}</option>}
           {c.kind === 'files' && <option value="files" disabled>{t('config.wf.insp.condFiles')}</option>}
         </select>
       </label>

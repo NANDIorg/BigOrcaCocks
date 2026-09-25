@@ -2,7 +2,7 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { GlobalTask } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
-import { returnHint, reviewErrorMessage } from './globalReview'
+import { isRunWorkflow, returnHint, reviewErrorMessage } from './globalReview'
 import { useT } from './i18n'
 
 interface Props {
@@ -70,7 +70,7 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, 
             placeholder={t('global.return.placeholder')}
           />
         </label>
-        <span className="muted g-return-hint">{returnHint(closesCoordinator)} {t('global.return.send')}</span>
+        <span className="muted g-return-hint">{returnHint(closesCoordinator, isRunWorkflow(global))} {t('global.return.send')}</span>
         {error && <span className="error-text">{error}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>{t('global.cancel')}</button>
