@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Workflow } from '@orca-board/core'
 import {
-  cardEssence, cardEssenceFor, cardState, depsLabel, filesLabel, shortText, stageLabel, wfNodeTitles,
+  cardEssence, cardEssenceFor, cardState, depsLabel, filesLabel, requestStageLabel, shortText, stageLabel, wfNodeTitles,
   type CardStateInput
 } from './cardState'
 
@@ -165,4 +165,18 @@ test('cardEssenceFor: задача из ленты без своей сути п
   // своя суть важнее запасной
   const review = base({ kind: 'review' })
   assert.equal(cardEssenceFor(review, cardState(review), true)?.text, 'Ждёт ревью')
+})
+
+test('requestStageLabel: метка этапа только у вопроса с известной нодой', () => {
+  const t = { ask1: 'Уточнение', work: 'Работа' }
+  assert.equal(requestStageLabel({ kind: 'question', nodeId: 'ask1' }, t), 'Этап «Уточнение»')
+  assert.equal(requestStageLabel({ kind: 'question' }, t), undefined, 'обычный вопрос — без метки')
+  assert.equal(requestStageLabel({ kind: 'question', nodeId: 'gone' }, t), undefined, 'ноды нет в графе — id не показываем')
+  assert.equal(requestStageLabel({ kind: 'question', nodeId: 'ask1' }, undefined), undefined)
+  assert.equal(requestStageLabel({ kind: 'approval', nodeId: 'work' }, t), undefined, 'у approval нода — «Человек», метка не нужна')
+})
+
+test('пилюля этапа для ask — как у любой ноды: название из графа', () => {
+  const ask = wfNodeTitles({ version: 1, nodes: [{ id: 'q', type: 'ask', x: 0, y: 0, instructions: 'x' }], edges: [] })
+  assert.equal(stageLabel({ stage: { nodeId: 'q', visits: { q: 1 } } }, ask, () => undefined)?.text, 'Вопрос человеку')
 })

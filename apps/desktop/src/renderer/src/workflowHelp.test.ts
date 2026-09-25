@@ -36,3 +36,11 @@ test('справка «Работы» описывает поля этапа и 
   assert.match(details, /показ/i)
   assert.match(WF_NODE_HELP.human.details, /показ/i)
 })
+
+test('справка «Вопроса человеку»: один исход next, поля из инспектора, вопросы идут человеку', () => {
+  const { fields, outcomes, actor } = WF_NODE_HELP.ask
+  assert.deepEqual(Object.keys(outcomes), ['next'])
+  for (const label of ['Роль', 'О чём спросить']) assert.ok(fields.some((f) => f.startsWith(`${label} — `)), `нет описания поля «${label}»`)
+  assert.match(actor, /минуя координатора/)
+  assert.ok(WF_ADDABLE_TYPES.includes('ask') && WF_TYPE_ORDER.includes('ask'))
+})
