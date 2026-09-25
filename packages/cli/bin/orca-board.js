@@ -42,7 +42,7 @@ const HELP = `orca-board — управление доской агентов
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
   global list                             карточки: название, описание, статус-колонка, priority, прогресс подзадач,
                                           typeId и typeTitle — тип задачи, coordinatorAlive — жив ли терминал координатора
-  global get [--global <id>]              одна карточка (с coordinatorAlive)
+  global get [--global <id>]              одна карточка (с coordinatorAlive); git.branch — ветка глобальной задачи, куда сливаются подзадачи
   global create [--title "..."] [--description "..."] [--status <id колонки>]
                 [--priority urgent|high|normal|low]   приоритет глобальной задачи, по умолчанию normal
                 [--type <id из types list>]   тип задачи (роли, воркфлоу, правила); без него — тип проекта
