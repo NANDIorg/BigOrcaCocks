@@ -1,11 +1,12 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   globalTaskTitle, isProtectedBranch, runBranchName, runBranchSettingsProblems,
-  type RunBranchSettings, type RunGit, type Task, type TaskStore
+  type Run, type RunBranchSettings, type RunGit, type Task, type TaskStore
 } from '@orca-board/core'
-import { currentBranch } from './git'
+import { currentBranch, mergeBranch, removeWorktreeKeepBranch } from './git'
 import { OrcaError } from './i18n'
 
 // Ветка глобальной задачи (docs/architecture.md → «Ветка глобальной задачи»). Раньше подзадачи ответвлялись от HEAD
@@ -136,6 +137,104 @@ export function mergeTarget(store: TaskStore, repoRoot: string, task: Pick<Task,
   return { cwd: repoRoot, branch }
 }
 
+/** Итог слияния ветки глобальной задачи в её базу (`mergeRunBranch`). */
+export type RunMergeResult =
+  /** Слито (или сливать нечего: база уже содержит ветку). `into` — локальная ветка, в которую слито. */
+  | { kind: 'ok'; into: string }
+  /** git не слил ветку (текст в `error`), база не тронута: конфликт разрешают в ветке глобальной задачи. */
+  | { kind: 'conflict'; error: string }
+  /** Слить нельзя, и повтор без правки настройки или репозитория не поможет: причина по-русски, с подсказкой. */
+  | { kind: 'blocked'; reason: string }
+
+/**
+ * Локальная ветка, в которую сливать: база — сама локальная ветка (`develop`) или `<remote>/<ветка>` (`origin/develop`
+ * → `develop`: слить можно только в локальную ветку, remote-ветку двигает push). Коммит и неизвестное имя — undefined.
+ */
+function localBaseBranch(repoRoot: string, base: string): string | undefined {
+  if (branchExists(repoRoot, base)) return base
+  const [remote, ...rest] = base.split('/')
+  if (rest.length === 0) return undefined
+  try {
+    if (git(repoRoot, ['remote']).split('\n').includes(remote)) return rest.join('/')
+  } catch {
+    /* не git-репозиторий — ниже ветку не найдём */
+  }
+  return undefined
+}
+
+/** Каталог worktree, где ветка выгружена (корень или чужой worktree), — из `git worktree list --porcelain`. */
+function checkedOutAt(repoRoot: string, branch: string): string | undefined {
+  let current: string | undefined
+  for (const line of git(repoRoot, ['worktree', 'list', '--porcelain']).split('\n')) {
+    if (line.startsWith('worktree ')) current = line.slice('worktree '.length)
+    else if (line === `branch refs/heads/${branch}`) return current
+  }
+  return undefined
+}
+
+/**
+ * Нода `merge` воркфлоу глобальной задачи: слить ветку фичи в `RunGit.base`. Корень проекта не переключается:
+ * - база выгружена в корне (или другом worktree) и там чисто — сливаем прямо там; с незакоммиченными правками —
+ *   `blocked` (merge в грязное дерево может их задеть, а временный worktree на занятую ветку git не даст);
+ * - иначе — временный worktree базы (`git worktree add <tmp> <база>` → `merge --no-ff` → `worktree remove`).
+ * Защищённые ветки (`RunBranchSettings.protected`, как у `mergeTarget`) не сливаем никогда: `blocked` с подсказкой
+ * заменить `merge` на `git push` и PR. Все вызовы — `execFileSync('git', […])`.
+ */
+export function mergeRunBranch(repoRoot: string, g: RunGit, settings: RunBranchSettings, message: string): RunMergeResult {
+  const target = localBaseBranch(repoRoot, g.base)
+  if (!target) {
+    return { kind: 'blocked', reason: `база «${g.base}» — не ветка (коммит или неизвестное имя): слить в неё нельзя. Замените merge в воркфлоу на git push и создайте PR` }
+  }
+  if (isProtectedBranch(target, settings.protected) || isProtectedBranch(g.base, settings.protected)) {
+    return {
+      kind: 'blocked',
+      reason: `слияние в защищённую ветку «${target}» запрещено (настройка «О проекте → Git»). Замените merge в воркфлоу на git push и создайте PR`
+    }
+  }
+  if (!branchExists(repoRoot, target)) {
+    return { kind: 'blocked', reason: `локальной ветки «${target}» нет: создайте её (git branch ${target} ${g.base}) и повторите` }
+  }
+  if (!branchExists(repoRoot, g.branch)) return { kind: 'blocked', reason: `ветки глобальной задачи «${g.branch}» нет — сливать нечего` }
+  const merge = (cwd: string): RunMergeResult => {
+    try {
+      mergeBranch(cwd, g.branch, message)
+      return { kind: 'ok', into: target }
+    } catch (e) {
+      return { kind: 'conflict', error: (e as Error).message }
+    }
+  }
+  const at = checkedOutAt(repoRoot, target)
+  if (at) {
+    if (git(at, ['status', '--porcelain']) !== '') {
+      return { kind: 'blocked', reason: `ветка «${target}» выгружена в ${at} с незакоммиченными изменениями: закоммитьте или уберите их и повторите слияние` }
+    }
+    return merge(at)
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'orca-merge-'))
+  const worktree = join(dir, 'base')
+  try {
+    git(repoRoot, ['worktree', 'add', '-q', worktree, target])
+    return merge(worktree)
+  } catch (e) {
+    return { kind: 'blocked', reason: `не удалось подготовить временный worktree ветки «${target}»: ${gitError(e)}` }
+  } finally {
+    try {
+      removeWorktreeKeepBranch(repoRoot, worktree)
+    } catch {
+      /* временный worktree не критичен: `worktree prune` снимет запись позже */
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * В воркфлоу глобальной задачи есть `git push`: ветку пушит нода графа, авто-push при закрытии (`RunBranchSync`)
+ * для такого прогона выключен — иначе она ушла бы на remote дважды.
+ */
+export function workflowPushes(run: Pick<Run, 'workflowScope' | 'workflow'>): boolean {
+  return run.workflowScope === 'run' && (run.workflow?.nodes.some((n) => n.type === 'git' && n.operation === 'push') ?? false)
+}
+
 /** База для «что накопилось в ветке задачи» (ревью): ветка глобальной задачи или текущая ветка корня. */
 export function reviewBase(store: TaskStore, repoRoot: string, task: Pick<Task, 'runId'>): string {
   const run = task.runId ? store.getRun(task.runId) : undefined
@@ -162,7 +261,8 @@ export interface RunBranchSyncDeps {
 
 /**
  * Хвост жизни ветки глобальной задачи, по любому изменению доски (`projects.onChange`):
- * - прогон закрыт (карточка на «Проверке») и включён push — `git push -u <remote> <ветка>` в фоне, итог в `Run.git`;
+ * - прогон закрыт (карточка на «Проверке» или в «Сделано») и включён push — `git push -u <remote> <ветка>` в фоне, итог
+ *   в `Run.git`; прогону, у которого воркфлоу сам пушит (`workflowPushes`), авто-push не нужен;
  * - карточка в «Сделано», координатора и воркеров нет — worktree убирается, ветка остаётся.
  * Состояние попыток — в памяти: неудачный push не повторяется на каждом изменении доски (только после нового
  * закрытия или перезапуска), неудачная уборка — до перезапуска.
@@ -178,7 +278,7 @@ export class RunBranchSync {
     for (const run of store.listRuns()) {
       const g = run.git
       if (!g) continue
-      if (settings.push && run.closedAt !== undefined && (g.pushedAt ?? 0) < run.closedAt &&
+      if (settings.push && !workflowPushes(run) && run.closedAt !== undefined && (g.pushedAt ?? 0) < run.closedAt &&
           this.pushTried.get(run.id) !== run.closedAt && !this.pushing.has(run.id)) {
         this.pushTried.set(run.id, run.closedAt)
         this.push(store, repoRoot, run.id, g.branch, settings.remote)

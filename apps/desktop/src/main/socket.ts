@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import {
   EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
+  type RequestResolution, type Run, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
@@ -29,6 +29,11 @@ export interface ProjectDeps {
   accept(taskId: string, decision?: string): void
   /** `review reject`: на этапе проверки — исход reject по воркфлоу, иначе ready с замечаниями. */
   reject(taskId: string, feedback: string): unknown
+  /**
+   * `stage finish`: закрыть этап «Работа» прогона и выполнить эффекты следующей ноды (`finishRunStage` в workflow-run.ts).
+   * Только через него: store делает лишь переход, а проверку, запрос человеку, мерж и конец создаёт движок прогона.
+   */
+  finishStage(runId: string, summary?: string): { run: Run; action: WfAction }
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
   resolveRequest(id: string, resolution: RequestResolution): unknown
   /**
@@ -600,13 +605,14 @@ const handlers: Record<string, Handler> = {
     return store.closeRun(id)
   },
   // Координатор набрал агентов на этапе «Работа» и закрывает его: граф идёт дальше исходом next. Переход делает
-  // store (`finishStage`), эффекты новой ноды — проверка, запрос человеку, мерж — движок прогона по `stage_changed`.
+  // store (`finishStage`), эффекты новой ноды — проверка, запрос человеку, мерж — движок прогона: сокет зовёт его
+  // `finishStage` из deps, а не store напрямую (`stage_changed` эффектов не запускает).
   'stage.finish': (r, deps, store) => {
     const id = str(r.params.run)
     if (!id) throw new Error('--run обязателен')
     if (r.params.summary === true) throw new Error('--summary требует текста сводки')
     const from = store.getRun(id)?.stage?.nodeId
-    const { run, action } = store.finishStage(id, { summary: str(r.params.summary), ...runFallback(deps.resolveRun(id)) })
+    const { run, action } = deps.finishStage(id, str(r.params.summary))
     return {
       run: id,
       finished: from,
