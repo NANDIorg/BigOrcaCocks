@@ -7,7 +7,8 @@ import type { UpdateSupport } from './updater'
 /** Репозиторий с релизами. Публичный: токен не нужен. */
 export const RELEASES_REPO = { owner: 'NANDIorg', repo: 'BigOrcaCocks' } as const
 /** Откуда берётся манифест: `latest` — последний опубликованный (не draft, не prerelease) релиз. */
-export const LATEST_DOWNLOAD_URL = `https://github.com/${RELEASES_REPO.owner}/${RELEASES_REPO.repo}/releases/latest/download`
+const RELEASES_URL = `https://github.com/${RELEASES_REPO.owner}/${RELEASES_REPO.repo}/releases`
+export const LATEST_DOWNLOAD_URL = `${RELEASES_URL}/latest/download`
 
 /** Один файл релиза из `latest-mac.yml`. `sha512` — base64, как пишет electron-builder. */
 export interface UpdateFile {
@@ -84,14 +85,21 @@ export function pickMacZip(files: UpdateFile[], arch: string): UpdateFile | null
 }
 
 /**
- * Имя файла релиза → URL скачивания. Принимаем только простое имя: без `/`, `\`, `..` — иначе манифест мог бы
+ * Имя файла релиза → URL скачивания **по тегу найденной версии** (`releases/download/v<версия>/<файл>`), а не по `latest`:
+ * если между проверкой и загрузкой вышел ещё один релиз, `latest/download` отдал бы файл новой версии, и sha512 из
+ * манифеста старой не сошёлся бы. Принимаем только простое имя: без `/`, `\`, `..` — иначе манифест мог бы
  * увести загрузку на чужой адрес или выйти из каталога загрузки.
  */
-export function assetUrl(name: string): string {
+export function assetUrl(name: string, version: string): string {
   if (!name || /[\\/]/.test(name) || name.includes('..') || /[\0-\x1f]/.test(name)) {
     throw new Error(`в latest-mac.yml недопустимое имя файла «${name}»`)
   }
-  return `${LATEST_DOWNLOAD_URL}/${encodeURIComponent(name)}`
+  return `${RELEASES_URL}/download/${encodeURIComponent(releaseTag(version))}/${encodeURIComponent(name)}`
+}
+
+/** Тег релиза по версии: `0.2.0` → `v0.2.0` (так называет теги воркфлоу релиза). */
+export function releaseTag(version: string): string {
+  return `v${version.replace(/^v/, '')}`
 }
 
 interface Semver {
@@ -255,6 +263,8 @@ export function bundleMismatch(
  * Скрипт подмены. Запускается detached через `/bin/sh <script> <аргументы>`; пути приходят позиционными аргументами,
  * а не подставляются в текст — никакой shell-инъекции через имена файлов.
  * Аргументы: PID TARGET NEW STAGE PREVIOUS LOG.
+ *  0. берёт lock (`PREVIOUS.lock`, внутри pid скрипта): два одновременно ждущих скрипта гонялись бы — второй
+ *     удалял бы PREVIOUS во время `ditto` первого. Lock занят живым скриптом — выходит; хозяин умер — lock забирается;
  *  1. ждёт выхода PID (не дольше 10 минут: если человек отменил выход, скрипт молча завершается);
  *  2. переносит старый .app в PREVIOUS, копирует новый `ditto` (сохраняет подпись и атрибуты);
  *  3. при любой ошибке возвращает старый .app и запускает его;
@@ -264,6 +274,15 @@ export function bundleMismatch(
 export const INSTALL_SCRIPT = `#!/bin/sh
 PID="$1"; TARGET="$2"; NEW="$3"; STAGE="$4"; PREV="$5"; LOG="$6"
 log() { printf '%s %s\\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
+LOCK="$PREV.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  OWNER="$(cat "$LOCK/pid" 2>/dev/null)"
+  if [ -n "$OWNER" ] && kill -0 "$OWNER" 2>/dev/null; then log "другая установка уже идёт (pid $OWNER) — выходим"; exit 0; fi
+  rm -rf "$LOCK"
+  mkdir "$LOCK" 2>/dev/null || { log "не удалось взять lock $LOCK"; exit 1; }
+fi
+echo "$$" > "$LOCK/pid"
+trap 'rm -rf "$LOCK"' EXIT
 log "старт: заменяем $TARGET на $NEW, ждём выхода pid $PID"
 
 i=0
