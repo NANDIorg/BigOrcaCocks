@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
+  DEFAULT_COLUMNS, STORE_FORMAT_VERSION, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
   type TaskPriority
 } from '@orca-board/core'
@@ -57,7 +57,7 @@ const toOpenTerminal = (t: TerminalInfo): OpenTerminal => ({
   runId: t.runId
 })
 
-const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [], runs: [], requests: [] }
+const EMPTY: StoreSnapshot = { formatVersion: STORE_FORMAT_VERSION, tasks: [], dispatches: [], events: [], questions: [], runs: [], requests: [] }
 
 /** Что открыто у проекта: вкладка, выбранный терминал и открытая глобальная задача. У каждого проекта своё. */
 interface ProjectView {

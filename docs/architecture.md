@@ -1155,8 +1155,9 @@ UI работает с активным проектом; воркеры и ко
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
-`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings> }`
-(`settings` — глобальные настройки приложения, см. «Фоновый режим»).
+`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion? }`
+(`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
+запуска, см. «Безопасность состояния»).
 - `Project { id, root, name, enabledAgents?, columns?, taskTypeIds?, defaultTaskTypeId?, legacyTypeId? }`. Ролей, графа,
   правил агентов и разрешений у проекта нет — они у типа. `taskTypeIds` нет — доступны все типы библиотеки;
   `defaultTaskTypeId` — тип глобальных задач без выбранного типа, координатора и «Входящих»; `legacyTypeId` — тип,
@@ -1229,6 +1230,38 @@ UI работает с активным проектом; воркеры и ко
 проекта. Незакрытый dispatch и задача на гейте после миграции продолжают: граф — из `Run.workflow`, роли — из типа
 «<имя проекта>» = бывших ролей проекта. Правка или удаление этого типа (`saveTaskType`, `deleteTaskType`) сначала
 загружает доски проектов с таким `legacyTypeId` (`settleLegacyRuns`): старые прогоны получают снимок прежнего типа.
+
+
+### Безопасность состояния
+
+Файлы состояния (`projects.json`, `boards/<id>.json`) — единственная копия работы человека, поэтому:
+
+- **Атомарная запись.** `writeFileAtomic` (`src/main/persistence.ts`): пишем в `<файл>.tmp`, затем `renameSync` (в пределах
+  каталога атомарен). Обрыв посреди записи оставляет старый файл целым; при ошибке `.tmp` убирается. Так пишут и
+  `jsonPersistence`, и `ProjectManager.save()`.
+- **Битый файл не превращается в пустую доску молча.** `readJsonFile` при ошибке разбора (или корне не-объекте) переименовывает
+  файл в `<файл>.corrupt-<ts>`, возвращает «пусто» и `StateWarning { kind: 'corrupt', file, movedTo, message }`.
+  Предупреждения копит `ProjectManager.stateWarnings()` (проекты и открытые доски); канала в renderer пока нет —
+  его добавит задача IPC-контракта.
+- **`formatVersion` доски.** `StoreSnapshot.formatVersion` (`STORE_FORMAT_VERSION = 1`, `packages/core/src/store.ts`).
+  Файл без поля — до его появления: `TaskStore` при загрузке проставляет версию и сохраняет (`migrateFormatVersion` в
+  общем списке миграций конструктора). Версия выше известной — `assertStoreFormat` бросает «доска сохранена более
+  новой версией … — обновите приложение» **до любых записей**, файл остаётся как есть (образец —
+  `validateWorkflow`). Мусорная версия (не целое, < 1) — тоже отказ. Поднимать константу нужно, когда формат меняется
+  так, что старый код потеряет данные; новое необязательное поле версию не поднимает.
+- **Бэкап при смене версии.** `backupOnVersionChange(userData, app.getVersion())` (`src/main/backup.ts`) вызывается
+  в `whenReady` ДО `new ProjectManager` — миграции переписывают файлы, а бэкап хранит формат старой версии. Если
+  `lastRunVersion` из `projects.json` отличается от текущей, `projects.json` и `boards/*.json` копируются в
+  `userData/backups/<старая версия>/`, остаются 3 последних каталога (`pruneBackups`, по времени изменения). Версия
+  проставляется в `projects.json` сразу после копирования (иначе падение до загрузки менеджера привело бы к
+  повторному бэкапу уже мигрированных файлов поверх исходных); `ProjectManager.markRun()` покрывает первый запуск.
+  Файл без `lastRunVersion` (до появления поля) бэкапится как `unknown`. Первый запуск (файлов нет) — без бэкапа.
+- **«Только что обновились».** `getJustUpdatedFrom()` возвращает версию, с которой пришли в этом запуске, или `null`.
+  Только при переходе на более новую версию (`compareVersions`): откат назад и `unknown` — не обновление. Отдавать в
+  renderer будет задача IPC-контракта обновлений.
+- **Один экземпляр.** `app.requestSingleInstanceLock()` в начале `src/main/index.ts`: второй экземпляр вызывает
+  `app.exit(0)`, первый по `second-instance` показывает окно (`showWindow`). Иначе второй отобрал бы сокет и писал бы в
+  те же файлы. Блокировка привязана к `userData`, изолированный `pnpm dev` со своим `userData` работает рядом.
 
 ## Статистика (`packages/core/src/stats.ts`, типы — `types.ts`, IPC `stats:project`)
 
@@ -1543,6 +1576,15 @@ ad-hoc, и приложение падает при запуске. Провер
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
 
 ## Грабли разработки
+
+- Запись состояния шла прямо в `projects.json` / `boards/<id>.json` (`writeFileSync`), а битый JSON при загрузке молча
+  становился пустой доской и затирался при следующей записи. Теперь запись атомарная, битый файл откладывается в
+  `.corrupt-<ts>`, доска из будущего формата не открывается (см. «Безопасность состояния»). Новый код записи
+  состояния — только через `writeFileAtomic`; чтение — через `readJsonFile`. В бэкапе (`backup.ts`) читать
+  `projects.json` напрямую (`JSON.parse`), а не через `readJsonFile`: тот переименовывает битый файл, и бэкап «как есть»
+  сломался бы (поймал тест).
+- Тесты, отдающие `TaskStore` готовый снапшот и проверяющие «не сохраняется» (`saved.length === 0`), должны класть в него
+  `formatVersion: STORE_FORMAT_VERSION`, иначе миграция формата сохранит файл (`active-time.test.ts`).
 
 - `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has
