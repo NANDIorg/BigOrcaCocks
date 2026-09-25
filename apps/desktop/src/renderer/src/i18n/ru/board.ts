@@ -28,6 +28,7 @@ export default {
   'stage.gateTitle': 'Задача-гейт: проверяет ветку рабочей задачи',
   'stage.visit': '{name} · {n}-й заход',
   'stage.title': 'Этап воркфлоу: {text}',
+  'stage.request': 'Этап «{name}»',
   'deps.title': 'Ждёт: {names}',
   'deps.one': '⧗ ждёт: {name}',
   'deps.many': { one: '⧗ ждёт {count} задачу', few: '⧗ ждёт {count} задачи', many: '⧗ ждёт {count} задач' },

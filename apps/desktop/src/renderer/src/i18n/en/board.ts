@@ -26,6 +26,7 @@ export default {
   'stage.gateTitle': 'Gate task: checks the branch of a work task',
   'stage.visit': '{name} · pass {n}',
   'stage.title': 'Workflow stage: {text}',
+  'stage.request': 'Stage “{name}”',
   'deps.title': 'Waiting on: {names}',
   'deps.one': '⧗ waiting on: {name}',
   'deps.many': { one: '⧗ waiting on {count} task', other: '⧗ waiting on {count} tasks' },

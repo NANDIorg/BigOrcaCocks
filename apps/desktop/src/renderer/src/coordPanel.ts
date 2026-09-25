@@ -1,5 +1,7 @@
 import { AGENT_TITLES, type AgentSession, type ColumnKind } from '@orca-board/core'
 import { formatDuration } from './duration'
+import { t } from './i18n'
+import { formatDateTime } from './i18n/format'
 
 /** Состояние координатора на вкладке: работает, ждёт человека или не запущен. */
 export type CoordState = 'working' | 'waiting' | 'stopped'
@@ -13,10 +15,9 @@ export function coordState(live: boolean, waiting: number | undefined, kind: Col
   return (waiting ?? 0) > 0 || kind === 'needs_input' ? 'waiting' : 'working'
 }
 
-export const COORD_STATE_TEXT: Record<CoordState, string> = {
-  working: 'Координатор работает',
-  waiting: 'Координатор ждёт вас',
-  stopped: 'Координатор не запущен'
+/** Подпись состояния координатора на текущем языке. */
+export function coordStateText(state: CoordState): string {
+  return t(`shell.coord.state.${state}`)
 }
 
 /** Строка списка запусков. */
@@ -34,13 +35,13 @@ export interface SessionRow {
 }
 
 function stamp(ts: number): string {
-  return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return formatDateTime(ts, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 /** Конец периода в тот же день, что и начало, — только время: «24.09, 10:05 — 14:33». */
 function endStamp(start: number, end: number): string {
-  const day = (t: number): string => new Date(t).toDateString()
-  return day(start) === day(end) ? new Date(end).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : stamp(end)
+  const day = (ts: number): string => new Date(ts).toDateString()
+  return day(start) === day(end) ? formatDateTime(end, { hour: '2-digit', minute: '2-digit' }) : stamp(end)
 }
 
 /**
@@ -67,9 +68,9 @@ export function sessionRows(sessions: readonly AgentSession[] | undefined, liveP
       const end = s.endedAt ?? (live ? now : undefined)
       return {
         key: `${s.ptyId}:${s.startedAt}`,
-        title: `Запуск ${i + 1}`,
+        title: t('shell.coord.session', { n: i + 1 }),
         agent: s.model ? `${title} · ${s.model}` : title,
-        period: `${stamp(s.startedAt)} — ${s.endedAt !== undefined ? endStamp(s.startedAt, s.endedAt) : live ? 'сейчас' : 'конец неизвестен'}`,
+        period: `${stamp(s.startedAt)} — ${s.endedAt !== undefined ? endStamp(s.startedAt, s.endedAt) : live ? t('shell.coord.now') : t('shell.coord.endUnknown')}`,
         ...(end !== undefined ? { duration: formatDuration(Math.max(0, end - s.startedAt)) } : {}),
         live
       }

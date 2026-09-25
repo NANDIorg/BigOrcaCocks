@@ -3,6 +3,7 @@ import {
   type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState } from '../../shared/ipc'
+import { t } from './i18n'
 
 // Логика «Настройки → Типы задач» (settings/TaskTypePane.tsx) и «О проекте → Типы задач»
 // (about/TaskTypesSection.tsx): без React, чтобы тестировать node --test.
@@ -11,12 +12,13 @@ import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeI
  * Renderer приходит по HMR, а main и preload остаются старыми до перезапуска: у старого preload нет
  * `window.orca.taskTypes` и `projects.setTaskTypes`, у старого main — хендлеров `taskTypes:*`.
  */
-export const TASK_TYPES_STALE_MESSAGE =
-  'Приложение запущено со старой версией main/preload, где ещё нет типов задач. Перезапустите приложение.'
+export function taskTypesStaleMessage(): string {
+  return t('config.taskType.stale')
+}
 
 /** `window.orca.taskTypes` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function taskTypeLibraryApi(api: Partial<OrcaApi> | undefined): OrcaApi['taskTypes'] {
-  if (!api?.taskTypes) throw new Error(TASK_TYPES_STALE_MESSAGE)
+  if (!api?.taskTypes) throw new Error(taskTypesStaleMessage())
   return api.taskTypes
 }
 
@@ -27,7 +29,7 @@ export function hasProjectTaskTypes(api: Partial<OrcaApi> | undefined): boolean 
 
 /** Текст ошибки IPC для раздела: preload новый, а main старый — «перезапустите приложение». */
 export function taskTypesError(message: string): string {
-  return /No handler registered for '(taskTypes:|projects:setTaskTypes)/.test(message) ? TASK_TYPES_STALE_MESSAGE : message
+  return /No handler registered for '(taskTypes:|projects:setTaskTypes)/.test(message) ? taskTypesStaleMessage() : message
 }
 
 /** Ключ запомненного раздела «Настроек»; «О проекте → Типы задач» ставит в него тип кнопкой «Изменить в Настройках». */
@@ -82,11 +84,11 @@ export function patchedTaskType(t: TaskType, patch: TaskTypePatch): TaskTypeInpu
 }
 
 /** Переименование: пустое название — ошибка (текст для формы), пустое описание убирает поле. */
-export function renamedTaskType(t: TaskType, title: string, description: string): TaskTypeInput | { error: string } {
+export function renamedTaskType(type: TaskType, title: string, description: string): TaskTypeInput | { error: string } {
   const name = title.trim()
-  if (!name) return { error: 'Название типа не может быть пустым' }
+  if (!name) return { error: t('config.taskType.emptyTitle') }
   const desc = description.trim()
-  return { id: t.id, title: name, ...(desc ? { description: desc } : {}), settings: t.settings }
+  return { id: type.id, title: name, ...(desc ? { description: desc } : {}), settings: type.settings }
 }
 
 /**
@@ -153,17 +155,17 @@ export interface TypeRemovalConfirm {
  * удалённый тип не вернётся и после перезапуска. Новый тип по умолчанию — по правилу main (`defaultTaskTypeId`):
  * «Программирование», а без него — первый оставшийся.
  */
-export function typeRemovalConfirm(t: TaskType, state: TaskTypesState, usage: TypeUsage | undefined): TypeRemovalConfirm {
+export function typeRemovalConfirm(type: TaskType, state: TaskTypesState, usage: TypeUsage | undefined): TypeRemovalConfirm {
   const lines: string[] = []
-  if (state.defaultTaskTypeId === t.id) {
-    const rest = state.taskTypes.filter((x) => x.id !== t.id)
+  if (state.defaultTaskTypeId === type.id) {
+    const rest = state.taskTypes.filter((x) => x.id !== type.id)
     const next = rest.find((x) => x.id === GENERAL_TASK_TYPE_ID) ?? rest[0]
-    if (next) lines.push(`Это тип по умолчанию библиотеки — им станет «${next.title}».`)
+    if (next) lines.push(t('config.taskType.remove.newDefault', { title: next.title }))
   }
-  if (usage?.asDefault) lines.push(`Он тип по умолчанию в проектах (${usage.asDefault}): они перейдут на тип библиотеки по умолчанию.`)
-  lines.push('Уже созданные глобальные задачи этого типа доработают по снимку ролей, сохранённому при создании.')
-  lines.push('Тип не вернётся и после перезапуска приложения; нужен похожий — сначала сделайте «Дублировать».')
-  return { title: `Удалить тип «${t.title}»?`, lines, action: 'Удалить' }
+  if (usage?.asDefault) lines.push(t('config.taskType.remove.projects', { n: usage.asDefault }))
+  lines.push(t('config.taskType.remove.snapshot'))
+  lines.push(t('config.taskType.remove.permanent'))
+  return { title: t('config.taskType.remove.title', { title: type.title }), lines, action: t('config.taskType.remove.action') }
 }
 
 // ---------- «О проекте → Типы задач» ----------
@@ -193,8 +195,8 @@ export function toggledProjectTypes(
   const current = all.filter((x) => isTypeAvailable(p, x))
   const def = projectDefaultTypeId(p, state)
   const next = on ? all.filter((x) => x === id || current.includes(x)) : current.filter((x) => x !== id)
-  if (!on && id === def) return { error: 'Тип по умолчанию нельзя выключить — сначала сделайте по умолчанию другой тип.' }
-  if (!next.length) return { error: 'В проекте должен остаться хотя бы один тип.' }
+  if (!on && id === def) return { error: t('config.taskType.toggle.defaultOff') }
+  if (!next.length) return { error: t('config.taskType.toggle.lastOne') }
   return { typeIds: next.length === all.length ? null : next, defaultTypeId: def }
 }
 

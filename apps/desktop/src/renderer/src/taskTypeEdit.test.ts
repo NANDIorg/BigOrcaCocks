@@ -1,15 +1,18 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, type AgentInfo, type Role, type TaskType
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 import {
-  TASK_TYPES_STALE_MESSAGE, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
+  taskTypesStaleMessage, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
   hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, patchedTaskType, pickTaskTypeId,
   projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi,
   taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey
 } from './taskTypeEdit'
+import { setLocale } from './i18n'
+
+afterEach(() => setLocale('ru'))
 
 const general = presetTaskType('general')!
 const frontend = presetTaskType('frontend')!
@@ -21,10 +24,10 @@ const state: TaskTypesState = { taskTypes: [general, frontend, own], defaultTask
 const project = (id: string, extra: Partial<Project> = {}): Project => ({ id, root: `/${id}`, name: id, ...extra })
 
 test('старый preload без taskTypes — понятная ошибка, старый main — «перезапустите»', () => {
-  assert.throws(() => taskTypeLibraryApi({} as Partial<OrcaApi>), { message: TASK_TYPES_STALE_MESSAGE })
-  assert.throws(() => taskTypeLibraryApi(undefined), { message: TASK_TYPES_STALE_MESSAGE })
-  assert.equal(taskTypesError("Error: No handler registered for 'taskTypes:list'"), TASK_TYPES_STALE_MESSAGE)
-  assert.equal(taskTypesError("Error: No handler registered for 'projects:setTaskTypes'"), TASK_TYPES_STALE_MESSAGE)
+  assert.throws(() => taskTypeLibraryApi({} as Partial<OrcaApi>), { message: taskTypesStaleMessage() })
+  assert.throws(() => taskTypeLibraryApi(undefined), { message: taskTypesStaleMessage() })
+  assert.equal(taskTypesError("Error: No handler registered for 'taskTypes:list'"), taskTypesStaleMessage())
+  assert.equal(taskTypesError("Error: No handler registered for 'projects:setTaskTypes'"), taskTypesStaleMessage())
   assert.equal(taskTypesError('тип задачи: пустое название'), 'тип задачи: пустое название')
   assert.equal(hasProjectTaskTypes({ projects: {} } as unknown as Partial<OrcaApi>), false)
 })
@@ -149,4 +152,14 @@ test('заготовка удаляется так же, как свой тип;
   assert.ok(text.includes(`им станет «${frontend.title}»`))
   assert.match(text, /перейдут на тип библиотеки/)
   assert.doesNotMatch(text, /к системному/)
+})
+
+test('тексты удаления и ошибок — на языке интерфейса', () => {
+  setLocale('en')
+  const c = typeRemovalConfirm(own, { ...state, defaultTaskTypeId: 'type_1' }, { asDefault: 2, available: 3 })
+  assert.equal(c.title, 'Delete type “Мой”?')
+  assert.equal(c.action, 'Delete')
+  assert.match(c.lines.join('\n'), /default type in projects \(2\)/)
+  assert.deepEqual(renamedTaskType(own, ' ', ''), { error: 'Type name can’t be empty' })
+  assert.throws(() => taskTypeLibraryApi(undefined), { message: /old main\/preload without task types/ })
 })

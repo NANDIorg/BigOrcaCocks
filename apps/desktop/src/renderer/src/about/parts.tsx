@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
+import { useT } from '../i18n'
 
 /** Заголовок раздела «О проекте»: название, пояснение и действия справа. */
 export function SectionHead({ title, hint, children }: {
@@ -40,11 +41,12 @@ export function Switch({ on, disabled, title, onChange }: {
 
 /** Кнопка «Скопировать» с подтверждением «Скопировано». */
 export function CopyButton({ text }: { text: string }): React.JSX.Element {
+  const t = useT()
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
   useEffect(() => {
     if (state === 'idle') return
-    const t = window.setTimeout(() => setState('idle'), 1500)
-    return () => window.clearTimeout(t)
+    const timer = window.setTimeout(() => setState('idle'), 1500)
+    return () => window.clearTimeout(timer)
   }, [state])
   return (
     <button
@@ -53,9 +55,19 @@ export function CopyButton({ text }: { text: string }): React.JSX.Element {
       disabled={!text}
       onClick={() => navigator.clipboard.writeText(text).then(() => setState('ok'), () => setState('fail'))}
     >
-      {state === 'ok' ? 'Скопировано' : state === 'fail' ? 'Не удалось' : 'Скопировать'}
+      {state === 'ok' ? t('config.about.copied') : state === 'fail' ? t('config.about.copyFailed') : t('config.about.copy')}
     </button>
   )
+}
+
+/**
+ * Переведённая фраза с командой или путём в `<code>` (или `<b>`): `{name}` в тексте заменяется на выделенное
+ * `value`. Порядок слов в языках разный, поэтому фразу не собираем из кусков вокруг кода.
+ */
+export function withCode(text: string, value: string, name = 'cmd', Tag: 'code' | 'b' = 'code'): React.ReactNode {
+  const [before, ...rest] = text.split(`{${name}}`)
+  if (!rest.length) return text
+  return <>{before}<Tag>{value}</Tag>{rest.join(value)}</>
 }
 
 // Склонение живёт в .ts-модуле, чтобы его могли импортировать модули логики с тестами под node --test.

@@ -5,8 +5,9 @@ import type { Project, TaskTypesState } from '../../../shared/ipc'
 import { RolesEditor } from '../RolesEditor'
 import { Icon } from '../icons'
 import { ipcErrorMessage, useAutoSave } from '../useAutoSave'
-import { AGENT_RULES_PLACEHOLDER } from '../agentRules'
-import { SectionHead, plural } from '../about/parts'
+import { agentRulesPlaceholder } from '../agentRules'
+import { SectionHead } from '../about/parts'
+import { useT, type TFunction, type TKey } from '../i18n'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import {
   TASK_TYPE_TABS, libraryAgents, resolveTypeSettings, typeColumnChoices,
@@ -31,11 +32,11 @@ interface Props {
   projects: Project[]
 }
 
-const TAB_LABELS: Record<TaskTypeTab, string> = {
-  roles: 'Роли',
-  workflow: 'Воркфлоу',
-  perm: 'Разрешения',
-  rules: 'Правила доски'
+const TAB_LABELS: Record<TaskTypeTab, TKey> = {
+  roles: 'config.taskType.tab.roles',
+  workflow: 'config.taskType.tab.workflow',
+  perm: 'config.taskType.tab.perm',
+  rules: 'config.taskType.tab.rules'
 }
 
 /**
@@ -43,11 +44,12 @@ const TAB_LABELS: Record<TaskTypeTab, string> = {
  * глобальные задачи берут роли и правила типа при каждом запуске агента. Все типы равны — и созданные человеком,
  * и заготовки, с которыми приходит приложение: любой правится, переименовывается и удаляется (кроме последнего).
  */
-export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, onSelect, projects }: Props): React.JSX.Element {
-  const editorKey = typeEditorKey(t)
+export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSelect, projects }: Props): React.JSX.Element {
+  const t = useT()
+  const editorKey = typeEditorKey(type)
   const isLast = state.taskTypes.length <= 1
-  const isDefault = state.defaultTaskTypeId === t.id
-  const s = resolveTypeSettings(t.settings)
+  const isDefault = state.defaultTaskTypeId === type.id
+  const s = resolveTypeSettings(type.settings)
   const typeAgents = libraryAgents(agents)
   const agentOk = new Set(typeAgents.filter((a) => a.enabled).map((a) => a.id as string))
   const rolesOff = s.roles.filter((r) => !agentOk.has(r.agent)).length
@@ -65,7 +67,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
     setConfirming(false)
     setError(null)
     setSectionError(null)
-  }, [t.id])
+  }, [type.id])
   useEffect(() => setSectionError(null), [tab])
 
   async function act(action: () => Promise<void>): Promise<void> {
@@ -82,24 +84,24 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
 
   /** Правка раздела с ошибкой под разделом (для редакторов без своего автосохранения). */
   function patchSection(p: Parameters<TaskTypesHook['patch']>[1]): void {
-    api.patch(t.id, p).then(() => setSectionError(null), (e: unknown) => setSectionError(ipcErrorMessage(e)))
+    api.patch(type.id, p).then(() => setSectionError(null), (e: unknown) => setSectionError(ipcErrorMessage(e)))
   }
 
-  const duplicate = (): Promise<void> => act(async () => onSelect((await api.duplicate(t.id)).id))
-  const makeDefault = (): Promise<void> => act(() => api.setDefault(t.id))
-  const removal = typeRemovalConfirm(t, state, usage)
+  const duplicate = (): Promise<void> => act(async () => onSelect((await api.duplicate(type.id)).id))
+  const makeDefault = (): Promise<void> => act(() => api.setDefault(type.id))
+  const removal = typeRemovalConfirm(type, state, usage)
   const remove = (): Promise<void> =>
     act(async () => {
-      await api.remove(t.id)
+      await api.remove(type.id)
       setConfirming(false)
       onSelect(null)
     })
 
   const counts: Record<TaskTypeTab, string> = {
     roles: rolesOff ? `${s.roles.length} · ${rolesOff} !` : String(s.roles.length),
-    workflow: s.workflow ? 'свой' : 'дефолт',
+    workflow: s.workflow ? t('config.taskType.count.own') : t('config.taskType.count.default'),
     perm: permissionParts(s.permissionMode).title,
-    rules: s.agentRules.trim() ? 'есть' : 'нет'
+    rules: s.agentRules.trim() ? t('config.taskType.count.yes') : t('config.taskType.count.no')
   }
 
   function renderTab(): React.ReactNode {
@@ -108,8 +110,8 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
         return (
           <>
             <SectionHead
-              title="Роли"
-              hint="Кто выполняет подзадачи глобальной задачи этого типа: агент, модель, усилие и инструкция. Порядок — как в «Новой задаче»."
+              title={t('config.taskType.tab.roles')}
+              hint={t('config.taskType.rolesHint')}
             />
             <RolesEditor
               storageKey={editorKey}
@@ -117,7 +119,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
               agents={typeAgents}
               workflow={s.workflow}
               ofTaskType
-              onSave={(next) => api.patch(t.id, { roles: next })}
+              onSave={(next) => api.patch(type.id, { roles: next })}
             />
           </>
         )
@@ -125,12 +127,12 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
         return (
           <TaskTypeWorkflow
             key={editorKey}
-            title={t.title}
+            title={type.title}
             workflow={s.workflow}
             roles={s.roles}
             columns={typeColumnChoices(projects)}
             readOnly={false}
-            onSave={(wf) => api.patch(t.id, { workflow: wf })}
+            onSave={(wf) => api.patch(type.id, { workflow: wf })}
           />
         )
       case 'perm':
@@ -143,7 +145,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
             key={editorKey}
             storageKey={editorKey}
             text={s.agentRules}
-            onSave={(text) => api.patch(t.id, { agentRules: text })}
+            onSave={(text) => api.patch(type.id, { agentRules: text })}
           />
         )
     }
@@ -154,30 +156,30 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
       <div className="tpl-head">
         <div className="tpl-head-text">
           <h2>
-            {t.title}
-            {isDefault && <span className="chip ok">по умолчанию</span>}
+            {type.title}
+            {isDefault && <span className="chip ok">{t('config.taskType.defaultChip')}</span>}
           </h2>
-          {t.description && <p>{t.description}</p>}
-          <p className="tpl-usage">{usageText(usage)}</p>
+          {type.description && <p>{type.description}</p>}
+          <p className="tpl-usage">{usageText(t, usage)}</p>
         </div>
         <div className="tpl-actions">
           {!isDefault && (
-            <button type="button" className="btn-sm" disabled={busy} onClick={() => void makeDefault()} title="Тип новых проектов и проектов, у которых свой тип по умолчанию удалён">
-              <Icon.star /> По умолчанию
+            <button type="button" className="btn-sm" disabled={busy} onClick={() => void makeDefault()} title={t('config.taskType.makeDefaultTitle')}>
+              <Icon.star /> {t('config.taskType.makeDefault')}
             </button>
           )}
-          <button type="button" className="btn-sm" disabled={busy} onClick={() => void duplicate()}>Дублировать</button>
+          <button type="button" className="btn-sm" disabled={busy} onClick={() => void duplicate()}>{t('config.taskType.duplicate')}</button>
           <button type="button" className="btn-sm" disabled={busy || renaming} onClick={() => setRenaming(true)}>
-            <Icon.edit /> Переименовать
+            <Icon.edit /> {t('config.taskType.rename')}
           </button>
           <button
             type="button"
             className="btn-sm danger"
             disabled={busy || confirming || isLast}
-            title={isLast ? 'Последний тип удалить нельзя — сначала создайте другой' : undefined}
+            title={isLast ? t('config.taskType.lastTypeTitle') : undefined}
             onClick={() => setConfirming(true)}
           >
-            <Icon.trash /> Удалить
+            <Icon.trash /> {t('config.taskType.delete')}
           </button>
         </div>
       </div>
@@ -187,7 +189,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
           <div className="roles-confirm-title">{removal.title}</div>
           <ul>{removal.lines.map((l) => <li key={l}>{l}</li>)}</ul>
           <div className="roles-confirm-btns">
-            <button type="button" className="btn-sm" autoFocus onClick={() => setConfirming(false)}>Отмена</button>
+            <button type="button" className="btn-sm" autoFocus onClick={() => setConfirming(false)}>{t('config.taskType.cancel')}</button>
             <button type="button" className="btn-sm danger-fill" disabled={busy} onClick={() => void remove()}>{removal.action}</button>
           </div>
         </div>
@@ -195,10 +197,10 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
 
       {renaming && (
         <RenameForm
-          type={t}
+          type={type}
           onCancel={() => setRenaming(false)}
           onSave={(title, description) => act(async () => {
-            await api.rename(t.id, title, description)
+            await api.rename(type.id, title, description)
             setRenaming(false)
           })}
         />
@@ -206,11 +208,10 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
       {error && <div className="editor-error">{error}</div>}
 
       <div className="about-banner">
-        Правка типа действует <b>во всех проектах</b>, где он доступен, со следующего запуска агента. Воркфлоу глобальная
-        задача берёт при создании — уже созданные идут по своему графу.
+        {t('config.taskType.banner.before')} <b>{t('config.taskType.banner.bold')}</b>{t('config.taskType.banner.after')}
       </div>
 
-      <div className="tpl-tabs" role="tablist" aria-label="Разделы типа">
+      <div className="tpl-tabs" role="tablist" aria-label={t('config.taskType.tabsAria')}>
         {TASK_TYPE_TABS.map((id) => (
           <button
             key={id}
@@ -220,7 +221,7 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
             className={tab === id ? 'on' : ''}
             onClick={() => onTab(id)}
           >
-            {TAB_LABELS[id]}
+            {t(TAB_LABELS[id])}
             <span className={`tpl-tab-count${id === 'roles' && rolesOff ? ' warn' : ''}`}>{counts[id]}</span>
           </button>
         ))}
@@ -231,10 +232,10 @@ export function TaskTypePane({ type: t, state, usage, agents, tab, onTab, api, o
 }
 
 /** «По умолчанию в 2 проектах · доступен в 5». */
-function usageText(u: TypeUsage | undefined): string {
-  if (!u || u.available === 0) return 'Ни в одном проекте не доступен — включите его в «О проекте → Типы задач».'
-  const parts = [`Доступен в ${u.available} ${plural(u.available, 'проекте', 'проектах', 'проектах')}`]
-  if (u.asDefault) parts.push(`по умолчанию в ${u.asDefault}`)
+function usageText(t: TFunction, u: TypeUsage | undefined): string {
+  if (!u || u.available === 0) return t('config.taskType.usage.none')
+  const parts = [t('config.taskType.usage.available', { count: u.available })]
+  if (u.asDefault) parts.push(t('config.taskType.usage.default', { n: u.asDefault }))
   return `${parts.join(' · ')}.`
 }
 
@@ -244,6 +245,7 @@ function RenameForm({ type, onCancel, onSave }: {
   onCancel(): void
   onSave(title: string, description: string): Promise<void>
 }): React.JSX.Element {
+  const t = useT()
   const [title, setTitle] = useState(type.title)
   const [description, setDescription] = useState(type.description ?? '')
   return (
@@ -262,16 +264,16 @@ function RenameForm({ type, onCancel, onSave }: {
       }}
     >
       <label>
-        <span>Название</span>
+        <span>{t('config.taskType.renameTitle')}</span>
         <input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} />
       </label>
       <label>
-        <span>Описание</span>
-        <input value={description} placeholder="Одна строка в выборе типа глобальной задачи" onChange={(e) => setDescription(e.target.value)} />
+        <span>{t('config.taskType.renameDescription')}</span>
+        <input value={description} placeholder={t('config.taskType.renameDescriptionPlaceholder')} onChange={(e) => setDescription(e.target.value)} />
       </label>
       <div className="tpl-rename-btns">
-        <button type="submit" className="btn-sm primary" disabled={!title.trim()}>Сохранить</button>
-        <button type="button" className="btn-sm" onClick={onCancel}>Отмена</button>
+        <button type="submit" className="btn-sm primary" disabled={!title.trim()}>{t('config.taskType.save')}</button>
+        <button type="button" className="btn-sm" onClick={onCancel}>{t('config.taskType.cancel')}</button>
       </div>
     </form>
   )
@@ -283,20 +285,21 @@ function TypeRules({ storageKey, text, onSave }: {
   text: string
   onSave(text: string): Promise<void>
 }): React.JSX.Element {
+  const t = useT()
   const { draft, error, update } = useAutoSave(storageKey, text, onSave)
   return (
     <>
       <SectionHead
-        title="Правила доски"
-        hint="Markdown для агентов, запущенных доской: воркеры всех ролей и координатор глобальной задачи этого типа получают его блоком «Правила проекта» в системном промпте. Не CLAUDE.md и не обычные сессии."
+        title={t('config.taskType.tab.rules')}
+        hint={t('config.taskType.rulesHint')}
       />
       <div className="agent-rules">
         <textarea
           value={draft}
-          placeholder={AGENT_RULES_PLACEHOLDER}
+          placeholder={agentRulesPlaceholder()}
           rows={12}
           spellCheck={false}
-          aria-label="Правила для агентов доски"
+          aria-label={t('config.taskType.rulesAria')}
           onChange={(e) => update(e.target.value, true)}
         />
         {error && <div className="editor-error">{error}</div>}

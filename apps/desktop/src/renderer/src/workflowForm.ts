@@ -4,27 +4,37 @@ import {
 } from '@orca-board/core'
 import { NODE_H, NODE_W } from './workflowGeometry'
 import { connect, makeNode, uniqueId } from './workflowEdit'
+import { t } from './i18n'
 
 // Логика инспектора ноды и вкладки «Настройки → Типы задач → Воркфлоу»: правка полей ноды, переходы портов с клавиатуры,
 // импорт/экспорт JSON, пресет лимита повторов. Как и workflowEdit.ts — чистые функции над графом.
 
-/** Названия типов нод в инспекторе и подсказках холста. */
-export const WF_TYPE_TITLES: Record<WfNodeType, string> = {
-  start: 'Старт', work: 'Работа', ask: 'Вопрос человеку', gate: 'Проверка агентом', human: 'Решение человека',
-  condition: 'Условие', merge: 'Мерж', end: 'Конец'
+/** Названия типов нод в инспекторе и подсказках холста. Геттеры — на текущем языке интерфейса. */
+export const WF_TYPE_TITLES: Readonly<Record<WfNodeType, string>> = {
+  get start() { return t('config.wf.type.start') },
+  get work() { return t('config.wf.type.work') },
+  get ask() { return t('config.wf.type.ask') },
+  get gate() { return t('config.wf.type.gate') },
+  get human() { return t('config.wf.type.human') },
+  get condition() { return t('config.wf.type.condition') },
+  get merge() { return t('config.wf.type.merge') },
+  get end() { return t('config.wf.type.end') }
 }
 
 /** Порядок типов в select «Тип» инспектора. */
-export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'gate', 'human', 'condition', 'merge', 'end']
+export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'human', 'condition', 'merge', 'end']
 
 /** Роли, которые можно поставить на этап: без служебных (coordinator, assistant) — они задачам не назначаются. */
 export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[] {
   return roles.filter((r) => isTaskRole(r.id))
 }
 
-/** Ноды, у которых есть поле «Колонка»: start и condition задача проходит насквозь, стоять в них она не может. */
+/**
+ * Ноды, у которых есть поле «Колонка»: start и condition задача проходит насквозь, стоять в них она не может.
+ * У ask колонку не задают: пока агент работает, задача в «В работе», а при вопросе store сам держит её в «Нужен ответ».
+ */
 export function hasColumn(type: WfNodeType): boolean {
-  return type !== 'start' && type !== 'condition'
+  return type !== 'start' && type !== 'condition' && type !== 'ask'
 }
 
 /** Поля ноды, которые правит инспектор. Пустая строка у необязательного поля — «не задано» (поле удаляется). */
@@ -53,9 +63,9 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     else delete n.column
   }
   if (patch.roleId !== undefined) {
-    // У гейта роль обязательна (пустую подсветит валидация), у работы пустая — «роль задачи».
+    // У гейта роль обязательна (пустую подсветит валидация), у работы и вопроса пустая — «роль задачи».
     if (n.type === 'gate') n.roleId = patch.roleId
-    else if (n.type === 'work') {
+    else if (n.type === 'work' || n.type === 'ask') {
       if (patch.roleId) n.roleId = patch.roleId
       else delete n.roleId
     }
@@ -64,6 +74,8 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     if (patch.instructions.trim()) n.instructions = patch.instructions
     else delete n.instructions
   }
+  // У ask инструкция обязательна: пустая остаётся строкой — поле не пропадает, а валидация подсвечивает его.
+  if (patch.instructions !== undefined && n.type === 'ask') n.instructions = patch.instructions
   if (patch.showcase !== undefined && n.type === 'work') {
     const what = patch.showcase.what ?? n.showcase?.what ?? ''
     const required = patch.showcase.required ?? n.showcase?.required ?? false
@@ -89,10 +101,13 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
   const node: WfNode = { ...fresh, id: cur.id }
   if (cur.title) node.title = cur.title
   if (cur.column && hasColumn(type)) node.column = cur.column
-  const role = cur.type === 'gate' || cur.type === 'work' ? cur.roleId : undefined
-  const instructions = cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' ? cur.instructions : undefined
-  if (role && (node.type === 'gate' || node.type === 'work')) node.roleId = role
-  if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work')) node.instructions = instructions
+  const role = cur.type === 'gate' || cur.type === 'work' || cur.type === 'ask' ? cur.roleId : undefined
+  const instructions =
+    cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' || cur.type === 'ask' ? cur.instructions : undefined
+  if (role && (node.type === 'gate' || node.type === 'work' || node.type === 'ask')) node.roleId = role
+  if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work' || node.type === 'ask')) {
+    node.instructions = instructions
+  }
   const ports = WF_PORTS[type]
   return {
     ...wf,
@@ -157,25 +172,25 @@ export function parseWorkflowJson(text: string): { workflow: Workflow } | { erro
   try {
     data = JSON.parse(text)
   } catch (e) {
-    return { error: `файл не JSON: ${e instanceof Error ? e.message : String(e)}` }
+    return { error: t('config.wf.import.notJson', { message: e instanceof Error ? e.message : String(e) }) }
   }
-  if (!isObj(data)) return { error: 'в файле не воркфлоу: ожидался объект { version, nodes, edges }' }
+  if (!isObj(data)) return { error: t('config.wf.import.notObject') }
   const { version, nodes, edges } = data
   if (typeof version !== 'number' || !Array.isArray(nodes) || !Array.isArray(edges)) {
-    return { error: 'в файле не воркфлоу: нужны поля version (число), nodes и edges (массивы)' }
+    return { error: t('config.wf.import.noFields') }
   }
   if (version > WORKFLOW_VERSION) {
-    return { error: `воркфлоу в формате версии ${version}, приложение знает только ${WORKFLOW_VERSION} — обновите приложение` }
+    return { error: t('config.wf.import.newerVersion', { version, known: WORKFLOW_VERSION }) }
   }
   for (const [i, n] of nodes.entries()) {
     if (!isObj(n) || typeof n.id !== 'string' || typeof n.type !== 'string' || typeof n.x !== 'number' || typeof n.y !== 'number') {
-      return { error: `нода №${i + 1}: нужны строки id и type и числа x и y` }
+      return { error: t('config.wf.import.badNode', { n: i + 1 }) }
     }
-    if (!(n.type in WF_PORTS)) return { error: `нода «${n.id}»: неизвестный тип «${n.type}»` }
+    if (!(n.type in WF_PORTS)) return { error: t('config.wf.import.unknownType', { id: n.id, type: n.type }) }
   }
   for (const [i, e] of edges.entries()) {
     if (!isObj(e) || typeof e.id !== 'string' || typeof e.from !== 'string' || typeof e.to !== 'string' || typeof e.outcome !== 'string') {
-      return { error: `переход №${i + 1}: нужны строки id, from, outcome и to` }
+      return { error: t('config.wf.import.badEdge', { n: i + 1 }) }
     }
   }
   // Форма проверена выше; остальное (порты, ссылки) — дело validateWorkflow.
@@ -206,8 +221,8 @@ export function addRetryLimit(wf: Workflow, limit = 3): { workflow: Workflow; ad
   const rejects = wf.edges.filter((e) => e.outcome === 'reject' && byId.get(e.from)?.type === 'gate' && byId.get(e.to)?.type === 'work')
   if (rejects.length === 0) {
     const limited = wf.edges.some((e) => e.outcome === 'reject' && byId.get(e.from)?.type === 'gate' && isAttempts(byId.get(e.to)))
-    if (limited) return { error: 'Лимит повторов уже стоит: отказ проверки идёт через условие.' }
-    return { error: 'Нет проверки агентом, отказ которой ведёт прямо в работу, — лимит повторов некуда поставить.' }
+    if (limited) return { error: t('config.wf.limit.already') }
+    return { error: t('config.wf.limit.nowhere') }
   }
   let next = wf
   for (const reject of rejects) {
@@ -217,13 +232,13 @@ export function addRetryLimit(wf: Workflow, limit = 3): { workflow: Workflow; ad
     const humanId = uniqueId('limit_human', [...ids, condId])
     const condPos = freeSpot(next, gate.x, gate.y + NODE_H + 60)
     const cond: WfNode = {
-      id: condId, type: 'condition', title: `Отказов ≥ ${limit}`, ...condPos,
+      id: condId, type: 'condition', title: t('config.wf.limit.condTitle', { limit }), ...condPos,
       test: { kind: 'attempts', node: reject.to, atLeast: limit }
     }
     const humanPos = freeSpot({ ...next, nodes: [...next.nodes, cond] }, condPos.x + NODE_W + 70, condPos.y)
     const human: WfNode = {
-      id: humanId, type: 'human', title: `После ${limit} отказов`, ...humanPos,
-      instructions: `Задачу вернули на доработку столько раз, сколько разрешает лимит (${limit}). Примите работу как есть или верните её в работу ещё раз.`
+      id: humanId, type: 'human', title: t('config.wf.limit.humanTitle', { limit }), ...humanPos,
+      instructions: t('config.wf.limit.humanInstructions', { limit })
     }
     const accept = portTarget(next, gate.id, 'accept')
     next = {

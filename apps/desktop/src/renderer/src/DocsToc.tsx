@@ -4,6 +4,7 @@ import { formatSize } from './docLinks'
 import { longTime, readingMinutes } from './docTree'
 import type { DocTocItem } from './docToc'
 import { DocIcon } from './docsIcons'
+import { useT } from './i18n'
 
 export interface DocsTocProps {
   items: DocTocItem[]
@@ -20,10 +21,11 @@ export interface DocsTocProps {
 
 /** Правая колонка «На странице»: оглавление h2/h3 с текущим разделом, прогресс чтения, метаданные. */
 export function DocsToc(p: DocsTocProps): React.JSX.Element {
+  const t = useT()
   return (
-    <aside className="docs-toc" aria-label="На странице">
-      <h4>На странице</h4>
-      {p.items.length === 0 && <div className="muted docs-toc-empty">Нет разделов</div>}
+    <aside className="docs-toc" aria-label={t('config.docs.toc.title')}>
+      <h4>{t('config.docs.toc.title')}</h4>
+      {p.items.length === 0 && <div className="muted docs-toc-empty">{t('config.docs.toc.empty')}</div>}
       {p.items.map((h) => (
         <a
           key={h.id}
@@ -37,14 +39,14 @@ export function DocsToc(p: DocsTocProps): React.JSX.Element {
           {h.text}
         </a>
       ))}
-      <div className="docs-prog" title={`Прочитано ${Math.round(p.progress * 100)}%`}>
+      <div className="docs-prog" title={t('config.docs.toc.progress', { percent: Math.round(p.progress * 100) })}>
         <i style={{ width: `${Math.round(p.progress * 100)}%` }} />
       </div>
       <div className="docs-toc-meta">
-        {p.file && <div><DocIcon.clock />изменён {longTime(p.file.mtime, p.now)}</div>}
-        <div><DocIcon.file />{p.file ? `${formatSize(p.file.size)} · ` : ''}≈ {readingMinutes(p.content)} мин</div>
-        {p.alsoTasks.map((t) => (
-          <div key={t} title={t}><DocIcon.branch /><span className="docs-ellipsis">также правит задача «{t}»</span></div>
+        {p.file && <div><DocIcon.clock />{t('config.docs.toc.modified', { when: longTime(p.file.mtime, p.now) })}</div>}
+        <div><DocIcon.file />{p.file ? `${formatSize(p.file.size)} · ` : ''}{t('config.docs.toc.reading', { n: readingMinutes(p.content) })}</div>
+        {p.alsoTasks.map((task) => (
+          <div key={task} title={task}><DocIcon.branch /><span className="docs-ellipsis">{t('config.docs.toc.alsoTask', { task })}</span></div>
         ))}
       </div>
     </aside>

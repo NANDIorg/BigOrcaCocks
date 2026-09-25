@@ -1,4 +1,4 @@
-import { wfNodeTitle, type ColumnKind, type Dispatch, type Question, type Task, type Workflow } from '@orca-board/core'
+import { wfNodeTitle, type ColumnKind, type Dispatch, type HumanRequest, type Question, type Task, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
 
 /**
@@ -157,6 +157,20 @@ export function stageLabel(
   const visits = stage.visits?.[stage.nodeId] ?? 1
   const text = visits > 1 ? t('board.stage.visit', { name, n: visits }) : name
   return { kind: 'stage', text, title: t('board.stage.title', { text }) }
+}
+
+/**
+ * Метка «Этап «…»» у вопроса с этапа `ask` воркфлоу: по `HumanRequest.nodeId` и названию ноды из графа прогона.
+ * Только у вопросов: у approval `nodeId` — нода «Человек», её название уже в заголовке запроса. Ноды нет в графе
+ * (граф поменяли, нет снимка) — метки нет: id человеку ничего не говорит.
+ */
+export function requestStageLabel(
+  request: Pick<HumanRequest, 'kind' | 'nodeId'>,
+  titles: Readonly<Record<string, string>> | undefined
+): string | undefined {
+  if (request.kind !== 'question' || !request.nodeId) return undefined
+  const name = titles?.[request.nodeId]
+  return name ? t('board.stage.request', { name }) : undefined
 }
 
 /** Свёрнутые зависимости: одна пунктирная метка вместо чипа на каждую; полный список — в подсказке. */

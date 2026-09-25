@@ -2,8 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { WF_PORTS, type WfNodeType } from '@orca-board/core'
 import { WF_NODE_HELP } from './workflowHelp'
-import { WF_ADDABLE_TYPES } from './workflowEdit'
-import { WF_TYPE_ORDER } from './workflowForm'
+import { WF_ADDABLE_TYPES, WF_OUTCOME_LABELS } from './workflowEdit'
+import { WF_TYPE_ORDER, WF_TYPE_TITLES } from './workflowForm'
+import { setLocale } from './i18n'
 
 const MODEL_TYPES = Object.keys(WF_PORTS) as WfNodeType[]
 
@@ -35,4 +36,30 @@ test('справка «Работы» описывает поля этапа и 
   }
   assert.match(details, /показ/i)
   assert.match(WF_NODE_HELP.human.details, /показ/i)
+})
+
+test('справка и подписи переводятся: на en — английский текст, ни одного ключа словаря вместо текста', () => {
+  setLocale('en')
+  try {
+    for (const type of MODEL_TYPES) {
+      const h = WF_NODE_HELP[type]
+      const texts = [h.summary, h.actor, h.details, ...h.fields, ...Object.values(h.outcomes)]
+      for (const s of texts) assert.ok(!s.startsWith('config.') && !/[А-Яа-яЁё]/.test(s ?? ''), `${type}: «${s}»`)
+      assert.ok(!/[А-Яа-яЁё]/.test(WF_TYPE_TITLES[type]), type)
+    }
+    assert.equal(WF_OUTCOME_LABELS.reject, 'reject')
+    assert.equal(WF_TYPE_TITLES.gate, 'Agent check')
+  } finally {
+    setLocale('ru')
+  }
+  assert.equal(WF_TYPE_TITLES.gate, 'Проверка агентом')
+  assert.equal(WF_OUTCOME_LABELS.reject, 'вернуть')
+})
+
+test('справка «Вопроса человеку»: один исход next, поля из инспектора, вопросы идут человеку', () => {
+  const { fields, outcomes, actor } = WF_NODE_HELP.ask
+  assert.deepEqual(Object.keys(outcomes), ['next'])
+  for (const label of ['Роль', 'О чём спросить']) assert.ok(fields.some((f) => f.startsWith(`${label} — `)), `нет описания поля «${label}»`)
+  assert.match(actor, /минуя координатора/)
+  assert.ok(WF_ADDABLE_TYPES.includes('ask') && WF_TYPE_ORDER.includes('ask'))
 })
