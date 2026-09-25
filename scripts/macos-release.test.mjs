@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { builderRequire, readYaml, run, validateCredentials, validateReleaseConfig, selectIdentity, validateSignature, notarizeDmg, verifyUpdateMetadata } from './macos-release.mjs'
 import { beforePack, artifactBuildCompleted } from '../apps/desktop/build/macos-release-hooks.mjs'
@@ -135,14 +135,18 @@ test('оба конфига и hooks совместимы с установле�
   }
 })
 
-test('реальный CLI builder отказывает без credentials до упаковки', () => {
+test('реальный CLI builder запрещает macOS-упаковку на Windows, иначе отказывает без credentials', () => {
   const require = createRequire(join(desktop, 'package.json'))
   const cli = join(dirname(require.resolve('electron-builder/package.json')), 'cli.js')
   const env = { ...process.env, CI: 'true' }
   for (const name of Object.keys(env)) if (/^(CSC_|APPLE_|GH_TOKEN|GITHUB_TOKEN)/.test(name)) delete env[name]
   const result = spawnSync(process.execPath, [cli, '--mac', '--dir', '--publish', 'never'], { cwd: desktop, env, encoding: 'utf8', timeout: 30_000 })
   assert.equal(result.status, 1, result.stdout + result.stderr)
-  assert.match(result.stdout + result.stderr, /не задан CSC_LINK/)
+  // На Windows builder отклоняет платформу до beforePack; guard credentials
+  // дополнительно проверяется напрямую на всех ОС и через CLI на macOS/Linux.
+  assert.match(result.stdout + result.stderr, process.platform === 'win32'
+    ? /Build for macOS is supported only on macOS/
+    : /не задан CSC_LINK/)
   assert.doesNotMatch(result.stdout + result.stderr, /packaging\s+platform=darwin|notarization successful/)
 })
 
@@ -266,7 +270,7 @@ test('проверка вложенного native-кода, entitlements, Gatek
 test('пустые entitlements библиотек Framework/dylib/node не блокируют проверку приложения', t => {
   const app = appFixture(t)
   verifyApp(app, 'x64', '1.0.0', team, appCommands({ entitlements: path =>
-    path.includes('.framework/') || path.endsWith('.dylib') || path.endsWith('.node') ? '' : jitEntitlements }))
+    path.includes(`.framework${sep}`) || path.endsWith('.dylib') || path.endsWith('.node') ? '' : jitEntitlements }))
 })
 
 test('основной Electron executable и helpers по-прежнему требуют allow-jit', t => {

@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, rmSync, readFileSync, openSync, readSync, closeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve, relative } from 'node:path'
+import { join, resolve, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inspect, run, requireRelease, validateTeamId, verifySignature, verifyUpdateMetadata } from './macos-release.mjs'
 
@@ -42,18 +42,20 @@ export function verifyApp(app, arch, version, teamId, execute = run) {
   requireRelease(execute('/usr/bin/lipo', ['-archs', main]).stdout.trim() === architecture, `неверная архитектура ${arch}`)
   verifySignature(app, teamId, {}, execute)
   requireRelease(verifyEntitlements(app, execute)['com.apple.security.cs.allow-jit'] === true, 'Electron требует allow-jit')
-  const binaries = [...machOFiles(app)]
+  // Структуру bundle сравниваем независимо от ОС тестовых фикстур;
+  // системным утилитам передаём исходный путь с родным разделителем.
+  const binaries = [...machOFiles(app)].map(path => ({ path, bundlePath: relative(app, path).split(sep).join('/') }))
   for (const marker of ['/Electron Framework.framework/', ' Helper', '/node-pty/build/Release/pty.node', '/node-pty/build/Release/spawn-helper']) {
-    requireRelease(binaries.some(path => path.includes(marker)), `не найден подписанный исполняемый код ${marker}`)
+    requireRelease(binaries.some(({ bundlePath }) => bundlePath.includes(marker)), `не найден подписанный исполняемый код ${marker}`)
   }
-  for (const path of binaries) {
+  for (const { path, bundlePath } of binaries) {
     verifySignature(path, teamId, {}, execute)
     const entitlements = verifyEntitlements(path, execute)
-    if (path === main || (path.includes(' Helper') && path.includes('.app/Contents/MacOS/'))) {
+    if (path === main || (bundlePath.includes(' Helper') && bundlePath.includes('.app/Contents/MacOS/'))) {
       requireRelease(entitlements['com.apple.security.cs.allow-jit'] === true, 'Electron executable или Helper требует allow-jit')
     }
     // Prebuilds других архитектур могут оставаться в node-pty; выполняется пересобранный build/Release.
-    if (path.includes('/node-pty/build/Release/')) {
+    if (bundlePath.includes('/node-pty/build/Release/')) {
       requireRelease(execute('/usr/bin/lipo', ['-archs', path]).stdout.trim().split(/\s+/).includes(architecture),
         `неверная архитектура native-модуля ${relative(app, path)}`)
     }

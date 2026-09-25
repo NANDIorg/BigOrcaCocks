@@ -2098,6 +2098,10 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
   временного каталога и валидатор POSIX-путей: они выполняются на macOS/Linux.
   Нативную Windows-установку эта группа не проверяет. Общие тесты check/download
   и чистой валидации идут на всех ОС.
+- Фикстуры macOS verifier выполняются и на Windows: структуру bundle сравнивай после
+  нормализации разделителей, но в codesign/lipo передавай исходный путь. Реальный builder
+  на Windows запрещает macOS-упаковку ещё до beforePack; CLI-тест проверяет этот отказ,
+  а проверка credentials через hook остаётся общей для всех ОС.
 - Чистая CI-установка с `--ignore-scripts` не собирает `node-pty`. В пакете 1.1.0 есть
   prebuilds для macOS/Windows, но Linux socket-тесты падают при импорте с `Failed to load
   native module: pty.node`. CI отдельно выполняет `pnpm --filter @orca-board/desktop rebuild node-pty`
