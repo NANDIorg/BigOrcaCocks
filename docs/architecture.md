@@ -105,7 +105,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   живут в настройках проекта.
 - `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
   (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
-  `git: RunGit {branch, base, worktree?, pushedAt?, pushError?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
+  `git: RunGit {branch, base, worktree?, pushedAt?, pushError?, prUrl?, prError?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -1163,7 +1163,8 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 - **Настройки** — `Project.git` (`RunBranchSettings`, нет — `DEFAULT_RUN_BRANCH_SETTINGS`): `enabled` (по умолчанию да),
   `base` (пусто — текущая ветка корня; `origin/develop` — сначала `git fetch origin develop`, офлайн — от того, что есть),
   `template` (`feature/{runId}-{slug}`; `{runId}` обязателен, `{slug}` — `branchSlug`: название латиницей, кириллица
-  транслитерируется, ≤ 40 символов), `push` (по умолчанию нет), `remote` (`origin`), `protected`
+  транслитерируется, ≤ 40 символов), `push` (по умолчанию нет), `pr` (по умолчанию нет: после push открыть PR через
+  `gh`; нужны `enabled` и `push`, иначе проблема `prNeedsPush`), `remote` (`origin`), `protected`
   (`master`, `main`, `develop`, `release/*`, `hotfix/*`). Проверка — `runBranchSettingsProblems` (коды для renderer,
   русский `text` для main), имя ветки — `branchNameProblem` (подмножество `git check-ref-format`).
 - **`ensureRunBranch`** — при запуске координатора (до PTY) и воркера: `Run.git` есть — вернуть, восстановив worktree
@@ -1180,7 +1181,16 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
   **`reviewBase`** — база `review info`: ветка фичи или текущая ветка корня.
 - **`RunBranchSync`** — на каждое `projects.onChange`: прогон закрыт (`closedAt`, карточка на «Проверке») и `push` —
   `git push -u <remote> refs/heads/<b>:refs/heads/<b>` в фоне (`execFile`, `GIT_TERMINAL_PROMPT=0`), итог — `pushedAt` /
-  `pushError`; неудача не повторяется до нового закрытия или перезапуска. Карточка в «Сделано», координатора и воркеров
+  `pushError`; неудача не повторяется до нового закрытия или перезапуска. Если включён `pr` и ветка отправлена
+  (`pushedAt`) без `prUrl` — после успешного push (и самостоятельно на любом изменении доски: ветку могли отправить
+  раньше, до включения `pr`) `openPr`: `gh pr view <ветка> --json url,state` — открытый PR подхватывается (`prUrl`,
+  идемпотентно), иначе `gh pr create --head <ветка> --base <prBaseBranch(RunGit.base, remote)> --title <название задачи>
+  --body-file <временный файл>` (обычный PR, не draft; тело — `Run.summary.text`, без неё описание задачи). Только
+  `execFile('gh', …)` без shell, env — `NET_ENV` + `GH_PROMPT_DISABLED=1`, `GH_NO_UPDATE_NOTIFIER=1`, PATH как у агентов
+  (процесс + `extraPathDirs()`: у GUI на macOS он урезан), таймаут 60 с, cwd — worktree ветки или root. Итог — `RunGit.prUrl`
+  / `RunGit.prError` (нет gh — «gh не установлен», нет базы PR — «укажите «От чего ответвлять»», иначе stderr ≤ 2000);
+  попытка одна на каждый `pushedAt` (память `prTried`, как `pushTried`): после ошибки повтор — с новым push или после
+  перезапуска. gh вынесен в `RunBranchSyncDeps.gh` для тестов. Координатор и воркеры PR не создают. Карточка в «Сделано», координатора и воркеров
   нет — `git worktree remove` **без `--force`** (грязный worktree остаётся), `Run.git.worktree` снимается, ветка остаётся.
   Удаление глобальной задачи (`removeGlobalTask`) тоже убирает worktree, ветку оставляет.
 - **UI**: чип ветки в шапке глобальной задачи (`GlobalTaskHeader` → `BranchChip`, логика — `renderer/src/runBranch.ts`):
@@ -1188,9 +1198,10 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 ## Ревью и мерж (`src/main/review.ts`, `src/main/workflow.ts`, `src/main/git.ts`)
 
-Это **локальная** интеграция без GitHub PR и CI: ветка подзадачи сливается в ветку её глобальной задачи (см. «Ветка
-глобальной задачи»), а без неё — в текущую ветку root проекта, если та не защищённая. Ветку фичи в общие ветки
-переносит человек через GitHub PR по [Git Flow](git-flow.md).
+Это **локальная** интеграция без проверки CI: ветка подзадачи сливается в ветку её глобальной задачи (см. «Ветка
+глобальной задачи»), а без неё — в текущую ветку root проекта, если та не защищённая. Мерж подзадач PR не создаёт.
+PR ветки **глобальной задачи** может открыть приложение (настройка `pr`, после push — см. `RunBranchSync`), но
+переносит ветку фичи в общие ветки по [Git Flow](git-flow.md) человек: мерж PR, CI и ревью второго разработчика остаются за ним.
 
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
@@ -1933,6 +1944,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
+| gh (PR ветки глобальной задачи) | `execFile('gh', [...])` без shell, PATH процесса + `extraPathDirs()` (`/opt/homebrew/bin`) | то же, `gh.exe` находится по PATH; нет gh (`ENOENT`) — `prError` | `runGh()` — `src/main/run-branch.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается

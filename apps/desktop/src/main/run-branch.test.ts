@@ -3,7 +3,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, normalizeRunBranchSettings, type RunBranchSettings, type Task } from '@orca-board/core'
@@ -216,5 +216,158 @@ describe('RunBranchSync', () => {
     store.moveGlobalTask(run.id, 'done')
     new RunBranchSync({ isAlive: (id) => id === 'pty-coord' }).sync(store, repo, settings())
     assert.equal(existsSync(g.worktree!), true)
+  })
+})
+
+describe('RunBranchSync: PR через gh', () => {
+  type GhCall = { args: string[]; cwd: string; body?: string }
+
+  /** Поддельный gh: `view` отвечает по `view`, `create` — по `create`; тело PR читается до удаления файла. */
+  function fakeGh(behavior: { view?: () => string; create?: () => string } = {}): { calls: GhCall[]; gh: (args: string[], cwd: string) => Promise<string> } {
+    const calls: GhCall[] = []
+    const gh = async (args: string[], cwd: string): Promise<string> => {
+      const call: GhCall = { args, cwd }
+      const bf = args.indexOf('--body-file')
+      if (bf >= 0) call.body = readFileSync(args[bf + 1], 'utf8')
+      calls.push(call)
+      if (args[1] === 'view') {
+        if (!behavior.view) throw Object.assign(new Error('no pull requests found'), { stderr: 'no pull requests found for branch' })
+        return behavior.view()
+      }
+      return behavior.create ? behavior.create() : 'https://github.com/o/r/pull/7\n'
+    }
+    return { calls, gh }
+  }
+
+  const arg = (c: GhCall, name: string): string => c.args[c.args.indexOf(name) + 1]
+
+  /** Глобальная задача с веткой; push включён, `pr` — по умолчанию тоже. */
+  function closedRun(patch: Partial<RunBranchSettings> = {}): { store: TaskStore; runId: string; s: RunBranchSettings } {
+    const store = newStore()
+    const run = store.createGlobalTask({ title: 'Фича', description: 'Описание задачи' })
+    const s = settings({ push: true, pr: true, base: 'origin/develop', ...patch })
+    ensureRunBranch(store, repo, run.id, s)
+    return { store, runId: run.id, s }
+  }
+
+  it('PR открывается только после успешного push, база — из RunGit.base без префикса remote', async () => {
+    const { store, runId, s } = closedRun()
+    const { calls, gh } = fakeGh()
+    const sync = new RunBranchSync({ isAlive: () => false, gh })
+
+    sync.sync(store, repo, s)
+    assert.equal(calls.length, 0, 'ветка не закрыта и не отправлена — PR не нужен')
+
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prUrl !== undefined, 'prUrl')
+    const g = store.getRun(runId)!.git!
+    assert.equal(g.prUrl, 'https://github.com/o/r/pull/7')
+    assert.equal(g.prError, undefined)
+    assert.notEqual(g.pushedAt, undefined)
+    const create = calls.find((c) => c.args[1] === 'create')!
+    assert.equal(arg(create, '--head'), g.branch)
+    assert.equal(arg(create, '--base'), 'develop')
+    assert.equal(arg(create, '--title'), 'Фича')
+    assert.equal(create.args.includes('--draft'), false, 'обычный PR')
+    assert.equal(create.body, 'Описание задачи', 'без сводки координатора — описание глобальной задачи')
+    assert.equal(existsSync(arg(create, '--body-file')), false, 'временный файл удалён')
+  })
+
+  it('неудачный push — gh не вызывается', async () => {
+    const { store, runId, s } = closedRun({ remote: 'nope' })
+    const { calls, gh } = fakeGh()
+    const sync = new RunBranchSync({ isAlive: () => false, gh })
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.pushError !== undefined, 'ошибка push')
+    assert.equal(calls.length, 0)
+  })
+
+  it('тело PR — итоговая сводка координатора', async () => {
+    const { store, runId, s } = closedRun()
+    const { calls, gh } = fakeGh()
+    const sync = new RunBranchSync({ isAlive: () => false, gh })
+    store.moveGlobalTask(runId, 'review')
+    store.finishRun(runId, 'Итог работы')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prUrl !== undefined, 'prUrl')
+    assert.equal(calls.find((c) => c.args[1] === 'create')!.body, 'Итог работы')
+  })
+
+  it('ошибка gh — в prError и не повторяется на каждом изменении доски; после нового push — повтор', async () => {
+    const { store, runId, s } = closedRun()
+    let fail = true
+    const { calls, gh } = fakeGh({ create: () => { if (fail) throw Object.assign(new Error('x'), { stderr: 'GraphQL: forbidden' }); return 'https://github.com/o/r/pull/8\n' } })
+    const sync = new RunBranchSync({ isAlive: () => false, gh })
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prError !== undefined, 'prError')
+    assert.equal(store.getRun(runId)!.git!.prError, 'GraphQL: forbidden')
+    const n = calls.length
+    sync.sync(store, repo, s)
+    sync.sync(store, repo, s)
+    await new Promise((r) => setTimeout(r, 100))
+    assert.equal(calls.length, n, 'повтора нет')
+
+    // Новый push (новый pushedAt) снимает запрет.
+    fail = false
+    store.setRunGit(runId, { pushedAt: Date.now() + 1000 })
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prUrl !== undefined, 'prUrl после повтора')
+    assert.equal(store.getRun(runId)!.git!.prError, undefined)
+  })
+
+  it('уже открытый PR подхватывается без create; закрытый — нет', async () => {
+    const { store, runId, s } = closedRun()
+    const open = fakeGh({ view: () => JSON.stringify({ url: 'https://github.com/o/r/pull/3', state: 'OPEN' }) })
+    const sync = new RunBranchSync({ isAlive: () => false, gh: open.gh })
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prUrl !== undefined, 'prUrl')
+    assert.equal(store.getRun(runId)!.git!.prUrl, 'https://github.com/o/r/pull/3')
+    assert.equal(open.calls.some((c) => c.args[1] === 'create'), false)
+
+    const b = closedRun()
+    const closed = fakeGh({ view: () => JSON.stringify({ url: 'https://github.com/o/r/pull/2', state: 'MERGED' }) })
+    const sync2 = new RunBranchSync({ isAlive: () => false, gh: closed.gh })
+    b.store.moveGlobalTask(b.runId, 'review')
+    sync2.sync(b.store, repo, b.s)
+    await waitFor(() => b.store.getRun(b.runId)!.git!.prUrl !== undefined, 'prUrl нового PR')
+    assert.equal(b.store.getRun(b.runId)!.git!.prUrl, 'https://github.com/o/r/pull/7')
+  })
+
+  it('без базы PR (пустая база — текущая ветка корня, не ветка на remote) — prError, gh create не вызывается', async () => {
+    const { store, runId, s } = closedRun()
+    store.setRunGit(runId, { base: 'deadbeef1234' })
+    const { calls, gh } = fakeGh()
+    const sync = new RunBranchSync({ isAlive: () => false, gh })
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prError !== undefined, 'prError')
+    assert.match(store.getRun(runId)!.git!.prError!, /не удалось определить базу PR/)
+    assert.equal(calls.some((c) => c.args[1] === 'create'), false)
+  })
+
+  it('gh не установлен (ENOENT) — понятная подсказка в prError', async () => {
+    const { store, runId, s } = closedRun()
+    const sync = new RunBranchSync({ isAlive: () => false, gh: async () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }) } })
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prError !== undefined, 'prError')
+    assert.equal(store.getRun(runId)!.git!.prError, 'gh не установлен (https://cli.github.com)')
+  })
+
+  it('pr выключен — gh не вызывается; уже отправленная ветка получает PR по включению настройки', async () => {
+    const { store, runId, s } = closedRun({ pr: false })
+    const { calls, gh } = fakeGh()
+    const sync = new RunBranchSync({ isAlive: () => false, gh })
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.pushedAt !== undefined, 'push')
+    assert.equal(calls.length, 0)
+
+    sync.sync(store, repo, { ...s, pr: true })
+    await waitFor(() => store.getRun(runId)!.git!.prUrl !== undefined, 'prUrl')
   })
 })
