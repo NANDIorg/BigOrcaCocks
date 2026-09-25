@@ -46,7 +46,7 @@ describe('workerTaskPrompt', () => {
   })
 
   it('этап без инструкции и показа — промпт как без этапа', () => {
-    assert.equal(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'work', title: 'Работа' }), '# Задача: T\n\nS\n')
+    assert.equal(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'work', type: 'work', title: 'Работа' }), '# Задача: T\n\nS\n')
   })
 
   it('раздел «Этап»: инструкция и обязательный показ с флагами done, до замечаний ревью', () => {

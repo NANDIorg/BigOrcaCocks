@@ -546,6 +546,8 @@ export interface Question {
    * ждёт координатора.
    */
   forHuman?: boolean
+  /** Нода `ask` воркфлоу, на которой задан вопрос (этап «Вопрос человеку»); у прочих вопросов нет. */
+  nodeId?: string
   createdAt: number
   answeredAt?: number
 }

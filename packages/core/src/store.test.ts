@@ -506,7 +506,7 @@ describe('показ человеку: finishDispatch и решение approval
 
   it('обязательный показ: done без него — ошибка с подсказкой, dispatch не закрыт', () => {
     const { s, t, d } = showcaseRun(true)
-    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'work', title: 'Дизайн', showcase: { what: 'варианты макета', required: true } })
+    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'work', type: 'work', title: 'Дизайн', showcase: { what: 'варианты макета', required: true } })
     assert.throws(() => s.finishDispatch(d.id, 'готово'), /этап «Дизайн» требует показ человеку: варианты макета[\s\S]*--show-file[\s\S]*--show/)
     assert.equal(s.getDispatch(d.id)!.endedAt, undefined)
     s.finishDispatch(d.id, 'готово', ['a.html'], undefined, { showcase: { text: '# Варианты', files: [' design\\a.html ', 'design/a.html', '', 'design/a.png'] } })

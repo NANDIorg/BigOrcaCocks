@@ -38,6 +38,8 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
   switch (type) {
     case 'gate':
       return { ...pos, type, roleId: '' }
+    case 'ask':
+      return { ...pos, type, instructions: '' }
     case 'condition': {
       const work = wf.nodes.find((n) => n.type === 'work')
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }
