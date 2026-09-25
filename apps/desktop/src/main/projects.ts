@@ -13,8 +13,9 @@ import {
 import { jsonPersistence } from './persistence'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
+import { DEFAULT_UPDATE_SETTINGS } from '../shared/ipc'
 import type {
-  AppSettings, AppSettingsPatch, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput, TaskTypesState
+  AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput, TaskTypesState
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
@@ -83,7 +84,21 @@ interface RawProjectsFile extends Omit<LegacyProjectsFile, 'templates'> {
   templates?: unknown
 }
 
-export const DEFAULT_APP_SETTINGS: AppSettings = { keepInBackground: true, notifications: DEFAULT_NOTIFICATION_SETTINGS }
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  keepInBackground: true,
+  notifications: DEFAULT_NOTIFICATION_SETTINGS,
+  updates: DEFAULT_UPDATE_SETTINGS
+}
+
+const UPDATE_SETTING_KEYS = Object.keys(DEFAULT_UPDATE_SETTINGS) as (keyof UpdateSettings)[]
+
+/** Настройки обновления из файла: незаданные и не-boolean поля — дефолты. */
+function normalizeUpdateSettings(raw: unknown): UpdateSettings {
+  const r = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+  const out = { ...DEFAULT_UPDATE_SETTINGS }
+  for (const k of UPDATE_SETTING_KEYS) if (typeof r[k] === 'boolean') out[k] = r[k] as boolean
+  return out
+}
 
 /** Имя бэкапа projects.json старого формата: откат на старую версию приложения прочтёт проекты без ролей. */
 export const PROJECTS_BACKUP_NAME = 'projects.v1.bak.json'
@@ -450,7 +465,8 @@ export class ProjectManager {
     const s = this.data.settings ?? {}
     return {
       keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground,
-      notifications: normalizeNotificationSettings(s.notifications)
+      notifications: normalizeNotificationSettings(s.notifications),
+      updates: normalizeUpdateSettings(s.updates)
     }
   }
 
@@ -463,6 +479,17 @@ export class ProjectManager {
     }
     if (patch.notifications !== undefined) {
       next.notifications = mergeNotificationSettings(this.settings().notifications, patch.notifications)
+    }
+    if (patch.updates !== undefined) {
+      if (typeof patch.updates !== 'object' || patch.updates === null || Array.isArray(patch.updates)) throw new Error('updates: ожидается объект')
+      const merged = this.settings().updates
+      for (const k of UPDATE_SETTING_KEYS) {
+        const v = patch.updates[k]
+        if (v === undefined) continue
+        if (typeof v !== 'boolean') throw new Error(`updates.${k} должен быть boolean`)
+        merged[k] = v
+      }
+      next.updates = merged
     }
     this.data.settings = next
     this.save()
