@@ -131,8 +131,7 @@ pnpm verify      # перед PR: check:git-flow + typecheck + test + build (к�
   Стабилизация общих release/hotfix-веток — через `fix/*` и PR. Работать прямо в общих ветках нельзя.
 - **Воркер Orca (`ORCA_DISPATCH_ID`):** используй назначенный worktree на `orca/<taskId>`,
   не переключай ветку, не создавай внешний PR. Локально мержит приложение — в ветку глобальной задачи
-  (`feature/<runId>-<slug>`, `src/main/run-branch.ts`), а не в ветку root. В защищённые ветки root
-  (`master` / `develop` / release / hotfix) приложение не сливает. Настройка — «О проекте → Git», процесс —
+  (`feature/<runId>-<slug>`, `src/main/run-branch.ts`), а не в ветку root. Процесс —
   «Работа через Orca» в `docs/git-flow.md`.
 - У каждого разработчика свой clone. У каждой рабочей ветки один владелец; разные пишущие агенты
   не делят worktree. Не трогай чужие правки и не переключай root проекта при живых воркерах Orca.

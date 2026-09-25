@@ -105,7 +105,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   живут в настройках проекта.
 - `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
   (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
-  `git: RunGit {branch, base, worktree?, pushedAt?, pushError?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
+  `git: RunGit {branch, base, worktree?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -917,10 +917,6 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     (`enabledAgents`), не установленные — под спойлером; «Обновить» пересканирует PATH.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog). Сохраняется через `projects:setColumns`.
-  - «Git» (`about/GitSection.tsx`) — ветка на каждую глобальную задачу (`Project.git`, `RunBranchSettings`): вкл/выкл,
-    база, шаблон имени с примером, push и remote, защищённые ветки строкой через запятую. Сохраняется кнопкой через
-    `projects:setGit`; ошибки формы — `runBranchSettingsProblems` по коду (`config.about.git.issue.*`). Нет метода у старого
-    preload — «перезапустите приложение». В меню — «ветки» / «выкл».
   - «Типы задач» (`about/TaskTypesSection.tsx`, логика — `renderer/src/taskTypeEdit.ts`) — все типы библиотеки
     (`taskTypes:list`, перечитывается при каждом открытии раздела) с галочкой «доступен в проекте» и кнопкой
     «По умолчанию»; сверху переключатель «Все типы библиотеки» (`taskTypeIds` не задан — доступны и типы, созданные
@@ -1086,8 +1082,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ветка в другом worktree (`git.branchBusy`) → грязное дерево, включая untracked (`git.dirtyTree`); удалённая `origin/x` без локальной `x` —
   `checkout --track -b x origin/x`. Отдельного события «ветка сменилась» нет: `ProjectGitResult.branch` и результат `checkoutBranch` уже несут новую ветку;
   `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
-  агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
-  веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
+  агенты, типы, `groupId`; ролей, графа, правил и разрешений у проекта нет);
   **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
   `projects:createGroup(name)` → `ProjectGroup`, `projects:renameGroup(id, name)` → `ProjectGroup`,
   `projects:removeGroup(id)` (проекты группы становятся без группы, сами не удаляются), `projects:setGroupCollapsed(id, collapsed)` →
@@ -1183,39 +1178,34 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 У каждой глобальной задачи — своя ветка и свой worktree; подзадачи ответвляются от неё и сливаются в неё, ветка корня
 проекта не меняется. Так несколько глобальных задач одного проекта идут параллельно и не смешиваются, а Orca, открытый
-на `master`, не пишет в `master`.
+на `master`, не пишет в `master`. Что делать с веткой после «Проверки» (push, PR, мерж в основную ветку) — решает
+человек: приложение её никуда не отправляет.
 
-- **Настройки** — `Project.git` (`RunBranchSettings`, нет — `DEFAULT_RUN_BRANCH_SETTINGS`): `enabled` (по умолчанию да),
-  `base` (пусто — текущая ветка корня; `origin/develop` — сначала `git fetch origin develop`, офлайн — от того, что есть),
-  `template` (`feature/{runId}-{slug}`; `{runId}` обязателен, `{slug}` — `branchSlug`: название латиницей, кириллица
-  транслитерируется, ≤ 40 символов), `push` (по умолчанию нет), `remote` (`origin`), `protected`
-  (`master`, `main`, `develop`, `release/*`, `hotfix/*`). Проверка — `runBranchSettingsProblems` (коды для renderer,
-  русский `text` для main), имя ветки — `branchNameProblem` (подмножество `git check-ref-format`).
+- **Настроек нет** (раньше были `Project.git`: вкл/выкл, база, шаблон, push, remote, защищённые ветки — убраны вместе
+  с разделом «О проекте → Git»; `normalizeProject` в `projects.ts` удаляет старое поле, `migrateRunGit` в store —
+  `Run.git.pushedAt`/`pushError`). Имя — `runBranchName`: `feature/<runId>-<slug>` (`branchSlug`: название латиницей,
+  кириллица транслитерируется, ≤ 40 символов), база — ветка, открытая в корне при старте (detached HEAD — коммит).
 - **`ensureRunBranch`** — при запуске координатора (до PTY) и воркера: `Run.git` есть — вернуть, восстановив worktree
   (`worktree prune` + `worktree add` на существующую ветку; ветки нет — `git.runBranchMissing`). Нет — завести:
   `git worktree add --no-track -b <ветка> <repo>/../.orca-worktrees/<runId> <база>` и `store.setRunGit`. `--no-track` —
-  иначе upstream новой ветки стал бы `origin/develop`, и голый `git push` отказал бы или ушёл в базу. Ветку **не** заводит:
-  «Входящим», при выключенной настройке и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина
-  фичи уже в корне) — такие работают по-старому.
+  иначе upstream новой ветки стал бы базой, и голый `git push` отказал бы или ушёл в неё. Ветку **не** заводит:
+  «Входящим» и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина фичи уже в корне) —
+  такие работают по-старому.
 - **Координатор** запускается в worktree ветки (`cwd`), туда же — `.orca-attachments`. **Воркер**: `orca/<taskId>`
   ответвляется от `Run.git.branch` (без неё — от HEAD корня).
-- **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки, `{cwd: корень, branch: текущая}`, но
-  не в защищённую (`OrcaError` `git.protectedBranch`: нода `merge` → `workflow_blocked`, приёмка вне графа — ошибка, до
-  git-части). Передаётся как `WorkflowDeps.mergeTarget` и `targetOf` в `acceptReview` / `resolveHumanRequest`.
+- **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки («Входящие», старые прогоны),
+  `{cwd: корень, branch: текущая}` — любая, защищённых веток нет. Передаётся как `WorkflowDeps.mergeTarget` и `targetOf` в `acceptReview` / `resolveHumanRequest`.
   **`reviewBase`** — база `review info`: ветка фичи или текущая ветка корня.
-- **`RunBranchSync`** — на каждое `projects.onChange`: прогон закрыт (`closedAt`, карточка на «Проверке») и `push` —
-  `git push -u <remote> refs/heads/<b>:refs/heads/<b>` в фоне (`execFile`, `GIT_TERMINAL_PROMPT=0`), итог — `pushedAt` /
-  `pushError`; неудача не повторяется до нового закрытия или перезапуска. Карточка в «Сделано», координатора и воркеров
-  нет — `git worktree remove` **без `--force`** (грязный worktree остаётся), `Run.git.worktree` снимается, ветка остаётся.
+- **`RunBranchSync`** — на каждое `projects.onChange`: карточка в «Сделано», координатора и воркеров нет — `git worktree remove` **без `--force`** (грязный worktree остаётся), `Run.git.worktree` снимается, ветка остаётся.
   Удаление глобальной задачи (`removeGlobalTask`) тоже убирает worktree, ветку оставляет.
 - **UI**: чип ветки в шапке глобальной задачи (`GlobalTaskHeader` → `BranchChip`, логика — `renderer/src/runBranch.ts`):
-  имя, тон по push, подсказка — база, папка, push; клик копирует имя. **CLI**: `global get` → поле `git`.
+  имя, подсказка — база и папка; клик копирует имя. **CLI**: `global get` → поле `git`.
 
 ## Ревью и мерж (`src/main/review.ts`, `src/main/workflow.ts`, `src/main/git.ts`)
 
 Это **локальная** интеграция без GitHub PR и CI: ветка подзадачи сливается в ветку её глобальной задачи (см. «Ветка
-глобальной задачи»), а без неё — в текущую ветку root проекта, если та не защищённая. Ветку фичи в общие ветки
-переносит человек через GitHub PR по [Git Flow](git-flow.md).
+глобальной задачи»), а без неё — в текущую ветку root проекта. Ветку фичи дальше ведёт человек (для этого репозитория —
+GitHub PR по [Git Flow](git-flow.md)).
 
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
@@ -2090,8 +2080,8 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 
 - Orca сливал подзадачи в **текущую ветку корня**, а root был открыт на `master`: две фичи ушли прямо в `master` и
   перемешались (правило «открой в Orca worktree фичи» в CLAUDE.md и `git-flow.md` агенты не могли выполнить — ветку корня
-  выбирает человек). Теперь у глобальной задачи своя ветка (`run-branch.ts`), а в защищённые ветки корня приложение не
-  сливает. Правило процесса, которое нельзя проверить кодом, — не защита: ставь проверку в код.
+  выбирает человек). Теперь у глобальной задачи своя ветка (`run-branch.ts`). Правило процесса, которое нельзя проверить
+  кодом, — не защита: ставь проверку в код.
 
 - CI выполняет тесты на трёх ОС. Фикстура живого PTY запускает Node, а не отсутствующий
   в Windows `sleep`. Интеграционные тесты `MacUpdater.install` используют реальные пути
