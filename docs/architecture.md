@@ -1535,7 +1535,7 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 `releaseNotes` (markdown; на Windows/NSIS — то, что отдаёт electron-updater из GitHub, то есть HTML: `Markdown.tsx` санитизирует его
 DOMPurify), `releaseUrl`, `percent` (только `downloading`), `installPending` (`'idle' | 'quit' | null`),
 `mode` (`'auto' | 'manual-download'`), `unsupportedReason` (только `unsupported`: `dev`, `portable`, `not-in-applications`,
-`no-write-access`, `translocated`, `platform` — установщика для этой ОС нет: Linux и macOS до `macUpdater`), `error` (только `error`, по-русски).
+`no-write-access`, `translocated`, `platform` — установщика для этой ОС нет: Linux), `error` (только `error`, по-русски).
 
 ```
 idle ─check→ checking ─новее нет→ idle

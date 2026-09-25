@@ -1,6 +1,5 @@
 // Обновление приложения: `Updater` — единственный источник правды `UpdateState`. Он ведёт расписание проверок,
-// фоновую загрузку и отложенную установку; «как» на конкретной ОС знает `PlatformUpdater` (winUpdater.ts, macOS —
-// отдельная задача), а сами переходы и решения — чистый updateMachine.ts.
+// фоновую загрузку и отложенную установку; «как» на конкретной ОС знает `PlatformUpdater` (winUpdater.ts, macUpdater.ts), а сами переходы и решения — чистый updateMachine.ts.
 // Модуль не импортирует electron (всё окружение приходит через `UpdaterHost`), поэтому тестируется в node:test.
 // См. docs/architecture.md → «Обновление».
 import type { UpdateInfo, UpdateInstallWhen, UpdateSettings, UpdateState } from '../shared/ipc'
