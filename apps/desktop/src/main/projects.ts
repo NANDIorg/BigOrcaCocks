@@ -4,10 +4,11 @@ import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
-  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
+  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType, normalizeRunBranchSettings, runBranchSettingsProblems,
   type RunBranchSettings, type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfMigrationNote, type WfValidationContext,
+  type WfNodeTemplate, type WfTemplateNode,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
@@ -18,7 +19,7 @@ import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
 import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
   AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
-  TaskTypesState
+  TaskTypesState, NodeTemplateInput
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
@@ -84,6 +85,11 @@ export interface ProjectsFile {
   taskTypesSeeded?: boolean
   /** Тип библиотеки по умолчанию (новые проекты, ассистент); нет или удалён — `general`, иначе первый тип. */
   defaultTaskTypeId?: string
+  /**
+   * Библиотека шаблонов нод — глобальная, как типы задач, в порядке показа (`node-templates.ts` в core). Нет ключа —
+   * шаблонов нет (отдельной миграции и бампа версии не нужно, старая версия приложения поле игнорирует).
+   */
+  nodeTemplates?: WfNodeTemplate[]
   /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
   settings?: Partial<AppSettings>
   /**
@@ -234,6 +240,10 @@ export class ProjectManager {
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
       normalizeGroups(data)
+      const templates = loadedNodeTemplates(data.nodeTemplates, this.file)
+      if (templates.list.length) data.nodeTemplates = templates.list
+      else delete data.nodeTemplates
+      this.warnings.push(...templates.warnings)
       const settingsSet = isObject(raw.settings) && Object.keys(raw.settings).length > 0
       const onboarding = loadedOnboarding(raw.onboarding, data.projects.length > 0 || settingsSet)
       data.onboarding = onboarding.value
@@ -551,6 +561,61 @@ export class ProjectManager {
     const own = t.settings.workflow
     if (own && own.version > WORKFLOW_VERSION) throw futureWorkflowError(own.version)
     return { typeId: t.id, title: t.title, workflow: own ? clone(own) : resolveTaskType(t).workflow, custom: own !== undefined }
+  }
+
+  // ---------- библиотека шаблонов нод ----------
+
+  /** Шаблоны в порядке хранения; копии — правка результата не меняет библиотеку. */
+  nodeTemplates(): WfNodeTemplate[] {
+    return (this.data.nodeTemplates ?? []).map(clone)
+  }
+
+  /**
+   * Создать (без `id` — новый id) или целиком заменить шаблон. `updatedAt` ставит main: по нему редактор подсказывает
+   * «шаблон изменился». Проверка — `validateNodeTemplate` (в том числе путь подзадачи у `work`); роли и колонки
+   * проверяются при вставке в граф типа, а не здесь: шаблон глобальный. Предупреждения проверки не мешают сохранению.
+   */
+  saveNodeTemplate(input: NodeTemplateInput): WfNodeTemplate {
+    if (!isObject(input)) throw new OrcaError('nodeTemplate.notObject')
+    if (input.id !== undefined && !nonEmpty(input.id)) throw new OrcaError('nodeTemplate.emptyId')
+    if (!nonEmpty(input.title)) throw new OrcaError('nodeTemplate.emptyTitle')
+    const id = input.id ?? this.newNodeTemplateId()
+    // Описание не строки не «пропускаем молча»: оно доезжает до `validateNodeTemplate`, и тот назовёт проблему по коду.
+    const description = typeof input.description === 'string' ? input.description.trim() || undefined : input.description
+    const template = {
+      id, title: input.title.trim(),
+      ...(description !== undefined ? { description } : {}),
+      node: templateNode(input.node),
+      updatedAt: Date.now()
+    } as WfNodeTemplate
+    const { errors } = validateNodeTemplate(template)
+    if (errors.length) throw new OrcaError('nodeTemplate.notSaved', { errors: errors.map((e) => e.message).join('; ') })
+    const list = [...(this.data.nodeTemplates ?? [])]
+    const i = list.findIndex((t) => t.id === id)
+    if (i === -1) list.push(template)
+    else list[i] = template
+    this.data.nodeTemplates = list
+    this.save()
+    return clone(template)
+  }
+
+  /** Удалить шаблон. Вставленные из него ноды остаются в графах как есть: `templateId` — только подсказка редактору. */
+  deleteNodeTemplate(id: string): WfNodeTemplate[] {
+    const list = this.data.nodeTemplates ?? []
+    const t = list.find((x) => x.id === id)
+    if (!t) throw new OrcaError('nodeTemplate.notFound', { id: String(id) })
+    const rest = list.filter((x) => x.id !== id)
+    if (rest.length) this.data.nodeTemplates = rest
+    else delete this.data.nodeTemplates
+    this.save()
+    return this.nodeTemplates()
+  }
+
+  private newNodeTemplateId(): string {
+    let id: string
+    do id = `tpl_${randomBytes(4).toString('hex')}`
+    while ((this.data.nodeTemplates ?? []).some((t) => t.id === id))
+    return id
   }
 
   // ---------- типы проекта и прогонов ----------
@@ -1098,6 +1163,45 @@ function loadedTaskType(v: unknown): TaskType[] {
     settings,
     ...(notes.length ? { workflowNotes: notes } : {})
   }]
+}
+
+/**
+ * Нода шаблона на сохранение: копия без `id` и позиции — их задаёт вставка в граф. Не объект оставляем как есть,
+ * `validateNodeTemplate` назовёт проблему по коду.
+ */
+function templateNode(v: unknown): WfTemplateNode {
+  if (!isObject(v)) return v as WfTemplateNode
+  const { id: _id, x: _x, y: _y, ...rest } = clone(v)
+  return rest as unknown as WfTemplateNode
+}
+
+/**
+ * Шаблоны из projects.json без доверия к данным: не массив — пусто; каждая запись проходит `validateNodeTemplate`
+ * (и служебные поля `id`/`x`/`y` ноды снимаются), негодные и повторные по id пропускаются с предупреждением, остальные
+ * остаются: один битый шаблон не уносит библиотеку. Пропущенное из файла исчезнет при ближайшей записи projects.json.
+ */
+function loadedNodeTemplates(v: unknown, file: string): { list: WfNodeTemplate[]; warnings: StateWarning[] } {
+  const list: WfNodeTemplate[] = []
+  const warnings: StateWarning[] = []
+  if (v === undefined) return { list, warnings }
+  if (!Array.isArray(v)) {
+    warnings.push({ kind: 'skipped', file, message: `шаблоны нод: в файле ${file} ожидается массив — библиотека пропущена` })
+    return { list, warnings }
+  }
+  const seen = new Set<string>()
+  v.forEach((raw: unknown, i) => {
+    const skip = (why: string): void => {
+      warnings.push({ kind: 'skipped', file, message: `шаблон нод №${i + 1} в ${file} пропущен: ${why}` })
+    }
+    if (!isObject(raw)) return skip('ожидается объект')
+    const t = { ...clone(raw), node: templateNode(raw.node) } as unknown as WfNodeTemplate
+    const { errors } = validateNodeTemplate(t)
+    if (errors.length) return skip(errors.map((e) => e.message).join('; '))
+    if (seen.has(t.id)) return skip(`повторный id «${t.id}»`)
+    seen.add(t.id)
+    list.push(t)
+  })
+  return { list, warnings }
 }
 
 /** Предупреждения миграции графа из projects.json: битые записи (не объект, нет кода или текста) выпадают. */

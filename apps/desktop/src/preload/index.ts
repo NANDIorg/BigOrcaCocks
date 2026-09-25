@@ -54,6 +54,11 @@ const api: OrcaApi = {
     duplicate: (id) => ipcRenderer.invoke('taskTypes:duplicate', id),
     setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id)
   },
+  nodeTemplates: {
+    list: () => ipcRenderer.invoke('nodeTemplates:list'),
+    save: (input) => ipcRenderer.invoke('nodeTemplates:save', input),
+    delete: (id) => ipcRenderer.invoke('nodeTemplates:delete', id)
+  },
   agents: {
     list: (refresh) => ipcRenderer.invoke('agents:list', refresh)
   },
