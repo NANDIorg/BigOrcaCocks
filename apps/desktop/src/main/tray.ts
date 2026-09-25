@@ -8,6 +8,10 @@ export interface TrayHandlers {
   quit(): void
   /** Число задач в работе для пункта меню. */
   activeCount(): number
+  /** Версия скачанного обновления, готового к установке; null — пункта «Перезапустить и обновить» нет. */
+  readyUpdate(): string | null
+  /** «Перезапустить и обновить»: установка с обычным подтверждением, если работают агенты. */
+  installUpdate(): void
 }
 
 // Модульная ссылка: без неё GC соберёт Tray, и иконка пропадёт из строки меню.
@@ -29,10 +33,12 @@ export function createTray(h: TrayHandlers): Tray {
 export function refreshTray(): void {
   if (!tray || tray.isDestroyed() || !handlers) return
   const h = handlers
+  const update = h.readyUpdate()
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Открыть orca-board', click: () => h.open() },
       { label: `Задач в работе: ${h.activeCount()}`, enabled: false },
+      ...(update ? [{ label: `Перезапустить и обновить до ${update}`, click: () => h.installUpdate() }] : []),
       { type: 'separator' },
       { label: 'Выйти', click: () => h.quit() }
     ])
