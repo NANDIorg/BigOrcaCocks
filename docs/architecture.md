@@ -1516,48 +1516,89 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
   (`StatsSnapshot`, собирает `App.tsx`) без `usage`: токенов и стоимости нет, над секцией — «перезапустите приложение».
 - Карточка на доске статистику не показывает: стоимость потребовала бы читать транскрипты для всей доски.
 
-## Обновление (`src/main/updater.ts`, типы — `shared/ipc.ts`)
+## Обновление (`src/main/updater.ts`, `updateMachine.ts`, `winUpdater.ts`; типы — `shared/ipc.ts`)
 
 Решение (вариант B, «гибрид»): Windows NSIS — electron-updater; macOS (ad-hoc подпись, Squirrel.Mac не работает) — свой установщик:
 скачать zip из GitHub Releases (репозиторий NANDIorg/BigOrcaCocks) по `latest-mac.yml`, проверить sha512 и codesign, после выхода
 подменить `.app` detached-скриптом и перезапустить; portable Windows — только «скачать новый exe». Каналов (бета) нет; в dev
-(`!app.isPackaged`) обновление выключено. **Общая часть (`Updater`) пока заглушка**: держит состояние, методы ничего не делают; macOS-бэкенд написан отдельно (см. ниже) и подключается в ветке `darwin`.
+(`!app.isPackaged`) обновление выключено. **Реализовано:** машина состояний, расписание, отложенная установка, Windows (NSIS и portable)
+и macOS (свой установщик, см. «macOS-бэкенд»): ветка `darwin` в `createPlatformUpdater` (`updaterBackend.ts`).
 
 **Настройки** (`AppSettings.updates`, `UpdateSettings`; дефолты — `DEFAULT_UPDATE_SETTINGS`): `autoCheck` (true) — проверять в фоне,
 `autoDownload` (true) — скачивать сразу, `installWhenIdle` (false) — ставить, когда у агентов не осталось живых сессий.
-Установка по кнопке и автоматически при выходе — всегда.
+Установка по кнопке и при выходе — всегда. Настройки читаются при каждом решении; после `app:setSettings` main зовёт
+`updater.settingsChanged()` (включили `autoDownload` при найденной версии — качаем; включили `installWhenIdle` при готовом
+обновлении «при выходе» — переходим на ожидание агентов).
 
 **Состояние** — `UpdateState` (единственный источник правды — main, renderer подписывается на `updates:changed`):
 `status` (`idle | checking | available | downloading | ready | installing | error | unsupported`), `currentVersion`, `availableVersion`,
-`releaseNotes` (markdown), `releaseUrl`, `percent` (только `downloading`), `installPending` (`'idle' | 'quit' | null`),
+`releaseNotes` (markdown; на Windows/NSIS — то, что отдаёт electron-updater из GitHub, то есть HTML: `Markdown.tsx` санитизирует его
+DOMPurify), `releaseUrl`, `percent` (только `downloading`), `installPending` (`'idle' | 'quit' | null`),
 `mode` (`'auto' | 'manual-download'`), `unsupportedReason` (только `unsupported`: `dev`, `portable`, `not-in-applications`,
-`no-write-access`, `translocated`), `error` (только `error`, по-русски).
+`no-write-access`, `translocated`, `platform` — установщика для этой ОС нет: Linux и macOS до `macUpdater`), `error` (только `error`, по-русски).
 
 ```
 idle ─check→ checking ─новее нет→ idle
                  │ └─ошибка→ error
                  └─есть→ available ─download/autoDownload→ downloading(percent) ─→ ready ─install→ installing → перезапуск
-                                                              └─ошибка→ error
-unsupported — терминальное состояние: check/download/install ничего не меняют
+                                                              └─ошибка→ error          └─ошибка→ error
+unsupported — терминальное: check/download/install ничего не меняют (кроме portable: см. ниже)
 ```
 
-`install({when})`: `now` — выйти и заменить (с обычным подтверждением выхода), `idle` — `installPending = 'idle'`, поставить, когда живых
-сессий агентов нет, `quit` — `installPending = 'quit'`, при следующем выходе. `cancelPending()` снимает отложенную установку.
-`getJustUpdated()` отдаёт версию, с которой обновились (для «Обновлено до …»), один раз после старта, иначе `null`.
+**Слои.** `updateMachine.ts` — чистые переходы и решения (`checkFinished`, `downloadDone`, `idleAction`, `compareVersions`…), без
+electron и таймеров. `updater.ts` — `Updater`: вызывает их, ходит в `PlatformUpdater`, ведёт таймеры и рассылает `onChanged`;
+окружение (настройки, число агентов, диалог, выход) приходит через `UpdaterHost`, поэтому модуль не импортирует electron и
+тестируется в `node:test` (`updater.test.ts`, `updateMachine.test.ts`, `githubRelease.test.ts`). `updaterBackend.ts` выбирает бэкенд
+по платформе (`isPackaged`, `process.platform`, `PORTABLE_EXECUTABLE_FILE`). `Updater` создаётся в `main/index.ts`
+(`whenReady`), `updater.start()` запускает расписание.
+
+**Расписание.** `autoCheck`: первая проверка через `INITIAL_CHECK_DELAY_MS` (10 с) после старта и затем раз в `CHECK_INTERVAL_MS`
+(4 ч). Фоновая проверка не превращает сбой в `error` (нет сети — не повод рисовать ошибку каждые четыре часа): состояние
+возвращается к прежнему; ручная («Проверить») ошибку показывает. Проверка возможна из `idle | available | error`; в `checking`,
+`downloading`, `ready`, `installing` — no-op. Найдено и `autoDownload` → сразу `downloading`. Сбой загрузки → `error` с сохранённой
+`availableVersion`; повтор — `download()` или следующая проверка.
+
+**Отложенная установка.** Когда обновление скачано (`ready`), `installPending` ставится автоматически: `'quit'` (по умолчанию) или
+`'idle'` (если `installWhenIdle`). `install({when})` в `ready` (иначе — ошибка; в `unsupported`/`installing` — no-op):
+- `now` — если живых агентов нет, ставим сразу; иначе диалог main (`confirmInstall` в `index.ts`, делит флаг `confirmingQuit`
+  с `requestQuit`): «N задач в работе: обновить сейчас (агенты остановятся) / когда агенты закончат / отмена»;
+- `idle` — `installPending = 'idle'`; `Updater` опрашивает `liveWorkerCount()` каждые `IDLE_POLL_MS` (5 с, только пока ждём).
+  Агенты закончились → `installWhenIdle` включён: ставим сразу; иначе диалог «Агенты закончили работу. Перезапустить и обновить
+  до X?» («Позже» переводит на `quit`). Если живых агентов нет уже в момент вызова — это `now` без второго вопроса;
+- `quit` — `installPending = 'quit'`.
+`cancelPending()` снимает установку (`null`): при выходе тогда ничего не ставится. Обычный выход (`quitNow`) при `ready` и
+непустом `installPending` вызывает `updater.installOnQuit()` — установка сама завершает приложение. Пункт трея «Перезапустить и
+обновить до X» (`readyUpdate` / `installUpdate` в `TrayHandlers`) виден в `ready` и делает `install({when: 'now'})`.
+
+**Установка** (`runInstall`): `host.lockQuit()` (`quitting = true`, иначе `quitAndInstall` упрётся в диалог выхода из `before-quit`) →
+`installing` → `PlatformUpdater.install()` → `host.quit()` (`killAll` + `app.quit`). Сбой → `error`, `unlockQuit()` (при установке по
+выходу — выходим всё равно). `getJustUpdated()` отдаёт версию один раз: `host.takeJustUpdated()` (в `index.ts` — `getJustUpdatedFrom()`
+из `backup.ts`, работает на всех платформах) или, если её нет, `backend.consumeJustUpdated()` (маркер macOS-установщика; вызывается
+всегда, чтобы убрать остатки скачивания).
 
 **Платформенный бэкенд** — интерфейс `PlatformUpdater` (`updater.ts`): `check(): Promise<UpdateInfo | null>` (`UpdateInfo {version,
 releaseNotes, releaseUrl}`), `download(onProgress): Promise<void>` (скачать + проверить целостность), `install(): Promise<void>`
-(подготовить замену и выйти). Бэкенд знает только «как» на своей ОС и бросает ошибки; расписание, состояния, отложенную установку и
-настройки ведёт `Updater`. Windows- и macOS-бэкенды — отдельные модули (`winUpdater.ts`, `macUpdater.ts`). `Updater` не импортирует electron (версия и `isPackaged`
-приходят в `createUpdater`), поэтому тестируется в `node:test` (`updater.test.ts`).
+(подготовить замену; выход добивает `Updater`). Бэкенд знает только «как» на своей ОС и бросает ошибки; расписание, состояния, отложенную
+установку и настройки ведёт `Updater`. Необязательный `consumeJustUpdated()` — версия, с которой обновились, по маркеру самого бэкенда
+(macOS; заодно чистит остатки скачивания).
+
+**Windows NSIS** (`winUpdater.ts`): `electron-updater` (`autoUpdater`) читает `latest.yml` и `app-update.yml` (electron-builder кладёт его
+в `resources` при сборке nsis/portable по блоку `publish`). `autoDownload` и `autoInstallOnAppQuit` выключены — всем управляет
+`Updater`; sha512 установщика electron-updater сверяет сам (проверка издателя не настроена: подписи кода нет);
+`install()` — `quitAndInstall(true, true)` (тихая установка в прежнюю папку и перезапуск).
+
+**Windows portable** (`PORTABLE_EXECUTABLE_FILE`): заменить exe на ходу нельзя, поэтому `support = { mode: 'manual-download',
+unsupportedReason: 'portable' }`, статус остаётся `unsupported`, но проверка **работает**: `GET /repos/NANDIorg/BigOrcaCocks/releases/latest`
+(`githubRelease.ts`), версия новее и в релизе есть `*-portable-*.exe` → заполняются `availableVersion`, `releaseNotes`, `releaseUrl`
+(страница релиза; UI показывает «доступна X, скачать»). Скачивания и установки нет; сбой проверки состояние не меняет.
 
 ### macOS-бэкенд (`src/main/macUpdater.ts`, чистая логика — `macUpdateLogic.ts`)
 
 Реализует `PlatformUpdater` без Squirrel.Mac. `macUpdater.ts` electron не импортирует: окружение (`MacUpdaterEnv`: версия, `process.arch`,
 путь к `.app`, userData, `fetch`, `run` = `execFile`, `spawnDetached`) приходит снаружи, `createMacUpdater({ app, net })` собирает его из
 electron (`net.fetch` учитывает системный прокси). `macUpdateSupport({ isPackaged })` — `detectMacSupport` на настоящей ФС. Подключение к
-`Updater` — ветка `darwin` в `createUpdater` (поддержка → `UpdateSupport`, бэкенд → `createMacUpdater`); после старта `getJustUpdated()`
-берёт версию из `MacUpdater.consumeJustUpdated()`.
+`Updater` — ветка `darwin` в `createPlatformUpdater` (`updaterBackend.ts`: `macUpdateSupport` → `UpdateSupport`, при поддержке —
+`createMacUpdater({ app, net })`); `getJustUpdated()` учитывает `MacUpdater.consumeJustUpdated()`.
 
 - **check**: `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml` → `parseUpdateManifest` (свой разбор плоского
   yml, без зависимостей) → `pickMacZip` (arm64 — файл с «arm64», x64 — zip без «arm64»; dmg игнорируется) → `isNewerVersion` (semver) против
@@ -1629,13 +1670,20 @@ skills, тексты main (уведомления, диалоги, ошибки 
   (`coordStateText`, `requestKindTitle`) или объект с геттерами, если константу читают чужие экраны
   (`REQUEST_KIND_TITLE` в `RequestCard.tsx` — его берёт `TaskModal`). Строка, вычисленная при импорте, останется
   на языке старта.
+- **Подписи в модулях логики — функции, а не константы:** константа посчиталась бы один раз при загрузке модуля
+  на языке по умолчанию. Доска так и сделана: `cardStateLabel()`, `priorityTitle()`, `approxTitle()`,
+  `showcaseStaleMessage()`. Таблица, которую чужие модули читают как есть, отдаёт текст геттером:
+  `BOARD_SORT_OPTIONS[].title` (`boardSort.ts`, берёт и GlobalBoard), `STATUS_SOURCE_TITLES` (`statusHistory.ts`,
+  берёт globalTimeline). Подписи из core только русские: они нужны CLI и промптам (`PRIORITY_TITLES`,
+  `COLUMN_COLORS[].title`). В renderer их заменяют `priorityTitle()` (`taskPriority.ts`) и `columnColorTitle()`
+  (`boardColumns.ts`). Названия колонок доски — данные проекта, их не переводим, как и дефолтные «Бэклог»,
+  «Готовы» из `DEFAULT_COLUMNS`.
 - **Строка с элементами внутри** («В работе в среднем **3 ч**») — один ключ с параметром-слотом
   (`'В работе в среднем {time}'`) и `<Rich text={t(…)} slots={{ time: <b>…</b> }} />` (`StatsCells.tsx`,
   разбор — `richParts` в `globalFormat.ts`), а не склейка кусков фраз: порядок слов в языках разный.
-- **Ошибки «перезапустите приложение»** — функции (`staleReviewMessage()`, `statsStaleMessage()`), а не константы
-  модуля: константа вычислилась бы один раз на языке старта. Сравнивать с ними — на всех языках
-  (`isStaleStatsError`), язык могли сменить между запросом и ответом. Текст ошибок main не переводится, поэтому
-  регэкспы по нему (`reviewErrorMessage`) остаются русскими.
+- **Ошибки «перезапустите приложение»** (`staleReviewMessage()`, `statsStaleMessage()`) сравнивать — на всех
+  языках (`isStaleStatsError`): язык могли сменить между запросом и ответом. Текст ошибок main не переводится,
+  поэтому регэкспы по нему (`reviewErrorMessage`) остаются русскими.
 - **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
   (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
   `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык
@@ -1683,7 +1731,7 @@ skills, тексты main (уведомления, диалоги, ошибки 
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
-| Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | electron-updater (NSIS); portable — только ссылка на релиз | `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`; раздел «Обновление» |
+| Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
 `node`/Node из Electron прямо из `Resources/cli` без сборки и без `node_modules`, поэтому импортировать
@@ -1925,6 +1973,13 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
   в карточку). События из портала React доводит до `Board` по дереву компонентов, поэтому обработчик клавиш доски
   проверяет, что цель — сама карточка (`data-card-id`), а меню глушит Esc через `preventDefault` + `stopPropagation`, иначе
   глобальный Esc в `GlobalTaskView` вернёт на общую доску вместе с закрытием меню.
+- `quitAndInstall` (electron-updater) сам зовёт `app.quit()`, а `before-quit` в `index.ts` перехватывает выход диалогом. Поэтому перед
+  установкой `Updater` обязательно вызывает `host.lockQuit()` (`quitting = true`); при сбое установки — `unlockQuit()`. Без этого
+  перед установкой всплывало бы второе «N задач в работе… Выйти?».
+- Проверка обновления в portable оставляет статус `unsupported` (контракт: он терминальный для установки), но заполняет
+  `availableVersion` / `releaseUrl`. Renderer не должен считать «`unsupported` → нечего показывать».
+- `electron-updater` импортируется только из `winUpdater.ts` (через `updaterBackend.ts`): он тянет electron, а `updater.ts` и
+  `updateMachine.ts` должны оставаться чистыми, чтобы тестироваться в `node:test`.
 
 ## Открытые вопросы
 

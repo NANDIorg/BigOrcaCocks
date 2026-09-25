@@ -5,6 +5,7 @@ import {
   cardEssence, cardEssenceFor, cardState, depsLabel, filesLabel, requestStageLabel, shortText, stageLabel, wfNodeTitles,
   type CardStateInput
 } from './cardState'
+import { setLocale } from './i18n'
 
 const base = (over: Partial<CardStateInput> = {}): CardStateInput => ({
   kind: 'backlog', task: {}, questions: [], running: false, waitingDeps: 0, ...over
@@ -169,7 +170,11 @@ test('cardEssenceFor: задача из ленты без своей сути п
 
 test('requestStageLabel: метка этапа только у вопроса с известной нодой', () => {
   const t = { ask1: 'Уточнение', work: 'Работа' }
+  setLocale('ru')
   assert.equal(requestStageLabel({ kind: 'question', nodeId: 'ask1' }, t), 'Этап «Уточнение»')
+  setLocale('en')
+  assert.equal(requestStageLabel({ kind: 'question', nodeId: 'ask1' }, t), 'Stage “Уточнение”', 'название ноды — данные, не переводится')
+  setLocale('ru')
   assert.equal(requestStageLabel({ kind: 'question' }, t), undefined, 'обычный вопрос — без метки')
   assert.equal(requestStageLabel({ kind: 'question', nodeId: 'gone' }, t), undefined, 'ноды нет в графе — id не показываем')
   assert.equal(requestStageLabel({ kind: 'question', nodeId: 'ask1' }, undefined), undefined)

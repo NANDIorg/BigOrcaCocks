@@ -1,4 +1,5 @@
 import type { BoardColumn, ColumnKind, Task } from '@orca-board/core'
+import { t, type TKey } from './i18n'
 
 /**
  * Колонка локальной доски в том виде, как её показываем: сама колонка проекта (заголовок, цвет, куда ставить
@@ -58,4 +59,22 @@ export function pendingDeps(
     const status = statusOf(d)
     return status === undefined || kindOf(status) !== 'done'
   }).length
+}
+
+/** Названия цветов палитры `COLUMN_COLORS` (core) по значению: в core они только русские. */
+const COLOR_KEYS: Record<string, TKey> = {
+  '#6b6f7c': 'board.color.gray',
+  '#7b86f5': 'board.color.blue',
+  '#f08a3a': 'board.color.orange',
+  '#e8b04a': 'board.color.yellow',
+  '#b57bee': 'board.color.purple',
+  '#5ad1cc': 'board.color.teal',
+  '#e5484d': 'board.color.red',
+  '#2ea043': 'board.color.green'
+}
+
+/** Название цвета колонки на языке интерфейса; цвет не из палитры — его название из core. */
+export function columnColorTitle(color: { value: string; title: string }): string {
+  const key = COLOR_KEYS[color.value.toLowerCase()]
+  return key ? t(key) : color.title
 }

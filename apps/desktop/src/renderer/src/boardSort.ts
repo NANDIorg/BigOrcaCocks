@@ -1,4 +1,6 @@
 import { priorityRank, type GlobalTask, type Task, type TaskPriority } from '@orca-board/core'
+import { t } from './i18n'
+import { formatDateTime } from './i18n/format'
 
 /** Порядок карточек внутри колонок. */
 export type BoardSort = 'created' | 'done' | 'updated' | 'priority'
@@ -7,13 +9,18 @@ export type BoardSort = 'created' | 'done' | 'updated' | 'priority'
 export const BOARD_SORT_KEY = 'orca.board.sort'
 export const GLOBAL_BOARD_SORT_KEY = 'orca.globalBoard.sort'
 
-/** Сортировки обеих досок (локальной и глобальной): даты и приоритет. */
-export const BOARD_SORT_OPTIONS: { value: BoardSort; title: string }[] = [
-  { value: 'created', title: 'по созданию' },
-  { value: 'done', title: 'по завершению' },
-  { value: 'updated', title: 'по обновлению' },
-  { value: 'priority', title: 'по приоритету' }
-]
+const BOARD_SORTS: BoardSort[] = ['created', 'done', 'updated', 'priority']
+
+/**
+ * Сортировки обеих досок (локальной и глобальной): даты и приоритет. `title` — геттер, чтобы подпись была на
+ * текущем языке и у доски, которая берёт массив как есть (GlobalBoard).
+ */
+export const BOARD_SORT_OPTIONS: readonly { readonly value: BoardSort; readonly title: string }[] = BOARD_SORTS.map((value) => ({
+  value,
+  get title() {
+    return t(`board.sort.${value}`)
+  }
+}))
 
 export function isBoardSort(v: unknown): v is BoardSort {
   return BOARD_SORT_OPTIONS.some((o) => o.value === v)
@@ -94,6 +101,7 @@ export function compareGlobals(sort: BoardSort, a: GlobalSortable, b: GlobalSort
   return compareSorted(sort, { ...globalSortDates(a), priority: a.priority }, { ...globalSortDates(b), priority: b.priority })
 }
 
+/** Короткая метка времени карточки: «25.09, 14:05» / «09/25, 2:05 PM». */
 export function formatStamp(ts: number): string {
-  return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return formatDateTime(ts, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }

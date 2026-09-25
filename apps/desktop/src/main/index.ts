@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, net, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -18,11 +18,12 @@ import { agentInfos, assertAgentUsable, missingRoleMessage, pickRole } from './a
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
-import { createUpdater, type Updater } from './updater'
+import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
+import { createPlatformUpdater } from './updaterBackend'
 import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
-import { backupOnVersionChange, rememberUpdate } from './backup'
+import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -121,6 +122,8 @@ function liveWorkerCount(): number {
 function quitNow(): void {
   quitting = true
   killAll()
+  // Обновление скачано и установка при выходе не снята — её установщик сам завершит приложение.
+  if (updater.installOnQuit()) return
   app.quit()
 }
 
@@ -145,6 +148,46 @@ async function requestQuit(): Promise<void> {
   } finally {
     confirmingQuit = false
   }
+}
+
+/**
+ * Подтверждение установки обновления (`UpdaterHost.confirmInstall`) — тот же диалог, что у выхода, только с выбором
+ * «сейчас / когда агенты закончат / отмена». Делит `confirmingQuit` с `requestQuit`: два диалога сразу не показываем.
+ */
+async function confirmInstall(req: InstallRequest): Promise<InstallChoice> {
+  if (confirmingQuit) return 'cancel'
+  confirmingQuit = true
+  try {
+    const parent = win && !win.isDestroyed() ? win : null
+    const opts =
+      req.reason === 'idle-reached'
+        ? {
+            type: 'question' as const,
+            message: `Агенты закончили работу. Перезапустить и обновить до ${req.version}?`,
+            buttons: ['Перезапустить и обновить', 'Позже'],
+            defaultId: 0,
+            cancelId: 1,
+            noLink: true
+          }
+        : {
+            type: 'warning' as const,
+            message: `${req.workers} ${tasksWord(req.workers)} в работе: обновить до ${req.version} сейчас (агенты остановятся) или когда агенты закончат?`,
+            buttons: ['Обновить сейчас', 'Когда агенты закончат', 'Отмена'],
+            defaultId: 1,
+            cancelId: 2,
+            noLink: true
+          }
+    const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts)
+    if (req.reason === 'idle-reached') return response === 0 ? 'now' : 'cancel'
+    return response === 0 ? 'now' : response === 1 ? 'idle' : 'cancel'
+  } finally {
+    confirmingQuit = false
+  }
+}
+
+/** Версия, с которой приложение только что обновилось («Обновлено до …»): итог бэкапа при смене версии (`backup.ts`). */
+function takeJustUpdated(): string | null {
+  return getJustUpdatedFrom()
 }
 
 function tasksWord(n: number): string {
@@ -525,7 +568,11 @@ function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent
 
 function registerIpc(): void {
   handle('app:getSettings', () => projects.settings())
-  handle('app:setSettings', (_e, patch: AppSettingsPatch) => projects.setSettings(patch ?? {}))
+  handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
+    const settings = projects.setSettings(patch ?? {})
+    updater.settingsChanged()
+    return settings
+  })
   handle('app:testNotification', () => testNotification())
   handle('updates:getState', () => updater.getState())
   handle('updates:check', () => updater.check())
@@ -709,10 +756,39 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
-  updater = createUpdater({ version: app.getVersion(), isPackaged: app.isPackaged })
+  const { support, backend } = createPlatformUpdater({
+    version: app.getVersion(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    portableExe: process.env.PORTABLE_EXECUTABLE_FILE,
+    electron: { app, net }
+  })
+  updater = createUpdater({
+    version: app.getVersion(),
+    support,
+    backend,
+    host: {
+      settings: () => projects.settings().updates,
+      liveWorkerCount,
+      confirmInstall,
+      lockQuit: () => {
+        quitting = true
+      },
+      unlockQuit: () => {
+        quitting = false
+      },
+      quit: () => {
+        killAll()
+        app.quit()
+      },
+      takeJustUpdated
+    }
+  })
   updater.onChanged((state) => {
     if (win && !win.isDestroyed()) win.webContents.send('updates:changed', state)
+    refreshTray()
   })
+  updater.start()
   registerIpc()
   startSocketServer(SOCKET_PATH, {
     resolve: (projectId) => {
@@ -755,7 +831,13 @@ app.whenReady().then(() => {
   })
   watchStuck()
   watchFinishedCoordinators()
-  createTray({ open: () => showWindow(), quit: () => void requestQuit(), activeCount: activeDispatchCount })
+  createTray({
+    open: () => showWindow(),
+    quit: () => void requestQuit(),
+    activeCount: activeDispatchCount,
+    readyUpdate: () => updater.readyVersion(),
+    installUpdate: () => void updater.install({ when: 'now' })
+  })
   createWindow()
   // Клик по иконке в Dock (macOS) — вернуть окно.
   app.on('activate', () => showWindow())

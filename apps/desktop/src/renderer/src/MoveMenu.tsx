@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { menuIndexForKey, stepMenu } from './boardNav'
+import { useT } from './i18n'
 
 /** Колонка, куда можно перенести карточку. `disabled` — колонка, где карточка уже лежит. */
 export interface MoveTarget {
@@ -31,6 +32,7 @@ const WIDTH = 216
  * обрезалось бы у нижнего края.
  */
 export function MoveMenu({ anchor, targets, onPick, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const ref = useRef<HTMLDivElement>(null)
   const [active, setActive] = useState(() => Math.max(targets.findIndex((t) => !t.disabled), 0))
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
@@ -112,29 +114,29 @@ export function MoveMenu({ anchor, targets, onPick, onClose }: Props): React.JSX
       ref={ref}
       className="move-menu"
       role="menu"
-      aria-label="Переместить в"
+      aria-label={t('board.move.aria')}
       aria-activedescendant={`move-menu-${active}`}
       tabIndex={-1}
       style={{ left: pos?.left ?? 0, top: pos?.top ?? 0, width: WIDTH, opacity: pos ? 1 : 0 }}
       onKeyDown={onKeyDown}
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="move-menu-title">Переместить в…</div>
-      {targets.map((t, i) => (
+      <div className="move-menu-title">{t('board.move.title')}</div>
+      {targets.map((target, i) => (
         <button
-          key={t.id}
+          key={target.id}
           id={`move-menu-${i}`}
           type="button"
           role="menuitem"
           tabIndex={-1}
           className={`move-menu-item ${i === active ? 'on' : ''}`}
-          aria-disabled={t.disabled || undefined}
-          onMouseEnter={() => !t.disabled && setActive(i)}
+          aria-disabled={target.disabled || undefined}
+          onMouseEnter={() => !target.disabled && setActive(i)}
           onClick={() => pick(i)}
         >
-          <span className="sw" style={{ background: t.color }} aria-hidden />
-          <span className="move-menu-name">{t.title}</span>
-          {t.disabled ? <span className="k">здесь</span> : i < 9 && <kbd className="k">{i + 1}</kbd>}
+          <span className="sw" style={{ background: target.color }} aria-hidden />
+          <span className="move-menu-name">{target.title}</span>
+          {target.disabled ? <span className="k">{t('board.move.here')}</span> : i < 9 && <kbd className="k">{i + 1}</kbd>}
         </button>
       ))}
     </div>,

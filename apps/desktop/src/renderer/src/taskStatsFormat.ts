@@ -5,7 +5,7 @@ import {
 } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { formatDuration } from './duration'
-import { plural } from './plural'
+import { t } from './i18n'
 import {
   STATS_STALE_MESSAGE, costCell, formatAgentTime, formatTokens, isStaleStatsError, missingLabel, missingSessions, sessionsLabel, statsApi, totalTokens
 } from './statsFormat'
@@ -18,7 +18,9 @@ import {
 // ---------- доступ к API и старый main ----------
 
 /** Подсказка вместо токенов и стоимости, когда main/preload старее `stats:task` / `stats:global`. */
-export const TASK_STATS_STALE_HINT = 'Токены и стоимость недоступны: приложение запущено со старой версией main/preload — перезапустите приложение.'
+export function taskStatsStaleHint(): string {
+  return t('board.stats.staleHint')
+}
 
 export type TaskStatsApi = Pick<OrcaApi['stats'], 'task' | 'global'>
 
@@ -169,7 +171,9 @@ export function spanLabel(span: { ms: number; approx?: boolean }): string {
 }
 
 /** Подсказка к «≈»: откуда неточность. */
-export const APPROX_TITLE = 'Приблизительно: история статусов начинается с записи миграции или обрезана — ранние переходы неизвестны'
+export function approxTitle(): string {
+  return t('board.stats.approx')
+}
 
 /** Значение показателя: текст, «неизвестно» (курсивом, не 0) и подсказка. */
 export interface StatFact {
@@ -196,29 +200,29 @@ export function costFact(u: StatsUsage): Pick<StatFact, 'value' | 'hint' | 'unkn
   const gaps = missing > 0 && u.sessions > 0 ? missingLabel(missing) : undefined
   if (c.kind === 'cost') {
     return {
-      value: c.atLeast ? `не менее ${c.text}` : c.text,
-      hint: [tokens !== undefined ? `${formatTokens(tokens)} токенов` : undefined, gaps].filter(Boolean).join(' · ') || undefined,
-      title: c.atLeast ? `${formatTokens(u.unpricedTokens)} токенов моделей без цены не оценены: ${u.unpricedModels.join(', ')}` : undefined
+      value: c.atLeast ? t('board.stats.atLeast', { value: c.text }) : c.text,
+      hint: [tokens !== undefined ? t('board.stats.tokens', { value: formatTokens(tokens) }) : undefined, gaps].filter(Boolean).join(' · ') || undefined,
+      title: c.atLeast ? t('board.stats.unpricedTokens', { value: formatTokens(u.unpricedTokens), models: u.unpricedModels.join(', ') }) : undefined
     }
   }
-  if (c.kind === 'unpriced') return { value: 'без цены', hint: `у моделей нет цены: ${u.unpricedModels.join(', ')}`, unknown: true }
+  if (c.kind === 'unpriced') return { value: t('board.stats.unpriced'), hint: t('board.stats.unpricedHint', { models: u.unpricedModels.join(', ') }), unknown: true }
   return {
-    value: 'нет данных',
-    hint: u.sessions > 0 ? sessionsLabel(u.sessions) + ' без данных о токенах' : 'агенты не запускались',
+    value: t('board.stats.noData'),
+    hint: u.sessions > 0 ? t('board.stats.noTokens', { sessions: sessionsLabel(u.sessions) }) : t('board.stats.agentsNotRun'),
     unknown: true,
-    title: 'Нет данных о токенах: агент не пишет транскрипт, транскрипт удалён или сессия от версии до статистики'
+    title: t('board.stats.noTokensTitle')
   }
 }
 
 /** «Ждала вас»: сколько у задачи был pending-запрос к человеку (не время самого человека). */
 export function waitFact(human: TaskWaitStats): StatFact {
   const total = human.resolved + human.cancelled + human.pending
-  const base = { id: 'wait', label: 'Ждала вас', title: 'Сколько задача ждала вашего решения: время самого человека приложению неизвестно' }
-  if (total === 0) return { ...base, value: 'не ждала', hint: 'запросов к вам не было' }
+  const base = { id: 'wait', label: t('board.stats.wait'), title: t('board.stats.waitTitle') }
+  if (total === 0) return { ...base, value: t('board.stats.notWaited'), hint: t('board.stats.noRequests') }
   return {
     ...base,
     value: formatDuration(human.waitingMs),
-    hint: human.pending > 0 ? `ждёт сейчас · запросов ${total}` : `${total} ${plural(total, 'запрос', 'запроса', 'запросов')}`,
+    hint: human.pending > 0 ? t('board.stats.waitingNow', { total }) : t('board.stats.requests', { count: total }),
     ...(human.pending > 0 ? { live: true } : {})
   }
 }
@@ -226,28 +230,29 @@ export function waitFact(human: TaskWaitStats): StatFact {
 function agentsFact(usage: StatsUsage): StatFact {
   return {
     id: 'agents',
-    label: 'Агенты',
-    value: usage.sessions > 0 ? formatAgentTime(usage.agentMs) : 'не запускались',
+    label: t('board.stats.agents'),
+    value: usage.sessions > 0 ? formatAgentTime(usage.agentMs) : t('board.stats.notRun'),
     hint: usage.sessions > 0 ? sessionsLabel(usage.sessions) : undefined,
-    title: 'Сумма времени сессий агентов (параллельные складываются)'
+    title: t('board.stats.agentsTitle')
   }
 }
 
 /** Строка фактов задачи: «Время жизни · В работе · Агенты · Ждала вас · Стоимость». */
 export function taskFacts(s: TaskStats): StatFact[] {
   const life = s.lifetime
-  const lead = s.leadMs !== undefined ? `от старта до «Готово» ${formatDuration(s.leadMs)}` : undefined
+  const lead = s.leadMs !== undefined ? t('board.stats.lead', { value: formatDuration(s.leadMs) }) : undefined
+  const running = t('board.stats.running')
   return [
     {
-      id: 'lifetime', label: 'Время жизни', value: spanLabel(life), approx: life.approx === true, live: life.running === true,
-      hint: life.running ? `идёт${lead ? ` · ${lead}` : ''}` : lead, title: life.approx ? APPROX_TITLE : 'От создания до входа в «Готово»'
+      id: 'lifetime', label: t('board.stats.lifetime'), value: spanLabel(life), approx: life.approx === true, live: life.running === true,
+      hint: life.running ? `${running}${lead ? ` · ${lead}` : ''}` : lead, title: life.approx ? approxTitle() : t('board.stats.lifetimeTitle')
     },
     s.activeMs !== undefined
-      ? { id: 'active', label: 'В работе', value: formatDuration(s.activeMs), title: 'Время, пока задача была в колонке «В работе»' }
-      : { id: 'active', label: 'В работе', value: 'не бывала', unknown: true, title: 'Задача ещё не была в колонке «В работе»' },
+      ? { id: 'active', label: t('board.stats.active'), value: formatDuration(s.activeMs), title: t('board.stats.activeTitle') }
+      : { id: 'active', label: t('board.stats.active'), value: t('board.stats.neverActive'), unknown: true, title: t('board.stats.neverActiveTitle') },
     agentsFact(s.usage),
     waitFact(s.human),
-    { id: 'cost', label: 'Стоимость', ...costFact(s.usage) }
+    { id: 'cost', label: t('board.stats.cost'), ...costFact(s.usage) }
   ]
 }
 
@@ -256,15 +261,15 @@ export function globalFacts(s: GlobalTaskStats): StatFact[] {
   const life = s.lifetime
   return [
     {
-      id: 'lifetime', label: 'Время жизни', value: spanLabel(life), approx: life.approx === true, live: life.running === true,
-      hint: life.running ? 'идёт' : undefined, title: life.approx ? APPROX_TITLE : 'От создания до закрытия'
+      id: 'lifetime', label: t('board.stats.lifetime'), value: spanLabel(life), approx: life.approx === true, live: life.running === true,
+      hint: life.running ? t('board.stats.running') : undefined, title: life.approx ? approxTitle() : t('board.stats.lifetimeGlobalTitle')
     },
     s.ownActiveMs !== undefined
-      ? { id: 'own', label: 'Своё время', value: formatDuration(s.ownActiveMs), title: 'Время, пока сама глобальная задача была «В работе»' }
-      : { id: 'own', label: 'Своё время', value: 'нет данных', unknown: true, title: 'Прогон запущен до учёта собственного времени' },
+      ? { id: 'own', label: t('board.stats.own'), value: formatDuration(s.ownActiveMs), title: t('board.stats.ownTitle') }
+      : { id: 'own', label: t('board.stats.own'), value: t('board.stats.noData'), unknown: true, title: t('board.stats.ownUnknownTitle') },
     agentsFact(s.usage),
     waitFact(s.human),
-    { id: 'cost', label: 'Стоимость', ...costFact(s.usage) }
+    { id: 'cost', label: t('board.stats.cost'), ...costFact(s.usage) }
   ]
 }
 
@@ -311,7 +316,7 @@ export function stageParts(stages: readonly TaskStageTime[] | undefined): TimePa
 /** Значение части полосы: «2 ч 10 мин · 3 захода»; ноль — «—» (в done время не считается, а не «<1 мин»). */
 export function partValue(p: TimePart): string {
   if (p.ms === 0) return '—'
-  const times = p.entries > 1 ? ` · ${p.entries} ${plural(p.entries, 'заход', 'захода', 'заходов')}` : ''
+  const times = p.entries > 1 ? ` · ${t('board.stats.entries', { count: p.entries })}` : ''
   return `${spanLabel(p)}${times}`
 }
 
@@ -343,12 +348,12 @@ export function rejectionsTotal(r: TaskStats['rejections']): number {
 
 export function rejectionsTitle(r: TaskStats['rejections']): string {
   const parts = [
-    r.gate > 0 ? `отказов проверок ${r.gate}` : '',
-    r.approval > 0 ? `«Вернуть» по решению ${r.approval}` : '',
-    r.clarify > 0 ? `уточнений ответа ${r.clarify}` : '',
-    r.manual > 0 ? `возвратов вручную ${r.manual}` : ''
+    r.gate > 0 ? t('board.stats.rejGate', { n: r.gate }) : '',
+    r.approval > 0 ? t('board.stats.rejApproval', { n: r.approval }) : '',
+    r.clarify > 0 ? t('board.stats.rejClarify', { n: r.clarify }) : '',
+    r.manual > 0 ? t('board.stats.rejManual', { n: r.manual }) : ''
   ].filter(Boolean)
-  return parts.length > 0 ? parts.join(', ') : 'Возвратов на доработку не было'
+  return parts.length > 0 ? parts.join(', ') : t('board.stats.noRejections')
 }
 
 /** Чип-счётчик: подпись, значение и тон (`warn` — стоит посмотреть). */
@@ -361,12 +366,12 @@ export interface StatCounter {
 
 /** Запуски: «запусков 3» и исходы — сдано, упало, вышел без done, идут. */
 export function dispatchCounters(d: TaskStats['dispatches']): StatCounter[] {
-  if (d.total === 0) return [{ id: 'runs', text: 'запусков не было' }]
-  const out: StatCounter[] = [{ id: 'runs', text: `запусков ${d.total}` }]
-  if (d.done > 0) out.push({ id: 'done', text: `сдано ${d.done}`, tone: 'ok' })
-  if (d.failed > 0) out.push({ id: 'failed', text: `упало ${d.failed}`, tone: 'warn' })
-  if (d.unknown > 0) out.push({ id: 'unknown', text: `вышел без done ${d.unknown}`, title: 'Сессия закрылась без orca-board done' })
-  if (d.running > 0) out.push({ id: 'running', text: `идут сейчас ${d.running}`, tone: 'live' })
+  if (d.total === 0) return [{ id: 'runs', text: t('board.stats.noRuns') }]
+  const out: StatCounter[] = [{ id: 'runs', text: t('board.stats.runs', { n: d.total }) }]
+  if (d.done > 0) out.push({ id: 'done', text: t('board.stats.runsDone', { n: d.done }), tone: 'ok' })
+  if (d.failed > 0) out.push({ id: 'failed', text: t('board.stats.runsFailed', { n: d.failed }), tone: 'warn' })
+  if (d.unknown > 0) out.push({ id: 'unknown', text: t('board.stats.runsUnknown', { n: d.unknown }), title: t('board.stats.runsUnknownTitle') })
+  if (d.running > 0) out.push({ id: 'running', text: t('board.stats.runsRunning', { n: d.running }), tone: 'live' })
   return out
 }
 
@@ -376,31 +381,33 @@ export function taskCounters(s: TaskStats): StatCounter[] {
   const q = s.coordinatorQuestions
   return [
     ...dispatchCounters(s.dispatches),
-    { id: 'rejections', text: `отказов ревью ${back}`, tone: back > 0 ? 'warn' : undefined, title: rejectionsTitle(s.rejections) },
+    { id: 'rejections', text: t('board.stats.rejections', { n: back }), tone: back > 0 ? 'warn' : undefined, title: rejectionsTitle(s.rejections) },
     {
-      id: 'questions', text: `вопросов координатору ${q.count}`,
-      title: q.answerMedianMs !== undefined ? `Медиана ответа координатора ${formatDuration(q.answerMedianMs)}` : 'Вопросы воркера, на которые отвечает координатор (не вы)'
+      id: 'questions', text: t('board.stats.questions', { n: q.count }),
+      title: q.answerMedianMs !== undefined ? t('board.stats.questionsMedian', { value: formatDuration(q.answerMedianMs) }) : t('board.stats.questionsTitle')
     }
   ]
 }
 
-/** Вид запроса — как заголовок карточки запроса. */
-const KIND_TITLE: Record<HumanRequestKind, string> = { question: 'вопросов', answer: 'ответов', escalation: 'эскалаций', approval: 'решений' }
-
-/** Запросы к человеку: «вопросов 2, решений 1» — по видам, где они были. */
+/** Запросы к человеку: «вопросов 2, решений 1» — по видам, где они были (вид — как заголовок карточки запроса). */
 export function humanKinds(human: TaskWaitStats): string {
-  return HUMAN_REQUEST_KINDS.filter((k) => human.byKind[k].count > 0).map((k) => `${KIND_TITLE[k]} ${human.byKind[k].count}`).join(', ')
+  return HUMAN_REQUEST_KINDS.filter((k) => human.byKind[k].count > 0)
+    .map((k: HumanRequestKind) => t(`board.stats.kind.${k}`, { n: human.byKind[k].count }))
+    .join(', ')
 }
 
 /** Строка про запросы к человеку под фактами; нет запросов — `undefined`. */
 export function humanLine(human: TaskWaitStats): string | undefined {
   const total = human.resolved + human.cancelled + human.pending
   if (total === 0) return undefined
-  const parts = [`Запросов к вам ${total}: ${humanKinds(human)}`]
-  if (human.pending > 0) parts.push(`ждут ответа ${human.pending}`)
-  if (human.cancelled > 0) parts.push(`отменено ${human.cancelled}`)
+  const parts = [t('board.stats.humanTotal', { n: total, kinds: humanKinds(human) })]
+  if (human.pending > 0) parts.push(t('board.stats.humanPending', { n: human.pending }))
+  if (human.cancelled > 0) parts.push(t('board.stats.humanCancelled', { n: human.cancelled }))
   if (human.reactionMedianMs !== undefined) {
-    parts.push(`реакция: медиана ${formatDuration(human.reactionMedianMs)}${human.reactionMaxMs !== undefined ? `, дольше всего ${formatDuration(human.reactionMaxMs)}` : ''}`)
+    const median = formatDuration(human.reactionMedianMs)
+    parts.push(human.reactionMaxMs !== undefined
+      ? t('board.stats.reactionMax', { median, max: formatDuration(human.reactionMaxMs) })
+      : t('board.stats.reaction', { median }))
   }
   return parts.join(' · ')
 }
@@ -421,15 +428,15 @@ export function globalSides(s: GlobalTaskStats): SideStats[] {
     title,
     facts: [
       extra,
-      { id: `${id}-time`, label: 'Время агентов', value: u.sessions > 0 ? formatAgentTime(u.agentMs) : 'нет', unknown: u.sessions === 0 },
-      { id: `${id}-cost`, label: 'Стоимость', ...costFact(u) }
+      { id: `${id}-time`, label: t('board.stats.agentTime'), value: u.sessions > 0 ? formatAgentTime(u.agentMs) : t('board.stats.none'), unknown: u.sessions === 0 },
+      { id: `${id}-cost`, label: t('board.stats.cost'), ...costFact(u) }
     ]
   })
   const c = s.coordinator
-  const t = s.subtasks
+  const sub = s.subtasks
   return [
-    side('coordinator', 'Координатор', c, { id: 'launches', label: 'Запусков', value: String(c.launches), hint: c.sessions > 0 ? sessionsLabel(c.sessions) : undefined }),
-    side('subtasks', 'Подзадачи', t, { id: 'count', label: 'Подзадач', value: String(t.count), hint: `сделано ${t.done}` })
+    side('coordinator', t('board.stats.coordinator'), c, { id: 'launches', label: t('board.stats.launches'), value: String(c.launches), hint: c.sessions > 0 ? sessionsLabel(c.sessions) : undefined }),
+    side('subtasks', t('board.stats.subtasks'), sub, { id: 'count', label: t('board.stats.subtaskCount'), value: String(sub.count), hint: t('board.stats.subtasksDone', { n: sub.done }) })
   ]
 }
 
@@ -458,8 +465,8 @@ export function topTasks(rows: readonly StatsRow[], known: ReadonlySet<string>, 
 export function returnsCounter(returns: number): StatCounter {
   return {
     id: 'returns',
-    text: returns > 0 ? `возвращена в работу ${returns} ${plural(returns, 'раз', 'раза', 'раз')}` : 'возвратов не было',
+    text: returns > 0 ? t('board.stats.returns', { count: returns }) : t('board.stats.noReturns'),
     tone: returns > 0 ? 'warn' : undefined,
-    title: 'Сколько раз вы вернули глобальную задачу с «Проверки» в работу'
+    title: t('board.stats.returnsTitle')
   }
 }
