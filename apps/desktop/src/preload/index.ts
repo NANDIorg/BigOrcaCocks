@@ -14,6 +14,10 @@ const api: OrcaApi = {
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
     testNotification: () => ipcRenderer.invoke('app:testNotification')
   },
+  onboarding: {
+    getState: () => ipcRenderer.invoke('onboarding:getState'),
+    complete: (input) => ipcRenderer.invoke('onboarding:complete', input)
+  },
   updates: {
     getState: () => ipcRenderer.invoke('updates:getState'),
     check: () => ipcRenderer.invoke('updates:check'),

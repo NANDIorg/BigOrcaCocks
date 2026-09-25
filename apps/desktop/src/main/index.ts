@@ -20,7 +20,8 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingState } from '../shared/ipc'
+import { ONBOARDING_VERSION } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -577,6 +578,9 @@ function registerIpc(): void {
     return settings
   })
   handle('app:testNotification', () => testNotification())
+  // Заглушки контракта: настоящую реализацию (флаг в projects.json) делает backend-задача мастера.
+  handle('onboarding:getState', (): OnboardingState => ({ required: false, status: 'completed', version: ONBOARDING_VERSION }))
+  handle('onboarding:complete', (): OnboardingState => ({ required: false, status: 'completed', version: ONBOARDING_VERSION }))
   handle('updates:getState', () => updater.getState())
   handle('updates:check', () => updater.check())
   handle('updates:download', () => updater.download())

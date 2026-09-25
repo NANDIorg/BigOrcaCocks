@@ -1001,6 +1001,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
 - `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`);
+  `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
+  `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
+  невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
   (см. «Обновление»); `projects:list`, `projects:setActive`, `projects:remove`,
@@ -1027,7 +1030,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `updates:changed` (полный `UpdateState`), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
-- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`;
+- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
