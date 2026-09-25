@@ -20,7 +20,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -588,7 +588,11 @@ function registerIpc(): void {
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
   handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
   handle('projects:inProgressCounts', () => projects.inProgressCounts())
-  handle('projects:branch', (_e, id: string) => projectBranchInfo(resolveProject(id).root))
+  // Неизвестный проект (удалён, устаревший id в renderer) — не ошибка IPC, а «не репозиторий»: бейдж просто скрывается.
+  handle('projects:branch', (_e, id: string): ProjectBranchInfo => {
+    const p = projects.get(id)
+    return p ? projectBranchInfo(p.root) : { isGitRepo: false, branch: null, detached: false }
+  })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
