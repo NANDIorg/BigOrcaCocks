@@ -11,7 +11,7 @@ import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, writeRule } from './rules'
-import { currentBranch, projectBranchInfo } from './git'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
@@ -574,8 +574,22 @@ function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent
   })
 }
 
-function notImplemented(channel: string): never {
-  throw new Error(`не реализовано: ${channel}`)
+/** Корень проекта по id (не обязательно активного); неизвестный id — ошибка. */
+function projectRoot(id: string): string {
+  const p = projects.get(id)
+  if (!p) throw new Error(`project not found: ${id}`)
+  return p.root
+}
+
+/**
+ * Живые воркеры и координаторы проекта: у них worktree и рабочая ветка растут от корня, переключать его нельзя
+ * (CLAUDE.md, «Git и ветки»). Считаются процессы, а не записи: dispatch без живого PTY — уже мёртвый.
+ */
+function liveAgentCount(projectId: string): number {
+  const store = projects.store(projectId)
+  const workers = store.activeDispatches().filter((d) => isAlive(d.ptyId)).length
+  const coordinators = store.listRuns().filter((r) => r.coordinatorPtyId && isAlive(r.coordinatorPtyId)).length
+  return workers + coordinators
 }
 
 function registerIpc(): void {
@@ -611,11 +625,14 @@ function registerIpc(): void {
     const p = projects.get(id)
     return p ? projectBranchInfo(p.root) : { isGitRepo: false, branch: null, detached: false }
   })
-  // Заглушки контракта IPC: git-логику корня проекта (ветки, fetch, pull, checkout) добавляет отдельная задача.
-  handle('projects:branches', (): never => notImplemented('projects:branches'))
-  handle('projects:gitFetch', (): never => notImplemented('projects:gitFetch'))
-  handle('projects:gitPull', (): never => notImplemented('projects:gitPull'))
-  handle('projects:checkoutBranch', (): never => notImplemented('projects:checkoutBranch'))
+  // Git корня проекта. Renderer сам перезапрашивает ветку по результату (`ProjectGitResult.branch` / возврат checkout).
+  handle('projects:branches', (_e, id: string) => projectBranches(projectRoot(id)))
+  handle('projects:gitFetch', (_e, id: string) => projectFetch(projectRoot(id)))
+  handle('projects:gitPull', (_e, id: string) => projectPull(projectRoot(id)))
+  handle('projects:checkoutBranch', (_e, id: string, branch: string) => {
+    const root = projectRoot(id)
+    return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
+  })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
