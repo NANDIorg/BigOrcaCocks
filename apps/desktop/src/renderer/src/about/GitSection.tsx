@@ -103,7 +103,14 @@ export function GitSection({ project, onProjectChanged }: {
             <b>{t('config.about.git.push')}</b>
             <span className="hint">{t('config.about.git.pushHint')}</span>
           </div>
-          <Switch on={draft.push} disabled={!draft.enabled} onChange={(on) => set('push', on)} />
+          <Switch on={draft.push} disabled={!draft.enabled} onChange={(on) => { setDraft((d) => ({ ...d, push: on, pr: on && d.pr })); setDone(false) }} />
+        </div>
+        <div className="row-act">
+          <div className="row-act-text">
+            <b>{t('config.about.git.pr')}</b>
+            <span className="hint">{t('config.about.git.prHint')}</span>
+          </div>
+          <Switch on={draft.pr} disabled={!draft.enabled || !draft.push} onChange={(on) => set('pr', on)} />
         </div>
         <label>
           <span>{t('config.about.git.remote')}</span>

@@ -9,7 +9,7 @@ import { focusFeed } from './feedLink'
 import { useNow } from './useNow'
 import { formatStamp } from './boardSort'
 import { useT } from './i18n'
-import { branchChip } from './runBranch'
+import { branchChip, prLink } from './runBranch'
 import { coordinatorPill, currentStep, headerActions, statusSteps, type StatusStep } from './globalScreen'
 
 interface Props {
@@ -107,6 +107,7 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
         <PriorityBadge item={global} className="g-chip" />
         {typeTitle && <span className="g-chip task-type-chip" title={t('global.header.typeTitle')}>{typeTitle}</span>}
         {global.git && <BranchChip git={global.git} />}
+        {global.git && <PrChip git={global.git} />}
         {!global.inbox && (
           <CoordinatorPill
             global={global}
@@ -148,6 +149,18 @@ function BranchChip({ git }: { git: RunGit }): React.JSX.Element {
     >
       <Icon.branch /> {copied ? t('global.branch.copied') : chip.label}
     </button>
+  )
+}
+
+/** Ссылка на PR ветки; нет prUrl (старый main, PR не создан) — нет чипа. Внешние ссылки уходят в shell.openExternal. */
+function PrChip({ git }: { git: RunGit }): React.JSX.Element | null {
+  const t = useT()
+  const url = prLink(git)
+  if (!url) return null
+  return (
+    <a className="g-chip gt-branch gt-pr ok" href={url} target="_blank" rel="noreferrer" title={t('global.branch.prLinkTitle')}>
+      {t('global.branch.prLink')}
+    </a>
   )
 }
 
