@@ -376,7 +376,7 @@ export default {
     'If a showcase is set, the worker hands it in with done: a description and files from the branch (mockups, screenshots). ' +
     'The human sees the showcase at the next “Human” node — with image previews and “Open” / “Show in folder” buttons.',
   'wf.help.work.next': 'the worker ran orca-board done: next, usually a check.',
-  'wf.help.work.fieldRole': 'Role — who does the work; sets the task role. Empty — the role from the coordinator.',
+  'wf.help.work.fieldRole': 'Roles — whose agents do the work (optional, several allowed). Empty — the coordinator picks each subtask role from the type working roles.',
   'wf.help.work.fieldInstructions': 'Stage instructions — sent to the worker as the “Stage” section, on top of the task text.',
   'wf.help.work.fieldShowcase':
     'Show to human — what the worker hands in for review (e.g. mockup options). Needs a “Human” node further down, or no one will see it.',
