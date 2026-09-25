@@ -1,10 +1,13 @@
 import type React from 'react'
-import { useMemo, useRef, useState } from 'react'
+import { Fragment, useMemo, useRef, useState } from 'react'
 import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type WfMigrationNote, type Workflow } from '@orca-board/core'
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
 import type { WfSelection } from '../workflowEdit'
+import {
+  canOpenPath, crumbs, graphAt, levelIssues, locateId, resolvePath, scopeOf, startCustomSubflow, writeGraphAt, type WfPath
+} from '../workflowNav'
 import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, type WorkflowMigrationInfo } from '../workflowForm'
 import { SectionHead } from '../about/parts'
 import { useLocale, useT } from '../i18n'
@@ -36,6 +39,10 @@ interface Props {
  * «Типы задач → Воркфлоу»: холст и инспектор графа типа. Сохраняется кнопкой: промежуточный граф почти всегда
  * невалиден. `readOnly` — только просмотр: холст не меняет граф, инспектор недоступен. Компонент монтируется
  * с `key` по id типа, поэтому черновик другого типа сюда не протекает.
+ *
+ * Вход в ноду «Работа»: `path` — стек id нод «Работа» (`[]` — граф типа, `['impl']` — путь подзадачи этапа). Черновик
+ * один — граф типа: правки пути пишутся в `work.subflow` (`writeGraphAt`), поэтому сохранение, экспорт и валидация не
+ * знают про уровни. У ноды без своего пути показан образец по умолчанию — только просмотр, пока не заведут свой.
  */
 export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, notes, onDismissNotes, onSave }: Props): React.JSX.Element {
   const t = useT()
@@ -43,6 +50,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
   const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
   const [draft, setDraft] = useState<Workflow>(saved)
   const [selection, setSelection] = useState<WfSelection>(null)
+  const [path, setPath] = useState<WfPath>([])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -55,20 +63,50 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
   // Без колонок и агентов: и то и другое у проекта, а тип общий для всех проектов.
   // Язык — в зависимостях: тексты проблем и названия нод в них переводятся при проверке.
   const issues = useMemo(() => validateWorkflow(draft, { roles, nodeTitle }), [draft, roles, locale])
+  // Замена графа целиком (импорт, сброс) могла убрать ноду, в которую вошли: берём то, что ещё существует.
+  const at = resolvePath(draft, path)
+  const level = graphAt(draft, at) ?? { graph: draft, isDefault: false }
+  const scope = scopeOf(at)
+  /** Образец пути по умолчанию нельзя править — сначала заводят свой путь. */
+  const levelReadOnly = readOnly || level.isDefault
+  const levelIssuesShown = useMemo(() => levelIssues(issues, at), [issues, at.join('/')])
   const dirty = stableJson(draft) !== stableJson(saved)
   const custom = workflow !== undefined
   const { errors, warnings } = issues
   const stored = storedWorkflowNotes(notes, readOnly, onDismissNotes !== undefined)
 
+  /** Правка графа текущего уровня: на уровне пути она записывается в `work.subflow` ноды. */
   function edit(wf: Workflow): void {
+    if (levelReadOnly) return
+    setDraft(writeGraphAt(draft, at, wf))
+    setNotice(null)
+  }
+
+  /** Правка графа типа целиком (не текущего уровня): заводит собственный путь у ноды, в которую вошли. */
+  function editRoot(wf: Workflow): void {
     if (readOnly) return
     setDraft(wf)
     setNotice(null)
   }
 
+  /** Вход в путь подзадачи ноды «Работа». */
+  function open(nodeId: string): void {
+    if (!canOpenPath(draft, at, nodeId)) return
+    setPath([...at, nodeId])
+    setSelection(null)
+  }
+
+  /** Переход по крошке; при выходе вверх выделяется нода, из которой вышли. */
+  function goTo(target: WfPath): void {
+    const from = at[target.length]
+    setPath(target)
+    setSelection(from !== undefined && target.length < at.length ? { kind: 'node', id: from } : null)
+  }
+
   function replace(wf: Workflow, message: string | null): void {
     setMigration(null)
     setDraft(wf)
+    setPath([])
     setSelection(null)
     setCanvasRev((r) => r + 1)
     setNotice(message)
@@ -136,7 +174,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
   }
 
   function presetLimit(): void {
-    const res = addRetryLimit(draft)
+    const res = addRetryLimit(level.graph)
     if ('error' in res) {
       setNotice(res.error)
       return
@@ -145,9 +183,14 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
     setNotice(t('config.wf.tab.limitAdded'))
   }
 
+  /** Проблема пути (`impl/rev`) открывает путь ноды `impl` и выделяет `rev`. */
   const selectIssue = (nodeId?: string, edgeId?: string): void => {
-    if (edgeId) setSelection({ kind: 'edge', id: edgeId })
-    else if (nodeId) setSelection({ kind: 'node', id: nodeId })
+    const kind = edgeId ? 'edge' : 'node'
+    const id = edgeId ?? nodeId
+    if (!id) return
+    const target = locateId(draft, kind, id)
+    setPath(target.path)
+    setSelection({ kind, id: target.id })
   }
 
   return (
@@ -182,25 +225,53 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
           </div>
         )}
 
+        {at.length > 0 && (
+          <>
+            <nav className="wf-crumbs" aria-label={t('config.wf.nav.aria')}>
+              {crumbs(draft, at).map((c, i, all) => (
+                <Fragment key={i}>
+                  {i > 0 && <span className="wf-crumb-sep" aria-hidden>›</span>}
+                  {i === all.length - 1
+                    ? <b className="wf-crumb current" aria-current="page">{c.title}</b>
+                    : <button type="button" className="wf-crumb" onClick={() => goTo(c.path)}>{c.title}</button>}
+                </Fragment>
+              ))}
+              <span className={`chip ${level.isDefault ? 'sys' : 'ok'}`}>{level.isDefault ? t('config.wf.path.modeDefault') : t('config.wf.path.modeCustom')}</span>
+            </nav>
+            <div className="wf-path-banner" role="note">
+              <span>{level.isDefault ? t('config.wf.path.bannerDefault') : t('config.wf.path.banner')}</span>
+              {level.isDefault && !readOnly && (
+                <button type="button" className="btn-sm" onClick={() => editRoot(startCustomSubflow(draft, at[at.length - 1]))}>
+                  {t('config.wf.path.startCustom')}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
         <div className="wf-editor">
           <WorkflowCanvas
-            key={canvasRev}
-            workflow={draft}
+            key={`${canvasRev}:${at.join('/')}`}
+            workflow={level.graph}
             onChange={edit}
             selection={selection}
             onSelect={setSelection}
-            issues={issues}
+            issues={levelIssuesShown}
+            scope={scope}
+            onOpenNode={open}
           />
           {/* Только просмотр: инспектор показывает выбранную ноду, но поля недоступны. */}
-          <fieldset className="tpl-fieldset" disabled={readOnly}>
+          <fieldset className="tpl-fieldset" disabled={levelReadOnly}>
             <WorkflowInspector
-              workflow={draft}
+              workflow={level.graph}
               selection={selection}
               onChange={edit}
               onSelect={setSelection}
               roles={roles}
               columns={columns}
-              issues={issues}
+              issues={levelIssuesShown}
+              scope={scope}
+              onOpenPath={scope === 'run' ? open : undefined}
             />
           </fieldset>
         </div>
@@ -245,7 +316,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, no
                 {t('config.wf.tab.revert')}
               </button>
               <span className="wf-actions-sep" />
-              <button type="button" className="btn-sm" onClick={presetLimit} title={t('config.wf.tab.limitHint')}>
+              <button type="button" className="btn-sm" disabled={levelReadOnly} onClick={presetLimit} title={t('config.wf.tab.limitHint')}>
                 {t('config.wf.tab.limit')}
               </button>
               <span className="wf-actions-sep" />
