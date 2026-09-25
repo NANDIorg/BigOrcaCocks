@@ -14,7 +14,8 @@ import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type
 import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
-import { DEFAULT_UPDATE_SETTINGS } from '../shared/ipc'
+import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
+import type { OnboardingCompleteInput, OnboardingState } from '../shared/ipc'
 import type {
   AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
   TaskTypesState
@@ -81,6 +82,50 @@ export interface ProjectsFile {
    * состояния перед миграциями. Лежит здесь, а не в `settings`: это не настройка человека и в renderer не уходит.
    */
   lastRunVersion?: string
+  /**
+   * Мастер первого запуска. Не настройка человека: в `AppSettings` не входит, `app:setSettings` его не меняет, в
+   * renderer оно уходит только через `onboarding:*`. `pending` пишется явно при создании файла (`emptyProjectsFile`):
+   * `markRun` и `setSettings` создают projects.json уже при первом запуске, поэтому «нет файла» первым запуском
+   * не считается. Нет ключа — файл от версии до мастера, его решает `loadedOnboarding`.
+   */
+  onboarding?: StoredOnboarding
+}
+
+/** Что лежит в `ProjectsFile.onboarding`. `reason: 'existing'` — мастер не показывали: человек пользовался приложением до него. */
+export interface StoredOnboarding {
+  status: OnboardingState['status']
+  version: number
+  at?: number
+  reason?: 'existing'
+}
+
+const ONBOARDING_STATUSES: readonly StoredOnboarding['status'][] = ['pending', 'completed', 'skipped']
+
+/**
+ * Поле `onboarding` из файла. Нет ключа или он невалиден (не объект, неизвестный `status`) — файл от версии до
+ * мастера: пользователь с проектами или заданными настройками мастер уже не ждёт (`completed`, `existing`), пустой
+ * файл (запускал, но ничего не делал) — `pending`. `changed` — значение придумано здесь и его надо записать, иначе
+ * оно пересчитывалось бы при каждом старте.
+ */
+function loadedOnboarding(raw: unknown, existingUser: boolean): { value: StoredOnboarding; changed: boolean } {
+  if (isObject(raw) && ONBOARDING_STATUSES.includes(raw.status as StoredOnboarding['status'])) {
+    const status = raw.status as StoredOnboarding['status']
+    return {
+      value: {
+        status,
+        version: typeof raw.version === 'number' && Number.isFinite(raw.version) ? raw.version : ONBOARDING_VERSION,
+        ...(status !== 'pending' && typeof raw.at === 'number' && Number.isFinite(raw.at) ? { at: raw.at } : {}),
+        ...(raw.reason === 'existing' ? { reason: 'existing' as const } : {})
+      },
+      changed: false
+    }
+  }
+  return {
+    value: existingUser
+      ? { status: 'completed', version: ONBOARDING_VERSION, at: Date.now(), reason: 'existing' }
+      : { status: 'pending', version: ONBOARDING_VERSION },
+    changed: true
+  }
 }
 
 /** projects.json до типов задач: поля, которые читает только миграция. */
@@ -129,24 +174,26 @@ export class ProjectManager {
 
   constructor(private userData: string) {
     this.file = join(userData, 'projects.json')
-    const { data, legacyText } = this.load()
+    const { data, legacyText, dirty } = this.load()
     this.data = data
     if (legacyText !== undefined) {
       // Миграция пишет файл сразу: `legacyTypeId` должен дожить до ленивой загрузки досок.
       const backup = join(userData, PROJECTS_BACKUP_NAME)
       if (!existsSync(backup)) writeFileSync(backup, legacyText)
-      this.save()
     }
+    // `dirty` — решение по онбордингу для файла без ключа или битого: битый файл уже отложен, и без записи
+    // следующий старт увидел бы «файла нет» и показал мастер человеку, которому он не нужен.
+    if (legacyText !== undefined || dirty) this.save()
   }
 
   /** Файл целиком; `legacyText` — исходный текст, если файл был старого формата и его перевели на типы задач. */
-  private load(): { data: ProjectsFile; legacyText?: string } {
+  private load(): { data: ProjectsFile; legacyText?: string; dirty?: boolean } {
     const read = readJsonFile<RawProjectsFile>(this.file, 'проекты')
     if (read.status === 'missing') return { data: emptyProjectsFile() }
     // Битый projects.json — не «нет проектов»: файл отложен в .corrupt-<ts>, предупреждение ждёт `stateWarnings()`.
     if (read.status === 'corrupt') {
       this.warnings.push(read.warning)
-      return { data: emptyProjectsFile() }
+      return { data: existingUserFile(), dirty: true }
     }
     try {
       const text = read.text
@@ -164,7 +211,10 @@ export class ProjectManager {
       data.taskTypesSeeded = true
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
-      return { data, ...(changed ? { legacyText: text } : {}) }
+      const settingsSet = isObject(raw.settings) && Object.keys(raw.settings).length > 0
+      const onboarding = loadedOnboarding(raw.onboarding, data.projects.length > 0 || settingsSet)
+      data.onboarding = onboarding.value
+      return { data, ...(changed ? { legacyText: text } : {}), ...(onboarding.changed ? { dirty: true } : {}) }
     } catch (e) {
       // JSON разобрался, но содержимое не годится для нормализации — то же, что битый файл.
       const movedTo = quarantineCorrupt(this.file)
@@ -172,7 +222,7 @@ export class ProjectManager {
         kind: 'corrupt', file: this.file, movedTo,
         message: `проекты: файл ${this.file} не прочитан (${(e as Error).message})${movedTo ? ` — сохранён как ${movedTo}` : ''}, начато с пустого состояния`
       })
-      return { data: emptyProjectsFile() }
+      return { data: existingUserFile(), dirty: true }
     }
   }
 
@@ -537,6 +587,34 @@ export class ProjectManager {
     return this.settings()
   }
 
+  // ---------- мастер первого запуска ----------
+
+  onboardingState(): OnboardingState {
+    const o = this.data.onboarding ?? { status: 'pending' as const, version: ONBOARDING_VERSION }
+    return {
+      required: o.status === 'pending',
+      status: o.status,
+      version: o.version,
+      ...(o.status !== 'pending' && o.at !== undefined ? { at: o.at } : {})
+    }
+  }
+
+  /**
+   * Записать прохождение (`completed`) или пропуск (`skipped`). Идемпотентно: у уже пройденного или пропущенного
+   * статус, версия и время не меняются — повторный вызов (второе окно, двойной клик) ничего не понижает и не
+   * перезаписывает. Файл пишется только при изменении.
+   */
+  completeOnboarding(input?: OnboardingCompleteInput): OnboardingState {
+    if (input !== undefined && input !== null && !isObject(input)) throw new OrcaError('onboarding.invalidInput')
+    const skipped = input?.skipped
+    if (skipped !== undefined && typeof skipped !== 'boolean') throw new OrcaError('onboarding.invalidInput')
+    if (this.data.onboarding?.status === undefined || this.data.onboarding.status === 'pending') {
+      this.data.onboarding = { status: skipped ? 'skipped' : 'completed', version: ONBOARDING_VERSION, at: Date.now() }
+      this.save()
+    }
+    return this.onboardingState()
+  }
+
   setEnabledAgents(id: string, agents: AgentKind[]): Project {
     const p = this.mustGet(id)
     p.enabledAgents = agents.filter((a) => isAgentKind(a))
@@ -779,7 +857,15 @@ function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
 const GENERAL_DESCRIPTION = 'Перенесён из «Настройки → Для новых проектов».'
 
 function emptyProjectsFile(): ProjectsFile {
-  return { projects: [], activeId: null, version: PROJECTS_FILE_VERSION, taskTypes: presetTaskTypes(), taskTypesSeeded: true }
+  return {
+    projects: [], activeId: null, version: PROJECTS_FILE_VERSION, taskTypes: presetTaskTypes(), taskTypesSeeded: true,
+    onboarding: { status: 'pending', version: ONBOARDING_VERSION }
+  }
+}
+
+/** Пустое состояние вместо битого файла: человеку с повреждённым состоянием мастер не нужен, ему уже показывают предупреждение. */
+function existingUserFile(): ProjectsFile {
+  return { ...emptyProjectsFile(), onboarding: { status: 'completed', version: ONBOARDING_VERSION, at: Date.now(), reason: 'existing' } }
 }
 
 /**

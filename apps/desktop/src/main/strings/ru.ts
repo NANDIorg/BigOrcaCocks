@@ -154,5 +154,7 @@ export default {
 
   'stats.badRange': 'статистика: неизвестный период «{range}», ожидается {expected}',
   'stats.noTask': 'статистика: задачи {id} нет в проекте',
-  'stats.noGlobal': 'статистика: глобальной задачи {id} нет в проекте'
+  'stats.noGlobal': 'статистика: глобальной задачи {id} нет в проекте',
+
+  'onboarding.invalidInput': 'мастер первого запуска: ожидается объект с полем skipped (boolean)'
 } satisfies Record<string, string | { one: string; few: string; many: string }>

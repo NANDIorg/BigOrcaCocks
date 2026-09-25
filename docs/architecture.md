@@ -998,6 +998,21 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   кодируется встроенным PNG-энкодером (`encodePng`, zlib + CRC32) в два представления — 16px и 32px (Retina);
   файлов в сборке нет. На macOS — template image, система красит её под тему строки меню.
 
+## Мастер первого запуска (`src/main/projects.ts`)
+
+Поведение хранения; экран мастера (шаги, «Пропустить», «Пройти заново») описывает раздел UI, он целиком в renderer.
+
+- **Состояние** — поле `onboarding` в `userData/projects.json` (формат и миграция — «Формат `projects.json`»).
+  `ProjectManager.onboardingState()` отдаёт `OnboardingState` (`shared/ipc.ts`): `required` = статус `pending`.
+  Каналы `onboarding:getState` / `onboarding:complete` (`registerIpc`) — тонкие обёртки над менеджером.
+- **`completeOnboarding(input?)`**: `{ skipped: true }` → `skipped`, иначе `completed`; версия — `ONBOARDING_VERSION`
+  (`shared/ipc.ts`), время — `Date.now()`. Идемпотентно: у уже пройденного или пропущенного статус, версия и время
+  не меняются, файл не переписывается. Аргумент не объект или `skipped` не boolean → `OrcaError('onboarding.invalidInput')`.
+  Обратного перехода в `pending` нет: «Пройти заново» канала не требует и статус не трогает.
+- **`version`** только записывается; логики «показать новый шаг при `version < ONBOARDING_VERSION`» пока нет,
+  `required` считается по статусу.
+- Закрытие окна посреди мастера ничего не пишет: остаётся `pending`, мастер покажется при следующем запуске.
+
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
 - `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`);
@@ -1180,9 +1195,18 @@ UI работает с активным проектом; воркеры и ко
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
-`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion? }`
+`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
 (`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
-запуска, см. «Безопасность состояния»).
+запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
+- `onboarding: { status: 'pending'|'completed'|'skipped', version, at?, reason?: 'existing' }` — корень файла, а не
+  `settings`: это не настройка человека, `app:setSettings` его не меняет. Версию формата (`PROJECTS_FILE_VERSION`) поле
+  не бампает: оно опциональное, старая версия приложения при откате его игнорирует. `pending` пишется **явно**
+  (`emptyProjectsFile`), а не выводится из отсутствия файла (см. «Грабли разработки»). Миграция при `load()`
+  (`loadedOnboarding`): ключа нет или он невалиден (не объект, неизвестный `status`) — файл от версии до мастера:
+  есть проекты или непустые `settings` → `completed` + `reason: 'existing'` (мастер не показывается), иначе `pending`;
+  битый файл (в т. ч. JSON, не годящийся для нормализации) → `completed` + `existing`. Решение сразу пишется в файл
+  (`dirty` в конструкторе `ProjectManager`): битый файл уже отложен в `.corrupt-<ts>`, и без записи следующий старт
+  увидел бы «файла нет» и показал мастер.
 - `Project { id, root, name, enabledAgents?, columns?, taskTypeIds?, defaultTaskTypeId?, legacyTypeId? }`. Ролей, графа,
   правил агентов и разрешений у проекта нет — они у типа. `taskTypeIds` нет — доступны все типы библиотеки;
   `defaultTaskTypeId` — тип глобальных задач без выбранного типа, координатора и «Входящих»; `legacyTypeId` — тип,
@@ -2072,6 +2096,11 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
   `availableVersion` / `releaseUrl`. Renderer не должен считать «`unsupported` → нечего показывать».
 - `electron-updater` импортируется только из `winUpdater.ts` (через `updaterBackend.ts`): он тянет electron, а `updater.ts` и
   `updateMachine.ts` должны оставаться чистыми, чтобы тестироваться в `node:test`.
+- `markRun` (`lastRunVersion`) и `setSettings` создают `projects.json` уже при самом первом запуске, поэтому «первый запуск»
+  нельзя определять как «файла нет»: человек, закрывший приложение посреди мастера, больше бы его не увидел (файл есть,
+  проектов нет). `pending` пишется явно при создании файла (`emptyProjectsFile`), а миграция «существующий
+  пользователь» срабатывает только при отсутствии ключа `onboarding` (`loadedOnboarding`). Держит тест
+  «закрыли посреди мастера» в `projects-onboarding.test.ts`.
 
 ## Открытые вопросы
 
