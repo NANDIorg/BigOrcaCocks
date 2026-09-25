@@ -2,6 +2,7 @@ import type React from 'react'
 import type { AgentInfo, AgentKind } from '@orca-board/core'
 import { AgentLogo } from '../AgentLogo'
 import { Icon } from '../icons'
+import { useT } from '../i18n'
 import { SectionHead, Switch } from './parts'
 
 interface Props {
@@ -16,6 +17,7 @@ interface Props {
 
 /** Раздел «Агенты»: карточки установленных с переключателем; не установленные — под спойлером. */
 export function AgentsSection({ agents, all, error, onToggle, onRefresh }: Props): React.JSX.Element {
+  const t = useT()
   const installed = agents.filter((a) => a.installed)
   const missing = agents.filter((a) => !a.installed)
 
@@ -24,12 +26,12 @@ export function AgentsSection({ agents, all, error, onToggle, onRefresh }: Props
       <AgentLogo agent={a.id} size={22} />
       <div className="agent-card-text">
         <b>{a.title}</b>
-        <span>{a.installed ? a.version ?? 'установлен' : 'не установлен'}</span>
+        <span>{a.installed ? a.version ?? t('config.about.agents.installed') : t('config.about.agents.notInstalled')}</span>
       </div>
       <Switch
         on={a.installed && a.enabled}
         disabled={!a.installed || all?.on}
-        title={all?.on ? 'Включены все установленные' : a.enabled ? 'Выключить' : 'Включить'}
+        title={all?.on ? t('config.about.agents.allOnTitle') : a.enabled ? t('config.about.agents.disable') : t('config.about.agents.enable')}
         onChange={(on) => onToggle(a.id, on)}
       />
     </div>
@@ -38,17 +40,17 @@ export function AgentsSection({ agents, all, error, onToggle, onRefresh }: Props
   return (
     <>
       <SectionHead
-        title="Агенты"
-        hint="Выключенные агенты нельзя выбрать для роли; координатор их тоже не предложит. Установленные определяются по PATH."
+        title={t('config.about.nav.agents')}
+        hint={t('config.about.agents.hint')}
       >
-        <button className="btn-sm" onClick={onRefresh}><Icon.refresh /> Обновить</button>
+        <button className="btn-sm" onClick={onRefresh}><Icon.refresh /> {t('config.about.agents.refresh')}</button>
       </SectionHead>
       {all && (
         <div className="about-box">
           <div className="row-act">
             <div className="row-act-text">
-              <b>Все установленные</b>
-              <span className="hint">Новые агенты, появившиеся в PATH, включатся сами.</span>
+              <b>{t('config.about.agents.all')}</b>
+              <span className="hint">{t('config.about.agents.allHint')}</span>
             </div>
             <Switch on={all.on} onChange={all.onChange} />
           </div>
@@ -56,11 +58,11 @@ export function AgentsSection({ agents, all, error, onToggle, onRefresh }: Props
       )}
       <div className="agent-cards">
         {installed.map(card)}
-        {installed.length === 0 && <div className="muted">Установленных агентов не найдено.</div>}
+        {installed.length === 0 && <div className="muted">{t('config.about.agents.none')}</div>}
       </div>
       {missing.length > 0 && (
         <details className="agents-missing">
-          <summary className="muted">Не установлены · {missing.length}</summary>
+          <summary className="muted">{t('config.about.agents.missing', { count: missing.length })}</summary>
           <div className="agent-cards">{missing.map(card)}</div>
         </details>
       )}

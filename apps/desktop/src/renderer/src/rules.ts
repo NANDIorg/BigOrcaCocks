@@ -1,11 +1,14 @@
 import { isRuleFileName, RULE_FILE_NAMES, type OrcaApi, type RuleFile, type RuleFileName } from '../../shared/ipc'
+import { t } from './i18n'
 
 /** Как STALE_APP_MESSAGE в docLinks.ts: renderer обновился по HMR, а main/preload — ещё нет. */
-export const RULES_STALE_MESSAGE = 'Приложение запущено со старой версией main/preload, где ещё нет раздела «Правила». Перезапустите приложение.'
+export function rulesStaleMessage(): string {
+  return t('config.about.rules.stale')
+}
 
 /** `window.orca.rules` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function rulesApi(api: Partial<OrcaApi> | undefined): OrcaApi['rules'] {
-  if (!api?.rules) throw new Error(RULES_STALE_MESSAGE)
+  if (!api?.rules) throw new Error(rulesStaleMessage())
   return api.rules
 }
 
@@ -14,39 +17,32 @@ export function isStaleRulesError(message: string): boolean {
   return /No handler registered for 'rules:/.test(message)
 }
 
-/** Для чего файл — подпись под переключателем. */
+/** Для чего файл — подпись под переключателем. Геттеры: текст на текущем языке интерфейса. */
 export const RULE_HINTS: Record<RuleFileName, string> = {
-  'CLAUDE.md': 'Читает Claude Code: запреты, обязательные шаги, стиль, проверки.',
-  'AGENTS.md': 'Читают Codex и другие агенты. Обычно отсылает к CLAUDE.md, чтобы правила не расходились.'
+  get 'CLAUDE.md'() {
+    return t('config.about.rules.hintClaude')
+  },
+  get 'AGENTS.md'() {
+    return t('config.about.rules.hintAgents')
+  }
 }
 
-/** Заготовка для «Создать»: AGENTS.md отсылает к CLAUDE.md, CLAUDE.md — пустой каркас разделов. */
+/**
+ * Заготовка для «Создать»: AGENTS.md отсылает к CLAUDE.md, CLAUDE.md — пустой каркас разделов.
+ * На языке интерфейса: файл пишет человек, заготовка — только подсказка структуры.
+ */
 export const RULE_TEMPLATES: Record<RuleFileName, string> = {
-  'CLAUDE.md': [
-    '# Правила проекта',
-    '',
-    '## Нельзя',
-    '',
-    '- ',
-    '',
-    '## Обязательно',
-    '',
-    '- ',
-    '',
-    '## Стиль кода',
-    '',
-    '- ',
-    '',
-    '## Проверки перед сдачей',
-    '',
-    '- ',
-    '',
-    '## Git и ветки',
-    '',
-    '- ',
-    ''
-  ].join('\n'),
-  'AGENTS.md': '# Правила проекта\n\nПравила проекта — в CLAUDE.md, прочитай его.\n'
+  get 'CLAUDE.md'() {
+    const sections = ['tplDont', 'tplMust', 'tplStyle', 'tplChecks', 'tplGit'] as const
+    return [
+      `# ${t('config.about.rules.tplTitle')}`,
+      '',
+      ...sections.flatMap((k) => [`## ${t(`config.about.rules.${k}`)}`, '', '- ', ''])
+    ].join('\n')
+  },
+  get 'AGENTS.md'() {
+    return `# ${t('config.about.rules.tplTitle')}\n\n${t('config.about.rules.tplAgents')}\n`
+  }
 }
 
 /** Выбранный файл: сохранённый, если он из белого списка, иначе первый существующий, иначе CLAUDE.md. */

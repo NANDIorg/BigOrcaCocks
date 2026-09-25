@@ -4,6 +4,7 @@ import { DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, nextStage, validateWor
 import {
   addRetryLimit, changeNodeType, conditionOfKind, exportWorkflowJson, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName
 } from './workflowForm'
+import { setLocale } from './i18n'
 
 const wf = defaultWorkflow(DEFAULT_ROLES)
 const node = (w: Workflow, id: string) => w.nodes.find((n) => n.id === id)
@@ -107,6 +108,19 @@ test('экспорт и импорт JSON: круг без потерь, мус�
   assert.match((parseWorkflowJson('{"version":1,"nodes":[],"edges":[{"id":"e"}]}') as { error: string }).error, /переход №1/)
   assert.equal(workflowFileName('my app: v2'), 'workflow-my-app-v2.json')
   assert.equal(workflowFileName('  '), 'workflow.json')
+})
+
+test('ошибки импорта и названия пресета — на языке интерфейса', () => {
+  setLocale('en')
+  try {
+    assert.match((parseWorkflowJson('{') as { error: string }).error, /^not a JSON file/)
+    assert.match((parseWorkflowJson('{"version":1,"nodes":[{"id":"a","type":"x","x":0,"y":0}],"edges":[]}') as { error: string }).error, /unknown type “x”/)
+    const res = addRetryLimit(wf)
+    assert.ok('workflow' in res)
+    assert.ok(res.workflow.nodes.some((n) => n.title === 'Rejects ≥ 3'))
+  } finally {
+    setLocale('ru')
+  }
 })
 
 test('пресет «3 отказа → человек»: граф валиден, третий отказ уходит человеку', () => {

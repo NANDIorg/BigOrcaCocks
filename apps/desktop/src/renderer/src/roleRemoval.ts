@@ -1,4 +1,5 @@
 import { DEFAULT_ROLES, wfNodeTitle, type Role, type Workflow } from '@orca-board/core'
+import { t, type TKey } from './i18n'
 
 /** Системные роли — id из DEFAULT_ROLES: у пустого назначения есть значение по умолчанию, их можно вернуть из дефолта. */
 export const SYSTEM_ROLE_IDS: ReadonlySet<string> = new Set(DEFAULT_ROLES.map((r) => r.id))
@@ -12,32 +13,22 @@ export function isSystemRole(roleId: string): boolean {
  * не запускается (`startCoordinator`), ассистент без assistant берёт агента coordinator (`assistantRole`),
  * `task create --role <нет в типе задачи>` — ошибка (`pickRole`), задачи старой доски без роли получают developer.
  */
-const SYSTEM_ROLE_LOSSES: Readonly<Record<string, readonly string[]>> = {
-  coordinator: [
-    'Нельзя будет запустить прогон и продолжить глобальную задачу: координатор запускается только ролью coordinator.',
-    'Если нет и роли assistant, ассистент доски запустится claude с настройками по умолчанию.'
-  ],
-  assistant: [
-    'Ассистент доски запустится агентом, моделью и усилием роли coordinator (без неё — claude по умолчанию), без инструкций роли assistant.'
-  ],
-  developer: [
-    'Координатор не сможет поручать задачи с кодом роли developer (task create --role developer вернёт ошибку).',
-    'Задачи со старой доски без роли получают developer — их нельзя будет запустить.'
-  ],
-  reviewer: [
-    'Координатор не сможет создавать задачи ревью (task create --role reviewer вернёт ошибку) — ревью придётся делать вручную.'
-  ],
-  qa: [
-    'Координатор не сможет поручать тесты и проверки роли qa (task create --role qa вернёт ошибку).'
-  ]
+const SYSTEM_ROLE_LOSSES: Readonly<Record<string, readonly TKey[]>> = {
+  coordinator: ['config.roles.loss.coordinatorRun', 'config.roles.loss.coordinatorAssistant'],
+  assistant: ['config.roles.loss.assistant'],
+  developer: ['config.roles.loss.developerTasks', 'config.roles.loss.developerOld'],
+  reviewer: ['config.roles.loss.reviewer'],
+  qa: ['config.roles.loss.qa']
 }
 
 /** Удаление роли из типа задачи: роли прогона не копируются, а читаются из библиотеки при каждом запуске агента. */
-export const TASK_TYPE_RUNS_LOSS = 'Незакрытые глобальные задачи этого типа потеряют роль со следующего запуска агента.'
+export function taskTypeRunsLoss(): string {
+  return t('config.roles.loss.taskTypeRuns')
+}
 
 /** Почему роль нельзя удалить; undefined — можно. Последнюю роль не пропускает и main (`validateRoles`). */
 export function removeBlocker(roles: readonly Role[]): string | undefined {
-  return roles.length > 1 ? undefined : 'Нельзя удалить последнюю роль'
+  return roles.length > 1 ? undefined : t('config.roles.lastRole')
 }
 
 /** Названия нод воркфлоу, где занята роль: роль гейта, роль работы, роль в условии. */
@@ -60,17 +51,15 @@ export function workflowNodesWithRole(wf: Workflow | undefined, roleId: string):
  * предупреждаем всегда.
  */
 export function removalConsequences(roleId: string, taskCount?: number, workflow?: Workflow, ofTaskType = false): string[] {
-  const out = [...(SYSTEM_ROLE_LOSSES[roleId] ?? [])]
-  if (ofTaskType) out.push(TASK_TYPE_RUNS_LOSS)
-  if (taskCount) out.push(`Задачи на этой роли (${taskCount}) не запустятся, пока роль не вернут.`)
+  const out = (SYSTEM_ROLE_LOSSES[roleId] ?? []).map((key) => t(key))
+  if (ofTaskType) out.push(taskTypeRunsLoss())
+  if (taskCount) out.push(t('config.roles.loss.tasks', { n: taskCount }))
   const stages = workflowNodesWithRole(workflow, roleId)
   if (stages.length) {
-    out.push(
-      `Роль занята в воркфлоу: ${stages.map((t) => `«${t}»`).join(', ')}. Задачи остановятся на этих этапах, ` +
-        'а граф не сохранится, пока роль не заменят во вкладке «Воркфлоу» типа (Настройки → Типы задач).'
-    )
+    const list = stages.map((title) => t('config.roles.loss.stage', { title })).join(', ')
+    out.push(t('config.roles.loss.workflow', { stages: list }))
   }
-  if (isSystemRole(roleId)) out.push('Вернуть роль можно кнопкой «Вернуть системные роли» под списком — с настройками по умолчанию.')
+  if (isSystemRole(roleId)) out.push(t('config.roles.loss.restore'))
   return out
 }
 

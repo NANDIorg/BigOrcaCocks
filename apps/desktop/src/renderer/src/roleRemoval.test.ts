@@ -1,7 +1,10 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_ROLES, defaultWorkflow, type Role, type Workflow } from '@orca-board/core'
-import { TASK_TYPE_RUNS_LOSS, isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles, workflowNodesWithRole } from './roleRemoval'
+import { setLocale } from './i18n'
+import { taskTypeRunsLoss, isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles, workflowNodesWithRole } from './roleRemoval'
+
+afterEach(() => setLocale('ru'))
 
 const ids = (roles: readonly Role[]): string[] => roles.map((r) => r.id)
 const custom: Role = { id: 'role_x', title: 'Аналитик', agent: 'codex' }
@@ -79,9 +82,18 @@ test('граф с ролью отправляет во вкладку «Ворк
 })
 
 test('удаление роли из типа задачи предупреждает про незакрытые глобальные задачи', () => {
-  assert.deepEqual(removalConsequences(custom.id, undefined, undefined, true), [TASK_TYPE_RUNS_LOSS])
-  assert.match(TASK_TYPE_RUNS_LOSS, /^Незакрытые глобальные задачи этого типа потеряют роль со следующего запуска агента\.$/)
-  assert.ok(removalConsequences('developer', undefined, undefined, true).includes(TASK_TYPE_RUNS_LOSS))
+  assert.deepEqual(removalConsequences(custom.id, undefined, undefined, true), [taskTypeRunsLoss()])
+  assert.match(taskTypeRunsLoss(), /^Незакрытые глобальные задачи этого типа потеряют роль со следующего запуска агента\.$/)
+  assert.ok(removalConsequences('developer', undefined, undefined, true).includes(taskTypeRunsLoss()))
   // Без типа (роль не из библиотеки) строки нет.
-  assert.ok(!removalConsequences('developer').includes(TASK_TYPE_RUNS_LOSS))
+  assert.ok(!removalConsequences('developer').includes(taskTypeRunsLoss()))
+})
+
+test('последствия удаления — на языке интерфейса', () => {
+  setLocale('en')
+  assert.equal(removeBlocker([custom]), 'Can’t delete the last role')
+  assert.deepEqual(removalConsequences(custom.id, 3), ['Tasks with this role (3) won’t start until the role is back.'])
+  const lines = removalConsequences('reviewer', undefined, defaultWorkflow([{ id: 'reviewer' }])).join('\n')
+  assert.match(lines, /used in the workflow: “Ревью”/)
+  assert.match(lines, /Restore system roles/)
 })

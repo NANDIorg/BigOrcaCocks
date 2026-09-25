@@ -1,6 +1,7 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { docLinkHash, docsApi, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, STALE_APP_MESSAGE } from './docLinks'
+import { docLinkHash, docsApi, formatSize, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, STALE_APP_MESSAGE } from './docLinks'
+import { setLocale } from './i18n'
 import type { OrcaApi } from '../../shared/ipc'
 
 test('docsApi — старый preload без docs даёт понятную ошибку, а не TypeError', () => {
@@ -8,6 +9,16 @@ test('docsApi — старый preload без docs даёт понятную о�
   assert.throws(() => docsApi({} as Partial<OrcaApi>), { message: STALE_APP_MESSAGE })
   const docs = { list: async () => [] } as unknown as OrcaApi['docs']
   assert.equal(docsApi({ docs }), docs)
+})
+
+afterEach(() => setLocale('ru'))
+
+test('docsApi и formatSize — на языке интерфейса', () => {
+  assert.equal(formatSize(1536 * 1024), '1,5 МБ')
+  setLocale('en')
+  assert.throws(() => docsApi(undefined), { message: /old main\/preload without Docs/ })
+  assert.equal(formatSize(500), '500 B')
+  assert.equal(formatSize(1536 * 1024), '1.5 MB')
 })
 
 test('isStaleDocsError — старый main без хендлеров docs:*', () => {

@@ -3,8 +3,9 @@ import type { TaskType } from '@orca-board/core'
 import type { TaskTypeInput, TaskTypesState } from '../../../shared/ipc'
 import { ipcErrorMessage } from '../useAutoSave'
 import {
-  TASK_TYPES_STALE_MESSAGE, patchedTaskType, renamedTaskType, taskTypeLibraryApi, taskTypesError, type TaskTypePatch
+  patchedTaskType, renamedTaskType, taskTypeLibraryApi, taskTypesError, taskTypesStaleMessage, type TaskTypePatch
 } from '../taskTypeEdit'
+import { t } from '../i18n'
 
 /** Ошибка IPC типов по-человечески: нет API или хендлера в старом main — «перезапустите приложение». */
 function message(e: unknown): string {
@@ -35,7 +36,7 @@ export interface TaskTypesHook {
 export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
   const stale = !window.orca.taskTypes
   const [state, setState] = useState<TaskTypesState | null>(null)
-  const [error, setError] = useState<string | null>(stale ? TASK_TYPES_STALE_MESSAGE : null)
+  const [error, setError] = useState<string | null>(stale ? taskTypesStaleMessage() : null)
   /**
    * Последняя сохранённая версия каждого типа. taskTypes:save заменяет тип целиком, а редакторы разделов
    * сохраняются с задержкой: без этого правка ролей, досохранённая после смены вкладки, затёрла бы
@@ -45,7 +46,7 @@ export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
 
   async function reload(): Promise<TaskTypesState> {
     const next = await taskTypeLibraryApi(window.orca).list()
-    latest.current = new Map(next.taskTypes.map((t) => [t.id, t]))
+    latest.current = new Map(next.taskTypes.map((x) => [x.id, x]))
     setState(next)
     setError(null)
     return next
@@ -76,7 +77,7 @@ export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
   function update(id: string, build: (t: TaskType) => TaskTypeInput): Promise<void> {
     const run = queue.current.then(async () => {
       const base = latest.current.get(id)
-      if (!base) throw new Error(`тип задачи не найден: ${id}`)
+      if (!base) throw new Error(t('config.taskType.notFound', { id }))
       const saved = await write(() => taskTypeLibraryApi(window.orca).save(build(base)))
       latest.current.set(id, saved)
     })
@@ -89,10 +90,10 @@ export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
     error,
     stale,
     create: (input) => write(() => taskTypeLibraryApi(window.orca).save(input)),
-    patch: (id, p) => update(id, (t) => patchedTaskType(t, p)),
+    patch: (id, p) => update(id, (type) => patchedTaskType(type, p)),
     rename: (id, title, description) =>
-      update(id, (t) => {
-        const input = renamedTaskType(t, title, description)
+      update(id, (type) => {
+        const input = renamedTaskType(type, title, description)
         if ('error' in input) throw new Error(input.error)
         return input
       }),

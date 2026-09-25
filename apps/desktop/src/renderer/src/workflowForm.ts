@@ -4,14 +4,21 @@ import {
 } from '@orca-board/core'
 import { NODE_H, NODE_W } from './workflowGeometry'
 import { connect, makeNode, uniqueId } from './workflowEdit'
+import { t } from './i18n'
 
 // Логика инспектора ноды и вкладки «Настройки → Типы задач → Воркфлоу»: правка полей ноды, переходы портов с клавиатуры,
 // импорт/экспорт JSON, пресет лимита повторов. Как и workflowEdit.ts — чистые функции над графом.
 
-/** Названия типов нод в инспекторе и подсказках холста. */
-export const WF_TYPE_TITLES: Record<WfNodeType, string> = {
-  start: 'Старт', work: 'Работа', ask: 'Вопрос человеку', gate: 'Проверка агентом', human: 'Решение человека',
-  condition: 'Условие', merge: 'Мерж', end: 'Конец'
+/** Названия типов нод в инспекторе и подсказках холста. Геттеры — на текущем языке интерфейса. */
+export const WF_TYPE_TITLES: Readonly<Record<WfNodeType, string>> = {
+  get start() { return t('config.wf.type.start') },
+  get work() { return t('config.wf.type.work') },
+  get ask() { return t('config.wf.type.ask') },
+  get gate() { return t('config.wf.type.gate') },
+  get human() { return t('config.wf.type.human') },
+  get condition() { return t('config.wf.type.condition') },
+  get merge() { return t('config.wf.type.merge') },
+  get end() { return t('config.wf.type.end') }
 }
 
 /** Порядок типов в select «Тип» инспектора. */
@@ -157,25 +164,25 @@ export function parseWorkflowJson(text: string): { workflow: Workflow } | { erro
   try {
     data = JSON.parse(text)
   } catch (e) {
-    return { error: `файл не JSON: ${e instanceof Error ? e.message : String(e)}` }
+    return { error: t('config.wf.import.notJson', { message: e instanceof Error ? e.message : String(e) }) }
   }
-  if (!isObj(data)) return { error: 'в файле не воркфлоу: ожидался объект { version, nodes, edges }' }
+  if (!isObj(data)) return { error: t('config.wf.import.notObject') }
   const { version, nodes, edges } = data
   if (typeof version !== 'number' || !Array.isArray(nodes) || !Array.isArray(edges)) {
-    return { error: 'в файле не воркфлоу: нужны поля version (число), nodes и edges (массивы)' }
+    return { error: t('config.wf.import.noFields') }
   }
   if (version > WORKFLOW_VERSION) {
-    return { error: `воркфлоу в формате версии ${version}, приложение знает только ${WORKFLOW_VERSION} — обновите приложение` }
+    return { error: t('config.wf.import.newerVersion', { version, known: WORKFLOW_VERSION }) }
   }
   for (const [i, n] of nodes.entries()) {
     if (!isObj(n) || typeof n.id !== 'string' || typeof n.type !== 'string' || typeof n.x !== 'number' || typeof n.y !== 'number') {
-      return { error: `нода №${i + 1}: нужны строки id и type и числа x и y` }
+      return { error: t('config.wf.import.badNode', { n: i + 1 }) }
     }
-    if (!(n.type in WF_PORTS)) return { error: `нода «${n.id}»: неизвестный тип «${n.type}»` }
+    if (!(n.type in WF_PORTS)) return { error: t('config.wf.import.unknownType', { id: n.id, type: n.type }) }
   }
   for (const [i, e] of edges.entries()) {
     if (!isObj(e) || typeof e.id !== 'string' || typeof e.from !== 'string' || typeof e.to !== 'string' || typeof e.outcome !== 'string') {
-      return { error: `переход №${i + 1}: нужны строки id, from, outcome и to` }
+      return { error: t('config.wf.import.badEdge', { n: i + 1 }) }
     }
   }
   // Форма проверена выше; остальное (порты, ссылки) — дело validateWorkflow.
@@ -206,8 +213,8 @@ export function addRetryLimit(wf: Workflow, limit = 3): { workflow: Workflow; ad
   const rejects = wf.edges.filter((e) => e.outcome === 'reject' && byId.get(e.from)?.type === 'gate' && byId.get(e.to)?.type === 'work')
   if (rejects.length === 0) {
     const limited = wf.edges.some((e) => e.outcome === 'reject' && byId.get(e.from)?.type === 'gate' && isAttempts(byId.get(e.to)))
-    if (limited) return { error: 'Лимит повторов уже стоит: отказ проверки идёт через условие.' }
-    return { error: 'Нет проверки агентом, отказ которой ведёт прямо в работу, — лимит повторов некуда поставить.' }
+    if (limited) return { error: t('config.wf.limit.already') }
+    return { error: t('config.wf.limit.nowhere') }
   }
   let next = wf
   for (const reject of rejects) {
@@ -217,13 +224,13 @@ export function addRetryLimit(wf: Workflow, limit = 3): { workflow: Workflow; ad
     const humanId = uniqueId('limit_human', [...ids, condId])
     const condPos = freeSpot(next, gate.x, gate.y + NODE_H + 60)
     const cond: WfNode = {
-      id: condId, type: 'condition', title: `Отказов ≥ ${limit}`, ...condPos,
+      id: condId, type: 'condition', title: t('config.wf.limit.condTitle', { limit }), ...condPos,
       test: { kind: 'attempts', node: reject.to, atLeast: limit }
     }
     const humanPos = freeSpot({ ...next, nodes: [...next.nodes, cond] }, condPos.x + NODE_W + 70, condPos.y)
     const human: WfNode = {
-      id: humanId, type: 'human', title: `После ${limit} отказов`, ...humanPos,
-      instructions: `Задачу вернули на доработку столько раз, сколько разрешает лимит (${limit}). Примите работу как есть или верните её в работу ещё раз.`
+      id: humanId, type: 'human', title: t('config.wf.limit.humanTitle', { limit }), ...humanPos,
+      instructions: t('config.wf.limit.humanInstructions', { limit })
     }
     const accept = portTarget(next, gate.id, 'accept')
     next = {
