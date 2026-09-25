@@ -24,6 +24,7 @@ import {
   isNewerVersion,
   parseUpdateManifest,
   pickMacZip,
+  releaseTag,
   validateInstallPaths,
   type UpdateFile
 } from './macUpdateLogic'
@@ -155,6 +156,8 @@ interface Staged {
 export class MacUpdater implements PlatformUpdater {
   private found: Found | null = null
   private staged: Staged | null = null
+  /** install.sh уже запущен: второй скрипт гонялся бы с первым за `previous/` и .app. */
+  private installLaunched = false
 
   constructor(private env: MacUpdaterEnv) {}
 
@@ -186,7 +189,7 @@ export class MacUpdater implements PlatformUpdater {
     mkdirSync(stage, { recursive: true })
 
     const zip = join(stage, 'update.zip')
-    const url = assetUrl(file.url)
+    const url = assetUrl(file.url, version)
     onProgress(0)
     let got: { sha512: string; bytes: number }
     try {
@@ -217,6 +220,8 @@ export class MacUpdater implements PlatformUpdater {
   }
 
   async install(): Promise<void> {
+    // Скрипт уже ждёт выхода приложения и сам всё подменит; повторный запуск — только гонка (см. lock в INSTALL_SCRIPT).
+    if (this.installLaunched) return
     const staged = this.staged
     if (!staged) throw new Error('обновление не скачано: установить нечего')
     if (!existsSync(staged.app)) throw new Error('скачанное обновление пропало с диска: скачайте его заново')
@@ -234,6 +239,7 @@ export class MacUpdater implements PlatformUpdater {
     } catch (e) {
       throw netError('не удалось запустить установщик обновления', e)
     }
+    this.installLaunched = true
   }
 
   /**
@@ -258,7 +264,7 @@ export class MacUpdater implements PlatformUpdater {
 
   /** Метаданные релиза из публичного API. Любая ошибка — пустые заметки и ссылка на страницу релиза: сеть не должна ломать проверку. */
   private async fetchRelease(version: string): Promise<{ notes: string; url: string }> {
-    const tag = `v${version}`
+    const tag = releaseTag(version)
     const fallbackUrl = `https://github.com/${RELEASES_REPO.owner}/${RELEASES_REPO.repo}/releases/tag/${tag}`
     try {
       const res = await getWithTimeout(

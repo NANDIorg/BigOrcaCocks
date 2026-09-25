@@ -86,6 +86,7 @@ function fakeHost() {
     requests: [] as InstallRequest[],
     calls: [] as string[],
     justUpdated: null as string | null,
+    quitThrows: false,
     afters: [] as Array<() => void>,
     everys: new Map<number, Array<() => void>>(),
     timers: undefined as unknown as UpdaterTimers
@@ -113,7 +114,10 @@ function fakeHost() {
     },
     lockQuit: () => void h.calls.push('lock'),
     unlockQuit: () => void h.calls.push('unlock'),
-    quit: () => void h.calls.push('quit'),
+    quit: () => {
+      h.calls.push('quit')
+      if (h.quitThrows) throw new Error('выход сорвался')
+    },
     takeJustUpdated: () => h.justUpdated,
     timers: h.timers
   }
@@ -449,6 +453,30 @@ describe('Updater: установка', () => {
     assert.equal(q.u.installOnQuit(), true)
     await new Promise((r) => setImmediate(r))
     assert.deepEqual(q.h.calls, ['lock', 'quit'])
+  })
+
+  it('backend.install вызывается один раз: параллельные «установить» и выход не запускают второй установщик', async () => {
+    const { u, backend } = await ready()
+    await Promise.all([u.install({ when: 'now' }), u.install({ when: 'now' })])
+    assert.equal(u.installOnQuit(), false)
+    await new Promise((r) => setImmediate(r))
+    assert.equal(backend.installs, 1)
+  })
+
+  it('выход сорвался после install: повторная установка (после новой загрузки) не зовёт backend.install снова', async () => {
+    const { u, h, backend } = await ready()
+    h.quitThrows = true
+    const s = await u.install({ when: 'now' })
+    assert.equal(s.status, 'error')
+    assert.equal(backend.installs, 1)
+    // Обновление снова готово (человек нажал «Скачать») — установщик первого запуска уже ждёт выхода.
+    await u.download()
+    assert.equal(u.getState().status, 'ready')
+    h.quitThrows = false
+    h.calls.length = 0
+    await u.install({ when: 'now' })
+    assert.equal(backend.installs, 1, 'второй установщик не запущен')
+    assert.deepEqual(h.calls, ['lock', 'quit'], 'но выход состоялся')
   })
 
   it('installOnQuit: ставит при ready и не снятом installPending, иначе false', async () => {

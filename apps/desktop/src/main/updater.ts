@@ -1,6 +1,5 @@
 // Обновление приложения: `Updater` — единственный источник правды `UpdateState`. Он ведёт расписание проверок,
-// фоновую загрузку и отложенную установку; «как» на конкретной ОС знает `PlatformUpdater` (winUpdater.ts, macOS —
-// отдельная задача), а сами переходы и решения — чистый updateMachine.ts.
+// фоновую загрузку и отложенную установку; «как» на конкретной ОС знает `PlatformUpdater` (winUpdater.ts, macUpdater.ts), а сами переходы и решения — чистый updateMachine.ts.
 // Модуль не импортирует electron (всё окружение приходит через `UpdaterHost`), поэтому тестируется в node:test.
 // См. docs/architecture.md → «Обновление».
 import type { UpdateInfo, UpdateInstallWhen, UpdateSettings, UpdateState } from '../shared/ipc'
@@ -132,6 +131,11 @@ export class Updater {
   /** Диалог подтверждения открыт — второй не показываем. */
   private confirming = false
   private justUpdatedTaken = false
+  /**
+   * `backend.install()` уже отработал (на macOS это запущенный detached-скрипт). Больше его не зовём: если выход
+   * после этого сорвался и человек снова дошёл до «установить», второй установщик гонялся бы с первым.
+   */
+  private installLaunched = false
   private stopIdlePoll: (() => void) | null = null
   private stops: Array<() => void> = []
   private readonly timers: UpdaterTimers
@@ -336,7 +340,10 @@ export class Updater {
     this.host.lockQuit()
     this.setState(installStarted(this.state))
     try {
-      await this.backend.install()
+      if (!this.installLaunched) {
+        await this.backend.install()
+        this.installLaunched = true
+      }
       this.host.quit()
     } catch (e) {
       this.setState(installFailed(this.state, errorText('Не удалось установить обновление', e)))
