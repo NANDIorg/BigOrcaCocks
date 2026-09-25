@@ -262,13 +262,13 @@ describe('после ответа человека процесс идёт да�
     assert.equal(store.getTask(task.id)!.status, 'ready')
     assert.equal(store.getGlobalTask(g.id).status, 'in_progress')
     const answered = store.snapshot().questions.filter((x) => x.taskId === task.id && x.answeredAt)
-    assert.match(workerTaskPrompt(store.getTask(task.id)!, undefined, answered), /# Ответы на твои вопросы\n\n- Какую БД\?\n  Ответ: Postgres/)
+    assert.match(workerTaskPrompt(store.getTask(task.id)!, undefined, answered), /# Ответы на вопросы по задаче\n\n- Какую БД\?\n  Ответ: Postgres/)
   })
 })
 
 describe('ответы на вопросы в промпте', () => {
   it('промпт без ответов на вопросы — без раздела', () => {
-    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: '?' }]), /Ответы на твои вопросы/)
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: '?' }]), /Ответы на вопросы по задаче/)
   })
 })
 

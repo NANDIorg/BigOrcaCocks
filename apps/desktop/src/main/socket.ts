@@ -411,7 +411,7 @@ const handlers: Record<string, Handler> = {
       ...(task ? { fallback: runFallback(deps.resolveRun(task.runId)) } : {})
     })
   },
-  'worker.ask': async (r, _d, store, stream) => {
+  'worker.ask': async (r, deps, store, stream) => {
     const dispatchId = str(r.params.dispatch) ?? r.dispatchId
     const taskId = str(r.params.task) ?? r.taskId ?? (dispatchId ? store.getDispatch(dispatchId)?.taskId : undefined)
     if (!taskId) throw new Error('нет задачи: укажи --task или запусти из воркера')
@@ -424,9 +424,13 @@ const handlers: Record<string, Handler> = {
       .questions.filter((q) => q.taskId === taskId && q.dispatchId === dispatchId && q.answeredAt && q.question === question.trim())
       .at(-1)
     if (answered && dispatchId !== undefined) return answered
+    // Этап «Вопрос человеку»: отвечает человек, а не координатор — вопрос идёт человеку при любом координаторе.
+    // Граф прогона без снимка — по типу прогона, как в `worker.done`.
+    const task = store.getTask(taskId)
+    const onAskStage = task ? store.taskStageNode(taskId, runFallback(deps.resolveRun(task.runId)))?.type === 'ask' : false
     const q = store.ask(
       { taskId, dispatchId, question, options: askOptions(r.params), context: str(r.params.context) },
-      { coordinatorAlive: coordinatorAlive(store, taskId) }
+      { coordinatorAlive: coordinatorAlive(store, taskId), ...(onAskStage ? { forceHuman: true } : {}) }
     )
     if (r.params.wait === false || q.answeredAt) return q
     askWaiters.set(q.id, (askWaiters.get(q.id) ?? 0) + 1)

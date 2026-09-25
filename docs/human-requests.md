@@ -30,7 +30,7 @@ interface HumanRequest {
   body?: string              // markdown: контекст вопроса (+ «**Координатор:** …» из forward --note) или сам ответ
   options: RequestOption[]   // только у question; у answer/escalation/approval действия встроены
   questionId?: string        // kind=question: исходный Question (ask держит соединение за него)
-  nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача; kind=question: нода ask, с которой задан вопрос
+  nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача; kind=question: нода ask, с которой задан вопрос (Инбокс показывает «Этап «…»»)
   showcaseDispatchId?: string // kind=approval: запуск, чей показ (Dispatch.showcase) в body; файлы — IPC showcase:*
   resolution?: RequestResolution
   createdAt: number
@@ -61,6 +61,7 @@ interface HumanRequest {
 | Источник | Метод store | Условие | Запрос |
 |---|---|---|---|
 | Воркер спросил, координатор не жив | `ask(…, {coordinatorAlive: false})` | «Входящие», нет PTY координатора, `runs finish`, прогон закрыт (`coordinatorAlive` в `socket.ts`) | `question` |
+| Воркер спросил на этапе «Вопрос человеку» | `ask(…, {forceHuman: true})` | задача стоит на ноде `ask` (`taskStageNode` в `worker.ask`) — при любом координаторе, живом тоже | `question`, `nodeId` — нода `ask` (и в `Question.nodeId`) |
 | Координатор передал вопрос | `forwardQuestion(id, note?)` | вопрос не отвечен; уже переданный — без изменений | `question`, `note` — в `body` |
 | Координатор умер | `escalateOpenQuestions(runId)` | выход PTY координатора (`worker.ts`), загрузка проекта (`projects.ts`) | `question` на каждый его открытый вопрос текущего запуска |
 | Сдан ответ для человека | `finishDispatch` | `task.answerFor === 'human'` | `answer`, `body` — ответ; `request_created` идёт после `worker_done` |
@@ -128,7 +129,9 @@ Payload короткие: строка события в мониторе коо
    `[orca] на вопрос q_… ответили: orca-board request get --request req_…` (без запроса — `question get`;
    `deliverAnswers` в `index.ts`, `answerNudge` в `notify.ts`). Ответ воркер забирает этой командой (поле `answer`).
 4. Воркер мёртв (`question_answered.workerLive: false`, задача в ready) — координатор делает `worker start`,
-   ответ попадает в промпт (раздел «Ответы на твои вопросы», `workerTaskPrompt`).
+   ответ попадает в промпт (раздел «Ответы на вопросы по задаче», `workerTaskPrompt`). Задача на этапе `ask` —
+   воркера стартует само приложение (`handleEvents` в `workflow.ts`), координатору `worker start` не нужен; этап не
+   сбрасывается (`store.enterWork`), роль ноды не становится ролью задачи (`docs/workflow.md`, «Вопрос человеку»).
 
 ## CLI
 

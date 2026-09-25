@@ -1,4 +1,5 @@
 import { WF_PORTS, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type Workflow } from '@orca-board/core'
+import { t } from './i18n'
 
 // Правка графа воркфлоу в редакторе — чистые функции: на вход граф, на выход новый граф (исходный не меняется).
 // Недопустимая операция возвращает граф как есть: холст и инспектор не обязаны проверять её заранее.
@@ -7,19 +8,19 @@ import { WF_PORTS, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type
 /** Что выделено на холсте. */
 export type WfSelection = { kind: 'node'; id: string } | { kind: 'edge'; id: string } | null
 
-/** Подписи исходов на портах и в инспекторе. */
-export const WF_OUTCOME_LABELS: Record<WfOutcome, string> = {
-  next: 'дальше',
-  accept: 'принять',
-  reject: 'вернуть',
-  yes: 'да',
-  no: 'нет',
-  ok: 'слито',
-  conflict: 'конфликт'
+/** Подписи исходов на портах и в инспекторе. Геттеры — чтобы подпись шла на текущем языке интерфейса. */
+export const WF_OUTCOME_LABELS: Readonly<Record<WfOutcome, string>> = {
+  get next() { return t('config.wf.outcome.next') },
+  get accept() { return t('config.wf.outcome.accept') },
+  get reject() { return t('config.wf.outcome.reject') },
+  get yes() { return t('config.wf.outcome.yes') },
+  get no() { return t('config.wf.outcome.no') },
+  get ok() { return t('config.wf.outcome.ok') },
+  get conflict() { return t('config.wf.outcome.conflict') }
 }
 
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
-export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'gate', 'human', 'condition', 'merge', 'end', 'start']
+export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'human', 'condition', 'merge', 'end', 'start']
 
 /** Свободный id вида `<prefix>`, `<prefix>_2`, `<prefix>_3`… */
 export function uniqueId(prefix: string, taken: Iterable<string>): string {

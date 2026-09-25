@@ -175,7 +175,7 @@ needs_input — **вычисляемая** колонка: там карточк
   Живой воркер получает ответ через свой `ask` (или повтор той же команды после таймаута инструмента);
   `ask` уже не ждёт — main пишет в терминал пинок `[orca] на вопрос q_… ответили: orca-board request get --request req_…`
   (`deliverAnswers`, `answerNudge`). Воркер мёртв (`workerLive: false`, задача в ready) — координатор делает
-  `worker start`, ответы попадают в промпт (раздел «Ответы на твои вопросы»).
+  `worker start`, ответы попадают в промпт (раздел «Ответы на вопросы по задаче»).
 - **Принял ответ** → git-часть приёмки (`acceptReview` в `src/main/review.ts`: коммиты ветки сливаются,
   worktree и ветка удаляются; конфликт — ошибка, ветка остаётся), задача → done, событие
   `answer_accepted {taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer, answerTruncated?}`

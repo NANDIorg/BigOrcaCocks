@@ -363,9 +363,15 @@ Store хранит позицию и решает, куда задача пер�
   `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
   гейта удалена). Эффекты `action` выполнит main.
 - **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
-  задача не на ноде `work` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
-  складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` —
-  ничего. Задачи-ответы и гейты — мимо. Возвращает `action` нового этапа.
+  задача не на ноде `work` или `ask` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
+  складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` и `ask` —
+  ничего (на `ask` агент входит при каждом запуске, включая автоперезапуск после ответа). Задачи-ответы и гейты — мимо.
+  Возвращает `action` нового этапа. Обёртка в `workflow.ts` кроме того применяет роль ноды `work` к задаче, а роль ноды
+  `ask` возвращает вызывающему (`{roleId}`) — на задачу она не переносится.
+- **`taskWorkStage(taskId, fallback?)`** — этап `work` или `ask` (`wfWorkStage`) для промпта и проверки показа;
+  **`taskStageNode(taskId, fallback?)`** — нода этапа любого типа (сокет `worker.ask` решает по ней, кому адресовать вопрос).
+- **`ask(input, {coordinatorAlive?, forceHuman?})`** — `forceHuman` (задача на ноде `ask`): вопрос сразу человеку, в
+  `Question.nodeId` и `HumanRequest.nodeId` — нода этапа `task.stage.nodeId`.
 - **`blockStage(taskId, reason)`** — эффект этапа не выполнился (воркер не стартовал, мерж упал не конфликтом):
   `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
 - **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
@@ -403,17 +409,25 @@ Store хранит позицию и решает, куда задача пер�
   (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS`. Недопустимая операция возвращает граф как есть.
 - **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
-  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы пустое значение — «роль задачи»,
-  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека/работы, у работы — «Показать человеку»
+  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы и «Вопроса человеку» пустое значение — «роль задачи»,
+  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
+  валидация, поэтому `patchNode` не удаляет пустую строку), у работы — «Показать человеку»
   (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N или роль
-  рабочей задачи), «слито» у конца, колонка доски (не у старта и условия). На каждый порт — select «куда ведёт»
+  рабочей задачи), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
   (`setPortTarget`: пусто — снять переход), поэтому граф собирается с клавиатуры без холста. Выбран переход — его цель
   и удаление; ничего не выбрано — список нод кнопками. Проблемы валидации ноды — списком под формой.
 - **`workflowForm.ts`** — логика инспектора и раздела: `patchNode` (пустые необязательные поля удаляются),
-  `changeNodeType`, `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
+  `changeNodeType` (роль и инструкция переносятся между `work`/`gate`/`human`/`ask`, где они есть), `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
   (`exportWorkflowJson`, `parseWorkflowJson` — проверяет только форму `{version, nodes[], edges[]}`, смысл —
   `validateWorkflow`; старую версию поднимает `migrateWorkflow`, будущую отвергает), пресет `addRetryLimit(wf, 3)`
   и проверка старого main/preload (`workflowApi`, `WORKFLOW_STALE_MESSAGE`, `isStaleWorkflowError`).
+- **Вопрос человеку в редакторе**: `ask` — в палитре (`WF_ADDABLE_TYPES`, сразу после «Работы»), в select «Тип»
+  (`WF_TYPE_ORDER`), в легенде («Вопрос человеку», `WF_NODE_HELP.ask`), иконка-«облачко» и цвет «Нужен ответ»
+  (`.wf-node--ask`), подпись на холсте — «роль …» / «роль задачи». Роль на `ask` учитывает и удаление роли
+  (`workflowNodesWithRole` в `roleRemoval.ts`). В Инбоксе вопрос с этапа `ask` (`HumanRequest.nodeId`) получает метку
+  «Этап «<нода>»» в шапке `RequestCard` (`requestStageLabel` в `cardState.ts`; название — из графа прогона,
+  `workflowOf` → `workflowForRun`; нода пропала из графа — метки нет). Пилюля этапа на карточке доски для `ask` та же,
+  что у `work` (`stageLabel`).
 - **Пресет «3 отказа → человек»** (`addRetryLimit`): каждый `reject` гейта-агента, ведущий прямо в работу,
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
@@ -875,7 +889,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     предупреждение о ролях, чей агент выключен в проекте (`rolesWithAgentOff`: они здесь не запустятся). «Изменить в
     Настройках» кладёт `type:<id>` в `orca.settingsSection` — «Настройки» откроются на этом типе (App не трогаем, окно
     открывается шестерёнкой). Старый preload без `taskTypes` / `projects.setTaskTypes` (`hasProjectTaskTypes`) или
-    старый main («No handler registered», `taskTypesError`) — `TASK_TYPES_STALE_MESSAGE` «перезапустите приложение».
+    старый main («No handler registered», `taskTypesError`) — `taskTypesStaleMessage()` «перезапустите приложение».
   - «Правила» (`about/RulesSection.tsx`, логика — `renderer/src/rules.ts`) — `CLAUDE.md` и `AGENTS.md` из **корня
     репозитория** проекта (`Project.root`, не worktree задач), вкладки между ними (выбор — `localStorage` `orca.rulesFile`).
     Просмотр — `Markdown variant="doc"`; «Редактировать» — textarea с исходником, «Сохранить» (⌘S/Ctrl+S) / «Отмена»
@@ -884,7 +898,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     Стиль кода / Проверки перед сдачей / Git и ветки», AGENTS.md — отсылка к CLAUDE.md). Пишет main (`src/main/rules.ts`):
     имя только из белого списка `RULE_FILE_NAMES` (`shared/ipc.ts`), симлинк — только внутрь проекта (пишется цель),
     запись атомарная (tmp рядом + `rename`, права сохраняются), перевод строк — как в файле (renderer получает `\n` и
-    `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `RULES_STALE_MESSAGE`.
+    `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `rulesStaleMessage()`.
   - «Прогоны» (`RunsSection` в `runs.tsx`) — свежие сверху: метка, дата создания, «задач N / закрыто M»
     (задачи с этим `runId`, закрыто — в колонках `kind=done`), статус «идёт» / «закрыт <дата>», полная цель.
     У идущего прогона кнопка «Закрыть» (`confirm` → IPC `runs:close`). Пусто — заглушка.
@@ -918,7 +932,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     сохраняются с задержкой, поэтому правка раздела (`patch(id, patch)` → `patchedTaskType`, null удаляет поле)
     собирается из последней сохранённой версии типа и идёт через очередь.
   - Логика без React — `renderer/src/taskTypeEdit.ts` (тест рядом). Старый main/preload: нет `window.orca.taskTypes`
-    или хендлера `taskTypes:*` → `TASK_TYPES_STALE_MESSAGE` («перезапустите приложение») вместо списка.
+    или хендлера `taskTypes:*` → `taskTypesStaleMessage()` («перезапустите приложение») вместо списка.
 - **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» у колонок `storageKey = active.id`, в «Настройках» у типа — `typeEditorKey(t, rev)`: `type:<id>:b|u:<rev>` — у встроенного и его изменённой копии признак один (`b`), поэтому первая правка исполнителя не сбрасывает черновик посреди быстрых кликов, а после «Вернуть встроенный» `rev` растёт и редакторы берут встроенные значения. `executorOnly` — меняются только исполнитель и инструкции роли.
 
 ## Реестр терминалов (`src/main/pty.ts`)
@@ -985,7 +999,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»); `projects:list`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`);
+  `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
+  `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
+  (см. «Обновление»); `projects:list`, `projects:setActive`, `projects:remove`,
   `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы; ролей, графа, правил и разрешений у проекта нет);
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
@@ -1006,8 +1023,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ошибка по-русски; см. «Статистика задачи»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
-  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
-- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.terminals.{list, onChanged}`;
+  `updates:changed` (полный `UpdateState`), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
+- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
@@ -1037,7 +1054,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
 | `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка |
-| `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу |
+| `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу. Задача на этапе `ask` — вопрос человеку при любом координаторе (`forceHuman`) |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
@@ -1157,8 +1174,9 @@ UI работает с активным проектом; воркеры и ко
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
-`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings> }`
-(`settings` — глобальные настройки приложения, см. «Фоновый режим»).
+`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion? }`
+(`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
+запуска, см. «Безопасность состояния»).
 - `Project { id, root, name, enabledAgents?, columns?, taskTypeIds?, defaultTaskTypeId?, legacyTypeId? }`. Ролей, графа,
   правил агентов и разрешений у проекта нет — они у типа. `taskTypeIds` нет — доступны все типы библиотеки;
   `defaultTaskTypeId` — тип глобальных задач без выбранного типа, координатора и «Входящих»; `legacyTypeId` — тип,
@@ -1231,6 +1249,41 @@ UI работает с активным проектом; воркеры и ко
 проекта. Незакрытый dispatch и задача на гейте после миграции продолжают: граф — из `Run.workflow`, роли — из типа
 «<имя проекта>» = бывших ролей проекта. Правка или удаление этого типа (`saveTaskType`, `deleteTaskType`) сначала
 загружает доски проектов с таким `legacyTypeId` (`settleLegacyRuns`): старые прогоны получают снимок прежнего типа.
+
+
+### Безопасность состояния
+
+Файлы состояния (`projects.json`, `boards/<id>.json`) — единственная копия работы человека, поэтому:
+
+- **Атомарная запись.** `writeFileAtomic` (`src/main/persistence.ts`): пишем в `<файл>.tmp`, затем `renameSync` (в пределах
+  каталога атомарен). Обрыв посреди записи оставляет старый файл целым; при ошибке `.tmp` убирается. Так пишут и
+  `jsonPersistence`, и `ProjectManager.save()`.
+- **Битый файл не превращается в пустую доску молча.** `readJsonFile` при ошибке разбора (или корне не-объекте) переименовывает
+  файл в `<файл>.corrupt-<ts>`, возвращает «пусто» и `StateWarning { kind: 'corrupt', file, movedTo, message }`.
+  Предупреждения копит `ProjectManager.stateWarnings()` (проекты и открытые доски); канала в renderer пока нет —
+  его добавит задача IPC-контракта.
+- **`formatVersion` доски.** `StoreSnapshot.formatVersion` (`STORE_FORMAT_VERSION = 1`, `packages/core/src/store.ts`).
+  Файл без поля — до его появления: `TaskStore` при загрузке проставляет версию и сохраняет (`migrateFormatVersion` в
+  `packages/core/src/store.ts`, в общем списке миграций конструктора). Версия выше известной — `assertStoreFormat` бросает «доска сохранена более
+  новой версией … — обновите приложение» **до любых записей**, файл остаётся как есть (образец —
+  `validateWorkflow`). Мусорная версия (не целое, < 1) — тоже отказ. Поднимать константу нужно, когда формат меняется
+  так, что старый код потеряет данные; новое необязательное поле версию не поднимает.
+  `ProjectManager.store(id)` для такой доски бросает при каждом вызове, а `inProgressCounts()` (IPC
+  `projects:inProgressCounts`, метод сокета `projects`) её пропускает — ключа проекта нет, потребители берут `?? 0`, и
+  одна такая доска не роняет счётчики остальных.
+- **Бэкап при смене версии.** `backupOnVersionChange(userData, app.getVersion())` (`src/main/backup.ts`) вызывается
+  в `whenReady` ДО `new ProjectManager` — миграции переписывают файлы, а бэкап хранит формат старой версии. Если
+  `lastRunVersion` из `projects.json` отличается от текущей, `projects.json` и `boards/*.json` копируются в
+  `userData/backups/<старая версия>/`, остаются 3 последних каталога (`pruneBackups`, по времени изменения). Версия
+  проставляется в `projects.json` сразу после копирования (иначе падение до загрузки менеджера привело бы к
+  повторному бэкапу уже мигрированных файлов поверх исходных); `ProjectManager.markRun()` покрывает первый запуск.
+  Файл без `lastRunVersion` (до появления поля) бэкапится как `unknown`. Первый запуск (файлов нет) — без бэкапа.
+- **«Только что обновились».** `getJustUpdatedFrom()` возвращает версию, с которой пришли в этом запуске, или `null`.
+  Только при переходе на более новую версию (`compareVersions`): откат назад и `unknown` — не обновление. Отдавать в
+  renderer будет задача IPC-контракта обновлений.
+- **Один экземпляр.** `app.requestSingleInstanceLock()` в начале `src/main/index.ts`: второй экземпляр вызывает
+  `app.exit(0)`, первый по `second-instance` показывает окно (`showWindow`). Иначе второй отобрал бы сокет и писал бы в
+  те же файлы. Блокировка привязана к `userData`, изолированный `pnpm dev` со своим `userData` работает рядом.
 
 ## Статистика (`packages/core/src/stats.ts`, типы — `types.ts`, IPC `stats:project`)
 
@@ -1463,6 +1516,73 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
   (`StatsSnapshot`, собирает `App.tsx`) без `usage`: токенов и стоимости нет, над секцией — «перезапустите приложение».
 - Карточка на доске статистику не показывает: стоимость потребовала бы читать транскрипты для всей доски.
 
+## Обновление (`src/main/updater.ts`, типы — `shared/ipc.ts`)
+
+Решение (вариант B, «гибрид»): Windows NSIS — electron-updater; macOS (ad-hoc подпись, Squirrel.Mac не работает) — свой установщик:
+скачать zip из GitHub Releases (репозиторий NANDIorg/BigOrcaCocks) по `latest-mac.yml`, проверить sha512 и codesign, после выхода
+подменить `.app` detached-скриптом и перезапустить; portable Windows — только «скачать новый exe». Каналов (бета) нет; в dev
+(`!app.isPackaged`) обновление выключено. **Общая часть (`Updater`) пока заглушка**: держит состояние, методы ничего не делают; macOS-бэкенд написан отдельно (см. ниже) и подключается в ветке `darwin`.
+
+**Настройки** (`AppSettings.updates`, `UpdateSettings`; дефолты — `DEFAULT_UPDATE_SETTINGS`): `autoCheck` (true) — проверять в фоне,
+`autoDownload` (true) — скачивать сразу, `installWhenIdle` (false) — ставить, когда у агентов не осталось живых сессий.
+Установка по кнопке и автоматически при выходе — всегда.
+
+**Состояние** — `UpdateState` (единственный источник правды — main, renderer подписывается на `updates:changed`):
+`status` (`idle | checking | available | downloading | ready | installing | error | unsupported`), `currentVersion`, `availableVersion`,
+`releaseNotes` (markdown), `releaseUrl`, `percent` (только `downloading`), `installPending` (`'idle' | 'quit' | null`),
+`mode` (`'auto' | 'manual-download'`), `unsupportedReason` (только `unsupported`: `dev`, `portable`, `not-in-applications`,
+`no-write-access`, `translocated`), `error` (только `error`, по-русски).
+
+```
+idle ─check→ checking ─новее нет→ idle
+                 │ └─ошибка→ error
+                 └─есть→ available ─download/autoDownload→ downloading(percent) ─→ ready ─install→ installing → перезапуск
+                                                              └─ошибка→ error
+unsupported — терминальное состояние: check/download/install ничего не меняют
+```
+
+`install({when})`: `now` — выйти и заменить (с обычным подтверждением выхода), `idle` — `installPending = 'idle'`, поставить, когда живых
+сессий агентов нет, `quit` — `installPending = 'quit'`, при следующем выходе. `cancelPending()` снимает отложенную установку.
+`getJustUpdated()` отдаёт версию, с которой обновились (для «Обновлено до …»), один раз после старта, иначе `null`.
+
+**Платформенный бэкенд** — интерфейс `PlatformUpdater` (`updater.ts`): `check(): Promise<UpdateInfo | null>` (`UpdateInfo {version,
+releaseNotes, releaseUrl}`), `download(onProgress): Promise<void>` (скачать + проверить целостность), `install(): Promise<void>`
+(подготовить замену и выйти). Бэкенд знает только «как» на своей ОС и бросает ошибки; расписание, состояния, отложенную установку и
+настройки ведёт `Updater`. Windows- и macOS-бэкенды — отдельные модули (`winUpdater.ts`, `macUpdater.ts`). `Updater` не импортирует electron (версия и `isPackaged`
+приходят в `createUpdater`), поэтому тестируется в `node:test` (`updater.test.ts`).
+
+### macOS-бэкенд (`src/main/macUpdater.ts`, чистая логика — `macUpdateLogic.ts`)
+
+Реализует `PlatformUpdater` без Squirrel.Mac. `macUpdater.ts` electron не импортирует: окружение (`MacUpdaterEnv`: версия, `process.arch`,
+путь к `.app`, userData, `fetch`, `run` = `execFile`, `spawnDetached`) приходит снаружи, `createMacUpdater({ app, net })` собирает его из
+electron (`net.fetch` учитывает системный прокси). `macUpdateSupport({ isPackaged })` — `detectMacSupport` на настоящей ФС. Подключение к
+`Updater` — ветка `darwin` в `createUpdater` (поддержка → `UpdateSupport`, бэкенд → `createMacUpdater`); после старта `getJustUpdated()`
+берёт версию из `MacUpdater.consumeJustUpdated()`.
+
+- **check**: `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml` → `parseUpdateManifest` (свой разбор плоского
+  yml, без зависимостей) → `pickMacZip` (arm64 — файл с «arm64», x64 — zip без «arm64»; dmg игнорируется) → `isNewerVersion` (semver) против
+  `app.getVersion()`. Заметки и ссылка — публичный API `releases/tags/v<версия>`; его ошибка не валит проверку (пустые заметки, ссылка
+  на `releases/tag/v<версия>`). Сетевые ошибки — исключение по-русски, `Updater` переводит в `error`; приложение не падает.
+- **download** → `userData/updates/<версия>-<arch>/`: скачивание в `update.zip.part` (таймаут 60 с без данных, прогресс — целые %),
+  sha512 (base64) и размер из yml → `ditto -x -k` → `codesign --verify --deep --strict` → `CFBundleIdentifier` равен текущему, а
+  `CFBundleShortVersionString` — версии релиза (`plutil -extract`). Любой сбой стирает каталог загрузки. Проверки сделаны здесь, а не в `install()`:
+  человек видит ошибку сразу, а не в момент выхода из приложения. Имя файла из yml — только простое (`assetUrl`: без `/`, `..`), адрес — всегда
+  `releases/latest/download/`. sha512 из того же релиза защищает от битой загрузки, но не от подмены самого релиза: доверие — к аккаунту GitHub.
+- **install**: `validateInstallPaths` (абсолютные пути, `.app`, ничего внутри заменяемого приложения) → пишет `updates/install.sh` (текст —
+  `INSTALL_SCRIPT`) и маркер `updates/pending.json` → запускает `/bin/sh install.sh PID TARGET NEW STAGE PREVIOUS LOG` detached. Внешние
+  команды — только `execFile`/`spawn` с массивом аргументов, пути в скрипт идут позиционными аргументами, а не текстом. Сам выход из приложения
+  делает `Updater` (обычное подтверждение). Скрипт ждёт выхода PID (не дольше 10 минут — если выход отменили, молча завершается), переносит
+  старый `.app` в `updates/previous/`, копирует новый `ditto`, снимает `com.apple.quarantine`, чистит каталог загрузки, `open`. Любая ошибка —
+  откат: старый `.app` возвращается на место и запускается. Повторный запуск скрипта безвреден (нового `.app` уже нет). Лог — `updates/install.log`;
+  `previous/` хранит одну прошлую версию для ручного отката.
+- **Предусловия** (`detectMacSupport`, определяются при старте): `!isPackaged` или запуск не из бандла — `dev`; путь в `/Volumes/` (смонтированный
+  dmg) — `not-in-applications`; путь с `/AppTranslocation/` — `translocated`; нет права записи в бандл или его папку — `no-write-access`. Во
+  всех трёх случаях `mode: 'manual-download'`, `status: 'unsupported'`; текст для человека — «переместите приложение в „Программы“» (UI берёт
+  его по `unsupportedReason`, для логов main — `macUnsupportedMessage`).
+- **Грабли.** Ad-hoc подпись новой сборки другая — macOS может заново спросить разрешения (доступ к папкам и т. п.), это ожидаемо.
+  Настоящую подмену на установленном приложении в тестах не проверить: `macUpdater.test.ts` гоняет настоящий `install.sh` (успех, откат при
+  падении `ditto`, повторный запуск, пути с пробелами и кавычками) на подставных каталогах, `open` и `ditto` подменяются через PATH.
+
 ## Уведомления
 
 `ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification` по `notifyKind` (`src/main/notify.ts`):
@@ -1505,6 +1625,10 @@ skills, тексты main (уведомления, диалоги, ошибки 
   `formatShort`, `formatDateTime`, `formatDuration` (единицы — ключи `common.unit.*`). На них переведены
   `duration.ts` (`formatDuration` — реэкспорт) и числа в `statsFormat.ts` (деньги, токены, время агентов, оси).
   Не пиши `toLocaleString('ru-RU')` и `replace('.', ',')` — бери эти функции.
+- **Подписи-константы** (`Record<вид, string>`) переводятся при чтении, а не при загрузке модуля: функция
+  (`coordStateText`, `requestKindTitle`) или объект с геттерами, если константу читают чужие экраны
+  (`REQUEST_KIND_TITLE` в `RequestCard.tsx` — его берёт `TaskModal`). Строка, вычисленная при импорте, останется
+  на языке старта.
 - **Строка с элементами внутри** («В работе в среднем **3 ч**») — один ключ с параметром-слотом
   (`'В работе в среднем {time}'`) и `<Rich text={t(…)} slots={{ time: <b>…</b> }} />` (`StatsCells.tsx`,
   разбор — `richParts` в `globalFormat.ts`), а не склейка кусков фраз: порядок слов в языках разный.
@@ -1523,6 +1647,16 @@ skills, тексты main (уведомления, диалоги, ошибки 
   в разделе «Общие» ошибка `common.staleApp`.
 - **Переключатель** «Язык / Language» — «Настройки → Общие» (`settings/GeneralSection.tsx`), сегменты
   «Русский» / «English» (названия — каждое на своём языке, `LOCALE_NAMES`). Язык меняется сразу, до ответа main.
+
+- **Строки в модулях логики.** Экспорт-константа с текстом вычислялась бы один раз на языке загрузки, поэтому:
+  `Record` с подписями — объект с геттерами (`WF_TYPE_TITLES`, `WF_OUTCOME_LABELS`, `WF_NODE_HELP`, `RULE_HINTS`,
+  `RULE_TEMPLATES`: API прежний, текст на текущем языке), одиночная строка — функция (`rulesStaleMessage()`,
+  `taskTypesStaleMessage()`, `staleAppMessage()`, `agentRulesPlaceholder()`; константа `STALE_APP_MESSAGE`
+  удалена — вместо неё `staleAppMessage()`).
+- **Код внутри фразы** — `withCode(t('…'), value, name)` из `about/parts.tsx`: `{name}` в переводе заменяется на
+  `<code>` (или `<b>`). Фразу не собирают из кусков вокруг кода: порядок слов в языках разный.
+- **Режимы разрешений** — `permissionParts(mode)` переводит по ключу режима (`config.about.perm.<mode>`), а не
+  режет русскую строку `PERMISSION_MODES` из shared (её по-прежнему использует main).
 
 **Добавить строку:** ключ в `i18n/ru/<область>.ts` и тот же ключ в `i18n/en/<область>.ts`, в компоненте —
 `t('<область>.<ключ>')`. **Добавить область:** файлы в `ru/` и `en/` и строки в `RU` и `DICTS.en` в `i18n/dict.ts`.
@@ -1549,6 +1683,7 @@ skills, тексты main (уведомления, диалоги, ошибки 
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
+| Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | electron-updater (NSIS); portable — только ссылка на релиз | `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`; раздел «Обновление» |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
 `node`/Node из Electron прямо из `Resources/cli` без сборки и без `node_modules`, поэтому импортировать
@@ -1578,8 +1713,9 @@ skills, тексты main (уведомления, диалоги, ошибки 
 `cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
 `pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
 
-Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac`, dmg arm64 + x64;
-`dist:win` — `electron-builder --win`. Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
+Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac --publish never`, dmg + zip
+arm64 и x64; `dist:win` — `electron-builder --win --publish never`; `dist:publish` — те же сборки mac и win с
+`--publish always` (нужен `GH_TOKEN`), см. «Выпуск релиза». Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
 папки) → `orca-board-<версия>-x64.exe` и `portable` x64 → `orca-board-<версия>-portable-x64.exe`
 (отдельный `artifactName`, иначе portable перезаписывал бы установщик). В `Resources/cli` попадают
 обе обёртки CLI — `orca-board` и `orca-board.cmd`. Windows-сборка делается кросс с macOS; тестировать
@@ -1596,7 +1732,100 @@ ad-hoc, и приложение падает при запуске. Провер
 Скачанная сборка всё равно не проходит Gatekeeper («Apple не удалось подтвердить…»), её открывают через
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
 
+### Выпуск релиза (`publish` в `electron-builder.yml`, скрипт `dist:publish`)
+
+Релизы — GitHub Releases публичного репозитория `NANDIorg/BigOrcaCocks`. `publish: {provider: github,
+owner, repo, releaseType: draft}` в `electron-builder.yml` — публикация создаёт **черновик** релиза с тегом
+`v<version>`, человек проверяет его и публикует сам. Токен в конфиг не кладётся. Поле `repository` в
+`apps/desktop/package.json` указывает на тот же репозиторий (метаданные пакета).
+Обычные `dist`/`dist:mac`/`dist:win` вызывают electron-builder с `--publish never`: локальная сборка ничего не
+выкладывает даже при заданном `GH_TOKEN`.
+
+Что генерирует сборка (проверено `dist:mac` и `dist:win`, всё в `apps/desktop/release/`):
+
+| Файл | Откуда | Зачем |
+|---|---|---|
+| `orca-board-<v>-arm64.zip`, `-x64.zip` | `mac.target: zip` | то, что скачивает автообновление macOS (dmg на месте не подменить) |
+| `orca-board-<v>-arm64.dmg`, `-x64.dmg` | `mac.target: dmg` | ручная установка |
+| `orca-board-<v>-x64.exe` | `win.target: nsis` | установщик Windows и цель `electron-updater` |
+| `orca-board-<v>-portable-x64.exe` | `win.target: portable` | portable, обновление — только «скачать новый exe» |
+| `latest-mac.yml` | mac-сборка | манифест обновлений macOS |
+| `latest.yml` | nsis | манифест обновлений Windows (portable в него не входит) |
+| `*.blockmap` (zip, dmg, nsis-exe) | electron-builder | дифференциальная загрузка `electron-updater`; для zip-установщика macOS не обязателен |
+
+Про манифесты: `latest-mac.yml` **один на обе архитектуры** — в `files` лежат zip и dmg для arm64 и x64, а верхнеуровневые
+`path`/`sha512` указывают на x64-zip (это артефакт порядка сборки, не «текущая» архитектура).
+Клиент macOS обязан выбирать запись из `files` по своей архитектуре (`-arm64.zip` / `-x64.zip`), а не по `path`.
+Имена в `url` — без базового пути, относительно ассетов релиза, поэтому файлы нельзя переименовывать
+после сборки: sha512 и имена в yml должны совпадать с загруженными ассетами.
+
+Чек-лист релиза:
+
+1. Версия поднята коммитом `chore: release vX.Y.Z` (одновременно `/package.json` и `apps/desktop/package.json`).
+2. `pnpm typecheck && pnpm test`.
+3. `GH_TOKEN=<токен с правом repo> pnpm --filter @orca-board/desktop run dist:publish` — собирает mac
+   (arm64 + x64), затем win и загружает ассеты в черновик релиза `vX.Y.Z` (второй вызов дописывает в тот же черновик).
+   Токен — только в окружении команды, не в файлах.
+4. Открыть черновик на GitHub и проверить, что есть **все** ассеты: 2 zip, 2 dmg, `orca-board-<v>-x64.exe`,
+   `orca-board-<v>-portable-x64.exe`, `latest-mac.yml`, `latest.yml`, blockmap-файлы. Без `.yml` приложение
+   обновления не найдёт: манифест — единственное, что оно читает; без zip macOS нечего скачивать.
+5. Нажать «Publish release» (снять «Set as a pre-release», если стоит). Пока релиз — черновик, он не виден
+   клиентам и не отдаётся по `releases/latest`: обновления начнутся только после публикации.
+6. После публикации проверить `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml`
+   и `.../latest.yml` (должны отдавать yml версии релиза).
+
+Если релиз опубликован без `.yml` или с неполным набором — дописать недостающие ассеты в опубликованный релиз
+(Edit → Attach binaries) из `apps/desktop/release/`; версию менять не нужно.
+
+#### Выпуск через CI (`.github/workflows/release.yml`)
+
+Основной путь: релиз собирает GitHub Actions, а не машина разработчика. Так Windows-сборка делается на Windows
+(node-pty нативно), а не кросс с macOS.
+
+1. Коммит `chore: release vX.Y.Z` (версия в `/package.json` и `apps/desktop/package.json` совпадает) — в `master`.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`. Запуск вручную: Actions → Release → Run workflow (версия берётся из
+   `package.json`, тег в git не создаётся до публикации черновика).
+3. Дождаться зелёного workflow и открыть черновик `vX.Y.Z` в Releases. Публиковать (`Publish release`) — пункты 5–6
+   чек-листа выше. Красный workflow — черновик неполный, публиковать нельзя.
+
+Джобы:
+
+| Джоба | Раннер | Что делает |
+|---|---|---|
+| `prepare` | ubuntu | версии в двух `package.json` совпадают, тег = `v<version>`; создаёт черновик `gh release create --draft`, если его нет. Уже опубликованный релиз с таким тегом — ошибка |
+| `build (mac)` | macos-14 | `pnpm install`, `typecheck`, `test`, сборка, `electron-builder --mac --publish always` (arm64 **и** x64), `codesign --verify` обоих `.app` |
+| `build (win)` | windows-latest | то же с `--win`: nsis + portable x64, node-pty пересобирается нативно |
+| `verify` | ubuntu | в черновике ровно один релиз с тегом и есть `latest.yml`, `latest-mac.yml`, zip и blockmap обеих архитектур, dmg, nsis-exe + blockmap, portable; `latest-mac.yml` описывает и arm64, и x64 zip. Иначе — красный |
+
+Почему так, а не «одна джоба на архитектуру»:
+
+- **`latest-mac.yml` при раздельных джобах теряет архитектуру.** `GitHubPublisher` при загрузке ассета, который уже есть
+  в релизе, удаляет старый и льёт заново (`overwriteArtifact` в `electron-publish`). Джобы arm64 и x64 каждая пишет свой
+  `latest-mac.yml`, выигрывает последняя — в манифесте остаётся одна архитектура, а клиент другой архитектуры не найдёт zip.
+  Одна mac-джоба с `--mac` строит обе архитектуры из `electron-builder.yml` (`arch: [arm64, x64]`) и сама сливает их в единый
+  манифест. x64 на arm64-раннере собирается кросс: node-pty идёт с prebuilds под darwin-x64, так же собирает локальный `dist:mac`.
+  Отдельного раннера macos-13 (Intel) поэтому нет (GitHub выводит его из обращения).
+- **Черновик создаёт `prepare`, а не electron-builder.** mac- и win-джобы стартуют параллельно; если черновика нет, каждая
+  создала бы свой (`getOrCreateRelease` ищет черновик по тегу в списке релизов, гонки не учитывает) — два релиза с одним тегом.
+  `verify` падает и на дубле.
+- Токен — `secrets.GITHUB_TOKEN` с `permissions: contents: write`, отдельных секретов не нужно.
+- `concurrency: release-<ref>` без отмены — повторный запуск на тот же тег ждёт предыдущий. Перезапуск упавшей джобы
+  безопасен: ассеты перезаливаются в тот же черновик.
+
+Проверено только `actionlint` и разбором YAML; реального запуска в Actions не было (нужен push тега в репозиторий).
+При первом выпуске смотреть глазами: сборка node-pty на windows-latest (нужны MSVC Spectre-libs, см. `binding.gyp` node-pty),
+версия pnpm в `pnpm/action-setup` (`version: 12`), содержимое `latest-mac.yml` в логе `verify`.
+
 ## Грабли разработки
+
+- Запись состояния шла прямо в `projects.json` / `boards/<id>.json` (`writeFileSync`), а битый JSON при загрузке молча
+  становился пустой доской и затирался при следующей записи. Теперь запись атомарная, битый файл откладывается в
+  `.corrupt-<ts>`, доска из будущего формата не открывается (см. «Безопасность состояния»). Новый код записи
+  состояния — только через `writeFileAtomic`; чтение — через `readJsonFile`. В бэкапе (`backup.ts`) читать
+  `projects.json` напрямую (`JSON.parse`), а не через `readJsonFile`: тот переименовывает битый файл, и бэкап «как есть»
+  сломался бы (поймал тест).
+- Тесты, отдающие `TaskStore` готовый снапшот и проверяющие «не сохраняется» (`saved.length === 0`), должны класть в него
+  `formatVersion: STORE_FORMAT_VERSION`, иначе миграция формата сохранит файл (`active-time.test.ts`).
 
 - Тесты под `node --test` резолвят импорты хуком `apps/desktop/test/ts-resolve.mjs`: без него node не находит
   модуль без расширения и не открывает папку. Хук пробует `<путь>.ts`, затем `<путь>/index.ts` — поэтому
@@ -1604,6 +1833,15 @@ ad-hoc, и приложение падает при запуске. Провер
 
 - В компоненте, где `const t = useT()`, не называй `t` локальные переменные (`const t = await types.create(…)`,
   `(t: TaskType) => …`): тень ломает перевод, а typecheck ругается невнятно («not callable», «used before declaration»).
+
+- `store.enterWork` сбрасывал на первый этап любую ноду, кроме `work`, а `runWorker` зовёт его при каждом запуске агента.
+  Для этапа «Вопрос человеку» (`ask`) это вернуло бы задачу с `ask` на первую «Работу» при старте самого агента и при
+  автоперезапуске после ответа. Теперь `enterWork` не трогает `work` и `ask`. Новый тип этапа, на котором стоит живой
+  агент, добавляй в это условие.
+- Роль ноды `work` осознанно становится ролью задачи (`applyWorkRole`), роль ноды `ask` — нет: иначе следующая «Работа» без
+  своей роли запустилась бы ролью опросника. Роль этапа `ask` едет в запуск отдельным параметром
+  (`WorkflowDeps.startWorker(taskId, {roleId})`, `startWorker(…, roleId)`), `task.roleId` и `task.agent` не меняются;
+  `Dispatch.roleId` — роль запуска. Не «упрощай» до `applyWorkRole` для всех `start_worker`.
 
 - `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has
