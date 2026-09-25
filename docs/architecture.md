@@ -1943,11 +1943,13 @@ ZIP и его metadata после формирования не меняются
 
 #### Выпуск через CI (`.github/workflows/release.yml`)
 
-Workflow запускается push тега `vX.Y.Z`. Ручной выпуск нетегированной ветки отключён:
-тег фиксирует проверенный релизный коммит из master. Для macOS обязательны signing/Apple secrets.
+Релизные jobs явно требуют push тега `vX.Y.Z`: тег фиксирует проверенный релизный коммит
+из master. Отдельный `workflow_dispatch` проверяет подписанную macOS-сборку без выпуска.
+Для macOS обязательны signing/Apple secrets.
 
 | Джоба | Раннер | Что делает |
 |---|---|---|
+| `macos-validation` | macos-14 | Только dispatch: проверяет feature/develop и полный expected_sha до checkout/зависимостей, закрепляет checkout на SHA, собирает обе архитектуры существующими hooks и verifier, считает SHA256SUMS; загружает только Actions artifacts |
 | `validate` | ubuntu | Проверяет совпадение версий, тег, принадлежность master и `docs/releases/vX.Y.Z.md`; передаёт описание артефактом |
 | `package` (mac) | macos-14 | `pnpm verify`, Developer ID/runtime, notarize/staple `.app` и DMG обеих архитектур, проверка финальных ZIP/DMG и manifest; без credentials падает |
 | `package` (win) | windows-latest | `pnpm verify`, нативная сборка node-pty и упаковка NSIS/portable x64 через `--publish never` |
@@ -1959,6 +1961,16 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 нет checkout или исполнения кода проекта. Черновик создаётся один раз после успешных
 сборок, поэтому гонки между mac/win нет. По одному тегу workflow выполняются последовательно.
 Опубликованные релизы и существующие теги не перезаписываются.
+
+Manual job независима от релизных jobs и имеет явное `contents: read`; `draft` и её write-token
+при dispatch недоступны. Пять secrets передаются только шагу builder/verifier после `pnpm build`.
+Ошибка любого обязательного шага запрещает upload установщиков. Артефакт
+`macos-validation-<SHA>-<run_id>-<run_attempt>` содержит ровно два DMG, два ZIP, ZIP blockmaps,
+`latest-mac.yml` и SHA256SUMS окончательных байтов. При ошибке отдельный артефакт сохраняет
+только существующие `.dmg.json`/`.dmg.log` notarization. Версия, теги и Releases не меняются.
+Workflow ID 366875950 зарегистрирован в default master, но dispatch новой feature и успешная
+проверка credentials пока не выполнены. Требования GitHub, предел уверенности и команды —
+[ручная проверка без выпуска](releasing.md#ручная-проверка-подписанной-macos-сборки-без-выпуска).
 
 Зелёный CI не подтверждает ручную проверку приложения: скачивание сборок, smoke-тесты
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.

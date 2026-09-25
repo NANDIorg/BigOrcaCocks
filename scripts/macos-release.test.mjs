@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { builderRequire, readYaml, run, validateCredentials, validateReleaseConfig, selectIdentity, validateSignature, notarizeDmg, verifyUpdateMetadata } from './macos-release.mjs'
 import { beforePack, artifactBuildCompleted } from '../apps/desktop/build/macos-release-hooks.mjs'
 import { beforePack as localBeforePack } from '../apps/desktop/build/macos-local-hooks.mjs'
@@ -320,4 +320,170 @@ test('CI не загружает установщики до проверки ma
   assert.equal(workflow.permissions.contents, 'read')
   assert.deepEqual(workflow.jobs.draft.needs, ['validate', 'package'])
   assert.ok(!config().forceCodeSigning, 'mac forceCodeSigning не должен требовать Windows certificate')
+})
+
+const releaseWorkflow = () => readYaml(join(root, '.github/workflows/release.yml'))
+const validationJob = () => releaseWorkflow().jobs['macos-validation']
+
+// Выполняем выражения из YAML на таблице событий. Это ограниченный контракт workflow,
+// а не эмулятор Actions: неизвестные конструкции должны потребовать обновления проверки.
+function condition(expression, github, succeeded = true) {
+  const source = (expression ?? 'success()').replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  const evaluate = new Function('github', 'startsWith', 'success', 'failure', 'always', `return (${source})`)
+  return Boolean(evaluate(github, (value, prefix) => value.startsWith(prefix), () => succeeded, () => !succeeded, () => true))
+}
+
+test('manual/tag: dispatch никогда не достигает release jobs и токена записи', () => {
+  const workflow = releaseWorkflow()
+  assert.deepEqual(Object.keys(workflow.on).sort(), ['push', 'workflow_dispatch'])
+  assert.deepEqual(workflow.on.push, { tags: ['v*'] })
+  assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.required, true)
+  assert.equal(workflow.on.workflow_dispatch.inputs.expected_sha.type, 'string')
+  assert.deepEqual(workflow.permissions, { contents: 'read' })
+  assert.deepEqual(validationJob().permissions, { contents: 'read' })
+  assert.equal(validationJob().needs, undefined)
+  for (const event_name of ['workflow_dispatch', 'push', 'pull_request']) {
+    for (const ref of ['refs/heads/feature/signing', 'refs/heads/develop', 'refs/heads/master', 'refs/tags/v1.0.1', 'refs/tags/other']) {
+      const github = { event_name, ref }
+      for (const [name, job] of Object.entries(workflow.jobs)) {
+        const enabled = condition(job.if, github)
+        assert.equal(enabled, name === 'macos-validation' ? event_name === 'workflow_dispatch' :
+          event_name === 'push' && ref === 'refs/tags/v1.0.1', `${event_name} ${ref}: ${name}`)
+        if (event_name === 'workflow_dispatch' && enabled) assert.deepEqual(job.permissions ?? workflow.permissions, { contents: 'read' })
+      }
+    }
+  }
+})
+
+test('validation: только шаг подписи получает пять secrets; подготовка и upload без credentials', () => {
+  const workflow = releaseWorkflow()
+  assert.equal(workflow.env, undefined)
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    assert.equal(job.env, undefined)
+    const secretSteps = job.steps.filter(step => JSON.stringify(step).includes('secrets.'))
+    assert.equal(secretSteps.length, ['macos-validation', 'package'].includes(name) ? 1 : 0)
+    for (const step of secretSteps) {
+      assert.deepEqual(step.env, Object.fromEntries(Object.keys(credentials).map(key => [key, '${{ secrets.' + key + ' }}'])))
+      assert.match(step.run, /electron-builder --mac --publish never\s+node scripts\/verify-macos-release.mjs/)
+    }
+  }
+  const job = validationJob()
+  assert.equal(job['runs-on'], 'macos-14')
+  const steps = job.steps
+  const guard = steps.findIndex(step => step.id === 'validation-ref')
+  const checkout = steps.findIndex(step => step.uses?.startsWith('actions/checkout@'))
+  const head = steps.findIndex(step => step.id === 'validation-checkout')
+  const setup = steps.findIndex(step => step.uses?.startsWith('actions/setup-node@'))
+  const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile')
+  const build = steps.findIndex(step => step.run === 'pnpm build')
+  const sign = steps.findIndex(step => step.id === 'validation-sign')
+  const sums = steps.findIndex(step => step.id === 'validation-checksums')
+  assert.ok(guard === 0 && guard < checkout && checkout < head && head < setup && setup < install && install < build && build < sign && sign < sums)
+  assert.equal(steps[checkout].with.ref, '${{ github.sha }}')
+  assert.equal(steps[checkout].with['persist-credentials'], false)
+  assert.equal(steps[guard].env.EXPECTED_SHA, '${{ inputs.expected_sha }}')
+  assert.equal(steps[setup].with['node-version-file'], '.nvmrc')
+  assert.equal(readFileSync(join(root, '.nvmrc'), 'utf8').trim(), '24')
+  assert.match(JSON.parse(readFileSync(join(root, 'package.json'))).packageManager, /^pnpm@\d+\.\d+\.\d+$/)
+  assert.ok(steps.some(step => step.uses?.startsWith('pnpm/action-setup@')))
+  for (const step of steps) {
+    assert.equal(step['continue-on-error'], undefined)
+    if (step.run) assert.equal(step.if, undefined, 'ни одну обязательную проверку нельзя пропустить')
+  }
+  assert.equal(job['continue-on-error'], undefined)
+  assert.deepEqual(config().mac.target, [{ target: 'dmg', arch: ['arm64', 'x64'] }, { target: 'zip', arch: ['arm64', 'x64'] }])
+})
+
+// Shell этих шагов — bash на macOS runner; контракт YAML выше проверяется на всех ОС.
+test('настоящий guard отклоняет тег/master/orca, короткий или неверный SHA и подменённый checkout', { skip: process.platform === 'win32' }, t => {
+  const cwd = temporary(t)
+  for (const args of [['init'], ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'fixture']]) {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+  }
+  const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+  const env = { ...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF_TYPE: 'branch',
+    GITHUB_REF: 'refs/heads/feature/signing', GITHUB_SHA: sha, EXPECTED_SHA: sha }
+  const guard = validationJob().steps.find(step => step.id === 'validation-ref').run
+  const head = validationJob().steps.find(step => step.id === 'validation-checkout').run
+  const execute = (script, override) => spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script], { cwd, env: { ...env, ...override }, encoding: 'utf8' })
+  for (const ref of ['refs/heads/feature/signing', 'refs/heads/feature/nested/signing', 'refs/heads/develop']) {
+    assert.equal(execute(guard, { GITHUB_REF: ref }).status, 0)
+  }
+  for (const invalid of [{ GITHUB_REF: 'refs/heads/master' }, { GITHUB_REF: 'refs/heads/orca/task' },
+    { GITHUB_REF: 'refs/tags/v1.0.0', GITHUB_REF_TYPE: 'tag' }, { GITHUB_REF: 'refs/heads/feature/' },
+    { GITHUB_REF: 'refs/heads/feature/a..b' }, { GITHUB_REF_TYPE: 'tag' }, { GITHUB_EVENT_NAME: 'push' },
+    { EXPECTED_SHA: '' }, { EXPECTED_SHA: sha.slice(0, 7) }, { EXPECTED_SHA: 'f'.repeat(40) },
+    { EXPECTED_SHA: 'g'.repeat(40) }, { EXPECTED_SHA: `${sha}\n` }, { EXPECTED_SHA: '$(exit 0)' }]) {
+    assert.notEqual(execute(guard, invalid).status, 0, JSON.stringify(invalid))
+  }
+  assert.equal(execute(head, {}).status, 0)
+  assert.notEqual(execute(head, { GITHUB_SHA: 'f'.repeat(40) }).status, 0)
+})
+
+test('ошибка builder/verifier блокирует upload установщиков; диагностика доступна отдельно', { skip: process.platform === 'win32' }, () => {
+  const steps = validationJob().steps
+  const sign = steps.find(step => step.id === 'validation-sign')
+  const uploads = steps.filter(step => step.uses?.startsWith('actions/upload-artifact@'))
+  assert.equal(uploads.length, 2)
+  for (const [builderExit, verifierExit] of [[0, 0], [23, 0], [0, 24]]) {
+    // Запускаем именно shell из workflow; функции заменяют только внешние команды.
+    const script = `pnpm() { printf 'builder:%s\\n' "$*"; return ${builderExit}; }\nnode() { printf 'verifier:%s\\n' "$*"; return ${verifierExit}; }\n${sign.run}`
+    const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script], { encoding: 'utf8' })
+    assert.equal(result.status, builderExit || verifierExit, result.stderr)
+    assert.match(result.stdout, /builder:--filter @orca-board\/desktop exec electron-builder --mac --publish never/)
+    assert.equal(result.stdout.includes('verifier:scripts/verify-macos-release.mjs'), builderExit === 0)
+    const enabled = uploads.filter(step => condition(step.if, {}, result.status === 0))
+    assert.equal(enabled.length, 1)
+    assert.equal(enabled[0].with.name.includes('notarization'), result.status !== 0)
+  }
+  const installers = uploads.find(step => !step.with.name.includes('notarization'))
+  assert.ok(steps.indexOf(installers) > steps.findIndex(step => step.id === 'validation-checksums'))
+  assert.equal(condition(installers.if, {}, false), false, 'ошибка checksums тоже запрещает upload')
+  assert.equal(installers.with['if-no-files-found'], 'error')
+  assert.match(installers.with.name, /validation-\$\{\{ github.sha \}\}-\$\{\{ github.run_id \}\}/)
+  const diagnostic = uploads.find(step => step.with.name.includes('notarization'))
+  assert.deepEqual(diagnostic.with.path.trim().split('\n').sort(), ['arm64', 'x64'].flatMap(arch =>
+    ['json', 'log'].map(ext => `apps/desktop/release/notarization/orca-board-*-${arch}.dmg.${ext}`)).sort())
+})
+
+test('validation хеширует только полный финальный комплект; upload использует тот же закрытый список', t => {
+  const fixture = metadataFixture(t)
+  const cwd = temporary(t)
+  const desktop = join(cwd, 'apps/desktop')
+  mkdirSync(desktop, { recursive: true })
+  const directory = join(desktop, 'release')
+  cpSync(fixture.directory, directory, { recursive: true })
+  writeFileSync(join(desktop, 'package.json'), '{"version":"1.0.0"}')
+  writeFileSync(join(directory, 'private.p12'), 'не должно попасть в артефакт')
+  const steps = validationJob().steps
+  const script = steps.find(step => step.id === 'validation-checksums').run
+  // Исполняем тело Node из YAML, заменяя лишь путь к модулю проекта для временного cwd.
+  const source = script.match(/node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)?.[1]
+  assert.ok(source)
+  const code = source.replace("'./scripts/macos-release.mjs'", JSON.stringify(pathToFileURL(join(root, 'scripts/macos-release.mjs')).href))
+  const output = join(cwd, 'output')
+  const execute = () => spawnSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd, encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: output }
+  })
+  const expected = ['latest-mac.yml', ...['arm64', 'x64'].flatMap(arch =>
+    ['dmg', 'zip', 'zip.blockmap'].map(ext => `orca-board-1.0.0-${arch}.${ext}`))].sort()
+  const verifySums = () => {
+    const lines = readFileSync(join(directory, 'SHA256SUMS'), 'utf8').trim().split('\n')
+    assert.deepEqual(lines.map(line => line.slice(66)).sort(), expected)
+    for (const line of lines) assert.equal(line.slice(0, 64), createHash('sha256').update(readFileSync(join(directory, line.slice(66)))).digest('hex'))
+  }
+  assert.equal(execute().status, 0)
+  verifySums()
+  const before = readFileSync(join(directory, 'SHA256SUMS'), 'utf8')
+  writeFileSync(join(directory, 'orca-board-1.0.0-arm64.dmg'), 'байты после stapling')
+  assert.equal(execute().status, 0)
+  verifySums()
+  assert.notEqual(readFileSync(join(directory, 'SHA256SUMS'), 'utf8'), before)
+  assert.match(readFileSync(output, 'utf8'), /^version=1.0.0\n/)
+  const upload = steps.find(step => step.with?.name?.startsWith('macos-validation-${{'))
+  const paths = upload.with.path.trim().split('\n').map(path => path.replace('${{ steps.validation-checksums.outputs.version }}', '1.0.0'))
+  assert.deepEqual(paths.sort(), [...expected, 'SHA256SUMS'].map(file => `apps/desktop/release/${file}`).sort())
+  rmSync(join(directory, 'orca-board-1.0.0-x64.zip.blockmap'))
+  assert.notEqual(execute().status, 0, 'неполный комплект не должен получить успешный checksum-шаг')
 })
