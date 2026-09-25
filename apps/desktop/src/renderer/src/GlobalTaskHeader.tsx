@@ -8,6 +8,7 @@ import { MoveMenu } from './MoveMenu'
 import { focusFeed } from './feedLink'
 import { useNow } from './useNow'
 import { formatStamp } from './boardSort'
+import { useT } from './i18n'
 import { coordinatorPill, currentStep, headerActions, statusSteps, type StatusStep } from './globalScreen'
 
 interface Props {
@@ -49,6 +50,7 @@ interface Props {
  */
 export function GlobalTaskHeader(props: Props): React.JSX.Element {
   const { global, statusKind, columns, coordinatorPty, typeTitle, onBack, onEdit, onStartCoordinator, onAccept, onReturn } = props
+  const t = useT()
   const actions = headerActions(global, statusKind, coordinatorPty !== undefined, props.attentionCount)
   const steps = columns ? statusSteps(columns, global.status) : []
   const backRef = useRef<HTMLButtonElement>(null)
@@ -62,8 +64,8 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
   return (
     <header className="gt-head">
       <div className="gt-head-row1">
-        <button ref={backRef} type="button" className="gt-back" onClick={onBack} title="К общей доске (Esc)">
-          <span aria-hidden>←</span> Глобальные задачи
+        <button ref={backRef} type="button" className="gt-back" onClick={onBack} title={t('global.header.backTitle')}>
+          <span aria-hidden>←</span> {t('global.header.back')}
         </button>
         {!global.inbox && steps.length > 0 && <StatusSteps steps={steps} onMove={props.onMove} />}
       </div>
@@ -71,17 +73,17 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
         <h2 className="gt-head-title" title={global.title}>{global.title}</h2>
         <div className="gt-head-actions">
           {primary?.kind === 'accept' && (
-            <button type="button" className="btn-sm gt-cta ok" onClick={onAccept} title="Результат принят — в «Сделано»">
+            <button type="button" className="btn-sm gt-cta ok" onClick={onAccept} title={t('global.action.acceptTitle')}>
               ✓ {primary.label}
             </button>
           )}
           {actions.returnToWork && (
-            <button type="button" className="btn-sm" title="Написать, что доделать, и перезапустить координатора" onClick={onReturn}>
-              Вернуть в работу…
+            <button type="button" className="btn-sm" title={t('global.action.returnTitle')} onClick={onReturn}>
+              {t('global.action.return')}
             </button>
           )}
           {primary?.kind === 'answer' && (
-            <button type="button" className="btn-sm primary gt-cta" onClick={focusFeed} title="К ленте «Ждут вас»">
+            <button type="button" className="btn-sm primary gt-cta" onClick={focusFeed} title={t('global.header.answerTitle')}>
               {primary.label} <kbd className="rq-kbd">G</kbd>
             </button>
           )}
@@ -91,10 +93,10 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
             </button>
           )}
           {actions.quietStart && (
-            <button type="button" className="btn-sm" onClick={onStartCoordinator}><Icon.play /> Запустить координатора</button>
+            <button type="button" className="btn-sm" onClick={onStartCoordinator}><Icon.play /> {t('global.action.start')}</button>
           )}
-          <button type="button" className="btn-sm gt-quiet" onClick={onEdit} title="Изменить название, цель, приоритет">
-            <Icon.edit /> Изменить
+          <button type="button" className="btn-sm gt-quiet" onClick={onEdit} title={t('global.header.editTitle')}>
+            <Icon.edit /> {t('global.header.edit')}
           </button>
           {props.onRemove && !global.inbox && <MoreMenu onRemove={props.onRemove} />}
         </div>
@@ -102,7 +104,7 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
       <div className="gt-head-row3">
         {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
         <PriorityBadge item={global} className="g-chip" />
-        {typeTitle && <span className="g-chip task-type-chip" title="Тип задачи: роли, воркфлоу и правила агентов">{typeTitle}</span>}
+        {typeTitle && <span className="g-chip task-type-chip" title={t('global.header.typeTitle')}>{typeTitle}</span>}
         {!global.inbox && (
           <CoordinatorPill
             global={global}
@@ -113,11 +115,13 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
           />
         )}
         {!global.inbox && (
-          <span className="gt-time muted" title={`Создана ${formatStamp(global.createdAt)}${global.closedAt !== undefined ? `, закрыта ${formatStamp(global.closedAt)}` : ''}`}>
+          <span className="gt-time muted" title={global.closedAt !== undefined
+            ? t('global.header.createdClosed', { created: formatStamp(global.createdAt), closed: formatStamp(global.closedAt) })
+            : t('global.header.created', { date: formatStamp(global.createdAt) })}>
             <GlobalDuration global={global} variant="line" />
           </span>
         )}
-        {global.inbox && <span className="muted">Сюда попадают подзадачи без глобальной задачи</span>}
+        {global.inbox && <span className="muted">{t('global.header.inbox')}</span>}
       </div>
     </header>
   )
@@ -128,12 +132,13 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
  * (CSS) вместо ленты шагов — чип текущего статуса с меню «Переместить в…» (`MoveMenu`, цифра = номер колонки).
  */
 function StatusSteps({ steps, onMove }: { steps: StatusStep[]; onMove(status: string): void }): React.JSX.Element {
+  const t = useT()
   const now = currentStep(steps)
   const [menu, setMenu] = useState<HTMLElement | null>(null)
   const chipRef = useRef<HTMLButtonElement>(null)
   return (
     <>
-      <div className="gt-steps" role="group" aria-label={now ? `Статус: ${now.title}` : 'Статус'}>
+      <div className="gt-steps" role="group" aria-label={now ? t('global.steps.aria', { title: now.title }) : t('global.steps.status')}>
         {steps.map((s, i) => (
           <span key={s.id} className="gt-step-wrap" style={{ '--c': s.color } as React.CSSProperties}>
             {i > 0 && <span className="gt-step-sep" aria-hidden />}
@@ -142,7 +147,7 @@ function StatusSteps({ steps, onMove }: { steps: StatusStep[]; onMove(status: st
               className={`gt-step ${s.state}`}
               aria-current={s.state === 'now' ? 'step' : undefined}
               disabled={!s.movable && s.state !== 'now'}
-              title={s.state === 'now' ? 'Текущий статус' : s.movable ? `Перенести в «${s.title}»` : `«${s.title}» ставится сама, когда есть вопросы к вам`}
+              title={s.state === 'now' ? t('global.steps.current') : t(s.movable ? 'global.steps.move' : 'global.steps.auto', { title: s.title })}
               onClick={() => s.movable && onMove(s.id)}
             >
               <i aria-hidden />{s.title}
@@ -156,10 +161,10 @@ function StatusSteps({ steps, onMove }: { steps: StatusStep[]; onMove(status: st
         className="gt-status-chip"
         style={{ '--c': now?.color ?? 'var(--chip)' } as React.CSSProperties}
         aria-haspopup="menu"
-        title="Перенести в…"
+        title={t('global.steps.moveTo')}
         onClick={() => setMenu(chipRef.current)}
       >
-        {now?.title ?? 'Статус'} <span aria-hidden>▾</span>
+        {now?.title ?? t('global.steps.status')} <span aria-hidden>▾</span>
       </button>
       {menu && (
         <MoveMenu
@@ -199,6 +204,7 @@ function LivePill(props: PillProps): React.JSX.Element {
 }
 
 function PillBody({ global, coordinatorPty, sessions, onShow, onStop, now }: PillProps & { now: number }): React.JSX.Element {
+  const t = useT()
   const info = coordinatorPill(
     { live: coordinatorPty !== undefined, waiting: global.waiting > 0, sessions, agent: global.coordinatorAgent, ptyId: coordinatorPty },
     now
@@ -210,7 +216,7 @@ function PillBody({ global, coordinatorPty, sessions, onShow, onStop, now }: Pil
   }, [coordinatorPty])
 
   return (
-    <span className={`gt-coord ${info.state}`} role="group" aria-label="Координатор">
+    <span className={`gt-coord ${info.state}`} role="group" aria-label={t('global.pill.aria')}>
       <span className={`gt-coord-dot ${info.state}`} aria-hidden />
       <span className="gt-coord-text">
         <b>{info.title}</b>
@@ -218,15 +224,15 @@ function PillBody({ global, coordinatorPty, sessions, onShow, onStop, now }: Pil
       </span>
       {coordinatorPty && !confirming && (
         <>
-          <button type="button" className="gt-link" onClick={() => onShow(coordinatorPty)}>Терминал →</button>
-          <button type="button" className="gt-link danger" onClick={() => setConfirming(true)} title="Закрыть терминал координатора">■ Остановить</button>
+          <button type="button" className="gt-link" onClick={() => onShow(coordinatorPty)}>{t('global.pill.terminal')}</button>
+          <button type="button" className="gt-link danger" onClick={() => setConfirming(true)} title={t('global.pill.stopTitle')}>{t('global.pill.stop')}</button>
         </>
       )}
       {coordinatorPty && confirming && (
         <span
           className="gt-stop-confirm"
           role="alertdialog"
-          aria-label="Остановить координатора?"
+          aria-label={t('global.pill.confirmAria')}
           onKeyDown={(e) => {
             if (e.key !== 'Escape') return
             // Esc закрывает подтверждение, а не уводит с экрана: экранный обработчик пропускает обработанные клавиши.
@@ -234,7 +240,7 @@ function PillBody({ global, coordinatorPty, sessions, onShow, onStop, now }: Pil
             setConfirming(false)
           }}
         >
-          <span>Остановить?</span>
+          <span>{t('global.pill.confirm')}</span>
           <button
             type="button"
             className="btn-sm danger-fill"
@@ -244,9 +250,9 @@ function PillBody({ global, coordinatorPty, sessions, onShow, onStop, now }: Pil
               onStop(coordinatorPty)
             }}
           >
-            Остановить
+            {t('global.pill.confirmStop')}
           </button>
-          <button type="button" className="btn-sm" onClick={() => setConfirming(false)}>Отмена</button>
+          <button type="button" className="btn-sm" onClick={() => setConfirming(false)}>{t('global.cancel')}</button>
         </span>
       )}
     </span>
@@ -255,6 +261,7 @@ function PillBody({ global, coordinatorPty, sessions, onShow, onStop, now }: Pil
 
 /** Меню «⋯»: редкие действия. Закрывается по клику мимо и Esc. */
 function MoreMenu({ onRemove }: { onRemove(): void }): React.JSX.Element {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLSpanElement>(null)
   useEffect(() => {
@@ -276,7 +283,7 @@ function MoreMenu({ onRemove }: { onRemove(): void }): React.JSX.Element {
         ref.current?.querySelector<HTMLElement>('.gt-more-btn')?.focus({ preventScroll: true })
       }}
     >
-      <button type="button" className="btn-sm gt-quiet gt-more-btn" aria-haspopup="menu" aria-expanded={open} aria-label="Ещё" title="Ещё" onClick={() => setOpen((v) => !v)}>⋯</button>
+      <button type="button" className="btn-sm gt-quiet gt-more-btn" aria-haspopup="menu" aria-expanded={open} aria-label={t('global.header.more')} title={t('global.header.more')} onClick={() => setOpen((v) => !v)}>⋯</button>
       {open && (
         <div className="gt-more-menu" role="menu">
           <button
@@ -289,7 +296,7 @@ function MoreMenu({ onRemove }: { onRemove(): void }): React.JSX.Element {
               onRemove()
             }}
           >
-            Удалить задачу…
+            {t('global.header.remove')}
           </button>
         </div>
       )}

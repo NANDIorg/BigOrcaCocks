@@ -1505,6 +1505,13 @@ skills, тексты main (уведомления, диалоги, ошибки 
   `formatShort`, `formatDateTime`, `formatDuration` (единицы — ключи `common.unit.*`). На них переведены
   `duration.ts` (`formatDuration` — реэкспорт) и числа в `statsFormat.ts` (деньги, токены, время агентов, оси).
   Не пиши `toLocaleString('ru-RU')` и `replace('.', ',')` — бери эти функции.
+- **Строка с элементами внутри** («В работе в среднем **3 ч**») — один ключ с параметром-слотом
+  (`'В работе в среднем {time}'`) и `<Rich text={t(…)} slots={{ time: <b>…</b> }} />` (`StatsCells.tsx`,
+  разбор — `richParts` в `globalFormat.ts`), а не склейка кусков фраз: порядок слов в языках разный.
+- **Ошибки «перезапустите приложение»** — функции (`staleReviewMessage()`, `statsStaleMessage()`), а не константы
+  модуля: константа вычислилась бы один раз на языке старта. Сравнивать с ними — на всех языках
+  (`isStaleStatsError`), язык могли сменить между запросом и ответом. Текст ошибок main не переводится, поэтому
+  регэкспы по нему (`reviewErrorMessage`) остаются русскими.
 - **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
   (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
   `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык

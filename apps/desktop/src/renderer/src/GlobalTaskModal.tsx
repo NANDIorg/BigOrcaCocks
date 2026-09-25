@@ -13,6 +13,7 @@ import { PriorityOptions } from './Priority'
 import { STALE_PRIORITY_MESSAGE, taskPriorityOf } from './taskPriority'
 import { rolesWithDisabledAgent } from './taskTypes'
 import { typeChangeOptions } from './globalTypeChange'
+import { useT } from './i18n'
 
 interface Props {
   /** Правка существующей; без неё — создание новой. */
@@ -50,6 +51,7 @@ interface Props {
 /** Создание и правка глобальной задачи: название, описание, приоритет, тип (при правке — пока не начата) и колонка (при создании). */
 export function GlobalTaskModal(props: Props): React.JSX.Element {
   const { global, columns, types, defaultTypeId, agents = [], typeTitle, priorityEditable, statusKind, live = false, onAccept, onReturn, onClose, onSave } = props
+  const t = useT()
   const [title, setTitle] = useState(global?.title ?? '')
   const [description, setDescription] = useState(global?.description ?? '')
   // Новая — «обычный»; у карточки от старого main поля нет — тоже normal.
@@ -63,11 +65,11 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
   const editing = global !== undefined
   const actions = global ? globalTaskActions(global, statusKind, live) : undefined
   const selectedType = editing ? undefined
-    : types?.find((t) => t.id === pickedTypeId) ?? types?.find((t) => t.id === defaultTypeId) ?? types?.[0]
+    : types?.find((ty) => ty.id === pickedTypeId) ?? types?.find((ty) => ty.id === defaultTypeId) ?? types?.[0]
   // Правка: варианты смены типа, пока задача не начата; undefined — тип только бейджем.
   const editTypes = global ? typeChangeOptions(global, statusKind, types, typeTitle) : undefined
   const editTypeId = pickedTypeId ?? global?.typeId ?? defaultTypeId ?? editTypes?.[0]?.id
-  const editType = editTypes ? types?.find((t) => t.id === editTypeId) : undefined
+  const editType = editTypes ? types?.find((ty) => ty.id === editTypeId) : undefined
   const offAgentRoles = selectedType ? rolesWithDisabledAgent(selectedType, agents) : []
   // У «Входящих» название фиксированное и описания нет — правится только то, что задано явно.
   const canSave = !busy && (title.trim() !== '' || (!editing && description.trim() !== ''))
@@ -112,33 +114,33 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
 
   return (
     <div className="modal-backdrop" onClick={close}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={editing ? 'Глобальная задача' : 'Новая глобальная задача'} onClick={(e) => e.stopPropagation()}>
-        <h3>{editing ? 'Глобальная задача' : 'Новая глобальная задача'}</h3>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={t(editing ? 'global.modal.edit' : 'global.modal.new')} onClick={(e) => e.stopPropagation()}>
+        <h3>{t(editing ? 'global.modal.edit' : 'global.modal.new')}</h3>
         {global && !global.inbox && (
           <p className="muted modal-sub">
-            Создана {formatStamp(global.createdAt)}
-            {global.closedAt !== undefined && <> · закрыта {formatStamp(global.closedAt)}</>} · <GlobalDuration global={global} variant="line" />
+            {t('global.modal.created', { date: formatStamp(global.createdAt) })}
+            {global.closedAt !== undefined && <> · {t('global.modal.closed', { date: formatStamp(global.closedAt) })}</>} · <GlobalDuration global={global} variant="line" />
           </p>
         )}
         {global && typeTitle && !editTypes && (
-          <p className="muted modal-sub task-type-line">Тип задачи: <span className="task-type-badge">{typeTitle}</span></p>
+          <p className="muted modal-sub task-type-line">{t('global.modal.typeLine')} <span className="task-type-badge">{typeTitle}</span></p>
         )}
         {global && <GlobalReturns global={global} />}
         {actions && (actions.accept || actions.returnToWork) && (
           <div className="g-modal-review">
-            <span className="muted">На проверке</span>
+            <span className="muted">{t('global.modal.onReview')}</span>
             {actions.accept && onAccept && (
-              <button type="button" className="btn-sm primary" disabled={busy} onClick={onAccept}>Подтвердить</button>
+              <button type="button" className="btn-sm primary" disabled={busy} onClick={onAccept}>{t('global.action.accept')}</button>
             )}
             {actions.returnToWork && onReturn && (
-              <button type="button" className="btn-sm" disabled={busy} title="Написать, что доделать, и перезапустить координатора" onClick={onReturn}>
-                Вернуть в работу…
+              <button type="button" className="btn-sm" disabled={busy} title={t('global.action.returnTitle')} onClick={onReturn}>
+                {t('global.action.return')}
               </button>
             )}
           </div>
         )}
         <label>
-          Название
+          {t('global.modal.title')}
           <input
             autoFocus
             value={title}
@@ -146,71 +148,69 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             onKeyDown={(e) => {
               if (e.key === 'Enter') void save()
             }}
-            placeholder="Например: экспорт отчётов в PDF"
+            placeholder={t('global.modal.titlePlaceholder')}
           />
         </label>
         <label>
-          Описание
+          {t('global.modal.description')}
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Цель, контекст и критерии готовности — по нему координатор разобьёт задачу на подзадачи"
+            placeholder={t('global.modal.descriptionPlaceholder')}
           />
         </label>
         {!global?.inbox && (
           <label>
-            Приоритет
+            {t('global.modal.priority')}
             {priorityEditable ? (
               <select value={priority} onChange={(e) => isTaskPriority(e.target.value) && setPriority(e.target.value)}>
                 <PriorityOptions />
               </select>
             ) : (
               // main старый: приоритет не сохранится — показываем текущий и просим перезапустить.
-              <span className="muted" title={STALE_PRIORITY_MESSAGE}>{PRIORITY_TITLES[priority]} · перезапустите приложение, чтобы менять</span>
+              <span className="muted" title={STALE_PRIORITY_MESSAGE}>{PRIORITY_TITLES[priority]} · {t('global.modal.priorityStale')}</span>
             )}
           </label>
         )}
         {!editing && types && types.length > 0 && (
           <label>
-            Тип задачи
+            {t('global.modal.type')}
             <select value={selectedType?.id ?? ''} onChange={(e) => setTypeId(e.target.value)}>
-              {types.map((t) => (
-                <option key={t.id} value={t.id}>{t.title}{t.id === defaultTypeId ? ' (по умолчанию)' : ''}</option>
+              {types.map((ty) => (
+                <option key={ty.id} value={ty.id}>{ty.id === defaultTypeId ? t('global.modal.typeDefault', { title: ty.title }) : ty.title}</option>
               ))}
             </select>
             <span className="muted task-type-hint">
-              {selectedType?.description ? `${selectedType.description}. ` : ''}Тип задаёт роли, воркфлоу и правила агентов этой задачи; сменить его можно, пока задача не была «В работе».
+              {selectedType?.description ? `${selectedType.description}. ` : ''}{t('global.modal.typeHintNew')}
             </span>
             {offAgentRoles.length > 0 && (
               <span className="task-type-warn" role="status">
-                В проекте выключен агент у ролей: {offAgentRoles.map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ')} —
-                их подзадачи не запустятся. Включите агента в «О проекте → Агенты» или выберите другой тип.
+                {t('global.modal.offAgents', { roles: offAgentRoles.map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ') })}
               </span>
             )}
           </label>
         )}
         {editTypes && (
           <label>
-            Тип задачи
+            {t('global.modal.type')}
             <select value={editTypeId ?? ''} onChange={(e) => setTypeId(e.target.value)}>
-              {editTypes.map((t) => (
-                <option key={t.id} value={t.id}>{t.title}{t.id === defaultTypeId ? ' (по умолчанию)' : ''}</option>
+              {editTypes.map((ty) => (
+                <option key={ty.id} value={ty.id}>{ty.id === defaultTypeId ? t('global.modal.typeDefault', { title: ty.title }) : ty.title}</option>
               ))}
             </select>
             <span className="muted task-type-hint">
-              {editType?.description ? `${editType.description}. ` : ''}Тип можно сменить, пока задача не была «В работе»: после запуска он фиксируется.
+              {editType?.description ? `${editType.description}. ` : ''}{t('global.modal.typeHintEdit')}
             </span>
             {editType && rolesWithDisabledAgent(editType, agents).length > 0 && (
               <span className="task-type-warn" role="status">
-                В проекте выключен агент у ролей: {rolesWithDisabledAgent(editType, agents).map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ')} —
-                их подзадачи не запустятся. Включите агента в «О проекте → Агенты» или выберите другой тип.
+                {t('global.modal.offAgents', { roles: rolesWithDisabledAgent(editType, agents).map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ') })}
               </span>
             )}
           </label>
         )}
         {!editing && (
           <label>
-            Колонка
+            {t('global.modal.column')}
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               {columns.map((c) => (
                 <option key={c.id} value={c.id}>{c.title}</option>
@@ -220,9 +220,9 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
         )}
         {error && <span className="error-text">{error}</span>}
         <div className="row">
-          <button className="btn-text" onClick={close} disabled={busy}>Отмена</button>
+          <button className="btn-text" onClick={close} disabled={busy}>{t('global.cancel')}</button>
           <button className="btn-primary" disabled={!canSave} onClick={() => void save()}>
-            {editing ? 'Сохранить' : 'Создать'}
+            {t(editing ? 'global.modal.save' : 'global.modal.create')}
           </button>
         </div>
       </div>

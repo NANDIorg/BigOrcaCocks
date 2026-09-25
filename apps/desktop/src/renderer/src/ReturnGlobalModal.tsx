@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { GlobalTask } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { returnHint, reviewErrorMessage } from './globalReview'
+import { useT } from './i18n'
 
 interface Props {
   global: GlobalTask
@@ -15,6 +16,7 @@ interface Props {
 
 /** «Вернуть в работу…» с «Проверки»: что доделать — обязательно, это уточнение попадёт в цель координатора. */
 export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, onSubmit }: Props): React.JSX.Element {
+  const t = useT()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -53,11 +55,11 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, 
 
   return (
     <div className="modal-backdrop" onClick={close}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label="Вернуть в работу" onClick={(e) => e.stopPropagation()}>
-        <h3>Вернуть в работу</h3>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={t('global.return.title')} onClick={(e) => e.stopPropagation()}>
+        <h3>{t('global.return.title')}</h3>
         <p className="muted modal-sub" title={global.title}>{global.title}</p>
         <label>
-          Что доделать
+          {t('global.return.what')}
           <textarea
             autoFocus
             value={text}
@@ -65,15 +67,15 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, 
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
             }}
-            placeholder="Что не так с результатом и что нужно изменить. Координатор получит это уточнение и продолжит работу."
+            placeholder={t('global.return.placeholder')}
           />
         </label>
-        <span className="muted g-return-hint">{returnHint(closesCoordinator)} ⌘/Ctrl+Enter — отправить.</span>
+        <span className="muted g-return-hint">{returnHint(closesCoordinator)} {t('global.return.send')}</span>
         {error && <span className="error-text">{error}</span>}
         <div className="row">
-          <button className="btn-text" onClick={close} disabled={busy}>Отмена</button>
+          <button className="btn-text" onClick={close} disabled={busy}>{t('global.cancel')}</button>
           <button className="btn-primary" disabled={!canSubmit} onClick={() => void submit()}>
-            {busy ? 'Запускаю…' : 'Вернуть в работу'}
+            {busy ? t('global.return.busy') : t('global.return.title')}
           </button>
         </div>
       </div>

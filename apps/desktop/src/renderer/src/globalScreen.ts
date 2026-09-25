@@ -1,6 +1,7 @@
 import { AGENT_TITLES, type AgentSession, type BoardColumn, type ColumnKind } from '@orca-board/core'
 import { formatDuration } from './duration'
 import { globalTaskActions } from './globalReview'
+import { t } from './i18n'
 
 /** Вкладки экрана глобальной задачи (`GlobalTaskView`), в порядке показа: номер вкладки = клавиша 1–5. */
 export type GlobalTabId = 'board' | 'overview' | 'coordinator' | 'history' | 'stats'
@@ -29,11 +30,11 @@ export function defaultTab(kind: ColumnKind | undefined): GlobalTabId {
 /** Заголовок вкладки: «Итог и цель» там, где есть итог, иначе «Цель и детали». */
 export function tabTitle(id: GlobalTabId, kind: ColumnKind | undefined): string {
   switch (id) {
-    case 'board': return 'Доска'
-    case 'overview': return isFinished(kind) ? 'Итог и цель' : 'Цель и детали'
-    case 'coordinator': return 'Координатор'
-    case 'history': return 'История'
-    case 'stats': return 'Статистика'
+    case 'board': return t('global.tab.board')
+    case 'overview': return t(isFinished(kind) ? 'global.tab.summary' : 'global.tab.goal')
+    case 'coordinator': return t('global.tab.coordinator')
+    case 'history': return t('global.tab.history')
+    case 'stats': return t('global.tab.stats')
   }
 }
 
@@ -108,14 +109,14 @@ export function launchChecklist(g: { description: string; title: string; progres
   const goal = g.description.trim()
   return [
     typeTitle
-      ? { ok: true, text: `Тип «${typeTitle}» — роли и воркфлоу заданы` }
-      : { ok: false, text: 'Тип не выбран — возьмётся тип проекта по умолчанию' },
+      ? { ok: true, text: t('global.launch.type', { type: typeTitle }) }
+      : { ok: false, text: t('global.launch.noType') },
     goal !== '' && goal !== g.title.trim()
-      ? { ok: true, text: 'Цель описана' }
-      : { ok: false, text: 'Цель — только название: опишите, что должно получиться («Изменить»)' },
+      ? { ok: true, text: t('global.launch.goal') }
+      : { ok: false, text: t('global.launch.goalTitleOnly') },
     g.progress.total > 0
-      ? { ok: true, text: `Подзадач уже ${g.progress.total} — координатор продолжит с них` }
-      : { ok: false, text: 'Подзадачи — их создаст координатор' }
+      ? { ok: true, text: t('global.launch.subtasks', { count: g.progress.total }) }
+      : { ok: false, text: t('global.launch.noSubtasks') }
   ]
 }
 
@@ -215,15 +216,15 @@ export function headerActions(
   attentionCount?: number
 ): HeaderActions {
   const actions = globalTaskActions(g, kind, live)
-  if (actions.accept) return { primary: { kind: 'accept', label: 'Подтвердить' }, returnToWork: actions.returnToWork, quietStart: false }
+  if (actions.accept) return { primary: { kind: 'accept', label: t('global.action.accept') }, returnToWork: actions.returnToWork, quietStart: false }
   const waiting = attentionCount ?? g.waiting ?? 0
   if (!g.inbox && kind === 'needs_input' && waiting > 0) {
-    return { primary: { kind: 'answer', label: `Ответить · ${waiting}`, count: waiting }, returnToWork: false, quietStart: actions.startCoordinator }
+    return { primary: { kind: 'answer', label: t('global.header.answer', { count: waiting }), count: waiting }, returnToWork: false, quietStart: actions.startCoordinator }
   }
   if (actions.startCoordinator) {
     return kind === 'done'
       ? { returnToWork: false, quietStart: true }
-      : { primary: { kind: 'start', label: 'Запустить координатора' }, returnToWork: false, quietStart: false }
+      : { primary: { kind: 'start', label: t('global.action.start') }, returnToWork: false, quietStart: false }
   }
   return { returnToWork: false, quietStart: false }
 }
@@ -266,12 +267,12 @@ export function coordinatorPill(input: CoordinatorPillInput, now: number): Coord
   const model = session?.model ?? (session ? AGENT_TITLES[session.agent] : agent ? AGENT_TITLES[agent] : undefined)
   const parts: string[] = []
   if (model) parts.push(model)
-  if (list.length > 0 && session) parts.push(`${list.indexOf(session) + 1}-й запуск`)
+  if (list.length > 0 && session) parts.push(t('global.run.nth', { n: list.indexOf(session) + 1 }))
   if (session) {
     const end = live ? now : session.endedAt
     if (end !== undefined && end >= session.startedAt) parts.push(formatDuration(end - session.startedAt))
   }
-  if (live) return { state: waiting ? 'waiting' : 'working', title: waiting ? 'Координатор ждёт вас' : 'Координатор работает', parts, live }
-  if (session) return { state: 'finished', title: 'Координатор завершил', parts, live }
-  return { state: 'idle', title: 'Координатор не запущен', parts: [], live }
+  if (live) return { state: waiting ? 'waiting' : 'working', title: t(waiting ? 'global.pill.waiting' : 'global.pill.working'), parts, live }
+  if (session) return { state: 'finished', title: t('global.pill.finished'), parts, live }
+  return { state: 'idle', title: t('global.pill.idle'), parts: [], live }
 }

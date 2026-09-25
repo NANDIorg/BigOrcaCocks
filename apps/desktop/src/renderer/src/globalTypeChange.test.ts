@@ -1,7 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { GlobalTask, TaskType } from '@orca-board/core'
-import { STALE_TYPE_CHANGE_MESSAGE, changeTypeApi, typeChangeOptions } from './globalTypeChange'
+import { staleTypeChangeMessage, changeTypeApi, typeChangeOptions } from './globalTypeChange'
+import { setLocale } from './i18n'
+
+/** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
+function inEnglish(fn: () => void): void {
+  setLocale('en')
+  try {
+    fn()
+  } finally {
+    setLocale('ru')
+  }
+}
 
 const types = [
   { id: 'dev', title: 'Разработка', roles: [] },
@@ -37,14 +48,18 @@ test('typeChangeOptions: текущий тип вне проекта остаё�
 })
 
 test('changeTypeApi: старый preload или старый main — «перезапустите приложение»', async () => {
-  assert.throws(() => changeTypeApi(undefined), { message: STALE_TYPE_CHANGE_MESSAGE })
-  assert.throws(() => changeTypeApi({ globalTasks: {} }), { message: STALE_TYPE_CHANGE_MESSAGE })
+  assert.throws(() => changeTypeApi(undefined), { message: staleTypeChangeMessage() })
+  assert.throws(() => changeTypeApi({ globalTasks: {} }), { message: staleTypeChangeMessage() })
   const oldMain = changeTypeApi({
     globalTasks: { changeType: () => Promise.reject(new Error("Error invoking remote method 'globalTasks:changeType': Error: No handler registered for 'globalTasks:changeType'")) }
   })
-  await assert.rejects(oldMain('run_1', 'docs'), { message: STALE_TYPE_CHANGE_MESSAGE })
+  await assert.rejects(oldMain('run_1', 'docs'), { message: staleTypeChangeMessage() })
   const other = changeTypeApi({ globalTasks: { changeType: () => Promise.reject(new Error('нельзя сменить')) } })
   await assert.rejects(other('run_1', 'docs'), /нельзя сменить/)
   const ok = changeTypeApi({ globalTasks: { changeType: (id, typeId) => Promise.resolve({ id, typeId } as GlobalTask) } })
   assert.deepEqual(await ok('run_1', 'docs'), { id: 'run_1', typeId: 'docs' })
+})
+
+test('английский интерфейс: ошибка старого main/preload', () => {
+  inEnglish(() => assert.throws(() => changeTypeApi(undefined), { message: /cannot change the task type/ }))
 })

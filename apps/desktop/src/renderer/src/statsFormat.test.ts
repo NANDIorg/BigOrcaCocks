@@ -16,6 +16,12 @@ import {
   hasUsage,
   isEmptyStats,
   isStaleStatsError,
+  metricLabel,
+  rangeLabel,
+  rangePhrase,
+  sessionsLabel,
+  statsStaleMessage,
+  tokenBreakdown,
   localDateKey,
   missingLabel,
   missingSessions,
@@ -27,6 +33,17 @@ import {
   taskCost,
   totalTokens
 } from './statsFormat'
+import { setLocale } from './i18n'
+
+/** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
+function inEnglish(fn: () => void): void {
+  setLocale('en')
+  try {
+    fn()
+  } finally {
+    setLocale('ru')
+  }
+}
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -222,4 +239,35 @@ test('niceStep, axisLabelIndexes, formatAxis', () => {
 
 test('localDateKey: локальная дата с ведущими нулями', () => {
   assert.equal(localDateKey(noon(2026, 3, 5)), '2026-03-05')
+})
+
+test('подписи статистики по языку: периоды, метрики, сессии, разбивка токенов, «Другие»', () => {
+  const usage = { input: 2_100_000, output: 5_800_000, cacheRead: 219_000_000, cacheWrite: 17_000_000 }
+  assert.deepEqual([rangeLabel('7d'), rangeLabel('all'), rangePhrase('all'), metricLabel('time')], ['7 дней', 'Всё время', 'всё время', 'Время агентов'])
+  assert.deepEqual([1, 2, 5].map(sessionsLabel), ['1 сессия', '2 сессии', '5 сессий'])
+  assert.equal(tokenBreakdown(usage), 'вход 2,1 млн · ответ 5,8 млн · кэш: чтение 219,0 млн, запись 17,0 млн')
+  inEnglish(() => {
+    assert.deepEqual([rangeLabel('7d'), rangeLabel('all'), rangePhrase('30d'), metricLabel('time')], ['7 days', 'All time', 'the last 30 days', 'Agent time'])
+    assert.deepEqual([1, 2].map(sessionsLabel), ['1 session', '2 sessions'])
+    assert.deepEqual([1, 3].map(missingLabel), ['no data for 1 session', 'no data for 3 sessions'])
+    assert.equal(tokenBreakdown(usage), 'input 2.1M · output 5.8M · cache: read 219.0M, write 17.0M')
+    assert.equal(statusParts({ gone: 1 }, []).at(-1)?.title, 'Other')
+  })
+})
+
+test('устаревший main/preload: сообщение на языке интерфейса, узнаётся на любом языке', () => {
+  inEnglish(() => {
+    assert.throws(() => statsApi(undefined), { message: statsStaleMessage() })
+    assert.match(statsStaleMessage(), /Restart the app/)
+    assert.equal(isStaleStatsError(statsStaleMessage()), true)
+  })
+  assert.equal(isStaleStatsError(STATS_STALE_MESSAGE), true)
+  assert.equal(isStaleStatsError('другая ошибка'), false)
+})
+
+test('buildChart: месяц в подсказке — на языке интерфейса', () => {
+  const now = new Date(2026, 8, 24, 12).getTime()
+  const title = (): string => buildChart(stats({ range: 'all', generatedAt: now, byDay: [day('2025-01-15', { tasksDone: 1 })] }), 'done').columns[0].title
+  assert.equal(title(), 'январь 2025')
+  inEnglish(() => assert.equal(title(), 'January 2025'))
 })

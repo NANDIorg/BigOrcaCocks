@@ -2,6 +2,17 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { BoardColumn, StatusChange } from '@orca-board/core'
 import { dayLabel, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
+import { setLocale } from './i18n'
+
+/** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
+function inEnglish(fn: () => void): void {
+  setLocale('en')
+  try {
+    fn()
+  } finally {
+    setLocale('ru')
+  }
+}
 
 const columns: BoardColumn[] = [
   { id: 'backlog', title: 'Бэклог', color: '#111', kind: 'backlog' },
@@ -178,4 +189,25 @@ test('visibleTimeline: свёрнутая лента — новейшие соб
   assert.equal(visibleTimeline(events, false)[0].key, 'e0')
   assert.equal(visibleTimeline(events, true).length, events.length)
   assert.equal(visibleTimeline(events.slice(0, 3), false).length, 3)
+})
+
+test('английский интерфейс: подписи дней и событий ленты', () => {
+  inEnglish(() => {
+    assert.equal(dayLabel(at(24, 1), NOW), 'Today')
+    assert.equal(dayLabel(at(23, 23), NOW), 'Yesterday')
+    assert.equal(dayLabel(at(22), NOW), 'September 22')
+    assert.equal(dayLabel(new Date(2025, 11, 31).getTime(), NOW), 'December 31, 2025')
+    const events = globalTimeline({
+      createdAt: at(20),
+      statusHistory: [change('backlog', at(20)), change('review', at(21))],
+      returns: [{ at: at(22), text: 'fix it' }],
+      closedAt: at(23)
+    }, columns, NOW)
+    assert.deepEqual(events.map((e) => [e.title, e.detail]), [
+      ['Work closed', undefined],
+      ['Returned from review', 'follow-up'],
+      ['Moved to “Проверка”', undefined],
+      ['Created', 'in “Бэклог”']
+    ])
+  })
 })
