@@ -42,7 +42,9 @@ const HELP = `orca-board — управление доской агентов
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
   global list                             карточки: название, описание, статус-колонка, priority, прогресс подзадач,
                                           typeId и typeTitle — тип задачи, coordinatorAlive — жив ли терминал координатора
-  global get [--global <id>]              одна карточка (с coordinatorAlive); git.branch — ветка глобальной задачи, куда сливаются подзадачи
+  global get [--global <id>]              одна карточка (с coordinatorAlive); git.branch — ветка глобальной задачи, куда сливаются подзадачи;
+                                          stage — где она на графе воркфлоу (nodeId, visits — заходы в ноды), stageHistory — путь по этапам;
+                                          у прогонов старого формата (воркфлоу по подзадачам) stage нет
   global create [--title "..."] [--description "..."] [--status <id колонки>]
                 [--priority urgent|high|normal|low]   приоритет глобальной задачи, по умолчанию normal
                 [--type <id из types list>]   тип задачи (роли, воркфлоу, правила); без него — тип проекта
@@ -62,15 +64,22 @@ const HELP = `orca-board — управление доской агентов
                                           назначение, агент, модель, включён ли агент; без прогона — типа
                                           --type или типа проекта по умолчанию
   columns list     колонки доски: id, название, kind
-  workflow show [--run <id>] [--type <id>]   воркфлоу: этапы рабочей задачи после worker_done (проверки, человек,
-                                          мерж) и переходы; с --run — снимок прогона, без — граф типа --type
-                                          или типа проекта по умолчанию
+  workflow show [--run <id>] [--type <id>]   воркфлоу: этапы графа и переходы; с --run — снимок графа прогона
+                                          и его текущий этап, без — граф типа --type или типа проекта по умолчанию.
+                                          scope: run — граф ведёт глобальную задачу, stage — где она сейчас (нода,
+                                          visit — заход, roleIds — роли этапа «Работа», пусто — любые рабочие роли типа,
+                                          instructions, feedback/decision/answers — что сказали проверка и человек,
+                                          tasks — подзадачи захода, tasksDoneAt — когда они закрылись); scope: task —
+                                          прежний воркфлоу по подзадачам (после worker_done: проверки, человек, мерж)
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
                                           (у каждой — priority: urgent|high|normal|low);
                                           у задачи в воркфлоу — stage (этап: nodeId и число заходов visits),
                                           у задачи-проверки — gateFor (чью ветку проверяет)
   task get --task <id>                    одна задача (со stage и gateFor)
   task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]... [--run <id>]
+              воркфлоу глобальной задачи: подзадачи создаются только на этапе «Работа» (после stage_started; на другом
+              этапе — ошибка «дождись stage_started»); роль — из ролей этапа (у этапа роли не заданы — любая рабочая
+              роль типа), чужая — ошибка; у этапа одна роль — --role можно не указывать
               [--answer-for human|coordinator]   задача-ответ: результат — ответ в markdown, не код;
                                           human — ответ читает человек, coordinator — ты сам
               [--priority urgent|high|normal|low]   приоритет, по умолчанию normal
@@ -83,15 +92,21 @@ const HELP = `orca-board — управление доской агентов
   worker restart --task <id> [--feedback "..."]   stop + запуск заново; работает и на задаче в работе
                                           задачу в review/done не перезапускает: для неё task reopen --task <id> --start
   worker read --dispatch <id> [--limit 80]
-  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked] [--timeout-ms 900000] [--run <id>]
+  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked,stage_started,stage_tasks_done] [--timeout-ms 900000] [--run <id>]
   check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
+  stage finish [--run <id>] [--summary "..." | --summary-file summary.md]
+                                          воркфлоу глобальной задачи: закрыть этап «Работа» — граф идёт дальше (проверка,
+                                          человек, мерж…). Все подзадачи этапа должны быть в done (stage_tasks_done),
+                                          иначе ошибка. --summary — сводка этапа для следующих этапов и человека
   runs finish [--run <id>] [--summary "..." | --summary-file summary.md]
-                                          координатор закончил работу (после run_done; если все подзадачи в done —
-                                          закрывает прогон сам); --summary — итог в markdown «что сделано и что
-                                          проверить», человек видит его на «Проверке»; заменяет прежнюю сводку
+                                          прогоны старого формата (воркфлоу по подзадачам): координатор закончил работу
+                                          (после run_done; если все подзадачи в done — закрывает прогон сам); --summary —
+                                          итог в markdown «что сделано и что проверить», человек видит его на «Проверке»;
+                                          заменяет прежнюю сводку. У прогона с воркфлоу глобальной задачи до run_done —
+                                          ошибка: этап закрывает stage finish, а run_done приходит, когда граф дошёл до конца
   question list
   question get --question <id>            вопрос целиком и ответ на него
   question answer --question <id> --answer "..."
@@ -100,9 +115,13 @@ const HELP = `orca-board — управление доской агентов
 
   review info --task <id>                 diff-stat и коммиты ветки задачи
   review accept --task <id> [--decision "..."]  задача на этапе проверки — исход accept, дальше по воркфлоу
-                                          (обычно мерж и done); вне воркфлоу — слить ветку, задача → done
+                                          (обычно мерж и done); вне воркфлоу — слить ветку, задача → done;
+                                          задача-проверка ветки глобальной задачи (ты — проверяющий) — свой --task:
+                                          приложение само находит прогон и двигает его граф
   review reject --task <id> --feedback "..."   задача на этапе проверки — исход reject (обычно снова в работу,
-                                          воркер стартует сам); вне воркфлоу — ready с замечаниями
+                                          воркер стартует сам); вне воркфлоу — ready с замечаниями; у задачи-проверки
+                                          ветки глобальной задачи — граф идёт назад, замечания получит координатор
+                                          в stage_started (feedback)
   task reopen --task <id> [--feedback "..."] [--start]   задача (done/review/backlog/…) → ready, feedback — по
                                           желанию; ждёт решения по ответу — это «Уточнить» (feedback обязателен);
                                           --start — сразу запустить воркера
@@ -110,7 +129,8 @@ const HELP = `orca-board — управление доской агентов
   events list
 
 Запросы к человеку (Инбокс: вопросы, ответы задач-ответов, упавшие воркеры, этапы воркфлоу «человек»):
-  request list [--run <id>] [--all]       ждущие ответа (pending); --all — и решённые
+  request list [--run <id>] [--all]       ждущие ответа (pending); --all — и решённые; у запроса этапа «человек»
+                                          глобальной задачи taskId нет — он относится к прогону (runId, nodeId)
   request get --request <id>              запрос целиком: текст, контекст/ответ, варианты, решение
   request resolve --request <id> --option <id|метка> [--text "..."]   ответ на вопрос вариантом
   request resolve --request <id> --text "..."                        ответ на вопрос своим текстом
@@ -132,7 +152,7 @@ const HELP = `orca-board — управление доской агентов
                                           Оборвался по таймауту — повтори ту же команду: переподключится
                                           к тому же вопросу (или сразу вернёт ответ), новый не создастся
 
-Прогон: --run <id> у task create, check, request list, runs close, runs finish, roles list, rules get/set
+Прогон: --run <id> у task create, check, request list, runs close, runs finish, stage finish, roles list, rules get/set
 и workflow show по умолчанию берётся из $ORCA_RUN_ID (у roles list, rules и workflow show — если нет --type) —
 задачи, созданные координатором, наследуют его прогон (= его глобальную задачу) и роли его типа. Так же --global
 у global get, global tasks и global add-task. Задача без прогона попадает во «Входящие» (роли — типа проекта
@@ -181,7 +201,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 // Прогон координатора: явный --run важнее $ORCA_RUN_ID.
-const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'request.list', 'workflow.show', 'roles.list', 'rules.get', 'rules.set']
+const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'stage.finish', 'request.list', 'workflow.show', 'roles.list', 'rules.get', 'rules.set']
 // Здесь --type выбирает тип явно: прогон из окружения не подставляем, иначе он перебил бы выбор.
 const TYPE_METHODS = ['workflow.show', 'roles.list', 'rules.get', 'rules.set']
 const explicitType = TYPE_METHODS.includes(method) && params.type !== undefined
@@ -232,8 +252,8 @@ if (method === 'worker.done') {
 }
 if (method === 'worker.ask') readFileParam('context-file', 'context')
 if (method === 'rules.set') readFileParam('file', 'text')
-if (method === 'runs.finish') readFileParam('summary-file', 'summary')
-if (method === 'runs.finish' && params.summary === true) {
+if (method === 'runs.finish' || method === 'stage.finish') readFileParam('summary-file', 'summary')
+if ((method === 'runs.finish' || method === 'stage.finish') && params.summary === true) {
   console.error('ошибка: --summary требует текста сводки')
   process.exit(1)
 }
@@ -245,7 +265,7 @@ if (params.option !== undefined && params.option.includes(true)) {
   console.error('ошибка: --option требует текста варианта ("метка|пояснение")')
   process.exit(1)
 }
-if ((method === 'runs.close' || method === 'runs.finish') && !params.run) {
+if ((method === 'runs.close' || method === 'runs.finish' || method === 'stage.finish') && !params.run) {
   console.error('ошибка: не указан прогон — передайте --run <id> или задайте ORCA_RUN_ID')
   process.exit(1)
 }
