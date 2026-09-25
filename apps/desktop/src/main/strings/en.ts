@@ -160,6 +160,7 @@ export default {
   'git.workersActive': 'Orca agents are working in the project ({count}) — the root branch cannot be switched, wait for them to finish',
   'git.branchNotFound': 'branch “{branch}” exists neither locally nor on the remote',
   'git.opFailed': 'git {command}: {error}',
+  'git.timeout': 'no response in {seconds} s',
   'request.alreadyCancelled': 'already decided: request {id} was cancelled',
   'request.alreadyResolved': 'already decided: request {id} was resolved',
 

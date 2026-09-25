@@ -163,6 +163,7 @@ export default {
   'git.workersActive': 'в проекте работают агенты Orca ({count}) — переключать ветку корня нельзя, дождитесь их завершения',
   'git.branchNotFound': 'ветки «{branch}» нет ни локально, ни на remote',
   'git.opFailed': 'git {command}: {error}',
+  'git.timeout': 'не ответил за {seconds} с',
   'request.alreadyCancelled': 'уже решено: запрос {id} отменён',
   'request.alreadyResolved': 'уже решено: запрос {id} решён',
 
