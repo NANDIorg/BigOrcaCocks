@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DEFAULT_RUN_BRANCH_SETTINGS, branchNameProblem, branchSlug, isProtectedBranch, normalizeRunBranchSettings,
-  runBranchName, runBranchSettingsProblems
+  prBaseBranch, runBranchName, runBranchSettingsProblems
 } from './run-branch.ts'
 import { TaskStore } from './store.ts'
 
@@ -78,6 +78,18 @@ describe('normalizeRunBranchSettings', () => {
   })
 })
 
+describe('normalizeRunBranchSettings: pr', () => {
+  it('по умолчанию выключен, старые настройки без поля получают false', () => {
+    assert.equal(DEFAULT_RUN_BRANCH_SETTINGS.pr, false)
+    assert.equal(normalizeRunBranchSettings({ enabled: true, push: true }).pr, false)
+  })
+
+  it('булево сохраняется, чужой тип отбрасывается', () => {
+    assert.equal(normalizeRunBranchSettings({ pr: true }).pr, true)
+    assert.equal(normalizeRunBranchSettings({ pr: 'yes' }).pr, false)
+  })
+})
+
 describe('runBranchSettingsProblems', () => {
   it('по умолчанию — без ошибок', () => {
     assert.deepEqual(runBranchSettingsProblems(normalizeRunBranchSettings(undefined)), [])
@@ -91,6 +103,45 @@ describe('runBranchSettingsProblems', () => {
     assert.deepEqual(codes({ base: 'origin/dev elop' }), ['base'])
     assert.deepEqual(codes({ remote: 'a/b' }), ['remote'])
     assert.match(runBranchSettingsProblems({ ...d, template: 'feature/{slug}' })[0].text, /\{runId\}/)
+  })
+})
+
+describe('runBranchSettingsProblems: prNeedsPush', () => {
+  const d = normalizeRunBranchSettings(undefined)
+  const codes = (patch: Partial<typeof d>): string[] => runBranchSettingsProblems({ ...d, ...patch }).map((x) => x.code)
+
+  it('PR без push — ошибка с пояснением', () => {
+    assert.deepEqual(codes({ pr: true, push: false }), ['prNeedsPush'])
+    assert.match(runBranchSettingsProblems({ ...d, pr: true, push: false })[0].text, /Отправлять ветку на remote/)
+  })
+
+  it('PR вместе с push и выключенная ветка — без ошибки', () => {
+    assert.deepEqual(codes({ pr: true, push: true }), [])
+    assert.deepEqual(codes({ enabled: false, pr: true, push: false }), [])
+  })
+})
+
+describe('prBaseBranch', () => {
+  it('отрезает префикс remote', () => {
+    assert.equal(prBaseBranch('origin/develop', 'origin'), 'develop')
+    assert.equal(prBaseBranch('origin/release/1.2', 'origin'), 'release/1.2')
+  })
+
+  it('локальная ветка — как есть, в том числе с чужим префиксом', () => {
+    assert.equal(prBaseBranch('develop', 'origin'), 'develop')
+    assert.equal(prBaseBranch('feature/x', 'origin'), 'feature/x')
+    assert.equal(prBaseBranch('upstream/develop', 'origin'), 'upstream/develop')
+  })
+
+  it('пустая строка и SHA — undefined', () => {
+    assert.equal(prBaseBranch('', 'origin'), undefined)
+    assert.equal(prBaseBranch('  ', 'origin'), undefined)
+    assert.equal(prBaseBranch('1a2b3c4', 'origin'), undefined)
+    assert.equal(prBaseBranch('0123456789abcdef0123456789abcdef01234567', 'origin'), undefined)
+  })
+
+  it('короткое hex-имя ветки (меньше 7 символов) — ветка', () => {
+    assert.equal(prBaseBranch('dead', 'origin'), 'dead')
   })
 })
 

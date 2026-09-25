@@ -73,6 +73,7 @@ export default {
   'about.git.issue.templateRunId': 'Branch name must contain {runId}: otherwise two tasks with the same title get the same branch',
   'about.git.issue.base': 'Branch off from: invalid branch name',
   'about.git.issue.remote': 'Remote: a name without spaces or “/”',
+  'about.git.issue.prNeedsPush': 'A PR is opened after push: enable “Push the branch to the remote”',
   'about.perm.title': 'Agent permissions',
   'about.perm.hint': 'How Claude Code (coordinator and workers) handles permission prompts.',
   'about.perm.auto': 'Auto',

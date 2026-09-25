@@ -73,6 +73,7 @@ export default {
   'about.git.issue.templateRunId': 'Имя ветки должно содержать {runId}: иначе у двух задач с одним названием совпадут ветки',
   'about.git.issue.base': 'От чего ответвлять: недопустимое имя ветки',
   'about.git.issue.remote': 'Remote: имя без пробелов и «/»',
+  'about.git.issue.prNeedsPush': 'PR создаётся после push: включите «Отправлять ветку на remote»',
   'about.perm.title': 'Разрешения агентов',
   'about.perm.hint': 'Как Claude Code (координатор и воркеры) обращается с подтверждениями.',
   'about.perm.auto': 'Авто',
