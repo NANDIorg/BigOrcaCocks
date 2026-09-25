@@ -1,11 +1,11 @@
 import type React from 'react'
 import { useMemo, useRef, useState } from 'react'
-import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type Workflow } from '@orca-board/core'
+import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type WfMigrationNote, type Workflow } from '@orca-board/core'
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
 import type { WfSelection } from '../workflowEdit'
-import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName } from '../workflowForm'
+import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, type WorkflowMigrationInfo } from '../workflowForm'
 import { SectionHead } from '../about/parts'
 import { useLocale, useT } from '../i18n'
 import { nodeTitle, wfIssueText } from '../defaultTitles'
@@ -23,6 +23,10 @@ interface Props {
    */
   columns: BoardColumn[]
   readOnly: boolean
+  /** Предупреждения автомиграции сохранённого графа (`TaskType.workflowNotes`); показываются, пока их не закрыли. */
+  notes?: WfMigrationNote[]
+  /** «Понятно»: убрать предупреждения из типа. Нет (старый main) — кнопки нет, замечания уйдут с правкой графа. */
+  onDismissNotes?(): Promise<void>
   /** null — вернуть дефолтный граф (поле удаляется из типа). Ошибка — наружу, покажем под кнопками. */
   onSave(wf: Workflow | null): Promise<void>
 }
@@ -32,7 +36,7 @@ interface Props {
  * невалиден. `readOnly` — только просмотр: холст не меняет граф, инспектор недоступен. Компонент монтируется
  * с `key` по id типа, поэтому черновик другого типа сюда не протекает.
  */
-export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, onSave }: Props): React.JSX.Element {
+export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, notes, onDismissNotes, onSave }: Props): React.JSX.Element {
   const t = useT()
   const locale = useLocale()
   const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
@@ -41,6 +45,8 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** Что изменила миграция графа старого формата при импорте: показывается, пока граф не заменили или не сохранили. */
+  const [migration, setMigration] = useState<WorkflowMigrationInfo | null>(null)
   /** Растёт при замене графа целиком (импорт, сброс): холст заново вписывает граф в окно. */
   const [canvasRev, setCanvasRev] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -59,6 +65,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   }
 
   function replace(wf: Workflow, message: string | null): void {
+    setMigration(null)
     setDraft(wf)
     setSelection(null)
     setCanvasRev((r) => r + 1)
@@ -79,7 +86,10 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   }
 
   const save = (): Promise<void> =>
-    run(() => onSave(draft), t('config.wf.tab.saved'))
+    run(async () => {
+      await onSave(draft)
+      setMigration(null)
+    }, t('config.wf.tab.saved'))
 
   const reset = (): Promise<void> => {
     if (!confirm(t('config.wf.tab.resetConfirm', { title }))) {
@@ -108,6 +118,19 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
     }
     setError(null)
     replace(res.workflow, t('config.wf.tab.imported', { file: file.name }))
+    if (res.migration) setMigration(res.migration)
+  }
+
+  async function dismissNotes(dismiss: () => Promise<void>): Promise<void> {
+    setBusy(true)
+    try {
+      await dismiss()
+      setError(null)
+    } catch (e) {
+      setError(ipcErrorMessage(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   function presetLimit(): void {
@@ -165,6 +188,27 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
             />
           </fieldset>
         </div>
+
+        {migration && (
+          <div className="wf-migration" role="status">
+            <span>{t('config.wf.tab.importMigrated', { version: migration.fromVersion })}</span>
+            {migration.notes.length > 0 && <ul>{migration.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+          </div>
+        )}
+
+        {notes && notes.length > 0 && (
+          <div className="wf-migration" role="status">
+            <span>{t('config.wf.tab.storedMigrated')}</span>
+            <ul>{notes.map((n, i) => <li key={i}>{n.message}</li>)}</ul>
+            {!readOnly && onDismissNotes && (
+              <div>
+                <button type="button" className="btn-sm" disabled={busy} onClick={() => void dismissNotes(onDismissNotes)}>
+                  {t('config.wf.tab.storedMigratedDismiss')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {(errors.length > 0 || warnings.length > 0) && (
           <div className="wf-problems">

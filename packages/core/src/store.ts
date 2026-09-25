@@ -1538,11 +1538,16 @@ export class TaskStore {
   /**
    * «Подтвердить» на проверке: человек принял результат — карточка из kind=review в done. Прогон уже закрыт
    * (`runs finish`, выход координатора после run_done или автозакрытие без координатора), поэтому `closedAt` не меняется и событий нет.
+   * `decision` — поле «Решение / что делать дальше» у approval ноды `human`: уходит координатору в `stage_started` следующего
+   * этапа; у прогона старого формата решать нечего, и оно игнорируется.
    */
-  acceptGlobalTask(id: string): GlobalTask {
+  acceptGlobalTask(id: string, decision?: string): GlobalTask {
     const run = this.mustRun(id)
     // Воркфлоу прогона: «Проверка» — approval ноды `human`; дальше граф двигает main по решению.
-    if (run.workflowScope === 'run') return this.resolveRunApproval(run, { action: 'accept' })
+    if (run.workflowScope === 'run') {
+      const text = decision?.trim()
+      return this.resolveRunApproval(run, { action: 'accept', ...(text ? { text } : {}) })
+    }
     if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — подтвердить можно только из колонки «Проверка»`)
     this.setRunStatus(run, this.columnId('done'))
     run.updatedAt = Date.now()

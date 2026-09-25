@@ -56,7 +56,7 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }
     }
     case 'git':
-      return { ...pos, type, operation: 'create_branch', branch: '' }
+      return { ...pos, type, operation: 'commit', message: '' }
     case 'end':
       return { ...pos, type, merged: false }
     default:

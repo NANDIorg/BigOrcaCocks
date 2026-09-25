@@ -136,26 +136,31 @@ export function wfNodeTitles(wf: Workflow | undefined): Record<string, string> {
 }
 
 /**
- * Метка этапа воркфлоу. Рабочая задача — название ноды (`Task.stage.nodeId`) и «N-й заход» со второго (`visits`);
- * гейт — «⛉ Гейт «нода» → задача» (`Task.gateFor`). Без названий нод (`titles` нет или нода неизвестна) этап не
- * подписываем — id ноды человеку ничего не говорит; гейту хватает и без нод. Старый main поля `stage` не знает —
- * пилюли просто нет.
+ * Метка этапа воркфлоу. Рабочая задача движка подзадач — название ноды (`Task.stage.nodeId`) и «N-й заход» со второго
+ * (`visits`); подзадача воркфлоу глобальной задачи — этап и заход, в который её создали (`Task.stageOf`); гейт — «⛉ Гейт
+ * «нода» → задача» (`Task.gateFor.taskId`) или «⛉ Гейт «нода» → ветка задачи» (`gateFor.runId`: проверяет ветку глобальной
+ * задачи целиком). Без названий нод (`titles` нет или нода неизвестна) этап не подписываем — id ноды человеку ничего не
+ * говорит; гейту хватает и без нод. Старый main поля `stage`/`stageOf` не знает — пилюли просто нет.
  */
 export function stageLabel(
-  task: Pick<Task, 'stage' | 'gateFor'>,
+  task: Pick<Task, 'stage' | 'gateFor'> & Partial<Pick<Task, 'stageOf'>>,
   titles: Readonly<Record<string, string>> | undefined,
   taskTitle: (id: string) => string | undefined
 ): StageLabel | null {
   if (task.gateFor) {
     const node = titles?.[task.gateFor.nodeId]
-    const target = task.gateFor.taskId !== undefined ? taskTitle(task.gateFor.taskId) : undefined
+    if (task.gateFor.taskId === undefined) {
+      const text = node ? t('board.stage.gateRun', { node }) : t('board.stage.gateRunBare')
+      return { kind: 'gate', text, title: t('board.stage.gateRunTitle') }
+    }
+    const target = taskTitle(task.gateFor.taskId)
     const text = `${node ? t('board.stage.gateNode', { node }) : t('board.stage.gate')}${target ? ` → ${target}` : ''}`
     return { kind: 'gate', text, title: t('board.stage.gateTitle') }
   }
   const stage = task.stage
-  const name = stage ? titles?.[stage.nodeId] : undefined
-  if (!stage || !name) return null
-  const visits = stage.visits?.[stage.nodeId] ?? 1
+  const name = stage ? titles?.[stage.nodeId] : task.stageOf ? titles?.[task.stageOf.nodeId] : undefined
+  if (!name) return null
+  const visits = stage ? stage.visits?.[stage.nodeId] ?? 1 : task.stageOf?.visit ?? 1
   const text = visits > 1 ? t('board.stage.visit', { name, n: visits }) : name
   return { kind: 'stage', text, title: t('board.stage.title', { text }) }
 }

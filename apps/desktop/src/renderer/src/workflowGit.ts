@@ -13,8 +13,16 @@ export type WfGitNode = Extract<WfNode, { type: 'git' }>
 /** Значения полей ноды `git`, которые правит форма; пустая строка — «не задано». */
 export type WfGitPatch = Partial<Omit<WfGitParams, 'operation'>> & { operation?: WfGitOperation }
 
-/** Операции в порядке показа в select. */
-export const GIT_OPERATIONS: readonly WfGitOperation[] = WF_GIT_OPERATIONS
+/**
+ * Операции в порядке показа в select. В воркфлоу глобальной задачи у неё одна ветка, её имя задаёт шаблон проекта, поэтому
+ * `create_branch` и `checkout` не предлагаются (валидация графа их запрещает — `gitRunOperation`).
+ */
+export const GIT_OPERATIONS: readonly WfGitOperation[] = WF_GIT_OPERATIONS.filter((op) => op === 'commit' || op === 'push')
+
+/** Операция известна, но в графе глобальной задачи недоступна (`create_branch`, `checkout`): остаётся в select отключённой. */
+export function isUnavailableGitOperation(op: unknown): op is WfGitOperation {
+  return isGitOperation(op) && !GIT_OPERATIONS.includes(op)
+}
 
 /** Операция из известного списка. Граф из импорта или более новой версии может нести любую строку или не нести операции вовсе. */
 export function isGitOperation(op: unknown): op is WfGitOperation {

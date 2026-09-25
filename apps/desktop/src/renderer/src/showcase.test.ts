@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { Dispatch, HumanRequest } from '@orca-board/core'
 import { showcaseMarkdown } from '../../shared/showcase'
 import {
-  showcaseStaleMessage, autoPreviewPaths, bodyWithoutShowcase, latestShowcase, requestShowcase, showcaseApi,
+  showcaseStaleMessage, autoPreviewPaths, bodyWithoutShowcase, latestShowcase, requestShowcase, requestShowcaseTaskId, showcaseApi,
   showcaseErrorText, showcaseFiles
 } from './showcase'
 
@@ -65,4 +65,14 @@ test('старые main/preload — понятная ошибка «переза
   assert.throws(() => showcaseApi(undefined), { message: showcaseStaleMessage() })
   assert.equal(showcaseErrorText("No handler registered for 'showcase:read'"), showcaseStaleMessage())
   assert.equal(showcaseErrorText('показ: файл не найден: a.png'), 'показ: файл не найден: a.png')
+})
+
+test('requestShowcaseTaskId: у approval задачи — она сама; у approval прогона без задачи — задача dispatch, сдавшего показ', () => {
+  const dispatches = [dispatch('d1', { taskId: 't9' })]
+  assert.equal(requestShowcaseTaskId(approval({ showcaseDispatchId: 'd1' }), dispatches), 't1')
+  const { taskId: _taskId, ...runLevel } = approval({ showcaseDispatchId: 'd1' })
+  assert.equal(requestShowcaseTaskId(runLevel, dispatches), 't9')
+  assert.equal(requestShowcaseTaskId({ ...runLevel, showcaseDispatchId: 'gone' }, dispatches), undefined)
+  assert.equal(requestShowcaseTaskId({ ...runLevel, showcaseDispatchId: undefined }, dispatches), undefined)
+  assert.equal(requestShowcaseTaskId(runLevel, undefined), undefined)
 })

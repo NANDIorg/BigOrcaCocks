@@ -438,6 +438,17 @@ describe('approval прогона: нода human', () => {
     assert.equal(s.getRequest(second.id)!.resolution?.action, 'accept')
   })
 
+  it('«Подтвердить» с решением: текст (обрезанный) — в resolution и request_resolved.decision; пустой — как без решения', () => {
+    const { s, run } = atHuman()
+    const first = s.requestRunApproval(run.id, { nodeId: 'check', title: 'Проверка' })
+    s.acceptGlobalTask(run.id, '  Вариант B  ')
+    assert.deepEqual(s.getRequest(first.id)!.resolution, { action: 'accept', text: 'Вариант B' })
+    assert.equal(events(s, 'request_resolved').at(-1)!.payload.decision, 'Вариант B')
+    const second = s.requestRunApproval(run.id, { nodeId: 'check', title: 'Проверка' })
+    s.acceptGlobalTask(run.id, '   ')
+    assert.deepEqual(s.getRequest(second.id)!.resolution, { action: 'accept' })
+  })
+
   it('accept человека → конец графа: прогон закрыт, «Сделано», run_done с nodeId; runs finish после этого — сигнал, до — ошибка', () => {
     const { s, run } = atHuman()
     assert.throws(() => s.finishRun(run.id), /воркфлоу ведёт граф.*stage finish/)

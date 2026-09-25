@@ -484,8 +484,8 @@ export function handleRunApproval(deps: RunWorkflowDeps, request: HumanRequest):
 }
 
 /** «Подтвердить» на карточке прогона на «Проверке»: решение approval ноды `human` и переход по `accept`. */
-export function acceptRun(deps: RunWorkflowDeps, runId: string): GlobalTask {
-  return decideRun(deps, runId, (id) => deps.store.acceptGlobalTask(id))
+export function acceptRun(deps: RunWorkflowDeps, runId: string, decision?: string): GlobalTask {
+  return decideRun(deps, runId, (id) => deps.store.acceptGlobalTask(id, decision))
 }
 
 /**

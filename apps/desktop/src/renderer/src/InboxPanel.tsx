@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { globalTaskTitle, type Dispatch, type HumanRequest, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
 import { RequestCard, requestKindTitle, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
-import { requestShowcase } from './showcase'
+import { requestShowcase, requestShowcaseTaskId } from './showcase'
 import { requestStageLabel, wfNodeTitles } from './cardState'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
@@ -60,7 +60,9 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
   const where = (r: HumanRequest): string => {
     const run = runById.get(r.runId)
     const task = r.taskId !== undefined ? taskById.get(r.taskId) : undefined
-    return [run ? builtinText(globalTaskTitle(run)) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
+    // Approval уровня прогона задачи не имеет: после названия глобальной задачи — нода воркфлоу, на которой он ждёт.
+    const node = r.taskId === undefined && r.nodeId ? wfNodeTitles(workflowOf?.(r.runId))[r.nodeId] : undefined
+    return [run ? builtinText(globalTaskTitle(run)) : undefined, task?.title ?? r.taskId ?? node].filter(Boolean).join(' › ')
   }
 
   const stageOf = (r: HumanRequest): string | undefined =>
@@ -215,6 +217,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
                 }}
                 request={r}
                 showcase={requestShowcase(r, dispatches)}
+                showcaseTaskId={requestShowcaseTaskId(r, dispatches)}
                 where={where(r)}
                 stage={stageOf(r)}
                 active={open && current?.id === r.id}

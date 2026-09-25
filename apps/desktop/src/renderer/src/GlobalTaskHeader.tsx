@@ -11,6 +11,7 @@ import { formatStamp } from './boardSort'
 import { useT } from './i18n'
 import { branchChip } from './runBranch'
 import { coordinatorPill, currentStep, headerActions, statusSteps, type StatusStep } from './globalScreen'
+import type { StageLabel } from './cardState'
 
 interface Props {
   global: GlobalTask
@@ -26,6 +27,8 @@ interface Props {
   attentionCount?: number
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
+  /** Где стоит граф воркфлоу (`runStageLabel`): «Этап: Реализация · 2-й заход»; нет — граф не начат или прогон старого формата. */
+  stage?: StageLabel | null
   onBack(): void
   onEdit(): void
   /** Клик по шагу степпера: перенести задачу в колонку (`globalTasks.move`). */
@@ -106,6 +109,9 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
         {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
         <PriorityBadge item={global} className="g-chip" />
         {typeTitle && <span className="g-chip task-type-chip" title={t('global.header.typeTitle')}>{typeTitle}</span>}
+        {props.stage && global.closedAt === undefined && (
+          <span className={`g-chip stage ${props.stage.kind}`} title={props.stage.title}>{t('global.stage.pill', { text: props.stage.text })}</span>
+        )}
         {global.git && <BranchChip git={global.git} />}
         {!global.inbox && (
           <CoordinatorPill

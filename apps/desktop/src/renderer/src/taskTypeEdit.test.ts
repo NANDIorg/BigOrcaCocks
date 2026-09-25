@@ -50,6 +50,12 @@ test('правка собирает тип целиком: null и пустые 
   assert.equal(own.settings.agentRules, 'правило')
 })
 
+test('замечания миграции: закрытие — пустой список в самом типе, обычная правка их не передаёт', () => {
+  assert.deepEqual(patchedTaskType(own, { workflowNotes: [] }).workflowNotes, [])
+  assert.equal('workflowNotes' in patchedTaskType(own, { agentRules: 'x' }), false)
+  assert.equal('workflowNotes' in patchedTaskType(own, { workflowNotes: [] }).settings, false)
+})
+
 test('переименование: пустое название — ошибка, пустое описание убирает поле', () => {
   assert.deepEqual(renamedTaskType(own, '  ', 'x'), { error: 'Название типа не может быть пустым' })
   const r = renamedTaskType(own, ' Сервисы ', ' ')
