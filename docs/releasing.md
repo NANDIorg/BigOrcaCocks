@@ -90,7 +90,8 @@
 `git push origin refs/tags/vX.Y.Z`. Не ставь тег на HEAD рабочего каталога по привычке.
 Если тег уже существует, проверь точное совпадение SHA и продолжи существующий workflow.
 
-`.github/workflows/release.yml` запускается только по тегу:
+Релизные jobs `.github/workflows/release.yml` запускаются только по push тега `v*`
+(отдельный ручной validation без выпуска описан ниже):
 
 1. Проверяет тег, обе версии, master и непустое описание `docs/releases/vX.Y.Z.md`.
 2. Ставит зависимости, выполняет `pnpm verify` и упаковывает приложение на macOS/Windows.
@@ -155,6 +156,99 @@ ZIP содержит уже stapled `.app`, а его blockmap/metadata созд
 ссылка на успешный workflow, приложенные файлы и результаты/ограничения smoke-проверки.
 Пока нужны review, CI или ручная проверка, называй конкретный незавершённый шаг.
 
+## Ручная проверка подписанной macOS-сборки без выпуска
+
+`workflow_dispatch` в существующем `release.yml` запускает только самостоятельную job
+`macos-validation` на чистом `macos-14`. Разрешены опубликованные `feature/*` и `develop`.
+Обязательный `expected_sha` — полный SHA из 40 строчных hex-символов проверенного коммита.
+До checkout и зависимостей проверяются событие, ref и SHA запуска; checkout закреплён на
+этом SHA и повторно сверяется через Git. Если ветка продвинулась между проверкой и dispatch,
+несовпадение останавливает job до сборки и credentials.
+
+Node 24 берётся из `.nvmrc`, pnpm 10.33.0 — из `packageManager`; затем
+`pnpm install --frozen-lockfile`, `pnpm build`. Только следующий шаг получает пять Apple/signing
+secrets и запускает существующие `electron-builder --mac --publish never` и
+`scripts/verify-macos-release.mjs`. Конфиг/hooks общие с релизом: обе архитектуры за один вызов,
+Developer ID нужной Team, hardened runtime, notarize/staple `.app` до ZIP/DMG,
+подпись/notarize/staple финальных DMG, все проверки контейнеров и metadata без пропусков.
+
+После полного успеха считается SHA-256 окончательных байтов и загружается Actions artifact
+`macos-validation-<SHA>-<run_id>-<run_attempt>` на 14 дней. Внутри ровно восемь файлов:
+два DMG, два ZIP, два ZIP blockmap, `latest-mac.yml`, `SHA256SUMS` (семь записей).
+Загружаются конкретные имена текущей версии, а не каталог сборки. При ошибке подписи,
+verifier или checksums установщики не загружаются. Имеющиеся результаты и логи Apple
+для DMG сохраняются отдельно в `macos-validation-notarization-<SHA>-<run_id>-<run_attempt>`;
+при раннем отказе до submission этих файлов может не быть. Keychain/p12 туда не входят.
+
+Все токены выполняющихся manual jobs имеют только `contents: read`. Jobs `validate`,
+`package`, `draft` явно требуют push релизного тега, поэтому job с `contents: write`
+при dispatch пропущена. Validation не создаёт тег, Draft или Release, не меняет версию,
+не загружает файлы в Releases и не затрагивает опубликованный v1.0.0. Даже при версии
+1.0.0 в именах это тестовые Actions artifacts конкретного SHA, а не замена выпуска.
+
+### Будущий запуск после публикации feature
+
+Владелец/обычная сессия сначала интегрирует результат Orca в feature, объединяет актуальный
+develop по Git Flow, выполняет `pnpm verify`, публикует проверенную feature и открывает PR
+в develop. Воркер не публикует `orca/*` и не меняет root; координатор управляет доской.
+Validation можно запустить до merge PR на опубликованной feature, содержащей новый workflow.
+
+На **25.09.2026** чтением GitHub API подтверждены default branch `master`, существование
+`.github/workflows/release.yml` в ней, активный workflow ID **366875950** и предшествующий
+push-run. [GitHub описывает](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
+наличие файла в default branch и dispatch уже запускавшегося workflow на другой branch/tag
+через API/CLI. [CLI `--ref`](https://cli.github.com/manual/gh_workflow_run) выбирает версию
+workflow из указанного ref; она должна содержать `workflow_dispatch` и объявление input.
+[REST API](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
+принимает имя ветки/тега и inputs, требует Actions write у вызывающего пользователя/токена
+(это право отправить событие, не права `GITHUB_TOKEN` самой job).
+
+Эти первоисточники и регистрация workflow обосновывают следующий способ запуска,
+**но успешный dispatch нового workflow на feature ещё не выполнен**, как и положительный
+прогон подписанной сборки. Не объявляй доступность dispatch доказанной одним наличием ID.
+Если GitHub отвергнет событие, сохрани статус/сообщение API без токенов и проверь опубликованный
+ref, trigger, регистрацию и полномочия вызывающего. Не обходи отказ тегом, запуском старого
+релиза или изменением default branch; требуемую интеграцию workflow выполняй отдельно по Git Flow.
+
+Команды из worktree опубликованной, проверенной feature (для develop замени `validation_ref`
+и используй его проверенный SHA):
+
+```sh
+validation_repo=NANDIorg/BigOrcaCocks
+validation_ref=feature/macos-signing-current-run
+validation_sha=$(git rev-parse HEAD)
+test "$(gh api "repos/$validation_repo/git/ref/heads/$validation_ref" --jq .object.sha)" = "$validation_sha"
+gh workflow run 366875950 --repo "$validation_repo" --ref "$validation_ref" -f expected_sha="$validation_sha"
+gh run list --repo "$validation_repo" --workflow 366875950 --event workflow_dispatch --branch "$validation_ref" --commit "$validation_sha" --json databaseId,headSha,headBranch,event,createdAt,status,conclusion,url
+```
+
+Выбери ID именно нового dispatch по SHA/ref/времени (при задержке повтори `run list`, а не
+dispatch; предыдущий успешный run этого SHA не заменяет новый). Дождись результата:
+
+```sh
+validation_run=<ID-нового-run>
+gh run watch "$validation_run" --repo "$validation_repo" --exit-status
+gh api "repos/$validation_repo/actions/runs/$validation_run" --jq '{workflow_id,event,head_branch,head_sha,status,conclusion,run_attempt}'
+test "$(gh run view "$validation_run" --repo "$validation_repo" --json headSha --jq .headSha)" = "$validation_sha"
+validation_attempt=$(gh api "repos/$validation_repo/actions/runs/$validation_run" --jq .run_attempt)
+validation_artifact="macos-validation-$validation_sha-$validation_run-$validation_attempt"
+validation_dir=$(mktemp -d)
+gh run download "$validation_run" --repo "$validation_repo" --name "$validation_artifact" --dir "$validation_dir"
+ls -1 "$validation_dir"
+(cd "$validation_dir" && shasum -a 256 -c SHA256SUMS)
+```
+
+Перед скачиванием сверяй `workflow_id=366875950`, `event=workflow_dispatch`, ref/SHA,
+`status=completed`, `conclusion=success` и успешную `macos-validation` в run. В каталоге
+проверь описанный комплект восьми файлов; все семь строк SHA256SUMS должны дать OK.
+На Linux вместо `shasum` можно использовать `sha256sum --check SHA256SUMS`.
+При отказе изучай конкретный шаг и отдельный diagnostic artifact текущей попытки,
+не запрашивай значения secrets и не принимай частичные файлы за готовую сборку.
+
+Зелёный реальный validation подтвердит credentials и автоматическую цепочку на этом SHA.
+Первая установка Intel/Apple Silicon с quarantine, онлайн/офлайн, GUI/JIT/PTY/CLI и обновление
+с 1.0.0 остаются отдельной приёмкой ниже. Новый patch-релиз требует отдельного релизного поручения.
+
 ## Подпись macOS и CI secrets
 
 Публичная сборка требует действующего участия издателя в **Apple Developer Program** и
@@ -185,9 +279,10 @@ Builder импортирует `.p12` во временный keychain runner и
 не импортируй сертификат в личный keychain ради проверки кода. Runner нужен доступ к Apple
 notary/timestamp/ticket-сервисам и Xcode с `notarytool`/`stapler`.
 Разрешение настроить secrets, сертификат или аккаунт не следует из поручения исправить код.
-По диагностике v1.0.0 локального Developer ID Application нет; repository secrets отсутствовали,
-а доступ к организационным secrets не подтверждён. Пока владелец не предоставил доступ,
-реальный подписанный выпуск и первый запуск **не проверены**.
+По диагностике v1.0.0 локального Developer ID Application не было и repository secrets отсутствовали.
+QA 25.09.2026 подтвердил имена/метаданные всех пяти repository secrets; значения не читались.
+Это не подтверждает корректность p12/паролей, действительность сертификата или выдачу secrets
+runner. Реальный успешный подписанный прогон и первый запуск **пока не проверены**.
 
 Порядок в коде (закреплённый **electron-builder 26.15.3**):
 
