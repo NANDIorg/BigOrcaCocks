@@ -1962,7 +1962,10 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 - Чистая CI-установка с `--ignore-scripts` не собирает `node-pty`. В пакете 1.1.0 есть
   prebuilds для macOS/Windows, но Linux socket-тесты падают при импорте с `Failed to load
   native module: pty.node`. CI отдельно выполняет `pnpm --filter @orca-board/desktop rebuild node-pty`
-  под Node runner; GUI и Electron-упаковка проверяются отдельно.
+  под Node runner. В darwin prebuilds node-pty 1.1.0 `spawn-helper` имеет mode 0644:
+  импорт проходит, но запуск PTY падает с `posix_spawnp failed`. На macOS CI принудительно
+  собирает node-pty из исходников (`npm_config_build_from_source=true`); GUI и
+  Electron-упаковка проверяются отдельно.
 - Запись состояния шла прямо в `projects.json` / `boards/<id>.json` (`writeFileSync`), а битый JSON при загрузке молча
   становился пустой доской и затирался при следующей записи. Теперь запись атомарная, битый файл откладывается в
   `.corrupt-<ts>`, доска из будущего формата не открывается (см. «Безопасность состояния»). Новый код записи

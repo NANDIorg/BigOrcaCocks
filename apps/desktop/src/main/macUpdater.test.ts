@@ -195,9 +195,7 @@ describe('MacUpdater.download', () => {
   })
 })
 
-// Установка передаёт реальные пути файловой системы POSIX-скрипту и намеренно отвергает C:\\….
-// Эти интеграционные сценарии выполняются на macOS/Linux; check/download и чистая валидация
-// остаются на всех ОС. Нативный Windows-установщик эта группа не проверяет.
+// install проверяет POSIX-пути (validateInstallPaths) и запускает /bin/sh: на Windows этого пути нет, обновляется winUpdater.
 describe('MacUpdater.install', { skip: process.platform === 'win32' }, () => {
   async function ready(): Promise<{ u: MacUpdater; env: MacUpdaterEnv }> {
     const env = makeEnv({ manifest: yml(), notes: '', zip: ZIP_BYTES })

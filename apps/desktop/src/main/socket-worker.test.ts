@@ -429,10 +429,14 @@ describe('worker ask: адресат вопроса', () => {
   let coordPty: string
 
   beforeEach(() => {
-    // Живой координатор: настоящий PTY (реестр main), который isAlive видит.
-    // Node есть на всех runner; системного sleep в Windows нет.
-    coordPty = spawnPty({ meta: { role: 'coordinator', label: 'coord' }, command: process.execPath,
-      args: ['-e', 'setTimeout(() => {}, 30000)'], cols: 80, rows: 24 })
+    // Живой координатор: настоящий PTY (реестр main), который isAlive видит. node вместо sleep — его нет на Windows.
+    coordPty = spawnPty({
+      meta: { role: 'coordinator', label: 'coord' },
+      command: process.execPath,
+      args: ['-e', 'setTimeout(() => {}, 30000)'],
+      cols: 80,
+      rows: 24
+    })
   })
   afterEach(() => killPty(coordPty))
 

@@ -49,6 +49,10 @@ jobs:
       # на Linux готового бинарника в пакете нет, собираем его под Node runner.
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @orca-board/desktop rebuild node-pty
+        # В darwin prebuilds 1.1.0 spawn-helper поставляется без executable bit.
+        # Собираем под Node runner: одного импорта PTY недостаточно, тесты теперь запускают процесс.
+        env:
+          npm_config_build_from_source: ${{ runner.os == 'macOS' && 'true' || 'false' }}
       - run: pnpm verify
         # Git-фикстуры не должны зависеть от identity, CRLF и safe.directory=* образа runner.
         env:
