@@ -20,7 +20,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, ProjectGroup, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -586,7 +586,13 @@ function registerIpc(): void {
   handle('updates:cancelPending', () => updater.cancelPending())
   handle('updates:getJustUpdated', () => updater.getJustUpdated())
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
-  handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
+  // Группы проектов: контракт `shared/ipc.ts`, хранение и обработчики — задача backend. Пока `groups` всегда пуст.
+  handle('projects:list', () => ({ active: projects.active(), projects: projects.list(), groups: [] as ProjectGroup[] }))
+  for (const channel of ['createGroup', 'renameGroup', 'removeGroup', 'setGroupCollapsed', 'setProjectGroup', 'reorderGroups']) {
+    handle(`projects:${channel}`, () => {
+      throw new OrcaError('projects.notImplemented')
+    })
+  }
   handle('projects:inProgressCounts', () => projects.inProgressCounts())
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   handle('projects:remove', (_e, id: string) => projects.remove(id))

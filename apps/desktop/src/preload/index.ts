@@ -37,6 +37,12 @@ const api: OrcaApi = {
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setEnabledAgents: (id, agents) => ipcRenderer.invoke('projects:setEnabledAgents', id, agents),
     setColumns: (id, columns) => ipcRenderer.invoke('projects:setColumns', id, columns),
+    createGroup: (name) => ipcRenderer.invoke('projects:createGroup', name),
+    renameGroup: (id, name) => ipcRenderer.invoke('projects:renameGroup', id, name),
+    removeGroup: (id) => ipcRenderer.invoke('projects:removeGroup', id),
+    setGroupCollapsed: (id, collapsed) => ipcRenderer.invoke('projects:setGroupCollapsed', id, collapsed),
+    setProjectGroup: (projectId, groupId) => ipcRenderer.invoke('projects:setProjectGroup', projectId, groupId),
+    reorderGroups: (ids) => ipcRenderer.invoke('projects:reorderGroups', ids),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {

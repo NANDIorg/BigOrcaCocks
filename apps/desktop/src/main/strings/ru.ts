@@ -54,6 +54,9 @@ export default {
 
   'projects.none': 'нет проектов: добавьте репозиторий',
   'projects.notGit': '{path} — не git-репозиторий',
+  'projects.groupNotFound': 'группа проектов не найдена: {id}',
+  'projects.groupNameEmpty': 'название группы проектов не может быть пустым',
+  'projects.notImplemented': 'группы проектов: не реализовано',
 
   'agent.unknown': 'неизвестный агент: {id}. Известные: {known}',
   'agent.notInstalled': 'агент {id} не установлен (нет бинарника {bin} в PATH)',

@@ -1027,9 +1027,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
-  (см. «Обновление»); `projects:list`, `projects:setActive`, `projects:remove`,
+  (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
   `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
-  агенты, типы; ролей, графа, правил и разрешений у проекта нет);
+  агенты, типы, `groupId`; ролей, графа, правил и разрешений у проекта нет);
+  **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
+  `projects:createGroup(name)` → `ProjectGroup`, `projects:renameGroup(id, name)` → `ProjectGroup`,
+  `projects:removeGroup(id)` (проекты группы становятся без группы, сами не удаляются), `projects:setGroupCollapsed(id, collapsed)` →
+  `ProjectGroup`, `projects:setProjectGroup(projectId, groupId | null)` → `Project` (`null` — вынуть из группы),
+  `projects:reorderGroups(ids)` → `ProjectGroup[]` (`ids` — все id групп в новом порядке). Ошибки — `OrcaError`
+  `projects.groupNotFound` (неизвестная группа) и `projects.groupNameEmpty` (пустое имя после обрезки пробелов).
+  В контрактной версии `projects:list` отдаёт `groups: []`, остальные каналы бросают `projects.notImplemented`;
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
   `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
   (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
@@ -1198,7 +1205,7 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 ## Проекты (`src/main/projects.ts`)
 
 `ProjectManager` хранит список репозиториев и библиотеку типов задач в `userData/projects.json` (у проекта —
-`enabledAgents`, `columns`, `taskTypeIds`, `defaultTaskTypeId`, `legacyTypeId`), доску каждого — в `userData/boards/<id>.json`
+`enabledAgents`, `columns`, `taskTypeIds`, `defaultTaskTypeId`, `legacyTypeId`, `groupId`), доску каждого — в `userData/boards/<id>.json`
 (`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board` (на Windows — `%APPDATA%\orca-board`).
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
 UI работает с активным проектом; воркеры и координатор получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
@@ -1206,9 +1213,12 @@ UI работает с активным проектом; воркеры и ко
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
-`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
+`{ version, projects: Project[], activeId, groups?: ProjectGroup[], taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
 (`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
 запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
+- `groups?: ProjectGroup[]` — группы проектов для левого меню (`shared/ipc.ts`), порядок массива = порядок в меню; у проекта
+  `groupId` ссылается на `groups[].id`, нет или указывает на несуществующую группу — проект без группы. Поле опциональное,
+  версию формата не бампает: старая версия приложения его игнорирует (хранение — в контракте только описано).
 - `onboarding: { status: 'pending'|'completed'|'skipped', version, at?, reason?: 'existing' }` — корень файла, а не
   `settings`: это не настройка человека, `app:setSettings` его не меняет. Версию формата (`PROJECTS_FILE_VERSION`) поле
   не бампает: оно опциональное, старая версия приложения при откате его игнорирует. `pending` пишется **явно**
