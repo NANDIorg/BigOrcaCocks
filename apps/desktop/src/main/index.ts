@@ -22,6 +22,7 @@ import { createUpdater, type Updater } from './updater'
 import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
+import { backupOnVersionChange, rememberUpdate } from './backup'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -47,6 +48,13 @@ function shellPath(): string | null {
 const userPath = shellPath()
 if (userPath) process.env.PATH = userPath
 app.setPath('userData', join(app.getPath('appData'), 'orca-board'))
+
+// Второй экземпляр отобрал бы у первого сокет и писал бы в те же файлы состояния — он фокусирует первый и выходит.
+// Блокировка привязана к userData, поэтому изолированный `pnpm dev` со своим userData живёт рядом с основным.
+// `app.exit`, а не `quit`: before-quit → requestQuit трогает то, что у второго экземпляра не создано.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) app.exit(0)
+else app.on('second-instance', () => { if (app.isReady()) showWindow() })
 
 let win: BrowserWindow | null = null
 let projects: ProjectManager
@@ -671,8 +679,12 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return
   app.setAppUserModelId('orca-board')
+  // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
+  rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
+  projects.markRun(app.getVersion())
   if (process.env.ORCA_REPO) {
     try {
       projects.add(process.env.ORCA_REPO)
