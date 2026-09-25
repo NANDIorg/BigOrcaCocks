@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, RunBranchSettings } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -238,6 +238,8 @@ export interface Project {
   defaultTaskTypeId?: string
   /** Тип, в который миграция перенесла настройки проекта; его получают старые прогоны доски. */
   legacyTypeId?: string
+  /** Ветки глобальных задач; нет — `DEFAULT_RUN_BRANCH_SETTINGS` (или main до этой настройки). */
+  git?: RunBranchSettings
 }
 
 /** Создать (без `id`) или целиком заменить тип задачи. */
@@ -437,6 +439,11 @@ export interface OrcaApi {
     setEnabledAgents(id: string, agents: AgentKind[]): Promise<Project>
     /** Задачи из удалённых колонок переезжают в backlog. */
     setColumns(id: string, columns: BoardColumn[]): Promise<Project>
+    /**
+     * Ветки глобальных задач: патч поверх текущих настроек. Ошибка шаблона, базы или remote — `OrcaError[git.badSettings]`.
+     * Нет у старого preload — renderer показывает «перезапустите приложение».
+     */
+    setGit?(id: string, patch: Partial<RunBranchSettings>): Promise<Project>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
   }

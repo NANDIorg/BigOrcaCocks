@@ -38,6 +38,7 @@ const api: OrcaApi = {
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setEnabledAgents: (id, agents) => ipcRenderer.invoke('projects:setEnabledAgents', id, agents),
     setColumns: (id, columns) => ipcRenderer.invoke('projects:setColumns', id, columns),
+    setGit: (id, patch) => ipcRenderer.invoke('projects:setGit', id, patch),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {

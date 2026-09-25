@@ -6,8 +6,8 @@ import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
-  resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
-  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
+  resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType, normalizeRunBranchSettings, runBranchSettingsProblems,
+  type RunBranchSettings, type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
@@ -56,6 +56,8 @@ export interface Project {
    * `assignRunTypes` идемпотентна.
    */
   legacyTypeId?: string
+  /** Ветки глобальных задач (`RunBranchSettings`, run-branch.ts в core). Нет — настройки по умолчанию. */
+  git?: RunBranchSettings
 }
 
 export interface ProjectsFile {
@@ -615,6 +617,22 @@ export class ProjectManager {
     return this.onboardingState()
   }
 
+  /** Ветки глобальных задач проекта: сохранённые или по умолчанию. */
+  gitSettings(id: string): RunBranchSettings {
+    return normalizeRunBranchSettings(this.get(id)?.git)
+  }
+
+  /** Поменять настройки веток: патч поверх текущих, ошибки шаблона, базы или remote — `git.badSettings`. */
+  setGitSettings(id: string, patch: unknown): Project {
+    const p = this.mustGet(id)
+    const next = normalizeRunBranchSettings({ ...this.gitSettings(id), ...(isObject(patch) ? patch : {}) })
+    const problems = runBranchSettingsProblems(next)
+    if (problems.length > 0) throw new OrcaError('git.badSettings', { problems: problems.map((x) => x.text).join('; ') })
+    p.git = next
+    this.save()
+    return p
+  }
+
   setEnabledAgents(id: string, agents: AgentKind[]): Project {
     const p = this.mustGet(id)
     p.enabledAgents = agents.filter((a) => isAgentKind(a))
@@ -992,6 +1010,7 @@ function normalizeProject(p: Project): void {
   if (p.taskTypeIds !== undefined && !(Array.isArray(p.taskTypeIds) && p.taskTypeIds.length && p.taskTypeIds.every(nonEmpty))) delete p.taskTypeIds
   if (p.defaultTaskTypeId !== undefined && !nonEmpty(p.defaultTaskTypeId)) delete p.defaultTaskTypeId
   if (p.legacyTypeId !== undefined && !nonEmpty(p.legacyTypeId)) delete p.legacyTypeId
+  if (p.git !== undefined) p.git = normalizeRunBranchSettings(p.git)
 }
 
 /**
