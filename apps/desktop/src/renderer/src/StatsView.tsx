@@ -2,12 +2,13 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BoardColumn, ProjectStats, StatsRange, StatsRow, StatsUsage } from '@orca-board/core'
 import { Icon } from './icons'
-import { Cost, NoData } from './StatsCells'
+import { Cost, NoData, Rich } from './StatsCells'
+import { useT } from './i18n'
+import { formatDateTime } from './i18n/format'
 import { ipcErrorMessage } from './useAutoSave'
 import {
   CHART_METRICS,
   RANGE_OPTIONS,
-  STATS_STALE_MESSAGE,
   axisLabelBudget,
   axisLabelIndexes,
   buildChart,
@@ -21,13 +22,16 @@ import {
   hasUsage,
   isEmptyStats,
   isStaleStatsError,
+  metricLabel,
   missingLabel,
   missingSessions,
+  rangeLabel,
   rangePhrase,
   seriesColor,
   sessionsLabel,
   shareItems,
   statsApi,
+  statsStaleMessage,
   statusParts,
   taskCost,
   tokenBreakdown,
@@ -60,6 +64,7 @@ function store(key: string, value: string): void {
  * смене периода, по событиям не обновляются (docs/architecture.md → «Статистика → Интерфейс»).
  */
 export function StatsView({ projectId, columns }: { projectId: string; columns: BoardColumn[] }): React.JSX.Element {
+  const t = useT()
   const [range, setRange] = useState<StatsRange>(() => stored(RANGE_KEY, ['7d', '30d', 'all'], '30d'))
   const [metric, setMetric] = useState<ChartMetric>(() => stored(METRIC_KEY, ['cost', 'tokens', 'time', 'done'], 'cost'))
   const [stats, setStats] = useState<ProjectStats | null>(null)
@@ -78,7 +83,7 @@ export function StatsView({ projectId, columns }: { projectId: string; columns: 
     } catch (e) {
       if (id !== req.current) return
       const msg = ipcErrorMessage(e)
-      setError(isStaleStatsError(msg) ? STATS_STALE_MESSAGE : msg)
+      setError(isStaleStatsError(msg) ? statsStaleMessage() : msg)
     } finally {
       if (id === req.current) setLoading(false)
     }
@@ -101,35 +106,35 @@ export function StatsView({ projectId, columns }: { projectId: string; columns: 
   }
 
   const period = (
-    <div className="stats-period" role="radiogroup" aria-label="Период">
-      {RANGE_OPTIONS.map((o) => (
-        <button key={o.value} role="radio" aria-checked={range === o.value} className={range === o.value ? 'on' : ''} onClick={() => pickRange(o.value)}>
-          {o.label}
+    <div className="stats-period" role="radiogroup" aria-label={t('global.stats.period')}>
+      {RANGE_OPTIONS.map((r) => (
+        <button key={r} role="radio" aria-checked={range === r} className={range === r ? 'on' : ''} onClick={() => pickRange(r)}>
+          {rangeLabel(r)}
         </button>
       ))}
     </div>
   )
 
   const shown = stats && stats.range === range ? stats : null
-  const updated = shown && new Date(shown.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  const updated = shown && formatDateTime(shown.generatedAt, { hour: '2-digit', minute: '2-digit' })
 
   let body: React.JSX.Element
   if (error && !shown) {
     body = (
       <div className="stats-state">
-        <b>Не удалось посчитать статистику</b>
+        <b>{t('global.stats.error')}</b>
         <span className="stats-error">{error}</span>
-        {error !== STATS_STALE_MESSAGE && <button className="btn-sm" onClick={() => void load()}>Повторить</button>}
+        {!isStaleStatsError(error) && <button className="btn-sm" onClick={() => void load()}>{t('global.retry')}</button>}
       </div>
     )
   } else if (!shown) {
-    body = <div className="stats-state"><span className="stats-muted">Считаем статистику…</span></div>
+    body = <div className="stats-state"><span className="stats-muted">{t('global.stats.loading')}</span></div>
   } else if (isEmptyStats(shown)) {
     body = (
       <div className="stats-state">
         <svg className="stats-state-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></svg>
-        <b>{range === 'all' ? 'Статистики пока нет' : `За ${rangePhrase(range)} агенты не запускались`}</b>
-        <span>Статистика появится после первого прогона координатора или воркера.{range !== 'all' && ' Выберите период побольше.'}</span>
+        <b>{range === 'all' ? t('global.stats.emptyAll') : t('global.stats.emptyRange', { range: rangePhrase(range) })}</b>
+        <span>{t('global.stats.emptyHint')}{range !== 'all' && ` ${t('global.stats.pickLonger')}`}</span>
       </div>
     )
   } else {
@@ -141,11 +146,11 @@ export function StatsView({ projectId, columns }: { projectId: string; columns: 
       <div className={`stats-dash ${loading && shown ? 'refreshing' : ''}`}>
         <div className="stats-top">
           <span className="stats-muted">
-            {updated ? `Обновлено в ${updated} · считается по запросу, не хранится` : 'Токены и стоимость — из транскриптов агентов, время и задачи — из доски'}
+            {updated ? t('global.stats.updated', { time: updated }) : t('global.stats.source')}
           </span>
           <span className="grow" />
-          {error && shown && <span className="stats-error" title={error}>Не удалось обновить</span>}
-          <button className="icon-btn stats-refresh" title="Пересчитать" aria-label="Пересчитать" onClick={() => void load()} disabled={loading}>
+          {error && shown && <span className="stats-error" title={error}>{t('global.stats.refreshError')}</span>}
+          <button className="icon-btn stats-refresh" title={t('global.stats.refresh')} aria-label={t('global.stats.refresh')} onClick={() => void load()} disabled={loading}>
             <Icon.refresh />
           </button>
           {period}
@@ -157,11 +162,12 @@ export function StatsView({ projectId, columns }: { projectId: string; columns: 
 }
 
 function Dashboard({ stats, columns, metric, onMetric }: { stats: ProjectStats; columns: BoardColumn[]; metric: ChartMetric; onMetric: (m: ChartMetric) => void }): React.JSX.Element {
+  const t = useT()
   const usage = hasUsage(stats)
-  const t = stats.totals
-  const tokens = totalTokens(t.tokens)
+  const tot = stats.totals
+  const tokens = totalTokens(tot.tokens)
   const perTask = taskCost(stats)
-  const missing = missingSessions(t)
+  const missing = missingSessions(tot)
   const m = effectiveMetric(metric, usage)
   const allowed = chartMetrics(usage)
 
@@ -170,53 +176,55 @@ function Dashboard({ stats, columns, metric, onMetric }: { stats: ProjectStats; 
       <section className="stats-panel">
         <div className="stats-hero">
           <div className="stats-big">
-            <span className="stats-muted">Потрачено за {rangePhrase(stats.range)}</span>
+            <span className="stats-muted">{t('global.stats.spent', { range: rangePhrase(stats.range) })}</span>
             <span className="stats-big-value">
-              {t.costUsd !== undefined ? (
-                <>{t.unpricedTokens > 0 && <small>не менее </small>}{formatUsd(t.costUsd)}</>
+              {tot.costUsd !== undefined ? (
+                <>{tot.unpricedTokens > 0 && <small>{t('global.stats.atLeast')} </small>}{formatUsd(tot.costUsd)}</>
               ) : (
                 <NoData />
               )}
             </span>
             <span className="stats-hint">
               {!usage
-                ? `${sessionsLabel(t.sessions)} без данных о токенах`
-                : t.costUsd === undefined
-                  ? `у моделей нет цены: ${t.unpricedModels.join(', ')}`
+                ? t('global.stats.noUsage', { sessions: sessionsLabel(tot.sessions) })
+                : tot.costUsd === undefined
+                  ? t('global.stats.noPrice', { models: tot.unpricedModels.join(', ') })
                   : missing > 0
                     ? missingLabel(missing)
-                    : `${sessionsLabel(t.sessions)}, у всех есть данные`}
+                    : t('global.stats.allKnown', { sessions: sessionsLabel(tot.sessions) })}
             </span>
             <div className="stats-facts">
-              <div title={t.tokens && tokenBreakdown(t.tokens)}>
-                <span>Токены</span>
+              <div title={tot.tokens && tokenBreakdown(tot.tokens)}>
+                <span>{t('global.stats.tokens')}</span>
                 <b>{tokens !== undefined ? formatTokens(tokens) : <NoData />}</b>
-                {t.tokens && <em>ответ {formatTokens(t.tokens.output)} · из кэша {tokens ? Math.round((t.tokens.cacheRead / tokens) * 100) : 0}%</em>}
+                {tot.tokens && (
+                  <em>{t('global.stats.tokensSub', { output: formatTokens(tot.tokens.output), pct: tokens ? Math.round((tot.tokens.cacheRead / tokens) * 100) : 0 })}</em>
+                )}
               </div>
               <div>
-                <span>Время агентов</span>
-                <b>{formatAgentTime(t.agentMs)}</b>
-                <em>{sessionsLabel(t.sessions)}</em>
+                <span>{t('global.stats.agentTime')}</span>
+                <b>{formatAgentTime(tot.agentMs)}</b>
+                <em>{sessionsLabel(tot.sessions)}</em>
               </div>
               <div>
-                <span>Задач завершено</span>
+                <span>{t('global.stats.tasksDone')}</span>
                 <b>{stats.tasks.done}</b>
-                <em>из {stats.tasks.total} на доске</em>
+                <em>{t('global.stats.ofBoard', { total: stats.tasks.total })}</em>
               </div>
               <div>
-                <span>Цена задачи</span>
-                <b>{perTask !== undefined ? formatUsd(perTask) : <NoData title="Нет стоимости или ни одной завершённой задачи за период" />}</b>
-                {stats.taskTime.avgActiveMs !== undefined && <em>в работе ~{formatAgentTime(stats.taskTime.avgActiveMs)}</em>}
+                <span>{t('global.stats.taskCost')}</span>
+                <b>{perTask !== undefined ? formatUsd(perTask) : <NoData title={t('global.stats.taskCostNone')} />}</b>
+                {stats.taskTime.avgActiveMs !== undefined && <em>{t('global.stats.inWork', { time: formatAgentTime(stats.taskTime.avgActiveMs) })}</em>}
               </div>
             </div>
           </div>
           <div className="stats-chart-box">
             <div className="stats-chart-head">
-              <span className="stats-muted grow">{stats.range === 'all' ? 'За всё время' : 'По дням'}</span>
-              <div className="stats-subtabs" role="tablist" aria-label="Метрика графика">
-                {CHART_METRICS.filter((x) => allowed.includes(x.value)).map((x) => (
-                  <button key={x.value} role="tab" aria-selected={m === x.value} className={m === x.value ? 'on' : ''} onClick={() => onMetric(x.value)}>
-                    {x.label}
+              <span className="stats-muted grow">{stats.range === 'all' ? t('global.stats.allTime') : t('global.stats.byDay')}</span>
+              <div className="stats-subtabs" role="tablist" aria-label={t('global.stats.metricAria')}>
+                {CHART_METRICS.filter((x) => allowed.includes(x)).map((x) => (
+                  <button key={x} role="tab" aria-selected={m === x} className={m === x ? 'on' : ''} onClick={() => onMetric(x)}>
+                    {metricLabel(x)}
                   </button>
                 ))}
               </div>
@@ -230,27 +238,27 @@ function Dashboard({ stats, columns, metric, onMetric }: { stats: ProjectStats; 
 
       <div className="stats-grid3">
         <section className="stats-panel">
-          <h3>Модели</h3>
-          <ShareList rows={stats.byModel} byCost={usage} colorRows={stats.byModel} empty="Нет данных о моделях" />
+          <h3>{t('global.stats.models')}</h3>
+          <ShareList rows={stats.byModel} byCost={usage} colorRows={stats.byModel} empty={t('global.stats.modelsEmpty')} />
         </section>
         <section className="stats-panel">
-          <h3>Роли</h3>
-          <ShareList rows={stats.byRole} byCost={usage} colorRows={stats.byRole} empty="Агенты не запускались" />
+          <h3>{t('global.stats.roles')}</h3>
+          <ShareList rows={stats.byRole} byCost={usage} colorRows={stats.byRole} empty={t('global.stats.rolesEmpty')} />
         </section>
         <section className="stats-panel">
-          <h3>Задачи на доске</h3>
+          <h3>{t('global.stats.board')}</h3>
           <BoardBlock stats={stats} columns={columns} />
         </section>
       </div>
 
       <div className="stats-grid2">
         <section className="stats-panel">
-          <h3>Самые дорогие глобальные задачи</h3>
-          <TopTable rows={stats.byGlobalTask} head="Глобальная задача" usage={usage} />
+          <h3>{t('global.stats.topGlobal')}</h3>
+          <TopTable rows={stats.byGlobalTask} head={t('global.stats.topGlobalHead')} usage={usage} />
         </section>
         <section className="stats-panel">
-          <h3>Самые дорогие задачи</h3>
-          <TopTable rows={stats.byTask} head="Задача" usage={usage} />
+          <h3>{t('global.stats.topTasks')}</h3>
+          <TopTable rows={stats.byTask} head={t('global.stats.topTasksHead')} usage={usage} />
         </section>
       </div>
     </>
@@ -259,23 +267,24 @@ function Dashboard({ stats, columns, metric, onMetric }: { stats: ProjectStats; 
 
 /** Сколько «неизвестного» в итоге: сессии без токенов и модели без цены. Всё известно — блока нет. */
 function UnknownNotice({ stats }: { stats: ProjectStats }): React.JSX.Element | null {
-  const t = stats.totals
-  const missing = missingSessions(t)
-  if (missing === 0 && t.unpricedModels.length === 0) return null
+  const t = useT()
+  const tot = stats.totals
+  const missing = missingSessions(tot)
+  if (missing === 0 && tot.unpricedModels.length === 0) return null
   return (
     <div className="stats-notice" role="note">
       <Icon.info />
       <div>
         {missing > 0 && (
           <p>
-            <b>Нет данных о токенах по {missing} из {sessionsLabel(t.sessions)}.</b> Агент не пишет транскрипт с токенами,
-            транскрипт удалён или сессия запущена до появления статистики. В итоги они входят временем, но не токенами и стоимостью.
+            <b>{t('global.stats.missingTitle', { missing, sessions: sessionsLabel(tot.sessions) })}</b> {t('global.stats.missingText')}
           </p>
         )}
-        {t.unpricedModels.length > 0 && (
+        {tot.unpricedModels.length > 0 && (
           <p>
-            <b>Нет цены для {t.unpricedModels.length > 1 ? 'моделей' : 'модели'} {t.unpricedModels.join(', ')}</b> — {formatTokens(t.unpricedTokens)} токенов
-            не вошли в стоимость. Цены — таблица <code>MODEL_PRICES</code> в <code>packages/core/src/pricing.ts</code>.
+            <b>{t('global.stats.noPriceModel', { count: tot.unpricedModels.length, models: tot.unpricedModels.join(', ') })}</b>
+            {' — '}{t('global.stats.noPriceTokens', { tokens: formatTokens(tot.unpricedTokens) })}{' '}
+            <Rich text={t('global.stats.pricesAt')} slots={{ table: <code>MODEL_PRICES</code>, file: <code>packages/core/src/pricing.ts</code> }} />
           </p>
         )}
       </div>
@@ -306,6 +315,7 @@ function useWidth(fallback: number): [React.RefObject<HTMLDivElement | null>, nu
 
 /** Столбики по периоду простым SVG: стоимость — стопкой по моделям, остальное — одной серией. */
 function DayChart({ stats, metric }: { stats: ProjectStats; metric: ChartMetric }): React.JSX.Element {
+  const t = useT()
   const [hover, setHover] = useState<number | null>(null)
   const chart = buildChart(stats, metric)
   const [boxRef, W] = useWidth(CH.W)
@@ -323,7 +333,7 @@ function DayChart({ stats, metric }: { stats: ProjectStats; metric: ChartMetric 
 
   return (
     <div className="stats-chart" ref={boxRef} onMouseLeave={() => setHover(null)}>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${CHART_METRICS.find((x) => x.value === metric)?.label ?? ''} по ${chart.bucket === 'day' ? 'дням' : chart.bucket === 'week' ? 'неделям' : 'месяцам'}`}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t(`global.stats.chart.${chart.bucket}`, { metric: metricLabel(metric) })}>
         {ticks.map((v) => (
           <g key={v}>
             <line className="grid" x1={pl} x2={W - pr} y1={y(v)} y2={y(v)} />
@@ -358,7 +368,7 @@ function DayChart({ stats, metric }: { stats: ProjectStats; metric: ChartMetric 
         <div className={`stats-tip ${hover > n / 2 ? 'left' : ''}`} style={{ left: `${((pl + (hover + 0.5) * slot) / W) * 100}%` }}>
           <b>{hovered.title}</b>
           {!hovered.active ? (
-            <span className="stats-muted">нет активности</span>
+            <span className="stats-muted">{t('global.stats.noActivity')}</span>
           ) : (
             <>
               {metric === 'cost' && hovered.segments.map((s) => (
@@ -367,8 +377,8 @@ function DayChart({ stats, metric }: { stats: ProjectStats; metric: ChartMetric 
                   <span>{formatUsd(s.value)}</span>
                 </div>
               ))}
-              <div className="r"><span>{CHART_METRICS.find((x) => x.value === metric)?.label}</span><span>{formatMetric(hovered.total, metric)}</span></div>
-              {metric !== 'done' && <div className="r"><span>Задач завершено</span><span>{hovered.days.reduce((a, d) => a + d.tasksDone, 0)}</span></div>}
+              <div className="r"><span>{metricLabel(metric)}</span><span>{formatMetric(hovered.total, metric)}</span></div>
+              {metric !== 'done' && <div className="r"><span>{t('global.stats.tasksDone')}</span><span>{hovered.days.reduce((a, d) => a + d.tasksDone, 0)}</span></div>}
             </>
           )}
         </div>
@@ -392,6 +402,7 @@ function roundTop(x: number, y: number, w: number, h: number): string {
 
 /** Блок долей «Модели» / «Роли»: первые 5 строк, полоса — стоимость, без токенов — время агентов. */
 function ShareList({ rows, byCost, colorRows, empty }: { rows: StatsRow[]; byCost: boolean; colorRows: StatsRow[]; empty: string }): React.JSX.Element {
+  const t = useT()
   const items = shareItems(rows, byCost)
   if (items.length === 0) return <div className="stats-muted">{empty}</div>
   return (
@@ -406,12 +417,13 @@ function ShareList({ rows, byCost, colorRows, empty }: { rows: StatsRow[]; byCos
           <div className="stats-share" aria-hidden="true"><i style={{ width: `${Math.max(2, share * 100)}%`, background: seriesColor(colorRows, row.key) }} /></div>
         </div>
       ))}
-      {rows.length > items.length && <span className="stats-hint">и ещё {rows.length - items.length}</span>}
+      {rows.length > items.length && <span className="stats-hint">{t('global.stats.more', { count: rows.length - items.length })}</span>}
     </div>
   )
 }
 
 function BoardBlock({ stats, columns }: { stats: ProjectStats; columns: BoardColumn[] }): React.JSX.Element {
+  const t = useT()
   const parts = statusParts(stats.tasks.byStatus, columns)
   const total = parts.reduce((a, p) => a + p.count, 0)
   const d = stats.dispatches
@@ -419,7 +431,7 @@ function BoardBlock({ stats, columns }: { stats: ProjectStats; columns: BoardCol
   return (
     <>
       {total > 0 && (
-        <div className="stats-stackbar" role="img" aria-label="Задачи по колонкам">
+        <div className="stats-stackbar" role="img" aria-label={t('global.stats.boardAria')}>
           {parts.filter((p) => p.count > 0).map((p) => <i key={p.id || 'other'} title={`${p.title}: ${p.count}`} style={{ width: `${(p.count / total) * 100}%`, background: p.color }} />)}
         </div>
       )}
@@ -428,29 +440,32 @@ function BoardBlock({ stats, columns }: { stats: ProjectStats; columns: BoardCol
           <span key={p.id || 'other'}><i className="swatch" style={{ background: p.color }} /><span className="x" title={p.title}>{p.title}</span><b>{p.count}</b></span>
         ))}
       </div>
-      <div className="stats-hint">Прогоны агентов за период: {d.total}{stats.coordinatorLaunches > 0 && ` · запусков координатора ${stats.coordinatorLaunches}`}</div>
+      <div className="stats-hint">
+        {t('global.stats.runs', { count: d.total })}
+        {stats.coordinatorLaunches > 0 && ` · ${t('global.stats.coordLaunches', { count: stats.coordinatorLaunches })}`}
+      </div>
       {d.total > 0 && (
         <div className="stats-chips">
-          <span className="chip ok stats-chip">сдано {d.done}</span>
-          {d.failed > 0 && <span className="chip warn stats-chip">упало {d.failed}</span>}
-          {d.unknown > 0 && <span className="chip stats-chip" title="Сессия закрылась без orca-board done">исход неизвестен {d.unknown}</span>}
-          {d.running > 0 && <span className="chip live stats-chip">идут сейчас {d.running}</span>}
+          <span className="chip ok stats-chip">{t('global.stats.runDone', { count: d.done })}</span>
+          {d.failed > 0 && <span className="chip warn stats-chip">{t('global.stats.runFailed', { count: d.failed })}</span>}
+          {d.unknown > 0 && <span className="chip stats-chip" title={t('global.stats.runUnknownTitle')}>{t('global.stats.runUnknown', { count: d.unknown })}</span>}
+          {d.running > 0 && <span className="chip live stats-chip">{t('global.stats.runRunning', { count: d.running })}</span>}
         </div>
       )}
       <div className="stats-muted">
         {tt.samples > 0 ? (
           <>
-            {tt.avgActiveMs !== undefined && <>В работе в среднем <b>{formatAgentTime(tt.avgActiveMs)}</b></>}
+            {tt.avgActiveMs !== undefined && <Rich text={t('global.stats.avgActive')} slots={{ time: <b>{formatAgentTime(tt.avgActiveMs)}</b> }} />}
             {tt.avgActiveMs !== undefined && tt.avgLeadMs !== undefined && ', '}
-            {tt.avgLeadMs !== undefined && <>от старта до «Готово» — <b>{formatAgentTime(tt.avgLeadMs)}</b></>}
-            {` (${tt.samples} ${tt.samples === 1 ? 'задача' : 'задач'})`}
+            {tt.avgLeadMs !== undefined && <Rich text={t('global.stats.avgLead')} slots={{ time: <b>{formatAgentTime(tt.avgLeadMs)}</b> }} />}
+            {` ${t('global.stats.samples', { count: tt.samples })}`}
           </>
         ) : (
-          'Время задач — когда за период завершится хоть одна'
+          t('global.stats.taskTimeNone')
         )}
       </div>
       <div className="stats-muted">
-        Глобальных задач: <b>{stats.globalTasks.total}</b>, закрыто за период <b>{stats.globalTasks.done}</b>
+        <Rich text={t('global.stats.globals')} slots={{ total: <b>{stats.globalTasks.total}</b>, done: <b>{stats.globalTasks.done}</b> }} />
       </div>
     </>
   )
@@ -460,7 +475,8 @@ const TOP_ROWS = 8
 
 /** Топ по стоимости (main уже отсортировал): задача, стоимость, время агентов, доля. Без токенов — только время. */
 function TopTable({ rows, head, usage }: { rows: StatsRow[]; head: string; usage: boolean }): React.JSX.Element {
-  if (rows.length === 0) return <div className="stats-muted">За период агенты по задачам не запускались</div>
+  const t = useT()
+  if (rows.length === 0) return <div className="stats-muted">{t('global.stats.topEmpty')}</div>
   const items = shareItems(rows, usage, TOP_ROWS)
   return (
     <div className="stats-tbl-wrap">
@@ -468,9 +484,9 @@ function TopTable({ rows, head, usage }: { rows: StatsRow[]; head: string; usage
         <thead>
           <tr>
             <th>{head}</th>
-            {usage && <th className="r">Стоимость</th>}
-            <th className="r">Время агентов</th>
-            <th className="share-col" title={`Доля ${usage ? 'стоимости' : 'времени агентов'}`}>доля</th>
+            {usage && <th className="r">{t('global.stats.cost')}</th>}
+            <th className="r">{t('global.stats.agentTime')}</th>
+            <th className="share-col" title={t(usage ? 'global.stats.shareCost' : 'global.stats.shareTime')}>{t('global.stats.share')}</th>
           </tr>
         </thead>
         <tbody>
@@ -481,7 +497,7 @@ function TopTable({ rows, head, usage }: { rows: StatsRow[]; head: string; usage
                 <td className="r">
                   <Cost usage={row} />
                   {row.sessionsWithUsage > 0 && row.sessionsWithUsage < row.sessions && (
-                    <span className="stats-hint stats-sess" title="Сессий с данными о токенах"> ({row.sessionsWithUsage}/{row.sessions})</span>
+                    <span className="stats-hint stats-sess" title={t('global.stats.sessionsWithUsage')}> ({row.sessionsWithUsage}/{row.sessions})</span>
                   )}
                 </td>
               )}
@@ -491,7 +507,7 @@ function TopTable({ rows, head, usage }: { rows: StatsRow[]; head: string; usage
           ))}
         </tbody>
       </table>
-      {rows.length > items.length && <span className="stats-hint">и ещё {rows.length - items.length}</span>}
+      {rows.length > items.length && <span className="stats-hint">{t('global.stats.more', { count: rows.length - items.length })}</span>}
     </div>
   )
 }

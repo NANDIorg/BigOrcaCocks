@@ -7,6 +7,8 @@ import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, t
 import { useNow } from './useNow'
 import { globalTaskActions } from './globalReview'
 import { PriorityBadge } from './Priority'
+import { useT } from './i18n'
+import { fullStamp, relativeTime, subtasksLabel } from './globalFormat'
 import { BOARD_SORT_OPTIONS, GLOBAL_BOARD_SORT_KEY, compareGlobals, formatStamp, readSort, writeSort, type BoardSort } from './boardSort'
 
 /**
@@ -49,24 +51,8 @@ interface Props {
   typeTitle?(global: GlobalTask): string | undefined
 }
 
-/** «только что», «5 мин назад», «3 ч назад», иначе дата. */
-export function relativeTime(ts: number, now = Date.now()): string {
-  const min = Math.floor((now - ts) / 60000)
-  if (min < 1) return 'только что'
-  if (min < 60) return `${min} мин назад`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `${h} ч назад`
-  return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
-
-/** «1 подзадача», «3 подзадачи», «5 подзадач». */
-export function subtasksLabel(n: number): string {
-  const mod10 = n % 10
-  const mod100 = n % 100
-  if (mod10 === 1 && mod100 !== 11) return `${n} подзадача`
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} подзадачи`
-  return `${n} подзадач`
-}
+// Живут в globalFormat.ts (тестируются без React); отсюда их берут лента «Ждут вас» и «Итог и цель».
+export { relativeTime, subtasksLabel }
 
 /**
  * Время глобальной задачи. chip (карточка) — только своё время в работе; line (внутри задачи) — два
@@ -103,12 +89,13 @@ function DurationText({ global, part, variant, now }: DurationPartProps & { now:
 
 /** Полоса прогресса «готово / всего» с подписью; без подзадач — спокойная подпись. */
 export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.Element {
+  const t = useT()
   const { done, total } = global.progress
   const pct = total ? Math.round((done / total) * 100) : 0
   return (
-    <div className="g-progress" title={total ? `Готово ${done} из ${total}` : 'Подзадач пока нет'}>
+    <div className="g-progress" title={total ? t('global.progress.title', { done, total }) : t('global.progress.noneTitle')}>
       <div className="g-progress-line">
-        <span>{total ? `${done} / ${subtasksLabel(total)}` : 'Нет подзадач'}</span>
+        <span>{total ? `${done} / ${subtasksLabel(total)}` : t('global.progress.none')}</span>
         {total > 0 && <span>{pct}%</span>}
       </div>
       <div className="g-bar" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}>
@@ -122,7 +109,8 @@ export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.El
 export function GlobalBoard(props: Props): React.JSX.Element {
   const { columns, globals, liveCoordinators, attention, requests, tasks, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
   const { onResolveRequest, onOpenInbox, onAccept, onReturn, typeTitle } = props
-  const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
+  const t = useT()
+  const taskTitle = new Map(tasks.map((task) => [task.id, task.title]))
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [sort, setSort] = useState<BoardSort>(() => readSort(GLOBAL_BOARD_SORT_KEY))
@@ -147,8 +135,8 @@ export function GlobalBoard(props: Props): React.JSX.Element {
   return (
     <div className="board-wrap">
       <div className="board-toolbar">
-        <span className="board-sort-label">Сортировка:</span>
-        <div className="segmented" role="group" aria-label="Сортировка карточек">
+        <span className="board-sort-label">{t('global.board.sort')}</span>
+        <div className="segmented" role="group" aria-label={t('global.board.sortAria')}>
           {BOARD_SORT_OPTIONS.map((o) => (
             <button
               key={o.value}
@@ -198,10 +186,10 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                 {items.length === 0 && dragOver !== column.id && (
                   <div className="g-empty">
                     {auto
-                      ? 'Здесь появятся задачи, где подзадачи ждут вашего ответа'
+                      ? t('global.board.emptyAuto')
                       : column.kind === 'review'
-                        ? 'Сюда попадают задачи, когда все подзадачи сделаны: проверьте результат'
-                        : 'Здесь пока пусто — перетащите карточку сюда'}
+                        ? t('global.board.emptyReview')
+                        : t('global.board.empty')}
                   </div>
                 )}
                 {items.map((g) => {
@@ -217,7 +205,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                       tabIndex={0}
                       draggable
                       data-global-id={g.id}
-                      aria-label={`Глобальная задача «${g.title}», ${g.progress.done} из ${g.progress.total} готово. Enter — открыть`}
+                      aria-label={t('global.board.cardAria', { title: g.title, done: g.progress.done, total: g.progress.total })}
                       onDragStart={(e) => {
                         e.dataTransfer.setData('text/global-id', g.id)
                         e.dataTransfer.effectAllowed = 'move'
@@ -238,15 +226,15 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                     >
                       <div className="card-tools" onClick={(e) => e.stopPropagation()}>
                         {actions.startCoordinator && (
-                          <button type="button" className="card-tool" title="Запустить координатора" aria-label="Запустить координатора" onClick={() => onStartCoordinator(g)}>
+                          <button type="button" className="card-tool" title={t('global.action.start')} aria-label={t('global.action.start')} onClick={() => onStartCoordinator(g)}>
                             <Icon.play />
                           </button>
                         )}
-                        <button type="button" className="card-tool" title="Редактировать" aria-label="Редактировать" onClick={() => onEdit(g)}>
+                        <button type="button" className="card-tool" title={t('global.action.edit')} aria-label={t('global.action.edit')} onClick={() => onEdit(g)}>
                           <Icon.edit />
                         </button>
                         {!g.inbox && (
-                          <button type="button" className="card-tool danger" title="Удалить" aria-label="Удалить" onClick={() => onRemove(g)}>
+                          <button type="button" className="card-tool danger" title={t('global.action.remove')} aria-label={t('global.action.remove')} onClick={() => onRemove(g)}>
                             <Icon.trash />
                           </button>
                         )}
@@ -258,11 +246,11 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                       <div className="g-card-chips">
                         <span className="g-chip status">{column.title}</span>
                         <PriorityBadge item={g} className="g-chip" />
-                        {g.inbox && <span className="g-chip">служебная</span>}
-                        {typeTitle?.(g) && <span className="g-chip task-type-chip" title="Тип задачи">{typeTitle(g)}</span>}
-                        {live && <span className="chip live">● координатор</span>}
-                        {g.waiting > 0 && <span className="g-chip warn">ждёт вашего ответа: {g.waiting}</span>}
-                        {att && att.review > 0 && <span className="g-chip review">на ревью: {att.review}</span>}
+                        {g.inbox && <span className="g-chip">{t('global.board.inbox')}</span>}
+                        {typeTitle?.(g) && <span className="g-chip task-type-chip" title={t('global.board.type')}>{typeTitle(g)}</span>}
+                        {live && <span className="chip live">{t('global.board.live')}</span>}
+                        {g.waiting > 0 && <span className="g-chip warn">{t('global.board.waiting', { count: g.waiting })}</span>}
+                        {att && att.review > 0 && <span className="g-chip review">{t('global.board.review', { count: att.review })}</span>}
                       </div>
                       {request && (
                         // Клики внутри запроса не открывают задачу, а перетаскивание из него не тащит карточку.
@@ -275,7 +263,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                             onResolve={(res) => onResolveRequest(request, res)}
                           />
                           <button type="button" className="btn-text g-card-inbox" onClick={() => onOpenInbox(request.id)}>
-                            {g.waiting > 1 ? `Открыть во Входящих · ещё ${g.waiting - 1}` : 'Открыть во Входящих'}
+                            {g.waiting > 1 ? t('global.board.openInboxMore', { count: g.waiting - 1 }) : t('global.board.openInbox')}
                           </button>
                         </div>
                       )}
@@ -283,35 +271,35 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                       {(actions.accept || actions.returnToWork) && (
                         <div className="g-card-review" onClick={(e) => e.stopPropagation()}>
                           {actions.accept && (
-                            <button type="button" className="btn-sm primary" onClick={() => onAccept(g)} title="Результат принят — в «Сделано»">
-                              Подтвердить
+                            <button type="button" className="btn-sm primary" onClick={() => onAccept(g)} title={t('global.action.acceptTitle')}>
+                              {t('global.action.accept')}
                             </button>
                           )}
                           {actions.returnToWork && (
                             <button
                               type="button"
                               className="btn-sm"
-                              title="Написать, что доделать, и перезапустить координатора"
+                              title={t('global.action.returnTitle')}
                               onClick={() => onReturn(g)}
                             >
-                              Вернуть в работу…
+                              {t('global.action.return')}
                             </button>
                           )}
                           {g.returns && g.returns.length > 0 && (
-                            <span className="g-card-returns" title="Сколько раз задачу возвращали с проверки">возвратов: {g.returns.length}</span>
+                            <span className="g-card-returns" title={t('global.board.returnsTitle')}>{t('global.board.returns', { count: g.returns.length })}</span>
                           )}
                         </div>
                       )}
                       {column.kind === 'done' && g.closedAt !== undefined ? (
-                        <div className="stamp">Завершено: {formatStamp(g.closedAt)}</div>
+                        <div className="stamp">{t('global.board.closedAt', { date: formatStamp(g.closedAt) })}</div>
                       ) : sort === 'updated' ? (
-                        <div className="stamp">Обновлено: {formatStamp(g.activityAt)}</div>
+                        <div className="stamp">{t('global.board.updatedAt', { date: formatStamp(g.activityAt) })}</div>
                       ) : null}
                       <div className="g-card-foot">
-                        <span title={new Date(g.activityAt).toLocaleString('ru-RU')}>{relativeTime(g.activityAt)}</span>
+                        <span title={fullStamp(g.activityAt)}>{relativeTime(g.activityAt)}</span>
                         {!g.inbox ? (
-                          <span>{g.closedAt !== undefined && 'закрыта · '}<GlobalDuration global={g} /></span>
-                        ) : g.closedAt !== undefined && <span>закрыта</span>}
+                          <span>{g.closedAt !== undefined && `${t('global.board.closed')} · `}<GlobalDuration global={g} /></span>
+                        ) : g.closedAt !== undefined && <span>{t('global.board.closed')}</span>}
                       </div>
                     </article>
                   )

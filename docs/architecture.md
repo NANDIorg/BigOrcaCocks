@@ -1678,6 +1678,12 @@ skills, тексты main (уведомления, диалоги, ошибки 
   `COLUMN_COLORS[].title`). В renderer их заменяют `priorityTitle()` (`taskPriority.ts`) и `columnColorTitle()`
   (`boardColumns.ts`). Названия колонок доски — данные проекта, их не переводим, как и дефолтные «Бэклог»,
   «Готовы» из `DEFAULT_COLUMNS`.
+- **Строка с элементами внутри** («В работе в среднем **3 ч**») — один ключ с параметром-слотом
+  (`'В работе в среднем {time}'`) и `<Rich text={t(…)} slots={{ time: <b>…</b> }} />` (`StatsCells.tsx`,
+  разбор — `richParts` в `globalFormat.ts`), а не склейка кусков фраз: порядок слов в языках разный.
+- **Ошибки «перезапустите приложение»** (`staleReviewMessage()`, `statsStaleMessage()`) сравнивать — на всех
+  языках (`isStaleStatsError`): язык могли сменить между запросом и ответом. Текст ошибок main не переводится,
+  поэтому регэкспы по нему (`reviewErrorMessage`) остаются русскими.
 - **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
   (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
   `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык

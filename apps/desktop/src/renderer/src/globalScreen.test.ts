@@ -5,6 +5,17 @@ import {
   coordinatorPill, currentStep, defaultTab, headerActions, launchChecklist, statusSteps, readTabChoice, resolveTab, showsLaunchHint, showsSummary, stepTab, tabAt, tabTitle, visibleTabs, writeTabChoice,
   type GlobalTabId, type TabStorage
 } from './globalScreen'
+import { setLocale } from './i18n'
+
+/** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
+function inEnglish(fn: () => void): void {
+  setLocale('en')
+  try {
+    fn()
+  } finally {
+    setLocale('ru')
+  }
+}
 
 const ALL = visibleTabs({})
 
@@ -213,4 +224,25 @@ test('пилюля: старый main без запусков — только �
 test('пилюля: незакрытый прошлый запуск без endedAt — время неизвестно, а не отрицательное', () => {
   const p = coordinatorPill({ live: false, waiting: false, sessions: [session({ model: 'M' })] }, 5 * H)
   assert.deepEqual(p.parts, ['M', '1-й запуск'])
+})
+
+test('английский интерфейс: вкладки, чек-лист, действия шапки и пилюля координатора', () => {
+  inEnglish(() => {
+    assert.deepEqual(ALL.map((id) => tabTitle(id, 'review')), ['Board', 'Summary & goal', 'Coordinator', 'History', 'Stats'])
+    assert.equal(tabTitle('overview', 'backlog'), 'Goal & details')
+    const g = { title: 'Export', description: 'PDF reports', progress: { total: 1 } }
+    assert.deepEqual(launchChecklist(g, 'Feature').map((c) => c.text), [
+      'Type “Feature” — roles and workflow are set',
+      'Goal is described',
+      '1 subtask already — the coordinator will continue from it'
+    ])
+    assert.equal(launchChecklist({ ...g, progress: { total: 4 } }, undefined)[2]!.text, '4 subtasks already — the coordinator will continue from them')
+    assert.deepEqual(headerActions({}, 'review', false).primary, { kind: 'accept', label: 'Accept' })
+    assert.deepEqual(headerActions({ waiting: 2 }, 'needs_input', true).primary, { kind: 'answer', label: 'Answer · 2', count: 2 })
+    assert.equal(coordinatorPill({ live: false, waiting: false }, 0).title, 'Coordinator not started')
+    const sessions = [{ agent: 'claude', startedAt: 0, endedAt: 60_000 }, { agent: 'claude', startedAt: 100_000, endedAt: 400_000 }] as AgentSession[]
+    assert.deepEqual(coordinatorPill({ live: false, waiting: false, sessions }, 0), {
+      state: 'finished', title: 'Coordinator finished', parts: ['Claude Code', 'run #2', '5 min'], live: false
+    })
+  })
 })

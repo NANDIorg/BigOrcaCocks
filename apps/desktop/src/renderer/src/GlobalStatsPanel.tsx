@@ -12,6 +12,7 @@ import {
 import { useNow } from './useNow'
 import { useStatsLoad } from './useStatsLoad'
 import { Icon } from './icons'
+import { useT } from './i18n'
 
 interface Props {
   projectId: string
@@ -34,6 +35,7 @@ interface Props {
  */
 export function GlobalStatsPanel(props: Props): React.JSX.Element {
   const { projectId, global, columns, tasks, dispatches, coordinatorLive, snapshot, onOpenTask } = props
+  const t = useT()
   const now = useNow()
   const snap = useRef(snapshot)
   snap.current = snapshot
@@ -47,15 +49,15 @@ export function GlobalStatsPanel(props: Props): React.JSX.Element {
   if (!load.stats) {
     return load.error ? (
       <div className="ts-state">
-        <span className="stats-error">Не удалось посчитать статистику: {load.error}</span>
-        <button type="button" className="btn-sm" onClick={load.reload}>Повторить</button>
+        <span className="stats-error">{t('global.stats.errorWith', { error: load.error })}</span>
+        <button type="button" className="btn-sm" onClick={load.reload}>{t('global.retry')}</button>
       </div>
     ) : (
-      <div className="stats-hint">Считаем статистику…</div>
+      <div className="stats-hint">{t('global.stats.loading')}</div>
     )
   }
 
-  const ids = new Set(tasks.map((t) => t.id))
+  const ids = new Set(tasks.map((task) => task.id))
   // Каждая идущая сессия подзадачи или её проверки тикает отдельно.
   const subtasksRunning = dispatches.filter((d) => ids.has(d.taskId) && d.endedAt === undefined).length
   const stats = advanceGlobalStats(load.stats, now, {
@@ -70,14 +72,14 @@ export function GlobalStatsPanel(props: Props): React.JSX.Element {
       {load.stale && <StaleNote />}
       {load.error && (
         <div className="ts-state">
-          <span className="stats-error">Не удалось обновить: {load.error}</span>
-          <button type="button" className="btn-sm" onClick={load.reload}>Повторить</button>
+          <span className="stats-error">{t('global.stats.refreshErrorWith', { error: load.error })}</span>
+          <button type="button" className="btn-sm" onClick={load.reload}>{t('global.retry')}</button>
         </div>
       )}
       <section className="gt-box">
-        <h3>Итог</h3>
+        <h3>{t('global.panel.total')}</h3>
         <StatFacts facts={globalFacts(stats)} />
-        <TimeBar title="По колонкам" parts={columnParts(stats.columns, columns)} empty="Время по колонкам пока не накопилось" />
+        <TimeBar title={t('global.panel.byColumn')} parts={columnParts(stats.columns, columns)} empty={t('global.panel.byColumnEmpty')} />
         {human && <div className="stats-hint ts-human"><Icon.info /> {human}</div>}
       </section>
 
@@ -91,18 +93,18 @@ export function GlobalStatsPanel(props: Props): React.JSX.Element {
       </div>
 
       <section className="gt-box">
-        <h3>Подзадачи по стоимости</h3>
+        <h3>{t('global.panel.top')}</h3>
         {top.length === 0 ? (
-          <div className="stats-hint">Агенты по подзадачам не запускались</div>
+          <div className="stats-hint">{t('global.panel.topEmpty')}</div>
         ) : (
           <div className="ts-table-wrap">
             <table className="stats-table ts-table">
               <thead>
                 <tr>
-                  <th>Подзадача</th>
-                  {usage && <th className="r">Стоимость</th>}
-                  <th className="r">Время агентов</th>
-                  <th className="share-col" title={`Доля ${usage ? 'стоимости' : 'времени агентов'}`}>доля</th>
+                  <th>{t('global.panel.subtask')}</th>
+                  {usage && <th className="r">{t('global.stats.cost')}</th>}
+                  <th className="r">{t('global.stats.agentTime')}</th>
+                  <th className="share-col" title={t(usage ? 'global.stats.shareCost' : 'global.stats.shareTime')}>{t('global.stats.share')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -110,7 +112,7 @@ export function GlobalStatsPanel(props: Props): React.JSX.Element {
                   <tr key={r.key || r.title}>
                     <td className="t">
                       {r.openable ? (
-                        <button type="button" className="btn-text ts-open" title={`Открыть: ${r.title}`} onClick={() => onOpenTask(r.key)}>
+                        <button type="button" className="btn-text ts-open" title={t('global.panel.open', { title: r.title })} onClick={() => onOpenTask(r.key)}>
                           <span className="x">{r.title}</span>
                         </button>
                       ) : (
@@ -124,18 +126,18 @@ export function GlobalStatsPanel(props: Props): React.JSX.Element {
                 ))}
               </tbody>
             </table>
-            {stats.byTask.length > top.length && <span className="stats-hint">и ещё {stats.byTask.length - top.length}</span>}
+            {stats.byTask.length > top.length && <span className="stats-hint">{t('global.stats.more', { count: stats.byTask.length - top.length })}</span>}
           </div>
         )}
       </section>
 
       <div className="ts-sides">
         <section className="gt-box">
-          <h3>Роли</h3>
+          <h3>{t('global.stats.roles')}</h3>
           <RolesTable rows={stats.byRole} />
         </section>
         <section className="gt-box">
-          <h3>Возвраты с «Проверки»</h3>
+          <h3>{t('global.panel.returns')}</h3>
           <Counters items={[returnsCounter(stats.returns)]} />
         </section>
       </div>

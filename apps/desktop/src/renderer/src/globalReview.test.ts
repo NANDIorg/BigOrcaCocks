@@ -2,14 +2,25 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { OrcaApi } from '../../shared/ipc'
 import {
-  STALE_RETURN_LIVE_MESSAGE,
-  STALE_REVIEW_MESSAGE,
+  staleReturnLiveMessage,
+  staleReviewMessage,
   globalReviewApi,
   globalTaskActions,
   returnHint,
   returnsNewestFirst,
   reviewErrorMessage
 } from './globalReview'
+import { setLocale } from './i18n'
+
+/** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
+function inEnglish(fn: () => void): void {
+  setLocale('en')
+  try {
+    fn()
+  } finally {
+    setLocale('ru')
+  }
+}
 
 test('globalTaskActions: на «Проверке» — подтвердить и вернуть, без запуска координатора', () => {
   assert.deepEqual(globalTaskActions({}, 'review', false), { startCoordinator: false, accept: true, returnToWork: true })
@@ -49,9 +60,9 @@ test('returnsNewestFirst: новые сверху, без возвратов —
 })
 
 test('globalReviewApi: старый preload без методов — «перезапустите приложение»', () => {
-  assert.throws(() => globalReviewApi(undefined), { message: STALE_REVIEW_MESSAGE })
+  assert.throws(() => globalReviewApi(undefined), { message: staleReviewMessage() })
   const old = { globalTasks: {} } as unknown as Partial<OrcaApi>
-  assert.throws(() => globalReviewApi(old), { message: STALE_REVIEW_MESSAGE })
+  assert.throws(() => globalReviewApi(old), { message: staleReviewMessage() })
 })
 
 test('globalReviewApi: новый preload — вызовы уходят в методы', async () => {
@@ -69,11 +80,21 @@ test('globalReviewApi: новый preload — вызовы уходят в ме�
 })
 
 test('reviewErrorMessage: нет хендлера в старом main — «перезапустите», остальное как есть', () => {
-  assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:accept'"), STALE_REVIEW_MESSAGE)
-  assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:returnToWork'"), STALE_REVIEW_MESSAGE)
+  assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:accept'"), staleReviewMessage())
+  assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:returnToWork'"), staleReviewMessage())
   assert.equal(reviewErrorMessage('глобальная задача не на проверке'), 'глобальная задача не на проверке')
   assert.equal(
     reviewErrorMessage("Error invoking remote method 'globalTasks:returnToWork': Error: координатор этой глобальной задачи ещё завершается — повторите через несколько секунд"),
-    STALE_RETURN_LIVE_MESSAGE
+    staleReturnLiveMessage()
   )
+})
+
+test('английский интерфейс: подсказка возврата и ошибки старого main', () => {
+  inEnglish(() => {
+    assert.equal(returnHint(false), 'The task moves to In progress, and a coordinator terminal opens with this note.')
+    assert.match(returnHint(true), /^The previous coordinator is still open/)
+    assert.throws(() => globalReviewApi(undefined), { message: /old main\/preload version without global task Review/ })
+    assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:accept'"), staleReviewMessage())
+    assert.match(staleReviewMessage(), /Restart the app/)
+  })
 })

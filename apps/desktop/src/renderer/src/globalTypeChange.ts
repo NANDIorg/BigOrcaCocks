@@ -1,12 +1,16 @@
 import { canChangeRunType, type ColumnKind, type GlobalTask, type TaskType } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
+import { t } from './i18n'
 
 /**
  * Смена типа глобальной задачи в модалке правки (docs/nested-kanban.md → «Тип задачи»): пока задача не начата
  * (`canChangeRunType` из core — то же правило, что проверит main), тип — селект; после — только бейдж.
  */
 
-export const STALE_TYPE_CHANGE_MESSAGE = 'Приложение запущено со старой версией main/preload, где тип задачи ещё нельзя сменить. Перезапустите приложение.'
+/** Ошибка «старый main/preload не умеет менять тип» на текущем языке интерфейса. */
+export function staleTypeChangeMessage(): string {
+  return t('global.stale.typeChange')
+}
 
 /**
  * Варианты селекта типа при правке или undefined — тип только показывается (задача начата, «Входящие», старый main
@@ -41,13 +45,13 @@ export function typeChangeOptions(
 export function changeTypeApi(api: { globalTasks?: Partial<OrcaApi['globalTasks']> } | undefined): OrcaApi['globalTasks']['changeType'] {
   const globalTasks = api?.globalTasks
   const fn = globalTasks?.changeType
-  if (typeof fn !== 'function') throw new Error(STALE_TYPE_CHANGE_MESSAGE)
+  if (typeof fn !== 'function') throw new Error(staleTypeChangeMessage())
   return async (id, typeId) => {
     try {
       return await fn.call(globalTasks, id, typeId)
     } catch (e) {
       if (/No handler registered for 'globalTasks:changeType'/.test(e instanceof Error ? e.message : String(e))) {
-        throw new Error(STALE_TYPE_CHANGE_MESSAGE)
+        throw new Error(staleTypeChangeMessage())
       }
       throw e
     }

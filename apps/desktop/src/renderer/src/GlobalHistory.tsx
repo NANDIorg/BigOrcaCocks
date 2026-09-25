@@ -2,6 +2,8 @@ import type React from 'react'
 import { useMemo, useState } from 'react'
 import { globalBoardColumns, type AgentSession, type BoardColumn, type GlobalTask } from '@orca-board/core'
 import { useNow } from './useNow'
+import { useT } from './i18n'
+import { fullStamp } from './globalFormat'
 import { formatClock, globalTimeline, groupByDay, TIMELINE_COLLAPSED, visibleTimeline } from './globalTimeline'
 
 export interface GlobalHistoryProps {
@@ -21,6 +23,7 @@ export interface GlobalHistoryProps {
  * необязательно: со старым main ленты может не быть — тогда подсказка перезапустить приложение.
  */
 export function GlobalHistory({ global, columns = [], coordinatorSessions }: GlobalHistoryProps): React.JSX.Element {
+  const t = useT()
   const now = useNow()
   const [expanded, setExpanded] = useState(false)
   // Названия — как на глобальной доске («Проверка»), остальные колонки проекта — запасом для статусов вне неё.
@@ -31,15 +34,14 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions }: Glo
   const days = groupByDay(shown, now)
 
   return (
-    <section className="gt-box gt-hist" aria-label="История">
+    <section className="gt-box gt-hist" aria-label={t('global.history.title')}>
       <h3>
-        История
+        {t('global.history.title')}
         {events.length > 0 && <span className="muted gt-sub">{events.length}</span>}
       </h3>
       {events.length === 0 ? (
         <p className="muted gt-stub">
-          История пока пуста
-          {global.statusHistory === undefined ? ' — если задача не новая, перезапустите приложение: старая версия не присылает историю.' : '.'}
+          {t(global.statusHistory === undefined ? 'global.history.emptyStale' : 'global.history.empty')}
         </p>
       ) : (
         <>
@@ -49,7 +51,7 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions }: Glo
               <ol className="gt-hist-list">
                 {day.events.map((e) => (
                   <li key={e.key} className={`gt-hist-row gt-hist-${e.kind}${e.highlight ? ' is-return' : ''}`}>
-                    <span className="gt-hist-at" title={new Date(e.at).toLocaleString('ru-RU')}>
+                    <span className="gt-hist-at" title={fullStamp(e.at)}>
                       {e.approx ? '≈ ' : ''}{formatClock(e.at)}
                     </span>
                     <span className="gt-hist-pt" style={e.color ? ({ '--c': e.color } as React.CSSProperties) : undefined} aria-hidden />
@@ -68,11 +70,11 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions }: Glo
           ))}
           {hidden > 0 && (
             <button type="button" className="btn-text gt-hist-more" onClick={() => setExpanded(true)}>
-              Показать ранние события ({hidden})
+              {t('global.history.more', { count: hidden })}
             </button>
           )}
           {expanded && events.length > TIMELINE_COLLAPSED && (
-            <button type="button" className="btn-text gt-hist-more" onClick={() => setExpanded(false)}>Свернуть</button>
+            <button type="button" className="btn-text gt-hist-more" onClick={() => setExpanded(false)}>{t('global.history.collapse')}</button>
           )}
         </>
       )}
