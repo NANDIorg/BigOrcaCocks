@@ -969,6 +969,7 @@ export function App(): React.JSX.Element {
           tasks={tasks}
           runs={snap.runs}
           dispatches={snap.dispatches}
+          workflowOf={(runId) => workflowForRun(runId, snap.runs, active, taskTypes)}
           focus={inboxFocus}
           onClose={() => setShowInbox(false)}
           onOpenTerminal={openTerminalForTask}

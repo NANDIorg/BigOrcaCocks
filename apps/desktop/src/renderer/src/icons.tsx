@@ -43,6 +43,7 @@ export const Icon = {
 export const WfNodeIcon: Record<WfNodeType, () => React.JSX.Element> = {
   start: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M10 8.5v7l5.5-3.5z" /></svg>,
   work: (): React.JSX.Element => <svg {...base}><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" /></svg>,
+  ask: (): React.JSX.Element => <svg {...base}><path d="M4 5h16v11H9l-5 4z" /><path d="M10 9.5a2 2 0 1 1 2.8 1.8c-.5.2-.8.6-.8 1.2M12 14.5h.01" /></svg>,
   gate: Icon.shield,
   human: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>,
   condition: (): React.JSX.Element => <svg {...base}><path d="M12 3l9 9-9 9-9-9z" /><path d="M10 10a2 2 0 1 1 2.8 1.8c-.5.2-.8.6-.8 1.2M12 16h.01" /></svg>,

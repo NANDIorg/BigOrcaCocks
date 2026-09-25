@@ -19,7 +19,7 @@ export const WF_OUTCOME_LABELS: Record<WfOutcome, string> = {
 }
 
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
-export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'gate', 'human', 'condition', 'merge', 'end', 'start']
+export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'human', 'condition', 'merge', 'end', 'start']
 
 /** Свободный id вида `<prefix>`, `<prefix>_2`, `<prefix>_3`… */
 export function uniqueId(prefix: string, taken: Iterable<string>): string {
@@ -38,6 +38,8 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
   switch (type) {
     case 'gate':
       return { ...pos, type, roleId: '' }
+    case 'ask':
+      return { ...pos, type, instructions: '' }
     case 'condition': {
       const work = wf.nodes.find((n) => n.type === 'work')
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }

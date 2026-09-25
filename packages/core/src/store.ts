@@ -200,9 +200,17 @@ export class TaskStore {
       const own = this.migrateRunActiveTime()
       const started = this.migrateRunStarted()
       const synced = this.syncRunActiveTime()
-      const format = snap.formatVersion === undefined
+      const format = this.migrateFormatVersion(snap.formatVersion)
       if (format || history || active || priority || runPriority || stale || requests || stages || stageHistory || migrated || own || started || synced) this.persistence?.save(this.snapshot())
     }
+  }
+
+  /**
+   * Файл без `formatVersion` — до появления поля (версия 1): само поле проставит `snapshot()`, а конструктору
+   * остаётся сохранить файл. Возвращает true, если версии не было. Проверка «из будущего» — `assertStoreFormat`, до миграций.
+   */
+  private migrateFormatVersion(formatVersion: unknown): boolean {
+    return formatVersion === undefined
   }
 
   /**

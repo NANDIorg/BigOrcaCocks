@@ -297,11 +297,13 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 валидации в редакторе.
 
 - **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 1`. Ноды (`WfNode`): `start`, `work`
-  (без `roleId` — роль задачи), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
+  (без `roleId` — роль задачи), `ask` («Вопрос человеку»: `roleId?`, `instructions` — обязательны; агент спрашивает
+  человека штатным `orca-board ask`, `stageAction` — тот же `start_worker`, что у `work`; `WfWorkStage.type`
+  различает этапы; `Question.nodeId` — нода, на которой спросили), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
   (закрытый список предикатов `WfCondition`: `attempts` — сколько раз задача заходила в ноду, `role` — роль
   задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `end` (`merged`). У каждой ноды
   опциональные `title` и `column`. Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
-  `WF_PORTS` (gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
+  `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
 - **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
   ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
   ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).
@@ -401,17 +403,25 @@ Store хранит позицию и решает, куда задача пер�
   (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS`. Недопустимая операция возвращает граф как есть.
 - **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
-  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы пустое значение — «роль задачи»,
-  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека/работы, у работы — «Показать человеку»
+  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы и «Вопроса человеку» пустое значение — «роль задачи»,
+  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
+  валидация, поэтому `patchNode` не удаляет пустую строку), у работы — «Показать человеку»
   (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N или роль
-  рабочей задачи), «слито» у конца, колонка доски (не у старта и условия). На каждый порт — select «куда ведёт»
+  рабочей задачи), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
   (`setPortTarget`: пусто — снять переход), поэтому граф собирается с клавиатуры без холста. Выбран переход — его цель
   и удаление; ничего не выбрано — список нод кнопками. Проблемы валидации ноды — списком под формой.
 - **`workflowForm.ts`** — логика инспектора и раздела: `patchNode` (пустые необязательные поля удаляются),
-  `changeNodeType`, `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
+  `changeNodeType` (роль и инструкция переносятся между `work`/`gate`/`human`/`ask`, где они есть), `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
   (`exportWorkflowJson`, `parseWorkflowJson` — проверяет только форму `{version, nodes[], edges[]}`, смысл —
   `validateWorkflow`; старую версию поднимает `migrateWorkflow`, будущую отвергает), пресет `addRetryLimit(wf, 3)`
   и проверка старого main/preload (`workflowApi`, `WORKFLOW_STALE_MESSAGE`, `isStaleWorkflowError`).
+- **Вопрос человеку в редакторе**: `ask` — в палитре (`WF_ADDABLE_TYPES`, сразу после «Работы»), в select «Тип»
+  (`WF_TYPE_ORDER`), в легенде («Вопрос человеку», `WF_NODE_HELP.ask`), иконка-«облачко» и цвет «Нужен ответ»
+  (`.wf-node--ask`), подпись на холсте — «роль …» / «роль задачи». Роль на `ask` учитывает и удаление роли
+  (`workflowNodesWithRole` в `roleRemoval.ts`). В Инбоксе вопрос с этапа `ask` (`HumanRequest.nodeId`) получает метку
+  «Этап «<нода>»» в шапке `RequestCard` (`requestStageLabel` в `cardState.ts`; название — из графа прогона,
+  `workflowOf` → `workflowForRun`; нода пропала из графа — метки нет). Пилюля этапа на карточке доски для `ask` та же,
+  что у `work` (`stageLabel`).
 - **Пресет «3 отказа → человек»** (`addRetryLimit`): каждый `reject` гейта-агента, ведущий прямо в работу,
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
@@ -983,7 +993,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»); `projects:list`, `projects:setActive`, `projects:remove`,
   `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы; ролей, графа, правил и разрешений у проекта нет);
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
@@ -1245,10 +1255,13 @@ UI работает с активным проектом; воркеры и ко
   его добавит задача IPC-контракта.
 - **`formatVersion` доски.** `StoreSnapshot.formatVersion` (`STORE_FORMAT_VERSION = 1`, `packages/core/src/store.ts`).
   Файл без поля — до его появления: `TaskStore` при загрузке проставляет версию и сохраняет (`migrateFormatVersion` в
-  общем списке миграций конструктора). Версия выше известной — `assertStoreFormat` бросает «доска сохранена более
+  `packages/core/src/store.ts`, в общем списке миграций конструктора). Версия выше известной — `assertStoreFormat` бросает «доска сохранена более
   новой версией … — обновите приложение» **до любых записей**, файл остаётся как есть (образец —
   `validateWorkflow`). Мусорная версия (не целое, < 1) — тоже отказ. Поднимать константу нужно, когда формат меняется
   так, что старый код потеряет данные; новое необязательное поле версию не поднимает.
+  `ProjectManager.store(id)` для такой доски бросает при каждом вызове, а `inProgressCounts()` (IPC
+  `projects:inProgressCounts`, метод сокета `projects`) её пропускает — ключа проекта нет, потребители берут `?? 0`, и
+  одна такая доска не роняет счётчики остальных.
 - **Бэкап при смене версии.** `backupOnVersionChange(userData, app.getVersion())` (`src/main/backup.ts`) вызывается
   в `whenReady` ДО `new ProjectManager` — миграции переписывают файлы, а бэкап хранит формат старой версии. Если
   `lastRunVersion` из `projects.json` отличается от текущей, `projects.json` и `boards/*.json` копируются в
@@ -1507,6 +1520,51 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 На Windows уведомления показываются только при заданном AppUserModelID — `app.setAppUserModelId('orca-board')`
 в `app.whenReady()` (`src/main/index.ts`).
 
+## Язык интерфейса (i18n, `renderer/src/i18n/`)
+
+Свой лёгкий модуль без зависимостей: `t()` с параметрами, множественное число через `Intl.PluralRules`,
+форматирование через `Intl`. Языки — `ru` (по умолчанию) и `en`. Переводится только UI renderer: промпты агентов,
+skills, тексты main (уведомления, диалоги, ошибки IPC) и введённые человеком названия (колонки, роли, типы) — нет.
+
+- **Словари по областям** — отдельные файлы `i18n/ru/<область>.ts` и `i18n/en/<область>.ts`, чтобы задачи
+  перевода разных экранов не правили один файл: `common` (кнопки, состояния, единицы измерения), `settings`
+  (окно «Настройки»), `board` (доска, карточки, модалка задачи), `shell` (App, инбокс, лента внимания, координатор,
+  ассистент, терминал), `global` (глобальные задачи, статистика), `config` («О проекте»: роли, воркфлоу, типы задач,
+  документация). Области собраны в `i18n/dict.ts` (`RU`, `DICTS`). Ключи внутри области плоские, с точками
+  (`'general.title'`); в `t()` — с именем области: `t('settings.general.title')`. Тип `TKey` — объединение всех
+  ключей: опечатка — ошибка typecheck.
+- **ru — эталон ключей.** `ru/*.ts` — `export default {…} satisfies AreaDict`; `en/*.ts` —
+  `satisfies AreaTranslation<typeof ru>`: пропущенный или лишний ключ в en — ошибка типа. Тест
+  `renderer/src/i18n.test.ts` дополнительно сверяет ключи, plural-формы и параметры `{name}` во всех областях.
+- **Сообщение** — строка с параметрами `{name}` (`t('settings.nav.typeUsage', { count: 3 })`) или формы
+  множественного числа: ru — `{ one, few, many }`, en — `{ one, other }`; число — параметр `count`, форму выбирает
+  `pluralCategory(locale, count)`. Старый `plural.ts` (три русские формы) — только для ещё не переведённых строк.
+- **API** (`i18n/index.ts`): в компоненте — `const t = useT()` (перерисует компонент при смене языка), язык —
+  `useLocale()`; в модулях логики (`.ts`, тестируются под node) — `t()` и `getLocale()` на текущем языке.
+  `translate(locale, key, params)` — чистая функция для тестов. Смена языка — `setLocale()`: подписчики
+  `useSyncExternalStore` перерисовываются, корень `Root` в `main.tsx` зовёт `useLocale()` и пересоздаёт `<App />`,
+  поэтому обновляются и компоненты без `useT()` (кроме обёрнутых в `memo`). Нет ключа в словаре языка — русский
+  текст, нет и там — сам ключ.
+- **Форматирование** (`i18n/format.ts`): `intlLocale()` (`ru-RU` / `en-US`), `formatInteger`, `formatFixed`,
+  `formatShort`, `formatDateTime`, `formatDuration` (единицы — ключи `common.unit.*`). На них переведены
+  `duration.ts` (`formatDuration` — реэкспорт) и числа в `statsFormat.ts` (деньги, токены, время агентов, оси).
+  Не пиши `toLocaleString('ru-RU')` и `replace('.', ',')` — бери эти функции.
+- **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
+  (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
+  `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык
+  русский (`settingsLocale`). Язык системы не угадываем: `navigator.language` в Electron — язык самого приложения,
+  `en-US` даже при русской macOS (`AppleLanguages = ru-RU`), и все обновившиеся получили бы английский. При старте
+  окна `initLocale` (`main.tsx`) сразу ставит язык из кэша `localStorage['orca.locale']` — чтобы английский
+  интерфейс не мигал русским, — затем из настроек main. Старый preload без `window.orca.app` или ошибка IPC —
+  кэш или русский, без падения; старый main, который отбросил `language`, — язык меняется до перезапуска,
+  в разделе «Общие» ошибка `common.staleApp`.
+- **Переключатель** «Язык / Language» — «Настройки → Общие» (`settings/GeneralSection.tsx`), сегменты
+  «Русский» / «English» (названия — каждое на своём языке, `LOCALE_NAMES`). Язык меняется сразу, до ответа main.
+
+**Добавить строку:** ключ в `i18n/ru/<область>.ts` и тот же ключ в `i18n/en/<область>.ts`, в компоненте —
+`t('<область>.<ключ>')`. **Добавить область:** файлы в `ru/` и `en/` и строки в `RU` и `DICTS.en` в `i18n/dict.ts`.
+Правило: новый UI-текст — только через `t()`, ключ сразу в ru и en.
+
 ## Кроссплатформенность
 
 Поддерживаются macOS и Windows (x64). Всё платформозависимое — ветки `process.platform === 'win32'`
@@ -1557,8 +1615,9 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 `cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
 `pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
 
-Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac`, dmg arm64 + x64;
-`dist:win` — `electron-builder --win`. Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
+Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac --publish never`, dmg + zip
+arm64 и x64; `dist:win` — `electron-builder --win --publish never`; `dist:publish` — те же сборки mac и win с
+`--publish always` (нужен `GH_TOKEN`), см. «Выпуск релиза». Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
 папки) → `orca-board-<версия>-x64.exe` и `portable` x64 → `orca-board-<версия>-portable-x64.exe`
 (отдельный `artifactName`, иначе portable перезаписывал бы установщик). В `Resources/cli` попадают
 обе обёртки CLI — `orca-board` и `orca-board.cmd`. Windows-сборка делается кросс с macOS; тестировать
@@ -1575,6 +1634,51 @@ ad-hoc, и приложение падает при запуске. Провер
 Скачанная сборка всё равно не проходит Gatekeeper («Apple не удалось подтвердить…»), её открывают через
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
 
+### Выпуск релиза (`publish` в `electron-builder.yml`, скрипт `dist:publish`)
+
+Релизы — GitHub Releases публичного репозитория `NANDIorg/BigOrcaCocks`. `publish: {provider: github,
+owner, repo, releaseType: draft}` в `electron-builder.yml` — публикация создаёт **черновик** релиза с тегом
+`v<version>`, человек проверяет его и публикует сам. Токен в конфиг не кладётся. Поле `repository` в
+`apps/desktop/package.json` указывает на тот же репозиторий (метаданные пакета).
+Обычные `dist`/`dist:mac`/`dist:win` вызывают electron-builder с `--publish never`: локальная сборка ничего не
+выкладывает даже при заданном `GH_TOKEN`.
+
+Что генерирует сборка (проверено `dist:mac` и `dist:win`, всё в `apps/desktop/release/`):
+
+| Файл | Откуда | Зачем |
+|---|---|---|
+| `orca-board-<v>-arm64.zip`, `-x64.zip` | `mac.target: zip` | то, что скачивает автообновление macOS (dmg на месте не подменить) |
+| `orca-board-<v>-arm64.dmg`, `-x64.dmg` | `mac.target: dmg` | ручная установка |
+| `orca-board-<v>-x64.exe` | `win.target: nsis` | установщик Windows и цель `electron-updater` |
+| `orca-board-<v>-portable-x64.exe` | `win.target: portable` | portable, обновление — только «скачать новый exe» |
+| `latest-mac.yml` | mac-сборка | манифест обновлений macOS |
+| `latest.yml` | nsis | манифест обновлений Windows (portable в него не входит) |
+| `*.blockmap` (zip, dmg, nsis-exe) | electron-builder | дифференциальная загрузка `electron-updater`; для zip-установщика macOS не обязателен |
+
+Про манифесты: `latest-mac.yml` **один на обе архитектуры** — в `files` лежат zip и dmg для arm64 и x64, а верхнеуровневые
+`path`/`sha512` указывают на x64-zip (это артефакт порядка сборки, не «текущая» архитектура).
+Клиент macOS обязан выбирать запись из `files` по своей архитектуре (`-arm64.zip` / `-x64.zip`), а не по `path`.
+Имена в `url` — без базового пути, относительно ассетов релиза, поэтому файлы нельзя переименовывать
+после сборки: sha512 и имена в yml должны совпадать с загруженными ассетами.
+
+Чек-лист релиза:
+
+1. Версия поднята коммитом `chore: release vX.Y.Z` (одновременно `/package.json` и `apps/desktop/package.json`).
+2. `pnpm typecheck && pnpm test`.
+3. `GH_TOKEN=<токен с правом repo> pnpm --filter @orca-board/desktop run dist:publish` — собирает mac
+   (arm64 + x64), затем win и загружает ассеты в черновик релиза `vX.Y.Z` (второй вызов дописывает в тот же черновик).
+   Токен — только в окружении команды, не в файлах.
+4. Открыть черновик на GitHub и проверить, что есть **все** ассеты: 2 zip, 2 dmg, `orca-board-<v>-x64.exe`,
+   `orca-board-<v>-portable-x64.exe`, `latest-mac.yml`, `latest.yml`, blockmap-файлы. Без `.yml` приложение
+   обновления не найдёт: манифест — единственное, что оно читает; без zip macOS нечего скачивать.
+5. Нажать «Publish release» (снять «Set as a pre-release», если стоит). Пока релиз — черновик, он не виден
+   клиентам и не отдаётся по `releases/latest`: обновления начнутся только после публикации.
+6. После публикации проверить `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml`
+   и `.../latest.yml` (должны отдавать yml версии релиза).
+
+Если релиз опубликован без `.yml` или с неполным набором — дописать недостающие ассеты в опубликованный релиз
+(Edit → Attach binaries) из `apps/desktop/release/`; версию менять не нужно.
+
 ## Грабли разработки
 
 - Запись состояния шла прямо в `projects.json` / `boards/<id>.json` (`writeFileSync`), а битый JSON при загрузке молча
@@ -1585,6 +1689,13 @@ ad-hoc, и приложение падает при запуске. Провер
   сломался бы (поймал тест).
 - Тесты, отдающие `TaskStore` готовый снапшот и проверяющие «не сохраняется» (`saved.length === 0`), должны класть в него
   `formatVersion: STORE_FORMAT_VERSION`, иначе миграция формата сохранит файл (`active-time.test.ts`).
+
+- Тесты под `node --test` резолвят импорты хуком `apps/desktop/test/ts-resolve.mjs`: без него node не находит
+  модуль без расширения и не открывает папку. Хук пробует `<путь>.ts`, затем `<путь>/index.ts` — поэтому
+  `import { t } from './i18n'` работает и в тестах, и в vite. Новый вид импорта в модулях с тестами — проверяй хук.
+
+- В компоненте, где `const t = useT()`, не называй `t` локальные переменные (`const t = await types.create(…)`,
+  `(t: TaskType) => …`): тень ломает перевод, а typecheck ругается невнятно («not callable», «used before declaration»).
 
 - `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has
