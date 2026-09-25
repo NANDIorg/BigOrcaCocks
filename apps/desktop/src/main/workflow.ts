@@ -14,7 +14,9 @@ import {
 // Исполнитель воркфлоу (docs/workflow.md): store решает, куда задача переходит (`advanceStage`, чистый
 // `nextStage` в core), здесь выполняются эффекты этапа — запуск воркера, задача-проверка, запрос человеку,
 // мерж, конец. Координатор в жизненном цикле рабочей задачи больше не участвует. Это движок прогонов старого формата
-// (без `Run.workflowScope`) и «Входящих»; воркфлоу глобальной задачи — `workflow-run.ts`.
+// (без `Run.workflowScope`), «Входящих» и **пути подзадачи** в воркфлоу глобальной задачи: подзадача этапа «Работа»
+// идёт по `work.subflow` (нет — `defaultSubflow()`), граф прогона ведёт `workflow-run.ts`. Кому принадлежит событие или
+// задача, решает `taskEngine`: один исполнитель на событие.
 
 export interface WorkflowDeps {
   store: TaskStore
@@ -39,8 +41,30 @@ export interface WorkflowDeps {
 /** Сколько переходов подряд без ожидания (мерж → условие → мерж…) допускается, прежде чем считать граф зациклившимся. */
 const MAX_STEPS = 50
 
+/**
+ * Исполнитель задачи: `legacy` — прежний воркфлоу по подзадачам (прогон старого формата, «Входящие»), `path` — путь
+ * подзадачи этапа «Работа» (этот модуль), `run` — воркфлоу глобальной задачи (`workflow-run.ts`: проверки и вопросы
+ * этапов, подзадачи вне этапа). `handleWorkflowEvents` берёт `legacy` и `path`, `handleRunWorkflowEvents` — `run`:
+ * событие не обрабатывают оба и не пропускают оба.
+ */
+export type TaskEngine = 'legacy' | 'path' | 'run'
+
+export function taskEngine(deps: Pick<WorkflowDeps, 'store' | 'run'>, task: Task): TaskEngine {
+  const { store } = deps
+  if (task.runId === undefined || store.getRun(task.runId)?.workflowScope !== 'run') return 'legacy'
+  // Проверку ветки подзадачи создаёт только путь; проверка ветки прогона (`gateFor.runId`) — граф прогона.
+  if (task.gateFor) return task.gateFor.taskId !== undefined ? 'path' : 'run'
+  if (task.answerFor || !task.stageOf) return 'run'
+  return stageOfNode(deps, task)?.type === 'work' ? 'path' : 'run'
+}
+
+/** Нода графа прогона, к которой привязана подзадача (`Task.stageOf`). */
+function stageOfNode(deps: Pick<WorkflowDeps, 'store' | 'run'>, task: Task): WfNode | undefined {
+  return deps.store.runWorkflow(task.runId, fallback(deps, task)).nodes.find((n) => n.id === task.stageOf?.nodeId)
+}
+
 /** Запасной граф для store (`runWorkflow`): роли и граф типа прогона задачи. */
-function fallback(deps: WorkflowDeps, task: Task): RunWorkflowFallback {
+function fallback(deps: Pick<WorkflowDeps, 'run'>, task: Task): RunWorkflowFallback {
   const t = deps.run(task.runId)
   return { roleIds: t.roles.map((r) => r.id), ...(t.workflow ? { workflow: t.workflow } : {}) }
 }
@@ -55,10 +79,15 @@ function mustTask(deps: WorkflowDeps, taskId: string): Task {
   return task
 }
 
-/** Нода, на которой стоит задача, в графе её прогона. */
+/** Граф, по которому ходит задача: путь ноды «Работа» у подзадачи прогона, иначе граф её прогона (`TaskStore.taskWorkflow`). */
+function graphOf(deps: WorkflowDeps, task: Task): Workflow {
+  return deps.store.taskWorkflow(task, fallback(deps, task))
+}
+
+/** Нода, на которой стоит задача, в её графе. */
 function stageNode(deps: WorkflowDeps, task: Task): WfNode | undefined {
   if (!task.stage) return undefined
-  return deps.store.runWorkflow(task.runId, fallback(deps, task)).nodes.find((n) => n.id === task.stage!.nodeId)
+  return graphOf(deps, task).nodes.find((n) => n.id === task.stage!.nodeId)
 }
 
 function message(e: unknown): string {
@@ -137,7 +166,8 @@ function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction, defer
   for (let step = 0; step < MAX_STEPS; step += 1) {
     const task = store.getTask(taskId)
     if (!task) return undefined
-    const node = store.runWorkflow(task.runId, fallback(deps, task)).nodes.find((n) => n.id === action.nodeId)
+    const graph = graphOf(deps, task)
+    const node = graph.nodes.find((n) => n.id === action.nodeId)
     switch (action.type) {
       case 'start_worker':
         if (deferWorker) return action
@@ -192,7 +222,7 @@ function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction, defer
           // Как замечания при reject: если `error` ведёт в «Работу», воркер увидит причину в промпте.
           store.updateTask(taskId, { feedback: run.text })
           note = { title: `Git-операция «${action.operation}» не удалась`, text: run.text }
-          if (!store.runWorkflow(task.runId, fallback(deps, task)).edges.some((e) => e.from === node.id && e.outcome === 'error')) {
+          if (!graph.edges.some((e) => e.from === node.id && e.outcome === 'error')) {
             store.blockStage(taskId, `нода «${wfNodeTitle(node)}»: ${run.text}; у ноды нет перехода «error» — добавьте его в воркфлоу (например, к человеку)`)
             return
           }
@@ -408,8 +438,8 @@ function handleEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
     if (!e.taskId || (e.type !== 'worker_done' && e.type !== 'escalation' && e.type !== 'question_answered')) continue
     const task = deps.store.getTask(e.taskId)
     if (!task || task.answerFor) continue
-    // Воркфлоу прогона (`workflowScope: 'run'`) ведёт `workflow-run.ts`: подзадачи по графу не ходят.
-    if (task.runId !== undefined && deps.store.getRun(task.runId)?.workflowScope === 'run') continue
+    // Граф прогона (проверки и вопросы этапов, подзадачи вне этапа) ведёт `workflow-run.ts`; путь подзадачи — этот модуль.
+    if (taskEngine(deps, task) === 'run') continue
     try {
       if (e.type === 'question_answered') {
         restartAsk(deps, task, e.payload.workerLive === true)
