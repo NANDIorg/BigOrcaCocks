@@ -85,3 +85,16 @@ test('удаление роли из типа задачи предупрежд�
   // Без типа (роль не из библиотеки) строки нет.
   assert.ok(!removalConsequences('developer').includes(TASK_TYPE_RUNS_LOSS))
 })
+
+test('роль на этапе «Вопрос человеку» тоже считается занятой', () => {
+  const wf = defaultWorkflow([{ id: 'reviewer' }])
+  const withAsk: Workflow = {
+    ...wf,
+    nodes: [...wf.nodes, { id: 'ask', type: 'ask', title: 'Уточнение', x: 0, y: 0, roleId: 'role_x', instructions: 'о чём спросить' }]
+  }
+  assert.deepEqual(workflowNodesWithRole(withAsk, 'role_x'), ['Уточнение'])
+  assert.match(removalConsequences('role_x', undefined, withAsk).join('\n'), /«Уточнение»/)
+  // ask без роли роль не занимает.
+  const noRole: Workflow = { ...wf, nodes: [...wf.nodes, { id: 'ask', type: 'ask', x: 0, y: 0, instructions: 'x' }] }
+  assert.deepEqual(workflowNodesWithRole(noRole, 'role_x'), [])
+})
