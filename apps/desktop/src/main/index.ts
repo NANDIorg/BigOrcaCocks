@@ -63,7 +63,7 @@ else app.on('second-instance', () => { if (app.isReady()) showWindow() })
 let win: BrowserWindow | null = null
 let projects: ProjectManager
 let updater: Updater
-/** Push и уборка worktree веток глобальных задач (`run-branch.ts`): попытки помнит между изменениями доски. */
+/** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
 const runBranchSync = new RunBranchSync({ isAlive })
 /** Выход подтверждён (или подтверждать нечего) — before-quit больше не перехватываем. */
 let quitting = false
@@ -207,7 +207,6 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
   return {
     socketPath: SOCKET_PATH,
     projectId,
-    git: projects.gitSettings(projectId),
     permissionMode: type.permissionMode,
     roles: type.roles,
     typeTitle: type.title,
@@ -333,7 +332,7 @@ function workflowDeps(projectId: string): WorkflowDeps {
       return { roles: t.roles, ...(workflow ? { workflow } : {}) }
     },
     startWorker: (taskId, opts) => runWorker(taskId, p.id, undefined, undefined, opts),
-    mergeTarget: (task) => mergeTarget(p.store, p.root, task, projects.gitSettings(p.id))
+    mergeTarget: (task) => mergeTarget(p.store, p.root, task)
   }
 }
 
@@ -637,7 +636,6 @@ function registerIpc(): void {
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
-  handle('projects:setGit', (_e, id: string, patch: unknown) => projects.setGitSettings(id, patch))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
   handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   handle('projects:add', async (_e, typeId?: string, path?: string) => {
@@ -805,7 +803,7 @@ app.whenReady().then(() => {
     closeDoneWorkers(store)
     // Закрытие и «Сделано» глобальной задачи — тоже любой путь (runs finish, перенос, выход координатора).
     const project = projects.get(projectId)
-    if (project) runBranchSync.sync(store, project.root, projects.gitSettings(projectId))
+    if (project) runBranchSync.sync(store, project.root)
     refreshTray()
   })
   projects.onEvents(notify)

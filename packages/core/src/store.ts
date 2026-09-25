@@ -200,9 +200,10 @@ export class TaskStore {
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
       const started = this.migrateRunStarted()
+      const runGit = this.migrateRunGit()
       const synced = this.syncRunActiveTime()
       const format = this.migrateFormatVersion(snap.formatVersion)
-      if (format || history || active || priority || runPriority || stale || requests || stages || stageHistory || migrated || own || started || synced) this.persistence?.save(this.snapshot())
+      if (format || history || active || priority || runPriority || stale || requests || stages || stageHistory || migrated || own || started || runGit || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -374,6 +375,22 @@ export class TaskStore {
    * Остальные (в бэклоге, без координатора и подзадач) остаются без поля — тип им ещё можно сменить.
    * «Входящие» не трогаем: их тип не меняется в любом случае. Возвращает true, если что-то поменялось.
    */
+  /**
+   * `Run.git` до отказа от настроек веток хранил итог автоматического push (`pushedAt`, `pushError`): push больше
+   * не делается, поля убираются, чтобы не показывать устаревший статус. Возвращает true, если что-то убрано.
+   */
+  private migrateRunGit(): boolean {
+    let changed = false
+    for (const run of this.runs.values()) {
+      const g = run.git as (Run['git'] & { pushedAt?: unknown; pushError?: unknown }) | undefined
+      if (!g || (!('pushedAt' in g) && !('pushError' in g))) continue
+      delete g.pushedAt
+      delete g.pushError
+      changed = true
+    }
+    return changed
+  }
+
   private migrateRunStarted(): boolean {
     let changed = false
     for (const run of this.runs.values()) {

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunBranchSettings, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand, taskWorktreePath } from './git'
@@ -33,8 +33,6 @@ export interface WorkerEnvContext {
   workflow?: Workflow
   /** Тип нового прогона координатора: id, снимок и граф уходят в `Run.typeId`, `Run.taskType`, `Run.workflow`. */
   type?: RunTypeInput
-  /** Ветки глобальных задач проекта (`Project.git`): заводить ли ветку фичи, от чего и как назвать. */
-  git: RunBranchSettings
 }
 
 /** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
@@ -205,7 +203,7 @@ export function startWorker(
   // заводим `orca/<id>`. Нет worktree на диске (конец без мержа, удалили руками) — ставим на ту же ветку.
   const branch = task.branch ?? `orca/${task.id}`
   const worktree = task.worktree ?? taskWorktreePath(repoRoot, task.id)
-  const runGit = ensureRunBranch(store, repoRoot, task.runId, ctx.git)
+  const runGit = ensureRunBranch(store, repoRoot, task.runId)
   let fresh = false
   if (!existsSync(worktree)) {
     const branchExists = execFileSync('git', ['branch', '--list', branch], { cwd: repoRoot }).toString().trim() !== ''
@@ -360,7 +358,7 @@ export function startCoordinator(
   const sessionId = agentSessionId(spec)
   try {
     // Ветка фичи заводится до координатора: он декомпозирует по коду этой ветки, воркеры ответвятся от неё.
-    const cwd = ensureRunBranch(store, repoRoot, run.id, ctx.git)?.worktree ?? repoRoot
+    const cwd = ensureRunBranch(store, repoRoot, run.id)?.worktree ?? repoRoot
     root = images.length > 0 ? attachmentsRoot(cwd) : undefined
     if (root) pruneAttachments(store, root)
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
@@ -429,7 +427,7 @@ export function returnToWork(
  * Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из типа библиотеки по умолчанию.
  * Правил проекта у него нет: они относятся к агентам, работающим в репозитории проекта.
  */
-export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules' | 'git'>
+export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules'>
 
 /**
  * Ассистент доски: интерактивный агент роли assistant (нет такой роли — агент роли coordinator, нет и её — claude).

@@ -795,8 +795,6 @@ button:disabled { opacity: .45; cursor: default; }
 /* Ветка глобальной задачи в шапке: кнопка-чип (клик копирует имя), иконка по высоте строки. */
 .g-chip.gt-branch { display: inline-flex; align-items: center; gap: 4px; border: 0; cursor: pointer; font-family: ui-monospace, Menlo, monospace; }
 .g-chip.gt-branch svg { width: 12px; height: 12px; flex: none; }
-.g-chip.gt-branch.ok { color: var(--col-done); }
-.g-chip.gt-branch.warn { color: var(--col-input); background: rgba(232,176,74,.12); }
 /* Приоритет на глобальной карточке — те же цвета, что у .chip.priority, но заливкой, как у соседних .g-chip. */
 .g-chip.priority.urgent { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); font-weight: 600; }
 .g-chip.priority.high { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
@@ -990,11 +988,6 @@ button:disabled { opacity: .45; cursor: default; }
 .row-act-text b { font-weight: 500; }
 .row-act-text .hint { margin: 0; }
 /* «О проекте → Git»: поля с подписью и пояснением столбиком. */
-.git-form { display: flex; flex-direction: column; gap: 14px; }
-.git-form label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
-.git-form label .hint { margin: 0; font-size: 12px; }
-.git-form input:disabled { opacity: .5; }
-.git-actions { display: flex; align-items: center; gap: 10px; }
 .danger-zone .btn-sm.danger { color: var(--danger); border-color: rgba(239,107,107,.5); }
 .danger-zone .btn-sm.danger svg { width: 14px; height: 14px; }
 
