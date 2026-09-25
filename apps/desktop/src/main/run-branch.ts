@@ -1,10 +1,12 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
 import {
-  globalTaskTitle, isProtectedBranch, runBranchName, runBranchSettingsProblems,
+  globalTaskTitle, isProtectedBranch, prBaseBranch, runBranchName, runBranchSettingsProblems,
   type RunBranchSettings, type RunGit, type Task, type TaskStore
 } from '@orca-board/core'
+import { extraPathDirs } from './agents'
 import { currentBranch } from './git'
 import { OrcaError } from './i18n'
 
@@ -18,6 +20,8 @@ import { OrcaError } from './i18n'
 const NET_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
 const FETCH_TIMEOUT_MS = 20_000
 const PUSH_TIMEOUT_MS = 120_000
+const GH_TIMEOUT_MS = 60_000
+const PR_ERROR_LIMIT = 2000
 
 function git(cwd: string, args: string[], opts: { timeout?: number } = {}): string {
   return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', env: NET_ENV, ...opts }).trim()
@@ -156,19 +160,53 @@ export function removeRunWorktree(repoRoot: string, worktree: string): boolean {
   }
 }
 
+/**
+ * Окружение gh: без интерактивных запросов (логин, обновление) — приложение не может их показать. PATH — как у
+ * агентов (`workerPath()` в worker.ts): у GUI на macOS он урезан, и gh из Homebrew не находится. Считается на
+ * каждый вызов: `process.env.PATH` main подменяет при старте на PATH оболочки.
+ */
+function ghEnv(): NodeJS.ProcessEnv {
+  const path = [...(process.env.PATH ?? '').split(delimiter).filter(Boolean), ...extraPathDirs()].join(delimiter)
+  return { ...NET_ENV, PATH: path, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' }
+}
+
+/** Вызов `gh` без shell (CLAUDE.md); stdout при успехе, при ошибке — исключение `execFile` (`code`, `stderr`). */
+export function runGh(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('gh', args, { cwd, env: ghEnv(), timeout: GH_TIMEOUT_MS, encoding: 'utf8' }, (err, stdout, stderr) => {
+      if (!err) return resolve(stdout)
+      reject(Object.assign(err, { stderr }))
+    })
+  })
+}
+
+/** Текст `prError` по ошибке gh: нет gh — понятная подсказка, иначе stderr (как `pushError`). */
+function ghErrorText(e: unknown): string {
+  const err = e as { code?: string; stderr?: string | Buffer; message?: string }
+  if (err.code === 'ENOENT') return 'gh не установлен (https://cli.github.com)'
+  return (err.stderr?.toString().trim() || err.message || String(e)).slice(0, PR_ERROR_LIMIT)
+}
+
 export interface RunBranchSyncDeps {
   isAlive(ptyId: string): boolean
+  /** Вызов `gh` в каталоге; по умолчанию настоящий gh, тесты подставляют свой. */
+  gh?(args: string[], cwd: string): Promise<string>
 }
 
 /**
  * Хвост жизни ветки глобальной задачи, по любому изменению доски (`projects.onChange`):
  * - прогон закрыт (карточка на «Проверке») и включён push — `git push -u <remote> <ветка>` в фоне, итог в `Run.git`;
+ * - ветка отправлена и включён `pr` — `gh pr create` в базу (или подхват уже открытого PR), итог — `prUrl`/`prError`;
  * - карточка в «Сделано», координатора и воркеров нет — worktree убирается, ветка остаётся.
  * Состояние попыток — в памяти: неудачный push не повторяется на каждом изменении доски (только после нового
- * закрытия или перезапуска), неудачная уборка — до перезапуска.
+ * закрытия или перезапуска), неудачная попытка открыть PR — до нового push или перезапуска, неудачная уборка —
+ * до перезапуска.
  */
 export class RunBranchSync {
   private pushTried = new Map<string, number>()
+  /** Для какого `pushedAt` PR уже пробовали открыть: повтор — только после нового push. */
+  private prTried = new Map<string, number>()
+  private prOpening = new Set<string>()
   private pushing = new Set<string>()
   private keepWorktree = new Set<string>()
 
@@ -181,8 +219,9 @@ export class RunBranchSync {
       if (settings.push && run.closedAt !== undefined && (g.pushedAt ?? 0) < run.closedAt &&
           this.pushTried.get(run.id) !== run.closedAt && !this.pushing.has(run.id)) {
         this.pushTried.set(run.id, run.closedAt)
-        this.push(store, repoRoot, run.id, g.branch, settings.remote)
+        this.push(store, repoRoot, run.id, g.branch, settings)
       }
+      this.maybeOpenPr(store, repoRoot, run.id, settings)
       if (g.worktree && !this.keepWorktree.has(g.worktree) && this.idleDone(store, run.id)) {
         if (removeRunWorktree(repoRoot, g.worktree)) store.setRunGit(run.id, { worktree: undefined })
         else this.keepWorktree.add(g.worktree)
@@ -200,15 +239,68 @@ export class RunBranchSync {
   }
 
   /** Явный refspec: результат не зависит от `push.default` и upstream ветки у человека. */
-  private push(store: TaskStore, repoRoot: string, runId: string, branch: string, remote: string): void {
+  private push(store: TaskStore, repoRoot: string, runId: string, branch: string, settings: RunBranchSettings): void {
     this.pushing.add(runId)
     const ref = `refs/heads/${branch}`
-    execFile('git', ['push', '--quiet', '-u', remote, `${ref}:${ref}`], { cwd: repoRoot, env: NET_ENV, timeout: PUSH_TIMEOUT_MS }, (err, _out, stderr) => {
+    execFile('git', ['push', '--quiet', '-u', settings.remote, `${ref}:${ref}`], { cwd: repoRoot, env: NET_ENV, timeout: PUSH_TIMEOUT_MS }, (err, _out, stderr) => {
       this.pushing.delete(runId)
       // Глобальную задачу могли удалить, пока шёл push.
       if (!store.getRun(runId)?.git) return
       if (err) store.setRunGit(runId, { pushError: (stderr?.toString().trim() || err.message).slice(0, 2000) })
-      else store.setRunGit(runId, { pushedAt: Date.now(), pushError: undefined })
+      else {
+        store.setRunGit(runId, { pushedAt: Date.now(), pushError: undefined })
+        this.maybeOpenPr(store, repoRoot, runId, settings)
+      }
     })
+  }
+
+  /** PR открываем только для отправленной ветки без PR и один раз на каждый push (ошибка не повторяется сама). */
+  private maybeOpenPr(store: TaskStore, repoRoot: string, runId: string, settings: RunBranchSettings): void {
+    const g = store.getRun(runId)?.git
+    if (!settings.enabled || !settings.pr || !g?.pushedAt || g.prUrl) return
+    if (this.prTried.get(runId) === g.pushedAt || this.prOpening.has(runId)) return
+    this.prTried.set(runId, g.pushedAt)
+    this.prOpening.add(runId)
+    void this.openPr(store, repoRoot, runId, settings)
+      .finally(() => this.prOpening.delete(runId))
+  }
+
+  /**
+   * Уже открытый PR ветки подхватываем (идемпотентность: приложение перезапустили, PR открыли руками), иначе
+   * создаём обычный (не draft) PR в базу ветки. Текст — итоговая сводка координатора, без неё — описание задачи.
+   */
+  private async openPr(store: TaskStore, repoRoot: string, runId: string, settings: RunBranchSettings): Promise<void> {
+    const gh = this.deps.gh ?? runGh
+    const record = (patch: Partial<RunGit>): void => {
+      // Глобальную задачу могли удалить, пока шёл gh.
+      if (store.getRun(runId)?.git) store.setRunGit(runId, patch)
+    }
+    const run = store.getRun(runId)
+    const g = run?.git
+    if (!run || !g) return
+    const cwd = g.worktree && existsSync(g.worktree) ? g.worktree : repoRoot
+    let bodyDir: string | undefined
+    try {
+      try {
+        const view = JSON.parse(await gh(['pr', 'view', g.branch, '--json', 'url,state'], cwd)) as { url?: string; state?: string }
+        if (view.url && view.state === 'OPEN') return record({ prUrl: view.url, prError: undefined })
+      } catch (e) {
+        // Нет PR — gh выходит с ошибкой; нет самого gh — дальше create не поможет.
+        if ((e as { code?: string }).code === 'ENOENT') throw e
+      }
+      const base = prBaseBranch(g.base, settings.remote)
+      if (!base) return record({ prError: 'не удалось определить базу PR: укажите «От чего ответвлять»' })
+      bodyDir = mkdtempSync(join(tmpdir(), 'orca-pr-'))
+      const bodyFile = join(bodyDir, 'body.md')
+      writeFileSync(bodyFile, run.summary?.text?.trim() || run.objective)
+      const out = await gh(['pr', 'create', '--head', g.branch, '--base', base, '--title', globalTaskTitle(run), '--body-file', bodyFile], cwd)
+      const url = out.split('\n').map((l) => l.trim()).filter((l) => /^https?:\/\//.test(l)).pop()
+      if (!url) return record({ prError: `gh pr create не вернул ссылку: ${out.trim()}`.slice(0, PR_ERROR_LIMIT) })
+      record({ prUrl: url, prError: undefined })
+    } catch (e) {
+      record({ prError: ghErrorText(e) })
+    } finally {
+      if (bodyDir) rmSync(bodyDir, { recursive: true, force: true })
+    }
   }
 }
