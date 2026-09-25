@@ -95,6 +95,46 @@ export function withAgentRules(
   return withRoleInstructions(base, role)
 }
 
+/** Язык, на котором агенты доски общаются с человеком: язык интерфейса приложения в момент запуска агента. */
+export type AgentLanguage = 'ru' | 'en'
+
+/** Заголовок директивы языка в системном промпте агента (`agentLanguageDirective`). */
+export const AGENT_LANGUAGE_HEADING = '# Language'
+
+/**
+ * Директива языка общения с человеком. Служебные инструкции (skills) и промпты написаны по-русски и не переводятся,
+ * поэтому без директивы агент отвечал бы по-русски и человеку с английским интерфейсом. Директива — на языке ответа:
+ * так её не спутать с остальными инструкциями. Коммиты и комментарии в коде — по правилам проекта, а не по языку UI:
+ * это язык репозитория, его читают не только в приложении. Русский (и не выбранный) — пусто: поведение прежнее.
+ */
+export function agentLanguageDirective(language: AgentLanguage | undefined): string {
+  if (language !== 'en') return ''
+  return [
+    AGENT_LANGUAGE_HEADING,
+    '',
+    'The person uses the app in English. Write everything a human reads in English: answers and summaries ' +
+      '(`orca-board done`), questions and their options (`orca-board ask`), global task summaries ' +
+      '(`orca-board runs finish`), titles and specs of tasks you create, review feedback, and your messages in the terminal.',
+    'The instructions above are in Russian; that does not change the language you reply in.',
+    "Commit messages, code comments and documentation follow the project's own rules (CLAUDE.md, AGENTS.md, " +
+      'project rules above), not the interface language.'
+  ].join('\n')
+}
+
+/**
+ * Системный промпт агента, запущенного доской (воркер любой роли и любого этапа, координатор, ассистент):
+ * `withAgentRules`, затем директива языка (`agentLanguageDirective`) — последним блоком, чтобы роль и правила
+ * проекта её не перебили. Язык берётся в момент запуска: уже запущенные агенты смену языка не видят.
+ */
+export function agentSystemPrompt(
+  system: string,
+  opts: { projectRules?: string; role?: Pick<Role, 'title' | 'systemPrompt'>; language?: AgentLanguage }
+): string {
+  const base = withAgentRules(system, opts.projectRules, opts.role)
+  const directive = agentLanguageDirective(opts.language)
+  return directive ? `${base}\n\n${directive}` : base
+}
+
 // ---------- колонки ----------
 
 /** Системные виды колонок: по ним store переводит задачи автоматически. */

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION, COORDINATOR_RETURN_HEADING } from './prompts.ts'
 import { getAgent } from './agents.ts'
-import { withRoleInstructions, withAgentRules } from './types.ts'
+import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
 
 describe('builtinPromptKind', () => {
   it('координаторская инструкция только у роли coordinator', () => {
@@ -394,5 +394,52 @@ describe('воркфлоу в инструкциях: ревью и мерж в�
     assert.match(worker, /ветку сливает приложение/)
     assert.doesNotMatch(worker, /это делает координатор/)
     assert.match(worker, /Задача-проверка[\s\S]*orca-board review accept --task <id>[\s\S]*orca-board review reject --task <id> --feedback[\s\S]*orca-board done/)
+  })
+})
+
+describe('язык общения агентов с человеком (agentSystemPrompt)', () => {
+  const skills = ['worker', 'coordinator', 'assistant'].map((k) => readFileSync(new URL(`../../../skills/${k}.md`, import.meta.url), 'utf8'))
+  const role = { title: 'Разработчик', systemPrompt: 'пиши тесты' }
+
+  it('английский интерфейс — английская директива последним блоком у всех служебных инструкций', () => {
+    for (const skill of skills) {
+      const out = agentSystemPrompt(skill, { projectRules: 'правило', role, language: 'en' })
+      const at = out.lastIndexOf(`\n\n${AGENT_LANGUAGE_HEADING}\n`)
+      assert.ok(at > 0, 'нет директивы языка')
+      assert.ok(at > out.indexOf('# Инструкции роли'), 'директива идёт после роли')
+      assert.ok(at > out.indexOf('# Правила проекта'), 'директива идёт после правил проекта')
+      const directive = out.slice(at)
+      assert.match(directive, /Write everything a human reads in English/)
+      assert.match(directive, /orca-board done/)
+      assert.match(directive, /orca-board ask/)
+      assert.match(directive, /orca-board runs finish/)
+      assert.match(directive, /instructions above are in Russian/)
+      // Коммиты и комментарии — по правилам проекта, а не по языку интерфейса.
+      assert.match(directive, /Commit messages, code comments and documentation follow the project's own rules/)
+      assert.doesNotMatch(directive, /[а-яё]/i, 'директива целиком по-английски')
+    }
+  })
+
+  it('русский или не выбранный язык — промпт как раньше (withAgentRules)', () => {
+    for (const skill of skills) {
+      const before = withAgentRules(skill, 'правило', role)
+      assert.equal(agentSystemPrompt(skill, { projectRules: 'правило', role, language: 'ru' }), before)
+      assert.equal(agentSystemPrompt(skill, { projectRules: 'правило', role }), before)
+      assert.ok(!agentSystemPrompt(skill, { language: 'ru' }).includes(AGENT_LANGUAGE_HEADING))
+    }
+    assert.equal(agentLanguageDirective('ru'), '')
+    assert.equal(agentLanguageDirective(undefined), '')
+  })
+
+  it('без правил и роли (ассистент) — служебная инструкция и директива', () => {
+    const out = agentSystemPrompt('SYS', { language: 'en' })
+    assert.equal(out, `SYS\n\n${agentLanguageDirective('en')}`)
+  })
+
+  it('директива называет только команды, которые есть в CLI', () => {
+    const cli = readFileSync(new URL('../../cli/bin/orca-board.js', import.meta.url), 'utf8')
+    for (const [, cmd] of agentLanguageDirective('en').matchAll(/`orca-board ([a-z]+(?: [a-z]+)?)`/g)) {
+      assert.match(cli, new RegExp(`\\n  ${cmd} `), `нет команды ${cmd} в HELP`)
+    }
   })
 })

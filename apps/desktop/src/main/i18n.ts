@@ -6,7 +6,8 @@ import en from './strings/en'
  * Тексты main, которые видит человек (трей, уведомления, нативные диалоги, ошибки IPC), на языке интерфейса
  * (docs/architecture.md → «Язык интерфейса» → «main»). Свой маленький модуль, а не i18n renderer: тот тянет React.
  * Язык — модульное состояние, его ставит `index.ts` из `AppSettings.language` при старте и при `app:setSettings`.
- * Промпты, skills и всё, что читают агенты через сокет и CLI, остаётся русским.
+ * Промпты, skills и всё, что читают агенты через сокет и CLI, остаётся русским; язык, на котором агенты пишут человеку,
+ * задаёт директива `agentSystemPrompt` из `mainLocale()` при запуске агента (`worker.ts`).
  */
 
 export type MainLocale = AppLanguage

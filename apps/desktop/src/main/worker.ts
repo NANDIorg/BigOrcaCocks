@@ -3,12 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
-import { OrcaError } from './i18n'
+import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 
@@ -221,7 +221,7 @@ export function startWorker(
     ? undefined
     : store.taskWorkStage(task.id, { roleIds: ctx.roles.map((r) => r.id), ...(ctx.workflow ? { workflow: ctx.workflow } : {}) })
   const sessionId = agentSessionId(spec)
-  const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.worker, ctx.agentRules, role), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
+  const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.worker, { projectRules: ctx.agentRules, role, language: mainLocale() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -351,7 +351,7 @@ export function startCoordinator(
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
     if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
     const paths = root ? writeAttachments(root, run.id, images) : []
-    const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.coordinator, ctx.agentRules, role), coordinatorPrompt(objective, paths), {
+    const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.coordinator, { projectRules: ctx.agentRules, role, language: mainLocale() }), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
       shell: defaultShell(),
       model: role.model,
@@ -426,7 +426,7 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30): { 
   const role = assistantRole(ctx.roles)
   const spec = getAgent(role?.agent ?? 'claude')
   if (!spec) throw new Error(`неизвестный агент: ${role?.agent}`)
-  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.assistant, role), ASSISTANT_START_PROMPT, {
+  const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.assistant, { role, language: mainLocale() }), ASSISTANT_START_PROMPT, {
     permissionMode: ctx.permissionMode,
     shell: defaultShell(),
     model: role?.model,
