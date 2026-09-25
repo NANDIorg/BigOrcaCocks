@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { AgentSession, ColumnKind, GlobalTask } from '@orca-board/core'
 import { Icon } from './icons'
 import { globalTaskActions } from './globalReview'
-import { COORD_STATE_TEXT, coordState, knownSessions, sessionRows } from './coordPanel'
+import { coordState, coordStateText, knownSessions, sessionRows } from './coordPanel'
 import { appendTail, COORD_TAIL_LINES, mergeTail, tailFromRegistry, tailLines } from './coordTail'
+import { useT } from './i18n'
 
 export interface CoordinatorPanelProps {
   global: GlobalTask
@@ -80,6 +81,7 @@ function useCoordTail(ptyId: string | undefined): { lines: string[]; loading: bo
 
 /** Хвост вывода. Следует за концом, пока человек не прокрутил вверх, чтобы перечитать. */
 function CoordTail({ ptyId }: { ptyId: string }): React.JSX.Element {
+  const t = useT()
   const { lines, loading } = useCoordTail(ptyId)
   const ref = useRef<HTMLPreElement>(null)
   const pinned = useRef(true)
@@ -93,13 +95,13 @@ function CoordTail({ ptyId }: { ptyId: string }): React.JSX.Element {
       className="gt-coord-tail"
       tabIndex={0}
       role="log"
-      aria-label="Последний вывод координатора"
+      aria-label={t('shell.coord.tailLabel')}
       onScroll={(e) => {
         const el = e.currentTarget
         pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
       }}
     >
-      {lines.length > 0 ? lines.join('\n') : <span className="gt-coord-tail-empty">{loading ? 'Загружаю вывод…' : 'Вывода пока нет.'}</span>}
+      {lines.length > 0 ? lines.join('\n') : <span className="gt-coord-tail-empty">{loading ? t('shell.coord.tailLoading') : t('shell.coord.tailEmpty')}</span>}
     </pre>
   )
 }
@@ -110,6 +112,7 @@ function CoordTail({ ptyId }: { ptyId: string }): React.JSX.Element {
  */
 export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Element {
   const { global, statusKind, coordinatorPty, sessions, onStartCoordinator, onShowCoordinator, onStopCoordinator, onReturn } = props
+  const t = useT()
   const [confirmingStop, setConfirmingStop] = useState<string | undefined>(undefined)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -120,9 +123,9 @@ export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Elemen
 
   if (global.inbox) {
     return (
-      <section className="gt-box gt-coord-panel" aria-label="Координатор">
-        <h3>Координатор</h3>
-        <p className="muted">У «Входящих» нет координатора.</p>
+      <section className="gt-box gt-coord-panel" aria-label={t('shell.coord.title')}>
+        <h3>{t('shell.coord.title')}</h3>
+        <p className="muted">{t('shell.coord.inboxNone')}</p>
       </section>
     )
   }
@@ -135,16 +138,16 @@ export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Elemen
   return (
     <div className="gt-grid gt-coord-panel">
       <div className="gt-stack">
-        <section className="gt-box" aria-label="Состояние координатора">
+        <section className="gt-box" aria-label={t('shell.coord.stateLabel')}>
           <h3 className={`gt-coord-state gt-coord-${state}`} role="status">
             <span className={state === 'stopped' ? 'gt-coord-dot' : 'g-live-dot'} aria-hidden />
-            {COORD_STATE_TEXT[state]}
+            {coordStateText(state)}
           </h3>
-          {state === 'waiting' && <p className="muted gt-coord-note">Ждёт вашего решения — ответьте в ленте «Ждут вас».</p>}
+          {state === 'waiting' && <p className="muted gt-coord-note">{t('shell.coord.waitingNote')}</p>}
           {coordinatorPty ? (
             stopping ? (
-              <div className="gt-coord-confirm" role="alertdialog" aria-label="Остановить координатора">
-                <p>Остановить координатора? Его терминал закроется, работа прервётся. Подзадачи и их воркеры останутся как есть; продолжить можно, запустив координатора снова.</p>
+              <div className="gt-coord-confirm" role="alertdialog" aria-label={t('shell.coord.stopLabel')}>
+                <p>{t('shell.coord.stopConfirm')}</p>
                 <div className="gt-actions">
                   <button
                     type="button"
@@ -155,38 +158,38 @@ export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Elemen
                       onStopCoordinator(coordinatorPty)
                     }}
                   >
-                    ■ Остановить
+                    {t('shell.coord.stop')}
                   </button>
-                  <button type="button" className="btn-sm" onClick={() => setConfirmingStop(undefined)}>Отмена</button>
+                  <button type="button" className="btn-sm" onClick={() => setConfirmingStop(undefined)}>{t('shell.cancel')}</button>
                 </div>
               </div>
             ) : (
               <div className="gt-actions">
-                <button type="button" className="btn-sm primary" onClick={() => onShowCoordinator(coordinatorPty)}>Открыть терминал</button>
-                <button type="button" className="btn-sm danger" onClick={() => setConfirmingStop(coordinatorPty)}>■ Остановить</button>
+                <button type="button" className="btn-sm primary" onClick={() => onShowCoordinator(coordinatorPty)}>{t('shell.coord.openTerminal')}</button>
+                <button type="button" className="btn-sm danger" onClick={() => setConfirmingStop(coordinatorPty)}>{t('shell.coord.stop')}</button>
               </div>
             )
           ) : (
             <div className="gt-actions">
               {actions.startCoordinator && (
-                <button type="button" className="btn-sm primary" onClick={onStartCoordinator}><Icon.play /> Запустить координатора</button>
+                <button type="button" className="btn-sm primary" onClick={onStartCoordinator}><Icon.play /> {t('shell.coord.start')}</button>
               )}
               {actions.returnToWork && (
                 <>
-                  <button type="button" className="btn-sm" onClick={onReturn}>Вернуть в работу…</button>
-                  <span className="muted gt-coord-note">перезапустит координатора с уточнением</span>
+                  <button type="button" className="btn-sm" onClick={onReturn}>{t('shell.coord.return')}</button>
+                  <span className="muted gt-coord-note">{t('shell.coord.returnNote')}</span>
                 </>
               )}
-              {!actions.startCoordinator && !actions.returnToWork && <span className="muted gt-coord-note">Запуск недоступен в этом состоянии.</span>}
+              {!actions.startCoordinator && !actions.returnToWork && <span className="muted gt-coord-note">{t('shell.coord.unavailable')}</span>}
             </div>
           )}
         </section>
-        <section className="gt-box" aria-label="Запуски координатора">
-          <h3>Запуски{rows && rows.length > 0 && <span className="muted gt-sub">{rows.length}</span>}</h3>
+        <section className="gt-box" aria-label={t('shell.coord.sessionsLabel')}>
+          <h3>{t('shell.coord.sessions')}{rows && rows.length > 0 && <span className="muted gt-sub">{rows.length}</span>}</h3>
           {rows === undefined ? (
-            <p className="muted gt-coord-note">Запуски неизвестны: у этого прогона нет списка запусков (старая версия приложения или прогон создан до их учёта).</p>
+            <p className="muted gt-coord-note">{t('shell.coord.sessionsUnknown')}</p>
           ) : rows.length === 0 ? (
-            <p className="muted gt-coord-note">Запусков не было.</p>
+            <p className="muted gt-coord-note">{t('shell.coord.sessionsNone')}</p>
           ) : (
             <ul className="gt-coord-runs">
               {rows.map((r) => (
@@ -200,9 +203,9 @@ export function CoordinatorPanel(props: CoordinatorPanelProps): React.JSX.Elemen
           )}
         </section>
       </div>
-      <section className="gt-box" aria-label="Последний вывод">
-        <h3>Последний вывод <span className="muted gt-sub">только чтение · полный — во вкладке «Терминалы»</span></h3>
-        {coordinatorPty ? <CoordTail ptyId={coordinatorPty} /> : <p className="muted gt-coord-note">Координатор не запущен — вывода нет.</p>}
+      <section className="gt-box" aria-label={t('shell.coord.outputLabel')}>
+        <h3>{t('shell.coord.outputLabel')} <span className="muted gt-sub">{t('shell.coord.outputSub')}</span></h3>
+        {coordinatorPty ? <CoordTail ptyId={coordinatorPty} /> : <p className="muted gt-coord-note">{t('shell.coord.noOutput')}</p>}
       </section>
     </div>
   )

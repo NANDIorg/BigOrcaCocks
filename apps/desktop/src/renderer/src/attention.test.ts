@@ -1,10 +1,11 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ColumnKind, Dispatch, HumanRequest, Question, Task } from '@orca-board/core'
 import {
   ATTENTION_NARROW_LIMIT, attentionCountTitle, attentionLabel, attentionSummary, attentionTaskIds, buildAttention, defaultCollapsed, feedItemOfTask, questionAnswerText,
   questionAsRequest, readCollapsed, writeCollapsed, type AttentionInput
 } from './attention'
+import { setLocale } from './i18n'
 
 const task = (id: string, status: string, extra: Partial<Task> = {}): Task => ({
   id, title: `Задача ${id}`, spec: '', status, roleId: 'dev', agent: 'claude', deps: [], createdAt: 1, updatedAt: 100, ...extra
@@ -19,6 +20,8 @@ const request = (id: string, taskId: string, kind: HumanRequest['kind'], extra: 
 const question = (id: string, taskId: string, extra: Partial<Question> = {}): Question => ({
   id, taskId, question: `Вопрос ${id}?`, options: [{ id: '1', label: 'да' }, { id: '2', label: 'нет' }], createdAt: 60, ...extra
 })
+
+afterEach(() => setLocale('ru'))
 
 const kinds: Record<string, ColumnKind> = { backlog: 'backlog', ready: 'ready', in_progress: 'in_progress', needs_input: 'needs_input', review: 'review', done: 'done' }
 const input = (extra: Partial<AttentionInput>): AttentionInput => ({
@@ -258,4 +261,20 @@ test('ответ на вопрос: вариант — его метка, сво
   assert.throws(() => questionAnswerText(q, { action: 'answer', optionId: '9' }), /нет варианта 9/)
   assert.throws(() => questionAnswerText(q, { action: 'answer', text: ' ' }), /пустой/)
   assert.throws(() => questionAnswerText(q, { action: 'accept' }), /только ответить/)
+})
+
+test('английский интерфейс: подписи, сводка, счётчик и заголовки пунктов — на английском', () => {
+  setLocale('en')
+  const items = buildAttention(input({
+    tasks: [task('a', 'needs_input'), task('b', 'review'), task('c', 'in_progress')],
+    requests: [request('r1', 'a', 'question'), request('r2', 'a', 'question'), request('r3', 'a', 'answer')],
+    dispatches: [dispatch('d1', 'c', { outcome: 'unknown', endedAt: 1 }), dispatch('d2', 'b', { outcome: 'done', endedAt: 2, files: ['x.ts'] })]
+  }))
+  assert.equal(attentionSummary(items), '1 failure · 2 questions · 1 answer · 1 review')
+  assert.equal(attentionCountTitle(items), '5 items across 3 tasks — the “Waiting for you” filter on the board counts tasks')
+  assert.equal(items.find((i) => i.id === 'fail:c')?.title, 'Process exited without orca-board done')
+  assert.equal(items.find((i) => i.id === 'rev:b')?.title, 'Awaiting review: 1 file')
+  assert.equal(attentionLabel({ kind: 'failure', failure: 'stuck' }), 'Worker is silent')
+  assert.equal(attentionLabel({ kind: 'approval' }), 'Decision needed')
+  assert.throws(() => questionAnswerText(question('q1', 'a'), { action: 'answer', text: ' ' }), /empty answer/)
 })

@@ -1625,6 +1625,10 @@ skills, тексты main (уведомления, диалоги, ошибки 
   `formatShort`, `formatDateTime`, `formatDuration` (единицы — ключи `common.unit.*`). На них переведены
   `duration.ts` (`formatDuration` — реэкспорт) и числа в `statsFormat.ts` (деньги, токены, время агентов, оси).
   Не пиши `toLocaleString('ru-RU')` и `replace('.', ',')` — бери эти функции.
+- **Подписи-константы** (`Record<вид, string>`) переводятся при чтении, а не при загрузке модуля: функция
+  (`coordStateText`, `requestKindTitle`) или объект с геттерами, если константу читают чужие экраны
+  (`REQUEST_KIND_TITLE` в `RequestCard.tsx` — его берёт `TaskModal`). Строка, вычисленная при импорте, останется
+  на языке старта.
 - **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
   (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
   `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык

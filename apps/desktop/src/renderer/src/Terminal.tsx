@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { t } from './i18n'
 
 interface Props {
   ptyId: string
@@ -41,7 +42,7 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
     if (initialTail) term.write(initialTail.replace(/\r?\n/g, '\r\n'))
     const offData = window.orca.pty.onData(ptyId, (d) => term.write(d))
     const offExit = window.orca.pty.onExit(ptyId, (code) =>
-      term.write(`\r\n\x1b[90m[процесс завершился с кодом ${code}]\x1b[0m\r\n`)
+      term.write(`\r\n\x1b[90m${t('shell.term.exitCode', { code })}\x1b[0m\r\n`)
     )
     const onInput = term.onData((d) => window.orca.pty.write(ptyId, d))
     const ro = new ResizeObserver(doFit)
