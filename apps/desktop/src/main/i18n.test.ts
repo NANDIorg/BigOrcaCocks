@@ -8,6 +8,7 @@ import { OrcaError, ipcError, mt, mtIn, setMainLocale, mainLocale } from './i18n
 import { describeEvent } from './notify'
 import { missingRoleMessage } from './agents'
 import { columnTitle } from './defaultTitles'
+import { PROJECT_GIT_ERROR_CODES } from '../shared/ipc'
 
 afterEach(() => setMainLocale('ru'))
 
@@ -18,6 +19,13 @@ describe('словари main', () => {
   it('en — те же ключи, что ru, и те же параметры {name}', () => {
     assert.deepEqual(Object.keys(en).sort(), Object.keys(ru).sort())
     for (const [key, m] of Object.entries(ru)) assert.deepEqual(names(en[key as keyof typeof en]), names(m), key)
+  })
+
+  it('коды git-ошибок корня проекта из контракта IPC есть в словарях и ходят в renderer с кодом', () => {
+    for (const code of PROJECT_GIT_ERROR_CODES) {
+      assert.ok(code in ru, code)
+      assert.equal((ipcError(new OrcaError(code as keyof typeof ru)) as Error).name, `OrcaError[${code}]`)
+    }
   })
 
   it('в en нет кириллицы', () => {
