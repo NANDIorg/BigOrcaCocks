@@ -72,7 +72,7 @@ export function taskStatsKey(snap: StatsSnapshot, taskId: string): string {
   return [
     mine.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(','),
     snap.dispatches.filter((d) => ids.has(d.taskId)).map((d) => `${d.id}:${d.endedAt ?? ''}:${d.outcome ?? ''}`).join(','),
-    snap.requests.filter((r) => ids.has(r.taskId)).map((r) => `${r.id}:${r.status}`).join(',')
+    snap.requests.filter((r) => r.taskId !== undefined && ids.has(r.taskId)).map((r) => `${r.id}:${r.status}`).join(',')
   ].join('|')
 }
 

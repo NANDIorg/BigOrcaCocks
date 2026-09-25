@@ -106,7 +106,7 @@ export function resolveHumanRequest(
   const pending = store.getRequest(id)
   if (!pending) throw new Error(`request not found: ${id}`)
   if (pending.status !== 'pending') throw new OrcaError(pending.status === 'cancelled' ? 'request.alreadyCancelled' : 'request.alreadyResolved', { id })
-  if (resolution.action === 'accept' && pending.kind === 'answer') {
+  if (resolution.action === 'accept' && pending.kind === 'answer' && pending.taskId !== undefined) {
     acceptReview(store, repoRoot, pending.taskId, resolution.text, targetOf)
     return { request: store.getRequest(id)! }
   }
@@ -115,15 +115,17 @@ export function resolveHumanRequest(
     approved?.(request)
     return { request: store.getRequest(id)! }
   }
-  if (resolution.action !== 'clarify' && resolution.action !== 'restart') return { request }
+  // Запрос без задачи (approval прогона) воркера не перезапускает: clarify и restart к нему не относятся.
+  const taskId = request.taskId
+  if ((resolution.action !== 'clarify' && resolution.action !== 'restart') || taskId === undefined) return { request }
   try {
-    const w = startWorker(request.taskId)
+    const w = startWorker(taskId)
     return { request, worker: { ptyId: w.ptyId, dispatchId: w.dispatchId } }
   } catch (e) {
     // В журнал задачи (его читает координатор) — по-русски, человеку в UI — на языке интерфейса.
     const startError = e instanceof OrcaError ? mt(e.key, e.params) : (e as Error).message
     const what = resolution.action === 'clarify' ? 'уточнение принято' : 'перезапуск'
-    store.escalate(request.taskId, `${what}, но воркер не запустился: ${(e as Error).message}`, { requestId: request.id, startFailed: true })
+    store.escalate(taskId, `${what}, но воркер не запустился: ${(e as Error).message}`, { requestId: request.id, startFailed: true })
     return { request, startError }
   }
 }

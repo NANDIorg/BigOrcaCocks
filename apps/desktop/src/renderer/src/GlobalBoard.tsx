@@ -259,7 +259,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                             key={request.id}
                             request={request}
                             compact
-                            where={taskTitle.get(request.taskId)}
+                            where={request.taskId !== undefined ? taskTitle.get(request.taskId) : undefined}
                             onResolve={(res) => onResolveRequest(request, res)}
                           />
                           <button type="button" className="btn-text g-card-inbox" onClick={() => onOpenInbox(request.id)}>

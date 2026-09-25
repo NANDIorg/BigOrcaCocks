@@ -350,7 +350,8 @@ function closeGate(deps: WorkflowDeps, gate: Task): void {
  */
 function gatePending(deps: WorkflowDeps, gate: Task): boolean {
   const { store } = deps
-  const target = gate.gateFor ? store.getTask(gate.gateFor.taskId) : undefined
+  // Проверка ветки глобальной задачи (`gateFor.runId`) — воркфлоу прогона, этот движок её не ведёт.
+  const target = gate.gateFor?.taskId !== undefined ? store.getTask(gate.gateFor.taskId) : undefined
   if (!target || !gate.gateFor || target.stage?.nodeId !== gate.gateFor.nodeId || store.columnKind(target.status) === 'done') return false
   const latest = store.listTasks().filter((t) => t.gateFor?.taskId === target.id && t.gateFor.nodeId === gate.gateFor!.nodeId).at(-1)
   return latest?.id === gate.id
@@ -367,7 +368,7 @@ function settleGate(deps: WorkflowDeps, gate: Task, why: 'done' | 'exit'): void 
     return
   }
   if (why === 'done') {
-    const target = gate.gateFor!.taskId
+    const target = gate.gateFor!.taskId!
     deps.store.blockStage(
       target,
       `проверка ${gate.id} сдана без решения (нет review accept/reject по задаче ${target}). ` +
@@ -486,7 +487,7 @@ export function reviewReject(deps: WorkflowDeps, taskId: string, feedback: strin
 export function approvalResolved(deps: WorkflowDeps, request: HumanRequest): void {
   const action = request.resolution?.action
   if (request.kind !== 'approval' || (action !== 'accept' && action !== 'reject')) return
-  const task = deps.store.getTask(request.taskId)
+  const task = request.taskId !== undefined ? deps.store.getTask(request.taskId) : undefined
   if (!task?.stage || (request.nodeId !== undefined && task.stage.nodeId !== request.nodeId)) return
   advance(deps, task.id, action)
 }

@@ -148,7 +148,7 @@ export function stageLabel(
 ): StageLabel | null {
   if (task.gateFor) {
     const node = titles?.[task.gateFor.nodeId]
-    const target = taskTitle(task.gateFor.taskId)
+    const target = task.gateFor.taskId !== undefined ? taskTitle(task.gateFor.taskId) : undefined
     const text = `${node ? t('board.stage.gateNode', { node }) : t('board.stage.gate')}${target ? ` → ${target}` : ''}`
     return { kind: 'gate', text, title: t('board.stage.gateTitle') }
   }

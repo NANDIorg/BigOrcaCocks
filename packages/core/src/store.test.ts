@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { STATUS_HISTORY_LIMIT } from './status-history.ts'
 import { TaskStore, EVENT_ANSWER_LIMIT, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
-import { WORKFLOW_VERSION, defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
+import { WORKFLOW_VERSION_TASK_SCOPE, legacyDefaultWorkflow, describeWorkflow, legacyPipelineWorkflow, type Workflow } from './workflow.ts'
 import { presetTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
 
 /** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
@@ -22,7 +22,7 @@ const store = (p?: Persistence) => new TaskStore(p, () => DEFAULT_COLUMNS)
 
 /** Дефолт с ролью reviewer плюс лимит: третий заход в работу уходит человеку. */
 function withLimit(): Workflow {
-  const wf = defaultWorkflow([{ id: 'reviewer' }])
+  const wf = legacyDefaultWorkflow([{ id: 'reviewer' }])
   wf.nodes.push(
     { id: 'limit', type: 'condition', test: { kind: 'attempts', node: 'work', atLeast: 3 }, x: 0, y: 0 },
     { id: 'boss', type: 'human', x: 0, y: 0 }
@@ -40,12 +40,12 @@ function withLimit(): Workflow {
 describe('снимок воркфлоу в прогоне', () => {
   it('createRun хранит копию графа: правка исходника снимок не меняет', () => {
     const s = store()
-    const wf = defaultWorkflow([{ id: 'reviewer' }])
+    const wf = legacyDefaultWorkflow([{ id: 'reviewer' }])
     const run = s.createRun('цель', undefined, wf)
     wf.nodes[0].title = 'изменили'
     wf.edges.pop()
     const saved = s.getRun(run.id)!.workflow!
-    assert.deepEqual(saved, defaultWorkflow([{ id: 'reviewer' }]))
+    assert.deepEqual(saved, legacyDefaultWorkflow([{ id: 'reviewer' }]))
     assert.deepEqual(s.runWorkflow(run.id), saved)
   })
 
@@ -59,9 +59,9 @@ describe('снимок воркфлоу в прогоне', () => {
     const s = store()
     const run = s.createRun('цель')
     assert.equal(s.getRun(run.id)!.workflow, undefined)
-    assert.deepEqual(s.runWorkflow(run.id), defaultWorkflow([]))
-    assert.deepEqual(s.runWorkflow(run.id, ['developer', 'reviewer']), defaultWorkflow([{ id: 'reviewer' }]))
-    assert.deepEqual(s.runWorkflow(undefined), defaultWorkflow([]))
+    assert.deepEqual(s.runWorkflow(run.id), legacyDefaultWorkflow([]))
+    assert.deepEqual(s.runWorkflow(run.id, ['developer', 'reviewer']), legacyDefaultWorkflow([{ id: 'reviewer' }]))
+    assert.deepEqual(s.runWorkflow(undefined), legacyDefaultWorkflow([]))
   })
 })
 
@@ -72,7 +72,7 @@ describe('тип задачи в прогоне', () => {
     settings: {
       roles: [{ id: 'writer', title: 'Автор', agent: 'claude' }],
       agentRules: 'Пиши по-русски.',
-      workflow: pipelineWorkflow([{ type: 'human', id: 'eyes', title: 'Глазами' }])
+      workflow: legacyPipelineWorkflow([{ type: 'human', id: 'eyes', title: 'Глазами' }])
     }
   }
 
@@ -104,12 +104,11 @@ describe('тип задачи в прогоне', () => {
   it('две задачи разных прогонов идут разными графами', () => {
     const s = store()
     const review = s.createRun('код', undefined, runTypeInput(presetTaskType('general')!))
-    const eyes = s.createRun('доки', undefined, runTypeInput(docs))
-    const a = s.createTask({ title: 'Код', runId: review.id })
-    const b = s.createTask({ title: 'Доки', runId: eyes.id })
-    for (const t of [a, b]) s.advanceStage(t.id, 'next')
-    assert.deepEqual(s.advanceStage(a.id, 'next').action, { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' })
-    assert.deepEqual(s.advanceStage(b.id, 'next').action, { type: 'request_human', nodeId: 'eyes' })
+    const eyes = s.createRun('доки', undefined, runTypeInput(presetTaskType('docs')!))
+    assert.deepEqual(s.enterRunStage(review.id).action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(s.enterRunStage(eyes.id).action, { type: 'start_stage', nodeId: 'work', roleId: 'writer' })
+    assert.deepEqual(s.advanceRunStage(review.id, 'next').action, { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' })
+    assert.deepEqual(s.advanceRunStage(eyes.id, 'next').action, { type: 'request_human', nodeId: 'review' })
   })
 
   it('прогон без снимка графа идёт по графу типа из fallback, а не по дефолтному', () => {
@@ -169,7 +168,7 @@ describe('advanceStage', () => {
   }
 
   it('вход из старта в работу, затем в гейт ревью; события stage_changed', () => {
-    const { s, run, task } = setup(defaultWorkflow([{ id: 'reviewer' }]))
+    const { s, run, task } = setup(legacyDefaultWorkflow([{ id: 'reviewer' }]))
     const entered = s.advanceStage(task.id, 'next')
     assert.deepEqual(entered.action, { type: 'start_worker', nodeId: 'work' })
     assert.deepEqual(s.getTask(task.id)!.stage, { nodeId: 'work', visits: { start: 1, work: 1 } })
@@ -186,7 +185,7 @@ describe('advanceStage', () => {
   })
 
   it('reject возвращает в работу, accept ведёт в мерж; visits копятся', () => {
-    const { s, task } = setup(defaultWorkflow([{ id: 'reviewer' }]))
+    const { s, task } = setup(legacyDefaultWorkflow([{ id: 'reviewer' }]))
     s.advanceStage(task.id, 'next')
     s.advanceStage(task.id, 'next')
     assert.deepEqual(s.advanceStage(task.id, 'reject').action, { type: 'start_worker', nodeId: 'work' })
@@ -222,7 +221,7 @@ describe('advanceStage', () => {
   })
 
   it('роль гейта удалена: этап сменился, но дальше blocked', () => {
-    const { s, task } = setup(defaultWorkflow([{ id: 'reviewer' }]))
+    const { s, task } = setup(legacyDefaultWorkflow([{ id: 'reviewer' }]))
     s.advanceStage(task.id, 'next', { roleIds: ['developer'] })
     const r = s.advanceStage(task.id, 'next', { roleIds: ['developer'] })
     assert.equal(r.action.type, 'blocked')
@@ -324,7 +323,7 @@ describe('stageHistory', () => {
 
   it('advanceStage и enterWork пишут вход в этап с исходом; reject и restart различимы', () => {
     const s = store()
-    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const run = s.createRun('цель', undefined, legacyDefaultWorkflow([{ id: 'reviewer' }]))
     const t = s.createTask({ title: 'Код', runId: run.id })
     s.advanceStage(t.id, 'next')
     s.advanceStage(t.id, 'next')
@@ -353,7 +352,7 @@ describe('stageHistory', () => {
 
   it(`хранится не больше ${STATUS_HISTORY_LIMIT} последних`, () => {
     const s = store()
-    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const run = s.createRun('цель', undefined, legacyDefaultWorkflow([{ id: 'reviewer' }]))
     const t = s.createTask({ title: 'Код', runId: run.id })
     s.advanceStage(t.id, 'next')
     for (let i = 0; i < STATUS_HISTORY_LIMIT; i += 1) {
@@ -368,7 +367,7 @@ describe('stageHistory', () => {
   it('миграция: история восстанавливается из событий stage_changed', () => {
     const p = memory()
     const s = store(p)
-    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const run = s.createRun('цель', undefined, legacyDefaultWorkflow([{ id: 'reviewer' }]))
     const t = s.createTask({ title: 'Код', runId: run.id })
     s.advanceStage(t.id, 'next')
     s.advanceStage(t.id, 'next')
@@ -434,7 +433,7 @@ describe('исполнитель: переходы store', () => {
   it('enterWork: этап «Вопрос человеку» не сбрасывается, taskWorkStage и taskStageNode отдают его', () => {
     const s = store()
     const wf: Workflow = {
-      version: WORKFLOW_VERSION,
+      version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
         { id: 'start', type: 'start', x: 0, y: 0 },
         { id: 'ask', type: 'ask', roleId: 'analyst', title: 'Уточнить', instructions: 'Спроси про БД', x: 0, y: 0 },
@@ -455,7 +454,7 @@ describe('исполнитель: переходы store', () => {
     assert.equal(s.getTask(t.id)!.stage!.nodeId, 'ask')
     assert.deepEqual(s.getTask(t.id)!.stage!.visits, { start: 1, ask: 1 }, 'заходы не растут')
     assert.equal(s.taskStageNode(t.id)?.type, 'ask')
-    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'ask', type: 'ask', title: 'Уточнить', instructions: 'Спроси про БД' })
+    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'ask', type: 'ask', title: 'Уточнить', roleId: 'analyst', instructions: 'Спроси про БД' })
     assert.equal(s.listEvents().filter((e) => e.type === 'stage_changed' && e.payload.outcome === 'restart').length, 0)
     s.advanceStage(t.id, 'next')
     assert.equal(s.taskWorkStage(t.id)!.type, 'work')
@@ -526,7 +525,7 @@ describe('показ человеку: finishDispatch и решение approval
   /** Прогон с графом «Работа (показ) → человек → мерж». */
   function showcaseRun(required: boolean) {
     const s = store()
-    const wf = pipelineWorkflow([{ type: 'human', id: 'pick', title: 'Выбрать вариант' }])
+    const wf = legacyPipelineWorkflow([{ type: 'human', id: 'pick', title: 'Выбрать вариант' }])
     Object.assign(wf.nodes.find((n) => n.id === 'work')!, { title: 'Дизайн', showcase: { what: 'варианты макета', ...(required ? { required } : {}) } })
     const run = s.createRun('цель', undefined, wf)
     const t = s.createTask({ title: 'A', runId: run.id })

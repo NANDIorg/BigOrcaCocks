@@ -519,7 +519,7 @@ function notify(projectId: string, events: OrcaEvent[]): void {
 function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution): ReturnType<typeof resolveHumanRequest> {
   const p = resolveProject(projectId)
   const request = p.store.getRequest(id)
-  if (request) syncWorkerLiveness(p.store, request.taskId)
+  if (request?.taskId) syncWorkerLiveness(p.store, request.taskId)
   const deps = workflowDeps(p.id)
   return resolveHumanRequest(p.store, p.root, id, resolution, deps.startWorker, (r) => approvalResolved(deps, r), deps.mergeTarget)
 }

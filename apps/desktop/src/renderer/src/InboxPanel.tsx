@@ -59,7 +59,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
   const runById = new Map(runs.map((r) => [r.id, r]))
   const where = (r: HumanRequest): string => {
     const run = runById.get(r.runId)
-    const task = taskById.get(r.taskId)
+    const task = r.taskId !== undefined ? taskById.get(r.taskId) : undefined
     return [run ? builtinText(globalTaskTitle(run)) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
   }
 

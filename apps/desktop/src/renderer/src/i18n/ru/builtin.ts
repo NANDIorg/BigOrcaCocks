@@ -52,6 +52,8 @@ export default {
   'type.legacy.desc': 'Перенесён из «Настройки → Для новых проектов».',
 
   'node.work': 'Работа',
+  'node.implementation': 'Реализация',
+  'node.humanCheck': 'Проверка человеком',
   'node.mergeConflict': 'Конфликт мержа',
   'node.eyes': 'Посмотреть глазами',
   'node.tests': 'Прогон тестов',

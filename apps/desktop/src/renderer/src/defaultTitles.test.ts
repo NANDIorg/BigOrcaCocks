@@ -34,7 +34,9 @@ test('словарь builtin покрывает встроенные текст�
   const core = coreTexts()
   const dict = new Set(Object.values(RU.builtin).filter((v): v is string => typeof v === 'string'))
   // Шаблон суффикса модели и описание перенесённого типа (старый формат настроек) — не из заготовок.
-  const extra = ['{name} (по умолчанию)', 'Перенесён из «Настройки → Для новых проектов».']
+  // «Конфликт мержа» — нода графов по подзадачам (`legacyPipelineWorkflow`, снимки старых прогонов): в заготовках её больше нет,
+  // а у старых прогонов она есть и показывается на языке интерфейса.
+  const extra = ['{name} (по умолчанию)', 'Перенесён из «Настройки → Для новых проектов».', 'Конфликт мержа']
   // Латиница («QA») не переводится; «<этап>?» — название условия из заготовки, узнаётся по этапу.
   const known = (text: string): boolean => dict.has(text) || (text.endsWith('?') && dict.has(text.slice(0, -1)))
   for (const text of core) if (!/^[\x20-\x7e]+$/.test(text)) assert.ok(known(text), `нет в builtin: ${text}`)

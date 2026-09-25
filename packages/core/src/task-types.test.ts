@@ -8,7 +8,7 @@ import {
   taskTypeFromLegacyProject, type TaskType
 } from './task-types.ts'
 import { DEFAULT_ROLES, type Role } from './types.ts'
-import { defaultWorkflow, nextStage, pipelineWorkflow, startStage, validateWorkflow } from './workflow.ts'
+import { defaultWorkflow, nextRunStage, pipelineWorkflow, startRunStage, validateWorkflow } from './workflow.ts'
 
 const writer: Role = { id: 'writer', title: 'Автор', agent: 'codex', model: 'gpt-5' }
 
@@ -69,28 +69,27 @@ describe('заготовки типов', () => {
     assert.deepEqual(general.settings.workflow, defaultWorkflow(DEFAULT_ROLES))
   })
 
-  it('«Фронтенд и бэкенд»: задача frontend после ревью идёт к человеку, backend — сразу в мерж', () => {
+  it('«Фронтенд и бэкенд»: два этапа «Работа» по порядку — бэкенд, затем фронтенд; после ревью — человек', () => {
     const wf = presetTaskType('fullstack')!.settings.workflow!
-    const afterReview = (roleId: string): string => {
-      const ctx = { roleId }
-      const work = startStage(wf, ctx)
-      const review = nextStage(wf, work.stage, 'next', ctx)
-      assert.equal(review.stage.nodeId, 'review')
-      return nextStage(wf, review.stage, 'accept', ctx).stage.nodeId
-    }
-    assert.equal(afterReview('frontend'), 'eyes')
-    assert.equal(afterReview('backend'), 'merge')
+    const first = startRunStage(wf)
+    assert.deepEqual(first.action, { type: 'start_stage', nodeId: 'backend', roleId: 'backend' })
+    const second = nextRunStage(wf, first.stage, 'next')
+    assert.deepEqual(second.action, { type: 'start_stage', nodeId: 'work', roleId: 'frontend' })
+    const review = nextRunStage(wf, second.stage, 'next')
+    assert.equal(review.stage.nodeId, 'review')
+    assert.equal(nextRunStage(wf, review.stage, 'accept').stage.nodeId, 'eyes')
+    assert.equal(nextRunStage(wf, review.stage, 'reject').stage.nodeId, 'work', 'отказ — в последнюю работу')
   })
 
-  it('«Бэкенд»: после ревью — прогон тестов ролью qa, затем мерж', () => {
+  it('«Бэкенд»: после ревью — прогон тестов ролью qa, затем проверка человеком', () => {
     const wf = presetTaskType('backend')!.settings.workflow!
-    const ctx = { roleId: 'developer' }
-    const work = startStage(wf, ctx)
-    const review = nextStage(wf, work.stage, 'next', ctx)
-    const tests = nextStage(wf, review.stage, 'accept', ctx)
+    const work = startRunStage(wf)
+    assert.deepEqual(work.action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    const review = nextRunStage(wf, work.stage, 'next')
+    const tests = nextRunStage(wf, review.stage, 'accept')
     assert.deepEqual(tests.action, { type: 'create_gate', nodeId: 'tests', roleId: 'qa' })
-    assert.equal(nextStage(wf, tests.stage, 'accept', ctx).stage.nodeId, 'merge')
-    assert.equal(nextStage(wf, tests.stage, 'reject', ctx).stage.nodeId, 'work')
+    assert.equal(nextRunStage(wf, tests.stage, 'accept').action.type, 'request_human')
+    assert.equal(nextRunStage(wf, tests.stage, 'reject').stage.nodeId, 'work')
   })
 
   it('«Документация»: ревью делает человек, агентного гейта нет', () => {

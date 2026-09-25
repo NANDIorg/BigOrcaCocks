@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, nextStage, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, nextStage, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
 import {
   WF_TYPE_ORDER, WF_TYPE_TITLES, addRetryLimit, changeNodeType, conditionOfKind, exportWorkflowJson, hasColumn, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName
 } from './workflowForm'
 import { setLocale } from './i18n'
+import { graphWithMerge } from './workflowFixture'
 
-const wf = defaultWorkflow(DEFAULT_ROLES)
+const wf = graphWithMerge(DEFAULT_ROLES)
 const node = (w: Workflow, id: string) => w.nodes.find((n) => n.id === id)
 /** Роль ноды любого типа: у типов без роли — undefined. */
 const roleOf = (w: Workflow, id: string): string | undefined => {
@@ -41,14 +42,14 @@ test('patchNode: пустые необязательные поля удаляю
 
 test('patchNode: инструкция и показ у «Работы»', () => {
   let next = patchNode(wf, 'work', { instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
-  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', roleId: 'developer', instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
   next = patchNode(next, 'work', { showcase: { required: true } })
   assert.deepEqual(showcaseOf(next), { what: 'макеты', required: true }, 'флажок не стирает текст')
   next = patchNode(next, 'work', { showcase: { what: '' } })
   assert.deepEqual(showcaseOf(next), { what: '', required: true }, 'обязательный показ с пустым «что» остаётся — его подсветит валидация')
   assert.ok(validateWorkflow(next, ctx).errors.some((e) => e.nodeId === 'work'))
   next = patchNode(next, 'work', { showcase: { required: false }, instructions: ' ' })
-  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа' }, 'пустой показ и инструкция удаляются')
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', roleId: 'developer' }, 'пустой показ и инструкция удаляются')
   assert.deepEqual(patchNode(wf, 'review', { showcase: { what: 'x' } }), wf, 'показ только у «Работы»')
 
   const human = changeNodeType(patchNode(wf, 'work', { instructions: 'этап', showcase: { what: 'макеты' } }), 'work', 'human')
@@ -143,7 +144,7 @@ test('пресет «3 отказа → человек»: граф валиде�
 
   const again = addRetryLimit(limited)
   assert.ok('error' in again, 'повторно лимит не ставится')
-  assert.ok('error' in addRetryLimit(defaultWorkflow([])), 'без проверки агентом ставить некуда')
+  assert.ok('error' in addRetryLimit(graphWithMerge([])), 'без проверки агентом ставить некуда')
 })
 
 test('ask: тип в select «Тип», без поля «Колонка»', () => {

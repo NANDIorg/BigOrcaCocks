@@ -7,8 +7,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, realpathSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION, defaultWorkflow, validateWorkflow,
-  type Role, type Workflow, type Task, type Persistence, type StoreSnapshot
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION_TASK_SCOPE, defaultWorkflow, legacyDefaultWorkflow, migrateWorkflow, toTaskScopeWorkflow, validateWorkflow,
+  type Role, type RunTypeInput, type Workflow, type Task, type Persistence, type StoreSnapshot
 } from '@orca-board/core'
 import { enterWork, handleWorkflowEvents, reviewAccept, reviewReject, approvalResolved, type WorkflowDeps } from './workflow'
 import { resolveHumanRequest } from './review'
@@ -250,7 +250,7 @@ describe('дефолтный граф без reviewer — решает чело�
 
 /** start → work → merge → end: без ревью. */
 const noReview: Workflow = {
-  version: WORKFLOW_VERSION,
+  version: WORKFLOW_VERSION_TASK_SCOPE,
   nodes: [
     { id: 'start', type: 'start', x: 0, y: 0 },
     { id: 'work', type: 'work', x: 0, y: 0 },
@@ -281,7 +281,7 @@ describe('свой граф прогона', () => {
 
   it('конец без мержа: задача в done, worktree убран, ветка сохранена', () => {
     const wf: Workflow = {
-      version: WORKFLOW_VERSION,
+      version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
         { id: 'start', type: 'start', x: 0, y: 0 },
         { id: 'work', type: 'work', x: 0, y: 0 },
@@ -307,7 +307,7 @@ describe('свой граф прогона', () => {
 
 /** start → «Дизайн» (work с обязательным показом) → «Выбрать вариант» (human) → merge → end. */
 const design: Workflow = {
-  version: WORKFLOW_VERSION,
+  version: WORKFLOW_VERSION_TASK_SCOPE,
   nodes: [
     { id: 'start', type: 'start', x: 0, y: 0 },
     { id: 'work', type: 'work', title: 'Дизайн', x: 0, y: 0, instructions: 'Сделай макеты', showcase: { what: '2 варианта макета', required: true } },
@@ -414,7 +414,7 @@ describe('мимо воркфлоу и возвраты', () => {
 
 /** start → «Уточнить» (ask, роль qa) → «Работа» → мерж → конец. */
 const askFirst: Workflow = {
-  version: WORKFLOW_VERSION,
+  version: WORKFLOW_VERSION_TASK_SCOPE,
   nodes: [
     { id: 'start', type: 'start', x: 0, y: 0 },
     { id: 'ask', type: 'ask', roleId: 'qa', title: 'Уточнить', instructions: 'Спроси, какую БД брать', x: 0, y: 0 },
@@ -547,9 +547,18 @@ describe('этап «Вопрос человеку» (ask)', () => {
 
 // ---------- сквозные сценарии (QA воркфлоу, docs/workflow.md) ----------
 
+/**
+ * Ошибки графа старого движка по подзадачам (версия 1) без тех, что валидация видит у любого такого графа: формат
+ * версии 1 и роль «Работы». Остальное (порты, ссылки, роли гейтов) — проверка того, что тестовый граф собран верно.
+ */
+function structuralErrors(wf: Workflow): string[] {
+  const legacy = ['versionOld', 'workNoRole']
+  return validateWorkflow(wf, { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }).errors.filter((e) => !legacy.includes(e.code ?? '')).map((e) => e.message)
+}
+
 /** Дефолт с reviewer, после ревью — гейт QA: accept ревью → QA, accept QA → мерж, reject обоих — в работу. */
 function reviewThenQa(): Workflow {
-  const wf = defaultWorkflow(DEFAULT_ROLES)
+  const wf = legacyDefaultWorkflow(DEFAULT_ROLES)
   wf.nodes.push({ id: 'qa', type: 'gate', roleId: 'qa', title: 'QA', x: 550, y: 0 })
   wf.edges = wf.edges.map((e) => (e.id === 'e_review_accept' ? { ...e, to: 'qa' } : e))
   wf.edges.push(
@@ -562,7 +571,7 @@ function reviewThenQa(): Workflow {
 describe('сценарий: гейт QA после ревью', () => {
   it('ревью → QA → мерж; отказ QA возвращает в работу, повтор проходит оба гейта заново', () => {
     const wf = reviewThenQa()
-    assert.deepEqual(validateWorkflow(wf, { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }).errors, [])
+    assert.deepEqual(structuralErrors(wf), [])
     const run = store.createRun('цель', undefined, wf)
     const a = workTask('Логин', run.id)
     commit(a, 'login.ts', 'v1\n')
@@ -601,11 +610,11 @@ describe('сценарий: гейт QA после ревью', () => {
 
 describe('сценарий: пресет «3 отказа → человек» (addRetryLimit редактора)', () => {
   it('два отказа — снова работа, третий — запрос человеку; «Вернуть» — ещё круг, следующий отказ — сразу человек; «Принять» — мерж', () => {
-    const preset = addRetryLimit(defaultWorkflow(DEFAULT_ROLES), 3)
+    const preset = addRetryLimit(legacyDefaultWorkflow(DEFAULT_ROLES), 3)
     assert.ok('workflow' in preset)
     const wf = preset.workflow
     const check = validateWorkflow(wf, { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS })
-    assert.deepEqual(check.errors, [])
+    assert.deepEqual(structuralErrors(wf), [])
     assert.equal(check.warnings.some((w) => /бесконечно/.test(w.message)), false, 'лимит снимает предупреждение о бесконечном цикле')
 
     const run = store.createRun('цель', undefined, wf)
@@ -670,6 +679,15 @@ describe('сценарий: конфликт мержа после ревью а
   })
 })
 
+/**
+ * Тип прогона для движка по подзадачам: граф типа (версия 2 — граф глобальной задачи) переведён в граф подзадач, как это
+ * делает store для прогонов без снимка. Прогон по типу с графом версии 2 идёт воркфлоу глобальной задачи, а тут
+ * проверяется старый движок.
+ */
+function taskScope(t: RunTypeInput): RunTypeInput {
+  return { ...t, ...(t.workflow ? { workflow: toTaskScopeWorkflow(t.workflow) } : {}) }
+}
+
 describe('сценарии с проектом: правка графа и удалённая роль', () => {
   const PID = 'p1'
   let pm: ProjectManager
@@ -694,7 +712,7 @@ describe('сценарии с проектом: правка графа и уд�
   })
 
   it('граф поменяли посреди прогона — идущая задача живёт на снимке, новый прогон — на новом графе', () => {
-    const run1 = store.createRun('первая цель', undefined, pm.runType(PID))
+    const run1 = store.createRun('первая цель', undefined, taskScope(pm.runType(PID)))
     const a = workTask('A', run1.id)
     commit(a, 'a.ts', 'a\n')
 
@@ -703,7 +721,7 @@ describe('сценарии с проектом: правка графа и уд�
     assert.equal(task(a.id).stage?.nodeId, 'review', 'по снимку — ревью, хотя в проекте его уже нет')
     assert.equal(gatesOf(a.id).length, 1)
 
-    const run2 = store.createRun('вторая цель', undefined, pm.runType(PID))
+    const run2 = store.createRun('вторая цель', undefined, taskScope(pm.runType(PID)))
     const b = workTask('B', run2.id)
     commit(b, 'b.ts', 'b\n')
     done(b.id)
@@ -715,8 +733,9 @@ describe('сценарии с проектом: правка графа и уд�
     reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'a.ts')), true)
-    assert.deepEqual(store.getRun(run1.id)!.workflow, defaultWorkflow(DEFAULT_ROLES))
-    assert.deepEqual(store.getRun(run2.id)!.workflow, noReview)
+    // Снимок — граф типа, каким его видит движок подзадач (`toTaskScopeWorkflow` от сохранённого графа версии 2).
+    assert.deepEqual(store.getRun(run1.id)!.workflow, toTaskScopeWorkflow(defaultWorkflow(DEFAULT_ROLES)))
+    assert.deepEqual(store.getRun(run2.id)!.workflow, toTaskScopeWorkflow(migrateWorkflow(noReview, DEFAULT_ROLES)))
   })
 
   it('задача без прогона («Входящие») идёт по графу типа проекта по умолчанию', () => {
@@ -729,9 +748,9 @@ describe('сценарии с проектом: правка графа и уд�
   })
 
   it('роль гейта удалили после сохранения графа — workflow_blocked (уведомление-эскалация), человек решает сам', () => {
-    const base = defaultWorkflow(DEFAULT_ROLES)
+    const base = legacyDefaultWorkflow(DEFAULT_ROLES)
     saveWorkflow({ ...base, nodes: base.nodes.map((n) => (n.id === 'review' ? { ...n, roleId: 'qa', title: 'QA' } : n)) })
-    const run = store.createRun('цель', undefined, pm.runType(PID))
+    const run = store.createRun('цель', undefined, taskScope(pm.runType(PID)))
     pm.patchTaskType(pm.projectDefaultTypeId(PID), { roles: DEFAULT_ROLES.filter((r) => r.id !== 'qa') })
     assert.throws(() => saveWorkflow(pm.taskTypeWorkflow(pm.projectDefaultTypeId(PID)).workflow), /нет роли «qa»/, 'граф типа с удалённой ролью больше не сохранить')
 

@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultWorkflow, type Workflow } from '@orca-board/core'
+import { type Workflow } from '@orca-board/core'
 import {
   LAYOUT_DX, LAYOUT_DY, NODE_H, NODE_W, autoLayout, curvePoint, distanceToCurve, edgeCurve, edgeCurveOf, fitView,
   hitEdge, hitNode, hitPort, inputPoint, panBy, portPoint, screenToWorld, zoomAt
 } from './workflowGeometry'
+import { graphWithMerge } from './workflowFixture'
 
-const wf = defaultWorkflow([{ id: 'reviewer' }])
+const wf = graphWithMerge([{ id: 'reviewer' }])
 const node = (id: string) => wf.nodes.find((n) => n.id === id)!
 const close = (a: number, b: number): void => assert.ok(Math.abs(a - b) < 1e-6, `${a} ≈ ${b}`)
 

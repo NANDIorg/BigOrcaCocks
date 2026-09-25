@@ -22,7 +22,7 @@ interface RequestResolution { action: 'answer' | 'accept' | 'clarify' | 'restart
 interface HumanRequest {
   id: string                 // req_…
   runId: string              // прогон = глобальная задача
-  taskId: string
+  taskId?: string            // нет у approval уровня прогона (нода human воркфлоу глобальной задачи, `docs/workflow.md`): его решают по runId
   dispatchId?: string        // запуск, который спросил / сдал ответ / упал
   kind: HumanRequestKind
   status: HumanRequestStatus
@@ -45,7 +45,7 @@ interface HumanRequest {
 | `question` | вопрос воркера (`ask`) адресован человеку | `answer` (вариант `optionId` и/или `text`) |
 | `answer` | задача-ответ `answerFor: 'human'` сдала `done --answer-file` | `accept` (`text` — решение), `clarify` (`text` — уточнение) |
 | `escalation` | PTY текущего запуска закрылся без `orca-board done` | `restart`, `dismiss` |
-| `approval` | рабочая задача пришла на ноду `human` воркфлоу (`docs/workflow.md`): ревью человеком, конфликт мержа | `accept` (`text` — комментарий), `reject` (`text` — замечания воркеру) |
+| `approval` | рабочая задача (движок подзадач) или **глобальная задача** (воркфлоу прогона: «Проверка человеком», без `taskId`, `requestRunApproval`) пришла на ноду `human` воркфлоу (`docs/workflow.md`): ревью человеком, конфликт мержа | `accept` (`text` — комментарий), `reject` (`text` — замечания воркеру) |
 
 `Question` остаётся: это канал «воркер ↔ отвечающий». Запрос создаётся по нему, только когда адресат — человек
 (`Question.forHuman = true`). Адресат определяется **в момент создания** и потом не пересчитывается.
@@ -66,6 +66,7 @@ interface HumanRequest {
 | Координатор умер | `escalateOpenQuestions(runId)` | выход PTY координатора (`worker.ts`), загрузка проекта (`projects.ts`) | `question` на каждый его открытый вопрос текущего запуска |
 | Сдан ответ для человека | `finishDispatch` | `task.answerFor === 'human'` | `answer`, `body` — ответ; `request_created` идёт после `worker_done` |
 | Этап воркфлоу «человек» | `requestApproval` (зовёт исполнитель в main) | задача пришла на ноду `human`; ждущий approval задачи не дублируется | `approval`, `body` — инструкция ноды, текст конфликта мержа, итог воркера, показ («## Показ»: текст и файлы, `showcaseDispatchId`), ветка |
+| Этап воркфлоу глобальной задачи «человек» | `requestRunApproval` (зовёт исполнитель в main) | граф прогона пришёл на ноду `human`; ждущий approval прогона не дублируется | `approval` **без задачи** (`taskId` нет, `runId` — прогон); карточка на «Проверке», «Подтвердить» / «Вернуть в работу» решают запрос; `request_created` и `request_resolved` несут `runId` |
 | Воркер вышел без `done` | `ptyExited` | запуск текущий, задача не в done и у неё нет pending-вопроса к человеку (ответ сам вернёт её в ready) | `escalation` (вдобавок к событию `escalation` координатору) |
 | Загрузка снапшота | `migrateRequests` | открытые вопросы текущих запусков (PTY после перезапуска нет); снапшот до `HumanRequest` — ещё сданные ответы и упавшие воркеры в needs_input | как выше, без событий |
 
@@ -106,12 +107,12 @@ Payload короткие: строка события в мониторе коо
 
 | Событие | Payload | Полный текст |
 |---|---|---|
-| `request_created` | `taskId, requestId, kind, title` (≤ 300 символов), `runId, dispatchId?, questionId?` | `orca-board request get --request <id>` |
+| `request_created` | `taskId?` (нет у approval прогона), `requestId, kind, title` (≤ 300 символов), `runId, dispatchId?, questionId?` | `orca-board request get --request <id>` |
 | `question` | `taskId, dispatchId, questionId, question` (≤ 300), `forHuman?: true, options` (метки) | `orca-board question get --question <id>` |
 | `question_answered` | `taskId, dispatchId, questionId, requestId?, question, answer, workerLive, status` | — |
 | `answer_accepted` | `taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 | `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId` | `orca-board request get --request <id>` (`resolution.text`) |
-| `request_resolved` | `taskId, action` (`restart`/`dismiss`/`accept`/`reject`), `requestId, kind, dispatchId?, nodeId?` (approval), `decision` (≤ 2000, текст решения по approval), `decisionTruncated?` | `orca-board request get --request <id>` (`resolution.text`) |
+| `request_resolved` | `taskId` (у approval прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`), `requestId, kind, dispatchId?, nodeId?` (approval), `decision` (≤ 2000, текст решения по approval), `decisionTruncated?` | `orca-board request get --request <id>` (`resolution.text`) |
 | `worker_done` | `taskId, dispatchId, summary, files, answerFor?, gateFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 
 Уведомление «нужен ваш ответ» (`notifyKind`, `notify.ts`) приходит только на `request_created` (вопрос / ответ
