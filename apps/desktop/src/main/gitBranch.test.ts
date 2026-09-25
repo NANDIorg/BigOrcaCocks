@@ -29,3 +29,19 @@ test('projectBranchInfo: ветка, репозиторий без коммит�
   git(dir, 'checkout', '--detach')
   assert.deepEqual(projectBranchInfo(dir), { isGitRepo: true, branch: null, detached: true, sha })
 })
+
+test('projectBranchInfo: папка проекта удалена — не исключение', () => {
+  const dir = join(mkdtempSync(join(tmpdir(), 'orca-gone-')), 'missing')
+  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: false, branch: null, detached: false })
+})
+
+test('projectBranchInfo: git недоступен (пустой PATH) — не исключение', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'orca-nopath-'))
+  const saved = process.env.PATH
+  process.env.PATH = ''
+  try {
+    assert.deepEqual(projectBranchInfo(dir), { isGitRepo: false, branch: null, detached: false })
+  } finally {
+    process.env.PATH = saved
+  }
+})
