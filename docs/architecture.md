@@ -905,7 +905,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **«Настройки»** (`settings/SettingsModal.tsx`): модальное окно по шестерёнке в rail (`showSettings` в `App.tsx`,
   Esc/клик по фону — закрыть). Внутри та же сетка `.about` в контейнере `about-host`, что во вкладке (меню слева,
   раздел справа, на узкой ширине — полоса); выбранный раздел — `localStorage` `orca.settingsSection`.
-  - «Общие» (`settings/GeneralSection.tsx`) — глобальные настройки приложения («Работать в фоне»).
+  - «Общие» (`settings/GeneralSection.tsx`) — глобальные настройки приложения («Язык», «Работать в фоне») и строка
+    «Мастер первого запуска» с кнопкой «Пройти заново»: `SettingsModal` закрывается, `App` открывает `OnboardingModal`
+    в режиме `rerun` (статус уже записан, `onboarding:complete` не зовётся). Строки нет, если в preload нет
+    `window.orca.onboarding` (`onboardingApi()`). Запись настроек — общий `saveAppSettings` (`appSettingsSave.ts`):
+    его же зовёт шаг «Язык» мастера.
   - «Уведомления» (`settings/NotificationsSection.tsx`) — фильтр ролей строится по ролям всех типов библиотеки
     (`libraryRoles`, без повторов по id).
   - Группа «Типы задач» — каждый тип отдельным пунктом меню (`type:<id>` в `orca.settingsSection`; старые
@@ -1677,7 +1681,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
   перевода разных экранов не правили один файл: `common` (кнопки, состояния, единицы измерения), `settings`
   (окно «Настройки»), `board` (доска, карточки, модалка задачи), `shell` (App, инбокс, лента внимания, координатор,
   ассистент, терминал), `global` (глобальные задачи, статистика), `config` («О проекте»: роли, воркфлоу, типы задач,
-  документация). Области собраны в `i18n/dict.ts` (`RU`, `DICTS`). Ключи внутри области плоские, с точками
+  документация), `onboarding` (мастер первого запуска, `OnboardingModal.tsx`). Области собраны в `i18n/dict.ts` (`RU`, `DICTS`). Ключи внутри области плоские, с точками
   (`'general.title'`); в `t()` — с именем области: `t('settings.general.title')`. Тип `TKey` — объединение всех
   ключей: опечатка — ошибка typecheck.
 - **ru — эталон ключей.** `ru/*.ts` — `export default {…} satisfies AreaDict`; `en/*.ts` —

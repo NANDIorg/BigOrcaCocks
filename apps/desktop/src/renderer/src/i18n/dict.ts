@@ -6,6 +6,7 @@ import ruShell from './ru/shell'
 import ruGlobal from './ru/global'
 import ruConfig from './ru/config'
 import ruBuiltin from './ru/builtin'
+import ruOnboarding from './ru/onboarding'
 import enCommon from './en/common'
 import enSettings from './en/settings'
 import enBoard from './en/board'
@@ -13,6 +14,7 @@ import enShell from './en/shell'
 import enGlobal from './en/global'
 import enConfig from './en/config'
 import enBuiltin from './en/builtin'
+import enOnboarding from './en/onboarding'
 
 /**
  * Русские словари по областям — эталон ключей. Области разнесены по файлам, чтобы задачи перевода
@@ -26,7 +28,8 @@ export const RU = {
   shell: ruShell,
   global: ruGlobal,
   config: ruConfig,
-  builtin: ruBuiltin
+  builtin: ruBuiltin,
+  onboarding: ruOnboarding
 }
 
 export type Area = keyof typeof RU
@@ -44,6 +47,7 @@ export const DICTS: Record<Locale, Record<Area, AreaDict>> = {
     shell: enShell,
     global: enGlobal,
     config: enConfig,
-    builtin: enBuiltin
+    builtin: enBuiltin,
+    onboarding: enOnboarding
   }
 }

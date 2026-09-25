@@ -31,6 +31,8 @@ import { GlobalTaskModal } from './GlobalTaskModal'
 import { changeTypeApi } from './globalTypeChange'
 import { ReturnGlobalModal } from './ReturnGlobalModal'
 import { ProjectTypeModal } from './ProjectTypeModal'
+import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
+import { loadOnboarding, shouldShowOnboarding } from './onboarding'
 import { startAddProject, type AddProjectStart } from './projectAdd'
 import { globalReviewApi, reviewErrorMessage } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
@@ -154,6 +156,8 @@ export function App(): React.JSX.Element {
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
+  /** Мастер первого запуска: `first` — при старте (статус pending), `rerun` — «Пройти заново» из настроек. */
+  const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
   const [showDocs, setShowDocs] = useState(false)
   /** Обновление приложения: плашка в сайдбаре, «Настройки → Обновления», тост после старта. */
@@ -254,6 +258,10 @@ export function App(): React.JSX.Element {
   }
 
   useEffect(() => {
+    // Не показываем мастер при неизвестном состоянии (старый main/preload, сбой чтения) — см. `loadOnboarding`.
+    void loadOnboarding(window.orca).then((state) => {
+      if (shouldShowOnboarding(state)) setOnboarding((cur) => cur ?? 'first')
+    })
     window.orca.app.info().then((i) => setSocketPath(i.socketPath))
     void refreshProjects()
     const offBoard = window.orca.board.onChange(({ projectId, snapshot }) => {
@@ -1009,6 +1017,11 @@ export function App(): React.JSX.Element {
           updates={updates}
           onRefreshAgents={() => refreshAgents(true)}
           onProjectsChanged={refreshProjects}
+          onRunOnboarding={() => {
+            setShowSettings(false)
+            refreshTaskTypes()
+            setOnboarding('rerun')
+          }}
           onClose={() => {
             setShowSettings(false)
             refreshTaskTypes()
@@ -1063,6 +1076,16 @@ export function App(): React.JSX.Element {
             await window.orca.globalTasks.createTask(openGlobal.id, input)
             setShowNew(false)
           }}
+        />
+      )}
+      {/* До ProjectTypeModal: выбор типа проекта из шага «Первый проект» открывается поверх мастера. */}
+      {onboarding && (
+        <OnboardingModal
+          mode={onboarding}
+          projects={projects}
+          onAddProject={addProject}
+          suspended={!!addPick}
+          onClose={() => setOnboarding(null)}
         />
       )}
       {addPick && (

@@ -1915,3 +1915,43 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .toast > svg { color: var(--col-done); flex-shrink: 0; }
 .toast .icon-btn { background: transparent; border: 0; color: var(--muted); width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; }
 .toast .icon-btn:hover { background: var(--side-2); color: var(--text); }
+
+/* Мастер первого запуска (OnboardingModal.tsx). Ширина — по окну: на узком остаётся поле 16px, тело прокручивается. */
+.onboarding-backdrop { padding: 16px; box-sizing: border-box; }
+.modal.onboarding { width: 560px; max-width: 100%; max-height: 100%; box-sizing: border-box; gap: 12px; }
+.onboarding-head { display: flex; align-items: flex-start; gap: 12px; }
+.onboarding-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.onboarding-head h3 { overflow-wrap: anywhere; }
+.onboarding-step { font-size: 12px; }
+.onboarding-dots { display: flex; gap: 6px; }
+.onboarding-dot { flex: 1; height: 4px; border-radius: 2px; background: var(--chip); opacity: .5; }
+.onboarding-dot.passed { background: var(--accent); opacity: .55; }
+.onboarding-dot.active { background: var(--accent); opacity: 1; }
+.onboarding-body { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.onboarding-body h4 { margin: 0; font-size: 16px; font-weight: 600; }
+.onboarding-body p { margin: 2px 0 0; font-size: 13px; }
+.onboarding-body .about-box { margin-bottom: 0; }
+.onboarding-agents-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.onboarding-agents-head > div { flex: 1; min-width: 200px; }
+.onboarding-agents-head .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
+.onboarding-agents-head .btn-sm svg { width: 14px; height: 14px; }
+.onboarding .agent-card { background: var(--frame); }
+.onboarding-note {
+  font-size: 13px; padding: 10px 12px; border-radius: 10px; line-height: 1.45;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 10%, var(--side));
+}
+.onboarding-add { display: inline-flex; align-items: center; gap: 8px; }
+.onboarding-add svg { width: 16px; height: 16px; }
+.onboarding-projects { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.onboarding-project { display: flex; align-items: center; gap: 8px; background: var(--frame); border-radius: 10px; padding: 8px 12px; min-width: 0; }
+.onboarding-project svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--muted); }
+.onboarding-project b { font-weight: 500; flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding-project .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 12px; }
+.onboarding-foot { align-items: center; flex-wrap: wrap; }
+.onboarding-foot-gap { flex: 1; }
+@media (max-width: 520px) {
+  .modal.onboarding { padding: 18px; }
+  .onboarding-foot { justify-content: stretch; }
+  .onboarding-foot .btn-primary { flex: 1 0 100%; order: -1; }
+  .onboarding-foot-gap { display: none; }
+}
