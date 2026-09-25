@@ -54,6 +54,8 @@ export default {
 
   'projects.none': 'нет проектов: добавьте репозиторий',
   'projects.notGit': '{path} — не git-репозиторий',
+  'projects.groupNotFound': 'группа проектов не найдена: {id}',
+  'projects.groupNameEmpty': 'название группы проектов не может быть пустым',
 
   'agent.unknown': 'неизвестный агент: {id}. Известные: {known}',
   'agent.notInstalled': 'агент {id} не установлен (нет бинарника {bin} в PATH)',
@@ -149,6 +151,19 @@ export default {
 
   'review.noBranch': 'у задачи нет ветки',
   'review.untracked': 'новые файлы:',
+  'git.protectedBranch': 'мерж в «{branch}» запрещён: это общая ветка (настройка «О проекте → Git → Защищённые ветки»). Запустите задачу из глобальной задачи с веткой фичи или откройте в Orca worktree рабочей ветки',
+  'git.runBranchFailed': 'не удалось завести ветку «{branch}» глобальной задачи от «{base}»: {error}',
+  'git.runBranchMissing': 'ветки «{branch}» глобальной задачи больше нет в репозитории — восстановите её или снимите ветку с задачи',
+  'git.badSettings': 'настройки Git проекта: {problems}',
+  'git.notRepo': '{path} — не git-репозиторий',
+  'git.dirtyTree': 'в проекте есть незакоммиченные изменения — переключение ветки не выполняется: закоммитьте или отложите их',
+  'git.notFastForward': 'ветка «{branch}» разошлась с {upstream}: fast-forward невозможен, объедините изменения вручную (merge или rebase)',
+  'git.noUpstream': 'у ветки «{branch}» нет upstream — обновлять её не из чего',
+  'git.branchBusy': 'ветка «{branch}» уже открыта в другом worktree: {path}',
+  'git.workersActive': 'в проекте работают агенты Orca ({count}) — переключать ветку корня нельзя, дождитесь их завершения',
+  'git.branchNotFound': 'ветки «{branch}» нет ни локально, ни на remote',
+  'git.opFailed': 'git {command}: {error}',
+  'git.timeout': 'не ответил за {seconds} с',
   'request.alreadyCancelled': 'уже решено: запрос {id} отменён',
   'request.alreadyResolved': 'уже решено: запрос {id} решён',
 

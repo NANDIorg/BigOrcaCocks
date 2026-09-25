@@ -112,11 +112,24 @@ describe('workerTaskPrompt: этап «Вопрос человеку»', () => {
     assert.match(worker, /раздел\s+«Ответы\s+на\s+вопросы\s+по\s+задаче»/)
   })
 
+  it('skills/coordinator.md: этап git выполняет приложение, поле git и исход error названы', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /`git` — приложение само выполняет git-операцию из поля `git`/)
+    assert.match(skill, /исход `error`/)
+  })
+
   it('skills/coordinator.md: этап ask, вопросы с него не обрабатываются, воркера перезапускает приложение', () => {
     const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
     assert.match(skill, /`ask` — агент спрашивает человека/)
     assert.match(skill, /- `question_answered` →[\s\S]*этапе\s+`ask`[\s\S]*`worker start` не нужен/)
     assert.match(skill, /- `request_created` →[\s\S]*`question`\s+с этапа `ask`[\s\S]*обрабатывать не нужно/)
+  })
+
+  it('skills/coordinator.md: ветка глобальной задачи — координатор в её worktree и не ведёт её сам', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /worktree\s+\*\*ветки\s+своей\s+глобальной\s+задачи\*\*[\s\S]*`orca-board global get`[\s\S]*`git\.branch`/)
+    assert.match(skill, /Не\s+переключай\s+ветку,\s+не\s+коммить\s+и\s+не\s+мержи\s+сам/)
+    assert.match(skill, /слиты\s+в\s+ветку\s+глобальной\s+задачи/)
   })
 })
 

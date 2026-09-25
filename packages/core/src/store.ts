@@ -21,6 +21,7 @@ import {
   type GlobalColumnKind, type GlobalTask
 } from './global-tasks.ts'
 import type { RunTypeInput, TaskTypeSnapshot } from './task-types.ts'
+import type { RunGit } from './run-branch.ts'
 
 /**
  * Версия формата файла доски. Растёт, когда снапшот меняется так, что старая версия приложения его не поймёт
@@ -952,6 +953,21 @@ export class TaskStore {
     this.commit()
   }
 
+  /**
+   * Ветка глобальной задачи (`Run.git`): заводит её, отмечает push и уборку worktree main (`src/main/run-branch.ts`).
+   * `undefined` в патче снимает поле. У «Входящих» ветки нет: это не фича, а корзина разрозненных задач.
+   */
+  setRunGit(runId: string, patch: Partial<RunGit>): Run {
+    const run = this.mustRun(runId)
+    if (run.inbox) throw new Error('у «Входящих» нет своей ветки')
+    const next: Partial<RunGit> = { ...run.git, ...patch }
+    if (!next.branch || !next.base) throw new Error(`ветка глобальной задачи ${runId}: нужны branch и base`)
+    for (const k of Object.keys(next) as Array<keyof RunGit>) if (next[k] === undefined) delete next[k]
+    run.git = next as RunGit
+    this.commit()
+    return run
+  }
+
   // ---------- global tasks ----------
 
   /** Карточки глобальных задач с прогрессом подзадач, в порядке создания. */
@@ -1446,7 +1462,7 @@ export class TaskStore {
       this.applyAccept(task, this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer'), decision)
     }
     // Событие — до commit в updateTask: если задача последняя, run_done придёт после answer_accepted.
-    return this.updateTask(taskId, { status: this.columnId('done'), worktree: undefined, branch: undefined })
+    return this.updateTask(taskId, { status: this.columnId('done'), worktree: undefined, branch: undefined, branchForeign: undefined })
   }
 
   /**
@@ -1752,6 +1768,7 @@ export class TaskStore {
         this.applyAccept(task, request, text)
         task.worktree = undefined
         task.branch = undefined
+        task.branchForeign = undefined
         this.setStatus(task, this.columnId('done'))
         this.promoteReady()
         break

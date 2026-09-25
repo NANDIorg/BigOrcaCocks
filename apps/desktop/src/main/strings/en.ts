@@ -51,6 +51,8 @@ export default {
 
   'projects.none': 'no projects: add a repository',
   'projects.notGit': '{path} is not a git repository',
+  'projects.groupNotFound': 'project group not found: {id}',
+  'projects.groupNameEmpty': 'the project group name cannot be empty',
 
   'agent.unknown': 'unknown agent: {id}. Known: {known}',
   'agent.notInstalled': 'agent {id} is not installed (no {bin} binary in PATH)',
@@ -146,6 +148,19 @@ export default {
 
   'review.noBranch': 'the task has no branch',
   'review.untracked': 'new files:',
+  'git.protectedBranch': 'merging into “{branch}” is not allowed: it is a shared branch (Project → Git → Protected branches). Run the task inside a global task with a feature branch, or open a working-branch worktree in Orca',
+  'git.runBranchFailed': 'could not create branch “{branch}” for the global task from “{base}”: {error}',
+  'git.runBranchMissing': 'branch “{branch}” of the global task no longer exists in the repository — restore it or detach the branch from the task',
+  'git.badSettings': 'project Git settings: {problems}',
+  'git.notRepo': '{path} is not a git repository',
+  'git.dirtyTree': 'the project has uncommitted changes — the branch is not switched: commit or stash them first',
+  'git.notFastForward': 'branch “{branch}” has diverged from {upstream}: fast-forward is not possible, combine the changes manually (merge or rebase)',
+  'git.noUpstream': 'branch “{branch}” has no upstream — nothing to update it from',
+  'git.branchBusy': 'branch “{branch}” is already checked out in another worktree: {path}',
+  'git.workersActive': 'Orca agents are working in the project ({count}) — the root branch cannot be switched, wait for them to finish',
+  'git.branchNotFound': 'branch “{branch}” exists neither locally nor on the remote',
+  'git.opFailed': 'git {command}: {error}',
+  'git.timeout': 'no response in {seconds} s',
   'request.alreadyCancelled': 'already decided: request {id} was cancelled',
   'request.alreadyResolved': 'already decided: request {id} was resolved',
 

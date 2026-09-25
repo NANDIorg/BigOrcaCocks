@@ -30,6 +30,11 @@ const api: OrcaApi = {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
+    branch: (id) => ipcRenderer.invoke('projects:branch', id),
+    branches: (id) => ipcRenderer.invoke('projects:branches', id),
+    gitFetch: (id) => ipcRenderer.invoke('projects:gitFetch', id),
+    gitPull: (id) => ipcRenderer.invoke('projects:gitPull', id),
+    checkoutBranch: (id, branch) => ipcRenderer.invoke('projects:checkoutBranch', id, branch),
     add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
     detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
     setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
@@ -37,6 +42,13 @@ const api: OrcaApi = {
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setEnabledAgents: (id, agents) => ipcRenderer.invoke('projects:setEnabledAgents', id, agents),
     setColumns: (id, columns) => ipcRenderer.invoke('projects:setColumns', id, columns),
+    createGroup: (name) => ipcRenderer.invoke('projects:createGroup', name),
+    renameGroup: (id, name) => ipcRenderer.invoke('projects:renameGroup', id, name),
+    removeGroup: (id) => ipcRenderer.invoke('projects:removeGroup', id),
+    setGroupCollapsed: (id, collapsed) => ipcRenderer.invoke('projects:setGroupCollapsed', id, collapsed),
+    setProjectGroup: (projectId, groupId) => ipcRenderer.invoke('projects:setProjectGroup', projectId, groupId),
+    reorderGroups: (ids) => ipcRenderer.invoke('projects:reorderGroups', ids),
+    setGit: (id, patch) => ipcRenderer.invoke('projects:setGit', id, patch),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {

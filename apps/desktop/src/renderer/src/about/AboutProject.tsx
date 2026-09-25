@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import { DEFAULT_COLUMNS, type AgentInfo, type AgentKind, type BoardColumn, type Run, type Task } from '@orca-board/core'
+import { DEFAULT_COLUMNS, normalizeRunBranchSettings, type AgentInfo, type AgentKind, type BoardColumn, type Run, type Task } from '@orca-board/core'
 import type { Project } from '../../../shared/ipc'
 import { ColumnsEditor } from '../ColumnsEditor'
 import { RunsSection } from '../runs'
@@ -12,11 +12,12 @@ import { OverviewSection } from './OverviewSection'
 import { AgentsSection } from './AgentsSection'
 import { RulesSection } from './RulesSection'
 import { TaskTypesSection } from './TaskTypesSection'
+import { GitSection } from './GitSection'
 
 /** Роли, воркфлоу, разрешения и правила доски ушли в тип задачи («Настройки → Типы задач»). */
-type Section = 'overview' | 'agents' | 'columns' | 'types' | 'rules' | 'runs'
+type Section = 'overview' | 'agents' | 'columns' | 'types' | 'git' | 'rules' | 'runs'
 
-const SECTIONS: readonly Section[] = ['overview', 'agents', 'columns', 'types', 'rules', 'runs']
+const SECTIONS: readonly Section[] = ['overview', 'agents', 'columns', 'types', 'git', 'rules', 'runs']
 const SECTION_KEY = 'orca.aboutSection'
 /** Разделы до типов задач: их содержимое теперь у типа — ведём в «Типы задач». */
 const TYPE_SECTIONS_OLD = ['roles', 'workflow', 'perm', 'agentRules']
@@ -111,6 +112,10 @@ export function AboutProject(props: Props): React.JSX.Element {
       count: project.taskTypeIds ? String(project.taskTypeIds.length) : t('config.about.nav.typesAll'),
       title: t('config.about.nav.typesTitle')
     },
+    {
+      id: 'git', label: t('config.about.nav.git'), icon: Icon.branch, title: t('config.about.nav.gitTitle'),
+      count: normalizeRunBranchSettings(project.git).enabled ? t('config.about.nav.gitOn') : t('config.about.nav.gitOff')
+    },
     { id: 'rules', label: t('config.about.nav.rules'), icon: Icon.doc, title: t('config.about.nav.rulesTitle') },
     {
       id: 'runs', label: t('config.about.nav.runs'), icon: Icon.runs,
@@ -164,6 +169,8 @@ export function AboutProject(props: Props): React.JSX.Element {
         )
       case 'types':
         return <TaskTypesSection key={project.id} project={project} agents={agents} onProjectChanged={onProjectChanged} />
+      case 'git':
+        return <GitSection project={project} onProjectChanged={onProjectChanged} />
       case 'rules':
         return <RulesSection key={project.id} root={project.root} />
       case 'runs':

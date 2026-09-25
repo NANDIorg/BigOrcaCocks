@@ -3,14 +3,15 @@ import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunBranchSettings, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
-import { setupCommand } from './git'
+import { setupCommand, taskWorktreePath } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
 import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
+import { ensureRunBranch } from './run-branch'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -32,6 +33,8 @@ export interface WorkerEnvContext {
   workflow?: Workflow
   /** Тип нового прогона координатора: id, снимок и граф уходят в `Run.typeId`, `Run.taskType`, `Run.workflow`. */
   type?: RunTypeInput
+  /** Ветки глобальных задач проекта (`Project.git`): заводить ли ветку фичи, от чего и как назвать. */
+  git: RunBranchSettings
 }
 
 /** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
@@ -172,7 +175,8 @@ function agentSessionId(spec: AgentSpec): string | undefined {
 
 /**
  * Старт воркера: git worktree на ветке задачи → подготовка → PTY с агентом → dispatch.
- * Worktree создаётся рядом с репозиторием: <repo>/../.orca-worktrees/<taskId>.
+ * Worktree создаётся рядом с репозиторием: <repo>/../.orca-worktrees/<taskId>. Ветка `orca/<taskId>` ответвляется
+ * от ветки глобальной задачи (`ensureRunBranch`), а без неё — от текущего HEAD корня, как раньше.
  */
 export function startWorker(
   store: TaskStore,
@@ -197,12 +201,17 @@ export function startWorker(
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
 
-  const branch = `orca/${task.id}`
-  const worktree = join(repoRoot, '..', '.orca-worktrees', task.id)
+  // Ветку и worktree могла уже назначить нода воркфлоу «Git» (`create_branch`/`checkout`): работаем на них, а не
+  // заводим `orca/<id>`. Нет worktree на диске (конец без мержа, удалили руками) — ставим на ту же ветку.
+  const branch = task.branch ?? `orca/${task.id}`
+  const worktree = task.worktree ?? taskWorktreePath(repoRoot, task.id)
+  const runGit = ensureRunBranch(store, repoRoot, task.runId, ctx.git)
   let fresh = false
   if (!existsSync(worktree)) {
     const branchExists = execFileSync('git', ['branch', '--list', branch], { cwd: repoRoot }).toString().trim() !== ''
-    const args = branchExists ? ['worktree', 'add', worktree, branch] : ['worktree', 'add', '-b', branch, worktree]
+    const args = branchExists
+      ? ['worktree', 'add', worktree, branch]
+      : ['worktree', 'add', '-b', branch, worktree, ...(runGit ? [runGit.branch] : [])]
     execFileSync('git', args, { cwd: repoRoot, stdio: 'pipe' })
     fresh = true
   }
@@ -224,7 +233,8 @@ export function startWorker(
   const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.worker, { projectRules: ctx.agentRules, role, language: mainLocale() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
-  const setup = fresh ? setupCommand(worktree) : null
+  // Worktree, который создала нода «Git» до первого запуска, тоже «свежий»: зависимостей в нём ещё нет.
+  const setup = fresh || !snap.dispatches.some((d) => d.taskId === task.id) ? setupCommand(worktree) : null
   const win32 = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : undefined
   const { command, args } = win32
     ? win32
@@ -255,12 +265,13 @@ export function startWorker(
 const ATTACHMENTS_DIR = '.orca-attachments'
 
 /**
- * Папка изображений координатора: `<repoRoot>/.orca-attachments` — внутри cwd координатора (чтение
- * без лишних разрешений агенту), в том числе когда repoRoot сам linked worktree. Внутри лежит свой
- * `.gitignore` с `*`: папка не попадает в `git status`/`git add -A`, а .gitignore репозитория не трогаем.
+ * Папка изображений координатора: `<cwd>/.orca-attachments` — внутри cwd координатора (чтение без лишних
+ * разрешений агенту): worktree ветки глобальной задачи или корень. Внутри лежит свой `.gitignore` с `*`: папка
+ * не попадает в `git status`/`git add -A`, не мешает `git worktree remove` без `--force`, а .gitignore
+ * репозитория не трогаем.
  */
-function attachmentsRoot(repoRoot: string): string {
-  const root = join(repoRoot, ATTACHMENTS_DIR)
+function attachmentsRoot(cwd: string): string {
+  const root = join(cwd, ATTACHMENTS_DIR)
   try {
     mkdirSync(root, { recursive: true })
     const ignore = join(root, '.gitignore')
@@ -308,7 +319,8 @@ function writeAttachments(root: string, runId: string, images: ImageAttachment[]
 }
 
 /**
- * Координатор: агент роли coordinator (нет такой роли — claude без модели) в корне репозитория с инструкцией и целью.
+ * Координатор: агент роли coordinator (нет такой роли — claude без модели) с инструкцией и целью — в worktree ветки
+ * глобальной задачи (`ensureRunBranch`), а без неё — в корне репозитория.
  * Без `runId` запуск создаёт новый прогон = глобальную задачу; с `runId` — повторный запуск на существующей
  * (цель — её описание и список подзадач, см. `resumeObjective`). Id прогона уходит координатору в ORCA_RUN_ID.
  * `images` (уже проверенные `validateImageAttachments`) сохраняются файлами на время прогона,
@@ -342,12 +354,15 @@ export function startCoordinator(
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
   if (resume) objective = resume.objective
-  const root = images.length > 0 ? attachmentsRoot(repoRoot) : undefined
-  if (root) pruneAttachments(store, root)
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
+  let root: string | undefined
   const sessionId = agentSessionId(spec)
   try {
+    // Ветка фичи заводится до координатора: он декомпозирует по коду этой ветки, воркеры ответвятся от неё.
+    const cwd = ensureRunBranch(store, repoRoot, run.id, ctx.git)?.worktree ?? repoRoot
+    root = images.length > 0 ? attachmentsRoot(cwd) : undefined
+    if (root) pruneAttachments(store, root)
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
     if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
     const paths = root ? writeAttachments(root, run.id, images) : []
@@ -361,7 +376,7 @@ export function startCoordinator(
     const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
     ptyId = spawnPty({
       meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
-      cwd: repoRoot,
+      cwd,
       command: launch.command,
       args: launch.args,
       cols,
@@ -414,7 +429,7 @@ export function returnToWork(
  * Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из типа библиотеки по умолчанию.
  * Правил проекта у него нет: они относятся к агентам, работающим в репозитории проекта.
  */
-export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules'>
+export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules' | 'git'>
 
 /**
  * Ассистент доски: интерактивный агент роли assistant (нет такой роли — агент роли coordinator, нет и её — claude).

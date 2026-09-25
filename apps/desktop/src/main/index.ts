@@ -11,7 +11,8 @@ import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, writeRule } from './rules'
-import { currentBranch } from './git'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
+import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
@@ -20,7 +21,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -62,6 +63,8 @@ else app.on('second-instance', () => { if (app.isReady()) showWindow() })
 let win: BrowserWindow | null = null
 let projects: ProjectManager
 let updater: Updater
+/** Push и уборка worktree веток глобальных задач (`run-branch.ts`): попытки помнит между изменениями доски. */
+const runBranchSync = new RunBranchSync({ isAlive })
 /** Выход подтверждён (или подтверждать нечего) — before-quit больше не перехватываем. */
 let quitting = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
@@ -204,6 +207,7 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
   return {
     socketPath: SOCKET_PATH,
     projectId,
+    git: projects.gitSettings(projectId),
     permissionMode: type.permissionMode,
     roles: type.roles,
     typeTitle: type.title,
@@ -328,7 +332,8 @@ function workflowDeps(projectId: string): WorkflowDeps {
       const workflow = runnableWorkflow(t.workflow)
       return { roles: t.roles, ...(workflow ? { workflow } : {}) }
     },
-    startWorker: (taskId, opts) => runWorker(taskId, p.id, undefined, undefined, opts)
+    startWorker: (taskId, opts) => runWorker(taskId, p.id, undefined, undefined, opts),
+    mergeTarget: (task) => mergeTarget(p.store, p.root, task, projects.gitSettings(p.id))
   }
 }
 
@@ -399,7 +404,8 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
  * с живым dispatch и удаление с подзадачами без cascade. Оставшиеся терминалы подзадач (после `done`
  * dispatch закрыт, а PTY жив) закрываются после удаления.
  */
-function removeGlobalTask(store: TaskStore, runId: string, cascade: boolean): { deleted: string; tasks: string[] } {
+function removeGlobalTask(p: { store: TaskStore; root: string }, runId: string, cascade: boolean): { deleted: string; tasks: string[] } {
+  const { store } = p
   const run = store.getRun(runId)
   if (run?.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
     throw new OrcaError('global.coordinatorAlive')
@@ -407,6 +413,8 @@ function removeGlobalTask(store: TaskStore, runId: string, cascade: boolean): { 
   const ptyIds = store.snapshot().dispatches.filter((d) => store.getTask(d.taskId)?.runId === runId && isAlive(d.ptyId)).map((d) => d.ptyId)
   const result = store.deleteGlobalTask(runId, { cascade })
   ptyIds.forEach((id) => killPty(id))
+  // Worktree ветки фичи больше некому убрать; сама ветка остаётся — в ней может быть работа. Грязный — не трогаем.
+  if (run?.git?.worktree) removeRunWorktree(p.root, run.git.worktree)
   return result
 }
 
@@ -513,7 +521,7 @@ function resolveRequest(projectId: string | undefined, id: string, resolution: R
   const request = p.store.getRequest(id)
   if (request) syncWorkerLiveness(p.store, request.taskId)
   const deps = workflowDeps(p.id)
-  return resolveHumanRequest(p.store, p.root, id, resolution, deps.startWorker, (r) => approvalResolved(deps, r))
+  return resolveHumanRequest(p.store, p.root, id, resolution, deps.startWorker, (r) => approvalResolved(deps, r), deps.mergeTarget)
 }
 
 /** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */
@@ -566,6 +574,24 @@ function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent
   })
 }
 
+/** Корень проекта по id (не обязательно активного); неизвестный id — ошибка. */
+function projectRoot(id: string): string {
+  const p = projects.get(id)
+  if (!p) throw new Error(`project not found: ${id}`)
+  return p.root
+}
+
+/**
+ * Живые воркеры и координаторы проекта: у них worktree и рабочая ветка растут от корня, переключать его нельзя
+ * (CLAUDE.md, «Git и ветки»). Считаются процессы, а не записи: dispatch без живого PTY — уже мёртвый.
+ */
+function liveAgentCount(projectId: string): number {
+  const store = projects.store(projectId)
+  const workers = store.activeDispatches().filter((d) => isAlive(d.ptyId)).length
+  const coordinators = store.listRuns().filter((r) => r.coordinatorPtyId && isAlive(r.coordinatorPtyId)).length
+  return workers + coordinators
+}
+
 function registerIpc(): void {
   handle('app:getSettings', () => projects.settings())
   handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
@@ -586,12 +612,32 @@ function registerIpc(): void {
   handle('updates:cancelPending', () => updater.cancelPending())
   handle('updates:getJustUpdated', () => updater.getJustUpdated())
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
-  handle('projects:list', () => ({ active: projects.active(), projects: projects.list() }))
+  handle('projects:list', () => ({ active: projects.active(), projects: projects.list(), groups: projects.groups() }))
+  handle('projects:createGroup', (_e, name: string) => projects.createGroup(name))
+  handle('projects:renameGroup', (_e, id: string, name: string) => projects.renameGroup(id, name))
+  handle('projects:removeGroup', (_e, id: string) => projects.removeGroup(id))
+  handle('projects:setGroupCollapsed', (_e, id: string, collapsed: boolean) => projects.setGroupCollapsed(id, collapsed))
+  handle('projects:setProjectGroup', (_e, projectId: string, groupId: string | null) => projects.setProjectGroup(projectId, groupId))
+  handle('projects:reorderGroups', (_e, ids: string[]) => projects.reorderGroups(ids))
   handle('projects:inProgressCounts', () => projects.inProgressCounts())
+  // Неизвестный проект (удалён, устаревший id в renderer) — не ошибка IPC, а «не репозиторий»: бейдж просто скрывается.
+  handle('projects:branch', (_e, id: string): ProjectBranchInfo => {
+    const p = projects.get(id)
+    return p ? projectBranchInfo(p.root) : { isGitRepo: false, branch: null, detached: false }
+  })
+  // Git корня проекта. Renderer сам перезапрашивает ветку по результату (`ProjectGitResult.branch` / возврат checkout).
+  handle('projects:branches', (_e, id: string) => projectBranches(projectRoot(id)))
+  handle('projects:gitFetch', (_e, id: string) => projectFetch(projectRoot(id)))
+  handle('projects:gitPull', (_e, id: string) => projectPull(projectRoot(id)))
+  handle('projects:checkoutBranch', (_e, id: string, branch: string) => {
+    const root = projectRoot(id)
+    return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
+  })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
+  handle('projects:setGit', (_e, id: string, patch: unknown) => projects.setGitSettings(id, patch))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
   handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   handle('projects:add', async (_e, typeId?: string, path?: string) => {
@@ -642,7 +688,7 @@ function registerIpc(): void {
   })
   handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
   handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
-    removeGlobalTask(projects.activeStore(), id, opts?.cascade === true)
+    removeGlobalTask(resolveProject(), id, opts?.cascade === true)
   )
   handle('globalTasks:tasks', (_e, id: string) => projects.activeStore().listSubtasks(id))
   handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
@@ -757,6 +803,9 @@ app.whenReady().then(() => {
     if (win && !win.isDestroyed()) win.webContents.send('board:changed', { projectId, snapshot: store.snapshot() })
     // Любой путь в done (review accept, task move, tasks:move из UI) проходит через commit store — ловим здесь.
     closeDoneWorkers(store)
+    // Закрытие и «Сделано» глобальной задачи — тоже любой путь (runs finish, перенос, выход координатора).
+    const project = projects.get(projectId)
+    if (project) runBranchSync.sync(store, project.root, projects.gitSettings(projectId))
     refreshTray()
   })
   projects.onEvents(notify)
@@ -808,7 +857,7 @@ app.whenReady().then(() => {
         reject: (taskId, feedback) => reviewReject(workflowDeps(p.id), taskId, feedback),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
-        deleteGlobalTask: (runId, cascade) => removeGlobalTask(p.store, runId, cascade),
+        deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),
         agents: () => projectAgents(p.id),
         resolveRun: (runId) => projects.resolveRun(p.id, runId),
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),

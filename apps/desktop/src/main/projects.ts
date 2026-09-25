@@ -6,8 +6,8 @@ import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
-  resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
-  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
+  resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType, normalizeRunBranchSettings, runBranchSettingsProblems,
+  type RunBranchSettings, type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
@@ -15,7 +15,7 @@ import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
 import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
-import type { OnboardingCompleteInput, OnboardingState } from '../shared/ipc'
+import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
   AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
   TaskTypesState
@@ -38,6 +38,8 @@ export interface Project {
   id: string
   root: string
   name: string
+  /** Группа в левом меню (`ProjectsFile.groups[].id`). Нет — проект без группы; висячая ссылка чистится при загрузке. */
+  groupId?: string
   /** Включённые агенты. undefined — все установленные. */
   enabledAgents?: AgentKind[]
   /** Колонки доски в порядке показа. undefined — DEFAULT_COLUMNS. */
@@ -56,11 +58,18 @@ export interface Project {
    * `assignRunTypes` идемпотентна.
    */
   legacyTypeId?: string
+  /** Ветки глобальных задач (`RunBranchSettings`, run-branch.ts в core). Нет — настройки по умолчанию. */
+  git?: RunBranchSettings
 }
 
 export interface ProjectsFile {
   projects: Project[]
   activeId: string | null
+  /**
+   * Группы проектов для левого меню, порядок массива = порядок в меню. Нет ключа — файл до групп: групп нет, все
+   * проекты без группы (отдельной миграции и бампа версии не нужно, старая версия приложения поле игнорирует).
+   */
+  groups?: ProjectGroup[]
   /** Версия формата (`PROJECTS_FILE_VERSION`); нет — файл до типов задач, его переводит миграция в `load()`. */
   version?: number
   /**
@@ -211,6 +220,7 @@ export class ProjectManager {
       data.taskTypesSeeded = true
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
+      normalizeGroups(data)
       const settingsSet = isObject(raw.settings) && Object.keys(raw.settings).length > 0
       const onboarding = loadedOnboarding(raw.onboarding, data.projects.length > 0 || settingsSet)
       data.onboarding = onboarding.value
@@ -248,6 +258,81 @@ export class ProjectManager {
 
   get(id: string): Project | undefined {
     return this.data.projects.find((p) => p.id === id)
+  }
+
+  // ---------- группы проектов ----------
+
+  /** Группы в порядке показа; групп нет — пустой массив. */
+  groups(): ProjectGroup[] {
+    return (this.data.groups ?? []).map((g) => ({ ...g }))
+  }
+
+  private mustGetGroup(id: string): ProjectGroup {
+    const g = (this.data.groups ?? []).find((x) => x.id === id)
+    if (!g) throw new OrcaError('projects.groupNotFound', { id })
+    return g
+  }
+
+  /** Новая группа в конце списка. Имя обрезается; пустое — `projects.groupNameEmpty`. */
+  createGroup(name: string): ProjectGroup {
+    const trimmed = groupName(name)
+    const groups = this.data.groups ?? []
+    let id: string
+    do id = `group_${randomBytes(4).toString('hex')}`
+    while (groups.some((g) => g.id === id))
+    const group: ProjectGroup = { id, name: trimmed }
+    this.data.groups = [...groups, group]
+    this.save()
+    return { ...group }
+  }
+
+  renameGroup(id: string, name: string): ProjectGroup {
+    const g = this.mustGetGroup(id)
+    g.name = groupName(name)
+    this.save()
+    return { ...g }
+  }
+
+  /** Удалить группу: её проекты остаются, но становятся проектами без группы. */
+  removeGroup(id: string): void {
+    this.mustGetGroup(id)
+    this.data.groups = (this.data.groups ?? []).filter((g) => g.id !== id)
+    for (const p of this.data.projects) if (p.groupId === id) delete p.groupId
+    this.save()
+  }
+
+  /** Свернуть/развернуть группу; развёрнутая хранится без поля (`collapsed` не пишется вовсе). */
+  setGroupCollapsed(id: string, collapsed: boolean): ProjectGroup {
+    const g = this.mustGetGroup(id)
+    if (collapsed) g.collapsed = true
+    else delete g.collapsed
+    this.save()
+    return { ...g }
+  }
+
+  /** Положить проект в группу; `null` — вынуть. Неизвестный проект — `project not found`, неизвестная группа — `projects.groupNotFound`. */
+  setProjectGroup(projectId: string, groupId: string | null): Project {
+    const p = this.mustGet(projectId)
+    if (groupId === null) delete p.groupId
+    else p.groupId = this.mustGetGroup(groupId).id
+    this.save()
+    return p
+  }
+
+  /** Новый порядок групп: `ids` — ровно все существующие id, каждый один раз; иначе `projects.groupNotFound` на первом лишнем или пропущенном. */
+  reorderGroups(ids: string[]): ProjectGroup[] {
+    const groups = this.data.groups ?? []
+    const seen = new Set<string>()
+    for (const id of ids) {
+      if (seen.has(id)) throw new OrcaError('projects.groupNotFound', { id })
+      this.mustGetGroup(id)
+      seen.add(id)
+    }
+    const missing = groups.find((g) => !seen.has(g.id))
+    if (missing) throw new OrcaError('projects.groupNotFound', { id: missing.id })
+    this.data.groups = ids.map((id) => groups.find((g) => g.id === id)!)
+    this.save()
+    return this.groups()
   }
 
   private mustGet(id: string): Project {
@@ -613,6 +698,22 @@ export class ProjectManager {
       this.save()
     }
     return this.onboardingState()
+  }
+
+  /** Ветки глобальных задач проекта: сохранённые или по умолчанию. */
+  gitSettings(id: string): RunBranchSettings {
+    return normalizeRunBranchSettings(this.get(id)?.git)
+  }
+
+  /** Поменять настройки веток: патч поверх текущих, ошибки шаблона, базы или remote — `git.badSettings`. */
+  setGitSettings(id: string, patch: unknown): Project {
+    const p = this.mustGet(id)
+    const next = normalizeRunBranchSettings({ ...this.gitSettings(id), ...(isObject(patch) ? patch : {}) })
+    const problems = runBranchSettingsProblems(next)
+    if (problems.length > 0) throw new OrcaError('git.badSettings', { problems: problems.map((x) => x.text).join('; ') })
+    p.git = next
+    this.save()
+    return p
   }
 
   setEnabledAgents(id: string, agents: AgentKind[]): Project {
@@ -987,11 +1088,36 @@ function loadedRoles(v: unknown): Role[] | undefined {
   }
 }
 
+/** Название группы: обрезанное по краям, непустое. */
+function groupName(name: unknown): string {
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  if (!trimmed) throw new OrcaError('projects.groupNameEmpty')
+  return trimmed
+}
+
+/**
+ * Группы из файла: мусор (не объект, нет id или названия, повтор id) отбрасывается, название обрезается, `collapsed`
+ * остаётся только как `true`. Ссылки проектов на пропавшие группы снимаются — иначе группа, потерянная из-за битой
+ * записи, «воскресла» бы вместе со старой привязкой при появлении такого же id. Файл без групп остаётся без ключа.
+ */
+function normalizeGroups(data: ProjectsFile): void {
+  const raw: unknown[] = Array.isArray(data.groups) ? data.groups : []
+  const groups: ProjectGroup[] = []
+  for (const g of raw) {
+    if (!isObject(g) || !nonEmpty(g.id) || typeof g.name !== 'string' || !g.name.trim() || groups.some((x) => x.id === g.id)) continue
+    groups.push({ id: g.id, name: g.name.trim(), ...(g.collapsed === true ? { collapsed: true } : {}) })
+  }
+  if (groups.length) data.groups = groups
+  else delete data.groups
+  for (const p of data.projects) if (p.groupId !== undefined && !groups.some((g) => g.id === p.groupId)) delete p.groupId
+}
+
 /** Поля проекта нового формата: мусор отбрасывается (тип по умолчанию и доступные типы — строки id). */
 function normalizeProject(p: Project): void {
   if (p.taskTypeIds !== undefined && !(Array.isArray(p.taskTypeIds) && p.taskTypeIds.length && p.taskTypeIds.every(nonEmpty))) delete p.taskTypeIds
   if (p.defaultTaskTypeId !== undefined && !nonEmpty(p.defaultTaskTypeId)) delete p.defaultTaskTypeId
   if (p.legacyTypeId !== undefined && !nonEmpty(p.legacyTypeId)) delete p.legacyTypeId
+  if (p.git !== undefined) p.git = normalizeRunBranchSettings(p.git)
 }
 
 /**

@@ -185,3 +185,18 @@ test('пилюля этапа для ask — как у любой ноды: на
   const ask = wfNodeTitles({ version: 1, nodes: [{ id: 'q', type: 'ask', x: 0, y: 0, instructions: 'x' }], edges: [] })
   assert.equal(stageLabel({ stage: { nodeId: 'q', visits: { q: 1 } } }, ask, () => undefined)?.text, 'Вопрос человеку')
 })
+
+test('stageLabel: этап git подписан названием ноды — заданным или «Git»', () => {
+  const graph: Workflow = {
+    version: 1,
+    nodes: [
+      { id: 'g1', type: 'git', x: 0, y: 0, operation: 'create_branch', branch: 'feature/{taskId}' },
+      { id: 'g2', type: 'git', x: 0, y: 0, operation: 'push', title: 'Пуш в origin' }
+    ],
+    edges: []
+  }
+  const names = wfNodeTitles(graph)
+  assert.deepEqual(names, { g1: 'Git', g2: 'Пуш в origin' })
+  assert.deepEqual(stageLabel({ stage: { nodeId: 'g1', visits: { g1: 1 } } }, names, () => undefined), { kind: 'stage', text: 'Git', title: 'Этап воркфлоу: Git' })
+  assert.equal(stageLabel({ stage: { nodeId: 'g2', visits: { g2: 2 } } }, names, () => undefined)?.text, 'Пуш в origin · 2-й заход')
+})

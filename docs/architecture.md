@@ -103,8 +103,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, ... }` — прогон
-  (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»):
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
+  (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
+  `git: RunGit {branch, base, worktree?, pushedAt?, pushError?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -303,9 +304,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   человека штатным `orca-board ask`, `stageAction` — тот же `start_worker`, что у `work`; `WfWorkStage.type`
   различает этапы; `Question.nodeId` — нода, на которой спросили), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
   (закрытый список предикатов `WfCondition`: `attempts` — сколько раз задача заходила в ноду, `role` — роль
-  задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `end` (`merged`). У каждой ноды
+  задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `git` (git-операция без агента:
+  `operation` — `create_branch` / `checkout` / `commit` / `push`, поля `branch`, `base`, `message`, `remote`; исходы `ok` / `error`;
+  контракт — `docs/workflow.md`, «Нода Git»), `end` (`merged`). У каждой ноды
   опциональные `title` и `column`. Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
-  `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
+  `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, git: ok/error, end — без выходов).
 - **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
   ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
   ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).
@@ -314,6 +317,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   перед проверкой `condition` по роли (`<id>_if`), остальные задачи её пропускают. Из него собраны
   `defaultWorkflow` и графы заготовок типов задач; id нод и рёбер стабильны (`work`, `merge`, `end`,
   `conflict`, `e_<нода>_<исход>`).
+- **Нода `git`, хелперы** (`workflow.ts`): `WF_GIT_OPERATIONS`, `WF_GIT_FIELD_USE` (обязательные/необязательные поля по операции),
+  `wfGitVars(task)` + `renderGitTemplate` (подстановки `{taskId}`, `{slug}`, `{title}`), `wfGitSlug`, `isValidGitBranchName`,
+  `isValidGitRemoteName`, `gitBranchTemplateValid`. Валидация и `stageAction` (неполная нода → `blocked`) используют их же, чтобы main
+  не дублировал правила. Состояние (`Task.stage`, `stageHistory`) не менялось: `outcome: 'error'` — просто ещё одно значение `WfOutcome`.
 - **`migrateWorkflow(wf)`** — старую версию поднимает до текущей (пока без шагов), будущую не трогает.
 - **`stableJson(v)`** — JSON с отсортированными ключами: сравнение ролей и графов без учёта порядка полей
   («несохранённые изменения» редактора графа).
@@ -330,7 +337,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **`nextStage(wf, stage, outcome, ctx)` → `{stage, action}`** — чистая функция перехода. `stage =
   {nodeId, visits}`, `visits` считает заходы в ноды (включая условия) и нужен `attempts`. Цепочка `condition`
   проходится за один вызов; повторный заход в то же условие за вызов → `blocked` (граф мог сохранить старый
-  код без проверки). `action`: `start_worker` / `create_gate` / `request_human` / `merge` / `done` /
+  код без проверки). `action`: `start_worker` / `create_gate` / `request_human` / `merge` / `git` / `done` /
   `blocked {reason}`; при `blocked` из-за нет ребра/ноды задача остаётся на прежнем этапе. `ctx.roleIds` —
   текущие роли типа прогона: роль гейта удалили → `blocked` на ноде гейта. `startStage(wf, ctx)` — переход из
   старта, `stageAction(wf, stage, ctx)` — действие для текущего этапа (повтор эффекта после рестарта или
@@ -340,7 +347,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   спека рабочей задачи как критерии. Команды сборки и тестов конкретного репозитория в шаблон не входят —
   они берутся из `node.instructions` (раздел «Как проверять») или системного промпта роли.
 - **`describeWorkflow(wf)` → `WfStageInfo[]`** — граф для `orca-board workflow show`: этапы в порядке обхода от
-  старта (недостижимые — в конце) с `type`, `title`, `roleId?`, `instructions?`, `condition?` (условие словами) и
+  старта (недостижимые — в конце) с `type`, `title`, `roleId?`, `instructions?`, `condition?` (условие словами), `git?` и
   `next` — исход → «название (id)» ноды.
 
 ### Воркфлоу: состояние в store (`packages/core/src/store.ts`)
@@ -408,7 +415,7 @@ Store хранит позицию и решает, куда задача пер�
 - **`workflowEdit.ts`** — чистые функции правки: `addNode` (уникальный id, пустые поля — их подсветит
   валидация), `removeNode` (с рёбрами), `moveNode`, `connect` (у порта одно ребро: прежнее заменяется с
   сохранением id; чужой порт и вход в `start` отвергаются), `disconnect`, `removeSelected`, `issueTargets`
-  (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS`. Недопустимая операция возвращает граф как есть.
+  (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS` и `wfOutcomeLabel(тип, исход)`. Недопустимая операция возвращает граф как есть.
 - **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
   (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы и «Вопроса человеку» пустое значение — «роль задачи»,
@@ -430,6 +437,17 @@ Store хранит позицию и решает, куда задача пер�
   «Этап «<нода>»» в шапке `RequestCard` (`requestStageLabel` в `cardState.ts`; название — из графа прогона,
   `workflowOf` → `workflowForRun`; нода пропала из графа — метки нет). Пилюля этапа на карточке доски для `ask` та же,
   что у `work` (`stageLabel`).
+- **Нода Git в редакторе** (`workflowGit.ts`): в палитре после «Мержа» (`WF_ADDABLE_TYPES`), в select «Тип» и легенде
+  (`WF_NODE_HELP.git`), иконка `WfNodeIcon.git`. Инспектор (`GitFields`) показывает операцию и **только её поля**
+  (`gitFieldsFor` по `WF_GIT_FIELD_USE` из core): ветка — `create_branch`/`checkout`, база — `create_branch`,
+  сообщение — `commit`, remote — `push`. Под веткой и сообщением — подстановки (`gitPlaceholdersHint`: у ветки без
+  `{title}`) и превью на образцовой задаче (`gitPreview`; красное — имя недопустимо для git). `patchGit` при смене
+  операции убирает поля, которых у новой операции нет (иначе невидимое значение давало бы предупреждение
+  `gitParamIgnored`), пустое необязательное поле удаляет, пустое обязательное оставляет строкой — его подсветит
+  валидация. Порты `ok`/`error`: `ok` подписан «выполнено» (`wfOutcomeLabel`, у мержа тот же `ok` — «слито»), `error`
+  красный, как `reject`/`conflict`. Поля «Колонка» нет (`hasColumn`): git выполняется синхронно, задача на ноде не стоит.
+  Подпись на холсте — «операция: ветка/сообщение/remote» (`gitNodeSubtitle`). Пилюля этапа на карточке (`stageLabel`) —
+  название ноды, как у остальных этапов.
 - **Пресет «3 отказа → человек»** (`addRetryLimit`): каждый `reject` гейта-агента, ведущий прямо в работу,
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
@@ -751,6 +769,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
   Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
+- **Меню веток у бейджа ветки** (`BranchMenu.tsx`, логика — `renderer/src/projectGit.ts`, ветка — `useProjectBranch.ts`):
+  бейдж текущей ветки в шапке — кнопка; по клику поповер с «Fetch», «Pull» (у Pull — ↑ahead ↓behind текущей ветки),
+  поиском и списками локальных / удалённых веток (текущая отмечена, занятая другим worktree недоступна, удалённые без
+  дублей локальных); выбор ветки — `projects.checkoutBranch`. Пока идёт операция, всё заблокировано; её состояние живёт
+  в `BranchMenu`, а не в поповере, поэтому закрытое меню не теряет идущий fetch/pull. Ошибки — по `ipcErrorCode`
+  (`gitErrorMessage`): у кодов `PROJECT_GIT_ERROR_CODES` свой текст в `i18n/*/shell.ts` (`branch.err.*`), у `git.opFailed`
+  и неизвестных — сообщение main (в нём stderr git). Нет git-методов в preload или канала в main
+  (`No handler registered for 'projects:…'`) — «перезапустите приложение» (`projectGitApi`, `isStaleGitError`).
+  После checkout и pull бейдж обновляется сразу (`useProjectBranch().update`), затем перечитывается.
 - **Смена проекта** (`useEffect` по `active?.id`: сайдбар или `projects:focus`) сбрасывает выбранную
   задачу и закрывает модалку задачи (`openTaskId = null`) — чужая задача в модалке не остаётся.
 - **Добавление проекта** (`addProject` в `App.tsx`, логика — `renderer/src/projectAdd.ts` `startAddProject`,
@@ -761,6 +788,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   внутри него (`findProjectForPath`; renderer git не запускает) — модалки нет, `projects.add(undefined, path)`
   переключает на существующий проект. Старый preload без `detectTaskType`/`taskTypes` или старый main
   («No handler registered for 'projects:detectTaskType'») — прежний `projects.add()` без выбора типа.
+- **Группы проектов в левом меню** (`ProjectList.tsx`; логика — `renderer/src/projectGroups.ts` `buildSidebar`, меню — `PopupMenu.tsx`,
+  диалоги имени и подтверждения — `GroupDialogs.tsx`). Сверху сворачиваемые группы (заголовок — кнопка с `aria-expanded`, число проектов,
+  в свёрнутом виде — сумма бейджей «в работе»), ниже проекты без группы; `groupId` несуществующей группы читается как «без группы»,
+  пустая группа остаётся в меню. Свёрнутая группа с активным проектом подсвечена. Сворачивание — оптимистично, затем
+  `projects.setGroupCollapsed`. Действия — кнопка «…» или правая кнопка на проекте/группе: перенос в группу / из группы / в новую группу
+  (`setProjectGroup`), переименование, удаление (подтверждение — модалка приложения, не `window.confirm`; проекты остаются без группы).
+  После действия перечитывается только `projects.list()` (`reloadProjectList` в `App.tsx`), доска не трогается. Старый main/preload:
+  `list()` без `groups` — меню без групп; нет методов групп (`groupsApi`) или нет хендлера в main
+  (`isStaleGroupsError`: «No handler registered for 'projects:createGroup'…») — «перезапустите приложение» (`shell.projects.staleApp`).
+  Drag-and-drop проектов между группами нет.
 - **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет кромки заголовка).
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
   Колонку «Готовы» (kind `ready`) локальная доска отдельно не показывает: её карточки лежат в колонке kind `backlog`
@@ -880,6 +917,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     (`enabledAgents`), не установленные — под спойлером; «Обновить» пересканирует PATH.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog). Сохраняется через `projects:setColumns`.
+  - «Git» (`about/GitSection.tsx`) — ветка на каждую глобальную задачу (`Project.git`, `RunBranchSettings`): вкл/выкл,
+    база, шаблон имени с примером, push и remote, защищённые ветки строкой через запятую. Сохраняется кнопкой через
+    `projects:setGit`; ошибки формы — `runBranchSettingsProblems` по коду (`config.about.git.issue.*`). Нет метода у старого
+    preload — «перезапустите приложение». В меню — «ветки» / «выкл».
   - «Типы задач» (`about/TaskTypesSection.tsx`, логика — `renderer/src/taskTypeEdit.ts`) — все типы библиотеки
     (`taskTypes:list`, перечитывается при каждом открытии раздела) с галочкой «доступен в проекте» и кнопкой
     «По умолчанию»; сверху переключатель «Все типы библиотеки» (`taskTypeIds` не задан — доступны и типы, созданные
@@ -1027,9 +1068,35 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
-  (см. «Обновление»); `projects:list`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
-  агенты, типы; ролей, графа, правил и разрешений у проекта нет);
+  (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
+  `projects:gitFetch(id)` (`git fetch --all --prune`) и `projects:gitPull(id)` (`git pull --ff-only` текущей ветки) → `ProjectGitResult {output, branch: ProjectBranchInfo}`,
+  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking); все четыре — опциональные методы `OrcaApi.projects`
+  (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
+  `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
+  воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
+  Реализация — `src/main/git.ts` («git корня проекта»): все вызовы через `execFile('git', [...])` без shell, **асинхронные** (`fetch` идёт до 120 с,
+  синхронный вызов заморозил бы окно и терминалы), `GIT_TERMINAL_PROMPT=0`, таймаут 120 с для сети и 30 с для локальных команд; операции над одним
+  корнем идут по очереди (`serial`). `projectBranches` — `for-each-ref` (локальные, `refs/remotes` без `*/HEAD`), `worktree list --porcelain`
+  (`busy`), `for-each-ref %(upstream:short/track)` + `rev-list --left-right --count` (upstream, ahead/behind, `[gone]`), `status --porcelain` (`dirty`).
+  `projectPull` — не голый `git pull`, а `fetch <remote upstream>` + `merge --ff-only`: `git.notFastForward` определяется по факту (HEAD — не предок
+  upstream), а не по тексту git, зависящему от локали; правки в дереве, мешающие обновлению, дают `git.opFailed`. `checkoutProjectBranch` проверяет по порядку:
+  репозиторий → та же ветка (успех без остальных проверок) → ветка есть (`git.branchNotFound`; имена вроде `--orphan` сюда не доходят) →
+  `liveAgents > 0` (`git.workersActive`; `liveAgentCount(projectId)` в `index.ts` — активные dispatch с живым PTY + координаторы прогонов с живым PTY) →
+  ветка в другом worktree (`git.branchBusy`) → грязное дерево, включая untracked (`git.dirtyTree`); удалённая `origin/x` без локальной `x` —
+  `checkout --track -b x origin/x`. Отдельного события «ветка сменилась» нет: `ProjectGitResult.branch` и результат `checkoutBranch` уже несут новую ветку;
+  `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
+  агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
+  веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
+  **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
+  `projects:createGroup(name)` → `ProjectGroup`, `projects:renameGroup(id, name)` → `ProjectGroup`,
+  `projects:removeGroup(id)` (проекты группы становятся без группы, сами не удаляются), `projects:setGroupCollapsed(id, collapsed)` →
+  `ProjectGroup`, `projects:setProjectGroup(projectId, groupId | null)` → `Project` (`null` — вынуть из группы),
+  `projects:reorderGroups(ids)` → `ProjectGroup[]` (`ids` — все id групп в новом порядке). Ошибки — `OrcaError`
+  `projects.groupNotFound` (неизвестная группа) и `projects.groupNameEmpty` (пустое имя после обрезки пробелов).
+  Реализация — `ProjectManager` (`main/projects.ts`: `groups`, `createGroup`, `renameGroup`, `removeGroup`, `setGroupCollapsed`,
+  `setProjectGroup`, `reorderGroups`); `reorderGroups` требует ровно все id по одному разу, иначе `groupNotFound` на лишнем/пропущенном;
+  неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
   `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
   (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
@@ -1112,19 +1179,53 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 спрашивает только про опасные. `bypassPermissions` — вообще без вопросов, `acceptEdits` —
 только правки файлов без вопросов, остальной Bash спросит в терминале приложения.
 
+## Ветка глобальной задачи (`src/main/run-branch.ts`, чистая часть — `packages/core/src/run-branch.ts`)
+
+У каждой глобальной задачи — своя ветка и свой worktree; подзадачи ответвляются от неё и сливаются в неё, ветка корня
+проекта не меняется. Так несколько глобальных задач одного проекта идут параллельно и не смешиваются, а Orca, открытый
+на `master`, не пишет в `master`.
+
+- **Настройки** — `Project.git` (`RunBranchSettings`, нет — `DEFAULT_RUN_BRANCH_SETTINGS`): `enabled` (по умолчанию да),
+  `base` (пусто — текущая ветка корня; `origin/develop` — сначала `git fetch origin develop`, офлайн — от того, что есть),
+  `template` (`feature/{runId}-{slug}`; `{runId}` обязателен, `{slug}` — `branchSlug`: название латиницей, кириллица
+  транслитерируется, ≤ 40 символов), `push` (по умолчанию нет), `remote` (`origin`), `protected`
+  (`master`, `main`, `develop`, `release/*`, `hotfix/*`). Проверка — `runBranchSettingsProblems` (коды для renderer,
+  русский `text` для main), имя ветки — `branchNameProblem` (подмножество `git check-ref-format`).
+- **`ensureRunBranch`** — при запуске координатора (до PTY) и воркера: `Run.git` есть — вернуть, восстановив worktree
+  (`worktree prune` + `worktree add` на существующую ветку; ветки нет — `git.runBranchMissing`). Нет — завести:
+  `git worktree add --no-track -b <ветка> <repo>/../.orca-worktrees/<runId> <база>` и `store.setRunGit`. `--no-track` —
+  иначе upstream новой ветки стал бы `origin/develop`, и голый `git push` отказал бы или ушёл в базу. Ветку **не** заводит:
+  «Входящим», при выключенной настройке и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина
+  фичи уже в корне) — такие работают по-старому.
+- **Координатор** запускается в worktree ветки (`cwd`), туда же — `.orca-attachments`. **Воркер**: `orca/<taskId>`
+  ответвляется от `Run.git.branch` (без неё — от HEAD корня).
+- **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки, `{cwd: корень, branch: текущая}`, но
+  не в защищённую (`OrcaError` `git.protectedBranch`: нода `merge` → `workflow_blocked`, приёмка вне графа — ошибка, до
+  git-части). Передаётся как `WorkflowDeps.mergeTarget` и `targetOf` в `acceptReview` / `resolveHumanRequest`.
+  **`reviewBase`** — база `review info`: ветка фичи или текущая ветка корня.
+- **`RunBranchSync`** — на каждое `projects.onChange`: прогон закрыт (`closedAt`, карточка на «Проверке») и `push` —
+  `git push -u <remote> refs/heads/<b>:refs/heads/<b>` в фоне (`execFile`, `GIT_TERMINAL_PROMPT=0`), итог — `pushedAt` /
+  `pushError`; неудача не повторяется до нового закрытия или перезапуска. Карточка в «Сделано», координатора и воркеров
+  нет — `git worktree remove` **без `--force`** (грязный worktree остаётся), `Run.git.worktree` снимается, ветка остаётся.
+  Удаление глобальной задачи (`removeGlobalTask`) тоже убирает worktree, ветку оставляет.
+- **UI**: чип ветки в шапке глобальной задачи (`GlobalTaskHeader` → `BranchChip`, логика — `renderer/src/runBranch.ts`):
+  имя, тон по push, подсказка — база, папка, push; клик копирует имя. **CLI**: `global get` → поле `git`.
+
 ## Ревью и мерж (`src/main/review.ts`, `src/main/workflow.ts`, `src/main/git.ts`)
 
-Это **локальная** интеграция в текущую ветку root проекта, без GitHub PR и CI.
-При разработке этого репозитория root в Orca — отдельный worktree `feature/*` / `fix/*`,
-а `orca/*` — его подзадачи. База не закреплена в задаче: нельзя переключать root, пока
-живы воркеры. Общие ветки обновляются через GitHub PR по [Git Flow](git-flow.md).
+Это **локальная** интеграция без GitHub PR и CI: ветка подзадачи сливается в ветку её глобальной задачи (см. «Ветка
+глобальной задачи»), а без неё — в текущую ветку root проекта, если та не защищённая. Ветку фичи в общие ветки
+переносит человек через GitHub PR по [Git Flow](git-flow.md).
 
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
 
 - **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
   старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
-  становится ролью задачи.
+  становится ролью задачи. Если первым этапом стоит нода `git`, `enterWork` выполняет её до запуска (`prepareBeforeWork`,
+  `executeSteps(…, deferWorker)`), а воркера стартует сам `runWorker`; цепочка ушла мимо «Работы» — `runWorker` бросает
+  «воркер не запущен: до работы задача остановилась на этапе…». `startWorker` (`worker.ts`) работает на готовых
+  `Task.branch` / `Task.worktree`, а не создаёт `orca/<id>`.
 - **Подписка** `projects.onEvents(runWorkflowEvents)` в `src/main/index.ts` (как `deliverAnswers`), шаги —
   `setImmediate`, не внутри commit: `worker_done` рабочей задачи текущего dispatch → исход `next`; `worker_done`
   задачи-проверки → закрыть её (решение уже есть) или `workflow_blocked` «сдана без решения»; `escalation`
@@ -1132,13 +1233,16 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 - **Эффекты** (`execute`): `start_worker` — задача в ready и `runWorker`; `create_gate` — рабочая в колонку ноды
   (по умолчанию `kind=review`), `createTask` с `gateFor`, `gateTaskTitle`/`gateTaskSpec` и ролью гейта, сразу
   `runWorker`; `request_human` — `requestApproval` (тело: инструкция ноды, текст конфликта, итог воркера, ветка);
-  `merge` — `mergeTaskBranch`, затем сразу исход `ok` / `conflict`; `done` — ветка слита → `acceptTask`, не слита
+  `merge` — `mergeTaskBranch`, затем сразу исход `ok` / `conflict`; `git` — `runGitNode`: операция ноды в worktree
+  задачи (`gitCreateBranch` / `gitCheckout` / `gitCommit` / `gitPush` в `git.ts`), обновляет `Task.worktree` / `Task.branch`
+  / `Task.branchForeign` и сразу исход `ok` / `error` (текст отказа git — в `task.feedback` и в запрос человеку); `done` — ветка слита → `acceptTask`, не слита
   (конец без мержа) → хвосты коммитятся, worktree убирается, **ветка остаётся**, задача в done. Ошибка эффекта →
   `blockStage` (`workflow_blocked`) с причиной и командой, если её можно выполнить. Больше 50 переходов подряд без
   ожидания — тоже `workflow_blocked`.
-- **`mergeTaskBranch(repoRoot, task)`** (`review.ts`) — git-часть приёмки: незакоммиченное коммитится от
-  `orca-board`, `git merge --no-ff` в текущую ветку репозитория (если в ветке есть коммиты), `git worktree remove
-  --force`, `git branch -D`. Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
+- **`mergeTaskBranch(repoRoot, task, target)`** (`review.ts`) — git-часть приёмки: незакоммиченное коммитится от
+  `orca-board`, `git merge --no-ff` в `target` (`mergeTarget`; без него — текущая ветка корня) (если в ветке есть коммиты), `git worktree remove
+  --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
+  удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
   месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
@@ -1198,7 +1302,7 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 ## Проекты (`src/main/projects.ts`)
 
 `ProjectManager` хранит список репозиториев и библиотеку типов задач в `userData/projects.json` (у проекта —
-`enabledAgents`, `columns`, `taskTypeIds`, `defaultTaskTypeId`, `legacyTypeId`), доску каждого — в `userData/boards/<id>.json`
+`enabledAgents`, `columns`, `taskTypeIds`, `defaultTaskTypeId`, `legacyTypeId`, `groupId`), доску каждого — в `userData/boards/<id>.json`
 (`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board` (на Windows — `%APPDATA%\orca-board`).
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
 UI работает с активным проектом; воркеры и координатор получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
@@ -1206,9 +1310,16 @@ UI работает с активным проектом; воркеры и ко
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
-`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
+`{ version, projects: Project[], activeId, groups?: ProjectGroup[], taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
 (`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
 запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
+- `groups?: ProjectGroup[]` — группы проектов для левого меню (`shared/ipc.ts`), порядок массива = порядок в меню; у проекта
+  `groupId` ссылается на `groups[].id`, нет или указывает на несуществующую группу — проект без группы. Поле опциональное,
+  версию формата не бампает: старая версия приложения его игнорирует. Файл без `groups` читается как «групп нет» — это и
+  есть миграция. `load()` (`normalizeGroups`) отбрасывает битые записи (нет id или названия, повтор id), обрезает имя,
+  оставляет `collapsed` только как `true` и снимает `groupId`, указывающий на пропавшую группу; `stripLegacy`
+  (`task-types-migration.ts`) `groupId` сохраняет. Удаление группы снимает `groupId` у её проектов, удаление проекта
+  группы не трогает, пустая группа остаётся. Тесты — `main/projects-groups.test.ts`.
 - `onboarding: { status: 'pending'|'completed'|'skipped', version, at?, reason?: 'existing' }` — корень файла, а не
   `settings`: это не настройка человека, `app:setSettings` его не меняет. Версию формата (`PROJECTS_FILE_VERSION`) поле
   не бампает: оно опциональное, старая версия приложения при откате его игнорирует. `pending` пишется **явно**
@@ -1977,6 +2088,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 
 ## Грабли разработки
 
+- Orca сливал подзадачи в **текущую ветку корня**, а root был открыт на `master`: две фичи ушли прямо в `master` и
+  перемешались (правило «открой в Orca worktree фичи» в CLAUDE.md и `git-flow.md` агенты не могли выполнить — ветку корня
+  выбирает человек). Теперь у глобальной задачи своя ветка (`run-branch.ts`), а в защищённые ветки корня приложение не
+  сливает. Правило процесса, которое нельзя проверить кодом, — не защита: ставь проверку в код.
+
 - CI выполняет тесты на трёх ОС. Фикстура живого PTY запускает Node, а не отсутствующий
   в Windows `sleep`. Интеграционные тесты `MacUpdater.install` используют реальные пути
   временного каталога и валидатор POSIX-путей: они выполняются на macOS/Linux.
@@ -2122,6 +2238,17 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
   проектов нет). `pending` пишется явно при создании файла (`emptyProjectsFile`), а миграция «существующий
   пользователь» срабатывает только при отсутствии ключа `onboarding` (`loadedOnboarding`). Держит тест
   «закрыли посреди мастера» в `projects-onboarding.test.ts`.
+- Модалка, отрисованная внутри сайдбара (или другого контейнера), уходит под позиционированные блоки основной
+  области: `position: fixed` без `z-index` лежит в общем порядке слоёв по месту в DOM, и глобальные задачи с их
+  панелями, идущие позже, перекрывают бэкдроп (так диалог создания группы оказался «ниже» глобальных задач).
+  Диалоги, вызываемые из вложенных компонентов, рисуй порталом в `body` (`createPortal`, как `PopupMenu` и
+  `GroupDialogs.tsx`) и задавай бэкдропу явный `z-index` (группы — 40: выше меню 30 и входящих 21, ниже тоста 50).
+- Нода `git` выполняет git синхронно в main (`execFileSync`), как и остальной git приложения. `push` может идти до 120 с
+  (`PUSH_TIMEOUT_MS` в `git.ts`) — всё это время main не отвечает; `GIT_TERMINAL_PROMPT=0` не даёт git ждать пароль в
+  терминале, которого нет. Ssh-ключ с passphrase без агента даст `error`, а не запрос. Асинхронный `push` потребует
+  переделать `executeSteps` в async — пока не делали.
+- Ветку задачи не выводи из `orca/${task.id}`: нода `git` меняет `Task.branch`, а `startWorker`, `review`, гейты и `merge`
+  читают её из задачи. Удаляя ветку при уборке, смотри на `Task.branchForeign`.
 
 ## Открытые вопросы
 
