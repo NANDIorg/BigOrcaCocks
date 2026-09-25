@@ -316,7 +316,7 @@ describe('настройки приложения: язык', () => {
   it('не выбран — нет поля; выбранный переживает перезапуск; чужой язык — ошибка', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
-    assert.equal(pm.settings().language, undefined, 'первый запуск: язык берёт renderer из системы')
+    assert.equal(pm.settings().language, undefined, 'первый запуск: язык не выбран, renderer показывает русский')
     assert.equal(pm.setSettings({ language: 'en' }).language, 'en')
     assert.equal(new ProjectManager(tmp).settings().language, 'en')
     assert.throws(() => pm.setSettings({ language: 'de' as 'en' }), /неизвестный язык «de»/)

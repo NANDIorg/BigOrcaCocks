@@ -5,7 +5,7 @@ import { initLocale, useLocale } from './i18n'
 import './styles.css'
 import '@xterm/xterm/css/xterm.css'
 
-// Язык — до первого рендера (кэш / система), затем из настроек main. Старый preload без app — язык системы.
+// Язык — до первого рендера (кэш или русский), затем из настроек main. Старый preload без app — не падаем.
 initLocale(window.orca?.app)
 
 /**

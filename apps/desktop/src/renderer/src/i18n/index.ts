@@ -25,11 +25,6 @@ export function isLocale(v: unknown): v is Locale {
   return v === 'ru' || v === 'en'
 }
 
-/** Язык системы для первого запуска: английский для `en-*`, иначе русский. */
-export function systemLocale(tag: string | undefined): Locale {
-  return tag?.toLowerCase().startsWith('en') ? 'en' : DEFAULT_LOCALE
-}
-
 let current: Locale = DEFAULT_LOCALE
 const listeners = new Set<() => void>()
 
@@ -55,26 +50,29 @@ export function subscribeLocale(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-/** Язык из настроек приложения: выбран явно — он, не выбран (первый запуск, старый main) — язык системы. */
-export function settingsLocale(settings: Pick<AppSettings, 'language'> | null | undefined, systemTag: string | undefined): Locale {
-  return isLocale(settings?.language) ? settings.language : systemLocale(systemTag)
+/**
+ * Язык из настроек приложения: выбран явно — он, не выбран (первый запуск, старый main) — русский.
+ * Язык системы не угадываем: `navigator.language` в Electron — язык самого приложения (`en-US`
+ * при русской macOS), и автоопределение переключило бы на английский всех, кто обновился.
+ */
+export function settingsLocale(settings: Pick<AppSettings, 'language'> | null | undefined): Locale {
+  return isLocale(settings?.language) ? settings.language : DEFAULT_LOCALE
 }
 
 /**
- * Язык при старте окна: сразу — из кэша или системы, затем — из настроек main. Без `window.orca.app`
- * (старый preload) или при ошибке остаётся язык системы, окно не падает.
+ * Язык при старте окна: сразу — из кэша (чтобы английский интерфейс не мигал русским), затем — из
+ * настроек main. Без `window.orca.app` (старый preload) или при ошибке — кэш или русский, окно не падает.
  */
 export function initLocale(api: { getSettings(): Promise<Pick<AppSettings, 'language'>> } | undefined): void {
-  const tag = typeof navigator === 'undefined' ? undefined : navigator.language
   let cached: string | null = null
   try {
     cached = localStorage.getItem(CACHE_KEY)
   } catch {
     cached = null
   }
-  setLocale(isLocale(cached) ? cached : systemLocale(tag))
+  setLocale(isLocale(cached) ? cached : DEFAULT_LOCALE)
   if (typeof api?.getSettings !== 'function') return
-  api.getSettings().then((s) => setLocale(settingsLocale(s, tag)), () => undefined)
+  api.getSettings().then((s) => setLocale(settingsLocale(s)), () => undefined)
 }
 
 /** Категория множественного числа по правилам языка. */

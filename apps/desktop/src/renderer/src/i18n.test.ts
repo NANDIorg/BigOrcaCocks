@@ -3,7 +3,7 @@
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { DICTS, RU } from './i18n/dict'
-import { getLocale, interpolate, pluralCategory, setLocale, settingsLocale, systemLocale, t, translate, type Locale, type PluralMessage } from './i18n'
+import { getLocale, interpolate, pluralCategory, setLocale, settingsLocale, t, translate, type Locale, type PluralMessage } from './i18n'
 import { formatDateTime, formatDuration, formatFixed, formatInteger, intlLocale } from './i18n/format'
 import { formatAgentTime, formatAxis, formatTokens, formatUsd } from './statsFormat'
 
@@ -92,19 +92,12 @@ describe('множественное число', () => {
 })
 
 describe('выбор языка', () => {
-  it('язык системы: en-* — английский, остальное — русский', () => {
-    assert.equal(systemLocale('en-US'), 'en')
-    assert.equal(systemLocale('EN'), 'en')
-    assert.equal(systemLocale('ru-RU'), 'ru')
-    assert.equal(systemLocale('de-DE'), 'ru')
-    assert.equal(systemLocale(undefined), 'ru')
-  })
-
-  it('выбранный в настройках язык важнее системного; нет поля (старый main) — системный', () => {
-    assert.equal(settingsLocale({ language: 'ru' }, 'en-US'), 'ru')
-    assert.equal(settingsLocale({}, 'en-GB'), 'en')
-    assert.equal(settingsLocale(null, 'ru'), 'ru')
-    assert.equal(settingsLocale({ language: 'de' as Locale }, 'ru'), 'ru')
+  it('выбранный в настройках язык; не выбран, старый main или мусор — русский (язык системы не угадываем)', () => {
+    assert.equal(settingsLocale({ language: 'en' }), 'en')
+    assert.equal(settingsLocale({ language: 'ru' }), 'ru')
+    assert.equal(settingsLocale({}), 'ru')
+    assert.equal(settingsLocale(null), 'ru')
+    assert.equal(settingsLocale({ language: 'de' as Locale }), 'ru')
   })
 })
 

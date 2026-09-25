@@ -40,7 +40,7 @@ export type AppLanguage = 'ru' | 'en'
 export interface AppSettings {
   /** Закрытие окна не завершает приложение: PTY живут, иконка в трее. По умолчанию true. */
   keepInBackground: boolean
-  /** Язык интерфейса; не выбран — renderer берёт язык системы (en-* → en, иначе ru). */
+  /** Язык интерфейса; не выбран — русский (язык системы не угадываем, см. `settingsLocale`). */
   language?: AppLanguage
   /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
   notifications: NotificationSettings

@@ -10,7 +10,7 @@ export function GeneralSection({ settings, error, onChange }: {
   onChange(patch: AppSettingsPatch): void
 }): React.JSX.Element {
   const t = useT()
-  // Язык не выбран явно (первый запуск) — отмечен тот, что показан сейчас: язык системы.
+  // Язык не выбран явно (первый запуск) — отмечен тот, что показан сейчас: русский.
   const locale = useLocale()
   return (
     <>
@@ -36,6 +36,8 @@ export function GeneralSection({ settings, error, onChange }: {
             ))}
           </div>
         </div>
+      </div>
+      <div className="about-box">
         <div className="row-act">
           <div className="row-act-text">
             <b>{t('settings.general.background')}</b>

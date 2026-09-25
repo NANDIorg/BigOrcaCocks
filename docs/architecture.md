@@ -1505,11 +1505,13 @@ skills, тексты main (уведомления, диалоги, ошибки 
   Не пиши `toLocaleString('ru-RU')` и `replace('.', ',')` — бери эти функции.
 - **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
   (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
-  `app:setSettings` — нового IPC нет. Не выбран (первый запуск) — поля нет, renderer берёт язык системы:
-  `navigator.language` `en-*` → en, иначе ru (`systemLocale`, `settingsLocale`). При старте окна `initLocale`
-  (`main.tsx`) сразу ставит язык из кэша `localStorage['orca.locale']` или системы — чтобы окно не мигало
-  русским, — затем из настроек main. Старый preload без `window.orca.app` или ошибка IPC — язык системы, без падения;
-  старый main, который отбросил `language`, — язык меняется до перезапуска, в разделе «Общие» ошибка `common.staleApp`.
+  `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык
+  русский (`settingsLocale`). Язык системы не угадываем: `navigator.language` в Electron — язык самого приложения,
+  `en-US` даже при русской macOS (`AppleLanguages = ru-RU`), и все обновившиеся получили бы английский. При старте
+  окна `initLocale` (`main.tsx`) сразу ставит язык из кэша `localStorage['orca.locale']` — чтобы английский
+  интерфейс не мигал русским, — затем из настроек main. Старый preload без `window.orca.app` или ошибка IPC —
+  кэш или русский, без падения; старый main, который отбросил `language`, — язык меняется до перезапуска,
+  в разделе «Общие» ошибка `common.staleApp`.
 - **Переключатель** «Язык / Language» — «Настройки → Общие» (`settings/GeneralSection.tsx`), сегменты
   «Русский» / «English» (названия — каждое на своём языке, `LOCALE_NAMES`). Язык меняется сразу, до ответа main.
 
