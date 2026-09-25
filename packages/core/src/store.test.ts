@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { STATUS_HISTORY_LIMIT } from './status-history.ts'
 import { TaskStore, EVENT_ANSWER_LIMIT, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
-import { defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
+import { WORKFLOW_VERSION, defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
 import { presetTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
 
 /** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
@@ -429,6 +429,36 @@ describe('исполнитель: переходы store', () => {
     assert.equal(s.getTask(t.id)!.stage!.visits.work, 2)
     const last = s.listEvents().filter((e) => e.type === 'stage_changed').at(-1)!
     assert.deepEqual([last.payload.from, last.payload.to, last.payload.outcome], ['review', 'work', 'restart'])
+  })
+
+  it('enterWork: этап «Вопрос человеку» не сбрасывается, taskWorkStage и taskStageNode отдают его', () => {
+    const s = store()
+    const wf: Workflow = {
+      version: WORKFLOW_VERSION,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'ask', type: 'ask', roleId: 'analyst', title: 'Уточнить', instructions: 'Спроси про БД', x: 0, y: 0 },
+        { id: 'work', type: 'work', x: 0, y: 0 },
+        { id: 'end', type: 'end', x: 0, y: 0 }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'ask' },
+        { id: 'e2', from: 'ask', outcome: 'next', to: 'work' },
+        { id: 'e3', from: 'work', outcome: 'next', to: 'end' }
+      ]
+    }
+    const run = s.createRun('цель', undefined, wf)
+    const t = s.createTask({ title: 'A', runId: run.id })
+    assert.equal(s.taskStageNode(t.id), undefined, 'без этапа ноды нет')
+    assert.deepEqual(s.enterWork(t.id), { type: 'start_worker', nodeId: 'ask', roleId: 'analyst' }, 'первый заход — сразу в ask')
+    assert.equal(s.enterWork(t.id), undefined, 'повторный старт агента (автоперезапуск) этап не сбрасывает')
+    assert.equal(s.getTask(t.id)!.stage!.nodeId, 'ask')
+    assert.deepEqual(s.getTask(t.id)!.stage!.visits, { start: 1, ask: 1 }, 'заходы не растут')
+    assert.equal(s.taskStageNode(t.id)?.type, 'ask')
+    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'ask', type: 'ask', title: 'Уточнить', instructions: 'Спроси про БД' })
+    assert.equal(s.listEvents().filter((e) => e.type === 'stage_changed' && e.payload.outcome === 'restart').length, 0)
+    s.advanceStage(t.id, 'next')
+    assert.equal(s.taskWorkStage(t.id)!.type, 'work')
   })
 
   it('enterWork: задачи-ответы и гейты — мимо', () => {

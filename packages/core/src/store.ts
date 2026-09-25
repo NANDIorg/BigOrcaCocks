@@ -13,7 +13,7 @@ import { trackActiveTime } from './active-time.ts'
 import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
   defaultWorkflow, nextStage, startStage, wfNodeTitle, wfWorkStage,
-  type WfAction, type WfOutcome, type WfStage, type WfWorkStage, type Workflow
+  type WfAction, type WfNode, type WfOutcome, type WfStage, type WfWorkStage, type Workflow
 } from './workflow.ts'
 import {
   globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, globalTaskTitle, runTypeLockReason,
@@ -784,9 +784,12 @@ export class TaskStore {
 
   /**
    * Задача снова идёт в работу (`worker start`, перезапуск, «Уточнить» не в счёт — у задач-ответов этапа нет):
-   * этап, который не «Работа» (задачу вернули вручную с ревью, переоткрыли из done), сбрасывается на первый этап
+   * этап, который не «Работа» и не «Вопрос человеку» (задачу вернули вручную с ревью, переоткрыли из done),
+   * сбрасывается на первый этап
    * от старта — иначе её `done` пришёл бы на этап проверки. Задача без этапа входит в граф. Заходы (`visits`)
-   * копятся: лимит повторов считает и такие возвраты. Этап «Работа» не трогается. Задачи-ответы и гейты — мимо.
+   * копятся: лимит повторов считает и такие возвраты. Этапы «Работа» и «Вопрос человеку» не трогаются: агент
+   * входит в `ask` при каждом запуске (`worker start`, автоперезапуск после ответа), и сброс вернул бы задачу
+   * на первую «Работу». Задачи-ответы и гейты — мимо.
    * Возвращает действие нового этапа или undefined, если этап не менялся.
    */
   enterWork(taskId: string, opts: RunWorkflowFallback = {}): WfAction | undefined {
@@ -794,7 +797,7 @@ export class TaskStore {
     if (task.answerFor || task.gateFor) return undefined
     const wf = this.runWorkflow(task.runId, opts)
     const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
-    if (current?.type === 'work') return undefined
+    if (current?.type === 'work' || current?.type === 'ask') return undefined
     if (!task.stage) return this.advanceStage(taskId, 'next', opts).action
     const ctx = { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}) }
     const step = startStage(wf, ctx)
@@ -1244,13 +1247,24 @@ export class TaskStore {
   }
 
   /**
-   * Этап «Работа», на котором стоит задача (`wfWorkStage` по графу прогона): для раздела «Этап» в промпте воркера
-   * и проверки показа в `finishDispatch`. Задача вне воркфлоу или не на «Работе» — undefined.
+   * Этап «Работа» или «Вопрос человеку», на котором стоит задача (`wfWorkStage` по графу прогона): для раздела
+   * «Этап» в промпте воркера и проверки показа в `finishDispatch`. Задача вне воркфлоу или на другом этапе —
+   * undefined.
    */
   taskWorkStage(taskId: string, fallback: RunWorkflowFallback = {}): WfWorkStage | undefined {
     const task = this.mustTask(taskId)
     if (!task.stage) return undefined
     return wfWorkStage(this.runWorkflow(task.runId, fallback), task.stage.nodeId)
+  }
+
+  /**
+   * Нода графа прогона, на которой стоит задача (любого типа). Для сокета: граф прогона и запасной граф типа
+   * известны вызывающему (`worker.ask` решает по типу ноды, кому адресовать вопрос). Задача вне воркфлоу — undefined.
+   */
+  taskStageNode(taskId: string, fallback: RunWorkflowFallback = {}): WfNode | undefined {
+    const task = this.mustTask(taskId)
+    if (!task.stage) return undefined
+    return this.runWorkflow(task.runId, fallback).nodes.find((n) => n.id === task.stage!.nodeId)
   }
 
   /**
@@ -1529,11 +1543,13 @@ export class TaskStore {
    * (от имени координатора/человека) — только по несделанной задаче. Идемпотентно: пока у запуска есть
    * открытый вопрос, повторный ask возвращает его (инструмент оборвал ask по таймауту — воркер переспросил).
    * Адресат фиксируется здесь: `coordinatorAlive` (живость PTY координатора знает только main) — вопрос
-   * ждёт координатора, задача в работе; иначе сразу запрос к человеку (needs_input).
+   * ждёт координатора, задача в работе; иначе сразу запрос к человеку (needs_input). `forHuman` — этап
+   * «Вопрос человеку»: вопрос идёт человеку при любом координаторе, а нода этапа записывается в
+   * `Question.nodeId` и `HumanRequest.nodeId`.
    */
   ask(
     input: { taskId: string; dispatchId?: string; question: string; options?: readonly (string | RequestOption)[]; context?: string },
-    opts: { coordinatorAlive?: boolean } = {}
+    opts: { coordinatorAlive?: boolean; forceHuman?: boolean } = {}
   ): Question {
     const task = this.mustTask(input.taskId)
     if (input.dispatchId !== undefined) {
@@ -1553,10 +1569,11 @@ export class TaskStore {
       question,
       options: normalizeOptions(input.options),
       ...(input.context?.trim() ? { context: input.context.trim() } : {}),
+      ...(opts.forceHuman && task.stage ? { nodeId: task.stage.nodeId } : {}),
       createdAt: Date.now()
     }
     this.questions.set(q.id, q)
-    const forHuman = opts.coordinatorAlive !== true
+    const forHuman = opts.forceHuman === true || opts.coordinatorAlive !== true
     this.pushEvent('question', {
       taskId: task.id, dispatchId: q.dispatchId, questionId: q.id, question: short(q.question),
       ...(forHuman ? { forHuman: true } : {}), options: q.options.map((o) => o.label)
@@ -1588,7 +1605,8 @@ export class TaskStore {
     if (request) this.closeRequest(request, 'resolved', resolution ?? { action: 'answer', text: answer })
     this.settleTask(task)
     task.updatedAt = Date.now()
-    // workerLive: false и задача в ready — координатору сделать `worker start` (ответ будет в промпте).
+    // workerLive: false и задача в ready — координатору сделать `worker start` (ответ будет в промпте); на этапе
+    // «Вопрос человеку» воркера перезапускает приложение (handleEvents в main/workflow.ts).
     this.pushEvent('question_answered', {
       taskId: task.id, dispatchId: q.dispatchId, questionId: q.id,
       ...(request ? { requestId: request.id } : {}),
@@ -1641,7 +1659,8 @@ export class TaskStore {
     q.forHuman = true
     const body = [q.context, note?.trim() ? `**Координатор:** ${note.trim()}` : undefined].filter(Boolean).join('\n\n')
     return this.createRequest(this.mustTask(q.taskId), {
-      kind: 'question', title: q.question, ...(body ? { body } : {}), options: q.options, questionId: q.id, dispatchId: q.dispatchId
+      kind: 'question', title: q.question, ...(body ? { body } : {}), options: q.options, questionId: q.id, dispatchId: q.dispatchId,
+      ...(q.nodeId ? { nodeId: q.nodeId } : {})
     }, emit)
   }
 

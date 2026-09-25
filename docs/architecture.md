@@ -363,9 +363,15 @@ Store хранит позицию и решает, куда задача пер�
   `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
   гейта удалена). Эффекты `action` выполнит main.
 - **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
-  задача не на ноде `work` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
-  складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` —
-  ничего. Задачи-ответы и гейты — мимо. Возвращает `action` нового этапа.
+  задача не на ноде `work` или `ask` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
+  складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` и `ask` —
+  ничего (на `ask` агент входит при каждом запуске, включая автоперезапуск после ответа). Задачи-ответы и гейты — мимо.
+  Возвращает `action` нового этапа. Обёртка в `workflow.ts` кроме того применяет роль ноды `work` к задаче, а роль ноды
+  `ask` возвращает вызывающему (`{roleId}`) — на задачу она не переносится.
+- **`taskWorkStage(taskId, fallback?)`** — этап `work` или `ask` (`wfWorkStage`) для промпта и проверки показа;
+  **`taskStageNode(taskId, fallback?)`** — нода этапа любого типа (сокет `worker.ask` решает по ней, кому адресовать вопрос).
+- **`ask(input, {coordinatorAlive?, forceHuman?})`** — `forceHuman` (задача на ноде `ask`): вопрос сразу человеку, в
+  `Question.nodeId` и `HumanRequest.nodeId` — нода этапа `task.stage.nodeId`.
 - **`blockStage(taskId, reason)`** — эффект этапа не выполнился (воркер не стартовал, мерж упал не конфликтом):
   `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
 - **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
@@ -1037,7 +1043,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
 | `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка |
-| `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу |
+| `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу. Задача на этапе `ask` — вопрос человеку при любом координаторе (`forceHuman`) |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
@@ -1545,6 +1551,15 @@ ad-hoc, и приложение падает при запуске. Провер
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
 
 ## Грабли разработки
+
+- `store.enterWork` сбрасывал на первый этап любую ноду, кроме `work`, а `runWorker` зовёт его при каждом запуске агента.
+  Для этапа «Вопрос человеку» (`ask`) это вернуло бы задачу с `ask` на первую «Работу» при старте самого агента и при
+  автоперезапуске после ответа. Теперь `enterWork` не трогает `work` и `ask`. Новый тип этапа, на котором стоит живой
+  агент, добавляй в это условие.
+- Роль ноды `work` осознанно становится ролью задачи (`applyWorkRole`), роль ноды `ask` — нет: иначе следующая «Работа» без
+  своей роли запустилась бы ролью опросника. Роль этапа `ask` едет в запуск отдельным параметром
+  (`WorkflowDeps.startWorker(taskId, {roleId})`, `startWorker(…, roleId)`), `task.roleId` и `task.agent` не меняются;
+  `Dispatch.roleId` — роль запуска. Не «упрощай» до `applyWorkRole` для всех `start_worker`.
 
 - `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has

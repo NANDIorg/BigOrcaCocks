@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
+import { spawnPty, killPty } from './pty'
 
 let tmp: string
 let sockPath: string
@@ -407,5 +408,72 @@ describe('worker done: показ человеку', () => {
     const d = store.startDispatch(task.id, 'pty_w')
     assert.match((await call('worker.done', { summary: 's', showcase: 'a.png' }, { dispatchId: d.id })).error!, /showcase: нужен объект/)
     assert.match((await call('worker.done', { summary: 's', showcase: { text: 1 } }, { dispatchId: d.id })).error!, /showcase.text/)
+  })
+})
+
+describe('worker ask: адресат вопроса', () => {
+  const wf: Workflow = {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'ask', type: 'ask', instructions: 'Спроси про БД', x: 0, y: 0 },
+      { id: 'work', type: 'work', x: 0, y: 0 },
+      { id: 'end', type: 'end', x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e1', from: 'start', outcome: 'next', to: 'ask' },
+      { id: 'e2', from: 'ask', outcome: 'next', to: 'work' },
+      { id: 'e3', from: 'work', outcome: 'next', to: 'end' }
+    ]
+  }
+  let coordPty: string
+
+  beforeEach(() => {
+    // Живой координатор: настоящий PTY (реестр main), который isAlive видит.
+    coordPty = spawnPty({ meta: { role: 'coordinator', label: 'coord' }, command: 'sleep', args: ['30'], cols: 80, rows: 24 })
+  })
+  afterEach(() => killPty(coordPty))
+
+  /** Задача прогона со снимком графа `wf` и живым координатором, запущенная и стоящая на `ask` или `work`. */
+  function runningTask(stage: 'ask' | 'work'): { taskId: string; dispatchId: string } {
+    const run = store.createRun('цель', undefined, wf)
+    store.setRunPty(run.id, coordPty)
+    const task = store.createTask({ title: 'Хранилище', roleId: 'developer', runId: run.id })
+    store.enterWork(task.id)
+    if (stage === 'work') store.advanceStage(task.id, 'next')
+    assert.equal(store.getTask(task.id)!.stage!.nodeId, stage)
+    const d = store.startDispatch(task.id, 'pty_w')
+    return { taskId: task.id, dispatchId: d.id }
+  }
+
+  it('на этапе ask вопрос идёт человеку даже при живом координаторе: запрос в Инбоксе с нодой этапа', async () => {
+    const { taskId, dispatchId } = runningTask('ask')
+    const res = await call('worker.ask', { question: 'Какую БД?', wait: false }, { dispatchId })
+    assert.equal(res.ok, true, res.error)
+    const [request] = store.pendingRequests()
+    assert.equal(request.kind, 'question')
+    assert.equal(request.taskId, taskId)
+    assert.equal(request.nodeId, 'ask')
+    assert.equal(store.getTask(taskId)!.status, 'needs_input')
+    assert.equal(store.openQuestions()[0].forHuman, true)
+    assert.equal(store.openQuestions()[0].nodeId, 'ask')
+  })
+
+  it('на этапе «Работа» при живом координаторе вопрос ждёт координатора, как раньше', async () => {
+    const { taskId, dispatchId } = runningTask('work')
+    const res = await call('worker.ask', { question: 'Какую БД?', wait: false }, { dispatchId })
+    assert.equal(res.ok, true, res.error)
+    assert.equal(store.pendingRequests().length, 0)
+    assert.equal(store.getTask(taskId)!.status, 'in_progress')
+    assert.equal(store.openQuestions()[0].forHuman, undefined)
+    assert.equal(store.openQuestions()[0].nodeId, undefined)
+  })
+
+  it('задача вне воркфлоу и без координатора — человеку, как раньше, но без ноды', async () => {
+    const task = store.createTask({ title: 'Логин', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const res = await call('worker.ask', { question: '?', wait: false }, { dispatchId: d.id })
+    assert.equal(res.ok, true, res.error)
+    assert.equal(store.pendingRequests()[0].nodeId, undefined)
   })
 })
