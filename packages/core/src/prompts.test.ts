@@ -112,6 +112,12 @@ describe('workerTaskPrompt: этап «Вопрос человеку»', () => {
     assert.match(worker, /раздел\s+«Ответы\s+на\s+вопросы\s+по\s+задаче»/)
   })
 
+  it('skills/coordinator.md: этап git выполняет приложение, поле git и исход error названы', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /`git` — приложение само выполняет git-операцию из поля `git`/)
+    assert.match(skill, /исход `error`/)
+  })
+
   it('skills/coordinator.md: этап ask, вопросы с него не обрабатываются, воркера перезапускает приложение', () => {
     const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
     assert.match(skill, /`ask` — агент спрашивает человека/)

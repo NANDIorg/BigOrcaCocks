@@ -6,7 +6,7 @@ import { app } from 'electron'
 import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunBranchSettings, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
-import { setupCommand } from './git'
+import { setupCommand, taskWorktreePath } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
 import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv } from './assistant'
@@ -201,8 +201,10 @@ export function startWorker(
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
 
-  const branch = `orca/${task.id}`
-  const worktree = join(repoRoot, '..', '.orca-worktrees', task.id)
+  // Ветку и worktree могла уже назначить нода воркфлоу «Git» (`create_branch`/`checkout`): работаем на них, а не
+  // заводим `orca/<id>`. Нет worktree на диске (конец без мержа, удалили руками) — ставим на ту же ветку.
+  const branch = task.branch ?? `orca/${task.id}`
+  const worktree = task.worktree ?? taskWorktreePath(repoRoot, task.id)
   const runGit = ensureRunBranch(store, repoRoot, task.runId, ctx.git)
   let fresh = false
   if (!existsSync(worktree)) {
@@ -231,7 +233,8 @@ export function startWorker(
   const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.worker, { projectRules: ctx.agentRules, role, language: mainLocale() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
-  const setup = fresh ? setupCommand(worktree) : null
+  // Worktree, который создала нода «Git» до первого запуска, тоже «свежий»: зависимостей в нём ещё нет.
+  const setup = fresh || !snap.dispatches.some((d) => d.taskId === task.id) ? setupCommand(worktree) : null
   const win32 = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : undefined
   const { command, args } = win32
     ? win32

@@ -8,7 +8,18 @@ import { isTaskRole } from './prompts.ts'
 export const WORKFLOW_VERSION = 1
 
 /** Исход этапа: по нему выбирается ребро. У каждого типа ноды — фиксированный набор портов (`WF_PORTS`). */
-export type WfOutcome = 'next' | 'accept' | 'reject' | 'yes' | 'no' | 'ok' | 'conflict'
+export type WfOutcome = 'next' | 'accept' | 'reject' | 'yes' | 'no' | 'ok' | 'conflict' | 'error'
+
+/**
+ * Операции ноды `git` (v1). Только то, что укладывается в модель «один worktree на ветку задачи»
+ * (`orca/<taskId>`, слияние — нода `merge`): без merge/rebase/reset, удаления веток и `push --force`.
+ * Подробности и обоснование — `docs/workflow.md` («Нода Git»).
+ */
+export const WF_GIT_OPERATIONS = ['create_branch', 'checkout', 'commit', 'push'] as const
+export type WfGitOperation = (typeof WF_GIT_OPERATIONS)[number]
+
+/** Remote по умолчанию для `push`. */
+export const WF_GIT_DEFAULT_REMOTE = 'origin'
 
 /**
  * Условие из закрытого списка предикатов. Произвольных выражений нет намеренно: их не провалидировать
@@ -42,6 +53,19 @@ interface WfNodeBase {
   column?: string
 }
 
+/** Операция и её параметры; лишние для операции поля игнорируются (валидация предупреждает). */
+export interface WfGitParams {
+  operation: WfGitOperation
+  /** Шаблон имени ветки (`create_branch` — новая, `checkout` — существующая). Подстановки: `{taskId}`, `{slug}`. */
+  branch?: string
+  /** Откуда создать ветку (`create_branch`); пусто — текущая ветка корня репозитория (та, куда сольёт `merge`). */
+  base?: string
+  /** Шаблон сообщения коммита (`commit`). Подстановки: `{taskId}`, `{slug}`, `{title}`. */
+  message?: string
+  /** Remote для `push`; пусто — `origin` (`WF_GIT_DEFAULT_REMOTE`). */
+  remote?: string
+}
+
 export type WfNode = WfNodeBase &
   (
     | { type: 'start' }
@@ -62,6 +86,11 @@ export type WfNode = WfNodeBase &
     | { type: 'human'; instructions?: string }
     | { type: 'condition'; test: WfCondition }
     | { type: 'merge' }
+    /**
+     * Git-операция без агента: приложение само выполняет `operation` в worktree задачи. Какие поля нужны
+     * какой операции — `wfGitFieldUse`; в `branch` и `message` работают подстановки (`renderGitTemplate`).
+     */
+    | WfGitParams & { type: 'git' }
     /** Конец. `merged` — для отображения: задача пришла сюда со слитой веткой. */
     | { type: 'end'; merged?: boolean }
   )
@@ -90,6 +119,7 @@ export const WF_PORTS: Record<WfNodeType, WfOutcome[]> = {
   human: ['accept', 'reject'],
   condition: ['yes', 'no'],
   merge: ['ok', 'conflict'],
+  git: ['ok', 'error'],
   end: []
 }
 
@@ -101,6 +131,7 @@ const NODE_TYPE_TITLES: Record<WfNodeType, string> = {
   human: 'Человек',
   condition: 'Условие',
   merge: 'Мерж',
+  git: 'Git',
   end: 'Конец'
 }
 
@@ -143,6 +174,85 @@ export function wfWorkStage(wf: Workflow, nodeId: string): WfWorkStage | undefin
     ...(instructions ? { instructions } : {}),
     ...(showcase ? { showcase } : {})
   }
+}
+
+// ---------- нода git: параметры и шаблоны ----------
+
+/** Поля ноды `git`, о которых спрашивает операция. */
+export type WfGitField = 'branch' | 'base' | 'message' | 'remote'
+
+/**
+ * Какие поля использует операция: `required` — без них граф не пройдёт валидацию, `optional` — есть значение
+ * по умолчанию. Остальные поля операцией игнорируются (валидация предупреждает). Единый источник для
+ * валидации, исполнителя и формы редактора.
+ */
+export const WF_GIT_FIELD_USE: Readonly<Record<WfGitOperation, { required: readonly WfGitField[]; optional: readonly WfGitField[] }>> = {
+  create_branch: { required: ['branch'], optional: ['base'] },
+  checkout: { required: ['branch'], optional: [] },
+  commit: { required: ['message'], optional: [] },
+  push: { required: [], optional: ['remote'] }
+}
+
+/** Подстановки шаблонов: в имени ветки — без `{title}` (в названии задачи пробелы и кириллица). */
+export const WF_GIT_BRANCH_PLACEHOLDERS = ['taskId', 'slug'] as const
+export const WF_GIT_MESSAGE_PLACEHOLDERS = ['taskId', 'slug', 'title'] as const
+
+const TRANSLIT: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm',
+  н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch',
+  ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya'
+}
+
+/**
+ * Слаг из названия задачи для имени ветки: латиница в нижнем регистре, кириллица транслитерируется, всё прочее —
+ * дефис; не длиннее 40 символов; пустое название — `task`. Детерминирован: два вызова с одним названием дают одну ветку.
+ */
+export function wfGitSlug(title: string): string {
+  const latin = [...title.toLowerCase()].map((c) => TRANSLIT[c] ?? c).join('')
+  const slug = latin.replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 40).replace(/-+$/, '')
+  return slug || 'task'
+}
+
+/** Значения подстановок для задачи. */
+export function wfGitVars(task: Pick<Task, 'id' | 'title'>): Record<string, string> {
+  return { taskId: task.id, slug: wfGitSlug(task.title), title: task.title.trim() }
+}
+
+/** Имена подстановок `{…}` шаблона в порядке появления (с повторами). */
+function placeholders(template: string): string[] {
+  return [...template.matchAll(/\{([^{}]*)\}/g)].map((m) => m[1])
+}
+
+/** Подставляет значения в шаблон; неизвестная подстановка остаётся как есть (её ловит `validateWorkflow`). */
+export function renderGitTemplate(template: string, vars: Readonly<Record<string, string>>): string {
+  return template.replace(/\{([^{}]*)\}/g, (all, name: string) => (name in vars ? vars[name] : all))
+}
+
+/**
+ * Имя ветки допустимо для git (упрощённый `git check-ref-format --branch`): не пустое, без пробелов и
+ * управляющих символов, без `~ ^ : ? * [ \ { }`, без `..`, `//`, `@{`, не начинается с `-` или `/`, не кончается
+ * `/`, `.` или `.lock`, части между `/` не начинаются с `.`. Возвращает true, если имя годится.
+ */
+export function isValidGitBranchName(name: string): boolean {
+  if (!name || name === '@') return false
+  if (/[\s\x00-\x1f\x7f~^:?*[\\{}]/.test(name)) return false
+  if (name.startsWith('-') || name.startsWith('/') || name.endsWith('/') || name.endsWith('.')) return false
+  if (name.includes('..') || name.includes('//') || name.includes('@{')) return false
+  return name.split('/').every((part) => !part.startsWith('.') && !part.endsWith('.lock'))
+}
+
+/** Remote — имя без пробелов и не флаг (`-…`): подставляется в `git push <remote>`. */
+export function isValidGitRemoteName(name: string): boolean {
+  return !!name && !/[\s\x00-\x1f\x7f]/.test(name) && !name.startsWith('-')
+}
+
+/**
+ * Шаблон имени ветки после подстановки: годится ли результат. Проверяет `validateWorkflow` (с образцом
+ * значений) и исполнитель (с настоящими) — слаг и id гарантируют допустимость, а вот шаблон вроде `feat/{slug}.`
+ * или с пробелом — нет.
+ */
+export function gitBranchTemplateValid(template: string, vars: Readonly<Record<string, string>>): boolean {
+  return isValidGitBranchName(renderGitTemplate(template, vars))
 }
 
 // ---------- дефолт и миграция ----------
@@ -288,7 +398,17 @@ export const WF_ISSUE_TEXTS = {
   endlessLoop: 'нода «{node}»: возврат в работу без лимита повторов — отказы могут повторяться бесконечно',
   showcaseUnseen: 'нода «{node}»: показ человеку задан, но дальше нет ноды «Человек» до следующей работы или мержа — показ никто не увидит',
   acceptWithoutMerge: 'нода «{node}»: после accept путь ведёт в «{end}» без мержа — принятая работа не будет слита',
-  mergeAgain: 'нода «{node}»: после мержа путь снова ведёт в мерж «{merge}»'
+  mergeAgain: 'нода «{node}»: после мержа путь снова ведёт в мерж «{merge}»',
+  gitBadOperation: 'нода «{node}»: неизвестная git-операция «{operation}»',
+  gitFieldNotString: 'нода «{node}»: поле «{field}» должно быть строкой',
+  gitNoBranch: 'нода «{node}»: для операции {operation} не задано имя ветки',
+  gitNoMessage: 'нода «{node}»: для операции commit не задано сообщение коммита',
+  gitBranchInvalid: 'нода «{node}»: имя ветки «{branch}» недопустимо для git (пробелы, «..», спецсимволы, «/» или «.» по краям — правила `git check-ref-format`)',
+  gitBaseInvalid: 'нода «{node}»: базовая ветка «{base}» недопустима для git',
+  gitBaseSameAsBranch: 'нода «{node}»: новая ветка «{branch}» совпадает с базовой',
+  gitRemoteInvalid: 'нода «{node}»: имя remote «{remote}» недопустимо (пробелы или «-» в начале)',
+  gitUnknownPlaceholder: 'нода «{node}»: в поле «{field}» неизвестная подстановка «{placeholder}», доступны: {available}',
+  gitParamIgnored: 'нода «{node}»: поле «{field}» не используется операцией {operation} — значение игнорируется'
 } as const
 
 export type WfIssueCode = keyof typeof WF_ISSUE_TEXTS
@@ -503,6 +623,7 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
         }
       }
     }
+    if (n.type === 'git') validateGitNode(n, at, errors, warnings)
     if (n.type === 'condition') {
       const t = n.test
       if (t.kind === 'attempts') {
@@ -584,6 +705,73 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
   return { errors, warnings }
 }
 
+/** Проверка ноды `git`: операция, обязательные и лишние поля, подстановки, имена веток и remote. */
+function validateGitNode(
+  n: Extract<WfNode, { type: 'git' }>,
+  at: (n: WfNode, code: WfIssueCode, params?: Record<string, string | number>) => WfIssue,
+  errors: WfIssue[],
+  warnings: WfIssue[]
+): void {
+  const op: unknown = n.operation
+  if (typeof op !== 'string' || !(WF_GIT_OPERATIONS as readonly string[]).includes(op)) {
+    errors.push(at(n, 'gitBadOperation', { operation: String(op) }))
+    return
+  }
+  const operation = op as WfGitOperation
+  const use = WF_GIT_FIELD_USE[operation]
+  const FIELDS: WfGitField[] = ['branch', 'base', 'message', 'remote']
+  const value = (f: WfGitField): string => {
+    const v: unknown = n[f]
+    return typeof v === 'string' ? v.trim() : ''
+  }
+  for (const f of FIELDS) {
+    const v: unknown = n[f]
+    if (v === undefined) continue
+    if (typeof v !== 'string') {
+      errors.push(at(n, 'gitFieldNotString', { field: f }))
+      continue
+    }
+    if (!use.required.includes(f) && !use.optional.includes(f) && v.trim()) {
+      warnings.push(at(n, 'gitParamIgnored', { field: f, operation }))
+    }
+  }
+  const checkPlaceholders = (f: 'branch' | 'message', available: readonly string[]): void => {
+    for (const name of new Set(placeholders(value(f)))) {
+      if (!available.includes(name)) {
+        errors.push(at(n, 'gitUnknownPlaceholder', {
+          field: f, placeholder: `{${name}}`, available: available.map((a) => `{${a}}`).join(', ')
+        }))
+      }
+    }
+  }
+  const sample = { taskId: 'task_x', slug: 'x', title: 'x' }
+
+  if (use.required.includes('branch')) {
+    const branch = value('branch')
+    if (typeof n.branch === 'string' || n.branch === undefined) {
+      if (!branch) errors.push(at(n, 'gitNoBranch', { operation }))
+      else {
+        checkPlaceholders('branch', WF_GIT_BRANCH_PLACEHOLDERS)
+        // Подстановки проверены выше: образец значений нужен только для остального шаблона.
+        if (!gitBranchTemplateValid(branch, sample)) errors.push(at(n, 'gitBranchInvalid', { branch }))
+        else if (operation === 'create_branch' && value('base') === branch) {
+          errors.push(at(n, 'gitBaseSameAsBranch', { branch }))
+        }
+      }
+    }
+  }
+  if (operation === 'create_branch' && value('base') && !isValidGitBranchName(value('base'))) {
+    errors.push(at(n, 'gitBaseInvalid', { base: value('base') }))
+  }
+  if (operation === 'commit' && (typeof n.message === 'string' || n.message === undefined)) {
+    if (!value('message')) errors.push(at(n, 'gitNoMessage'))
+    else checkPlaceholders('message', WF_GIT_MESSAGE_PLACEHOLDERS)
+  }
+  if (operation === 'push' && value('remote') && !isValidGitRemoteName(value('remote'))) {
+    errors.push(at(n, 'gitRemoteInvalid', { remote: value('remote') }))
+  }
+}
+
 // ---------- исполнение ----------
 
 /** Позиция задачи в воркфлоу прогона. `visits` — сколько раз задача заходила в каждую ноду (для `attempts`). */
@@ -598,6 +786,12 @@ export type WfAction =
   | { type: 'create_gate'; nodeId: string; roleId: string }
   | { type: 'request_human'; nodeId: string }
   | { type: 'merge'; nodeId: string }
+  /**
+   * Git-операция ноды `git`. Шаблоны `branch`/`message` не подставлены: исполнитель вызывает
+   * `renderGitTemplate(x, wfGitVars(task))`. `remote` для `push` уже с умолчанием, для остальных операций
+   * ненужные поля опущены.
+   */
+  | { type: 'git'; nodeId: string; operation: WfGitOperation; branch?: string; base?: string; message?: string; remote?: string }
   | { type: 'done'; nodeId: string; merged: boolean }
   /** Идти дальше нельзя: задача стоит в `nodeId`, нужен человек или координатор. */
   | { type: 'blocked'; nodeId: string; reason: string }
@@ -635,12 +829,39 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
       return { type: 'request_human', nodeId: node.id }
     case 'merge':
       return { type: 'merge', nodeId: node.id }
+    case 'git':
+      return gitAction(node)
     case 'end':
       return { type: 'done', nodeId: node.id, merged: node.merged ?? false }
     default:
       // start и condition не бывают позицией задачи: nextStage проходит их сразу.
       return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}» не может быть этапом задачи` }
   }
+}
+
+/**
+ * Действие ноды `git`. Граф с неполной нодой (сохранён старым кодом или правкой файла в обход валидации) —
+ * `blocked`: это ошибка настройки, а не исход `error`, который описывает отказ самой git-операции.
+ */
+function gitAction(node: Extract<WfNode, { type: 'git' }>): WfAction {
+  const blocked = (reason: string): WfAction => ({ type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: ${reason}` })
+  const op: unknown = node.operation
+  if (typeof op !== 'string' || !(WF_GIT_OPERATIONS as readonly string[]).includes(op)) {
+    return blocked(`неизвестная git-операция «${String(op)}»`)
+  }
+  const operation = op as WfGitOperation
+  const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+  const use = WF_GIT_FIELD_USE[operation]
+  const action: Extract<WfAction, { type: 'git' }> = { type: 'git', nodeId: node.id, operation }
+  for (const f of [...use.required, ...use.optional]) {
+    const v = text(node[f])
+    if (v) action[f] = v
+    else if (use.required.includes(f)) {
+      return blocked(f === 'branch' ? `для операции ${operation} не задано имя ветки` : 'для операции commit не задано сообщение коммита')
+    }
+  }
+  if (operation === 'push') action.remote = action.remote ?? WF_GIT_DEFAULT_REMOTE
+  return action
 }
 
 /**
@@ -743,6 +964,8 @@ export interface WfStageInfo {
   condition?: string
   /** Что воркер «Работы» сдаёт на показ человеку. */
   showcase?: WfShowcase
+  /** Операция и параметры ноды `git` (только заполненные; у `push` — с remote по умолчанию). */
+  git?: Omit<Extract<WfAction, { type: 'git' }>, 'type' | 'nodeId'>
   /** Исход → «название (id)» ноды, куда он ведёт. */
   next: Partial<Record<WfOutcome, string>>
 }
@@ -780,6 +1003,13 @@ export function describeWorkflow(wf: Workflow): WfStageInfo[] {
       if (stage?.showcase) info.showcase = stage.showcase
     }
     if (n.type === 'condition') info.condition = conditionText(n.test, byId)
+    if (n.type === 'git') {
+      const a = gitAction(n)
+      if (a.type === 'git') {
+        const { type: _type, nodeId: _nodeId, ...git } = a
+        info.git = git
+      }
+    }
     return info
   })
 }

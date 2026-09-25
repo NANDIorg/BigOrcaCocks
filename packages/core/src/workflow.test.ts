@@ -5,7 +5,8 @@ import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
   WORKFLOW_VERSION, WF_PORTS, defaultWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, nextStage, pipelineWorkflow,
-  startStage, stageAction, validateWorkflow, stableJson, wfWorkStage, describeWorkflow, WF_ISSUE_TEXTS
+  startStage, stageAction, validateWorkflow, stableJson, wfWorkStage, describeWorkflow, WF_ISSUE_TEXTS,
+  WF_GIT_OPERATIONS, WF_GIT_FIELD_USE, wfGitSlug, wfGitVars, renderGitTemplate, isValidGitBranchName, isValidGitRemoteName
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfValidation, Workflow } from './workflow.ts'
 
@@ -626,5 +627,177 @@ describe('validateWorkflow: код и параметры проблем для �
     const { warnings } = validateWorkflow({ ...wf, nodes: [...wf.nodes, lost] }, { ...ctx, nodeTitle: (n) => `T:${n.id}` })
     const w = warnings.find((i) => i.code === 'unreachable')
     assert.equal(w?.params?.node, 'T:lost')
+  })
+})
+
+describe('нода «Git»', () => {
+  /** Дефолт: старт → git → работа → … Ветка создаётся до первой работы; ошибка git — к человеку. */
+  const withGit = (patch: Record<string, unknown> = {}): Workflow => {
+    const wf = structuredClone(defaultWorkflow(noReviewer))
+    const first = wf.edges.find((e) => e.from === 'start')!
+    const target = first.to
+    first.to = 'git'
+    wf.nodes.push({ id: 'git', type: 'git', operation: 'create_branch', branch: 'feature/{taskId}-{slug}', x: 100, y: 100, ...patch } as WfNode)
+    wf.edges.push(
+      { id: 'e_git_ok', from: 'git', outcome: 'ok', to: target },
+      { id: 'e_git_error', from: 'git', outcome: 'error', to: 'conflict' }
+    )
+    return wf
+  }
+  const c = { ...ctx, roles: noReviewer }
+  const errs = (wf: Workflow): string => messages(validateWorkflow(wf, c).errors)
+
+  it('порты ok/error, название по умолчанию «Git», версия формата не менялась', () => {
+    assert.deepEqual(WF_PORTS.git, ['ok', 'error'])
+    assert.equal(describeWorkflow(withGit()).find((s) => s.id === 'git')!.title, 'Git')
+    assert.equal(WORKFLOW_VERSION, 1)
+  })
+
+  it('корректные ноды всех операций проходят валидацию без ошибок и предупреждений', () => {
+    for (const patch of [
+      { operation: 'create_branch', branch: 'orca/{taskId}' },
+      { operation: 'create_branch', branch: 'feature/{slug}', base: 'develop' },
+      { operation: 'checkout', branch: 'develop' },
+      { operation: 'commit', message: 'feat: {title} ({taskId})', branch: undefined },
+      { operation: 'push', branch: undefined },
+      { operation: 'push', branch: undefined, remote: 'upstream' }
+    ]) {
+      const { errors, warnings } = validateWorkflow(withGit(patch), c)
+      assert.deepEqual(errors, [], JSON.stringify(patch))
+      assert.ok(!warnings.some((w) => w.nodeId === 'git'), JSON.stringify(patch))
+    }
+  })
+
+  it('операция обязательна и из списка v1', () => {
+    assert.deepEqual([...WF_GIT_OPERATIONS], ['create_branch', 'checkout', 'commit', 'push'])
+    for (const bad of [undefined, '', 'merge', 'reset', 'push_force', 5]) hasError(withGit({ operation: bad }), 'неизвестная git-операция', { nodeId: 'git' }, c)
+  })
+
+  it('обязательные поля по операции', () => {
+    assert.deepEqual(WF_GIT_FIELD_USE.create_branch.required, ['branch'])
+    assert.deepEqual(WF_GIT_FIELD_USE.checkout.required, ['branch'])
+    assert.deepEqual(WF_GIT_FIELD_USE.commit.required, ['message'])
+    assert.deepEqual(WF_GIT_FIELD_USE.push.required, [])
+    for (const bad of [undefined, '', '   ']) {
+      hasError(withGit({ operation: 'create_branch', branch: bad }), 'для операции create_branch не задано имя ветки', { nodeId: 'git' }, c)
+      hasError(withGit({ operation: 'checkout', branch: bad }), 'для операции checkout не задано имя ветки', { nodeId: 'git' }, c)
+      hasError(withGit({ operation: 'commit', branch: undefined, message: bad }), 'не задано сообщение коммита', { nodeId: 'git' }, c)
+    }
+  })
+
+  it('нестроковые поля — ошибка', () => {
+    hasError(withGit({ branch: 5 }), 'поле «branch» должно быть строкой', { nodeId: 'git' }, c)
+    hasError(withGit({ remote: {} }), 'поле «remote» должно быть строкой', { nodeId: 'git' }, c)
+  })
+
+  it('имя ветки, база и remote: недопустимые — ошибки с контекстом', () => {
+    for (const branch of ['my branch', 'a..b', '-x', 'x/', '/x', 'x.lock', 'a~b', 'a:{slug}', 'feature/{slug}.']) {
+      hasError(withGit({ branch }), `имя ветки «${branch}» недопустимо`, { nodeId: 'git' }, c)
+    }
+    hasError(withGit({ base: 'de velop' }), 'базовая ветка «de velop» недопустима', { nodeId: 'git' }, c)
+    hasError(withGit({ branch: 'develop', base: 'develop' }), 'совпадает с базовой', { nodeId: 'git' }, c)
+    hasError(withGit({ operation: 'push', branch: undefined, remote: '-f' }), 'имя remote «-f» недопустимо', { nodeId: 'git' }, c)
+    hasError(withGit({ operation: 'push', branch: undefined, remote: 'my origin' }), 'имя remote', { nodeId: 'git' }, c)
+  })
+
+  it('подстановки: неизвестная — ошибка, {title} только в сообщении коммита', () => {
+    hasError(withGit({ branch: 'f/{nope}' }), 'неизвестная подстановка «{nope}»', { nodeId: 'git' }, c)
+    hasError(withGit({ branch: 'f/{title}' }), 'неизвестная подстановка «{title}»', { nodeId: 'git' }, c)
+    hasError(withGit({ operation: 'commit', branch: undefined, message: 'x {slug} {who}' }), 'подстановка «{who}»', { nodeId: 'git' }, c)
+    assert.equal(errs(withGit({ operation: 'commit', branch: undefined, message: '{taskId}: {title}' })), '')
+  })
+
+  it('лишние для операции поля — предупреждение, не ошибка', () => {
+    const wf = withGit({ operation: 'commit', branch: 'x', message: 'm', remote: 'origin' })
+    assert.equal(errs(wf), '')
+    hasWarning(wf, 'поле «branch» не используется операцией commit', 'git', c)
+    hasWarning(wf, 'поле «remote» не используется операцией commit', 'git', c)
+    const empty = withGit({ operation: 'commit', branch: '  ', message: 'm' })
+    assert.ok(!validateWorkflow(empty, c).warnings.some((w) => w.code === 'gitParamIgnored'))
+  })
+
+  it('без исхода ok или error — ошибка, чужой порт — ошибка', () => {
+    for (const port of ['ok', 'error']) {
+      const wf = withGit()
+      wf.edges = wf.edges.filter((e) => e.id !== `e_git_${port}`)
+      hasError(wf, `нет перехода для ${port}`, { nodeId: 'git' }, c)
+    }
+    const foreign = withGit()
+    edge(foreign, 'e_git_error').outcome = 'conflict'
+    hasError(foreign, 'лишний переход «conflict»', { nodeId: 'git' }, c)
+    hasError(foreign, 'нет перехода для error', { nodeId: 'git' }, c)
+  })
+
+  it('error, ведущий в никуда (нет пути к концу), ловится общей проверкой', () => {
+    const wf = withGit()
+    wf.nodes.push({ id: 'sink', type: 'work', x: 0, y: 0 })
+    edge(wf, 'e_git_error').to = 'sink'
+    wf.edges.push({ id: 'e_sink', from: 'sink', outcome: 'next', to: 'sink' })
+    hasError(wf, 'нет пути к концу', { nodeId: 'sink' }, c)
+  })
+
+  it('слаг: кириллица транслитерируется, лишнее — дефис, до 40 символов, пусто — task', () => {
+    assert.equal(wfGitSlug('Нода Git: контракт (v1)'), 'noda-git-kontrakt-v1')
+    assert.equal(wfGitSlug('Щётка ёжика'), 'schetka-ezhika')
+    assert.equal(wfGitSlug('  ---  '), 'task')
+    assert.equal(wfGitSlug(''), 'task')
+    const long = wfGitSlug('a'.repeat(39) + ' bbbb')
+    assert.ok(long.length <= 40 && !long.endsWith('-'), long)
+  })
+
+  it('подстановки: renderGitTemplate и wfGitVars', () => {
+    const vars = wfGitVars({ id: 'task_abc', title: '  Починить логин ' })
+    assert.deepEqual(vars, { taskId: 'task_abc', slug: 'pochinit-login', title: 'Починить логин' })
+    assert.equal(renderGitTemplate('feature/{taskId}-{slug}', vars), 'feature/task_abc-pochinit-login')
+    assert.equal(renderGitTemplate('fix: {title} [{nope}]', vars), 'fix: Починить логин [{nope}]')
+    assert.ok(isValidGitBranchName(renderGitTemplate('feature/{taskId}-{slug}', vars)))
+    assert.ok(isValidGitBranchName('orca/task_x') && isValidGitBranchName('release/1.2.3'))
+    assert.ok(!isValidGitBranchName('@') && !isValidGitBranchName('a@{b'))
+    assert.ok(isValidGitRemoteName('origin') && !isValidGitRemoteName(''))
+  })
+
+  describe('NodeStep (WfAction)', () => {
+    const at = (wf: Workflow): ReturnType<typeof stageAction> => stageAction(wf, { nodeId: 'git', visits: {} }, { roleId: 'developer' })
+
+    it('create_branch: только нужные поля, шаблон не подставлен, значения без пробелов по краям', () => {
+      assert.deepEqual(at(withGit({ branch: ' feature/{slug} ', base: ' develop ', message: 'лишнее', remote: 'x' })),
+        { type: 'git', nodeId: 'git', operation: 'create_branch', branch: 'feature/{slug}', base: 'develop' })
+      assert.deepEqual(at(withGit()), { type: 'git', nodeId: 'git', operation: 'create_branch', branch: 'feature/{taskId}-{slug}' })
+    })
+
+    it('checkout, commit, push', () => {
+      assert.deepEqual(at(withGit({ operation: 'checkout', branch: 'develop' })), { type: 'git', nodeId: 'git', operation: 'checkout', branch: 'develop' })
+      assert.deepEqual(at(withGit({ operation: 'commit', message: 'wip {taskId}' })), { type: 'git', nodeId: 'git', operation: 'commit', message: 'wip {taskId}' })
+      assert.deepEqual(at(withGit({ operation: 'push' })), { type: 'git', nodeId: 'git', operation: 'push', remote: 'origin' })
+      assert.deepEqual(at(withGit({ operation: 'push', remote: 'upstream' })), { type: 'git', nodeId: 'git', operation: 'push', remote: 'upstream' })
+    })
+
+    it('неполная нода — blocked (настройка), а не исход error', () => {
+      for (const patch of [{ operation: 'nope' }, { branch: '' }, { operation: 'commit', message: ' ' }]) {
+        const a = at(withGit(patch))
+        assert.equal(a.type, 'blocked', JSON.stringify(patch))
+        assert.equal(a.nodeId, 'git')
+      }
+    })
+
+    it('nextStage приводит в git-ноду с действием, а исходы ok/error ведут по рёбрам', () => {
+      const wf = withGit()
+      const step = startStage(wf, { roleId: 'developer' })
+      assert.equal(step.stage.nodeId, 'git')
+      assert.equal(step.action.type, 'git')
+      assert.equal(step.stage.visits.git, 1)
+      const ok = nextStage(wf, step.stage, 'ok', { roleId: 'developer' })
+      assert.equal(ok.stage.nodeId, 'work')
+      assert.equal(ok.action.type, 'start_worker')
+      const err = nextStage(wf, step.stage, 'error', { roleId: 'developer' })
+      assert.equal(err.stage.nodeId, 'conflict')
+      assert.equal(err.action.type, 'request_human')
+    })
+
+    it('describeWorkflow показывает операцию и параметры', () => {
+      const info = describeWorkflow(withGit({ operation: 'push' })).find((s) => s.id === 'git')!
+      assert.deepEqual(info.git, { operation: 'push', remote: 'origin' })
+      assert.ok(info.next.ok && info.next.error)
+    })
   })
 })

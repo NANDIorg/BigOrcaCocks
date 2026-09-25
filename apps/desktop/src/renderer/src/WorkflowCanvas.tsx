@@ -7,11 +7,12 @@ import {
   portPoint, screenToWorld, snap, viewBox, zoomAt, type Point, type View
 } from './workflowGeometry'
 import {
-  WF_ADDABLE_TYPES, WF_OUTCOME_LABELS, addNode, canConnect, connect, issueTargets, moveNode, removeSelected,
+  WF_ADDABLE_TYPES, addNode, canConnect, connect, issueTargets, moveNode, removeSelected, wfOutcomeLabel,
   type WfSelection
 } from './workflowEdit'
 import { WF_TYPE_TITLES } from './workflowForm'
 import { WF_NODE_HELP } from './workflowHelp'
+import { gitNodeSubtitle } from './workflowGit'
 import { useT, type TFunction } from './i18n'
 import { nodeTitle } from './defaultTitles'
 
@@ -46,6 +47,7 @@ function nodeSubtitle(node: WfNode, t: TFunction): string {
       if (node.test.kind === 'role') return t('config.wf.sub.roles', { roles: node.test.roleIds.join(', ') || '?' })
       return t('config.wf.sub.files')
     case 'merge': return t('config.wf.sub.merge')
+    case 'git': return gitNodeSubtitle(node)
     case 'end': return node.merged ? t('config.wf.sub.merged') : t('config.wf.sub.notMerged')
     default: return ''
   }
@@ -257,7 +259,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
                 return (
                   <g key={outcome} className={`wf-port wf-port--${outcome}`}>
                     <circle cx={x} cy={y} r={6} />
-                    <text x={x + 9} y={y - 5} className="wf-port-label">{WF_OUTCOME_LABELS[outcome]}</text>
+                    <text x={x + 9} y={y - 5} className="wf-port-label">{wfOutcomeLabel(node.type, outcome)}</text>
                   </g>
                 )
               })}

@@ -32,7 +32,7 @@ export type MergeResult = { ok: true } | { ok: false; conflict: true; error: str
  */
 export function mergeTaskBranch(
   repoRoot: string,
-  task: Pick<Task, 'title' | 'worktree' | 'branch'>,
+  task: Pick<Task, 'title' | 'worktree' | 'branch' | 'branchForeign'>,
   target: MergeTarget = rootTarget(repoRoot)
 ): MergeResult {
   if (!task.worktree || !task.branch) return { ok: true }
@@ -45,7 +45,8 @@ export function mergeTaskBranch(
       return { ok: false, conflict: true, error: (e as Error).message }
     }
   }
-  removeWorktree(repoRoot, task.worktree, task.branch)
+  // Ветку, которую создала не orca (нода git → checkout), не удаляем: снимается только worktree.
+  removeWorktree(repoRoot, task.worktree, task.branch, task.branchForeign === true)
   return { ok: true }
 }
 

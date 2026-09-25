@@ -304,9 +304,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   человека штатным `orca-board ask`, `stageAction` — тот же `start_worker`, что у `work`; `WfWorkStage.type`
   различает этапы; `Question.nodeId` — нода, на которой спросили), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
   (закрытый список предикатов `WfCondition`: `attempts` — сколько раз задача заходила в ноду, `role` — роль
-  задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `end` (`merged`). У каждой ноды
+  задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `git` (git-операция без агента:
+  `operation` — `create_branch` / `checkout` / `commit` / `push`, поля `branch`, `base`, `message`, `remote`; исходы `ok` / `error`;
+  контракт — `docs/workflow.md`, «Нода Git»), `end` (`merged`). У каждой ноды
   опциональные `title` и `column`. Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
-  `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
+  `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, git: ok/error, end — без выходов).
 - **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
   ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
   ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).
@@ -315,6 +317,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   перед проверкой `condition` по роли (`<id>_if`), остальные задачи её пропускают. Из него собраны
   `defaultWorkflow` и графы заготовок типов задач; id нод и рёбер стабильны (`work`, `merge`, `end`,
   `conflict`, `e_<нода>_<исход>`).
+- **Нода `git`, хелперы** (`workflow.ts`): `WF_GIT_OPERATIONS`, `WF_GIT_FIELD_USE` (обязательные/необязательные поля по операции),
+  `wfGitVars(task)` + `renderGitTemplate` (подстановки `{taskId}`, `{slug}`, `{title}`), `wfGitSlug`, `isValidGitBranchName`,
+  `isValidGitRemoteName`, `gitBranchTemplateValid`. Валидация и `stageAction` (неполная нода → `blocked`) используют их же, чтобы main
+  не дублировал правила. Состояние (`Task.stage`, `stageHistory`) не менялось: `outcome: 'error'` — просто ещё одно значение `WfOutcome`.
 - **`migrateWorkflow(wf)`** — старую версию поднимает до текущей (пока без шагов), будущую не трогает.
 - **`stableJson(v)`** — JSON с отсортированными ключами: сравнение ролей и графов без учёта порядка полей
   («несохранённые изменения» редактора графа).
@@ -331,7 +337,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - **`nextStage(wf, stage, outcome, ctx)` → `{stage, action}`** — чистая функция перехода. `stage =
   {nodeId, visits}`, `visits` считает заходы в ноды (включая условия) и нужен `attempts`. Цепочка `condition`
   проходится за один вызов; повторный заход в то же условие за вызов → `blocked` (граф мог сохранить старый
-  код без проверки). `action`: `start_worker` / `create_gate` / `request_human` / `merge` / `done` /
+  код без проверки). `action`: `start_worker` / `create_gate` / `request_human` / `merge` / `git` / `done` /
   `blocked {reason}`; при `blocked` из-за нет ребра/ноды задача остаётся на прежнем этапе. `ctx.roleIds` —
   текущие роли типа прогона: роль гейта удалили → `blocked` на ноде гейта. `startStage(wf, ctx)` — переход из
   старта, `stageAction(wf, stage, ctx)` — действие для текущего этапа (повтор эффекта после рестарта или
@@ -341,7 +347,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   спека рабочей задачи как критерии. Команды сборки и тестов конкретного репозитория в шаблон не входят —
   они берутся из `node.instructions` (раздел «Как проверять») или системного промпта роли.
 - **`describeWorkflow(wf)` → `WfStageInfo[]`** — граф для `orca-board workflow show`: этапы в порядке обхода от
-  старта (недостижимые — в конце) с `type`, `title`, `roleId?`, `instructions?`, `condition?` (условие словами) и
+  старта (недостижимые — в конце) с `type`, `title`, `roleId?`, `instructions?`, `condition?` (условие словами), `git?` и
   `next` — исход → «название (id)» ноды.
 
 ### Воркфлоу: состояние в store (`packages/core/src/store.ts`)
@@ -409,7 +415,7 @@ Store хранит позицию и решает, куда задача пер�
 - **`workflowEdit.ts`** — чистые функции правки: `addNode` (уникальный id, пустые поля — их подсветит
   валидация), `removeNode` (с рёбрами), `moveNode`, `connect` (у порта одно ребро: прежнее заменяется с
   сохранением id; чужой порт и вход в `start` отвергаются), `disconnect`, `removeSelected`, `issueTargets`
-  (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS`. Недопустимая операция возвращает граф как есть.
+  (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS` и `wfOutcomeLabel(тип, исход)`. Недопустимая операция возвращает граф как есть.
 - **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
   (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы и «Вопроса человеку» пустое значение — «роль задачи»,
@@ -431,6 +437,17 @@ Store хранит позицию и решает, куда задача пер�
   «Этап «<нода>»» в шапке `RequestCard` (`requestStageLabel` в `cardState.ts`; название — из графа прогона,
   `workflowOf` → `workflowForRun`; нода пропала из графа — метки нет). Пилюля этапа на карточке доски для `ask` та же,
   что у `work` (`stageLabel`).
+- **Нода Git в редакторе** (`workflowGit.ts`): в палитре после «Мержа» (`WF_ADDABLE_TYPES`), в select «Тип» и легенде
+  (`WF_NODE_HELP.git`), иконка `WfNodeIcon.git`. Инспектор (`GitFields`) показывает операцию и **только её поля**
+  (`gitFieldsFor` по `WF_GIT_FIELD_USE` из core): ветка — `create_branch`/`checkout`, база — `create_branch`,
+  сообщение — `commit`, remote — `push`. Под веткой и сообщением — подстановки (`gitPlaceholdersHint`: у ветки без
+  `{title}`) и превью на образцовой задаче (`gitPreview`; красное — имя недопустимо для git). `patchGit` при смене
+  операции убирает поля, которых у новой операции нет (иначе невидимое значение давало бы предупреждение
+  `gitParamIgnored`), пустое необязательное поле удаляет, пустое обязательное оставляет строкой — его подсветит
+  валидация. Порты `ok`/`error`: `ok` подписан «выполнено» (`wfOutcomeLabel`, у мержа тот же `ok` — «слито»), `error`
+  красный, как `reject`/`conflict`. Поля «Колонка» нет (`hasColumn`): git выполняется синхронно, задача на ноде не стоит.
+  Подпись на холсте — «операция: ветка/сообщение/remote» (`gitNodeSubtitle`). Пилюля этапа на карточке (`stageLabel`) —
+  название ноды, как у остальных этапов.
 - **Пресет «3 отказа → человек»** (`addRetryLimit`): каждый `reject` гейта-агента, ведущий прямо в работу,
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
@@ -1180,7 +1197,10 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 - **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
   старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
-  становится ролью задачи.
+  становится ролью задачи. Если первым этапом стоит нода `git`, `enterWork` выполняет её до запуска (`prepareBeforeWork`,
+  `executeSteps(…, deferWorker)`), а воркера стартует сам `runWorker`; цепочка ушла мимо «Работы» — `runWorker` бросает
+  «воркер не запущен: до работы задача остановилась на этапе…». `startWorker` (`worker.ts`) работает на готовых
+  `Task.branch` / `Task.worktree`, а не создаёт `orca/<id>`.
 - **Подписка** `projects.onEvents(runWorkflowEvents)` в `src/main/index.ts` (как `deliverAnswers`), шаги —
   `setImmediate`, не внутри commit: `worker_done` рабочей задачи текущего dispatch → исход `next`; `worker_done`
   задачи-проверки → закрыть её (решение уже есть) или `workflow_blocked` «сдана без решения»; `escalation`
@@ -1188,13 +1208,16 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 - **Эффекты** (`execute`): `start_worker` — задача в ready и `runWorker`; `create_gate` — рабочая в колонку ноды
   (по умолчанию `kind=review`), `createTask` с `gateFor`, `gateTaskTitle`/`gateTaskSpec` и ролью гейта, сразу
   `runWorker`; `request_human` — `requestApproval` (тело: инструкция ноды, текст конфликта, итог воркера, ветка);
-  `merge` — `mergeTaskBranch`, затем сразу исход `ok` / `conflict`; `done` — ветка слита → `acceptTask`, не слита
+  `merge` — `mergeTaskBranch`, затем сразу исход `ok` / `conflict`; `git` — `runGitNode`: операция ноды в worktree
+  задачи (`gitCreateBranch` / `gitCheckout` / `gitCommit` / `gitPush` в `git.ts`), обновляет `Task.worktree` / `Task.branch`
+  / `Task.branchForeign` и сразу исход `ok` / `error` (текст отказа git — в `task.feedback` и в запрос человеку); `done` — ветка слита → `acceptTask`, не слита
   (конец без мержа) → хвосты коммитятся, worktree убирается, **ветка остаётся**, задача в done. Ошибка эффекта →
   `blockStage` (`workflow_blocked`) с причиной и командой, если её можно выполнить. Больше 50 переходов подряд без
   ожидания — тоже `workflow_blocked`.
 - **`mergeTaskBranch(repoRoot, task, target)`** (`review.ts`) — git-часть приёмки: незакоммиченное коммитится от
   `orca-board`, `git merge --no-ff` в `target` (`mergeTarget`; без него — текущая ветка корня) (если в ветке есть коммиты), `git worktree remove
-  --force`, `git branch -D`. Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
+  --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
+  удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
   месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
@@ -2170,6 +2193,12 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
   панелями, идущие позже, перекрывают бэкдроп (так диалог создания группы оказался «ниже» глобальных задач).
   Диалоги, вызываемые из вложенных компонентов, рисуй порталом в `body` (`createPortal`, как `PopupMenu` и
   `GroupDialogs.tsx`) и задавай бэкдропу явный `z-index` (группы — 40: выше меню 30 и входящих 21, ниже тоста 50).
+- Нода `git` выполняет git синхронно в main (`execFileSync`), как и остальной git приложения. `push` может идти до 120 с
+  (`PUSH_TIMEOUT_MS` в `git.ts`) — всё это время main не отвечает; `GIT_TERMINAL_PROMPT=0` не даёт git ждать пароль в
+  терминале, которого нет. Ssh-ключ с passphrase без агента даст `error`, а не запрос. Асинхронный `push` потребует
+  переделать `executeSteps` в async — пока не делали.
+- Ветку задачи не выводи из `orca/${task.id}`: нода `git` меняет `Task.branch`, а `startWorker`, `review`, гейты и `merge`
+  читают её из задачи. Удаляя ветку при уборке, смотри на `Task.branchForeign`.
 
 ## Открытые вопросы
 
