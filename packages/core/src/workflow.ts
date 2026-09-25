@@ -59,6 +59,11 @@ interface WfNodeBase {
   title?: string
   /** Колонка доски, в которой стоит задача на этом этапе; нет — колонка по умолчанию для этапа. */
   column?: string
+  /**
+   * Из какого шаблона (`WfNodeTemplate.id`) нода вставлена: вставка — копия, ссылка нужна только редактору для
+   * «Обновить из шаблона». Исполнитель и валидация содержимого её не читают.
+   */
+  templateId?: string
 }
 
 /** Операция и её параметры; лишние для операции поля игнорируются (валидация предупреждает). */
@@ -85,8 +90,11 @@ export type WfNode = WfNodeBase &
      * как список из одной роли, `migrateWorkflow` переносит её в `roleIds`; в графе по подзадачам (версия 1)
      * это роль задачи. `instructions` и `showcase` попадают в промпт воркера разделом «Этап» (`workerTaskPrompt`);
      * нормализованный вид — `wfWorkStage`.
+     *
+     * `subflow` — путь, который проходит каждая подзадача этапа (только в графе версии 2). Нет — путь по умолчанию
+     * `defaultSubflow()`. Исполняет его движок по подзадачам (`Task.stage`, `TaskStore.advanceStage`).
      */
-    | { type: 'work'; roleIds?: string[]; /** @deprecated одна роль версии 1, см. выше */ roleId?: string; instructions?: string; showcase?: WfShowcase }
+    | { type: 'work'; roleIds?: string[]; /** @deprecated одна роль версии 1, см. выше */ roleId?: string; instructions?: string; showcase?: WfShowcase; subflow?: WfSubflow }
     /**
      * Вопрос человеку: агент роли ноды задаёт вопросы штатным `orca-board ask`, они идут человеку, минуя
      * координатора; ответы попадают в промпт следующих этапов. Код на этапе не меняется. `instructions` — о чём
@@ -131,6 +139,17 @@ export interface WfEdge {
 
 export interface Workflow {
   version: number
+  nodes: WfNode[]
+  edges: WfEdge[]
+}
+
+/**
+ * Путь подзадачи этапа «Работа» (`work.subflow`): граф без версии — версия у внешнего графа, а сам путь читается
+ * как часть графа версии 2. Внутри ноды работают как в графе по подзадачам (`WfContext.scope: 'subtask'`): `work` —
+ * воркер подзадачи, `gate` — проверка ветки подзадачи, `merge` — ветка подзадачи в ветку глобальной задачи. Нельзя
+ * `ask` и вложенный `subflow` (глубина 1). Контракт — docs/workflow.md, «Путь подзадачи».
+ */
+export interface WfSubflow {
   nodes: WfNode[]
   edges: WfEdge[]
 }
@@ -404,6 +423,32 @@ const CONFLICT_INSTRUCTIONS =
   'Ветка не сливается без конфликтов. Разрешите конфликт в ветке задачи и примите её или верните в работу.'
 
 /**
+ * Путь подзадачи по умолчанию — у ноды `work` без `subflow`: воркер → мерж в ветку глобальной задачи → конец;
+ * конфликт мержа уходит человеку («Принять» — снова мерж, «Вернуть» — в работу). Это тот же путь, что зашит в движке
+ * прогона (`subtaskDone` → `mergeSubtask`). id стабильны: `start`, `work`, `merge`, `conflict`, `end`, `e_<нода>_<исход>`.
+ * Каждый вызов возвращает новый граф: вызывающий код может его править.
+ */
+export function defaultSubflow(): WfSubflow {
+  return {
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'work', type: 'work', x: PIPELINE_STEP_X, y: 0 },
+      { id: 'merge', type: 'merge', x: PIPELINE_STEP_X * 2, y: 0 },
+      { id: 'end', type: 'end', merged: true, x: PIPELINE_STEP_X * 3, y: 0 },
+      { id: 'conflict', type: 'human', title: 'Конфликт мержа', instructions: CONFLICT_INSTRUCTIONS, x: PIPELINE_STEP_X * 2, y: 180 }
+    ],
+    edges: [
+      { id: 'e_start_next', from: 'start', outcome: 'next', to: 'work' },
+      { id: 'e_work_next', from: 'work', outcome: 'next', to: 'merge' },
+      { id: 'e_merge_ok', from: 'merge', outcome: 'ok', to: 'end' },
+      { id: 'e_merge_conflict', from: 'merge', outcome: 'conflict', to: 'conflict' },
+      { id: 'e_conflict_accept', from: 'conflict', outcome: 'accept', to: 'merge' },
+      { id: 'e_conflict_reject', from: 'conflict', outcome: 'reject', to: 'work' }
+    ]
+  }
+}
+
+/**
  * Типовой граф **по подзадачам** (версия 1): старт → работа → проверки → мерж → конец. Отказ проверки возвращает в
  * работу, конфликт мержа уходит человеку. Только для прогонов старого движка (`Run.workflowScope` не задан) и
  * «Входящих» — новые прогоны идут по `pipelineWorkflow`. id стабильны: `work`, `merge`, `end`, `conflict`,
@@ -486,7 +531,8 @@ export function legacyDefaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workf
  */
 export function toTaskScopeWorkflow(wf: Workflow): Workflow {
   if (wf.version < WORKFLOW_VERSION) return wf
-  let nodes: WfNode[] = wf.nodes.map((n) => (n.type === 'work' ? (({ roleId: _roleId, roleIds: _roleIds, ...rest }) => rest)(n) as WfNode : { ...n }))
+  // Путь подзадачи (`subflow`) в графе по подзадачам не читается: он сам и есть граф подзадачи (`TaskStore.taskWorkflow`).
+  let nodes: WfNode[] = wf.nodes.map((n) => (n.type === 'work' ? (({ roleId: _roleId, roleIds: _roleIds, subflow: _subflow, ...rest }) => rest)(n) as WfNode : { ...n }))
   let edges: WfEdge[] = wf.edges.map((e) => ({ ...e }))
   const isEnd = (id: string): boolean => nodes.find((n) => n.id === id)?.type === 'end'
   // Финальная проверка человеком: входящие в неё переходы ведут туда, куда вёл её accept.
@@ -740,8 +786,26 @@ export const WF_ISSUE_TEXTS = {
   gitRemoteInvalid: 'нода «{node}»: имя remote «{remote}» недопустимо (пробелы или «-» в начале)',
   gitUnknownPlaceholder: 'нода «{node}»: в поле «{field}» неизвестная подстановка «{placeholder}», доступны: {available}',
   gitParamIgnored: 'нода «{node}»: поле «{field}» не используется операцией {operation} — значение игнорируется',
-  gitRunOperation: 'нода «{node}»: операция {operation} недоступна в воркфлоу глобальной задачи — у неё одна ветка, её имя задаёт шаблон проекта'
+  gitRunOperation: 'нода «{node}»: операция {operation} недоступна в воркфлоу глобальной задачи — у неё одна ветка, её имя задаёт шаблон проекта',
+  templateIdNotString: 'нода «{node}»: id шаблона должен быть непустой строкой',
+  subflowInvalid: 'нода «{node}»: путь подзадачи должен быть графом с полями nodes и edges',
+  subflowOnNonWork: 'нода «{node}»: путь подзадачи бывает только у ноды «Работа»',
+  subflowInTaskScope: 'нода «{node}»: путь подзадачи задан в графе по подзадачам (версия 1) — он есть только в графе глобальной задачи',
+  subflowNested: 'нода «{node}»: у ноды внутри пути подзадачи не может быть своего пути — вложенность только одна',
+  subflowNoWork: 'от старта не достижима ни одна нода «Работа» — воркер подзадачи никогда не запустится',
+  subflowAskNotAllowed: 'нода «{node}»: «Вопрос человеку» недоступен в пути подзадачи — вопросы задаются этапом глобальной задачи',
+  subflowNoMerge: 'нода «{node}»: путь от старта приходит в конец, минуя «Мерж» — коммиты подзадачи не попадут в ветку глобальной задачи',
+  subflowDoubleReview: 'нода «{node}»: проверка есть и в пути подзадачи, и дальше в графе — ветка будет проверена дважды; если хватает проверки каждой подзадачи, внешнюю можно убрать',
+  templateNoId: 'шаблон: пустой id',
+  templateNoTitle: 'шаблон: не задано название',
+  templateNotString: 'шаблон «{template}»: поле «{field}» должно быть строкой',
+  templateBadUpdatedAt: 'шаблон «{template}»: время обновления должно быть числом',
+  templateBadNode: 'шаблон «{template}»: нода шаблона должна быть объектом с известным типом',
+  templateNodeStart: 'шаблон «{template}»: ноду «Старт» шаблоном сделать нельзя — в графе она одна и создаётся вместе с ним'
 } as const
+
+/** Префикс сообщения о проблеме внутри пути подзадачи; `{node}` — название ноды «Работа», которой принадлежит путь. */
+export const WF_SUBFLOW_PREFIX = 'нода «{node}» → путь подзадачи: '
 
 export type WfIssueCode = keyof typeof WF_ISSUE_TEXTS
 
@@ -753,8 +817,15 @@ export interface WfIssue {
   message: string
   code?: WfIssueCode
   params?: Record<string, string | number>
+  /** Нода на холсте; проблема внутри пути подзадачи — путь `<нода «Работа»>/<нода пути>` (например, `impl/rev`). */
   nodeId?: string
+  /** Переход на холсте; внутри пути подзадачи — так же с префиксом `<нода «Работа»>/`. */
   edgeId?: string
+  /**
+   * Только проблема внутри пути подзадачи: нода «Работа», которой принадлежит путь. `message` уже начинается с
+   * `WF_SUBFLOW_PREFIX`; renderer переводит проблему по `code` и добавляет тот же префикс сам.
+   */
+  subflowOf?: { nodeId: string; title: string }
 }
 
 export interface WfValidation {
@@ -775,6 +846,12 @@ export interface WfValidationContext {
   enabledAgents?: readonly string[]
   /** Название ноды в тексте проблемы; нет — `wfNodeTitle` (русские названия типов). renderer передаёт переведённые. */
   nodeTitle?: (node: WfNode) => string
+  /**
+   * Что проверяется: граф глобальной задачи (`'run'`, по умолчанию) или путь подзадачи (`'subtask'`). Путь подзадачи
+   * проверяет `validateWorkflow` сам, рекурсивно, у каждой ноды `work` с `subflow`; снаружи `'subtask'` передают,
+   * только чтобы проверить путь отдельно (редактор пути).
+   */
+  scope?: 'run' | 'subtask'
 }
 
 const KNOWN_TYPES = Object.keys(WF_PORTS) as WfNodeType[]
@@ -782,11 +859,18 @@ const KNOWN_TYPES = Object.keys(WF_PORTS) as WfNodeType[]
 /**
  * Проверка графа. Вызывают renderer (подсказки в редакторе) и main (перед сохранением).
  * Роль могут удалить после сохранения, поэтому исполнитель повторяет проверку роли сам (`nextStage` → blocked).
+ *
+ * Путь подзадачи (`work.subflow`) проверяется здесь же, рекурсивно, со `scope: 'subtask'`: проблемы пути приходят
+ * с префиксом `WF_SUBFLOW_PREFIX` и `nodeId` вида `impl/rev`. Отличия пути от графа глобальной задачи: `ask`
+ * запрещён, вложенного пути нет, условие по роли допустимо (у подзадачи роль есть), не предупреждаем про конец
+ * без человека, зато предупреждаем про конец в обход мержа.
  */
 export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfValidation {
   const errors: WfIssue[] = []
   const warnings: WfIssue[] = []
   const title = ctx.nodeTitle ?? wfNodeTitle
+  /** Проверяется путь подзадачи, а не граф глобальной задачи. */
+  const sub = ctx.scope === 'subtask'
   const issue = (code: WfIssueCode, params: Record<string, string | number> = {}, at: { nodeId?: string; edgeId?: string } = {}): WfIssue => ({
     message: WF_ISSUE_TEXTS[code].replace(/\{(\w+)\}/g, (all, k: string) => (k in params ? String(params[k]) : all)),
     code,
@@ -916,6 +1000,32 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
     errors.push(at(nodes.get(id)!, 'conditionCycle'))
   }
 
+  /** Путь подзадачи ноды `work`: место, вложенность, версия графа, затем рекурсивная проверка пути. */
+  const checkSubflow = (n: Extract<WfNode, { type: 'work' }>): void => {
+    const raw: unknown = n.subflow
+    if (raw === undefined) return
+    if (sub) return void errors.push(at(n, 'subflowNested'))
+    if (wf.version < WORKFLOW_VERSION) return void errors.push(at(n, 'subflowInTaskScope'))
+    const path = raw as { nodes?: unknown; edges?: unknown } | null
+    const isObjects = (list: unknown): list is object[] => Array.isArray(list) && list.every((x) => x !== null && typeof x === 'object')
+    if (!path || typeof path !== 'object' || !isObjects(path.nodes) || !isObjects(path.edges)) {
+      return void errors.push(at(n, 'subflowInvalid'))
+    }
+    const inner = validateWorkflow(
+      { version: WORKFLOW_VERSION, nodes: path.nodes as WfNode[], edges: path.edges as WfEdge[] },
+      { ...ctx, scope: 'subtask' }
+    )
+    const lift = (i: WfIssue): WfIssue => ({
+      ...i,
+      message: WF_SUBFLOW_PREFIX.replace('{node}', title(n)) + i.message,
+      nodeId: i.nodeId !== undefined ? `${n.id}/${i.nodeId}` : n.id,
+      ...(i.edgeId !== undefined ? { edgeId: `${n.id}/${i.edgeId}` } : {}),
+      subflowOf: { nodeId: n.id, title: title(n) }
+    })
+    errors.push(...inner.errors.map(lift))
+    warnings.push(...inner.warnings.map(lift))
+  }
+
   // 6. Ссылки нод на роли, ноды и колонки.
   const roleById = new Map(ctx.roles.map((r) => [r.id, r]))
   const checkRole = (n: WfNode, roleId: string): void => {
@@ -937,7 +1047,10 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       if (!n.roleId) errors.push(at(n, 'gateNoRole'))
       else checkRole(n, n.roleId)
     }
-    if (n.type === 'ask') {
+    if (n.type === 'ask' && sub) {
+      // Вопросы человеку — этап глобальной задачи: иначе человеку пришла бы анкета на каждую подзадачу.
+      errors.push(at(n, 'subflowAskNotAllowed'))
+    } else if (n.type === 'ask') {
       // Воркфлоу идёт по глобальной задаче: у неё нет роли, поэтому вопрос задаёт агент роли этапа.
       if (!n.roleId) errors.push(at(n, 'askNoRole'))
       else checkRole(n, n.roleId)
@@ -951,9 +1064,14 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
         for (const roleId of wfWorkRoleIds(n)) checkRole(n, roleId)
       }
     }
-    if (n.type === 'ask' && (typeof n.instructions !== 'string' || !n.instructions.trim())) {
+    if (n.type === 'ask' && !sub && (typeof n.instructions !== 'string' || !n.instructions.trim())) {
       errors.push(at(n, 'askNoInstructions'))
     }
+    if (n.templateId !== undefined && (typeof n.templateId !== 'string' || !n.templateId.trim())) {
+      errors.push(at(n, 'templateIdNotString'))
+    }
+    if (n.type === 'work') checkSubflow(n)
+    else if ((n as { subflow?: unknown }).subflow !== undefined) errors.push(at(n, 'subflowOnNonWork'))
     if (n.type === 'work') {
       if (n.instructions !== undefined && typeof n.instructions !== 'string') {
         errors.push(at(n, 'instructionsNotString'))
@@ -975,7 +1093,8 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
         if (!nodes.has(t.node)) errors.push(at(n, 'attemptsNoNode', { target: t.node }))
         if (!Number.isInteger(t.atLeast) || t.atLeast < 1) errors.push(at(n, 'attemptsBadCount'))
       } else if (t.kind === 'role') {
-        errors.push(at(n, 'conditionRoleRun'))
+        // У подзадачи роль есть, а у глобальной задачи — нет.
+        if (!sub) errors.push(at(n, 'conditionRoleRun'))
       } else if (t.kind === 'files') {
         errors.push(at(n, 'filesUnsupported'))
       } else {
@@ -986,7 +1105,7 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
 
   // 7. Хотя бы одна работа на пути от старта.
   if (start && ![...fromStart].some((id) => nodes.get(id)!.type === 'work')) {
-    errors.push(issue('noWorkReachable', {}, { nodeId: start.id }))
+    errors.push(issue(sub ? 'subflowNoWork' : 'noWorkReachable', {}, { nodeId: start.id }))
   }
 
   // Предупреждения.
@@ -1026,8 +1145,24 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
   const isMerge = (id: string): boolean => nodes.get(id)?.type === 'merge'
   // Без человека перед концом глобальная задача уходит в «Сделано» сама: разрешено (полностью автоматический
   // граф), но человек должен это видеть.
-  const unattendedEnd = start ? endWithoutHuman([...nodes.values()], edges) : undefined
+  // В пути подзадачи человек не нужен: путь по умолчанию (воркер → мерж) его не содержит.
+  const unattendedEnd = start && !sub ? endWithoutHuman([...nodes.values()], edges) : undefined
   if (unattendedEnd) warnings.push(at(unattendedEnd, 'noHumanBeforeEnd'))
+
+  // Путь подзадачи в обход мержа: коммиты подзадачи остались бы в её ветке, а этап глобальной задачи закрылся.
+  if (sub && start) {
+    const bypass = [...reach([start.id], succ, isMerge)].map((id) => nodes.get(id)!).find((x) => x.type === 'end')
+    if (bypass) warnings.push(at(bypass, 'subflowNoMerge'))
+  }
+
+  // Проверка и в пути подзадачи, и дальше в графе: ветка проверяется дважды.
+  if (!sub) {
+    for (const n of nodes.values()) {
+      const path = n.type === 'work' ? (n.subflow as Partial<WfSubflow> | undefined) : undefined
+      if (!path || !fromStart.has(n.id) || !Array.isArray(path.nodes) || !path.nodes.some((x) => x?.type === 'gate')) continue
+      if ([...reach(succ(n.id), succ)].some((id) => nodes.get(id)!.type === 'gate')) warnings.push(at(n, 'subflowDoubleReview'))
+    }
+  }
 
   for (const n of nodes.values()) {
     if (n.type !== 'merge' || !fromStart.has(n.id)) continue
@@ -1151,10 +1286,12 @@ export interface WfContext {
   /** Роли проекта сейчас; есть — у гейта (и у `work`/`ask` прогона) проверяется, что роль не удалили. */
   roleIds?: readonly string[]
   /**
-   * Чья позиция на графе: подзадачи (нет поля, движок до воркфлоу глобальной задачи) или глобальной задачи
-   * (`'run'`, `Run.stage`). От неё зависит действие `work`/`ask` и то, что `condition: role` посчитать нельзя.
+   * Чья позиция на графе: подзадачи (нет поля, движок до воркфлоу глобальной задачи), глобальной задачи
+   * (`'run'`, `Run.stage`) или подзадачи на пути ноды `work` (`'subtask'`, `Task.stage` на `work.subflow`). От неё
+   * зависит действие `work`/`ask` и то, что `condition: role` посчитать нельзя. `'subtask'` — прежнее поведение без
+   * поля, но `ask` в пути запрещён (`blocked`).
    */
-  scope?: 'run'
+  scope?: 'run' | 'subtask'
 }
 
 export interface WfStep {
@@ -1173,6 +1310,9 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
     case 'work':
     case 'ask':
       if (ctx.scope === 'run') return runWorkAction(node, ctx)
+      if (ctx.scope === 'subtask' && node.type === 'ask') {
+        return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: «Вопрос человеку» недоступен в пути подзадачи` }
+      }
       // Тот же start_worker: исполнитель (main) различает работу и вопрос по типу ноды.
       {
         // Граф по подзадачам: у ноды `work` роль — одна прежняя, несколько ролей там смысла не имеют.
