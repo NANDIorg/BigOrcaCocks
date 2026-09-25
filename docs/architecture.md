@@ -1060,7 +1060,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
   (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
+  `projects:gitFetch(id)` (`git fetch --all --prune`) и `projects:gitPull(id)` (`git pull --ff-only` текущей ветки) → `ProjectGitResult {output, branch: ProjectBranchInfo}`,
+  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking); все четыре — опциональные методы `OrcaApi.projects`
+  (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
+  `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
+  воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт). В контрактной версии обработчики — заглушки «не реализовано»;
+  `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
   веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
   **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):

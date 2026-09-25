@@ -574,6 +574,10 @@ function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent
   })
 }
 
+function notImplemented(channel: string): never {
+  throw new Error(`не реализовано: ${channel}`)
+}
+
 function registerIpc(): void {
   handle('app:getSettings', () => projects.settings())
   handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
@@ -607,6 +611,11 @@ function registerIpc(): void {
     const p = projects.get(id)
     return p ? projectBranchInfo(p.root) : { isGitRepo: false, branch: null, detached: false }
   })
+  // Заглушки контракта IPC: git-логику корня проекта (ветки, fetch, pull, checkout) добавляет отдельная задача.
+  handle('projects:branches', (): never => notImplemented('projects:branches'))
+  handle('projects:gitFetch', (): never => notImplemented('projects:gitFetch'))
+  handle('projects:gitPull', (): never => notImplemented('projects:gitPull'))
+  handle('projects:checkoutBranch', (): never => notImplemented('projects:checkoutBranch'))
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
