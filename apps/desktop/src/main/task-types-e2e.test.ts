@@ -11,8 +11,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, defaultWorkflow,
-  type Role, type Task, type Workflow
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, legacyDefaultWorkflow, migrateWorkflow, toTaskScopeWorkflow,
+  type Role, type RunTypeInput, type Task, type Workflow
 } from '@orca-board/core'
 import { enterWork, handleWorkflowEvents, reviewAccept, reviewReject, approvalResolved, type WorkflowDeps } from './workflow'
 import { resolveHumanRequest } from './review'
@@ -141,9 +141,18 @@ function appHarness(pm: ProjectManager, projectId: string): Harness {
   })
 }
 
+/**
+ * Тип прогона для движка по подзадачам: граф типа (версия 2 — граф глобальной задачи) переведён в граф подзадач, как это
+ * делает store для прогонов без снимка. Прогон по типу с графом версии 2 идёт воркфлоу глобальной задачи, а тут
+ * проверяется старый движок.
+ */
+function taskScope(t: RunTypeInput): RunTypeInput {
+  return { ...t, ...(t.workflow ? { workflow: toTaskScopeWorkflow(t.workflow) } : {}) }
+}
+
 /** Роль координатора нового прогона (`runCoordinator` без runId → `startCoordinator`): тип и прогон в store. */
 function startCoordinator(pm: ProjectManager, h: Harness, projectId: string, objective: string, typeId?: string): string {
-  const type = pm.runType(projectId, typeId)
+  const type = taskScope(pm.runType(projectId, typeId))
   const resolved = pm.resolveType(projectId, type.typeId)
   const role = resolved.roles.find((r) => r.id === 'coordinator')
   if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', resolved)}`)
@@ -168,7 +177,7 @@ const LEGACY_ROLES: Role[] = DEFAULT_ROLES.map((r) =>
 
 /** Дефолтный граф, но проверка — гейт QA вместо ревьюера. */
 function qaWorkflow(roles: readonly Role[] = DEFAULT_ROLES): Workflow {
-  const wf = defaultWorkflow([...roles])
+  const wf = legacyDefaultWorkflow([...roles])
   return { ...wf, nodes: wf.nodes.map((n) => (n.id === 'review' ? { id: 'review', type: 'gate', roleId: 'qa', x: n.x, y: n.y } : n)) }
 }
 
@@ -209,7 +218,7 @@ describe('сценарий 1: старый projects.json и доска со ст
     // --- Старая версия приложения: доска проекта. ---
     const old = legacyBoard()
     // Прогон A снят, когда граф проекта был дефолтным (гейт reviewer); потом человек поменял граф проекта на гейт QA.
-    const runA = old.store.createRun('Прогон A', undefined, defaultWorkflow(LEGACY_ROLES)).id
+    const runA = old.store.createRun('Прогон A', undefined, legacyDefaultWorkflow(LEGACY_ROLES)).id
     const runB = old.store.createRun('Прогон B (до воркфлоу)').id
     assert.equal(old.store.getRun(runB)?.workflow, undefined)
     const a1 = old.work('A1: в работе', 'developer', runA)
@@ -241,7 +250,7 @@ describe('сценарий 1: старый projects.json и доска со ст
     const legacyType = pm.taskType(LEGACY_TID)!
     assert.equal(legacyType.title, 'repo')
     assert.deepEqual(legacyType.settings.roles?.map((r) => [r.id, r.agent, r.model]), LEGACY_ROLES.map((r) => [r.id, r.agent, r.model]))
-    assert.deepEqual(legacyType.settings.workflow, qaWorkflow(LEGACY_ROLES))
+    assert.deepEqual(legacyType.settings.workflow, migrateWorkflow(qaWorkflow(LEGACY_ROLES), LEGACY_ROLES), 'граф типа мигрировал в версию 2: без мержа, роль у работы')
     assert.equal(legacyType.settings.agentRules, 'правила проекта')
     assert.equal(legacyType.settings.permissionMode, 'acceptEdits')
     assert.equal(pm.taskType('tpl_mine')?.settings.agentRules, 'шаблон', 'шаблон стал типом')
@@ -256,7 +265,7 @@ describe('сценарий 1: старый projects.json и доска со ст
       assert.equal(h.store.getGlobalTask(runId).typeTitle, 'repo')
     }
     assert.equal(h.store.getRun(inboxId)?.typeId, undefined)
-    assert.deepEqual(h.store.getRun(runA)?.workflow, defaultWorkflow(LEGACY_ROLES), 'снимок графа прогона не тронут')
+    assert.deepEqual(h.store.getRun(runA)?.workflow, legacyDefaultWorkflow(LEGACY_ROLES), 'снимок графа прогона не тронут')
     assert.equal(h.store.getRun(runB)?.workflow, undefined)
     // Окружение агентов прогона (ctx) — бывшие настройки проекта.
     const ctxA = pm.resolveRun(PID, runA)
@@ -396,8 +405,8 @@ describe('сценарий 2: один проект, две глобальные
     const ta = pm.saveTaskType({ title: 'Ревью Claude', settings: { roles: withReviewer({ agent: 'claude', model: 'opus' }) } })
     const tb = pm.saveTaskType({ title: 'Ревью Codex', settings: { roles: withReviewer({ agent: 'codex', model: 'gpt-5.5' }) } })
     const h = appHarness(pm, pid)
-    const runA = h.store.createGlobalTask({ title: 'A', type: pm.runType(pid, ta.id) }).id
-    const runB = h.store.createGlobalTask({ title: 'B', type: pm.runType(pid, tb.id) }).id
+    const runA = h.store.createGlobalTask({ title: 'A', type: taskScope(pm.runType(pid, ta.id)) }).id
+    const runB = h.store.createGlobalTask({ title: 'B', type: taskScope(pm.runType(pid, tb.id)) }).id
 
     const a = h.work('Задача A', 'developer', runA)
     const b = h.work('Задача B', 'developer', runB)
@@ -478,7 +487,7 @@ describe('сценарий 3а: заготовку типа изменили и 
 
     // Полная правка заготовки: название, состав ролей (без qa), граф без гейта тестов, разрешения.
     const roles = (backend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa')
-    pm.saveTaskType({ id: 'backend', title: 'Бэкенд без QA', settings: { roles, workflow: defaultWorkflow(roles), permissionMode: 'acceptEdits' } })
+    pm.saveTaskType({ id: 'backend', title: 'Бэкенд без QA', settings: { roles, workflow: legacyDefaultWorkflow(roles), permissionMode: 'acceptEdits' } })
     const after = h.store.getRun(runOld)!
     assert.deepEqual(after.taskType, before.taskType, 'снимок типа у запущенной задачи прежний')
     assert.deepEqual(after.workflow, before.workflow, 'граф запущенной задачи прежний')
@@ -508,7 +517,7 @@ describe('сценарий 3а: заготовку типа изменили и 
 describe('сценарий 4: тип проекта по умолчанию сменили до первой загрузки доски', () => {
   it('старые прогоны всё равно получают тип «repo» (legacyTypeId), «Входящие» — новый тип по умолчанию', () => {
     const old = legacyBoard()
-    const runId = old.store.createRun('Старый прогон', undefined, defaultWorkflow(LEGACY_ROLES)).id
+    const runId = old.store.createRun('Старый прогон', undefined, legacyDefaultWorkflow(LEGACY_ROLES)).id
     const t = old.store.createTask({ title: 'Старая задача', roleId: 'developer', runId })
     const i = old.store.createTask({ title: 'Входящая', roleId: 'writer' })
     const inboxId = old.task(i.id).runId!
@@ -531,7 +540,7 @@ describe('сценарий 4: тип проекта по умолчанию см
 
   it('тип «repo» удалили до первой загрузки доски: старые прогоны сохраняют роли проекта', () => {
     const old = legacyBoard()
-    const runId = old.store.createRun('Старый прогон', undefined, defaultWorkflow(LEGACY_ROLES)).id
+    const runId = old.store.createRun('Старый прогон', undefined, legacyDefaultWorkflow(LEGACY_ROLES)).id
     const t = old.store.createTask({ title: 'Старая задача', roleId: 'developer', runId })
     writeLegacyProjects()
 
@@ -547,7 +556,7 @@ describe('сценарий 4: тип проекта по умолчанию см
 
   it('тип «repo» изменили до первой загрузки доски: снимок старых прогонов — до правки, как у прогона, созданного до неё', () => {
     const old = legacyBoard()
-    const runId = old.store.createRun('Старый прогон', undefined, defaultWorkflow(LEGACY_ROLES)).id
+    const runId = old.store.createRun('Старый прогон', undefined, legacyDefaultWorkflow(LEGACY_ROLES)).id
     writeLegacyProjects()
 
     const pm = newProjectManager()

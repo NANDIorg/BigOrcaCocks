@@ -1,11 +1,19 @@
-// Воркфлоу: граф этапов, которые проходит одна рабочая задача от первого запуска до мержа.
+// Воркфлоу: граф этапов, которые проходит глобальная задача (версия 2, `Run.stage`) или, в старом формате, каждая
+// рабочая подзадача (версия 1, `Task.stage`) — от первого запуска до конца. Контракт версии 2 — docs/workflow.md.
 // Модуль импортирует renderer (живая валидация в редакторе), поэтому без node-импортов;
 // значения импортируются с расширением .ts — тесты гоняются node --test без бандлера.
 import type { BoardColumn, Role, Task } from './types'
 import { isTaskRole } from './prompts.ts'
 
-/** Версия формата графа. Меняется при несовместимой правке типов ниже, вместе с `migrateWorkflow`. */
-export const WORKFLOW_VERSION = 1
+/**
+ * Версия формата графа. Меняется при несовместимой правке типов ниже, вместе с `migrateWorkflow`.
+ * 2 — граф идёт по глобальной задаче (`Run.stage`), а не по подзадачам: `work` ведёт координатор, `merge` — слияние
+ * ветки глобальной задачи в базовую. 1 — граф по подзадачам (`WORKFLOW_VERSION_TASK_SCOPE`), доживает у старых прогонов.
+ */
+export const WORKFLOW_VERSION = 2
+
+/** Версия графа, который идёт по подзадачам (движок до воркфлоу глобальной задачи). Так же помечены `legacyPipelineWorkflow` и `legacyDefaultWorkflow`. */
+export const WORKFLOW_VERSION_TASK_SCOPE = 1
 
 /** Исход этапа: по нему выбирается ребро. У каждого типа ноды — фиксированный набор портов (`WF_PORTS`). */
 export type WfOutcome = 'next' | 'accept' | 'reject' | 'yes' | 'no' | 'ok' | 'conflict' | 'error'
@@ -26,9 +34,9 @@ export const WF_GIT_DEFAULT_REMOTE = 'origin'
  * и не показать в редакторе.
  */
 export type WfCondition =
-  /** Задача заходила в ноду `node` не меньше `atLeast` раз (лимит повторов). */
+  /** Задача (в версии 2 — глобальная, по `Run.stage.visits`) заходила в ноду `node` не меньше `atLeast` раз (лимит повторов). */
   | { kind: 'attempts'; node: string; atLeast: number }
-  /** Роль рабочей задачи — одна из `roleIds`. */
+  /** Роль рабочей задачи — одна из `roleIds`. Только граф по подзадачам: у глобальной задачи роли нет, в графе версии 2 это ошибка. */
   | { kind: 'role'; roleIds: string[] }
   /** Все файлы ветки подходят под маску. Зарезервировано под v2: пока не исполняется и не проходит валидацию. */
   | { kind: 'files'; glob: string }
@@ -70,25 +78,39 @@ export type WfNode = WfNodeBase &
   (
     | { type: 'start' }
     /**
-     * Работа воркера. Без `roleId` — роль задачи (её выбрал координатор). `instructions` и `showcase` попадают
-     * в промпт воркера разделом «Этап» (`workerTaskPrompt`); нормализованный вид — `wfWorkStage`.
+     * Работа. В графе глобальной задачи (версия 2) `roleId` обязателен: этап ведут агенты одной роли, подзадачи
+     * которых создаёт координатор по `stage_started`. В графе по подзадачам (версия 1) без `roleId` — роль задачи
+     * (её выбрал координатор). `instructions` и `showcase` попадают в промпт воркера разделом «Этап»
+     * (`workerTaskPrompt`); нормализованный вид — `wfWorkStage`.
      */
     | { type: 'work'; roleId?: string; instructions?: string; showcase?: WfShowcase }
     /**
-     * Вопрос человеку: агент роли ноды (пусто — роль задачи) задаёт вопросы штатным `orca-board ask`, они идут
-     * человеку, минуя координатора; ответы попадают в промпт следующих этапов. Код на этапе не меняется.
-     * `instructions` — о чём спросить, обязательны. Роль этапа не становится ролью задачи (в отличие от `work`).
+     * Вопрос человеку: агент роли ноды задаёт вопросы штатным `orca-board ask`, они идут человеку, минуя
+     * координатора; ответы попадают в промпт следующих этапов. Код на этапе не меняется. `instructions` — о чём
+     * спросить, обязательны. В графе глобальной задачи роль обязательна, а задачу создаёт приложение (одна); в графе по
+     * подзадачам пусто — роль задачи, и роль этапа не становится ролью задачи (в отличие от `work`).
      */
     | { type: 'ask'; roleId?: string; instructions: string }
-    /** Гейт-агент: отдельная задача-проверка ветки рабочей задачи; исход — accept/reject. */
+    /**
+     * Гейт-агент: отдельная задача-проверка; исход — accept/reject. В графе глобальной задачи проверяет ветку
+     * глобальной задачи целиком против `RunGit.base`, в графе по подзадачам — ветку рабочей задачи.
+     */
     | { type: 'gate'; roleId: string; instructions?: string }
-    /** Гейт-человек: запрос в Инбоксе «Принять» / «Вернуть». */
+    /**
+     * Гейт-человек: запрос в Инбоксе «Принять» / «Вернуть». В графе глобальной задачи — approval уровня прогона
+     * (без задачи, `TaskStore.requestRunApproval`), карточка встаёт на «Проверку».
+     */
     | { type: 'human'; instructions?: string }
     | { type: 'condition'; test: WfCondition }
+    /**
+     * Слияние. В графе глобальной задачи — ветки глобальной задачи в `RunGit.base` локально (в защищённые ветки — нет:
+     * `workflow_blocked`); в графе по подзадачам — ветки подзадачи в ветку глобальной задачи.
+     */
     | { type: 'merge' }
     /**
-     * Git-операция без агента: приложение само выполняет `operation` в worktree задачи. Какие поля нужны
-     * какой операции — `wfGitFieldUse`; в `branch` и `message` работают подстановки (`renderGitTemplate`).
+     * Git-операция без агента: приложение само выполняет `operation` в worktree (глобальной задачи в версии 2, задачи в
+     * версии 1). Какие поля нужны какой операции — `wfGitFieldUse`; в `branch` и `message` работают подстановки
+     * (`renderGitTemplate`). В графе глобальной задачи доступны только `commit` и `push`.
      */
     | WfGitParams & { type: 'git' }
     /** Конец. `merged` — для отображения: задача пришла сюда со слитой веткой. */
@@ -148,6 +170,8 @@ export interface WfWorkStage {
   nodeId: string
   type: 'work' | 'ask'
   title: string
+  /** Роль этапа (`work` прогона — обязательна; у графа по подзадачам — необязательна). */
+  roleId?: string
   instructions?: string
   showcase?: WfShowcase
 }
@@ -171,6 +195,7 @@ export function wfWorkStage(wf: Workflow, nodeId: string): WfWorkStage | undefin
   const showcase = wfShowcase(node)
   return {
     nodeId: node.id, type: node.type, title: wfNodeTitle(node),
+    ...(node.roleId ? { roleId: node.roleId } : {}),
     ...(instructions ? { instructions } : {}),
     ...(showcase ? { showcase } : {})
   }
@@ -258,32 +283,123 @@ export function gitBranchTemplateValid(template: string, vars: Readonly<Record<s
 // ---------- дефолт и миграция ----------
 
 /**
- * Проверка в линейном графе (`pipelineWorkflow`): гейт-агент или человек. Отказ всегда возвращает в работу.
- * `onlyForRoles` — проверка только для задач этих ролей: перед ней ставится условие по роли, остальные задачи
- * её пропускают.
+ * Проверка в линейном графе глобальной задачи (`pipelineWorkflow`): гейт-агент проверяет ветку глобальной
+ * задачи целиком, `human` — решение человека. Отказ любой проверки возвращает в последнюю «Работу».
  */
 export type WfPipelineCheck =
+  | { type: 'gate'; id: string; roleId: string; title?: string; instructions?: string }
+  | { type: 'human'; id: string; title?: string; instructions?: string }
+
+/** Этап «Работа» линейного графа: id ноды, роль агентов и тексты. */
+export interface WfPipelineWork {
+  id: string
+  roleId: string
+  title?: string
+  instructions?: string
+}
+
+const PIPELINE_STEP_X = 220
+/** Id и название финальной проверки человеком, которую `pipelineWorkflow` добавляет, если последняя проверка — не `human`. */
+export const PIPELINE_FINAL_CHECK_ID = 'check'
+// Не «Проверка»: так называется нода `gate` по умолчанию, и перевод встроенных названий узнаёт их по тексту.
+const PIPELINE_FINAL_CHECK_TITLE = 'Проверка человеком'
+const PIPELINE_WORK_TITLE = 'Реализация'
+
+/**
+ * Роль, агенты которой ведут этап «Работа» по умолчанию: `developer`, иначе первая рабочая (не служебная и не
+ * `reviewer`) роль, иначе `reviewer` (других нет), иначе `developer` — валидация укажет, что роли в проекте нет.
+ */
+export function defaultWorkRole(roles: readonly Pick<Role, 'id'>[]): string {
+  const ids = roles.map((r) => r.id).filter(isTaskRole)
+  if (ids.includes('developer')) return 'developer'
+  return ids.find((id) => id !== 'reviewer') ?? ids[0] ?? 'developer'
+}
+
+/**
+ * Конструктор типового графа глобальной задачи: старт → работа (одна или несколько по порядку) → проверки по
+ * порядку → «Проверка» человеком → конец. Отказ любой проверки возвращает в последнюю «Работу». Финальная
+ * проверка человеком — нода `human` `check` — добавляется, если последняя из `checks` не `human`: без неё
+ * результат ушёл бы в «Сделано» без человека. Из него собраны `defaultWorkflow` и графы заготовок типов задач
+ * (task-types.ts), поэтому id стабильны: `work`, `end`, `check`, `e_<нода>_<исход>`.
+ */
+export function pipelineWorkflow(
+  checks: readonly WfPipelineCheck[],
+  opts: { work?: readonly WfPipelineWork[]; roleId?: string } = {}
+): Workflow {
+  const works: readonly WfPipelineWork[] = opts.work?.length ? opts.work : [{ id: 'work', roleId: opts.roleId ?? 'developer' }]
+  const nodes: WfNode[] = [{ id: 'start', type: 'start', x: 0, y: 0 }]
+  const edges: WfEdge[] = []
+  let x = 0
+  // Куда ведёт выход предыдущего шага: его выход задаётся, когда известен следующий шаг.
+  let link: (to: string) => void = (to) => edges.push({ id: 'e_start', from: 'start', outcome: 'next', to })
+  const back = works[works.length - 1].id
+  for (const w of works) {
+    x += PIPELINE_STEP_X
+    link(w.id)
+    nodes.push({
+      id: w.id, type: 'work', title: w.title ?? PIPELINE_WORK_TITLE, roleId: w.roleId, x, y: 0,
+      ...(w.instructions ? { instructions: w.instructions } : {})
+    })
+    link = (to) => edges.push({ id: `e_${w.id}`, from: w.id, outcome: 'next', to })
+  }
+  const all: readonly WfPipelineCheck[] = checks.at(-1)?.type === 'human'
+    ? checks
+    : [...checks, { type: 'human', id: PIPELINE_FINAL_CHECK_ID, title: PIPELINE_FINAL_CHECK_TITLE }]
+  for (const c of all) {
+    x += PIPELINE_STEP_X
+    link(c.id)
+    const text = { ...(c.title ? { title: c.title } : {}), ...(c.instructions ? { instructions: c.instructions } : {}) }
+    nodes.push(c.type === 'gate'
+      ? { id: c.id, type: 'gate', roleId: c.roleId, ...text, x, y: 0 }
+      : { id: c.id, type: 'human', ...text, x, y: 0 })
+    const from = c.id
+    link = (to) => edges.push(
+      { id: `e_${from}_accept`, from, outcome: 'accept', to },
+      { id: `e_${from}_reject`, from, outcome: 'reject', to: back }
+    )
+  }
+  x += PIPELINE_STEP_X
+  link('end')
+  nodes.push({ id: 'end', type: 'end', x, y: 0 })
+  return { version: WORKFLOW_VERSION, nodes, edges }
+}
+
+/**
+ * Дефолтный граф глобальной задачи, повторяющий прежнее поведение (работа → ревью → «Проверка» человеком):
+ * старт → «Реализация» (`defaultWorkRole`) → ревью агентом, если есть роль `reviewer` → «Проверка» человеком
+ * (accept → конец, reject → «Реализация») → конец. Слияния в базовую ветку нет: это решает человек графом типа.
+ */
+export function defaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workflow {
+  const hasReviewer = roles.some((r) => r.id === 'reviewer')
+  return pipelineWorkflow(hasReviewer ? [{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }] : [], {
+    roleId: defaultWorkRole(roles)
+  })
+}
+
+/**
+ * Проверка в линейном графе по подзадачам (`legacyPipelineWorkflow`). `onlyForRoles` — проверка только для задач
+ * этих ролей: перед ней ставится условие по роли, остальные задачи её пропускают.
+ */
+export type WfLegacyPipelineCheck =
   | { type: 'gate'; id: string; roleId: string; title?: string; instructions?: string; onlyForRoles?: string[] }
   | { type: 'human'; id: string; title?: string; instructions?: string; onlyForRoles?: string[] }
 
-const PIPELINE_STEP_X = 220
 const CONFLICT_INSTRUCTIONS =
   'Ветка не сливается без конфликтов. Разрешите конфликт в ветке задачи и примите её или верните в работу.'
 
 /**
- * Конструктор типового графа: старт → работа → проверки по порядку → мерж → конец. Отказ любой проверки
- * возвращает в работу, конфликт мержа уходит человеку (принять — снова мерж, вернуть — в работу).
- * Из него собраны `defaultWorkflow` и графы заготовок типов задач (task-types.ts), поэтому id нод
- * и рёбер стабильны: `work`, `merge`, `end`, `conflict`, `e_<нода>_<исход>`; условие роли — `<id проверки>_if`.
+ * Типовой граф **по подзадачам** (версия 1): старт → работа → проверки → мерж → конец. Отказ проверки возвращает в
+ * работу, конфликт мержа уходит человеку. Только для прогонов старого движка (`Run.workflowScope` не задан) и
+ * «Входящих» — новые прогоны идут по `pipelineWorkflow`. id стабильны: `work`, `merge`, `end`, `conflict`,
+ * `e_<нода>_<исход>`; условие роли — `<id проверки>_if`.
  */
-export function pipelineWorkflow(checks: readonly WfPipelineCheck[]): Workflow {
+export function legacyPipelineWorkflow(checks: readonly WfLegacyPipelineCheck[]): Workflow {
   const nodes: WfNode[] = [
     { id: 'start', type: 'start', x: 0, y: 0 },
     { id: 'work', type: 'work', title: 'Работа', x: PIPELINE_STEP_X, y: 0 }
   ]
   const edges: WfEdge[] = [{ id: 'e_start', from: 'start', outcome: 'next', to: 'work' }]
   let x = PIPELINE_STEP_X
-  // Куда ведёт выход предыдущего шага: его выход задаётся, когда известен следующий шаг.
   let link: (to: string) => void = (to) => edges.push({ id: 'e_work', from: 'work', outcome: 'next', to })
   for (const c of checks) {
     let entry: string = c.id
@@ -324,17 +440,17 @@ export function pipelineWorkflow(checks: readonly WfPipelineCheck[]): Workflow {
     { id: 'e_conflict_accept', from: 'conflict', outcome: 'accept', to: 'merge' },
     { id: 'e_conflict_reject', from: 'conflict', outcome: 'reject', to: 'work' }
   )
-  return { version: WORKFLOW_VERSION, nodes, edges }
+  return { version: WORKFLOW_VERSION_TASK_SCOPE, nodes, edges }
 }
 
 /**
- * Дефолтный граф, повторяющий поведение до воркфлоу: работа → ревью → мерж → конец, отказ — обратно в работу.
- * Есть роль `reviewer` — ревью делает агент (гейт), нет — человек. Конфликт мержа уходит человеку:
- * раньше задача с конфликтом зависала в «Ревью». Лимита повторов нет, как и раньше.
+ * Дефолтный граф **по подзадачам** (версия 1), повторяющий поведение до воркфлоу: работа → ревью → мерж → конец,
+ * отказ — обратно в работу. Есть роль `reviewer` — ревью делает агент, нет — человек. Им пользуется движок
+ * подзадач, когда у старого прогона нет снимка графа: граф версии 2 (`defaultWorkflow`) по подзадачам не ходит.
  */
-export function defaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workflow {
+export function legacyDefaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workflow {
   const hasReviewer = roles.some((r) => r.id === 'reviewer')
-  return pipelineWorkflow([
+  return legacyPipelineWorkflow([
     hasReviewer
       ? { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }
       : { type: 'human', id: 'review', title: 'Ревью человеком' }
@@ -342,13 +458,208 @@ export function defaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workflow {
 }
 
 /**
- * Приводит граф старой версии формата к `WORKFLOW_VERSION`. Пока версия одна — только проставляет её.
- * Граф из будущей версии не трогает: его отвергнет `validateWorkflow` («обновите приложение»).
+ * Граф воркфлоу глобальной задачи (версия 2) в виде графа **по подзадачам** (версия 1): его читает старый движок
+ * для прогонов без своего снимка («Входящие», прогон до воркфлоу), у которых граф берётся из типа задачи. Раньше такая
+ * подзадача шла по графу типа — гейты и проверки сохраняются, а смысл нод меняется так:
+ * - `work` теряет роль: подзадача сама выбрала роль, а этап её не переопределяет;
+ * - финальная «Проверка» человеком (`PIPELINE_FINAL_CHECK_ID`, accept → конец) снимается: результат принимает
+ *   глобальная задача, а не каждая подзадача;
+ * - перед концом появляется `merge` (подзадача → ветка глобальной задачи) и «Конфликт мержа» у человека, если
+ *   в графе своего `merge` нет (свой `merge` версии 2 — слияние прогона в базу — остаётся как есть).
+ * Граф версии 1 возвращается как есть. Исходный граф не меняется.
  */
-export function migrateWorkflow(wf: Workflow): Workflow {
-  if (!(wf.version < WORKFLOW_VERSION)) return wf
-  // Сюда добавлять шаги миграции: if (wf.version < 2) { … }
-  return { ...wf, version: WORKFLOW_VERSION }
+export function toTaskScopeWorkflow(wf: Workflow): Workflow {
+  if (wf.version < WORKFLOW_VERSION) return wf
+  let nodes: WfNode[] = wf.nodes.map((n) => (n.type === 'work' ? (({ roleId: _roleId, ...rest }) => rest)(n) as WfNode : { ...n }))
+  let edges: WfEdge[] = wf.edges.map((e) => ({ ...e }))
+  const isEnd = (id: string): boolean => nodes.find((n) => n.id === id)?.type === 'end'
+  // Финальная проверка человеком: входящие в неё переходы ведут туда, куда вёл её accept.
+  const finalCheck = nodes.find((n) => n.type === 'human' && n.id === PIPELINE_FINAL_CHECK_ID)
+  const acceptTo = finalCheck ? edges.find((e) => e.from === finalCheck.id && e.outcome === 'accept')?.to : undefined
+  if (finalCheck && acceptTo !== undefined && isEnd(acceptTo)) {
+    edges = edges.filter((e) => e.from !== finalCheck.id).map((e) => (e.to === finalCheck.id ? { ...e, to: acceptTo } : e))
+    nodes = nodes.filter((n) => n.id !== finalCheck.id)
+  }
+  if (!nodes.some((n) => n.type === 'merge')) {
+    const end = nodes.find((n) => n.type === 'end')
+    const firstWork = nodes.find((n) => n.type === 'work')
+    if (end && firstWork) {
+      const free = (base: string): string => (nodes.some((n) => n.id === base) ? `${base}_task` : base)
+      const merge = free('merge')
+      const conflict = free('conflict')
+      const endIds = new Set(nodes.filter((n) => n.type === 'end').map((n) => n.id))
+      edges = edges.map((e) => (endIds.has(e.to) ? { ...e, to: merge } : e))
+      nodes.push(
+        { id: merge, type: 'merge', x: end.x, y: end.y },
+        { id: conflict, type: 'human', title: 'Конфликт мержа', x: end.x, y: end.y + 180, instructions: CONFLICT_INSTRUCTIONS }
+      )
+      edges.push(
+        { id: `e_${merge}_ok`, from: merge, outcome: 'ok', to: end.id },
+        { id: `e_${merge}_conflict`, from: merge, outcome: 'conflict', to: conflict },
+        { id: `e_${conflict}_accept`, from: conflict, outcome: 'accept', to: merge },
+        { id: `e_${conflict}_reject`, from: conflict, outcome: 'reject', to: firstWork.id }
+      )
+      nodes = nodes.map((n) => (n.id === end.id && n.type === 'end' ? { ...n, merged: true } : n))
+    }
+  }
+  return { version: WORKFLOW_VERSION_TASK_SCOPE, nodes, edges }
+}
+
+/** Про что предупреждает миграция графа (`WfMigrationNote.code`). */
+export type WfMigrationCode =
+  | 'mergeRemoved' | 'roleConditionRemoved' | 'gitNodeRemoved' | 'nodeOrphaned'
+  | 'workRoleSet' | 'askRoleSet' | 'attemptsTargetRemoved' | 'noHumanBeforeEnd'
+
+/** Предупреждение человеку о том, что миграция изменила граф; `message` — по-русски, для показа как есть. */
+export interface WfMigrationNote {
+  code: WfMigrationCode
+  nodeId?: string
+  message: string
+}
+
+/**
+ * Приводит граф старой версии формата к `WORKFLOW_VERSION` и сообщает, что изменилось (`WfMigrationNote`).
+ * Граф из будущей версии не трогает: его отвергнет `validateWorkflow` («обновите приложение»).
+ *
+ * v1 → v2 (граф по подзадачам → граф по глобальной задаче; подробности — docs/workflow.md, «Миграция»):
+ * - `merge` v1 снимается: он значил «подзадача → ветка глобальной задачи», теперь это автоматика приложения, а
+ *   `merge` v2 — слияние ветки глобальной задачи в базовую, и молча подменять смысл нельзя. Переходы в него ведут
+ *   дальше по исходу `ok` (обычно в конец); ноды, в которые после этого никто не ведёт («Конфликт мержа»), снимаются;
+ * - `condition: role` снимается с переходом по `yes`: у глобальной задачи роли нет;
+ * - `git create_branch/checkout` снимаются с переходом по `ok`: ветка глобальной задачи одна, её задаёт шаблон проекта;
+ * - `work` и `ask` без роли получают `defaultWorkRole(roles)` — в v2 роль обязательна (`roles` нет — `developer`).
+ */
+export function migrateWorkflowReport(
+  wf: Workflow,
+  roles: readonly Pick<Role, 'id'>[] = []
+): { workflow: Workflow; notes: WfMigrationNote[] } {
+  if (!(wf.version < WORKFLOW_VERSION)) return { workflow: wf, notes: [] }
+  const notes: WfMigrationNote[] = []
+  const title = (n: WfNode): string => wfNodeTitle(n)
+  let nodes: WfNode[] = wf.nodes.map((n) => ({ ...n }))
+  let edges: WfEdge[] = wf.edges.map((e) => ({ ...e }))
+
+  /** Порт, по которому проходит снимаемая нода; undefined — нода остаётся. */
+  const bypass = (n: WfNode): WfOutcome | undefined => {
+    if (n.type === 'merge') return 'ok'
+    if (n.type === 'condition' && n.test?.kind === 'role') return 'yes'
+    if (n.type === 'git' && (n.operation === 'create_branch' || n.operation === 'checkout')) return 'ok'
+    return undefined
+  }
+  const before = new Map(nodes.map((n) => [n.id, n]))
+  const start = nodes.find((n) => n.type === 'start')
+  const reachable = (ns: readonly WfNode[], es: readonly WfEdge[]): Set<string> => {
+    const seen = new Set<string>()
+    const queue = start ? [start.id] : []
+    const ids = new Set(ns.map((n) => n.id))
+    while (queue.length) {
+      const id = queue.shift()!
+      if (seen.has(id) || !ids.has(id)) continue
+      seen.add(id)
+      queue.push(...es.filter((e) => e.from === id).map((e) => e.to))
+    }
+    return seen
+  }
+  const reachedBefore = reachable(nodes, edges)
+
+  const removed = new Set(nodes.filter((n) => bypass(n) !== undefined).map((n) => n.id))
+  const fallbackEnd = nodes.find((n) => n.type === 'end')?.id
+  /** Куда ведёт переход в `id` после снятия нод: по их портам, пока не встретится оставшаяся нода. */
+  const resolve = (id: string): string | undefined => {
+    const seen = new Set<string>()
+    let cur = id
+    while (removed.has(cur)) {
+      if (seen.has(cur)) return fallbackEnd
+      seen.add(cur)
+      const port = bypass(before.get(cur)!)
+      const next = edges.find((e) => e.from === cur && e.outcome === port)
+      if (!next) return fallbackEnd
+      cur = next.to
+    }
+    return cur
+  }
+  if (removed.size > 0) {
+    const kept: WfEdge[] = []
+    for (const e of edges) {
+      if (removed.has(e.from)) continue
+      const to = resolve(e.to)
+      if (to !== undefined) kept.push({ ...e, to })
+    }
+    for (const id of removed) {
+      const n = before.get(id)!
+      if (n.type === 'merge') {
+        notes.push({ code: 'mergeRemoved', nodeId: id, message: `нода «${title(n)}» снята: подзадачи теперь сливаются в ветку глобальной задачи автоматически. Слияние ветки в базовую добавьте отдельной нодой «Мерж» сами` })
+      } else if (n.type === 'condition') {
+        notes.push({ code: 'roleConditionRemoved', nodeId: id, message: `условие по роли «${title(n)}» снято: у глобальной задачи нет роли, путь идёт по «Да»` })
+      } else if (n.type === 'git') {
+        notes.push({ code: 'gitNodeRemoved', nodeId: id, message: `нода «${title(n)}» снята: у глобальной задачи одна ветка, её имя задаёт шаблон в настройках проекта` })
+      }
+    }
+    nodes = nodes.filter((n) => !removed.has(n.id))
+    edges = kept
+    // Ноды, в которые дошли бы только через снятые («Конфликт мержа»), теряют вход — снимаем и их.
+    const reachedAfter = reachable(nodes, edges)
+    const orphans = nodes.filter((n) => reachedBefore.has(n.id) && !reachedAfter.has(n.id))
+    for (const n of orphans) {
+      notes.push({ code: 'nodeOrphaned', nodeId: n.id, message: `нода «${title(n)}» снята: после удаления мержа в неё не ведёт ни один переход` })
+    }
+    const gone = new Set(orphans.map((n) => n.id))
+    nodes = nodes.filter((n) => !gone.has(n.id))
+    edges = edges.filter((e) => !gone.has(e.from) && !gone.has(e.to))
+    for (const n of nodes) {
+      if (n.type === 'condition' && n.test?.kind === 'attempts' && (removed.has(n.test.node) || gone.has(n.test.node))) {
+        notes.push({ code: 'attemptsTargetRemoved', nodeId: n.id, message: `условие «${title(n)}» считает заходы в снятую ноду «${n.test.node}» — выберите другую` })
+      }
+    }
+  }
+
+  const role = defaultWorkRole(roles)
+  nodes = nodes.map((n) => {
+    if (n.type === 'work' && !n.roleId) {
+      notes.push({ code: 'workRoleSet', nodeId: n.id, message: `этап «${title(n)}»: роль не была задана — подставлена «${role}». Этап ведут агенты одной роли, проверьте выбор` })
+      return { ...n, roleId: role }
+    }
+    if (n.type === 'ask' && !n.roleId) {
+      notes.push({ code: 'askRoleSet', nodeId: n.id, message: `этап «${title(n)}»: роль не была задана — подставлена «${role}». Вопросы задаёт агент этой роли, проверьте выбор` })
+      return { ...n, roleId: role }
+    }
+    return n
+  })
+
+  const noHuman = endWithoutHuman(nodes, edges)
+  if (noHuman) {
+    notes.push({ code: 'noHumanBeforeEnd', nodeId: noHuman.id, message: `путь к «${title(noHuman)}» идёт без ноды «Человек»: результат уйдёт в «Сделано» без вашей проверки. Добавьте «Человек» перед концом` })
+  }
+  return { workflow: { ...wf, version: WORKFLOW_VERSION, nodes, edges }, notes }
+}
+
+/**
+ * Приводит граф старой версии к `WORKFLOW_VERSION` (`migrateWorkflowReport` без предупреждений: их показывает
+ * вызывающий код, которому они нужны). Роли типа — для роли этапов без неё.
+ */
+export function migrateWorkflow(wf: Workflow, roles: readonly Pick<Role, 'id'>[] = []): Workflow {
+  return migrateWorkflowReport(wf, roles).workflow
+}
+
+/**
+ * Первая нода «Конец», до которой есть путь от старта, не проходящий ни через одну ноду `human`; undefined — такого
+ * пути нет. Общая для валидации (предупреждение) и миграции.
+ */
+function endWithoutHuman(nodes: readonly WfNode[], edges: readonly WfEdge[]): WfNode | undefined {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const start = nodes.find((n) => n.type === 'start')
+  if (!start) return undefined
+  const seen = new Set<string>()
+  const queue = [start.id]
+  while (queue.length) {
+    const id = queue.shift()!
+    const n = byId.get(id)
+    if (!n || seen.has(id) || n.type === 'human') continue
+    seen.add(id)
+    if (n.type === 'end') return n
+    queue.push(...edges.filter((e) => e.from === id).map((e) => e.to))
+  }
+  return undefined
 }
 
 // ---------- валидация ----------
@@ -389,15 +700,16 @@ export const WF_ISSUE_TEXTS = {
   showcaseRequiredNotBool: 'нода «{node}»: «показ обязателен» должен быть да/нет',
   attemptsNoNode: 'нода «{node}»: условие считает заходы в несуществующую ноду «{target}»',
   attemptsBadCount: 'нода «{node}»: число заходов должно быть целым и не меньше 1',
-  roleConditionEmpty: 'нода «{node}»: в условии не выбрана ни одна роль',
-  roleConditionUnknown: 'нода «{node}»: в условии роль «{role}», которой нет в типе задачи',
+  workNoRole: 'нода «{node}»: не выбрана роль — этап «Работа» ведут агенты одной роли',
+  askNoRole: 'нода «{node}»: не выбрана роль — вопросы человеку задаёт агент этой роли',
+  conditionRoleRun: 'нода «{node}»: условие по роли не работает в воркфлоу глобальной задачи — у неё нет роли',
   filesUnsupported: 'нода «{node}»: условие по файлам ветки пока не поддерживается',
   conditionUnknown: 'нода «{node}»: неизвестный вид условия',
   noWorkReachable: 'от старта не достижима ни одна нода «Работа» — воркер никогда не запустится',
   unreachable: 'нода «{node}»: недостижима от старта',
   endlessLoop: 'нода «{node}»: возврат в работу без лимита повторов — отказы могут повторяться бесконечно',
   showcaseUnseen: 'нода «{node}»: показ человеку задан, но дальше нет ноды «Человек» до следующей работы или мержа — показ никто не увидит',
-  acceptWithoutMerge: 'нода «{node}»: после accept путь ведёт в «{end}» без мержа — принятая работа не будет слита',
+  noHumanBeforeEnd: 'нода «{node}»: путь к концу идёт без ноды «Человек» — результат уйдёт в «Сделано» без вашей проверки',
   mergeAgain: 'нода «{node}»: после мержа путь снова ведёт в мерж «{merge}»',
   gitBadOperation: 'нода «{node}»: неизвестная git-операция «{operation}»',
   gitFieldNotString: 'нода «{node}»: поле «{field}» должно быть строкой',
@@ -408,7 +720,8 @@ export const WF_ISSUE_TEXTS = {
   gitBaseSameAsBranch: 'нода «{node}»: новая ветка «{branch}» совпадает с базовой',
   gitRemoteInvalid: 'нода «{node}»: имя remote «{remote}» недопустимо (пробелы или «-» в начале)',
   gitUnknownPlaceholder: 'нода «{node}»: в поле «{field}» неизвестная подстановка «{placeholder}», доступны: {available}',
-  gitParamIgnored: 'нода «{node}»: поле «{field}» не используется операцией {operation} — значение игнорируется'
+  gitParamIgnored: 'нода «{node}»: поле «{field}» не используется операцией {operation} — значение игнорируется',
+  gitRunOperation: 'нода «{node}»: операция {operation} недоступна в воркфлоу глобальной задачи — у неё одна ветка, её имя задаёт шаблон проекта'
 } as const
 
 export type WfIssueCode = keyof typeof WF_ISSUE_TEXTS
@@ -605,7 +918,11 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       if (!n.roleId) errors.push(at(n, 'gateNoRole'))
       else checkRole(n, n.roleId)
     }
-    if ((n.type === 'work' || n.type === 'ask') && n.roleId) checkRole(n, n.roleId)
+    if (n.type === 'work' || n.type === 'ask') {
+      // Воркфлоу идёт по глобальной задаче: у неё нет роли, поэтому роль этапа — единственная.
+      if (!n.roleId) errors.push(at(n, n.type === 'work' ? 'workNoRole' : 'askNoRole'))
+      else checkRole(n, n.roleId)
+    }
     if (n.type === 'ask' && (typeof n.instructions !== 'string' || !n.instructions.trim())) {
       errors.push(at(n, 'askNoInstructions'))
     }
@@ -630,10 +947,7 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
         if (!nodes.has(t.node)) errors.push(at(n, 'attemptsNoNode', { target: t.node }))
         if (!Number.isInteger(t.atLeast) || t.atLeast < 1) errors.push(at(n, 'attemptsBadCount'))
       } else if (t.kind === 'role') {
-        if (t.roleIds.length === 0) errors.push(at(n, 'roleConditionEmpty'))
-        for (const r of t.roleIds) {
-          if (!roleById.has(r)) errors.push(at(n, 'roleConditionUnknown', { role: r }))
-        }
+        errors.push(at(n, 'conditionRoleRun'))
       } else if (t.kind === 'files') {
         errors.push(at(n, 'filesUnsupported'))
       } else {
@@ -682,15 +996,10 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
   }
 
   const isMerge = (id: string): boolean => nodes.get(id)?.type === 'merge'
-  for (const n of nodes.values()) {
-    if ((n.type !== 'gate' && n.type !== 'human') || !fromStart.has(n.id)) continue
-    const accept = edges.find((e) => e.from === n.id && e.outcome === 'accept')
-    if (!accept) continue
-    const endWithoutMerge = [...reach([accept.to], succ, isMerge)].find((id) => nodes.get(id)!.type === 'end')
-    if (endWithoutMerge) {
-      warnings.push(at(n, 'acceptWithoutMerge', { end: title(nodes.get(endWithoutMerge)!) }, accept.id))
-    }
-  }
+  // Без человека перед концом глобальная задача уходит в «Сделано» сама: разрешено (полностью автоматический
+  // граф), но человек должен это видеть.
+  const unattendedEnd = start ? endWithoutHuman([...nodes.values()], edges) : undefined
+  if (unattendedEnd) warnings.push(at(unattendedEnd, 'noHumanBeforeEnd'))
 
   for (const n of nodes.values()) {
     if (n.type !== 'merge' || !fromStart.has(n.id)) continue
@@ -718,6 +1027,8 @@ function validateGitNode(
     return
   }
   const operation = op as WfGitOperation
+  // Остальные поля проверяем и у этих операций: человек чинит граф, глядя на все проблемы сразу.
+  if (operation === 'create_branch' || operation === 'checkout') errors.push(at(n, 'gitRunOperation', { operation }))
   const use = WF_GIT_FIELD_USE[operation]
   const FIELDS: WfGitField[] = ['branch', 'base', 'message', 'remote']
   const value = (f: WfGitField): string => {
@@ -774,15 +1085,25 @@ function validateGitNode(
 
 // ---------- исполнение ----------
 
-/** Позиция задачи в воркфлоу прогона. `visits` — сколько раз задача заходила в каждую ноду (для `attempts`). */
+/**
+ * Позиция на графе: подзадачи (`Task.stage`, версия 1) или глобальной задачи (`Run.stage`, версия 2). `visits` —
+ * сколько раз заходили в каждую ноду (для `attempts`).
+ */
 export interface WfStage {
   nodeId: string
   visits: Record<string, number>
 }
 
-/** Что сделать исполнителю (main), когда задача пришла в ноду. */
+/** Что сделать исполнителю (main), когда задача (или глобальная задача — для `Run.stage`) пришла в ноду. */
 export type WfAction =
   | { type: 'start_worker'; nodeId: string; roleId?: string }
+  /**
+   * Только воркфлоу глобальной задачи: этап «Работа» — координатору отправлен `stage_started`, он набирает агентов
+   * роли `roleId`. Приложение агентов само не запускает.
+   */
+  | { type: 'start_stage'; nodeId: string; roleId: string }
+  /** Только воркфлоу глобальной задачи: этап `ask` — приложение создаёт одну задачу роли `roleId`, её вопросы идут человеку. */
+  | { type: 'create_ask'; nodeId: string; roleId: string }
   | { type: 'create_gate'; nodeId: string; roleId: string }
   | { type: 'request_human'; nodeId: string }
   | { type: 'merge'; nodeId: string }
@@ -797,10 +1118,15 @@ export type WfAction =
   | { type: 'blocked'; nodeId: string; reason: string }
 
 export interface WfContext {
-  /** Роль рабочей задачи — для условия `role`. */
-  roleId: string
-  /** Роли проекта сейчас; есть — у гейта проверяется, что его роль не удалили. */
+  /** Роль рабочей задачи — для условия `role`. Воркфлоу глобальной задачи (`scope: 'run'`) роли не имеет. */
+  roleId?: string
+  /** Роли проекта сейчас; есть — у гейта (и у `work`/`ask` прогона) проверяется, что роль не удалили. */
   roleIds?: readonly string[]
+  /**
+   * Чья позиция на графе: подзадачи (нет поля, движок до воркфлоу глобальной задачи) или глобальной задачи
+   * (`'run'`, `Run.stage`). От неё зависит действие `work`/`ask` и то, что `condition: role` посчитать нельзя.
+   */
+  scope?: 'run'
 }
 
 export interface WfStep {
@@ -818,6 +1144,7 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
   switch (node.type) {
     case 'work':
     case 'ask':
+      if (ctx.scope === 'run') return runWorkAction(node, ctx)
       // Тот же start_worker: исполнитель (main) различает работу и вопрос по типу ноды.
       return node.roleId ? { type: 'start_worker', nodeId: node.id, roleId: node.roleId } : { type: 'start_worker', nodeId: node.id }
     case 'gate':
@@ -837,6 +1164,16 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
       // start и condition не бывают позицией задачи: nextStage проходит их сразу.
       return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}» не может быть этапом задачи` }
   }
+}
+
+/** Действие `work`/`ask` в воркфлоу глобальной задачи: роль обязательна и должна быть в проекте. */
+function runWorkAction(node: Extract<WfNode, { type: 'work' | 'ask' }>, ctx: WfContext): WfAction {
+  const blocked = (reason: string): WfAction => ({ type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: ${reason}` })
+  if (!node.roleId) return blocked(node.type === 'work' ? 'не выбрана роль этапа' : 'не выбрана роль, которая задаёт вопросы')
+  if (ctx.roleIds && !ctx.roleIds.includes(node.roleId)) return blocked(`нет роли «${node.roleId}» в проекте`)
+  return node.type === 'work'
+    ? { type: 'start_stage', nodeId: node.id, roleId: node.roleId }
+    : { type: 'create_ask', nodeId: node.id, roleId: node.roleId }
 }
 
 /**
@@ -907,13 +1244,33 @@ export function startStage(wf: Workflow, ctx: WfContext): WfStep {
   return nextStage(wf, { nodeId: start.id, visits: { [start.id]: 1 } }, 'next', ctx)
 }
 
+/**
+ * Переход глобальной задачи по исходу текущего этапа (`Run.stage`): то же, что `nextStage`, но в контексте прогона —
+ * `work` даёт `start_stage`, `ask` — `create_ask`, условие по роли не считается. Чистая функция, как и `nextStage`:
+ * эффекты выполняет main по `action`, а состояние двигает `TaskStore.advanceRunStage`.
+ */
+export function nextRunStage(wf: Workflow, stage: WfStage, outcome: WfOutcome, ctx: Omit<WfContext, 'scope' | 'roleId'> = {}): WfStep {
+  return nextStage(wf, stage, outcome, { ...ctx, scope: 'run' })
+}
+
+/** Первый этап глобальной задачи: переход из старта (`startStage` в контексте прогона). */
+export function startRunStage(wf: Workflow, ctx: Omit<WfContext, 'scope' | 'roleId'> = {}): WfStep {
+  return startStage(wf, { ...ctx, scope: 'run' })
+}
+
+/** Действие ноды, в которой стоит глобальная задача (`stageAction` в контексте прогона): повторить эффект после рестарта. */
+export function runStageAction(wf: Workflow, stage: WfStage, ctx: Omit<WfContext, 'scope' | 'roleId'> = {}): WfAction {
+  return stageAction(wf, stage, { ...ctx, scope: 'run' })
+}
+
 /** Значение условия или текст причины, почему его не посчитать. */
 function evalCondition(test: WfCondition, visits: Record<string, number>, ctx: WfContext): boolean | string {
   switch (test.kind) {
     case 'attempts':
       return (visits[test.node] ?? 0) >= test.atLeast
     case 'role':
-      return test.roleIds.includes(ctx.roleId)
+      if (ctx.scope === 'run') return 'условие по роли не работает в воркфлоу глобальной задачи: у неё нет роли'
+      return ctx.roleId !== undefined && test.roleIds.includes(ctx.roleId)
     case 'files':
       return 'условие по файлам ветки пока не поддерживается'
     default:

@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, EVENT_TITLE_LIMIT, type StoreSnapshot } from './store.ts'
-import { WORKFLOW_VERSION, type Workflow } from './workflow.ts'
+import { WORKFLOW_VERSION_TASK_SCOPE, type Workflow } from './workflow.ts'
 import { DEFAULT_COLUMNS, REQUEST_ACTIONS, type HumanRequest, type ResolutionAction } from './types.ts'
 
 /** Глобальная задача с двумя подзадачами (вторая не даёт прогону закрыться) и живым воркером первой. */
@@ -155,7 +155,7 @@ describe('HumanRequest: таблица переходов', () => {
   it('forceHuman (этап «Вопрос человеку»): вопрос человеку даже при живом координаторе, нода этапа — в вопросе и запросе', () => {
     const { store, g, task, dispatch } = setup()
     const wf: Workflow = {
-      version: WORKFLOW_VERSION,
+      version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
         { id: 'start', type: 'start', x: 0, y: 0 },
         { id: 'ask', type: 'ask', instructions: 'Спроси', x: 0, y: 0 },

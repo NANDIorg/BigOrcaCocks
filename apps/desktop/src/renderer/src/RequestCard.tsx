@@ -169,7 +169,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
       </div>
       <div className="rq-title">{r.title}</div>
 
-      {shownShowcase && <ShowcaseBlock taskId={r.taskId} showcase={shownShowcase} />}
+      {shownShowcase && r.taskId !== undefined && <ShowcaseBlock taskId={r.taskId} showcase={shownShowcase} />}
 
       {body && !compact && (
         <div className="rq-body">
@@ -322,8 +322,8 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
           <button className="btn-sm primary" disabled={busy} onClick={() => void resolve({ action: 'restart' })}>
             <Kbd show={hints} k="R" />{busy ? '…' : t('shell.request.restart')}
           </button>
-          {onOpenTerminal && (
-            <button className="btn-sm" disabled={busy} onClick={() => onOpenTerminal(r.taskId)}>{t('shell.request.terminal')}</button>
+          {onOpenTerminal && r.taskId !== undefined && (
+            <button className="btn-sm" disabled={busy} onClick={() => onOpenTerminal(r.taskId!)}>{t('shell.request.terminal')}</button>
           )}
           <button className="btn-sm" disabled={busy} onClick={() => void resolve({ action: 'dismiss' })} title={t('shell.request.dismissHint')}>
             {t('shell.request.dismiss')}

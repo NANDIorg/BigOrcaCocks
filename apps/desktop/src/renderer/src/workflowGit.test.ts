@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_GIT_OPERATIONS, validateWorkflow, defaultWorkflow, type WfNode } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_GIT_OPERATIONS, validateWorkflow, type WfNode } from '@orca-board/core'
 import {
   GIT_OPERATIONS, gitFieldsFor, gitNodeSubtitle, gitOperationTitle, gitPlaceholdersHint, gitPreview, patchGit, type WfGitNode
 } from './workflowGit'
@@ -8,8 +8,9 @@ import { WF_ADDABLE_TYPES, addNode, wfOutcomeLabel } from './workflowEdit'
 import { WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, hasColumn, patchNode, portTarget, setPortTarget } from './workflowForm'
 import { WF_NODE_HELP } from './workflowHelp'
 import { setLocale } from './i18n'
+import { graphWithMerge } from './workflowFixture'
 
-const base = defaultWorkflow(DEFAULT_ROLES)
+const base = graphWithMerge(DEFAULT_ROLES)
 const gitNode = (over: Partial<WfGitNode> = {}): WfGitNode => ({ id: 'g', type: 'git', x: 0, y: 0, operation: 'create_branch', branch: '', ...over })
 const ctx = { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }
 
@@ -151,7 +152,9 @@ test('смена типа: из git в другой тип поля git проп
 test('валидация ловит пустую ветку и недопустимый шаблон, правка через форму их убирает', () => {
   const { workflow, nodeId } = addNode(base, 'git', 0, 0)
   const wired = setPortTarget(setPortTarget(workflow, nodeId, 'ok', 'end'), nodeId, 'error', 'work')
-  const errors = (w: typeof wired): (string | undefined)[] => validateWorkflow(w, ctx).errors.filter((e) => e.nodeId === nodeId).map((e) => e.code)
+  // create_branch и checkout в воркфлоу глобальной задачи запрещены (`gitRunOperation`): поля проверяются, но ошибка операции остаётся.
+  const errors = (w: typeof wired): (string | undefined)[] => validateWorkflow(w, ctx).errors.filter((e) => e.nodeId === nodeId && e.code !== 'gitRunOperation').map((e) => e.code)
+  assert.ok(validateWorkflow(wired, ctx).errors.some((e) => e.nodeId === nodeId && e.code === 'gitRunOperation'))
   assert.ok(errors(wired).includes('gitNoBranch'))
   assert.ok(errors(patchNode(wired, nodeId, { git: { branch: 'feat/{title}' } })).includes('gitUnknownPlaceholder'))
   assert.deepEqual(errors(patchNode(wired, nodeId, { git: { branch: 'feature/{taskId}-{slug}' } })), [])

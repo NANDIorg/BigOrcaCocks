@@ -12,8 +12,9 @@ import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
 import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
-  defaultWorkflow, nextStage, startStage, wfNodeTitle, wfWorkStage,
-  type WfAction, type WfNode, type WfOutcome, type WfStage, type WfWorkStage, type Workflow
+  WORKFLOW_VERSION, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction,
+  startRunStage, startStage, toTaskScopeWorkflow, wfNodeTitle, wfWorkStage,
+  type WfAction, type WfNode, type WfNodeType, type WfOutcome, type WfShowcase, type WfStage, type WfWorkStage, type Workflow
 } from './workflow.ts'
 import {
   globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, globalTaskTitle, runTypeLockReason,
@@ -91,7 +92,16 @@ function eventDecision(text: string): { decision: string; decisionTruncated?: tr
   return text.length > EVENT_ANSWER_LIMIT ? { decision: text.slice(0, EVENT_ANSWER_LIMIT), decisionTruncated: true } : { decision: text }
 }
 
-/** Глубокая копия графа: правка графа проекта после создания прогона не должна менять снимок. */
+/**
+ * Текстовое поле payload события: не длиннее `EVENT_ANSWER_LIMIT`, обрезанное помечено `<ключ>Truncated`. Полный
+ * текст — в самом прогоне (`TaskStore.runStage`): строка события в мониторе координатора обрезается.
+ */
+function eventText(key: string, text: string): Record<string, string | true> {
+  return text.length > EVENT_ANSWER_LIMIT
+    ? { [key]: text.slice(0, EVENT_ANSWER_LIMIT), [`${key}Truncated`]: true }
+    : { [key]: text }
+}
+
 /**
  * Запасной граф для `runWorkflow`, если у прогона нет снимка: граф типа прогона (или типа проекта по умолчанию
  * для «Входящих»), иначе — дефолтный по ролям `roleIds`. Оба приходят от вызывающего кода: store в библиотеку
@@ -100,6 +110,39 @@ function eventDecision(text: string): { decision: string; decisionTruncated?: tr
 export interface RunWorkflowFallback {
   roleIds?: readonly string[]
   workflow?: Workflow
+}
+
+/** Опции переходов воркфлоу глобальной задачи: запасной граф и роли (как у `advanceStage`) и то, что попадёт в новый этап. */
+export interface RunStageOptions extends RunWorkflowFallback {
+  /** Коммит ветки глобальной задачи на входе в этап (`StageChange.commit`); определяет main. */
+  commit?: string
+  /** Замечания проверки или человека, вернувших в работу; в `Run.returns` и `stage_started`. */
+  feedback?: string
+  /** Решение человека на ноде `human` (текст «Принять»). */
+  decision?: string
+  /** Ответы человека на этапе «Вопрос человеку». */
+  answers?: string
+}
+
+/** Где стоит глобальная задача на графе и что для этого нужно знать координатору (`TaskStore.runStage`). */
+export interface RunStageInfo {
+  runId: string
+  nodeId: string
+  type: WfNodeType
+  title: string
+  /** Какой по счёту заход в ноду: возврат по reject увеличивает. */
+  visit: number
+  /** Роль этапа «Работа»/«Вопрос человеку». */
+  roleId?: string
+  instructions?: string
+  showcase?: WfShowcase
+  feedback?: string
+  decision?: string
+  answers?: string
+  /** Подзадачи текущего захода этапа. */
+  tasks: string[]
+  /** Когда закрылась последняя из них (`Run.stageTasksDoneAt`); нет — этап ещё работает. */
+  tasksDoneAt?: number
 }
 
 /** Необязательная часть `finishDispatch`: показ человеку и запасной граф прогона (как у `advanceStage`). */
@@ -118,14 +161,25 @@ function snapshotWorkflow(wf: Workflow): Workflow {
   return JSON.parse(JSON.stringify(wf)) as Workflow
 }
 
+/**
+ * Где идёт воркфлоу нового прогона: граф версии 2 ведёт глобальную задачу (`workflowScope: 'run'`). Прогон типа задачи
+ * без своего графа тоже (граф даст запасной вариант — граф типа или `defaultWorkflow`). Прогон вовсе без типа и графа
+ * (вызывающий код до воркфлоу, тесты) и с графом версии 1 остаётся на старом движке по подзадачам — поле не ставится.
+ * Приложение всегда создаёт прогон с типом (`runTypeInput`), поэтому новые прогоны получают `'run'`.
+ */
+function runScopeFields(graph: Workflow | undefined, typed = false): Pick<Run, 'workflowScope'> {
+  return graph ? (graph.version >= WORKFLOW_VERSION ? { workflowScope: 'run' } : {}) : typed ? { workflowScope: 'run' } : {}
+}
+
 /** Поля нового прогона из его типа (копии) или, по-старому, из одного графа. */
-function runTypeFields(type: Workflow | RunTypeInput | undefined): Pick<Run, 'typeId' | 'taskType' | 'workflow'> {
-  if (!type) return {}
-  if (!('typeId' in type)) return { workflow: snapshotWorkflow(type) }
+function runTypeFields(type: Workflow | RunTypeInput | undefined): Pick<Run, 'typeId' | 'taskType' | 'workflow' | 'workflowScope'> {
+  if (!type) return runScopeFields(undefined)
+  if (!('typeId' in type)) return { workflow: snapshotWorkflow(type), ...runScopeFields(type) }
   return {
     typeId: type.typeId,
     taskType: JSON.parse(JSON.stringify(type.snapshot)) as TaskTypeSnapshot,
-    ...(type.workflow ? { workflow: snapshotWorkflow(type.workflow) } : {})
+    ...(type.workflow ? { workflow: snapshotWorkflow(type.workflow) } : {}),
+    ...runScopeFields(type.workflow, true)
   }
 }
 
@@ -279,7 +333,9 @@ export class TaskStore {
     let changed = false
     for (const task of this.tasks.values()) {
       if (task.stage || task.answerFor || task.gateFor || !this.isKind(task, 'review')) continue
-      const stage = firstGateStage(defaultWorkflow([]), task.roleId)
+      // Подзадачи воркфлоу глобальной задачи по графу не ходят.
+      if (task.runId !== undefined && this.runs.get(task.runId)?.workflowScope === 'run') continue
+      const stage = firstGateStage(legacyDefaultWorkflow([]), task.roleId)
       if (!stage) continue
       task.stage = stage
       changed = true
@@ -498,7 +554,10 @@ export class TaskStore {
 
   private commit(): void {
     // Автозакрытие прогона — решение приложения, а не того, чья команда закрыла последнюю подзадачу.
-    withStatusSource('app', () => this.closeFinishedRuns())
+    withStatusSource('app', () => {
+      this.syncStageTasks()
+      this.closeFinishedRuns()
+    })
     this.syncRunActiveTime()
     this.persistence?.save(this.snapshot())
     this.listeners.forEach((fn) => fn())
@@ -591,9 +650,17 @@ export class TaskStore {
     runId?: string
     /** Задача-ответ: кто читает ответ. Нет — обычная задача. */
     answerFor?: AnswerAudience
-    /** Задача-гейт воркфлоу: чью ветку проверяет (создаёт исполнитель в main, не координатор). */
-    gateFor?: { taskId: string; nodeId: string }
-    /** Нет — normal. */
+    /**
+     * Задача-проверка воркфлоу (создаёт исполнитель в main, не координатор): ветку рабочей задачи (`taskId`) или
+     * ветку глобальной задачи целиком (`runId`, воркфлоу прогона) — ровно одно из двух.
+     */
+    gateFor?: { nodeId: string; taskId?: string; runId?: string }
+    /**
+     * Этап воркфлоу глобальной задачи, к которому относится задача, — только для приложения (задача-вопрос этапа
+     * `ask`). Подзадачу этапа «Работа» store привязывает сам: без этого поля и без `gateFor`.
+     */
+    stageOf?: { nodeId: string; visit: number }
+    /** Нет — normal; в воркфлоу глобальной задачи — роль этапа «Работа». */
     priority?: TaskPriority
   }): Task {
     if (input.priority !== undefined) assertPriority(input.priority)
@@ -603,7 +670,15 @@ export class TaskStore {
     const now = Date.now()
     // Подзадача всегда внутри глобальной задачи: без runId — во «Входящие»; чужой/несуществующий — ошибка.
     const run = input.runId !== undefined ? this.mustRun(input.runId) : (this.inbox() ?? this.addRun({ objective: '', inbox: true }))
-    if (input.gateFor && !this.tasks.has(input.gateFor.taskId)) throw new Error(`проверяемой задачи ${input.gateFor.taskId} нет`)
+    const gate = input.gateFor
+    if (gate) {
+      if ((gate.taskId === undefined) === (gate.runId === undefined)) throw new Error('gateFor: укажи ровно одно — taskId (ветка задачи) или runId (ветка глобальной задачи)')
+      if (gate.taskId !== undefined && !this.tasks.has(gate.taskId)) throw new Error(`проверяемой задачи ${gate.taskId} нет`)
+      if (gate.runId !== undefined && (gate.runId !== run.id || run.workflowScope !== 'run')) {
+        throw new Error(`проверка ветки глобальной задачи ${gate.runId}: задача должна быть в этой же глобальной задаче с воркфлоу прогона`)
+      }
+    }
+    const { roleId, stageOf } = this.bindToStage(run, input)
     const deps = (input.deps ?? []).filter((d) => this.tasks.has(d))
     const foreign = deps.filter((d) => this.tasks.get(d)!.runId !== run.id)
     if (foreign.length > 0) throw new Error(`зависимости из другой глобальной задачи: ${foreign.join(', ')}`)
@@ -614,11 +689,12 @@ export class TaskStore {
       status: this.columnId('backlog'),
       priority: input.priority ?? DEFAULT_TASK_PRIORITY,
       deps,
-      roleId: input.roleId ?? DEFAULT_ROLE_ID,
+      roleId: roleId ?? DEFAULT_ROLE_ID,
       agent: input.agent ?? DEFAULT_AGENT,
       runId: run.id,
       ...(input.answerFor ? { answerFor: input.answerFor } : {}),
-      ...(input.gateFor ? { gateFor: { ...input.gateFor } } : {}),
+      ...(gate ? { gateFor: { ...gate } } : {}),
+      ...(stageOf ? { stageOf: { ...stageOf } } : {}),
       createdAt: now,
       updatedAt: now
     }
@@ -630,6 +706,39 @@ export class TaskStore {
     this.promoteReady()
     this.commit()
     return task
+  }
+
+  /**
+   * Роль и этап новой подзадачи в воркфлоу глобальной задачи (`workflowScope: 'run'`). Пока граф не начат
+   * (`Run.stage` нет), ограничений нет: человек может заготовить подзадачи, они к этапу не относятся. Когда граф идёт,
+   * подзадачи создаются только на этапе «Работа»: роль по умолчанию — роль этапа, чужая — ошибка; задача
+   * привязывается к текущему заходу (`Task.stageOf`). Проверки и вопросы этапов создаёт приложение (`gateFor` или
+   * явный `stageOf`) — их этот порядок не касается. Прогон старого движка и «Входящие» — без изменений.
+   */
+  private bindToStage(
+    run: Run,
+    input: { roleId?: string; gateFor?: unknown; stageOf?: { nodeId: string; visit: number } }
+  ): { roleId?: string; stageOf?: { nodeId: string; visit: number } } {
+    const roleId = input.roleId
+    if (run.workflowScope !== 'run') {
+      if (input.stageOf) throw new Error('stageOf: у прогона старого формата воркфлоу идёт по подзадачам, этапов прогона нет')
+      return { ...(roleId !== undefined ? { roleId } : {}) }
+    }
+    if (input.stageOf) {
+      if (!run.workflow?.nodes.some((n) => n.id === input.stageOf!.nodeId)) throw new Error(`в воркфлоу глобальной задачи ${run.id} нет ноды «${input.stageOf.nodeId}»`)
+      return { ...(roleId !== undefined ? { roleId } : {}), stageOf: input.stageOf }
+    }
+    if (input.gateFor || !run.stage) return { ...(roleId !== undefined ? { roleId } : {}) }
+    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === run.stage!.nodeId)
+    const where = node ? `«${wfNodeTitle(node)}»` : `«${run.stage.nodeId}»`
+    if (node?.type !== 'work') {
+      throw new Error(`подзадачи создаются только на этапе «Работа»: глобальная задача ${run.id} сейчас на этапе ${where} — дождись stage_started`)
+    }
+    if (!node.roleId) throw new Error(`на этапе ${where} не выбрана роль — подзадачи создать нельзя, поправь воркфлоу`)
+    if (roleId !== undefined && roleId !== node.roleId) {
+      throw new Error(`роль «${roleId}» не разрешена на этапе ${where}: его ведут агенты роли «${node.roleId}»`)
+    }
+    return { roleId: node.roleId, stageOf: { nodeId: node.id, visit: run.stage.visits[node.id] ?? 1 } }
   }
 
   /** runId задачи неизменен: принадлежность прогону задаётся только при создании. */
@@ -758,7 +867,16 @@ export class TaskStore {
   runWorkflow(runId: string | undefined, fallback: readonly string[] | RunWorkflowFallback = {}): Workflow {
     const run = runId !== undefined ? this.runs.get(runId) : undefined
     const fb = isRoleIdList(fallback) ? { roleIds: fallback } : fallback
-    return run?.workflow ?? fb.workflow ?? defaultWorkflow((fb.roleIds ?? []).map((id) => ({ id })))
+    const roles = (fb.roleIds ?? []).map((id) => ({ id }))
+    if (run?.workflowScope === 'run') {
+      // Граф по подзадачам (версия 1) прогон глобальной задачи не поведёт: у прогона без своего графа — дефолтный.
+      const own = run.workflow ?? fb.workflow
+      return own && own.version >= WORKFLOW_VERSION ? own : defaultWorkflow(roles)
+    }
+    // Старый движок (прогон без `workflowScope`, «Входящие», прогон без id): граф версии 2 по подзадачам не ходит.
+    // Граф типа из библиотеки уже мог мигрировать до v2 — для подзадач его переводят обратно (`toTaskScopeWorkflow`).
+    const own = run?.workflow ?? fb.workflow
+    return own ? toTaskScopeWorkflow(own) : legacyDefaultWorkflow(roles)
   }
 
   /**
@@ -788,7 +906,8 @@ export class TaskStore {
   advanceStage(taskId: string, outcome: WfOutcome, opts: RunWorkflowFallback = {}): { task: Task; action: WfAction } {
     const task = this.mustTask(taskId)
     if (task.answerFor) throw new Error(`задача ${taskId} — задача-ответ, она идёт мимо воркфлоу`)
-    if (task.gateFor) throw new Error(`задача ${taskId} — проверка задачи ${task.gateFor.taskId}, у неё нет своего этапа`)
+    if (task.gateFor) throw new Error(`задача ${taskId} — проверка ${task.gateFor.taskId !== undefined ? `задачи ${task.gateFor.taskId}` : `глобальной задачи ${task.gateFor.runId}`}, у неё нет своего этапа`)
+    if (this.isRunScope(task)) throw new Error(`задача ${taskId} — подзадача воркфлоу глобальной задачи: по графу ходит сама глобальная задача (advanceRunStage)`)
     if (!task.stage && outcome !== 'next') {
       throw new Error(`задача ${taskId} ещё не в воркфлоу: войти в него можно только исходом next, получено ${outcome}`)
     }
@@ -829,7 +948,7 @@ export class TaskStore {
    */
   enterWork(taskId: string, opts: RunWorkflowFallback = {}): WfAction | undefined {
     const task = this.mustTask(taskId)
-    if (task.answerFor || task.gateFor) return undefined
+    if (task.answerFor || task.gateFor || this.isRunScope(task)) return undefined
     const wf = this.runWorkflow(task.runId, opts)
     const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
     if (current?.type === 'work' || current?.type === 'ask') return undefined
@@ -856,6 +975,11 @@ export class TaskStore {
     return step.action
   }
 
+  /** Задача принадлежит глобальной задаче с воркфлоу прогона: её позиции на графе нет. */
+  private isRunScope(task: Task): boolean {
+    return task.runId !== undefined && this.runs.get(task.runId)?.workflowScope === 'run'
+  }
+
   /**
    * Исполнитель не смог выполнить эффект этапа (воркер или проверка не запустились, мерж упал не конфликтом):
    * задача остаётся на этапе, координатору и человеку — `workflow_blocked` с причиной.
@@ -878,6 +1002,295 @@ export class TaskStore {
     const existing = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'approval')
     if (existing) return existing
     const request = this.createRequest(task, {
+      kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}),
+      ...(fields.showcaseDispatchId ? { showcaseDispatchId: fields.showcaseDispatchId } : {})
+    })
+    this.commit()
+    return request
+  }
+
+  // ---------- воркфлоу глобальной задачи ----------
+
+  private mustRunScope(runId: string): Run {
+    const run = this.mustRun(runId)
+    if (run.workflowScope !== 'run') {
+      throw new Error(`глобальная задача ${runId} идёт по воркфлоу подзадач (старый формат) — этапов прогона у неё нет`)
+    }
+    return run
+  }
+
+  /**
+   * Колонка глобальной задачи на ноде: заданная нодой (`WfNode.column`, если это колонка глобального канбана),
+   * иначе по умолчанию — `human` встаёт на «Проверку», `end` — в «Сделано», остальные ноды — «В работе».
+   */
+  private stageColumn(node: WfNode | undefined): string {
+    if (node?.column !== undefined && globalStoredColumns(this.columns()).some((c) => c.id === node.column)) return node.column
+    return this.columnId(node?.type === 'human' ? 'review' : node?.type === 'end' ? 'done' : 'in_progress')
+  }
+
+  /**
+   * Позиция глобальной задачи на графе с деталями этапа — для координатора (`stage get`) и для цели перезапущенного
+   * координатора: то же, что в `stage_started`, но тексты целиком. `tasks` — подзадачи текущего захода этапа.
+   * Нет позиции (граф не начат, прогон старого формата) — undefined.
+   */
+  runStage(runId: string, fallback: RunWorkflowFallback = {}): RunStageInfo | undefined {
+    const run = this.mustRun(runId)
+    if (run.workflowScope !== 'run' || !run.stage) return undefined
+    const node = this.runWorkflow(run.id, fallback).nodes.find((n) => n.id === run.stage!.nodeId)
+    if (!node) return undefined
+    const visit = run.stage.visits[node.id] ?? 1
+    const stage = wfWorkStage({ version: WORKFLOW_VERSION, nodes: [node], edges: [] }, node.id)
+    return {
+      runId: run.id,
+      nodeId: node.id,
+      type: node.type,
+      title: wfNodeTitle(node),
+      visit,
+      ...(stage?.roleId ? { roleId: stage.roleId } : {}),
+      ...(stage?.instructions ? { instructions: stage.instructions } : {}),
+      ...(stage?.showcase ? { showcase: stage.showcase } : {}),
+      ...run.stageInput,
+      tasks: this.stageTasks(run).map((t) => t.id),
+      ...(run.stageTasksDoneAt !== undefined ? { tasksDoneAt: run.stageTasksDoneAt } : {})
+    }
+  }
+
+  /** Подзадачи текущего захода в текущий этап глобальной задачи (задачи прошлых заходов — не в счёт). */
+  private stageTasks(run: Run): Task[] {
+    const stage = run.stage
+    if (!stage) return []
+    const visit = stage.visits[stage.nodeId] ?? 1
+    return [...this.tasks.values()].filter(
+      (t) => t.runId === run.id && !t.gateFor && t.stageOf?.nodeId === stage.nodeId && t.stageOf.visit === visit
+    )
+  }
+
+  /**
+   * Этап «Работа» глобальной задачи закончен по подзадачам: есть хотя бы одна и все в kind=done. Как `closeFinishedRuns`
+   * у старого движка: `stage_tasks_done` координатору — один раз (`Run.stageTasksDoneAt`), не закрывая этап: координатор
+   * решает, нужно ли ещё что-то, и зовёт `stage finish`. Подзадача, ушедшая из done, или новая подзадача снимает
+   * метку (непрочитанные `stage_tasks_done` гасятся). Вызывается из `commit`, поэтому ловит любую смену статуса.
+   */
+  private syncStageTasks(): void {
+    for (const run of this.runs.values()) {
+      if (run.workflowScope !== 'run' || !run.stage || run.closedAt !== undefined) continue
+      const node = run.workflow?.nodes.find((n) => n.id === run.stage!.nodeId)
+      if (node?.type !== 'work') continue
+      const tasks = this.stageTasks(run)
+      const done = tasks.length > 0 && tasks.every((t) => this.isKind(t, 'done'))
+      if (done && run.stageTasksDoneAt === undefined) {
+        run.stageTasksDoneAt = Date.now()
+        run.updatedAt = run.stageTasksDoneAt
+        this.pushEvent('stage_tasks_done', { runId: run.id, nodeId: node.id })
+      } else if (!done && run.stageTasksDoneAt !== undefined) {
+        this.dropStageEvents(run.id)
+        run.stageTasksDoneAt = undefined
+      }
+    }
+  }
+
+  /** Непрочитанные `stage_tasks_done` прогона гасятся: этап ожил или ушёл дальше, координатору они больше не нужны. */
+  private dropStageEvents(runId: string): void {
+    for (const e of this.events) {
+      if (e.type === 'stage_tasks_done' && e.payload.runId === runId && !e.consumedBy) e.consumedBy = 'stage'
+    }
+  }
+
+  /**
+   * Первый вход глобальной задачи в граф: из старта до первой ноды с действием (обычно — «Работа»). Граф прогона
+   * фиксируется снимком (`Run.workflow`), если его не было. Граф уже начат — позицию не меняет и возвращает действие
+   * текущей ноды: так исполнитель повторяет эффект после рестарта. `opts.commit` — коммит ветки прогона на входе
+   * (`StageChange.commit`).
+   */
+  enterRunStage(runId: string, opts: RunStageOptions = {}): { run: Run; action: WfAction } {
+    const run = this.mustRunScope(runId)
+    const wf = this.runWorkflow(runId, opts)
+    if (run.stage) return { run, action: runStageAction(wf, run.stage, this.stageCtx(opts)) }
+    const action = this.moveRunStage(run, wf, undefined, 'next', opts)
+    this.commit()
+    return { run, action }
+  }
+
+  /**
+   * Переход глобальной задачи по исходу текущей ноды (`nextRunStage`): меняет `Run.stage`, историю и колонку карточки,
+   * шлёт `stage_changed` и событие по новой ноде — `stage_started` на «Работе», `run_done` при входе в `end`
+   * (прогон закрыт, карточка — в «Сделано»), `workflow_blocked`, если дальше идти нельзя (позиция остаётся).
+   * Сами эффекты — создать проверку или вопрос, запросить человека, слить ветку — делает main по возвращённому действию.
+   * `opts.feedback` — замечания проверки или человека при `reject` (пишутся в `Run.returns` и в `stage_started`),
+   * `decision` — решение человека, `answers` — ответы этапа «Вопрос человеку»: они уходят координатору на следующую «Работу».
+   * Этап «Работа» закрывает не этот метод, а `finishStage`.
+   */
+  advanceRunStage(runId: string, outcome: WfOutcome, opts: RunStageOptions = {}): { run: Run; action: WfAction } {
+    const run = this.mustRunScope(runId)
+    if (!run.stage) throw new Error(`граф глобальной задачи ${runId} ещё не начат — сначала enterRunStage`)
+    if (run.closedAt !== undefined && this.runWorkflow(runId, opts).nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end') {
+      throw new Error(`граф глобальной задачи ${runId} уже дошёл до конца`)
+    }
+    const wf = this.runWorkflow(runId, opts)
+    const action = this.moveRunStage(run, wf, run.stage, outcome, opts)
+    this.commit()
+    return { run, action }
+  }
+
+  /**
+   * Координатор закончил набор агентов на этапе «Работа» (`stage finish`): граф идёт дальше исходом `next`. Закрыть можно,
+   * только когда закрыты все подзадачи текущего захода (`stage_tasks_done`), и хотя бы одна есть. `summary` —
+   * сводка для следующих нод (проверка, человек): пишется в историю этапа и в `Run.summary` («Что сделал»).
+   * Ошибки — с подсказкой, что делать координатору.
+   */
+  finishStage(runId: string, opts: RunStageOptions & { summary?: string } = {}): { run: Run; action: WfAction } {
+    const run = this.mustRunScope(runId)
+    const wf = this.runWorkflow(runId, opts)
+    const node = run.stage ? wf.nodes.find((n) => n.id === run.stage!.nodeId) : undefined
+    if (!run.stage || node?.type !== 'work') {
+      throw new Error(`stage finish: глобальная задача ${runId} сейчас не на этапе «Работа»${node ? ` (этап «${wfNodeTitle(node)}»)` : ''} — закрывать нечего, дождись stage_started`)
+    }
+    const tasks = this.stageTasks(run)
+    if (tasks.length === 0) throw new Error(`stage finish: на этапе «${wfNodeTitle(node)}» нет подзадач — создай их (task create) и дождись stage_tasks_done`)
+    const open = tasks.filter((t) => !this.isKind(t, 'done'))
+    if (open.length > 0) {
+      throw new Error(`stage finish: на этапе «${wfNodeTitle(node)}» не закрыты подзадачи (${open.map((t) => t.id).join(', ')}) — дождись stage_tasks_done`)
+    }
+    const text = opts.summary?.trim()
+    if (text) {
+      const entry = [...(run.stageHistory ?? [])].reverse().find((h) => h.nodeId === node.id)
+      if (entry) entry.summary = text
+      run.summary = { at: Date.now(), text }
+    }
+    const action = this.moveRunStage(run, wf, run.stage, 'next', opts)
+    this.commit()
+    return { run, action }
+  }
+
+  /**
+   * Страховка на случай, когда координатор умер (вышел, упал, приложение перезапустили), не успев вызвать `stage finish`:
+   * этапы «Работа» прогонов с закрытыми подзадачами (`stageTasksDoneAt`) закрываются без сводки — аналог `settleIdleRuns`
+   * старого движка. Живость PTY знает только main, он и вызывает. `fallback` — запасной граф и роли прогона (как у
+   * `runWorkflow`). Возвращает закрытые прогоны с действием нового этапа: эффекты — забота main.
+   */
+  settleIdleStages(
+    isAlive: (ptyId: string) => boolean,
+    fallback: (run: Run) => RunStageOptions = () => ({})
+  ): Array<{ runId: string; action: WfAction }> {
+    const settled: Array<{ runId: string; action: WfAction }> = []
+    for (const run of [...this.runs.values()]) {
+      if (run.workflowScope !== 'run' || run.stageTasksDoneAt === undefined || run.closedAt !== undefined) continue
+      if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) continue
+      const opts = fallback(run)
+      const action = this.moveRunStage(run, this.runWorkflow(run.id, opts), run.stage, 'next', opts)
+      settled.push({ runId: run.id, action })
+    }
+    if (settled.length > 0) this.commit()
+    return settled
+  }
+
+  /** Контекст `nextRunStage`: роли проекта сейчас — чтобы `blocked`, если роль этапа удалили. */
+  private stageCtx(opts: RunStageOptions): { roleIds?: readonly string[] } {
+    return opts.roleIds ? { roleIds: opts.roleIds } : {}
+  }
+
+  /**
+   * Переход по графу без commit (общий для enter/advance/finish/settle): двигает `Run.stage`, пишет историю,
+   * колонку и события. Возвращает действие ноды, куда пришли; `blocked` без движения — позиция не меняется.
+   */
+  private moveRunStage(run: Run, wf: Workflow, from: WfStage | undefined, outcome: WfOutcome, opts: RunStageOptions): WfAction {
+    const ctx = this.stageCtx(opts)
+    const step = from ? nextRunStage(wf, from, outcome, ctx) : startRunStage(wf, ctx)
+    const now = Date.now()
+    const nodeAt = (id: string): WfNode | undefined => wf.nodes.find((n) => n.id === id)
+    const fromId = from?.nodeId
+    const moved = step.stage !== from && step.stage.nodeId !== ''
+    run.workflow ??= snapshotWorkflow(wf)
+    if (moved) {
+      const node = nodeAt(step.stage.nodeId)
+      const input = {
+        ...(opts.feedback?.trim() ? { feedback: opts.feedback.trim() } : {}),
+        ...(opts.decision?.trim() ? { decision: opts.decision.trim() } : {}),
+        ...(opts.answers?.trim() ? { answers: opts.answers.trim() } : {})
+      }
+      run.stage = step.stage
+      run.stageInput = Object.keys(input).length > 0 ? input : undefined
+      this.dropStageEvents(run.id)
+      run.stageTasksDoneAt = undefined
+      run.updatedAt = now
+      recordStage(run, {
+        nodeId: step.stage.nodeId, at: now, outcome, visit: step.stage.visits[step.stage.nodeId] ?? 1,
+        ...(node ? { title: wfNodeTitle(node) } : {}),
+        ...(fromId !== undefined ? { from: fromId } : {}),
+        ...(opts.commit ? { commit: opts.commit } : {})
+      })
+      if (outcome === 'reject' && input.feedback) run.returns = [...(run.returns ?? []), { at: now, text: input.feedback }]
+      this.pushEvent('stage_changed', {
+        runId: run.id, ...(fromId !== undefined ? { from: fromId } : {}), to: step.stage.nodeId, outcome,
+        ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
+      })
+    }
+    const action = step.action
+    const node = nodeAt(action.nodeId)
+    switch (action.type) {
+      case 'blocked':
+        this.pushEvent('workflow_blocked', { runId: run.id, nodeId: action.nodeId, reason: short(action.reason) })
+        break
+      case 'done':
+        // Граф дошёл до конца: прогон закрыт, координатор выходит. Ждать человека больше нечего.
+        this.cancelRequests((r) => r.runId === run.id)
+        run.closedAt = now
+        run.reopenedAt = undefined
+        run.runDoneAt = undefined
+        this.setRunStatus(run, this.stageColumn(node))
+        run.updatedAt = now
+        if (!run.inbox) this.pushEvent('run_done', { runId: run.id, objective: run.objective, nodeId: action.nodeId })
+        break
+      case 'start_stage': {
+        this.placeRun(run, this.stageColumn(node))
+        const info = this.runStage(run.id, opts)
+        const p = {
+          runId: run.id, nodeId: action.nodeId, title: info?.title ?? action.nodeId, roleId: action.roleId, visit: info?.visit ?? 1,
+          ...(info?.instructions ? eventText('instructions', info.instructions) : {}),
+          ...(info?.feedback ? eventText('feedback', info.feedback) : {}),
+          ...(info?.decision ? eventText('decision', info.decision) : {}),
+          ...(info?.answers ? eventText('answers', info.answers) : {})
+        }
+        this.pushEvent('stage_started', p)
+        break
+      }
+      default:
+        this.placeRun(run, this.stageColumn(node))
+    }
+    return action
+  }
+
+  /** Карточка глобальной задачи в колонку `status` (не трогая, если она там уже стоит). */
+  private placeRun(run: Run, status: string): void {
+    if (run.status === status) return
+    this.setRunStatus(run, status)
+    run.updatedAt = Date.now()
+  }
+
+  /**
+   * Исполнитель не смог выполнить эффект этапа глобальной задачи (проверка или вопрос не создались, слияние в
+   * защищённую ветку, git упал не конфликтом): позиция остаётся, координатору и человеку — `workflow_blocked` с
+   * причиной и `runId` (без `taskId`).
+   */
+  blockRunStage(runId: string, reason: string): OrcaEvent {
+    const run = this.mustRunScope(runId)
+    const event = this.pushEvent('workflow_blocked', {
+      runId, ...(run.stage ? { nodeId: run.stage.nodeId } : {}), reason: short(reason)
+    })
+    this.commit()
+    return event
+  }
+
+  /**
+   * Нода `human` воркфлоу глобальной задачи: approval уровня прогона («Принять» / «Вернуть») без задачи. Карточка встаёт
+   * в «Нужен ответ», пока запрос ждёт (`waiting`). Ждущий approval прогона не дублируется — возвращается он.
+   * Решение — `resolveRequest`; дальше граф двигает main (`advanceRunStage` с `feedback`/`decision` из решения).
+   */
+  requestRunApproval(runId: string, fields: { nodeId: string; title: string; body?: string; showcaseDispatchId?: string }): HumanRequest {
+    const run = this.mustRunScope(runId)
+    const existing = this.pendingRequest((r) => r.runId === run.id && r.taskId === undefined && r.kind === 'approval')
+    if (existing) return existing
+    const request = this.createRequest(run, {
       kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}),
       ...(fields.showcaseDispatchId ? { showcaseDispatchId: fields.showcaseDispatchId } : {})
     })
@@ -1043,6 +1456,7 @@ export class TaskStore {
     delete run.typeId
     delete run.taskType
     delete run.workflow
+    delete run.workflowScope
     Object.assign(run, runTypeFields(type))
     run.updatedAt = Date.now()
     this.commit()
@@ -1082,6 +1496,8 @@ export class TaskStore {
    */
   acceptGlobalTask(id: string): GlobalTask {
     const run = this.mustRun(id)
+    // Воркфлоу прогона: «Проверка» — approval ноды `human`; дальше граф двигает main по решению.
+    if (run.workflowScope === 'run') return this.resolveRunApproval(run, { action: 'accept' })
     if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — подтвердить можно только из колонки «Проверка»`)
     this.setRunStatus(run, this.columnId('done'))
     run.updatedAt = Date.now()
@@ -1099,6 +1515,7 @@ export class TaskStore {
     const run = this.mustRun(id)
     const clarification = text.trim()
     if (!clarification) throw new Error('напиши, что доделать: уточнение получит координатор')
+    if (run.workflowScope === 'run') return this.resolveRunApproval(run, { action: 'reject', text: clarification })
     if (run.inbox) throw new Error('«Входящие» нельзя вернуть в работу: у них нет координатора')
     if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — вернуть в работу можно только из колонки «Проверка»`)
     const at = Date.now()
@@ -1107,6 +1524,16 @@ export class TaskStore {
     this.setRunStatus(run, this.columnId('in_progress'))
     this.commit()
     return this.getGlobalTask(id)
+  }
+
+  /** «Подтвердить» / «Вернуть в работу» на карточке прогона с воркфлоу: решение по ждущему approval ноды `human`. */
+  private resolveRunApproval(run: Run, resolution: RequestResolution): GlobalTask {
+    const request = this.pendingRequest((r) => r.runId === run.id && r.taskId === undefined && r.kind === 'approval')
+    if (!request) {
+      throw new Error(`у глобальной задачи ${run.id} нет запроса на проверку — подтвердить или вернуть можно, когда воркфлоу дошёл до ноды «Человек»`)
+    }
+    this.resolveRequest(request.id, resolution)
+    return this.getGlobalTask(run.id)
   }
 
   /**
@@ -1125,7 +1552,7 @@ export class TaskStore {
     if (busy.length > 0) throw new Error(`подзадачи в работе (${busy.map((d) => d.taskId).join(', ')}) — сначала останови воркеров`)
     for (const taskId of ids) this.tasks.delete(taskId)
     for (const q of [...this.questions.values()]) if (ids.has(q.taskId)) this.questions.delete(q.id)
-    for (const r of [...this.requests.values()]) if (r.runId === id || ids.has(r.taskId)) this.requests.delete(r.id)
+    for (const r of [...this.requests.values()]) if (r.runId === id || (r.taskId !== undefined && ids.has(r.taskId))) this.requests.delete(r.id)
     // Зависимости между глобальными запрещены при создании, но старые данные могли их содержать.
     for (const t of this.tasks.values()) if (t.deps.some((d) => ids.has(d))) t.deps = t.deps.filter((d) => !ids.has(d))
     this.runs.delete(id)
@@ -1181,9 +1608,14 @@ export class TaskStore {
    * Иначе ошибка: до run_done координатору ещё есть что делать. Повторный вызов обновляет время.
    * `summary` — итоговая сводка координатора (markdown): непустая заменяет прежнюю `Run.summary`,
    * пустая или её нет — прежняя остаётся. При ошибке сводка не сохраняется.
+   * Воркфлоу прогона (`workflowScope: 'run'`): закрывает граф, а не координатор, поэтому до `run_done` команда — ошибка;
+   * после — просто сигнал «закончил» (`finishedAt`), как у старого координатора, привыкшего к `runs finish` после run_done.
    */
   finishRun(id: string, summary?: string): Run {
     const run = this.mustRun(id)
+    if (run.workflowScope === 'run' && run.closedAt === undefined) {
+      throw new Error(`runs finish: у глобальной задачи ${id} воркфлоу ведёт граф — этап «Работа» закрывает stage finish, а run_done придёт, когда граф дойдёт до конца`)
+    }
     if (run.closedAt === undefined) {
       const tasks = [...this.tasks.values()].filter((t) => t.runId === run.id)
       const idle =
@@ -1210,7 +1642,8 @@ export class TaskStore {
    */
   private closeFinishedRuns(): void {
     for (const run of this.runs.values()) {
-      if (run.closedAt !== undefined) continue
+      // Воркфлоу прогона закрывает граф (нода `end`), а конец этапа «Работа» — `stage_tasks_done` (syncStageTasks).
+      if (run.closedAt !== undefined || run.workflowScope === 'run') continue
       const tasks = [...this.tasks.values()].filter((t) => t.runId === run.id)
       const allDone = tasks.length > 0 && tasks.every((t) => this.isKind(t, 'done'))
       if (run.runDoneAt !== undefined) {
@@ -1303,8 +1736,9 @@ export class TaskStore {
    */
   taskWorkStage(taskId: string, fallback: RunWorkflowFallback = {}): WfWorkStage | undefined {
     const task = this.mustTask(taskId)
-    if (!task.stage) return undefined
-    return wfWorkStage(this.runWorkflow(task.runId, fallback), task.stage.nodeId)
+    const nodeId = task.stage?.nodeId ?? task.stageOf?.nodeId
+    if (nodeId === undefined) return undefined
+    return wfWorkStage(this.runWorkflow(task.runId, fallback), nodeId)
   }
 
   /**
@@ -1313,8 +1747,9 @@ export class TaskStore {
    */
   taskStageNode(taskId: string, fallback: RunWorkflowFallback = {}): WfNode | undefined {
     const task = this.mustTask(taskId)
-    if (!task.stage) return undefined
-    return this.runWorkflow(task.runId, fallback).nodes.find((n) => n.id === task.stage!.nodeId)
+    const nodeId = task.stage?.nodeId ?? task.stageOf?.nodeId
+    if (nodeId === undefined) return undefined
+    return this.runWorkflow(task.runId, fallback).nodes.find((n) => n.id === nodeId)
   }
 
   /**
@@ -1359,7 +1794,7 @@ export class TaskStore {
       taskId: task.id, dispatchId, summary, files,
       ...(task.answerFor ? { answerFor: task.answerFor } : {}),
       // Проверка воркфлоу: координатору по ней делать нечего, исход уже у рабочей задачи.
-      ...(task.gateFor ? { gateFor: task.gateFor.taskId } : {}),
+      ...(task.gateFor ? { gateFor: task.gateFor.taskId ?? task.gateFor.runId } : {}),
       ...(request ? { requestId: request.id } : {}),
       ...(text ? eventAnswer(text) : {})
     })
@@ -1565,13 +2000,16 @@ export class TaskStore {
    * Текст решения («вариант 2») — в `decision` события, последним и обрезанным: координатор учтёт выбор человека,
    * полный текст — `resolution.text` запроса (`orca-board request get`).
    */
-  private applyApproval(task: Task, request: HumanRequest, action: 'accept' | 'reject', text?: string): void {
+  private applyApproval(task: Task | undefined, request: HumanRequest, action: 'accept' | 'reject', text?: string): void {
     this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}) })
-    if (action === 'reject' && text) task.feedback = text
-    this.settleTask(task)
-    task.updatedAt = Date.now()
+    if (task) {
+      if (action === 'reject' && text) task.feedback = text
+      this.settleTask(task)
+      task.updatedAt = Date.now()
+    }
+    // У approval прогона задачи нет: событие адресовано по `runId`, а замечания несёт `resolution.text`.
     this.pushEvent('request_resolved', {
-      taskId: task.id, action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {}),
+      ...(task ? { taskId: task.id } : { runId: request.runId }), action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {}),
       ...(text ? eventDecision(text) : {})
     })
   }
@@ -1748,8 +2186,10 @@ export class TaskStore {
     if (!REQUEST_ACTIONS[request.kind].includes(resolution.action)) {
       throw new Error(`запрос ${request.kind}: действие ${resolution.action} недопустимо — ${REQUEST_ACTIONS[request.kind].join(', ')}`)
     }
-    const task = this.mustTask(request.taskId)
+    // У approval уровня прогона задачи нет: его решают по `runId`, остальным видам запросов задача обязательна.
+    const task = request.taskId !== undefined ? this.mustTask(request.taskId) : undefined
     const text = resolution.text?.trim() || undefined
+    if (!task && request.kind !== 'approval') throw new Error(`запрос ${id} (${request.kind}) без задачи — решить можно только approval прогона`)
     switch (resolution.action) {
       case 'answer': {
         const q = this.mustQuestion(request.questionId ?? '')
@@ -1765,15 +2205,15 @@ export class TaskStore {
           this.applyApproval(task, request, 'accept', text)
           break
         }
-        this.applyAccept(task, request, text)
-        task.worktree = undefined
-        task.branch = undefined
-        task.branchForeign = undefined
-        this.setStatus(task, this.columnId('done'))
+        this.applyAccept(task!, request, text)
+        task!.worktree = undefined
+        task!.branch = undefined
+        task!.branchForeign = undefined
+        this.setStatus(task!, this.columnId('done'))
         this.promoteReady()
         break
       case 'clarify':
-        this.applyClarify(task, request, text ?? '')
+        this.applyClarify(task!, request, text ?? '')
         break
       case 'reject':
         this.applyApproval(task, request, 'reject', text)
@@ -1781,10 +2221,10 @@ export class TaskStore {
       case 'restart':
       case 'dismiss':
         this.closeRequest(request, 'resolved', { action: resolution.action, ...(text ? { text } : {}) })
-        if (resolution.action === 'restart' && !this.isKind(task, 'done')) this.setStatus(task, this.columnId('ready'))
-        else this.settleTask(task)
+        if (resolution.action === 'restart' && !this.isKind(task!, 'done')) this.setStatus(task!, this.columnId('ready'))
+        else this.settleTask(task!)
         this.pushEvent('request_resolved', {
-          taskId: task.id, action: resolution.action, requestId: request.id, kind: request.kind, dispatchId: request.dispatchId
+          taskId: task!.id, action: resolution.action, requestId: request.id, kind: request.kind, dispatchId: request.dispatchId
         })
         break
     }
@@ -1798,14 +2238,16 @@ export class TaskStore {
    * request_created (без него — миграция при загрузке и finishDispatch, который шлёт его после worker_done).
    */
   private createRequest(
-    task: Task,
+    subject: Task | Run,
     fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId' | 'showcaseDispatchId'>>,
     emit = true
   ): HumanRequest {
+    // Запрос уровня прогона (approval ноды `human`) — без задачи: карточка «Нужен ответ» вычисляется по pending-запросам прогона.
+    const task = 'objective' in subject ? undefined : subject
     const request: HumanRequest = {
       id: newId('req'),
-      runId: task.runId ?? '',
-      taskId: task.id,
+      runId: task ? task.runId ?? '' : (subject as Run).id,
+      ...(task ? { taskId: task.id } : {}),
       ...(fields.dispatchId !== undefined ? { dispatchId: fields.dispatchId } : {}),
       kind: fields.kind,
       status: 'pending',
@@ -1818,7 +2260,7 @@ export class TaskStore {
       createdAt: Date.now()
     }
     this.requests.set(request.id, request)
-    if (!this.isKind(task, 'done') && !this.isKind(task, 'needs_input')) this.setStatus(task, this.columnId('needs_input'))
+    if (task && !this.isKind(task, 'done') && !this.isKind(task, 'needs_input')) this.setStatus(task, this.columnId('needs_input'))
     if (emit) this.requestCreated(request)
     return request
   }
@@ -1826,7 +2268,7 @@ export class TaskStore {
   /** Событие request_created: короткое, полный текст — в запросе по requestId. */
   private requestCreated(r: HumanRequest): void {
     this.pushEvent('request_created', {
-      taskId: r.taskId, requestId: r.id, kind: r.kind, title: short(r.title), runId: r.runId,
+      ...(r.taskId !== undefined ? { taskId: r.taskId } : {}), requestId: r.id, kind: r.kind, title: short(r.title), runId: r.runId,
       ...(r.dispatchId ? { dispatchId: r.dispatchId } : {}),
       ...(r.questionId ? { questionId: r.questionId } : {})
     })
