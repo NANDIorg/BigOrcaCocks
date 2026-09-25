@@ -735,11 +735,8 @@ export class TaskStore {
       return { ...(roleId !== undefined ? { roleId } : {}), stageOf: input.stageOf }
     }
     if (input.gateFor || !run.stage) return { ...(roleId !== undefined ? { roleId } : {}) }
-    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === run.stage!.nodeId)
-    const where = node ? `«${wfNodeTitle(node)}»` : `«${run.stage.nodeId}»`
-    if (node?.type !== 'work') {
-      throw new Error(`подзадачи создаются только на этапе «Работа»: глобальная задача ${run.id} сейчас на этапе ${where} — дождись stage_started`)
-    }
+    const node = this.assertStageAcceptsTasks(run.id)!
+    const where = `«${wfNodeTitle(node)}»`
     const stageOf = { nodeId: node.id, visit: run.stage.visits[node.id] ?? 1 }
     const allowed = wfWorkRoleIds(node)
     if (allowed.length > 0) {
@@ -756,6 +753,22 @@ export class TaskStore {
       }
     }
     return { ...(roleId !== undefined ? { roleId } : {}), stageOf }
+  }
+
+  /**
+   * Глобальная задача с воркфлоу прогона сейчас на этапе «Работа» — только на нём создаются подзадачи (`bindToStage`).
+   * Иначе ошибка с подсказкой ждать `stage_started`. Граф не начат, прогон старого формата и «Входящие» не проверяются
+   * (undefined): нужна main, чтобы сообщить об этапе раньше выбора роли (`task create` без `--role`).
+   */
+  assertStageAcceptsTasks(runId: string): Extract<WfNode, { type: 'work' }> | undefined {
+    const run = this.runs.get(runId)
+    if (!run || run.workflowScope !== 'run' || !run.stage) return undefined
+    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === run.stage!.nodeId)
+    if (node?.type !== 'work') {
+      const where = node ? `«${wfNodeTitle(node)}»` : `«${run.stage.nodeId}»`
+      throw new Error(`подзадачи создаются только на этапе «Работа»: глобальная задача ${run.id} сейчас на этапе ${where} — дождись stage_started`)
+    }
+    return node
   }
 
   /**

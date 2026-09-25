@@ -149,6 +149,18 @@ describe('createTask в воркфлоу прогона: роль и этап', 
     assert.equal(s.stageDefaultRole(run.id), undefined, 'роли по умолчанию у этапа без ролей нет')
   })
 
+  it('assertStageAcceptsTasks: на «Работе» отдаёт ноду, вне неё — ошибка про stage_started; граф не начат и старый формат — без проверки', () => {
+    const { s, run } = stageWithRoles(undefined)
+    assert.equal(s.assertStageAcceptsTasks(run.id)?.id, 'work')
+    const t = s.createTask({ title: 'A', runId: run.id })
+    finish(s, t.id)
+    s.finishStage(run.id, opts)
+    assert.throws(() => s.assertStageAcceptsTasks(run.id), /только на этапе «Работа».*«Проверка».*дождись stage_started/)
+    assert.equal(s.assertStageAcceptsTasks(s.createRun('не начат', undefined, defaultWorkflow([])).id), undefined)
+    assert.equal(s.assertStageAcceptsTasks(s.createRun('старый', undefined, legacyDefaultWorkflow([])).id), undefined)
+    assert.equal(s.assertStageAcceptsTasks('run_nope'), undefined)
+  })
+
   it('этап без ролей: служебные роли и роль gate графа не подходят', () => {
     const { s, run } = stageWithRoles(undefined)
     assert.throws(() => s.createTask({ title: 'X', runId: run.id, roleId: 'coordinator' }), /роль «coordinator» не разрешена на этапе «Реализация».*рабочие роли типа/)

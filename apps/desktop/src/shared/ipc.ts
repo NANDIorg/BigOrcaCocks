@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, RunBranchSettings } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, RunBranchSettings, WfMigrationNote } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -264,6 +264,11 @@ export interface TaskTypeInput {
   title: string
   description?: string
   settings: TaskTypeSettings
+  /**
+   * Предупреждения автомиграции графа (`TaskType.workflowNotes`). Не передан — прежние остаются, пока граф не менялся;
+   * передан (пустой список — «закрыть») — сохраняется как есть.
+   */
+  workflowNotes?: WfMigrationNote[]
 }
 
 /** Вся библиотека типов в порядке хранения и тип библиотеки по умолчанию. */

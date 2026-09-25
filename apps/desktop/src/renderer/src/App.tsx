@@ -525,7 +525,8 @@ export function App(): React.JSX.Element {
     try {
       const ptyId = await api.returnToWork(id, text, 120, 30)
       setReturnGlobalId(null)
-      // У прогона с воркфлоу координатор один и живёт до конца графа: терминала для показа может не быть.
+      // main.returnToWork пока и для прогона с воркфлоу гасит живого координатора и запускает нового (docs/workflow.md,
+      // «Что остаётся за пределами core»); когда движок оставит одного, терминала для показа может не быть.
       if (ptyId) showTerminal(ptyId, projectId)
     } catch (e) {
       const message = reviewErrorMessage(e)

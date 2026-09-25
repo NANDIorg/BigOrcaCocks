@@ -350,7 +350,7 @@ function closeGate(deps: WorkflowDeps, gate: Task): void {
  */
 function gatePending(deps: WorkflowDeps, gate: Task): boolean {
   const { store } = deps
-  // Проверка ветки глобальной задачи (`gateFor.runId`) — воркфлоу прогона, этот движок её не ведёт.
+  if (gate.gateFor?.runId !== undefined) return runGatePending(deps, gate)
   const target = gate.gateFor?.taskId !== undefined ? store.getTask(gate.gateFor.taskId) : undefined
   if (!target || !gate.gateFor || target.stage?.nodeId !== gate.gateFor.nodeId || store.columnKind(target.status) === 'done') return false
   const latest = store.listTasks().filter((t) => t.gateFor?.taskId === target.id && t.gateFor.nodeId === gate.gateFor!.nodeId).at(-1)
@@ -368,6 +368,15 @@ function settleGate(deps: WorkflowDeps, gate: Task, why: 'done' | 'exit'): void 
     return
   }
   if (why === 'done') {
+    const runId = gate.gateFor!.runId
+    if (runId !== undefined) {
+      deps.store.blockRunStage(
+        runId,
+        `проверка ${gate.id} сдана без решения (нет review accept/reject по задаче ${gate.id}). ` +
+          `Перезапустить проверку: orca-board task reopen --task ${gate.id} --start; или решите в приложении: «Принять» / «Вернуть» у задачи ${gate.id}`
+      )
+      return
+    }
     const target = gate.gateFor!.taskId!
     deps.store.blockStage(
       target,
@@ -417,6 +426,10 @@ function handleEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
         settleGate(deps, task, 'exit')
       }
     } catch (err) {
+      if (task.gateFor?.runId !== undefined) {
+        deps.store.blockRunStage(task.gateFor.runId, `ошибка исполнителя воркфлоу: ${message(err)}`)
+        continue
+      }
       const target = task.gateFor?.taskId ?? task.id
       if (deps.store.getTask(target)) deps.store.blockStage(target, `ошибка исполнителя воркфлоу: ${message(err)}`)
     }
@@ -439,6 +452,49 @@ function restartAsk(deps: WorkflowDeps, task: Task, workerLive: boolean): void {
   } catch (e) {
     deps.store.blockStage(task.id, `воркер не запустился после ответа: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`)
   }
+}
+
+/** Запасной граф для store по прогону `runId` (как `fallback`, но без задачи). */
+function runFallback(deps: WorkflowDeps, runId: string): RunWorkflowFallback {
+  const t = deps.run(runId)
+  return { roleIds: t.roles.map((r) => r.id), ...(t.workflow ? { workflow: t.workflow } : {}) }
+}
+
+/**
+ * Проверка ветки глобальной задачи ещё должна вынести решение: прогон стоит на её ноде `gate` и это последняя
+ * проверка этой ноды (после reject → работа → снова проверка старая уже не в счёт).
+ */
+function runGatePending(deps: WorkflowDeps, gate: Task): boolean {
+  const { store } = deps
+  const runId = gate.gateFor?.runId
+  const run = runId !== undefined ? store.getRun(runId) : undefined
+  if (!runId || !run || run.workflowScope !== 'run' || run.closedAt !== undefined || run.stage?.nodeId !== gate.gateFor!.nodeId) return false
+  const latest = store.listTasks().filter((t) => t.gateFor?.runId === runId && t.gateFor.nodeId === gate.gateFor!.nodeId).at(-1)
+  return latest?.id === gate.id
+}
+
+/**
+ * `review accept/reject` по задаче-проверке ветки глобальной задачи (`gateFor.runId`): проверяющий или человек решает
+ * своим `--task <id проверки>`, приложение само находит прогон и двигает его граф исходом accept / reject (замечания
+ * `reject` уходят в `stage_started` следующей «Работы»). Проверка уже не актуальна (граф ушёл дальше, есть новая
+ * проверка ноды) — ошибка. Переход делает store (`advanceRunStage`), эффекты новой ноды — движок прогона. Задача-проверка
+ * закрывается здесь, если её воркер уже сдал `done` (решение человека в приложении); у живого проверяющего — по его `done`.
+ */
+function decideRunGate(deps: WorkflowDeps, gate: Task, outcome: 'accept' | 'reject', text?: string): void {
+  const { store } = deps
+  const runId = gate.gateFor!.runId!
+  if (!runGatePending(deps, gate)) {
+    const run = store.getRun(runId)
+    const node = run?.stage ? store.runWorkflow(runId, runFallback(deps, runId)).nodes.find((n) => n.id === run.stage!.nodeId) : undefined
+    const where = node ? `на этапе «${wfNodeTitle(node)}»` : 'не на этапе проверки'
+    throw new Error(`проверка ${gate.id} уже не актуальна: глобальная задача ${runId} сейчас ${where} — решение по ней принято или проверка заменена новой`)
+  }
+  const comment = text?.trim() || undefined
+  store.advanceRunStage(runId, outcome, {
+    ...runFallback(deps, runId),
+    ...(comment ? (outcome === 'reject' ? { feedback: comment } : { decision: comment }) : {})
+  })
+  if (store.columnKind(mustTask(deps, gate.id).status) === 'review') closeGate(deps, gate)
 }
 
 /**
@@ -464,6 +520,7 @@ function decide(deps: WorkflowDeps, task: Task, outcome: 'accept' | 'reject', te
  */
 export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: string): void {
   const task = mustTask(deps, taskId)
+  if (task.gateFor?.runId !== undefined) return decideRunGate(deps, task, 'accept', decision)
   if (task.answerFor || !task.stage) {
     if (task.gateFor) closeGate(deps, task)
     else acceptReview(deps.store, deps.repoRoot, taskId, decision, deps.mergeTarget)
@@ -478,6 +535,10 @@ export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: stri
  */
 export function reviewReject(deps: WorkflowDeps, taskId: string, feedback: string): Task {
   const task = mustTask(deps, taskId)
+  if (task.gateFor?.runId !== undefined) {
+    decideRunGate(deps, task, 'reject', feedback)
+    return mustTask(deps, taskId)
+  }
   if (task.answerFor || task.gateFor || !task.stage) return deps.store.rejectReview(taskId, feedback)
   decide(deps, task, 'reject', feedback)
   return mustTask(deps, taskId)
