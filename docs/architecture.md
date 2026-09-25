@@ -993,7 +993,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»); `projects:list`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`);
+  `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
+  `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
+  (см. «Обновление»); `projects:list`, `projects:setActive`, `projects:remove`,
   `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы; ролей, графа, правил и разрешений у проекта нет);
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
@@ -1014,8 +1017,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ошибка по-русски; см. «Статистика задачи»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
-  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
-- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.terminals.{list, onChanged}`;
+  `updates:changed` (полный `UpdateState`), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
+- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
@@ -1470,6 +1473,41 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
   обработчика в main (`isStaleStatsError`) — время считается в renderer теми же `buildTaskStats` / `buildGlobalTaskStats` по снимку доски
   (`StatsSnapshot`, собирает `App.tsx`) без `usage`: токенов и стоимости нет, над секцией — «перезапустите приложение».
 - Карточка на доске статистику не показывает: стоимость потребовала бы читать транскрипты для всей доски.
+
+## Обновление (`src/main/updater.ts`, типы — `shared/ipc.ts`)
+
+Решение (вариант B, «гибрид»): Windows NSIS — electron-updater; macOS (ad-hoc подпись, Squirrel.Mac не работает) — свой установщик:
+скачать zip из GitHub Releases (репозиторий NANDIorg/BigOrcaCocks) по `latest-mac.yml`, проверить sha512 и codesign, после выхода
+подменить `.app` detached-скриптом и перезапустить; portable Windows — только «скачать новый exe». Каналов (бета) нет; в dev
+(`!app.isPackaged`) обновление выключено. **Сейчас в коде — только контракт и заглушка**: `Updater` держит состояние, методы ничего не делают.
+
+**Настройки** (`AppSettings.updates`, `UpdateSettings`; дефолты — `DEFAULT_UPDATE_SETTINGS`): `autoCheck` (true) — проверять в фоне,
+`autoDownload` (true) — скачивать сразу, `installWhenIdle` (false) — ставить, когда у агентов не осталось живых сессий.
+Установка по кнопке и автоматически при выходе — всегда.
+
+**Состояние** — `UpdateState` (единственный источник правды — main, renderer подписывается на `updates:changed`):
+`status` (`idle | checking | available | downloading | ready | installing | error | unsupported`), `currentVersion`, `availableVersion`,
+`releaseNotes` (markdown), `releaseUrl`, `percent` (только `downloading`), `installPending` (`'idle' | 'quit' | null`),
+`mode` (`'auto' | 'manual-download'`), `unsupportedReason` (только `unsupported`: `dev`, `portable`, `not-in-applications`,
+`no-write-access`, `translocated`), `error` (только `error`, по-русски).
+
+```
+idle ─check→ checking ─новее нет→ idle
+                 │ └─ошибка→ error
+                 └─есть→ available ─download/autoDownload→ downloading(percent) ─→ ready ─install→ installing → перезапуск
+                                                              └─ошибка→ error
+unsupported — терминальное состояние: check/download/install ничего не меняют
+```
+
+`install({when})`: `now` — выйти и заменить (с обычным подтверждением выхода), `idle` — `installPending = 'idle'`, поставить, когда живых
+сессий агентов нет, `quit` — `installPending = 'quit'`, при следующем выходе. `cancelPending()` снимает отложенную установку.
+`getJustUpdated()` отдаёт версию, с которой обновились (для «Обновлено до …»), один раз после старта, иначе `null`.
+
+**Платформенный бэкенд** — интерфейс `PlatformUpdater` (`updater.ts`): `check(): Promise<UpdateInfo | null>` (`UpdateInfo {version,
+releaseNotes, releaseUrl}`), `download(onProgress): Promise<void>` (скачать + проверить целостность), `install(): Promise<void>`
+(подготовить замену и выйти). Бэкенд знает только «как» на своей ОС и бросает ошибки; расписание, состояния, отложенную установку и
+настройки ведёт `Updater`. Windows- и macOS-бэкенды — отдельные задачи. `Updater` не импортирует electron (версия и `isPackaged`
+приходят в `createUpdater`), поэтому тестируется в `node:test` (`updater.test.ts`).
 
 ## Уведомления
 
