@@ -82,6 +82,28 @@ test('patchGit: пустая обязательная ветка остаётс�
   assert.equal(n.operation, 'create_branch')
 })
 
+test('нода с неизвестной или отсутствующей операцией: ничего не бросает, форму можно починить сменой операции', () => {
+  const broken: WfGitNode[] = [
+    gitNode({ operation: 'rebase' as never, branch: 'x' }),
+    { id: 'g', type: 'git', x: 0, y: 0 } as unknown as WfGitNode
+  ]
+  for (const n of broken) {
+    assert.deepEqual(gitFieldsFor(n.operation), [])
+    assert.equal(gitNodeSubtitle(n), gitOperationTitle(n.operation))
+    assert.doesNotThrow(() => patchGit(n, { branch: 'y' }))
+    assert.doesNotThrow(() => patchGit(n, {}))
+    const fixed = patchGit(n, { operation: 'commit' })
+    assert.equal(fixed.operation, 'commit')
+    assert.ok(!('branch' in fixed))
+    assert.equal(fixed.message, '')
+  }
+  assert.equal(gitOperationTitle('rebase'), 'rebase')
+  assert.equal(gitOperationTitle(undefined), '?')
+  assert.equal(gitNodeSubtitle(broken[0]), 'rebase')
+  assert.equal(gitNodeSubtitle(broken[1]), '?')
+  assert.ok(!gitNodeSubtitle(broken[0]).includes('config.wf'))
+})
+
 test('patchNode: git-поля правятся только у ноды git; исходный граф не меняется', () => {
   const { workflow, nodeId } = addNode(base, 'git', 0, 0)
   const next = patchNode(workflow, nodeId, { git: { branch: 'feature/{taskId}' } })

@@ -16,9 +16,15 @@ export type WfGitPatch = Partial<Omit<WfGitParams, 'operation'>> & { operation?:
 /** Операции в порядке показа в select. */
 export const GIT_OPERATIONS: readonly WfGitOperation[] = WF_GIT_OPERATIONS
 
-/** Название операции на языке интерфейса. */
-export function gitOperationTitle(op: WfGitOperation): string {
-  return t(`config.wf.git.op.${op}` as TKey)
+/** Операция из известного списка. Граф из импорта или более новой версии может нести любую строку или не нести операции вовсе. */
+export function isGitOperation(op: unknown): op is WfGitOperation {
+  return typeof op === 'string' && (WF_GIT_OPERATIONS as readonly string[]).includes(op)
+}
+
+/** Название операции на языке интерфейса; у неизвестной — сама строка (у отсутствующей — «?»), а не ключ i18n. */
+export function gitOperationTitle(op: WfGitOperation | string | undefined): string {
+  if (isGitOperation(op)) return t(`config.wf.git.op.${op}` as TKey)
+  return typeof op === 'string' && op ? op : '?'
 }
 
 /** Поле формы: имя, обязательное ли; порядок — как в `FIELD_ORDER`. */
@@ -30,7 +36,8 @@ export interface GitFieldSpec {
 const FIELD_ORDER: readonly WfGitField[] = ['branch', 'base', 'message', 'remote']
 
 /** Только поля выбранной операции: сначала обязательные по порядку формы, затем необязательные. Чужих полей нет. */
-export function gitFieldsFor(op: WfGitOperation): GitFieldSpec[] {
+export function gitFieldsFor(op: WfGitOperation | string | undefined): GitFieldSpec[] {
+  if (!isGitOperation(op)) return []
   const use = WF_GIT_FIELD_USE[op]
   const pick = (list: readonly WfGitField[], required: boolean): GitFieldSpec[] =>
     FIELD_ORDER.filter((f) => list.includes(f)).map((field) => ({ field, required }))
@@ -76,7 +83,8 @@ export function gitPreview(field: 'branch' | 'message', template: string | undef
 export function gitNodeSubtitle(node: WfGitNode): string {
   const op = gitOperationTitle(node.operation)
   const value =
-    node.operation === 'commit' ? node.message
+    !isGitOperation(node.operation) ? undefined
+    : node.operation === 'commit' ? node.message
     : node.operation === 'push' ? node.remote?.trim() || WF_GIT_DEFAULT_REMOTE
     : node.branch
   return value?.trim() ? `${op}: ${value.trim()}` : op
@@ -89,7 +97,13 @@ export function gitNodeSubtitle(node: WfGitNode): string {
  */
 export function patchGit(node: WfGitNode, patch: WfGitPatch): WfGitNode {
   const next: WfGitNode = { ...node }
-  if (patch.operation && (WF_GIT_OPERATIONS as readonly string[]).includes(patch.operation)) next.operation = patch.operation
+  if (isGitOperation(patch.operation)) next.operation = patch.operation
+  // Операция ноды неизвестна — полей у неё нет, и решать, какие лишние, нельзя: правим только значения из патча.
+  // Починить ноду можно сменой операции на известную (следующий вызов уже пройдёт по полной ветке).
+  if (!isGitOperation(next.operation)) {
+    for (const field of FIELD_ORDER) if (patch[field] !== undefined) next[field] = patch[field]
+    return next
+  }
   const use = WF_GIT_FIELD_USE[next.operation]
   for (const field of FIELD_ORDER) {
     const value = patch[field]

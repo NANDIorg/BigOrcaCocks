@@ -7,7 +7,7 @@ import { Icon, WfNodeIcon } from './icons'
 import { issueTargets, removeSelected, wfOutcomeLabel, type WfSelection } from './workflowEdit'
 import { WF_NODE_HELP } from './workflowHelp'
 import {
-  GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
+  GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, isGitOperation, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
 } from './workflowGit'
 import {
   WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, conditionOfKind, hasColumn, nodeOptionLabel, patchNode, portTarget,
@@ -306,9 +306,9 @@ function GitFields({ node, onChange }: { node: WfGitNode; onChange(patch: WfGitP
     <>
       <label className="wf-field">
         <span>{t('config.wf.git.operation')}</span>
-        <select value={node.operation} onChange={(e) => onChange({ operation: e.target.value as WfGitNode['operation'] })}>
+        <select value={node.operation ?? ''} onChange={(e) => onChange({ operation: e.target.value as WfGitNode['operation'] })}>
           {GIT_OPERATIONS.map((op) => <option key={op} value={op}>{gitOperationTitle(op)}</option>)}
-          {!GIT_OPERATIONS.includes(node.operation) && <option value={node.operation}>{String(node.operation)}</option>}
+          {!isGitOperation(node.operation) && <option value={node.operation ?? ''}>{gitOperationTitle(node.operation)}</option>}
         </select>
       </label>
       {gitFieldsFor(node.operation).map(({ field, required }) => {
