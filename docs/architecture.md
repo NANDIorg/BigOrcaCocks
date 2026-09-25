@@ -1,6 +1,8 @@
 # Архитектура orca-board
 
 Правила разработки (что нельзя, что обязательно, проверки) — в [CLAUDE.md](../CLAUDE.md).
+Ветки, PR и выпуск самого проекта — [git-flow.md](git-flow.md); исходный аудит инструкций —
+[development-audit.md](development-audit.md).
 
 ## Процессы
 
@@ -1112,6 +1114,11 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 ## Ревью и мерж (`src/main/review.ts`, `src/main/workflow.ts`, `src/main/git.ts`)
 
+Это **локальная** интеграция в текущую ветку root проекта, без GitHub PR и CI.
+При разработке этого репозитория root в Orca — отдельный worktree `feature/*` / `fix/*`,
+а `orca/*` — его подзадачи. База не закреплена в задаче: нельзя переключать root, пока
+живы воркеры. Общие ветки обновляются через GitHub PR по [Git Flow](git-flow.md).
+
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
 
@@ -1889,11 +1896,12 @@ ad-hoc, и приложение падает при запуске. Провер
 Скачанная сборка всё равно не проходит Gatekeeper («Apple не удалось подтвердить…»), её открывают через
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
 
-### Выпуск релиза (`publish` в `electron-builder.yml`, скрипт `dist:publish`)
+### Выпуск релиза (`publish` в `electron-builder.yml`)
 
 Релизы — GitHub Releases публичного репозитория `NANDIorg/BigOrcaCocks`. `publish: {provider: github,
 owner, repo, releaseType: draft}` в `electron-builder.yml` — публикация создаёт **черновик** релиза с тегом
-`v<version>`, человек проверяет его и публикует сам. Токен в конфиг не кладётся. Поле `repository` в
+`v<version>`. Публикует владелец либо агент по явному поручению после проверок по
+[docs/releasing.md](releasing.md). Токен в конфиг не кладётся. Поле `repository` в
 `apps/desktop/package.json` указывает на тот же репозиторий (метаданные пакета).
 Обычные `dist`/`dist:mac`/`dist:win` вызывают electron-builder с `--publish never`: локальная сборка ничего не
 выкладывает даже при заданном `GH_TOKEN`.
@@ -1916,65 +1924,48 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
 Имена в `url` — без базового пути, относительно ассетов релиза, поэтому файлы нельзя переименовывать
 после сборки: sha512 и имена в yml должны совпадать с загруженными ассетами.
 
-Чек-лист релиза:
-
-1. Версия поднята коммитом `chore: release vX.Y.Z` (одновременно `/package.json` и `apps/desktop/package.json`).
-2. `pnpm typecheck && pnpm test`.
-3. `GH_TOKEN=<токен с правом repo> pnpm --filter @orca-board/desktop run dist:publish` — собирает mac
-   (arm64 + x64), затем win и загружает ассеты в черновик релиза `vX.Y.Z` (второй вызов дописывает в тот же черновик).
-   Токен — только в окружении команды, не в файлах.
-4. Открыть черновик на GitHub и проверить, что есть **все** ассеты: 2 zip, 2 dmg, `orca-board-<v>-x64.exe`,
-   `orca-board-<v>-portable-x64.exe`, `latest-mac.yml`, `latest.yml`, blockmap-файлы. Без `.yml` приложение
-   обновления не найдёт: манифест — единственное, что оно читает; без zip macOS нечего скачивать.
-5. Нажать «Publish release» (снять «Set as a pre-release», если стоит). Пока релиз — черновик, он не виден
-   клиентам и не отдаётся по `releases/latest`: обновления начнутся только после публикации.
-6. После публикации проверить `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml`
-   и `.../latest.yml` (должны отдавать yml версии релиза).
-
-Если релиз опубликован без `.yml` или с неполным набором — дописать недостающие ассеты в опубликованный релиз
-(Edit → Attach binaries) из `apps/desktop/release/`; версию менять не нужно.
+Основной путь выпуска — [инструкция для человека и агента](releasing.md) и
+[Git Flow](git-flow.md): подготовка версии/описания через PR, release/hotfix → master,
+аннотированный тег на merge SHA, проверенный черновик и отдельная публикация.
+`dist:publish` остаётся техническим локальным скриптом; обычные выпуски делает CI.
+Не запускай его вместо релизных проверок или для замены файлов опубликованной версии.
 
 #### Выпуск через CI (`.github/workflows/release.yml`)
 
-Основной путь: релиз собирает GitHub Actions, а не машина разработчика. Так Windows-сборка делается на Windows
-(node-pty нативно), а не кросс с macOS.
-
-1. Коммит `chore: release vX.Y.Z` (версия в `/package.json` и `apps/desktop/package.json` совпадает) — в `master`.
-2. `git tag vX.Y.Z && git push origin vX.Y.Z`. Запуск вручную: Actions → Release → Run workflow (версия берётся из
-   `package.json`, тег в git не создаётся до публикации черновика).
-3. Дождаться зелёного workflow и открыть черновик `vX.Y.Z` в Releases. Публиковать (`Publish release`) — пункты 5–6
-   чек-листа выше. Красный workflow — черновик неполный, публиковать нельзя.
-
-Джобы:
+Workflow запускается push тега `vX.Y.Z`. Ручной выпуск нетегированной ветки отключён:
+тег фиксирует проверенный релизный коммит из master. Внешний секрет не требуется.
 
 | Джоба | Раннер | Что делает |
 |---|---|---|
-| `prepare` | ubuntu | версии в двух `package.json` совпадают, тег = `v<version>`; создаёт черновик `gh release create --draft`, если его нет. Уже опубликованный релиз с таким тегом — ошибка |
-| `build (mac)` | macos-14 | `pnpm install`, `typecheck`, `test` (с `GIT_CONFIG_*`: git-identity, `autocrlf=false`, сброс `safe.directory=*` runner — иначе тесты коммитов и «dubious ownership» краснеют), сборка, `electron-builder --mac --publish always` (arm64 **и** x64), `codesign --verify` обоих `.app` |
-| `build (win)` | windows-latest | то же с `--win`: nsis + portable x64, node-pty пересобирается нативно |
-| `verify` | ubuntu | в черновике ровно один релиз с тегом и есть `latest.yml`, `latest-mac.yml`, zip и blockmap обеих архитектур, dmg, nsis-exe + blockmap, portable; `latest-mac.yml` описывает и arm64, и x64 zip. Иначе — красный |
+| `validate` | ubuntu | Проверяет совпадение версий, тег, принадлежность master и `docs/releases/vX.Y.Z.md`; передаёт описание артефактом |
+| `package` (mac) | macos-14 | `pnpm verify`, упаковка dmg/zip arm64 и x64 через `--publish never`, проверка ad-hoc подписи обоих `.app` |
+| `package` (win) | windows-latest | `pnpm verify`, нативная сборка node-pty и упаковка NSIS/portable x64 через `--publish never` |
+| `draft` | ubuntu | Проверяет полный комплект, обе архитектуры в latest-mac.yml и версии манифестов; создаёт SHA256SUMS, загружает файлы и описание в единственный черновик, сверяет имена/размеры/state через API |
 
-Почему так, а не «одна джоба на архитектуру»:
+Одна mac-job собирает обе архитектуры: electron-builder объединяет их в `latest-mac.yml`.
+Раздельные jobs перезаписали бы этот манифест друг другом, оставив одну архитектуру.
+Сборщики имеют только `contents: read`; `contents: write` есть только у `draft`, где
+нет checkout или исполнения кода проекта. Черновик создаётся один раз после успешных
+сборок, поэтому гонки между mac/win нет. По одному тегу workflow выполняются последовательно.
+Опубликованные релизы и существующие теги не перезаписываются.
 
-- **`latest-mac.yml` при раздельных джобах теряет архитектуру.** `GitHubPublisher` при загрузке ассета, который уже есть
-  в релизе, удаляет старый и льёт заново (`overwriteArtifact` в `electron-publish`). Джобы arm64 и x64 каждая пишет свой
-  `latest-mac.yml`, выигрывает последняя — в манифесте остаётся одна архитектура, а клиент другой архитектуры не найдёт zip.
-  Одна mac-джоба с `--mac` строит обе архитектуры из `electron-builder.yml` (`arch: [arm64, x64]`) и сама сливает их в единый
-  манифест. x64 на arm64-раннере собирается кросс: node-pty идёт с prebuilds под darwin-x64, так же собирает локальный `dist:mac`.
-  Отдельного раннера macos-13 (Intel) поэтому нет (GitHub выводит его из обращения).
-- **Черновик создаёт `prepare`, а не electron-builder.** mac- и win-джобы стартуют параллельно; если черновика нет, каждая
-  создала бы свой (`getOrCreateRelease` ищет черновик по тегу в списке релизов, гонки не учитывает) — два релиза с одним тегом.
-  `verify` падает и на дубле.
-- Токен — `secrets.GITHUB_TOKEN` с `permissions: contents: write`, отдельных секретов не нужно.
-- `concurrency: release-<ref>` без отмены — повторный запуск на тот же тег ждёт предыдущий. Перезапуск упавшей джобы
-  безопасен: ассеты перезаливаются в тот же черновик.
-
-Проверено только `actionlint` и разбором YAML; реального запуска в Actions не было (нужен push тега в репозиторий).
-При первом выпуске смотреть глазами: сборка node-pty на windows-latest (нужны MSVC Spectre-libs, см. `binding.gyp` node-pty),
-версия pnpm в `pnpm/action-setup` (`version: 12`), содержимое `latest-mac.yml` в логе `verify`.
+Зелёный CI не подтверждает ручную проверку приложения: скачивание сборок, smoke-тесты
+и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
 ## Грабли разработки
 
+- CI выполняет тесты на трёх ОС. Фикстура живого PTY запускает Node, а не отсутствующий
+  в Windows `sleep`. Интеграционные тесты `MacUpdater.install` используют реальные пути
+  временного каталога и валидатор POSIX-путей: они выполняются на macOS/Linux.
+  Нативную Windows-установку эта группа не проверяет. Общие тесты check/download
+  и чистой валидации идут на всех ОС.
+- Чистая CI-установка с `--ignore-scripts` не собирает `node-pty`. В пакете 1.1.0 есть
+  prebuilds для macOS/Windows, но Linux socket-тесты падают при импорте с `Failed to load
+  native module: pty.node`. CI отдельно выполняет `pnpm --filter @orca-board/desktop rebuild node-pty`
+  под Node runner. В darwin prebuilds node-pty 1.1.0 `spawn-helper` имеет mode 0644:
+  импорт проходит, но запуск PTY падает с `posix_spawnp failed`. На macOS CI принудительно
+  собирает node-pty из исходников (`npm_config_build_from_source=true`); GUI и
+  Electron-упаковка проверяются отдельно.
 - Запись состояния шла прямо в `projects.json` / `boards/<id>.json` (`writeFileSync`), а битый JSON при загрузке молча
   становился пустой доской и затирался при следующей записи. Теперь запись атомарная, битый файл откладывается в
   `.corrupt-<ts>`, доска из будущего формата не открывается (см. «Безопасность состояния»). Новый код записи
@@ -2037,7 +2028,8 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
   `electron-vite dev` с временем коммита.
 
 - `git reset --hard` в скриптах тестирования дважды стёр незакоммиченные правки. Правило:
-  коммит сразу после зелёного typecheck, тесты — только read-only git-командами.
+  коммит после зелёных проверок, в рабочем репозитории проверки используют только read-only
+  git-команды. Git-фикстуры тестов создаются отдельно во временной папке.
 - Повторяемый флаг CLI (`REPEATABLE_FLAGS`, сейчас `option`) приходит в сокет массивом **всегда**, даже
   из одного вхождения. Хендлер, которому нужно одно значение (`request.resolve --option`), должен принимать
   и строку, и массив — `str()` на массиве даёт `undefined` (`singleOption` в `src/main/request-params.ts`).

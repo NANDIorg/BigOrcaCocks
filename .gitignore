@@ -6,3 +6,7 @@ out/
 *.db
 release/
 *.tgz
+.worktrees/
+.orca-worktrees/
+.orca-attachments/
+/review/

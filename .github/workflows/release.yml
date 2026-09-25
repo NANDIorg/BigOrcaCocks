@@ -1,121 +1,74 @@
-# Выпуск релиза: push тега vX.Y.Z (или ручной запуск) → сборка mac и Windows → черновик GitHub Release.
-# Публикует человек: проверяет ассеты и жмёт «Publish release». См. docs/architecture.md, «Выпуск релиза».
-name: Release
+# Порядок работы агента и публикации: docs/releasing.md.
+name: Release draft
 
 on:
   push:
-    tags: ['v*.*.*']
-  workflow_dispatch:
+    tags: ['v*']
 
-# contents: write — создать черновик релиза и залить в него ассеты токеном GITHUB_TOKEN.
 permissions:
-  contents: write
+  contents: read
 
-# Два запуска на один тег не должны писать в один черновик одновременно.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  GH_REPO: ${{ github.repository }}
-
 jobs:
-  # Черновик создаём заранее и один раз. Если mac- и win-джобы стартуют одновременно и черновика ещё нет,
-  # electron-builder в каждой создаст свой, и получится два релиза с одним тегом.
-  prepare:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     outputs:
-      version: ${{ steps.meta.outputs.version }}
-      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.notes.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Версия и тег
-        id: meta
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-git-flow.mjs
+      - name: Выпускается только коммит из master
+        run: git merge-base --is-ancestor HEAD origin/master
+      - name: Описание выпуска из релизного PR
+        id: notes
         run: |
-          version=$(node -p "require('./apps/desktop/package.json').version")
-          root_version=$(node -p "require('./package.json').version")
-          tag="v$version"
-          if [ "$version" != "$root_version" ]; then
-            echo "::error::Версии расходятся: /package.json = $root_version, apps/desktop/package.json = $version"
-            exit 1
-          fi
-          # Тег — источник правды для человека, но electron-builder берёт версию из package.json:
-          # при расхождении ассеты ушли бы в релиз другого тега.
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
-            echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией в package.json ($tag)"
-            exit 1
-          fi
+          version=$(node -p "require('./package.json').version")
+          notes="docs/releases/v$version.md"
+          test -s "$notes"
+          grep -q '[^[:space:]]' "$notes"
+          cp "$notes" release-notes.md
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Черновик релиза
-        env:
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          # Черновик не находится «релизом по тегу» (тега в git ещё может не быть), поэтому ищем по списку.
-          state=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-            --jq '.[] | select(.tag_name == env.TAG) | if .draft then "draft" else "published" end' | sort -u | tr '\n' ' ')
-          case "$state" in
-            "")
-              gh release create "$TAG" --draft --title "$TAG" --generate-notes --target "$GITHUB_SHA"
-              ;;
-            "draft ")
-              echo "Черновик $TAG уже есть — дописываем в него (повторный запуск перезальёт ассеты)."
-              ;;
-            *)
-              echo "::error::Релиз $TAG уже опубликован или черновиков несколько ($state). Удалите его или поднимите версию."
-              exit 1
-              ;;
-          esac
-
-  # Одна mac-джоба на обе архитектуры (--mac собирает arm64 и x64 из electron-builder.yml).
-  # Так electron-builder сам сливает их в единый latest-mac.yml. Две отдельные джобы (arm64 и x64)
-  # писали бы latest-mac.yml по очереди, и вторая перезаписала бы первую (GitHubPublisher удаляет
-  # одноимённый ассет и грузит заново) — в манифесте осталась бы одна архитектура.
-  build:
-    needs: prepare
+  package:
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: mac
-            os: macos-14
-            platform: --mac
-          - name: win
-            os: windows-latest
-            platform: --win
-    name: build (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+          # Обе mac-архитектуры в одной job: electron-builder объединяет latest-mac.yml.
+          - os: macos-14
+            platform: mac
+          - os: windows-latest
+            platform: win
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          version: 12
-
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: pnpm
-
-      # postinstall desktop (`electron-builder install-app-deps`) собирает node-pty под Electron
-      # нативно — на Windows нужны MSVC и Python, они есть в образе windows-latest.
-      - name: Установка зависимостей
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      # Тесты делают реальные git-коммиты и проверяют отказ git на «чужом» каталоге. На runner нет git-identity
-      # (на Windows коммит падает: «unable to auto-detect email address»), а в глобальном конфиге стоит
-      # safe.directory=* — git не отказывает, и тест «dubious ownership» краснеет. Переопределяем через
-      # GIT_CONFIG_* только на этот шаг: конфиг runner не трогаем. Пустое значение safe.directory сбрасывает список.
-      - name: Тесты
-        run: pnpm test
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
         env:
           GIT_CONFIG_COUNT: '4'
           GIT_CONFIG_KEY_0: user.name
@@ -126,78 +79,103 @@ jobs:
           GIT_CONFIG_VALUE_2: 'false'
           GIT_CONFIG_KEY_3: safe.directory
           GIT_CONFIG_VALUE_3: ''
-
-      - name: Сборка
-        run: pnpm --filter @orca-board/desktop run build
-
-      # Публикация прямо из electron-builder: он находит черновик по тегу v<version> и дописывает ассеты.
-      # Обычный `dist:publish` не берём: он собирает mac и win подряд, а в CI это разные раннеры.
-      - name: Сборка и загрузка в черновик
-        run: pnpm --filter @orca-board/desktop exec electron-builder ${{ matrix.platform }} --publish always
-
-      # Ad-hoc подпись должна быть целой: без неё скачанный .app «повреждён» (см. «Подпись macOS»).
-      - name: Проверка подписи .app
-        if: matrix.name == 'mac'
+      # На Windows собираем нативно с npmRebuild из electron-builder.yml.
+      # Публикация отключена; токена записи у упаковщика нет.
+      - run: pnpm --filter @orca-board/desktop exec electron-builder --${{ matrix.platform }} --publish never
+      - name: Проверка ad-hoc подписи обеих macOS-сборок
+        if: matrix.platform == 'mac'
         shell: bash
         run: |
-          apps=$(find apps/desktop/release -maxdepth 2 -name '*.app' -type d)
-          [ "$(echo "$apps" | wc -l)" -eq 2 ] || { echo "::error::Ожидались два .app (arm64 и x64), найдено: $apps"; exit 1; }
-          echo "$apps" | while read -r app; do
-            echo "codesign: $app"
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' app; do
             codesign --verify --deep --strict "$app"
-          done
+            count=$((count + 1))
+          done < <(find apps/desktop/release -maxdepth 2 -name '*.app' -type d -print0)
+          test "$count" -eq 2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installers-${{ matrix.platform }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
+          if-no-files-found: error
+          retention-days: 14
 
-  # Без .yml клиент обновления не найдёт, без zip macOS нечего скачивать: неполный черновик — ошибка.
-  verify:
-    needs: [prepare, build]
+  draft:
+    needs: [validate, package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      TAG: ${{ needs.prepare.outputs.tag }}
-      VERSION: ${{ needs.prepare.outputs.version }}
+    permissions:
+      contents: write
     steps:
-      - name: Проверка ассетов черновика
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-notes
+          path: notes
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installers-*
+          path: installers
+          merge-multiple: true
+      - name: Проверить комплект, создать контрольные суммы и загрузить черновик
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
         run: |
-          ids=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-            --jq '.[] | select(.tag_name == env.TAG and .draft) | .id')
-          if [ "$(echo "$ids" | grep -c .)" -ne 1 ]; then
-            echo "::error::Ожидался ровно один черновик $TAG, найдено: '$ids'"
-            exit 1
+          set -euo pipefail
+          cp notes/release-notes.md installers/RELEASE_NOTES.md
+          cd installers
+          files=(
+            latest.yml latest-mac.yml
+            "orca-board-$RELEASE_VERSION-arm64.zip" "orca-board-$RELEASE_VERSION-arm64.zip.blockmap"
+            "orca-board-$RELEASE_VERSION-x64.zip" "orca-board-$RELEASE_VERSION-x64.zip.blockmap"
+            "orca-board-$RELEASE_VERSION-arm64.dmg" "orca-board-$RELEASE_VERSION-x64.dmg"
+            "orca-board-$RELEASE_VERSION-x64.exe" "orca-board-$RELEASE_VERSION-x64.exe.blockmap"
+            "orca-board-$RELEASE_VERSION-portable-x64.exe" RELEASE_NOTES.md
+          )
+          for file in "${files[@]}"; do
+            test -s "$file" || { echo "::error::Нет непустого файла $file"; exit 1; }
+          done
+          # В разных версиях упаковщика dmg blockmap бывает отдельным файлом либо встроен в dmg.
+          for file in *.dmg.blockmap; do
+            if [ -f "$file" ]; then test -s "$file"; files+=("$file"); fi
+          done
+          for manifest in latest.yml latest-mac.yml; do
+            grep -qxF "version: $RELEASE_VERSION" "$manifest"
+          done
+          for arch in arm64 x64; do
+            grep -qxF "  - url: orca-board-$RELEASE_VERSION-$arch.zip" latest-mac.yml
+          done
+          grep -qxF "  - url: orca-board-$RELEASE_VERSION-x64.exe" latest.yml
+          sha256sum "${files[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          files+=(SHA256SUMS)
+
+          # Сбой API не принимаем за отсутствие релиза; опубликованное и дубли не перезаписываем.
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.RELEASE_TAG) | {id, draft}' | jq -s . > ../releases.json
+          count=$(jq length ../releases.json)
+          if [ "$count" -eq 0 ]; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "orca-board $RELEASE_VERSION" --notes-file RELEASE_NOTES.md
+          else
+            test "$count" -eq 1
+            test "$(jq -r '.[0].draft' ../releases.json)" = true
+            gh release edit "$RELEASE_TAG" --draft=true --title "orca-board $RELEASE_VERSION" --notes-file RELEASE_NOTES.md
           fi
-          release_id=$ids
-
-          gh api --paginate "repos/$GH_REPO/releases/$release_id/assets?per_page=100" \
-            --jq '.[] | select(.state == "uploaded") | "\(.id) \(.name)"' > assets.txt
-          echo "Ассеты черновика $TAG:"
-          cut -d' ' -f2 assets.txt
-
-          missing=0
-          for name in \
-            latest.yml latest-mac.yml \
-            "orca-board-$VERSION-arm64.zip" "orca-board-$VERSION-arm64.zip.blockmap" \
-            "orca-board-$VERSION-x64.zip" "orca-board-$VERSION-x64.zip.blockmap" \
-            "orca-board-$VERSION-arm64.dmg" "orca-board-$VERSION-x64.dmg" \
-            "orca-board-$VERSION-x64.exe" "orca-board-$VERSION-x64.exe.blockmap" \
-            "orca-board-$VERSION-portable-x64.exe"; do
-            if ! cut -d' ' -f2 assets.txt | grep -qxF "$name"; then
-              echo "::error::В черновике $TAG нет $name"
-              missing=1
-            fi
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+          # Проверяем ответ GitHub после загрузки, а не только файлы на runner.
+          gh release view "$RELEASE_TAG" --json isDraft,assets > ../uploaded.json
+          test "$(jq -r .isDraft ../uploaded.json)" = true
+          for file in "${files[@]}"; do
+            size=$(wc -c < "$file")
+            jq -e --arg name "$file" --argjson size "$size" \
+              'any(.assets[]; .name == $name and .size == $size and .state == "uploaded")' ../uploaded.json > /dev/null
           done
-          [ "$missing" -eq 0 ] || exit 1
-
-          # latest-mac.yml должен описывать обе архитектуры: при перезаписи второй джобой остаётся одна.
-          asset_id=$(awk '$2 == "latest-mac.yml" {print $1}' assets.txt)
-          gh api -H "Accept: application/octet-stream" "repos/$GH_REPO/releases/assets/$asset_id" > latest-mac.yml
-          cat latest-mac.yml
-          for name in "orca-board-$VERSION-arm64.zip" "orca-board-$VERSION-x64.zip"; do
-            grep -qF "url: $name" latest-mac.yml || { echo "::error::В latest-mac.yml нет $name"; missing=1; }
-          done
-          grep -qE "^version: $VERSION\$" latest-mac.yml || { echo "::error::В latest-mac.yml версия не $VERSION"; missing=1; }
-
-          asset_id=$(awk '$2 == "latest.yml" {print $1}' assets.txt)
-          gh api -H "Accept: application/octet-stream" "repos/$GH_REPO/releases/assets/$asset_id" > latest.yml
-          grep -qF "url: orca-board-$VERSION-x64.exe" latest.yml || { echo "::error::В latest.yml нет установщика nsis"; missing=1; }
-          [ "$missing" -eq 0 ] || exit 1
-
-          echo "Черновик $TAG полный: https://github.com/$GH_REPO/releases — проверьте и нажмите Publish release."
+          echo "Черновик готов: https://github.com/$GH_REPO/releases"

@@ -2,10 +2,16 @@
   "name": "orca-board",
   "private": true,
   "version": "1.0.0",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "pnpm --filter @orca-board/desktop dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --if-present test"
+    "test": "node --test scripts/*.test.mjs && pnpm -r --if-present test",
+    "check:git-flow": "node scripts/check-git-flow.mjs",
+    "verify": "pnpm check:git-flow && pnpm typecheck && pnpm test && pnpm build"
   }
 }
