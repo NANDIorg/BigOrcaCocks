@@ -1,7 +1,7 @@
 import { isRuleFileName, RULE_FILE_NAMES, type OrcaApi, type RuleFile, type RuleFileName } from '../../shared/ipc'
 import { t } from './i18n'
 
-/** Как STALE_APP_MESSAGE в docLinks.ts: renderer обновился по HMR, а main/preload — ещё нет. */
+/** Как staleAppMessage() в docLinks.ts: renderer обновился по HMR, а main/preload — ещё нет. */
 export function rulesStaleMessage(): string {
   return t('config.about.rules.stale')
 }

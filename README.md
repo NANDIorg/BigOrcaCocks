@@ -96,9 +96,17 @@ pnpm dev
 
 - **`pnpm --filter @orca-board/desktop run pack`** → `apps/desktop/release/mac-arm64/orca-board.app`
   (ad-hoc подпись, только macOS arm64).
-- **`pnpm --filter @orca-board/desktop run dist:mac`** (или `dist`) → dmg arm64 и x64.
-- **`pnpm --filter @orca-board/desktop run dist:win`** → установщик NSIS и portable exe (x64),
-  в `apps/desktop/release/`. Собирается и с macOS.
+- **`pnpm --filter @orca-board/desktop run dist:mac`** (или `dist`) → dmg и zip arm64 и x64
+  плюс `latest-mac.yml` и blockmap (zip и yml нужны автообновлению). Ничего не публикует.
+- **`pnpm --filter @orca-board/desktop run dist:win`** → установщик NSIS и portable exe (x64)
+  плюс `latest.yml` и blockmap, в `apps/desktop/release/`. Собирается и с macOS. Ничего не публикует.
+- **`GH_TOKEN=<токен> pnpm --filter @orca-board/desktop run dist:publish`** — сборка mac + win и загрузка
+  в **черновик** релиза на GitHub (`NANDIorg/BigOrcaCocks`). Чек-лист релиза — что обязано лежать в релизе
+  и как опубликовать черновик — в `docs/architecture.md`, «Сборка → Выпуск релиза». Коротко: в релизе должны быть
+  2 zip, 2 dmg, `orca-board-<версия>-x64.exe`, portable exe, `latest-mac.yml`, `latest.yml` и blockmap;
+  без `.yml` приложение обновления не найдёт. Пока релиз — черновик, клиенты его не видят: нажмите «Publish release».
+- **Релиз через CI:** push тега `vX.Y.Z` запускает `.github/workflows/release.yml` — сборка mac и Windows
+  в черновик релиза (порядок — `docs/architecture.md`, «Выпуск через CI»).
 - **CLI `orca-board`** кладётся в ресурсы приложения (`Resources/cli`, см. `docs/architecture.md`),
   отдельно ставить его не нужно.
 

@@ -55,3 +55,11 @@ test('справка и подписи переводятся: на en — ан�
   assert.equal(WF_TYPE_TITLES.gate, 'Проверка агентом')
   assert.equal(WF_OUTCOME_LABELS.reject, 'вернуть')
 })
+
+test('справка «Вопроса человеку»: один исход next, поля из инспектора, вопросы идут человеку', () => {
+  const { fields, outcomes, actor } = WF_NODE_HELP.ask
+  assert.deepEqual(Object.keys(outcomes), ['next'])
+  for (const label of ['Роль', 'О чём спросить']) assert.ok(fields.some((f) => f.startsWith(`${label} — `)), `нет описания поля «${label}»`)
+  assert.match(actor, /минуя координатора/)
+  assert.ok(WF_ADDABLE_TYPES.includes('ask') && WF_TYPE_ORDER.includes('ask'))
+})

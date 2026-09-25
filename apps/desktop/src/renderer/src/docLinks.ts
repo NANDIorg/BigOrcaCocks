@@ -10,12 +10,6 @@ export function staleAppMessage(): string {
   return t('config.docs.staleApp')
 }
 
-/**
- * Русский текст для старых импортов (`showcase.ts`, `statsFormat.ts`): строка вычисляется один раз и язык не меняет.
- * В новых местах — `staleAppMessage()`.
- */
-export const STALE_APP_MESSAGE = 'Приложение запущено со старой версией main/preload, где ещё нет «Документов». Перезапустите приложение.'
-
 /** `window.orca.docs` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function docsApi(api: Partial<OrcaApi> | undefined): OrcaApi['docs'] {
   if (!api?.docs) throw new Error(staleAppMessage())

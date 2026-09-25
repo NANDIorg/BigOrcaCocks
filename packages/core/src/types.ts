@@ -606,7 +606,7 @@ export interface HumanRequest {
   options: RequestOption[]
   /** Вопрос, из которого создан запрос (kind=question): сокет `ask` держится за него. */
   questionId?: string
-  /** Нода `human` воркфлоу, на которой задача ждёт решения (kind=approval). */
+  /** Нода воркфлоу, на которой создан запрос: `human` (kind=approval) или `ask` (kind=question с этапа «Вопрос человеку»). */
   nodeId?: string
   /**
    * Dispatch, чей показ (`Dispatch.showcase`) выведен в approval: renderer берёт из него файлы и читает их

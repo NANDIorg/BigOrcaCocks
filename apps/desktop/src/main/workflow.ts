@@ -19,8 +19,11 @@ export interface WorkflowDeps {
    * без снимка графа. Без прогона («Входящие») — тип проекта по умолчанию.
    */
   run(runId: string | undefined): { roles: Role[]; workflow?: Workflow }
-  /** Запуск воркера задачи с проверками роли и агента (`runWorker` в index.ts). */
-  startWorker(taskId: string): { ptyId: string; dispatchId: string }
+  /**
+   * Запуск воркера задачи с проверками роли и агента (`runWorker` в index.ts). `roleId` — роль этапа «Вопрос
+   * человеку»: она только на этот запуск, роль задачи не меняется (в отличие от роли «Работы»).
+   */
+  startWorker(taskId: string, opts?: { roleId?: string }): { ptyId: string; dispatchId: string }
 }
 
 /** Сколько переходов подряд без ожидания (мерж → условие → мерж…) допускается, прежде чем считать граф зациклившимся. */
@@ -60,11 +63,16 @@ function moveTo(deps: WorkflowDeps, taskId: string, status: string): void {
 
 /**
  * Перед запуском воркера рабочей задачи (`runWorker`): задача входит в граф или возвращается на этап
- * «Работа» (store.enterWork). Роль ноды «Работа», если задана, становится ролью задачи.
+ * «Работа» (store.enterWork). Роль ноды «Работа», если задана, становится ролью задачи. Возвращает роль этапа
+ * «Вопрос человеку» (если задача стоит на нём и роль задана): её `runWorker` передаёт в запуск, а на задачу
+ * не переносит — иначе следующая «Работа» без своей роли запустилась бы ролью опросника.
  */
-export function enterWork(deps: WorkflowDeps, taskId: string): void {
+export function enterWork(deps: WorkflowDeps, taskId: string): { roleId?: string } {
   const action = deps.store.enterWork(taskId, fallback(deps, mustTask(deps, taskId)))
+  const node = stageNode(deps, mustTask(deps, taskId))
+  if (node?.type === 'ask') return node.roleId ? { roleId: node.roleId } : {}
   if (action?.type === 'start_worker' && action.roleId) applyWorkRole(deps, taskId, action.roleId)
+  return {}
 }
 
 function applyWorkRole(deps: WorkflowDeps, taskId: string, roleId: string): void {
@@ -99,11 +107,13 @@ function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction): void
     const node = store.runWorkflow(task.runId, fallback(deps, task)).nodes.find((n) => n.id === action.nodeId)
     switch (action.type) {
       case 'start_worker':
-        if (action.roleId) applyWorkRole(deps, taskId, action.roleId)
+        // «Вопрос человеку» роль на задачу не переносит: она только для этого запуска.
+        if (node?.type !== 'ask' && action.roleId) applyWorkRole(deps, taskId, action.roleId)
         // Колонка «Работы» — «В работе», её ставит сам запуск; до него (и при ошибке) задача ждёт в ready.
         if (store.columnKind(task.status) !== 'in_progress') moveTo(deps, taskId, store.columnId('ready'))
         try {
-          deps.startWorker(taskId)
+          if (node?.type === 'ask') deps.startWorker(taskId, action.roleId ? { roleId: action.roleId } : undefined)
+          else deps.startWorker(taskId)
         } catch (e) {
           store.blockStage(taskId, `воркер не запустился: ${message(e)}. Запустить заново: orca-board worker start --task ${taskId}`)
         }
@@ -252,14 +262,14 @@ function settleGate(deps: WorkflowDeps, gate: Task, why: 'done' | 'exit'): void 
   }
 }
 
-/** Рабочая задача сдала `done`: этап «Работа» → переход по `next`. */
+/** Рабочая задача сдала `done`: этап «Работа» или «Вопрос человеку» → переход по `next`. */
 function workDone(deps: WorkflowDeps, task: Task, dispatchId: string | undefined): void {
   // Сданный прошлый запуск (задачу уже перезапустили) переход не делает.
   if (dispatchId !== undefined && task.dispatchId !== dispatchId) return
   if (!task.stage) deps.store.enterWork(task.id, fallback(deps, task))
   const current = mustTask(deps, task.id)
   const node = stageNode(deps, current)
-  if (node?.type !== 'work') {
+  if (node?.type !== 'work' && node?.type !== 'ask') {
     deps.store.blockStage(task.id, `воркер сдал работу, а задача на этапе «${node ? wfNodeTitle(node) : current.stage?.nodeId ?? '—'}», не на «Работе»`)
     return
   }
@@ -269,7 +279,8 @@ function workDone(deps: WorkflowDeps, task: Task, dispatchId: string | undefined
 /**
  * События store → шаги воркфлоу (подписка `projects.onEvents` в index.ts, как `deliverAnswers`):
  * `worker_done` рабочей задачи — переход дальше, проверки — закрытие; `escalation` проверки — закрытие,
- * если решение уже есть. Задачи-ответы идут мимо воркфлоу. Ошибки не выбрасываются из подписки —
+ * если решение уже есть; `question_answered` на этапе «Вопрос человеку» без живого воркера — автоперезапуск
+ * (координатор в этом этапе не участвует). Задачи-ответы идут мимо воркфлоу. Ошибки не выбрасываются из подписки —
  * они становятся `workflow_blocked`.
  */
 export function handleWorkflowEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
@@ -278,11 +289,13 @@ export function handleWorkflowEvents(deps: WorkflowDeps, events: readonly OrcaEv
 
 function handleEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
   for (const e of events) {
-    if (!e.taskId || (e.type !== 'worker_done' && e.type !== 'escalation')) continue
+    if (!e.taskId || (e.type !== 'worker_done' && e.type !== 'escalation' && e.type !== 'question_answered')) continue
     const task = deps.store.getTask(e.taskId)
     if (!task || task.answerFor) continue
     try {
-      if (e.type === 'worker_done') {
+      if (e.type === 'question_answered') {
+        restartAsk(deps, task, e.payload.workerLive === true)
+      } else if (e.type === 'worker_done') {
         if (task.gateFor) settleGate(deps, task, 'done')
         else workDone(deps, task, e.dispatchId)
       } else if (task.gateFor && e.payload.stuck !== true) {
@@ -292,6 +305,24 @@ function handleEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
       const target = task.gateFor?.taskId ?? task.id
       if (deps.store.getTask(target)) deps.store.blockStage(target, `ошибка исполнителя воркфлоу: ${message(err)}`)
     }
+  }
+}
+
+/**
+ * Человек ответил на вопрос с этапа «Вопрос человеку», а агента уже нет (упал, перезапуск приложения): воркер
+ * стартует сам, ответ попадает в его промпт, этап не сбрасывается. Живой воркер получает ответ через свой `ask`.
+ * Ошибка запуска — `workflow_blocked` (перехватывает вызывающий `handleEvents`).
+ */
+function restartAsk(deps: WorkflowDeps, task: Task, workerLive: boolean): void {
+  if (workerLive || task.gateFor) return
+  const node = stageNode(deps, task)
+  if (node?.type !== 'ask') return
+  // Задача не в ready (ушла в другую колонку, есть другой запрос) — запускать нечего.
+  if (deps.store.columnKind(task.status) !== 'ready') return
+  try {
+    deps.startWorker(task.id, node.roleId ? { roleId: node.roleId } : undefined)
+  } catch (e) {
+    deps.store.blockStage(task.id, `воркер не запустился после ответа: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`)
   }
 }
 

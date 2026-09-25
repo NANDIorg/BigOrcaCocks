@@ -31,12 +31,12 @@ export function removeBlocker(roles: readonly Role[]): string | undefined {
   return roles.length > 1 ? undefined : t('config.roles.lastRole')
 }
 
-/** Названия нод воркфлоу, где занята роль: роль гейта, роль работы, роль в условии. */
+/** Названия нод воркфлоу, где занята роль: роль гейта, роль работы, роль вопроса, роль в условии. */
 export function workflowNodesWithRole(wf: Workflow | undefined, roleId: string): string[] {
   if (!wf) return []
   return wf.nodes
     .filter((n) =>
-      ((n.type === 'gate' || n.type === 'work') && n.roleId === roleId) ||
+      ((n.type === 'gate' || n.type === 'work' || n.type === 'ask') && n.roleId === roleId) ||
       (n.type === 'condition' && n.test.kind === 'role' && n.test.roleIds.includes(roleId)))
     .map((n) => wfNodeTitle(n))
 }

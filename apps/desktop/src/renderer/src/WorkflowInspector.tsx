@@ -235,6 +235,23 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
           </label>
         </>
       )}
+      {node.type === 'ask' && (
+        <>
+          <label className="wf-field">
+            <span>{t('config.wf.insp.role')}</span>
+            <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty={t('config.wf.insp.askRoleEmpty')} onChange={(roleId) => patch({ roleId })} />
+          </label>
+          <label className="wf-field">
+            <span>{t('config.wf.insp.askInstructions')}</span>
+            <textarea
+              rows={4}
+              value={node.instructions}
+              placeholder={t('config.wf.insp.askPlaceholder')}
+              onChange={(e) => patch({ instructions: e.target.value })}
+            />
+          </label>
+        </>
+      )}
       {node.type === 'gate' && (
         <label className="wf-field">
           <span>{t('config.wf.insp.reviewerRole')}</span>

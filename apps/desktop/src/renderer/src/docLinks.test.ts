@@ -1,12 +1,12 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { docLinkHash, docsApi, formatSize, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, STALE_APP_MESSAGE } from './docLinks'
+import { docLinkHash, docsApi, formatSize, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, staleAppMessage } from './docLinks'
 import { setLocale } from './i18n'
 import type { OrcaApi } from '../../shared/ipc'
 
 test('docsApi — старый preload без docs даёт понятную ошибку, а не TypeError', () => {
-  assert.throws(() => docsApi(undefined), { message: STALE_APP_MESSAGE })
-  assert.throws(() => docsApi({} as Partial<OrcaApi>), { message: STALE_APP_MESSAGE })
+  assert.throws(() => docsApi(undefined), { message: staleAppMessage() })
+  assert.throws(() => docsApi({} as Partial<OrcaApi>), { message: staleAppMessage() })
   const docs = { list: async () => [] } as unknown as OrcaApi['docs']
   assert.equal(docsApi({ docs }), docs)
 })
