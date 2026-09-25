@@ -150,10 +150,29 @@ start → «Реализация» (work, без роли) ──next──▶ �
   снимается, перед концом появляются `merge` и «Конфликт мержа»); типа с графом нет — `legacyDefaultWorkflow`. Прежние конструкторы остались как `legacyPipelineWorkflow` и
   `legacyDefaultWorkflow` (версия 1, `WORKFLOW_VERSION_TASK_SCOPE`).
 
+### Промпты и skills прогона
+
+Код — `packages/core/src/prompts.ts`, инструкции — `skills/coordinator.md` и `skills/worker.md`; проверки — `prompts.test.ts`.
+
+- **`skills/coordinator.md`.** Координатор — диспетчер этапов `work`: этап начинается с `stage_started` (роли `roleIds` — пусто значит любые рабочие роли типа по
+  описанию, инструкции, `feedback`/`decision`/`answers`), он создаёт подзадачи и запускает воркеров; `stage_tasks_done` — нужны ли ещё задачи, иначе `stage finish --summary`
+  (сигнал «набор закончен», а не отчёт); на `gate`/`human`/`ask`/`git`/`merge` ждёт; `run_done` (с `nodeId`) — граф дошёл до `end`, выход без `runs finish`.
+  `stage_started` и `stage_tasks_done` — в трёх местах `--types` шага 3 (после `workflow_blocked`). `workflow_blocked` может быть без `taskId`. Прогоны старого формата
+  (`workflow show` → `scope: task`) описаны отдельным разделом в конце: `run_done` «все подзадачи закрыты» и `runs finish`.
+- **Повторный запуск координатора.** Цель (`resumeCoordinatorObjective(goal, subtasks, returns, stage?)`) с `stage` (`CoordinatorStage` — то, что отдаёт `TaskStore.runStage`, плюс
+  `tasksDone`) несёт блок `# Этап: <название>` (`COORDINATOR_STAGE_HEADING`): роли, инструкции, замечания, решение, ответы и подзадачи захода / прошлых заходов, а в конце — что делать
+  (нет подзадач — как `stage_started`; есть незакрытые — цикл; все закрыты — `stage finish`). «Уточнение после проверки» в этом режиме не добавляется: замечания уже в `feedback`.
+  Собирает `stage` вызывающий код (движок main); без него цель прежняя.
+- **Задачи прогона.** `runGateTaskSpec` / `runGateTaskTitle` — спека задачи `gate`: ветка глобальной задачи целиком против `RunGit.base` (`git log`/`git diff base...branch`, пробный
+  `merge --no-commit`), цель, сводки этапов (`StageChange.summary`), `instructions` ноды; решение — `review accept|reject --task "$ORCA_TASK_ID"` (id задачи до создания неизвестен, воркер
+  берёт свой из окружения). `runAskTaskSpec` / `runAskTaskTitle` — спека задачи `ask`: цель, сводки, ветка (только чтение), что выяснить и общие с этапом «Вопрос человеку» правила
+  (`ASK_STAGE_RULES`), поэтому раздел «# Этап» к ней добавлять не нужно. Контекст — `RunTaskContext`; создаёт задачи движок main.
+- **`skills/worker.md`.** Задача-проверка глобальной задачи проверяет ветку целиком, `review accept|reject --task` — свой id проверки.
+
 ### Что остаётся за пределами core
 
 Движок main (эффекты нод, создание задач-проверок и вопросов, слияние прогона в базу, автомерж подзадач, подписки на решения), renderer (редактор, этап на карточке,
-approval без задачи в Инбоксе), промпты и skills координатора и воркера — отдельные задачи по этому контракту. Сокет и CLI (`stage finish`, `workflow show` по прогону,
+approval без задачи в Инбоксе) — отдельные задачи по этому контракту; промпты и skills — раздел выше. Сокет и CLI (`stage finish`, `workflow show` по прогону,
 `global get` → `stage`, `review accept|reject` по проверке прогона, ошибки `task create`, `runs finish` для `scope: 'run'`) — поверх методов store; протокол — «Протокол сокета» и «CLI»
 в `docs/architecture.md`. Эффекты новой ноды после `stage finish` / решения проверки выполняет движок прогона: сокет только двигает граф (`finishStage`, `advanceRunStage`). До их выхода main и renderer работают со старым форматом: там, где запрос или проверка
 могут не иметь задачи, стоят только защитные проверки типов.
