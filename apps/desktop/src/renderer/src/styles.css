@@ -1529,6 +1529,23 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 }
 .wf-toolbar .icon-btn { width: 30px; height: 30px; font-size: 16px; }
 .wf-toolbar .icon-btn svg { width: 17px; height: 17px; }
+/* «Свои ноды»: панель библиотеки под кнопкой-звездой на холсте (WorkflowCanvas.tsx) и блок в инспекторе */
+.wf-toolbar .icon-btn.active { color: var(--accent); background: var(--chip); }
+.wf-lib {
+  position: absolute; top: 50px; left: 10px; z-index: 2; width: 280px; max-height: calc(100% - 70px); overflow-y: auto;
+  padding: 6px; background: var(--frame); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+}
+.wf-lib-head { padding: 4px 8px 6px; font-size: 12px; color: var(--muted); }
+.wf-lib .hint { margin: 0; padding: 4px 8px 6px; font-size: 12px; color: var(--muted); }
+.wf-lib-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wf-lib-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.wf-lib-item:hover:not(:disabled), .wf-lib-item:focus-visible { background: var(--chip); }
+.wf-lib-item:disabled { opacity: .5; cursor: default; }
+.wf-lib-text { display: flex; flex-direction: column; min-width: 0; }
+.wf-lib-text b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-lib-text small { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-tpl .hint { margin: 0; font-size: 12px; }
+.wf-tpl-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .wf-toolbar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--chip); }
 
 /* «Настройки → Типы задач → Воркфлоу» (settings/TaskTypeWorkflow.tsx) и инспектор ноды (WorkflowInspector.tsx) */
@@ -1572,8 +1589,8 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-row .wf-field { flex: 1; }
 .wf-row .wf-num { flex: 0 0 90px; }
 .wf-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.wf-ports, .wf-roles, .wf-subflow { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
-.wf-ports legend, .wf-roles legend, .wf-subflow legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+.wf-ports, .wf-roles, .wf-subflow, .wf-tpl { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.wf-ports legend, .wf-roles legend, .wf-subflow legend, .wf-tpl legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
 .wf-port-field > span { font-weight: 600; }
 .wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
 .wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span, .wf-port-field.wf-port--error > span { color: var(--wf-reject); }
@@ -2079,3 +2096,14 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node-path rect { fill: var(--chip); }
 .wf-node-path { color: var(--accent); pointer-events: none; }
 .wf-subflow .hint { margin: 0; }
+
+/* «Настройки → Свои ноды» (settings/NodeTemplatesSection.tsx) */
+.tpl-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tpl-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.tpl-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tpl-row-main b { overflow-wrap: anywhere; }
+.tpl-row-main small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.tpl-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.tpl-row-actions .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
+.tpl-row-actions .btn-sm svg { width: 14px; height: 14px; }
+.tpl-row-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }

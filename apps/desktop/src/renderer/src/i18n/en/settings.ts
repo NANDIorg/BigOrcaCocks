@@ -70,5 +70,18 @@ export default {
   'updates.autoDownload': 'Download updates automatically',
   'updates.autoDownloadHint': 'A found version is downloaded right away; you install it yourself — with the button or when you quit the app.',
   'updates.installWhenIdle': 'Install when agents finish',
-  'updates.installWhenIdleHint': 'A downloaded version is installed on its own once no agents are running. Off by default: the app never restarts without your decision.'
+  'updates.installWhenIdleHint': 'A downloaded version is installed on its own once no agents are running. Off by default: the app never restarts without your decision.',
+  'nav.nodeTemplates': 'My nodes',
+  'nodeTpl.title': 'My nodes',
+  'nodeTpl.hint': 'A library of configured nodes shared by all task types. A copy is inserted — editing or deleting a template does not change nodes already inserted or running tasks.',
+  'nodeTpl.howTo': 'How to add: in “Task types → Workflow” select a node and press “Save as my node”. Insert with the star button above the canvas.',
+  'nodeTpl.empty': 'The library has no nodes yet.',
+  'nodeTpl.rename': 'Rename',
+  'nodeTpl.remove': 'Delete',
+  'nodeTpl.removeConfirm': 'Delete the template “{title}”? Copies already inserted stay in graphs as ordinary nodes.',
+  'nodeTpl.name': 'Name',
+  'nodeTpl.description': 'Description',
+  'nodeTpl.descriptionPlaceholder': 'What this node is for (optional)',
+  'nodeTpl.save': 'Save',
+  'nodeTpl.cancel': 'Cancel'
 } satisfies AreaTranslation<typeof ru>

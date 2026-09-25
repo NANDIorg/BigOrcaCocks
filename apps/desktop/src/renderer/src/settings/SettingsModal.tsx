@@ -11,6 +11,8 @@ import {
 import { GeneralSection } from './GeneralSection'
 import { NotificationsSection } from './NotificationsSection'
 import { UpdatesSection } from './UpdatesSection'
+import { NodeTemplatesSection } from './NodeTemplatesSection'
+import { useNodeTemplates } from './useNodeTemplates'
 import { TaskTypePane } from './TaskTypePane'
 import { useTaskTypes } from './useTaskTypes'
 import { useT } from '../i18n'
@@ -19,8 +21,8 @@ import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
 
-/** Раздел меню: общий, уведомления, обновления или тип задачи (`type:<id>`). */
-type Section = 'general' | 'notifications' | 'updates' | `type:${string}`
+/** Раздел меню: общий, уведомления, обновления, свои ноды или тип задачи (`type:<id>`). */
+type Section = 'general' | 'notifications' | 'updates' | 'nodes' | `type:${string}`
 
 const TAB_KEY = 'orca.settingsTypeTab'
 const TYPE = 'type:'
@@ -38,7 +40,7 @@ function stored(key: string): string | null {
 /** Запомненный раздел. Старые разделы шаблонов (`tpl:<id>`) и «Для новых проектов» ведут в типы задач. */
 function initialSection(): Section {
   const v = stored(SETTINGS_SECTION_KEY)
-  if (v === 'general' || v === 'notifications' || v === 'updates') return v
+  if (v === 'general' || v === 'notifications' || v === 'updates' || v === 'nodes') return v
   if (v?.startsWith(TYPE)) return v as Section
   if (v?.startsWith(OLD_TPL)) return `${TYPE}${v.slice(OLD_TPL.length)}`
   return v ? `${TYPE}` : 'general'
@@ -73,6 +75,8 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
   const [tab, setTab] = useState<TaskTypeTab>(initialTab)
   const [projectList, setProjectList] = useState<Project[]>([])
   const types = useTaskTypes(reloadProjects)
+  /** Библиотека своих нод: одно состояние на редактор воркфлоу типа и раздел «Свои ноды». */
+  const nodeTemplates = useNodeTemplates()
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -152,6 +156,10 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
     count: updateState?.availableVersion ? versionLabel(updateState.availableVersion) : undefined,
     tone: updateState?.status === 'available' || updateState?.status === 'ready' ? 'warn' : undefined
   }
+  const nodesNav: NavEntry<Section> = {
+    id: 'nodes', label: t('settings.nav.nodeTemplates'), icon: Icon.star,
+    count: nodeTemplates.templates ? String(nodeTemplates.templates.length) : undefined
+  }
   /** Текущий пункт меню: у типа — с фактическим id (пустой `type:` после удаления — тип по умолчанию). */
   const navCurrent: Section = currentId ? `${TYPE}${currentId}` : section
   const typeItem = (type: TaskType): React.JSX.Element => {
@@ -179,6 +187,7 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
         api={types}
         onSelect={selectType}
         projects={projectList}
+        nodeTemplates={nodeTemplates}
       />
     )
   }
@@ -212,6 +221,7 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
                   {createError && <div className="editor-error tpl-nav-error">{createError}</div>}
                 </div>
               )}
+              <NavItem item={nodesNav} current={section} showCount={nodeTemplates.templates !== null} onGo={go} />
             </nav>
             <div className="about-pane">
               <section className="about-sec">
@@ -226,6 +236,8 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
                   />
                 ) : section === 'updates' ? (
                   <UpdatesSection settings={appSettings} updates={updates} error={appError} onChange={(p) => void saveApp({ updates: p })} />
+                ) : section === 'nodes' ? (
+                  <NodeTemplatesSection library={nodeTemplates} />
                 ) : (
                   renderType()
                 )}
