@@ -2,6 +2,14 @@ appId: dev.orca-board
 productName: orca-board
 directories:
   output: release
+# Релизы — GitHub Releases публичного репозитория. releaseType: draft — публикация создаёт черновик,
+# человек проверяет файлы и жмёт Publish сам. Токен (GH_TOKEN) в конфиг не кладём: он нужен
+# только скрипту `dist:publish`, обычный `dist` собирает с `--publish never`.
+publish:
+  provider: github
+  owner: NANDIorg
+  repo: BigOrcaCocks
+  releaseType: draft
 files:
   - out/**
   - package.json
@@ -13,6 +21,10 @@ mac:
   category: public.app-category.developer-tools
   target:
     - target: dmg
+      arch: [arm64, x64]
+    # zip нужен автообновлению: dmg подменить на месте нельзя, приложение качает zip
+    # по latest-mac.yml. Squirrel.Mac при ad-hoc подписи не работает, но сам zip нужен и своему установщику.
+    - target: zip
       arch: [arm64, x64]
   # Ad-hoc подпись: без неё скачанный браузером .app (карантин) на Apple Silicon macOS
   # называет «повреждённым» и не даёт открыть. Нотаризации нет — Developer ID не нужен.
