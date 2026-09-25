@@ -38,7 +38,7 @@ export function GitSection({ project, onProjectChanged }: {
   const [draft, setDraft] = useState<Draft>(() => toDraft(saved))
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
-  const branchInfo = useProjectBranch(project.id)
+  const branchInfo = useProjectBranch(project.id).info
   const current = branchInfo?.branch ?? null
 
   // Проект сменился или настройки пришли из main — форма заново.
