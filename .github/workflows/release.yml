@@ -48,7 +48,7 @@ jobs:
   package:
     needs: validate
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -79,20 +79,32 @@ jobs:
           GIT_CONFIG_VALUE_2: 'false'
           GIT_CONFIG_KEY_3: safe.directory
           GIT_CONFIG_VALUE_3: ''
-      # На Windows собираем нативно с npmRebuild из electron-builder.yml.
-      # Публикация отключена; токена записи у упаковщика нет.
-      - run: pnpm --filter @orca-board/desktop exec electron-builder --${{ matrix.platform }} --publish never
-      - name: Проверка ad-hoc подписи обеих macOS-сборок
+      # Секреты получает только macOS-упаковка. Hook отклоняет отсутствующие credentials,
+      # чужую Team и ad-hoc; встроенный builder notarize/staple .app, hook завершает DMG.
+      - name: Подпись, notarization и проверка финальных macOS-артефактов
         if: matrix.platform == 'mac'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
           set -euo pipefail
-          count=0
-          while IFS= read -r -d '' app; do
-            codesign --verify --deep --strict "$app"
-            count=$((count + 1))
-          done < <(find apps/desktop/release -maxdepth 2 -name '*.app' -type d -print0)
-          test "$count" -eq 2
+          pnpm --filter @orca-board/desktop exec electron-builder --mac --publish never
+          node scripts/verify-macos-release.mjs
+      # На Windows собираем нативно с npmRebuild из electron-builder.yml, без Apple secrets.
+      - if: matrix.platform == 'win'
+        run: pnpm --filter @orca-board/desktop exec electron-builder --win --publish never
+      - name: Диагностика notarization DMG (не файлы релиза)
+        if: always() && matrix.platform == 'mac'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-notarization
+          path: apps/desktop/release/notarization/
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installers-${{ matrix.platform }}
@@ -143,10 +155,11 @@ jobs:
           for file in "${files[@]}"; do
             test -s "$file" || { echo "::error::Нет непустого файла $file"; exit 1; }
           done
-          # В разных версиях упаковщика dmg blockmap бывает отдельным файлом либо встроен в dmg.
+          # Stapling изменяет DMG. Его metadata отключена; updater использует ZIP.
           for file in *.dmg.blockmap; do
-            if [ -f "$file" ]; then test -s "$file"; files+=("$file"); fi
+            if [ -f "$file" ]; then echo "::error::Недопустимый DMG blockmap: $file"; exit 1; fi
           done
+          if grep -q '\.dmg' latest-mac.yml; then echo '::error::DMG в update manifest'; exit 1; fi
           for manifest in latest.yml latest-mac.yml; do
             grep -qxF "version: $RELEASE_VERSION" "$manifest"
           done
