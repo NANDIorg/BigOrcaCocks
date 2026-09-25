@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, RunBranchSettings, WfMigrationNote } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, RunBranchSettings, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -271,6 +271,15 @@ export interface TaskTypeInput {
   workflowNotes?: WfMigrationNote[]
 }
 
+/** Создать (без `id`) или целиком заменить шаблон ноды; `updatedAt` ставит main. */
+export interface NodeTemplateInput {
+  id?: string
+  title: string
+  description?: string
+  /** Нода без id и позиции (лишние `id`/`x`/`y` main снимет). */
+  node: WfTemplateNode
+}
+
 /** Вся библиотека типов в порядке хранения и тип библиотеки по умолчанию. */
 export interface TaskTypesState {
   taskTypes: TaskType[]
@@ -510,6 +519,19 @@ export interface OrcaApi {
     /** Копия типа под новым id. */
     duplicate(id: string): Promise<TaskType>
     setDefault(id: string): Promise<TaskTypesState>
+  }
+  /**
+   * Библиотека шаблонов нод (docs/architecture.md → «Шаблоны нод»): глобальная, общая для всех типов задач. Вставка
+   * в граф — копия ноды с `templateId`, поэтому у прогонов ничего не меняется при правке или удалении шаблона.
+   * Нет у старого preload — renderer показывает «перезапустите приложение».
+   */
+  nodeTemplates: {
+    /** Все шаблоны в порядке хранения (битые записи файла при загрузке пропущены). */
+    list(): Promise<WfNodeTemplate[]>
+    /** Создать или заменить шаблон; негодный (`validateNodeTemplate`) — ошибка `nodeTemplate.notSaved`. */
+    save(input: NodeTemplateInput): Promise<WfNodeTemplate>
+    /** Удалить шаблон (нет такого — `nodeTemplate.notFound`); возвращает оставшиеся. */
+    delete(id: string): Promise<WfNodeTemplate[]>
   }
   agents: {
     /** Агенты реестра с признаками «установлен»/«включён» для активного проекта. refresh — пересканировать PATH. */

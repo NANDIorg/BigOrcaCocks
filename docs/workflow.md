@@ -196,12 +196,19 @@ start → «Реализация» (work, без роли) ──next──▶ �
 «Свои ноды» — глобальная библиотека настроенных нод (`projects.json → nodeTemplates`, рядом с `taskTypes`; глобальная, потому что типы задач тоже глобальные). `WfNodeTemplate {id, title, description?,
 node, updatedAt}`, где `node` — любая нода без `id`, `x`, `y`, кроме `start` (путь — только у `work`). **Вставка — копия** ноды в граф с `templateId` (`WfNode.templateId`): снимок прогона
 (`Run.workflow`) остаётся самодостаточным, править или удалить шаблон можно без последствий для идущих задач; `templateId` нужен только редактору для «Шаблон изменился: обновить» и исполнителем
-не читается. Версий у шаблона нет. Хранение, IPC и редактор — отдельные задачи; контракт core — модуль `node-templates.ts` (без node-импортов: его читает renderer):
+не читается. Версий у шаблона нет. Хранение и IPC — «Библиотека шаблонов» ниже, редактор — отдельная задача; контракт core — модуль `node-templates.ts` (без node-импортов: его читает renderer):
 
 - `validateNodeTemplate(template, {nodeTitle?, scope?})` → `{errors, warnings}`: поля шаблона (`templateNoId`, `templateNoTitle`, `templateNotString`, `templateBadUpdatedAt`, `templateBadNode`, `templateNodeStart`) и сама
   нода — тем же `validateWorkflow` на образце «старт → нода → конец» (в том числе путь подзадачи). Роли шаблона против ролей проекта **не проверяются** (роли типа свои — ошибку роли даст вставка), служебная роль — ошибка;
   колонки, `attempts` на другие ноды и предупреждения о соседях («показ никто не увидит», «человек перед концом») не проверяются: они зависят от графа, в который шаблон попадёт. `scope: 'subtask'` — шаблон
   вставляют в путь подзадачи (там нельзя `ask` и вложенный путь).
+
+**Библиотека шаблонов** (main: `ProjectManager.nodeTemplates / saveNodeTemplate / deleteNodeTemplate`, `main/projects.ts`; IPC `nodeTemplates:list|save|delete`, docs/architecture.md → «IPC»).
+Порядок хранения — порядок показа. Загрузка без доверия к данным (`loadedNodeTemplates`): каждая запись проходит `validateNodeTemplate`, лишние `id`/`x`/`y` у ноды снимаются; негодная запись
+(не объект, нет id, битая нода, повторный id) **пропускается** с предупреждением `StateWarning {kind: 'skipped'}` (`stateWarnings()`), остальные остаются, а не «нет библиотеки». Пропущенная запись из файла пропадёт
+при ближайшей записи `projects.json`. Сохранение (`saveNodeTemplate`): без `id` — новый `tpl_<hex>`, существующий `id` заменяет шаблон на месте, `updatedAt` ставит main; негодный шаблон — `OrcaError`
+`nodeTemplate.notSaved` с текстами проблем core (предупреждения не мешают), форма — `nodeTemplate.notObject|emptyId|emptyTitle`. Роли и колонки против типа задач при сохранении не проверяются — при вставке в граф.
+Удаление (`deleteNodeTemplate`) — `nodeTemplate.notFound` для неизвестного id; вставленные копии в графах остаются, `templateId` у них становится «висячим».
 
 ### Миграция
 

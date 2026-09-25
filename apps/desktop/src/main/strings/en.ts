@@ -115,6 +115,12 @@ export default {
   'workflow.future': 'the workflow is saved in format version {version}, the app only knows {known} — update the app',
   'workflow.notSaved': 'workflow not saved: {errors}',
 
+  'nodeTemplate.notObject': 'node template: an object is expected',
+  'nodeTemplate.emptyId': 'node template: empty id',
+  'nodeTemplate.emptyTitle': 'node template: empty title',
+  'nodeTemplate.notFound': 'node template not found: {id}',
+  'nodeTemplate.notSaved': 'node template not saved: {errors}',
+
   'rules.onlyKnown': 'only {a} and {b} in the project root can be edited, not “{name}”',
   'rules.brokenLink': '{name}: the link points to a missing file',
   'rules.linkOutside': '{name}: the link points outside the project',

@@ -7,10 +7,11 @@ import type { Persistence, StoreSnapshot } from '@orca-board/core'
  * файл не прочитался и был отложен в сторону, а не молча заменён пустым.
  */
 export interface StateWarning {
-  kind: 'corrupt'
-  /** Файл, который не прочитался. */
+  /** `corrupt` — файл не прочитался и отложен; `skipped` — файл прочитан, но часть записей в нём негодна и пропущена. */
+  kind: 'corrupt' | 'skipped'
+  /** Файл, который не прочитался (или из которого пропущены записи). */
   file: string
-  /** Куда он переименован (`<файл>.corrupt-<ts>`); нет — переименовать не удалось. */
+  /** Куда он переименован (`<файл>.corrupt-<ts>`); нет — переименовать не удалось (у `skipped` не бывает). */
   movedTo?: string
   message: string
 }
