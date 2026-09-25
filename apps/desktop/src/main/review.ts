@@ -19,7 +19,7 @@ export type MergeResult = { ok: true } | { ok: false; conflict: true; error: str
  * Не слилось — `conflict`, ничего не удалено: конфликт разрешают в ветке и сливают снова.
  * Ошибка коммита или удаления worktree — исключение (это не конфликт, повтор мержа не поможет).
  */
-export function mergeTaskBranch(repoRoot: string, task: Pick<Task, 'title' | 'worktree' | 'branch'>): MergeResult {
+export function mergeTaskBranch(repoRoot: string, task: Pick<Task, 'title' | 'worktree' | 'branch' | 'branchForeign'>): MergeResult {
   if (!task.worktree || !task.branch) return { ok: true }
   commitWorktree(task.worktree, `orca: ${task.title}`)
   const info = reviewInfo(repoRoot, task.worktree, task.branch)
@@ -30,7 +30,8 @@ export function mergeTaskBranch(repoRoot: string, task: Pick<Task, 'title' | 'wo
       return { ok: false, conflict: true, error: (e as Error).message }
     }
   }
-  removeWorktree(repoRoot, task.worktree, task.branch)
+  // Ветку, которую создала не orca (нода git → checkout), не удаляем: снимается только worktree.
+  removeWorktree(repoRoot, task.worktree, task.branch, task.branchForeign === true)
   return { ok: true }
 }
 

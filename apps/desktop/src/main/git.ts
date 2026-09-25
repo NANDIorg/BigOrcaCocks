@@ -72,13 +72,169 @@ export function removeWorktreeKeepBranch(repoRoot: string, worktree: string): vo
   if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
 }
 
-export function removeWorktree(repoRoot: string, worktree: string, branch: string): void {
+/**
+ * Убрать worktree и ветку. `foreign` — ветку создал не orca (нода `git` переключила worktree на существующую,
+ * `Task.branchForeign`): её удалять нельзя, снимается только worktree.
+ */
+export function removeWorktree(repoRoot: string, worktree: string, branch: string, foreign = false): void {
+  if (foreign) {
+    removeWorktreeKeepBranch(repoRoot, worktree)
+    return
+  }
   if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
   try {
     git(repoRoot, ['branch', '-D', branch])
   } catch {
     /* уже удалена */
   }
+}
+
+// ---------- git-операции ноды воркфлоу «Git» (docs/workflow.md → «Нода Git») ----------
+
+/** Отказ git-операции ноды: текст `git <команда>: <причина>` уходит в `task.feedback` и исход `error`. */
+export class GitOpError extends Error {}
+
+/** Сколько ждать сеть (`push`): git выполняется синхронно в main, зависший remote не должен вешать приложение насовсем. */
+const PUSH_TIMEOUT_MS = 120_000
+
+/** Папка worktree задачи по умолчанию — та же, что создаёт `startWorker`: рядом с репозиторием. */
+export function taskWorktreePath(repoRoot: string, taskId: string): string {
+  return join(repoRoot, '..', '.orca-worktrees', taskId)
+}
+
+/**
+ * git с понятной ошибкой: `git <команда без -c>: <stderr>`. `GIT_TERMINAL_PROMPT=0` — без запроса пароля в
+ * терминале, которого у main нет (иначе `push` зависает на ожидании ввода).
+ */
+function opGit(cwd: string, args: string[], timeoutMs?: number): string {
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGKILL' as const } : {})
+    }).trim()
+  } catch (e) {
+    const err = e as { stderr?: string; stdout?: string; message?: string; code?: string }
+    const shown: string[] = []
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] === '-c') i += 1
+      else shown.push(args[i])
+    }
+    const reason = err.code === 'ETIMEDOUT'
+      ? `не ответил за ${Math.round((timeoutMs ?? 0) / 1000)} с`
+      : (err.stderr?.toString().trim() || err.stdout?.toString().trim() || err.message || 'неизвестная ошибка')
+    throw new GitOpError(`git ${shown.join(' ')}: ${reason}`)
+  }
+}
+
+/** Ветка существует локально. */
+function localBranchExists(repoRoot: string, branch: string): boolean {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: repoRoot, stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Имя допустимо для git по-настоящему (`git check-ref-format --branch`); упрощённую проверку core делает исполнитель до этого. */
+export function isBranchNameAcceptedByGit(repoRoot: string, name: string): boolean {
+  try {
+    execFileSync('git', ['check-ref-format', '--branch', name], { cwd: repoRoot, stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Ветка, на которой стоит worktree; `undefined` — detached HEAD. */
+function worktreeBranch(worktree: string): string | undefined {
+  try {
+    return opGit(worktree, ['symbolic-ref', '--short', '-q', 'HEAD'])
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Точка отсчёта новой ветки по умолчанию — текущая ветка корня репозитория (та, куда сольёт `merge`). Detached HEAD
+ * корня — хеш коммита: слово `HEAD` в worktree означало бы уже его собственный HEAD.
+ */
+function defaultBase(repoRoot: string): string {
+  const branch = currentBranch(repoRoot)
+  return branch === 'HEAD' ? opGit(repoRoot, ['rev-parse', 'HEAD']) : branch
+}
+
+/** `git switch`/`checkout` с грязным деревом может унести правки на другую ветку — поэтому требуем чистоту. */
+function assertClean(worktree: string, action: string): void {
+  if (opGit(worktree, ['status', '--porcelain']) !== '') {
+    throw new GitOpError(`в worktree есть незакоммиченные изменения — ${action} не выполняется; добавьте перед ним операцию commit`)
+  }
+}
+
+/**
+ * Операция `create_branch`: новая ветка `branch` от `base`, worktree — на ней. Worktree ещё нет (нода стоит до первой
+ * «Работы») — создаётся сразу на новой ветке, `orca/<id>` не заводится; `base` по умолчанию — текущая ветка корня.
+ * Worktree уже есть — переключается на новую ветку; `base` по умолчанию — то место, где он стоит.
+ * `own` — `branch` уже записана в задаче (повторный заход в ноду после возврата, конец без мержа): существующая ветка
+ * не ошибка, worktree ставится на неё.
+ */
+export function gitCreateBranch(repoRoot: string, worktree: string, branch: string, base: string | undefined, own: boolean): void {
+  if (localBranchExists(repoRoot, branch)) {
+    if (!own) throw new GitOpError(`ветка «${branch}» уже существует`)
+    checkoutBranch(repoRoot, worktree, branch)
+    return
+  }
+  const verify = (start: string): void => {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', `${start}^{commit}`], { cwd: repoRoot, stdio: 'pipe' })
+    } catch {
+      throw new GitOpError(`базовой ветки «${start}» нет — не от чего создавать «${branch}»`)
+    }
+  }
+  // --no-track: иначе ветка от remote-ветки унаследовала бы её upstream, и голый `git push` ушёл бы не туда.
+  if (existsSync(worktree)) {
+    // Worktree уже есть (нода посреди работы): без `base` ветвимся от того места, где он стоит, — коммиты задачи не теряются.
+    assertClean(worktree, 'создание ветки')
+    if (base) verify(base)
+    opGit(worktree, ['checkout', '-q', '--no-track', '-b', branch, ...(base ? [base] : [])])
+    return
+  }
+  const start = base ?? defaultBase(repoRoot)
+  verify(start)
+  opGit(repoRoot, ['worktree', 'add', '-q', '--no-track', '-b', branch, worktree, start])
+}
+
+/** Операция `checkout`: worktree — на существующую локальную ветку; worktree нет — создаётся на ней. */
+export function gitCheckout(repoRoot: string, worktree: string, branch: string): void {
+  if (!localBranchExists(repoRoot, branch)) throw new GitOpError(`ветки «${branch}» нет`)
+  checkoutBranch(repoRoot, worktree, branch)
+}
+
+function checkoutBranch(repoRoot: string, worktree: string, branch: string): void {
+  if (!existsSync(worktree)) {
+    opGit(repoRoot, ['worktree', 'add', '-q', worktree, branch])
+    return
+  }
+  if (worktreeBranch(worktree) === branch) return
+  assertClean(worktree, 'переключение ветки')
+  opGit(worktree, ['checkout', '-q', branch])
+}
+
+/** Операция `commit`: всё незакоммиченное — одним коммитом от `orca-board`; нечего коммитить — тоже успех. */
+export function gitCommit(worktree: string, message: string): void {
+  if (!existsSync(worktree)) throw new GitOpError('у задачи нет worktree — коммитить нечего')
+  if (opGit(worktree, ['status', '--porcelain']) === '') return
+  opGit(worktree, ['add', '-A'])
+  opGit(worktree, ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message])
+}
+
+/** Операция `push`: ветка задачи в `remote` с upstream, без force. */
+export function gitPush(repoRoot: string, worktree: string | undefined, remote: string, branch: string): void {
+  const cwd = worktree && existsSync(worktree) ? worktree : repoRoot
+  opGit(cwd, ['push', '-u', remote, branch], PUSH_TIMEOUT_MS)
 }
 
 /**

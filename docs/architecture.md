@@ -1141,7 +1141,10 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 - **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
   старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
-  становится ролью задачи.
+  становится ролью задачи. Если первым этапом стоит нода `git`, `enterWork` выполняет её до запуска (`prepareBeforeWork`,
+  `executeSteps(…, deferWorker)`), а воркера стартует сам `runWorker`; цепочка ушла мимо «Работы» — `runWorker` бросает
+  «воркер не запущен: до работы задача остановилась на этапе…». `startWorker` (`worker.ts`) работает на готовых
+  `Task.branch` / `Task.worktree`, а не создаёт `orca/<id>`.
 - **Подписка** `projects.onEvents(runWorkflowEvents)` в `src/main/index.ts` (как `deliverAnswers`), шаги —
   `setImmediate`, не внутри commit: `worker_done` рабочей задачи текущего dispatch → исход `next`; `worker_done`
   задачи-проверки → закрыть её (решение уже есть) или `workflow_blocked` «сдана без решения»; `escalation`
@@ -1149,13 +1152,16 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 - **Эффекты** (`execute`): `start_worker` — задача в ready и `runWorker`; `create_gate` — рабочая в колонку ноды
   (по умолчанию `kind=review`), `createTask` с `gateFor`, `gateTaskTitle`/`gateTaskSpec` и ролью гейта, сразу
   `runWorker`; `request_human` — `requestApproval` (тело: инструкция ноды, текст конфликта, итог воркера, ветка);
-  `merge` — `mergeTaskBranch`, затем сразу исход `ok` / `conflict`; `done` — ветка слита → `acceptTask`, не слита
+  `merge` — `mergeTaskBranch`, затем сразу исход `ok` / `conflict`; `git` — `runGitNode`: операция ноды в worktree
+  задачи (`gitCreateBranch` / `gitCheckout` / `gitCommit` / `gitPush` в `git.ts`), обновляет `Task.worktree` / `Task.branch`
+  / `Task.branchForeign` и сразу исход `ok` / `error` (текст отказа git — в `task.feedback` и в запрос человеку); `done` — ветка слита → `acceptTask`, не слита
   (конец без мержа) → хвосты коммитятся, worktree убирается, **ветка остаётся**, задача в done. Ошибка эффекта →
   `blockStage` (`workflow_blocked`) с причиной и командой, если её можно выполнить. Больше 50 переходов подряд без
   ожидания — тоже `workflow_blocked`.
 - **`mergeTaskBranch(repoRoot, task)`** (`review.ts`) — git-часть приёмки: незакоммиченное коммитится от
   `orca-board`, `git merge --no-ff` в текущую ветку репозитория (если в ветке есть коммиты), `git worktree remove
-  --force`, `git branch -D`. Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
+  --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
+  удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
   месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
@@ -2114,6 +2120,12 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
   проектов нет). `pending` пишется явно при создании файла (`emptyProjectsFile`), а миграция «существующий
   пользователь» срабатывает только при отсутствии ключа `onboarding` (`loadedOnboarding`). Держит тест
   «закрыли посреди мастера» в `projects-onboarding.test.ts`.
+- Нода `git` выполняет git синхронно в main (`execFileSync`), как и остальной git приложения. `push` может идти до 120 с
+  (`PUSH_TIMEOUT_MS` в `git.ts`) — всё это время main не отвечает; `GIT_TERMINAL_PROMPT=0` не даёт git ждать пароль в
+  терминале, которого нет. Ssh-ключ с passphrase без агента даст `error`, а не запрос. Асинхронный `push` потребует
+  переделать `executeSteps` в async — пока не делали.
+- Ветку задачи не выводи из `orca/${task.id}`: нода `git` меняет `Task.branch`, а `startWorker`, `review`, гейты и `merge`
+  читают её из задачи. Удаляя ветку при уборке, смотри на `Task.branchForeign`.
 
 ## Открытые вопросы
 

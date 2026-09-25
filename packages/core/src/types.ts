@@ -469,6 +469,12 @@ export interface Task {
   agent: AgentKind
   worktree?: string
   branch?: string
+  /**
+   * `branch` создало не приложение, а человек: нода воркфлоу `git` переключила worktree на существующую ветку
+   * (`checkout`, например `develop`). Уборка после мержа снимает только worktree и такую ветку не удаляет.
+   * Нет поля — ветка своя (`orca/<id>` или созданная нодой `create_branch`); у старых задач его не было.
+   */
+  branchForeign?: boolean
   dispatchId?: string
   /** Замечания после ревью (у задачи-ответа — уточнение), попадут в промпт при перезапуске. */
   feedback?: string
