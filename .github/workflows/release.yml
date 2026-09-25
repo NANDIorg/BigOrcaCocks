@@ -1,3 +1,4 @@
+# Порядок работы агента и публикации: docs/releasing.md.
 name: Release draft
 
 on:
@@ -15,6 +16,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      version: ${{ steps.notes.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -26,16 +29,32 @@ jobs:
       - run: node scripts/check-git-flow.mjs
       - name: Выпускается только коммит из master
         run: git merge-base --is-ancestor HEAD origin/master
+      - name: Описание выпуска из релизного PR
+        id: notes
+        run: |
+          version=$(node -p "require('./package.json').version")
+          notes="docs/releases/v$version.md"
+          test -s "$notes"
+          grep -q '[^[:space:]]' "$notes"
+          cp "$notes" release-notes.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 14
 
   package:
     needs: validate
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # Обе mac-архитектуры в одной job: electron-builder объединяет latest-mac.yml.
+          - os: macos-14
             platform: mac
           - os: windows-latest
             platform: win
@@ -63,17 +82,31 @@ jobs:
       # На Windows собираем нативно с npmRebuild из electron-builder.yml.
       # Публикация отключена; токена записи у упаковщика нет.
       - run: pnpm --filter @orca-board/desktop exec electron-builder --${{ matrix.platform }} --publish never
+      - name: Проверка ad-hoc подписи обеих macOS-сборок
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' app; do
+            codesign --verify --deep --strict "$app"
+            count=$((count + 1))
+          done < <(find apps/desktop/release -maxdepth 2 -name '*.app' -type d -print0)
+          test "$count" -eq 2
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installers-${{ matrix.platform }}
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.exe
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
           if-no-files-found: error
           retention-days: 14
 
   draft:
-    needs: package
+    needs: [validate, package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -81,20 +114,68 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
+          name: release-notes
+          path: notes
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
           pattern: installers-*
           path: installers
           merge-multiple: true
-      - name: Создать или обновить только черновик
+      - name: Проверить комплект, создать контрольные суммы и загрузить черновик
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" --json isDraft > release.json; then
-            test "$(jq -r .isDraft release.json)" = true
+          cp notes/release-notes.md installers/RELEASE_NOTES.md
+          cd installers
+          files=(
+            latest.yml latest-mac.yml
+            "orca-board-$RELEASE_VERSION-arm64.zip" "orca-board-$RELEASE_VERSION-arm64.zip.blockmap"
+            "orca-board-$RELEASE_VERSION-x64.zip" "orca-board-$RELEASE_VERSION-x64.zip.blockmap"
+            "orca-board-$RELEASE_VERSION-arm64.dmg" "orca-board-$RELEASE_VERSION-x64.dmg"
+            "orca-board-$RELEASE_VERSION-x64.exe" "orca-board-$RELEASE_VERSION-x64.exe.blockmap"
+            "orca-board-$RELEASE_VERSION-portable-x64.exe" RELEASE_NOTES.md
+          )
+          for file in "${files[@]}"; do
+            test -s "$file" || { echo "::error::Нет непустого файла $file"; exit 1; }
+          done
+          # В разных версиях упаковщика dmg blockmap бывает отдельным файлом либо встроен в dmg.
+          for file in *.dmg.blockmap; do
+            if [ -f "$file" ]; then test -s "$file"; files+=("$file"); fi
+          done
+          for manifest in latest.yml latest-mac.yml; do
+            grep -qxF "version: $RELEASE_VERSION" "$manifest"
+          done
+          for arch in arm64 x64; do
+            grep -qxF "  - url: orca-board-$RELEASE_VERSION-$arch.zip" latest-mac.yml
+          done
+          grep -qxF "  - url: orca-board-$RELEASE_VERSION-x64.exe" latest.yml
+          sha256sum "${files[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          files+=(SHA256SUMS)
+
+          # Сбой API не принимаем за отсутствие релиза; опубликованное и дубли не перезаписываем.
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.RELEASE_TAG) | {id, draft}' | jq -s . > ../releases.json
+          count=$(jq length ../releases.json)
+          if [ "$count" -eq 0 ]; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "orca-board $RELEASE_VERSION" --notes-file RELEASE_NOTES.md
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --title "$RELEASE_TAG"
+            test "$count" -eq 1
+            test "$(jq -r '.[0].draft' ../releases.json)" = true
+            gh release edit "$RELEASE_TAG" --draft=true --title "orca-board $RELEASE_VERSION" --notes-file RELEASE_NOTES.md
           fi
-          gh release upload "$RELEASE_TAG" installers/* --clobber
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+          # Проверяем ответ GitHub после загрузки, а не только файлы на runner.
+          gh release view "$RELEASE_TAG" --json isDraft,assets > ../uploaded.json
+          test "$(jq -r .isDraft ../uploaded.json)" = true
+          for file in "${files[@]}"; do
+            size=$(wc -c < "$file")
+            jq -e --arg name "$file" --argjson size "$size" \
+              'any(.assets[]; .name == $name and .size == $size and .state == "uploaded")' ../uploaded.json > /dev/null
+          done
+          echo "Черновик готов: https://github.com/$GH_REPO/releases"

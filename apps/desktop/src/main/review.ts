@@ -1,10 +1,11 @@
 import type { TaskStore, HumanRequest, RequestResolution, Task } from '@orca-board/core'
 import { reviewInfo, commitWorktree, mergeBranch, removeWorktree, type ReviewInfo } from './git'
+import { OrcaError, mt } from './i18n'
 
 export function getReview(store: TaskStore, repoRoot: string, taskId: string): ReviewInfo {
   const task = store.getTask(taskId)
   if (!task) throw new Error(`task not found: ${taskId}`)
-  if (!task.worktree || !task.branch) throw new Error('у задачи нет ветки')
+  if (!task.worktree || !task.branch) throw new OrcaError('review.noBranch')
   return reviewInfo(repoRoot, task.worktree, task.branch)
 }
 
@@ -85,7 +86,7 @@ export function resolveHumanRequest(
 ): ResolveOutcome {
   const pending = store.getRequest(id)
   if (!pending) throw new Error(`request not found: ${id}`)
-  if (pending.status !== 'pending') throw new Error(`уже решено: запрос ${id} ${pending.status === 'cancelled' ? 'отменён' : 'решён'}`)
+  if (pending.status !== 'pending') throw new OrcaError(pending.status === 'cancelled' ? 'request.alreadyCancelled' : 'request.alreadyResolved', { id })
   if (resolution.action === 'accept' && pending.kind === 'answer') {
     acceptReview(store, repoRoot, pending.taskId, resolution.text)
     return { request: store.getRequest(id)! }
@@ -100,9 +101,10 @@ export function resolveHumanRequest(
     const w = startWorker(request.taskId)
     return { request, worker: { ptyId: w.ptyId, dispatchId: w.dispatchId } }
   } catch (e) {
-    const startError = (e as Error).message
+    // В журнал задачи (его читает координатор) — по-русски, человеку в UI — на языке интерфейса.
+    const startError = e instanceof OrcaError ? mt(e.key, e.params) : (e as Error).message
     const what = resolution.action === 'clarify' ? 'уточнение принято' : 'перезапуск'
-    store.escalate(request.taskId, `${what}, но воркер не запустился: ${startError}`, { requestId: request.id, startFailed: true })
+    store.escalate(request.taskId, `${what}, но воркер не запустился: ${(e as Error).message}`, { requestId: request.id, startFailed: true })
     return { request, startError }
   }
 }

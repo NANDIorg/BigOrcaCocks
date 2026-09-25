@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import { marked, Marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { assignHeadingIds, DOC_ID_PREFIX, findDocHeading, type DocHeading } from './docToc'
+import { t, useLocale } from './i18n'
 import './docs-markdown.css'
 
 /** Сейчас санитизируется документ, а не чат: только в документе `#якорь` становится переходом. */
@@ -54,7 +55,7 @@ const docMarked = new Marked({
       const cls = language ? ` class="language-${escapeHtml(language)}"` : ''
       return (
         `<div class="doc-code"><div class="doc-code-head"><span>${escapeHtml(language)}</span>` +
-        `<button type="button" class="doc-copy">Копировать</button></div>` +
+        `<button type="button" class="doc-copy">${escapeHtml(t('board.markdown.copy'))}</button></div>` +
         `<pre><code${cls}>${escapeHtml(text.replace(/\n$/, ''))}</code></pre></div>\n`
       )
     }
@@ -88,8 +89,8 @@ function onDocClick(e: React.MouseEvent<HTMLDivElement>): void {
   if (copy) {
     const code = copy.closest('.doc-code')?.querySelector('code')?.textContent ?? ''
     void navigator.clipboard.writeText(code).then(() => {
-      copy.textContent = 'Скопировано'
-      setTimeout(() => (copy.textContent = 'Копировать'), 1500)
+      copy.textContent = t('board.markdown.copied')
+      setTimeout(() => (copy.textContent = t('board.markdown.copy')), 1500)
     })
   }
 }
@@ -99,7 +100,9 @@ function onDocClick(e: React.MouseEvent<HTMLDivElement>): void {
  * в окне «Документы» (типографика из docs-markdown.css, оглавление — buildDocToc из docToc.ts).
  */
 export function Markdown({ text, className, variant = 'chat' }: { text: string; className?: string; variant?: 'chat' | 'doc' }): React.JSX.Element {
-  const html = useMemo(() => (variant === 'doc' ? renderDocMarkdown(text) : renderMarkdown(text)), [text, variant])
+  // Язык — в зависимостях: подпись «Копировать» зашита в HTML документа.
+  const locale = useLocale()
+  const html = useMemo(() => (variant === 'doc' ? renderDocMarkdown(text) : renderMarkdown(text)), [text, variant, locale])
   if (variant === 'doc') {
     return <div className={`doc-md${className ? ` ${className}` : ''}`} onClick={onDocClick} dangerouslySetInnerHTML={{ __html: html }} />
   }

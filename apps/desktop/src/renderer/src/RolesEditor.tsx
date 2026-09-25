@@ -24,8 +24,11 @@ import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
 import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
-import { executorOnlyPatch } from './taskTypeEdit'
 import { agentChangePatch, withPatch } from './roleEdit'
+import { useT, type TFunction, type TKey } from './i18n'
+import { withCode } from './about/parts'
+import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
+import { ipcErrorMessage } from './ipcError'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -40,11 +43,6 @@ interface Props {
   workflow?: Workflow
   /** Только просмотр: роли можно выбирать и читать, правки не сохраняются. */
   readOnly?: boolean
-  /**
-   * Встроенный тип задачи: меняются только исполнитель (агент, модель, усилие) и инструкции роли; состав, порядок,
-   * названия и назначение ролей заблокированы — их правят в копии типа.
-   */
-  executorOnly?: boolean
   /** Роли типа задачи: в последствиях удаления — незакрытые глобальные задачи этого типа. */
   ofTaskType?: boolean
   onSave(roles: Role[]): Promise<void>
@@ -63,10 +61,10 @@ function agentState(info: AgentInfo | undefined): AgentState {
   return info.enabled ? 'on' : 'off'
 }
 
-const AGENT_STATE_TEXT: Record<AgentState, string> = {
-  on: 'Агент включён',
-  off: 'Агент выключен — роль не запустится',
-  unknown: 'Агент неизвестен — роль не запустится'
+const AGENT_STATE_TEXT: Record<AgentState, TKey> = {
+  on: 'config.roles.agentState.on',
+  off: 'config.roles.agentState.off',
+  unknown: 'config.roles.agentState.unknown'
 }
 
 function newRoleId(): string {
@@ -75,11 +73,12 @@ function newRoleId(): string {
 
 /** Вкладка «Роли» типа задачи («Настройки» → «Типы задач»): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
 export function RolesEditor({
-  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, executorOnly = false, ofTaskType = false, onSave
+  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, ofTaskType = false, onSave
 }: Props): React.JSX.Element {
+  const t = useT()
   const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
-  /** Состав и порядок ролей: заблокированы и в просмотре, и в режиме «только исполнитель». */
-  const locked = readOnly || executorOnly
+  /** Состав и порядок ролей в просмотре заблокированы. */
+  const locked = readOnly
   const update: typeof save = locked ? () => undefined : save
   const enabled = agents.filter((a) => a.enabled)
   const builtin = useBuiltinPrompts()
@@ -93,11 +92,10 @@ export function RolesEditor({
 
   function patch(i: number, p: Partial<Role>, debounce = false): void {
     if (readOnly) return
-    const allowed = executorOnly ? executorOnlyPatch(p) : p
-    save(roles.map((r, j) => (j === i ? withPatch(r, allowed) : r)), debounce)
+    save(roles.map((r, j) => (j === i ? withPatch(r, p) : r)), debounce)
   }
 
-  /** Смена агента (и во встроенном типе): модель и effort сбрасываются — `agentChangePatch`. */
+  /** Смена агента: модель и effort сбрасываются — `agentChangePatch`. */
   function changeAgent(i: number, agent: AgentKind): void {
     patch(i, agentChangePatch(agent))
   }
@@ -112,13 +110,13 @@ export function RolesEditor({
 
   function add(): void {
     const agent: AgentKind = enabled[0]?.id ?? agents[0]?.id ?? 'claude'
-    const role: Role = { id: newRoleId(), title: 'Новая роль', agent }
+    const role: Role = { id: newRoleId(), title: t('config.roles.newRole'), agent }
     update([...roles, role])
     setSelectedId(role.id)
   }
 
   function duplicate(i: number): void {
-    const role: Role = { ...roles[i], id: newRoleId(), title: `${roles[i].title} (копия)` }
+    const role: Role = { ...roles[i], id: newRoleId(), title: t('config.roles.copyTitle', { title: roles[i].title }) }
     update([...roles.slice(0, i + 1), role, ...roles.slice(i + 1)])
     setSelectedId(role.id)
   }
@@ -164,8 +162,8 @@ export function RolesEditor({
     const state = agentState(info)
     const isService = !isTaskRole(r.id)
     const summary = [
-      info?.title ?? r.agent,
-      state === 'on' ? modelLabel(info, r.model) : state === 'off' ? 'выключен' : 'неизвестен',
+      agentTitle(r.agent),
+      state === 'on' ? modelTitle(modelLabel(info, r.model)) : state === 'off' ? t('config.roles.summaryOff') : t('config.roles.summaryUnknown'),
       state === 'on' ? r.effort : undefined
     ].filter(Boolean).join(' · ')
     const count = taskCounts?.[r.id]
@@ -181,12 +179,12 @@ export function RolesEditor({
         }}
       >
         {isService ? (
-          <span className={`roles-dot ${state}`} role="img" aria-label={AGENT_STATE_TEXT[state]} title={AGENT_STATE_TEXT[state]} />
+          <span className={`roles-dot ${state}`} role="img" aria-label={t(AGENT_STATE_TEXT[state])} title={t(AGENT_STATE_TEXT[state])} />
         ) : locked ? null : (
           <span
             className="roles-handle"
             draggable
-            title="Перетащите, чтобы изменить порядок (или Alt+↑/↓)"
+            title={t('config.roles.dragHint')}
             aria-hidden="true"
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = 'move'
@@ -210,9 +208,9 @@ export function RolesEditor({
           }}
         >
           <span className="roles-title">
-            <span className="roles-name">{r.title || 'Без названия'}</span>
+            <span className="roles-name">{r.title ? builtinText(r.title) : t('config.roles.untitled')}</span>
             {!isService && state !== 'on' && (
-              <span className={`roles-dot ${state}`} role="img" aria-label={AGENT_STATE_TEXT[state]} title={AGENT_STATE_TEXT[state]} />
+              <span className={`roles-dot ${state}`} role="img" aria-label={t(AGENT_STATE_TEXT[state])} title={t(AGENT_STATE_TEXT[state])} />
             )}
           </span>
           <span className="roles-sub">
@@ -221,11 +219,11 @@ export function RolesEditor({
           </span>
         </button>
         {isService ? (
-          <span className="chip sys" title={`${SERVICE_TEXT[builtinPromptKind(r.id)]}, задачам не назначается`}>запуск</span>
+          <span className="chip sys" title={t('config.roles.serviceChipTitle', { service: t(SERVICE_TEXT[builtinPromptKind(r.id)]) })}>{t('config.roles.serviceChip')}</span>
         ) : state !== 'on' ? (
-          <span className="chip warn" title={AGENT_STATE_TEXT[state]}>!</span>
+          <span className="chip warn" title={t(AGENT_STATE_TEXT[state])}>!</span>
         ) : count !== undefined ? (
-          <span className="chip mono" title={`Задач на роли: ${count}`}>{count}</span>
+          <span className="chip mono" title={t('config.roles.taskCountTitle', { n: count })}>{count}</span>
         ) : null}
       </li>
     )
@@ -234,23 +232,23 @@ export function RolesEditor({
   return (
     <div className="editor roles-editor">
       <div className="roles-md">
-        <aside className="roles-list" aria-label="Список ролей">
+        <aside className="roles-list" aria-label={t('config.roles.listAria')}>
           {system.length > 0 && (
             <>
-              <div className="roles-group">Системная</div>
+              <div className="roles-group">{t('config.roles.groupSystem')}</div>
               <ul>{system.map(item)}</ul>
             </>
           )}
-          <div className="roles-group">Роли для задач</div>
+          <div className="roles-group">{t('config.roles.groupTask')}</div>
           <ul>{taskRoles.map(item)}</ul>
-          {!locked && <button type="button" className="btn-sm roles-add" onClick={add}>＋ Новая роль</button>}
+          {!locked && <button type="button" className="btn-sm roles-add" onClick={add}>{t('config.roles.add')}</button>}
           <div className="roles-hint">
-            Порядок — как в «Новой задаче».{taskCounts ? ' Число — задач проекта на роли.' : ''}
+            {t('config.roles.orderHint')}{taskCounts ? ` ${t('config.roles.countHint')}` : ''}
           </div>
           {missing.length > 0 && !locked && (
             <div className="roles-hint">
-              Удалены системные: {missing.map((r) => r.id).join(', ')}.{' '}
-              <button type="button" className="roles-link" onClick={restore}>Вернуть системные роли</button>
+              {t('config.roles.missing', { ids: missing.map((r) => r.id).join(', ') })}{' '}
+              <button type="button" className="roles-link" onClick={restore}>{t('config.roles.restore')}</button>
             </div>
           )}
         </aside>
@@ -266,7 +264,6 @@ export function RolesEditor({
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
             readOnly={readOnly}
-            executorOnly={executorOnly}
             onPatch={(p, debounce) => patch(index, p, debounce)}
             onAgent={(agent) => changeAgent(index, agent)}
             onModel={(model, debounce) => changeModel(index, model, debounce)}
@@ -274,7 +271,7 @@ export function RolesEditor({
             onRemove={() => remove(index)}
           />
         ) : (
-          <section className="roles-panel roles-empty">Ролей нет — добавьте первую.</section>
+          <section className="roles-panel roles-empty">{t('config.roles.empty')}</section>
         )}
       </div>
       {error && <div className="editor-error">{error}</div>}
@@ -293,7 +290,6 @@ interface PanelProps {
   deleteBlocker: string | undefined
   builtin: BuiltinState
   readOnly: boolean
-  executorOnly: boolean
   onPatch(p: Partial<Role>, debounce?: boolean): void
   onAgent(agent: AgentKind): void
   onModel(model: string, debounce?: boolean): void
@@ -305,9 +301,10 @@ type RoleTab = 'prompt' | 'builtin' | 'start'
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, workflow, ofTaskType, deleteBlocker, builtin, readOnly, executorOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, ofTaskType, deleteBlocker, builtin, readOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
-  const locked = readOnly || executorOnly
+  const t = useT()
+  const locked = readOnly
   const [tab, setTab] = useState<RoleTab>('prompt')
   /** Открыто подтверждение удаления: что сломается без роли. */
   const [confirming, setConfirming] = useState(false)
@@ -316,7 +313,7 @@ function RolePanel({
   const defaults = current?.defaults
   const models = current ? modelOptions(current) : []
   const customModel = r.model && !models.some((m) => m.id === r.model) ? r.model : undefined
-  const defaultModel = modelLabel(current, defaults?.model)
+  const defaultModel = modelTitle(modelLabel(current, defaults?.model))
   const efforts = effortsOf(current, r.agent, r.model)
   const isSystem = isSystemRole(r.id)
   const isService = !isTaskRole(r.id)
@@ -325,13 +322,16 @@ function RolePanel({
   const builtinText = builtin && 'prompts' in builtin ? builtin.prompts[kind] : undefined
   const losses = removalConsequences(r.id, count, workflow, ofTaskType)
   const tabs: { id: RoleTab; label: string }[] = [
-    { id: 'prompt', label: r.systemPrompt ? 'Инструкции роли •' : 'Инструкции роли' },
-    { id: 'builtin', label: `Встроенная инструкция Orca${builtinText ? ` · ${lineCount(builtinText)} строк` : ''}` },
-    { id: 'start', label: 'Стартовое сообщение' }
+    { id: 'prompt', label: r.systemPrompt ? t('config.roles.tab.promptSet') : t('config.roles.tab.prompt') },
+    {
+      id: 'builtin',
+      label: builtinText ? t('config.roles.tab.builtinLines', { count: lineCount(builtinText) }) : t('config.roles.tab.builtin')
+    },
+    { id: 'start', label: t('config.roles.tab.start') }
   ]
 
   return (
-    <section className="roles-panel" aria-label={`Роль «${r.title}»`}>
+    <section className="roles-panel" aria-label={t('config.roles.panelAria', { title: roleTitle(r) })}>
       {/* Только чтение — поля недоступны, а вкладки инструкций ниже остаются кликабельными. */}
       <fieldset className="roles-fields" disabled={readOnly}>
       <div className="roles-head">
@@ -339,114 +339,112 @@ function RolePanel({
           <input
             className="roles-title-input"
             value={r.title}
-            placeholder="Название роли"
-            aria-label="Название роли"
-            disabled={executorOnly}
+            placeholder={t('config.roles.titlePlaceholder')}
+            aria-label={t('config.roles.titlePlaceholder')}
             onChange={(e) => onPatch({ title: e.target.value }, true)}
           />
           <div className="roles-meta">
-            <span className="chip mono" title="id роли (для CLI: --role)">{r.id}</span>
-            {isSystem && <span className="chip sys" title="Встроенная роль Orca: после удаления её можно вернуть с настройками по умолчанию">системная</span>}
+            <span className="chip mono" title={t('config.roles.idTitle')}>{r.id}</span>
+            {isSystem && <span className="chip sys" title={t('config.roles.systemChipTitle')}>{t('config.roles.systemChip')}</span>}
             {isService
-              ? <span className="chip sys">{SERVICE_TEXT[kind].toLowerCase()} · задачам не назначается</span>
-              : <span className="chip ok">назначается задачам</span>}
+              ? <span className="chip sys">{t('config.roles.serviceBadge', { service: t(SERVICE_TEXT[kind]).toLowerCase() })}</span>
+              : <span className="chip ok">{t('config.roles.assignable')}</span>}
           </div>
         </div>
-        {!locked && <button type="button" className="btn-sm" onClick={onDuplicate}>Дублировать</button>}
+        {!locked && <button type="button" className="btn-sm" onClick={onDuplicate}>{t('config.roles.duplicate')}</button>}
       </div>
 
       {state !== 'on' && (
         <div className="roles-warn" role="alert">
           {state === 'off'
-            ? `Агент «${current?.title}» выключен — роль не запустится. Выберите другого агента или включите этого в списке агентов.`
-            : `Агент «${r.agent}» неизвестен — роль не запустится. Выберите другого агента.`}
+            ? t('config.roles.warnOff', { agent: agentTitle(r.agent) })
+            : t('config.roles.warnUnknown', { agent: r.agent })}
         </div>
       )}
 
       <div className="roles-sec">
         <div className="roles-sec-head">
-          <span>Назначение</span>
-          <span className="roles-hint">координатор выбирает роль по этому тексту</span>
+          <span>{t('config.roles.purpose')}</span>
+          <span className="roles-hint">{t('config.roles.purposeHint')}</span>
         </div>
         <textarea
           className="roles-description"
           value={r.description ?? ''}
           rows={3}
-          placeholder={defaultDescription ?? 'Что делает роль и когда её брать'}
-          aria-label="Назначение роли"
-          disabled={executorOnly}
+          placeholder={defaultDescription ?? t('config.roles.purposePlaceholder')}
+          aria-label={t('config.roles.purposeAria')}
           onChange={(e) => onPatch({ description: e.target.value }, true)}
         />
         {defaultDescription ? (
           <div className="roles-hint">
-            Пусто — берётся назначение по умолчанию для <code>{r.id}</code>.{' '}
+            {withCode(t('config.roles.purposeDefault'), r.id, 'id')}{' '}
             {r.description !== defaultDescription && !locked && (
               <button type="button" className="roles-link" onClick={() => onPatch({ description: defaultDescription })}>
-                Вернуть по умолчанию
+                {t('config.roles.resetDefault')}
               </button>
             )}
           </div>
         ) : !r.description?.trim() && (
-          <div className="roles-warn">Нет назначения — координатор выберет роль только по id и названию.</div>
+          <div className="roles-warn">{t('config.roles.noPurpose')}</div>
         )}
       </div>
 
       <div className="roles-sec">
-        <div className="roles-sec-head"><span>Исполнитель</span></div>
+        <div className="roles-sec-head"><span>{t('config.roles.executor')}</span></div>
         <div className="roles-grid3">
           <div className="roles-field">
-            <span className="roles-label">Агент</span>
+            <span className="roles-label">{t('config.roles.agent')}</span>
             <div className="roles-agent">
               <AgentLogo agent={r.agent} size={18} />
               <select
                 value={r.agent}
                 className={state !== 'on' ? 'off' : ''}
-                aria-label="Агент"
+                aria-label={t('config.roles.agent')}
                 onChange={(e) => onAgent(e.target.value as AgentKind)}
               >
                 {enabled.map((a) => (
-                  <option key={a.id} value={a.id}>{a.title}</option>
+                  <option key={a.id} value={a.id}>{agentTitle(a.id)}</option>
                 ))}
-                {state === 'off' && current && <option value={current.id} disabled>{current.title} (выключен)</option>}
-                {state === 'unknown' && <option value={r.agent} disabled>{r.agent} (неизвестен)</option>}
+                {state === 'off' && current && <option value={current.id} disabled>{t('config.roles.agentOffOption', { agent: current.title })}</option>}
+                {state === 'unknown' && <option value={r.agent} disabled>{t('config.roles.agentUnknownOption', { agent: r.agent })}</option>}
               </select>
             </div>
           </div>
           <div className="roles-field">
-            <span className="roles-label">Модель</span>
+            <span className="roles-label">{t('config.roles.model')}</span>
             {models.length > 0 ? (
-              <select value={r.model ?? ''} aria-label="Модель" onChange={(e) => onModel(e.target.value)}>
-                <option value="">{defaultModel ? `по умолчанию агента: ${defaultModel}` : 'по умолчанию агента'}</option>
+              <select value={r.model ?? ''} aria-label={t('config.roles.model')} onChange={(e) => onModel(e.target.value)}>
+                <option value="">{defaultModel ? t('config.roles.modelDefaultOf', { model: defaultModel }) : t('config.roles.modelDefault')}</option>
                 {models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
+                  <option key={m.id} value={m.id}>{modelTitle(m.label)}</option>
                 ))}
-                {customModel && <option value={customModel}>{customModel} (нестандартная)</option>}
+                {customModel && <option value={customModel}>{t('config.roles.modelCustom', { model: customModel })}</option>}
               </select>
             ) : (
               <input
                 value={r.model ?? ''}
-                aria-label="Модель"
-                placeholder={defaults?.model ? `по умолчанию агента: ${defaults.model}` : 'по умолчанию агента'}
+                aria-label={t('config.roles.model')}
+                placeholder={defaults?.model ? t('config.roles.modelDefaultOf', { model: defaults.model }) : t('config.roles.modelDefault')}
                 onChange={(e) => onModel(e.target.value, true)}
               />
             )}
           </div>
           <div className="roles-field">
             <span className="roles-label">
-              <span>Усилие</span>
-              {defaults?.effort && <span>по умолчанию: {defaults.effort}</span>}
+              <span>{t('config.roles.effort')}</span>
+              {defaults?.effort && <span>{t('config.roles.effortDefault', { effort: defaults.effort })}</span>}
             </span>
             {efforts.length > 0 ? (
-              <div className="roles-effort" role="radiogroup" aria-label="Усилие">
+              <div className="roles-effort" role="radiogroup" aria-label={t('config.roles.effort')}>
                 <button
                   type="button"
                   role="radio"
                   aria-checked={!r.effort}
                   className={!r.effort ? 'on' : ''}
-                  title="По умолчанию агента"
+                  title={t('config.roles.effortAutoTitle')}
                   onClick={() => onPatch({ effort: undefined })}
                 >
-                  авто
+                  {t('config.roles.effortAuto')}
                 </button>
                 {efforts.map((e) => (
                   <button
@@ -455,43 +453,43 @@ function RolePanel({
                     role="radio"
                     aria-checked={r.effort === e}
                     className={`${r.effort === e ? 'on' : ''}${defaults?.effort === e ? ' def' : ''}`}
-                    title={defaults?.effort === e ? `${e} — по умолчанию агента` : e}
+                    title={defaults?.effort === e ? t('config.roles.effortIsDefault', { effort: e }) : e}
                     onClick={() => onPatch({ effort: e })}
                   >
                     {e}
                   </button>
                 ))}
                 {r.effort && !efforts.includes(r.effort) && (
-                  <button type="button" role="radio" aria-checked className="on bad" disabled title="Модель не поддерживает этот уровень">
+                  <button type="button" role="radio" aria-checked className="on bad" disabled title={t('config.roles.effortUnsupported')}>
                     {r.effort}
                   </button>
                 )}
               </div>
             ) : (
-              <div className="roles-hint roles-effort-none">агент не поддерживает выбор усилия</div>
+              <div className="roles-hint roles-effort-none">{t('config.roles.effortNone')}</div>
             )}
           </div>
         </div>
-        <pre className="roles-preview" aria-label="Команда запуска">
-          <span className="k">$</span> {commandPreview(r, kind)}
+        <pre className="roles-preview" aria-label={t('config.roles.commandAria')}>
+          <span className="k">$</span> {commandPreview(t, r, kind)}
         </pre>
       </div>
       </fieldset>
 
       <div className="roles-sec">
-        <div className="roles-tabs" role="tablist" aria-label="Инструкции">
-          {tabs.map((t) => (
+        <div className="roles-tabs" role="tablist" aria-label={t('config.roles.tabsAria')}>
+          {tabs.map((x) => (
             <button
-              key={t.id}
+              key={x.id}
               type="button"
               role="tab"
-              id={`role-tab-${r.id}-${t.id}`}
-              aria-selected={tab === t.id}
+              id={`role-tab-${r.id}-${x.id}`}
+              aria-selected={tab === x.id}
               aria-controls={`role-tabpanel-${r.id}`}
-              className={tab === t.id ? 'on' : ''}
-              onClick={() => setTab(t.id)}
+              className={tab === x.id ? 'on' : ''}
+              onClick={() => setTab(x.id)}
             >
-              {t.label}
+              {x.label}
             </button>
           ))}
         </div>
@@ -500,33 +498,30 @@ function RolePanel({
             <>
               <textarea
                 value={r.systemPrompt ?? ''}
-                placeholder="Например: пиши тесты на каждое изменение. Встроенную инструкцию и правила доски сюда копировать не нужно."
+                placeholder={t('config.roles.promptPlaceholder')}
                 rows={5}
                 readOnly={readOnly}
-                aria-label="Инструкции роли"
+                aria-label={t('config.roles.tab.prompt')}
                 onChange={(e) => onPatch({ systemPrompt: e.target.value }, true)}
               />
               <div className="roles-hint">
-                Правила роли для агентов доски: дописываются после встроенной инструкции и «Правил доски» типа блоком
-                «# Инструкции роли «{r.title}»» и не заменяют их. Получает только агент, запущенный доской на этой роли, — не
-                CLAUDE.md и не обычные сессии. Пусто — агент получает только встроенную инструкцию.
+                {t('config.roles.promptHint', { title: r.title })}
               </div>
             </>
           )}
           {tab === 'builtin' && (
             <>
-              <div className="roles-hint">skills/{kind}.md · только чтение</div>
+              <div className="roles-hint">{t('config.roles.builtinSource', { kind })}</div>
               {builtinText !== undefined ? (
-                <pre className="role-text" tabIndex={0} aria-label="Встроенная инструкция Orca">{builtinText.trimEnd()}</pre>
+                <pre className="role-text" tabIndex={0} aria-label={t('config.roles.tab.builtin')}>{builtinText.trimEnd()}</pre>
               ) : (
                 <div className="roles-hint">
-                  {builtin && 'error' in builtin ? `Не удалось загрузить: ${builtin.error}` : 'Загрузка…'}
+                  {builtin && 'error' in builtin ? t('config.roles.loadFailed', { error: builtin.error }) : t('common.loading')}
                 </div>
               )}
               {kind === 'coordinator' && (
                 <div className="roles-hint">
-                  С ней запускается координатор. Если назначить роль <code>coordinator</code> задаче, воркер получит воркерскую
-                  инструкцию (skills/worker.md).
+                  {withCode(t('config.roles.coordinatorHint'), 'coordinator', 'code')}
                 </div>
               )}
             </>
@@ -534,14 +529,10 @@ function RolePanel({
           {tab === 'start' && (
             <>
               <div className="roles-hint">
-                {current?.title ?? r.agent} {CHANNEL_TEXT[promptChannel(getAgent(r.agent))]}. В ‹…› подставляются данные{' '}
-                {kind === 'coordinator'
-                  ? 'прогона; если к цели приложены изображения, добавляется блок с путями к ним.'
-                  : kind === 'assistant'
-                    ? 'не нужны: сообщение постоянное, запросы человек пишет в терминал ассистента.'
-                    : 'задачи; после возврата с ревью добавляется блок «Замечания после ревью».'}
+                {t('config.roles.startLead', { agent: agentTitle(r.agent), channel: t(CHANNEL_TEXT[promptChannel(getAgent(r.agent))]) })}{' '}
+                {t(START_TEXT[kind])}
               </div>
-              <pre className="role-text short">{startTemplate(kind)}</pre>
+              <pre className="role-text short">{startTemplate(t, kind)}</pre>
             </>
           )}
         </div>
@@ -550,7 +541,7 @@ function RolePanel({
       {!locked && <div className="roles-foot">
         {count !== undefined && (
           <span className="roles-hint">
-            {count > 0 ? `Используется в задачах проекта: ${count}` : 'Задач на этой роли нет'}
+            {count > 0 ? t('config.roles.usedIn', { n: count }) : t('config.roles.noTasks')}
           </span>
         )}
         <span className="grow" />
@@ -558,21 +549,21 @@ function RolePanel({
           type="button"
           className="btn-sm danger"
           disabled={deleteBlocker !== undefined || confirming}
-          title={deleteBlocker ?? 'Удалить роль'}
+          title={deleteBlocker ?? t('config.roles.delete')}
           onClick={() => (losses.length > 0 ? setConfirming(true) : onRemove())}
         >
-          <Icon.trash /> Удалить роль
+          <Icon.trash /> {t('config.roles.delete')}
         </button>
       </div>}
       {confirming && (
-        <div className="roles-confirm" role="alertdialog" aria-label={`Удалить роль «${r.title}»?`}>
+        <div className="roles-confirm" role="alertdialog" aria-label={t('config.roles.confirmTitle', { title: r.title })}>
           <div className="roles-confirm-title">
-            Удалить {isSystem ? 'системную роль' : 'роль'} «{r.title || r.id}»?
+            {t(isSystem ? 'config.roles.confirmTitleSystem' : 'config.roles.confirmTitle', { title: r.title || r.id })}
           </div>
           <ul>{losses.map((l) => <li key={l}>{l}</li>)}</ul>
           <div className="roles-confirm-btns">
-            <button type="button" className="btn-sm" autoFocus onClick={() => setConfirming(false)}>Отмена</button>
-            <button type="button" className="btn-sm danger-fill" onClick={onRemove}>Удалить</button>
+            <button type="button" className="btn-sm" autoFocus onClick={() => setConfirming(false)}>{t('config.roles.cancel')}</button>
+            <button type="button" className="btn-sm danger-fill" onClick={onRemove}>{t('config.roles.remove')}</button>
           </div>
         </div>
       )}
@@ -592,13 +583,13 @@ function shellArg(arg: string): string {
 }
 
 /** Строка запуска агента роли — из того же `invoke` реестра, что и реальный запуск; тексты — плейсхолдерами. */
-function commandPreview(r: Role, kind: BuiltinPromptKind): string {
+function commandPreview(t: TFunction, r: Role, kind: BuiltinPromptKind): string {
   const spec = getAgent(r.agent)
-  if (!spec) return `${r.agent}: агент неизвестен`
-  const system = `‹skills/${kind}.md${r.systemPrompt ? ' + инструкции роли' : ''}›`
-  const prompt = kind === 'coordinator' ? '‹цель прогона›' : kind === 'assistant' ? ASSISTANT_START_PROMPT : '‹задание›'
+  if (!spec) return t('config.roles.agentUnknownCmd', { agent: r.agent })
+  const system = t(r.systemPrompt ? 'config.roles.ph.systemWithRole' : 'config.roles.ph.system', { kind })
+  const prompt = kind === 'coordinator' ? t('config.roles.ph.goal') : kind === 'assistant' ? ASSISTANT_START_PROMPT : t('config.roles.ph.task')
   const { command, args } = spec.invoke(system, prompt, {
-    permissionMode: '‹режим разрешений›', shell: '$SHELL', model: r.model, effort: r.effort
+    permissionMode: t('config.roles.ph.permission'), shell: '$SHELL', model: r.model, effort: r.effort
   })
   return [command, ...args].map(shellArg).join(' ')
 }
@@ -612,7 +603,7 @@ function useBuiltinPrompts(): BuiltinState {
     let alive = true
     window.orca.prompts.builtin().then(
       (prompts) => alive && setState({ prompts }),
-      (e: unknown) => alive && setState({ error: (e as Error).message ?? String(e) })
+      (e: unknown) => alive && setState({ error: ipcErrorMessage(e) })
     )
     return () => {
       alive = false
@@ -622,21 +613,29 @@ function useBuiltinPrompts(): BuiltinState {
 }
 
 /** Стартовое сообщение с ‹плейсхолдерами› — собирается теми же функциями, что и при запуске. */
-function startTemplate(kind: BuiltinPromptKind): string {
-  if (kind === 'coordinator') return coordinatorPrompt('‹цель прогона›')
+function startTemplate(t: TFunction, kind: BuiltinPromptKind): string {
+  if (kind === 'coordinator') return coordinatorPrompt(t('config.roles.ph.goal'))
   if (kind === 'assistant') return ASSISTANT_START_PROMPT
-  return workerTaskPrompt({ title: '‹название задачи›', spec: '‹описание задачи›' })
+  return workerTaskPrompt({ title: t('config.roles.ph.taskTitle'), spec: t('config.roles.ph.taskSpec') })
 }
 
 /** Что запускает служебная роль (у воркерской kind — не используется). */
-const SERVICE_TEXT: Record<BuiltinPromptKind, string> = {
-  coordinator: 'Запускает прогон',
-  assistant: 'Ассистент доски',
-  worker: 'Выполняет задачу'
+const SERVICE_TEXT: Record<BuiltinPromptKind, TKey> = {
+  coordinator: 'config.roles.service.coordinator',
+  assistant: 'config.roles.service.assistant',
+  worker: 'config.roles.service.worker'
 }
 
-const CHANNEL_TEXT = {
-  system: 'получает встроенную и дополнительные инструкции как системный промпт (--append-system-prompt), а стартовое сообщение — отдельно',
-  combined: 'не имеет отдельного системного промпта: инструкции идут в начале стартового сообщения, после разделителя «---» — задание',
-  none: 'запускается без промпта: инструкции и задание не передаются'
-} as const
+/** Как передаётся промпт агенту (`promptChannel`). */
+const CHANNEL_TEXT: Record<ReturnType<typeof promptChannel>, TKey> = {
+  system: 'config.roles.channel.system',
+  combined: 'config.roles.channel.combined',
+  none: 'config.roles.channel.none'
+}
+
+/** Что подставляется в ‹…› стартового сообщения. */
+const START_TEXT: Record<BuiltinPromptKind, TKey> = {
+  coordinator: 'config.roles.start.coordinator',
+  assistant: 'config.roles.start.assistant',
+  worker: 'config.roles.start.worker'
+}

@@ -3,12 +3,15 @@
 Монорепо pnpm: `apps/desktop` (Electron: main / preload / renderer / shared), `packages/core`
 (модель, store, промпты — TypeScript без сборки), `packages/cli` (голый JS, `bin/orca-board.js`),
 `skills/` (инструкции координатора и воркера, вшиваются в сборку), `docs/` (архитектура и решения).
-Полная картина — `docs/architecture.md`. Комментарии в коде, документация, коммиты и UI — на русском.
+Полная картина — `docs/architecture.md`. Комментарии в коде, документация и коммиты — на русском;
+UI — на русском и английском через i18n (`renderer/src/i18n/`).
 Этот файл и `AGENTS.md` можно править и в приложении: «О проекте → Правила».
 
 Командный процесс — **[docs/git-flow.md](docs/git-flow.md), прочитай целиком перед работой**.
 Вход для разработчика — [CONTRIBUTING.md](CONTRIBUTING.md). Эти правила относятся к разработке
 orca-board; `skills/*.md` — инструкции самого продукта для любых пользовательских проектов.
+Поручения собрать/опубликовать релиз выполняй по **[docs/releasing.md](docs/releasing.md)**:
+«собери» заканчивается черновиком, «опубликуй» разрешает публикацию после проверок.
 
 ## Нельзя
 
@@ -49,7 +52,7 @@ orca-board; `skills/*.md` — инструкции самого продукта
   `docs/architecture.md`.
 - **Renderer должен работать со старыми main и preload.** В `pnpm dev` renderer обновляется по HMR, а
   main и preload — только после перезапуска. Перед вызовом нового API проверяй, что он есть, и показывай
-  «перезапустите приложение» вместо падения (фикс 086a654: `docsApi()` и `STALE_APP_MESSAGE` в
+  «перезапустите приложение» вместо падения (фикс 086a654: `docsApi()` и `staleAppMessage()` в
   `renderer/src/docLinks.ts`).
 - **Новая команда или метод CLI проходит всю цепочку:** store (core) → метод сокета
   (`src/main/socket.ts`) → команда и `HELP` в `packages/cli/bin/orca-board.js` → разделы «Протокол
@@ -68,6 +71,15 @@ orca-board; `skills/*.md` — инструкции самого продукта
   тест в подпапке (`about/`, `settings/`) не выполнится, клади его в `renderer/src/`
   (как `taskTypeEdit.test.ts`). Логику из компонентов выноси в `.ts`-модуль и тестируй его
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).
+- **Новый UI-текст в renderer — только через `t()`, ключ сразу в ru и en.** Словари — по областям:
+  `renderer/src/i18n/ru/<область>.ts` и `i18n/en/<область>.ts` (`common`, `settings`, `board`, `shell`, `global`,
+  `config`, `builtin`). В компоненте — `const t = useT()`, в `.ts`-модулях — `t()` из `./i18n`. Числа, даты и
+  длительности — через `i18n/format.ts`, не `toLocaleString('ru-RU')`. Тексты main, которые видит человек (трей,
+  уведомления, диалоги, ошибки IPC), — ключ в `main/strings/ru.ts` и `en.ts`, `mt()` или `OrcaError` (`main/i18n.ts`);
+  `message` у `OrcaError` русский — его читают сокет и CLI. Ошибку main в renderer узнавать по `ipcErrorCode`, не по
+  тексту. Не переводятся: промпты и skills, всё, что агенты читают через сокет и CLI, введённые человеком названия.
+  Кириллица в литералах renderer вне `i18n/` роняет `noCyrillic.test.ts`. Подробнее — «Язык интерфейса» в
+  `docs/architecture.md`.
 - **Обновляй docs в том же коммите:** `docs/architecture.md` (модель, IPC, сокет, CLI),
   `docs/nested-kanban.md` (глобальные задачи), `docs/human-requests.md` (запросы к человеку),
   `docs/workflow.md` (воркфлоу задачи: этапы, проверки, мерж).

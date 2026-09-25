@@ -3,8 +3,8 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { BoardColumn, Task } from '@orca-board/core'
 import type { DocGroup } from '../../shared/ipc'
 import { Markdown } from './Markdown'
-import { ipcErrorMessage } from './useAutoSave'
-import { docLinkHash, docsApi, isStaleDocsError, resolveDocLink, STALE_APP_MESSAGE } from './docLinks'
+import { ipcErrorCode, ipcErrorMessage } from './ipcError'
+import { docLinkHash, docsApi, isStaleDocsError, resolveDocLink, staleAppMessage } from './docLinks'
 import { alsoIn, buildTree, dirAncestors, excerpt, sameDoc, type DocRef, type TaskMark } from './docTree'
 import { clearMatches, findInDoc, paintMatches, scrollToRange, type TextMatch } from './docFind'
 import { buildDocToc, findDocHeading } from './docToc'
@@ -12,6 +12,7 @@ import { DocsTree, dirKey, TaskDot, type TreeMode } from './DocsTree'
 import { DocsToc } from './DocsToc'
 import { DocsBlank, DocsStart, taskCards } from './DocsStart'
 import { DocIcon } from './docsIcons'
+import { useT } from './i18n'
 
 /** Запись истории переходов: документ и где он был прокручен, когда с него ушли. */
 interface Entry extends DocRef {
@@ -33,11 +34,10 @@ const docs = (): ReturnType<typeof docsApi> => docsApi(window.orca)
 
 function errorMessage(e: unknown): string {
   const msg = ipcErrorMessage(e)
-  return isStaleDocsError(msg) ? STALE_APP_MESSAGE : msg
+  return isStaleDocsError(msg) ? staleAppMessage() : msg
 }
 
 const nameOf = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
-const STAY = 'Остались на странице, на которой были.'
 
 const MODE_KEY = 'orca.docs.mode'
 const TOC_KEY = 'orca.docs.toc'
@@ -71,6 +71,7 @@ export interface DocsModalProps {
  * Относительные ссылки на .md открываются здесь же, http(s) — во внешнем браузере.
  */
 export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalProps): React.JSX.Element {
+  const t = useT()
   const [groups, setGroups] = useState<DocGroup[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -109,9 +110,9 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
   const marks = useMemo(() => {
     const byId = new Map(columns.map((c) => [c.id, c]))
     const out = new Map<string, TaskMark>()
-    for (const t of tasks) {
-      const col = byId.get(t.status)
-      if (col) out.set(t.id, { color: col.color, status: col.title })
+    for (const task of tasks) {
+      const col = byId.get(task.status)
+      if (col) out.set(task.id, { color: col.color, status: col.title })
     }
     return out
   }, [tasks, columns])
@@ -163,9 +164,13 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
     } catch (e) {
       if (seq !== navSeq.current) return
       const msg = errorMessage(e)
-      if (opts.link && current && /не найден/i.test(msg)) {
-        setDocError({ title: `Файл не найден: ${doc.path}`, detail: `Ссылка из ${nameOf(current.path)} ведёт на удалённый файл. ${STAY}` })
-      } else setDocError({ title: msg, detail: current ? STAY : undefined })
+      // Файла нет: main с переводом присылает код docs.notFound, main до перевода — только русский текст.
+      if (opts.link && current && (ipcErrorCode(e) === 'docs.notFound' || /не найден/i.test(msg))) {
+        setDocError({
+          title: t('config.docs.err.notFound', { path: doc.path }),
+          detail: `${t('config.docs.err.deletedLink', { name: nameOf(current.path) })} ${t('config.docs.err.stay')}`
+        })
+      } else setDocError({ title: msg, detail: current ? t('config.docs.err.stay') : undefined })
       return
     }
     if (seq !== navSeq.current) return
@@ -200,7 +205,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
       const text = await docs().read(current.source, current.path)
       if (seq === navSeq.current) setContent(text)
     } catch (e) {
-      if (seq === navSeq.current) setDocError({ title: errorMessage(e), detail: 'Показана версия, прочитанная раньше.' })
+      if (seq === navSeq.current) setDocError({ title: errorMessage(e), detail: t('config.docs.err.staleVersion') })
     }
   }
 
@@ -269,7 +274,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
     const root = articleRef.current
     const el = root && findDocHeading(root, hash)
     if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
-    else setDocError({ title: `В документе нет раздела «${hash}»` })
+    else setDocError({ title: t('config.docs.err.noSection', { hash }) })
   }
 
   // ⌘F: совпадения в тексте открытого документа.
@@ -365,7 +370,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
       e.preventDefault()
       const path = resolveDocLink(current.path, docHref)
       if (path) void go({ source: current.source, path }, { hash: docLinkHash(docHref), link: docHref })
-      else setDocError({ title: `Ссылка ведёт за пределы проекта: ${docHref}`, detail: STAY })
+      else setDocError({ title: t('config.docs.err.outside', { href: docHref }), detail: t('config.docs.err.stay') })
     }
   }
 
@@ -411,7 +416,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
         <b>{docError.title}</b>
         {docError.detail && <><br /><span className="muted">{docError.detail}</span></>}
       </div>
-      <button className="icon-btn docs-tool" title="Скрыть" aria-label="Скрыть ошибку" onClick={() => setDocError(null)}>
+      <button className="icon-btn docs-tool" title={t('config.docs.err.hide')} aria-label={t('config.docs.err.hideAria')} onClick={() => setDocError(null)}>
         <DocIcon.close />
       </button>
     </div>
@@ -428,11 +433,11 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
     center = (
       <section className="docs-pane">
         <div className="docs-crumbs">
-          <button className="icon-btn docs-tool" title="Назад (⌘[)" aria-label="Назад" disabled={!canBack} onClick={back}><DocIcon.back /></button>
-          <button className="icon-btn docs-tool" title="Вперёд (⌘])" aria-label="Вперёд" disabled={!canForward} onClick={forward}><DocIcon.forward /></button>
+          <button className="icon-btn docs-tool" title={t('config.docs.nav.back')} aria-label={t('config.docs.nav.backAria')} disabled={!canBack} onClick={back}><DocIcon.back /></button>
+          <button className="icon-btn docs-tool" title={t('config.docs.nav.forward')} aria-label={t('config.docs.nav.forwardAria')} disabled={!canForward} onClick={forward}><DocIcon.forward /></button>
           <div className="docs-path" title={current.path}>
             {current.source === 'project' ? (
-              <span className="src">Проект</span>
+              <span className="src">{t('config.docs.tree.project')}</span>
             ) : (
               <span className="src" title={currentGroup?.branch}><TaskDot mark={marks.get(current.source)} />{currentGroup?.title ?? current.source}</span>
             )}
@@ -442,7 +447,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
                 <Fragment key={dir}>
                   <span className="sep">/</span>
                   {current.source === 'project' ? (
-                    <button className="seg" onClick={() => revealDir(dir)} title="Показать в дереве">{seg}</button>
+                    <button className="seg" onClick={() => revealDir(dir)} title={t('config.docs.nav.revealDir')}>{seg}</button>
                   ) : (
                     <span className="seg">{seg}</span>
                   )}
@@ -453,9 +458,9 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
             <span className="cur">{nameOf(current.path)}</span>
           </div>
           <span className="docs-grow" />
-          <button className={`icon-btn docs-tool ${showToc ? 'on' : ''}`} title="Оглавление" aria-label="Оглавление" aria-pressed={showToc} onClick={toggleToc}><DocIcon.toc /></button>
-          <button className="icon-btn docs-tool" title="Показать в папке" aria-label="Показать в папке" onClick={() => void run((s, p) => docs().reveal(s, p))}><DocIcon.reveal /></button>
-          <button className="icon-btn docs-tool" title="Открыть в системе" aria-label="Открыть в системе" onClick={() => void run((s, p) => docs().open(s, p))}><DocIcon.external /></button>
+          <button className={`icon-btn docs-tool ${showToc ? 'on' : ''}`} title={t('config.docs.nav.toc')} aria-label={t('config.docs.nav.toc')} aria-pressed={showToc} onClick={toggleToc}><DocIcon.toc /></button>
+          <button className="icon-btn docs-tool" title={t('config.docs.nav.reveal')} aria-label={t('config.docs.nav.reveal')} onClick={() => void run((s, p) => docs().reveal(s, p))}><DocIcon.reveal /></button>
+          <button className="icon-btn docs-tool" title={t('config.docs.nav.openExternal')} aria-label={t('config.docs.nav.openExternal')} onClick={() => void run((s, p) => docs().open(s, p))}><DocIcon.external /></button>
         </div>
         {find.open && (
           <div className="docs-find">
@@ -463,8 +468,8 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
             <input
               ref={findRef}
               value={find.query}
-              placeholder="Найти в документе"
-              aria-label="Найти в документе"
+              placeholder={t('config.docs.find.placeholder')}
+              aria-label={t('config.docs.find.placeholder')}
               onChange={(e) => setFind({ open: true, query: e.target.value, index: 0 })}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -476,10 +481,10 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
                 }
               }}
             />
-            <span className="docs-find-count">{find.query.trim() ? (findMatches.length ? `${findPos} из ${findMatches.length}` : 'нет совпадений') : ''}</span>
-            <button className="icon-btn docs-tool" title="Предыдущее (⇧↵)" aria-label="Предыдущее" disabled={!findMatches.length} onClick={() => stepFind(-1)}><DocIcon.up /></button>
-            <button className="icon-btn docs-tool" title="Следующее (↵)" aria-label="Следующее" disabled={!findMatches.length} onClick={() => stepFind(1)}><DocIcon.down /></button>
-            <button className="icon-btn docs-tool" title="Закрыть (Esc)" aria-label="Закрыть поиск" onClick={closeFind}><DocIcon.close /></button>
+            <span className="docs-find-count">{find.query.trim() ? (findMatches.length ? t('config.docs.find.pos', { pos: findPos, total: findMatches.length }) : t('config.docs.find.none')) : ''}</span>
+            <button className="icon-btn docs-tool" title={t('config.docs.find.prev')} aria-label={t('config.docs.find.prevAria')} disabled={!findMatches.length} onClick={() => stepFind(-1)}><DocIcon.up /></button>
+            <button className="icon-btn docs-tool" title={t('config.docs.find.next')} aria-label={t('config.docs.find.nextAria')} disabled={!findMatches.length} onClick={() => stepFind(1)}><DocIcon.down /></button>
+            <button className="icon-btn docs-tool" title={t('config.docs.find.close')} aria-label={t('config.docs.find.closeAria')} onClick={closeFind}><DocIcon.close /></button>
           </div>
         )}
         <div className="docs-body" ref={bodyRef} onScroll={onScroll}>
@@ -488,14 +493,14 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
             g.source === 'project' ? (
               <div key={g.source} className="docs-note project">
                 <DocIcon.file />
-                <span className="docs-grow">Это версия файла из задачи. В проекте есть свой <b>{nameOf(current.path)}</b></span>
-                <button className="btn-sm" onClick={() => void go({ source: 'project', path: current.path })}>Открыть версию проекта</button>
+                <span className="docs-grow">{t('config.docs.version.task')} <b>{nameOf(current.path)}</b></span>
+                <button className="btn-sm" onClick={() => void go({ source: 'project', path: current.path })}>{t('config.docs.version.openProject')}</button>
               </div>
             ) : (
               <div key={g.source} className="docs-note">
                 <TaskDot mark={marks.get(g.source)} />
-                <span className="docs-grow">Этот файл также изменён в задаче <b>«{g.title}»</b></span>
-                <button className="btn-sm" onClick={() => void go({ source: g.source, path: current.path })}>Открыть версию задачи</button>
+                <span className="docs-grow">{t('config.docs.version.alsoTask')} <b>«{g.title}»</b></span>
+                <button className="btn-sm" onClick={() => void go({ source: g.source, path: current.path })}>{t('config.docs.version.openTask')}</button>
               </div>
             )
           )}
@@ -511,13 +516,13 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="docs-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Документы">
+      <div className="docs-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('config.docs.title')}>
         <div className="docs-head">
-          <h3><DocIcon.doc />Документы <span className="proj">· {projectName}</span></h3>
+          <h3><DocIcon.doc />{t('config.docs.title')} <span className="proj">· {projectName}</span></h3>
           <span className="docs-grow" />
-          <span className="docs-keys"><kbd>⌘P</kbd> файл · <kbd>⌘F</kbd> в тексте</span>
-          <button className="icon-btn docs-tool" title="Обновить" aria-label="Обновить" onClick={() => { void refresh(); void reload() }}><DocIcon.refresh /></button>
-          <button className="icon-btn" title="Закрыть (Esc)" aria-label="Закрыть" onClick={onClose}><DocIcon.close /></button>
+          <span className="docs-keys"><kbd>⌘P</kbd> {t('config.docs.keys.file')} · <kbd>⌘F</kbd> {t('config.docs.keys.inText')}</span>
+          <button className="icon-btn docs-tool" title={t('config.docs.refresh')} aria-label={t('config.docs.refresh')} onClick={() => { void refresh(); void reload() }}><DocIcon.refresh /></button>
+          <button className="icon-btn" title={t('config.docs.close')} aria-label={t('common.close')} onClick={onClose}><DocIcon.close /></button>
         </div>
         <div className={`docs-grid ${withToc ? 'with-toc' : ''}`}>
           <DocsTree

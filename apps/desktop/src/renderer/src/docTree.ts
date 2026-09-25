@@ -1,4 +1,6 @@
 import type { DocFile, DocGroup } from '../../shared/ipc'
+import { t } from './i18n'
+import { formatDateTime } from './i18n/format'
 
 /** Чистые функции окна «Документы»: дерево папок из путей, поиск по пути, время и подписи. */
 
@@ -176,39 +178,42 @@ export function findAll(text: string, query: string): number[] {
   return out
 }
 
-const pad = (n: number): string => String(n).padStart(2, '0')
 const dayStart = (ms: number): number => new Date(ms).setHours(0, 0, 0, 0)
-const hhmm = (d: Date): string => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+const hhmm = (d: Date): string => formatDateTime(d, { hour: '2-digit', minute: '2-digit' })
 
-function dayLabel(ms: number, now: number): string | null {
+/** 0 — сегодня, 1 — вчера, иначе null. */
+function dayOffset(ms: number, now: number): 0 | 1 | null {
   const days = Math.round((dayStart(now) - dayStart(ms)) / 86_400_000)
-  return days === 0 ? 'сегодня' : days === 1 ? 'вчера' : null
+  return days === 0 || days === 1 ? days : null
 }
 
+function dayLabel(ms: number, now: number): string | null {
+  const days = dayOffset(ms, now)
+  return days === 0 ? t('config.docs.time.today') : days === 1 ? t('config.docs.time.yesterday') : null
+}
+
+/** «18.09» / «09/18»; другой год — «18.09.25» / «09/18/25». */
 function date(d: Date, now: number): string {
-  const dm = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`
-  return d.getFullYear() === new Date(now).getFullYear() ? dm : `${dm}.${String(d.getFullYear()).slice(2)}`
+  const sameYear = d.getFullYear() === new Date(now).getFullYear()
+  return formatDateTime(d, sameYear ? { day: '2-digit', month: '2-digit' } : { day: '2-digit', month: '2-digit', year: '2-digit' })
 }
 
 /** Коротко для дерева: сегодня — «14:32», вчера — «вчера», раньше — «18.09» (другой год — «18.09.25»). */
 export function shortTime(ms: number, now: number): string {
   const d = new Date(ms)
-  const day = dayLabel(ms, now)
-  return day === 'сегодня' ? hhmm(d) : day ?? date(d, now)
+  return dayOffset(ms, now) === 0 ? hhmm(d) : dayLabel(ms, now) ?? date(d, now)
 }
 
 /** Подробно: «сегодня в 14:32», «вчера в 19:05», «18.09 в 10:00». */
 export function longTime(ms: number, now: number): string {
   const d = new Date(ms)
-  return `${dayLabel(ms, now) ?? date(d, now)} в ${hhmm(d)}`
+  return t('config.docs.time.at', { day: dayLabel(ms, now) ?? date(d, now), time: hhmm(d) })
 }
 
-/** 1 файл, 2 файла, 5 файлов. */
-export function plural(n: number, [one, few, many]: [string, string, string]): string {
-  const m10 = n % 10
-  const m100 = n % 100
-  const word = m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many
-  return `${n} ${word}`
+/** Для карточки, без предлога: «сегодня 14:32», «18.09 10:00». */
+export function dayTime(ms: number, now: number): string {
+  const d = new Date(ms)
+  return t('config.docs.time.dayTime', { day: dayLabel(ms, now) ?? date(d, now), time: hhmm(d) })
 }
 
 /** Время чтения, минуты (≈200 слов в минуту, не меньше 1). Блоки кода считаются как текст. */

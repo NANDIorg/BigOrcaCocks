@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Локальная доска — вариант A</title>
+<!--
+  Вариант A «Плотная доска»: та же канбан-структура (колонки = статусы), но колонки гибкой ширины,
+  тонкие заголовки, карточка с полосой состояния и этапом воркфлоу, свёрнутое «Сделано».
+  Статичный макет, данные выдуманы. Переключатели сверху — тема и ширина окна.
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --chip-text: #c9ccd6;
+  --line: rgba(255,255,255,.06); --text: #ecedf1; --muted: #9ea1ad;
+  --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b; --ok: #8fd16a;
+  --shadow: 0 1px 0 rgba(0,0,0,.25);
+  --radius: 14px;
+  color-scheme: dark;
+}
+/* Светлой темы в приложении пока нет — это предлагаемые токены с той же ролью переменных. */
+:root[data-theme="light"] {
+  --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+  --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+  --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+  --accent: #5a63c8; --accent-2: #4850b0;
+  --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+  --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c; --ok: #3f8a1f;
+  --shadow: 0 1px 2px rgba(20,24,40,.08);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+    --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+    --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+    --accent: #5a63c8; --accent-2: #4850b0;
+    --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+    --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c; --ok: #3f8a1f;
+    --shadow: 0 1px 2px rgba(20,24,40,.08);
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- панель макета (не часть дизайна) ---------- */
+.mock-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mock-bar b { font-size: 14px; }
+.mock-bar .grow { flex: 1; }
+.seg-group { display: inline-flex; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.seg-group button { background: transparent; border: 0; padding: 4px 12px; color: var(--muted); white-space: nowrap; }
+.seg-group button + button { border-left: 1px solid var(--chip); }
+.seg-group button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.stage { padding: 16px; overflow-x: auto; }
+.win { margin: 0 auto; width: 1440px; max-width: 100%; height: 780px; display: grid; grid-template-columns: 72px minmax(0,1fr); background: var(--frame); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.25); transition: width .2s; }
+.rail { border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 0; }
+.rail i { width: 40px; height: 40px; border-radius: 12px; background: var(--side-2); display: block; opacity: .6; }
+.rail i.on { background: var(--accent); opacity: 1; }
+
+/* ---------- шапка глобальной задачи (сжатая) ---------- */
+.view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.head { padding: 14px 24px 0; display: flex; flex-direction: column; gap: 6px; }
+.crumbs { font-size: 12px; color: var(--muted); display: flex; gap: 6px; min-width: 0; }
+.crumbs span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.title-row h2 { margin: 0; font-size: 20px; font-weight: 600; flex: 1 1 320px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--chip); background: transparent; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn:hover { border-color: var(--text); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.sm { height: 24px; padding: 0 9px; font-size: 12px; border-radius: 12px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--col-progress); box-shadow: 0 0 0 3px color-mix(in srgb, var(--col-progress) 30%, transparent); }
+
+/* Тулбар доски: прогресс, фильтры состояния, сортировка — одной строкой вместо двух. */
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 24px 0; font-size: 12px; }
+.progress { display: flex; align-items: center; gap: 8px; min-width: 180px; }
+.bar { flex: 1; height: 6px; border-radius: 3px; background: var(--side-2); overflow: hidden; display: flex; }
+.bar span { display: block; height: 100%; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter { border: 1px solid var(--chip); background: transparent; border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--chip-text); display: inline-flex; gap: 6px; align-items: center; }
+.filter[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); color: var(--text); }
+.filter .n { font-weight: 600; }
+.filter.attn .n { color: var(--col-input); }
+.filter.bad .n { color: var(--danger); }
+.toolbar .grow { flex: 1; }
+.sort { background: var(--side); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 3px 8px; font-size: 12px; }
+.muted { color: var(--muted); }
+
+/* ---------- доска ---------- */
+.board { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 12px 24px 20px; overflow-x: auto; }
+/* Гибкая ширина: 4–5 колонок влезают в обычное окно без горизонтального скролла. */
+.column { flex: 1 1 250px; min-width: 232px; max-width: 340px; display: flex; flex-direction: column; min-height: 0; background: var(--side); border-radius: var(--radius); }
+.col-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; font-size: 13px; font-weight: 600; border-top: 3px solid var(--c); border-radius: var(--radius) var(--radius) 0 0; }
+.col-head .count { color: var(--muted); font-weight: 500; }
+.col-head .grow { flex: 1; }
+.col-head .flag { font-size: 11px; font-weight: 600; color: var(--col-input); background: color-mix(in srgb, var(--col-input) 16%, transparent); border-radius: 999px; padding: 1px 8px; }
+.col-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.group-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 4px 0; }
+
+/* Свёрнутая колонка «Сделано»: узкая полоса с вертикальной подписью, раскрывается по клику/Enter. */
+.column.collapsed { flex: 0 0 44px; min-width: 44px; align-items: center; cursor: pointer; border: 0; color: inherit; font: inherit; padding: 0; }
+.column.collapsed .col-head { flex-direction: column; border-top: 0; border-left: 0; padding: 12px 0; width: 100%; }
+.column.collapsed .vtitle { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 13px; font-weight: 600; margin-top: 8px; }
+.column.collapsed .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+
+/* ---------- карточка ---------- */
+.card { position: relative; background: var(--card); border-radius: 10px; padding: 9px 10px 9px 13px; box-shadow: var(--shadow); cursor: grab; overflow-wrap: anywhere; }
+.card:hover { background: var(--card-hover); }
+/* Полоса состояния слева: цвет — что с задачей сейчас, а не в какой она колонке. */
+.card::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--state, transparent); }
+.card.s-live { --state: var(--col-progress); }
+.card.s-human { --state: var(--col-input); }
+.card.s-review { --state: var(--col-review); }
+.card.s-bad { --state: var(--danger); }
+.card.s-blocked { background: color-mix(in srgb, var(--card) 70%, var(--side)); }
+.card.s-blocked .name { color: var(--muted); }
+.card.focused { box-shadow: 0 0 0 2px var(--accent); }
+.card .line1 { display: flex; gap: 6px; align-items: flex-start; }
+.prio { flex: 0 0 auto; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 5px; border-radius: 4px; margin-top: 1px; }
+.prio.urgent { color: #fff; background: var(--danger); }
+.prio.high { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 16%, transparent); }
+.prio.low { color: var(--muted); border: 1px dashed var(--chip); line-height: 16px; }
+.name { font-size: 13.5px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex: 1; min-width: 0; }
+.tools { display: flex; gap: 2px; opacity: 0; }
+.card:hover .tools, .card:focus-within .tools, .card.focused .tools { opacity: 1; }
+.tool { width: 22px; height: 22px; border-radius: 6px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0; font-size: 12px; }
+.tool:hover { background: var(--side-2); color: var(--text); }
+.meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.agent { flex: 0 0 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; font-size: 9px; font-weight: 700; color: #fff; }
+.agent.claude { background: #d97757; }
+.agent.codex { background: #10a37f; }
+.meta .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.meta .grow { flex: 1; }
+.meta .time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.meta .time.live { color: var(--col-progress); font-weight: 600; }
+/* Этап воркфлоу — новый элемент: где задача в графе типа (Task.stage.nodeId). */
+.stage-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--chip-text); border: 1px solid var(--chip); border-radius: 6px; padding: 0 6px; white-space: nowrap; }
+.stage-pill.gate { border-color: color-mix(in srgb, var(--col-review) 60%, transparent); color: var(--col-review); }
+.tags { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+.tag { font-size: 11.5px; color: var(--chip-text); border: 1px solid var(--chip); border-radius: 999px; padding: 0 8px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.tag.dep { border-style: dashed; color: var(--muted); }
+.tag.bad { color: var(--danger); border-color: var(--danger); }
+.tag.mono { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; }
+/* Действие на карточке — одна строка с главной кнопкой, как card-brief сейчас, но цвет по состоянию. */
+.act { margin-top: 8px; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; font-size: 12.5px; background: color-mix(in srgb, var(--state) 10%, transparent); border: 1px solid color-mix(in srgb, var(--state) 40%, transparent); }
+.act .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act .btn.sm { flex-shrink: 0; }
+.more { font-size: 12px; color: var(--muted); padding: 4px; text-align: center; border: 0; background: transparent; }
+.more:hover { color: var(--text); }
+
+.kbd-hint { font-size: 11.5px; color: var(--muted); padding: 0 24px 10px; display: flex; gap: 14px; flex-wrap: wrap; }
+kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--chip); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--chip-text); }
+
+/* Меню «Переместить в…» — перенос без мыши. */
+.menu { position: absolute; z-index: 5; right: 8px; top: 34px; width: 200px; background: var(--side-2); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.35); padding: 4px; font-size: 13px; }
+.menu div { padding: 6px 8px; border-radius: 6px; display: flex; gap: 8px; align-items: center; }
+.menu div.on { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.menu .sw { width: 8px; height: 8px; border-radius: 2px; }
+.menu .k { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+/* Узкое окно: колонки остаются колонками, но их можно прокрутить; шапка складывается. */
+.win.narrow .column { flex-basis: 232px; }
+.win.narrow .title-row h2 { font-size: 17px; }
+.win.narrow .kbd-hint { display: none; }
+
+.notes { max-width: 1100px; margin: 8px auto 40px; padding: 0 16px; color: var(--muted); font-size: 13px; }
+.notes h3 { color: var(--text); font-size: 15px; margin: 18px 0 6px; }
+.notes li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <b>Вариант A — «Плотная доска»</b>
+  <span class="muted">колонки = статусы, как сейчас; меньше шума, больше смысла на карточке</span>
+  <span class="grow"></span>
+  <span>Тема</span>
+  <div class="seg-group" id="theme">
+    <button data-v="auto" aria-pressed="true">авто</button><button data-v="dark" aria-pressed="false">тёмная</button><button data-v="light" aria-pressed="false">светлая</button>
+  </div>
+  <span>Окно</span>
+  <div class="seg-group" id="width">
+    <button data-v="1440" aria-pressed="true">1440</button><button data-v="1180" aria-pressed="false">1180</button><button data-v="860" aria-pressed="false">860</button>
+  </div>
+</div>
+
+<div class="stage">
+<div class="win" id="win">
+  <nav class="rail" aria-label="Разделы"><i class="on"></i><i></i><i></i><i></i></nav>
+  <main class="view">
+    <div class="head">
+      <nav class="crumbs" aria-label="Навигация"><span>← Глобальные задачи</span><span>/</span><span>Показ человеку: макеты и выбор варианта</span></nav>
+      <div class="title-row">
+        <h2>Показ человеку: макеты и выбор варианта</h2>
+        <button class="btn">✎ Изменить</button>
+        <button class="btn"><span class="live-dot"></span> Координатор работает</button>
+      </div>
+    </div>
+
+    <div class="toolbar" role="toolbar" aria-label="Доска подзадач">
+      <div class="progress" title="Сделано 3 из 11">
+        <span><b>3</b>/11</span>
+        <div class="bar" aria-hidden="true"><span style="width:27%;background:var(--col-done)"></span><span style="width:9%;background:var(--col-review)"></span><span style="width:18%;background:var(--col-input)"></span><span style="width:27%;background:var(--col-progress)"></span></div>
+      </div>
+      <div class="filters" role="group" aria-label="Показать">
+        <button class="filter" aria-pressed="true">Все <span class="n">11</span></button>
+        <button class="filter attn" aria-pressed="false">Ждут вас <span class="n">3</span></button>
+        <button class="filter bad" aria-pressed="false">Проблемы <span class="n">1</span></button>
+        <button class="filter" aria-pressed="false">Мои роли ▾</button>
+      </div>
+      <span class="grow"></span>
+      <label class="muted">Сортировка
+        <select class="sort" aria-label="Сортировка карточек"><option>по приоритету</option><option>по созданию</option><option>по обновлению</option><option>по завершению</option></select>
+      </label>
+    </div>
+
+    <div class="board">
+      <!-- Бэклог (вместе с «Готовы») -->
+      <section class="column" style="--c: var(--col-backlog)" aria-label="Бэклог, 4">
+        <div class="col-head"><span>Бэклог</span><span class="count">4</span><span class="grow"></span><button class="tool" title="Новая подзадача" aria-label="Новая подзадача">＋</button></div>
+        <div class="col-body">
+          <div class="group-label">Готовы к запуску · 1</div>
+          <article class="card" tabindex="0">
+            <div class="line1"><span class="prio low" title="Приоритет: низкий">низ</span><div class="name">docs: раздел «Показ человеку» в workflow.md</div><div class="tools"><button class="tool" aria-label="Запустить" title="Запустить">▶</button><button class="tool" aria-label="Ещё" title="Ещё">⋯</button></div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Техписатель · sonnet</span><span class="grow"></span><span class="stage-pill">Работа</span></div>
+          </article>
+          <div class="group-label">Ждут зависимостей · 3</div>
+          <article class="card s-blocked" tabindex="0">
+            <div class="line1"><div class="name">Тесты showcase.test.ts для requestShowcase</div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Тестировщик · sonnet</span></div>
+            <div class="tags"><span class="tag dep" title="Ждёт: Миграция store — showcase в старых dispatch">⧗ Миграция store — showcase…</span></div>
+          </article>
+          <article class="card s-blocked" tabindex="0">
+            <div class="line1"><div class="name">E2E: approval с показом в Инбоксе</div></div>
+            <div class="meta"><span class="agent codex">X</span><span class="who">Тестировщик · gpt-5</span></div>
+            <div class="tags"><span class="tag dep" title="Ждёт: Миграция store; Иконки типов файлов">⧗ ждёт 2 задачи</span></div>
+          </article>
+          <article class="card s-blocked" tabindex="0">
+            <div class="line1"><div class="name">Changelog и заметка к релизу</div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Техписатель · sonnet</span></div>
+            <div class="tags"><span class="tag dep">⧗ ждёт 4 задачи</span></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- В работе -->
+      <section class="column" style="--c: var(--col-progress)" aria-label="В работе, 3">
+        <div class="col-head"><span>В работе</span><span class="count">3</span></div>
+        <div class="col-body">
+          <article class="card s-live focused" tabindex="0" style="position:relative">
+            <div class="line1"><span class="prio urgent" title="Приоритет: срочный">!!</span><div class="name">Миграция store — showcase в старых dispatch</div><div class="tools"><button class="tool" aria-label="Терминал" title="Терминал">⌘</button><button class="tool" aria-label="Ещё" title="Ещё" aria-expanded="true">⋯</button></div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Разработчик · opus</span><span class="grow"></span><span class="time live" title="Время работы: идёт">● 12:34</span></div>
+            <div class="tags"><span class="stage-pill">Работа · 2-й заход</span><span class="tag mono">orca/task_k2m9</span></div>
+            <div class="menu" role="menu" aria-label="Переместить в">
+              <div class="muted" style="font-size:11px">Переместить в… <span class="k">M</span></div>
+              <div><span class="sw" style="background:var(--col-backlog)"></span>Бэклог<span class="k">1</span></div>
+              <div class="on"><span class="sw" style="background:var(--col-input)"></span>Нужен ответ<span class="k">3</span></div>
+              <div><span class="sw" style="background:var(--col-review)"></span>Ревью<span class="k">4</span></div>
+              <div><span class="sw" style="background:var(--col-done)"></span>Сделано<span class="k">5</span></div>
+            </div>
+          </article>
+          <article class="card s-live" tabindex="0">
+            <div class="line1"><div class="name">Ревью ветки: renderer — инспектор ноды и блок «Показ»</div></div>
+            <div class="meta"><span class="agent codex">X</span><span class="who">Ревьюер · gpt-5</span><span class="grow"></span><span class="time live">● 03:10</span></div>
+            <div class="tags"><span class="stage-pill gate" title="Задача-гейт: проверяет ветку рабочей задачи">⛉ Гейт «Ревью кода» → Инспектор ноды</span></div>
+          </article>
+          <article class="card s-bad" tabindex="0">
+            <div class="line1"><span class="prio high" title="Приоритет: высокий">выс</span><div class="name">Иконки для типов файлов показа (PDF, HTML, PNG)</div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Дизайнер · opus</span><span class="grow"></span><span class="time">⏸ 21 мин</span></div>
+            <div class="act"><span class="txt">Воркер упал (код 1), 14:02</span><button class="btn sm">↻ Перезапустить</button></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- Нужен ответ -->
+      <section class="column" style="--c: var(--col-input)" aria-label="Нужен ответ, 2">
+        <div class="col-head"><span>Нужен ответ</span><span class="count">2</span><span class="grow"></span><span class="flag">ждут вас</span></div>
+        <div class="col-body">
+          <article class="card s-human" tabindex="0">
+            <div class="line1"><div class="name">Превью файлов показа в модалке задачи</div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Разработчик · opus</span><span class="grow"></span><span class="time">⏸ 8 мин</span></div>
+            <div class="act"><span class="txt" title="PDF показывать через iframe или рендерить первую страницу картинкой?">? PDF показывать через iframe или картинкой?</span><button class="btn sm primary">Ответить</button></div>
+          </article>
+          <article class="card s-human" tabindex="0">
+            <div class="line1"><div class="name">Разбор: где показывать «Показ» в Инбоксе</div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Аналитик · opus</span><span class="grow"></span><span class="tag" style="border-color:var(--col-input);color:var(--col-input)">ответ</span></div>
+            <div class="act"><span class="txt">Ответ готов: в карточке запроса, свёрнуто</span><button class="btn sm primary">Прочитать</button></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- Ревью -->
+      <section class="column" style="--c: var(--col-review)" aria-label="Ревью, 1">
+        <div class="col-head"><span>Ревью</span><span class="count">1</span></div>
+        <div class="col-body">
+          <article class="card s-review" tabindex="0">
+            <div class="line1"><span class="prio high" title="Приоритет: высокий">выс</span><div class="name">Показ: вёрстка файла в узком Инбоксе, короткие подписи поля решения и флажка у approval при длинных названиях вариантов</div></div>
+            <div class="meta"><span class="agent claude">C</span><span class="who">Дизайнер · opus</span><span class="grow"></span><span class="time">⏸ 47 мин</span></div>
+            <div class="tags"><span class="stage-pill">Показ человеку</span></div>
+            <div class="act"><span class="txt">3 файла · 2 варианта на выбор</span><button class="btn sm primary">Смотреть</button></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- Сделано — свёрнуто -->
+      <button class="column collapsed" style="--c: var(--col-done)" aria-expanded="false" aria-label="Сделано, 3 — развернуть">
+        <div class="col-head"><span class="dot"></span><span class="count">3</span><span class="vtitle">Сделано</span></div>
+      </button>
+    </div>
+    <div class="kbd-hint" aria-hidden="true"><span><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> по карточкам</span><span><kbd>Enter</kbd> открыть</span><span><kbd>M</kbd> переместить</span><span><kbd>S</kbd> запустить</span><span><kbd>Esc</kbd> к глобальным</span></div>
+  </main>
+</div>
+</div>
+
+<div class="notes">
+  <h3>Что видно на макете</h3>
+  <ul>
+    <li>Заголовок колонки — тонкая строка с цветной кромкой вместо заливки 56 px; колонки 232–340 px и тянутся по окну.</li>
+    <li>Полоса слева на карточке — состояние: оранжевая — идёт работа, жёлтая — ждёт человека, фиолетовая — на ревью, красная — упал/молчит. Ждущие зависимостей приглушены.</li>
+    <li>Этап воркфлоу (<code>Task.stage</code>) и задача-гейт видны на карточке; зависимости — одним пунктиром «⧗ ждёт…», без чипа на каждую.</li>
+    <li>Фильтры «Ждут вас / Проблемы» заменяют поиск глазами; «Сделано» свёрнуто в полосу.</li>
+    <li>Меню «Переместить в…» (<kbd>M</kbd>) — перенос без мыши, на макете открыто у фокусной карточки.</li>
+  </ul>
+</div>
+
+<script>
+  // Только переключатели макета: тема и ширина окна.
+  const root = document.documentElement
+  const win = document.getElementById('win')
+  function bind(id, apply) {
+    const group = document.getElementById(id)
+    group.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return
+      group.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      apply(b.dataset.v)
+    })
+  }
+  bind('theme', (v) => { if (v === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', v) })
+  bind('width', (v) => { win.style.width = v + 'px'; win.classList.toggle('narrow', v === '860') })
+  // ?theme=light&w=860 — открыть макет сразу в нужной теме и ширине.
+  const q = new URLSearchParams(location.search)
+  if (q.get('theme')) document.querySelector(`#theme [data-v="${q.get('theme')}"]`)?.click()
+  if (q.get('w')) document.querySelector(`#width [data-v="${q.get('w')}"]`)?.click()
+</script>
+</body>
+</html>

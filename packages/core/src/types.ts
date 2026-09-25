@@ -1,5 +1,5 @@
 import type { AgentKind } from './agents'
-import type { WfStage, Workflow } from './workflow'
+import type { WfOutcome, WfStage, Workflow } from './workflow'
 import type { TaskTypeSnapshot } from './task-types'
 export type { AgentKind }
 
@@ -95,6 +95,46 @@ export function withAgentRules(
   return withRoleInstructions(base, role)
 }
 
+/** Язык, на котором агенты доски общаются с человеком: язык интерфейса приложения в момент запуска агента. */
+export type AgentLanguage = 'ru' | 'en'
+
+/** Заголовок директивы языка в системном промпте агента (`agentLanguageDirective`). */
+export const AGENT_LANGUAGE_HEADING = '# Language'
+
+/**
+ * Директива языка общения с человеком. Служебные инструкции (skills) и промпты написаны по-русски и не переводятся,
+ * поэтому без директивы агент отвечал бы по-русски и человеку с английским интерфейсом. Директива — на языке ответа:
+ * так её не спутать с остальными инструкциями. Коммиты и комментарии в коде — по правилам проекта, а не по языку UI:
+ * это язык репозитория, его читают не только в приложении. Русский (и не выбранный) — пусто: поведение прежнее.
+ */
+export function agentLanguageDirective(language: AgentLanguage | undefined): string {
+  if (language !== 'en') return ''
+  return [
+    AGENT_LANGUAGE_HEADING,
+    '',
+    'The person uses the app in English. Write everything a human reads in English: answers and summaries ' +
+      '(`orca-board done`), questions and their options (`orca-board ask`), global task summaries ' +
+      '(`orca-board runs finish`), titles and specs of tasks you create, review feedback, and your messages in the terminal.',
+    'The instructions above are in Russian; that does not change the language you reply in.',
+    "Commit messages, code comments and documentation follow the project's own rules (CLAUDE.md, AGENTS.md, " +
+      'project rules above), not the interface language.'
+  ].join('\n')
+}
+
+/**
+ * Системный промпт агента, запущенного доской (воркер любой роли и любого этапа, координатор, ассистент):
+ * `withAgentRules`, затем директива языка (`agentLanguageDirective`) — последним блоком, чтобы роль и правила
+ * проекта её не перебили. Язык берётся в момент запуска: уже запущенные агенты смену языка не видят.
+ */
+export function agentSystemPrompt(
+  system: string,
+  opts: { projectRules?: string; role?: Pick<Role, 'title' | 'systemPrompt'>; language?: AgentLanguage }
+): string {
+  const base = withAgentRules(system, opts.projectRules, opts.role)
+  const directive = agentLanguageDirective(opts.language)
+  return directive ? `${base}\n\n${directive}` : base
+}
+
 // ---------- колонки ----------
 
 /** Системные виды колонок: по ним store переводит задачи автоматически. */
@@ -144,6 +184,56 @@ export const DEFAULT_COLUMNS: BoardColumn[] = [
 
 /** Статус задачи — id колонки доски (см. BoardColumn). */
 export type TaskStatus = string
+
+/**
+ * Кто перевёл задачу в колонку: `human` — человек в UI (IPC renderer), `cli` — команда `orca-board` без
+ * ORCA_DISPATCH_ID (координатор или человек в терминале — сокет их не различает), `worker` — команда воркера
+ * (есть ORCA_DISPATCH_ID), `workflow` — исполнитель воркфлоу в main двигает задачу по графу, `app` — само
+ * приложение: зависимости закрыты (backlog → ready), воркер умер, миграция, автозакрытие прогона.
+ */
+export type StatusSource = 'human' | 'cli' | 'worker' | 'workflow' | 'app'
+
+export const STATUS_SOURCES: StatusSource[] = ['human', 'cli', 'worker', 'workflow', 'app']
+
+/** Запись истории статусов задачи или глобальной задачи (`Task.statusHistory`, `Run.statusHistory`). */
+export interface StatusChange {
+  /** Колонка, в которую перешла задача (id колонки). */
+  status: TaskStatus
+  /** Момент перехода, epoch ms. */
+  at: number
+  by: StatusSource
+  /** Нода воркфлоу (`WfStage.nodeId`), на которой стояла задача при переходе; у глобальных задач нет. */
+  stage?: string
+  /**
+   * Стартовая запись миграции у задачи от кода до истории: реального перехода не было, это статус на момент
+   * обновления, а `at` — последняя правка задачи (`updatedAt`), не точный момент входа в колонку.
+   */
+  migrated?: true
+}
+
+/**
+ * Запись истории этапов воркфлоу задачи (`Task.stageHistory`). `StatusChange.stage` фиксирует этап только при
+ * смене колонки, а переходы внутри колонки (ревью → работа при reject) оставались лишь в событиях `stage_changed`.
+ */
+export interface StageChange {
+  /** Нода, в которую вошла задача. */
+  nodeId: string
+  /** Название ноды на момент перехода (граф прогона может измениться позже). */
+  title?: string
+  /** Момент перехода, epoch ms. */
+  at: number
+  /** Исход, с которым задача пришла в ноду: порт предыдущей ноды или `restart` (`enterWork` — возврат на первый этап). */
+  outcome?: WfOutcome | 'restart'
+  /** Откуда пришла (нет — вход в граф из старта). */
+  from?: string
+  /** Кто двигал (источник как у `StatusChange.by`). */
+  by?: StatusSource
+  /**
+   * Запись миграции у задачи от кода до истории этапов, которой нет в логе событий: реального перехода не
+   * восстановить, это этап на момент обновления (`at` — `updatedAt`).
+   */
+  migrated?: true
+}
 
 /** @deprecated Колонки берутся из настроек проекта, это только дефолт. */
 export const TASK_STATUSES: TaskStatus[] = DEFAULT_COLUMNS.map((c) => c.id)
@@ -217,6 +307,13 @@ export interface Run {
   /** Начало текущего отрезка собственного времени; нет — время глобальной задачи стоит. */
   activeSince?: number
   /**
+   * Глобальная задача впервые вошла в работу: карточка оказалась в колонке kind=in_progress (перенос, запуск
+   * координатора) — ставится в `TaskStore.commit` вместе с открытием отрезка времени и больше не снимается.
+   * Пока его нет (и нет координатора и подзадач), тип задачи можно сменить (`canChangeRunType`). У прогонов от кода
+   * до поля проставляется миграцией `migrateRunStarted`.
+   */
+  startedAt?: number
+  /**
    * Тип глобальной задачи (`TaskType.id`, task-types.ts): задаёт роли, правила агентов доски и разрешения
    * прогона — main берёт их по `resolveRunType` «вживую» из библиотеки. Нет — «Входящие» или прогон, ещё
    * не прошедший миграцию (`assignRunTypes`): используется тип проекта по умолчанию.
@@ -246,6 +343,31 @@ export interface Run {
    * Нет — координатор сводку не передавал (старый код, ручной перенос): UI показывает сводки подзадач.
    */
   summary?: { at: number; text: string }
+  /**
+   * История смены колонки, от старых к новым (`recordStatus`, status-history.ts): не длиннее
+   * `STATUS_HISTORY_LIMIT`, подряд одинаковых статусов нет. Нет — снапшот от кода до истории, ещё не прошедший
+   * миграцию (renderer мог получить его от старого main).
+   */
+  statusHistory?: StatusChange[]
+  /**
+   * Запуски координатора на этой глобальной задаче, от старых к новым (статистика: время и токены координатора).
+   * `coordinatorPtyId` — только последний, а глобальную задачу перезапускают («Вернуть в работу», повторный старт).
+   * Нет — прогон от кода до статистики: время и токены координатора неизвестны.
+   */
+  coordinatorSessions?: AgentSession[]
+}
+
+/** Запуск агента вне dispatch (координатор): для статистики времени и токенов. */
+export interface AgentSession {
+  ptyId: string
+  roleId: string
+  agent: AgentKind
+  model?: string
+  /** Как `Dispatch.sessionId`. */
+  sessionId?: string
+  startedAt: number
+  /** Выход PTY; нет — агент ещё работает (или приложение упало до выхода — тогда конец неизвестен). */
+  endedAt?: number
 }
 
 // ---------- задачи ----------
@@ -260,6 +382,46 @@ export const ANSWER_AUDIENCES: AnswerAudience[] = ['human', 'coordinator']
 
 /** Предел длины ответа (символов): ответ хранится в снапшоте доски. */
 export const MAX_ANSWER_LENGTH = 200_000
+
+/**
+ * Показ человеку, который воркер сдал с `done` (нода «Работа» с `showcase`, workflow.ts): `text` — markdown
+ * с описанием, `files` — пути файлов в ветке задачи от корня worktree (макеты, скриншоты). Сами файлы не
+ * копируются: их читает main из worktree задачи.
+ */
+export interface DispatchShowcase {
+  text?: string
+  files: string[]
+}
+
+/** Предел длины текста показа (символов): он хранится в снапшоте доски, как ответ. */
+export const MAX_SHOWCASE_LENGTH = MAX_ANSWER_LENGTH
+
+/** Сколько файлов можно сдать на показ. */
+export const MAX_SHOWCASE_FILES = 50
+
+/**
+ * Показ из `done` в сохраняемый вид: текст без пустоты, пути без пробелов по краям, без повторов, `\` → `/`.
+ * Пустой показ — undefined. Путь должен быть относительным и не выходить из worktree (`..`): иначе ошибка
+ * с подсказкой. Есть ли файл в ветке, core не знает — это проверяет main при чтении.
+ */
+export function normalizeShowcase(input: { text?: string; files?: readonly string[] } | undefined): DispatchShowcase | undefined {
+  if (!input) return undefined
+  const text = input.text?.trim() ? input.text : undefined
+  if (text && text.length > MAX_SHOWCASE_LENGTH) throw new Error(`текст показа длиннее ${MAX_SHOWCASE_LENGTH} символов — сократи его`)
+  const files: string[] = []
+  for (const raw of input.files ?? []) {
+    const file = raw.trim().replace(/\\/g, '/')
+    if (!file) continue
+    if (file.startsWith('/') || /^[a-zA-Z]:/.test(file)) {
+      throw new Error(`файл показа «${raw}»: нужен путь от корня репозитория задачи, а не абсолютный`)
+    }
+    if (file.split('/').includes('..')) throw new Error(`файл показа «${raw}»: путь не должен выходить из репозитория задачи (..)`)
+    if (!files.includes(file)) files.push(file)
+  }
+  if (files.length > MAX_SHOWCASE_FILES) throw new Error(`файлов показа больше ${MAX_SHOWCASE_FILES} — оставь главные`)
+  if (!text && files.length === 0) return undefined
+  return { ...(text ? { text } : {}), files }
+}
 
 /**
  * Приоритет задачи: влияет только на порядок показа и выбора, не на промпт воркера. Порядок в
@@ -335,6 +497,17 @@ export interface Task {
   stage?: WfStage
   /** Задача-гейт: чью ветку проверяет и на какой ноде `gate` рабочей задачи. */
   gateFor?: { taskId: string; nodeId: string }
+  /**
+   * История смены колонки, от старых к новым (`recordStatus`, status-history.ts): не длиннее
+   * `STATUS_HISTORY_LIMIT`, подряд одинаковых статусов нет. Нет — снапшот от кода до истории, ещё не прошедший
+   * миграцию (renderer мог получить его от старого main).
+   */
+  statusHistory?: StatusChange[]
+  /**
+   * История этапов воркфлоу, от старых к новым (`recordStage`, status-history.ts): не длиннее
+   * `STATUS_HISTORY_LIMIT`. Нет у задач вне воркфлоу (ответ, гейт) и у снапшота от кода до истории этапов.
+   */
+  stageHistory?: StageChange[]
 }
 
 export type DispatchOutcome = 'done' | 'failed' | 'unknown'
@@ -350,8 +523,24 @@ export interface Dispatch {
   files?: string[]
   /** Ответ задачи-ответа (markdown), `orca-board done --answer-file`. */
   answer?: string
+  /** Показ человеку (`normalizeShowcase`). Нет — воркер ничего не показывал или dispatch от кода до показа. */
+  showcase?: DispatchShowcase
   /** Уже отправили эскалацию «нет вывода». */
   stuckNotified?: boolean
+  /**
+   * Снимок роли, агента и модели на момент запуска (статистика: разбивки по роли и модели). Роль задачи и её
+   * модель могут перенастроить позже, а прогон агента уже потратил токены на ту модель. Нет — dispatch от кода
+   * до статистики: берутся `Task.roleId` / `Task.agent`, модель — из транскрипта или неизвестна.
+   */
+  roleId?: string
+  agent?: AgentKind
+  model?: string
+  /**
+   * Id сессии агента: по нему main находит транскрипт с токенами (docs/architecture.md, «Статистика»).
+   * Claude Code — uuid, который main генерирует и передаёт в `--session-id`; у агентов, которым id задать нельзя,
+   * — найденный по cwd и времени (codex) или нет.
+   */
+  sessionId?: string
 }
 
 /** Вариант ответа на вопрос: кнопка в UI. `id` — что уходит в `resolution.optionId`. */
@@ -397,6 +586,8 @@ export interface Question {
    * ждёт координатора.
    */
   forHuman?: boolean
+  /** Нода `ask` воркфлоу, на которой задан вопрос (этап «Вопрос человеку»); у прочих вопросов нет. */
+  nodeId?: string
   createdAt: number
   answeredAt?: number
 }
@@ -455,8 +646,13 @@ export interface HumanRequest {
   options: RequestOption[]
   /** Вопрос, из которого создан запрос (kind=question): сокет `ask` держится за него. */
   questionId?: string
-  /** Нода `human` воркфлоу, на которой задача ждёт решения (kind=approval). */
+  /** Нода воркфлоу, на которой создан запрос: `human` (kind=approval) или `ask` (kind=question с этапа «Вопрос человеку»). */
   nodeId?: string
+  /**
+   * Dispatch, чей показ (`Dispatch.showcase`) выведен в approval: renderer берёт из него файлы и читает их
+   * из worktree задачи (IPC `showcase:*`). Отдельно от `dispatchId`: тот — «кто спросил / упал».
+   */
+  showcaseDispatchId?: string
   resolution?: RequestResolution
   createdAt: number
   /** Решён или отменён. */
@@ -506,4 +702,241 @@ export interface OrcaEvent {
   payload: Record<string, unknown>
   createdAt: number
   consumedBy?: string
+}
+
+// ---------- статистика ----------
+
+/**
+ * Период статистики проекта: всё время или последние 7 / 30 суток от момента запроса (скользящее окно, а не
+ * календарные недели). Границу считает `statsRangeStart` (stats.ts).
+ */
+export type StatsRange = 'all' | '7d' | '30d'
+
+export const STATS_RANGES: StatsRange[] = ['all', '7d', '30d']
+
+/**
+ * Токены по видам — как их считает API Anthropic: `input` — только некэшированный вход, кэш отдельно.
+ * У codex `input_tokens` включает кэш, при чтении из него вычитается `cached_input_tokens`. Рассуждения
+ * (reasoning) входят в `output`: отдельно их даёт не каждый агент.
+ */
+export interface TokenUsage {
+  input: number
+  output: number
+  /** Чтение из кэша промпта (`cache_read_input_tokens`, у codex — `cached_input_tokens`). */
+  cacheRead: number
+  /** Запись в кэш промпта (`cache_creation_input_tokens`); у codex — 0. */
+  cacheWrite: number
+}
+
+/**
+ * Цена модели, $ за миллион токенов. Таблица цен — одна, `MODEL_PRICES` в `packages/core/src/pricing.ts`
+ * (docs/architecture.md, «Статистика → Стоимость»).
+ */
+export interface ModelPrice {
+  /** Префиксы id модели из транскрипта (`claude-opus-5` покрывает `claude-opus-5-20260101`); самый длинный выигрывает. */
+  match: string[]
+  /**
+   * Точные id (модели OpenAI): подходит id целиком либо с датой-снапшотом (`gpt-5.5-2026-04-23`, `gpt-5.5-20260423`),
+   * регистр и префикс провайдера (`openai/`) не важны. Префикс тут нельзя: `gpt-5` покрыл бы неизвестную `gpt-5.7-x`
+   * чужой ценой, а стоимость неизвестной модели — «неизвестна», не цена соседа.
+   */
+  exact?: string[]
+  input: number
+  output: number
+  cacheRead: number
+  /** Запись в кэш с TTL 5 минут. */
+  cacheWrite5m: number
+  /** Запись в кэш с TTL 1 час; транскрипт Claude Code делит запись по TTL (`usage.cache_creation`). */
+  cacheWrite1h: number
+}
+
+/**
+ * Расход за срез статистики (весь проект, роль, модель, задача, день). «Неизвестно» и «ноль» различаются:
+ * `tokens` нет, если ни для одной сессии среза не нашлось данных (агент без транскриптов, транскрипт удалён,
+ * dispatch от кода до статистики); тогда UI пишет «нет данных», а не 0.
+ */
+export interface StatsUsage {
+  tokens?: TokenUsage
+  /**
+   * Стоимость токенов моделей из `MODEL_PRICES`, $. Нет — токенов нет или ни одна их модель не известна таблице.
+   * Токены неизвестных моделей в неё не входят — см. `unpricedTokens`.
+   */
+  costUsd?: number
+  /** Токены (все виды) моделей, которых нет в таблице цен: стоимость по ним неизвестна. */
+  unpricedTokens: number
+  /** Id таких моделей — чтобы UI подсказал, что дописать в таблицу. */
+  unpricedModels: string[]
+  /** Сессии агентов в срезе (dispatch + запуски координатора). */
+  sessions: number
+  /** Из них — с найденными данными о токенах. `sessions - sessionsWithUsage` — «неизвестно». */
+  sessionsWithUsage: number
+  /** Время работы агентов: сумма длительностей сессий, мс (идущая — до момента запроса). */
+  agentMs: number
+}
+
+/** Строка разбивки: роль, модель, агент, глобальная задача или задача. */
+export interface StatsRow extends StatsUsage {
+  /** Id роли / модели / агента / глобальной задачи / задачи; `unknown` — модель неизвестна. */
+  key: string
+  /** Подпись для UI: название роли, задачи; для модели и агента — их id и название агента. */
+  title: string
+}
+
+/** День в разбивке по дням (локальная дата main). Дни без активности в массив не попадают. */
+export interface StatsDay extends StatsUsage {
+  /** `YYYY-MM-DD`. */
+  date: string
+  /** Задач, вошедших в kind=done в этот день. */
+  tasksDone: number
+  /**
+   * Расход дня по моделям — сегменты столбца графика «Стоимость» на вкладке «Статистика» (вариант B);
+   * те же ключи, что в `ProjectStats.byModel`, порядок тот же. Сессии без данных о модели — строка `unknown`.
+   */
+  byModel: StatsRow[]
+}
+
+/** Счётчики задач или глобальных задач. */
+export interface StatsCounts {
+  /** Всего сейчас на доске (без учёта периода). */
+  total: number
+  /** Сейчас по колонкам: id колонки → число. */
+  byStatus: Record<string, number>
+  /** Созданы в периоде. */
+  created: number
+  /** Вошли в kind=done в периоде (по `StatusChange`; у записей без истории — `doneAt` / `closedAt`). */
+  done: number
+}
+
+/**
+ * Статистика проекта (`stats:project`). Период задаёт `range`: токены — по времени сообщений в транскрипте,
+ * сессии и время агентов — по пересечению сессии с периодом, счётчики `created` / `done` — по моменту события.
+ * Пустой проект или стаб main — `emptyProjectStats` (stats.ts).
+ */
+export interface ProjectStats {
+  projectId: string
+  range: StatsRange
+  /** Начало периода, epoch ms; нет — всё время. */
+  from?: number
+  /** Момент расчёта: конец периода и «сейчас» для идущих сессий. */
+  generatedAt: number
+  /** Итог по проекту за период. */
+  totals: StatsUsage
+  tasks: StatsCounts
+  globalTasks: StatsCounts
+  /** Прогоны агентов на задачах (`Dispatch`) за период: по исходу и ещё идущие. */
+  dispatches: { total: number; done: number; failed: number; unknown: number; running: number }
+  /** Запуски координатора (`Run.coordinatorSessions`) за период. */
+  coordinatorLaunches: number
+  /**
+   * Время задач, вошедших в done в периоде. `avgActiveMs` — среднее `Task.activeMs` (время в kind=in_progress);
+   * `avgLeadMs` — среднее от первого входа в kind=in_progress до входа в done по истории статусов (записи
+   * миграции `migrated` не считаются). Нет выборки — поля нет; `samples` — сколько задач вошло в среднее.
+   */
+  taskTime: { avgActiveMs?: number; avgLeadMs?: number; samples: number }
+  /** Разбивки; строки отсортированы по стоимости, затем по токенам, затем по времени агентов — по убыванию. */
+  byRole: StatsRow[]
+  byModel: StatsRow[]
+  byAgent: StatsRow[]
+  byGlobalTask: StatsRow[]
+  byTask: StatsRow[]
+  /** По дням, от старых к новым. */
+  byDay: StatsDay[]
+}
+
+// ---------- статистика задачи ----------
+
+/**
+ * Интервал времени в статистике задачи: `approx` — начало неточное. Это запись миграции (`StatusChange.migrated`:
+ * реальный вход в колонку неизвестен) или история обрезана до `STATUS_HISTORY_LIMIT`, ранние переходы потеряны.
+ */
+export interface StatsSpan {
+  ms: number
+  approx?: true
+}
+
+/** Время в колонке доски: сумма по всем заходам. `entries` — сколько раз задача заходила в колонку. */
+export interface TaskColumnTime {
+  status: TaskStatus
+  ms: number
+  entries: number
+  approx?: true
+}
+
+/** Время на этапе воркфлоу: сумма по всем заходам (возврат `work → work` — отдельный заход). */
+export interface TaskStageTime {
+  nodeId: string
+  title: string
+  ms: number
+  entries: number
+  approx?: true
+}
+
+/**
+ * Ожидание человека: сколько у задачи (или её проверок) был pending-запрос. Это время, которое задача **ждала**
+ * человека, а не время самого человека — оно приложению неизвестно.
+ */
+export interface TaskWaitStats {
+  /** Объединённое время, когда был хотя бы один pending-запрос, мс (параллельные запросы не складываются; идущий — до generatedAt). */
+  waitingMs: number
+  byKind: Record<HumanRequestKind, { count: number; waitingMs: number }>
+  resolved: number
+  cancelled: number
+  pending: number
+  /** Реакция по решённым запросам: `resolvedAt − createdAt`. Решённых нет — полей нет. */
+  reactionMedianMs?: number
+  reactionMaxMs?: number
+}
+
+/**
+ * Статистика одной задачи (`stats:task`): время жизни и по колонкам/этапам, расход агентов, возвраты, ожидание
+ * человека. Считается `buildTaskStats` (task-stats.ts); токены приходят из main (транскрипты), время — из снапшота.
+ * «Неизвестно ≠ 0»: нет данных — поля нет (`leadMs`, `activeMs`, `stages`, `usage.tokens`).
+ */
+export interface TaskStats {
+  taskId: string
+  /** Момент расчёта: «сейчас» для идущих интервалов и сессий. */
+  generatedAt: number
+  /** Создана → последний вход в done; не done — до `generatedAt` и `running: true`. */
+  lifetime: StatsSpan & { running?: true }
+  /** Первый вход в in_progress → вход в done по истории статусов; нет честной истории или не done — поля нет. */
+  leadMs?: number
+  /** `Task.activeMs` на момент `generatedAt` (с идущим отрезком). Не бывала в работе — поля нет. */
+  activeMs?: number
+  /** Время по колонкам, порядок колонок доски; колонки без заходов не включаются. */
+  columns: TaskColumnTime[]
+  /** Время по этапам воркфлоу, в порядке первого захода. Нет `stageHistory` (задача вне воркфлоу, старый код) — поля нет. */
+  stages?: TaskStageTime[]
+  /** Расход: сессии задачи и её задач-гейтов (`Task.gateFor`). Та же семантика «неизвестно ≠ 0», что у проекта. */
+  usage: StatsUsage
+  byRole: StatsRow[]
+  byModel: StatsRow[]
+  /** Прогоны агентов на задаче и её проверках; `total` = `usage.sessions`. */
+  dispatches: { total: number; done: number; failed: number; unknown: number; running: number }
+  /**
+   * Возвраты на доработку: `gate` — отказы проверок (`stageHistory` с исходом reject, без отказов человека),
+   * `approval` — «Вернуть» по approval, `clarify` — «Уточнить» по ответу задачи-ответа, `manual` — возврат
+   * вручную (ревью → ready вне воркфлоу, `enterWork` с этапа не «Работа» в воркфлоу).
+   */
+  rejections: { gate: number; approval: number; clarify: number; manual: number }
+  human: TaskWaitStats
+  /** Вопросы координатору (не адресованные человеку): число и медиана ответа по отвеченным. */
+  coordinatorQuestions: { count: number; answerMedianMs?: number }
+}
+
+/**
+ * Статистика глобальной задачи (`stats:global`): то же по времени и ожиданию человека, расход — координатора и
+ * подзадач раздельно. Проверки подзадач учитываются в подзадаче, которую они проверяют.
+ */
+export interface GlobalTaskStats extends Omit<TaskStats, 'taskId' | 'activeMs' | 'stages' | 'dispatches' | 'rejections' | 'coordinatorQuestions'> {
+  runId: string
+  /** `Run.activeMs` на момент `generatedAt` — собственное время глобальной задачи; нет — неизвестно. */
+  ownActiveMs?: number
+  /** Расход координатора; `launches` — запуски (`Run.coordinatorSessions`). */
+  coordinator: StatsUsage & { launches: number }
+  /** Сумма по подзадачам (без координатора); `count` / `done` — рабочие подзадачи без проверок. */
+  subtasks: StatsUsage & { count: number; done: number }
+  /** Возвраты человеком с «Проверки» в работу (`Run.returns`). */
+  returns: number
+  /** Строки по подзадачам, сортировка как в `ProjectStats` (стоимость → токены → время агентов). */
+  byTask: StatsRow[]
 }

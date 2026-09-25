@@ -4,8 +4,9 @@ import assert from 'node:assert/strict'
 import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
 import {
   globalBoardColumns, globalColumnKind, GLOBAL_REVIEW_TITLE, globalStoredColumns, globalTaskStatus, globalTaskTitle, INBOX_TITLE, toGlobalTasks,
-  hasPendingRequest, pendingRequestsOf
+  hasPendingRequest, pendingRequestsOf, canChangeRunType, runTypeLockReason
 } from './global-tasks.ts'
+import { defaultWorkflow } from './workflow.ts'
 import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
 import { DEFAULT_COLUMNS, type BoardColumn, type HumanRequest, type Run, type Task } from './types.ts'
 
@@ -140,6 +141,92 @@ describe('тип задачи на карточке', () => {
       assert.ok(!('typeId' in card))
       assert.ok(!('typeTitle' in card))
     }
+  })
+})
+
+describe('смена типа глобальной задачи до начала работы', () => {
+  const docs = { typeId: 'docs', snapshot: { id: 'docs', title: 'Документация', roles: [] }, workflow: defaultWorkflow([{ id: 'writer' }]) }
+  const dev = { typeId: 'dev', snapshot: { id: 'dev', title: 'Разработка', roles: [] }, workflow: defaultWorkflow([{ id: 'coder' }]) }
+
+  it('в бэклоге: пересобираются typeId, снимок типа и граф', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', type: docs })
+    const changed = store.changeGlobalTaskType(g.id, dev)
+    assert.equal(changed.typeId, 'dev')
+    assert.equal(changed.typeTitle, 'Разработка')
+    const run = store.getRun(g.id)!
+    assert.deepEqual(run.taskType, dev.snapshot)
+    assert.notEqual(run.taskType, dev.snapshot, 'снимок — копия')
+    assert.deepEqual(run.workflow, dev.workflow)
+    assert.notEqual(run.workflow, dev.workflow, 'граф — копия')
+  })
+
+  it('у нового типа нет графа — граф старого типа не остаётся', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', type: docs })
+    store.changeGlobalTaskType(g.id, { typeId: 'dev', snapshot: dev.snapshot })
+    assert.equal(store.getRun(g.id)!.workflow, undefined)
+  })
+
+  it('после «В работе» — ошибка, даже если карточку вернули в бэклог', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', type: docs })
+    store.moveGlobalTask(g.id, 'wip')
+    assert.ok(store.getGlobalTask(g.id).startedAt !== undefined)
+    assert.throws(() => store.changeGlobalTaskType(g.id, dev), /нельзя сменить: задача уже была «В работе»/)
+    store.moveGlobalTask(g.id, 'plan')
+    assert.throws(() => store.changeGlobalTaskType(g.id, dev), /уже была «В работе»/)
+    assert.equal(store.getRun(g.id)!.typeId, 'docs')
+  })
+
+  it('координатор запускался или есть подзадачи — ошибка', () => {
+    const store = newStore()
+    const withPty = store.createGlobalTask({ title: 'P', type: docs })
+    store.setRunPty(withPty.id, 'pty_1')
+    assert.throws(() => store.changeGlobalTaskType(withPty.id, dev), /нельзя сменить/)
+    const withTasks = store.createGlobalTask({ title: 'T', type: docs })
+    store.createTask({ title: 'a', runId: withTasks.id })
+    assert.throws(() => store.changeGlobalTaskType(withTasks.id, dev), /есть подзадачи \(1\)/)
+  })
+
+  it('«Входящие» тип не меняют', () => {
+    const store = newStore()
+    const inbox = store.createTask({ title: 'x' }).runId!
+    assert.throws(() => store.changeGlobalTaskType(inbox, dev), /«Входящие» — служебная задача/)
+  })
+
+  it('миграция startedAt: бывшие в работе прогоны помечаются, нетронутые в бэклоге — нет', () => {
+    const now = Date.now()
+    const run = (id: string, extra: Partial<Run> = {}): Run => ({ id, objective: id, status: 'plan', createdAt: now, updatedAt: now + 1, ...extra })
+    const p = memory({
+      runs: [
+        run('run_fresh'),
+        run('run_pty', { coordinatorPtyId: 'pty_x' }),
+        run('run_tasks'),
+        run('run_time', { activeMs: 5 }),
+        run('run_done', { status: 'fin', closedAt: now }),
+        run('run_inbox', { inbox: true, activeMs: 5 })
+      ],
+      tasks: [{
+        id: 't1', title: 't', description: '', status: 'todo', deps: [], roleId: 'dev', priority: 'normal', runId: 'run_tasks',
+        createdAt: now, updatedAt: now
+      } as Task]
+    })
+    const store = newStore(p)
+    assert.equal(store.getRun('run_fresh')!.startedAt, undefined)
+    for (const id of ['run_pty', 'run_tasks', 'run_time', 'run_done']) assert.equal(store.getRun(id)!.startedAt, now + 1, id)
+    assert.equal(store.getRun('run_inbox')!.startedAt, undefined)
+    assert.ok(p.saved()!.runs.find((r) => r.id === 'run_pty')!.startedAt !== undefined, 'миграция сохранена')
+  })
+
+  it('canChangeRunType / runTypeLockReason: чистое правило', () => {
+    const base = { subtasks: 0, statusKind: 'backlog' as const }
+    assert.equal(canChangeRunType(base), true)
+    assert.equal(canChangeRunType({ ...base, inbox: true }), false)
+    assert.equal(canChangeRunType({ ...base, startedAt: 1 }), false)
+    assert.equal(canChangeRunType({ ...base, coordinatorPtyId: 'p' }), false)
+    assert.equal(canChangeRunType({ ...base, subtasks: 2 }), false)
+    assert.match(runTypeLockReason({ ...base, statusKind: 'done' })!, /в бэклоге/)
   })
 })
 

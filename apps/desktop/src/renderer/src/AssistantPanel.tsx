@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { Terminal } from './Terminal'
 import { Icon } from './icons'
 import type { AssistantTerminal } from './assistantPty'
+import { useT } from './i18n'
 
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
  * Esc закрывает панель, только если фокус не в терминале: в xterm Esc нужен агенту (прервать ответ).
  */
 export function AssistantPanel({ open, terminals, activePty, status, onClose, onReset, onOpenInTerminals }: Props): React.JSX.Element {
+  const t = useT()
   const panelRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -31,8 +33,8 @@ export function AssistantPanel({ open, terminals, activePty, status, onClose, on
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
       if (document.querySelector('.modal-backdrop')) return
-      const t = e.target as HTMLElement | null
-      if (t?.closest('.xterm')) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest('.xterm')) return
       e.preventDefault()
       onClose()
     }
@@ -48,19 +50,19 @@ export function AssistantPanel({ open, terminals, activePty, status, onClose, on
   return (
     <>
       {open && <div className="inbox-scrim" onClick={onClose} />}
-      <aside ref={panelRef} tabIndex={-1} className={`inbox assistant ${open ? 'open' : ''}`} aria-label="Ассистент" inert={!open}>
+      <aside ref={panelRef} tabIndex={-1} className={`inbox assistant ${open ? 'open' : ''}`} aria-label={t('shell.assistant.title')} inert={!open}>
         <div className="inbox-head">
           <h3>
-            <span className="assistant-title">Ассистент</span>
+            <span className="assistant-title">{t('shell.assistant.title')}</span>
           </h3>
-          <kbd className="rq-kbd" title="Открыть / закрыть">⌘K</kbd>
-          <button className="icon-btn" title="Новый диалог: перезапустить ассистента с чистым контекстом" aria-label="Новый диалог" onClick={onReset} disabled={status.busy}>
+          <kbd className="rq-kbd" title={t('shell.toggle')}>⌘K</kbd>
+          <button className="icon-btn" title={t('shell.assistant.reset')} aria-label={t('shell.assistant.resetLabel')} onClick={onReset} disabled={status.busy}>
             <Icon.refresh />
           </button>
-          <button className="icon-btn" title="Открыть во вкладке «Терминалы»" aria-label="Открыть во вкладке терминалов" onClick={onOpenInTerminals} disabled={!activePty}>
+          <button className="icon-btn" title={t('shell.assistant.openInTerminals')} aria-label={t('shell.assistant.openInTerminalsLabel')} onClick={onOpenInTerminals} disabled={!activePty}>
             <Icon.external />
           </button>
-          <button className="icon-btn task-modal-close" title="Закрыть (Esc)" aria-label="Закрыть" onClick={onClose}>
+          <button className="icon-btn task-modal-close" title={t('shell.closeEsc')} aria-label={t('common.close')} onClick={onClose}>
             <Icon.close />
           </button>
         </div>
@@ -70,17 +72,17 @@ export function AssistantPanel({ open, terminals, activePty, status, onClose, on
           </div>
         )}
         <div className="assistant-body">
-          {terminals.map((t) => (
-            <div key={t.ptyId} className={`term ${t.ptyId === activePty ? '' : 'hidden'}`}>
-              <Terminal ptyId={t.ptyId} initialTail={t.tail} visible={open && t.ptyId === activePty} />
+          {terminals.map((term) => (
+            <div key={term.ptyId} className={`term ${term.ptyId === activePty ? '' : 'hidden'}`}>
+              <Terminal ptyId={term.ptyId} initialTail={term.tail} visible={open && term.ptyId === activePty} />
             </div>
           ))}
           {!activePty && (
-            <div className="empty">{status.error ? <span className="error-text">{status.error}</span> : 'Запускаю ассистента…'}</div>
+            <div className="empty">{status.error ? <span className="error-text">{status.error}</span> : t('shell.assistant.starting')}</div>
           )}
         </div>
         <div className="inbox-foot muted">
-          <kbd className="rq-kbd">⌘K</kbd> открыть / закрыть · <kbd className="rq-kbd">Esc</kbd> вне терминала — закрыть
+          <kbd className="rq-kbd">⌘K</kbd> {t('shell.assistant.footToggle')} · <kbd className="rq-kbd">Esc</kbd> {t('shell.assistant.footEsc')}
         </div>
       </aside>
     </>

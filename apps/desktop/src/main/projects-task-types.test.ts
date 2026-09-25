@@ -1,5 +1,5 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Типы задач в ProjectManager: библиотека (встроенные и
-// пользовательские, правка встроенного на месте), типы проекта, тип нового прогона и роли по прогону,
+// Запуск: pnpm --filter @orca-board/desktop test. Типы задач в ProjectManager: библиотека (засев заготовок один раз,
+// правка и удаление любого типа, тип по умолчанию после удаления), типы проекта, тип нового прогона и роли по прогону,
 // колонки проекта. Миграция — task-types-migration.test.ts.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes, defaultWorkflow,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes, defaultWorkflow,
   type BoardColumn, type Role
 } from '@orca-board/core'
 import { ProjectManager } from './projects'
@@ -45,48 +45,116 @@ beforeEach(() => { tmp = mkdtempSync(path.join(tmpdir(), 'orca-types-')) })
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 describe('библиотека типов', () => {
-  it('встроенные в их порядке, затем пользовательские; копия встроенного подменяет его', () => {
+  it('заготовки в библиотеке, затем свои; засев записывается в файл с первым сохранением', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
-    assert.deepEqual(pm.taskTypes().map((t) => t.id), builtinTaskTypes().map((t) => t.id))
+    assert.deepEqual(pm.taskTypes().map((t) => t.id), presetTaskTypes().map((t) => t.id))
+    assert.deepEqual(pm.taskTypes(), presetTaskTypes(), 'заготовки — обычные типы, без особых полей')
     const own = pm.saveTaskType({ title: '  Мой  ', description: ' одна строка ', settings: { agentRules: 'r' } })
     assert.equal(own.title, 'Мой')
     assert.equal(own.description, 'одна строка')
     assert.equal(pm.taskTypes().at(-1)?.id, own.id)
     assert.deepEqual(new ProjectManager(tmp).taskType(own.id), own, 'переживает перезапуск')
+    const file = saved()
+    assert.equal(file.taskTypesSeeded, true)
+    assert.deepEqual((file.taskTypes as Array<{ id: string }>).map((t) => t.id), [...presetTaskTypes().map((t) => t.id), own.id])
   })
 
-  it('копия встроенного под старым названием получает новое: встроенные переименовали («Общий» → «Программирование»)', () => {
-    const general = builtinTaskType(GENERAL_TASK_TYPE_ID)!
-    const docs = builtinTaskType('docs')!
+  it('нет projects.json — библиотека из заготовок, тип по умолчанию «Программирование»', () => {
+    const pm = new ProjectManager(tmp)
+    assert.deepEqual(pm.taskTypes(), presetTaskTypes())
+    assert.equal(pm.defaultTaskTypeId(), GENERAL_TASK_TYPE_ID)
+  })
+
+  it('миграция файла без засева: правки встроенных остаются со всем содержимым, флаги старых версий снимаются', () => {
+    const general = presetTaskType(GENERAL_TASK_TYPE_ID)!
+    const docs = presetTaskType('docs')!
     writeConfig({ taskTypes: [
+      { id: 'type_own', title: 'Свой', builtinBase: 'мусор', settings: {} },
+      // Правка до полной правки встроенных: название менять было нельзя — берётся название заготовки.
       { id: GENERAL_TASK_TYPE_ID, title: 'Общий', description: 'Перенесён из «Настройки → Для новых проектов».', settings: { agentRules: 'r' } },
-      { ...docs, builtin: undefined, title: 'Документация / аналитика' }
+      // Правка с отпечатком: название — правка человека, остаётся.
+      { ...docs, builtin: true, title: 'Моя документация', builtinBase: '00000000', settings: { agentRules: 'моё' } }
     ] })
     const pm = new ProjectManager(tmp)
-    assert.equal(pm.taskType(GENERAL_TASK_TYPE_ID)?.title, general.title)
-    assert.equal(pm.taskType(GENERAL_TASK_TYPE_ID)?.settings.agentRules, 'r', 'настройки копии не трогаются')
-    assert.equal(pm.taskType('docs')?.title, docs.title)
-    // Правка на месте сверяется с копией — после переименования она по-прежнему проходит.
-    assert.equal(pm.saveTaskTypeRules('docs', undefined, 'правила').title, docs.title)
+    const ids = presetTaskTypes().map((t) => t.id)
+    assert.deepEqual(pm.taskTypes().map((t) => t.id), [...ids, 'type_own'], 'заготовки в своём порядке, затем свои')
+    const g = pm.taskType(GENERAL_TASK_TYPE_ID)!
+    assert.equal(g.title, general.title)
+    assert.equal(g.description, 'Перенесён из «Настройки → Для новых проектов».')
+    assert.deepEqual(g.settings, { agentRules: 'r' }, 'содержимое правки не трогается')
+    const d = pm.taskType('docs')!
+    assert.equal(d.title, 'Моя документация')
+    assert.deepEqual(d.settings, { agentRules: 'моё' })
+    assert.deepEqual(pm.taskType('backend'), presetTaskType('backend'), 'неправленная заготовка — как в коде')
+    for (const t of pm.taskTypes()) assert.deepEqual(Object.keys(t).filter((k) => k.startsWith('builtin')), [], t.id)
+    // Засев однократный: переименование и удаление после миграции переживают перезапуск.
+    pm.saveTaskType({ id: 'docs', title: 'Аналитика', settings: d.settings })
+    pm.deleteTaskType('backend')
+    const again = new ProjectManager(tmp)
+    assert.equal(again.taskType('docs')?.title, 'Аналитика')
+    assert.equal(again.taskType('backend'), undefined)
+    assert.equal(again.taskType(GENERAL_TASK_TYPE_ID)?.title, general.title)
   })
 
-  it('встроенный на месте: исполнитель, системный промпт роли и правила — да, остальное — «Дублировать»', () => {
+  it('заготовка правится целиком: название, описание, роли, граф, разрешения, правила — и переживает перезапуск', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
-    const docs = builtinTaskType('docs')!
-    const roles = (docs.settings.roles ?? DEFAULT_ROLES).map((r, i) => (i === 0 ? { ...r, agent: 'codex' as const, model: 'gpt', systemPrompt: 'свой' } : r))
-    const edited = pm.saveTaskType({ id: 'docs', title: docs.title, description: docs.description, settings: { ...docs.settings, roles, agentRules: 'правила' } })
-    assert.equal(edited.settings.roles![0].agent, 'codex')
-    assert.equal(pm.taskType('docs')?.builtin, undefined, 'изменённый встроенный — пользовательская копия с его id')
-    assert.equal(pm.taskTypes().filter((t) => t.id === 'docs').length, 1)
-    assert.throws(() => pm.saveTaskType({ id: 'docs', title: 'Другое', settings: docs.settings }), /Дублировать/)
-    assert.throws(() => pm.patchTaskType('backend', { roles: [...(builtinTaskType('backend')!.settings.roles ?? DEFAULT_ROLES), DESIGNER] }), /Дублировать/)
-    assert.throws(() => pm.patchTaskType('backend', { permissionMode: 'bypassPermissions' }), /Дублировать/)
-    // Удаление копии возвращает встроенный; сам встроенный не удаляется.
-    pm.deleteTaskType('docs')
-    assert.equal(pm.taskType('docs')?.builtin, true)
-    assert.throws(() => pm.deleteTaskType('docs'), /встроенный/)
+    const backend = presetTaskType('backend')!
+    const roles = [...(backend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa'), DESIGNER]
+      .map((r) => (r.id === 'developer' ? { ...r, title: 'Сеньор', description: 'Пишет всё', agent: 'codex' as const, model: 'gpt' } : r))
+    const edited = pm.saveTaskType({
+      id: 'backend', title: 'Мой бэкенд', description: 'своё описание',
+      settings: { roles, workflow: defaultWorkflow(roles), permissionMode: 'bypassPermissions', agentRules: 'правила' }
+    })
+    assert.equal(pm.taskTypes().filter((t) => t.id === 'backend').length, 1)
+    assert.equal(pm.taskTypes().findIndex((t) => t.id === 'backend'), presetTaskTypes().findIndex((t) => t.id === 'backend'), 'на своём месте')
+    const again = new ProjectManager(tmp).taskType('backend')!
+    assert.deepEqual(again, edited, 'правка переживает перезапуск')
+    assert.equal(again.title, 'Мой бэкенд')
+    assert.deepEqual(again.settings.roles?.map((r) => r.id), roles.map((r) => r.id))
+    assert.equal(again.settings.permissionMode, 'bypassPermissions')
+    const patched = pm.patchTaskType('frontend', { permissionMode: 'acceptEdits' })
+    assert.equal(patched.settings.permissionMode, 'acceptEdits')
+  })
+
+  it('заготовка удаляется как любой тип и не возвращается после перезапуска', () => {
+    writeConfig({}, { defaultTaskTypeId: 'docs' })
+    const pm = new ProjectManager(tmp)
+    pm.setDefaultTaskType('docs')
+    const state = pm.deleteTaskType('docs')
+    assert.equal(state.taskTypes.some((t) => t.id === 'docs'), false)
+    assert.equal(state.defaultTaskTypeId, GENERAL_TASK_TYPE_ID, 'тип по умолчанию библиотеки — снова «Программирование»')
+    assert.equal(pm.projectDefaultTypeId(PID), GENERAL_TASK_TYPE_ID, 'проект с удалённым типом по умолчанию — на типе библиотеки')
+    const again = new ProjectManager(tmp)
+    assert.equal(again.taskType('docs'), undefined, 'засев не повторяется')
+    assert.equal(again.taskTypes().length, presetTaskTypes().length - 1)
+    assert.throws(() => pm.deleteTaskType('docs'), /тип задачи не найден: docs/)
+  })
+
+  it('удалён «Программирование» — тип по умолчанию первый в библиотеке, новые проекты и прогоны на нём', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    assert.equal(pm.deleteTaskType(GENERAL_TASK_TYPE_ID).defaultTaskTypeId, 'frontend')
+    assert.equal(pm.projectDefaultTypeId(PID), 'frontend')
+    assert.equal(pm.runType(PID).typeId, 'frontend')
+    assert.equal(pm.resolveRun(PID).typeId, 'frontend')
+    assert.equal(pm.add(gitRepo('fresh')).defaultTaskTypeId, 'frontend')
+    assert.equal(new ProjectManager(tmp).defaultTaskTypeId(), 'frontend', 'и после перезапуска')
+  })
+
+  it('последний тип удалить нельзя', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const [last, ...rest] = pm.taskTypes()
+    for (const t of rest) pm.deleteTaskType(t.id)
+    assert.throws(() => pm.deleteTaskType(last.id), /последний в библиотеке/)
+    assert.deepEqual(pm.taskTypes().map((t) => t.id), [last.id])
+  })
+
+  it('засеянный файл, в котором не осталось ни одного целого типа, засевается снова', () => {
+    writeConfig({ taskTypesSeeded: true, taskTypes: [{ id: 'битый' }] })
+    assert.deepEqual(new ProjectManager(tmp).taskTypes(), presetTaskTypes())
   })
 
   it('дублирование: копия под новым id, редактируется целиком', () => {
@@ -94,8 +162,8 @@ describe('библиотека типов', () => {
     const pm = new ProjectManager(tmp)
     const copy = pm.duplicateTaskType('frontend')
     assert.notEqual(copy.id, 'frontend')
-    assert.equal(copy.title, `${builtinTaskType('frontend')!.title} (копия)`)
-    assert.deepEqual(copy.settings, builtinTaskType('frontend')!.settings)
+    assert.equal(copy.title, `${presetTaskType('frontend')!.title} (копия)`)
+    assert.deepEqual(copy.settings, presetTaskType('frontend')!.settings)
     const next = pm.patchTaskType(copy.id, { roles: [...DEFAULT_ROLES, DESIGNER], permissionMode: 'acceptEdits' })
     assert.equal(next.settings.permissionMode, 'acceptEdits')
   })
@@ -119,7 +187,7 @@ describe('библиотека типов', () => {
     assert.equal(pm.deleteTaskType(t.id).defaultTaskTypeId, GENERAL_TASK_TYPE_ID)
   })
 
-  it('rules: правила и промпт роли встроенного типа правятся на месте', () => {
+  it('rules: правила и промпт роли заготовки правятся на месте', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
     pm.saveTaskTypeRules(GENERAL_TASK_TYPE_ID, undefined, 'общие правила')
@@ -150,13 +218,13 @@ describe('типы проекта', () => {
     assert.equal(api.defaultTaskTypeId, 'backend')
     assert.deepEqual(api.columns, DEFAULT_COLUMNS)
     assert.equal('roles' in api, false)
-    assert.deepEqual(pm.roles(api.id), builtinTaskType('backend')!.settings.roles ?? DEFAULT_ROLES, 'роли — из типа по умолчанию')
+    assert.deepEqual(pm.roles(api.id), presetTaskType('backend')!.settings.roles ?? DEFAULT_ROLES, 'роли — из типа по умолчанию')
     assert.equal(pm.add(gitRepo('plain')).defaultTaskTypeId, GENERAL_TASK_TYPE_ID)
     assert.throws(() => pm.add(gitRepo('x'), 'нет-такого'), /тип задачи не найден/)
     assert.equal(pm.add(gitRepo('api'), 'frontend').defaultTaskTypeId, 'backend', 'уже добавленный — как есть')
   })
 
-  it('detectTaskType: угаданный встроенный, без признаков — тип библиотеки по умолчанию', () => {
+  it('detectTaskType: угаданная заготовка, без признаков — тип библиотеки по умолчанию', () => {
     const pm = new ProjectManager(tmp)
     const front = gitRepo('front', { 'package.json': JSON.stringify({ dependencies: { react: '^18' } }) })
     assert.deepEqual(pm.detectTaskType(front), { path: front, typeId: 'frontend', reason: 'package.json: react' })
@@ -176,7 +244,7 @@ describe('типы проекта', () => {
     assert.throws(() => pm.setProjectTaskTypes(PID, { typeIds: [], defaultTypeId: 'docs' }), /хотя бы один/)
     assert.throws(() => pm.setProjectTaskTypes(PID, { typeIds: ['ghost'], defaultTypeId: 'ghost' }), /не найден: ghost/)
     pm.setProjectTaskTypes(PID, { typeIds: null, defaultTypeId: 'backend' })
-    assert.equal(pm.projectTaskTypes(PID).length, builtinTaskTypes().length)
+    assert.equal(pm.projectTaskTypes(PID).length, presetTaskTypes().length)
     assert.equal('taskTypeIds' in (saved().projects as Array<Record<string, unknown>>)[0], false)
   })
 
@@ -215,7 +283,7 @@ describe('тип прогона и роли по прогону', () => {
     assert.equal(ra.permissionMode, 'acceptEdits')
     const rb = pm.resolveRun(PID, b.id)
     assert.equal(rb.typeId, 'docs')
-    assert.deepEqual(rb.roles, builtinTaskType('docs')!.settings.roles ?? DEFAULT_ROLES)
+    assert.deepEqual(rb.roles, presetTaskType('docs')!.settings.roles ?? DEFAULT_ROLES)
     assert.equal(pm.roles(PID, b.id).some((r) => r.id === 'designer'), false)
     // Роли «вживую»: смена исполнителя роли типа действует на уже созданный прогон.
     pm.patchTaskType(mine.id, { roles: [...DEFAULT_ROLES, { ...DESIGNER, model: 'opus' }] })
@@ -241,5 +309,17 @@ describe('проект', () => {
     pm.setColumns(PID, DEFAULT_COLUMNS)
     const status = pm.store(PID).getTask(task.id)?.status
     assert.ok(DEFAULT_COLUMNS.some((c) => c.id === status && (c.kind === 'backlog' || c.kind === 'ready')), String(status))
+  })
+})
+
+describe('настройки приложения: язык', () => {
+  it('не выбран — нет поля; выбранный переживает перезапуск; чужой язык — ошибка', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    assert.equal(pm.settings().language, undefined, 'первый запуск: язык не выбран, renderer показывает русский')
+    assert.equal(pm.setSettings({ language: 'en' }).language, 'en')
+    assert.equal(new ProjectManager(tmp).settings().language, 'en')
+    assert.throws(() => pm.setSettings({ language: 'de' as 'en' }), /неизвестный язык «de»/)
+    assert.equal(pm.settings().keepInBackground, true, 'остальные настройки не задеты')
   })
 })

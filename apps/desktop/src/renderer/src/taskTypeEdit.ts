@@ -1,8 +1,9 @@
 import {
-  BUILTIN_EDITABLE_TYPE_ROLE_FIELDS, DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, builtinTaskTypes,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID,
   type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState } from '../../shared/ipc'
+import { t } from './i18n'
 
 // Логика «Настройки → Типы задач» (settings/TaskTypePane.tsx) и «О проекте → Типы задач»
 // (about/TaskTypesSection.tsx): без React, чтобы тестировать node --test.
@@ -11,12 +12,13 @@ import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeI
  * Renderer приходит по HMR, а main и preload остаются старыми до перезапуска: у старого preload нет
  * `window.orca.taskTypes` и `projects.setTaskTypes`, у старого main — хендлеров `taskTypes:*`.
  */
-export const TASK_TYPES_STALE_MESSAGE =
-  'Приложение запущено со старой версией main/preload, где ещё нет типов задач. Перезапустите приложение.'
+export function taskTypesStaleMessage(): string {
+  return t('config.taskType.stale')
+}
 
 /** `window.orca.taskTypes` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function taskTypeLibraryApi(api: Partial<OrcaApi> | undefined): OrcaApi['taskTypes'] {
-  if (!api?.taskTypes) throw new Error(TASK_TYPES_STALE_MESSAGE)
+  if (!api?.taskTypes) throw new Error(taskTypesStaleMessage())
   return api.taskTypes
 }
 
@@ -27,7 +29,7 @@ export function hasProjectTaskTypes(api: Partial<OrcaApi> | undefined): boolean 
 
 /** Текст ошибки IPC для раздела: preload новый, а main старый — «перезапустите приложение». */
 export function taskTypesError(message: string): string {
-  return /No handler registered for '(taskTypes:|projects:setTaskTypes)/.test(message) ? TASK_TYPES_STALE_MESSAGE : message
+  return /No handler registered for '(taskTypes:|projects:setTaskTypes)/.test(message) ? taskTypesStaleMessage() : message
 }
 
 /** Ключ запомненного раздела «Настроек»; «О проекте → Типы задач» ставит в него тип кнопкой «Изменить в Настройках». */
@@ -82,56 +84,19 @@ export function patchedTaskType(t: TaskType, patch: TaskTypePatch): TaskTypeInpu
 }
 
 /** Переименование: пустое название — ошибка (текст для формы), пустое описание убирает поле. */
-export function renamedTaskType(t: TaskType, title: string, description: string): TaskTypeInput | { error: string } {
+export function renamedTaskType(type: TaskType, title: string, description: string): TaskTypeInput | { error: string } {
   const name = title.trim()
-  if (!name) return { error: 'Название типа не может быть пустым' }
+  if (!name) return { error: t('config.taskType.emptyTitle') }
   const desc = description.trim()
-  return { id: t.id, title: name, ...(desc ? { description: desc } : {}), settings: t.settings }
-}
-
-const BUILTIN_IDS = builtinTaskTypes().map((t) => t.id)
-
-/**
- * Пользовательская копия встроенного с тем же id («изменённый встроенный» — после правки исполнителя, промпта или
- * правил): удаление вернёт встроенный, а не уберёт тип из списка.
- */
-export function overridesBuiltinType(t: Pick<TaskType, 'id' | 'builtin'>): boolean {
-  return !t.builtin && BUILTIN_IDS.includes(t.id)
-}
-
-/** Встроенный или его изменённая копия: устройство типа (состав ролей, граф, разрешения) правится только в дубле. */
-export function isBuiltinLike(t: Pick<TaskType, 'id' | 'builtin'>): boolean {
-  return !!t.builtin || overridesBuiltinType(t)
+  return { id: type.id, title: name, ...(desc ? { description: desc } : {}), settings: type.settings }
 }
 
 /**
- * Группы меню: встроенные (и изменённые встроенные — на своём месте, чтобы правка исполнителя не уносила пункт
- * в «Свои») и свои. Порядок внутри групп — как отдал main.
+ * Ключ черновиков редакторов типа (`useAutoSave`, `key` компонентов): свой у каждого типа, чтобы черновик одного
+ * типа не попал в другой при переключении.
  */
-export function splitTaskTypes(types: readonly TaskType[]): { builtin: TaskType[]; own: TaskType[] } {
-  return { builtin: types.filter(isBuiltinLike), own: types.filter((t) => !isBuiltinLike(t)) }
-}
-
-/**
- * Ключ черновиков редакторов типа (`useAutoSave`, `key` компонентов). Для встроенного и его изменённой копии
- * ключ один: первая правка исполнителя или промпта превращает встроенный в копию с тем же id, и черновик не должен
- * сбрасываться посреди быстрых кликов. После «Вернуть встроенный» редакторы пересоздаёт `rev` (см. TaskTypePane).
- */
-export function typeEditorKey(t: Pick<TaskType, 'id' | 'builtin'>, rev = 0): string {
-  return `type:${t.id}:${isBuiltinLike(t) ? 'b' : 'u'}:${rev}`
-}
-
-/**
- * Правка роли встроенного типа: проходят только поля, которые main примет без копии (исполнитель и системный
- * промпт — `BUILTIN_EDITABLE_TYPE_ROLE_FIELDS`); undefined в них — сброс, сохраняется. Смена агента приходит сюда
- * уже со сброшенными моделью и усилием (`changeAgent` в RolesEditor).
- */
-export function executorOnlyPatch(p: Partial<Role>): Partial<Role> {
-  const next: Partial<Role> = {}
-  // Отдельная функция с ключом-параметром: для объединения ключей TS не сводит типы полей `agent` и `model`.
-  const copy = <K extends keyof Role>(k: K): void => { next[k] = p[k] }
-  for (const k of BUILTIN_EDITABLE_TYPE_ROLE_FIELDS) if (k in p) copy(k)
-  return next
+export function typeEditorKey(t: Pick<TaskType, 'id'>): string {
+  return `type:${t.id}`
 }
 
 /** Где тип используется: по умолчанию в проектах и доступен в проектах (`taskTypeIds` нет — доступны все). */
@@ -176,16 +141,31 @@ export function typeColumnChoices(projects: readonly Project[]): BoardColumn[] {
   return out
 }
 
-/** Текст подтверждения удаления: что станет с проектами и глобальными задачами этого типа. */
-export function deleteTypeConfirmText(t: TaskType, state: TaskTypesState, usage: TypeUsage | undefined): string {
-  const lines = [`Удалить тип «${t.title}»?`, '']
-  if (overridesBuiltinType(t)) lines.push('Ваши правки пропадут — вернётся встроенный тип с этим именем.')
-  else if (state.defaultTaskTypeId === t.id) lines.push(`Это тип по умолчанию библиотеки — им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title ?? GENERAL_TASK_TYPE_ID}».`)
-  if (!overridesBuiltinType(t) && usage?.asDefault) {
-    lines.push(`Он тип по умолчанию в проектах (${usage.asDefault}): они перейдут на тип библиотеки по умолчанию.`)
+/** Подтверждение удаления типа — панель в шапке типа, не `confirm()`. */
+export interface TypeRemovalConfirm {
+  title: string
+  /** Последствия, по пункту на строку. */
+  lines: string[]
+  /** Надпись кнопки подтверждения. */
+  action: string
+}
+
+/**
+ * Что станет с проектами и глобальными задачами после удаления типа. Одинаково для любого типа, включая заготовки:
+ * удалённый тип не вернётся и после перезапуска. Новый тип по умолчанию — по правилу main (`defaultTaskTypeId`):
+ * «Программирование», а без него — первый оставшийся.
+ */
+export function typeRemovalConfirm(type: TaskType, state: TaskTypesState, usage: TypeUsage | undefined): TypeRemovalConfirm {
+  const lines: string[] = []
+  if (state.defaultTaskTypeId === type.id) {
+    const rest = state.taskTypes.filter((x) => x.id !== type.id)
+    const next = rest.find((x) => x.id === GENERAL_TASK_TYPE_ID) ?? rest[0]
+    if (next) lines.push(t('config.taskType.remove.newDefault', { title: next.title }))
   }
-  lines.push('Уже созданные глобальные задачи этого типа доработают по снимку ролей, сохранённому при создании.')
-  return lines.join('\n')
+  if (usage?.asDefault) lines.push(t('config.taskType.remove.projects', { n: usage.asDefault }))
+  lines.push(t('config.taskType.remove.snapshot'))
+  lines.push(t('config.taskType.remove.permanent'))
+  return { title: t('config.taskType.remove.title', { title: type.title }), lines, action: t('config.taskType.remove.action') }
 }
 
 // ---------- «О проекте → Типы задач» ----------
@@ -215,8 +195,8 @@ export function toggledProjectTypes(
   const current = all.filter((x) => isTypeAvailable(p, x))
   const def = projectDefaultTypeId(p, state)
   const next = on ? all.filter((x) => x === id || current.includes(x)) : current.filter((x) => x !== id)
-  if (!on && id === def) return { error: 'Тип по умолчанию нельзя выключить — сначала сделайте по умолчанию другой тип.' }
-  if (!next.length) return { error: 'В проекте должен остаться хотя бы один тип.' }
+  if (!on && id === def) return { error: t('config.taskType.toggle.defaultOff') }
+  if (!next.length) return { error: t('config.taskType.toggle.lastOne') }
   return { typeIds: next.length === all.length ? null : next, defaultTypeId: def }
 }
 

@@ -1,8 +1,9 @@
 import {
   DEFAULT_ROLES, resolveRunType,
-  type AgentInfo, type GlobalTask, type Role, type Run, type TaskType
+  type AgentInfo, type GlobalTask, type Role, type Run, type TaskType, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
+import { builtinText } from './defaultTitles'
 
 /**
  * Типы задач в renderer (docs/architecture.md → «Типы задач»): тип выбирается у глобальной задачи и задаёт
@@ -12,7 +13,7 @@ import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 /**
  * `window.orca.taskTypes` или undefined: в `pnpm dev` renderer приходит по HMR, а preload может быть старым —
  * без типов. Тогда выбора типа нет, подписи ролей — встроенные (`DEFAULT_ROLES`), а разделы «Типы задач»
- * просят перезапустить приложение (`TASK_TYPES_STALE_MESSAGE`).
+ * просят перезапустить приложение (`taskTypesStaleMessage()`).
  */
 export function taskTypesApi(api: TaskTypesHost | undefined): Pick<OrcaApi['taskTypes'], 'list'> | undefined {
   const types = api?.taskTypes
@@ -87,6 +88,23 @@ export function rolesForRun(
   return resolveRunType(run, state.taskTypes, defaultId).roles
 }
 
+/**
+ * Воркфлоу прогона `runId` — для названий этапов на карточках: снимок графа прогона (`Run.workflow`), а без него
+ * граф типа по тому же правилу, что и роли. Нет типов (старый main) и нет снимка — undefined: этапы не подписываем.
+ */
+export function workflowForRun(
+  runId: string | undefined,
+  runs: readonly Pick<Run, 'id' | 'typeId' | 'taskType' | 'workflow'>[],
+  project: Pick<Project, 'defaultTaskTypeId' | 'taskTypeIds'> | null | undefined,
+  state: TaskTypesState | null
+): Workflow | undefined {
+  const run = runId ? runs.find((r) => r.id === runId) : undefined
+  if (run?.workflow) return run.workflow
+  if (!state) return undefined
+  const defaultId = project ? projectDefaultTypeId(project, state) : state.defaultTaskTypeId
+  return resolveRunType(run, state.taskTypes, defaultId).workflow
+}
+
 /** Роли типа библиотеки по умолчанию — с ними main запускает ассистента приложения. */
 export function libraryDefaultRoles(state: TaskTypesState): Role[] {
   return resolveRunType(undefined, state.taskTypes, state.defaultTaskTypeId).roles
@@ -98,7 +116,8 @@ export function libraryDefaultRoles(state: TaskTypesState): Role[] {
  */
 export function globalTypeTitle(global: Pick<GlobalTask, 'typeId' | 'typeTitle' | 'inbox'>, state: TaskTypesState | null): string | undefined {
   if (global.inbox || global.typeId === undefined) return undefined
-  return state?.taskTypes.find((t) => t.id === global.typeId)?.title ?? global.typeTitle ?? global.typeId
+  const title = state?.taskTypes.find((t) => t.id === global.typeId)?.title ?? global.typeTitle
+  return title ? builtinText(title) : global.typeId
 }
 
 /**

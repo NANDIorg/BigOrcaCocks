@@ -14,7 +14,6 @@ export function withPatch(r: Role, p: Partial<Role>): Role {
 
 /**
  * Смена агента: модель и effort прошлого агента к новому не подходят — сбрасываются в «по умолчанию».
- * Одна правка и для полного редактора, и для встроенного типа (там её пропускает `executorOnlyPatch`).
  */
 export function agentChangePatch(agent: AgentKind): Partial<Role> {
   return { agent, model: undefined, effort: undefined }

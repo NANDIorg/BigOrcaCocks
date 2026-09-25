@@ -2,7 +2,7 @@
 // и разрешения уходят из проекта в пользовательский тип «<имя проекта>», шаблоны проектов становятся типами.
 // Чистая функция без ФС — её вызывает `ProjectManager.load()` после нормализации старого формата, а тесты — напрямую.
 import {
-  builtinTaskTypes, taskTypeFromLegacyProject,
+  presetTaskTypes, taskTypeFromLegacyProject,
   type Role, type TaskType, type TaskTypePermissionMode, type Workflow
 } from '@orca-board/core'
 import type { Project, ProjectsFile } from './projects'
@@ -23,7 +23,7 @@ export interface LegacyProjectFields {
 
 /**
  * projects.json старого формата после нормализации в `load()`: пользовательские шаблоны уже проверены и
- * без колонок и агентов (это готовые типы), старый `defaults` уже перенесён в копию встроенного `general`.
+ * без колонок и агентов (это готовые типы), старый `defaults` уже перенесён в тип `general`.
  */
 export interface LegacyProjectsFile extends Omit<ProjectsFile, 'projects'> {
   projects: Array<Project & LegacyProjectFields>
@@ -41,7 +41,7 @@ export function legacyTaskTypeId(projectId: string): string {
 
 /**
  * Перевести файл на типы задач. Уже переведённый (`version` 2) возвращается как есть с `changed: false`.
- * - шаблоны → типы с теми же id (копии встроенных остаются подменами встроенных типов), `defaultTemplateId` →
+ * - шаблоны → типы с теми же id (копии встроенных при засеве заменят одноимённые заготовки, `seededTaskTypes`), `defaultTemplateId` →
  *   `defaultTaskTypeId`;
  * - каждый проект → тип «<имя проекта>» (роли, граф, правила, разрешения; незаданное — встроенные значения,
  *   граф фиксируется, см. `taskTypeFromLegacyProject`). Тип становится типом проекта по умолчанию и
@@ -56,8 +56,8 @@ export function migrateProjectsFile(input: LegacyProjectsFile): { data: Projects
   }
   const types: TaskType[] = [...(input.taskTypes ?? [])]
   for (const t of input.templates ?? []) if (!types.some((x) => x.id === t.id)) types.push(t)
-  // Названия встроенных тоже заняты: тип «Программирование» из проекта с таким именем путал бы выбор типа.
-  const titles = new Set([...builtinTaskTypes().map((t) => t.title), ...types.map((t) => t.title)])
+  // Названия заготовок тоже заняты (их засеет `load()`): тип «Программирование» из проекта с таким именем путал бы выбор типа.
+  const titles = new Set([...presetTaskTypes().map((t) => t.title), ...types.map((t) => t.title)])
   const projects = input.projects.map((p) => {
     const id = legacyTaskTypeId(p.id)
     if (!types.some((t) => t.id === id)) {

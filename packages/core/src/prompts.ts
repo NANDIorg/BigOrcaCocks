@@ -1,6 +1,7 @@
 // Только type-импорты: модуль тестируется node --test без бандлера.
 import type { AgentSpec } from './agents'
 import type { Question, Role, Task } from './types'
+import type { WfWorkStage } from './workflow'
 
 /**
  * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
@@ -59,26 +60,78 @@ const ANSWER_READER = { human: 'человек', coordinator: 'координа�
  */
 export type AnsweredQuestion = Pick<Question, 'question' | 'answer'>
 
-/** Раздел с ответами на прошлые вопросы: перезапущенный воркер не должен спрашивать заново. */
+/**
+ * Раздел с ответами на вопросы по задаче: перезапущенный воркер не должен спрашивать заново, а воркер следующего
+ * этапа получает ответы, которые человек дал на этапе «Вопрос человеку» (сам он ничего не спрашивал) —
+ * поэтому заголовок нейтральный.
+ */
 function answersSection(answers: AnsweredQuestion[]): string[] {
   const done = answers.filter((q) => q.answer !== undefined)
   if (done.length === 0) return []
-  return ['', '# Ответы на твои вопросы', '', ...done.map((q) => `- ${q.question}\n  Ответ: ${q.answer}`)]
+  return ['', '# Ответы на вопросы по задаче', '', ...done.map((q) => `- ${q.question}\n  Ответ: ${q.answer}`)]
+}
+
+/** Заголовок раздела этапа в промпте воркера; дальше — название ноды. */
+export const WORKER_STAGE_HEADING = '# Этап:'
+
+/**
+ * Раздел об этапе «Вопрос человеку»: цель — спросить, а не делать. Без новых команд CLI: `orca-board ask` и
+ * `done` уже описаны в инструкции воркера. `answered` — ответы уже есть (повторный заход, перезапуск).
+ */
+function askStageSection(stage: WfWorkStage, answered: boolean): string[] {
+  const parts = ['', `${WORKER_STAGE_HEADING} ${stage.title}`]
+  if (stage.instructions) parts.push('', stage.instructions)
+  parts.push(
+    '',
+    'Твоя цель на этом этапе — задать вопрос(ы) человеку. Код не меняй и ничего не коммить. Изучай задачу и репозиторий только затем, чтобы спросить точно.',
+    'Спрашивай штатным `orca-board ask --question "..." [--option "метка|пояснение" ...] [--recommend <номер|метка>] [--context-file why.md]`: ответ человека придёт в поле `answer`. Вопросы задавай по одному и учитывай ответ в следующем. На этом этапе отвечает человек, а не координатор.',
+    'Когда выяснил всё, что нужно, — сдай `orca-board done --summary "что выяснил"`. Ответы на вопросы получит следующий этап.'
+  )
+  if (answered) parts.push('', 'Ответы выше уже получены (этап запущен повторно): не переспрашивай, спрашивай только новое.')
+  return parts
+}
+
+/**
+ * Раздел об этапе «Работа» или «Вопрос человеку»: что сделать (`instructions` ноды) и что сдать на показ человеку
+ * (`showcase`). Нечего сказать — пусто: промпт задач без настроек этапа не меняется (у `ask` раздел есть всегда).
+ * Флаги `done` для показа — те же, что подсказывает ошибка `finishDispatch`.
+ */
+function stageSection(stage: WfWorkStage | undefined, answered = false): string[] {
+  if (stage?.type === 'ask') return askStageSection(stage, answered)
+  if (!stage || (!stage.instructions && !stage.showcase)) return []
+  const parts = ['', `${WORKER_STAGE_HEADING} ${stage.title}`]
+  if (stage.instructions) parts.push('', stage.instructions)
+  if (stage.showcase) {
+    parts.push(
+      '',
+      `## Результат для показа человеку${stage.showcase.required ? ' (обязательно)' : ''}`,
+      '',
+      stage.showcase.what,
+      '',
+      'После этого этапа результат смотрит человек и решает, что дальше. Файлы для показа (макеты, скриншоты, HTML) закоммить в ветку задачи.',
+      'Сдай показ вместе с done: описание в markdown — файлом вне репозитория, файлы — путями от корня репозитория, флаг на каждый:',
+      '`orca-board done --summary "..." --show-file <описание.md> --show <путь> --show <путь>`.'
+    )
+    if (stage.showcase.required) parts.push('Без показа done не пройдёт.')
+  }
+  return parts
 }
 
 /**
  * Стартовое задание воркера: название, описание, замечания после ревью и ответы на вопросы по задаче
- * (`answers` — если воркер спрашивал до перезапуска). У задачи-ответа (`answerFor`) — блок о том, что
- * результат — ответ в markdown, а замечания — уточнение к прошлому ответу (`previousAnswer`).
+ * (`answers` — если воркер спрашивал до перезапуска или человек отвечал на этапе «Вопрос человеку»). `stage` — этап «Работа» или «Вопрос человеку» графа (`TaskStore.taskWorkStage`):
+ * его инструкция и требование показа идут разделом «Этап». У задачи-ответа (`answerFor`) — блок о том, что
+ * результат — ответ в markdown, а замечания — уточнение к прошлому ответу (`previousAnswer`); этапа у неё нет.
  */
 export function workerTaskPrompt(
   task: Pick<Task, 'title' | 'spec' | 'feedback' | 'answerFor'>,
   previousAnswer?: string,
-  answers: AnsweredQuestion[] = []
+  answers: AnsweredQuestion[] = [],
+  stage?: WfWorkStage
 ): string {
   if (!task.answerFor) {
     const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
-    return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', ...answersSection(answers), feedback].join('\n')
+    return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', ...answersSection(answers), ...stageSection(stage, answers.some((q) => q.answer !== undefined)), feedback].join('\n')
   }
   const parts = [
     `# Задача: ${task.title}`,

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION, COORDINATOR_RETURN_HEADING } from './prompts.ts'
 import { getAgent } from './agents.ts'
-import { withRoleInstructions, withAgentRules } from './types.ts'
+import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
 
 describe('builtinPromptKind', () => {
   it('координаторская инструкция только у роли coordinator', () => {
@@ -43,6 +43,80 @@ describe('workerTaskPrompt', () => {
     assert.equal(workerTaskPrompt({ title: 'T', spec: 'S' }), '# Задача: T\n\nS\n')
     assert.equal(workerTaskPrompt({ title: 'T', spec: '' }), '# Задача: T\n\n(описание не задано)\n')
     assert.equal(workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'F' }), '# Задача: T\n\nS\n\n\n# Замечания после ревью\n\nF')
+  })
+
+  it('этап без инструкции и показа — промпт как без этапа', () => {
+    assert.equal(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'work', type: 'work', title: 'Работа' }), '# Задача: T\n\nS\n')
+  })
+
+  it('раздел «Этап»: инструкция и обязательный показ с флагами done, до замечаний ревью', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'F' }, undefined, [], {
+      nodeId: 'design', title: 'Дизайн', instructions: 'Сделай макеты.', showcase: { what: '2–3 варианта: HTML и скриншоты', required: true }
+    })
+    assert.match(text, /# Этап: Дизайн\n\nСделай макеты\./)
+    assert.match(text, /## Результат для показа человеку \(обязательно\)\n\n2–3 варианта: HTML и скриншоты/)
+    assert.match(text, /orca-board done --summary "\.\.\." --show-file <описание\.md> --show <путь>/)
+    assert.match(text, /Без показа done не пройдёт\./)
+    assert.ok(text.indexOf('# Этап:') < text.indexOf('# Замечания после ревью'))
+  })
+
+  it('необязательный показ — без «(обязательно)»; у задачи-ответа этапа нет', () => {
+    const stage = { nodeId: 'w', title: 'Работа', showcase: { what: 'скриншот' } }
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], stage)
+    assert.match(text, /## Результат для показа человеку\n/)
+    assert.doesNotMatch(text, /не пройдёт/)
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S', answerFor: 'human' }, undefined, [], stage), /# Этап:/)
+  })
+})
+
+describe('workerTaskPrompt: этап «Вопрос человеку»', () => {
+  const ask = { nodeId: 'ask', type: 'ask' as const, title: 'Уточнить', instructions: 'Выясни, какую БД брать.' }
+
+  it('раздел «Этап»: инструкция ноды, цель — спросить, код не менять, done после ответов', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], ask)
+    assert.match(text, /# Этап: Уточнить\n\nВыясни, какую БД брать\./)
+    assert.match(text, /задать вопрос\(ы\) человеку\. Код не меняй/)
+    assert.match(text, /orca-board ask --question "\.\.\."/)
+    assert.match(text, /отвечает человек, а не координатор/)
+    assert.match(text, /orca-board done --summary "что выяснил"/)
+    assert.doesNotMatch(text, /уже получены/, 'ответов нет — пометки нет')
+  })
+
+  it('раздел есть и без инструкции (у «Работы» без инструкции его нет)', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'ask', type: 'ask', title: 'Вопрос человеку' })
+    assert.match(text, /# Этап: Вопрос человеку\n\nТвоя цель на этом этапе/)
+  })
+
+  it('повторный заход: ответы под нейтральным заголовком и пометка «уже получены»', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: 'Какую БД?', answer: 'sqlite' }, { question: 'Ещё?' }], ask)
+    assert.match(text, /# Ответы на вопросы по задаче\n\n- Какую БД\?\n {2}Ответ: sqlite/)
+    assert.doesNotMatch(text, /Ещё\?/, 'вопрос без ответа в промпт не попадает')
+    assert.match(text, /Ответы выше уже получены[\s\S]*спрашивай только новое/)
+    assert.ok(text.indexOf('# Ответы на вопросы по задаче') < text.indexOf('# Этап:'))
+  })
+
+  it('следующая «Работа» получает ответы человека автоматически, без пометки про повтор', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [{ question: 'Какую БД?', answer: 'sqlite' }], { nodeId: 'work', type: 'work', title: 'Работа', instructions: 'Реализуй.' })
+    assert.match(text, /# Ответы на вопросы по задаче/)
+    assert.doesNotMatch(text, /Ответы на твои вопросы|уже получены/)
+  })
+
+  it('у задачи-ответа этапа ask нет', () => {
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S', answerFor: 'human' }, undefined, [], ask), /# Этап:/)
+  })
+
+  it('skills/worker.md описывает этап: только ask, код не менять, done после ответов, отвечает человек', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    assert.match(worker, /целью\s+задать\s+вопросы\s+человеку:\s+код\s+не\s+меняй[\s\S]*orca-board ask[\s\S]*отвечает\s+человек,\s+а\s+не\s+координатор[\s\S]*orca-board done --summary "что выяснил"/)
+    assert.match(worker, /на\s+этапе\s+«Вопрос\s+человеку»\s+—\s+всегда\s+человек/)
+    assert.match(worker, /раздел\s+«Ответы\s+на\s+вопросы\s+по\s+задаче»/)
+  })
+
+  it('skills/coordinator.md: этап ask, вопросы с него не обрабатываются, воркера перезапускает приложение', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /`ask` — агент спрашивает человека/)
+    assert.match(skill, /- `question_answered` →[\s\S]*этапе\s+`ask`[\s\S]*`worker start` не нужен/)
+    assert.match(skill, /- `request_created` →[\s\S]*`question`\s+с этапа `ask`[\s\S]*обрабатывать не нужно/)
   })
 })
 
@@ -221,6 +295,20 @@ describe('события после ответа человека в инстр�
     assert.doesNotMatch(prep, /роли есть в проекте/, 'роли больше не у проекта')
   })
 
+  it('request_resolved у approval с decision — выбор человека, учесть в следующих задачах', () => {
+    assert.match(skill, /- `request_resolved` →[\s\S]*`kind: approval`[\s\S]*`decision`[\s\S]*учти его в следующих задачах/)
+    assert.match(skill, /`decisionTruncated: true`[\s\S]*request get --request <requestId>[\s\S]*`resolution\.text`/)
+  })
+
+  it('воркер сдаёт показ человеку через done --show-file / --show, как подсказывает промпт этапа', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    assert.match(worker, /«Результат для показа человеку»/)
+    assert.match(worker, /orca-board done --summary "\.\.\." --show-file <описание\.md> --show <путь> --show <путь>/)
+    assert.match(worker, /без него `done` не пройдёт/)
+    // Заголовок в skill совпадает с разделом промпта этапа (workerTaskPrompt).
+    assert.match(workerTaskPrompt({ title: 't', spec: 's' }, undefined, [], { nodeId: 'w', title: 'Дизайн', showcase: { what: 'макеты' } }), /## Результат для показа человеку/)
+  })
+
   it('воркер после done не берёт работу из терминала, а отправляет в приложение', () => {
     const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
     assert.match(worker, /После `orca-board done` новую работу не бери[\s\S]*Решение \/ что делать дальше/)
@@ -306,5 +394,52 @@ describe('воркфлоу в инструкциях: ревью и мерж в�
     assert.match(worker, /ветку сливает приложение/)
     assert.doesNotMatch(worker, /это делает координатор/)
     assert.match(worker, /Задача-проверка[\s\S]*orca-board review accept --task <id>[\s\S]*orca-board review reject --task <id> --feedback[\s\S]*orca-board done/)
+  })
+})
+
+describe('язык общения агентов с человеком (agentSystemPrompt)', () => {
+  const skills = ['worker', 'coordinator', 'assistant'].map((k) => readFileSync(new URL(`../../../skills/${k}.md`, import.meta.url), 'utf8'))
+  const role = { title: 'Разработчик', systemPrompt: 'пиши тесты' }
+
+  it('английский интерфейс — английская директива последним блоком у всех служебных инструкций', () => {
+    for (const skill of skills) {
+      const out = agentSystemPrompt(skill, { projectRules: 'правило', role, language: 'en' })
+      const at = out.lastIndexOf(`\n\n${AGENT_LANGUAGE_HEADING}\n`)
+      assert.ok(at > 0, 'нет директивы языка')
+      assert.ok(at > out.indexOf('# Инструкции роли'), 'директива идёт после роли')
+      assert.ok(at > out.indexOf('# Правила проекта'), 'директива идёт после правил проекта')
+      const directive = out.slice(at)
+      assert.match(directive, /Write everything a human reads in English/)
+      assert.match(directive, /orca-board done/)
+      assert.match(directive, /orca-board ask/)
+      assert.match(directive, /orca-board runs finish/)
+      assert.match(directive, /instructions above are in Russian/)
+      // Коммиты и комментарии — по правилам проекта, а не по языку интерфейса.
+      assert.match(directive, /Commit messages, code comments and documentation follow the project's own rules/)
+      assert.doesNotMatch(directive, /[а-яё]/i, 'директива целиком по-английски')
+    }
+  })
+
+  it('русский или не выбранный язык — промпт как раньше (withAgentRules)', () => {
+    for (const skill of skills) {
+      const before = withAgentRules(skill, 'правило', role)
+      assert.equal(agentSystemPrompt(skill, { projectRules: 'правило', role, language: 'ru' }), before)
+      assert.equal(agentSystemPrompt(skill, { projectRules: 'правило', role }), before)
+      assert.ok(!agentSystemPrompt(skill, { language: 'ru' }).includes(AGENT_LANGUAGE_HEADING))
+    }
+    assert.equal(agentLanguageDirective('ru'), '')
+    assert.equal(agentLanguageDirective(undefined), '')
+  })
+
+  it('без правил и роли (ассистент) — служебная инструкция и директива', () => {
+    const out = agentSystemPrompt('SYS', { language: 'en' })
+    assert.equal(out, `SYS\n\n${agentLanguageDirective('en')}`)
+  })
+
+  it('директива называет только команды, которые есть в CLI', () => {
+    const cli = readFileSync(new URL('../../cli/bin/orca-board.js', import.meta.url), 'utf8')
+    for (const [, cmd] of agentLanguageDirective('en').matchAll(/`orca-board ([a-z]+(?: [a-z]+)?)`/g)) {
+      assert.match(cli, new RegExp(`\\n  ${cmd} `), `нет команды ${cmd} в HELP`)
+    }
   })
 })

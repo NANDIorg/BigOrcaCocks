@@ -1,220 +1,279 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
+import type { AgentSession, BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
+import { AttentionFeed } from './AttentionFeed'
+import type { AttentionItem } from './attention'
+import { focusBoard, focusFeed, onRevealOnBoard } from './feedLink'
+import { screenKey, tabKey } from './hotkeys'
+import { GlobalTaskHeader } from './GlobalTaskHeader'
+import { GlobalOverview } from './GlobalOverview'
+import { CoordinatorPanel } from './CoordinatorPanel'
+import { GlobalHistory } from './GlobalHistory'
+import { GlobalStatsPanel } from './GlobalStatsPanel'
+import type { StatsSnapshot } from './taskStatsFormat'
 import {
-  pendingRequestsOf, type BoardColumn, type ColumnKind, type Dispatch, type GlobalTask, type HumanRequest, type RequestResolution, type Task
-} from '@orca-board/core'
-import { Icon } from './icons'
-import { RequestCard } from './RequestCard'
-import { GlobalDuration, GlobalProgress, relativeTime } from './GlobalBoard'
-import { formatStamp } from './boardSort'
-import { PriorityBadge } from './Priority'
-import { globalTaskActions, returnsNewestFirst } from './globalReview'
-import { globalDoneReport } from './globalDoneReport'
-import { Markdown } from './Markdown'
+  defaultTab, readTabChoice, resolveTab, stepTab, tabAt, tabTitle, visibleTabs, writeTabChoice, type GlobalTabId
+} from './globalScreen'
+import { useT } from './i18n'
 
 interface Props {
+  /** Проект: id для `stats:global`. */
+  projectId: string
   global: GlobalTask
   /** Вид колонки глобального канбана, где сейчас задача (review — «Проверка»). */
   statusKind?: ColumnKind
   /** Живой координатор этой глобальной задачи (ptyId), если есть. */
   coordinatorPty?: string
+  /** Запуски координатора (`Run.coordinatorSessions`) — пилюля в шапке и события «Истории». Со старым main поля нет. */
+  coordinatorSessions?: AgentSession[]
+  /** Колонки глобального канбана (`globalBoardColumns`) — шаги степпера статуса в шапке. */
+  globalColumns?: BoardColumn[]
   onBack(): void
   onEdit(): void
+  /** Клик по шагу степпера: перенести задачу в колонку. */
+  onMove(status: string): void
   onStartCoordinator(): void
   onShowCoordinator(ptyId: string): void
+  /** «■ Остановить» координатора (после подтверждения в шапке и на вкладке «Координатор»): закрыть его PTY. */
+  onStopCoordinator(ptyId: string): void
+  /** «⋯ → Удалить задачу…». */
+  onRemove?(): void
   /** «Подтвердить» на «Проверке». */
   onAccept(): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
   onReturn(): void
-  /** Запросы к человеку проекта: pending этой глобальной задачи — лента «Ждут вашего ответа». */
-  requests: HumanRequest[]
+  /**
+   * Пункты ленты «Ждут вас» (`buildAttention`). Считает `App` и отдаёт и сюда, и доске (`attentionTaskIds`):
+   * лента и фильтр «Ждут вас» на доске берут один и тот же список.
+   */
+  attention: AttentionItem[]
   /** Подзадачи этой глобальной задачи — подпись, чей запрос. */
   tasks: Task[]
   /** Колонки проекта (доски подзадач): какие подзадачи сделаны — для фоллбэка «Что сделал». */
   columns: BoardColumn[]
   /** Запуски воркеров: сводка последнего запуска сделанной подзадачи — фоллбэк «Что сделал». */
   dispatches: Dispatch[]
+  /** Снимок проекта для вкладки «Статистика»: когда её перечитывать и запасной расчёт при старом main. */
+  statsSnapshot: StatsSnapshot
   onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
   /** «Открыть полностью» у ответа — модалка подзадачи. */
   onOpenTask(taskId: string): void
   onOpenTerminal(taskId: string): void
+  /** Ответ на вопрос воркера без запроса (лента, как у карточки доски). */
+  onAnswerQuestion(questionId: string, answer: string): Promise<void>
+  /** «Принять» / «Вернуть» / «Уточнить» готовой задачи прямо в ленте (`review.accept` / `review.reject`). */
+  onAcceptTask(taskId: string): Promise<void>
+  onRejectTask(taskId: string, feedback: string): Promise<void>
+  /** «↻ Перезапустить» упавшего воркера в ленте. */
+  onStartTask(task: Task): void | Promise<void>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
   children: React.ReactNode
 }
 
-/** Экран глобальной задачи: хлебные крошки, заголовок, описание и канбан только её подзадач. */
-export function GlobalTaskView(props: Props): React.JSX.Element {
-  const { global, statusKind, coordinatorPty, onBack, onEdit, onStartCoordinator, onShowCoordinator, onAccept, onReturn, children } = props
-  const { requests, tasks, columns, dispatches, onResolveRequest, onOpenTask, onOpenTerminal, typeTitle } = props
-  const pending = pendingRequestsOf(requests, { runId: global.id }).sort((a, b) => a.createdAt - b.createdAt)
-  const taskTitle = new Map(tasks.map((t) => [t.id, t.title]))
-  const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
-  const [expanded, setExpanded] = useState(false)
-  const backRef = useRef<HTMLButtonElement>(null)
-
-  // Открыли с клавиатуры/мышью — фокус на «назад», чтобы Enter/Escape сразу вели обратно.
-  useEffect(() => {
-    backRef.current?.focus({ preventScroll: true })
-    setExpanded(false)
-  }, [global.id])
-
-  // Escape — назад к общей доске, если фокус не в поле ввода и не открыта модалка (они ловят Escape сами).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      const el = e.target as HTMLElement | null
-      if (el && (el.closest('input, textarea, select, [contenteditable]') || el.closest('.modal-backdrop'))) return
-      if (document.querySelector('.modal-backdrop')) return
-      onBack()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onBack])
-
-  const description = global.description.trim()
-  const long = description.length > 220 || description.split('\n').length > 3
-
-  return (
-    <div className="g-view">
-      <div className="g-view-head">
-        <nav className="g-crumbs" aria-label="Навигация">
-          <button ref={backRef} type="button" className="g-back" onClick={onBack} title="К общей доске (Esc)">
-            <span aria-hidden>←</span> Глобальные задачи
-          </button>
-          <span className="g-crumb-sep" aria-hidden>/</span>
-          <span className="g-crumb-current" title={global.title}>{global.title}</span>
-        </nav>
-        <div className="g-view-title-row">
-          <h2 className="g-view-title" title={global.title}>{global.title}</h2>
-          <div className="g-view-actions">
-            <button type="button" className="btn-sm" onClick={onEdit}><Icon.edit /> Изменить</button>
-            {actions.accept && (
-              <button type="button" className="btn-sm primary" onClick={onAccept} title="Результат принят — в «Сделано»">Подтвердить</button>
-            )}
-            {actions.returnToWork && (
-              <button type="button" className="btn-sm" title="Написать, что доделать, и перезапустить координатора" onClick={onReturn}>
-                Вернуть в работу…
-              </button>
-            )}
-            {!global.inbox && coordinatorPty && (
-              <button type="button" className="btn-sm" onClick={() => onShowCoordinator(coordinatorPty)}>
-                <span className="g-live-dot" aria-hidden /> Координатор работает
-              </button>
-            )}
-            {actions.startCoordinator && (
-              <button type="button" className="btn-sm" onClick={onStartCoordinator}><Icon.play /> Запустить координатора</button>
-            )}
-          </div>
-        </div>
-        {description && description !== global.title && (
-          <div className={`g-view-desc ${long && !expanded ? 'clamped' : ''}`}>{description}</div>
-        )}
-        {long && (
-          <button type="button" className="btn-text g-more" onClick={() => setExpanded((v) => !v)}>
-            {expanded ? 'Свернуть' : 'Показать полностью'}
-          </button>
-        )}
-        <div className="g-view-meta">
-          <div className="g-view-progress"><GlobalProgress global={global} /></div>
-          {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
-          <PriorityBadge item={global} className="g-chip" />
-          {typeTitle && <span className="g-chip task-type-chip" title="Тип задачи: роли, воркфлоу и правила агентов">{typeTitle}</span>}
-          <span className="muted">Обновлено {relativeTime(global.activityAt)}</span>
-          {!global.inbox && (
-            <span className="muted" title={`Создана ${formatStamp(global.createdAt)}${global.closedAt !== undefined ? `, закрыта ${formatStamp(global.closedAt)}` : ''}`}>
-              · <GlobalDuration global={global} variant="line" />
-            </span>
-          )}
-          {global.closedAt !== undefined && <span className="muted">· закрыта</span>}
-          {global.inbox && <span className="muted">· сюда попадают задачи без глобальной</span>}
-        </div>
-        {statusKind === 'review' && <div className="g-review-note">Все подзадачи сделаны — проверьте результат: подтвердите или верните в работу с уточнением.</div>}
-        {statusKind === 'review' && (
-          <GlobalDoneReportBlock global={global} tasks={tasks} columns={columns} dispatches={dispatches} onOpenTask={onOpenTask} />
-        )}
-        <GlobalReturns global={global} />
-      </div>
-      {pending.length > 0 && (
-        <section className="g-requests" aria-label={`Ждут вашего ответа: ${pending.length}`}>
-          <h3 className="g-requests-title">Ждут вашего ответа <span className="g-col-count">{pending.length}</span></h3>
-          <div className="g-requests-list">
-            {pending.map((r) => (
-              <RequestCard
-                key={r.id}
-                request={r}
-                where={taskTitle.get(r.taskId) ?? r.taskId}
-                onResolve={(res) => onResolveRequest(r, res)}
-                onOpenFull={(req) => onOpenTask(req.taskId)}
-                onOpenTerminal={onOpenTerminal}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-      {children}
-    </div>
-  )
-}
-
-/** История уточнений при возвратах с «Проверки» в работу (`GlobalTask.returns`), новые сверху. */
-export function GlobalReturns({ global }: { global: GlobalTask }): React.JSX.Element | null {
-  const returns = returnsNewestFirst(global)
-  if (returns.length === 0) return null
-  return (
-    <details className="g-returns" open={returns.length === 1}>
-      <summary>Возвращали с проверки: {returns.length}</summary>
-      <ol className="g-returns-list">
-        {returns.map((r) => (
-          <li key={`${r.at}-${r.text}`}>
-            <span className="muted g-returns-at">{formatStamp(r.at)}</span>
-            <div className="g-returns-text">{r.text}</div>
-          </li>
-        ))}
-      </ol>
-    </details>
-  )
+function browserStorage(): Storage | undefined {
+  try {
+    return typeof localStorage === 'undefined' ? undefined : localStorage
+  } catch {
+    return undefined
+  }
 }
 
 /**
- * «Что сделал» на «Проверке»: итоговая сводка координатора (`runs finish --summary`), а без неё — сделанные
- * подзадачи со сводками воркеров (`globalDoneReport`).
+ * Экран глобальной задачи: шапка, лента «Ждут вас» (видна на любой вкладке) и вкладки «Доска · Итог и цель ·
+ * Координатор · История · Статистика». Вкладка по умолчанию зависит от состояния (`defaultTab`), выбор человека запоминается
+ * по id задачи. Доска остаётся смонтированной и на чужих вкладках (только скрыта): фильтры и выделение
+ * не пропадают, а события ленты (`feedLink`) находят получателя.
  */
-function GlobalDoneReportBlock(props: {
-  global: GlobalTask
-  tasks: Task[]
-  columns: BoardColumn[]
-  dispatches: Dispatch[]
-  onOpenTask(taskId: string): void
-}): React.JSX.Element {
-  const { global, tasks, columns, dispatches, onOpenTask } = props
-  const isDone = (status: string): boolean => columns.find((c) => c.id === status)?.kind === 'done'
-  const report = globalDoneReport(global, tasks, dispatches, isDone)
+export function GlobalTaskView(props: Props): React.JSX.Element {
+  const t = useT()
+  const { global, statusKind, coordinatorPty, onBack, children } = props
+  const { attention, tasks, dispatches, columns, typeTitle } = props
+  const tabs = visibleTabs(global)
+  const initial = (): GlobalTabId => resolveTab(readTabChoice(browserStorage(), global.id), statusKind, tabs)
+
+  // Вкладка привязана к задаче: при смене `global.id` пересчитываем при рендере, а не в эффекте — иначе один кадр
+  // покажет вкладку прежней задачи. Живая смена статуса вкладку не трогает: экран не должен прыгать под рукой.
+  const [shown, setShown] = useState<{ id: string; tab: GlobalTabId }>(() => ({ id: global.id, tab: initial() }))
+  let tab = shown.tab
+  if (shown.id !== global.id) {
+    tab = initial()
+    setShown({ id: global.id, tab })
+  }
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+  const tablistRef = useRef<HTMLDivElement>(null)
+
+  /** Выбор человека: показать вкладку и запомнить его по id задачи (с вкладкой по умолчанию того момента). */
+  const selectTab = (id: GlobalTabId, focusTab = false): void => {
+    setShown({ id: global.id, tab: id })
+    writeTabChoice(browserStorage(), global.id, { tab: id, base: defaultTab(statusKind) })
+    if (focusTab) tablistRef.current?.querySelector<HTMLElement>(`[data-tab="${id}"]`)?.focus({ preventScroll: true })
+  }
+
+  /** Показать доску сразу, синхронно: следом ей шлют фокус и выделение карточки, а скрытая доска их не примет. */
+  const showBoard = (): void => {
+    if (tabRef.current === 'board') return
+    flushSync(() => setShown({ id: global.id, tab: 'board' }))
+  }
+
+  // Клавиши экрана (`screenKey`, `tabKey`): Esc — назад к общей доске, G — фокус между лентой «Ждут вас» и доской
+  // (на доске сперва открывается её вкладка), Alt+1…5 и 1…5 вне доски — вкладки. Один обработчик на всё: поля ввода,
+  // модалки и уже обработанные клавиши (меню «Переместить в…», Esc в подробностях ленты) `hotkeys` отсекает.
+  const keys = useRef({ onBack, attention: attention.length, tabs, selectTab, showBoard })
+  keys.current = { onBack, attention: attention.length, tabs, selectTab, showBoard }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const modal = document.querySelector('.modal-backdrop') !== null
+      const k = keys.current
+      const index = tabKey(e, modal)
+      if (index !== undefined) {
+        const id = tabAt(k.tabs, index)
+        if (id) {
+          e.preventDefault()
+          k.selectTab(id, true)
+        }
+        return
+      }
+      const key = screenKey(e, modal)
+      if (!key) return
+      if (key === 'back') {
+        k.onBack()
+        return
+      }
+      if (k.attention === 0) return
+      e.preventDefault()
+      if ((document.activeElement as HTMLElement | null)?.closest('.attn')) {
+        k.showBoard()
+        focusBoard()
+      } else focusFeed()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Имя задачи в карточке ленты выделяет карточку на доске: доска в этот момент может быть на скрытой вкладке.
+  useEffect(() => onRevealOnBoard(() => keys.current.showBoard()), [])
+
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const next = stepTab(tabs, tab, e.key)
+    if (!next) return
+    e.preventDefault()
+    selectTab(next, true)
+  }
+
   return (
-    <section className="g-done-report" aria-label="Что сделал">
-      <h3 className="g-done-report-title">
-        Что сделал
-        {report.kind === 'coordinator' ? (
-          <span className="muted g-done-report-sub">сводка координатора · {formatStamp(report.at)}</span>
-        ) : (
-          <span className="muted g-done-report-sub">координатор не оставил сводку — сделанные подзадачи</span>
-        )}
-      </h3>
-      {report.kind === 'coordinator' && <Markdown text={report.text} className="g-done-report-md" />}
-      {report.kind === 'subtasks' && report.items.length === 0 && <div className="muted">Сделанных подзадач нет.</div>}
-      {report.kind === 'subtasks' && report.items.length > 0 && (
-        <ul className="g-done-report-list">
-          {report.items.map((item) => (
-            <li key={item.taskId}>
-              <button type="button" className="btn-text g-done-report-task" onClick={() => onOpenTask(item.taskId)} title="Открыть подзадачу">
-                {item.title}
-              </button>
-              {item.summary ? <div className="g-done-report-text">{item.summary}</div> : <div className="muted">без сводки</div>}
-            </li>
+    <div className="gt-view">
+      <GlobalTaskHeader
+        global={global}
+        statusKind={statusKind}
+        columns={props.globalColumns}
+        coordinatorPty={coordinatorPty}
+        coordinatorSessions={props.coordinatorSessions}
+        attentionCount={attention.length}
+        typeTitle={typeTitle}
+        onBack={onBack}
+        onEdit={props.onEdit}
+        onMove={props.onMove}
+        onStartCoordinator={props.onStartCoordinator}
+        onShowCoordinator={props.onShowCoordinator}
+        onStopCoordinator={props.onStopCoordinator}
+        onRemove={props.onRemove}
+        onAccept={props.onAccept}
+        onReturn={props.onReturn}
+      />
+      <AttentionFeed
+        items={attention}
+        tasks={tasks}
+        runId={global.id}
+        dispatches={dispatches}
+        onResolveRequest={props.onResolveRequest}
+        onAnswerQuestion={props.onAnswerQuestion}
+        onAcceptTask={props.onAcceptTask}
+        onRejectTask={props.onRejectTask}
+        onStartTask={props.onStartTask}
+        onOpenTask={props.onOpenTask}
+        onOpenTerminal={props.onOpenTerminal}
+      />
+      {tabs.length > 1 && (
+        <div ref={tablistRef} className="gt-tabs" role="tablist" aria-label={t('global.tabs.aria')} onKeyDown={onTabKeyDown}>
+          {tabs.map((id, i) => (
+            <button
+              key={id}
+              id={`gt-tab-${id}`}
+              type="button"
+              role="tab"
+              data-tab={id}
+              className="gt-tab"
+              aria-selected={tab === id}
+              aria-controls={`gt-panel-${id}`}
+              tabIndex={tab === id ? 0 : -1}
+              title={`Alt+${i + 1}`}
+              onClick={() => selectTab(id)}
+            >
+              {id === 'coordinator' && coordinatorPty && <span className="g-live-dot" aria-label={t('global.tabs.live')} />}
+              {tabTitle(id, statusKind)}
+              {id === 'board' && tasks.length > 0 && <span className="gt-tab-n">{tasks.length}</span>}
+            </button>
           ))}
-        </ul>
+        </div>
       )}
-    </section>
+      <div id="gt-panel-board" className="gt-panel gt-panel-board" role="tabpanel" aria-labelledby="gt-tab-board" hidden={tab !== 'board'}>
+        {children}
+      </div>
+      {tab === 'overview' && (
+        <div id="gt-panel-overview" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-overview">
+          <GlobalOverview
+            global={global}
+            statusKind={statusKind}
+            coordinatorPty={coordinatorPty}
+            typeTitle={typeTitle}
+            tasks={tasks}
+            columns={columns}
+            dispatches={dispatches}
+            onAccept={props.onAccept}
+            onReturn={props.onReturn}
+            onStartCoordinator={props.onStartCoordinator}
+            onOpenTask={props.onOpenTask}
+          />
+        </div>
+      )}
+      {tab === 'coordinator' && (
+        <div id="gt-panel-coordinator" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-coordinator">
+          <CoordinatorPanel
+            global={global}
+            statusKind={statusKind}
+            coordinatorPty={coordinatorPty}
+            sessions={props.coordinatorSessions}
+            onStartCoordinator={props.onStartCoordinator}
+            onShowCoordinator={props.onShowCoordinator}
+            onStopCoordinator={props.onStopCoordinator}
+            onReturn={props.onReturn}
+          />
+        </div>
+      )}
+      {tab === 'history' && (
+        <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
+          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} />
+        </div>
+      )}
+      {tab === 'stats' && (
+        <div id="gt-panel-stats" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-stats">
+          <GlobalStatsPanel
+            key={global.id}
+            projectId={props.projectId}
+            global={global}
+            columns={props.globalColumns ?? columns}
+            tasks={tasks}
+            dispatches={dispatches}
+            coordinatorLive={coordinatorPty !== undefined}
+            snapshot={props.statsSnapshot}
+            onOpenTask={props.onOpenTask}
+          />
+        </div>
+      )}
+    </div>
   )
 }

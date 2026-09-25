@@ -24,7 +24,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor?, statusHistory?, stageHistory? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль типа задачи прогона (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -45,6 +45,43 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     задачи; задача в `in_progress` получает `activeSince` = начало живого dispatch (нет — `updatedAt`), и
     `closeStaleDispatches` закрывает этот отрезок при возврате в ready. Ограничение: dispatch, не переживший
     перезапуск приложения, закрывается моментом загрузки — время простоя приложения попадает в отрезок.
+  - **История статусов** (`statusHistory: StatusChange[]`, `packages/core/src/status-history.ts`) — переходы между
+    колонками от старых к новым: `{ status, at, by, stage?, migrated? }`. `status` — id колонки, `at` — epoch ms,
+    `stage` — нода воркфлоу (`stage.nodeId`) на момент перехода. Пишется в одной точке — `setStatus` (у `Run` —
+    `setRunStatus`) через `recordStatus`: тот же статус подряд не пишется, хранятся последние `STATUS_HISTORY_LIMIT`
+    (200) записей. Первая запись — при `createTask`/`addRun`. В renderer история приходит в снапшоте доски и в
+    `GlobalTask.statusHistory`, в CLI — в JSON `task get` (и `global get`), отдельных команд нет.
+    В UI — блок «История статуса» в `TaskModal` (`renderer/src/StatusHistoryBlock.tsx`, логика — `statusHistory.ts`):
+    колонка, время, источник и сколько задача пробыла в статусе; без поля — только текущий статус. У глобальной задачи
+    история — событие общей ленты вкладки «История» (`GlobalHistory.tsx`, `globalTimeline.ts`); из `GlobalTaskModal` блок убран.
+    `by` (`StatusSource`) store сам не знает — его задаёт вызывающий код через `withStatusSource(source, fn)`
+    (одна переменная на процесс, вложенный вызов перекрывает внешний, вне вызова — `app`):
+
+    | `by` | Где задаётся |
+    |---|---|
+    | `human` | `handle()` в `registerIpc` (`src/main/index.ts`) — любой IPC-вызов renderer |
+    | `cli` | `handle()` в `src/main/socket.ts` — запрос без `dispatchId` (координатор или человек в терминале) |
+    | `worker` | там же — запрос с `dispatchId` (ORCA_DISPATCH_ID воркера) |
+    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts` — колонку двигает граф |
+    | `app` | всё остальное: `promoteReady` (backlog → ready), автозакрытие в `commit`, смерть PTY, миграции |
+
+    Ограничение: источник действует только в синхронной части вызова — смены статуса после `await` пишутся как `app`.
+    Миграция `migrateStatusHistory` (первой в конструкторе, чтобы переходы остальных миграций легли после неё):
+    задаче и прогону без истории — одна запись текущей колонки с `migrated: true` и `at = updatedAt`. Прошлые
+    переходы не восстановить, а пустая история читалась бы как «статус не менялся»; прогон без `status` получает
+    колонку в `migrateGlobalTasks` обычным переходом.
+  - **История этапов** (`stageHistory: StageChange[]`, `recordStage` в `status-history.ts`) — входы задачи в ноды
+    воркфлоу от старых к новым: `{ nodeId, title?, at, outcome?, from?, by?, migrated? }`. `StatusChange.stage`
+    фиксирует этап лишь при смене колонки, а переход внутри колонки (`review → work` при `reject`) жил только в
+    событии `stage_changed`. `outcome` — исход, с которым пришли (`next`/`accept`/`reject`/`yes`/`no`/`ok`/`conflict`
+    или `restart` — `enterWork` вернул на первый этап), `from` — предыдущая нода (у входа из старта нет), `title` —
+    название ноды на тот момент, `by` — источник (`withStatusSource`, как у `StatusChange.by`). Пишется рядом с
+    `stage_changed` — в `advanceStage` и `enterWork`, только когда этап сменился; ту же ноду подряд записи не
+    склеивают (`work → work` — отдельный заход). Хранятся последние `STATUS_HISTORY_LIMIT` (200). У задач вне
+    воркфлоу (ответ, гейт, ещё не вошедшая в граф) поля нет. Миграция `migrateStageHistory` (после `migrateStages`):
+    задача с `stage`, но без `stageHistory`, восстанавливается из событий `stage_changed` по `taskId` (лог не
+    обрезается; `by: 'app'`), а если лога нет или он не доходит до текущего этапа — добавляется запись
+    `migrated: true` на текущую ноду с `at = updatedAt`.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
   - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
@@ -66,7 +103,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, typeId?, taskType?, workflow?, ... }` — прогон:
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, ... }` — прогон
+  (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»):
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -74,6 +112,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     открыт, пока карточка показана в `kind=in_progress` (в «Нужен ответ» стоит). Пересчёт — `syncRunActiveTime` в
     `commit()`, миграция — `migrateRunActiveTime`. В `GlobalTask` — `ownActiveMs`/`ownActiveSince`, рядом сумма
     подзадач `subtasksActiveMs`/`subtasksActiveSince` (`docs/nested-kanban.md`, «Тип GlobalTask»).
+  - `statusHistory` — история хранимых колонок карточки, как у `Task` (без `stage`). «Нужен ответ» карточка получает
+    на лету по запросам (`globalDisplayStatus`), в историю он не попадает.
+  - `startedAt` — первый вход в работу: ставится в `syncRunActiveTime` при открытии отрезка и не снимается; миграция
+    `migrateRunStarted` помечает прогоны от старого кода с координатором, подзадачами, своим временем или не в бэклоге.
+    По нему `canChangeRunType` решает, можно ли сменить тип (`changeGlobalTaskType`, `docs/nested-kanban.md` → «Смена типа»).
   - `priority` — приоритет глобальной задачи, та же шкала `TaskPriority`, что у `Task.priority`. `addRun` ставит
     `normal`, `createGlobalTask`/`updateGlobalTask` принимают и проверяют (`assertPriority`), миграция —
     `migrateRunPriority`. В `GlobalTask.priority` всегда есть: `toGlobalTask` читает нет поля как `normal`.
@@ -82,35 +125,37 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `workflow` — снимок графа типа. Нет `typeId` — «Входящие» или прогон от кода до типов: тип проекта по умолчанию.
     В `GlobalTask` — `typeId` и `typeTitle` (название из снимка).
 - **Типы задач** (`packages/core/src/task-types.ts`, без node-импортов — для main и renderer). `TaskType {id, title,
-  description?, builtin?, settings: {roles?, workflow?, agentRules?, permissionMode?}}` (режим — `TaskTypePermissionMode`):
+  description?, settings: {roles?, workflow?, agentRules?, permissionMode?}}` (режим — `TaskTypePermissionMode`):
   тип выбирается у глобальной задачи и задаёт её роли, граф, правила агентов доски и разрешения. Колонок и агентов у
   типа нет — они у проекта. Шаблонов проектов (`ProjectTemplate`, `templates.ts`, `template-sections.ts`) больше нет.
   Пустое поле — `DEFAULT_ROLES`, `defaultWorkflow(roles)`, без правил, `auto` (`resolveTaskType`).
-  - Встроенные — `builtinTaskTypes()` (свежие копии; по id — `builtinTaskType(id)`), названия — по виду задачи:
-    «Программирование» (`general` = `DEFAULT_ROLES` / `defaultWorkflow`), «Фронтенд» (ревью → человек «посмотреть
-    глазами»), «Бэкенд» (ревьюер на `opus`, ревью → прогон тестов ролью `qa`), «Фронтенд и бэкенд» (`fullstack`: роли
-    `frontend` / `backend`, человек только для задач `frontend`), «Мобильная разработка» (`mobile`: ревью → человек),
-    «QA: автотесты» (`autotests`: `autotester`), «Документация» (`docs`: `writer`, ревью человеком). У всех
-    `coordinator` и `assistant` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы собраны
-    `pipelineWorkflow`. **Id не менять**: это id бывших встроенных шаблонов проектов (по ним мигрировали старые
-    проекты), на них ссылаются `defaultTaskTypeId` / `taskTypeIds` проектов, `Run.typeId` и копии встроенных в
-    projects.json. Название — можно: копия встроенного получает новое название при загрузке (`withBuiltinTitle`).
-  - Правка встроенного на месте, без «Дублировать» (`isBuiltinTypeInPlaceEdit`): поля ролей
-    `BUILTIN_EDITABLE_TYPE_ROLE_FIELDS` — агент, модель, усилие и `systemPrompt`, — и `agentRules` типа. Название,
-    состав ролей, граф и разрешения — только в копии. Поэтому `rules set` на встроенном типе — правка на месте, не ошибка.
+  - **Особых («системных») типов нет.** Заготовки — `presetTaskTypes()` (свежие копии; по id — `presetTaskType(id)`),
+    названия — по виду задачи: «Программирование» (`general` = `DEFAULT_ROLES` / `defaultWorkflow`), «Фронтенд» (ревью →
+    человек «посмотреть глазами»), «Бэкенд» (ревьюер на `opus`, ревью → прогон тестов ролью `qa`), «Фронтенд и бэкенд»
+    (`fullstack`: роли `frontend` / `backend`, человек только для задач `frontend`), «Мобильная разработка» (`mobile`:
+    ревью → человек), «QA: автотесты» (`autotests`: `autotester`), «Документация» (`docs`: `writer`, ревью человеком).
+    У всех `coordinator` и `assistant` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы
+    собраны `pipelineWorkflow`. main кладёт заготовки в библиотеку **один раз** (`seededTaskTypes`, флаг
+    `taskTypesSeeded` в projects.json), дальше это обычные типы: правятся целиком, переименовываются и удаляются, как
+    созданные человеком; удалённая не возвращается после рестарта, новая версия приложения их не перетирает.
+    **Id не менять**: это id бывших встроенных шаблонов проектов (по ним мигрировали старые проекты), на них ссылаются
+    старые проекты и прогоны, а засев старого файла сверяет по ним сохранённые правки.
+    Снимок типа (`Run.taskType`) и граф (`Run.workflow`) уже созданных глобальных задач правка и удаление типа не меняют.
   - **Какой тип у прогона** — одно правило, `resolveRunType(run, types, projectDefaultTypeId)` → `ResolvedRunType`
     (`roles`, `agentRules`, `permissionMode`, `workflow`, `source`): `run.typeId` → тип из библиотеки (`source: 'type'`,
     роли «вживую» — смена модели действует со следующего запуска) → снимок `run.taskType` (тип удалён,
-    `'snapshot'`) → тип проекта по умолчанию → встроенный `general` (`'default'`). `types` — вся библиотека
-    (встроенные с подменами и пользовательские); `general` берётся из кода, если в ней его нет.
+    `'snapshot'`) → тип проекта по умолчанию → `general` → первый тип библиотеки (`'default'`). `types` — вся
+    библиотека; заготовка `general` из кода — только при пустом списке (старый main у renderer).
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
-- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, stuckNotified? }` — `answer` — ответ задачи-ответа.
+- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files}` — показ человеку с «Работы» (`docs/workflow.md`);
+  `roleId`/`agent`/`model` — снимок роли на момент запуска, `sessionId` — сессия агента для поиска транскрипта (см. «Статистика»).
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
   адресован человеку и по нему есть `HumanRequest`. Ответить можно один раз, у запуска — не больше одного открытого вопроса.
-- `HumanRequest { id, runId, taskId, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, resolution?, createdAt, resolvedAt? }` —
+- `HumanRequest { id, runId, taskId, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, showcaseDispatchId?, resolution?, createdAt, resolvedAt? }` —
+  `showcaseDispatchId` — у approval: запуск, чей показ выведен в `body` (`docs/workflow.md` → «Показ человеку»);
   запрос к человеку: `kind` `question` | `answer` | `escalation` | `approval` (этап воркфлоу «человек», `nodeId` — его нода),
   `status` `pending` | `resolved` | `cancelled`.
   Единственный источник «ждёт человека» (колонка «Нужен ответ», Инбокс, уведомления); модель, переходы и события —
@@ -192,7 +237,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   - общие правила типа — `agentRules` (markdown, `ProjectManager.agentRules(projectId, runId?)` — правила типа прогона;
     запись — `saveTaskTypeRules(typeId, undefined, text)` или `taskTypes:save`);
   - правила роли — **это существующий `Role.systemPrompt`**, отдельного поля нет: он уже доходит и до воркера
-    (роль задачи), и до координатора (роль `coordinator`), редактируется в «Настройки → Типы задач → Роли» (вкладка «Инструкции роли», у встроенного типа — тоже на месте) и сохраняется в тип через `taskTypes:save`.
+    (роль задачи), и до координатора (роль `coordinator`), редактируется в «Настройки → Типы задач → Роли» (вкладка «Инструкции роли») и сохраняется в тип через `taskTypes:save`.
   Системный промпт: служебная инструкция Orca → `# Правила проекта` + текст (если непустой) →
   `# Инструкции роли «<title>»` (если непустой). Пусто/одни пробелы — блока нет, trim только по краям, текст как есть.
   Хранится как введено (без trim, как `systemPrompt`); из одних пробелов → поле удаляется; не строка → ошибка
@@ -201,7 +246,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   (`AssistantContext` без `agentRules`: он один на приложение и не работает в репозитории проекта); свой `systemPrompt`
   роли `assistant` — получает, как раньше. Меняются: сокет `rules.get` / `rules.set` (тип — `--type`, иначе тип
   прогона, иначе тип проекта по умолчанию), CLI `orca-board rules get|set`, в UI — «Настройки → Типы задач → Правила
-  доски» (у встроенного — на месте).
+  доски».
 - **Воркфлоу типа задачи** (`TaskType.settings.workflow?: Workflow`, модель и валидация — `packages/core/src/workflow.ts`):
   граф этапов жизненного цикла одной рабочей задачи. Глобальная задача снимает граф своего типа при создании
   (`Run.workflow`), дальше её задачи идут по снимку. `ProjectManager.taskTypeWorkflow(typeId)` — свой граф типа, а без
@@ -254,22 +299,24 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 валидации в редакторе.
 
 - **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 1`. Ноды (`WfNode`): `start`, `work`
-  (без `roleId` — роль задачи), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
+  (без `roleId` — роль задачи), `ask` («Вопрос человеку»: `roleId?`, `instructions` — обязательны; агент спрашивает
+  человека штатным `orca-board ask`, `stageAction` — тот же `start_worker`, что у `work`; `WfWorkStage.type`
+  различает этапы; `Question.nodeId` — нода, на которой спросили), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
   (закрытый список предикатов `WfCondition`: `attempts` — сколько раз задача заходила в ноду, `role` — роль
   задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `end` (`merged`). У каждой ноды
   опциональные `title` и `column`. Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
-  `WF_PORTS` (gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
+  `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
 - **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
   ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
   ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).
 - **`pipelineWorkflow(checks)`** — конструктор типового графа: `start → work → проверки по порядку → merge → end`,
   проверка — `gate` (роль) или `human`, reject любой — в `work`, конфликт мержа — `human`. `onlyForRoles` ставит
   перед проверкой `condition` по роли (`<id>_if`), остальные задачи её пропускают. Из него собраны
-  `defaultWorkflow` и графы встроенных типов задач; id нод и рёбер стабильны (`work`, `merge`, `end`,
+  `defaultWorkflow` и графы заготовок типов задач; id нод и рёбер стабильны (`work`, `merge`, `end`,
   `conflict`, `e_<нода>_<исход>`).
 - **`migrateWorkflow(wf)`** — старую версию поднимает до текущей (пока без шагов), будущую не трогает.
 - **`stableJson(v)`** — JSON с отсортированными ключами: сравнение ролей и графов без учёта порядка полей
-  (правка встроенного типа на месте, «несохранённые изменения» редактора графа).
+  («несохранённые изменения» редактора графа).
 - **`validateWorkflow(wf, {roles, columns?, enabledAgents?})` → `{errors, warnings}`**, у каждой проблемы
   `message` по-русски и `nodeId`/`edgeId` для подсветки. Ошибки: версия не текущая; пустые/дублирующиеся id,
   ребро в несуществующую ноду; не ровно один `start`, ребро в `start`, нет `end`; порт без ребра, два ребра на
@@ -313,18 +360,25 @@ Store хранит позицию и решает, куда задача пер�
   `commit` только при изменениях; возвращает число изменённых прогонов.
 - **`advanceStage(taskId, outcome, {roleIds?, workflow?})` → `{task, action}`** — `nextStage` по графу прогона; задача без
   `stage` входит в граф из старта (`startStage`, только исход `next`). Задачи-ответы и задачи-гейты (`gateFor`) —
-  ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}`;
+  ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}` и запись в
+  `Task.stageHistory` (то же самое в `enterWork`);
   `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
   гейта удалена). Эффекты `action` выполнит main.
 - **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
-  задача не на ноде `work` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
-  складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` —
-  ничего. Задачи-ответы и гейты — мимо. Возвращает `action` нового этапа.
+  задача не на ноде `work` или `ask` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
+  складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` и `ask` —
+  ничего (на `ask` агент входит при каждом запуске, включая автоперезапуск после ответа). Задачи-ответы и гейты — мимо.
+  Возвращает `action` нового этапа. Обёртка в `workflow.ts` кроме того применяет роль ноды `work` к задаче, а роль ноды
+  `ask` возвращает вызывающему (`{roleId}`) — на задачу она не переносится.
+- **`taskWorkStage(taskId, fallback?)`** — этап `work` или `ask` (`wfWorkStage`) для промпта и проверки показа;
+  **`taskStageNode(taskId, fallback?)`** — нода этапа любого типа (сокет `worker.ask` решает по ней, кому адресовать вопрос).
+- **`ask(input, {coordinatorAlive?, forceHuman?})`** — `forceHuman` (задача на ноде `ask`): вопрос сразу человеку, в
+  `Question.nodeId` и `HumanRequest.nodeId` — нода этапа `task.stage.nodeId`.
 - **`blockStage(taskId, reason)`** — эффект этапа не выполнился (воркер не стартовал, мерж упал не конфликтом):
   `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
 - **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
   задача в `needs_input`; ждущий approval той же задачи не дублируется. Решение — `resolveRequest` с `accept` /
-  `reject` (`text` при reject → `task.feedback`), `request_resolved {kind: 'approval', action, nodeId}`.
+  `reject` (`text` при reject → `task.feedback`), `request_resolved {kind: 'approval', action, nodeId, decision?}` (`decision` — текст решения, ≤ 2000).
 - **Задача-гейт** — `createTask({…, gateFor: {taskId, nodeId}})` (проверяемая задача должна существовать): `task_ready`
   по ней не шлётся (воркера запускает исполнитель), `worker_done` несёт `gateFor: <id рабочей задачи>`.
 - **Миграция при загрузке** (`migrateStages`): задача в колонке kind=review без `stage` (сдана кодом до воркфлоу),
@@ -357,16 +411,25 @@ Store хранит позицию и решает, куда задача пер�
   (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS`. Недопустимая операция возвращает граф как есть.
 - **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
-  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы пустое значение — «роль задачи»,
-  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека, условие (заходы в ноду ≥ N или роль
-  рабочей задачи), «слито» у конца, колонка доски (не у старта и условия). На каждый порт — select «куда ведёт»
+  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы и «Вопроса человеку» пустое значение — «роль задачи»,
+  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
+  валидация, поэтому `patchNode` не удаляет пустую строку), у работы — «Показать человеку»
+  (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N или роль
+  рабочей задачи), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
   (`setPortTarget`: пусто — снять переход), поэтому граф собирается с клавиатуры без холста. Выбран переход — его цель
   и удаление; ничего не выбрано — список нод кнопками. Проблемы валидации ноды — списком под формой.
 - **`workflowForm.ts`** — логика инспектора и раздела: `patchNode` (пустые необязательные поля удаляются),
-  `changeNodeType`, `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
+  `changeNodeType` (роль и инструкция переносятся между `work`/`gate`/`human`/`ask`, где они есть), `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
   (`exportWorkflowJson`, `parseWorkflowJson` — проверяет только форму `{version, nodes[], edges[]}`, смысл —
   `validateWorkflow`; старую версию поднимает `migrateWorkflow`, будущую отвергает), пресет `addRetryLimit(wf, 3)`
   и проверка старого main/preload (`workflowApi`, `WORKFLOW_STALE_MESSAGE`, `isStaleWorkflowError`).
+- **Вопрос человеку в редакторе**: `ask` — в палитре (`WF_ADDABLE_TYPES`, сразу после «Работы»), в select «Тип»
+  (`WF_TYPE_ORDER`), в легенде («Вопрос человеку», `WF_NODE_HELP.ask`), иконка-«облачко» и цвет «Нужен ответ»
+  (`.wf-node--ask`), подпись на холсте — «роль …» / «роль задачи». Роль на `ask` учитывает и удаление роли
+  (`workflowNodesWithRole` в `roleRemoval.ts`). В Инбоксе вопрос с этапа `ask` (`HumanRequest.nodeId`) получает метку
+  «Этап «<нода>»» в шапке `RequestCard` (`requestStageLabel` в `cardState.ts`; название — из графа прогона,
+  `workflowOf` → `workflowForRun`; нода пропала из графа — метки нет). Пилюля этапа на карточке доски для `ask` та же,
+  что у `work` (`stageLabel`).
 - **Пресет «3 отказа → человек»** (`addRetryLimit`): каждый `reject` гейта-агента, ведущий прямо в работу,
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
@@ -378,7 +441,6 @@ Store хранит позицию и решает, куда задача пер�
   ноду/переход. Кнопки: «Сохранить» (`taskTypes:save`), «Отменить правки», «3 отказа → человек», «Экспорт JSON»
   (скачивание `workflow-<тип>.json`), «Импорт JSON» (в черновик, сохранить — отдельно), «Сбросить к дефолтному»
   (поле графа удаляется из типа). Импорт и сброс пересоздают холст (`key`), чтобы граф заново вписался в окно.
-  У встроенного типа — только просмотр и экспорт.
 
 ## Прогоны (`packages/core/src/store.ts`, `src/main/worker.ts`, `src/main/socket.ts`)
 
@@ -434,7 +496,7 @@ Store хранит позицию и решает, куда задача пер�
   (`snapshot.runs`).
 - **UI** (`renderer/src/runs.tsx`: `RunFilter` = `'all' | 'none' | <runId>`, `runShortLabel`, `runColorIndex`,
   `RunBadge`, `RunsSection`): данные — `snapshot.runs` (у PTY координатора `runId` есть и в реестре
-  терминалов — `TerminalInfo.runId`, см. «Реестр терминалов»). На карточке задачи с `runId` — метка `RunBadge`; в шапке доски (`Board.tsx`) —
+  терминалов — `TerminalInfo.runId`, см. «Реестр терминалов»). На карточке задачи с `runId` — метка `RunBadge`; в тулбаре доски (`Board.tsx`) —
   select «Прогон» (при `runs.length > 0`), у закрытых прогонов — «(закрыт)»; фильтр хранит `App.tsx`
   в `runFilters` по `viewKey` (id проекта). В «О проекте» — раздел «Прогоны» (`RunsSection`) с закрытием
   через `window.orca.runs.close` (IPC `runs:close`). Подробности — «UI: доска и «О проекте»».
@@ -465,11 +527,11 @@ Store хранит позицию и решает, куда задача пер�
 orca-board coordinator start --objective "..." [--type <id>]   # человек; создаёт прогон типа --type (см. «Прогоны»)
 orca-board projects list                    # [{id,name,root,active,inProgress,defaultTypeId,defaultTypeTitle}]; без проектов — []; --project не нужен
 orca-board agents list                      # [{id,title,installed,enabled,version?,models,defaults}]
-orca-board types list                       # типы задач, доступные проекту: [{id,title,description?,default?,builtin?,permissionMode,roles,stages}]
+orca-board types list                       # типы задач, доступные проекту: [{id,title,description?,default?,permissionMode,roles,stages}]
 orca-board roles list [--run <id>] [--type <id>]   # роли типа прогона: [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
 orca-board workflow show [--run <id>] [--type <id>]   # {source: run|type, run?, typeId, typeTitle, stages: WfStageInfo[]} — этапы задачи после worker_done
-orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor
+orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor, statusHistory
 orca-board rules get [--type <id>] [--run <id>] [--role <id>]   # правила агентов типа: общие ({typeId,typeTitle,rules}) или роли (+ role, title)
 orca-board rules set [--type <id>] [--run <id>] [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
 orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]
@@ -509,6 +571,8 @@ orca-board worker read --dispatch <id>
 ```
 orca-board done --summary "..." --files a.ts,b.ts
 orca-board done --summary "..." --answer-file answer.md   # задача-ответ: CLI читает файл, шлёт текст в params.answer
+orca-board done --summary "..." --show-file showcase.md --show design/a.html --show design/a.png
+                                                   # показ человеку: params.showcase {text?, files}
 orca-board ask --question "..." [--option "метка|пояснение"]... [--recommend <номер|метка>] [--context-file why.md]
                                                    # блокирует до ответа; оборвался — повтор той же команды переподключается
 orca-board request get --request <id>              # забрать ответ по пинку «[orca] на вопрос … ответили: …»
@@ -516,13 +580,16 @@ orca-board request get --request <id>              # забрать ответ �
 
 `--option` повторяемый (без split по запятой, `|` отделяет пояснение), старое `--options a,b` работает.
 `--context-file` читает CLI и шлёт текст в `params.context`. Подробно — `docs/human-requests.md`.
+`--show` повторяемый, как `--option` (без split по запятой); `--show-file` CLI читает сам. Показ нужен на «Работе» с
+`showcase` — воркер узнаёт об этом из раздела «Этап» задания (`docs/workflow.md` → «Показ человеку»).
 
 ## Как воркер получает контекст
 
 При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`, `ORCA_PROJECT`,
 а в `PATH` — папка с `orca-board`. Команда запуска берётся из реестра по агенту роли задачи:
 `AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort})` → `{command, args}`
-(`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + замечания ревью.
+(`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + ответы на вопросы + раздел
+«Этап» (инструкция и показ ноды «Работа», `store.taskWorkStage`) + замечания ревью.
 
 Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
 `setRunPty(runId, ptyId, agent)`; если спавн упал, прогон сразу закрывается (`closeRun`), чтобы не висел открытым.
@@ -641,9 +708,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `model`/`model_reasoning_effort` — из `~/.codex/config.toml`, дефолтная модель в списке помечена «(по умолчанию)».
     Нет кэша — в списке только модель из `config.toml`. Чтение обоих файлов кэшируется на 60 с, `refresh` сбрасывает.
   - остальные — `models = []`, в UI модель вводится свободным текстом.
-- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?})`: модель — флагом агента;
+- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
+  `sessionId` — uuid сессии для статистики: `worker.ts` генерирует его (`agentSessionId`) только агентам с
+  `acceptsSessionId` (сейчас claude → `--session-id <uuid>`), ассистенту не передаётся.
 - **Дефолты и модели агента** (`agentConfig` в `src/main/agents.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
   всегда (`[]` / `{}`). codex: `config.toml` читается построчно, только ключи верхнего уровня до первой секции `[..]`;
   разбор кэша — чистая `parseCodexModelsCache(text, defaultModel?)` в core (`visibility: "hide"` пропускаются,
@@ -675,7 +744,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## UI: доска и «О проекте»
 
-- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `О проекте`) и выбранный
+- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Статистика` / `О проекте`) и выбранный
   терминал — свои у каждого проекта: `views: Record<projectId, ProjectView { tab, activePty }>`,
   запись через `updateView(projectId, patch)` (функциональный апдейтер, безопасен из обработчиков событий).
   Вкладка дублируется в `localStorage` ключом `orca.tab.<projectId>` (`storedTab` / `storeTab`,
@@ -692,25 +761,60 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   внутри него (`findProjectForPath`; renderer git не запускает) — модалки нет, `projects.add(undefined, path)`
   переключает на существующий проект. Старый preload без `detectTaskType`/`taskTypes` или старый main
   («No handler registered for 'projects:detectTaskType'») — прежний `projects.add()` без выбора типа.
-- **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет заголовка, иконка по `kind`).
+- **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет кромки заголовка).
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
-- **Карточка** компактная: слева `AgentLogo` (28), справа заголовок (до 2 строк, `-webkit-line-clamp: 2`)
-  и строка «роль · агент · модель» (`role.title` по `task.roleId`, `AGENT_TITLES[task.agent]`, `role.model`
-  если задана). Ниже чипы: приоритет (`priorityBadge` из `renderer/src/taskPriority.ts`: для `normal` и задач без
-  поля не показывается; `urgent` — красный, `high` — оранжевый, `low` — приглушённый пунктир), ветка (mono), зависимости `← <название>`, `● терминал` (есть живой PTY),
-  `вышел без done` / `упал` (по `outcome` последнего dispatch'а), `молчит` (`stuckNotified` без `endedAt`).
-  Кнопки «Запустить» (только если `kind` `ready`/`backlog` или последний dispatch `unknown`/`failed`,
-  и нет живого терминала) и «Удалить» (с `confirm`) — в правом верхнем углу, видны при наведении/фокусе/
-  `selected`, на touch — всегда. Строка `Завершено: …` в колонке `done` (из `doneAt`), `Обновлено: …` при
-  сортировке «по обновлению». `task.feedback` — одной строкой `↩ …` вне колонки `review`.
-  В колонке `review` — краткий блок «Ждёт ревью: N файлов» + «Открыть»; на каждый открытый вопрос —
-  блок с текстом вопроса + «Открыть». Полные формы ревью и ответа на вопрос живут только в модалке задачи.
-  Клик по карточке или «Открыть» → `onSelect` + `onOpenTask` (модалка).
-- **Фикс обрезки** (`styles.css`): у `.card` нет `overflow: hidden` (только `overflow-wrap: anywhere`),
-  `.card` и все `.col-body > *` — `flex-shrink: 0`, чтобы карточки не сжимались по высоте;
-  скроллится только `.col-body` (`overflow-y: auto`), цепочка `min-height: 0`:
-  `.content → .board-wrap → .board → .column → .col-body`. Ширина колонки фиксирована (300px).
-- **Сортировка карточек** внутри колонки: переключатель «Сортировка: по созданию / по завершению /
+  Колонку «Готовы» (kind `ready`) локальная доска отдельно не показывает: её карточки лежат в колонке kind `backlog`
+  (`localBoardColumns` в `renderer/src/boardColumns.ts`, счётчик — сумма, подсказка на заголовке). Модель не меняется:
+  статус `ready`, событие `task_ready` и `promoteReady` работают как раньше, в истории статусов «Готовы» остаётся.
+  Внутри колонки задачи со статусом ready — выше backlog (`compareInColumn`), над группами подписи «Готовы к запуску · N» /
+  «Ждут зависимостей · N» (только когда есть обе). Drag внутри объединённой колонки статус не трогает, из других колонок —
+  ставит `backlog` (`dropStatus`), core сам поднимет в ready при закрытых зависимостях. Бэклога в проекте нет — «Готовы»
+  показывается как обычная колонка. В редакторе колонок у ready — пометка «на доске вместе с Бэклогом».
+  Колонки **гибкие** (`flex: 1 1 250px`, 232–340 px), заголовок — строка 36 px с цветной кромкой (`--c`), счётчик текстом;
+  у `needs_input` при непустой колонке флажок «ждут вас». Колонка `done` **свёрнута по умолчанию** в полосу 44 px с вертикальной
+  подписью (`button.column.collapsed`, `aria-expanded`): раскрывается кликом/Enter, сворачивается кнопкой в заголовке,
+  drop на полосу работает. Свёрнутость — в `localStorage` (`orca.board.doneCollapsed`, `boardView.ts`). Не влезли по ширине —
+  доска прокручивается вбок, скроллится внутри колонки только `.col-body`.
+- **Состояние карточки** (`renderer/src/cardState.ts`, чистые функции): `cardState` сводит вид колонки, последний dispatch
+  (`outcome`, `stuckNotified`), открытые вопросы, готовый ответ задачи-ответа, живой терминал и незакрытые зависимости в
+  `live` / `human` / `review` / `bad` / `blocked` / `idle`. Порядок: `done` → idle; сбой (`failed`, `unknown`, молчит) → `bad`;
+  вопрос, готовый ответ или колонка `needs_input` → `human`; колонка `review` → `review`; работа или терминал → `live`;
+  зависимости в бэклоге → `blocked`. От состояния — цвет полосы слева (`.card.s-*`: оранжевая работа, жёлтая ждёт человека,
+  фиолетовая ревью, красная сбой, `blocked` приглушена), `aria-label` карточки («Название. Состояние: ждёт вас. суть») и
+  фильтры тулбара. «Ждёт человека» для фильтра «Ждут вас» — не состояние карточки, а наличие пункта в ленте «Ждут вас» (`attentionTaskIds`, проп
+  `Board.waitingTaskIds`): доска и лента считают одно и то же. Подробности связки — `docs/nested-kanban.md`.
+- **Карточка** (`BoardCard.tsx`): строка 1 — бейдж приоритета (`priorityMark` из `taskPriority.ts`: `!!` / `выс` / `низ`,
+  у `normal` и задач без поля его нет) и заголовок (до 2 строк); мета-строка — `AgentLogo` (16), «роль · модель» (модели нет —
+  агент; полная строка в подсказке) и время справа (в работе — живой оранжевый счётчик, иначе застывшее ⏸); теги — пилюля
+  этапа воркфлоу (`stageLabel`: название ноды `Task.stage.nodeId` и «N-й заход» со второго; у задачи-гейта `Task.gateFor` —
+  «⛉ Гейт «нода» → задача»), метка ответа, прогон (`RunBadge`), ветка (mono), **свёрнутые зависимости** (`depsLabel`: «⧗ ждёт: X»
+  или «⧗ ждёт N задач», полный список в подсказке; считаются только незакрытые), `● терминал`. Ниже — `Завершено: …` в `done`,
+  `Обновлено: …` при сортировке «по обновлению», `↩ feedback` вне колонки `review`. Вместо кнопки действия — **пунктирная
+  строка сути** (`cardEssence`: «? вопрос…», «✎ Ответ готов», «◉ Показ: 3 файла», «Ждёт ревью: N файлов», «✕ Упал» /
+  «✕ Вышел без done» / «✕ Молчит»; символ — вторичный сигнал, слово — основной) и ссылка «в ленте ↑», если `Board` получил
+  `onRevealInFeed(taskId)` (нет — ссылки нет, строка остаётся). Кнопки «Запустить» (только если `kind` `ready`/`backlog` или
+  последний dispatch `unknown`/`failed`, и нет живого терминала), «Переместить в…» и «Удалить» (с `confirm`) — поверх
+  правого верхнего угла, видны при наведении/фокусе, на touch — всегда. Клик по карточке → `onSelect` + `onOpenTask` (модалка).
+  Полные формы ревью и ответа на вопрос живут в модалке задачи.
+- **Названия этапов**: `Board` принимает опциональный `stageTitles` (`nodeId → название`, `wfNodeTitles` из `cardState.ts`);
+  `App` строит его по `workflowForRun` (`taskTypes.ts`: снимок `Run.workflow`, иначе граф типа прогона). Нет типов (старый
+  main) или нода неизвестна — пилюли этапа нет (id ноды человеку ничего не говорит), гейт подписывается и без неё.
+- **Тулбар** (`.lb-toolbar`, одна строка): прогресс `done/total` с полосой по видам колонок (`boardProgress`), фильтры «Все N /
+  Ждут вас N / Проблемы N / Мои роли ▾» (`aria-pressed`), select «Прогон» (если есть прогоны) и select сортировки. «Мои роли» —
+  выпадающий список чекбоксов с ролями, что есть на доске; пустой выбор ничего не отсекает. Фильтр (`orca.board.filter`) и
+  выбранные роли (`orca.board.roles`) — в `localStorage` рядом с сортировкой; чтение и запись в `try/catch`, при ошибке —
+  дефолты (`boardView.ts`). Колонка, где фильтр скрыл все карточки, пишет «Скрыто фильтром: N».
+- **Клавиатура** (`Board.tsx`, `boardNav.ts`, `MoveMenu.tsx`): roving tabindex — tabindex=0 у одной карточки, стрелки
+  двигают фокус по сетке развёрнутых колонок (`moveFocus`: вверх/вниз по колонке, вбок — на ту же строку соседней непустой),
+  `Enter` — открыть, `M` — меню «Переместить в…», `S` — запустить (если можно). `M`/`S` — по `event.code`, чтобы работали в
+  русской раскладке. Срабатывают только когда в фокусе сама карточка (не поля ввода и не кнопки на ней; `isEditableTarget`).
+  Меню — портал в `body` с `position: fixed` (колонка скроллится и обрезала бы его): цифры 1–9 — номер колонки, стрелки и Enter,
+  Esc/Tab закрывают (Esc с `preventDefault`, чтобы глобальный «назад к общей доске» из `GlobalTaskView` не сработал), клик
+  мимо и прокрутка закрывают без возврата фокуса. После переноса фокус возвращается карточке на новом месте. Drag-n-drop остаётся.
+- **Стили** (`styles.css`): у `.card` нет `overflow: hidden` (только `overflow-wrap: anywhere`), `.card` и все `.col-body > *` —
+  `flex-shrink: 0`, чтобы карточки не сжимались по высоте; скроллится только `.col-body` (`overflow-y: auto`), цепочка
+  `min-height: 0`: `.content → .board-wrap → .board → .column → .col-body`.
+- **Сортировка карточек** внутри колонки: `<select>` в тулбаре «по созданию / по завершению /
   по обновлению / по приоритету» (`createdAt` / `doneAt` / `updatedAt` / `priorityRank`, при равном приоритете —
   по `createdAt`), выбор хранится в `localStorage` ключом `orca.board.sort` (`BOARD_SORT_OPTIONS`,
   `renderer/src/boardSort.ts`). Сравнение по приоритету `compareByPriority` обобщённое — по объекту
@@ -718,7 +822,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   Глобальный канбан — те же четыре режима (`compareGlobals`: «обновление» — `activityAt`, «завершение» — `closedAt`),
   ключ `orca.globalBoard.sort` (`GLOBAL_BOARD_SORT_KEY`); см. `docs/nested-kanban.md`.
   Бейдж и варианты `<select>` приоритета — общие компоненты `PriorityBadge` / `PriorityOptions` (`renderer/src/Priority.tsx`).
-- **Прогоны на доске** (`runs.tsx`, `Board.tsx`): у задачи с `runId` среди чипов — метка прогона `RunBadge`
+- **Прогоны на доске** (`runs.tsx`, `Board.tsx`): у задачи с `runId` среди тегов — метка прогона `RunBadge`
   (первые 3 слова цели, до 24 символов с `…`, полная цель в `title`). Цвет — `.run-c0…7` по индексу прогона
   в списке, отсортированном по `createdAt` (`runColorIndex`, по модулю 8); закрытый прогон (`closedAt`) —
   приглушённая пунктирная метка. В тулбаре доски (если прогоны есть) select «Прогон»: «Все прогоны», прогоны
@@ -787,7 +891,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     предупреждение о ролях, чей агент выключен в проекте (`rolesWithAgentOff`: они здесь не запустятся). «Изменить в
     Настройках» кладёт `type:<id>` в `orca.settingsSection` — «Настройки» откроются на этом типе (App не трогаем, окно
     открывается шестерёнкой). Старый preload без `taskTypes` / `projects.setTaskTypes` (`hasProjectTaskTypes`) или
-    старый main («No handler registered», `taskTypesError`) — `TASK_TYPES_STALE_MESSAGE` «перезапустите приложение».
+    старый main («No handler registered», `taskTypesError`) — `taskTypesStaleMessage()` «перезапустите приложение».
   - «Правила» (`about/RulesSection.tsx`, логика — `renderer/src/rules.ts`) — `CLAUDE.md` и `AGENTS.md` из **корня
     репозитория** проекта (`Project.root`, не worktree задач), вкладки между ними (выбор — `localStorage` `orca.rulesFile`).
     Просмотр — `Markdown variant="doc"`; «Редактировать» — textarea с исходником, «Сохранить» (⌘S/Ctrl+S) / «Отмена»
@@ -796,26 +900,31 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     Стиль кода / Проверки перед сдачей / Git и ветки», AGENTS.md — отсылка к CLAUDE.md). Пишет main (`src/main/rules.ts`):
     имя только из белого списка `RULE_FILE_NAMES` (`shared/ipc.ts`), симлинк — только внутрь проекта (пишется цель),
     запись атомарная (tmp рядом + `rename`, права сохраняются), перевод строк — как в файле (renderer получает `\n` и
-    `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `RULES_STALE_MESSAGE`.
+    `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `rulesStaleMessage()`.
   - «Прогоны» (`RunsSection` в `runs.tsx`) — свежие сверху: метка, дата создания, «задач N / закрыто M»
     (задачи с этим `runId`, закрыто — в колонках `kind=done`), статус «идёт» / «закрыт <дата>», полная цель.
     У идущего прогона кнопка «Закрыть» (`confirm` → IPC `runs:close`). Пусто — заглушка.
 - **«Настройки»** (`settings/SettingsModal.tsx`): модальное окно по шестерёнке в rail (`showSettings` в `App.tsx`,
   Esc/клик по фону — закрыть). Внутри та же сетка `.about` в контейнере `about-host`, что во вкладке (меню слева,
   раздел справа, на узкой ширине — полоса); выбранный раздел — `localStorage` `orca.settingsSection`.
-  - «Общие» (`settings/GeneralSection.tsx`) — глобальные настройки приложения («Работать в фоне»).
+  - «Общие» (`settings/GeneralSection.tsx`) — глобальные настройки приложения («Язык», «Работать в фоне») и строка
+    «Мастер первого запуска» с кнопкой «Пройти заново»: `SettingsModal` закрывается, `App` открывает `OnboardingModal`
+    в режиме `rerun` (статус уже записан, `onboarding:complete` не зовётся). Строки нет, если в preload нет
+    `window.orca.onboarding` (`onboardingApi()`). Запись настроек — общий `saveAppSettings` (`appSettingsSave.ts`):
+    его же зовёт шаг «Язык» мастера.
   - «Уведомления» (`settings/NotificationsSection.tsx`) — фильтр ролей строится по ролям всех типов библиотеки
     (`libraryRoles`, без повторов по id).
   - Группа «Типы задач» — каждый тип отдельным пунктом меню (`type:<id>` в `orca.settingsSection`; старые
-    `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): сначала встроенные
-    (изменённый встроенный — на месте своего встроенного, `splitTaskTypes`), затем «Свои», внизу «Новый тип»
-    (`taskTypes:save` без id, пустые настройки = встроенные значения). Счётчик пункта — «по умолч.» или число проектов,
-    где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «встроенный» /
-    «изменённый встроенный» / «по умолчанию», «Доступен в N проектах · по умолчанию в K»), действия «По умолчанию»
-    (`taskTypes:setDefault`), «Дублировать» (`taskTypes:duplicate`, открывает копию), у своих — «Переименовать»
-    (форма в шапке: название и описание) и «Удалить» (`confirm` с последствиями из `deleteTypeConfirmText`: проекты
-    перейдут на тип библиотеки по умолчанию, глобальные задачи доработают по снимку), у изменённого встроенного —
-    «Вернуть встроенный». Ниже вкладки (`orca.settingsTypeTab`): «Роли», «Воркфлоу» (`settings/TaskTypeWorkflow.tsx` —
+    `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
+    библиотеки, без деления на встроенные и свои, внизу «Новый тип» (`taskTypes:save` без id, пустые настройки =
+    значения по умолчанию). Счётчик пункта — «по умолч.» или число проектов,
+    где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «по умолчанию»,
+    «Доступен в N проектах · по умолчанию в K»), действия у любого типа одинаковые: «По умолчанию»
+    (`taskTypes:setDefault`), «Дублировать» (`taskTypes:duplicate`, открывает копию), «Переименовать» (форма в шапке:
+    название и описание), «Удалить» (`taskTypes:delete`; у последнего типа выключена). Подтверждение — панель под
+    шапкой, не `confirm()`: заголовок, последствия и надпись кнопки — `typeRemovalConfirm` (какой тип станет типом по
+    умолчанию, проекты перейдут на тип библиотеки по умолчанию, задачи доработают по снимку, тип не вернётся после
+    перезапуска). Ниже вкладки (`orca.settingsTypeTab`): «Роли», «Воркфлоу» (`settings/TaskTypeWorkflow.tsx` —
     холст и инспектор, сохранение кнопкой), «Разрешения», «Правила доски». Колонок и агентов у типа нет — они у проекта.
     Все вкладки пишут в тип `taskTypes:save` целиком. Баннер своего типа: правка действует во всех проектах, где он
     доступен, со следующего запуска агента; граф глобальная задача снимает при создании.
@@ -823,20 +932,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     они у проекта, а тип общий. Выбор колонки в инспекторе — встроенные плюс колонки всех проектов (`typeColumnChoices`).
     Баннер над графом говорит, что колонки проверяются по доске конкретного проекта: нет колонки на доске — этап
     проходит без смены колонки (`moveTo` в main).
-  - Встроенный тип (`builtin`) и его изменённая копия: на месте меняются **исполнитель ролей (агент, модель, усилие),
-    инструкции ролей и правила доски** — как разрешает main (`isBuiltinTypeInPlaceEdit`, поля
-    `BUILTIN_EDITABLE_TYPE_ROLE_FIELDS`). `RolesEditor` с `executorOnly`: id, название, назначение,
-    добавление/удаление/порядок ролей заблокированы, правка роли проходит через `executorOnlyPatch`; поле «Инструкции
-    роли» открыто. Смена агента — та же правка, что в полном редакторе (`agentChangePatch` в `renderer/src/roleEdit.ts`).
-    Первая правка — обычный `patch(id, …)`: `patchedTaskType` из встроенного даёт копию с тем же id, и тип становится
-    «изменённым встроенным». Воркфлоу — просмотр (холст не меняет граф), «Разрешения» — в `<fieldset disabled>`;
-    остальное — «Дублировать».
+  - «Вернуть системные роли» в `RolesEditor` — про роли `DEFAULT_ROLES`, удалённые из списка типа, а не про тип целиком.
   - Хук `settings/useTaskTypes.ts`: список `taskTypes:list`, после каждой записи перечитывается целиком, плюс
     `onProjectsChanged` окна (удаление типа меняет тип проектов по умолчанию, доске нужны свежие роли типов). `taskTypes:save` заменяет тип целиком, а редакторы
     сохраняются с задержкой, поэтому правка раздела (`patch(id, patch)` → `patchedTaskType`, null удаляет поле)
     собирается из последней сохранённой версии типа и идёт через очередь.
   - Логика без React — `renderer/src/taskTypeEdit.ts` (тест рядом). Старый main/preload: нет `window.orca.taskTypes`
-    или хендлера `taskTypes:*` → `TASK_TYPES_STALE_MESSAGE` («перезапустите приложение») вместо списка.
+    или хендлера `taskTypes:*` → `taskTypesStaleMessage()` («перезапустите приложение») вместо списка.
 - **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» у колонок `storageKey = active.id`, в «Настройках» у типа — `typeEditorKey(t, rev)`: `type:<id>:b|u:<rev>` — у встроенного и его изменённой копии признак один (`b`), поэтому первая правка исполнителя не сбрасывает черновик посреди быстрых кликов, а после «Вернуть встроенный» `rev` растёт и редакторы берут встроенные значения. `executorOnly` — меняются только исполнитель и инструкции роли.
 
 ## Реестр терминалов (`src/main/pty.ts`)
@@ -886,7 +988,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Tray** (`createTray` в `app.whenReady()`, ссылка хранится в модуле — иначе GC уберёт иконку): строка меню
   на macOS, трей на Windows/Linux, tooltip `orca-board`. Меню: «Открыть orca-board», неактивный пункт
   «Задач в работе: N» (`activeDispatchCount` — незавершённые dispatch'и всех загруженных проектов;
-  меню пересобирает `refreshTray()` на каждый `projects.onChange`), «Выйти» (`requestQuit`).
+  меню пересобирает `refreshTray()` на каждый `projects.onChange` и при смене языка), «Выйти» (`requestQuit`).
+  Подписи — на языке интерфейса (`mt()`, «Язык интерфейса» → «main»).
   На macOS клик по иконке открывает меню, на Windows/Linux клик — `showWindow()`.
 - **Вернуть окно**: `showWindow()` — существующее развернуть/показать/сфокусировать, закрытое — `createWindow()`.
   Вызывается из пункта трея, клика по трею (Windows/Linux), `app.on('activate')` (клик по Dock на macOS)
@@ -901,9 +1004,30 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   кодируется встроенным PNG-энкодером (`encodePng`, zlib + CRC32) в два представления — 16px и 32px (Retina);
   файлов в сборке нет. На macOS — template image, система красит её под тему строки меню.
 
+## Мастер первого запуска (`src/main/projects.ts`)
+
+Поведение хранения; экран мастера (шаги, «Пропустить», «Пройти заново») описывает раздел UI, он целиком в renderer.
+
+- **Состояние** — поле `onboarding` в `userData/projects.json` (формат и миграция — «Формат `projects.json`»).
+  `ProjectManager.onboardingState()` отдаёт `OnboardingState` (`shared/ipc.ts`): `required` = статус `pending`.
+  Каналы `onboarding:getState` / `onboarding:complete` (`registerIpc`) — тонкие обёртки над менеджером.
+- **`completeOnboarding(input?)`**: `{ skipped: true }` → `skipped`, иначе `completed`; версия — `ONBOARDING_VERSION`
+  (`shared/ipc.ts`), время — `Date.now()`. Идемпотентно: у уже пройденного или пропущенного статус, версия и время
+  не меняются, файл не переписывается. Аргумент не объект или `skipped` не boolean → `OrcaError('onboarding.invalidInput')`.
+  Обратного перехода в `pending` нет: «Пройти заново» канала не требует и статус не трогает.
+- **`version`** только записывается; логики «показать новый шаг при `version < ONBOARDING_VERSION`» пока нет,
+  `required` считается по статусу.
+- Закрытие окна посреди мастера ничего не пишет: остаётся `pending`, мастер покажется при следующем запуске.
+
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`);
+  `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
+  `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
+  невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
+  `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
+  `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
+  (см. «Обновление»); `projects:list`, `projects:setActive`, `projects:remove`,
   `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы; ролей, графа, правил и разрешений у проекта нет);
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
@@ -911,14 +1035,23 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
   `projects:add(typeId?, path?)` (без `path` — диалог выбора папки, отмена → `null`),
   `projects:detectTaskType(path?)` → `TaskTypeDetection {path, typeId, reason} | null` (без `path` — диалог; проект не добавляет);
-  `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `agents:list(refresh?)`;
+  `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `globalTasks:changeType(id, typeId)` → `GlobalTask`
+  (смена типа до начала работы: `TaskStore.changeGlobalTaskType`, правило — `canChangeRunType`, см. `docs/nested-kanban.md`); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
-  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`.
+  `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`;
+  `showcase:read(taskId, path)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ),
+  `showcase:open(taskId, path)`, `showcase:reveal(taskId, path)` — файлы показа из worktree задачи активного проекта
+  (`main/showcase.ts`, белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»);
+  `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»),
+  `stats:task(projectId, taskId)` → `TaskStats`, `stats:global(projectId, runId)` → `GlobalTaskStats` (за всё время жизни; неизвестная задача или прогон —
+  ошибка по-русски; см. «Статистика задачи»).
+- Ошибки `invoke`: обёртка `handle()` переводит `OrcaError` на язык интерфейса и кладёт код в имя —
+  `OrcaError[<ключ>]: <текст>` (renderer: `ipcErrorMessage` / `ipcErrorCode`, см. «Язык интерфейса» → «main»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
-  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
-- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.terminals.{list, onChanged}`;
+  `updates:changed` (полный `UpdateState`), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
+- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
@@ -943,11 +1076,12 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`) |
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
-| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, builtin?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?}]}]` (`resolveTaskType`, `describeWorkflow`) |
+| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?}]}]` (`resolveTaskType`, `describeWorkflow`) |
 | `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
-| `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); встроенный тип правится на месте; тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
-| `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу |
+| `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
+| `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка |
+| `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу. Задача на этапе `ask` — вопрос человеку при любом координаторе (`forceHuman`) |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
@@ -1072,8 +1206,18 @@ UI работает с активным проектом; воркеры и ко
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
-`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings> }`
-(`settings` — глобальные настройки приложения, см. «Фоновый режим»).
+`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
+(`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
+запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
+- `onboarding: { status: 'pending'|'completed'|'skipped', version, at?, reason?: 'existing' }` — корень файла, а не
+  `settings`: это не настройка человека, `app:setSettings` его не меняет. Версию формата (`PROJECTS_FILE_VERSION`) поле
+  не бампает: оно опциональное, старая версия приложения при откате его игнорирует. `pending` пишется **явно**
+  (`emptyProjectsFile`), а не выводится из отсутствия файла (см. «Грабли разработки»). Миграция при `load()`
+  (`loadedOnboarding`): ключа нет или он невалиден (не объект, неизвестный `status`) — файл от версии до мастера:
+  есть проекты или непустые `settings` → `completed` + `reason: 'existing'` (мастер не показывается), иначе `pending`;
+  битый файл (в т. ч. JSON, не годящийся для нормализации) → `completed` + `existing`. Решение сразу пишется в файл
+  (`dirty` в конструкторе `ProjectManager`): битый файл уже отложен в `.corrupt-<ts>`, и без записи следующий старт
+  увидел бы «файла нет» и показал мастер.
 - `Project { id, root, name, enabledAgents?, columns?, taskTypeIds?, defaultTaskTypeId?, legacyTypeId? }`. Ролей, графа,
   правил агентов и разрешений у проекта нет — они у типа. `taskTypeIds` нет — доступны все типы библиотеки;
   `defaultTaskTypeId` — тип глобальных задач без выбранного типа, координатора и «Входящих»; `legacyTypeId` — тип,
@@ -1082,26 +1226,29 @@ UI работает с активным проектом; воркеры и ко
   объекта `settings`; остальное чистится **по разделам** (`loadedTaskType`): битые роли выпадают по одной, битый граф —
   раздел пропадает (тип берёт дефолтный), остальные разделы остаются — иначе проект молча уехал бы на тип по умолчанию,
   а его роли и правила пропали бы при первой записи (фикс 6118ab9). Граф будущей версии хранится как есть, старая
-  версия мигрируется, флаг `builtin` снимается. Копия встроенного (тот же id) получает название встроенного
-  (`withBuiltinTitle`): без копии название встроенного не меняется, а встроенные могут переименовать в новой версии.
+  версия мигрируется, поля старых версий `builtin` и `builtinBase` отбрасываются.
+- **Засев заготовок** (`seededTaskTypes`): нет файла — библиотека из `presetTaskTypes()`. Файл без `taskTypesSeeded`
+  (версия, где встроенные типы жили в коде, а в файле — только их правки с тем же id) получает заготовки один раз: в их
+  порядке, сохранённая правка побеждает заготовку со всем содержимым, дальше остальные типы; правке без `builtinBase`
+  (сделана до полной правки встроенных, название менять не могла) даётся название заготовки. Затем
+  `taskTypesSeeded: true` — уже засеянный файл не трогается, удалённая заготовка не возвращается. Флаг записывается с
+  первым сохранением; до него повторный засев даёт тот же результат. Библиотека, в которой после чистки не осталось ни
+  одного типа, засевается снова: без типа нельзя создать ни проект, ни глобальную задачу.
 
 **Типы задач** (`ProjectManager`, модель — «Модель → Типы задач»):
-- `taskTypes()` — встроенные (`builtinTaskTypes()`, их порядок), затем пользовательские. Встроенные в файле не хранятся.
-  Пользовательский тип с id встроенного **подменяет** его («изменённый встроенный»); удаление копии возвращает встроенный.
+- `taskTypes()` — вся библиотека из `projects.json` в порядке хранения; заготовки после засева — обычные типы.
 - `saveTaskType({id?, title, description?, settings})` — создать (без `id` — `type_<hex>`) или целиком заменить тип.
   `validTypeSettings`: режим разрешений, `validateRoles`, правила из пробелов удаляют поле, граф (`checkedWorkflow`) — по
   ролям типа, **колонки нод не проверяются**: тип общий для проектов с разными колонками, переход в неизвестную колонку
   исполнитель пропускает (`moveTo`). Неизменённый граф заново не проверяется (`savedTypeSettings`) — иначе удаление роли,
   на которую ссылается граф, или любая правка типа с графом будущей версии падали бы; такой граф исполнитель встретит
   как `workflow_blocked` или дефолтный. Колонки и агенты во входе (старые шаблоны) отбрасываются.
-- Встроенный тип и его копия с тем же id правятся на месте только в полях `isBuiltinTypeInPlaceEdit` (исполнитель и
-  `systemPrompt` ролей, `agentRules`); сравнение — с копией, если она есть (копия могла прийти из миграции старого
-  `defaults` с другими ролями). Иначе — ошибка «тип «…» встроенный: … остальное — через «Дублировать»».
 - `patchTaskType(id, patch)` — мерж раздела (null у графа и разрешений — встроенное значение); `saveTaskTypeRules(typeId,
   roleId?, text)` — `rules set` по типу: правила агентов или `systemPrompt` роли. `duplicateTaskType(id)` — «<название> (копия)».
-  `deleteTaskType(id)` — только пользовательские; ссылки проектов остаются висячими и при чтении пропускаются.
-- `defaultTaskTypeId()` — тип библиотеки по умолчанию: заданный и существующий, иначе `general`. Предвыбран при
-  добавлении проекта, даёт роли и режим разрешений ассистенту.
+  `deleteTaskType(id)` — любой тип, в том числе заготовку; ссылки проектов остаются висячими и при чтении пропускаются,
+  удалённый тип библиотеки по умолчанию сбрасывается. Последний тип — ошибка «…последний в библиотеке…».
+- `defaultTaskTypeId()` — тип библиотеки по умолчанию: заданный и существующий, иначе `general`, а если удалён и он —
+  первый тип библиотеки. Предвыбран при добавлении проекта, даёт роли и режим разрешений ассистенту.
 - `taskTypeWorkflow(typeId)` → `{typeId, title, workflow, custom}`: свой граф или дефолтный по ролям; граф будущей
   версии — ошибка «обновите приложение».
 
@@ -1126,10 +1273,10 @@ UI работает с активным проектом; воркеры и ко
 вызывает `load()` при `version` < 2):
 1. Нормализация старого формата, как до типов (`normalizeLegacy`): назначения системных ролей, нестроковые правила,
    битые графы проектов; шаблоны проверяются как типы (колонки и агенты отбрасываются); непустой старый `defaults` →
-   копия встроенного `general` и тип по умолчанию.
+   тип `general` (заменит заготовку при засеве) и тип по умолчанию.
 2. Шаблоны → типы с теми же id, `defaultTemplateId` → `defaultTaskTypeId`.
 3. **Каждый** проект → пользовательский тип «<имя проекта>» (`type_<projectId>`, описание «Перенесён из настроек
-   проекта…»; занятое название — «<имя> (2)», в том числе среди встроенных) с его ролями, графом, правилами и
+   проекта…»; занятое название — «<имя> (2)», в том числе среди заготовок) с его ролями, графом, правилами и
    разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)` (`taskTypeFromLegacyProject`). Проект:
    `defaultTaskTypeId = legacyTypeId = type_<id>`, `taskTypeIds` не задаётся. Поля проекта — по белому списку
    (`stripLegacy`): старые роли, граф, правила, разрешения и id шаблона проекта из файла уходят.
@@ -1144,6 +1291,401 @@ UI работает с активным проектом; воркеры и ко
 «<имя проекта>» = бывших ролей проекта. Правка или удаление этого типа (`saveTaskType`, `deleteTaskType`) сначала
 загружает доски проектов с таким `legacyTypeId` (`settleLegacyRuns`): старые прогоны получают снимок прежнего типа.
 
+
+### Безопасность состояния
+
+Файлы состояния (`projects.json`, `boards/<id>.json`) — единственная копия работы человека, поэтому:
+
+- **Атомарная запись.** `writeFileAtomic` (`src/main/persistence.ts`): пишем в `<файл>.tmp`, затем `renameSync` (в пределах
+  каталога атомарен). Обрыв посреди записи оставляет старый файл целым; при ошибке `.tmp` убирается. Так пишут и
+  `jsonPersistence`, и `ProjectManager.save()`.
+- **Битый файл не превращается в пустую доску молча.** `readJsonFile` при ошибке разбора (или корне не-объекте) переименовывает
+  файл в `<файл>.corrupt-<ts>`, возвращает «пусто» и `StateWarning { kind: 'corrupt', file, movedTo, message }`.
+  Предупреждения копит `ProjectManager.stateWarnings()` (проекты и открытые доски); канала в renderer пока нет —
+  его добавит задача IPC-контракта.
+- **`formatVersion` доски.** `StoreSnapshot.formatVersion` (`STORE_FORMAT_VERSION = 1`, `packages/core/src/store.ts`).
+  Файл без поля — до его появления: `TaskStore` при загрузке проставляет версию и сохраняет (`migrateFormatVersion` в
+  `packages/core/src/store.ts`, в общем списке миграций конструктора). Версия выше известной — `assertStoreFormat` бросает «доска сохранена более
+  новой версией … — обновите приложение» **до любых записей**, файл остаётся как есть (образец —
+  `validateWorkflow`). Мусорная версия (не целое, < 1) — тоже отказ. Поднимать константу нужно, когда формат меняется
+  так, что старый код потеряет данные; новое необязательное поле версию не поднимает.
+  `ProjectManager.store(id)` для такой доски бросает при каждом вызове, а `inProgressCounts()` (IPC
+  `projects:inProgressCounts`, метод сокета `projects`) её пропускает — ключа проекта нет, потребители берут `?? 0`, и
+  одна такая доска не роняет счётчики остальных.
+- **Бэкап при смене версии.** `backupOnVersionChange(userData, app.getVersion())` (`src/main/backup.ts`) вызывается
+  в `whenReady` ДО `new ProjectManager` — миграции переписывают файлы, а бэкап хранит формат старой версии. Если
+  `lastRunVersion` из `projects.json` отличается от текущей, `projects.json` и `boards/*.json` копируются в
+  `userData/backups/<старая версия>/`, остаются 3 последних каталога (`pruneBackups`, по времени изменения). Версия
+  проставляется в `projects.json` сразу после копирования (иначе падение до загрузки менеджера привело бы к
+  повторному бэкапу уже мигрированных файлов поверх исходных); `ProjectManager.markRun()` покрывает первый запуск.
+  Файл без `lastRunVersion` (до появления поля) бэкапится как `unknown`. Первый запуск (файлов нет) — без бэкапа.
+- **«Только что обновились».** `getJustUpdatedFrom()` возвращает версию, с которой пришли в этом запуске, или `null`.
+  Только при переходе на более новую версию (`compareVersions`): откат назад и `unknown` — не обновление. Отдавать в
+  renderer будет задача IPC-контракта обновлений.
+- **Один экземпляр.** `app.requestSingleInstanceLock()` в начале `src/main/index.ts`: второй экземпляр вызывает
+  `app.exit(0)`, первый по `second-instance` показывает окно (`showWindow`). Иначе второй отобрал бы сокет и писал бы в
+  те же файлы. Блокировка привязана к `userData`, изолированный `pnpm dev` со своим `userData` работает рядом.
+
+## Статистика (`packages/core/src/stats.ts`, типы — `types.ts`, IPC `stats:project`)
+
+Статистика проекта: токены и стоимость, задачи и глобальные задачи, прогоны агентов, время работы агентов и задач —
+за период `StatsRange` (`all` | `7d` | `30d`, скользящее окно от момента запроса, `statsRangeStart`). Считается в main
+по запросу `stats:project(projectId, range)` → `ProjectStats` из снапшота store проекта и транскриптов агентов на диске;
+в состоянии store хранятся только ссылки на сессии (`Dispatch.sessionId`, `Run.coordinatorSessions`), не токены.
+Renderer вызывает канал через проверку наличия API (старый preload — «перезапустите приложение», см. «Грабли разработки»).
+
+Где что:
+- `packages/core/src/stats-acc.ts` — общие `Acc` / `Group` / `sessionSpan` проекта и задачи (внутренний, не в `index.ts`);
+  `task-stats.ts` — статистика задачи, см. «Статистика задачи».
+- `packages/core/src/stats.ts` (без Node) — `statsSessions(snapshot)`: сессии агентов (`StatsSession`: dispatch и запуски
+  координатора, ключ — id dispatch или `coord:<runId>:<ptyId>`); `buildProjectStats(input)` — вся агрегация по снапшоту,
+  расход сессий приходит функцией `usage(session) → SessionUsage { records: UsageRecord[], lastAt? }` (нет — «неизвестно»),
+  плюс `isAlive`, `roleTitle`, `dayKey` (по умолчанию `localDayKey`). `packages/core/src/pricing.ts` — `MODEL_PRICES`,
+  `findModelPrice`, `tokensCost`.
+- `src/main/transcripts.ts` — поиск и разбор транскриптов (`collectSessionUsage`, `parseClaudeLine`, `parseCodexLine`),
+  кэш `TranscriptCache`; `src/main/stats.ts` — `projectStats(deps)`: снапшот → транскрипты → `buildProjectStats`,
+  найденные id сессий codex → `store.setDispatchSessionId`. `registerIpc` (`collectProjectStats` в `src/main/index.ts`)
+  добавляет названия ролей из типов всех глобальных задач проекта и `isAlive` из `pty.ts`.
+- Запись сессий: `startWorker` → `store.startDispatch(taskId, ptyId, id, {roleId, agent, model, sessionId})`;
+  `startCoordinator` → `store.setRunPty(runId, ptyId, agent, {roleId, agent, model, sessionId})` добавляет `AgentSession`
+  в `Run.coordinatorSessions`, выход PTY — `store.coordinatorExited(runId, ptyId)` (`endedAt`).
+- Транскрипты сессий, закрытых до начала периода (PTY мёртв), не читаются: в период они всё равно не попадут.
+  Первый расчёт по проекту с сотнями сессий — доли секунды на чтение; повторный — из кэша (десятки мс).
+
+Команды CLI для статистики нет: агентам она не нужна, человек смотрит её в UI. Понадобится — полная цепочка
+«метод сокета → команда и `HELP` → docs» (см. CLAUDE.md), тот же `ProjectStats`.
+
+### Контракт
+
+- `ProjectStats { projectId, range, from?, generatedAt, totals, tasks, globalTasks, dispatches, coordinatorLaunches, taskTime,
+  byRole, byModel, byAgent, byGlobalTask, byTask, byDay }`.
+- `StatsUsage { tokens?, costUsd?, unpricedTokens, unpricedModels, sessions, sessionsWithUsage, agentMs }` — расход среза;
+  `StatsRow = StatsUsage + { key, title }` (строки разбивок), `StatsDay = StatsUsage + { date: 'YYYY-MM-DD', tasksDone, byModel }`
+  (дни без активности не попадают, порядок — от старых к новым; `byModel` дня — ключи и порядок как у `ProjectStats.byModel`,
+  чтобы цвет модели на графике совпадал с блоком «Модели»).
+- `TokenUsage { input, output, cacheRead, cacheWrite }` — `input` без кэша (семантика API Anthropic), рассуждения — в `output`.
+- **«Неизвестно» ≠ 0.** `tokens` нет, если ни у одной сессии среза не нашлось данных; `costUsd` нет, если токенов нет или
+  ни одна модель не известна таблице цен. `sessions - sessionsWithUsage` — сессии без данных: UI показывает «нет данных
+  по N сессиям», а не занижает итог молча. Строки разбивок сортирует main: стоимость → токены → `agentMs`, по убыванию.
+
+### Откуда каждая метрика
+
+| Метрика | Источник |
+|---|---|
+| `tasks.total`, `tasks.byStatus` | текущие `Task.status` (без периода) |
+| `tasks.created` / `tasks.done` | `Task.createdAt` / вход в колонку kind=done по `statusHistory` (нет истории — `doneAt`) в периоде |
+| `globalTasks.*` | то же по `Run` («Входящие» не считаются); `done` — вход в kind=done по `Run.statusHistory`, иначе `closedAt` |
+| `dispatches` | `Dispatch` с `startedAt` в периоде: `outcome` done / failed / unknown, `running` — без `endedAt` |
+| `coordinatorLaunches` | `Run.coordinatorSessions` с `startedAt` в периоде (у старых прогонов — неизвестно, 0) |
+| `agentMs` | сумма `(endedAt ?? generatedAt) − startedAt` по dispatch и запускам координатора, обрезанная границами периода; `endedAt` нет, а PTY мёртв (упало приложение) — конец неизвестен, сессия берётся по последнему сообщению транскрипта, иначе не считается |
+| `taskTime.avgActiveMs` | среднее `Task.activeMs` задач, вошедших в done в периоде |
+| `taskTime.avgLeadMs` | среднее «первый вход в kind=in_progress → вход в done» по `statusHistory`, записи `migrated` не считаются |
+| `tokens`, `costUsd`, `byModel` | транскрипты агентов (ниже), по времени сообщения в периоде |
+| `byRole` / `byAgent` | `Dispatch.roleId` / `agent` (нет — `Task.roleId` / `Task.agent`); координатор — `AgentSession.roleId` |
+| `byGlobalTask` / `byTask` | `Task.runId` / `Dispatch.taskId`; запуски координатора — в свою глобальную задачу |
+| `byDay` | те же данные по локальной дате main: токены — по времени сообщения, время — по дню начала сессии |
+
+Ассистент (cwd `userData/assistant`, без проекта) в статистику проекта не входит.
+
+### Транскрипты и сопоставление с задачами
+
+**Claude Code** пишет сессию в `<конфиг>/projects/<slug cwd>/<sessionId>.jsonl`, где `<конфиг>` — `CLAUDE_CONFIG_DIR`
+или `~/.claude`, а slug — cwd, в котором каждый символ не из `[A-Za-z0-9]` заменён на `-`
+(`/…/.orca-worktrees/task_x` → `-…--orca-worktrees-task-x`; очень длинные пути Claude Code укорачивает — поэтому ищем
+по имени файла `<sessionId>.jsonl` во всех папках `projects/`, а slug — только быстрый путь).
+- **Надёжная привязка — `--session-id`.** main генерирует uuid, передаёт его в `claude --session-id <uuid>`
+  (`AgentInvokeOptions.sessionId`, агенты с `AgentSpec.acceptsSessionId`) и пишет в `Dispatch.sessionId` /
+  `AgentSession.sessionId`. Файл сессии — ровно этот dispatch.
+- **Запасной путь для dispatch без `sessionId`** (от кода до статистики): cwd worktree уникален для задачи
+  (`.orca-worktrees/<taskId>`), поэтому все сессии его slug — сессии задачи; сессия относится к dispatch, в окно
+  `[startedAt, endedAt ?? старт следующего dispatch]` которого попадает её первое сообщение (поле `timestamp`, cwd
+  дополнительно сверяется с полем `cwd` записей). Координатор без `sessionId` не сопоставляется: его cwd — корень
+  репозитория, там же обычные сессии человека; его токены — «неизвестно».
+- **Разбор:** учитываются записи `type: "assistant"` с `message.usage`; одна ответная реплика API пишется несколькими
+  строками (по блоку контента) с одинаковыми `message.id`/`requestId` — считать один раз. `input_tokens`,
+  `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` → `TokenUsage`; `usage.cache_creation`
+  делит запись по TTL (`ephemeral_5m_input_tokens`, `ephemeral_1h_input_tokens`) — для цены. Модель — `message.model`
+  каждой записи (модель может смениться посреди сессии); `<synthetic>` — локальные сообщения без расхода, пропускаются.
+  Сабагенты (Task/Agent) пишут `<sessionId>/subagents/agent-*.jsonl` рядом с файлом сессии — это расход той же сессии.
+- **Кэш:** разобранные итоги файла кэшируются в main по `(путь, размер, mtime)` — транскрипты большие и дописываются.
+  Файл вырос — дочитывается хвост с прошлого смещения (граница — конец последней полной строки: недописанная строка
+  ждёт следующего запроса), стал меньше — разбирается заново. Битые строки (обрыв записи, чужой формат) пропускаются.
+- **Время сессии для статистики** — `Dispatch.endedAt` (момент `done`), хотя терминал воркера может жить дольше:
+  записи транскрипта после `endedAt` всё равно считаются в токенах (по времени сообщения).
+
+**Codex** id сессии задать нельзя. Сессии — `<CODEX_HOME или ~/.codex>/sessions/YYYY/MM/DD/rollout-*.jsonl`;
+первая запись `session_meta` содержит `payload.cwd` и `payload.timestamp`, модель — `turn_context.payload.model`,
+токены — события `event_msg` с `payload.type: "token_count"`, поле `info.total_token_usage` (накопительное:
+`input_tokens` включает `cached_input_tokens`, `cacheRead` = cached, `input` = разность, `cacheWrite` =
+`cache_write_input_tokens` (обычно 0), `output` = `output_tokens`, reasoning в нём). Запись расхода — прирост счётчика
+с прошлого события со временем события (так токены делятся по периоду и дням); счётчик уменьшился — прирост от нуля.
+Привязка — как запасной путь Claude: cwd = worktree задачи и старт в окне dispatch; найденный id пишется в
+`Dispatch.sessionId` (`store.setDispatchSessionId`), чтобы не сверять cwd повторно. Файлы ищутся только в папках дат
+окна dispatch — по **локальной** дате (папка `2026/09/24` у сессии, начатой 23-го в 22:49 UTC), с запасом в день.
+
+**Остальные агенты** (opencode, gemini, cursor, amp, copilot, goose, shell) — данных о токенах не читаем: их сессии
+учитываются в `sessions` и `agentMs`, но не в `sessionsWithUsage` («неизвестно»). Новый источник — функция чтения
+по `AgentKind` в main рядом с существующими, контракт не меняется.
+
+### Стоимость
+
+Таблица цен — одна: `MODEL_PRICES: ModelPrice[]` в `packages/core/src/pricing.ts` (core, без Node — её же может
+показать renderer), $ за миллион токенов, значения — с официальных страниц цен провайдера, с датой проверки в комментарии.
+`ModelPrice { match[], exact?[], input, output, cacheRead, cacheWrite5m, cacheWrite1h }`: `match` — префиксы id модели из
+транскрипта, выигрывает самый длинный (`claude-opus-5` покрывает датированные версии); `exact` — точные id моделей
+OpenAI (id целиком или со снапшотом `-YYYY-MM-DD` / `-YYYYMMDD`, регистр и префикс `openai/` не важны): префиксом
+их не сопоставить — `gpt-5` покрыл бы неизвестную `gpt-5.7-x` чужой ценой. Цены GPT (`OPENAI_PRICES` в `pricing.ts`) —
+Standard-tier со страницы developers.openai.com/api/docs/pricing; у codex токены собирает `parseCodexLine`
+(кэшированная часть входа идёт по `cacheRead`), модели без цены на странице (`codex-auto-review`, `gpt-5-codex`,
+`gpt-5.1-codex*`…) остаются «без цены». Надбавка длинного контекста OpenAI (>272K входа: вход ×2, выход ×1,5) не
+учитывается — размер отдельного запроса из накопительного счётчика rollout не виден, стоимость таких запросов занижена. Стоимость считается по каждой
+записи с её моделью: `input·input + output·output + cacheRead·cacheRead + write5m·cacheWrite5m + write1h·cacheWrite1h`
+(у Anthropic запись в кэш 5 мин — 1,25× входа, 1 час — 2×, чтение — 0,1×; если транскрипт не делит запись по TTL —
+считается как 5 мин). Модель не найдена в таблице — её токены идут в `unpricedTokens`, id — в `unpricedModels`,
+в `costUsd` не входят; итог UI помечает как «не менее $X». Алиасы роли (`opus`, `sonnet`) в таблицу не нужны:
+в транскрипте всегда полный id модели.
+
+### Статистика задачи (`packages/core/src/task-stats.ts`, типы `TaskStats` / `GlobalTaskStats`)
+
+Статистика одной задачи и одной глобальной задачи: сколько на неё потрачено — время, агенты, ожидание человека, токены.
+Период не выбирается — всё время жизни. Чистые функции без Node: `buildTaskStats(input)` и `buildGlobalTaskStats(input)`
+(`input`: `now`, снапшот `tasks/runs/dispatches/requests/questions`, `columns`, `workflow?` для названий этапов и те же
+`usage` / `isAlive` / `roleTitle` / `prices`, что у проекта). Транскрипты читает main и отдаёт через `usage`; без `usage`
+(renderer при старом main) время считается, а токенов нет — «неизвестно», не ноль. Неизвестная задача — ошибка
+«статистика: задачи <id> нет в проекте». Общие с проектом кирпичи — `stats-acc.ts` (внутренний модуль: `Acc`, `Group`,
+`sessionSpan` — длительность сессии, `sessionModel`); `buildProjectStats` считает через них же, цифры проекта не менялись.
+
+Оговорки:
+- **«Ждала вас», а не «вы потратили».** Время самого человека приложению неизвестно; `human.waitingMs` — сколько у задачи был
+  pending-запрос к человеку (интервалы `createdAt → resolvedAt`, для идущего — до `generatedAt`, параллельные объединяются
+  `mergeSpans`), `reaction*` — как быстро человек реагировал (`resolvedAt − createdAt` по решённым).
+- **Гейты учитываются в проверяемой задаче:** сессии, запросы и вопросы задач `Task.gateFor.taskId = <задача>` входят в её
+  `usage`, `dispatches` и `human` (`dispatches.total === usage.sessions`). В глобальной задаче проверка идёт строкой той подзадачи,
+  которую проверяет (`byTask`), и не считается в `subtasks.count`.
+- **Приближённость (`approx`).** История статусов хранит не больше `STATUS_HISTORY_LIMIT` записей и может начинаться с записи
+  миграции (`migrated`: `at` — последняя правка, а не вход в колонку). Колонка/этап с такой записью и все колонки/этапы
+  обрезанной истории помечаются `approx: true`; жизнь done-задачи, у которой вход в done известен только по `doneAt` (миграция), — тоже.
+- **Время в done не считается:** интервал последней записи `done` обрезан входом в done (`ms: 0`), иначе он рос бы вечно.
+- **Dispatch, закрытый миграцией** (`outcome: 'unknown'`, `endedAt` = момент загрузки приложения, завышен на простой): в статистике
+  задачи конец — `min(endedAt, usage.lastAt)`, если транскрипт найден (`trimUnknownEnd`). В статистике проекта это **пока не меняется**
+  (`StatsSession.outcome` для этого уже есть) — предложение на отдельное согласование: изменит цифры `agentMs` проекта.
+
+Откуда каждая метрика:
+
+| Метрика | Источник |
+|---|---|
+| `lifetime` | `Task.createdAt` → последний вход в kind=done по `statusHistory` (запись `migrated` — `doneAt`, `approx`); не done — до `generatedAt`, `running: true` |
+| `leadMs` | первый непереходный вход в kind=in_progress → вход в done (как `taskTime.avgLeadMs`); не done или нет честной истории — поля нет |
+| `activeMs` | `Task.activeMs` + идущий отрезок `activeSince` до `generatedAt` (`taskActiveTime`); не бывала в работе — поля нет |
+| `columns` | `historySpans(statusHistory, конец жизни)`: запись живёт до следующей; сумма и число заходов по колонке, порядок колонок доски |
+| `stages` | то же по `Task.stageHistory`; название — `StageChange.title`, иначе из `workflow`, иначе `nodeId`; нет `stageHistory` — поля нет |
+| `usage`, `byRole`, `byModel` | сессии dispatch задачи и её гейтов (`statsSessions`), транскрипты через `usage`; время сессии — `sessionSpan` |
+| `dispatches` | `Dispatch` задачи и её гейтов: `outcome` done / failed / unknown, `running` — без `endedAt` |
+| `rejections.gate` | записи `stageHistory` с `outcome: 'reject'` минус отказы человека на approval (те тоже идут исходом reject) |
+| `rejections.approval` | `HumanRequest` kind=approval, решён с `action: 'reject'` |
+| `rejections.clarify` | `HumanRequest` kind=answer, решён с `action: 'clarify'` |
+| `rejections.manual` | в воркфлоу — записи `stageHistory` с `outcome: 'restart'` (`enterWork`: возврат с ревью / из done); вне воркфлоу — переходы ревью → ready по `statusHistory` (у задачи-ответа за вычетом `clarify`) |
+| `human` | `HumanRequest` задачи и её гейтов (у глобальной — все запросы прогона по `runId`) |
+| `coordinatorQuestions` | `Question` задачи и её гейтов без `forHuman`; медиана `answeredAt − createdAt` по отвеченным |
+
+`GlobalTaskStats` — то же по `Run` (`statusHistory`, `closedAt` вместо `doneAt`, «Входящие» не считаются) плюс `ownActiveMs`
+(`Run.activeMs` с идущим отрезком), `coordinator` (сессии `Run.coordinatorSessions` и `launches`), `subtasks` (расход
+подзадач вместе с проверками, `count` / `done` — рабочие подзадачи), `returns` (`Run.returns.length`), `byTask` (строки
+подзадач, сортировка как в проекте). Своих `stages`, `dispatches`, `rejections`, `coordinatorQuestions` у глобальной задачи нет.
+
+IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, runId)` → `GlobalTaskStats`
+(`OrcaApi.stats.task` / `.global`; `taskStats` / `globalTaskStats` в `apps/desktop/src/main/stats.ts`, обвязка — `collectTaskStats` /
+`collectGlobalTaskStats` в `main/index.ts`). Собираются как `stats:project`, но `include` в `collectSessionUsage` отбирает только
+сессии задачи и её проверок (для глобальной — подзадач прогона и его координатора): транскрипты других задач не читаются.
+Кэш транскриптов общий с проектом, найденные id сессий codex пишутся в store (`setDispatchSessionId`). Граф для названий этапов
+(`workflow`) main берёт из типа прогона задачи. UI — «Интерфейс — статистика задачи» ниже.
+Команды CLI для статистики задачи по-прежнему нет: тот же довод, что для проекта.
+
+### Интерфейс — вкладка «Статистика» (вариант B)
+
+Выбран вариант B из макетов `docs/mockups/project-stats/index.html` (A — раздел в «О проекте», C — полоса над доской —
+отклонены): отдельная вкладка проекта «Статистика» рядом с «Доской» и «Терминалами», дашборд на всю ширину.
+Данные — один вызов `stats.project(projectId, range)` при открытии вкладки и смене периода; не хранится и не
+обновляется по событиям (подпись «Обновлено в HH:MM» — `generatedAt`).
+
+| Блок | Поля `ProjectStats` |
+|---|---|
+| Период «7 дней / 30 дней / всё время» | параметр `range` |
+| Главная цифра «Потрачено за период» | `totals.costUsd`; `unpricedTokens > 0` — «не менее $X», `sessions − sessionsWithUsage > 0` — «нет данных по N сессиям» |
+| Факты: токены, время агентов, задач завершено, цена задачи | сумма `totals.tokens`, `totals.agentMs`, `tasks.done`; цена задачи = `totals.costUsd / tasks.done` (считает renderer, нет стоимости или `done = 0` — «нет данных») |
+| График по дням, метрика «Стоимость / Токены / Время агентов / Задачи» | `byDay[]`: стоимость — стопкой по `byDay[].byModel[].costUsd`, токены — `tokens`, время — `agentMs`, задачи — `tasksDone`; дни без записи — пустой столбец |
+| Предупреждение о неизвестном | `totals.unpricedModels` (дописать в `MODEL_PRICES`), `sessions − sessionsWithUsage` |
+| «Модели», «Роли» — доли | первые 5 строк `byModel` / `byRole`, полоса доли — `costUsd` (нет токенов — `agentMs`) |
+| «Задачи на доске» | `tasks.byStatus` (полоса по колонкам), `dispatches`, `taskTime.avgActiveMs` / `avgLeadMs` |
+| «Самые дорогие глобальные задачи», «Самые дорогие задачи» | первые строки `byGlobalTask` / `byTask` (уже отсортированы main) |
+
+Состояния: нет ни одной сессии с токенами — метрики «Стоимость» и «Токены» скрыты, доли и график — по `agentMs`;
+пустой проект (`emptyProjectStats`) — заглушка «статистики пока нет». `byAgent` на вкладке не выводится
+(в контракте остаётся — для подсказки и будущих разбивок). На узком окне сетки блоков перестраиваются в одну колонку.
+
+Код: `renderer/src/StatsView.tsx` (вкладка, `App.tsx` → `tab === 'stats'`), логика — `renderer/src/statsFormat.ts`
+(тест `statsFormat.test.ts`): форматирование (`formatTokens` «1,2 млн», `formatUsd`, `formatAgentTime` — в часах, не в днях),
+`costCell` («нет данных» / «без цены» / «не менее»), `buildChart` — столбцы периода: 7 / 30 дней до даты `generatedAt`,
+«всё время» — от первого дня `byDay`, длиннее 62 дней — по неделям, длиннее 420 — по месяцам. Цвет модели и роли —
+`seriesColor` по месту строки в `byModel` / `byRole` (`--s1`…`--s5`, `unknown` — `--s-unknown`, дальше — `--s-other`).
+Старый preload без `stats` — `statsApi()` бросает `statsStaleMessage()`, старый main — `isStaleStatsError` (как `docsApi`).
+Период и метрика графика запоминаются в `localStorage` (`orca.stats.range`, `orca.stats.metric`), общие для проектов.
+
+### Интерфейс — статистика задачи и глобальной задачи
+
+Показывается в двух местах; данные — `window.orca.stats.task(projectId, taskId)` / `.global(projectId, runId)`, считаются по запросу и не
+хранятся. Читает их `useStatsLoad` (`renderer/src/useStatsLoad.ts`): при открытии, при смене «ключа» (`taskStatsKey` / `globalStatsKey` —
+статус, запуски, запросы задачи или прогона; пачка событий за 400 мс — один вызов) и раз в минуту, пока что-то идёт (`isStatsRunning`).
+Ответ на устаревший запрос не затирает свежий.
+
+| Где | Что показывает |
+|---|---|
+| Секция «Статистика» в `TaskModal` над «Историей статуса» (`TaskStatsBlock.tsx`) | факты «Время жизни · В работе · Агенты · Ждала вас · Стоимость»; полоса по колонкам (цвета колонок доски, как `StatusHistoryBlock`) и по этапам воркфлоу (если есть `stages`); таблица ролей (время, токены, $); чипы «запусков N · сдано · упало · идут», «отказов ревью M» (в подсказке — гейты / «Вернуть» / уточнения / вручную), «вопросов K»; строка про запросы к человеку (виды, реакция) |
+| Вкладка «Статистика» в `GlobalTaskView` (`GlobalStatsPanel.tsx`; пятая, Alt+5; у «Входящих» нет) | «Итог» (те же факты, «Своё время» вместо «В работе», полоса по колонкам), «Координатор» и «Подзадачи» раздельно (запуски / число подзадач, время агентов, стоимость), топ подзадач по `byTask` (клик — `onOpenTask`; строки удалённых задач не кликабельны), роли, «возвраты с «Проверки»» (`returns`) |
+
+Правила отображения (`renderer/src/taskStatsFormat.ts`, тест `taskStatsFormat.test.ts`; цены и «нет данных» — те же, что на вкладке проекта:
+`costCell` → `costFact`):
+- **Неизвестно ≠ 0.** Нет токенов — «нет данных» (курсивом), нет цены — «без цены», часть токенов без цены — «не менее $X», сессии без
+  транскрипта — «нет данных по N сессиям» в подписи под стоимостью. Не бывала в работе — «не бывала», не ждала человека — «не ждала».
+- **`approx`** (история статусов миграции или обрезана) — «≈ 3 ч» и подсказка в значении и в легенде полосы.
+- **Бегущие значения.** main считает на `generatedAt`, клиент добавляет прошедшее (`advanceTaskStats` / `advanceGlobalStats`, таймер
+  `useNow` раз в 30 с): время жизни, «в работе» (пока открыт отрезок — `taskTicking` / `globalTaskTicking('own')`), колонка задачи, ожидание
+  человека (пока есть pending), время агентов идущих сессий (у глобальной — координатор по живому PTY и подзадачи по их незавершённым
+  `Dispatch`). Роли и этапы не тикают — обновляются при перечитывании.
+- **Старый main/preload** (HMR: renderer новый, main — нет). Нет `stats.task` в preload (`taskStatsApi` бросает `statsStaleMessage()`) или нет
+  обработчика в main (`isStaleStatsError`) — время считается в renderer теми же `buildTaskStats` / `buildGlobalTaskStats` по снимку доски
+  (`StatsSnapshot`, собирает `App.tsx`) без `usage`: токенов и стоимости нет, над секцией — «перезапустите приложение».
+- Карточка на доске статистику не показывает: стоимость потребовала бы читать транскрипты для всей доски.
+
+## Обновление (`src/main/updater.ts`, `updateMachine.ts`, `winUpdater.ts`; типы — `shared/ipc.ts`)
+
+Решение (вариант B, «гибрид»): Windows NSIS — electron-updater; macOS (ad-hoc подпись, Squirrel.Mac не работает) — свой установщик:
+скачать zip из GitHub Releases (репозиторий NANDIorg/BigOrcaCocks) по `latest-mac.yml`, проверить sha512 и codesign, после выхода
+подменить `.app` detached-скриптом и перезапустить; portable Windows — только «скачать новый exe». Каналов (бета) нет; в dev
+(`!app.isPackaged`) обновление выключено. **Реализовано:** машина состояний, расписание, отложенная установка, Windows (NSIS и portable)
+и macOS (свой установщик, см. «macOS-бэкенд»): ветка `darwin` в `createPlatformUpdater` (`updaterBackend.ts`).
+
+**Настройки** (`AppSettings.updates`, `UpdateSettings`; дефолты — `DEFAULT_UPDATE_SETTINGS`): `autoCheck` (true) — проверять в фоне,
+`autoDownload` (true) — скачивать сразу, `installWhenIdle` (false) — ставить, когда у агентов не осталось живых сессий.
+Установка по кнопке и при выходе — всегда. Настройки читаются при каждом решении; после `app:setSettings` main зовёт
+`updater.settingsChanged()` (включили `autoDownload` при найденной версии — качаем; включили `installWhenIdle` при готовом
+обновлении «при выходе» — переходим на ожидание агентов).
+
+**Состояние** — `UpdateState` (единственный источник правды — main, renderer подписывается на `updates:changed`):
+`status` (`idle | checking | available | downloading | ready | installing | error | unsupported`), `currentVersion`, `availableVersion`,
+`releaseNotes` (markdown; на Windows/NSIS — то, что отдаёт electron-updater из GitHub, то есть HTML: `Markdown.tsx` санитизирует его
+DOMPurify), `releaseUrl`, `percent` (только `downloading`), `installPending` (`'idle' | 'quit' | null`),
+`mode` (`'auto' | 'manual-download'`), `unsupportedReason` (только `unsupported`: `dev`, `portable`, `not-in-applications`,
+`no-write-access`, `translocated`, `platform` — установщика для этой ОС нет: Linux), `error` (только `error`, по-русски).
+
+```
+idle ─check→ checking ─новее нет→ idle
+                 │ └─ошибка→ error
+                 └─есть→ available ─download/autoDownload→ downloading(percent) ─→ ready ─install→ installing → перезапуск
+                                                              └─ошибка→ error          └─ошибка→ error
+unsupported — терминальное: check/download/install ничего не меняют (кроме portable: см. ниже)
+```
+
+**Слои.** `updateMachine.ts` — чистые переходы и решения (`checkFinished`, `downloadDone`, `idleAction`, `compareVersions`…), без
+electron и таймеров. `updater.ts` — `Updater`: вызывает их, ходит в `PlatformUpdater`, ведёт таймеры и рассылает `onChanged`;
+окружение (настройки, число агентов, диалог, выход) приходит через `UpdaterHost`, поэтому модуль не импортирует electron и
+тестируется в `node:test` (`updater.test.ts`, `updateMachine.test.ts`, `githubRelease.test.ts`). `updaterBackend.ts` выбирает бэкенд
+по платформе (`isPackaged`, `process.platform`, `PORTABLE_EXECUTABLE_FILE`). `Updater` создаётся в `main/index.ts`
+(`whenReady`), `updater.start()` запускает расписание.
+
+**Расписание.** `autoCheck`: первая проверка через `INITIAL_CHECK_DELAY_MS` (10 с) после старта и затем раз в `CHECK_INTERVAL_MS`
+(4 ч). Фоновая проверка не превращает сбой в `error` (нет сети — не повод рисовать ошибку каждые четыре часа): состояние
+возвращается к прежнему; ручная («Проверить») ошибку показывает. Проверка возможна из `idle | available | error`; в `checking`,
+`downloading`, `ready`, `installing` — no-op. Найдено и `autoDownload` → сразу `downloading`. Сбой загрузки → `error` с сохранённой
+`availableVersion`; повтор — `download()` или следующая проверка.
+
+**Отложенная установка.** Когда обновление скачано (`ready`), `installPending` ставится автоматически: `'quit'` (по умолчанию) или
+`'idle'` (если `installWhenIdle`). `install({when})` в `ready` (иначе — ошибка; в `unsupported`/`installing` — no-op):
+- `now` — если живых агентов нет, ставим сразу; иначе диалог main (`confirmInstall` в `index.ts`, делит флаг `confirmingQuit`
+  с `requestQuit`): «N задач в работе: обновить сейчас (агенты остановятся) / когда агенты закончат / отмена»;
+- `idle` — `installPending = 'idle'`; `Updater` опрашивает `liveWorkerCount()` каждые `IDLE_POLL_MS` (5 с, только пока ждём).
+  Агенты закончились → `installWhenIdle` включён: ставим сразу; иначе диалог «Агенты закончили работу. Перезапустить и обновить
+  до X?» («Позже» переводит на `quit`). Если живых агентов нет уже в момент вызова — это `now` без второго вопроса;
+- `quit` — `installPending = 'quit'`.
+`cancelPending()` снимает установку (`null`): при выходе тогда ничего не ставится. Обычный выход (`quitNow`) при `ready` и
+непустом `installPending` вызывает `updater.installOnQuit()` — установка сама завершает приложение. Пункт трея «Перезапустить и
+обновить до X» (`readyUpdate` / `installUpdate` в `TrayHandlers`) виден в `ready` и делает `install({when: 'now'})`.
+
+**Установка** (`runInstall`): `host.lockQuit()` (`quitting = true`, иначе `quitAndInstall` упрётся в диалог выхода из `before-quit`) →
+`installing` → `PlatformUpdater.install()` → `host.quit()` (`killAll` + `app.quit`). Сбой → `error`, `unlockQuit()` (при установке по
+выходу — выходим всё равно). **`backend.install()` вызывается не больше одного раза за процесс:** повторный вход в `runInstall` блокирует
+статус `installing` (параллельные «установить» и `installOnQuit`), а флаг `installLaunched` — случай, когда `install()` отработал, но
+`host.quit()` сорвался и после новой загрузки человек снова дошёл до установки: тогда только добиваем выход. Иначе на macOS два
+одновременно ждущих `install.sh` гонялись бы за `previous/` и `.app`. `getJustUpdated()` отдаёт версию один раз: `host.takeJustUpdated()` (в `index.ts` — `getJustUpdatedFrom()`
+из `backup.ts`, работает на всех платформах) или, если её нет, `backend.consumeJustUpdated()` (маркер macOS-установщика; вызывается
+всегда, чтобы убрать остатки скачивания).
+
+**Платформенный бэкенд** — интерфейс `PlatformUpdater` (`updater.ts`): `check(): Promise<UpdateInfo | null>` (`UpdateInfo {version,
+releaseNotes, releaseUrl}`), `download(onProgress): Promise<void>` (скачать + проверить целостность), `install(): Promise<void>`
+(подготовить замену; выход добивает `Updater`). Бэкенд знает только «как» на своей ОС и бросает ошибки; расписание, состояния, отложенную
+установку и настройки ведёт `Updater`. Необязательный `consumeJustUpdated()` — версия, с которой обновились, по маркеру самого бэкенда
+(macOS; заодно чистит остатки скачивания).
+
+**Windows NSIS** (`winUpdater.ts`): `electron-updater` (`autoUpdater`) читает `latest.yml` и `app-update.yml` (electron-builder кладёт его
+в `resources` при сборке nsis/portable по блоку `publish`). `autoDownload` и `autoInstallOnAppQuit` выключены — всем управляет
+`Updater`; sha512 установщика electron-updater сверяет сам (проверка издателя не настроена: подписи кода нет);
+`install()` — `quitAndInstall(true, true)` (тихая установка в прежнюю папку и перезапуск).
+
+**Windows portable** (`PORTABLE_EXECUTABLE_FILE`): заменить exe на ходу нельзя, поэтому `support = { mode: 'manual-download',
+unsupportedReason: 'portable' }`, статус остаётся `unsupported`, но проверка **работает**: `GET /repos/NANDIorg/BigOrcaCocks/releases/latest`
+(`githubRelease.ts`), версия новее и в релизе есть `*-portable-*.exe` → заполняются `availableVersion`, `releaseNotes`, `releaseUrl`
+(страница релиза; UI показывает «доступна X, скачать»). Скачивания и установки нет; сбой проверки состояние не меняет.
+
+### macOS-бэкенд (`src/main/macUpdater.ts`, чистая логика — `macUpdateLogic.ts`)
+
+Реализует `PlatformUpdater` без Squirrel.Mac. `macUpdater.ts` electron не импортирует: окружение (`MacUpdaterEnv`: версия, `process.arch`,
+путь к `.app`, userData, `fetch`, `run` = `execFile`, `spawnDetached`) приходит снаружи, `createMacUpdater({ app, net })` собирает его из
+electron (`net.fetch` учитывает системный прокси). `macUpdateSupport({ isPackaged })` — `detectMacSupport` на настоящей ФС. Подключение к
+`Updater` — ветка `darwin` в `createPlatformUpdater` (`updaterBackend.ts`: `macUpdateSupport` → `UpdateSupport`, при поддержке —
+`createMacUpdater({ app, net })`); `getJustUpdated()` учитывает `MacUpdater.consumeJustUpdated()`.
+
+- **check**: `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml` → `parseUpdateManifest` (свой разбор плоского
+  yml, без зависимостей) → `pickMacZip` (arm64 — файл с «arm64», x64 — zip без «arm64»; dmg игнорируется) → `isNewerVersion` (semver) против
+  `app.getVersion()`. Заметки и ссылка — публичный API `releases/tags/v<версия>`; его ошибка не валит проверку (пустые заметки, ссылка
+  на `releases/tag/v<версия>`). Сетевые ошибки — исключение по-русски, `Updater` переводит в `error`; приложение не падает.
+- **download** → `userData/updates/<версия>-<arch>/`: скачивание в `update.zip.part` (таймаут 60 с без данных, прогресс — целые %),
+  sha512 (base64) и размер из yml → `ditto -x -k` → `codesign --verify --deep --strict` → `CFBundleIdentifier` равен текущему, а
+  `CFBundleShortVersionString` — версии релиза (`plutil -extract`). Любой сбой стирает каталог загрузки. Проверки сделаны здесь, а не в `install()`:
+  человек видит ошибку сразу, а не в момент выхода из приложения. Имя файла из yml — только простое (`assetUrl`: без `/`, `..`), адрес — по тегу
+  найденной версии: `releases/download/v<версия>/<файл>` (`assetUrl(name, version)`), а не `latest/download` — иначе новый релиз между `check` и
+  `download` отдал бы файл другой версии и sha512 из манифеста не сошёлся бы. Только манифест берётся с `latest`. sha512 из того же релиза защищает от битой загрузки, но не от подмены самого релиза: доверие — к аккаунту GitHub.
+- **install**: `validateInstallPaths` (абсолютные пути, `.app`, ничего внутри заменяемого приложения) → пишет `updates/install.sh` (текст —
+  `INSTALL_SCRIPT`) и маркер `updates/pending.json` → запускает `/bin/sh install.sh PID TARGET NEW STAGE PREVIOUS LOG` detached. Внешние
+  команды — только `execFile`/`spawn` с массивом аргументов, пути в скрипт идут позиционными аргументами, а не текстом. Сам выход из приложения
+  делает `Updater` (обычное подтверждение). Второй `install()` того же `MacUpdater` — no-op (`installLaunched`), а сам скрипт первым делом берёт lock
+  `updates/previous.lock` (`mkdir`, внутри pid скрипта): при живом владельце второй экземпляр выходит, lock мёртвого владельца забирается,
+  снимается по `trap EXIT`. Скрипт ждёт выхода PID (не дольше 10 минут — если выход отменили, молча завершается), переносит
+  старый `.app` в `updates/previous/`, копирует новый `ditto`, снимает `com.apple.quarantine`, чистит каталог загрузки, `open`. Любая ошибка —
+  откат: старый `.app` возвращается на место и запускается. Повторный запуск скрипта безвреден (нового `.app` уже нет). Лог — `updates/install.log`;
+  `previous/` хранит одну прошлую версию для ручного отката.
+- **Предусловия** (`detectMacSupport`, определяются при старте): `!isPackaged` или запуск не из бандла — `dev`; путь в `/Volumes/` (смонтированный
+  dmg) — `not-in-applications`; путь с `/AppTranslocation/` — `translocated`; нет права записи в бандл или его папку — `no-write-access`. Во
+  всех трёх случаях `mode: 'manual-download'`, `status: 'unsupported'`; текст для человека — «переместите приложение в „Программы“» (UI берёт
+  его по `unsupportedReason`, для логов main — `macUnsupportedMessage`).
+- **Грабли.** Ad-hoc подпись новой сборки другая — macOS может заново спросить разрешения (доступ к папкам и т. п.), это ожидаемо.
+  Настоящую подмену на установленном приложении в тестах не проверить: `macUpdater.test.ts` гоняет настоящий `install.sh` (успех, откат при
+  падении `ditto`, повторный запуск, lock от параллельного скрипта, пути с пробелами и кавычками) на подставных каталогах, `open` и `ditto` подменяются через PATH.
+
+**UI в renderer.** Состояние — хук `useUpdates` (`renderer/src/useUpdates.ts`): `getState()` при старте + подписка `onChanged`,
+одно на приложение, передаётся плашке и «Настройкам». Что показывать при каком состоянии — чистые функции в `renderer/src/updateState.ts`
+(`bannerView`, `statusLine`, `canCheck`; тест `updateState.test.ts`), компоненты только рисуют:
+- **Плашка** (`UpdateBanner.tsx`, низ сайдбара): «Доступна X · Что нового · Скачать» → прогресс скачивания → «X готова · Перезапустить и обновить»
+  (при отложенной установке — подпись «при выходе / когда агенты закончат» и «Отменить») → ошибка с «Повторить» (`check()`);
+  `unsupported` с найденной версией (portable, macOS вне «Программ») — «Скачать» ссылкой на `releaseUrl` и причина.
+  Если сайдбар скрыт, о плашке напоминает точка на шестерёнке в rail.
+- **Живые агенты:** «Перезапустить и обновить» просто вызывает `install({when:'now'})`. Выбор «Сейчас / Когда агенты закончат / Отмена»
+  при живых воркерах делает диалог main (`confirmInstall`, считает `liveWorkerCount`) — в плашке своего вопроса нет, чтобы не спрашивать дважды.
+- **«Что нового»** (`UpdateNotesModal`): `releaseNotes` только через `Markdown.tsx`; ссылка на релиз — только `http(s)` (`isReleaseUrl`).
+- **«Настройки → Обновления»** (`settings/UpdatesSection.tsx`): версия, статус, «Проверить сейчас», переключатели `autoCheck`/`autoDownload`/`installWhenIdle`
+  (пишутся через `app:setSettings({updates})`; старый main поле отбросит — показывается `common.staleApp`).
+- **Тост «Обновлено до X»** (`UpdateToast`): один вызов `getJustUpdated()` при старте окна, скрывается сам через 10 с.
+- Старый preload без `window.orca.updates` (`pnpm dev` после HMR): `updatesApi()` возвращает null, вместо падения — `common.staleApp`.
+
 ## Уведомления
 
 `ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification` по `notifyKind` (`src/main/notify.ts`):
@@ -1156,6 +1698,133 @@ UI работает с активным проектом; воркеры и ко
 по `webContents.once('did-finish-load')` — иначе renderer его не услышит.
 На Windows уведомления показываются только при заданном AppUserModelID — `app.setAppUserModelId('orca-board')`
 в `app.whenReady()` (`src/main/index.ts`).
+
+## Язык интерфейса (i18n, `renderer/src/i18n/`)
+
+Свой лёгкий модуль без зависимостей: `t()` с параметрами, множественное число через `Intl.PluralRules`,
+форматирование через `Intl`. Языки — `ru` (по умолчанию) и `en`. Переводится всё, что видит человек: UI renderer и
+тексты main (трей, системные уведомления, нативные диалоги, ошибки IPC — см. «main» ниже), а также встроенные
+названия из core, пока их не переименовали («Встроенные названия»). Не переводятся: промпты агентов, skills, всё, что
+агенты читают через сокет и CLI (ошибки сокета, записи журнала задачи, тексты запросов), и введённые человеком
+названия (колонки, роли, типы).
+
+- **Словари по областям** — отдельные файлы `i18n/ru/<область>.ts` и `i18n/en/<область>.ts`, чтобы задачи
+  перевода разных экранов не правили один файл: `common` (кнопки, состояния, единицы измерения), `settings`
+  (окно «Настройки»), `board` (доска, карточки, модалка задачи), `shell` (App, инбокс, лента внимания, координатор,
+  ассистент, терминал), `global` (глобальные задачи, статистика), `config` («О проекте»: роли, воркфлоу, типы задач,
+  документация), `onboarding` (мастер первого запуска, `OnboardingModal.tsx`). Области собраны в `i18n/dict.ts` (`RU`, `DICTS`). Ключи внутри области плоские, с точками
+  (`'general.title'`); в `t()` — с именем области: `t('settings.general.title')`. Тип `TKey` — объединение всех
+  ключей: опечатка — ошибка typecheck.
+- **ru — эталон ключей.** `ru/*.ts` — `export default {…} satisfies AreaDict`; `en/*.ts` —
+  `satisfies AreaTranslation<typeof ru>`: пропущенный или лишний ключ в en — ошибка типа. Тест
+  `renderer/src/i18n.test.ts` дополнительно сверяет ключи, plural-формы и параметры `{name}` во всех областях.
+- **Сообщение** — строка с параметрами `{name}` (`t('settings.nav.typeUsage', { count: 3 })`) или формы
+  множественного числа: ru — `{ one, few, many }`, en — `{ one, other }`; число — параметр `count`, форму выбирает
+  `pluralCategory(locale, count)`. Старый `plural.ts` (три русские формы) — только для ещё не переведённых строк.
+- **API** (`i18n/index.ts`): в компоненте — `const t = useT()` (перерисует компонент при смене языка), язык —
+  `useLocale()`; в модулях логики (`.ts`, тестируются под node) — `t()` и `getLocale()` на текущем языке.
+  `translate(locale, key, params)` — чистая функция для тестов. Смена языка — `setLocale()`: подписчики
+  `useSyncExternalStore` перерисовываются, корень `Root` в `main.tsx` зовёт `useLocale()` и пересоздаёт `<App />`,
+  поэтому обновляются и компоненты без `useT()` (кроме обёрнутых в `memo`). Нет ключа в словаре языка — русский
+  текст, нет и там — сам ключ.
+- **Форматирование** (`i18n/format.ts`): `intlLocale()` (`ru-RU` / `en-US`), `formatInteger`, `formatFixed`,
+  `formatShort`, `formatDateTime`, `formatDuration` (единицы — ключи `common.unit.*`). На них переведены
+  `duration.ts` (`formatDuration` — реэкспорт) и числа в `statsFormat.ts` (деньги, токены, время агентов, оси).
+  Не пиши `toLocaleString('ru-RU')` и `replace('.', ',')` — бери эти функции.
+- **Подписи-константы** (`Record<вид, string>`) переводятся при чтении, а не при загрузке модуля: функция
+  (`coordStateText`, `requestKindTitle`) или объект с геттерами, если константу читают чужие экраны
+  (`REQUEST_KIND_TITLE` в `RequestCard.tsx` — его берёт `TaskModal`). Строка, вычисленная при импорте, останется
+  на языке старта.
+- **Подписи в модулях логики — функции, а не константы:** константа посчиталась бы один раз при загрузке модуля
+  на языке по умолчанию. Доска так и сделана: `cardStateLabel()`, `priorityTitle()`, `approxTitle()`,
+  `showcaseStaleMessage()`. Таблица, которую чужие модули читают как есть, отдаёт текст геттером:
+  `BOARD_SORT_OPTIONS[].title` (`boardSort.ts`, берёт и GlobalBoard), `STATUS_SOURCE_TITLES` (`statusHistory.ts`,
+  берёт globalTimeline). Подписи из core только русские: они нужны CLI и промптам (`PRIORITY_TITLES`,
+  `COLUMN_COLORS[].title`). В renderer их заменяют `priorityTitle()` (`taskPriority.ts`) и `columnColorTitle()`
+  (`boardColumns.ts`). Названия колонок доски — данные проекта; встроенные «Бэклог», «Готовы» из `DEFAULT_COLUMNS`
+  показываются переведёнными, пока их не переименовали (см. «Встроенные названия»).
+- **Строка с элементами внутри** («В работе в среднем **3 ч**») — один ключ с параметром-слотом
+  (`'В работе в среднем {time}'`) и `<Rich text={t(…)} slots={{ time: <b>…</b> }} />` (`StatsCells.tsx`,
+  разбор — `richParts` в `globalFormat.ts`), а не склейка кусков фраз: порядок слов в языках разный.
+- **Ошибки «перезапустите приложение»** (`staleReviewMessage()`, `statsStaleMessage()`) сравнивать — на всех
+  языках (`isStaleStatsError`): язык могли сменить между запросом и ответом. Русских констант-копий
+  (`STATS_STALE_MESSAGE`, `STALE_PRIORITY_MESSAGE`) больше нет — только функции.
+- **Ошибку main узнают по коду, а не по тексту** (текст уже на языке интерфейса): `ipcErrorCode(e)` из
+  `renderer/src/ipcError.ts` — `reviewErrorMessage` (`coordinator.finishing`), «файл не найден» в `DocsModal`
+  (`docs.notFound`). Русский регэксп рядом оставлен только для main до перевода (HMR: renderer новее main).
+  Показывать ошибку invoke — через `ipcErrorMessage(e)`: он срезает и обёртку ipcRenderer, и имя `OrcaError[код]`.
+- **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
+  (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
+  `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык
+  русский (`settingsLocale`). Язык системы не угадываем: `navigator.language` в Electron — язык самого приложения,
+  `en-US` даже при русской macOS (`AppleLanguages = ru-RU`), и все обновившиеся получили бы английский. При старте
+  окна `initLocale` (`main.tsx`) сразу ставит язык из кэша `localStorage['orca.locale']` — чтобы английский
+  интерфейс не мигал русским, — затем из настроек main. Старый preload без `window.orca.app` или ошибка IPC —
+  кэш или русский, без падения; старый main, который отбросил `language`, — язык меняется до перезапуска,
+  в разделе «Общие» ошибка `common.staleApp`.
+- **Переключатель** «Язык / Language» — «Настройки → Общие» (`settings/GeneralSection.tsx`), сегменты
+  «Русский» / «English» (названия — каждое на своём языке, `LOCALE_NAMES`). Язык меняется сразу, до ответа main.
+
+- **Строки в модулях логики.** Экспорт-константа с текстом вычислялась бы один раз на языке загрузки, поэтому:
+  `Record` с подписями — объект с геттерами (`WF_TYPE_TITLES`, `WF_OUTCOME_LABELS`, `WF_NODE_HELP`, `RULE_HINTS`,
+  `RULE_TEMPLATES`: API прежний, текст на текущем языке), одиночная строка — функция (`rulesStaleMessage()`,
+  `taskTypesStaleMessage()`, `staleAppMessage()`, `agentRulesPlaceholder()`; константа `STALE_APP_MESSAGE`
+  удалена — вместо неё `staleAppMessage()`).
+- **Код внутри фразы** — `withCode(t('…'), value, name)` из `about/parts.tsx`: `{name}` в переводе заменяется на
+  `<code>` (или `<b>`). Фразу не собирают из кусков вокруг кода: порядок слов в языках разный.
+- **Режимы разрешений** — `permissionParts(mode)` переводит по ключу режима (`config.about.perm.<mode>`), а не
+  режет русскую строку `PERMISSION_MODES` из shared (её по-прежнему использует main).
+
+- **main** (`src/main/i18n.ts`, словари `src/main/strings/ru.ts` и `en.ts`; en сверяется с ru по типу и тестом
+  `main/i18n.test.ts`). Не импортирует i18n renderer (тот тянет React). Язык — модульное состояние: `setMainLocale()`
+  из `AppSettings.language` при старте (`index.ts`, сразу после `ProjectManager`) и в `app:setSettings`; там же
+  `refreshTray()` — меню трея пересобирается без перезапуска, диалоги и уведомления берут язык при показе.
+  `mt(key, params)` — на текущем языке, `mtIn(locale, …)` — на заданном; параметр может быть вложенным сообщением
+  `{key, params}` (`MText`, переводится на тот же язык). Меню приложения своё не задаём — стандартное меню Electron.
+- **Ошибки main — `OrcaError(key, params)`**: `message` всегда русский (его получают сокет и CLI, по нему проверяют
+  тесты), а обёртка `handle()` в `index.ts` отдаёт в renderer `ipcError(e)` — текст на языке интерфейса и код в имени.
+  Electron передаёт в renderer только `String(error)` («имя: сообщение»), поэтому код едет в имени:
+  `Error invoking remote method 'docs:read': OrcaError[docs.notFound]: file not found: a.md`. Ошибки без ключа
+  (`task not found`, ошибки store из core, git) идут как есть. Текст, который уходит и человеку, и в журнал задачи
+  (`startError` в `resolveHumanRequest`), — человеку `mt()`, в журнал — русский `message`.
+- **Встроенные названия** (`renderer/src/defaultTitles.ts`, область словаря `builtin`). Core кладёт в данные русские
+  тексты: колонки по умолчанию, системные роли, заготовки типов задач (их роли, описания, ноды воркфлоу),
+  «Входящие», «Проверка» глобальной доски, «Оболочка», подписи моделей, цель координатора по одним картинкам
+  (`DEFAULT_IMAGE_OBJECTIVE` — агент получает русский текст, в подсказке окна координатора — перевод). Формат состояния не меняем: `builtinText()`
+  узнаёт не переименованное название по точному тексту из `i18n/ru/builtin.ts` и показывает перевод. Колонки и роли
+  переводятся один раз в `App` (`displayColumns`, `displayRoles`) для доски, модалок и статистики; редакторы
+  (колонки, роли, типы) получают данные из проекта как есть — иначе автосохранение записало бы перевод. «Проверка»
+  глобальной доски совпадает по тексту с нодой «Проверка» — её узнаём по виду колонки. `defaultTitles.test.ts`
+  сверяет словарь `builtin` с core: поменял текст в core — поправь словарь.
+- **Проблемы воркфлоу** (`validateWorkflow` в core): у `WfIssue` есть `code` и `params` (`WF_ISSUE_TEXTS` — русские
+  шаблоны, `message` прежний). renderer переводит по коду — `wfIssueText()`, ключи `config.wf.issue.<код>`; названия
+  нод в параметрах — через `ctx.nodeTitle` (renderer передаёт `nodeTitle` из `defaultTitles.ts`). Ошибка main
+  «воркфлоу не сохранён: …» перечисляет проблемы русским `message`: renderer проверяет граф сам до сохранения.
+- **Страж** `renderer/src/noCyrillic.test.ts`: кириллица в строковых литералах, шаблонах и JSX-тексте `.ts/.tsx`
+  renderer вне `i18n/` (тесты и комментарии не смотрятся) — падение с файлом и строкой. Исключения — `ALLOWED` с
+  причиной (клавиши русской раскладки в Инбоксе).
+- **Язык агентов** — язык интерфейса на момент запуска агента. Skills и промпты не переводятся; вместо этого
+  `agentSystemPrompt(system, {projectRules, role, language})` (`packages/core/src/types.ts`) дописывает к системному
+  промпту последним блоком директиву `# Language` (`agentLanguageDirective`): при `en` — по-английски «всё, что читает
+  человек (`done`, `ask`, `runs finish`, названия и описания задач, замечания проверки, сообщения в терминале), — на
+  английском; инструкции выше русские, язык ответа это не меняет; коммиты, комментарии в коде и документация — по
+  правилам проекта (CLAUDE.md, AGENTS.md, «Правила проекта»), а не по языку интерфейса». При `ru` блока нет — промпт как
+  раньше (`withAgentRules`). Язык подставляет `worker.ts` из `mainLocale()` во всех трёх `spec.invoke`: `startWorker`
+  (работа, задача-ответ, проверки воркфлоу, этап «Вопрос человеку», перезапуски после отказа и уточнения),
+  `startCoordinator` (и повторный запуск, «Вернуть в работу»), `startAssistant`. Смена языка действует на новые
+  запуски, живые агенты её не видят. Отдельной настройки «язык ответов агентов» нет. Страж —
+  `main/agent-language.test.ts` (каждый `spec.invoke` в `worker.ts` идёт через `agentSystemPrompt` с `mainLocale()`),
+  текст директивы — `prompts.test.ts`.
+- **Остаётся русским при английском интерфейсе:** данные человека; служебные тексты журнала (эскалации и их
+  причины от исполнителя воркфлоу — журнал задачи читает координатор; вопросы и сводки агенты пишут на языке
+  директивы `# Language`); ошибки store из core (`task not found` —
+  английские, отказы store вроде «тип меняется только, пока задача в бэклоге» — русские: их же получает CLI);
+  технические детали ошибок обновления macOS/Windows и сообщения валидации формы данных, которые UI не посылает.
+
+**Добавить строку:** ключ в `i18n/ru/<область>.ts` и тот же ключ в `i18n/en/<область>.ts`, в компоненте —
+`t('<область>.<ключ>')`. **Добавить область:** файлы в `ru/` и `en/` и строки в `RU` и `DICTS.en` в `i18n/dict.ts`.
+Правило: новый UI-текст — только через `t()`, ключ сразу в ru и en. Новый текст main, который видит человек, —
+ключ в `main/strings/ru.ts` и `en.ts`, `mt()` или `OrcaError`.
 
 ## Кроссплатформенность
 
@@ -1178,6 +1847,7 @@ UI работает с активным проектом; воркеры и ко
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
+| Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
 `node`/Node из Electron прямо из `Resources/cli` без сборки и без `node_modules`, поэтому импортировать
@@ -1207,8 +1877,9 @@ UI работает с активным проектом; воркеры и ко
 `cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
 `pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
 
-Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac`, dmg arm64 + x64;
-`dist:win` — `electron-builder --win`. Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
+Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac --publish never`, dmg + zip
+arm64 и x64; `dist:win` — `electron-builder --win --publish never`; `dist:publish` — те же сборки mac и win с
+`--publish always` (нужен `GH_TOKEN`), см. «Выпуск релиза». Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
 папки) → `orca-board-<версия>-x64.exe` и `portable` x64 → `orca-board-<версия>-portable-x64.exe`
 (отдельный `artifactName`, иначе portable перезаписывал бы установщик). В `Resources/cli` попадают
 обе обёртки CLI — `orca-board` и `orca-board.cmd`. Windows-сборка делается кросс с macOS; тестировать
@@ -1225,12 +1896,108 @@ ad-hoc, и приложение падает при запуске. Провер
 Скачанная сборка всё равно не проходит Gatekeeper («Apple не удалось подтвердить…»), её открывают через
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
 
+### Выпуск релиза (`publish` в `electron-builder.yml`)
+
+Релизы — GitHub Releases публичного репозитория `NANDIorg/BigOrcaCocks`. `publish: {provider: github,
+owner, repo, releaseType: draft}` в `electron-builder.yml` — публикация создаёт **черновик** релиза с тегом
+`v<version>`. Публикует владелец либо агент по явному поручению после проверок по
+[docs/releasing.md](releasing.md). Токен в конфиг не кладётся. Поле `repository` в
+`apps/desktop/package.json` указывает на тот же репозиторий (метаданные пакета).
+Обычные `dist`/`dist:mac`/`dist:win` вызывают electron-builder с `--publish never`: локальная сборка ничего не
+выкладывает даже при заданном `GH_TOKEN`.
+
+Что генерирует сборка (проверено `dist:mac` и `dist:win`, всё в `apps/desktop/release/`):
+
+| Файл | Откуда | Зачем |
+|---|---|---|
+| `orca-board-<v>-arm64.zip`, `-x64.zip` | `mac.target: zip` | то, что скачивает автообновление macOS (dmg на месте не подменить) |
+| `orca-board-<v>-arm64.dmg`, `-x64.dmg` | `mac.target: dmg` | ручная установка |
+| `orca-board-<v>-x64.exe` | `win.target: nsis` | установщик Windows и цель `electron-updater` |
+| `orca-board-<v>-portable-x64.exe` | `win.target: portable` | portable, обновление — только «скачать новый exe» |
+| `latest-mac.yml` | mac-сборка | манифест обновлений macOS |
+| `latest.yml` | nsis | манифест обновлений Windows (portable в него не входит) |
+| `*.blockmap` (zip, dmg, nsis-exe) | electron-builder | дифференциальная загрузка `electron-updater`; для zip-установщика macOS не обязателен |
+
+Про манифесты: `latest-mac.yml` **один на обе архитектуры** — в `files` лежат zip и dmg для arm64 и x64, а верхнеуровневые
+`path`/`sha512` указывают на x64-zip (это артефакт порядка сборки, не «текущая» архитектура).
+Клиент macOS обязан выбирать запись из `files` по своей архитектуре (`-arm64.zip` / `-x64.zip`), а не по `path`.
+Имена в `url` — без базового пути, относительно ассетов релиза, поэтому файлы нельзя переименовывать
+после сборки: sha512 и имена в yml должны совпадать с загруженными ассетами.
+
+Основной путь выпуска — [инструкция для человека и агента](releasing.md) и
+[Git Flow](git-flow.md): подготовка версии/описания через PR, release/hotfix → master,
+аннотированный тег на merge SHA, проверенный черновик и отдельная публикация.
+`dist:publish` остаётся техническим локальным скриптом; обычные выпуски делает CI.
+Не запускай его вместо релизных проверок или для замены файлов опубликованной версии.
+
+#### Выпуск через CI (`.github/workflows/release.yml`)
+
+Workflow запускается push тега `vX.Y.Z`. Ручной выпуск нетегированной ветки отключён:
+тег фиксирует проверенный релизный коммит из master. Внешний секрет не требуется.
+
+| Джоба | Раннер | Что делает |
+|---|---|---|
+| `validate` | ubuntu | Проверяет совпадение версий, тег, принадлежность master и `docs/releases/vX.Y.Z.md`; передаёт описание артефактом |
+| `package` (mac) | macos-14 | `pnpm verify`, упаковка dmg/zip arm64 и x64 через `--publish never`, проверка ad-hoc подписи обоих `.app` |
+| `package` (win) | windows-latest | `pnpm verify`, нативная сборка node-pty и упаковка NSIS/portable x64 через `--publish never` |
+| `draft` | ubuntu | Проверяет полный комплект, обе архитектуры в latest-mac.yml и версии манифестов; создаёт SHA256SUMS, загружает файлы и описание в единственный черновик, сверяет имена/размеры/state через API |
+
+Одна mac-job собирает обе архитектуры: electron-builder объединяет их в `latest-mac.yml`.
+Раздельные jobs перезаписали бы этот манифест друг другом, оставив одну архитектуру.
+Сборщики имеют только `contents: read`; `contents: write` есть только у `draft`, где
+нет checkout или исполнения кода проекта. Черновик создаётся один раз после успешных
+сборок, поэтому гонки между mac/win нет. По одному тегу workflow выполняются последовательно.
+Опубликованные релизы и существующие теги не перезаписываются.
+
+Зелёный CI не подтверждает ручную проверку приложения: скачивание сборок, smoke-тесты
+и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
+
 ## Грабли разработки
 
+- CI выполняет тесты на трёх ОС. Фикстура живого PTY запускает Node, а не отсутствующий
+  в Windows `sleep`. Интеграционные тесты `MacUpdater.install` используют реальные пути
+  временного каталога и валидатор POSIX-путей: они выполняются на macOS/Linux.
+  Нативную Windows-установку эта группа не проверяет. Общие тесты check/download
+  и чистой валидации идут на всех ОС.
 - Чистая CI-установка с `--ignore-scripts` не собирает `node-pty`. В пакете 1.1.0 есть
   prebuilds для macOS/Windows, но Linux socket-тесты падают при импорте с `Failed to load
   native module: pty.node`. CI отдельно выполняет `pnpm --filter @orca-board/desktop rebuild node-pty`
   под Node runner; GUI и Electron-упаковка проверяются отдельно.
+- Запись состояния шла прямо в `projects.json` / `boards/<id>.json` (`writeFileSync`), а битый JSON при загрузке молча
+  становился пустой доской и затирался при следующей записи. Теперь запись атомарная, битый файл откладывается в
+  `.corrupt-<ts>`, доска из будущего формата не открывается (см. «Безопасность состояния»). Новый код записи
+  состояния — только через `writeFileAtomic`; чтение — через `readJsonFile`. В бэкапе (`backup.ts`) читать
+  `projects.json` напрямую (`JSON.parse`), а не через `readJsonFile`: тот переименовывает битый файл, и бэкап «как есть»
+  сломался бы (поймал тест).
+- Тесты, отдающие `TaskStore` готовый снапшот и проверяющие «не сохраняется» (`saved.length === 0`), должны класть в него
+  `formatVersion: STORE_FORMAT_VERSION`, иначе миграция формата сохранит файл (`active-time.test.ts`).
+
+- Electron отдаёт в renderer ошибку `ipcMain.handle` только строкой `String(error)` — поля `code` и свои свойства
+  теряются. Стабильный код ошибки main едет в `name` (`OrcaError[docs.notFound]`), а renderer распознаёт ошибку по
+  `ipcErrorCode`, а не по тексту: текст переведён. Русские константы-копии сообщений (`STATS_STALE_MESSAGE`) при
+  английском интерфейсе давали русскую ошибку — сообщения только функциями на текущем языке.
+- Изолированный `pnpm dev` с сокетом в глубоком временном каталоге падал при старте: путь unix-сокета длиннее
+  ~104 байт (`sun_path`) — `listen` бросает, Electron показывает модальное окно ошибки main, и renderer не отвечает
+  даже на CDP (`Runtime.evaluate` висит). Для dev-экземпляра — короткий `ORCA_SOCKET` (например, относительный путь).
+- Встроенные названия core живут в данных пользователя (`projects.json`: засеянные типы, колонки проекта), поэтому
+  перевод — только при показе и не в полях редакторов: переведённый заголовок в `<input>` автосохранение записало бы
+  в проект, и при обратной смене языка название осталось бы английским.
+
+- Тесты под `node --test` резолвят импорты хуком `apps/desktop/test/ts-resolve.mjs`: без него node не находит
+  модуль без расширения и не открывает папку. Хук пробует `<путь>.ts`, затем `<путь>/index.ts` — поэтому
+  `import { t } from './i18n'` работает и в тестах, и в vite. Новый вид импорта в модулях с тестами — проверяй хук.
+
+- В компоненте, где `const t = useT()`, не называй `t` локальные переменные (`const t = await types.create(…)`,
+  `(t: TaskType) => …`): тень ломает перевод, а typecheck ругается невнятно («not callable», «used before declaration»).
+
+- `store.enterWork` сбрасывал на первый этап любую ноду, кроме `work`, а `runWorker` зовёт его при каждом запуске агента.
+  Для этапа «Вопрос человеку» (`ask`) это вернуло бы задачу с `ask` на первую «Работу» при старте самого агента и при
+  автоперезапуске после ответа. Теперь `enterWork` не трогает `work` и `ask`. Новый тип этапа, на котором стоит живой
+  агент, добавляй в это условие.
+- Роль ноды `work` осознанно становится ролью задачи (`applyWorkRole`), роль ноды `ask` — нет: иначе следующая «Работа» без
+  своей роли запустилась бы ролью опросника. Роль этапа `ask` едет в запуск отдельным параметром
+  (`WorkflowDeps.startWorker(taskId, {roleId})`, `startWorker(…, roleId)`), `task.roleId` и `task.agent` не меняются;
+  `Dispatch.roleId` — роль запуска. Не «упрощай» до `applyWorkRole` для всех `start_worker`.
 
 - `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has
@@ -1302,11 +2069,31 @@ ad-hoc, и приложение падает при запуске. Провер
   остаются без `typeId` и снимка и уходят на тип проекта по умолчанию — с чужими ролями, воркер падает «роли developer
   нет». Поэтому `deleteTaskType` и `saveTaskType` сначала вызывают `settleLegacyRuns` — грузят доски таких проектов,
   пока тип прежний. Снимок заранее в `projects.json` не кладём: роли с промптами дублировались бы в файле.
-- **Id встроенного типа менять нельзя, название — можно, но с нормализацией копий.** Id — ссылка из
-  `defaultTaskTypeId` / `taskTypeIds` проектов, `Run.typeId` и копий встроенных в projects.json. Копия встроенного
-  («изменённый встроенный», миграция старого `defaults`) хранит название на момент сохранения, и после
-  переименования встроенных («Общий» → «Программирование») она осталась бы под старым: `withBuiltinTitle` в `load()`
-  подставляет название встроенного.
+- **Засев заготовок — только один раз, по флагу `taskTypesSeeded`.** Пока встроенные типы подмешивались из кода при
+  каждом чтении, удалить их было нельзя: удалённый вернулся бы после рестарта. Теперь заготовки лежат в projects.json,
+  а флаг не даёт засеять их снова. Id заготовок менять нельзя: по ним засев старого файла находит сохранённые правки
+  встроенных, а старые проекты и прогоны — свой тип.
+- **Компонент и его модуль логики не называть одним словом в разном регистре** (`StatsView.tsx` + `statsView.ts`).
+  На macOS и Windows ФС без учёта регистра: `import './StatsView'` находит `statsView.ts`, tsc падает с TS1261
+  «differs only in casing». Модуль логики — другим словом: `StatsView.tsx` + `statsFormat.ts`.
+- Меню «Переместить в…» (`MoveMenu.tsx`) рисуется порталом в `body`, а не внутри карточки: у колонки своя прокрутка
+  (`overflow-y: auto`), внутри неё меню обрезалось бы у нижнего края. До расчёта позиции его прячут через `opacity: 0`,
+  не `visibility: hidden` — у скрытого элемента `focus()` не срабатывает, и меню открывалось без фокуса (клавиши уходили
+  в карточку). События из портала React доводит до `Board` по дереву компонентов, поэтому обработчик клавиш доски
+  проверяет, что цель — сама карточка (`data-card-id`), а меню глушит Esc через `preventDefault` + `stopPropagation`, иначе
+  глобальный Esc в `GlobalTaskView` вернёт на общую доску вместе с закрытием меню.
+- `quitAndInstall` (electron-updater) сам зовёт `app.quit()`, а `before-quit` в `index.ts` перехватывает выход диалогом. Поэтому перед
+  установкой `Updater` обязательно вызывает `host.lockQuit()` (`quitting = true`); при сбое установки — `unlockQuit()`. Без этого
+  перед установкой всплывало бы второе «N задач в работе… Выйти?».
+- Проверка обновления в portable оставляет статус `unsupported` (контракт: он терминальный для установки), но заполняет
+  `availableVersion` / `releaseUrl`. Renderer не должен считать «`unsupported` → нечего показывать».
+- `electron-updater` импортируется только из `winUpdater.ts` (через `updaterBackend.ts`): он тянет electron, а `updater.ts` и
+  `updateMachine.ts` должны оставаться чистыми, чтобы тестироваться в `node:test`.
+- `markRun` (`lastRunVersion`) и `setSettings` создают `projects.json` уже при самом первом запуске, поэтому «первый запуск»
+  нельзя определять как «файла нет»: человек, закрывший приложение посреди мастера, больше бы его не увидел (файл есть,
+  проектов нет). `pending` пишется явно при создании файла (`emptyProjectsFile`), а миграция «существующий
+  пользователь» срабатывает только при отсутствии ключа `onboarding` (`loadedOnboarding`). Держит тест
+  «закрыли посреди мастера» в `projects-onboarding.test.ts`.
 
 ## Открытые вопросы
 

@@ -28,11 +28,11 @@ const HELP = `orca-board — управление доской агентов
 
 Типы задач (тип выбирается у глобальной задачи и задаёт её роли, воркфлоу, правила агентов и разрешения):
   types list                              типы, доступные проекту: id, title, description, default — тип проекта
-                                          по умолчанию, builtin — встроенный, роли (agent, agentEnabled), этапы графа
+                                          по умолчанию, роли (agent, agentEnabled), этапы графа
 
 Правила агентов доски — правила типа задачи (попадают только в системный промпт воркеров и координатора,
 не в CLAUDE.md/AGENTS.md). Тип: --type <id>, иначе тип глобальной задачи --run (координатору — $ORCA_RUN_ID),
-иначе тип проекта по умолчанию. Встроенный тип правится на месте:
+иначе тип проекта по умолчанию:
   rules get [--type <id>] [--run <id>] [--role <id>]   без --role — общие правила типа, с --role — правила роли
                                           (= её системный промпт); не заданы — ""
   rules set [--type <id>] [--run <id>] [--role <id>] --text "..."    заменить правила; --text "" — очистить
@@ -122,7 +122,10 @@ const HELP = `orca-board — управление доской агентов
 
 Воркер (ORCA_DISPATCH_ID уже в окружении):
   done --summary "..." [--files a.ts,b.ts] [--answer-file answer.md | --answer "..."]
-                                          у задачи-ответа ответ (markdown) обязателен
+       [--show-file showcase.md] [--show <путь>]...
+                                          у задачи-ответа ответ (markdown) обязателен.
+                                          --show-file / --show — показ человеку: описание (markdown) и файлы
+                                          из ветки задачи (путь от корня репозитория, флаг на каждый файл)
   ask --question "..." [--option "метка|пояснение"]... [--recommend <id|метка>] [--context-file why.md] [--no-wait]
                                           блокируется до ответа; --option повторяется, запятые в метке
                                           допустимы (старое --options a,b тоже работает); id варианта — его номер.
@@ -155,7 +158,7 @@ if (method === 'ask') method = 'worker.ask'
 // с `--` (`--answer "--force"`): иначе значение превращалось в true, а следующий флаг терялся.
 const BOOLEAN_FLAGS = new Set(['wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help', 'start'])
 // Повторяемые флаги: каждое вхождение — отдельный элемент (без split по запятой).
-const REPEATABLE_FLAGS = new Set(['option'])
+const REPEATABLE_FLAGS = new Set(['option', 'show'])
 
 const params = {}
 for (let i = 0; i < argv.length; i++) {
@@ -214,6 +217,19 @@ function readFileParam(flag, into) {
   delete params[flag]
 }
 if (method === 'worker.done') readFileParam('answer-file', 'answer')
+// Показ человеку: описание из файла и пути файлов из ветки — одним объектом showcase (worker.done).
+if (method === 'worker.done') {
+  readFileParam('show-file', 'showText')
+  if (params.show !== undefined && params.show.includes(true)) {
+    console.error('ошибка: --show требует путь к файлу показа')
+    process.exit(1)
+  }
+  if (params.showText !== undefined || params.show !== undefined) {
+    params.showcase = { ...(params.showText !== undefined ? { text: params.showText } : {}), files: params.show ?? [] }
+  }
+  delete params.showText
+  delete params.show
+}
 if (method === 'worker.ask') readFileParam('context-file', 'context')
 if (method === 'rules.set') readFileParam('file', 'text')
 if (method === 'runs.finish') readFileParam('summary-file', 'summary')

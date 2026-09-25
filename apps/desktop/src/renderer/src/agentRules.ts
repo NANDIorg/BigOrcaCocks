@@ -1,9 +1,7 @@
 // «Правила доски» типа задачи (settings/TaskTypePane.tsx): блок «Правила проекта» в системном промпте агентов доски.
+import { t } from './i18n'
 
 /** Пример в пустом редакторе: типичное правило, которое нужно агентам доски, но не обычным сессиям. */
-export const AGENT_RULES_PLACEHOLDER = [
-  '# Например',
-  '',
-  '- Не создавать задачи, не писать комментарии и отчёты в ORION.',
-  '- Результат сдавать только через orca-board, без файлов-отчётов в репозитории.'
-].join('\n')
+export function agentRulesPlaceholder(): string {
+  return t('config.about.rules.placeholder')
+}

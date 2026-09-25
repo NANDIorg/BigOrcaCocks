@@ -1,5 +1,7 @@
 import type { ColumnKind, GlobalTaskReturn } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
+import { t } from './i18n'
+import { ipcErrorCode, ipcErrorMessage } from './ipcError'
 
 /**
  * Что можно сделать с глобальной задачей на карточке и в деталях. «Проверка» — колонка kind=review
@@ -43,12 +45,13 @@ export function returnsNewestFirst(g: { returns?: GlobalTaskReturn[] }): GlobalT
 
 /** Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. */
 export function returnHint(closesCoordinator: boolean): string {
-  const base = 'Задача уйдёт в «В работе», и откроется терминал координатора с этим уточнением.'
-  return closesCoordinator ? `Прежний координатор ещё открыт — его терминал будет закрыт. ${base}` : base
+  return t(closesCoordinator ? 'global.return.hintCloses' : 'global.return.hint')
 }
 
-export const STALE_REVIEW_MESSAGE =
-  'Приложение запущено со старой версией main/preload, где ещё нет «Проверки» глобальных задач. Перезапустите приложение.'
+/** Ошибка «старый main/preload без «Проверки»» на текущем языке интерфейса. */
+export function staleReviewMessage(): string {
+  return t('global.stale.review')
+}
 
 /**
  * `accept` и `returnToWork` из `window.orca.globalTasks` или понятная ошибка. В `pnpm dev` renderer
@@ -58,20 +61,25 @@ export function globalReviewApi(api: Partial<OrcaApi> | undefined): Pick<OrcaApi
   const g = api?.globalTasks as Partial<OrcaApi['globalTasks']> | undefined
   const accept = g?.accept
   const returnToWork = g?.returnToWork
-  if (typeof accept !== 'function' || typeof returnToWork !== 'function') throw new Error(STALE_REVIEW_MESSAGE)
+  if (typeof accept !== 'function' || typeof returnToWork !== 'function') throw new Error(staleReviewMessage())
   return { accept: (id) => accept(id), returnToWork: (id, text, cols, rows) => returnToWork(id, text, cols, rows) }
 }
 
-export const STALE_RETURN_LIVE_MESSAGE =
-  'Прежний координатор ещё открыт, а приложение запущено со старой версией main, которая не закрывает его при возврате. ' +
-  'Закройте терминал координатора или перезапустите приложение и повторите.'
+/** Старый main отказал в возврате при живом координаторе — как обойти, на текущем языке. */
+export function staleReturnLiveMessage(): string {
+  return t('global.stale.returnLive')
+}
 
 /**
- * Ошибка IPC для человека: preload новый, а main старый — «No handler registered» → «перезапустите».
- * Старый main отказывает в возврате при живом координаторе («ещё завершается») — объясняем, как обойти.
+ * Ошибка IPC для человека (`e` — ошибка invoke или её текст): preload новый, а main старый — «No handler registered»
+ * → «перезапустите». Отказ в возврате при живом координаторе («ещё завершается») — объясняем, как обойти. Main
+ * с переводом присылает код `coordinator.finishing`; main до перевода — только русский текст, его сверяем как есть.
  */
-export function reviewErrorMessage(message: string): string {
-  if (/No handler registered for 'globalTasks:(accept|returnToWork)'/.test(message)) return STALE_REVIEW_MESSAGE
-  if (/координатор этой глобальной задачи ещё завершается/.test(message)) return STALE_RETURN_LIVE_MESSAGE
-  return message
+export function reviewErrorMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e)
+  if (/No handler registered for 'globalTasks:(accept|returnToWork)'/.test(raw)) return staleReviewMessage()
+  if (ipcErrorCode(e) === 'coordinator.finishing' || /координатор этой глобальной задачи ещё завершается/.test(raw)) {
+    return staleReturnLiveMessage()
+  }
+  return ipcErrorMessage(e)
 }

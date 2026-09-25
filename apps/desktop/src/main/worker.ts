@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, withRoleInstructions, withAgentRules, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type TaskStore, type Role, type ImageAttachment, type RunTypeInput } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand } from './git'
-import { extraPathDirs, findBin, isCmdScript, missingRoleMessage } from './agents'
+import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
+import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 
@@ -23,6 +25,11 @@ export interface WorkerEnvContext {
   typeTitle: string
   /** Правила агентов типа задачи прогона: блок «Правила проекта» в системном промпте воркеров и координатора. */
   agentRules?: string
+  /**
+   * Граф типа прогона, который исполнитель может выполнить (`runnableWorkflow`): запасной для прогона без снимка
+   * графа — по нему ищется этап «Работа» для промпта воркера. Нет — дефолтный по ролям.
+   */
+  workflow?: Workflow
   /** Тип нового прогона координатора: id, снимок и граф уходят в `Run.typeId`, `Run.taskType`, `Run.workflow`. */
   type?: RunTypeInput
 }
@@ -156,6 +163,14 @@ function baseEnv(ctx: WorkerEnvContext): Record<string, string> {
 }
 
 /**
+ * Id сессии агента для статистики (docs/architecture.md → «Статистика»): uuid задаётся агенту при запуске, и
+ * main находит его транскрипт без догадок. Агент, которому id не задать, — `undefined` (codex ищется по cwd).
+ */
+function agentSessionId(spec: AgentSpec): string | undefined {
+  return spec.acceptsSessionId ? randomUUID() : undefined
+}
+
+/**
  * Старт воркера: git worktree на ветке задачи → подготовка → PTY с агентом → dispatch.
  * Worktree создаётся рядом с репозиторием: <repo>/../.orca-worktrees/<taskId>.
  */
@@ -165,7 +180,8 @@ export function startWorker(
   ctx: WorkerEnvContext,
   taskId: string,
   cols = 120,
-  rows = 30
+  rows = 30,
+  roleId?: string
 ): { ptyId: string; dispatchId: string; worktree: string; branch: string } {
   const task = store.getTask(taskId)
   if (!task) {
@@ -174,8 +190,10 @@ export function startWorker(
     throw new Error(`task not found: ${taskId}`)
   }
   if (store.columnKind(task.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
-  const role = ctx.roles.find((r) => r.id === task.roleId)
-  if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task.roleId, { title: ctx.typeTitle, roles: ctx.roles })}`)
+  // Роль этапа «Вопрос человеку» — только на этот запуск: задача сохраняет свою роль (`store.updateTask` ниже).
+  const runRoleId = roleId ?? task.roleId
+  const role = ctx.roles.find((r) => r.id === runRoleId)
+  if (!role) throw new OrcaError('worker.cannotStart', { reason: missingRoleText(runRoleId, { title: ctx.typeTitle, roles: ctx.roles }) })
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
 
@@ -188,8 +206,9 @@ export function startWorker(
     execFileSync('git', args, { cwd: repoRoot, stdio: 'pipe' })
     fresh = true
   }
-  // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи.
-  store.updateTask(task.id, { agent: role.agent, worktree, branch })
+  // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи. Роль этапа «Вопрос
+  // человеку» задачу не меняет (агент задачи остаётся прежним).
+  store.updateTask(task.id, { ...(roleId ? {} : { agent: role.agent }), worktree, branch })
 
   const dispatchId = newId('disp')
   // Уточнение к задаче-ответу идёт вместе с прошлым ответом: воркер отвечает заново, а не с нуля.
@@ -197,7 +216,12 @@ export function startWorker(
   const previousAnswer = snap.dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
   // Ответы на вопросы прошлых запусков: перезапуск после ответа человека не должен спрашивать заново.
   const answers = snap.questions.filter((q) => q.taskId === task.id && q.answeredAt).sort((a, b) => a.createdAt - b.createdAt)
-  const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.worker, ctx.agentRules, role), workerTaskPrompt(task, previousAnswer, answers), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort })
+  // Этап «Работа» графа: его инструкция и требование показа человеку — раздел «Этап» в задании.
+  const stage = task.answerFor
+    ? undefined
+    : store.taskWorkStage(task.id, { roleIds: ctx.roles.map((r) => r.id), ...(ctx.workflow ? { workflow: ctx.workflow } : {}) })
+  const sessionId = agentSessionId(spec)
+  const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.worker, { projectRules: ctx.agentRules, role, language: mainLocale() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   const setup = fresh ? setupCommand(worktree) : null
@@ -224,7 +248,7 @@ export function startWorker(
     },
     (id, code) => store.ptyExited(id, code)
   )
-  store.startDispatch(task.id, ptyId, dispatchId)
+  store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, dispatchId, worktree, branch }
 }
 
@@ -313,7 +337,7 @@ export function startCoordinator(
 ): { ptyId: string; runId: string } {
   // Роль coordinator можно удалить из типа задачи («Настройки» → «Типы задач»); молча запускать claude вместо неё нельзя — человек её убрал.
   const role = ctx.roles.find((r) => r.id === 'coordinator')
-  if (!role) throw new Error(`координатор не запустится: ${missingRoleMessage('coordinator', { title: ctx.typeTitle, roles: ctx.roles })}`)
+  if (!role) throw new OrcaError('coordinator.cannotStart', { reason: missingRoleText('coordinator', { title: ctx.typeTitle, roles: ctx.roles }) })
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
@@ -322,15 +346,17 @@ export function startCoordinator(
   if (root) pruneAttachments(store, root)
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
+  const sessionId = agentSessionId(spec)
   try {
     // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
     if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
     const paths = root ? writeAttachments(root, run.id, images) : []
-    const inv = spec.invoke(withAgentRules(BUILTIN_PROMPTS.coordinator, ctx.agentRules, role), coordinatorPrompt(objective, paths), {
+    const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.coordinator, { projectRules: ctx.agentRules, role, language: mainLocale() }), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
       shell: defaultShell(),
       model: role.model,
-      effort: role.effort
+      effort: role.effort,
+      sessionId
     })
     const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
     ptyId = spawnPty({
@@ -349,7 +375,10 @@ export function startCoordinator(
         BASH_DEFAULT_TIMEOUT_MS: '1800000',
         BASH_MAX_TIMEOUT_MS: '3600000'
       }
-    }, () => escalateAfterCoordinator(store, run.id))
+    }, (id) => {
+      store.coordinatorExited(run.id, id)
+      escalateAfterCoordinator(store, run.id)
+    })
   } catch (e) {
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
@@ -357,7 +386,7 @@ export function startCoordinator(
     if (root) rmSync(join(root, run.id), { recursive: true, force: true })
     throw e
   }
-  store.setRunPty(run.id, ptyId, role.agent)
+  store.setRunPty(run.id, ptyId, role.agent, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, runId: run.id }
 }
 
@@ -397,7 +426,7 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30): { 
   const role = assistantRole(ctx.roles)
   const spec = getAgent(role?.agent ?? 'claude')
   if (!spec) throw new Error(`неизвестный агент: ${role?.agent}`)
-  const inv = spec.invoke(withRoleInstructions(BUILTIN_PROMPTS.assistant, role), ASSISTANT_START_PROMPT, {
+  const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.assistant, { role, language: mainLocale() }), ASSISTANT_START_PROMPT, {
     permissionMode: ctx.permissionMode,
     shell: defaultShell(),
     model: role?.model,

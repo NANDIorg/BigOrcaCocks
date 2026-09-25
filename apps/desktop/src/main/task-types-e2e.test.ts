@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, builtinTaskType, defaultWorkflow,
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, defaultWorkflow,
   type Role, type Task, type Workflow
 } from '@orca-board/core'
 import { enterWork, handleWorkflowEvents, reviewAccept, reviewReject, approvalResolved, type WorkflowDeps } from './workflow'
@@ -319,8 +319,8 @@ describe('сценарий 2: один проект, две глобальные
   it('«Документация» и «Бэкенд»: у координаторов и воркеров свои агенты и модели, у задач свои графы', () => {
     const pm = newProjectManager()
     const pid = pm.add(repo).id
-    // Исполнителя встроенного типа меняют на месте (решение 1 координатора).
-    const docs = builtinTaskType('docs')!
+    // Исполнителя встроенного типа меняют на месте, без копии.
+    const docs = presetTaskType('docs')!
     pm.saveTaskType({
       id: 'docs', title: docs.title, description: docs.description,
       settings: {
@@ -329,7 +329,7 @@ describe('сценарий 2: один проект, две глобальные
           r.id === 'coordinator' ? { ...r, agent: 'codex', model: 'gpt-5.5' } : r.id === 'writer' ? { ...r, model: 'haiku' } : r)
       }
     })
-    const backend = builtinTaskType('backend')!
+    const backend = presetTaskType('backend')!
     pm.saveTaskType({
       id: 'backend', title: backend.title, description: backend.description,
       settings: { ...backend.settings, roles: backend.settings.roles!.map((r) => (r.id === 'coordinator' ? { ...r, model: 'opus' } : r)) }
@@ -464,6 +464,44 @@ describe('сценарий 3: тип удалён посреди прогона'
 
     // Новую глобальную задачу удалённого типа не создать.
     assert.throws(() => pm.runType(pid, t.id), /не найден/)
+  })
+})
+
+describe('сценарий 3а: заготовку типа изменили и удалили посреди прогона', () => {
+  it('снимок типа и граф запущенной задачи не меняются; новая задача берёт правку; после удаления задачи идут по снимку', () => {
+    const pm = newProjectManager()
+    const pid = pm.add(repo).id
+    const h = appHarness(pm, pid)
+    const backend = presetTaskType('backend')!
+    const runOld = startCoordinator(pm, h, pid, 'До правки', 'backend')
+    const before = structuredClone(h.store.getRun(runOld)!)
+
+    // Полная правка заготовки: название, состав ролей (без qa), граф без гейта тестов, разрешения.
+    const roles = (backend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa')
+    pm.saveTaskType({ id: 'backend', title: 'Бэкенд без QA', settings: { roles, workflow: defaultWorkflow(roles), permissionMode: 'acceptEdits' } })
+    const after = h.store.getRun(runOld)!
+    assert.deepEqual(after.taskType, before.taskType, 'снимок типа у запущенной задачи прежний')
+    assert.deepEqual(after.workflow, before.workflow, 'граф запущенной задачи прежний')
+    assert.equal(h.store.getGlobalTask(runOld).typeTitle, backend.title)
+
+    const runNew = startCoordinator(pm, h, pid, 'После правки', 'backend')
+    assert.equal(h.store.getRun(runNew)?.taskType?.title, 'Бэкенд без QA')
+    assert.deepEqual(h.store.getRun(runNew)?.taskType?.roles.map((r) => r.id), roles.map((r) => r.id))
+    assert.equal(h.store.getRun(runNew)?.taskType?.permissionMode, 'acceptEdits')
+
+    // Удаление заготовки: снимки обеих задач не трогаются, тип из кода не возвращается, название — из снимка.
+    const newBefore = structuredClone(h.store.getRun(runNew)!)
+    pm.deleteTaskType('backend')
+    assert.equal(pm.taskType('backend'), undefined)
+    assert.deepEqual(h.store.getRun(runOld)?.taskType, before.taskType)
+    assert.deepEqual(h.store.getRun(runNew)?.taskType, newBefore.taskType)
+    assert.deepEqual(h.store.getRun(runNew)?.workflow, newBefore.workflow)
+    const resolved = pm.resolveRun(pid, runNew)
+    assert.equal(resolved.source, 'snapshot')
+    assert.equal(resolved.title, 'Бэкенд без QA')
+    assert.deepEqual(resolved.roles.map((r) => r.id), roles.map((r) => r.id))
+    assert.equal(h.store.getGlobalTask(runOld).typeTitle, backend.title, 'карточка показывает название из снимка')
+    assert.throws(() => pm.runType(pid, 'backend'), /не найден/)
   })
 })
 

@@ -30,7 +30,8 @@ interface HumanRequest {
   body?: string              // markdown: контекст вопроса (+ «**Координатор:** …» из forward --note) или сам ответ
   options: RequestOption[]   // только у question; у answer/escalation/approval действия встроены
   questionId?: string        // kind=question: исходный Question (ask держит соединение за него)
-  nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача
+  nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача; kind=question: нода ask, с которой задан вопрос (Инбокс показывает «Этап «…»»)
+  showcaseDispatchId?: string // kind=approval: запуск, чей показ (Dispatch.showcase) в body; файлы — IPC showcase:*
   resolution?: RequestResolution
   createdAt: number
   resolvedAt?: number        // решён или отменён
@@ -60,10 +61,11 @@ interface HumanRequest {
 | Источник | Метод store | Условие | Запрос |
 |---|---|---|---|
 | Воркер спросил, координатор не жив | `ask(…, {coordinatorAlive: false})` | «Входящие», нет PTY координатора, `runs finish`, прогон закрыт (`coordinatorAlive` в `socket.ts`) | `question` |
+| Воркер спросил на этапе «Вопрос человеку» | `ask(…, {forceHuman: true})` | задача стоит на ноде `ask` (`taskStageNode` в `worker.ask`) — при любом координаторе, живом тоже | `question`, `nodeId` — нода `ask` (и в `Question.nodeId`) |
 | Координатор передал вопрос | `forwardQuestion(id, note?)` | вопрос не отвечен; уже переданный — без изменений | `question`, `note` — в `body` |
 | Координатор умер | `escalateOpenQuestions(runId)` | выход PTY координатора (`worker.ts`), загрузка проекта (`projects.ts`) | `question` на каждый его открытый вопрос текущего запуска |
 | Сдан ответ для человека | `finishDispatch` | `task.answerFor === 'human'` | `answer`, `body` — ответ; `request_created` идёт после `worker_done` |
-| Этап воркфлоу «человек» | `requestApproval` (зовёт исполнитель в main) | задача пришла на ноду `human`; ждущий approval задачи не дублируется | `approval`, `body` — инструкция ноды, текст конфликта мержа, итог воркера, ветка |
+| Этап воркфлоу «человек» | `requestApproval` (зовёт исполнитель в main) | задача пришла на ноду `human`; ждущий approval задачи не дублируется | `approval`, `body` — инструкция ноды, текст конфликта мержа, итог воркера, показ («## Показ»: текст и файлы, `showcaseDispatchId`), ветка |
 | Воркер вышел без `done` | `ptyExited` | запуск текущий, задача не в done и у неё нет pending-вопроса к человеку (ответ сам вернёт её в ready) | `escalation` (вдобавок к событию `escalation` координатору) |
 | Загрузка снапшота | `migrateRequests` | открытые вопросы текущих запусков (PTY после перезапуска нет); снапшот до `HumanRequest` — ещё сданные ответы и упавшие воркеры в needs_input | как выше, без событий |
 
@@ -78,8 +80,8 @@ interface HumanRequest {
 | `answer` + `clarify` | `feedback` = уточнение, задача → ready, **main сразу стартует воркера** | `answer_clarified` |
 | `escalation` + `restart` | задача → ready, **main сразу стартует воркера** | `request_resolved {action: 'restart'}` |
 | `escalation` + `dismiss` | запрос скрыт, задача из needs_input → ready | `request_resolved {action: 'dismiss'}` |
-| `approval` + `accept` | запрос решён, задача из needs_input; **main переводит задачу по исходу accept** (дефолт — мерж и done) | `request_resolved {kind: 'approval', action: 'accept', nodeId}` |
-| `approval` + `reject` | `feedback` = замечания, **main переводит по исходу reject** (дефолт — снова в работу, воркер стартует сразу) | `request_resolved {kind: 'approval', action: 'reject', nodeId}` |
+| `approval` + `accept` | запрос решён, задача из needs_input; **main переводит задачу по исходу accept** (дефолт — мерж и done) | `request_resolved {kind: 'approval', action: 'accept', nodeId, decision?}` (`decision` = `text`, например выбранный вариант) |
+| `approval` + `reject` | `feedback` = замечания, **main переводит по исходу reject** (дефолт — снова в работу, воркер стартует сразу) | `request_resolved {kind: 'approval', action: 'reject', nodeId, decision?}` (`decision` = замечания) |
 | не `pending` | ошибка «уже решено: запрос … решён/отменён» | — |
 
 Не удалось стартовать воркера после `clarify`/`restart` — запрос всё равно решён (задача в ready с уточнением),
@@ -109,7 +111,7 @@ Payload короткие: строка события в мониторе коо
 | `question_answered` | `taskId, dispatchId, questionId, requestId?, question, answer, workerLive, status` | — |
 | `answer_accepted` | `taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 | `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId` | `orca-board request get --request <id>` (`resolution.text`) |
-| `request_resolved` | `taskId, action` (`restart`/`dismiss`/`accept`/`reject`), `requestId, kind, dispatchId?, nodeId?` (approval) | — |
+| `request_resolved` | `taskId, action` (`restart`/`dismiss`/`accept`/`reject`), `requestId, kind, dispatchId?, nodeId?` (approval), `decision` (≤ 2000, текст решения по approval), `decisionTruncated?` | `orca-board request get --request <id>` (`resolution.text`) |
 | `worker_done` | `taskId, dispatchId, summary, files, answerFor?, gateFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 
 Уведомление «нужен ваш ответ» (`notifyKind`, `notify.ts`) приходит только на `request_created` (вопрос / ответ
@@ -127,7 +129,9 @@ Payload короткие: строка события в мониторе коо
    `[orca] на вопрос q_… ответили: orca-board request get --request req_…` (без запроса — `question get`;
    `deliverAnswers` в `index.ts`, `answerNudge` в `notify.ts`). Ответ воркер забирает этой командой (поле `answer`).
 4. Воркер мёртв (`question_answered.workerLive: false`, задача в ready) — координатор делает `worker start`,
-   ответ попадает в промпт (раздел «Ответы на твои вопросы», `workerTaskPrompt`).
+   ответ попадает в промпт (раздел «Ответы на вопросы по задаче», `workerTaskPrompt`). Задача на этапе `ask` —
+   воркера стартует само приложение (`handleEvents` в `workflow.ts`), координатору `worker start` не нужен; этап не
+   сбрасывается (`store.enterWork`), роль ноды не становится ролью задачи (`docs/workflow.md`, «Вопрос человеку»).
 
 ## CLI
 

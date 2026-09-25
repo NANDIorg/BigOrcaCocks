@@ -7,8 +7,9 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, builtinTaskType, builtinTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
+import { spawnPty, killPty } from './pty'
 
 let tmp: string
 let sockPath: string
@@ -18,6 +19,8 @@ let roles: Role[]
 let agents: AgentInfo[]
 /** Порядок вызовов фейков: restart должен сначала остановить, потом запустить. */
 let calls: string[]
+/** Граф типа проекта в `resolveRun`; нет — дефолтный по ролям. */
+let typeWorkflow: Workflow | undefined
 
 function fakeDeps(): ProjectDeps {
   let pty = 0
@@ -45,9 +48,9 @@ function fakeDeps(): ProjectDeps {
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
-    resolveRun: () => ({ ...resolveTaskType(builtinTaskType('general')!), roles, workflow: defaultWorkflow(roles), source: 'default' }),
-    taskTypes: () => ({ taskTypes: builtinTaskTypes(), defaultTypeId: 'general' }),
-    runType: () => runTypeInput(builtinTaskType('general')!),
+    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? defaultWorkflow(roles), source: 'default' }),
+    taskTypes: () => ({ taskTypes: presetTaskTypes(), defaultTypeId: 'general' }),
+    runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
     workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: defaultWorkflow(roles), custom: false })
@@ -64,16 +67,18 @@ interface Reply {
     stopped?: string[]
     dispatchId?: string
     task?: { status: string; feedback?: string }
+    showcase?: { text?: string; files: string[] }
     worker?: { dispatchId: string }
   }
 }
 
-function call(method: string, params: Record<string, unknown>): Promise<Reply> {
+/** `extra` — поля запроса вне params, как их шлёт CLI (dispatchId из ORCA_DISPATCH_ID). */
+function call(method: string, params: Record<string, unknown>, extra: { dispatchId?: string } = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const sock = connect(sockPath)
     let buf = ''
     sock.setEncoding('utf8')
-    sock.on('connect', () => sock.write(JSON.stringify({ id: '1', method, params }) + '\n'))
+    sock.on('connect', () => sock.write(JSON.stringify({ id: '1', method, params, ...extra }) + '\n'))
     sock.on('data', (chunk: string) => {
       buf += chunk
       const nl = buf.indexOf('\n')
@@ -92,6 +97,7 @@ beforeEach(async () => {
   roles = DEFAULT_ROLES
   agents = [{ id: 'claude', title: 'Claude Code', installed: true, enabled: true, models: [], defaults: {} }]
   calls = []
+  typeWorkflow = undefined
   server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [] })
   await new Promise((r) => server.once('listening', r))
 })
@@ -339,5 +345,137 @@ describe('приоритет задачи через сокет', () => {
     assert.match((await call('global.update', { global: g.id, priority: true })).error!, /--priority требует значения/)
     assert.match((await call('global.create', { title: 'z', priority: 'asap' })).error!, /приоритет: ожидается/)
     assert.equal(((await call('global.get', { global: g.id })).result as GlobalTask).priority, 'low')
+  })
+})
+
+describe('история статусов через сокет', () => {
+  it('команда без ORCA_DISPATCH_ID — cli, с ним — worker; task get отдаёт историю', async () => {
+    const task = store.createTask({ title: 'Логин', roleId: 'developer' })
+    assert.equal((await call('task.move', { task: task.id, status: 'in_progress' })).ok, true)
+    assert.equal((await call('task.move', { task: task.id, status: 'review' }, { dispatchId: 'disp_x' })).ok, true)
+    const got = await call('task.get', { task: task.id })
+    assert.equal(got.ok, true, got.error)
+    const history = (got.result as Task).statusHistory!
+    assert.deepEqual(history.map((e) => [e.status, e.by]), [
+      ['backlog', 'app'], ['ready', 'app'], ['in_progress', 'cli'], ['review', 'worker']
+    ])
+  })
+})
+
+describe('worker done: показ человеку', () => {
+  /** «Работа» с обязательным показом → человек: граф типа проекта, задача без прогона берёт его через resolveRun. */
+  const design: Workflow = {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'work', type: 'work', title: 'Дизайн', x: 0, y: 0, showcase: { what: 'варианты макета', required: true } },
+      { id: 'pick', type: 'human', x: 0, y: 0 },
+      { id: 'end', type: 'end', x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e1', from: 'start', outcome: 'next', to: 'work' },
+      { id: 'e2', from: 'work', outcome: 'next', to: 'pick' },
+      { id: 'e3', from: 'pick', outcome: 'accept', to: 'end' },
+      { id: 'e4', from: 'pick', outcome: 'reject', to: 'work' }
+    ]
+  }
+
+  it('showcase из CLI сохраняется в Dispatch.showcase (пути нормализованы)', async () => {
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const res = await call('worker.done', { summary: 's', showcase: { text: '## A и B', files: ['design\\a.png', ' b.html '] } }, { dispatchId: d.id })
+    assert.equal(res.ok, true, res.error)
+    assert.deepEqual(store.getDispatch(d.id)!.showcase, { text: '## A и B', files: ['design/a.png', 'b.html'] })
+  })
+
+  it('обязательный показ по графу типа (прогона без снимка): без него — ошибка с подсказкой, с ним — done', async () => {
+    typeWorkflow = design
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    store.enterWork(task.id, { roleIds: roles.map((r) => r.id), workflow: design })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const bare = await call('worker.done', { summary: 's' }, { dispatchId: d.id })
+    assert.equal(bare.ok, false)
+    assert.match(bare.error!, /этап «Дизайн» требует показ человеку: варианты макета/)
+    assert.match(bare.error!, /--show-file/)
+    assert.equal(store.getDispatch(d.id)!.outcome, undefined, 'dispatch не закрыт')
+    const ok = await call('worker.done', { summary: 's', showcase: { files: ['a.png'] } }, { dispatchId: d.id })
+    assert.equal(ok.ok, true, ok.error)
+    assert.equal(store.getDispatch(d.id)!.outcome, 'done')
+  })
+
+  it('чужая форма showcase — ошибка, а не молча пропавший показ', async () => {
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    assert.match((await call('worker.done', { summary: 's', showcase: 'a.png' }, { dispatchId: d.id })).error!, /showcase: нужен объект/)
+    assert.match((await call('worker.done', { summary: 's', showcase: { text: 1 } }, { dispatchId: d.id })).error!, /showcase.text/)
+  })
+})
+
+describe('worker ask: адресат вопроса', () => {
+  const wf: Workflow = {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'ask', type: 'ask', instructions: 'Спроси про БД', x: 0, y: 0 },
+      { id: 'work', type: 'work', x: 0, y: 0 },
+      { id: 'end', type: 'end', x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e1', from: 'start', outcome: 'next', to: 'ask' },
+      { id: 'e2', from: 'ask', outcome: 'next', to: 'work' },
+      { id: 'e3', from: 'work', outcome: 'next', to: 'end' }
+    ]
+  }
+  let coordPty: string
+
+  beforeEach(() => {
+    // Живой координатор: настоящий PTY (реестр main), который isAlive видит.
+    // Node есть на всех runner; системного sleep в Windows нет.
+    coordPty = spawnPty({ meta: { role: 'coordinator', label: 'coord' }, command: process.execPath,
+      args: ['-e', 'setTimeout(() => {}, 30000)'], cols: 80, rows: 24 })
+  })
+  afterEach(() => killPty(coordPty))
+
+  /** Задача прогона со снимком графа `wf` и живым координатором, запущенная и стоящая на `ask` или `work`. */
+  function runningTask(stage: 'ask' | 'work'): { taskId: string; dispatchId: string } {
+    const run = store.createRun('цель', undefined, wf)
+    store.setRunPty(run.id, coordPty)
+    const task = store.createTask({ title: 'Хранилище', roleId: 'developer', runId: run.id })
+    store.enterWork(task.id)
+    if (stage === 'work') store.advanceStage(task.id, 'next')
+    assert.equal(store.getTask(task.id)!.stage!.nodeId, stage)
+    const d = store.startDispatch(task.id, 'pty_w')
+    return { taskId: task.id, dispatchId: d.id }
+  }
+
+  it('на этапе ask вопрос идёт человеку даже при живом координаторе: запрос в Инбоксе с нодой этапа', async () => {
+    const { taskId, dispatchId } = runningTask('ask')
+    const res = await call('worker.ask', { question: 'Какую БД?', wait: false }, { dispatchId })
+    assert.equal(res.ok, true, res.error)
+    const [request] = store.pendingRequests()
+    assert.equal(request.kind, 'question')
+    assert.equal(request.taskId, taskId)
+    assert.equal(request.nodeId, 'ask')
+    assert.equal(store.getTask(taskId)!.status, 'needs_input')
+    assert.equal(store.openQuestions()[0].forHuman, true)
+    assert.equal(store.openQuestions()[0].nodeId, 'ask')
+  })
+
+  it('на этапе «Работа» при живом координаторе вопрос ждёт координатора, как раньше', async () => {
+    const { taskId, dispatchId } = runningTask('work')
+    const res = await call('worker.ask', { question: 'Какую БД?', wait: false }, { dispatchId })
+    assert.equal(res.ok, true, res.error)
+    assert.equal(store.pendingRequests().length, 0)
+    assert.equal(store.getTask(taskId)!.status, 'in_progress')
+    assert.equal(store.openQuestions()[0].forHuman, undefined)
+    assert.equal(store.openQuestions()[0].nodeId, undefined)
+  })
+
+  it('задача вне воркфлоу и без координатора — человеку, как раньше, но без ноды', async () => {
+    const task = store.createTask({ title: 'Логин', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const res = await call('worker.ask', { question: '?', wait: false }, { dispatchId: d.id })
+    assert.equal(res.ok, true, res.error)
+    assert.equal(store.pendingRequests()[0].nodeId, undefined)
   })
 })

@@ -1,5 +1,6 @@
 import { Tray, Menu, nativeImage, type NativeImage } from 'electron'
 import { deflateSync } from 'node:zlib'
+import { mt } from './i18n'
 
 export interface TrayHandlers {
   /** Показать окно (создать, если закрыто). */
@@ -8,6 +9,10 @@ export interface TrayHandlers {
   quit(): void
   /** Число задач в работе для пункта меню. */
   activeCount(): number
+  /** Версия скачанного обновления, готового к установке; null — пункта «Перезапустить и обновить» нет. */
+  readyUpdate(): string | null
+  /** «Перезапустить и обновить»: установка с обычным подтверждением, если работают агенты. */
+  installUpdate(): void
 }
 
 // Модульная ссылка: без неё GC соберёт Tray, и иконка пропадёт из строки меню.
@@ -25,16 +30,18 @@ export function createTray(h: TrayHandlers): Tray {
   return tray
 }
 
-/** Пересобрать меню (число задач в работе). */
+/** Пересобрать меню (число задач в работе, язык интерфейса — зовётся и после смены языка). */
 export function refreshTray(): void {
   if (!tray || tray.isDestroyed() || !handlers) return
   const h = handlers
+  const update = h.readyUpdate()
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Открыть orca-board', click: () => h.open() },
-      { label: `Задач в работе: ${h.activeCount()}`, enabled: false },
+      { label: mt('tray.open'), click: () => h.open() },
+      { label: mt('tray.active', { count: h.activeCount() }), enabled: false },
+      ...(update ? [{ label: mt('tray.restartUpdate', { version: update }), click: () => h.installUpdate() }] : []),
       { type: 'separator' },
-      { label: 'Выйти', click: () => h.quit() }
+      { label: mt('tray.quit'), click: () => h.quit() }
     ])
   )
 }

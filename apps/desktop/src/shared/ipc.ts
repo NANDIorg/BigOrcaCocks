@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -33,19 +33,124 @@ export interface TerminalSnapshot extends TerminalInfo {
   tail: string
 }
 
+/** Язык интерфейса (renderer/src/i18n). */
+export type AppLanguage = 'ru' | 'en'
+
 /** Глобальные настройки приложения (не проекта). */
 export interface AppSettings {
   /** Закрытие окна не завершает приложение: PTY живут, иконка в трее. По умолчанию true. */
   keepInBackground: boolean
+  /** Язык интерфейса; не выбран — русский (язык системы не угадываем, см. `settingsLocale`). */
+  language?: AppLanguage
   /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
   notifications: NotificationSettings
+  /** Автообновление приложения (docs/architecture.md → «Обновление»). */
+  updates: UpdateSettings
 }
 
-/** Патч настроек приложения: notifications мержится по полям. */
+/** Настройки автообновления. Дефолты — `DEFAULT_UPDATE_SETTINGS`. */
+export interface UpdateSettings {
+  /** Проверять наличие новой версии в фоне (при старте и раз в несколько часов). По умолчанию true. */
+  autoCheck: boolean
+  /** Скачивать найденную версию сразу, без клика. По умолчанию true. */
+  autoDownload: boolean
+  /**
+   * Ставить скачанное обновление, когда у агентов не осталось живых сессий (а не только при выходе).
+   * По умолчанию false: без явного решения человека приложение само не перезапускается.
+   */
+  installWhenIdle: boolean
+}
+
+export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = { autoCheck: true, autoDownload: true, installWhenIdle: false }
+
+/** Патч настроек приложения: notifications и updates мержатся по полям. */
 export interface AppSettingsPatch {
   keepInBackground?: boolean
+  language?: AppLanguage
   notifications?: NotificationSettingsPatch
+  updates?: Partial<UpdateSettings>
 }
+
+/** Способ обновления на этой платформе. */
+export type UpdateMode =
+  /** Скачивание и установка внутри приложения (Windows NSIS — electron-updater, macOS — свой установщик). */
+  | 'auto'
+  /** Установить не можем (portable Windows): показываем версию и ссылку `releaseUrl`, человек скачивает сам. */
+  | 'manual-download'
+
+/** Почему обновление недоступно (`UpdateState.status === 'unsupported'`). */
+export type UpdateUnsupportedReason =
+  /** Запуск из исходников/`pnpm dev` (`!app.isPackaged`). */
+  | 'dev'
+  /** Portable-сборка Windows: заменить exe на ходу нельзя. Состояние — `unsupported`, `mode: 'manual-download'`. */
+  | 'portable'
+  /** macOS: приложение запущено не из /Applications (например, прямо из dmg или Загрузок). */
+  | 'not-in-applications'
+  /** macOS: у пользователя нет прав на запись в папку с приложением. */
+  | 'no-write-access'
+  /** macOS: App Translocation — система запустила копию из read-only образа, подменять нечего. */
+  | 'translocated'
+  /** Для этой платформы установщика нет (Linux). */
+  | 'platform'
+
+/** Что известно о новой версии; отдаёт `PlatformUpdater.check()`. */
+export interface UpdateInfo {
+  /** Версия без префикса `v` (semver), например `0.4.2`. */
+  version: string
+  /** Заметки релиза, markdown (тело GitHub Release); нет — пустая строка. */
+  releaseNotes: string
+  /** Страница релиза на GitHub — для «что нового» и для `manual-download`. */
+  releaseUrl: string
+}
+
+/**
+ * Состояние обновления — машина состояний в main (`main/updater.ts`), единственный источник правды.
+ * Переходы: idle → checking → (idle | available | error); available → downloading → (ready | error);
+ * ready → installing → перезапуск. `unsupported` — терминальное: проверки и загрузка ничего не делают.
+ */
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'installing'
+  | 'error'
+  | 'unsupported'
+
+export interface UpdateState {
+  status: UpdateStatus
+  /** Версия запущенного приложения (`app.getVersion()`). */
+  currentVersion: string
+  /** Найденная версия; null, пока проверка не нашла новой. Сохраняется в downloading/ready/installing/error после находки. */
+  availableVersion: string | null
+  /** Заметки найденной версии, markdown; null, если версии нет. */
+  releaseNotes: string | null
+  /** Страница релиза; null, если версии нет. */
+  releaseUrl: string | null
+  /** Прогресс скачивания 0–100; только при `downloading`, иначе null. */
+  percent: number | null
+  /**
+   * Отложенная установка: `'quit'` — при выходе из приложения, `'idle'` — когда у агентов не останется живых сессий
+   * (ставит `install({when})` или `settings.updates.installWhenIdle`); null — ничего не запланировано.
+   */
+  installPending: 'idle' | 'quit' | null
+  /** Способ обновления на этой платформе. */
+  mode: UpdateMode
+  /** Причина, только при `status === 'unsupported'`. */
+  unsupportedReason: UpdateUnsupportedReason | null
+  /** Текст ошибки по-русски, только при `status === 'error'`; иначе null. */
+  error: string | null
+}
+
+/** Когда ставить скачанное обновление (`updates.install`). */
+export type UpdateInstallWhen =
+  /** Выйти и установить сейчас (с обычным подтверждением выхода, если работают агенты). */
+  | 'now'
+  /** Когда у агентов не останется живых сессий. */
+  | 'idle'
+  /** При следующем выходе из приложения. */
+  | 'quit'
 
 /** Правка задачи из UI/CLI: название, описание, приоритет (приоритет — в любой колонке). */
 export interface TaskPatch {
@@ -129,7 +234,7 @@ export interface TaskTypeInput {
   settings: TaskTypeSettings
 }
 
-/** Вся библиотека типов (встроенные, затем пользовательские) и тип библиотеки по умолчанию. */
+/** Вся библиотека типов в порядке хранения и тип библиотеки по умолчанию. */
 export interface TaskTypesState {
   taskTypes: TaskType[]
   defaultTaskTypeId: string
@@ -192,6 +297,12 @@ export interface DocFile {
   untracked: boolean
 }
 
+/** Файл показа для превью (`showcase:read`): mime по расширению и содержимое. */
+export interface ShowcaseFileData {
+  mime: string
+  bytes: Uint8Array
+}
+
 /** Группа документов: проект (`source: 'project'`) или worktree задачи в работе (`source` — id задачи). */
 export interface DocGroup {
   source: string
@@ -223,6 +334,25 @@ export interface RequestFocus {
   requestId: string
 }
 
+/** Текущая версия мастера первого запуска (main пишет её в projects.json, renderer сверяет). */
+export const ONBOARDING_VERSION = 1
+
+/** Состояние мастера первого запуска. Не входит в `AppSettings`: человек меняет его только через `onboarding:complete`. */
+export interface OnboardingState {
+  /** Мастер нужно показать при старте: статус `pending`. Новый main всегда отдаёт boolean. */
+  required: boolean
+  status: 'pending' | 'completed' | 'skipped'
+  /** Версия мастера, с которой записан статус. */
+  version: number
+  /** Когда пройден/пропущен (мс); у `pending` нет. */
+  at?: number
+}
+
+export interface OnboardingCompleteInput {
+  /** true — «Пропустить» (status 'skipped'), иначе 'completed'. По умолчанию false. */
+  skipped?: boolean
+}
+
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
 export interface OrcaApi {
   app: {
@@ -233,12 +363,44 @@ export interface OrcaApi {
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
   }
+  /**
+   * Мастер первого запуска (docs/architecture.md → «IPC»). Renderer читает `getState()` при старте и показывает
+   * мастер, только если `required`. «Пройти заново» канала не требует — оно целиком на стороне renderer.
+   */
+  onboarding: {
+    getState(): Promise<OnboardingState>
+    /** Записать прохождение/пропуск. Повторный вызов на пройденном — идемпотентен (статус не понижается до pending). */
+    complete(input?: OnboardingCompleteInput): Promise<OnboardingState>
+  }
+  /**
+   * Обновление приложения (docs/architecture.md → «Обновление»). Состояние живёт в main; renderer читает
+   * `getState()` при старте и дальше подписывается на `onChanged`. Все методы, кроме `getState`, возвращают
+   * состояние после действия. В `unsupported` действия ничего не меняют (не бросают).
+   */
+  updates: {
+    getState(): Promise<UpdateState>
+    /** Проверить наличие новой версии сейчас (кнопка «Проверить»). Во время проверки/скачивания — no-op. */
+    check(): Promise<UpdateState>
+    /** Скачать найденную версию (нужна при `autoDownload: false`). Не в `available` — no-op. */
+    download(): Promise<UpdateState>
+    /** Установить скачанное: `now` — выйти и заменить, `idle` / `quit` — отложить (`installPending`). Не в `ready` — ошибка. */
+    install(opts: { when: UpdateInstallWhen }): Promise<UpdateState>
+    /** Снять отложенную установку (`installPending` → null). */
+    cancelPending(): Promise<UpdateState>
+    /**
+     * Версия, с которой приложение только что обновилось, — чтобы показать «Обновлено до …»; null, если старт
+     * обычный. Отдаётся один раз после старта: повторный вызов вернёт null.
+     */
+    getJustUpdated(): Promise<string | null>
+    /** Состояние изменилось (в том числе прогресс скачивания). Всегда полное состояние. */
+    onChanged(cb: (state: UpdateState) => void): () => void
+  }
   projects: {
     list(): Promise<{ active: Project | null; projects: Project[] }>
     /** Задачи в колонках kind=in_progress по id проекта — для бейджа в списке проектов. */
     inProgressCounts(): Promise<Record<string, number>>
     /**
-     * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id встроенных типов
+     * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из
      * `detectTaskType`) — без диалога. Уже добавленный возвращается как есть.
      */
@@ -260,19 +422,19 @@ export interface OrcaApi {
   }
   /**
    * Типы задач (docs/architecture.md → «Типы задач»): тип выбирается у глобальной задачи и задаёт её роли,
-   * воркфлоу, правила агентов и разрешения. У встроенного на месте меняются исполнители ролей, их системные
-   * промпты и правила агентов; остальное — в копии («Дублировать»).
+   * воркфлоу, правила агентов и разрешения. Все типы равны: заготовки из приложения кладутся в библиотеку один раз
+   * и дальше правятся и удаляются, как созданные человеком.
    */
   taskTypes: {
     list(): Promise<TaskTypesState>
     /** Создать или заменить тип; настройки валидируются (граф — по ролям типа, колонки не проверяются). */
     save(input: TaskTypeInput): Promise<TaskType>
     /**
-     * Удалить пользовательский тип (копия встроенного — вернуть встроенный). Прогоны этого типа дорабатывают по
-     * своему снимку, проекты с ним по умолчанию — на типе библиотеки по умолчанию.
+     * Удалить любой тип (последний — ошибка); после перезапуска он не вернётся. Прогоны удалённого типа дорабатывают
+     * по своему снимку, проекты с ним по умолчанию — на типе библиотеки по умолчанию.
      */
     delete(id: string): Promise<TaskTypesState>
-    /** Копия типа (в том числе встроенного) под новым id. */
+    /** Копия типа под новым id. */
     duplicate(id: string): Promise<TaskType>
     setDefault(id: string): Promise<TaskTypesState>
   }
@@ -305,6 +467,11 @@ export interface OrcaApi {
     get(id: string): Promise<GlobalTask>
     create(input: GlobalTaskInput): Promise<GlobalTask>
     update(id: string, patch: GlobalTaskPatch): Promise<GlobalTask>
+    /**
+     * Сменить тип задачи (`typeId` из типов проекта) — только до начала работы (`canChangeRunType` из core):
+     * в бэклоге, ни разу не была «В работе», без координатора и подзадач; иначе и для «Входящих» — ошибка.
+     */
+    changeType(id: string, typeId: string): Promise<GlobalTask>
     /** status — id колонки проекта. Подзадачи не трогает. */
     move(id: string, status: string): Promise<GlobalTask>
     /**
@@ -397,12 +564,40 @@ export interface OrcaApi {
     /** Показать файл в Finder/Проводнике. */
     reveal(source: string, path: string): Promise<void>
   }
+  /**
+   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId`) из worktree задачи `taskId`
+   * активного проекта. `path` — как в `showcase.files` (от корня репозитория). Путь вне worktree, симлинк наружу,
+   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), нет worktree — ошибка.
+   */
+  showcase: {
+    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. */
+    read(taskId: string, path: string): Promise<ShowcaseFileData>
+    /** Открыть файл приложением системы по умолчанию (HTML — в браузере). */
+    open(taskId: string, path: string): Promise<void>
+    /** Показать файл в Finder/Проводнике. */
+    reveal(taskId: string, path: string): Promise<void>
+  }
   /** Правила активного проекта: CLAUDE.md и AGENTS.md в его корне (не в worktree задач). */
   rules: {
     /** Оба файла в порядке RULE_FILE_NAMES; отсутствующий — `exists: false`. */
     list(): Promise<RuleFile[]>
     /** Записать файл (создать, если нет) атомарно; имя не из белого списка — ошибка. */
     save(name: RuleFileName, text: string): Promise<RuleFile>
+  }
+  /** Статистика проекта (docs/architecture.md, «Статистика»): токены, стоимость, задачи, время агентов. */
+  stats: {
+    /**
+     * Статистика проекта `projectId` (не обязательно активного) за период. Считается по запросу: снапшот store +
+     * транскрипты агентов на диске. Неизвестный проект — ошибка. Токены, которых не нашли, — «неизвестно», не 0.
+     */
+    project(projectId: string, range: StatsRange): Promise<ProjectStats>
+    /**
+     * Статистика задачи за всё время жизни: время (колонки, этапы), расход сессий задачи и её проверок, ожидание
+     * человека. Транскрипты других задач не читаются. Неизвестная задача — ошибка.
+     */
+    task(projectId: string, taskId: string): Promise<TaskStats>
+    /** То же для глобальной задачи: подзадачи и координатор прогона раздельно. Неизвестный прогон — ошибка. */
+    global(projectId: string, runId: string): Promise<GlobalTaskStats>
   }
   review: {
     info(taskId: string): Promise<ReviewInfo>

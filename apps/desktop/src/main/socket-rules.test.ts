@@ -37,7 +37,6 @@ interface TypeRow {
   id: string
   title: string
   default?: boolean
-  builtin?: boolean
   roles: Array<{ id: string; agent: string; agentEnabled: boolean }>
   stages: Array<{ id: string; type: string }>
 }
@@ -205,9 +204,8 @@ describe('сокет: правила, роли и типы задач', () => {
     const own = rows.find((t) => t.id === `type_${PID}`)!
     assert.equal(own.title, 'repo')
     assert.equal(own.default, true)
-    assert.equal(own.builtin, undefined)
     const docs = rows.find((t) => t.id === 'docs')!
-    assert.equal(docs.builtin, true)
+    assert.equal('builtin' in docs, false, 'особого признака у заготовок нет')
     assert.equal(docs.default, undefined)
     assert.deepEqual(docs.roles.map((r) => r.id), ['coordinator', 'assistant', 'writer', 'reviewer'])
     assert.ok(docs.roles.every((r) => r.agentEnabled))

@@ -1,0 +1,157 @@
+import type ru from './ru'
+
+// Английские тексты main: ровно те же ключи, что в ru.ts (лишний или пропущенный — ошибка типа).
+export default {
+  'common.none': 'none',
+
+  'tray.open': 'Open orca-board',
+  'tray.active': 'Tasks in progress: {count}',
+  'tray.restartUpdate': 'Restart and update to {version}',
+  'tray.quit': 'Quit',
+
+  'dialog.cancel': 'Cancel',
+  'dialog.quit.message': {
+    one: '{count} task is in progress, its agent will be stopped. Quit?',
+    other: '{count} tasks are in progress, their agents will be stopped. Quit?'
+  },
+  'dialog.quit.quit': 'Quit',
+  'dialog.update.idleReached': 'Agents have finished. Restart and update to {version}?',
+  'dialog.update.restart': 'Restart and update',
+  'dialog.update.later': 'Later',
+  'dialog.update.busy': {
+    one: '{count} task is in progress: update to {version} now (the agent will stop) or when agents finish?',
+    other: '{count} tasks are in progress: update to {version} now (agents will stop) or when agents finish?'
+  },
+  'dialog.update.now': 'Update now',
+  'dialog.update.whenIdle': 'When agents finish',
+  'dialog.pickRepo': 'Choose a git repository',
+
+  'notify.question': 'Question',
+  'notify.workflowBlocked': 'Workflow stopped',
+  'notify.escalation': 'Escalation',
+  'notify.answerReady': 'Answer ready',
+  'notify.awaitingDecision': 'Awaiting decision',
+  'notify.readyForReview': 'Ready for review',
+  'notify.runDone': 'Run finished',
+  'notify.runSubtasksDone': 'Subtasks done, review coming up',
+  'notify.testPreview': 'Question: this is how notifications will look',
+  'notify.unsupported': 'system notifications are not supported',
+
+  'column.backlog': 'Backlog',
+  'column.ready': 'Ready',
+  'column.in_progress': 'In progress',
+  'column.needs_input': 'Needs input',
+  'column.review': 'Review',
+  'column.done': 'Done',
+
+  'update.notReady': 'The update is not ready to install yet (state: {status}): wait for the download to finish',
+  'update.checkFailed': 'Could not check for updates',
+  'update.downloadFailed': 'Could not download the update',
+  'update.installFailed': 'Could not install the update',
+
+  'projects.none': 'no projects: add a repository',
+  'projects.notGit': '{path} is not a git repository',
+
+  'agent.unknown': 'unknown agent: {id}. Known: {known}',
+  'agent.notInstalled': 'agent {id} is not installed (no {bin} binary in PATH)',
+  'agent.disabled': 'agent {id} is disabled in the project settings (“About project”). Enabled: {enabled}',
+
+  'role.missing': 'task type “{type}” has no role “{role}”. Type roles: {ids} (orca-board roles list).{hint}',
+  'role.missing.systemHint': ' This is a system role — you can restore it: “Settings” → “Task types” → “{type}” → “Restore system roles”.',
+  'role.missing.hint': ' Type roles are edited in “Settings” → “Task types”.',
+  'role.noneLeft': 'at least one role is required',
+  'role.emptyId': 'role #{n}: empty id',
+  'role.duplicate': 'role “{id}” is listed twice',
+  'role.emptyTitle': 'role “{id}”: empty name',
+  'role.unknownAgent': 'role “{id}”: unknown agent {agent}',
+  'role.descriptionNotString': 'role “{id}”: purpose must be a string',
+  'role.modelNotString': 'role “{id}”: model must be a string',
+  'role.effortNotString': 'role “{id}”: effort must be a string',
+  'role.promptNotString': 'role “{id}”: system prompt must be a string',
+
+  'worker.cannotStart': 'the worker will not start: {reason}',
+  'coordinator.cannotStart': 'the coordinator will not start: {reason}',
+  'coordinator.noObjective': 'no goal given',
+  'coordinator.inboxNotTarget': '“Inbox” is not a coordinator goal: create a global task',
+  'coordinator.alreadyRunning': 'the coordinator of this global task is already running (terminal {pty})',
+  'coordinator.finishing': 'the coordinator of this global task is still finishing — try again in a few seconds',
+
+  'global.notFound': 'global task not found: {id}',
+  'global.coordinatorAlive': 'the coordinator of this global task is still running — close its terminal first',
+  'global.typeRequired': 'choose a task type',
+  'global.subtaskTitleEmpty': 'the subtask title cannot be empty',
+
+  'column.noneLeft': 'at least one column is required',
+  'column.emptyId': 'column #{n}: empty id',
+  'column.duplicate': 'column “{id}” is listed twice',
+  'column.emptyTitle': 'column “{id}”: empty name',
+  'column.unknownKind': 'column “{id}”: unknown kind {kind}',
+  'column.systemMissing': 'system column “{kind}” is missing — it cannot be deleted',
+  'column.systemDuplicate': 'there must be one system column “{kind}”, found {n}',
+
+  'type.label': 'type “{title}”',
+  'type.notFound': 'task type not found: {id}',
+  'type.notFoundHint': 'task type not found: {id} (available: orca-board types list)',
+  'type.unavailable': 'type “{title}” is not available in project “{project}” (available: orca-board types list)',
+  'type.notObject': 'task type: an object is expected',
+  'type.emptyId': 'task type: empty id',
+  'type.emptyTitle': 'task type: empty name',
+  'type.descriptionNotString': 'type “{title}”: description must be a string',
+  'type.lastOne': 'type “{title}” is the last one in the library and cannot be deleted: create another type first',
+  'type.copyTitle': '{title} (copy)',
+  'type.noRole': 'type “{title}” has no role “{role}”',
+  'type.settingsNotObject': '{label}: an object is expected',
+  'type.unknownPermission': '{label}: unknown permission mode: {mode}',
+
+  'projectTypes.notObject': 'project types: an object is expected',
+  'projectTypes.badIds': 'project types: typeIds must be an array of type ids',
+  'projectTypes.empty': 'project types: at least one available type is required',
+  'projectTypes.defaultNotAvailable': 'the default type “{title}” must be among the types available to the project',
+
+  'workflow.future': 'the workflow is saved in format version {version}, the app only knows {known} — update the app',
+  'workflow.notSaved': 'workflow not saved: {errors}',
+
+  'rules.onlyKnown': 'only {a} and {b} in the project root can be edited, not “{name}”',
+  'rules.brokenLink': '{name}: the link points to a missing file',
+  'rules.linkOutside': '{name}: the link points outside the project',
+  'rules.notFile': '{name}: not a file',
+  'rules.fileTooBig': '{name}: the file is larger than {mb} MB',
+  'rules.notString': '{name}: the text must be a string',
+  'rules.textTooBig': '{name}: the text is larger than {mb} MB',
+  'rules.writeFailed': '{name}: could not write — {error}',
+  'rules.agentNotString': 'agent rules must be a string',
+  'rules.roleNotString': 'role rules must be a string',
+
+  'docs.project': 'Project',
+  'docs.noTaskSource': 'the task is not in progress or has no worktree: {id}',
+  'docs.noPath': 'no document path given',
+  'docs.notRelative': 'the path must be relative: {path}',
+  'docs.notMarkdown': 'not a markdown file: {path}',
+  'docs.outside': 'the path is outside the project: {path}',
+  'docs.notFound': 'file not found: {path}',
+  'docs.notFile': 'not a file: {path}',
+  'docs.tooBig': 'the file is larger than {mb} MB: {path}',
+
+  'showcase.taskNotFound': 'showcase: task not found: {id}',
+  'showcase.noWorktree': 'showcase: task {id} has no worktree',
+  'showcase.noWorktreeBranch': 'showcase: task {id} has no worktree — the files are left in branch {branch}',
+  'showcase.noPath': 'showcase: no file path given',
+  'showcase.notRelative': 'showcase: the path must be relative to the task repository root: {path}',
+  'showcase.badType': 'showcase: this file type cannot be opened: {path}',
+  'showcase.outside': 'showcase: the path is outside the task worktree: {path}',
+  'showcase.notFound': 'showcase: file not found: {path} (the agent did not commit it or deleted it)',
+  'showcase.notFile': 'showcase: not a file: {path}',
+  'showcase.noPreview': 'showcase: {path} has no preview — open it with the “Open” button',
+  'showcase.tooBig': 'showcase: the file is larger than {mb} MB: {path}',
+
+  'review.noBranch': 'the task has no branch',
+  'review.untracked': 'new files:',
+  'request.alreadyCancelled': 'already decided: request {id} was cancelled',
+  'request.alreadyResolved': 'already decided: request {id} was resolved',
+
+  'stats.badRange': 'statistics: unknown period “{range}”, expected {expected}',
+  'stats.noTask': 'statistics: task {id} is not in the project',
+  'stats.noGlobal': 'statistics: global task {id} is not in the project',
+
+  'onboarding.invalidInput': 'first-run wizard: an object with a boolean skipped field is expected'
+} satisfies { [K in keyof typeof ru]: string | { one: string; other: string } }

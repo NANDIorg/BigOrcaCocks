@@ -1,19 +1,21 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, builtinTaskType, isBuiltinTypeInPlaceEdit, type AgentInfo, type Role, type TaskType
+  DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, type AgentInfo, type Role, type TaskType
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 import {
-  TASK_TYPES_STALE_MESSAGE, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, deleteTypeConfirmText, executorOnlyPatch,
-  hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, overridesBuiltinType, patchedTaskType, pickTaskTypeId,
-  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, splitTaskTypes, taskTypeLibraryApi,
+  taskTypesStaleMessage, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
+  hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, patchedTaskType, pickTaskTypeId,
+  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi,
   taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey
 } from './taskTypeEdit'
-import { agentChangePatch, withPatch } from './roleEdit'
+import { setLocale } from './i18n'
 
-const general = builtinTaskType('general')!
-const frontend = builtinTaskType('frontend')!
+afterEach(() => setLocale('ru'))
+
+const general = presetTaskType('general')!
+const frontend = presetTaskType('frontend')!
 const own: TaskType = {
   id: 'type_1', title: 'Мой', description: 'для сервисов',
   settings: { permissionMode: 'acceptEdits', agentRules: 'правило' }
@@ -22,10 +24,10 @@ const state: TaskTypesState = { taskTypes: [general, frontend, own], defaultTask
 const project = (id: string, extra: Partial<Project> = {}): Project => ({ id, root: `/${id}`, name: id, ...extra })
 
 test('старый preload без taskTypes — понятная ошибка, старый main — «перезапустите»', () => {
-  assert.throws(() => taskTypeLibraryApi({} as Partial<OrcaApi>), { message: TASK_TYPES_STALE_MESSAGE })
-  assert.throws(() => taskTypeLibraryApi(undefined), { message: TASK_TYPES_STALE_MESSAGE })
-  assert.equal(taskTypesError("Error: No handler registered for 'taskTypes:list'"), TASK_TYPES_STALE_MESSAGE)
-  assert.equal(taskTypesError("Error: No handler registered for 'projects:setTaskTypes'"), TASK_TYPES_STALE_MESSAGE)
+  assert.throws(() => taskTypeLibraryApi({} as Partial<OrcaApi>), { message: taskTypesStaleMessage() })
+  assert.throws(() => taskTypeLibraryApi(undefined), { message: taskTypesStaleMessage() })
+  assert.equal(taskTypesError("Error: No handler registered for 'taskTypes:list'"), taskTypesStaleMessage())
+  assert.equal(taskTypesError("Error: No handler registered for 'projects:setTaskTypes'"), taskTypesStaleMessage())
   assert.equal(taskTypesError('тип задачи: пустое название'), 'тип задачи: пустое название')
   assert.equal(hasProjectTaskTypes({ projects: {} } as unknown as Partial<OrcaApi>), false)
 })
@@ -56,38 +58,23 @@ test('переименование: пустое название — ошибк
   assert.equal('description' in r, false)
 })
 
-test('встроенные отдельно от своих; изменённый встроенный — среди встроенных, удаление вернёт встроенный', () => {
-  const generalCopy: TaskType = { ...general, builtin: undefined }
-  assert.deepEqual(splitTaskTypes([generalCopy, frontend, own]).builtin.map((t) => t.id), ['general', 'frontend'])
-  assert.deepEqual(splitTaskTypes([generalCopy, frontend, own]).own.map((t) => t.id), ['type_1'])
-  assert.equal(overridesBuiltinType(generalCopy), true)
-  assert.equal(overridesBuiltinType(general), false)
-  assert.equal(overridesBuiltinType(own), false)
-})
-
-test('ключ редакторов не меняется, когда встроенный становится изменённым, и меняется по rev', () => {
-  const copy: TaskType = { ...frontend, builtin: undefined }
-  assert.equal(typeEditorKey(copy), typeEditorKey(frontend))
-  assert.notEqual(typeEditorKey(frontend, 1), typeEditorKey(frontend, 0))
+test('ключ редакторов — по id типа: правка типа его не меняет, у разных типов разный', () => {
+  const renamed: TaskType = { ...frontend, title: 'Другое' }
+  assert.equal(typeEditorKey(renamed), typeEditorKey(frontend))
   assert.notEqual(typeEditorKey(own), typeEditorKey(frontend))
 })
 
-test('встроенный тип: у ролей меняются исполнитель и системный промпт, правку примет main', () => {
-  assert.deepEqual(
-    executorOnlyPatch({ title: 'x', agent: 'codex', systemPrompt: 'y', model: 'opus', description: 'z' }),
-    { agent: 'codex', systemPrompt: 'y', model: 'opus' }
-  )
-  assert.ok('effort' in executorOnlyPatch({ effort: undefined }))
-  for (const t of [general, frontend]) {
-    const base = t.settings.roles ?? DEFAULT_ROLES
-    const i = base.findIndex((r) => r.id === 'developer')
-    const agent = base[i].agent === 'claude' ? 'codex' : 'claude'
-    const changed: Role = withPatch(withPatch(base[i], executorOnlyPatch(agentChangePatch(agent))), executorOnlyPatch({ systemPrompt: 'пиши тесты', title: 'x' }))
-    assert.equal(changed.title, base[i].title)
-    const roles = base.map((r, j) => (j === i ? changed : r))
-    // Правила доски у встроенного тоже правятся на месте.
-    assert.equal(isBuiltinTypeInPlaceEdit(t, patchedTaskType(t, { roles, agentRules: '# свои правила' })), true, t.id)
-  }
+test('заготовка правится целиком: patchedTaskType и renamedTaskType сохраняют его id', () => {
+  const roles = [...(frontend.settings.roles ?? DEFAULT_ROLES).filter((r) => r.id !== 'qa'), { id: 'designer', title: 'Дизайнер', agent: 'claude' as const }]
+  const input = patchedTaskType(frontend, { roles, permissionMode: 'acceptEdits', workflow: null })
+  assert.equal(input.id, 'frontend')
+  assert.deepEqual(input.settings.roles?.map((r) => r.id), roles.map((r) => r.id))
+  assert.equal(input.settings.permissionMode, 'acceptEdits')
+  assert.equal('workflow' in input.settings, false)
+  const renamed = renamedTaskType(frontend, 'Мой фронт', 'своё')
+  assert.ok(!('error' in renamed))
+  assert.equal(renamed.id, 'frontend')
+  assert.equal(renamed.title, 'Мой фронт')
 })
 
 test('использование: тип по умолчанию и доступность по проектам', () => {
@@ -147,9 +134,32 @@ test('колонки для графа типа — встроенные плю�
 })
 
 test('подтверждение удаления говорит о проектах и снимке глобальных задач', () => {
-  const text = deleteTypeConfirmText(own, { ...state, defaultTaskTypeId: 'type_1' }, { asDefault: 2, available: 3 })
-  assert.ok(text.includes(`им станет «${builtinTaskType(GENERAL_TASK_TYPE_ID)?.title}»`))
+  const c = typeRemovalConfirm(own, { ...state, defaultTaskTypeId: 'type_1' }, { asDefault: 2, available: 3 })
+  assert.equal(c.title, 'Удалить тип «Мой»?')
+  assert.equal(c.action, 'Удалить')
+  const text = c.lines.join('\n')
+  assert.ok(text.includes(`им станет «${general.title}»`))
   assert.match(text, /проектах \(2\)/)
   assert.match(text, /по снимку/)
-  assert.match(deleteTypeConfirmText({ ...general, builtin: undefined }, state, undefined), /вернётся встроенный/)
+  assert.match(text, /не вернётся/)
+})
+
+test('заготовка удаляется так же, как свой тип; удалили тип по умолчанию «Программирование» — им станет первый оставшийся', () => {
+  const c = typeRemovalConfirm(general, state, { asDefault: 2, available: 3 })
+  assert.equal(c.title, `Удалить тип «${general.title}»?`)
+  assert.equal(c.action, 'Удалить')
+  const text = c.lines.join('\n')
+  assert.ok(text.includes(`им станет «${frontend.title}»`))
+  assert.match(text, /перейдут на тип библиотеки/)
+  assert.doesNotMatch(text, /к системному/)
+})
+
+test('тексты удаления и ошибок — на языке интерфейса', () => {
+  setLocale('en')
+  const c = typeRemovalConfirm(own, { ...state, defaultTaskTypeId: 'type_1' }, { asDefault: 2, available: 3 })
+  assert.equal(c.title, 'Delete type “Мой”?')
+  assert.equal(c.action, 'Delete')
+  assert.match(c.lines.join('\n'), /default type in projects \(2\)/)
+  assert.deepEqual(renamedTaskType(own, ' ', ''), { error: 'Type name can’t be empty' })
+  assert.throws(() => taskTypeLibraryApi(undefined), { message: /old main\/preload without task types/ })
 })

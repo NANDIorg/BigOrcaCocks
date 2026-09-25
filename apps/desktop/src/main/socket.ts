@@ -2,13 +2,14 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
+  type RequestResolution, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams } from './request-params'
+import { runnableWorkflow } from './projects'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -45,7 +46,7 @@ export interface ProjectDeps {
   taskTypes(): { taskTypes: TaskType[]; defaultTypeId: string }
   /** Тип нового прогона для store (`createGlobalTask`): без `typeId` — тип по умолчанию, недоступный — ошибка. */
   runType(typeId?: string): RunTypeInput
-  /** `rules set` по типу: правила агентов (`roleId` нет) или системный промпт роли; встроенный правится на месте. */
+  /** `rules set` по типу: правила агентов (`roleId` нет) или системный промпт роли. */
   saveTaskTypeRules(typeId: string, roleId: string | undefined, text: string): TaskType
   /** Колонки доски в порядке показа. */
   columns(): BoardColumn[]
@@ -128,6 +129,21 @@ function list(v: unknown): string[] {
 function num(v: unknown, def: number): number {
   const n = Number(v)
   return Number.isFinite(n) ? n : def
+}
+
+/** Показ из `done` (CLI шлёт `{text?, files}`): чужая форма — ошибка, а не молча пропавший показ. */
+function showcaseParam(v: unknown): { showcase?: { text?: string; files: string[] } } {
+  if (v === undefined) return {}
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('showcase: нужен объект {text?, files}')
+  const o = v as Record<string, unknown>
+  if (o.text !== undefined && typeof o.text !== 'string') throw new Error('showcase.text должен быть строкой')
+  return { showcase: { ...(typeof o.text === 'string' ? { text: o.text } : {}), files: list(o.files) } }
+}
+
+/** Запасной граф store (`RunWorkflowFallback`) по типу прогона: граф будущей версии не исполняется. */
+function runFallback(t: ResolvedRunType): RunWorkflowFallback {
+  const workflow = runnableWorkflow(t.workflow)
+  return { roleIds: t.roles.map((r) => r.id), ...(workflow ? { workflow } : {}) }
 }
 
 /** Координатор прогона задачи жив (PTY в реестре) и не закончил работу — вопрос адресуется ему. */
@@ -231,7 +247,6 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
     title: t.title,
     ...(t.description ? { description: t.description } : {}),
     ...(t.id === defaultTypeId ? { default: true } : {}),
-    ...(t.builtin ? { builtin: true } : {}),
     permissionMode: resolved.permissionMode,
     roles: resolved.roles.map((role) => ({
       id: role.id,
@@ -384,13 +399,19 @@ const handlers: Record<string, Handler> = {
     if (!d) throw new Error(`dispatch not found: ${id}`)
     return { ...d, alive: isAlive(d.ptyId), tail: ptyTail(d.ptyId, num(r.params.limit, 80)) }
   },
-  'worker.done': (r, _d, store) => {
+  'worker.done': (r, deps, store) => {
     const id = str(r.params.dispatch) ?? r.dispatchId
     if (!id) throw new Error('нет dispatch: укажи --dispatch или запусти из воркера (ORCA_DISPATCH_ID)')
-    // CLI читает --answer-file сам и присылает текст в answer.
-    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer))
+    // CLI читает --answer-file и --show-file сам и присылает текст в answer и showcase.text.
+    const dispatch = store.getDispatch(id)
+    const task = dispatch ? store.getTask(dispatch.taskId) : undefined
+    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer), {
+      ...showcaseParam(r.params.showcase),
+      // Граф прогона без снимка — по типу прогона, как у исполнителя воркфлоу (workflowDeps в index.ts).
+      ...(task ? { fallback: runFallback(deps.resolveRun(task.runId)) } : {})
+    })
   },
-  'worker.ask': async (r, _d, store, stream) => {
+  'worker.ask': async (r, deps, store, stream) => {
     const dispatchId = str(r.params.dispatch) ?? r.dispatchId
     const taskId = str(r.params.task) ?? r.taskId ?? (dispatchId ? store.getDispatch(dispatchId)?.taskId : undefined)
     if (!taskId) throw new Error('нет задачи: укажи --task или запусти из воркера')
@@ -403,9 +424,13 @@ const handlers: Record<string, Handler> = {
       .questions.filter((q) => q.taskId === taskId && q.dispatchId === dispatchId && q.answeredAt && q.question === question.trim())
       .at(-1)
     if (answered && dispatchId !== undefined) return answered
+    // Этап «Вопрос человеку»: отвечает человек, а не координатор — вопрос идёт человеку при любом координаторе.
+    // Граф прогона без снимка — по типу прогона, как в `worker.done`.
+    const task = store.getTask(taskId)
+    const onAskStage = task ? store.taskStageNode(taskId, runFallback(deps.resolveRun(task.runId)))?.type === 'ask' : false
     const q = store.ask(
       { taskId, dispatchId, question, options: askOptions(r.params), context: str(r.params.context) },
-      { coordinatorAlive: coordinatorAlive(store, taskId) }
+      { coordinatorAlive: coordinatorAlive(store, taskId), ...(onAskStage ? { forceHuman: true } : {}) }
     )
     if (r.params.wait === false || q.answeredAt) return q
     askWaiters.set(q.id, (askWaiters.get(q.id) ?? 0) + 1)
@@ -520,7 +545,7 @@ const handlers: Record<string, Handler> = {
   },
   'columns.list': (_r, deps) => deps.columns(),
   // Правила агентов доски — типа задачи (typeOf): общие — agentRules типа, роли — её systemPrompt (оба уходят в
-  // системный промпт, withAgentRules). У встроенного типа они правятся на месте, копия не нужна.
+  // системный промпт, withAgentRules).
   'rules.get': (r, deps, store) => {
     const type = typeOf(r, deps, store)
     const role = ruleRole(r, type)
@@ -658,7 +683,9 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       }
       if (!handler) throw new Error(`неизвестная команда: ${req.method}`)
       const deps = socketDeps.resolve(req.projectId || undefined)
-      const result = await handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream)
+      // Источник для истории статусов: команда воркера (есть ORCA_DISPATCH_ID) или прочий CLI — координатор, человек.
+      const source = req.dispatchId ? 'worker' : 'cli'
+      const result = await withStatusSource(source, () => handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream))
       if (result === STREAM) return
       sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
     } catch (e) {

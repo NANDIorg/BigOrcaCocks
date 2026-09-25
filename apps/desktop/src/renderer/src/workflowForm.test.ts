@@ -2,8 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, nextStage, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
 import {
-  addRetryLimit, changeNodeType, conditionOfKind, exportWorkflowJson, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName
+  WF_TYPE_ORDER, WF_TYPE_TITLES, addRetryLimit, changeNodeType, conditionOfKind, exportWorkflowJson, hasColumn, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName
 } from './workflowForm'
+import { setLocale } from './i18n'
 
 const wf = defaultWorkflow(DEFAULT_ROLES)
 const node = (w: Workflow, id: string) => w.nodes.find((n) => n.id === id)
@@ -11,6 +12,10 @@ const node = (w: Workflow, id: string) => w.nodes.find((n) => n.id === id)
 const roleOf = (w: Workflow, id: string): string | undefined => {
   const n = node(w, id)
   return n && 'roleId' in n ? n.roleId : undefined
+}
+const showcaseOf = (w: Workflow): unknown => {
+  const n = node(w, 'work')
+  return n?.type === 'work' ? n.showcase : undefined
 }
 const ctx = { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }
 
@@ -23,7 +28,7 @@ test('роли для этапов — без служебных coordinator и 
 test('patchNode: пустые необязательные поля удаляются, чужие для типа — игнорируются', () => {
   let next = patchNode(wf, 'work', { title: '', roleId: 'developer', column: 'review' })
   assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, roleId: 'developer', column: 'review' })
-  next = patchNode(next, 'work', { roleId: '', column: '', instructions: 'не для работы' })
+  next = patchNode(next, 'work', { roleId: '', column: '', merged: true, test: { kind: 'role', roleIds: [] } })
   assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0 })
 
   next = patchNode(wf, 'review', { roleId: '', instructions: '  ' })
@@ -32,6 +37,24 @@ test('patchNode: пустые необязательные поля удаляю
 
   assert.equal(patchNode(wf, 'нет', { title: 'x' }), wf)
   assert.equal(node(wf, 'work')?.title, 'Работа', 'исходный граф не меняется')
+})
+
+test('patchNode: инструкция и показ у «Работы»', () => {
+  let next = patchNode(wf, 'work', { instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
+  next = patchNode(next, 'work', { showcase: { required: true } })
+  assert.deepEqual(showcaseOf(next), { what: 'макеты', required: true }, 'флажок не стирает текст')
+  next = patchNode(next, 'work', { showcase: { what: '' } })
+  assert.deepEqual(showcaseOf(next), { what: '', required: true }, 'обязательный показ с пустым «что» остаётся — его подсветит валидация')
+  assert.ok(validateWorkflow(next, ctx).errors.some((e) => e.nodeId === 'work'))
+  next = patchNode(next, 'work', { showcase: { required: false }, instructions: ' ' })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа' }, 'пустой показ и инструкция удаляются')
+  assert.deepEqual(patchNode(wf, 'review', { showcase: { what: 'x' } }), wf, 'показ только у «Работы»')
+
+  const human = changeNodeType(patchNode(wf, 'work', { instructions: 'этап', showcase: { what: 'макеты' } }), 'work', 'human')
+  const h = node(human, 'work')
+  assert.equal(h?.type === 'human' ? h.instructions : undefined, 'этап', 'инструкция переносится')
+  assert.ok(!(h && 'showcase' in h), 'показа у человека нет')
 })
 
 test('changeNodeType: сохраняет id, позицию и роль, убирает рёбра лишних портов', () => {
@@ -87,6 +110,19 @@ test('экспорт и импорт JSON: круг без потерь, мус�
   assert.equal(workflowFileName('  '), 'workflow.json')
 })
 
+test('ошибки импорта и названия пресета — на языке интерфейса', () => {
+  setLocale('en')
+  try {
+    assert.match((parseWorkflowJson('{') as { error: string }).error, /^not a JSON file/)
+    assert.match((parseWorkflowJson('{"version":1,"nodes":[{"id":"a","type":"x","x":0,"y":0}],"edges":[]}') as { error: string }).error, /unknown type “x”/)
+    const res = addRetryLimit(wf)
+    assert.ok('workflow' in res)
+    assert.ok(res.workflow.nodes.some((n) => n.title === 'Rejects ≥ 3'))
+  } finally {
+    setLocale('ru')
+  }
+})
+
 test('пресет «3 отказа → человек»: граф валиден, третий отказ уходит человеку', () => {
   const res = addRetryLimit(wf)
   assert.ok('workflow' in res)
@@ -108,4 +144,42 @@ test('пресет «3 отказа → человек»: граф валиде�
   const again = addRetryLimit(limited)
   assert.ok('error' in again, 'повторно лимит не ставится')
   assert.ok('error' in addRetryLimit(defaultWorkflow([])), 'без проверки агентом ставить некуда')
+})
+
+test('ask: тип в select «Тип», без поля «Колонка»', () => {
+  assert.ok(WF_TYPE_ORDER.includes('ask'))
+  assert.equal(WF_TYPE_TITLES.ask, 'Вопрос человеку')
+  assert.equal(hasColumn('ask'), false)
+  assert.equal(hasColumn('work'), true)
+})
+
+test('patchNode для ask: роль опциональна, инструкция обязательна и не удаляется пустой', () => {
+  const withAsk = changeNodeType(wf, 'review', 'ask')
+  assert.equal(node(withAsk, 'review')?.type, 'ask')
+  let next = patchNode(withAsk, 'review', { roleId: 'developer', instructions: 'Уточни срок' })
+  assert.deepEqual(node(next, 'review'), { id: 'review', type: 'ask', x: node(wf, 'review')!.x, y: node(wf, 'review')!.y, title: node(wf, 'review')!.title, roleId: 'developer', instructions: 'Уточни срок' })
+  next = patchNode(next, 'review', { roleId: '', instructions: '  ', column: 'review' })
+  const n = node(next, 'review')
+  assert.equal(n?.type === 'ask' && 'roleId' in n, false, 'пустая роль — «роль задачи»')
+  assert.equal(n?.type === 'ask' && n.instructions, '  ', 'пустая инструкция остаётся строкой, а не пропадает')
+  assert.ok(validateWorkflow(next, ctx).errors.some((e) => e.nodeId === 'review'), 'валидация подсвечивает пустое «О чём спросить»')
+})
+
+test('changeNodeType в ask и из него: роль и инструкция переносятся, колонка — нет, порты чистятся', () => {
+  const work = patchNode(wf, 'work', { roleId: 'developer', instructions: 'Спроси про формат', column: 'review' })
+  const ask = changeNodeType(work, 'work', 'ask')
+  const a = node(ask, 'work')
+  assert.equal(a?.type === 'ask' && a.roleId, 'developer')
+  assert.equal(a?.type === 'ask' && a.instructions, 'Спроси про формат')
+  assert.equal(a?.column, undefined, 'у ask колонки нет')
+  assert.ok(ask.edges.some((e) => e.from === 'work' && e.outcome === 'next'))
+
+  const back = changeNodeType(ask, 'work', 'work')
+  const w = node(back, 'work')
+  assert.equal(w?.type === 'work' && w.roleId, 'developer')
+  assert.equal(w?.type === 'work' && w.instructions, 'Спроси про формат')
+
+  // Гейт с двумя портами → ask с одним: лишние рёбра уходят.
+  const fromGate = changeNodeType(wf, 'review', 'ask')
+  assert.equal(fromGate.edges.filter((e) => e.from === 'review').every((e) => e.outcome === 'next'), true)
 })

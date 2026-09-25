@@ -1,24 +1,36 @@
 import type {
+  AgentSession,
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
-  HumanRequest, RequestOption, RequestResolution, TaskPriority
+  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, StageChange
 } from './types.ts'
 import {
   ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, MAX_ANSWER_LENGTH, REQUEST_ACTIONS,
-  TASK_PRIORITIES, isTaskPriority, normalizeOptions
+  TASK_PRIORITIES, isTaskPriority, normalizeOptions, normalizeShowcase
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
 import { trackActiveTime } from './active-time.ts'
+import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
-  defaultWorkflow, nextStage, startStage, wfNodeTitle, type WfAction, type WfOutcome, type WfStage, type Workflow
+  defaultWorkflow, nextStage, startStage, wfNodeTitle, wfWorkStage,
+  type WfAction, type WfNode, type WfOutcome, type WfStage, type WfWorkStage, type Workflow
 } from './workflow.ts'
 import {
-  globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, toGlobalTask, toGlobalTasks,
+  globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, globalTaskTitle, runTypeLockReason,
+  toGlobalTask, toGlobalTasks,
   type GlobalColumnKind, type GlobalTask
 } from './global-tasks.ts'
 import type { RunTypeInput, TaskTypeSnapshot } from './task-types.ts'
 
+/**
+ * Версия формата файла доски. Растёт, когда снапшот меняется так, что старая версия приложения его не поймёт
+ * (не при каждом новом необязательном поле). Файл без `formatVersion` — до появления поля, то есть версия 1.
+ */
+export const STORE_FORMAT_VERSION = 1
+
 export interface StoreSnapshot {
+  /** Нет в файлах до появления поля — `TaskStore` при загрузке проставляет и сохраняет (`migrateFormatVersion`). */
+  formatVersion: number
   tasks: Task[]
   dispatches: Dispatch[]
   events: OrcaEvent[]
@@ -26,6 +38,31 @@ export interface StoreSnapshot {
   runs: Run[]
   /** Запросы к человеку. Нет в снапшотах до их появления — тогда при загрузке идёт миграция. */
   requests: HumanRequest[]
+}
+
+/**
+ * Отказ открывать доску, сохранённую более новой версией: старый код молча потерял бы неизвестные ему поля при первой
+ * же записи. Образец — проверка версии графа в `validateWorkflow` (`workflow.ts`). Пустая/старая версия — не ошибка.
+ */
+export function assertStoreFormat(formatVersion: unknown): void {
+  if (formatVersion === undefined) return
+  if (!Number.isInteger(formatVersion) || (formatVersion as number) < 1) {
+    throw new Error(`доска: неизвестная версия формата: ${String(formatVersion)}`)
+  }
+  if ((formatVersion as number) > STORE_FORMAT_VERSION) {
+    throw new Error(`доска сохранена более новой версией (формат ${String(formatVersion)}, приложение знает только ${STORE_FORMAT_VERSION}) — обновите приложение`)
+  }
+}
+
+/** Снимок запуска воркера для `startDispatch`: поля `Dispatch` для статистики, все необязательные. */
+export type DispatchLaunch = Partial<Pick<Dispatch, 'roleId' | 'agent' | 'model' | 'sessionId'>>
+
+/** Запуск координатора для `setRunPty`: сессия без времени и PTY — их ставит store. */
+export type CoordinatorLaunch = Omit<AgentSession, 'ptyId' | 'startedAt' | 'endedAt'>
+
+/** Объект без полей со значением `undefined`: в сохранённом состоянии пустые поля не пишутся. */
+function definedFields<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
 }
 
 export interface Persistence {
@@ -48,6 +85,11 @@ function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
   return text.length > EVENT_ANSWER_LIMIT ? { answer: text.slice(0, EVENT_ANSWER_LIMIT), answerTruncated: true } : { answer: text }
 }
 
+/** Текст решения человека для payload события: как `eventAnswer`, но поля `decision` / `decisionTruncated`. */
+function eventDecision(text: string): { decision: string; decisionTruncated?: true } {
+  return text.length > EVENT_ANSWER_LIMIT ? { decision: text.slice(0, EVENT_ANSWER_LIMIT), decisionTruncated: true } : { decision: text }
+}
+
 /** Глубокая копия графа: правка графа проекта после создания прогона не должна менять снимок. */
 /**
  * Запасной граф для `runWorkflow`, если у прогона нет снимка: граф типа прогона (или типа проекта по умолчанию
@@ -57,6 +99,13 @@ function eventAnswer(text: string): { answer: string; answerTruncated?: true } {
 export interface RunWorkflowFallback {
   roleIds?: readonly string[]
   workflow?: Workflow
+}
+
+/** Необязательная часть `finishDispatch`: показ человеку и запасной граф прогона (как у `advanceStage`). */
+export interface FinishDispatchOptions {
+  /** Показ из `orca-board done`: `text` — markdown, `files` — пути в ветке задачи. Проверяет `normalizeShowcase`. */
+  showcase?: { text?: string; files?: readonly string[] }
+  fallback?: RunWorkflowFallback
 }
 
 /** Старая форма запасного графа — только роли (`runWorkflow(runId, roleIds)`). */
@@ -123,6 +172,8 @@ export class TaskStore {
     this.columnsFn = columns ?? (() => DEFAULT_COLUMNS)
     const snap = persistence?.load()
     if (snap) {
+      // До любых записей: снапшот из будущего формата не открываем и не перезаписываем.
+      assertStoreFormat(snap.formatVersion)
       // Миграция на лету: у старых задач нет roleId. Статусы старых задач совпадают
       // с id дефолтных колонок (backlog, ready, ...), их переводить не нужно.
       snap.tasks?.forEach((t) => this.tasks.set(t.id, { ...t, roleId: t.roleId ?? DEFAULT_ROLE_ID }))
@@ -133,6 +184,8 @@ export class TaskStore {
       snap.runs?.forEach((r) => this.runs.set(r.id, r))
       snap.requests?.forEach((r) => this.requests.set(r.id, r))
       this.events = snap.events ?? []
+      // Первой: переходы остальных миграций (воркер умер — задача в ready) ложатся в историю после стартовой записи.
+      const history = this.migrateStatusHistory()
       // До closeStaleDispatches: задача «В работе» от старого кода должна войти в него с открытым отрезком.
       const active = this.migrateActiveTime()
       const priority = this.migrateTaskPriority()
@@ -141,11 +194,42 @@ export class TaskStore {
       const stale = this.closeStaleDispatches()
       const requests = this.migrateRequests(snap.requests === undefined)
       const stages = this.migrateStages()
+      // После migrateStages: задача, вставшая на гейт миграцией, тоже получает запись.
+      const stageHistory = this.migrateStageHistory()
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
+      const started = this.migrateRunStarted()
       const synced = this.syncRunActiveTime()
-      if (active || priority || runPriority || stale || requests || stages || migrated || own || synced) this.persistence?.save(this.snapshot())
+      const format = this.migrateFormatVersion(snap.formatVersion)
+      if (format || history || active || priority || runPriority || stale || requests || stages || stageHistory || migrated || own || started || synced) this.persistence?.save(this.snapshot())
     }
+  }
+
+  /**
+   * Файл без `formatVersion` — до появления поля (версия 1): само поле проставит `snapshot()`, а конструктору
+   * остаётся сохранить файл. Возвращает true, если версии не было. Проверка «из будущего» — `assertStoreFormat`, до миграций.
+   */
+  private migrateFormatVersion(formatVersion: unknown): boolean {
+    return formatVersion === undefined
+  }
+
+  /**
+   * Задачи и глобальные задачи от кода до истории статусов получают стартовую запись: текущая колонка с
+   * `migrated: true` на момент последней правки (`updatedAt`). Прошлые переходы не восстановить — они нигде не
+   * журналировались, а пустая история выглядела бы как «статус не менялся с создания». Запись с отметкой
+   * честно говорит «была в этой колонке уже тогда», и следующий переход ляжет после неё. Прогон без status
+   * (снапшот до глобальных задач) пропускается: колонку ему даёт `migrateGlobalTasks`, и она попадёт в историю
+   * обычным переходом. Возвращает true, если что-то поменялось.
+   */
+  private migrateStatusHistory(): boolean {
+    let changed = false
+    const start = (entity: Task | Run, status: TaskStatus): void => {
+      entity.statusHistory = [{ status, at: entity.updatedAt ?? entity.createdAt, by: 'app', migrated: true }]
+      changed = true
+    }
+    for (const task of this.tasks.values()) if (task.statusHistory === undefined) start(task, task.status)
+    for (const run of this.runs.values()) if (run.statusHistory === undefined && run.status !== undefined) start(run, run.status)
+    return changed
   }
 
   /**
@@ -203,6 +287,44 @@ export class TaskStore {
   }
 
   /**
+   * Задачи в воркфлоу от кода до `stageHistory` получают историю из лога событий `stage_changed` (он не
+   * обрезается, поэтому восстановление полное, пока лог жив; `by` неизвестен). Событий нет — одна запись
+   * `migrated: true` на текущий этап с `at = updatedAt`. Задачи без `stage` (ответ, гейт, ещё не вошедшие
+   * в граф) поле не получают. Возвращает true, если что-то поменялось.
+   */
+  private migrateStageHistory(): boolean {
+    let changed = false
+    const byTask = new Map<string, OrcaEvent[]>()
+    for (const e of this.events) {
+      if (e.type !== 'stage_changed' || !e.taskId) continue
+      const list = byTask.get(e.taskId)
+      if (list) list.push(e)
+      else byTask.set(e.taskId, [e])
+    }
+    for (const task of this.tasks.values()) {
+      if (!task.stage || task.stageHistory !== undefined) continue
+      const built: { stageHistory?: StageChange[] } = {}
+      for (const e of byTask.get(task.id) ?? []) {
+        const p = e.payload
+        if (typeof p.to !== 'string') continue
+        recordStage(built, {
+          nodeId: p.to, at: e.createdAt, by: 'app',
+          ...(typeof p.title === 'string' ? { title: p.title } : {}),
+          ...(typeof p.outcome === 'string' ? { outcome: p.outcome as WfOutcome | 'restart' } : {}),
+          ...(typeof p.from === 'string' ? { from: p.from } : {})
+        })
+      }
+      // Лога нет или он не досказал текущий этап (позицию задаче вернула `migrateStages`, события не писались) — стартовая запись.
+      if (built.stageHistory?.at(-1)?.nodeId !== task.stage.nodeId) {
+        recordStage(built, { nodeId: task.stage.nodeId, at: task.updatedAt, by: 'app', migrated: true })
+      }
+      task.stageHistory = built.stageHistory
+      changed = true
+    }
+    return changed
+  }
+
+  /**
    * Время работы у задач от кода до `activeMs`/`activeSince`: сумма закрытых запусков воркера (dispatch) —
    * лучшее, что известно о том, сколько задача была в работе. Задача в kind=in_progress получает открытый
    * отрезок от начала живого запуска (нет его — от updatedAt, момента переноса). Не бывавшие в работе
@@ -246,6 +368,26 @@ export class TaskStore {
   }
 
   /**
+   * `Run.startedAt` у прогонов от кода до поля: прогон, у которого есть координатор, подзадачи, своё время
+   * или карточка не в бэклоге, считается уже бывшим в работе (точный момент неизвестен — берём `updatedAt`).
+   * Остальные (в бэклоге, без координатора и подзадач) остаются без поля — тип им ещё можно сменить.
+   * «Входящие» не трогаем: их тип не меняется в любом случае. Возвращает true, если что-то поменялось.
+   */
+  private migrateRunStarted(): boolean {
+    let changed = false
+    for (const run of this.runs.values()) {
+      if (run.startedAt !== undefined || run.inbox) continue
+      const hasSubtasks = [...this.tasks.values()].some((t) => t.runId === run.id)
+      const worked = run.coordinatorPtyId !== undefined || hasSubtasks || run.activeMs !== undefined ||
+        run.activeSince !== undefined || run.closedAt !== undefined || this.globalKind(run) !== 'backlog'
+      if (!worked) continue
+      run.startedAt = run.updatedAt ?? run.createdAt
+      changed = true
+    }
+    return changed
+  }
+
+  /**
    * Собственное время глобальных задач: отрезок открыт, пока карточка показана в kind=in_progress
    * (`globalTaskInProgress` — хранимый статус и pending-запросы). Статус прогона меняется во многих местах,
    * а «Нужен ответ» зависит ещё и от запросов, поэтому пересчёт — одним проходом из commit(), а не в каждом
@@ -258,6 +400,8 @@ export class TaskStore {
       const before = run.activeSince
       trackActiveTime(run, globalTaskInProgress(run, this.columns(), requests), now)
       if (run.activeSince !== before) changed = true
+      // Первый вход в работу — отметка навсегда: после неё тип задачи не меняется (`canChangeRunType`).
+      if (run.activeSince !== undefined && run.startedAt === undefined) run.startedAt = run.activeSince
     }
     return changed
   }
@@ -321,7 +465,7 @@ export class TaskStore {
     let changed = false
     for (const run of this.runs.values()) {
       if (run.status === undefined) {
-        run.status = this.columnId(run.closedAt !== undefined ? 'done' : 'in_progress')
+        this.setRunStatus(run, this.columnId(run.closedAt !== undefined ? 'done' : 'in_progress'))
         run.updatedAt ??= run.createdAt
         changed = true
         continue
@@ -329,7 +473,7 @@ export class TaskStore {
       // Глобальная задача из колонки подзадач (ready/needs_input/review/custom) — в ближайшую колонку глобального канбана.
       const status = globalTaskStatus(run.status, this.columns())
       if (status !== undefined && status !== run.status) {
-        run.status = status
+        this.setRunStatus(run, status)
         changed = true
       }
     }
@@ -340,7 +484,7 @@ export class TaskStore {
       const tasks = [...this.tasks.values()].filter((t) => t.runId === inbox.id)
       const allDone = tasks.every((t) => this.isKind(t, 'done'))
       if (allDone) inbox.closedAt ??= Date.now()
-      inbox.status = this.columnId(allDone ? 'done' : 'in_progress')
+      this.setRunStatus(inbox, this.columnId(allDone ? 'done' : 'in_progress'))
       changed = true
     }
     return changed
@@ -352,7 +496,8 @@ export class TaskStore {
   }
 
   private commit(): void {
-    this.closeFinishedRuns()
+    // Автозакрытие прогона — решение приложения, а не того, чья команда закрыла последнюю подзадачу.
+    withStatusSource('app', () => this.closeFinishedRuns())
     this.syncRunActiveTime()
     this.persistence?.save(this.snapshot())
     this.listeners.forEach((fn) => fn())
@@ -360,6 +505,7 @@ export class TaskStore {
 
   snapshot(): StoreSnapshot {
     return {
+      formatVersion: STORE_FORMAT_VERSION,
       tasks: this.listTasks(),
       dispatches: [...this.dispatches.values()],
       events: [...this.events],
@@ -389,11 +535,13 @@ export class TaskStore {
   }
 
   /**
-   * Все смены статуса идут здесь: следим за doneAt при входе/выходе из колонки done и за временем работы
+   * Все смены статуса идут здесь: пишем историю (`recordStatus`, источник — `withStatusSource` вызывающего кода),
+   * следим за doneAt при входе/выходе из колонки done и за временем работы
    * (отрезок открыт, пока задача в kind=in_progress, — `trackActiveTime`).
    */
   private setStatus(task: Task, status: TaskStatus): void {
     task.status = status
+    recordStatus(task, status, Date.now(), task.stage ? { stage: task.stage.nodeId } : {})
     trackActiveTime(task, this.columnKind(status) === 'in_progress', Date.now())
     if (this.columnKind(status) === 'done') {
       // Сделанной задаче ждать от человека нечего (перенесли вручную, приняли).
@@ -404,6 +552,15 @@ export class TaskStore {
       task.doneAt ??= Date.now()
     } else task.doneAt = undefined
     task.updatedAt = Date.now()
+  }
+
+  /**
+   * Все смены колонки глобальной задачи идут здесь — ради истории статусов (`recordStatus`). Время работы
+   * прогона считается не тут, а одним проходом в commit (`syncRunActiveTime`): «Нужен ответ» зависит ещё и от запросов.
+   */
+  private setRunStatus(run: Run, status: TaskStatus): void {
+    run.status = status
+    recordStatus(run, status, Date.now())
   }
 
   // ---------- tasks ----------
@@ -464,6 +621,7 @@ export class TaskStore {
       createdAt: now,
       updatedAt: now
     }
+    recordStatus(task, task.status, now)
     this.tasks.set(task.id, task)
     // Новая работа в закрытой глобальной задаче (или после run_done, пока координатор решал): прогон снова открыт,
     // run_done придёт по её завершении.
@@ -530,7 +688,7 @@ export class TaskStore {
     }
     for (const run of this.runs.values()) {
       if (run.status !== fromId) continue
-      run.status = toId
+      this.setRunStatus(run, toId)
       run.updatedAt = Date.now()
       moved += 1
     }
@@ -553,6 +711,11 @@ export class TaskStore {
    * её воркера запускает исполнитель воркфлоу сразу после создания, координатору делать нечего.
    */
   private promoteReady(): void {
+    // Задачу двигают закрытые зависимости, а не тот, чей вызов их закрыл.
+    withStatusSource('app', () => this.promoteReadyTasks())
+  }
+
+  private promoteReadyTasks(): void {
     for (const task of this.tasks.values()) {
       if (!this.isKind(task, 'backlog')) continue
       const depsDone = task.deps.every((d) => {
@@ -637,6 +800,10 @@ export class TaskStore {
       task.stage = step.stage
       task.updatedAt = Date.now()
       const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
+      recordStage(task, {
+        nodeId: step.stage.nodeId, at: task.updatedAt, outcome, ...(node ? { title: wfNodeTitle(node) } : {}),
+        ...(from !== undefined ? { from } : {})
+      })
       this.pushEvent('stage_changed', {
         taskId, runId: task.runId, ...(from !== undefined ? { from } : {}), to: step.stage.nodeId, outcome,
         ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
@@ -651,9 +818,12 @@ export class TaskStore {
 
   /**
    * Задача снова идёт в работу (`worker start`, перезапуск, «Уточнить» не в счёт — у задач-ответов этапа нет):
-   * этап, который не «Работа» (задачу вернули вручную с ревью, переоткрыли из done), сбрасывается на первый этап
+   * этап, который не «Работа» и не «Вопрос человеку» (задачу вернули вручную с ревью, переоткрыли из done),
+   * сбрасывается на первый этап
    * от старта — иначе её `done` пришёл бы на этап проверки. Задача без этапа входит в граф. Заходы (`visits`)
-   * копятся: лимит повторов считает и такие возвраты. Этап «Работа» не трогается. Задачи-ответы и гейты — мимо.
+   * копятся: лимит повторов считает и такие возвраты. Этапы «Работа» и «Вопрос человеку» не трогаются: агент
+   * входит в `ask` при каждом запуске (`worker start`, автоперезапуск после ответа), и сброс вернул бы задачу
+   * на первую «Работу». Задачи-ответы и гейты — мимо.
    * Возвращает действие нового этапа или undefined, если этап не менялся.
    */
   enterWork(taskId: string, opts: RunWorkflowFallback = {}): WfAction | undefined {
@@ -661,7 +831,7 @@ export class TaskStore {
     if (task.answerFor || task.gateFor) return undefined
     const wf = this.runWorkflow(task.runId, opts)
     const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
-    if (current?.type === 'work') return undefined
+    if (current?.type === 'work' || current?.type === 'ask') return undefined
     if (!task.stage) return this.advanceStage(taskId, 'next', opts).action
     const ctx = { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}) }
     const step = startStage(wf, ctx)
@@ -676,6 +846,7 @@ export class TaskStore {
     task.stage = { nodeId: step.stage.nodeId, visits }
     task.updatedAt = Date.now()
     const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
+    recordStage(task, { nodeId: step.stage.nodeId, at: task.updatedAt, outcome: 'restart', from, ...(node ? { title: wfNodeTitle(node) } : {}) })
     this.pushEvent('stage_changed', {
       taskId, runId: task.runId, from, to: step.stage.nodeId, outcome: 'restart',
       ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
@@ -699,13 +870,16 @@ export class TaskStore {
 
   /**
    * Нода `human`: запрос approval к человеку («Принять» / «Вернуть»), задача — в «Нужен ответ».
-   * Ждущий approval той же задачи не дублируется — возвращается он.
+   * Ждущий approval той же задачи не дублируется — возвращается он. `showcaseDispatchId` — чей показ в `body`.
    */
-  requestApproval(taskId: string, fields: { nodeId: string; title: string; body?: string }): HumanRequest {
+  requestApproval(taskId: string, fields: { nodeId: string; title: string; body?: string; showcaseDispatchId?: string }): HumanRequest {
     const task = this.mustTask(taskId)
     const existing = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'approval')
     if (existing) return existing
-    const request = this.createRequest(task, { kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}) })
+    const request = this.createRequest(task, {
+      kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}),
+      ...(fields.showcaseDispatchId ? { showcaseDispatchId: fields.showcaseDispatchId } : {})
+    })
     this.commit()
     return request
   }
@@ -713,6 +887,7 @@ export class TaskStore {
   /** Новый прогон без commit. Статус по умолчанию — колонка kind=backlog. */
   private addRun(fields: Partial<Omit<Run, 'id' | 'createdAt'>> & { objective: string }, createdAt = Date.now()): Run {
     const run: Run = { status: this.columnId('backlog'), priority: DEFAULT_TASK_PRIORITY, ...fields, id: newId('run'), createdAt, updatedAt: createdAt }
+    if (run.status !== undefined) recordStatus(run, run.status, createdAt)
     this.runs.set(run.id, run)
     return run
   }
@@ -745,7 +920,7 @@ export class TaskStore {
     run.runDoneAt = undefined
     run.finishedAt = undefined
     run.reopenedAt = Date.now()
-    if (run.status === undefined || this.isClosedKind(run)) run.status = this.columnId('in_progress')
+    if (run.status === undefined || this.isClosedKind(run)) this.setRunStatus(run, this.columnId('in_progress'))
     run.updatedAt = Date.now()
   }
 
@@ -753,15 +928,28 @@ export class TaskStore {
    * Координатор запущен на прогоне (новом или повторно на существующей глобальной задаче):
    * закрытый прогон переоткрывается, карточка — в колонку kind=in_progress.
    */
-  setRunPty(runId: string, ptyId: string, agent?: AgentKind): Run {
+  setRunPty(runId: string, ptyId: string, agent?: AgentKind, session?: CoordinatorLaunch): Run {
     const run = this.mustRun(runId)
     if (run.closedAt !== undefined || run.runDoneAt !== undefined) this.reopenRun(run)
     run.coordinatorPtyId = ptyId
     run.coordinatorAgent = agent
-    run.status = this.columnId('in_progress')
+    // Каждый запуск — отдельная сессия: время и токены координатора складываются по всем его перезапускам.
+    if (session) (run.coordinatorSessions ??= []).push({ ptyId, startedAt: Date.now(), ...definedFields(session) })
+    this.setRunStatus(run, this.columnId('in_progress'))
     run.updatedAt = Date.now()
     this.commit()
     return run
+  }
+
+  /**
+   * PTY координатора закрылся: конец его сессии для статистики. Прогон могли удалить, пока терминал жил, —
+   * тогда нечего отмечать.
+   */
+  coordinatorExited(runId: string, ptyId: string): void {
+    const session = this.runs.get(runId)?.coordinatorSessions?.find((s) => s.ptyId === ptyId && s.endedAt === undefined)
+    if (!session) return
+    session.endedAt = Date.now()
+    this.commit()
   }
 
   // ---------- global tasks ----------
@@ -826,6 +1014,26 @@ export class TaskStore {
   }
 
   /**
+   * Сменить тип глобальной задачи до начала работы (`runTypeLockReason`): `typeId`, снимок типа и снимок графа
+   * пересобираются из `type` так же, как при создании (`runTypeFields`); граф старого типа не остаётся, даже если
+   * у нового графа нет (прогон пойдёт по графу типа из библиотеки). Тип берёт main из библиотеки проекта.
+   */
+  changeGlobalTaskType(id: string, type: RunTypeInput): GlobalTask {
+    const run = this.mustRun(id)
+    const subtasks = [...this.tasks.values()].filter((t) => t.runId === id).length
+    const statusKind = run.status === undefined ? undefined : this.columnKind(run.status)
+    const reason = runTypeLockReason({ ...run, subtasks, statusKind })
+    if (reason) throw new Error(`тип глобальной задачи «${globalTaskTitle(run)}» (${id}) нельзя сменить: ${reason}`)
+    delete run.typeId
+    delete run.taskType
+    delete run.workflow
+    Object.assign(run, runTypeFields(type))
+    run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /**
    * Ручное перемещение карточки по колонкам проекта. Статусы подзадач не меняются.
    * В колонку kind=done или review («Проверка») — человек объявил работу сделанной: открытый прогон (в том числе
    * после run_done, пока координатор решал — `runDoneAt`) закрывается с `run_done {manual: true}`, чтобы координатор (если ждёт) закончил, а приложение закрыло
@@ -846,7 +1054,7 @@ export class TaskStore {
     } else if (run.closedAt !== undefined) {
       this.reopenRun(run)
     }
-    run.status = status
+    this.setRunStatus(run, status)
     run.updatedAt = Date.now()
     this.commit()
     return this.getGlobalTask(id)
@@ -859,7 +1067,7 @@ export class TaskStore {
   acceptGlobalTask(id: string): GlobalTask {
     const run = this.mustRun(id)
     if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — подтвердить можно только из колонки «Проверка»`)
-    run.status = this.columnId('done')
+    this.setRunStatus(run, this.columnId('done'))
     run.updatedAt = Date.now()
     this.commit()
     return this.getGlobalTask(id)
@@ -880,7 +1088,7 @@ export class TaskStore {
     const at = Date.now()
     run.returns = [...(run.returns ?? []), { at, text: clarification }]
     this.reopenRun(run)
-    run.status = this.columnId('in_progress')
+    this.setRunStatus(run, this.columnId('in_progress'))
     this.commit()
     return this.getGlobalTask(id)
   }
@@ -939,7 +1147,7 @@ export class TaskStore {
     if (run.closedAt === undefined) {
       run.closedAt = Date.now()
       run.runDoneAt = undefined
-      if (run.status !== undefined && this.globalKind(run) === 'in_progress') run.status = this.columnId('done')
+      if (run.status !== undefined && this.globalKind(run) === 'in_progress') this.setRunStatus(run, this.columnId('done'))
       run.updatedAt = run.closedAt
       this.commit()
     }
@@ -1042,7 +1250,7 @@ export class TaskStore {
     run.closedAt = Date.now()
     run.reopenedAt = undefined
     run.runDoneAt = undefined
-    run.status = status
+    this.setRunStatus(run, status)
     run.updatedAt = run.closedAt
     if (run.inbox || !notify) return undefined
     return this.pushEvent('run_done', { runId: run.id, objective: run.objective, ...(manual ? { manual: true } : {}) })
@@ -1054,9 +1262,13 @@ export class TaskStore {
     return this.dispatches.get(id)
   }
 
-  startDispatch(taskId: string, ptyId: string, dispatchId = newId('disp')): Dispatch {
+  /**
+   * `launch` — снимок роли, агента, модели и id сессии агента на момент запуска (статистика: разбивки и поиск
+   * транскрипта, docs/architecture.md → «Статистика»); без него dispatch статистика считает по задаче.
+   */
+  startDispatch(taskId: string, ptyId: string, dispatchId = newId('disp'), launch: DispatchLaunch = {}): Dispatch {
     const task = this.mustTask(taskId)
-    const dispatch: Dispatch = { id: dispatchId, taskId, ptyId, startedAt: Date.now() }
+    const dispatch: Dispatch = { id: dispatchId, taskId, ptyId, startedAt: Date.now(), ...definedFields(launch) }
     this.dispatches.set(dispatch.id, dispatch)
     // Новый запуск начинает с чистого листа: запросы прошлых запусков (сданный ответ, эскалация, вопрос
     // умершего воркера) больше не ждут человека. Ответы на прошлые вопросы — в промпте запуска.
@@ -1069,11 +1281,33 @@ export class TaskStore {
   }
 
   /**
+   * Этап «Работа» или «Вопрос человеку», на котором стоит задача (`wfWorkStage` по графу прогона): для раздела
+   * «Этап» в промпте воркера и проверки показа в `finishDispatch`. Задача вне воркфлоу или на другом этапе —
+   * undefined.
+   */
+  taskWorkStage(taskId: string, fallback: RunWorkflowFallback = {}): WfWorkStage | undefined {
+    const task = this.mustTask(taskId)
+    if (!task.stage) return undefined
+    return wfWorkStage(this.runWorkflow(task.runId, fallback), task.stage.nodeId)
+  }
+
+  /**
+   * Нода графа прогона, на которой стоит задача (любого типа). Для сокета: граф прогона и запасной граф типа
+   * известны вызывающему (`worker.ask` решает по типу ноды, кому адресовать вопрос). Задача вне воркфлоу — undefined.
+   */
+  taskStageNode(taskId: string, fallback: RunWorkflowFallback = {}): WfNode | undefined {
+    const task = this.mustTask(taskId)
+    if (!task.stage) return undefined
+    return this.runWorkflow(task.runId, fallback).nodes.find((n) => n.id === task.stage!.nodeId)
+  }
+
+  /**
    * Явное завершение воркером через `orca-board done`. У задачи-ответа ответ обязателен и уходит
    * в событие worker_done вместе с `answerFor` — координатор решает по нему, принимать ли ответ сам.
    * Ответ для человека (`answerFor: 'human'`) — запрос answer к человеку (needs_input), остальное — в review.
+   * Показ (`opts.showcase`) сохраняется в `Dispatch.showcase`; на «Работе» с обязательным показом без него — ошибка.
    */
-  finishDispatch(dispatchId: string, summary: string, files: string[] = [], answer?: string): Dispatch {
+  finishDispatch(dispatchId: string, summary: string, files: string[] = [], answer?: string, opts: FinishDispatchOptions = {}): Dispatch {
     const dispatch = this.mustDispatch(dispatchId)
     const task = this.mustTask(dispatch.taskId)
     const text = answer?.trim() ? answer : undefined
@@ -1083,11 +1317,20 @@ export class TaskStore {
     if (text && text.length > MAX_ANSWER_LENGTH) {
       throw new Error(`ответ длиннее ${MAX_ANSWER_LENGTH} символов — сократи его`)
     }
+    const showcase: DispatchShowcase | undefined = normalizeShowcase(opts.showcase)
+    const stage = this.taskWorkStage(task.id, opts.fallback)
+    if (!showcase && stage?.showcase?.required) {
+      throw new Error(
+        `этап «${stage.title}» требует показ человеку: ${stage.showcase.what}\n` +
+        'Сдай его вместе с done: описание — --show-file <файл.md>, файлы из ветки — --show <путь> (флаг на каждый файл).'
+      )
+    }
     dispatch.endedAt = Date.now()
     dispatch.outcome = 'done'
     dispatch.summary = summary
     dispatch.files = files
     if (text) dispatch.answer = text
+    if (showcase) dispatch.showcase = showcase
     // Запуск сдал работу: его вопрос и прошлый ответ человека больше не ждут (сам вопрос остаётся открытым).
     this.cancelRequests((r) => r.taskId === task.id)
     let request: HumanRequest | undefined
@@ -1130,6 +1373,17 @@ export class TaskStore {
       changed = true
     }
     if (changed) this.commit()
+  }
+
+  /**
+   * Id сессии агента, найденный статистикой после запуска (codex не даёт задать его заранее): следующий расчёт
+   * читает транскрипт сразу, без поиска по cwd и времени. Уже заданный id не меняется.
+   */
+  setDispatchSessionId(dispatchId: string, sessionId: string): void {
+    const d = this.dispatches.get(dispatchId)
+    if (!d || d.sessionId) return
+    d.sessionId = sessionId
+    this.commit()
   }
 
   /**
@@ -1292,6 +1546,8 @@ export class TaskStore {
   /**
    * Решение по approval без commit: запрос закрыт, при «Вернуть» замечания — в feedback для следующего запуска.
    * Колонку не трогает, кроме выхода из «Нужен ответ» (settleTask): дальше задачу ведёт исполнитель воркфлоу.
+   * Текст решения («вариант 2») — в `decision` события, последним и обрезанным: координатор учтёт выбор человека,
+   * полный текст — `resolution.text` запроса (`orca-board request get`).
    */
   private applyApproval(task: Task, request: HumanRequest, action: 'accept' | 'reject', text?: string): void {
     this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}) })
@@ -1299,7 +1555,8 @@ export class TaskStore {
     this.settleTask(task)
     task.updatedAt = Date.now()
     this.pushEvent('request_resolved', {
-      taskId: task.id, action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {})
+      taskId: task.id, action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {}),
+      ...(text ? eventDecision(text) : {})
     })
   }
 
@@ -1320,11 +1577,13 @@ export class TaskStore {
    * (от имени координатора/человека) — только по несделанной задаче. Идемпотентно: пока у запуска есть
    * открытый вопрос, повторный ask возвращает его (инструмент оборвал ask по таймауту — воркер переспросил).
    * Адресат фиксируется здесь: `coordinatorAlive` (живость PTY координатора знает только main) — вопрос
-   * ждёт координатора, задача в работе; иначе сразу запрос к человеку (needs_input).
+   * ждёт координатора, задача в работе; иначе сразу запрос к человеку (needs_input). `forHuman` — этап
+   * «Вопрос человеку»: вопрос идёт человеку при любом координаторе, а нода этапа записывается в
+   * `Question.nodeId` и `HumanRequest.nodeId`.
    */
   ask(
     input: { taskId: string; dispatchId?: string; question: string; options?: readonly (string | RequestOption)[]; context?: string },
-    opts: { coordinatorAlive?: boolean } = {}
+    opts: { coordinatorAlive?: boolean; forceHuman?: boolean } = {}
   ): Question {
     const task = this.mustTask(input.taskId)
     if (input.dispatchId !== undefined) {
@@ -1344,10 +1603,11 @@ export class TaskStore {
       question,
       options: normalizeOptions(input.options),
       ...(input.context?.trim() ? { context: input.context.trim() } : {}),
+      ...(opts.forceHuman && task.stage ? { nodeId: task.stage.nodeId } : {}),
       createdAt: Date.now()
     }
     this.questions.set(q.id, q)
-    const forHuman = opts.coordinatorAlive !== true
+    const forHuman = opts.forceHuman === true || opts.coordinatorAlive !== true
     this.pushEvent('question', {
       taskId: task.id, dispatchId: q.dispatchId, questionId: q.id, question: short(q.question),
       ...(forHuman ? { forHuman: true } : {}), options: q.options.map((o) => o.label)
@@ -1379,7 +1639,8 @@ export class TaskStore {
     if (request) this.closeRequest(request, 'resolved', resolution ?? { action: 'answer', text: answer })
     this.settleTask(task)
     task.updatedAt = Date.now()
-    // workerLive: false и задача в ready — координатору сделать `worker start` (ответ будет в промпте).
+    // workerLive: false и задача в ready — координатору сделать `worker start` (ответ будет в промпте); на этапе
+    // «Вопрос человеку» воркера перезапускает приложение (handleEvents в main/workflow.ts).
     this.pushEvent('question_answered', {
       taskId: task.id, dispatchId: q.dispatchId, questionId: q.id,
       ...(request ? { requestId: request.id } : {}),
@@ -1432,7 +1693,8 @@ export class TaskStore {
     q.forHuman = true
     const body = [q.context, note?.trim() ? `**Координатор:** ${note.trim()}` : undefined].filter(Boolean).join('\n\n')
     return this.createRequest(this.mustTask(q.taskId), {
-      kind: 'question', title: q.question, ...(body ? { body } : {}), options: q.options, questionId: q.id, dispatchId: q.dispatchId
+      kind: 'question', title: q.question, ...(body ? { body } : {}), options: q.options, questionId: q.id, dispatchId: q.dispatchId,
+      ...(q.nodeId ? { nodeId: q.nodeId } : {})
     }, emit)
   }
 
@@ -1520,7 +1782,7 @@ export class TaskStore {
    */
   private createRequest(
     task: Task,
-    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId'>>,
+    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId' | 'showcaseDispatchId'>>,
     emit = true
   ): HumanRequest {
     const request: HumanRequest = {
@@ -1535,6 +1797,7 @@ export class TaskStore {
       options: fields.options ?? [],
       ...(fields.questionId !== undefined ? { questionId: fields.questionId } : {}),
       ...(fields.nodeId !== undefined ? { nodeId: fields.nodeId } : {}),
+      ...(fields.showcaseDispatchId !== undefined ? { showcaseDispatchId: fields.showcaseDispatchId } : {}),
       createdAt: Date.now()
     }
     this.requests.set(request.id, request)

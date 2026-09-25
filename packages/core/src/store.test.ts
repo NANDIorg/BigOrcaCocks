@@ -2,10 +2,11 @@
 // Состояние воркфлоу в store: снимок графа в прогоне, advanceStage, миграция задач в ревью, рестарт.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
+import { STATUS_HISTORY_LIMIT } from './status-history.ts'
+import { TaskStore, EVENT_ANSWER_LIMIT, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
-import { defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
-import { builtinTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
+import { WORKFLOW_VERSION, defaultWorkflow, describeWorkflow, pipelineWorkflow, type Workflow } from './workflow.ts'
+import { presetTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
 
 /** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
 function memory(initial?: Partial<StoreSnapshot>): Persistence & { data: Partial<StoreSnapshot> | null } {
@@ -102,7 +103,7 @@ describe('тип задачи в прогоне', () => {
 
   it('две задачи разных прогонов идут разными графами', () => {
     const s = store()
-    const review = s.createRun('код', undefined, runTypeInput(builtinTaskType('general')!))
+    const review = s.createRun('код', undefined, runTypeInput(presetTaskType('general')!))
     const eyes = s.createRun('доки', undefined, runTypeInput(docs))
     const a = s.createTask({ title: 'Код', runId: review.id })
     const b = s.createTask({ title: 'Доки', runId: eyes.id })
@@ -125,7 +126,7 @@ describe('тип задачи в прогоне', () => {
     const s = store(p)
     const old = s.createRun('старый', undefined, withLimit())
     const bare = s.createRun('до воркфлоу')
-    const typed = s.createRun('с типом', undefined, runTypeInput(builtinTaskType('backend')!))
+    const typed = s.createRun('с типом', undefined, runTypeInput(presetTaskType('backend')!))
     const task = s.createTask({ title: 'Во «Входящих»' })
     const legacy = { typeId: 'type_p1', snapshot: snapshotTaskType(docs) }
 
@@ -312,6 +313,105 @@ describe('миграция и рестарт', () => {
   })
 })
 
+describe('stageHistory', () => {
+  const history = (s: TaskStore, id: string) => s.getTask(id)!.stageHistory!.map((e) => [e.nodeId, e.outcome, e.from])
+  /** Снапшот «от старого кода»: у задач нет stageHistory. */
+  function legacy(s: TaskStore, p: Persistence & { data: Partial<StoreSnapshot> | null }) {
+    const snap = s.snapshot()
+    for (const t of snap.tasks) delete t.stageHistory
+    p.save(snap)
+  }
+
+  it('advanceStage и enterWork пишут вход в этап с исходом; reject и restart различимы', () => {
+    const s = store()
+    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'reject')
+    s.advanceStage(t.id, 'next')
+    s.moveTask(t.id, 'review')
+    s.enterWork(t.id)
+    assert.deepEqual(history(s, t.id), [
+      ['work', 'next', undefined], ['review', 'next', 'work'], ['work', 'reject', 'review'],
+      ['review', 'next', 'work'], ['work', 'restart', 'review']
+    ])
+    const first = s.getTask(t.id)!.stageHistory![0]
+    assert.equal(first.title, 'Работа')
+    assert.equal(first.by, 'app')
+  })
+
+  it('этап не сменился — записи нет; задачи-ответы и гейты без истории', () => {
+    const s = store()
+    const t = s.createTask({ title: 'Код' })
+    s.enterWork(t.id)
+    s.enterWork(t.id)
+    assert.equal(t.stageHistory?.length, 1)
+    const ans = s.createTask({ title: 'Q', answerFor: 'human' })
+    assert.equal(s.getTask(ans.id)!.stageHistory, undefined)
+  })
+
+  it(`хранится не больше ${STATUS_HISTORY_LIMIT} последних`, () => {
+    const s = store()
+    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    s.advanceStage(t.id, 'next')
+    for (let i = 0; i < STATUS_HISTORY_LIMIT; i += 1) {
+      s.advanceStage(t.id, 'next')
+      s.advanceStage(t.id, 'reject')
+    }
+    const h = s.getTask(t.id)!.stageHistory!
+    assert.equal(h.length, STATUS_HISTORY_LIMIT)
+    assert.equal(h.at(-1)!.outcome, 'reject')
+  })
+
+  it('миграция: история восстанавливается из событий stage_changed', () => {
+    const p = memory()
+    const s = store(p)
+    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'reviewer' }]))
+    const t = s.createTask({ title: 'Код', runId: run.id })
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'next')
+    s.advanceStage(t.id, 'reject')
+    const expected = s.getTask(t.id)!.stageHistory!.map((e) => ({ nodeId: e.nodeId, outcome: e.outcome, from: e.from, title: e.title }))
+    legacy(s, p)
+
+    const loaded = store(p)
+    const got = loaded.getTask(t.id)!.stageHistory!
+    assert.deepEqual(got.map((e) => ({ nodeId: e.nodeId, outcome: e.outcome, from: e.from, title: e.title })), expected)
+    assert.ok(got.every((e) => e.migrated === undefined))
+    assert.equal(p.data!.tasks!.find((x) => x.id === t.id)!.stageHistory!.length, 3, 'миграция сохранена сразу')
+    // Повторная загрузка ничего не дописывает.
+    assert.equal(store(p).getTask(t.id)!.stageHistory!.length, 3)
+  })
+
+  it('миграция: событий нет — одна запись migrated; без stage поля нет', () => {
+    const p = memory()
+    const s = store(p)
+    const t = s.createTask({ title: 'Код' })
+    s.moveTask(t.id, 'review')
+    const ans = s.createTask({ title: 'Q', answerFor: 'human' })
+    const idle = s.createTask({ title: 'Ещё не в графе' })
+    legacy(s, p)
+
+    const loaded = store(p)
+    const got = loaded.getTask(t.id)!
+    assert.equal(got.stageHistory!.length, 1)
+    assert.deepEqual([got.stageHistory![0].nodeId, got.stageHistory![0].migrated, got.stageHistory![0].at], ['review', true, got.updatedAt])
+    assert.equal(loaded.getTask(ans.id)!.stageHistory, undefined)
+    assert.equal(loaded.getTask(idle.id)!.stageHistory, undefined)
+  })
+
+  it('уже записанная история миграцией не трогается', () => {
+    const p = memory()
+    const s = store(p)
+    const t = s.createTask({ title: 'Код' })
+    s.enterWork(t.id)
+    p.save(s.snapshot())
+    assert.deepEqual(history(store(p), t.id), [['work', 'next', undefined]])
+  })
+})
+
 describe('исполнитель: переходы store', () => {
   const REVIEWER = ['developer', 'reviewer']
 
@@ -329,6 +429,36 @@ describe('исполнитель: переходы store', () => {
     assert.equal(s.getTask(t.id)!.stage!.visits.work, 2)
     const last = s.listEvents().filter((e) => e.type === 'stage_changed').at(-1)!
     assert.deepEqual([last.payload.from, last.payload.to, last.payload.outcome], ['review', 'work', 'restart'])
+  })
+
+  it('enterWork: этап «Вопрос человеку» не сбрасывается, taskWorkStage и taskStageNode отдают его', () => {
+    const s = store()
+    const wf: Workflow = {
+      version: WORKFLOW_VERSION,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'ask', type: 'ask', roleId: 'analyst', title: 'Уточнить', instructions: 'Спроси про БД', x: 0, y: 0 },
+        { id: 'work', type: 'work', x: 0, y: 0 },
+        { id: 'end', type: 'end', x: 0, y: 0 }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'ask' },
+        { id: 'e2', from: 'ask', outcome: 'next', to: 'work' },
+        { id: 'e3', from: 'work', outcome: 'next', to: 'end' }
+      ]
+    }
+    const run = s.createRun('цель', undefined, wf)
+    const t = s.createTask({ title: 'A', runId: run.id })
+    assert.equal(s.taskStageNode(t.id), undefined, 'без этапа ноды нет')
+    assert.deepEqual(s.enterWork(t.id), { type: 'start_worker', nodeId: 'ask', roleId: 'analyst' }, 'первый заход — сразу в ask')
+    assert.equal(s.enterWork(t.id), undefined, 'повторный старт агента (автоперезапуск) этап не сбрасывает')
+    assert.equal(s.getTask(t.id)!.stage!.nodeId, 'ask')
+    assert.deepEqual(s.getTask(t.id)!.stage!.visits, { start: 1, ask: 1 }, 'заходы не растут')
+    assert.equal(s.taskStageNode(t.id)?.type, 'ask')
+    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'ask', type: 'ask', title: 'Уточнить', instructions: 'Спроси про БД' })
+    assert.equal(s.listEvents().filter((e) => e.type === 'stage_changed' && e.payload.outcome === 'restart').length, 0)
+    s.advanceStage(t.id, 'next')
+    assert.equal(s.taskWorkStage(t.id)!.type, 'work')
   })
 
   it('enterWork: задачи-ответы и гейты — мимо', () => {
@@ -389,6 +519,65 @@ describe('исполнитель: переходы store', () => {
     s.blockStage(t.id, 'воркер не запустился')
     const e = s.listEvents().find((x) => x.type === 'workflow_blocked')!
     assert.deepEqual([e.taskId, e.payload.nodeId, e.payload.reason], [t.id, 'work', 'воркер не запустился'])
+  })
+})
+
+describe('показ человеку: finishDispatch и решение approval', () => {
+  /** Прогон с графом «Работа (показ) → человек → мерж». */
+  function showcaseRun(required: boolean) {
+    const s = store()
+    const wf = pipelineWorkflow([{ type: 'human', id: 'pick', title: 'Выбрать вариант' }])
+    Object.assign(wf.nodes.find((n) => n.id === 'work')!, { title: 'Дизайн', showcase: { what: 'варианты макета', ...(required ? { required } : {}) } })
+    const run = s.createRun('цель', undefined, wf)
+    const t = s.createTask({ title: 'A', runId: run.id })
+    s.enterWork(t.id)
+    return { s, t, d: s.startDispatch(t.id, 'pty') }
+  }
+
+  it('обязательный показ: done без него — ошибка с подсказкой, dispatch не закрыт', () => {
+    const { s, t, d } = showcaseRun(true)
+    assert.deepEqual(s.taskWorkStage(t.id), { nodeId: 'work', type: 'work', title: 'Дизайн', showcase: { what: 'варианты макета', required: true } })
+    assert.throws(() => s.finishDispatch(d.id, 'готово'), /этап «Дизайн» требует показ человеку: варианты макета[\s\S]*--show-file[\s\S]*--show/)
+    assert.equal(s.getDispatch(d.id)!.endedAt, undefined)
+    s.finishDispatch(d.id, 'готово', ['a.html'], undefined, { showcase: { text: '# Варианты', files: [' design\\a.html ', 'design/a.html', '', 'design/a.png'] } })
+    assert.deepEqual(s.getDispatch(d.id)!.showcase, { text: '# Варианты', files: ['design/a.html', 'design/a.png'] })
+  })
+
+  it('необязательный показ и задача вне воркфлоу: done без показа проходит, поля нет', () => {
+    const { s, d } = showcaseRun(false)
+    assert.equal(s.finishDispatch(d.id, 'готово').showcase, undefined)
+    const plain = store()
+    const t = plain.createTask({ title: 'B' })
+    const d2 = plain.startDispatch(t.id, 'pty')
+    assert.equal(plain.taskWorkStage(t.id), undefined)
+    assert.equal(plain.finishDispatch(d2.id, 'ok', [], undefined, { showcase: { text: '  ', files: [] } }).showcase, undefined)
+  })
+
+  it('файлы показа: абсолютный путь и выход из репозитория — ошибка', () => {
+    const { s, d } = showcaseRun(false)
+    assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['/etc/passwd'] } }), /не абсолютный/)
+    assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['C:\\x.png'] } }), /не абсолютный/)
+    assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['a/../../x.png'] } }), /выходить из репозитория/)
+  })
+
+  it('approval: текст решения — decision в request_resolved, длинный обрезан; без текста поля нет', () => {
+    const s = store()
+    const t = s.createTask({ title: 'A' })
+    const r1 = s.requestApproval(t.id, { nodeId: 'pick', title: 'A' })
+    s.resolveRequest(r1.id, { action: 'accept', text: '  вариант 2  ' })
+    let e = s.listEvents().filter((x) => x.type === 'request_resolved').at(-1)!
+    assert.equal(e.payload.decision, 'вариант 2')
+    assert.equal(Object.keys(e.payload).at(-1), 'decision', 'решение — последним полем')
+    const r2 = s.requestApproval(t.id, { nodeId: 'pick', title: 'A' })
+    s.resolveRequest(r2.id, { action: 'reject', text: 'x'.repeat(EVENT_ANSWER_LIMIT + 10) })
+    e = s.listEvents().filter((x) => x.type === 'request_resolved').at(-1)!
+    assert.equal((e.payload.decision as string).length, EVENT_ANSWER_LIMIT)
+    assert.equal(e.payload.decisionTruncated, true)
+    assert.equal(s.getRequest(r2.id)!.resolution!.text!.length, EVENT_ANSWER_LIMIT + 10, 'полный текст — в запросе')
+    const r3 = s.requestApproval(t.id, { nodeId: 'pick', title: 'A' })
+    s.resolveRequest(r3.id, { action: 'accept' })
+    e = s.listEvents().filter((x) => x.type === 'request_resolved').at(-1)!
+    assert.equal('decision' in e.payload, false)
   })
 })
 

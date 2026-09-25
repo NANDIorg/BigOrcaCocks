@@ -14,6 +14,19 @@ const api: OrcaApi = {
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
     testNotification: () => ipcRenderer.invoke('app:testNotification')
   },
+  onboarding: {
+    getState: () => ipcRenderer.invoke('onboarding:getState'),
+    complete: (input) => ipcRenderer.invoke('onboarding:complete', input)
+  },
+  updates: {
+    getState: () => ipcRenderer.invoke('updates:getState'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    download: () => ipcRenderer.invoke('updates:download'),
+    install: (opts) => ipcRenderer.invoke('updates:install', opts),
+    cancelPending: () => ipcRenderer.invoke('updates:cancelPending'),
+    getJustUpdated: () => ipcRenderer.invoke('updates:getJustUpdated'),
+    onChanged: (cb) => on('updates:changed', cb)
+  },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
@@ -52,6 +65,7 @@ const api: OrcaApi = {
     get: (id) => ipcRenderer.invoke('globalTasks:get', id),
     create: (input) => ipcRenderer.invoke('globalTasks:create', input),
     update: (id, patch) => ipcRenderer.invoke('globalTasks:update', id, patch),
+    changeType: (id, typeId) => ipcRenderer.invoke('globalTasks:changeType', id, typeId),
     move: (id, status) => ipcRenderer.invoke('globalTasks:move', id, status),
     remove: (id, opts) => ipcRenderer.invoke('globalTasks:remove', id, opts),
     tasks: (id) => ipcRenderer.invoke('globalTasks:tasks', id),
@@ -102,9 +116,19 @@ const api: OrcaApi = {
     open: (source, path) => ipcRenderer.invoke('docs:open', source, path),
     reveal: (source, path) => ipcRenderer.invoke('docs:reveal', source, path)
   },
+  showcase: {
+    read: (taskId, path) => ipcRenderer.invoke('showcase:read', taskId, path),
+    open: (taskId, path) => ipcRenderer.invoke('showcase:open', taskId, path),
+    reveal: (taskId, path) => ipcRenderer.invoke('showcase:reveal', taskId, path)
+  },
   rules: {
     list: () => ipcRenderer.invoke('rules:list'),
     save: (name, text) => ipcRenderer.invoke('rules:save', name, text)
+  },
+  stats: {
+    project: (projectId, range) => ipcRenderer.invoke('stats:project', projectId, range),
+    task: (projectId, taskId) => ipcRenderer.invoke('stats:task', projectId, taskId),
+    global: (projectId, runId) => ipcRenderer.invoke('stats:global', projectId, runId)
   },
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),

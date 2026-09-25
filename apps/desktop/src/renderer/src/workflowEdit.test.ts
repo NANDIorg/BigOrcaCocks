@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { defaultWorkflow, validateWorkflow, DEFAULT_ROLES, DEFAULT_COLUMNS } from '@orca-board/core'
-import { addNode, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId } from './workflowEdit'
+import { WF_ADDABLE_TYPES, addNode, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId } from './workflowEdit'
 
 const wf = defaultWorkflow([{ id: 'reviewer' }])
 
@@ -78,4 +78,15 @@ test('issueTargets: проблемы по нодам и рёбрам, ошибк
   assert.equal(issueTargets(undefined).nodes.size, 0)
   const mixed = issueTargets({ errors: [{ message: 'e', edgeId: 'x' }], warnings: [{ message: 'w', edgeId: 'x' }] })
   assert.deepEqual(mixed.edges.get('x'), { level: 'error', messages: ['e', 'w'] })
+})
+
+test('ask: есть в палитре после «Работы», добавляется с пустой инструкцией — валидация её подсвечивает', () => {
+  assert.equal(WF_ADDABLE_TYPES[WF_ADDABLE_TYPES.indexOf('work') + 1], 'ask')
+  const { workflow, nodeId } = addNode(wf, 'ask', 5, 6)
+  assert.equal(nodeId, 'ask')
+  assert.deepEqual(workflow.nodes.at(-1), { id: 'ask', x: 5, y: 6, type: 'ask', instructions: '' })
+  const errors = validateWorkflow(workflow, { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }).errors
+  assert.ok(errors.some((e) => e.nodeId === 'ask'), 'пустое «О чём спросить» — ошибка на ноде')
+  // Порт next ведёт дальше: ask можно вставить в граф.
+  assert.equal(connect(workflow, 'ask', 'next', 'work').workflow.edges.some((e) => e.from === 'ask' && e.to === 'work'), true)
 })

@@ -2,6 +2,7 @@
 
 Начни с [CLAUDE.md](CLAUDE.md): ограничения архитектуры, стиль и проверки.
 Полный командный процесс — [docs/git-flow.md](docs/git-flow.md).
+Выпуск по поручению «собери релиз» — [docs/releasing.md](docs/releasing.md).
 Устройство приложения — [docs/architecture.md](docs/architecture.md).
 
 1. Используй отдельный clone и собственную Git/GitHub-учётную запись. Node 24,

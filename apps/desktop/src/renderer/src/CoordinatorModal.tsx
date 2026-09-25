@@ -8,6 +8,8 @@ import {
   type ImageAttachmentInput
 } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
+import { useT } from './i18n'
+import { builtinText } from './defaultTitles'
 
 interface Props {
   onClose(): void
@@ -25,6 +27,7 @@ const MB = 1024 * 1024
 const { maxCount, maxBytes, maxTotalBytes } = IMAGE_ATTACHMENT_LIMITS
 
 export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element {
+  const t = useT()
   const [objective, setObjective] = useState('')
   const [images, setImages] = useState<Pasted[]>([])
   const [reading, setReading] = useState(0)
@@ -56,20 +59,20 @@ export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element
 
   const addImage = async (file: File): Promise<void> => {
     try {
-      if (!isImageAttachmentMime(file.type)) throw new Error(`формат ${file.type} не поддерживается (нужен PNG, JPEG, GIF или WebP)`)
-      if (file.size > maxBytes) throw new Error(`изображение больше ${maxBytes / MB} МБ`)
+      if (!isImageAttachmentMime(file.type)) throw new Error(t('shell.coordModal.errFormat', { type: file.type }))
+      if (file.size > maxBytes) throw new Error(t('shell.coordModal.errSize', { mb: maxBytes / MB }))
       const data = new Uint8Array(await file.arrayBuffer())
       const mime = sniffImageType(data)
-      if (!mime) throw new Error('не удалось распознать изображение')
+      if (!mime) throw new Error(t('shell.coordModal.errUnknown'))
       const current = imagesRef.current
-      if (current.length >= maxCount) throw new Error(`можно приложить не больше ${maxCount} изображений`)
+      if (current.length >= maxCount) throw new Error(t('shell.coordModal.errCount', { count: maxCount }))
       const total = current.reduce((s, img) => s + img.data.byteLength, 0) + data.byteLength
-      if (total > maxTotalBytes) throw new Error(`изображения вместе больше ${maxTotalBytes / MB} МБ`)
+      if (total > maxTotalBytes) throw new Error(t('shell.coordModal.errTotal', { mb: maxTotalBytes / MB }))
       const img: Pasted = { id: nextId.current++, mime, data, url: URL.createObjectURL(new Blob([data], { type: mime })) }
       imagesRef.current = [...current, img]
       setImages(imagesRef.current)
     } catch (err) {
-      setError(`Изображение не добавлено: ${ipcErrorMessage(err)}`)
+      setError(t('shell.coordModal.imageError', { error: ipcErrorMessage(err) }))
     }
   }
 
@@ -89,7 +92,7 @@ export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element
       await onStart(objective.trim(), images.map(({ mime, data }) => ({ mime, data })))
     } catch (err) {
       // Текст и вложения остаются в форме — можно исправить и запустить снова.
-      setError(`Не удалось запустить координатора: ${ipcErrorMessage(err)}`)
+      setError(t('shell.app.coordinatorError', { error: ipcErrorMessage(err) }))
     } finally {
       busyRef.current = false
       setBusy(false)
@@ -104,35 +107,31 @@ export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element
   return (
     <div className="modal-backdrop" onClick={close}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Запустить координатора</h3>
-        <p className="muted" style={{ margin: 0 }}>
-          Claude Code откроется в корне репозитория с инструкцией координатора. Он разобьёт цель на задачи,
-          запустит воркеров и будет ждать событий.
-        </p>
+        <h3>{t('shell.coordModal.title')}</h3>
+        <p className="muted" style={{ margin: 0 }}>{t('shell.coordModal.intro')}</p>
         <label>
-          Цель
+          {t('shell.coordModal.goal')}
           <textarea
             autoFocus
             value={objective}
             readOnly={busy}
             onChange={(e) => setObjective(e.target.value)}
             onPaste={onPaste}
-            placeholder="Например: добавить экспорт отчёта в PDF, покрыть тестами, обновить README"
+            placeholder={t('shell.coordModal.goalPlaceholder')}
           />
         </label>
         <span className="muted coord-hint">
-          Скриншот можно вставить в поле через {navigator.platform.startsWith('Mac') ? '⌘V' : 'Ctrl+V'} — координатор
-          получит его файлом. Без текста цель будет: «{DEFAULT_IMAGE_OBJECTIVE}»
+          {t('shell.coordModal.pasteHint', { keys: navigator.platform.startsWith('Mac') ? '⌘V' : 'Ctrl+V', goal: builtinText(DEFAULT_IMAGE_OBJECTIVE) })}
         </span>
         {(images.length > 0 || reading > 0) && (
           <div className="coord-images">
             {images.map((img, i) => (
               <div key={img.id} className="coord-image">
-                <img src={img.url} alt={`Изображение ${i + 1}`} />
+                <img src={img.url} alt={t('shell.coordModal.image', { n: i + 1 })} />
                 <button
                   className="coord-image-remove"
-                  title="Убрать изображение"
-                  aria-label={`Убрать изображение ${i + 1}`}
+                  title={t('shell.coordModal.removeImage')}
+                  aria-label={t('shell.coordModal.removeImageN', { n: i + 1 })}
                   disabled={busy}
                   onClick={() => removeImage(img.id)}
                 >
@@ -145,9 +144,9 @@ export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element
         )}
         {error && <span className="error-text">{error}</span>}
         <div className="row">
-          <button className="btn-text" onClick={close} disabled={busy}>Отмена</button>
+          <button className="btn-text" onClick={close} disabled={busy}>{t('shell.cancel')}</button>
           <button className="btn-primary" disabled={!canStart} onClick={() => void start()}>
-            {busy ? 'Запуск…' : 'Запустить'}
+            {busy ? t('shell.coordModal.starting') : t('shell.coordModal.start')}
           </button>
         </div>
       </div>

@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { AGENTS, AGENT_IDS, DEFAULT_ROLES, getAgent, parseCodexModelsCache, type AgentInfo, type AgentKind, type AgentSpec, type ModelOption, type Role } from '@orca-board/core'
+import { OrcaError, mtIn, type MText } from './i18n'
 
 /** Реестр как список общего типа: у элементов union'а опциональные поля вроде versionArgs недоступны. */
 const SPECS: readonly AgentSpec[] = AGENTS
@@ -200,14 +201,12 @@ export function agentInfos(enabledAgents: AgentKind[] | undefined, refresh = fal
  */
 export function assertAgentUsable(agents: AgentInfo[], id: string): asserts id is AgentKind {
   const spec = getAgent(id)
-  if (!spec) throw new Error(`неизвестный агент: ${id}. Известные: ${AGENT_IDS.join(', ')}`)
+  if (!spec) throw new OrcaError('agent.unknown', { id, known: AGENT_IDS.join(', ') })
   const info = agents.find((a) => a.id === id)
-  if (!info?.installed) throw new Error(`агент ${id} не установлен (нет бинарника ${spec.bin} в PATH)`)
+  if (!info?.installed) throw new OrcaError('agent.notInstalled', { id, bin: spec.bin })
   if (!info.enabled) {
     const enabled = agents.filter((a) => a.enabled).map((a) => a.id)
-    throw new Error(
-      `агент ${id} выключен в настройках проекта («О проекте»). Включены: ${enabled.length ? enabled.join(', ') : 'нет'}`
-    )
+    throw new OrcaError('agent.disabled', { id, enabled: enabled.length ? enabled.join(', ') : { key: 'common.none' } })
   }
 }
 
@@ -223,11 +222,21 @@ export interface RoleSource {
  * запуска воркера и координатора.
  */
 export function missingRoleMessage(roleId: string, type: RoleSource): string {
-  const ids = type.roles.map((r) => r.id).join(', ') || 'нет'
-  const hint = DEFAULT_ROLES.some((r) => r.id === roleId)
-    ? ` Это системная роль — её можно вернуть: «Настройки» → «Типы задач» → «${type.title}» → «Вернуть системные роли».`
-    : ' Роли типа меняются в «Настройки» → «Типы задач».'
-  return `роли «${roleId}» нет в типе задачи «${type.title}». Роли типа: ${ids} (orca-board roles list).${hint}`
+  const m = missingRoleText(roleId, type)
+  return mtIn('ru', m.key, m.params)
+}
+
+/** То же сообщение непереведённым — для `OrcaError`: в UI оно покажется на языке интерфейса. */
+export function missingRoleText(roleId: string, type: RoleSource): MText {
+  const ids = type.roles.map((r) => r.id).join(', ')
+  const system = DEFAULT_ROLES.some((r) => r.id === roleId)
+  return {
+    key: 'role.missing',
+    params: {
+      role: roleId, type: type.title, ids: ids || { key: 'common.none' },
+      hint: system ? { key: 'role.missing.systemHint', params: { type: type.title } } : { key: 'role.missing.hint' }
+    }
+  }
 }
 
 /**
@@ -239,7 +248,7 @@ export function pickRole(type: RoleSource, agents: AgentInfo[], requested: strin
   const ids = roles.map((r) => r.id).join(', ')
   if (requested !== undefined) {
     const role = roles.find((r) => r.id === requested)
-    if (!role) throw new Error(missingRoleMessage(requested, type))
+    if (!role) throw OrcaError.of(missingRoleText(requested, type))
     assertAgentUsable(agents, role.agent)
     return role
   }

@@ -24,6 +24,8 @@ let repo: string
 let store: TaskStore
 let roles: Role[]
 let started: string[]
+/** Роль каждого запуска (Dispatch.roleId) в порядке `started`. */
+let startedRoles: string[]
 let deps: WorkflowDeps
 
 beforeEach(() => {
@@ -36,15 +38,19 @@ beforeEach(() => {
   store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
   roles = DEFAULT_ROLES
   started = []
+  startedRoles = []
   deps = {
     store,
     repoRoot: repo,
     run: () => ({ roles }),
-    // Как runWorker: задача входит в воркфлоу / на этап «Работа», затем dispatch.
-    startWorker(taskId) {
-      enterWork(deps, taskId)
+    // Как runWorker: задача входит в воркфлоу / на этап «Работа», затем dispatch; роль этапа «Вопрос человеку»
+    // едет в запуск, а не в роль задачи.
+    startWorker(taskId, opts) {
+      const entered = enterWork(deps, taskId)
+      const roleId = opts?.roleId ?? entered.roleId ?? task(taskId).roleId
       started.push(taskId)
-      const d = store.startDispatch(taskId, `pty_${taskId}_${started.length}`)
+      startedRoles.push(roleId)
+      const d = store.startDispatch(taskId, `pty_${taskId}_${started.length}`, undefined, { roleId })
       return { ptyId: d.ptyId, dispatchId: d.id }
     }
   }
@@ -299,6 +305,83 @@ describe('свой граф прогона', () => {
   })
 })
 
+/** start → «Дизайн» (work с обязательным показом) → «Выбрать вариант» (human) → merge → end. */
+const design: Workflow = {
+  version: WORKFLOW_VERSION,
+  nodes: [
+    { id: 'start', type: 'start', x: 0, y: 0 },
+    { id: 'work', type: 'work', title: 'Дизайн', x: 0, y: 0, instructions: 'Сделай макеты', showcase: { what: '2 варианта макета', required: true } },
+    { id: 'pick', type: 'human', title: 'Выбрать вариант', x: 0, y: 0 },
+    { id: 'merge', type: 'merge', x: 0, y: 0 },
+    { id: 'end', type: 'end', merged: true, x: 0, y: 0 }
+  ],
+  edges: [
+    { id: 'e1', from: 'start', outcome: 'next', to: 'work' },
+    { id: 'e2', from: 'work', outcome: 'next', to: 'pick' },
+    { id: 'e3', from: 'pick', outcome: 'accept', to: 'merge' },
+    { id: 'e4', from: 'pick', outcome: 'reject', to: 'work' },
+    { id: 'e5', from: 'merge', outcome: 'ok', to: 'end' }
+  ]
+}
+
+describe('показ человеку: «Работа» с showcase → «человек»', () => {
+  /** `done` с показом, как `orca-board done --show-file … --show …`. */
+  function doneWithShowcase(taskId: string, showcase: { text?: string; files: string[] }): string {
+    const before = store.listEvents().length
+    const dispatchId = task(taskId).dispatchId!
+    store.finishDispatch(dispatchId, 'макеты готовы', [], undefined, { showcase })
+    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    return dispatchId
+  }
+
+  it('показ последнего done — в body approval и showcaseDispatchId; «Принять» с выбором — decision в событии, мерж', () => {
+    const run = store.createRun('цель', undefined, design)
+    const a = workTask('Лендинг', run.id)
+    assert.throws(() => store.finishDispatch(task(a.id).dispatchId!, 'без показа', []), /требует показ человеку/)
+    commit(a, 'a.html', '<p>A</p>\n')
+    const dispatchId = doneWithShowcase(a.id, { text: '## Варианты\n\nA — строгий, B — яркий', files: ['a.html', 'b.png'] })
+
+    const [request] = store.pendingRequests()
+    assert.equal(request.kind, 'approval')
+    assert.equal(request.nodeId, 'pick')
+    assert.equal(request.showcaseDispatchId, dispatchId)
+    const body = request.body ?? ''
+    assert.match(body, /## Показ/)
+    assert.match(body, /A — строгий, B — яркий/)
+    assert.match(body, /- `a\.html`\n- `b\.png`/)
+    assert.ok(body.indexOf('макеты готовы') < body.indexOf('## Показ'), 'итог воркера — перед показом')
+
+    resolve(request.id, 'accept', 'вариант B')
+    const resolved = events('request_resolved', a.id).at(-1)!
+    assert.equal(resolved.payload.decision, 'вариант B')
+    assert.equal(task(a.id).status, 'done')
+    assert.equal(existsSync(path.join(repo, 'a.html')), true, 'ветка слита')
+  })
+
+  it('«Вернуть» → новый done: в новом approval показ нового запуска', () => {
+    const run = store.createRun('цель', undefined, design)
+    const a = workTask('Лендинг', run.id)
+    doneWithShowcase(a.id, { files: ['v1.png'] })
+    const [first] = store.pendingRequests()
+    resolve(first.id, 'reject', 'ярче')
+    const second = doneWithShowcase(a.id, { files: ['v2.png'] })
+    const [request] = store.pendingRequests()
+    assert.notEqual(request.id, first.id)
+    assert.equal(request.showcaseDispatchId, second)
+    assert.match(request.body ?? '', /v2\.png/)
+    assert.doesNotMatch(request.body ?? '', /v1\.png/)
+  })
+
+  it('без показа (нода без showcase) — body как раньше, showcaseDispatchId нет', () => {
+    roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
+    const a = workTask('Логин')
+    done(a.id, 'логин готов')
+    const [request] = store.pendingRequests()
+    assert.equal(request.showcaseDispatchId, undefined)
+    assert.doesNotMatch(request.body ?? '', /## Показ/)
+  })
+})
+
 describe('мимо воркфлоу и возвраты', () => {
   it('задача-ответ: done не трогает воркфлоу, review accept — прежняя приёмка', () => {
     const t = store.createTask({ title: 'Разберись', answerFor: 'coordinator' })
@@ -326,6 +409,139 @@ describe('мимо воркфлоу и возвраты', () => {
   it('accept на этапе «Работа» — ошибка с названием этапа', () => {
     const a = workTask('Логин')
     assert.throws(() => reviewAccept(deps, a.id), /этапе «Работа»/)
+  })
+})
+
+/** start → «Уточнить» (ask, роль qa) → «Работа» → мерж → конец. */
+const askFirst: Workflow = {
+  version: WORKFLOW_VERSION,
+  nodes: [
+    { id: 'start', type: 'start', x: 0, y: 0 },
+    { id: 'ask', type: 'ask', roleId: 'qa', title: 'Уточнить', instructions: 'Спроси, какую БД брать', x: 0, y: 0 },
+    { id: 'work', type: 'work', x: 0, y: 0 },
+    { id: 'merge', type: 'merge', x: 0, y: 0 },
+    { id: 'end', type: 'end', merged: true, x: 0, y: 0 }
+  ],
+  edges: [
+    { id: 'e1', from: 'start', outcome: 'next', to: 'ask' },
+    { id: 'e2', from: 'ask', outcome: 'next', to: 'work' },
+    { id: 'e3', from: 'work', outcome: 'next', to: 'merge' },
+    { id: 'e4', from: 'merge', outcome: 'ok', to: 'end' }
+  ]
+}
+
+describe('этап «Вопрос человеку» (ask)', () => {
+  /** Вопрос воркера на ask при живом координаторе: адресат — человек (как `worker.ask` в socket.ts). */
+  const askHuman = (t: Task, question: string): string => {
+    const q = store.ask({ taskId: t.id, dispatchId: t.dispatchId, question, options: ['sqlite', 'postgres'] }, { coordinatorAlive: true, forceHuman: true })
+    return q.id
+  }
+  /** Ответ человека в Инбоксе + доставка событий исполнителю (как подписка в index.ts). */
+  const humanAnswers = (questionId: string, text: string): void => {
+    const before = store.listEvents().length
+    const request = store.pendingRequests().find((r) => r.questionId === questionId)!
+    store.resolveRequest(request.id, { action: 'answer', text })
+    handleWorkflowEvents(deps, store.listEvents().slice(before))
+  }
+
+  it('сквозной: ask первым этапом → вопрос в Инбоксе → ответ → done → «Работа»; роль ask на задачу не переносится', () => {
+    const run = store.createRun('цель', undefined, askFirst)
+    const a = workTask('Хранилище', run.id)
+    // Первый запуск вошёл в граф в ask, а не в work.
+    assert.equal(task(a.id).stage?.nodeId, 'ask')
+    assert.deepEqual(startedRoles, ['qa'], 'Dispatch.roleId — роль ноды')
+    assert.equal(store.getDispatch(task(a.id).dispatchId!)!.roleId, 'qa')
+    assert.equal(task(a.id).roleId, 'developer', 'роль задачи не изменилась')
+    assert.equal(task(a.id).status, 'in_progress')
+
+    const qid = askHuman(task(a.id), 'Какую БД?')
+    const request = store.pendingRequests().find((r) => r.questionId === qid)!
+    assert.equal(request.kind, 'question')
+    assert.equal(request.nodeId, 'ask')
+    assert.equal(store.getQuestion(qid)!.nodeId, 'ask')
+    assert.equal(task(a.id).status, 'needs_input')
+
+    humanAnswers(qid, 'sqlite')
+    assert.equal(store.getQuestion(qid)!.answer, 'sqlite')
+    assert.equal(started.length, 1, 'воркер жив и получит ответ через ask: перезапуска нет')
+    assert.equal(task(a.id).stage?.nodeId, 'ask')
+    assert.equal(task(a.id).status, 'in_progress', 'ответ вернул задачу в работу')
+
+    done(a.id, 'выяснил')
+    assert.equal(task(a.id).stage?.nodeId, 'work')
+    assert.equal(started.length, 2, 'next → «Работа» запущена')
+    assert.deepEqual(startedRoles, ['qa', 'developer'], 'следующая «Работа» без своей роли — роль задачи, не опросника')
+    assert.equal(task(a.id).roleId, 'developer')
+    assert.equal(events('workflow_blocked', a.id).length, 0)
+    commit(task(a.id), 'db.ts', 'export {}\n')
+    done(a.id)
+    assert.equal(task(a.id).status, 'done', 'дальше мерж и конец')
+    assert.equal(existsSync(path.join(repo, 'db.ts')), true)
+  })
+
+  it('агент мёртв к моменту ответа: воркер стартует сам, этап не сброшен, роль ноды, ответ в вопросах задачи', () => {
+    const run = store.createRun('цель', undefined, askFirst)
+    const a = workTask('Хранилище', run.id)
+    const qid = askHuman(task(a.id), 'Какую БД?')
+    store.ptyExited(task(a.id).dispatchId ? store.getDispatch(task(a.id).dispatchId!)!.ptyId : '', 1)
+    assert.equal(task(a.id).status, 'needs_input', 'открытый вопрос держит задачу в «Нужен ответ» вместо эскалации')
+
+    humanAnswers(qid, 'postgres')
+    assert.equal(started.length, 2, 'автоперезапуск после ответа')
+    assert.deepEqual(startedRoles, ['qa', 'qa'])
+    assert.equal(task(a.id).stage?.nodeId, 'ask')
+    assert.deepEqual(task(a.id).stage?.visits, { start: 1, ask: 1 }, 'этап не сброшен и не считается повтором')
+    assert.equal(task(a.id).roleId, 'developer')
+    assert.equal(task(a.id).status, 'in_progress')
+    // Ответ уйдёт в промпт нового запуска (startWorker собирает отвеченные вопросы задачи).
+    const answered = store.snapshot().questions.filter((q) => q.taskId === a.id && q.answeredAt)
+    assert.deepEqual(answered.map((q) => q.answer), ['postgres'])
+    assert.equal(events('workflow_blocked', a.id).length, 0)
+  })
+
+  it('ответ на вопрос обычного воркера на «Работе» ничего не перезапускает — координатор делает worker start', () => {
+    const a = workTask('Логин')
+    const q = store.ask({ taskId: a.id, dispatchId: task(a.id).dispatchId, question: '?' }, { coordinatorAlive: true })
+    store.ptyExited(store.getDispatch(task(a.id).dispatchId!)!.ptyId, 1)
+    const before = store.listEvents().length
+    store.answer(q.id, 'да')
+    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    assert.equal(started.length, 1, 'на «Работе» воркера после ответа стартует координатор, приложение — нет')
+  })
+
+  it('автоперезапуск не сработал — workflow_blocked с командой перезапуска, этап остаётся ask', () => {
+    const run = store.createRun('цель', undefined, askFirst)
+    const a = workTask('Хранилище', run.id)
+    const qid = askHuman(task(a.id), 'Какую БД?')
+    store.ptyExited(store.getDispatch(task(a.id).dispatchId!)!.ptyId, 1)
+    deps.startWorker = () => { throw new Error('агент роли выключен') }
+    humanAnswers(qid, 'sqlite')
+    const [blocked] = events('workflow_blocked', a.id)
+    assert.match(String(blocked.payload.reason), /агент роли выключен[\s\S]*worker start --task/)
+    assert.equal(task(a.id).stage?.nodeId, 'ask')
+  })
+
+  it('возврат из reject в ask: этап тот же, ответы прошлого захода остаются вопросами задачи', () => {
+    const wf: Workflow = {
+      ...askFirst,
+      nodes: [...askFirst.nodes, { id: 'pick', type: 'human', x: 0, y: 0 }],
+      edges: askFirst.edges.map((e) => (e.id === 'e3' ? { ...e, to: 'pick' } : e)).concat(
+        { id: 'e5', from: 'pick', outcome: 'accept', to: 'merge' },
+        { id: 'e6', from: 'pick', outcome: 'reject', to: 'ask' }
+      )
+    }
+    const run = store.createRun('цель', undefined, wf)
+    const a = workTask('Хранилище', run.id)
+    humanAnswers(askHuman(task(a.id), 'Какую БД?'), 'sqlite')
+    done(a.id)
+    done(a.id)
+    assert.equal(task(a.id).stage?.nodeId, 'pick')
+    const request = store.pendingRequests().find((r) => r.kind === 'approval')!
+    resolve(request.id, 'reject', 'спроси ещё про кеш')
+    assert.equal(task(a.id).stage?.nodeId, 'ask', 'reject → снова ask, воркер стартовал сразу')
+    assert.equal(startedRoles.at(-1), 'qa')
+    assert.equal(task(a.id).roleId, 'developer')
+    assert.equal(store.snapshot().questions.filter((q) => q.taskId === a.id && q.answeredAt).length, 1, 'старый ответ доступен для промпта')
   })
 })
 

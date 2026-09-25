@@ -2,9 +2,11 @@ import type React from 'react'
 import { useState } from 'react'
 import type { Role } from '@orca-board/core'
 import type { AppSettings } from '../../../shared/ipc'
-import { NOTIFY_KINDS, NOTIFY_KIND_TITLES, isTime, type NotificationSettings, type NotificationSettingsPatch } from '../../../shared/notifications'
+import { NOTIFY_KINDS, isTime, type NotificationSettings, type NotificationSettingsPatch } from '../../../shared/notifications'
 import { ipcErrorMessage } from '../useAutoSave'
 import { SectionHead, Switch } from '../about/parts'
+import { useT } from '../i18n'
+import { builtinText } from '../defaultTitles'
 
 /** Строка «подпись + пояснение + переключатель». */
 function SwitchRow({ title, hint, on, disabled, onChange }: {
@@ -35,6 +37,7 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
   error: string | null
   onChange(patch: NotificationSettingsPatch): void
 }): React.JSX.Element {
+  const t = useT()
   const [testError, setTestError] = useState<string | null>(null)
   const n: NotificationSettings | null = settings?.notifications ?? null
   const off = !n || !n.enabled
@@ -45,34 +48,34 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
 
   return (
     <>
-      <SectionHead title="Уведомления" hint="Системные уведомления о событиях, которые ждут человека. Действуют на все проекты.">
-        <button type="button" className="btn-sm" disabled={!n} onClick={sendTest}>Отправить тестовое уведомление</button>
+      <SectionHead title={t('settings.notify.title')} hint={t('settings.notify.hint')}>
+        <button type="button" className="btn-sm" disabled={!n} onClick={sendTest}>{t('settings.notify.test')}</button>
       </SectionHead>
       <div className="about-box notif-rows">
         <SwitchRow
-          title="Показывать уведомления"
-          hint="Общий выключатель: без него уведомлений нет совсем."
+          title={t('settings.notify.enabled')}
+          hint={t('settings.notify.enabledHint')}
           on={n?.enabled ?? true}
           disabled={!n}
           onChange={(on) => onChange({ enabled: on })}
         />
         <SwitchRow
-          title="Со звуком"
-          hint="Иначе уведомление приходит беззвучно."
+          title={t('settings.notify.sound')}
+          hint={t('settings.notify.soundHint')}
           on={n?.sound ?? true}
           disabled={off}
           onChange={(on) => onChange({ sound: on })}
         />
         <SwitchRow
-          title="Только когда окно не в фокусе"
-          hint="Не уведомлять, пока вы смотрите на приложение."
+          title={t('settings.notify.unfocused')}
+          hint={t('settings.notify.unfocusedHint')}
           on={n?.onlyWhenUnfocused ?? false}
           disabled={off}
           onChange={(on) => onChange({ onlyWhenUnfocused: on })}
         />
         <SwitchRow
-          title="Показывать текст"
-          hint="Название задачи и текст вопроса / итога. Выключено — только вид события и проект."
+          title={t('settings.notify.preview')}
+          hint={t('settings.notify.previewHint')}
           on={n?.showPreview ?? true}
           disabled={off}
           onChange={(on) => onChange({ showPreview: on })}
@@ -80,10 +83,10 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
       </div>
 
       <div className="about-box">
-        <h3>События</h3>
+        <h3>{t('settings.notify.events')}</h3>
         <div className="notif-checks">
           {NOTIFY_KINDS.map((k) => (
-            <label key={k} className="notif-check" title={NOTIFY_KIND_TITLES[k].hint}>
+            <label key={k} className="notif-check" title={t(`settings.notify.kind.${k}Hint`)}>
               <input
                 type="checkbox"
                 checked={n?.events[k] ?? false}
@@ -91,8 +94,8 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
                 onChange={(e) => onChange({ events: { [k]: e.target.checked } })}
               />
               <span>
-                {NOTIFY_KIND_TITLES[k].title}
-                <small>{NOTIFY_KIND_TITLES[k].hint}</small>
+                {t(`settings.notify.kind.${k}`)}
+                <small>{t(`settings.notify.kind.${k}Hint`)}</small>
               </span>
             </label>
           ))}
@@ -100,8 +103,8 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
       </div>
 
       <div className="about-box">
-        <h3>Роли</h3>
-        <p className="hint notif-hint">От задач каких ролей уведомлять. «Прогон завершён» — от координатора. Новые роли включены.</p>
+        <h3>{t('settings.notify.roles')}</h3>
+        <p className="hint notif-hint">{t('settings.notify.rolesHint')}</p>
         <div className="notif-checks">
           {roles.map((r) => (
             <label key={r.id} className="notif-check">
@@ -112,7 +115,7 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
                 onChange={(e) => onChange({ roles: { [r.id]: e.target.checked } })}
               />
               <span>
-                {r.title || r.id}
+                {r.title ? builtinText(r.title) : r.id}
                 <small>{r.id}</small>
               </span>
             </label>
@@ -122,21 +125,21 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
 
       <div className="about-box">
         <SwitchRow
-          title="Тихие часы"
-          hint="В этот интервал уведомления не показываются. Можно через полночь (22:00 — 08:00)."
+          title={t('settings.notify.quiet')}
+          hint={t('settings.notify.quietHint')}
           on={n?.quietHours.enabled ?? false}
           disabled={off}
           onChange={(on) => onChange({ quietHours: { enabled: on } })}
         />
         <div className="notif-quiet">
-          <span>с</span>
+          <span>{t('settings.notify.quietFrom')}</span>
           <input
             type="time"
             value={n?.quietHours.from ?? ''}
             disabled={off || !n?.quietHours.enabled}
             onChange={(e) => isTime(e.target.value) && onChange({ quietHours: { from: e.target.value } })}
           />
-          <span>до</span>
+          <span>{t('settings.notify.quietTo')}</span>
           <input
             type="time"
             value={n?.quietHours.to ?? ''}

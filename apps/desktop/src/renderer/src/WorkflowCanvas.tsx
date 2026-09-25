@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type React from 'react'
-import { WF_PORTS, wfNodeTitle, type WfNode, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
+import { WF_PORTS, type WfNode, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import {
   NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, panBy,
@@ -11,6 +11,9 @@ import {
   type WfSelection
 } from './workflowEdit'
 import { WF_TYPE_TITLES } from './workflowForm'
+import { WF_NODE_HELP } from './workflowHelp'
+import { useT, type TFunction } from './i18n'
+import { nodeTitle } from './defaultTitles'
 
 interface Props {
   workflow: Workflow
@@ -32,17 +35,18 @@ function clip(s: string, max: number): string {
 }
 
 /** Вторая строка ноды: что на этапе происходит. */
-function nodeSubtitle(node: WfNode): string {
+function nodeSubtitle(node: WfNode, t: TFunction): string {
   switch (node.type) {
-    case 'work': return node.roleId ? `роль ${node.roleId}` : 'роль задачи'
-    case 'gate': return node.roleId ? `роль ${node.roleId}` : 'роль не выбрана'
-    case 'human': return 'через Инбокс'
+    case 'work':
+    case 'ask': return node.roleId ? t('config.wf.sub.role', { role: node.roleId }) : t('config.wf.sub.taskRole')
+    case 'gate': return node.roleId ? t('config.wf.sub.role', { role: node.roleId }) : t('config.wf.sub.noRole')
+    case 'human': return t('config.wf.sub.inbox')
     case 'condition':
-      if (node.test.kind === 'attempts') return `заходов в ${node.test.node || '?'} ≥ ${node.test.atLeast}`
-      if (node.test.kind === 'role') return `роль: ${node.test.roleIds.join(', ') || '?'}`
-      return 'по файлам ветки'
-    case 'merge': return 'в основную ветку'
-    case 'end': return node.merged ? 'работа слита' : 'без мержа'
+      if (node.test.kind === 'attempts') return t('config.wf.sub.attempts', { node: node.test.node || '?', n: node.test.atLeast })
+      if (node.test.kind === 'role') return t('config.wf.sub.roles', { roles: node.test.roleIds.join(', ') || '?' })
+      return t('config.wf.sub.files')
+    case 'merge': return t('config.wf.sub.merge')
+    case 'end': return node.merged ? t('config.wf.sub.merged') : t('config.wf.sub.notMerged')
     default: return ''
   }
 }
@@ -55,6 +59,7 @@ function nodeSubtitle(node: WfNode): string {
  * элемент под курсором события не получает.
  */
 export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues }: Props): React.JSX.Element {
+  const t = useT()
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -194,7 +199,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
         viewBox={size.w ? viewBox(view, size.w, size.h) : undefined}
         tabIndex={0}
         role="application"
-        aria-label="Редактор воркфлоу: перетаскивайте ноды, тяните переходы от кружков-портов, Delete удаляет выделенное"
+        aria-label={t('config.wf.canvas.aria')}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -236,13 +241,13 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
             isTarget && (targetOk ? 'drop-ok' : 'drop-bad')
           ].filter(Boolean).join(' ')
           const NodeIcon = WfNodeIcon[node.type]
-          const sub = nodeSubtitle(node)
+          const sub = nodeSubtitle(node, t)
           return (
             <g key={node.id} className={cls} transform={`translate(${node.x} ${node.y})`}>
-              <title>{[`${wfNodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(issue?.messages ?? [])].join('\n')}</title>
+              <title>{[`${nodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(issue?.messages ?? [])].join('\n')}</title>
               <rect width={NODE_W} height={NODE_H} rx={10} className="wf-node-box" />
               <g className="wf-node-icon" transform={`translate(10 ${(NODE_H - 20) / 2})`}><NodeIcon /></g>
-              <text x={38} y={sub ? 26 : 35} className="wf-node-title">{clip(wfNodeTitle(node), 13)}</text>
+              <text x={38} y={sub ? 26 : 35} className="wf-node-title">{clip(nodeTitle(node), 13)}</text>
               {sub && <text x={38} y={43} className="wf-node-sub">{clip(sub, 19)}</text>}
               {node.type !== 'start' && <circle cx={0} cy={NODE_H / 2} r={4} className="wf-port-in" />}
               {WF_PORTS[node.type].map((outcome) => {
@@ -275,19 +280,27 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
         {WF_ADDABLE_TYPES.map((type) => {
           const NodeIcon = WfNodeIcon[type]
           return (
-            <button key={type} type="button" className="icon-btn" title={`Добавить: ${WF_TYPE_TITLES[type]}`} onClick={() => add(type)}>
+            <button
+              key={type}
+              type="button"
+              className="icon-btn"
+              title={`${t('config.wf.canvas.add', { type: WF_TYPE_TITLES[type] })}. ${WF_NODE_HELP[type].summary}`}
+              aria-label={t('config.wf.canvas.add', { type: WF_TYPE_TITLES[type] })}
+              aria-description={WF_NODE_HELP[type].summary}
+              onClick={() => add(type)}
+            >
               <NodeIcon />
             </button>
           )
         })}
         <span className="wf-toolbar-sep" />
-        <button type="button" className="icon-btn" title="Уменьшить" onClick={() => zoomCenter(1 / 1.2)}>−</button>
-        <button type="button" className="icon-btn" title="Увеличить" onClick={() => zoomCenter(1.2)}><Icon.plus /></button>
-        <button type="button" className="icon-btn" title="Вписать граф в окно" onClick={() => setView(fitView(workflow, size.w, size.h))}>⤢</button>
+        <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomOut')} onClick={() => zoomCenter(1 / 1.2)}>−</button>
+        <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomIn')} onClick={() => zoomCenter(1.2)}><Icon.plus /></button>
+        <button type="button" className="icon-btn" title={t('config.wf.canvas.fit')} onClick={() => setView(fitView(workflow, size.w, size.h))}>⤢</button>
         <button
           type="button"
           className="icon-btn"
-          title="Расставить ноды по слоям от старта"
+          title={t('config.wf.canvas.layout')}
           onClick={() => {
             const laid = autoLayout(workflow)
             onChange(laid)

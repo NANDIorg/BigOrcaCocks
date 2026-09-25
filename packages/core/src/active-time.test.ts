@@ -2,7 +2,7 @@
 // Время работы задачи: копится только в kind=in_progress (active-time.ts, TaskStore.setStatus).
 import { describe, it, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
+import { TaskStore, STORE_FORMAT_VERSION, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS, type Task } from './types.ts'
 import { activeDuration, taskActiveTime, trackActiveTime } from './active-time.ts'
 import { toGlobalTask, globalOwnDuration, globalSubtasksDuration, type GlobalTask } from './global-tasks.ts'
@@ -277,11 +277,21 @@ describe('миграция времени работы при загрузке',
   it('уже мигрированные данные не трогаются', (t) => {
     clock(t, 100 * MIN)
     const { store, saved } = load({
-      // priority у прогона — иначе его мигрирует migrateRunPriority.
-      runs: [{ id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', priority: 'normal', updatedAt: 0, activeMs: 7, activeSince: 0 }],
+      // formatVersion — иначе файл без него мигрирует и сохраняется (migrateFormatVersion).
+      formatVersion: STORE_FORMAT_VERSION,
+      // priority и startedAt у прогона — иначе его мигрируют migrateRunPriority и migrateRunStarted,
+      // statusHistory (и у задачи) — иначе migrateStatusHistory.
+      runs: [{
+        id: 'run_1', objective: 'цель', createdAt: 0, status: 'in_progress', priority: 'normal', updatedAt: 0, activeMs: 7, activeSince: 0, startedAt: 0,
+        statusHistory: [{ status: 'in_progress', at: 0, by: 'app' }]
+      }],
       // stage — задача в review уже на этапе воркфлоу, иначе её мигрирует migrateStages.
-      // priority — иначе задачу мигрирует migrateTaskPriority.
-      tasks: [oldTask('t', 'review', { startedAt: 0, activeMs: 42, priority: 'normal', stage: { nodeId: 'review', visits: { review: 1 } } })],
+      // priority — иначе задачу мигрирует migrateTaskPriority; stageHistory — иначе migrateStageHistory.
+      tasks: [oldTask('t', 'review', {
+        startedAt: 0, activeMs: 42, priority: 'normal', stage: { nodeId: 'review', visits: { review: 1 } },
+        stageHistory: [{ nodeId: 'review', at: 0, by: 'app', migrated: true }],
+        statusHistory: [{ status: 'review', at: 0, by: 'worker' }]
+      })],
       dispatches: [{ id: 'd1', taskId: 't', ptyId: 'p1', startedAt: 0, endedAt: 4 * MIN, outcome: 'done' }],
       requests: []
     })

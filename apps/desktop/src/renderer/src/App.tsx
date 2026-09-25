@@ -1,12 +1,16 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
+  DEFAULT_COLUMNS, STORE_FORMAT_VERSION, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
   type TaskPriority
 } from '@orca-board/core'
 import type { GlobalTaskPatch, Project, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
+import { attentionTaskIds, buildAttention } from './attention'
+import { revealInFeed } from './feedLink'
+import { wfNodeTitles } from './cardState'
+import { builtinText, displayColumns, displayRoles } from './defaultTitles'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
@@ -16,21 +20,30 @@ import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
 import { AboutProject } from './about/AboutProject'
 import { SettingsModal } from './settings/SettingsModal'
+import { UpdateBanner, UpdateToast } from './UpdateBanner'
+import { needsAttention } from './updateState'
+import { useUpdates } from './useUpdates'
+import { useT } from './i18n'
 import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
+import { changeTypeApi } from './globalTypeChange'
 import { ReturnGlobalModal } from './ReturnGlobalModal'
 import { ProjectTypeModal } from './ProjectTypeModal'
+import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
+import { loadOnboarding, shouldShowOnboarding } from './onboarding'
 import { startAddProject, type AddProjectStart } from './projectAdd'
 import { globalReviewApi, reviewErrorMessage } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
+import { StatsView } from './StatsView'
+import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
-import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun } from './taskTypes'
+import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
-type Tab = 'board' | 'terminals' | 'info'
+type Tab = 'board' | 'terminals' | 'stats' | 'info'
 
 interface OpenTerminal {
   ptyId: string
@@ -51,7 +64,7 @@ const toOpenTerminal = (t: TerminalInfo): OpenTerminal => ({
   runId: t.runId
 })
 
-const EMPTY: StoreSnapshot = { tasks: [], dispatches: [], events: [], questions: [], runs: [], requests: [] }
+const EMPTY: StoreSnapshot = { formatVersion: STORE_FORMAT_VERSION, tasks: [], dispatches: [], events: [], questions: [], runs: [], requests: [] }
 
 /** Что открыто у проекта: вкладка, выбранный терминал и открытая глобальная задача. У каждого проекта своё. */
 interface ProjectView {
@@ -61,7 +74,7 @@ interface ProjectView {
   globalId: string | null
 }
 
-const TABS: Tab[] = ['board', 'terminals', 'info']
+const TABS: Tab[] = ['board', 'terminals', 'stats', 'info']
 const tabKey = (projectId: string): string => `orca.tab.${projectId}`
 const globalKey = (projectId: string): string => `orca.global.${projectId}`
 
@@ -121,6 +134,7 @@ function storeTab(projectId: string, tab: Tab): void {
 }
 
 export function App(): React.JSX.Element {
+  const t = useT()
   const [snap, setSnap] = useState<StoreSnapshot>(EMPTY)
   const [projects, setProjects] = useState<Project[]>([])
   const [active, setActive] = useState<Project | null>(null)
@@ -142,8 +156,12 @@ export function App(): React.JSX.Element {
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
+  /** Мастер первого запуска: `first` — при старте (статус pending), `rerun` — «Пройти заново» из настроек. */
+  const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
   const [showDocs, setShowDocs] = useState(false)
+  /** Обновление приложения: плашка в сайдбаре, «Настройки → Обновления», тост после старта. */
+  const updates = useUpdates()
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -240,6 +258,10 @@ export function App(): React.JSX.Element {
   }
 
   useEffect(() => {
+    // Не показываем мастер при неизвестном состоянии (старый main/preload, сбой чтения) — см. `loadOnboarding`.
+    void loadOnboarding(window.orca).then((state) => {
+      if (shouldShowOnboarding(state)) setOnboarding((cur) => cur ?? 'first')
+    })
     window.orca.app.info().then((i) => setSocketPath(i.socketPath))
     void refreshProjects()
     const offBoard = window.orca.board.onChange(({ projectId, snapshot }) => {
@@ -320,18 +342,28 @@ export function App(): React.JSX.Element {
   const runningTaskIds = new Set(terminals.filter((t) => t.taskId && !exited.has(t.ptyId)).map((t) => t.taskId!))
 
   // ---------- глобальные задачи (docs/nested-kanban.md) ----------
-  const columns = active?.columns ?? DEFAULT_COLUMNS
+  // Для показа: встроенные названия колонок — на языке интерфейса (редактор колонок берёт их из проекта как есть).
+  const columns = displayColumns(active?.columns ?? DEFAULT_COLUMNS)
   const kindById = new Map(columns.map((c) => [c.id, c.kind]))
   // Глобальный канбан — Бэклог / В работе / Нужен ответ / Проверка / Сделано; локальный канбан подзадач — все колонки.
   // «Нужен ответ» вычисляется (подзадачи ждут человека), поэтому в создание и перенос она не попадает.
-  const globalColumns = globalBoardColumns(columns)
-  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.requests ?? [])
+  const globalColumns = displayColumns(globalBoardColumns(columns))
+  // «Входящие» — служебная задача с встроенным названием из core: показываем на языке интерфейса.
+  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.requests ?? []).map((g) => (g.inbox ? { ...g, title: builtinText(g.title) } : g))
   const globalKindById = new Map(globalColumns.map((c) => [c.id, c.kind]))
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
   const subtasks = openGlobal ? tasks.filter((t) => t.runId === openGlobal.id) : []
+  // Лента «Ждут вас» открытой глобальной задачи. Список один на ленту и на доску: фильтр «Ждут вас» и ссылки
+  // «в ленте ↑» на карточках берут те же задачи (`attentionTaskIds`), а не считают состояние заново.
+  const feedItems = openGlobal
+    ? buildAttention({
+        tasks: subtasks, requests: snap.requests ?? [], questions: snap.questions, dispatches: snap.dispatches,
+        runId: openGlobal.id, running: runningTaskIds, kindOf: (status) => kindById.get(status)
+      })
+    : []
   /** Роли задач прогона — по типу его глобальной задачи; нет прогона — тип проекта по умолчанию. */
-  const rolesFor = (runId: string | undefined): Role[] => rolesForRun(runId, snap.runs, active, taskTypes)
+  const rolesFor = (runId: string | undefined): Role[] => displayRoles(rolesForRun(runId, snap.runs, active, taskTypes))
   const openGlobalRoles = rolesFor(openGlobal?.id)
   /** Живой координатор глобальной задачи → его PTY (реестр терминалов, runId). */
   const coordinatorPtys = new Map<string, string>()
@@ -345,6 +377,8 @@ export function App(): React.JSX.Element {
     attention.set(t.runId, { review: (attention.get(t.runId)?.review ?? 0) + 1 })
   }
   const requests = snap.requests ?? []
+  /** Для «Статистики» задач: ключ перечитывания и запасной расчёт времени при старом main. */
+  const statsSnapshot: StatsSnapshot = { tasks, runs: snap.runs, dispatches: snap.dispatches, requests, questions: snap.questions, columns }
 
   // ---------- ассистент ----------
   /** Терминалы ассистента: по реестру (роль) плюс только что запущенный, которого там ещё нет. */
@@ -369,7 +403,7 @@ export function App(): React.JSX.Element {
       setLaunchedAssistant(ptyId)
       setAssistantState({ busy: false, error: null })
     } catch (e) {
-      setAssistantState({ busy: false, error: `Не удалось запустить ассистента: ${ipcErrorMessage(e)}` })
+      setAssistantState({ busy: false, error: t('shell.app.assistantError', { error: ipcErrorMessage(e) }) })
     }
   }
 
@@ -402,7 +436,7 @@ export function App(): React.JSX.Element {
   /** Решить запрос вне Инбокса (карточка, экран глобальной задачи, модалка задачи). Ошибка — на карточке. */
   async function resolveRequest(r: HumanRequest, resolution: RequestResolution): Promise<void> {
     const res = await window.orca.requests.resolve(r.id, resolution)
-    if (res.startError) alert(`«${r.title}»: решение принято, но воркер не запустился — ${res.startError}. Координатор получил эскалацию.`)
+    if (res.startError) alert(t('shell.app.startError', { title: r.title, error: res.startError }))
   }
   const returningGlobal = returnGlobalId ? globals.find((g) => g.id === returnGlobalId) : undefined
   const editingGlobal = globalModal?.mode === 'edit' ? globals.find((g) => g.id === globalModal.id) : undefined
@@ -427,14 +461,14 @@ export function App(): React.JSX.Element {
       return
     }
     const note = g.progress.total
-      ? `Координатор продолжит работу, учитывая ${g.progress.total} уже созданных подзадач.`
-      : 'Координатор разобьёт описание на подзадачи.'
-    if (!confirm(`Запустить координатора на «${g.title}»?\n\n${note}`)) return
+      ? t('shell.app.coordinatorContinue', { count: g.progress.total })
+      : t('shell.app.coordinatorSplit')
+    if (!confirm(t('shell.app.confirmCoordinator', { title: g.title, note }))) return
     try {
       const ptyId = await window.orca.globalTasks.startCoordinator(g.id, 120, 30)
       showTerminal(ptyId, projectId)
     } catch (e) {
-      alert(`Не удалось запустить координатора: ${ipcErrorMessage(e)}`)
+      alert(t('shell.app.coordinatorError', { error: ipcErrorMessage(e) }))
     }
   }
 
@@ -443,7 +477,7 @@ export function App(): React.JSX.Element {
     try {
       await globalReviewApi(window.orca).accept(g.id)
     } catch (e) {
-      alert(`Не удалось подтвердить: ${reviewErrorMessage(ipcErrorMessage(e))}`)
+      alert(t('shell.app.acceptError', { error: reviewErrorMessage(e) }))
     }
   }
 
@@ -459,37 +493,48 @@ export function App(): React.JSX.Element {
       setReturnGlobalId(null)
       showTerminal(ptyId, projectId)
     } catch (e) {
-      const message = reviewErrorMessage(ipcErrorMessage(e))
+      const message = reviewErrorMessage(e)
       // Задача могла уже уйти в работу, а упал запуск координатора: уточнение сохранено в ней, повторный
       // возврат не пройдёт — закрываем модалку, «Запустить координатора» подхватит уточнение.
       setReturnGlobalId(null)
-      alert(`Не удалось вернуть в работу: ${message}\n\nЕсли задача уже «В работе», запустите координатора кнопкой — уточнение сохранено.`)
+      alert(t('shell.app.returnError', { error: message }))
+    }
+  }
+
+  /** Перенос глобальной задачи в колонку: с общей доски (перетаскивание) и из степпера шапки. */
+  async function moveGlobalTask(id: string, status: string): Promise<void> {
+    try {
+      await window.orca.globalTasks.move(id, status)
+    } catch (e) {
+      alert(t('shell.app.moveError', { error: ipcErrorMessage(e) }))
     }
   }
 
   async function removeGlobalTask(g: GlobalTask): Promise<void> {
     const n = g.progress.total
     const text = n
-      ? `Удалить глобальную задачу «${g.title}» вместе с подзадачами (${n})?`
-      : `Удалить глобальную задачу «${g.title}»?`
+      ? t('shell.app.confirmRemoveCascade', { title: g.title, count: n })
+      : t('shell.app.confirmRemove', { title: g.title })
     if (!confirm(text)) return
     try {
       await window.orca.globalTasks.remove(g.id, { cascade: n > 0 })
       if (view.globalId === g.id) updateView(viewKey, { globalId: null })
     } catch (e) {
-      alert(`Не удалось удалить: ${ipcErrorMessage(e)}`)
+      alert(t('shell.app.removeError', { error: ipcErrorMessage(e) }))
     }
   }
 
   async function saveGlobalTask(input: { title: string; description: string; status?: string; priority?: TaskPriority; typeId?: string }): Promise<void> {
     if (globalModal?.mode === 'edit') {
       const cur = globals.find((g) => g.id === globalModal.id)
-      if (!cur) throw new Error('глобальная задача не найдена — возможно, её удалили')
+      if (!cur) throw new Error(t('shell.app.globalNotFound'))
       const patch: GlobalTaskPatch = {}
       if (input.title !== cur.title) patch.title = input.title
       if (input.description !== cur.description.trim()) patch.description = input.description
       if (input.priority !== undefined && input.priority !== cur.priority) patch.priority = input.priority
       if (Object.keys(patch).length > 0) await window.orca.globalTasks.update(cur.id, patch)
+      // Тип модалка присылает, только пока его можно сменить; неизменённый не трогаем.
+      if (input.typeId !== undefined && input.typeId !== cur.typeId) await changeTypeApi(window.orca)(cur.id, input.typeId)
     } else {
       await window.orca.globalTasks.create({
         title: input.title || undefined,
@@ -569,7 +614,7 @@ export function App(): React.JSX.Element {
 
   async function openShell(): Promise<void> {
     const projectId = active?.id
-    const label = 'терминал'
+    const label = t('shell.term.shellLabel')
     const ptyId = await window.orca.pty.spawn({ cols: 120, rows: 30, projectId, label })
     // terminals:changed мог прийти раньше ответа spawn — тогда запись уже есть.
     setTerminals((prev) => (prev.some((t) => t.ptyId === ptyId) ? prev : [...prev, { ptyId, label, projectId, role: 'shell' }]))
@@ -669,45 +714,47 @@ export function App(): React.JSX.Element {
   }
 
   /** Подпись терминала в списке: имя, роль и агент — по задаче из снимка или по роли координатора. */
-  function describeTerminal(t: OpenTerminal): { name: string; role: string; agent: string } {
-    const project = projects.find((p) => p.id === t.projectId)
+  function describeTerminal(term: OpenTerminal): { name: string; role: string; agent: string } {
+    const project = projects.find((p) => p.id === term.projectId)
     const isActive = project !== undefined && project.id === active?.id
     // Роли — по типу прогона терминала; прогоны есть только у активного проекта, у чужого — тип по умолчанию.
     const rolesOf = (runId: string | undefined): Role[] =>
-      isActive ? rolesFor(runId) : rolesForRun(undefined, [], project, taskTypes)
-    if (t.role === 'coordinator') {
-      const role = rolesOf(t.runId).find((r) => r.id === 'coordinator')
-      const global = t.projectId === active?.id && t.runId ? globals.find((g) => g.id === t.runId) : undefined
-      return { name: global?.title ?? 'координатор', role: role?.title ?? 'Координатор', agent: role?.agent ?? 'claude' }
+      isActive ? rolesFor(runId) : displayRoles(rolesForRun(undefined, [], project, taskTypes))
+    if (term.role === 'coordinator') {
+      const role = rolesOf(term.runId).find((r) => r.id === 'coordinator')
+      const global = term.projectId === active?.id && term.runId ? globals.find((g) => g.id === term.runId) : undefined
+      return { name: global?.title ?? t('shell.term.coordinatorName'), role: role?.title ?? t('shell.term.coordinatorRole'), agent: role?.agent ?? 'claude' }
     }
-    if (t.role === 'assistant') {
+    if (term.role === 'assistant') {
       // Ассистент приложения запущен с ролями типа библиотеки по умолчанию; у старого main — проекта.
-      const role = assistantRole(taskTypes && !t.projectId ? libraryDefaultRoles(taskTypes) : rolesOf(undefined))
-      return { name: 'ассистент', role: role?.title ?? 'Ассистент', agent: role?.agent ?? 'claude' }
+      const role = assistantRole(taskTypes && !term.projectId ? libraryDefaultRoles(taskTypes) : rolesOf(undefined))
+      return { name: t('shell.term.assistantName'), role: role?.title ?? t('shell.term.assistantRole'), agent: role?.agent ?? 'claude' }
     }
-    if (t.role === 'shell') return { name: t.label, role: 'оболочка', agent: 'shell' }
-    const task = t.projectId === active?.id ? tasks.find((x) => x.id === t.taskId) : undefined
+    if (term.role === 'shell') return { name: term.label, role: t('shell.term.shellRole'), agent: 'shell' }
+    const task = term.projectId === active?.id ? tasks.find((x) => x.id === term.taskId) : undefined
     const role = task && rolesFor(task.runId).find((r) => r.id === task.roleId)
-    return { name: task?.title ?? t.label, role: role?.title ?? task?.roleId ?? 'воркер', agent: task?.agent ?? 'shell' }
+    return { name: task?.title ?? term.label, role: role?.title ?? task?.roleId ?? t('shell.term.workerRole'), agent: task?.agent ?? 'shell' }
   }
 
   return (
     <div className={`app ${showProjects ? '' : 'no-sidebar'}`}>
       <aside className="rail">
-        <button className={`icon ${showProjects ? 'active' : ''}`} title="Проекты" onClick={toggleProjects}><Icon.folder /></button>
+        <button className={`icon ${showProjects ? 'active' : ''}`} title={t('shell.rail.projects')} onClick={toggleProjects}><Icon.folder /></button>
         <button
           className={`icon ${showSettings ? 'active' : ''}`}
-          title="Настройки"
+          title={!showProjects && needsAttention(updates.state) ? t('shell.update.railHint') : t('shell.rail.settings')}
           onClick={() => setShowSettings(true)}
         >
           <Icon.gear />
+          {/* Сайдбар скрыт — плашки обновления не видно, поэтому точка на шестерёнке. */}
+          {!showProjects && needsAttention(updates.state) && <span className="rail-dot" />}
         </button>
-        <button className={`icon ${showDocs ? 'active' : ''}`} title="Документы" onClick={() => setShowDocs(true)} disabled={!active}>
+        <button className={`icon ${showDocs ? 'active' : ''}`} title={t('shell.rail.docs')} onClick={() => setShowDocs(true)} disabled={!active}>
           <Icon.doc />
         </button>
         <button
           className={`icon ${showAssistant ? 'active' : ''}`}
-          title="Ассистент (⌘K)"
+          title={t('shell.rail.assistant')}
           onClick={() => {
             setShowAssistant((v) => !v)
             setShowInbox(false)
@@ -723,23 +770,24 @@ export function App(): React.JSX.Element {
       {showProjects && (
         <aside className="sidebar">
           <div className="head">
-            <h2>Проекты</h2>
-            <button className="icon-btn fill" title="Добавить репозиторий" onClick={addProject}><Icon.plus /></button>
+            <h2>{t('shell.projects.title')}</h2>
+            <button className="icon-btn fill" title={t('shell.projects.add')} onClick={addProject}><Icon.plus /></button>
           </div>
           <div className="list">
-            {projects.length === 0 && <div className="empty">Нажмите +, чтобы добавить git-репозиторий</div>}
+            {projects.length === 0 && <div className="empty">{t('shell.projects.empty')}</div>}
             {projects.map((p) => (
               <div key={p.id} className={`item ${p.id === active?.id ? 'active' : ''}`} onClick={() => switchProject(p)}>
                 <div className="name-row">
                   <div className="name">{p.name}</div>
                   {(inProgress[p.id] ?? 0) > 0 && (
-                    <span className="tab-badge" title={`Задач в работе: ${inProgress[p.id]}`}>{inProgress[p.id]}</span>
+                    <span className="tab-badge" title={t('shell.projects.inProgress', { count: inProgress[p.id] })}>{inProgress[p.id]}</span>
                   )}
                 </div>
                 <div className="sub" title={p.root}>{p.root.replace(/^\/Users\/[^/]+/, '~')}</div>
               </div>
             ))}
           </div>
+          <UpdateBanner updates={updates} />
         </aside>
       )}
 
@@ -754,25 +802,25 @@ export function App(): React.JSX.Element {
                 setShowAssistant(false)
               }}
               disabled={!active}
-              title="Запросы, которые ждут вашего ответа (⌘J)"
+              title={t('shell.head.inboxHint')}
             >
-              Входящие{inboxCount > 0 && <><span className="dot" /> {inboxCount}</>}
+              {t('shell.head.inbox')}{inboxCount > 0 && <><span className="dot" /> {inboxCount}</>}
             </button>
-            <button className="round-btn" title="Открыть новый терминал" onClick={openShell} disabled={!active}><Icon.terminal /></button>
+            <button className="round-btn" title={t('shell.head.newShell')} onClick={openShell} disabled={!active}><Icon.terminal /></button>
             {/* Создание через координатора доступно вне глобальной задачи; её координатор — в GlobalTaskView.
                 Контекст задачи сохраняется и при переходе к терминалам. */}
             {!openGlobal && (
-              <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active} title="Новая глобальная задача через координатора">
-                <Icon.users /> Координатор
+              <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active} title={t('shell.head.coordinatorHint')}>
+                <Icon.users /> {t('shell.head.coordinator')}
               </button>
             )}
             {openGlobal ? (
               <button className="btn-primary" onClick={() => setShowNew(true)} disabled={!active}>
-                <Icon.plus /> Новая подзадача
+                <Icon.plus /> {t('shell.head.newSubtask')}
               </button>
             ) : (
               <button className="btn-primary" onClick={() => setGlobalModal({ mode: 'create' })} disabled={!active}>
-                <Icon.plus /> Новая задача
+                <Icon.plus /> {t('shell.head.newTask')}
               </button>
             )}
           </div>
@@ -780,15 +828,16 @@ export function App(): React.JSX.Element {
             <button
               className={`tab ${tab === 'board' ? 'active' : ''}`}
               onClick={() => (tab === 'board' && openGlobal ? closeGlobalTask() : setTab('board'))}
-              title={tab === 'board' && openGlobal ? 'К общей доске' : undefined}
+              title={tab === 'board' && openGlobal ? t('shell.tab.boardBack') : undefined}
             >
-              Канбан
+              {t('shell.tab.board')}
             </button>
             <button className={`tab ${tab === 'terminals' ? 'active' : ''}`} onClick={() => setTab('terminals')}>
-              Терминалы
+              {t('shell.tab.terminals')}
               {projectTerminals.length > 0 && <span className="tab-badge">{projectTerminals.length}</span>}
             </button>
-            <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>О проекте</button>
+            <button className={`tab ${tab === 'stats' ? 'active' : ''}`} onClick={() => setTab('stats')}>{t('shell.tab.stats')}</button>
+            <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>{t('shell.tab.info')}</button>
           </div>
         </div>
 
@@ -805,13 +854,7 @@ export function App(): React.JSX.Element {
               onOpenInbox={openInboxAt}
               focusId={lastGlobal}
               onOpen={openGlobalTask}
-              onMove={async (id, status) => {
-                try {
-                  await window.orca.globalTasks.move(id, status)
-                } catch (e) {
-                  alert(`Не удалось переместить: ${ipcErrorMessage(e)}`)
-                }
-              }}
+              onMove={(id, status) => moveGlobalTask(id, status)}
               onEdit={(g) => setGlobalModal({ mode: 'edit', id: g.id })}
               onRemove={(g) => void removeGlobalTask(g)}
               onStartCoordinator={(g) => void startGlobalCoordinator(g)}
@@ -822,33 +865,47 @@ export function App(): React.JSX.Element {
           )}
           {tab === 'board' && openGlobal && (
             <GlobalTaskView
+              projectId={active?.id ?? ''}
+              statsSnapshot={statsSnapshot}
               global={openGlobal}
               statusKind={globalKindById.get(openGlobal.status)}
               coordinatorPty={coordinatorPtys.get(openGlobal.id)}
+              coordinatorSessions={snap.runs.find((r) => r.id === openGlobal.id)?.coordinatorSessions}
+              globalColumns={globalColumns}
               onBack={closeGlobalTask}
               onEdit={() => setGlobalModal({ mode: 'edit', id: openGlobal.id })}
+              onMove={(status) => void moveGlobalTask(openGlobal.id, status)}
+              onStopCoordinator={closeTerminal}
+              onRemove={() => void removeGlobalTask(openGlobal)}
               onStartCoordinator={() => void startGlobalCoordinator(openGlobal)}
               onShowCoordinator={(ptyId) => showTerminal(ptyId)}
               onAccept={() => void acceptGlobalTask(openGlobal)}
               onReturn={() => setReturnGlobalId(openGlobal.id)}
-              requests={requests}
+              attention={feedItems}
               tasks={subtasks}
               columns={columns}
               dispatches={snap.dispatches}
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
+              onAnswerQuestion={(qid, a) => window.orca.questions.answer(qid, a)}
+              onAcceptTask={(id) => window.orca.review.accept(id)}
+              onRejectTask={(id, fb) => window.orca.review.reject(id, fb)}
+              onStartTask={startTask}
               typeTitle={globalTypeTitle(openGlobal, taskTypes)}
             >
               <Board
                 columns={columns}
                 roles={openGlobalRoles}
+                stageTitles={wfNodeTitles(workflowForRun(openGlobal.id, snap.runs, active, taskTypes))}
                 tasks={subtasks}
-                emptyText="Нет подзадач"
+                emptyText={t('shell.noSubtasks')}
                 questions={snap.questions}
                 dispatches={snap.dispatches}
                 selectedId={selected?.id}
                 runningTaskIds={runningTaskIds}
+                waitingTaskIds={attentionTaskIds(feedItems)}
+                onRevealInFeed={revealInFeed}
                 onSelect={selectTask}
                 onOpenTask={(task) => setOpenTaskId(task.id)}
                 onMove={(id, status) => window.orca.tasks.move(id, status)}
@@ -860,7 +917,9 @@ export function App(): React.JSX.Element {
               />
             </GlobalTaskView>
           )}
-          {tab === 'info' && !active && <div className="empty">Нет активного проекта — добавьте git-репозиторий.</div>}
+          {tab === 'stats' && !active && <div className="empty">{t('shell.projects.none')}</div>}
+          {tab === 'stats' && active && <StatsView key={active.id} projectId={active.id} columns={columns} />}
+          {tab === 'info' && !active && <div className="empty">{t('shell.projects.none')}</div>}
           {tab === 'info' && active && (
             <AboutProject
               project={active}
@@ -877,19 +936,19 @@ export function App(): React.JSX.Element {
 
           <div className={`term-page ${tab === 'terminals' ? '' : 'hidden'}`}>
             <div className="term-list">
-              {projectTerminals.length === 0 && <div className="empty">Нет открытых терминалов</div>}
-              {projectTerminals.map((t) => {
-                const info = describeTerminal(t)
-                const alive = !exited.has(t.ptyId)
-                const project = projects.find((p) => p.id === t.projectId)
+              {projectTerminals.length === 0 && <div className="empty">{t('shell.term.none')}</div>}
+              {projectTerminals.map((term) => {
+                const info = describeTerminal(term)
+                const alive = !exited.has(term.ptyId)
+                const project = projects.find((p) => p.id === term.projectId)
                 return (
                   <div
-                    key={t.ptyId}
-                    className={`term-item ${t.ptyId === activePty ? 'active' : ''}`}
-                    onClick={() => setActivePty(t.ptyId)}
+                    key={term.ptyId}
+                    className={`term-item ${term.ptyId === activePty ? 'active' : ''}`}
+                    onClick={() => setActivePty(term.ptyId)}
                     title={[info.name, info.role, project?.name].filter(Boolean).join(' · ')}
                   >
-                    <span className={`dot ${alive ? 'alive' : 'dead'}`} title={alive ? 'работает' : 'завершился'} />
+                    <span className={`dot ${alive ? 'alive' : 'dead'}`} title={alive ? t('shell.term.alive') : t('shell.term.exited')} />
                     <AgentLogo agent={info.agent} size={16} />
                     <span className="who">
                       <span className="name">{info.name}</span>
@@ -897,10 +956,10 @@ export function App(): React.JSX.Element {
                     </span>
                     <button
                       className="x"
-                      title="Закрыть терминал"
+                      title={t('shell.term.close')}
                       onClick={(e) => {
                         e.stopPropagation()
-                        closeTerminal(t.ptyId)
+                        closeTerminal(term.ptyId)
                       }}
                     >
                       <Icon.close />
@@ -911,7 +970,7 @@ export function App(): React.JSX.Element {
             </div>
             <div className="term-body">
               {projectTerminals.length === 0 && (
-                <div className="empty">Терминалы появятся при запуске задачи или координатора. Кнопка сверху открывает обычную оболочку.</div>
+                <div className="empty">{t('shell.term.emptyHint')}</div>
               )}
               {terminals.map((t) => (
                 <div key={t.ptyId} className={`term ${t.ptyId === activePty ? '' : 'hidden'}`}>
@@ -930,6 +989,8 @@ export function App(): React.JSX.Element {
           requests={snap.requests ?? []}
           tasks={tasks}
           runs={snap.runs}
+          dispatches={snap.dispatches}
+          workflowOf={(runId) => workflowForRun(runId, snap.runs, active, taskTypes)}
           focus={inboxFocus}
           onClose={() => setShowInbox(false)}
           onOpenTerminal={openTerminalForTask}
@@ -953,8 +1014,14 @@ export function App(): React.JSX.Element {
       {showSettings && (
         <SettingsModal
           agents={agents}
+          updates={updates}
           onRefreshAgents={() => refreshAgents(true)}
           onProjectsChanged={refreshProjects}
+          onRunOnboarding={() => {
+            setShowSettings(false)
+            refreshTaskTypes()
+            setOnboarding('rerun')
+          }}
           onClose={() => {
             setShowSettings(false)
             refreshTaskTypes()
@@ -975,9 +1042,11 @@ export function App(): React.JSX.Element {
       )}
       {openTask && active && (
         <TaskModal
+          projectId={active.id}
+          statsSnapshot={statsSnapshot}
           task={openTask}
           tasks={tasks}
-          columns={active.columns ?? DEFAULT_COLUMNS}
+          columns={columns}
           roles={rolesFor(openTask.runId)}
           agents={agents}
           dispatches={snap.dispatches}
@@ -1007,6 +1076,16 @@ export function App(): React.JSX.Element {
             await window.orca.globalTasks.createTask(openGlobal.id, input)
             setShowNew(false)
           }}
+        />
+      )}
+      {/* До ProjectTypeModal: выбор типа проекта из шага «Первый проект» открывается поверх мастера. */}
+      {onboarding && (
+        <OnboardingModal
+          mode={onboarding}
+          projects={projects}
+          onAddProject={addProject}
+          suspended={!!addPick}
+          onClose={() => setOnboarding(null)}
         />
       )}
       {addPick && (
@@ -1047,6 +1126,7 @@ export function App(): React.JSX.Element {
           onSubmit={(text) => returnGlobalTask(returningGlobal.id, text)}
         />
       )}
+      <UpdateToast />
     </div>
   )
 }

@@ -3,12 +3,14 @@ import { useEffect, useState } from 'react'
 import type { AgentInfo, TaskType } from '@orca-board/core'
 import type { Project, ProjectTaskTypesInput, TaskTypesState } from '../../../shared/ipc'
 import { ipcErrorMessage } from '../useAutoSave'
+import { useT } from '../i18n'
 import { SectionHead, Switch, storeSection } from './parts'
 import {
-  SETTINGS_SECTION_KEY, TASK_TYPES_STALE_MESSAGE, allTypesInput, defaultTypeInput, hasProjectTaskTypes, isBuiltinLike, isTypeAvailable,
-  overridesBuiltinType, projectDefaultTypeId, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi, taskTypesError,
+  SETTINGS_SECTION_KEY, taskTypesStaleMessage, allTypesInput, defaultTypeInput, hasProjectTaskTypes, isTypeAvailable,
+  projectDefaultTypeId, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi, taskTypesError,
   settingsTypeSection, toggledProjectTypes
 } from '../taskTypeEdit'
+import { builtinText } from '../defaultTitles'
 
 interface Props {
   project: Project
@@ -24,9 +26,10 @@ interface Props {
  * Старый main/preload без типов — «перезапустите приложение».
  */
 export function TaskTypesSection({ project, agents, onProjectChanged }: Props): React.JSX.Element {
+  const t = useT()
   const supported = hasProjectTaskTypes(window.orca)
   const [state, setState] = useState<TaskTypesState | null>(null)
-  const [error, setError] = useState<string | null>(supported ? null : TASK_TYPES_STALE_MESSAGE)
+  const [error, setError] = useState<string | null>(supported ? null : taskTypesStaleMessage())
   const [busy, setBusy] = useState(false)
   /** Тип, выбранный для «Настроек» кнопкой «Изменить»: подсказка, где его искать. */
   const [shown, setShown] = useState<string | null>(null)
@@ -62,22 +65,22 @@ export function TaskTypesSection({ project, agents, onProjectChanged }: Props): 
   }
 
   /** Открыть тип в «Настройках»: окно открывается шестерёнкой, запомненный раздел покажет этот тип. */
-  function showInSettings(t: TaskType): void {
-    storeSection(SETTINGS_SECTION_KEY, settingsTypeSection(t.id))
-    setShown(t.id)
+  function showInSettings(type: TaskType): void {
+    storeSection(SETTINGS_SECTION_KEY, settingsTypeSection(type.id))
+    setShown(type.id)
   }
 
   const head = (
     <SectionHead
-      title="Типы задач"
-      hint="Тип выбирается у глобальной задачи и задаёт её роли, воркфлоу, правила доски и разрешения. Здесь — какие типы можно выбрать в этом проекте и какой берётся по умолчанию: для глобальных задач без типа и «Входящих»."
+      title={t('config.about.nav.types')}
+      hint={t('config.about.types.hint')}
     />
   )
   if (!state) {
     return (
       <>
         {head}
-        {error ? <div className="editor-error">{error}</div> : <div className="muted">Загрузка…</div>}
+        {error ? <div className="editor-error">{error}</div> : <div className="muted">{t('common.loading')}</div>}
       </>
     )
   }
@@ -91,64 +94,64 @@ export function TaskTypesSection({ project, agents, onProjectChanged }: Props): 
       <div className="about-box">
         <div className="row-act">
           <div className="row-act-text">
-            <b>Все типы библиотеки</b>
-            <span className="hint">Включая типы, созданные позже. Выключите, чтобы оставить в проекте только отмеченные.</span>
+            <b>{t('config.about.types.all')}</b>
+            <span className="hint">{t('config.about.types.allHint')}</span>
           </div>
           <Switch on={allOn} disabled={busy} onChange={(on) => void save(allTypesInput(project, state, on))} />
         </div>
       </div>
       {error && <div className="editor-error">{error}</div>}
 
-      <ul className="tt-list" aria-label="Типы задач проекта">
-        {state.taskTypes.map((t) => {
-          const on = isTypeAvailable(project, t.id)
-          const isDef = t.id === def
-          const s = resolveTypeSettings(t.settings)
+      <ul className="tt-list" aria-label={t('config.about.types.listAria')}>
+        {state.taskTypes.map((type) => {
+          const on = isTypeAvailable(project, type.id)
+          const isDef = type.id === def
+          const s = resolveTypeSettings(type.settings)
           const off = rolesWithAgentOff(s.roles, agents)
           return (
-            <li key={t.id} className={`tt-item${on ? '' : ' off'}`}>
+            <li key={type.id} className={`tt-item${on ? '' : ' off'}`}>
               <input
                 type="checkbox"
                 checked={on}
                 disabled={busy || (on && isDef)}
-                title={on && isDef ? 'Тип по умолчанию выключить нельзя' : on ? 'Выключить в проекте' : 'Включить в проекте'}
-                aria-label={`Доступен в проекте: ${t.title}`}
-                onChange={(e) => void save(toggledProjectTypes(project, state, t.id, e.target.checked))}
+                title={on && isDef ? t('config.about.types.defaultLocked') : on ? t('config.about.types.disable') : t('config.about.types.enable')}
+                aria-label={t('config.about.types.availableAria', { title: builtinText(type.title) })}
+                onChange={(e) => void save(toggledProjectTypes(project, state, type.id, e.target.checked))}
               />
               <div className="tt-text">
                 <div className="tt-title">
-                  <b>{t.title}</b>
-                  {t.builtin && <span className="chip sys">встроенный</span>}
-                  {overridesBuiltinType(t) && <span className="chip sys">изменённый встроенный</span>}
-                  {isDef && <span className="chip ok">по умолчанию</span>}
+                  <b>{builtinText(type.title)}</b>
+                  {isDef && <span className="chip ok">{t('config.about.types.default')}</span>}
                 </div>
-                {t.description && <span className="hint">{t.description}</span>}
+                {type.description && <span className="hint">{builtinText(type.description)}</span>}
                 <span className="tt-roles">
-                  Роли: {s.roles.map((r) => r.title).join(', ')} · воркфлоу {s.workflow ? 'свой' : 'дефолтный'}
+                  {t('config.about.types.roles', {
+                    roles: s.roles.map((r) => builtinText(r.title)).join(', '),
+                    workflow: s.workflow ? t('config.about.types.wfOwn') : t('config.about.types.wfDefault')
+                  })}
                 </span>
                 {on && off.length > 0 && (
                   <span className="tt-warn">
-                    Агент выключен в проекте у ролей: {off.map((r) => r.title).join(', ')} — они здесь не запустятся.
-                    Включите агента в разделе «Агенты» или смените исполнителя в типе.
+                    {t('config.about.types.agentOff', { roles: off.map((r) => r.title).join(', ') })}
                   </span>
                 )}
-                {shown === t.id && (
-                  <span className="hint">Откройте «Настройки» (шестерёнка в левой панели) — там будет выбран этот тип.</span>
+                {shown === type.id && (
+                  <span className="hint">{t('config.about.types.shown')}</span>
                 )}
               </div>
               <div className="tt-actions">
                 {!isDef && (
-                  <button type="button" className="btn-sm" disabled={busy} onClick={() => void save(defaultTypeInput(project, t.id))}>
-                    По умолчанию
+                  <button type="button" className="btn-sm" disabled={busy} onClick={() => void save(defaultTypeInput(project, type.id))}>
+                    {t('config.about.types.makeDefault')}
                   </button>
                 )}
                 <button
                   type="button"
                   className="btn-sm"
-                  title={isBuiltinLike(t) ? 'Исполнители, инструкции ролей и правила доски — на месте, остальное — в копии' : 'Роли, воркфлоу, разрешения и правила доски'}
-                  onClick={() => showInSettings(t)}
+                  title={t('config.about.types.editTitle')}
+                  onClick={() => showInSettings(type)}
                 >
-                  Изменить в Настройках
+                  {t('config.about.types.edit')}
                 </button>
               </div>
             </li>
@@ -156,8 +159,7 @@ export function TaskTypesSection({ project, agents, onProjectChanged }: Props): 
         })}
       </ul>
       <p className="hint">
-        Тип общий для всех проектов: правка в «Настройках» действует везде, где он доступен. Уже созданная глобальная задача
-        идёт по графу, снятому при её создании.
+        {t('config.about.types.footer')}
       </p>
     </>
   )

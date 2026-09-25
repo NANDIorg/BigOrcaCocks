@@ -100,9 +100,16 @@ pnpm dev
 
 - **`pnpm --filter @orca-board/desktop run pack`** → `apps/desktop/release/mac-arm64/orca-board.app`
   (ad-hoc подпись, только macOS arm64).
-- **`pnpm --filter @orca-board/desktop run dist:mac`** (или `dist`) → dmg arm64 и x64.
-- **`pnpm --filter @orca-board/desktop run dist:win`** → установщик NSIS и portable exe (x64),
-  в `apps/desktop/release/`. Собирается и с macOS.
+- **`pnpm --filter @orca-board/desktop run dist:mac`** (или `dist`) → dmg и zip arm64 и x64
+  плюс `latest-mac.yml` и blockmap (zip и yml нужны автообновлению). Ничего не публикует.
+- **`pnpm --filter @orca-board/desktop run dist:win`** → установщик NSIS и portable exe (x64)
+  плюс `latest.yml` и blockmap, в `apps/desktop/release/`. Собирается и с macOS. Ничего не публикует.
+- **Релиз через CI:** поручение агенту «собери релиз X.Y.Z» запускает процесс из
+  [docs/releasing.md](docs/releasing.md): PR, тег на master, описание, macOS/Windows-сборки,
+  файлы автообновления и контрольные суммы в черновике GitHub Release. «Собери и опубликуй»
+  разрешает также публикацию после проверок. Ревью второго разработчика обязательно.
+- **`dist:publish`** — технический локальный скрипт сборки и загрузки в черновик,
+  требует `GH_TOKEN`. Для обычного выпуска используй описанный выше CI-процесс.
 - **CLI `orca-board`** кладётся в ресурсы приложения (`Resources/cli`, см. `docs/architecture.md`),
   отдельно ставить его не нужно.
 

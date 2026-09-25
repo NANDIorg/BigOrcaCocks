@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { mt } from './i18n'
 
 // git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
 // сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
@@ -35,7 +36,7 @@ export function reviewInfo(repoRoot: string, worktree: string, branch: string): 
   if (dirty) {
     const wtStat = git(worktree, ['diff', '--stat'])
     const untracked = git(worktree, ['ls-files', '--others', '--exclude-standard'])
-    stat = [stat, wtStat, untracked ? `новые файлы:\n${untracked}` : ''].filter(Boolean).join('\n')
+    stat = [stat, wtStat, untracked ? `${mt('review.untracked')}\n${untracked}` : ''].filter(Boolean).join('\n')
   }
   return { base, branch, stat, commits, dirty }
 }

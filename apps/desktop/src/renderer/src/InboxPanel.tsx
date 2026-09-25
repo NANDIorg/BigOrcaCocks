@@ -1,10 +1,14 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { globalTaskTitle, type HumanRequest, type RequestResolution, type Run, type Task } from '@orca-board/core'
-import { RequestCard, REQUEST_KIND_TITLE, type RequestCardHandle } from './RequestCard'
+import { globalTaskTitle, type Dispatch, type HumanRequest, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
+import { RequestCard, requestKindTitle, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
+import { requestShowcase } from './showcase'
+import { requestStageLabel, wfNodeTitles } from './cardState'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
+import { useT } from './i18n'
+import { builtinText } from './defaultTitles'
 
 interface Props {
   open: boolean
@@ -12,6 +16,10 @@ interface Props {
   requests: HumanRequest[]
   tasks: Task[]
   runs: Run[]
+  /** Запуски воркеров: показ человеку у approval (`showcaseDispatchId`). */
+  dispatches: Dispatch[]
+  /** Граф воркфлоу прогона (`workflowForRun`) — для метки этапа у вопросов с этапа «Вопрос человеку»; нет — метки нет. */
+  workflowOf?(runId: string): Workflow | undefined
   /** Открыть на этом запросе (клик по уведомлению); nonce — чтобы повторный клик по тому же сработал. */
   focus: { requestId: string; nonce: number } | null
   onClose(): void
@@ -34,7 +42,8 @@ function typingTarget(t: EventTarget | null): boolean {
  * возвращает карточку с текстом ошибки. Панель остаётся смонтированной и когда закрыта — черновики
  * ответов в карточках не теряются. Клавиши: j/k, 1–9, A, C, R, Enter — в поле, Esc.
  */
-export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
+export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
+  const t = useT()
   const pending = pendingRequests(requests)
   /** Отправленные, но ещё не подтверждённые снимком: карточка скрыта, но смонтирована (черновик, откат). */
   const [sent, setSent] = useState<Set<string>>(() => new Set())
@@ -46,13 +55,16 @@ export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpen
   const nodes = useRef(new Map<string, HTMLDivElement>())
   const panelRef = useRef<HTMLElement>(null)
 
-  const taskById = new Map(tasks.map((t) => [t.id, t]))
+  const taskById = new Map(tasks.map((task) => [task.id, task]))
   const runById = new Map(runs.map((r) => [r.id, r]))
   const where = (r: HumanRequest): string => {
     const run = runById.get(r.runId)
     const task = taskById.get(r.taskId)
-    return [run ? globalTaskTitle(run) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
+    return [run ? builtinText(globalTaskTitle(run)) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
   }
+
+  const stageOf = (r: HumanRequest): string | undefined =>
+    r.nodeId && r.kind === 'question' ? requestStageLabel(r, wfNodeTitles(workflowOf?.(r.runId))) : undefined
 
   // Выбранная карточка пропала (решена, отменена) — выбор на первую видимую.
   const current = visible.find((r) => r.id === activeId) ?? visible[0]
@@ -113,7 +125,7 @@ export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpen
     if (current?.id === r.id) select(next?.id)
     try {
       const res = await window.orca.requests.resolve(r.id, resolution)
-      if (res.startError) setNotice(`«${r.title}»: решение принято, но воркер не запустился — ${res.startError}. Координатор получил эскалацию.`)
+      if (res.startError) setNotice(t('shell.app.startError', { title: r.title, error: res.startError }))
     } catch (e) {
       setSent((prev) => {
         const nextSet = new Set(prev)
@@ -170,22 +182,22 @@ export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpen
   return (
     <>
       {open && <div className="inbox-scrim" onClick={onClose} />}
-      <aside ref={panelRef} tabIndex={-1} className={`inbox ${open ? 'open' : ''}`} aria-label="Входящие" inert={!open}>
+      <aside ref={panelRef} tabIndex={-1} className={`inbox ${open ? 'open' : ''}`} aria-label={t('shell.inbox.title')} inert={!open}>
         <div className="inbox-head">
-          <h3>Входящие{visible.length > 0 && <span className="inbox-count">{visible.length}</span>}</h3>
-          <kbd className="rq-kbd" title="Открыть / закрыть">⌘J</kbd>
-          <button className="icon-btn task-modal-close" title="Закрыть (Esc)" aria-label="Закрыть" onClick={onClose}>
+          <h3>{t('shell.inbox.title')}{visible.length > 0 && <span className="inbox-count">{visible.length}</span>}</h3>
+          <kbd className="rq-kbd" title={t('shell.toggle')}>⌘J</kbd>
+          <button className="icon-btn task-modal-close" title={t('shell.closeEsc')} aria-label={t('common.close')} onClick={onClose}>
             <Icon.close />
           </button>
         </div>
         {notice && (
           <div className="inbox-notice">
             <span className="error-text">{notice}</span>
-            <button className="btn-text" onClick={() => setNotice(null)}>Ок</button>
+            <button className="btn-text" onClick={() => setNotice(null)}>{t('shell.inbox.ok')}</button>
           </div>
         )}
         <div className="inbox-list">
-          {visible.length === 0 && <div className="empty">Ничего не ждёт вашего ответа</div>}
+          {visible.length === 0 && <div className="empty">{t('shell.inbox.empty')}</div>}
           {pending.map((r) => (
             <div
               key={r.id}
@@ -202,7 +214,9 @@ export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpen
                   else cards.current.delete(r.id)
                 }}
                 request={r}
+                showcase={requestShowcase(r, dispatches)}
                 where={where(r)}
+                stage={stageOf(r)}
                 active={open && current?.id === r.id}
                 onSelect={() => setActiveId(r.id)}
                 onResolve={(res) => resolve(r, res)}
@@ -217,8 +231,8 @@ export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpen
           ))}
         </div>
         <div className="inbox-foot muted">
-          <kbd className="rq-kbd">j</kbd>/<kbd className="rq-kbd">k</kbd> выбор · <kbd className="rq-kbd">1–9</kbd> вариант ·{' '}
-          <kbd className="rq-kbd">↵</kbd> в поле · <kbd className="rq-kbd">Esc</kbd> закрыть
+          <kbd className="rq-kbd">j</kbd>/<kbd className="rq-kbd">k</kbd> {t('shell.inbox.footSelect')} · <kbd className="rq-kbd">1–9</kbd> {t('shell.inbox.footOption')} ·{' '}
+          <kbd className="rq-kbd">↵</kbd> {t('shell.inbox.footInput')} · <kbd className="rq-kbd">Esc</kbd> {t('shell.inbox.footClose')}
         </div>
       </aside>
 
@@ -227,10 +241,10 @@ export function InboxPanel({ open, requests, tasks, runs, focus, onClose, onOpen
           <div className="modal inbox-full" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={full.title}>
             <div className="task-modal-head">
               <div className="inbox-full-title">
-                <div className="rq-kind">{REQUEST_KIND_TITLE[full.kind]} · {where(full)}</div>
+                <div className="rq-kind">{requestKindTitle(full.kind)} · {where(full)}</div>
                 <h3 title={full.title}>{full.title}</h3>
               </div>
-              <button className="icon-btn task-modal-close" title="Закрыть (Esc)" aria-label="Закрыть" onClick={() => { setFull(null); focusCard(current?.id) }}>
+              <button className="icon-btn task-modal-close" title={t('shell.closeEsc')} aria-label={t('common.close')} onClick={() => { setFull(null); focusCard(current?.id) }}>
                 <Icon.close />
               </button>
             </div>

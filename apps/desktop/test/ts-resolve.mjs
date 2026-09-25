@@ -1,6 +1,6 @@
 // Хук для `node --test` (type stripping Node ≥ 22.6): исходники main и core импортируют
 // относительные модули без расширения (так требует bundler-резолв electron-vite), node ищет файл
-// буквально — пробуем ещё `.ts`.
+// буквально — пробуем ещё `.ts`, а для папки (`./i18n`) — её `index.ts`.
 import { registerHooks } from 'node:module'
 
 registerHooks({
@@ -8,8 +8,13 @@ registerHooks({
     try {
       return next(specifier, context)
     } catch (e) {
-      if (e?.code !== 'ERR_MODULE_NOT_FOUND' || !specifier.startsWith('.') || specifier.endsWith('.ts')) throw e
-      return next(`${specifier}.ts`, context)
+      if (e?.code !== 'ERR_MODULE_NOT_FOUND' && e?.code !== 'ERR_UNSUPPORTED_DIR_IMPORT') throw e
+      if (!specifier.startsWith('.') || specifier.endsWith('.ts')) throw e
+      try {
+        return next(`${specifier}.ts`, context)
+      } catch {
+        return next(`${specifier}/index.ts`, context)
+      }
     }
   }
 })

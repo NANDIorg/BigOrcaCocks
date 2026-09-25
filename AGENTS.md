@@ -5,6 +5,9 @@
 1. [CLAUDE.md](CLAUDE.md) — обязательные инженерные правила.
 2. [docs/git-flow.md](docs/git-flow.md) — ветки, PR, релизы и работа вдвоём.
 
+Для поручений «собери релиз» / «опубликуй релиз» дополнительно прочитай целиком
+[docs/releasing.md](docs/releasing.md): версия, описание, PR, тег, сборки и файлы выпуска.
+
 Краткий вход для разработчика — [CONTRIBUTING.md](CONTRIBUTING.md).
 Не работай напрямую в `master` / `develop`. Обычная задача — отдельный worktree
 и `feature/*` от `origin/develop`; уже назначенный worktree не заменяй новым.

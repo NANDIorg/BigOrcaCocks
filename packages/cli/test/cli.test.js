@@ -82,6 +82,28 @@ describe('orca-board CLI', () => {
     assert.equal(missing.code, 1)
   })
 
+  it('done --show-file / --show: описание из файла и пути файлов — одним showcase; без значения — ошибка без запроса', async () => {
+    const file = join(dir, 'showcase.md')
+    writeFileSync(file, '## Варианты\n\n- A, B\n')
+    const { req } = await run(
+      ['done', '--summary', 's', '--show-file', file, '--show', 'design/a.html', '--show', 'design/a,b.png'],
+      { ORCA_DISPATCH_ID: 'disp_1' }
+    )
+    assert.deepEqual(req.params.showcase, { text: '## Варианты\n\n- A, B\n', files: ['design/a.html', 'design/a,b.png'] })
+    assert.equal('show' in req.params, false)
+    assert.equal('show-file' in req.params, false)
+    const onlyFiles = await run(['done', '--summary', 's', '--show', 'shot.png'], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.deepEqual(onlyFiles.req.params.showcase, { files: ['shot.png'] })
+    const plain = await run(['done', '--summary', 's'], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal('showcase' in plain.req.params, false)
+    const missing = await run(['done', '--summary', 's', '--show-file', join(dir, 'nope.md')], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal(missing.req, null)
+    assert.equal(missing.code, 1)
+    const empty = await run(['done', '--summary', 's', '--show'], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal(empty.req, null)
+    assert.equal(empty.code, 1)
+  })
+
   it('task create --answer-for и question forward уходят как есть', async () => {
     const created = await run(['task', 'create', '--title', 't', '--role', 'qa', '--answer-for', 'human'])
     assert.equal(created.req.params['answer-for'], 'human')

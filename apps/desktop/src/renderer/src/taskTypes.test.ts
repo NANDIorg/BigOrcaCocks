@@ -1,17 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_ROLES, builtinTaskType, type Role, type TaskType } from '@orca-board/core'
+import { DEFAULT_ROLES, presetTaskType, type Role, type TaskType } from '@orca-board/core'
 import type { TaskTypesState } from '../../shared/ipc'
 import {
   availableTypes, globalTypeTitle, isStaleTaskTypesError, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId,
-  rolesForRun, rolesWithDisabledAgent, taskTypesApi
+  rolesForRun, rolesWithDisabledAgent, taskTypesApi, workflowForRun
 } from './taskTypes'
 
 const role = (id: string, agent: Role['agent'] = 'claude'): Role => ({ id, title: id, agent })
 const type = (id: string, roles: Role[]): TaskType => ({ id, title: `Тип ${id}`, settings: { roles } })
 const DOCS = type('docs', [role('coordinator'), role('writer', 'codex')])
 const BACK = type('back', [role('coordinator'), role('developer'), role('qa')])
-const STATE: TaskTypesState = { taskTypes: [builtinTaskType('general')!, DOCS, BACK], defaultTaskTypeId: 'back' }
+const STATE: TaskTypesState = { taskTypes: [presetTaskType('general')!, DOCS, BACK], defaultTaskTypeId: 'back' }
 const ids = (roles: Role[]): string[] => roles.map((r) => r.id)
 
 test('taskTypesApi / loadTaskTypes — старый preload или старый main: null, прочие ошибки пробрасываются', async () => {
@@ -68,7 +68,7 @@ test('rolesForRun — старый main без типов: встроенные 
 
 test('libraryDefaultRoles — роли типа библиотеки по умолчанию (ассистент)', () => {
   assert.deepEqual(ids(libraryDefaultRoles(STATE)), ['coordinator', 'developer', 'qa'])
-  assert.deepEqual(libraryDefaultRoles({ taskTypes: [], defaultTaskTypeId: 'нет' }).map((r) => r.id), ids(builtinTaskType('general')!.settings.roles ?? DEFAULT_ROLES))
+  assert.deepEqual(libraryDefaultRoles({ taskTypes: [], defaultTaskTypeId: 'нет' }).map((r) => r.id), ids(presetTaskType('general')!.settings.roles ?? DEFAULT_ROLES))
 })
 
 test('globalTypeTitle — из библиотеки, тип удалён — из снимка, «Входящие» и старый main — без бейджа', () => {
@@ -89,4 +89,15 @@ test('rolesWithDisabledAgent — роли, чей агент выключен и
   assert.deepEqual(rolesWithDisabledAgent(BACK, agents), [])
   assert.deepEqual(ids(rolesWithDisabledAgent(DOCS, [{ id: 'claude', installed: false, enabled: true }])), ['coordinator', 'writer'])
   assert.deepEqual(rolesWithDisabledAgent(DOCS, []), [])
+})
+
+test('workflowForRun — снимок графа прогона, иначе граф типа; нет типов и снимка — undefined', () => {
+  const snapshot = { version: 1, nodes: [{ id: 'n1', type: 'start' as const, x: 0, y: 0 }], edges: [] }
+  const withSnapshot = { id: 'r1', typeId: 'docs', workflow: snapshot }
+  const byType = { id: 'r2', typeId: 'docs' }
+  assert.equal(workflowForRun('r1', [withSnapshot], {}, STATE), snapshot)
+  // Снимок есть — типы не нужны (старый main).
+  assert.equal(workflowForRun('r1', [withSnapshot], {}, null), snapshot)
+  assert.ok(workflowForRun('r2', [byType], {}, STATE)?.nodes.some((n) => n.type === 'work'))
+  assert.equal(workflowForRun('r2', [byType], {}, null), undefined)
 })

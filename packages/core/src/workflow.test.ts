@@ -5,7 +5,7 @@ import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
   WORKFLOW_VERSION, WF_PORTS, defaultWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, nextStage, pipelineWorkflow,
-  startStage, stageAction, validateWorkflow, stableJson
+  startStage, stageAction, validateWorkflow, stableJson, wfWorkStage, describeWorkflow, WF_ISSUE_TEXTS
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfValidation, Workflow } from './workflow.ts'
 
@@ -450,5 +450,181 @@ describe('stableJson', () => {
     assert.equal(stableJson({ b: 1, a: { d: [1, 2], c: undefined } }), stableJson({ a: { d: [1, 2] }, b: 1 }))
     assert.notEqual(stableJson({ a: [1, 2] }), stableJson({ a: [2, 1] }))
     assert.equal(stableJson({ b: 'x', a: null }), '{"a":null,"b":"x"}')
+  })
+})
+
+describe('показ человеку на «Работе»', () => {
+  /** Дефолт без reviewer (ревью — человек) с показом на работе. */
+  const withShowcase = (showcase: unknown, instructions?: unknown): Workflow => {
+    const wf = structuredClone(defaultWorkflow([]))
+    Object.assign(node(wf, 'work'), { showcase, ...(instructions !== undefined ? { instructions } : {}) })
+    return wf
+  }
+  const c = { ...ctx, roles: noReviewer }
+
+  it('wfWorkStage: тексты обрезаны, пустой показ — нет показа, required только true', () => {
+    const wf = withShowcase({ what: '  макеты  ', required: true }, '  сделай  ')
+    assert.deepEqual(wfWorkStage(wf, 'work'), { nodeId: 'work', type: 'work', title: 'Работа', instructions: 'сделай', showcase: { what: 'макеты', required: true } })
+    assert.deepEqual(wfWorkStage(withShowcase({ what: ' ' }), 'work'), { nodeId: 'work', type: 'work', title: 'Работа' })
+    assert.deepEqual(wfWorkStage(withShowcase({ what: 'x', required: false }), 'work')!.showcase, { what: 'x' })
+    assert.equal(wfWorkStage(wf, 'review'), undefined)
+    assert.equal(wfWorkStage(wf, 'nope'), undefined)
+  })
+
+  it('старый граф без полей валиден и без предупреждения о показе', () => {
+    const { errors, warnings } = validateWorkflow(defaultWorkflow([]), c)
+    assert.deepEqual(errors, [])
+    assert.ok(!warnings.some((w) => w.message.includes('показ')))
+    assert.deepEqual(validateWorkflow(withShowcase({ what: 'макеты', required: true }, 'сделай'), c).errors, [])
+  })
+
+  it('ошибки: пустой what, не объект, required не boolean, instructions не строка', () => {
+    hasError(withShowcase({ what: '  ' }), 'не задано, что показать человеку', { nodeId: 'work' }, c)
+    hasError(withShowcase('макеты'), 'не задано, что показать человеку', { nodeId: 'work' }, c)
+    hasError(withShowcase({ what: 'x', required: 'да' }), 'показ обязателен', { nodeId: 'work' }, c)
+    hasError(withShowcase(undefined, 42), 'должно быть строкой', { nodeId: 'work' }, c)
+  })
+
+  it('предупреждение: после работы с показом нет человека до мержа; гейт по пути не мешает', () => {
+    const gated = structuredClone(defaultWorkflow(DEFAULT_ROLES))
+    Object.assign(node(gated, 'work'), { showcase: { what: 'макеты' } })
+    hasWarning(gated, 'показ никто не увидит', 'work')
+    const withHuman = structuredClone(pipelineWorkflow([
+      { type: 'gate', id: 'review', roleId: 'reviewer' }, { type: 'human', id: 'eyes' }
+    ]))
+    Object.assign(node(withHuman, 'work'), { showcase: { what: 'макеты' } })
+    assert.ok(!validateWorkflow(withHuman, ctx).warnings.some((w) => w.message.includes('показ')))
+  })
+
+  it('describeWorkflow отдаёт instructions и showcase у работы', () => {
+    const work = describeWorkflow(withShowcase({ what: 'макеты', required: true }, 'сделай')).find((x) => x.id === 'work')!
+    assert.equal(work.instructions, 'сделай')
+    assert.deepEqual(work.showcase, { what: 'макеты', required: true })
+    assert.equal(describeWorkflow(defaultWorkflow([])).find((x) => x.id === 'work')!.showcase, undefined)
+  })
+})
+
+describe('этап «Вопрос человеку» (ask)', () => {
+  /** Дефолт без reviewer: старт → ask → работа → человек → мерж → конец. */
+  const withAsk = (patch: Record<string, unknown> = {}): Workflow => {
+    const wf = structuredClone(defaultWorkflow(noReviewer))
+    const first = wf.edges.find((e) => e.from === 'start')!
+    const target = first.to
+    first.to = 'ask'
+    wf.nodes.push({ id: 'ask', type: 'ask', instructions: 'Уточни, какой формат отчёта нужен', x: 100, y: 100, ...patch } as WfNode)
+    wf.edges.push({ id: 'e_ask_next', from: 'ask', outcome: 'next', to: target })
+    return wf
+  }
+  const c = { ...ctx, roles: noReviewer }
+
+  it('порт один — next, название по умолчанию «Вопрос человеку»', () => {
+    assert.deepEqual(WF_PORTS.ask, ['next'])
+    assert.equal(describeWorkflow(withAsk()).find((s) => s.id === 'ask')!.title, 'Вопрос человеку')
+  })
+
+  it('корректный граф проходит валидацию без ошибок и предупреждений об ask', () => {
+    const { errors, warnings } = validateWorkflow(withAsk(), c)
+    assert.deepEqual(errors, [])
+    assert.ok(!warnings.some((w) => w.nodeId === 'ask'))
+  })
+
+  it('пустые и нестроковые instructions — ошибка «не задано, о чём спросить»', () => {
+    for (const bad of [undefined, '', '   ', 5]) hasError(withAsk({ instructions: bad }), 'не задано, о чём спросить', { nodeId: 'ask' }, c)
+  })
+
+  it('роль: несуществующая и служебная — ошибки, выключенный агент — предупреждение, пусто — можно', () => {
+    hasError(withAsk({ roleId: 'nope' }), 'нет роли «nope»', { nodeId: 'ask' }, c)
+    hasError(withAsk({ roleId: 'coordinator' }), 'служебная', { nodeId: 'ask' }, c)
+    const role = DEFAULT_ROLES.find((r) => r.id === 'developer')!
+    hasWarning(withAsk({ roleId: 'developer' }), 'выключен', 'ask', { ...c, enabledAgents: ['other-agent'] })
+    assert.notEqual(role, undefined)
+    assert.deepEqual(validateWorkflow(withAsk({ roleId: 'developer' }), c).errors, [])
+  })
+
+  it('без исходящего next и с чужим портом — ошибки', () => {
+    const noNext = withAsk()
+    noNext.edges = noNext.edges.filter((e) => e.id !== 'e_ask_next')
+    hasError(noNext, 'нет перехода для next', { nodeId: 'ask' }, c)
+    const foreign = withAsk()
+    edge(foreign, 'e_ask_next').outcome = 'accept'
+    hasError(foreign, 'лишний переход «accept»', { nodeId: 'ask' }, c)
+  })
+
+  it('недостижимая ask — общее предупреждение о недостижимости', () => {
+    const wf = withAsk()
+    wf.edges.find((e) => e.from === 'start')!.to = 'ask'
+    wf.edges.find((e) => e.from === 'ask')!.to = 'work'
+    wf.nodes.push({ id: 'ask2', type: 'ask', instructions: 'x', x: 0, y: 0 })
+    wf.edges.push({ id: 'e_ask2', from: 'ask2', outcome: 'next', to: 'work' })
+    hasWarning(wf, 'недостижима от старта', 'ask2', c)
+  })
+
+  it('stageAction: start_worker с ролью ноды, без роли — без roleId', () => {
+    const stage = { nodeId: 'ask', visits: {} }
+    assert.deepEqual(stageAction(withAsk(), stage, { roleId: 'developer' }), { type: 'start_worker', nodeId: 'ask' })
+    assert.deepEqual(stageAction(withAsk({ roleId: 'analyst' }), stage, { roleId: 'developer' }), { type: 'start_worker', nodeId: 'ask', roleId: 'analyst' })
+  })
+
+  it('nextStage: start → ask, ask → работа, visits растут', () => {
+    const wf = withAsk()
+    const first = startStage(wf, { roleId: 'developer' })
+    assert.equal(first.stage.nodeId, 'ask')
+    assert.equal(first.action.type, 'start_worker')
+    assert.equal(first.stage.visits.ask, 1)
+    const second = nextStage(wf, first.stage, 'next', { roleId: 'developer' })
+    assert.equal(second.stage.nodeId, 'work')
+    assert.deepEqual(second.action, { type: 'start_worker', nodeId: 'work' })
+    assert.equal(second.stage.visits.work, 1)
+    assert.equal(second.stage.visits.ask, 1)
+  })
+
+  it('nextStage: work → ask (ask после работы)', () => {
+    const wf = defaultWorkflow(noReviewer)
+    const workNext = wf.edges.find((e) => e.from === 'work')!
+    const after = workNext.to
+    workNext.to = 'ask'
+    wf.nodes.push({ id: 'ask', type: 'ask', instructions: 'уточни', x: 0, y: 0 })
+    wf.edges.push({ id: 'e_ask_next', from: 'ask', outcome: 'next', to: after })
+    const step = nextStage(wf, { nodeId: 'work', visits: { work: 1 } }, 'next', { roleId: 'developer' })
+    assert.equal(step.stage.nodeId, 'ask')
+    assert.equal(step.stage.visits.ask, 1)
+    assert.equal(step.action.type, 'start_worker')
+    assert.equal(nextStage(wf, step.stage, 'next', { roleId: 'developer' }).stage.nodeId, after)
+  })
+
+  it('wfWorkStage: этап ask с type и обрезанными instructions; describeWorkflow — роль и instructions', () => {
+    const wf = withAsk({ roleId: 'analyst', instructions: '  что нужно?  ' })
+    assert.deepEqual(wfWorkStage(wf, 'ask'), { nodeId: 'ask', type: 'ask', title: 'Вопрос человеку', instructions: 'что нужно?' })
+    const info = describeWorkflow(wf).find((s) => s.id === 'ask')!
+    assert.equal(info.type, 'ask')
+    assert.equal(info.roleId, 'analyst')
+    assert.equal(info.instructions, 'что нужно?')
+    assert.equal(info.showcase, undefined)
+  })
+})
+
+describe('validateWorkflow: код и параметры проблем для перевода в UI', () => {
+  it('у каждой проблемы есть код, а message — русский шаблон кода с параметрами', () => {
+    const wf = defaultWorkflow(DEFAULT_ROLES)
+    const broken: Workflow = {
+      ...wf,
+      nodes: [...wf.nodes.map((n) => (n.type === 'gate' ? { ...n, roleId: 'nope' } : n)), { id: 'lost', type: 'work', x: 0, y: 0 }],
+      edges: wf.edges.filter((e) => e.outcome !== 'reject')
+    }
+    const { errors, warnings } = validateWorkflow(broken, ctx)
+    assert.ok(errors.length > 0 && warnings.length > 0)
+    for (const i of [...errors, ...warnings]) {
+      assert.ok(i.code, i.message)
+      const text = WF_ISSUE_TEXTS[i.code].replace(/\{(\w+)\}/g, (_, k: string) => String(i.params?.[k]))
+      assert.equal(i.message, text)
+    }
+  })
+
+  it('название ноды в параметрах — через ctx.nodeTitle', () => {
+    const wf = defaultWorkflow(DEFAULT_ROLES)
+    const lost: WfNode = { id: 'lost', type: 'work', x: 0, y: 0 }
+    const { warnings } = validateWorkflow({ ...wf, nodes: [...wf.nodes, lost] }, { ...ctx, nodeTitle: (n) => `T:${n.id}` })
+    const w = warnings.find((i) => i.code === 'unreachable')
+    assert.equal(w?.params?.node, 'T:lost')
   })
 })
