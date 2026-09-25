@@ -1,6 +1,8 @@
 import type { BoardColumn, ProjectStats, StatsDay, StatsRange, StatsRow, StatsUsage, TokenUsage } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { plural } from './plural'
+import { t } from './i18n'
+import { formatFixed, formatInteger, formatShort, joinUnits } from './i18n/format'
 
 /**
  * Логика вкладки «Статистика» (вариант B, docs/architecture.md → «Статистика → Интерфейс»): форматирование чисел
@@ -33,26 +35,24 @@ export function rangePhrase(range: StatsRange): string {
   return range === '7d' ? '7 дней' : range === '30d' ? '30 дней' : 'всё время'
 }
 
-/** Дробная часть — через запятую, как принято в русском тексте. */
-function fixed(v: number, digits: number): string {
-  return v.toFixed(digits).replace('.', ',')
-}
+/** Дробная часть — по языку интерфейса: «1,2» / «1.2». */
+const fixed = formatFixed
 
 /** Токены: «950», «12 тыс», «1,2 млн», «2,15 млрд». Отрицательное и NaN — «0». */
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0'
-  if (n >= 1e9) return `${fixed(n / 1e9, 2)} млрд`
+  if (n >= 1e9) return t('common.unit.billion', { n: fixed(n / 1e9, 2) })
   // 999 950 округлилось бы до «1000 тыс» — сразу в миллионы.
-  if (n >= 999_500) return `${fixed(n / 1e6, 1)} млн`
-  if (n >= 1000) return `${Math.round(n / 1000)} тыс`
+  if (n >= 999_500) return t('common.unit.million', { n: fixed(n / 1e6, 1) })
+  if (n >= 1000) return t('common.unit.thousand', { n: Math.round(n / 1000) })
   return String(Math.round(n))
 }
 
 /** Деньги: от $100 — целые с разрядами («$1 234»), меньше — с центами («$12,40»), копейки — «<$0,01». */
 export function formatUsd(v: number): string {
   if (!Number.isFinite(v) || v <= 0) return '$0'
-  if (v < 0.01) return '<$0,01'
-  if (v >= 100) return `$${Math.round(v).toLocaleString('ru-RU')}`
+  if (v < 0.01) return `<$${fixed(0.01, 2)}`
+  if (v >= 100) return `$${formatInteger(v)}`
   return `$${fixed(v, 2)}`
 }
 
@@ -64,12 +64,13 @@ const HOUR = 60 * MIN
  * работы). «<1 мин», «45 мин», «3 ч 12 мин», от 100 ч — только часы.
  */
 export function formatAgentTime(ms: number): string {
-  if (!Number.isFinite(ms) || ms < MIN) return '<1 мин'
+  if (!Number.isFinite(ms) || ms < MIN) return t('common.unit.lessThanMinute')
   const h = Math.floor(ms / HOUR)
   const m = Math.floor((ms % HOUR) / MIN)
-  if (h >= 100) return `${h} ч`
-  if (h > 0) return m > 0 ? `${h} ч ${m} мин` : `${h} ч`
-  return `${m} мин`
+  const hours = t('common.unit.hour', { n: h })
+  if (h >= 100) return hours
+  if (h > 0) return joinUnits(hours, m > 0 ? t('common.unit.min', { n: m }) : '')
+  return t('common.unit.min', { n: m })
 }
 
 /** Все виды токенов вместе; нет данных — undefined («неизвестно», не 0). */
@@ -377,9 +378,9 @@ export function formatMetric(v: number, metric: ChartMetric): string {
 /** Подпись деления оси: коротко, без «<1 мин» у нуля. */
 export function formatAxis(v: number, metric: ChartMetric): string {
   if (v === 0) return '0'
-  const short = (x: number): string => String(Number(x.toFixed(2))).replace('.', ',')
+  const short = (x: number): string => formatShort(x, 2)
   if (metric === 'cost') return `$${short(v)}`
   if (metric === 'tokens') return formatTokens(v)
-  if (metric === 'time') return v >= HOUR ? `${short(v / HOUR)} ч` : `${Math.round(v / MIN)} мин`
+  if (metric === 'time') return v >= HOUR ? t('common.unit.hour', { n: short(v / HOUR) }) : t('common.unit.min', { n: Math.round(v / MIN) })
   return String(v)
 }

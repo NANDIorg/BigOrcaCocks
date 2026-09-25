@@ -30,7 +30,7 @@ interface HumanRequest {
   body?: string              // markdown: контекст вопроса (+ «**Координатор:** …» из forward --note) или сам ответ
   options: RequestOption[]   // только у question; у answer/escalation/approval действия встроены
   questionId?: string        // kind=question: исходный Question (ask держит соединение за него)
-  nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача
+  nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача; kind=question: нода ask, с которой задан вопрос
   showcaseDispatchId?: string // kind=approval: запуск, чей показ (Dispatch.showcase) в body; файлы — IPC showcase:*
   resolution?: RequestResolution
   createdAt: number
