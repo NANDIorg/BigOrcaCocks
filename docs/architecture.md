@@ -1036,7 +1036,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `ProjectGroup`, `projects:setProjectGroup(projectId, groupId | null)` → `Project` (`null` — вынуть из группы),
   `projects:reorderGroups(ids)` → `ProjectGroup[]` (`ids` — все id групп в новом порядке). Ошибки — `OrcaError`
   `projects.groupNotFound` (неизвестная группа) и `projects.groupNameEmpty` (пустое имя после обрезки пробелов).
-  В контрактной версии `projects:list` отдаёт `groups: []`, остальные каналы бросают `projects.notImplemented`;
+  Реализация — `ProjectManager` (`main/projects.ts`: `groups`, `createGroup`, `renameGroup`, `removeGroup`, `setGroupCollapsed`,
+  `setProjectGroup`, `reorderGroups`); `reorderGroups` требует ровно все id по одному разу, иначе `groupNotFound` на лишнем/пропущенном;
+  неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
   `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
   (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
@@ -1218,7 +1220,11 @@ UI работает с активным проектом; воркеры и ко
 запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
 - `groups?: ProjectGroup[]` — группы проектов для левого меню (`shared/ipc.ts`), порядок массива = порядок в меню; у проекта
   `groupId` ссылается на `groups[].id`, нет или указывает на несуществующую группу — проект без группы. Поле опциональное,
-  версию формата не бампает: старая версия приложения его игнорирует (хранение — в контракте только описано).
+  версию формата не бампает: старая версия приложения его игнорирует. Файл без `groups` читается как «групп нет» — это и
+  есть миграция. `load()` (`normalizeGroups`) отбрасывает битые записи (нет id или названия, повтор id), обрезает имя,
+  оставляет `collapsed` только как `true` и снимает `groupId`, указывающий на пропавшую группу; `stripLegacy`
+  (`task-types-migration.ts`) `groupId` сохраняет. Удаление группы снимает `groupId` у её проектов, удаление проекта
+  группы не трогает, пустая группа остаётся. Тесты — `main/projects-groups.test.ts`.
 - `onboarding: { status: 'pending'|'completed'|'skipped', version, at?, reason?: 'existing' }` — корень файла, а не
   `settings`: это не настройка человека, `app:setSettings` его не меняет. Версию формата (`PROJECTS_FILE_VERSION`) поле
   не бампает: оно опциональное, старая версия приложения при откате его игнорирует. `pending` пишется **явно**

@@ -53,7 +53,6 @@ export default {
   'projects.notGit': '{path} is not a git repository',
   'projects.groupNotFound': 'project group not found: {id}',
   'projects.groupNameEmpty': 'the project group name cannot be empty',
-  'projects.notImplemented': 'project groups: not implemented',
 
   'agent.unknown': 'unknown agent: {id}. Known: {known}',
   'agent.notInstalled': 'agent {id} is not installed (no {bin} binary in PATH)',
