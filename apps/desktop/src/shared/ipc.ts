@@ -334,6 +334,25 @@ export interface RequestFocus {
   requestId: string
 }
 
+/** Текущая версия мастера первого запуска (main пишет её в projects.json, renderer сверяет). */
+export const ONBOARDING_VERSION = 1
+
+/** Состояние мастера первого запуска. Не входит в `AppSettings`: человек меняет его только через `onboarding:complete`. */
+export interface OnboardingState {
+  /** Мастер нужно показать при старте: статус `pending`. Новый main всегда отдаёт boolean. */
+  required: boolean
+  status: 'pending' | 'completed' | 'skipped'
+  /** Версия мастера, с которой записан статус. */
+  version: number
+  /** Когда пройден/пропущен (мс); у `pending` нет. */
+  at?: number
+}
+
+export interface OnboardingCompleteInput {
+  /** true — «Пропустить» (status 'skipped'), иначе 'completed'. По умолчанию false. */
+  skipped?: boolean
+}
+
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
 export interface OrcaApi {
   app: {
@@ -343,6 +362,15 @@ export interface OrcaApi {
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
+  }
+  /**
+   * Мастер первого запуска (docs/architecture.md → «IPC»). Renderer читает `getState()` при старте и показывает
+   * мастер, только если `required`. «Пройти заново» канала не требует — оно целиком на стороне renderer.
+   */
+  onboarding: {
+    getState(): Promise<OnboardingState>
+    /** Записать прохождение/пропуск. Повторный вызов на пройденном — идемпотентен (статус не понижается до pending). */
+    complete(input?: OnboardingCompleteInput): Promise<OnboardingState>
   }
   /**
    * Обновление приложения (docs/architecture.md → «Обновление»). Состояние живёт в main; renderer читает
