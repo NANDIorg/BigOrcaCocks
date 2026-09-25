@@ -151,5 +151,7 @@ export default {
 
   'stats.badRange': 'statistics: unknown period “{range}”, expected {expected}',
   'stats.noTask': 'statistics: task {id} is not in the project',
-  'stats.noGlobal': 'statistics: global task {id} is not in the project'
+  'stats.noGlobal': 'statistics: global task {id} is not in the project',
+
+  'onboarding.invalidInput': 'first-run wizard: an object with a boolean skipped field is expected'
 } satisfies { [K in keyof typeof ru]: string | { one: string; other: string } }
