@@ -22,11 +22,19 @@ export function branchChip(git: RunGit): BranchChip {
       : git.pushedAt !== undefined
         ? t('global.branch.pushed', { date: formatStamp(git.pushedAt) })
         : t('global.branch.notPushed'),
+    ...(git.prError
+      ? [t('global.branch.prError', { error: git.prError })]
+      : git.prUrl ? [t('global.branch.pr', { url: git.prUrl })] : []),
     t('global.branch.copyHint')
   ]
   return {
     label: git.branch,
-    tone: git.pushError ? 'warn' : git.pushedAt !== undefined ? 'ok' : 'plain',
+    tone: git.pushError || git.prError ? 'warn' : git.pushedAt !== undefined ? 'ok' : 'plain',
     title: lines.join('\n')
   }
+}
+
+/** Ссылка на PR для чипа: только https — значение приходит из вывода `gh`, в `href` ему без проверки не место. */
+export function prLink(git: RunGit): string | undefined {
+  return git.prUrl && git.prUrl.startsWith('https://') ? git.prUrl : undefined
 }

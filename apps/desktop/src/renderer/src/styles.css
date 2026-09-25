@@ -796,6 +796,7 @@ button:disabled { opacity: .45; cursor: default; }
 .g-chip.gt-branch { display: inline-flex; align-items: center; gap: 4px; border: 0; cursor: pointer; font-family: ui-monospace, Menlo, monospace; }
 .g-chip.gt-branch svg { width: 12px; height: 12px; flex: none; }
 .g-chip.gt-branch.ok { color: var(--col-done); }
+.g-chip.gt-pr { text-decoration: none; }
 .g-chip.gt-branch.warn { color: var(--col-input); background: rgba(232,176,74,.12); }
 /* Приоритет на глобальной карточке — те же цвета, что у .chip.priority, но заливкой, как у соседних .g-chip. */
 .g-chip.priority.urgent { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); font-weight: 600; }
