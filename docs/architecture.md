@@ -1717,6 +1717,45 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
 Если релиз опубликован без `.yml` или с неполным набором — дописать недостающие ассеты в опубликованный релиз
 (Edit → Attach binaries) из `apps/desktop/release/`; версию менять не нужно.
 
+#### Выпуск через CI (`.github/workflows/release.yml`)
+
+Основной путь: релиз собирает GitHub Actions, а не машина разработчика. Так Windows-сборка делается на Windows
+(node-pty нативно), а не кросс с macOS.
+
+1. Коммит `chore: release vX.Y.Z` (версия в `/package.json` и `apps/desktop/package.json` совпадает) — в `master`.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`. Запуск вручную: Actions → Release → Run workflow (версия берётся из
+   `package.json`, тег в git не создаётся до публикации черновика).
+3. Дождаться зелёного workflow и открыть черновик `vX.Y.Z` в Releases. Публиковать (`Publish release`) — пункты 5–6
+   чек-листа выше. Красный workflow — черновик неполный, публиковать нельзя.
+
+Джобы:
+
+| Джоба | Раннер | Что делает |
+|---|---|---|
+| `prepare` | ubuntu | версии в двух `package.json` совпадают, тег = `v<version>`; создаёт черновик `gh release create --draft`, если его нет. Уже опубликованный релиз с таким тегом — ошибка |
+| `build (mac)` | macos-14 | `pnpm install`, `typecheck`, `test`, сборка, `electron-builder --mac --publish always` (arm64 **и** x64), `codesign --verify` обоих `.app` |
+| `build (win)` | windows-latest | то же с `--win`: nsis + portable x64, node-pty пересобирается нативно |
+| `verify` | ubuntu | в черновике ровно один релиз с тегом и есть `latest.yml`, `latest-mac.yml`, zip и blockmap обеих архитектур, dmg, nsis-exe + blockmap, portable; `latest-mac.yml` описывает и arm64, и x64 zip. Иначе — красный |
+
+Почему так, а не «одна джоба на архитектуру»:
+
+- **`latest-mac.yml` при раздельных джобах теряет архитектуру.** `GitHubPublisher` при загрузке ассета, который уже есть
+  в релизе, удаляет старый и льёт заново (`overwriteArtifact` в `electron-publish`). Джобы arm64 и x64 каждая пишет свой
+  `latest-mac.yml`, выигрывает последняя — в манифесте остаётся одна архитектура, а клиент другой архитектуры не найдёт zip.
+  Одна mac-джоба с `--mac` строит обе архитектуры из `electron-builder.yml` (`arch: [arm64, x64]`) и сама сливает их в единый
+  манифест. x64 на arm64-раннере собирается кросс: node-pty идёт с prebuilds под darwin-x64, так же собирает локальный `dist:mac`.
+  Отдельного раннера macos-13 (Intel) поэтому нет (GitHub выводит его из обращения).
+- **Черновик создаёт `prepare`, а не electron-builder.** mac- и win-джобы стартуют параллельно; если черновика нет, каждая
+  создала бы свой (`getOrCreateRelease` ищет черновик по тегу в списке релизов, гонки не учитывает) — два релиза с одним тегом.
+  `verify` падает и на дубле.
+- Токен — `secrets.GITHUB_TOKEN` с `permissions: contents: write`, отдельных секретов не нужно.
+- `concurrency: release-<ref>` без отмены — повторный запуск на тот же тег ждёт предыдущий. Перезапуск упавшей джобы
+  безопасен: ассеты перезаливаются в тот же черновик.
+
+Проверено только `actionlint` и разбором YAML; реального запуска в Actions не было (нужен push тега в репозиторий).
+При первом выпуске смотреть глазами: сборка node-pty на windows-latest (нужны MSVC Spectre-libs, см. `binding.gyp` node-pty),
+версия pnpm в `pnpm/action-setup` (`version: 12`), содержимое `latest-mac.yml` в логе `verify`.
+
 ## Грабли разработки
 
 - Запись состояния шла прямо в `projects.json` / `boards/<id>.json` (`writeFileSync`), а битый JSON при загрузке молча
