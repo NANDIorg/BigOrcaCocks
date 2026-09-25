@@ -51,6 +51,8 @@ export default {
 
   'projects.none': 'no projects: add a repository',
   'projects.notGit': '{path} is not a git repository',
+  'projects.groupNotFound': 'project group not found: {id}',
+  'projects.groupNameEmpty': 'the project group name cannot be empty',
 
   'agent.unknown': 'unknown agent: {id}. Known: {known}',
   'agent.notInstalled': 'agent {id} is not installed (no {bin} binary in PATH)',

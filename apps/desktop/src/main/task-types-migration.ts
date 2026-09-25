@@ -89,9 +89,10 @@ export function migrateProjectsFile(input: LegacyProjectsFile): { data: Projects
  * уходят и поля, о которых новая версия не знает (id шаблона проекта и т. п.).
  */
 function stripLegacy(p: Project & LegacyProjectFields): Project {
-  const { id, root, name, enabledAgents, columns, taskTypeIds, defaultTaskTypeId, legacyTypeId } = p
+  const { id, root, name, groupId, enabledAgents, columns, taskTypeIds, defaultTaskTypeId, legacyTypeId } = p
   return {
     id, root, name,
+    ...(groupId !== undefined ? { groupId } : {}),
     ...(enabledAgents !== undefined ? { enabledAgents } : {}),
     ...(columns !== undefined ? { columns } : {}),
     ...(taskTypeIds !== undefined ? { taskTypeIds } : {}),

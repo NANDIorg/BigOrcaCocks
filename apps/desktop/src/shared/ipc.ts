@@ -204,6 +204,34 @@ export const PERMISSION_MODES: Record<PermissionMode, string> = {
 }
 
 /**
+ * Группа проектов в левом меню. Необязательна: проект без группы (`Project.groupId` не задан) показывается в меню
+ * как раньше. Порядок групп — порядок массива `projects.list().groups`; порядок проектов внутри группы — их порядок
+ * в `projects`. Хранится в projects.json (`groups`), см. docs/architecture.md → «Проекты».
+ */
+export interface ProjectGroup {
+  /** Стабильный идентификатор, его выдаёт main при `createGroup`. */
+  id: string
+  /** Название для показа; непустое, без пробелов по краям. Введено человеком — не переводится. */
+  name: string
+  /** Группа свёрнута в меню: проекты скрыты, заголовок виден. undefined — развёрнута. */
+  collapsed?: boolean
+}
+
+/**
+ * Текущая git-ветка корня проекта (`projects:branch`). Ровно одно из состояний:
+ * `isGitRepo: false` — не репозиторий (или git недоступен), `branch`/`detached` пусты;
+ * `detached: true` — detached HEAD, `branch: null`, `sha` — короткий хеш коммита;
+ * иначе `branch` — имя ветки (у репозитория без коммитов — имя будущей ветки).
+ */
+export interface ProjectBranchInfo {
+  isGitRepo: boolean
+  branch: string | null
+  detached: boolean
+  /** Короткий sha HEAD; только при `detached`. */
+  sha?: string
+}
+
+/**
  * Проект в renderer. Свои у проекта только колонки, агенты и типы задач; роли, воркфлоу, правила агентов
  * и разрешения — у типа задачи (`TaskType`, «Настройки → Типы задач»).
  */
@@ -211,6 +239,8 @@ export interface Project {
   id: string
   root: string
   name: string
+  /** Группа в левом меню (`ProjectGroup.id`). undefined — проект без группы. Id несуществующей группы читать как «без группы». */
+  groupId?: string
   /** Включённые агенты. undefined — все установленные. */
   enabledAgents?: AgentKind[]
   /** Колонки доски в порядке показа. undefined — DEFAULT_COLUMNS. */
@@ -398,9 +428,16 @@ export interface OrcaApi {
     onChanged(cb: (state: UpdateState) => void): () => void
   }
   projects: {
-    list(): Promise<{ active: Project | null; projects: Project[] }>
+    /** `groups` — группы проектов в порядке показа; групп нет — пустой массив. */
+    list(): Promise<{ active: Project | null; projects: Project[]; groups: ProjectGroup[] }>
     /** Задачи в колонках kind=in_progress по id проекта — для бейджа в списке проектов. */
     inProgressCounts(): Promise<Record<string, number>>
+    /**
+     * Текущая git-ветка корня проекта `id` (не обязательно активного). Не бросает для не-репозитория —
+     * это `{isGitRepo: false}`; неизвестный id — ошибка. Читается по запросу: ветку меняют снаружи приложения,
+     * поэтому renderer перезапрашивает её при смене проекта и фокусе окна.
+     */
+    branch(id: string): Promise<ProjectBranchInfo>
     /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из
@@ -419,6 +456,30 @@ export interface OrcaApi {
     setEnabledAgents(id: string, agents: AgentKind[]): Promise<Project>
     /** Задачи из удалённых колонок переезжают в backlog. */
     setColumns(id: string, columns: BoardColumn[]): Promise<Project>
+    /**
+     * Новая группа в конце списка. Имя обрезается по краям; пустое — `OrcaError` `projects.groupNameEmpty`.
+     * Одинаковые имена допустимы: группа определяется по `id`.
+     */
+    createGroup(name: string): Promise<ProjectGroup>
+    /** Переименовать группу. Пустое имя — `projects.groupNameEmpty`, неизвестный `id` — `projects.groupNotFound`. */
+    renameGroup(id: string, name: string): Promise<ProjectGroup>
+    /**
+     * Удалить группу. Её проекты не удаляются — они становятся проектами без группы (`groupId` снимается).
+     * Неизвестный `id` — `projects.groupNotFound`.
+     */
+    removeGroup(id: string): Promise<void>
+    /** Свернуть или развернуть группу в меню; состояние переживает перезапуск. Неизвестный `id` — `projects.groupNotFound`. */
+    setGroupCollapsed(id: string, collapsed: boolean): Promise<ProjectGroup>
+    /**
+     * Положить проект в группу; `null` — вынуть из группы (проект без группы). Неизвестный проект — обычная ошибка
+     * «project not found», неизвестная группа — `projects.groupNotFound`. Возвращает обновлённый проект.
+     */
+    setProjectGroup(projectId: string, groupId: string | null): Promise<Project>
+    /**
+     * Задать порядок групп: `ids` — все id групп в новом порядке. Набор должен совпадать с существующим (лишний или
+     * пропущенный id — `projects.groupNotFound`). Возвращает группы в новом порядке.
+     */
+    reorderGroups(ids: string[]): Promise<ProjectGroup[]>
     /**
      * Ветки глобальных задач: патч поверх текущих настроек. Ошибка шаблона, базы или remote — `OrcaError[git.badSettings]`.
      * Нет у старого preload — renderer показывает «перезапустите приложение».

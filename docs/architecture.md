@@ -779,6 +779,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   внутри него (`findProjectForPath`; renderer git не запускает) — модалки нет, `projects.add(undefined, path)`
   переключает на существующий проект. Старый preload без `detectTaskType`/`taskTypes` или старый main
   («No handler registered for 'projects:detectTaskType'») — прежний `projects.add()` без выбора типа.
+- **Группы проектов в левом меню** (`ProjectList.tsx`; логика — `renderer/src/projectGroups.ts` `buildSidebar`, меню — `PopupMenu.tsx`,
+  диалоги имени и подтверждения — `GroupDialogs.tsx`). Сверху сворачиваемые группы (заголовок — кнопка с `aria-expanded`, число проектов,
+  в свёрнутом виде — сумма бейджей «в работе»), ниже проекты без группы; `groupId` несуществующей группы читается как «без группы»,
+  пустая группа остаётся в меню. Свёрнутая группа с активным проектом подсвечена. Сворачивание — оптимистично, затем
+  `projects.setGroupCollapsed`. Действия — кнопка «…» или правая кнопка на проекте/группе: перенос в группу / из группы / в новую группу
+  (`setProjectGroup`), переименование, удаление (подтверждение — модалка приложения, не `window.confirm`; проекты остаются без группы).
+  После действия перечитывается только `projects.list()` (`reloadProjectList` в `App.tsx`), доска не трогается. Старый main/preload:
+  `list()` без `groups` — меню без групп; нет методов групп (`groupsApi`) или нет хендлера в main
+  (`isStaleGroupsError`: «No handler registered for 'projects:createGroup'…») — «перезапустите приложение» (`shell.projects.staleApp`).
+  Drag-and-drop проектов между группами нет.
 - **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет кромки заголовка).
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
   Колонку «Готовы» (kind `ready`) локальная доска отдельно не показывает: её карточки лежат в колонке kind `backlog`
@@ -1049,10 +1059,19 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
-  (см. «Обновление»); `projects:list`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
-  агенты, типы, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
+  (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
+  агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
   веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
+  **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
+  `projects:createGroup(name)` → `ProjectGroup`, `projects:renameGroup(id, name)` → `ProjectGroup`,
+  `projects:removeGroup(id)` (проекты группы становятся без группы, сами не удаляются), `projects:setGroupCollapsed(id, collapsed)` →
+  `ProjectGroup`, `projects:setProjectGroup(projectId, groupId | null)` → `Project` (`null` — вынуть из группы),
+  `projects:reorderGroups(ids)` → `ProjectGroup[]` (`ids` — все id групп в новом порядке). Ошибки — `OrcaError`
+  `projects.groupNotFound` (неизвестная группа) и `projects.groupNameEmpty` (пустое имя после обрезки пробелов).
+  Реализация — `ProjectManager` (`main/projects.ts`: `groups`, `createGroup`, `renameGroup`, `removeGroup`, `setGroupCollapsed`,
+  `setProjectGroup`, `reorderGroups`); `reorderGroups` требует ровно все id по одному разу, иначе `groupNotFound` на лишнем/пропущенном;
+  неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
   `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
   (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
@@ -1258,7 +1277,7 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 ## Проекты (`src/main/projects.ts`)
 
 `ProjectManager` хранит список репозиториев и библиотеку типов задач в `userData/projects.json` (у проекта —
-`enabledAgents`, `columns`, `taskTypeIds`, `defaultTaskTypeId`, `legacyTypeId`), доску каждого — в `userData/boards/<id>.json`
+`enabledAgents`, `columns`, `taskTypeIds`, `defaultTaskTypeId`, `legacyTypeId`, `groupId`), доску каждого — в `userData/boards/<id>.json`
 (`id` = sha1 от корня репозитория). `userData` фиксирован: `~/Library/Application Support/orca-board` (на Windows — `%APPDATA%\orca-board`).
 `TaskStore` проекта создаётся с `() => this.columns(id)`, поэтому смена колонок видна store сразу.
 UI работает с активным проектом; воркеры и координатор получают `ORCA_PROJECT` в env, и CLI кладёт его в запрос,
@@ -1266,9 +1285,16 @@ UI работает с активным проектом; воркеры и ко
 Ассистент один на приложение и `ORCA_PROJECT` не получает: он передаёт `--project`, без флага — активный проект.
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
-`{ version, projects: Project[], activeId, taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
+`{ version, projects: Project[], activeId, groups?: ProjectGroup[], taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
 (`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
 запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
+- `groups?: ProjectGroup[]` — группы проектов для левого меню (`shared/ipc.ts`), порядок массива = порядок в меню; у проекта
+  `groupId` ссылается на `groups[].id`, нет или указывает на несуществующую группу — проект без группы. Поле опциональное,
+  версию формата не бампает: старая версия приложения его игнорирует. Файл без `groups` читается как «групп нет» — это и
+  есть миграция. `load()` (`normalizeGroups`) отбрасывает битые записи (нет id или названия, повтор id), обрезает имя,
+  оставляет `collapsed` только как `true` и снимает `groupId`, указывающий на пропавшую группу; `stripLegacy`
+  (`task-types-migration.ts`) `groupId` сохраняет. Удаление группы снимает `groupId` у её проектов, удаление проекта
+  группы не трогает, пустая группа остаётся. Тесты — `main/projects-groups.test.ts`.
 - `onboarding: { status: 'pending'|'completed'|'skipped', version, at?, reason?: 'existing' }` — корень файла, а не
   `settings`: это не настройка человека, `app:setSettings` его не меняет. Версию формата (`PROJECTS_FILE_VERSION`) поле
   не бампает: оно опциональное, старая версия приложения при откате его игнорирует. `pending` пишется **явно**
@@ -2162,6 +2188,11 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
   проектов нет). `pending` пишется явно при создании файла (`emptyProjectsFile`), а миграция «существующий
   пользователь» срабатывает только при отсутствии ключа `onboarding` (`loadedOnboarding`). Держит тест
   «закрыли посреди мастера» в `projects-onboarding.test.ts`.
+- Модалка, отрисованная внутри сайдбара (или другого контейнера), уходит под позиционированные блоки основной
+  области: `position: fixed` без `z-index` лежит в общем порядке слоёв по месту в DOM, и глобальные задачи с их
+  панелями, идущие позже, перекрывают бэкдроп (так диалог создания группы оказался «ниже» глобальных задач).
+  Диалоги, вызываемые из вложенных компонентов, рисуй порталом в `body` (`createPortal`, как `PopupMenu` и
+  `GroupDialogs.tsx`) и задавай бэкдропу явный `z-index` (группы — 40: выше меню 30 и входящих 21, ниже тоста 50).
 - Нода `git` выполняет git синхронно в main (`execFileSync`), как и остальной git приложения. `push` может идти до 120 с
   (`PUSH_TIMEOUT_MS` в `git.ts`) — всё это время main не отвечает; `GIT_TERMINAL_PROMPT=0` не даёт git ждать пароль в
   терминале, которого нет. Ssh-ключ с passphrase без агента даст `error`, а не запрос. Асинхронный `push` потребует
