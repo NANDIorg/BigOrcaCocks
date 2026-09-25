@@ -1,6 +1,7 @@
 import type { Dispatch, DispatchShowcase, HumanRequest } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { showcaseFileType, showcaseMarkdown, type ShowcasePreview } from '../../shared/showcase'
+import { t } from './i18n'
 
 // Блок «Показ» (ShowcaseBlock.tsx): чей показ выводить, как показать каждый файл и что убрать из body approval.
 // Файлы читает main из worktree задачи (IPC showcase:*), здесь — только решения без React и IPC.
@@ -10,17 +11,19 @@ import { showcaseFileType, showcaseMarkdown, type ShowcasePreview } from '../../
  * по HMR, а `window.orca` остаётся старым — без `showcase` (или без хендлеров в main). Как `STALE_APP_MESSAGE`
  * в docLinks.ts.
  */
-export const SHOWCASE_STALE_MESSAGE = 'Приложение запущено со старой версией main/preload, где ещё нет показа файлов. Перезапустите приложение.'
+export function showcaseStaleMessage(): string {
+  return t('board.showcase.stale')
+}
 
 /** `window.orca.showcase` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function showcaseApi(api: Partial<OrcaApi> | undefined): OrcaApi['showcase'] {
-  if (!api?.showcase) throw new Error(SHOWCASE_STALE_MESSAGE)
+  if (!api?.showcase) throw new Error(showcaseStaleMessage())
   return api.showcase
 }
 
 /** Текст ошибки IPC (`ipcErrorMessage`) для человека: preload новый, а main старый — «No handler registered for 'showcase:…'». */
 export function showcaseErrorText(message: string): string {
-  return /No handler registered for 'showcase:/.test(message) ? SHOWCASE_STALE_MESSAGE : message
+  return /No handler registered for 'showcase:/.test(message) ? showcaseStaleMessage() : message
 }
 
 /** Как показать файл: `none` — тип не из белого списка, main его не откроет, остаётся только путь. */

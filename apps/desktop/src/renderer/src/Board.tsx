@@ -10,12 +10,13 @@ import {
 } from './boardView'
 import { isArrowKey, isEditableTarget, moveFocus } from './boardNav'
 import {
-  CARD_STATE_LABEL, cardEssenceFor, cardState, depsLabel, stageLabel, type CardEssence, type CardState, type CardStateInput
+  cardEssenceFor, cardStateLabel, cardState, depsLabel, stageLabel, type CardEssence, type CardState, type CardStateInput
 } from './cardState'
 import { BoardCard } from './BoardCard'
 import { MoveMenu, type MoveTarget } from './MoveMenu'
 import { onFocusBoard, onRevealOnBoard, scrollBehavior } from './feedLink'
 import { Icon } from './icons'
+import { useT } from './i18n'
 
 interface Props {
   /** Колонки проекта в порядке показа; статус задачи — id колонки. «Готовы» показывается внутри «Бэклога» (`localBoardColumns`). */
@@ -76,10 +77,9 @@ function cardElement(root: HTMLElement | null, id: string): HTMLElement | null {
   return root?.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(id)}"]`) ?? null
 }
 
-const FILTER_TITLES: Record<Exclude<BoardFilter, 'roles'>, string> = { all: 'Все', wait: 'Ждут вас', bad: 'Проблемы' }
-
 export function Board(props: Props): React.JSX.Element {
-  const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText = 'Пусто', questions, dispatches, selectedId, runningTaskIds, stageTitles, waitingTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask, onRevealInFeed } = props
+  const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText, questions, dispatches, selectedId, runningTaskIds, stageTitles, waitingTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask, onRevealInFeed } = props
+  const t = useT()
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [sort, setSort] = useState<BoardSort>(() => readSort(BOARD_SORT_KEY))
@@ -134,7 +134,7 @@ export function Board(props: Props): React.JSX.Element {
     onOpenTask?.(task)
   }
   const remove = (task: Task): void => {
-    if (window.confirm(`Удалить задачу «${task.title}»?`)) onRemove(task.id)
+    if (window.confirm(t('board.confirmRemove', { title: task.title }))) onRemove(task.id)
   }
   const openQ = new Map<string, Question[]>()
   questions.filter((q) => !q.answeredAt).forEach((q) => openQ.set(q.taskId, [...(openQ.get(q.taskId) ?? []), q]))
@@ -142,19 +142,19 @@ export function Board(props: Props): React.JSX.Element {
   dispatches.forEach((d) => lastDispatch.set(d.taskId, d))
 
   const info = new Map<string, CardInfo>()
-  for (const t of tasks) {
-    const kind = kindOf(t.status)
+  for (const task of tasks) {
+    const kind = kindOf(task.status)
     const input: CardStateInput = {
       kind,
-      task: t,
-      dispatch: lastDispatch.get(t.id),
-      questions: openQ.get(t.id) ?? [],
-      running: runningTaskIds.has(t.id),
-      waitingDeps: kind === 'backlog' ? pendingDeps(t, (dep) => byId.get(dep)?.status, kindOf) : 0
+      task,
+      dispatch: lastDispatch.get(task.id),
+      questions: openQ.get(task.id) ?? [],
+      running: runningTaskIds.has(task.id),
+      waitingDeps: kind === 'backlog' ? pendingDeps(task, (dep) => byId.get(dep)?.status, kindOf) : 0
     }
     const state = cardState(input)
-    const waits = waitingTaskIds.has(t.id)
-    info.set(t.id, { input, state, essence: cardEssenceFor(input, state, waits), waits })
+    const waits = waitingTaskIds.has(task.id)
+    info.set(task.id, { input, state, essence: cardEssenceFor(input, state, waits), waits })
   }
   const canStart = (t: Task): boolean => {
     const kind = kindOf(t.status)
@@ -335,17 +335,17 @@ export function Board(props: Props): React.JSX.Element {
       type="button"
       className={`filter ${cls}`}
       aria-pressed={filter === value}
-      title={value === 'wait' ? 'Оставить на доске задачи, которые ждут вашего ответа, показа или разбора сбоя' : undefined}
+      title={value === 'wait' ? t('board.filter.waitTitle') : undefined}
       onClick={() => changeFilter(value)}
     >
-      {FILTER_TITLES[value]} <span className="n">{count}</span>
+      {t(`board.filter.${value}`)} <span className="n">{count}</span>
     </button>
   )
 
   return (
     <div className="board-wrap">
-      <div className="lb-toolbar" role="toolbar" aria-label="Доска подзадач">
-        <div className="lb-progress" role="img" aria-label={`Сделано ${progress.done} из ${progress.total}`} title={`Сделано ${progress.done} из ${progress.total}`}>
+      <div className="lb-toolbar" role="toolbar" aria-label={t('board.toolbar')}>
+        <div className="lb-progress" role="img" aria-label={t('board.progress', { done: progress.done, total: progress.total })} title={t('board.progress', { done: progress.done, total: progress.total })}>
           <span><b>{progress.done}</b>/{progress.total}</span>
           <div className="bar" aria-hidden="true">
             {progress.parts.map((p) => (
@@ -353,7 +353,7 @@ export function Board(props: Props): React.JSX.Element {
             ))}
           </div>
         </div>
-        <div className="filters" role="group" aria-label="Показать">
+        <div className="filters" role="group" aria-label={t('board.filter.group')}>
           {filterButton('all', tasks.length)}
           {filterButton('wait', waitCount, 'wait')}
           {filterButton('bad', badCount, 'bad')}
@@ -364,24 +364,24 @@ export function Board(props: Props): React.JSX.Element {
               aria-pressed={filter === 'roles'}
               aria-haspopup="true"
               aria-expanded={rolesOpen}
-              title="Показать задачи только выбранных ролей"
+              title={t('board.filter.rolesTitle')}
               onClick={() => {
                 if (filter !== 'roles') changeFilter('roles')
                 setRolesOpen((v) => !v)
               }}
             >
-              Мои роли{effectiveRoles.length > 0 && <> <span className="n">{effectiveRoles.length}</span></>} ▾
+              {t('board.filter.roles')}{effectiveRoles.length > 0 && <> <span className="n">{effectiveRoles.length}</span></>} ▾
             </button>
             {rolesOpen && (
-              <div className="roles-pop" role="group" aria-label="Роли на доске">
-                {boardRoleIds.length === 0 && <div className="muted">Задач пока нет</div>}
+              <div className="roles-pop" role="group" aria-label={t('board.filter.rolesPop')}>
+                {boardRoleIds.length === 0 && <div className="muted">{t('board.filter.noTasks')}</div>}
                 {boardRoleIds.map((id) => (
                   <label key={id} className="roles-pop-item">
                     <input type="checkbox" checked={myRoles.includes(id)} onChange={() => toggleRole(id)} />
                     <span>{roles.find((r) => r.id === id)?.title ?? id}</span>
                   </label>
                 ))}
-                {boardRoleIds.length > 0 && effectiveRoles.length === 0 && <div className="muted roles-pop-hint">Ничего не выбрано — показаны все роли</div>}
+                {boardRoleIds.length > 0 && effectiveRoles.length === 0 && <div className="muted roles-pop-hint">{t('board.filter.noRoles')}</div>}
               </div>
             )}
           </div>
@@ -389,24 +389,24 @@ export function Board(props: Props): React.JSX.Element {
         <span className="grow" />
         {onRunFilter && (runs.length > 0 || runSel !== 'all') && (
           <label className="lb-select">
-            <span className="board-sort-label">Прогон</span>
-            <select className="run-filter" value={runSel} aria-label="Фильтр по прогону" onChange={(e) => onRunFilter(e.target.value)}>
-              <option value="all">Все прогоны</option>
+            <span className="board-sort-label">{t('board.run.label')}</span>
+            <select className="run-filter" value={runSel} aria-label={t('board.run.aria')} onChange={(e) => onRunFilter(e.target.value)}>
+              <option value="all">{t('board.run.all')}</option>
               {runs.map((r) => (
                 <option key={r.id} value={r.id} title={r.objective}>
-                  {runShortLabel(r, 5, 40)}{r.closedAt !== undefined ? ' (закрыт)' : ''}
+                  {runShortLabel(r, 5, 40)}{r.closedAt !== undefined ? ` ${t('board.run.closed')}` : ''}
                 </option>
               ))}
-              <option value="none">Без прогона</option>
+              <option value="none">{t('board.run.none')}</option>
             </select>
           </label>
         )}
         <label className="lb-select">
-          <span className="board-sort-label">Сортировка</span>
+          <span className="board-sort-label">{t('board.sort.label')}</span>
           <select
             className="sort"
             value={sort}
-            aria-label="Сортировка карточек"
+            aria-label={t('board.sort.aria')}
             onChange={(e) => {
               if (isBoardSort(e.target.value)) changeSort(e.target.value)
             }}
@@ -438,8 +438,8 @@ export function Board(props: Props): React.JSX.Element {
                 className={`column collapsed ${dragOver === status ? 'drag-over' : ''}`}
                 style={colStyle}
                 aria-expanded={false}
-                aria-label={`${column.title}, ${items.length} — развернуть`}
-                title="Развернуть колонку"
+                aria-label={t('board.column.expandAria', { title: column.title, n: items.length })}
+                title={t('board.column.expand')}
                 onClick={() => changeDoneCollapsed(false)}
                 {...dropProps}
               >
@@ -455,8 +455,8 @@ export function Board(props: Props): React.JSX.Element {
           const groups: { label?: string; items: Task[] }[] =
             merged && ready.length > 0 && ready.length < items.length
               ? [
-                  { label: `Готовы к запуску · ${ready.length}`, items: ready },
-                  { label: `Ждут зависимостей · ${items.length - ready.length}`, items: items.filter((t) => kindOf(t.status) !== 'ready') }
+                  { label: t('board.column.ready', { n: ready.length }), items: ready },
+                  { label: t('board.column.waitingDeps', { n: items.length - ready.length }), items: items.filter((task) => kindOf(task.status) !== 'ready') }
                 ]
               : [{ items }]
           return (
@@ -467,18 +467,18 @@ export function Board(props: Props): React.JSX.Element {
               aria-label={`${column.title}, ${items.length}`}
               {...dropProps}
             >
-              <div className="col-head" title={merged ? 'Вместе с «Готовы»: готовые к запуску — сверху, ждущие зависимостей — ниже' : undefined}>
+              <div className="col-head" title={merged ? t('board.column.mergedTitle') : undefined}>
                 <span>{column.title}</span>
                 <span className="count">{items.length}</span>
                 <span className="grow" />
-                {column.kind === 'needs_input' && items.length > 0 && <span className="flag">ждут вас</span>}
+                {column.kind === 'needs_input' && items.length > 0 && <span className="flag">{t('board.column.waitingFlag')}</span>}
                 {column.kind === 'done' && (
                   <button
                     type="button"
                     className="lb-tool"
                     aria-expanded
-                    aria-label={`Свернуть колонку «${column.title}»`}
-                    title="Свернуть колонку"
+                    aria-label={t('board.column.collapseAria', { title: column.title })}
+                    title={t('board.column.collapse')}
                     onClick={() => changeDoneCollapsed(true)}
                   >
                     <span className="chev-left"><Icon.chevron /></span>
@@ -490,7 +490,7 @@ export function Board(props: Props): React.JSX.Element {
                   <div className="placeholder" />
                 )}
                 {items.length === 0 && dragOver !== status && (
-                  <div className="empty">{hidden > 0 ? `Скрыто фильтром: ${hidden}` : emptyText}</div>
+                  <div className="empty">{hidden > 0 ? t('board.column.hidden', { n: hidden }) : emptyText ?? t('board.column.empty')}</div>
                 )}
                 {groups.map((g) => (
                   <div key={g.label ?? 'all'} className="card-group">
@@ -499,7 +499,7 @@ export function Board(props: Props): React.JSX.Element {
                       const ci = info.get(task.id)
                       if (!ci) return null
                       const kind = ci.input.kind
-                      const stateLabel = CARD_STATE_LABEL[ci.state]
+                      const stateLabel = cardStateLabel(ci.state)
                       return (
                         <BoardCard
                           key={task.id}
@@ -510,7 +510,7 @@ export function Board(props: Props): React.JSX.Element {
                           stage={stageLabel(task, stageTitles, (id) => byId.get(id)?.title)}
                           deps={depsLabel(task.deps, (d) => { const s = byId.get(d)?.status; return s !== undefined && kindOf(s) === 'done' }, (d) => byId.get(d)?.title)}
                           essence={ci.essence}
-                          ariaLabel={[task.title, stateLabel && `Состояние: ${stateLabel}`, ci.essence?.text].filter(Boolean).join('. ')}
+                          ariaLabel={[task.title, stateLabel && t('board.card.stateAria', { state: stateLabel }), ci.essence?.text].filter(Boolean).join('. ')}
                           run={task.runId ? runById.get(task.runId) : undefined}
                           runs={runs}
                           showUpdated={sort === 'updated'}
@@ -545,12 +545,12 @@ export function Board(props: Props): React.JSX.Element {
         })}
       </div>
       <div className="kbd-hint" aria-hidden="true">
-        <span><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> по карточкам</span>
-        <span><kbd>Enter</kbd> открыть</span>
-        <span><kbd>M</kbd> переместить</span>
-        <span><kbd>S</kbd> запустить</span>
-        {onRevealInFeed && waitingTaskIds.size > 0 && <span><kbd>G</kbd> к ленте</span>}
-        <span><kbd>Esc</kbd> к глобальным</span>
+        <span><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> {t('board.kbd.arrows')}</span>
+        <span><kbd>Enter</kbd> {t('board.kbd.open')}</span>
+        <span><kbd>M</kbd> {t('board.kbd.move')}</span>
+        <span><kbd>S</kbd> {t('board.kbd.start')}</span>
+        {onRevealInFeed && waitingTaskIds.size > 0 && <span><kbd>G</kbd> {t('board.kbd.feed')}</span>}
+        <span><kbd>Esc</kbd> {t('board.kbd.globals')}</span>
       </div>
       {menu && menuTask && (
         <MoveMenu

@@ -2,6 +2,8 @@ import type React from 'react'
 import { useState } from 'react'
 import type { BoardColumn, StatusChange } from '@orca-board/core'
 import { useNow } from './useNow'
+import { useT } from './i18n'
+import { formatDateTime } from './i18n/format'
 import { STATUS_HISTORY_COLLAPSED, statusDurationLabel, statusHistoryRows, visibleStatusRows } from './statusHistory'
 
 interface Props {
@@ -13,7 +15,7 @@ interface Props {
 }
 
 function formatAt(ts: number): string {
-  return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return formatDateTime(ts, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 function ColumnChip(props: { title: string; color?: string }): React.JSX.Element {
@@ -24,6 +26,7 @@ function ColumnChip(props: { title: string; color?: string }): React.JSX.Element
 /** Блок «История статуса» карточки задачи и глобальной задачи: переходы от старых к новым. */
 export function StatusHistoryBlock(props: Props): React.JSX.Element {
   const { history, columns, status } = props
+  const t = useT()
   const now = useNow()
   const [expanded, setExpanded] = useState(false)
   const rows = statusHistoryRows(history, columns, now)
@@ -34,8 +37,8 @@ export function StatusHistoryBlock(props: Props): React.JSX.Element {
     const column = columns.find((c) => c.id === status)
     return (
       <div className="status-history-empty muted">
-        <ColumnChip title={column?.title ?? status} color={column?.color} /> история переходов не записывалась
-        {history === undefined ? ' — перезапустите приложение, чтобы она появилась' : ''}
+        <ColumnChip title={column?.title ?? status} color={column?.color} /> {t('board.history.empty')}
+        {history === undefined ? ` — ${t('board.history.restart')}` : ''}
       </div>
     )
   }
@@ -44,7 +47,7 @@ export function StatusHistoryBlock(props: Props): React.JSX.Element {
     <div className="status-history">
       {hidden > 0 && (
         <button type="button" className="btn-text status-history-toggle" onClick={() => setExpanded(true)}>
-          Показать ранние переходы ({hidden})
+          {t('board.history.showEarlier', { n: hidden })}
         </button>
       )}
       <ol className="status-history-list">
@@ -53,7 +56,7 @@ export function StatusHistoryBlock(props: Props): React.JSX.Element {
             <ColumnChip title={r.title} color={r.color} />
             <span
               className="mono status-history-at"
-              title={r.migrated ? 'Записано при обновлении приложения: время последней правки задачи, а не момент перехода' : undefined}
+              title={r.migrated ? t('board.history.migrated') : undefined}
             >
               {r.migrated ? '≈ ' : ''}{formatAt(r.at)}
             </span>
@@ -64,7 +67,7 @@ export function StatusHistoryBlock(props: Props): React.JSX.Element {
       </ol>
       {expanded && rows.length > STATUS_HISTORY_COLLAPSED && (
         <button type="button" className="btn-text status-history-toggle" onClick={() => setExpanded(false)}>
-          Свернуть
+          {t('board.history.collapse')}
         </button>
       )}
     </div>

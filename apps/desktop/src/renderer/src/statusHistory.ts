@@ -1,15 +1,18 @@
 import type { BoardColumn, StatusChange, StatusSource } from '@orca-board/core'
 import { formatDuration } from './duration'
+import { t } from './i18n'
 
-/** Подписи источника перехода (`StatusChange.by`, docs/architecture.md, «История статусов»). */
-export const STATUS_SOURCE_TITLES: Record<StatusSource, string> = {
-  human: 'человек',
-  // Сокет не различает координатора и человека в терминале — в подписи оба.
-  cli: 'координатор / CLI',
-  worker: 'воркер',
-  workflow: 'воркфлоу',
-  app: 'приложение'
-}
+const STATUS_SOURCES: StatusSource[] = ['human', 'cli', 'worker', 'workflow', 'app']
+
+/**
+ * Подписи источника перехода (`StatusChange.by`, docs/architecture.md, «История статусов»). Геттеры — чтобы текст
+ * был на текущем языке и у модулей, которые берут таблицу как есть (globalTimeline.ts). У `cli` в подписи и
+ * координатор, и CLI: сокет не различает координатора и человека в терминале.
+ */
+export const STATUS_SOURCE_TITLES: Readonly<Record<StatusSource, string>> = Object.defineProperties(
+  {} as Record<StatusSource, string>,
+  Object.fromEntries(STATUS_SOURCES.map((s) => [s, { enumerable: true, get: () => t(`board.source.${s}`) }]))
+)
 
 /** Сколько последних переходов видно в свёрнутом блоке. */
 export const STATUS_HISTORY_COLLAPSED = 5
@@ -72,5 +75,5 @@ export function visibleStatusRows(rows: readonly StatusHistoryRow[], expanded: b
  */
 export function statusDurationLabel(row: Pick<StatusHistoryRow, 'durationMs' | 'current' | 'migrated'>): string {
   const value = `${row.migrated ? '≈ ' : ''}${formatDuration(row.durationMs)}`
-  return row.current ? `сейчас · ⏱ ${value}` : value
+  return row.current ? t('board.history.now', { value }) : value
 }
