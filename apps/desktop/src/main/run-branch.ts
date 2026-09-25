@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import {
   globalTaskTitle, isProtectedBranch, prBaseBranch, runBranchName, runBranchSettingsProblems,
-  type RunBranchSettings, type RunGit, type Task, type TaskStore
+  type PrErrorCode, type RunBranchSettings, type RunGit, type Task, type TaskStore
 } from '@orca-board/core'
+import type { GhStatus } from '../shared/ipc'
 import { extraPathDirs } from './agents'
 import { currentBranch } from './git'
 import { OrcaError } from './i18n'
@@ -187,10 +188,52 @@ function ghErrorText(e: unknown): string {
   return (err.stderr?.toString().trim() || err.message || String(e)).slice(0, PR_ERROR_LIMIT)
 }
 
+// Без логина gh выходит с кодом 4 («authentication required») и пишет «To get started with GitHub CLI, please run:
+// gh auth login»; протухший токен — «HTTP 401: Bad credentials» с кодом 1, поэтому смотрим и на текст.
+const GH_EXIT_AUTH = 4
+const GH_AUTH_RE = /gh auth login|not logged in|authentication required|bad credentials|HTTP 401/i
+// Remote не на GitHub (GitLab, свой сервер) или remote нет вовсе. В этом тексте gh тоже советует `gh auth login`
+// («To tell gh about a new GitHub host…»), поэтому его проверяем раньше логина.
+const GH_NOT_GITHUB_RE = /known GitHub host|no git remotes/i
+
+function ghStderr(e: unknown): string {
+  return (e as { stderr?: string | Buffer }).stderr?.toString() ?? ''
+}
+
+/** Вид ошибки gh для `RunGit.prErrorCode`: человеку «нет gh» и «нет логина» переводим, остальное — stderr как есть. */
+export function ghErrorCode(e: unknown): PrErrorCode {
+  const code = (e as { code?: string | number }).code
+  if (code === 'ENOENT') return 'ghMissing'
+  const stderr = ghStderr(e)
+  if (GH_NOT_GITHUB_RE.test(stderr)) return 'other'
+  return code === GH_EXIT_AUTH || GH_AUTH_RE.test(stderr) ? 'ghAuth' : 'other'
+}
+
+/**
+ * Готов ли gh открывать PR из корня проекта (`projects:ghStatus`, раздел «Git» при выборе «Push + PR»): один
+ * `gh repo view` проверяет сразу установку, логин и то, что remote — репозиторий GitHub. Ничего не меняет.
+ */
+export async function ghStatus(cwd: string, gh: (args: string[], cwd: string) => Promise<string> = runGh): Promise<GhStatus> {
+  try {
+    const out = JSON.parse(await gh(['repo', 'view', '--json', 'nameWithOwner'], cwd)) as { nameWithOwner?: string }
+    return { state: 'ok', repo: out.nameWithOwner ?? '' }
+  } catch (e) {
+    const code = ghErrorCode(e)
+    if (code === 'ghMissing') return { state: 'missing' }
+    if (code === 'ghAuth') return { state: 'noAuth' }
+    return GH_NOT_GITHUB_RE.test(ghStderr(e)) ? { state: 'notGithub' } : { state: 'error', detail: ghErrorText(e) }
+  }
+}
+
 export interface RunBranchSyncDeps {
   isAlive(ptyId: string): boolean
   /** Вызов `gh` в каталоге; по умолчанию настоящий gh, тесты подставляют свой. */
   gh?(args: string[], cwd: string): Promise<string>
+  /**
+   * PR не открылся (итог уже в `Run.git`): main показывает уведомление. Без него ошибка видна только в подсказке
+   * чипа ветки, а на «Проверке» человек ждёт готовый PR.
+   */
+  onPrFailed?(repoRoot: string, runId: string): void
 }
 
 /**
@@ -273,7 +316,9 @@ export class RunBranchSync {
     const gh = this.deps.gh ?? runGh
     const record = (patch: Partial<RunGit>): void => {
       // Глобальную задачу могли удалить, пока шёл gh.
-      if (store.getRun(runId)?.git) store.setRunGit(runId, patch)
+      if (!store.getRun(runId)?.git) return
+      store.setRunGit(runId, { prErrorCode: undefined, ...patch })
+      if (patch.prError) this.deps.onPrFailed?.(repoRoot, runId)
     }
     const run = store.getRun(runId)
     const g = run?.git
@@ -289,16 +334,16 @@ export class RunBranchSync {
         if ((e as { code?: string }).code === 'ENOENT') throw e
       }
       const base = prBaseBranch(g.base, settings.remote)
-      if (!base) return record({ prError: 'не удалось определить базу PR: укажите «От чего ответвлять»' })
+      if (!base) return record({ prError: 'не удалось определить базу PR: укажите «От чего ответвлять»', prErrorCode: 'other' })
       bodyDir = mkdtempSync(join(tmpdir(), 'orca-pr-'))
       const bodyFile = join(bodyDir, 'body.md')
       writeFileSync(bodyFile, run.summary?.text?.trim() || run.objective)
       const out = await gh(['pr', 'create', '--head', g.branch, '--base', base, '--title', globalTaskTitle(run), '--body-file', bodyFile], cwd)
       const url = out.split('\n').map((l) => l.trim()).filter((l) => /^https?:\/\//.test(l)).pop()
-      if (!url) return record({ prError: `gh pr create не вернул ссылку: ${out.trim()}`.slice(0, PR_ERROR_LIMIT) })
+      if (!url) return record({ prError: `gh pr create не вернул ссылку: ${out.trim()}`.slice(0, PR_ERROR_LIMIT), prErrorCode: 'other' })
       record({ prUrl: url, prError: undefined })
     } catch (e) {
-      record({ prError: ghErrorText(e) })
+      record({ prError: ghErrorText(e), prErrorCode: ghErrorCode(e) })
     } finally {
       if (bodyDir) rmSync(bodyDir, { recursive: true, force: true })
     }

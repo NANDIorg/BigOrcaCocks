@@ -12,7 +12,7 @@ import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, review
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, writeRule } from './rules'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
-import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
+import { ghStatus, mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
@@ -23,7 +23,7 @@ import { createUpdater, type Updater, type InstallChoice, type InstallRequest } 
 import { createPlatformUpdater } from './updaterBackend'
 import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
-import { describeEvent, answerNudge } from './notify'
+import { describeEvent, describePrFailure, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
 import { OrcaError, ipcError, mt, setMainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
@@ -64,7 +64,7 @@ let win: BrowserWindow | null = null
 let projects: ProjectManager
 let updater: Updater
 /** Push и уборка worktree веток глобальных задач (`run-branch.ts`): попытки помнит между изменениями доски. */
-const runBranchSync = new RunBranchSync({ isAlive })
+const runBranchSync = new RunBranchSync({ isAlive, onPrFailed: notifyPrFailed })
 /** Выход подтверждён (или подтверждать нечего) — before-quit больше не перехватываем. */
 let quitting = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
@@ -515,6 +515,20 @@ function notify(projectId: string, events: OrcaEvent[]): void {
   }
 }
 
+/** PR ветки глобальной задачи не открылся (`RunBranchSync`): уведомление как об эскалации, клик — к проекту. */
+function notifyPrFailed(repoRoot: string, runId: string): void {
+  if (!Notification.isSupported()) return
+  const project = projects.list().find((p) => p.root === repoRoot)
+  const run = project ? projects.store(project.id).getRun(runId) : undefined
+  if (!project || !run?.git) return
+  const settings = projects.settings().notifications
+  const content = describePrFailure(run, project.name, settings.showPreview)
+  if (!shouldNotify(content, settings, new Date(), BrowserWindow.getFocusedWindow() !== null)) return
+  const n = new Notification({ title: content.title, body: content.body, silent: !settings.sound })
+  n.on('click', () => focusProject(project.id))
+  n.show()
+}
+
 /** Решение запроса к человеку (IPC и сокет): accept — с git-частью, clarify/restart — сразу старт воркера. */
 function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution): ReturnType<typeof resolveHumanRequest> {
   const p = resolveProject(projectId)
@@ -638,6 +652,7 @@ function registerIpc(): void {
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   handle('projects:setGit', (_e, id: string, patch: unknown) => projects.setGitSettings(id, patch))
+  handle('projects:ghStatus', (_e, id: string) => ghStatus(projectRoot(id)))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
   handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   handle('projects:add', async (_e, typeId?: string, path?: string) => {

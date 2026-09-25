@@ -36,6 +36,9 @@ export default {
   'notify.runSubtasksDone': 'Subtasks done, review coming up',
   'notify.testPreview': 'Question: this is how notifications will look',
   'notify.unsupported': 'system notifications are not supported',
+  'notify.prFailed': 'PR not opened',
+  'notify.prGhMissing': 'gh is not installed — https://cli.github.com',
+  'notify.prGhAuth': 'gh is not signed in — run gh auth login',
 
   'column.backlog': 'Backlog',
   'column.ready': 'Ready',

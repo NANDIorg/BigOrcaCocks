@@ -1019,6 +1019,10 @@ button:disabled { opacity: .45; cursor: default; }
 .git-more > summary:hover { color: var(--text); }
 .git-more[open] > summary { margin-bottom: 12px; }
 .git-note { margin: 0 0 12px; font-size: 12px; }
+.git-gh { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.git-gh.ok { color: var(--col-done); }
+.git-gh.warn { color: var(--col-input); }
+.git-gh.muted { color: var(--muted); }
 .danger-zone .btn-sm.danger { color: var(--danger); border-color: rgba(239,107,107,.5); }
 .danger-zone .btn-sm.danger svg { width: 14px; height: 14px; }
 

@@ -38,6 +38,9 @@ export default {
   'notify.runSubtasksDone': 'Подзадачи сделаны, скоро проверка',
   'notify.testPreview': 'Вопрос: так уведомления и будут выглядеть',
   'notify.unsupported': 'системные уведомления не поддерживаются',
+  'notify.prFailed': 'PR не открыт',
+  'notify.prGhMissing': 'gh не установлен — https://cli.github.com',
+  'notify.prGhAuth': 'gh не авторизован — выполните gh auth login',
 
   // Встроенные колонки (`DEFAULT_COLUMNS`): подзаголовок уведомления, пока колонку не переименовали.
   'column.backlog': 'Бэклог',

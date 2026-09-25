@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync, readFileS
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, normalizeRunBranchSettings, type RunBranchSettings, type Task } from '@orca-board/core'
-import { ensureRunBranch, mergeTarget, reviewBase, RunBranchSync, runWorktreePath } from './run-branch'
+import { ensureRunBranch, ghErrorCode, ghStatus, mergeTarget, reviewBase, RunBranchSync, runWorktreePath } from './run-branch'
 import { acceptReview, mergeTaskBranch } from './review'
 
 const git = (cwd: string, ...args: string[]): string =>
@@ -295,6 +295,36 @@ describe('RunBranchSync: PR через gh', () => {
     assert.equal(calls.find((c) => c.args[1] === 'create')!.body, 'Итог работы')
   })
 
+  it('ошибка PR: код для перевода и уведомление; успех снимает код и не уведомляет', async () => {
+    const { store, runId, s } = closedRun()
+    let fail = true
+    const { gh } = fakeGh({ create: () => { if (fail) throw Object.assign(new Error('x'), { stderr: 'To get started with GitHub CLI, please run:  gh auth login' }); return 'https://github.com/o/r/pull/9\n' } })
+    const failed: string[] = []
+    const sync = new RunBranchSync({ isAlive: () => false, gh, onPrFailed: (root, id) => failed.push(`${root}|${id}`) })
+    store.moveGlobalTask(runId, 'review')
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prError !== undefined, 'prError')
+    assert.equal(store.getRun(runId)!.git!.prErrorCode, 'ghAuth')
+    assert.deepEqual(failed, [`${repo}|${runId}`])
+
+    fail = false
+    store.setRunGit(runId, { pushedAt: Date.now() + 1000 })
+    sync.sync(store, repo, s)
+    await waitFor(() => store.getRun(runId)!.git!.prUrl !== undefined, 'prUrl после повтора')
+    assert.equal(store.getRun(runId)!.git!.prErrorCode, undefined)
+    assert.equal(failed.length, 1, 'успех не уведомляет')
+  })
+
+  it('нет gh — prErrorCode ghMissing; без базы — other', async () => {
+    const missing = closedRun()
+    const enoent = async (): Promise<string> => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }) }
+    const sync = new RunBranchSync({ isAlive: () => false, gh: enoent })
+    missing.store.moveGlobalTask(missing.runId, 'review')
+    sync.sync(missing.store, repo, missing.s)
+    await waitFor(() => missing.store.getRun(missing.runId)!.git!.prError !== undefined, 'prError')
+    assert.equal(missing.store.getRun(missing.runId)!.git!.prErrorCode, 'ghMissing')
+  })
+
   it('ошибка gh — в prError и не повторяется на каждом изменении доски; после нового push — повтор', async () => {
     const { store, runId, s } = closedRun()
     let fail = true
@@ -369,5 +399,33 @@ describe('RunBranchSync: PR через gh', () => {
 
     sync.sync(store, repo, { ...s, pr: true })
     await waitFor(() => store.getRun(runId)!.git!.prUrl !== undefined, 'prUrl')
+  })
+})
+
+describe('gh: вид ошибки и готовность', () => {
+  const fail = (stderr: string, code?: string | number) => async (): Promise<string> => { throw Object.assign(new Error('gh'), { stderr, code }) }
+
+  it('ghErrorCode: ENOENT — нет gh, тексты логина — ghAuth, прочее — other', () => {
+    assert.equal(ghErrorCode(Object.assign(new Error('x'), { code: 'ENOENT' })), 'ghMissing')
+    assert.equal(ghErrorCode({ stderr: 'To get started with GitHub CLI, please run:  gh auth login' }), 'ghAuth')
+    assert.equal(ghErrorCode({ stderr: 'You are not logged into any GitHub hosts.' }), 'ghAuth')
+    assert.equal(ghErrorCode({ stderr: 'HTTP 401: Bad credentials (https://api.github.com/graphql)' }), 'ghAuth')
+    assert.equal(ghErrorCode({ stderr: 'GraphQL: forbidden' }), 'other')
+    assert.equal(ghErrorCode({ code: 4, stderr: '' }), 'ghAuth', 'код выхода gh 4 — authentication required')
+    // Remote не на GitHub: gh советует `gh auth login`, но дело не в логине.
+    assert.equal(ghErrorCode({ stderr: 'none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`' }), 'other')
+  })
+
+  it('ghStatus: repo view — ok с репозиторием, иначе missing / noAuth / notGithub / error', async () => {
+    const calls: string[][] = []
+    const ok = async (args: string[]): Promise<string> => { calls.push(args); return '{"nameWithOwner":"o/r"}' }
+    assert.deepEqual(await ghStatus('/p', ok), { state: 'ok', repo: 'o/r' })
+    assert.deepEqual(calls[0], ['repo', 'view', '--json', 'nameWithOwner'])
+    assert.deepEqual(await ghStatus('/p', fail('', 'ENOENT')), { state: 'missing' })
+    assert.deepEqual(await ghStatus('/p', fail('gh auth login')), { state: 'noAuth' })
+    // Тексты — как у настоящего gh 2.x.
+    assert.deepEqual(await ghStatus('/p', fail('none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`')), { state: 'notGithub' })
+    assert.deepEqual(await ghStatus('/p', fail('To get started with GitHub CLI, please run:  gh auth login\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.', 4)), { state: 'noAuth' })
+    assert.deepEqual(await ghStatus('/p', fail('boom')), { state: 'error', detail: 'boom' })
   })
 })

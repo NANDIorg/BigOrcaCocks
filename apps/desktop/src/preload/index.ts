@@ -49,6 +49,7 @@ const api: OrcaApi = {
     setProjectGroup: (projectId, groupId) => ipcRenderer.invoke('projects:setProjectGroup', projectId, groupId),
     reorderGroups: (ids) => ipcRenderer.invoke('projects:reorderGroups', ids),
     setGit: (id, patch) => ipcRenderer.invoke('projects:setGit', id, patch),
+    ghStatus: (id) => ipcRenderer.invoke('projects:ghStatus', id),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {

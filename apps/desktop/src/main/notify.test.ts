@@ -1,7 +1,7 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Фильтр и тексты системных уведомлений.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import type { OrcaEvent, Task } from '@orca-board/core'
+import type { OrcaEvent, Run, Task } from '@orca-board/core'
 import {
   DEFAULT_NOTIFICATION_SETTINGS as D,
   inQuietHours,
@@ -10,7 +10,7 @@ import {
   shouldNotify,
   type NotificationSettings
 } from '../shared/notifications'
-import { describeEvent, answerNudge } from './notify'
+import { describeEvent, describePrFailure, answerNudge } from './notify'
 
 const at = (hhmm: string): Date => new Date(2026, 0, 1, Number(hhmm.slice(0, 2)), Number(hhmm.slice(3)))
 const noon = at('12:00')
@@ -157,5 +157,26 @@ describe('describeEvent', () => {
   it('пинок воркеру — команда, а не текст ответа', () => {
     assert.equal(answerNudge('q_1', 'req_1'), '[orca] на вопрос q_1 ответили: orca-board request get --request req_1')
     assert.equal(answerNudge('q_1'), '[orca] на вопрос q_1 ответили: orca-board question get --question q_1')
+  })
+})
+
+describe('describePrFailure', () => {
+  const run = (git: Partial<NonNullable<Run['git']>>): Run =>
+    ({ id: 'run_1', title: 'Фича', objective: 'Фича', git: { branch: 'feature/x', base: 'develop', ...git } }) as Run
+
+  it('эскалация от координатора; нет gh и нет логина — своими словами, прочее — текст gh', () => {
+    const missing = describePrFailure(run({ prError: 'gh не установлен', prErrorCode: 'ghMissing' }), 'P', true)
+    assert.equal(missing.kind, 'escalation')
+    assert.equal(missing.roleId, 'coordinator')
+    assert.equal(missing.title, 'Фича · P')
+    assert.match(missing.body, /^PR не открыт: gh не установлен/)
+    assert.match(describePrFailure(run({ prError: 'x', prErrorCode: 'ghAuth' }), 'P', true).body, /gh auth login/)
+    assert.equal(describePrFailure(run({ prError: 'GraphQL: forbidden', prErrorCode: 'other' }), 'P', true).body, 'PR не открыт: GraphQL: forbidden')
+  })
+
+  it('без превью — только проект и общий текст', () => {
+    const c = describePrFailure(run({ prError: 'секрет', prErrorCode: 'other' }), 'P', false)
+    assert.equal(c.title, 'P')
+    assert.equal(c.body, 'PR не открыт')
   })
 })

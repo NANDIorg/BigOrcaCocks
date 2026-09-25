@@ -69,6 +69,8 @@ export default {
   'branch.pushError': 'Push не удался: {error}',
   'branch.pr': 'PR: {url}',
   'branch.prError': 'PR не создан: {error}',
+  'branch.prGhMissing': 'gh не установлен — поставьте GitHub CLI (https://cli.github.com)',
+  'branch.prGhAuth': 'gh не авторизован — выполните gh auth login',
   'branch.prLink': 'PR ↗',
   'branch.prLinkTitle': 'Открыть PR в браузере',
   'branch.copyHint': 'Клик — скопировать имя ветки',

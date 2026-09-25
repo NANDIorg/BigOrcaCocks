@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { normalizeRunBranchSettings, runBranchName, runBranchSettingsProblems, type RunBranchSettings } from '@orca-board/core'
 import type { Project } from '../../../shared/ipc'
 import { staleAppMessage } from '../docLinks'
-import { currentBranchProtected, GIT_FINISHES, gitFinish, gitFlow, withGitFinish } from '../gitSettingsForm'
+import { currentBranchProtected, GIT_FINISHES, ghNote, gitFinish, gitFlow, withGitFinish, type GhCheck } from '../gitSettingsForm'
 import { ipcErrorMessage } from '../useAutoSave'
 import { useProjectBranch } from '../useProjectBranch'
 import { useT } from '../i18n'
@@ -54,6 +54,31 @@ export function GitSection({ project, onProjectChanged }: {
   const example = runBranchName(next.template, { id: 'run_mh2k9x1', title: t('config.about.git.exampleTitle') })
   const finish = gitFinish(draft)
   const blocked = currentBranchProtected(current, draft.protected)
+  const wantsPr = draft.enabled && finish === 'pr'
+  const [gh, setGh] = useState<GhCheck | null>(null)
+  const [ghRound, setGhRound] = useState(0)
+
+  // gh проверяем, только когда выбран «Push + PR»: иначе он не нужен, а вызов идёт в сеть.
+  useEffect(() => {
+    if (!wantsPr) {
+      setGh(null)
+      return
+    }
+    // Renderer обновился по HMR, а preload старый — метода ещё нет.
+    const check = window.orca.projects.ghStatus
+    if (!check) {
+      setGh({ state: 'stale' })
+      return
+    }
+    let cancelled = false
+    setGh({ state: 'checking' })
+    check(project.id).then(
+      (s) => { if (!cancelled) setGh(s) },
+      (e: unknown) => { if (!cancelled) setGh({ state: 'error', detail: ipcErrorMessage(e) }) }
+    )
+    return () => { cancelled = true }
+  }, [project.id, wantsPr, ghRound])
+  const ghLine = gh && ghNote(gh)
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]): void {
     setDraft((d) => ({ ...d, [key]: value }))
@@ -129,6 +154,16 @@ export function GitSection({ project, onProjectChanged }: {
                 ))}
               </div>
               <span className="hint">{t(`config.about.git.finish.${finish}Hint`)}</span>
+              {ghLine && (
+                <div className={`git-gh ${ghLine.tone}`} role="status">
+                  <span>{ghLine.text}</span>
+                  {gh?.state !== 'checking' && gh?.state !== 'ok' && gh?.state !== 'stale' && (
+                    <button type="button" className="btn-sm" onClick={() => setGhRound((n) => n + 1)}>
+                      {t('config.about.git.gh.recheck')}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <details className="git-more">
               <summary>{t('config.about.git.more')}</summary>

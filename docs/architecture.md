@@ -105,7 +105,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   живут в настройках проекта.
 - `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
   (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
-  `git: RunGit {branch, base, worktree?, pushedAt?, pushError?, prUrl?, prError?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
+  `git: RunGit {branch, base, worktree?, pushedAt?, pushError?, prUrl?, prError?, prErrorCode?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -1092,6 +1092,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
   веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
+  `projects:ghStatus(id)` → `GhStatus` — готов ли gh открыть PR из корня проекта: один `gh repo view --json nameWithOwner`
+  (`ghStatus()` в `src/main/run-branch.ts`), `{state: 'ok', repo}` / `missing` (нет gh) / `noAuth` (нет `gh auth login`) /
+  `notGithub` (remote не на GitHub) / `{state: 'error', detail}`; ничего не меняет, раздел «Git» вызывает его при выборе
+  «Push + PR» (у старого preload метода нет — «перезапустите приложение»);
   **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
   `projects:createGroup(name)` → `ProjectGroup`, `projects:renameGroup(id, name)` → `ProjectGroup`,
   `projects:removeGroup(id)` (проекты группы становятся без группы, сами не удаляются), `projects:setGroupCollapsed(id, collapsed)` →
@@ -1217,7 +1221,10 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
   --body-file <временный файл>` (обычный PR, не draft; тело — `Run.summary.text`, без неё описание задачи). Только
   `execFile('gh', …)` без shell, env — `NET_ENV` + `GH_PROMPT_DISABLED=1`, `GH_NO_UPDATE_NOTIFIER=1`, PATH как у агентов
   (процесс + `extraPathDirs()`: у GUI на macOS он урезан), таймаут 60 с, cwd — worktree ветки или root. Итог — `RunGit.prUrl`
-  / `RunGit.prError` (нет gh — «gh не установлен», нет базы PR — «укажите «От чего ответвлять»», иначе stderr ≤ 2000);
+  / `RunGit.prError` (нет gh — «gh не установлен», нет базы PR — «укажите «От чего ответвлять»», иначе stderr ≤ 2000) и
+  `RunGit.prErrorCode` (`ghErrorCode`: `ENOENT` — `ghMissing`, stderr про `gh auth login` / 401 — `ghAuth`, прочее — `other`):
+  `prError` читают сокет и CLI, а renderer по коду переводит «нет gh» / «нет логина» (`prErrorText` в `runBranch.ts`).
+  Ошибка PR вызывает `RunBranchSyncDeps.onPrFailed` → уведомление (см. «Уведомления»);
   попытка одна на каждый `pushedAt` (память `prTried`, как `pushTried`): после ошибки повтор — с новым push или после
   перезапуска. gh вынесен в `RunBranchSyncDeps.gh` для тестов. Координатор и воркеры PR не создают. Карточка в «Сделано», координатора и воркеров
   нет — `git worktree remove` **без `--force`** (грязный worktree остаётся), `Run.git.worktree` снимается, ветка остаётся.
@@ -1823,6 +1830,9 @@ electron (`net.fetch` учитывает системный прокси). `macU
 всё, что ждёт человека, — только по `request_created` (вопрос / ответ готов / эскалация; клик открывает Инбокс
 на запросе, `requests:focus`); кроме него — `escalation` с `stuck: true`, `worker_done` рабочей задачи и `run_done`.
 Событие `question`, пока на него отвечает координатор, человека не дёргает (`docs/human-requests.md`).
+Не из store — неудачное открытие PR ветки глобальной задачи: `RunBranchSync` зовёт `onPrFailed`, main (`notifyPrFailed`)
+показывает `describePrFailure` — вид `escalation` от роли координатора (фильтр тот же), причина — по `prErrorCode`;
+клик открывает проект. Отдельного события нет: координатору по нему делать нечего.
 Уведомления работают и при закрытом окне (фоновый режим): `notify` живёт в main и от окна не зависит.
 Клик по уведомлению — `showWindow()` (развернуть существующее окно или создать новое) и `projects:focus <projectId>`
 (renderer делает проект активным). Если окно только что создано или ещё грузится, `projects:focus` шлётся
@@ -1978,7 +1988,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
-| gh (PR ветки глобальной задачи) | `execFile('gh', [...])` без shell, PATH процесса + `extraPathDirs()` (`/opt/homebrew/bin`) | то же, `gh.exe` находится по PATH; нет gh (`ENOENT`) — `prError` | `runGh()` — `src/main/run-branch.ts` |
+| gh (PR ветки глобальной задачи) | `execFile('gh', [...])` без shell, PATH процесса + `extraPathDirs()` (`/opt/homebrew/bin`) | то же, `gh.exe` находится по PATH; нет gh (`ENOENT`) — `prError` + `prErrorCode: ghMissing`, проверка заранее — `projects:ghStatus` | `runGh()` — `src/main/run-branch.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается

@@ -1,4 +1,4 @@
-import type { OrcaEvent, Task } from '@orca-board/core'
+import { globalTaskTitle, type OrcaEvent, type Run, type Task } from '@orca-board/core'
 import type { NotifyEvent, NotifyKind } from '../shared/notifications'
 import { mt } from './i18n'
 
@@ -73,4 +73,19 @@ export function describeEvent(e: OrcaEvent, task: Task | undefined, projectName:
     case 'runDone': body = withDetail(mt(e.payload.manual === true ? 'notify.runDone' : 'notify.runSubtasksDone'), detail('objective')); break
   }
   return { kind, roleId, title, body: body.slice(0, 200), ...(requestId ? { requestId } : {}) }
+}
+
+/**
+ * Уведомление «PR не открыт» (`RunBranchSync.onPrFailed`). Вид — эскалация: без человека PR не появится, а
+ * выключатель эскалаций в «Настройки → Уведомления» действует и здесь. «Нет gh» и «нет логина» — на языке
+ * человека (`prErrorCode`), остальное — текст gh как есть.
+ */
+export function describePrFailure(run: Run, projectName: string, preview: boolean): NotificationContent {
+  const g = run.git
+  const reason = g?.prErrorCode === 'ghMissing' ? mt('notify.prGhMissing')
+    : g?.prErrorCode === 'ghAuth' ? mt('notify.prGhAuth')
+      : g?.prError ?? ''
+  const title = preview ? `${globalTaskTitle(run)} · ${projectName}` : projectName
+  const body = preview && reason ? `${mt('notify.prFailed')}: ${reason}` : mt('notify.prFailed')
+  return { kind: 'escalation', roleId: RUN_ROLE_ID, title, body: body.slice(0, 200) }
 }

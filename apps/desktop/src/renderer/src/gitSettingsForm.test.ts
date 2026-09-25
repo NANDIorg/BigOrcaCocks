@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_RUN_BRANCH_SETTINGS, type RunBranchSettings } from '@orca-board/core'
-import { currentBranchProtected, GIT_FINISHES, gitFinish, gitFlow, withGitFinish } from './gitSettingsForm'
+import { currentBranchProtected, ghNote, GIT_FINISHES, gitFinish, gitFlow, withGitFinish } from './gitSettingsForm'
 import { setLocale } from './i18n'
 
 const s = (over: Partial<RunBranchSettings> = {}): RunBranchSettings => ({
@@ -44,4 +44,12 @@ test('предупреждение о защищённой ветке проек
   assert.equal(currentBranchProtected('main', ''), false)
   assert.equal(currentBranchProtected('feature/x', 'main, develop'), false)
   assert.equal(currentBranchProtected(null, 'main'), false)
+})
+
+test('строка про gh: готов — ok с репозиторием, проблемы — warn, проверка идёт — muted', () => {
+  assert.deepEqual(ghNote({ state: 'ok', repo: 'o/r' }), { tone: 'ok', text: 'gh готов: PR будут открываться в o/r' })
+  assert.equal(ghNote({ state: 'checking' }).tone, 'muted')
+  for (const state of ['missing', 'noAuth', 'notGithub', 'stale'] as const) assert.equal(ghNote({ state }).tone, 'warn')
+  assert.match(ghNote({ state: 'noAuth' }).text, /gh auth login/)
+  assert.match(ghNote({ state: 'error', detail: 'boom' }).text, /boom/)
 })

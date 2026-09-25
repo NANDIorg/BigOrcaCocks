@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { branchChip, prLink } from './runBranch'
+import { branchChip, prErrorText, prLink } from './runBranch'
 import { setLocale } from './i18n'
 
 const base = { branch: 'feature/run_a1-x', base: 'origin/develop', worktree: '/w/run_a1' }
@@ -37,4 +37,19 @@ test('PR: ссылка в подсказке, ошибка PR — warn, ссыл
   assert.equal(prLink({ ...base, prUrl: 'javascript:alert(1)' }), undefined)
   assert.equal(prLink({ ...base, prUrl: 'http://x/y' }), undefined)
   assert.equal(prLink(base), undefined)
+})
+
+test('ошибка PR: нет gh и нет логина — на языке интерфейса, прочее — текст gh', () => {
+  const g = { branch: 'b', base: 'main' }
+  assert.match(prErrorText({ ...g, prError: 'gh не установлен', prErrorCode: 'ghMissing' }), /GitHub CLI/)
+  assert.match(branchChip({ ...g, pushedAt: 1, prError: 'x', prErrorCode: 'ghAuth' }).title, /gh auth login/)
+  assert.equal(prErrorText({ ...g, prError: 'GraphQL: forbidden', prErrorCode: 'other' }), 'GraphQL: forbidden')
+  // Ошибка, записанная до появления кода, — как раньше, текстом.
+  assert.equal(prErrorText({ ...g, prError: 'old' }), 'old')
+  setLocale('en')
+  try {
+    assert.match(prErrorText({ ...g, prError: 'gh не установлен', prErrorCode: 'ghMissing' }), /not installed/)
+  } finally {
+    setLocale('ru')
+  }
 })

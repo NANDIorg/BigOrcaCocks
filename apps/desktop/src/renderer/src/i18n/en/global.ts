@@ -65,6 +65,8 @@ export default {
   'branch.pushError': 'Push failed: {error}',
   'branch.pr': 'PR: {url}',
   'branch.prError': 'PR not created: {error}',
+  'branch.prGhMissing': 'gh is not installed — install GitHub CLI (https://cli.github.com)',
+  'branch.prGhAuth': 'gh is not signed in — run gh auth login',
   'branch.prLink': 'PR ↗',
   'branch.prLinkTitle': 'Open the PR in the browser',
   'branch.copyHint': 'Click to copy the branch name',

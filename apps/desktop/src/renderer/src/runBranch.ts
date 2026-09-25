@@ -23,7 +23,7 @@ export function branchChip(git: RunGit): BranchChip {
         ? t('global.branch.pushed', { date: formatStamp(git.pushedAt) })
         : t('global.branch.notPushed'),
     ...(git.prError
-      ? [t('global.branch.prError', { error: git.prError })]
+      ? [t('global.branch.prError', { error: prErrorText(git) })]
       : git.prUrl ? [t('global.branch.pr', { url: git.prUrl })] : []),
     t('global.branch.copyHint')
   ]
@@ -32,6 +32,13 @@ export function branchChip(git: RunGit): BranchChip {
     tone: git.pushError || git.prError ? 'warn' : git.pushedAt !== undefined ? 'ok' : 'plain',
     title: lines.join('\n')
   }
+}
+
+/** Причина ошибки PR: «нет gh» и «нет логина» — на языке интерфейса, остальное — текст gh (`prError`) как есть. */
+export function prErrorText(git: RunGit): string {
+  if (git.prErrorCode === 'ghMissing') return t('global.branch.prGhMissing')
+  if (git.prErrorCode === 'ghAuth') return t('global.branch.prGhAuth')
+  return git.prError ?? ''
 }
 
 /** Ссылка на PR для чипа: только https — значение приходит из вывода `gh`, в `href` ему без проверки не место. */

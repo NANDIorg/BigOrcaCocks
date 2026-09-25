@@ -53,7 +53,15 @@ export interface RunGit {
   prUrl?: string
   /** Ошибка последней попытки открыть PR; снимается успешной. Урезается, как `pushError`. */
   prError?: string
+  /**
+   * Вид ошибки PR для перевода в renderer: `prError` — текст для сокета и CLI (по-русски или stderr gh), а человеку
+   * «gh не установлен» / «gh не авторизован» показываем на его языке. Нет — ошибки нет или она старше поля.
+   */
+  prErrorCode?: PrErrorCode
 }
+
+/** Почему приложение не открыло PR: нет gh, gh без логина, остальное (текст — в `RunGit.prError`). */
+export type PrErrorCode = 'ghMissing' | 'ghAuth' | 'other'
 
 const TRANSLIT: Record<string, string> = {
   а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm',

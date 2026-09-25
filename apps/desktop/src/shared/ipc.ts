@@ -274,6 +274,15 @@ export interface ProjectBranchList {
   dirty: boolean
 }
 
+/**
+ * Готовность gh открывать PR из корня проекта (`projects:ghStatus`): `missing` — gh не установлен, `noAuth` — нет
+ * `gh auth login`, `notGithub` — remote не на GitHub, `error` — прочее (`detail` — stderr gh).
+ */
+export type GhStatus =
+  | { state: 'ok'; repo: string }
+  | { state: 'missing' | 'noAuth' | 'notGithub' }
+  | { state: 'error'; detail: string }
+
 /** Итог `projects:gitFetch` / `projects:gitPull`. */
 export interface ProjectGitResult {
   /** Краткий вывод git (stdout + stderr, без ANSI, обрезан до ~4000 символов); пустой, если git ничего не написал. */
@@ -588,6 +597,11 @@ export interface OrcaApi {
      * Нет у старого preload — renderer показывает «перезапустите приложение».
      */
     setGit?(id: string, patch: Partial<RunBranchSettings>): Promise<Project>
+    /**
+     * Готов ли gh открыть PR из корня проекта `id` (`gh repo view`): раздел «Git» проверяет при выборе «Push + PR».
+     * Ничего не меняет. Нет у старого preload — renderer показывает «перезапустите приложение».
+     */
+    ghStatus?(id: string): Promise<GhStatus>
     /** Клик по уведомлению: показать этот проект. */
     onFocus(cb: (projectId: string) => void): () => void
   }
