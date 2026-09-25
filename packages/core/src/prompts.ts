@@ -74,6 +74,13 @@ function answersSection(answers: AnsweredQuestion[]): string[] {
 /** Заголовок раздела этапа в промпте воркера; дальше — название ноды. */
 export const WORKER_STAGE_HEADING = '# Этап:'
 
+/** Правила воркера на этапе «Вопрос человеку»: общие для задачи подзадач и для одиночной задачи прогона. */
+const ASK_STAGE_RULES = [
+  'Твоя цель на этом этапе — задать вопрос(ы) человеку. Код не меняй и ничего не коммить. Изучай задачу и репозиторий только затем, чтобы спросить точно.',
+  'Спрашивай штатным `orca-board ask --question "..." [--option "метка|пояснение" ...] [--recommend <номер|метка>] [--context-file why.md]`: ответ человека придёт в поле `answer`. Вопросы задавай по одному и учитывай ответ в следующем. На этом этапе отвечает человек, а не координатор.',
+  'Когда выяснил всё, что нужно, — сдай `orca-board done --summary "что выяснил"`. Ответы на вопросы получит следующий этап.'
+]
+
 /**
  * Раздел об этапе «Вопрос человеку»: цель — спросить, а не делать. Без новых команд CLI: `orca-board ask` и
  * `done` уже описаны в инструкции воркера. `answered` — ответы уже есть (повторный заход, перезапуск).
@@ -81,12 +88,7 @@ export const WORKER_STAGE_HEADING = '# Этап:'
 function askStageSection(stage: WfWorkStage, answered: boolean): string[] {
   const parts = ['', `${WORKER_STAGE_HEADING} ${stage.title}`]
   if (stage.instructions) parts.push('', stage.instructions)
-  parts.push(
-    '',
-    'Твоя цель на этом этапе — задать вопрос(ы) человеку. Код не меняй и ничего не коммить. Изучай задачу и репозиторий только затем, чтобы спросить точно.',
-    'Спрашивай штатным `orca-board ask --question "..." [--option "метка|пояснение" ...] [--recommend <номер|метка>] [--context-file why.md]`: ответ человека придёт в поле `answer`. Вопросы задавай по одному и учитывай ответ в следующем. На этом этапе отвечает человек, а не координатор.',
-    'Когда выяснил всё, что нужно, — сдай `orca-board done --summary "что выяснил"`. Ответы на вопросы получит следующий этап.'
-  )
+  parts.push('', ...ASK_STAGE_RULES.flatMap((l, i) => (i === 0 ? [l] : ['', l])))
   if (answered) parts.push('', 'Ответы выше уже получены (этап запущен повторно): не переспрашивай, спрашивай только новое.')
   return parts
 }
@@ -152,6 +154,112 @@ export function workerTaskPrompt(
   return parts.join('\n')
 }
 
+// ---------- задачи прогона: проверка и вопрос человеку ----------
+
+/** Сводка закрытого этапа «Работа» (`StageChange.summary` из `Run.stageHistory`): что получили следующие этапы. */
+export interface RunStageSummary {
+  title: string
+  summary: string
+}
+
+/**
+ * Что знает приложение о глобальной задаче, когда создаёт для неё задачу-проверку (`gate`) или задачу-вопрос (`ask`):
+ * цель, ветка с базой (нет ветки — проект без git) и сводки прошлых этапов «Работа».
+ */
+export interface RunTaskContext {
+  /** Цель глобальной задачи (описание, нет — название). */
+  goal: string
+  /** Название глобальной задачи — для заголовков спеки. */
+  title: string
+  /** Ветка глобальной задачи (`Run.git.branch`). */
+  branch?: string
+  /** База ветки (`Run.git.base`): дифф всей ветки считается против неё. */
+  base?: string
+  /** Сводки закрытых этапов «Работа», от старых к новым; этапы без сводки не передаём. */
+  stages?: readonly RunStageSummary[]
+  /** Инструкции самой ноды (`gate`: как проверять, `ask`: что выяснить). */
+  instructions?: string
+}
+
+function goalSection(ctx: RunTaskContext): string[] {
+  return ['## Цель глобальной задачи', '', ctx.goal.trim() || ctx.title]
+}
+
+function stageSummariesSection(stages: readonly RunStageSummary[] = []): string[] {
+  const done = stages.filter((s) => s.summary.trim())
+  if (done.length === 0) return []
+  return ['## Что сделано на прошлых этапах', '', ...done.flatMap((s) => [`### «${s.title}»`, '', s.summary.trim(), ''])].slice(0, -1)
+}
+
+/** Название задачи-проверки прогона: «<название ноды>: <название глобальной задачи>». */
+export function runGateTaskTitle(nodeTitle: string, runTitle: string): string {
+  return `${nodeTitle}: ${runTitle}`
+}
+
+/**
+ * Спека задачи-проверки ноды `gate` воркфлоу глобальной задачи: проверяется ветка глобальной задачи **целиком**
+ * против её базы, а не ветка одной подзадачи. Общий шаблон для любого проекта; как проверять в конкретном
+ * репозитории — в `instructions` ноды или системном промпте роли. Свой id проверяющий берёт из `$ORCA_TASK_ID`
+ * (id задачи неизвестен, пока её не создали): `review accept|reject` по нему двигает граф прогона, а не подзадачи.
+ */
+export function runGateTaskSpec(ctx: RunTaskContext): string {
+  const { branch, base } = ctx
+  const against = base ? `относительно базы \`${base}\`` : 'относительно основной ветки'
+  const steps: string[] = []
+  if (branch) {
+    steps.push(
+      `1. Что вошло в ветку: коммиты — \`git log ${base ?? '<основная ветка>'}..${branch}\`, итоговый дифф — \`git diff ${base ?? '<основная ветка>'}...${branch}\` (для обзора \`--stat\`).`,
+      `2. Проверь работу в своём worktree: слей ветку без коммита (\`git merge --no-commit ${branch}\`), проверь, затем отмени слияние (\`git merge --abort\`).`
+    )
+  } else {
+    steps.push(
+      '1. У глобальной задачи нет отдельной ветки: её работа слита в текущую ветку проекта. Посмотри, что изменилось, по `git log`.',
+      '2. Проверь результат в своём worktree.'
+    )
+  }
+  steps.push(
+    '3. Сверь результат с целью глобальной задачи и сводками этапов ниже: сделано ли то, что просили, и всё ли работает вместе.',
+    '4. Всё хорошо — `orca-board review accept --task "$ORCA_TASK_ID"`. Нет — `orca-board review reject --task "$ORCA_TASK_ID" --feedback "что исправить"`: замечания получит координатор, и граф вернётся на этап «Работа».',
+    '5. Последней командой обязательно `orca-board done --summary "принято"` или `"отклонено: …"` — без неё проверка останется открытой.'
+  )
+  const parts = [
+    branch
+      ? `Проверь ветку \`${branch}\` глобальной задачи «${ctx.title}» целиком: всё, что в ней сделано ${against}. Проверяется вся работа, а не отдельная подзадача.`
+      : `Проверь результат глобальной задачи «${ctx.title}» целиком. Проверяется вся работа, а не отдельная подзадача.`,
+    steps.join('\n'),
+    goalSection(ctx).join('\n')
+  ]
+  const stages = stageSummariesSection(ctx.stages)
+  if (stages.length > 0) parts.push(stages.join('\n'))
+  const own = ctx.instructions?.trim()
+  if (own) parts.push(`## Как проверять\n\n${own}`)
+  return parts.join('\n\n')
+}
+
+/** Название задачи-вопроса прогона: «<название ноды>: <название глобальной задачи>». */
+export function runAskTaskTitle(nodeTitle: string, runTitle: string): string {
+  return `${nodeTitle}: ${runTitle}`
+}
+
+/**
+ * Спека задачи-вопроса ноды `ask` воркфлоу глобальной задачи: одна задача роли ноды, её вопросы идут человеку
+ * напрямую, а ответы получит следующая «Работа» (координатор увидит их в `stage_started`). Спека самодостаточна
+ * (правила этапа те же, что в разделе «# Этап» воркера) — отдельный раздел этапа к ней добавлять не нужно.
+ */
+export function runAskTaskSpec(ctx: RunTaskContext): string {
+  const parts = [
+    `Ты — этап «Вопрос человеку» воркфлоу глобальной задачи «${ctx.title}»: выясни у человека то, чего не хватает, прежде чем работа пойдёт дальше.`,
+    goalSection(ctx).join('\n')
+  ]
+  const stages = stageSummariesSection(ctx.stages)
+  if (stages.length > 0) parts.push(stages.join('\n'))
+  if (ctx.branch) parts.push(`Ветка глобальной задачи: \`${ctx.branch}\`${ctx.base ? ` (от \`${ctx.base}\`)` : ''} — читать можно, менять нельзя.`)
+  const own = ctx.instructions?.trim()
+  if (own) parts.push(`## Что нужно выяснить\n\n${own}`)
+  parts.push(`## Как спрашивать\n\n${ASK_STAGE_RULES.join('\n\n')}`)
+  return parts.join('\n\n')
+}
+
 /**
  * Как агент получает системную инструкцию: `system` — отдельным system prompt (claude, `--append-system-prompt`),
  * `combined` — в начале стартового сообщения перед заданием, `none` — не получает (оболочка).
@@ -177,16 +285,97 @@ export const COORDINATOR_RESUME_SECTION = 'Повторный запуск'
 export const COORDINATOR_RETURN_HEADING = 'Уточнение после проверки'
 
 /**
+ * Заголовок блока цели с этапом графа (воркфлоу глобальной задачи): вход в раздел «Повторный запуск» для
+ * координатора, которого приложение перезапустило на этапе «Работа». Та же строка — в skills/coordinator.md.
+ */
+export const COORDINATOR_STAGE_HEADING = '# Этап:'
+
+/**
+ * Этап «Работа», на котором стоит глобальная задача: то, что несёт `stage_started`, но целиком (`TaskStore.runStage`).
+ * Структурно совместим с `RunStageInfo`, поэтому store не импортируется.
+ */
+export interface CoordinatorStage {
+  title: string
+  /** Какой по счёту заход в этап: возврат по reject увеличивает. */
+  visit: number
+  /** Роли этапа; нет или пусто — любые рабочие роли типа, выбирает координатор. */
+  roleIds?: readonly string[]
+  instructions?: string
+  /** Замечания проверки или человека, вернувших в этап. */
+  feedback?: string
+  /** Решение человека на прошлом этапе `human`. */
+  decision?: string
+  /** Ответы человека на этапе «Вопрос человеку». */
+  answers?: string
+  /** Id подзадач текущего захода: остальные подзадачи — прошлых заходов. */
+  tasks?: readonly string[]
+  /** Все подзадачи захода уже закрыты (`stage_tasks_done` уже отправлен). */
+  tasksDone?: boolean
+}
+
+/**
+ * Блок «# Этап» цели координатора: где стоит граф, роли, инструкции, что сказали человек и проверка, какие подзадачи
+ * уже есть и что делать дальше. Что делать — раздел «Повторный запуск» инструкции, здесь только состояние.
+ */
+function coordinatorStageSection(
+  stage: CoordinatorStage,
+  subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>
+): string[] {
+  const roles = stage.roleIds ?? []
+  const own = new Set(stage.tasks ?? [])
+  const current = subtasks.filter((t) => own.has(t.id))
+  const parts = [
+    '',
+    `${COORDINATOR_STAGE_HEADING} ${stage.title}`,
+    '',
+    `Глобальная задача стоит на этапе «Работа» «${stage.title}» (заход ${stage.visit}); ты перезапущен на нём — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции (вход — блок «${COORDINATOR_STAGE_HEADING}»).`,
+    roles.length > 0
+      ? `Роли этапа: ${roles.join(', ')} — подзадачи создавай только с ними.`
+      : 'Роли этапа не заданы: роль каждой подзадачи выбирай сам из включённых рабочих ролей типа (`orca-board roles list`, по описанию).'
+  ]
+  if (stage.instructions?.trim()) parts.push('', '## Инструкции этапа', '', stage.instructions.trim())
+  if (stage.feedback?.trim()) parts.push('', '## Замечания проверки или человека', '', stage.feedback.trim(), '', 'Это возврат в этап: создай подзадачи-исправления по замечаниям.')
+  if (stage.decision?.trim()) parts.push('', '## Решение человека', '', stage.decision.trim())
+  if (stage.answers?.trim()) parts.push('', '## Ответы человека на вопросы', '', stage.answers.trim())
+  if (current.length > 0) {
+    parts.push('', 'Подзадачи этого захода:', ...current.map((t) => `- ${t.id} [${t.status}] ${t.title}`))
+  }
+  parts.push(
+    '',
+    current.length === 0
+      ? 'Подзадач в этом заходе ещё нет: `stage_started` ты не получил — создай подзадачи по инструкциям и запусти воркеров.'
+      : stage.tasksDone
+        ? 'Все подзадачи захода закрыты, `stage_tasks_done` уже отправлен: решай сразу — нужны ли ещё задачи, иначе `orca-board stage finish --summary "..."`.'
+        : 'Есть незакрытые подзадачи: продолжи цикл (`worker start` для `ready`) и дождись `stage_tasks_done`.'
+  )
+  return parts
+}
+
+/**
  * Цель повторного запуска координатора на глобальной задаче: исходная цель, уточнения человека после
  * проверки (`returns` — последнее полностью, прошлые списком) и уже созданные подзадачи (`status` — название
  * колонки). Правила продолжения — раздел «Повторный запуск» встроенной инструкции, здесь только ссылка на него.
  * Нет ни подзадач, ни уточнений — цель без изменений.
+ *
+ * `stage` — воркфлоу глобальной задачи (`Run.workflowScope: 'run'`): координатор входит по блоку «# Этап» (граф ведёт
+ * приложение, `runs finish` не нужен), замечания человека уже в `stage.feedback`, поэтому «Уточнение после проверки»
+ * не добавляется. Подзадачи прошлых заходов — списком для контекста.
  */
 export function resumeCoordinatorObjective(
   goal: string,
   subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>,
-  returns: ReadonlyArray<{ text: string }> = []
+  returns: ReadonlyArray<{ text: string }> = [],
+  stage?: CoordinatorStage
 ): string {
+  if (stage) {
+    const own = new Set(stage.tasks ?? [])
+    const earlier = subtasks.filter((t) => !own.has(t.id))
+    const parts = [goal, ...coordinatorStageSection(stage, subtasks)]
+    if (earlier.length > 0) {
+      parts.push('', 'Подзадачи прошлых заходов и этапов (уже сделаны, не создавай их заново):', ...earlier.map((t) => `- ${t.id} [${t.status}] ${t.title}`))
+    }
+    return parts.join('\n')
+  }
   const parts = [goal]
   const last = returns[returns.length - 1]
   if (last) {
