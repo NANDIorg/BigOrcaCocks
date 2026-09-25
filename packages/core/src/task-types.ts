@@ -205,7 +205,7 @@ function frontendType(): TaskType {
       workflow: pipelineWorkflow([
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
         { type: 'human', id: 'eyes', title: 'Посмотреть глазами', instructions: EYES_CHECK }
-      ], { roleId: 'developer' }),
+      ], { roleIds: ['developer'] }),
       agentRules: FRONTEND_RULES
     }
   }
@@ -227,7 +227,7 @@ function backendType(): TaskType {
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
         { type: 'gate', id: 'tests', roleId: 'qa', title: 'Прогон тестов',
           instructions: 'Прогони тесты проекта (юнит и интеграционные) на ветке задачи. Принимай, только если всё зелёное; иначе верни с выводом упавших тестов.' }
-      ], { roleId: 'developer' }),
+      ], { roleIds: ['developer'] }),
       agentRules: BACKEND_RULES
     }
   }
@@ -249,16 +249,11 @@ function fullstackType(): TaskType {
         reviewer(),
         role('qa', { systemPrompt: `Пиши и прогоняй тесты: e2e на сценарии интерфейса, интеграционные на ручки.\n\n${DONE_REPORT}` })
       ],
-      // Этап «Работа» ведут агенты одной роли, поэтому слои — два этапа по порядку: контракт API — на бэкенде.
+      // Одна нода «Работа» на обе стороны: координатор сам раздаёт подзадачи ролям frontend и backend (контракт API — отдельной задачей, от которой зависят обе).
       workflow: pipelineWorkflow([
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
         { type: 'human', id: 'eyes', title: 'Посмотреть глазами', instructions: EYES_CHECK }
-      ], {
-        work: [
-          { id: 'backend', roleId: 'backend', title: 'Бэкенд' },
-          { id: 'work', roleId: 'frontend', title: 'Фронтенд' }
-        ]
-      }),
+      ], { roleIds: ['frontend', 'backend'] }),
       agentRules: `${FRONTEND_RULES}\n${BACKEND_RULES}`
     }
   }
@@ -283,7 +278,7 @@ function mobileType(): TaskType {
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
         { type: 'human', id: 'approve', title: 'Проверка перед мержем',
           instructions: 'Соберите ветку и проверьте на устройстве или эмуляторе, затем примите или верните в работу.' }
-      ], { roleId: 'developer' }),
+      ], { roleIds: ['developer'] }),
       agentRules: MOBILE_RULES
     }
   }
@@ -311,7 +306,7 @@ function autotestsType(): TaskType {
         },
         reviewer(`${REVIEW_PROMPT}\nОсобое внимание: флаки (ожидания, гонки), изоляция данных, читаемость шагов теста.`)
       ],
-      workflow: pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }], { roleId: 'autotester' }),
+      workflow: pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }], { roleIds: ['autotester'] }),
       agentRules: AUTOTEST_RULES
     }
   }
@@ -337,7 +332,7 @@ function docsType(): TaskType {
       ],
       workflow: pipelineWorkflow([
         { type: 'human', id: 'review', title: 'Ревью человеком' }
-      ], { roleId: 'writer' })
+      ], { roleIds: ['writer'] })
     }
   }
 }

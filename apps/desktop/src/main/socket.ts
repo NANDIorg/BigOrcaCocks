@@ -190,7 +190,8 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   if (!title) throw new Error('--title обязателен')
   if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
   // Роли — типа глобальной задачи; у «Входящих» (runId нет) — типа проекта по умолчанию.
-  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role))
+  // Без --role на этапе «Работа» с единственной ролью берётся она (`stageDefaultRole`).
+  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role) ?? (runId !== undefined ? store.stageDefaultRole(runId) : undefined))
   // --answer-for human|coordinator — задача-ответ; значение проверяет store.
   const answerFor = r.params['answer-for'] ?? r.params.answerFor
   if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
@@ -255,7 +256,7 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
       ...(role.model ? { model: role.model } : {}),
       agentEnabled: enabled.has(role.agent)
     })),
-    stages: describeWorkflow(resolved.workflow).map((s) => ({ id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}) }))
+    stages: describeWorkflow(resolved.workflow).map((s) => ({ id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}) }))
   }
 }
 

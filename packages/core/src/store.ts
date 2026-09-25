@@ -9,11 +9,12 @@ import {
   TASK_PRIORITIES, isTaskPriority, normalizeOptions, normalizeShowcase
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
+import { isTaskRole } from './prompts.ts'
 import { trackActiveTime } from './active-time.ts'
 import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
   WORKFLOW_VERSION, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction,
-  startRunStage, startStage, toTaskScopeWorkflow, wfNodeTitle, wfWorkStage,
+  startRunStage, startStage, toTaskScopeWorkflow, wfNodeTitle, wfWorkRoleIds, wfWorkStage,
   type WfAction, type WfNode, type WfNodeType, type WfOutcome, type WfShowcase, type WfStage, type WfWorkStage, type Workflow
 } from './workflow.ts'
 import {
@@ -132,8 +133,10 @@ export interface RunStageInfo {
   title: string
   /** Какой по счёту заход в ноду: возврат по reject увеличивает. */
   visit: number
-  /** Роль этапа «Работа»/«Вопрос человеку». */
+  /** Роль этапа «Вопрос человеку». */
   roleId?: string
+  /** Роли этапа «Работа»; нет — этап не ограничивает роли подзадач (любые рабочие роли типа). */
+  roleIds?: string[]
   instructions?: string
   showcase?: WfShowcase
   feedback?: string
@@ -711,9 +714,12 @@ export class TaskStore {
   /**
    * Роль и этап новой подзадачи в воркфлоу глобальной задачи (`workflowScope: 'run'`). Пока граф не начат
    * (`Run.stage` нет), ограничений нет: человек может заготовить подзадачи, они к этапу не относятся. Когда граф идёт,
-   * подзадачи создаются только на этапе «Работа»: роль по умолчанию — роль этапа, чужая — ошибка; задача
-   * привязывается к текущему заходу (`Task.stageOf`). Проверки и вопросы этапов создаёт приложение (`gateFor` или
-   * явный `stageOf`) — их этот порядок не касается. Прогон старого движка и «Входящие» — без изменений.
+   * подзадачи создаются только на этапе «Работа», привязываются к текущему заходу (`Task.stageOf`), а роль зависит
+   * от `roleIds` ноды:
+   * - роли не заданы — подойдёт любая рабочая роль типа (не служебная и не роль `gate` графа), выбирает координатор;
+   * - роли заданы — только из списка, иначе ошибка; одна роль в списке берётся по умолчанию, если роль не передана.
+   * Проверки и вопросы этапов создаёт приложение (`gateFor` или явный `stageOf`) — их этот порядок не касается.
+   * Прогон старого движка и «Входящие» — без изменений.
    */
   private bindToStage(
     run: Run,
@@ -734,11 +740,36 @@ export class TaskStore {
     if (node?.type !== 'work') {
       throw new Error(`подзадачи создаются только на этапе «Работа»: глобальная задача ${run.id} сейчас на этапе ${where} — дождись stage_started`)
     }
-    if (!node.roleId) throw new Error(`на этапе ${where} не выбрана роль — подзадачи создать нельзя, поправь воркфлоу`)
-    if (roleId !== undefined && roleId !== node.roleId) {
-      throw new Error(`роль «${roleId}» не разрешена на этапе ${where}: его ведут агенты роли «${node.roleId}»`)
+    const stageOf = { nodeId: node.id, visit: run.stage.visits[node.id] ?? 1 }
+    const allowed = wfWorkRoleIds(node)
+    if (allowed.length > 0) {
+      if (roleId !== undefined && !allowed.includes(roleId)) {
+        throw new Error(`роль «${roleId}» не разрешена на этапе ${where}: его ведут агенты ролей ${allowed.map((r) => `«${r}»`).join(', ')}`)
+      }
+      return { roleId: roleId ?? (allowed.length === 1 ? allowed[0] : undefined), stageOf }
     }
-    return { roleId: node.roleId, stageOf: { nodeId: node.id, visit: run.stage.visits[node.id] ?? 1 } }
+    if (roleId !== undefined) {
+      const wf = this.runWorkflow(run.id)
+      const gateRoles = new Set(wf.nodes.flatMap((n) => (n.type === 'gate' ? [n.roleId] : [])))
+      if (!isTaskRole(roleId) || gateRoles.has(roleId)) {
+        throw new Error(`роль «${roleId}» не разрешена на этапе ${where}: подзадачи ведут рабочие роли типа, а не служебные и не роли проверки`)
+      }
+    }
+    return { ...(roleId !== undefined ? { roleId } : {}), stageOf }
+  }
+
+  /**
+   * Роль подзадачи, которую можно не передавать: одна роль ноды «Работа», на которой стоит глобальная задача
+   * (`bindToStage` берёт её сам). Нет такой (этап не «Работа», ролей нет или несколько, прогон старого движка) —
+   * undefined, роль тогда выбирает вызывающий. Нужна main: `orca-board task create` без `--role` требует роль.
+   */
+  stageDefaultRole(runId: string): string | undefined {
+    const run = this.runs.get(runId)
+    if (!run || run.workflowScope !== 'run' || !run.stage) return undefined
+    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === run.stage!.nodeId)
+    if (node?.type !== 'work') return undefined
+    const allowed = wfWorkRoleIds(node)
+    return allowed.length === 1 ? allowed[0] : undefined
   }
 
   /** runId задачи неизменен: принадлежность прогону задаётся только при создании. */
@@ -1047,6 +1078,7 @@ export class TaskStore {
       title: wfNodeTitle(node),
       visit,
       ...(stage?.roleId ? { roleId: stage.roleId } : {}),
+      ...(stage?.roleIds ? { roleIds: stage.roleIds } : {}),
       ...(stage?.instructions ? { instructions: stage.instructions } : {}),
       ...(stage?.showcase ? { showcase: stage.showcase } : {}),
       ...run.stageInput,
@@ -1245,7 +1277,7 @@ export class TaskStore {
         this.placeRun(run, this.stageColumn(node))
         const info = this.runStage(run.id, opts)
         const p = {
-          runId: run.id, nodeId: action.nodeId, title: info?.title ?? action.nodeId, roleId: action.roleId, visit: info?.visit ?? 1,
+          runId: run.id, nodeId: action.nodeId, title: info?.title ?? action.nodeId, roleIds: action.roleIds, visit: info?.visit ?? 1,
           ...(info?.instructions ? eventText('instructions', info.instructions) : {}),
           ...(info?.feedback ? eventText('feedback', info.feedback) : {}),
           ...(info?.decision ? eventText('decision', info.decision) : {}),

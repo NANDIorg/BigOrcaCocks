@@ -668,7 +668,7 @@ function registerIpc(): void {
   handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
     if (!input?.title?.trim()) throw new OrcaError('global.subtaskTitleEmpty')
     const p = resolveProject()
-    const role = pickRole(projects.resolveRun(p.id, id), projectAgents(p.id), input.roleId)
+    const role = pickRole(projects.resolveRun(p.id, id), projectAgents(p.id), input.roleId ?? p.store.stageDefaultRole(id))
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
   })
   handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>

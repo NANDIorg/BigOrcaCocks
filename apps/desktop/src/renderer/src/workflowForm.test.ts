@@ -9,9 +9,10 @@ import { graphWithMerge } from './workflowFixture'
 
 const wf = graphWithMerge(DEFAULT_ROLES)
 const node = (w: Workflow, id: string) => w.nodes.find((n) => n.id === id)
-/** Роль ноды любого типа: у типов без роли — undefined. */
+/** Роль ноды любого типа (у «Работы» — роли списком через запятую): у типов без роли — undefined. */
 const roleOf = (w: Workflow, id: string): string | undefined => {
   const n = node(w, id)
+  if (n?.type === 'work') return n.roleIds?.join(',')
   return n && 'roleId' in n ? n.roleId : undefined
 }
 const showcaseOf = (w: Workflow): unknown => {
@@ -27,10 +28,10 @@ test('роли для этапов — без служебных coordinator и 
 })
 
 test('patchNode: пустые необязательные поля удаляются, чужие для типа — игнорируются', () => {
-  let next = patchNode(wf, 'work', { title: '', roleId: 'developer', column: 'review' })
-  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, roleId: 'developer', column: 'review' })
-  next = patchNode(next, 'work', { roleId: '', column: '', merged: true, test: { kind: 'role', roleIds: [] } })
-  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0 })
+  let next = patchNode(wf, 'work', { title: '', roleIds: ['developer', 'qa'], column: 'review' })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, roleIds: ['developer', 'qa'], column: 'review' })
+  next = patchNode(next, 'work', { roleIds: [], column: '', merged: true, test: { kind: 'role', roleIds: [] } })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0 }, 'пустой список — роли не заданы')
 
   next = patchNode(wf, 'review', { roleId: '', instructions: '  ' })
   assert.equal(roleOf(next, 'review'), '')
@@ -40,16 +41,24 @@ test('patchNode: пустые необязательные поля удаляю
   assert.equal(node(wf, 'work')?.title, 'Работа', 'исходный граф не меняется')
 })
 
+test('patchNode: роли «Работы» — список; одиночный roleId старого формата заменяется списком, у гейта и вопроса roleId прежний', () => {
+  const legacy: Workflow = { ...wf, nodes: wf.nodes.map((n) => (n.id === 'work' && n.type === 'work' ? { ...n, roleIds: undefined, roleId: 'developer' } : n)) }
+  const next = patchNode(legacy, 'work', { roleIds: ['frontend', 'backend'] })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', roleIds: ['frontend', 'backend'] })
+  assert.deepEqual(patchNode(wf, 'work', { roleId: 'qa' }), wf, 'roleId у «Работы» больше не правится')
+  assert.equal(roleOf(patchNode(wf, 'review', { roleId: 'qa' }), 'review'), 'qa')
+})
+
 test('patchNode: инструкция и показ у «Работы»', () => {
   let next = patchNode(wf, 'work', { instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
-  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', roleId: 'developer', instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', roleIds: ['developer'], instructions: 'Сделай 3 варианта макета', showcase: { what: 'макеты' } })
   next = patchNode(next, 'work', { showcase: { required: true } })
   assert.deepEqual(showcaseOf(next), { what: 'макеты', required: true }, 'флажок не стирает текст')
   next = patchNode(next, 'work', { showcase: { what: '' } })
   assert.deepEqual(showcaseOf(next), { what: '', required: true }, 'обязательный показ с пустым «что» остаётся — его подсветит валидация')
   assert.ok(validateWorkflow(next, ctx).errors.some((e) => e.nodeId === 'work'))
   next = patchNode(next, 'work', { showcase: { required: false }, instructions: ' ' })
-  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', roleId: 'developer' }, 'пустой показ и инструкция удаляются')
+  assert.deepEqual(node(next, 'work'), { id: 'work', type: 'work', x: 220, y: 0, title: 'Работа', roleIds: ['developer'] }, 'пустой показ и инструкция удаляются')
   assert.deepEqual(patchNode(wf, 'review', { showcase: { what: 'x' } }), wf, 'показ только у «Работы»')
 
   const human = changeNodeType(patchNode(wf, 'work', { instructions: 'этап', showcase: { what: 'макеты' } }), 'work', 'human')
@@ -177,7 +186,7 @@ test('changeNodeType в ask и из него: роль и инструкция �
 
   const back = changeNodeType(ask, 'work', 'work')
   const w = node(back, 'work')
-  assert.equal(w?.type === 'work' && w.roleId, 'developer')
+  assert.deepEqual(w?.type === 'work' && w.roleIds, ['developer'], 'роль вопроса становится списком из одной роли')
   assert.equal(w?.type === 'work' && w.instructions, 'Спроси про формат')
 
   // Гейт с двумя портами → ask с одним: лишние рёбра уходят.

@@ -8,6 +8,6 @@ import { WORKFLOW_VERSION, legacyDefaultWorkflow, type Role, type Workflow } fro
 export function graphWithMerge(roles: readonly Pick<Role, 'id'>[]): Workflow {
   const wf = structuredClone(legacyDefaultWorkflow(roles))
   wf.version = WORKFLOW_VERSION
-  for (const n of wf.nodes) if (n.type === 'work') n.roleId = 'developer'
+  for (const n of wf.nodes) if (n.type === 'work') n.roleIds = ['developer']
   return wf
 }

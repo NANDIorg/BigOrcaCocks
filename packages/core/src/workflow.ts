@@ -78,12 +78,15 @@ export type WfNode = WfNodeBase &
   (
     | { type: 'start' }
     /**
-     * Работа. В графе глобальной задачи (версия 2) `roleId` обязателен: этап ведут агенты одной роли, подзадачи
-     * которых создаёт координатор по `stage_started`. В графе по подзадачам (версия 1) без `roleId` — роль задачи
-     * (её выбрал координатор). `instructions` и `showcase` попадают в промпт воркера разделом «Этап»
-     * (`workerTaskPrompt`); нормализованный вид — `wfWorkStage`.
+     * Работа. В графе глобальной задачи (версия 2) роли этапа необязательны: `roleIds` — ноль, одна или несколько
+     * ролей, агентов которых координатор набирает по `stage_started`. Без ролей он сам выбирает роль каждой
+     * подзадачи из рабочих ролей типа (одна нода покрывает и фронт, и бэк); с ролями — только из списка. Читать
+     * список нужно через `wfWorkRoleIds`. `roleId` — одна роль в форме версии 1 (и первой правки версии 2): читается
+     * как список из одной роли, `migrateWorkflow` переносит её в `roleIds`; в графе по подзадачам (версия 1)
+     * это роль задачи. `instructions` и `showcase` попадают в промпт воркера разделом «Этап» (`workerTaskPrompt`);
+     * нормализованный вид — `wfWorkStage`.
      */
-    | { type: 'work'; roleId?: string; instructions?: string; showcase?: WfShowcase }
+    | { type: 'work'; roleIds?: string[]; /** @deprecated одна роль версии 1, см. выше */ roleId?: string; instructions?: string; showcase?: WfShowcase }
     /**
      * Вопрос человеку: агент роли ноды задаёт вопросы штатным `orca-board ask`, они идут человеку, минуя
      * координатора; ответы попадают в промпт следующих этапов. Код на этапе не меняется. `instructions` — о чём
@@ -170,10 +173,21 @@ export interface WfWorkStage {
   nodeId: string
   type: 'work' | 'ask'
   title: string
-  /** Роль этапа (`work` прогона — обязательна; у графа по подзадачам — необязательна). */
+  /** Роль этапа «Вопрос человеку» (в графе глобальной задачи обязательна; у графа по подзадачам — нет). */
   roleId?: string
+  /** Роли этапа «Работа» (`wfWorkRoleIds`); нет поля — этап не ограничивает роли подзадач. */
+  roleIds?: string[]
   instructions?: string
   showcase?: WfShowcase
+}
+
+/**
+ * Роли ноды «Работа»: `roleIds` без пустых и повторов; нет — прежняя одна роль `roleId` как список из одной; ни того
+ * ни другого — пусто (любые рабочие роли типа). Граф приходит из файла или UI, поэтому поля читаются без доверия к типам.
+ */
+export function wfWorkRoleIds(node: { roleIds?: unknown; roleId?: unknown }): string[] {
+  const raw: unknown[] = Array.isArray(node.roleIds) ? node.roleIds : node.roleId !== undefined ? [node.roleId] : []
+  return [...new Set(raw.filter((r): r is string => typeof r === 'string' && r.trim() !== '').map((r) => r.trim()))]
 }
 
 /**
@@ -193,9 +207,11 @@ export function wfWorkStage(wf: Workflow, nodeId: string): WfWorkStage | undefin
   if (!node || (node.type !== 'work' && node.type !== 'ask')) return undefined
   const instructions = typeof node.instructions === 'string' ? node.instructions.trim() : ''
   const showcase = wfShowcase(node)
+  const roleIds = node.type === 'work' ? wfWorkRoleIds(node) : []
   return {
     nodeId: node.id, type: node.type, title: wfNodeTitle(node),
-    ...(node.roleId ? { roleId: node.roleId } : {}),
+    ...(node.type === 'ask' && node.roleId ? { roleId: node.roleId } : {}),
+    ...(roleIds.length > 0 ? { roleIds } : {}),
     ...(instructions ? { instructions } : {}),
     ...(showcase ? { showcase } : {})
   }
@@ -290,10 +306,10 @@ export type WfPipelineCheck =
   | { type: 'gate'; id: string; roleId: string; title?: string; instructions?: string }
   | { type: 'human'; id: string; title?: string; instructions?: string }
 
-/** Этап «Работа» линейного графа: id ноды, роль агентов и тексты. */
+/** Этап «Работа» линейного графа: id ноды, роли агентов (нет — любые рабочие роли типа) и тексты. */
 export interface WfPipelineWork {
   id: string
-  roleId: string
+  roleIds?: string[]
   title?: string
   instructions?: string
 }
@@ -306,7 +322,7 @@ const PIPELINE_FINAL_CHECK_TITLE = 'Проверка человеком'
 const PIPELINE_WORK_TITLE = 'Реализация'
 
 /**
- * Роль, агенты которой ведут этап «Работа» по умолчанию: `developer`, иначе первая рабочая (не служебная и не
+ * Роль по умолчанию для нод с обязательной ролью (`ask`, миграция v1 → v2): `developer`, иначе первая рабочая (не служебная и не
  * `reviewer`) роль, иначе `reviewer` (других нет), иначе `developer` — валидация укажет, что роли в проекте нет.
  */
 export function defaultWorkRole(roles: readonly Pick<Role, 'id'>[]): string {
@@ -324,9 +340,9 @@ export function defaultWorkRole(roles: readonly Pick<Role, 'id'>[]): string {
  */
 export function pipelineWorkflow(
   checks: readonly WfPipelineCheck[],
-  opts: { work?: readonly WfPipelineWork[]; roleId?: string } = {}
+  opts: { work?: readonly WfPipelineWork[]; roleIds?: string[] } = {}
 ): Workflow {
-  const works: readonly WfPipelineWork[] = opts.work?.length ? opts.work : [{ id: 'work', roleId: opts.roleId ?? 'developer' }]
+  const works: readonly WfPipelineWork[] = opts.work?.length ? opts.work : [{ id: 'work', ...(opts.roleIds?.length ? { roleIds: opts.roleIds } : {}) }]
   const nodes: WfNode[] = [{ id: 'start', type: 'start', x: 0, y: 0 }]
   const edges: WfEdge[] = []
   let x = 0
@@ -337,7 +353,8 @@ export function pipelineWorkflow(
     x += PIPELINE_STEP_X
     link(w.id)
     nodes.push({
-      id: w.id, type: 'work', title: w.title ?? PIPELINE_WORK_TITLE, roleId: w.roleId, x, y: 0,
+      id: w.id, type: 'work', title: w.title ?? PIPELINE_WORK_TITLE, x, y: 0,
+      ...(w.roleIds?.length ? { roleIds: [...w.roleIds] } : {}),
       ...(w.instructions ? { instructions: w.instructions } : {})
     })
     link = (to) => edges.push({ id: `e_${w.id}`, from: w.id, outcome: 'next', to })
@@ -366,14 +383,13 @@ export function pipelineWorkflow(
 
 /**
  * Дефолтный граф глобальной задачи, повторяющий прежнее поведение (работа → ревью → «Проверка» человеком):
- * старт → «Реализация» (`defaultWorkRole`) → ревью агентом, если есть роль `reviewer` → «Проверка» человеком
- * (accept → конец, reject → «Реализация») → конец. Слияния в базовую ветку нет: это решает человек графом типа.
+ * старт → «Реализация» без роли (координатор сам выбирает роли подзадач из рабочих ролей типа) → ревью агентом,
+ * если есть роль `reviewer` → «Проверка» человеком (accept → конец, reject → «Реализация») → конец. Слияния в
+ * базовую ветку нет: это решает человек графом типа.
  */
 export function defaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workflow {
   const hasReviewer = roles.some((r) => r.id === 'reviewer')
-  return pipelineWorkflow(hasReviewer ? [{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }] : [], {
-    roleId: defaultWorkRole(roles)
-  })
+  return pipelineWorkflow(hasReviewer ? [{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }] : [])
 }
 
 /**
@@ -470,7 +486,7 @@ export function legacyDefaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workf
  */
 export function toTaskScopeWorkflow(wf: Workflow): Workflow {
   if (wf.version < WORKFLOW_VERSION) return wf
-  let nodes: WfNode[] = wf.nodes.map((n) => (n.type === 'work' ? (({ roleId: _roleId, ...rest }) => rest)(n) as WfNode : { ...n }))
+  let nodes: WfNode[] = wf.nodes.map((n) => (n.type === 'work' ? (({ roleId: _roleId, roleIds: _roleIds, ...rest }) => rest)(n) as WfNode : { ...n }))
   let edges: WfEdge[] = wf.edges.map((e) => ({ ...e }))
   const isEnd = (id: string): boolean => nodes.find((n) => n.id === id)?.type === 'end'
   // Финальная проверка человеком: входящие в неё переходы ведут туда, куда вёл её accept.
@@ -508,7 +524,7 @@ export function toTaskScopeWorkflow(wf: Workflow): Workflow {
 /** Про что предупреждает миграция графа (`WfMigrationNote.code`). */
 export type WfMigrationCode =
   | 'mergeRemoved' | 'roleConditionRemoved' | 'gitNodeRemoved' | 'nodeOrphaned'
-  | 'workRoleSet' | 'askRoleSet' | 'attemptsTargetRemoved' | 'noHumanBeforeEnd'
+  | 'askRoleSet' | 'attemptsTargetRemoved' | 'noHumanBeforeEnd'
 
 /** Предупреждение человеку о том, что миграция изменила граф; `message` — по-русски, для показа как есть. */
 export interface WfMigrationNote {
@@ -527,7 +543,9 @@ export interface WfMigrationNote {
  *   дальше по исходу `ok` (обычно в конец); ноды, в которые после этого никто не ведёт («Конфликт мержа»), снимаются;
  * - `condition: role` снимается с переходом по `yes`: у глобальной задачи роли нет;
  * - `git create_branch/checkout` снимаются с переходом по `ok`: ветка глобальной задачи одна, её задаёт шаблон проекта;
- * - `work` и `ask` без роли получают `defaultWorkRole(roles)` — в v2 роль обязательна (`roles` нет — `developer`).
+ * - роль `work` переносится в `roleIds`; `work` без роли остаётся без роли (координатор выбирает роли подзадач сам)
+ *   и предупреждения не даёт;
+ * - `ask` без роли получает `defaultWorkRole(roles)` — у вопроса роль обязательна (`roles` нет — `developer`).
  */
 export function migrateWorkflowReport(
   wf: Workflow,
@@ -615,9 +633,10 @@ export function migrateWorkflowReport(
 
   const role = defaultWorkRole(roles)
   nodes = nodes.map((n) => {
-    if (n.type === 'work' && !n.roleId) {
-      notes.push({ code: 'workRoleSet', nodeId: n.id, message: `этап «${title(n)}»: роль не была задана — подставлена «${role}». Этап ведут агенты одной роли, проверьте выбор` })
-      return { ...n, roleId: role }
+    if (n.type === 'work') {
+      const { roleId: _roleId, roleIds: _roleIds, ...rest } = n
+      const roleIds = wfWorkRoleIds(n)
+      return roleIds.length > 0 ? { ...rest, roleIds } : rest
     }
     if (n.type === 'ask' && !n.roleId) {
       notes.push({ code: 'askRoleSet', nodeId: n.id, message: `этап «${title(n)}»: роль не была задана — подставлена «${role}». Вопросы задаёт агент этой роли, проверьте выбор` })
@@ -700,7 +719,7 @@ export const WF_ISSUE_TEXTS = {
   showcaseRequiredNotBool: 'нода «{node}»: «показ обязателен» должен быть да/нет',
   attemptsNoNode: 'нода «{node}»: условие считает заходы в несуществующую ноду «{target}»',
   attemptsBadCount: 'нода «{node}»: число заходов должно быть целым и не меньше 1',
-  workNoRole: 'нода «{node}»: не выбрана роль — этап «Работа» ведут агенты одной роли',
+  workRolesNotList: 'нода «{node}»: роли этапа должны быть списком id ролей',
   askNoRole: 'нода «{node}»: не выбрана роль — вопросы человеку задаёт агент этой роли',
   conditionRoleRun: 'нода «{node}»: условие по роли не работает в воркфлоу глобальной задачи — у неё нет роли',
   filesUnsupported: 'нода «{node}»: условие по файлам ветки пока не поддерживается',
@@ -918,10 +937,19 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       if (!n.roleId) errors.push(at(n, 'gateNoRole'))
       else checkRole(n, n.roleId)
     }
-    if (n.type === 'work' || n.type === 'ask') {
-      // Воркфлоу идёт по глобальной задаче: у неё нет роли, поэтому роль этапа — единственная.
-      if (!n.roleId) errors.push(at(n, n.type === 'work' ? 'workNoRole' : 'askNoRole'))
+    if (n.type === 'ask') {
+      // Воркфлоу идёт по глобальной задаче: у неё нет роли, поэтому вопрос задаёт агент роли этапа.
+      if (!n.roleId) errors.push(at(n, 'askNoRole'))
       else checkRole(n, n.roleId)
+    }
+    if (n.type === 'work') {
+      // Роли этапа необязательны: нет ни одной — подзадачам роль выбирает координатор из рабочих ролей типа.
+      const raw: unknown = n.roleIds
+      if (raw !== undefined && (!Array.isArray(raw) || raw.some((r) => typeof r !== 'string'))) {
+        errors.push(at(n, 'workRolesNotList'))
+      } else {
+        for (const roleId of wfWorkRoleIds(n)) checkRole(n, roleId)
+      }
     }
     if (n.type === 'ask' && (typeof n.instructions !== 'string' || !n.instructions.trim())) {
       errors.push(at(n, 'askNoInstructions'))
@@ -1099,9 +1127,9 @@ export type WfAction =
   | { type: 'start_worker'; nodeId: string; roleId?: string }
   /**
    * Только воркфлоу глобальной задачи: этап «Работа» — координатору отправлен `stage_started`, он набирает агентов
-   * роли `roleId`. Приложение агентов само не запускает.
+   * ролей `roleIds` (пусто — любых рабочих ролей типа). Приложение агентов само не запускает.
    */
-  | { type: 'start_stage'; nodeId: string; roleId: string }
+  | { type: 'start_stage'; nodeId: string; roleIds: string[] }
   /** Только воркфлоу глобальной задачи: этап `ask` — приложение создаёт одну задачу роли `roleId`, её вопросы идут человеку. */
   | { type: 'create_ask'; nodeId: string; roleId: string }
   | { type: 'create_gate'; nodeId: string; roleId: string }
@@ -1146,7 +1174,12 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
     case 'ask':
       if (ctx.scope === 'run') return runWorkAction(node, ctx)
       // Тот же start_worker: исполнитель (main) различает работу и вопрос по типу ноды.
-      return node.roleId ? { type: 'start_worker', nodeId: node.id, roleId: node.roleId } : { type: 'start_worker', nodeId: node.id }
+      {
+        // Граф по подзадачам: у ноды `work` роль — одна прежняя, несколько ролей там смысла не имеют.
+        const roleIds = node.type === 'work' ? wfWorkRoleIds(node) : []
+        const roleId = node.type === 'ask' ? node.roleId : roleIds.length === 1 ? roleIds[0] : undefined
+        return roleId ? { type: 'start_worker', nodeId: node.id, roleId } : { type: 'start_worker', nodeId: node.id }
+      }
     case 'gate':
       if (ctx.roleIds && !ctx.roleIds.includes(node.roleId)) {
         return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: нет роли «${node.roleId}» в проекте` }
@@ -1166,14 +1199,21 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
   }
 }
 
-/** Действие `work`/`ask` в воркфлоу глобальной задачи: роль обязательна и должна быть в проекте. */
+/**
+ * Действие `work`/`ask` в воркфлоу глобальной задачи. `work` — роли необязательны, но заданные должны быть в проекте;
+ * у `ask` роль обязательна.
+ */
 function runWorkAction(node: Extract<WfNode, { type: 'work' | 'ask' }>, ctx: WfContext): WfAction {
   const blocked = (reason: string): WfAction => ({ type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: ${reason}` })
-  if (!node.roleId) return blocked(node.type === 'work' ? 'не выбрана роль этапа' : 'не выбрана роль, которая задаёт вопросы')
+  if (node.type === 'work') {
+    const roleIds = wfWorkRoleIds(node)
+    const missing = ctx.roleIds ? roleIds.filter((r) => !ctx.roleIds!.includes(r)) : []
+    if (missing.length > 0) return blocked(`нет ${missing.length > 1 ? 'ролей' : 'роли'} ${missing.map((r) => `«${r}»`).join(', ')} в проекте`)
+    return { type: 'start_stage', nodeId: node.id, roleIds }
+  }
+  if (!node.roleId) return blocked('не выбрана роль, которая задаёт вопросы')
   if (ctx.roleIds && !ctx.roleIds.includes(node.roleId)) return blocked(`нет роли «${node.roleId}» в проекте`)
-  return node.type === 'work'
-    ? { type: 'start_stage', nodeId: node.id, roleId: node.roleId }
-    : { type: 'create_ask', nodeId: node.id, roleId: node.roleId }
+  return { type: 'create_ask', nodeId: node.id, roleId: node.roleId }
 }
 
 /**
@@ -1314,8 +1354,10 @@ export interface WfStageInfo {
   id: string
   type: WfNodeType
   title: string
-  /** Роль гейта, работы или вопроса (без роли — роль задачи). */
+  /** Роль гейта или вопроса (без роли — роль задачи). */
   roleId?: string
+  /** Роли этапа «Работа»; нет — любые рабочие роли типа. */
+  roleIds?: string[]
   instructions?: string
   /** Условие ноды `condition` человеческими словами. */
   condition?: string
@@ -1352,7 +1394,11 @@ export function describeWorkflow(wf: Workflow): WfStageInfo[] {
     const next: Partial<Record<WfOutcome, string>> = {}
     for (const e of wf.edges) if (e.from === id) next[e.outcome] = label(e.to)
     const info: WfStageInfo = { id, type: n.type, title: wfNodeTitle(n), next }
-    if ((n.type === 'gate' || n.type === 'work' || n.type === 'ask') && n.roleId) info.roleId = n.roleId
+    if ((n.type === 'gate' || n.type === 'ask') && n.roleId) info.roleId = n.roleId
+    if (n.type === 'work') {
+      const roleIds = wfWorkRoleIds(n)
+      if (roleIds.length > 0) info.roleIds = roleIds
+    }
     if ((n.type === 'gate' || n.type === 'human') && n.instructions?.trim()) info.instructions = n.instructions.trim()
     if (n.type === 'work' || n.type === 'ask') {
       const stage = wfWorkStage(wf, n.id)
