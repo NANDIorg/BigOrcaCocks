@@ -45,9 +45,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      # Для typecheck, node:test и Vite не нужен нативный PTY/Electron.
-      # Полная установка и пересборка node-pty выполняются при сборке релиза.
+      # Electron и упаковщики для тестов не нужны. node-pty импортируется сокет-тестами:
+      # на Linux готового бинарника в пакете нет, собираем его под Node runner.
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @orca-board/desktop rebuild node-pty
       - run: pnpm verify
         # Git-фикстуры не должны зависеть от identity, CRLF и safe.directory=* образа runner.
         env:

@@ -1227,6 +1227,11 @@ ad-hoc, и приложение падает при запуске. Провер
 
 ## Грабли разработки
 
+- Чистая CI-установка с `--ignore-scripts` не собирает `node-pty`. В пакете 1.1.0 есть
+  prebuilds для macOS/Windows, но Linux socket-тесты падают при импорте с `Failed to load
+  native module: pty.node`. CI отдельно выполняет `pnpm --filter @orca-board/desktop rebuild node-pty`
+  под Node runner; GUI и Electron-упаковка проверяются отдельно.
+
 - `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has
   no resources but signature indicates they must be present». Пока .app собран локально, macOS его запускает, но
