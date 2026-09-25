@@ -311,3 +311,15 @@ describe('проект', () => {
     assert.ok(DEFAULT_COLUMNS.some((c) => c.id === status && (c.kind === 'backlog' || c.kind === 'ready')), String(status))
   })
 })
+
+describe('настройки приложения: язык', () => {
+  it('не выбран — нет поля; выбранный переживает перезапуск; чужой язык — ошибка', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    assert.equal(pm.settings().language, undefined, 'первый запуск: язык берёт renderer из системы')
+    assert.equal(pm.setSettings({ language: 'en' }).language, 'en')
+    assert.equal(new ProjectManager(tmp).settings().language, 'en')
+    assert.throws(() => pm.setSettings({ language: 'de' as 'en' }), /неизвестный язык «de»/)
+    assert.equal(pm.settings().keepInBackground, true, 'остальные настройки не задеты')
+  })
+})

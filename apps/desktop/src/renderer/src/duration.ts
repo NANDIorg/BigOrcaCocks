@@ -1,19 +1,8 @@
 import { activeDuration, globalOwnDuration, globalSubtasksDuration, taskActiveTime, type GlobalTask, type Task } from '@orca-board/core'
+import { formatDuration } from './i18n/format'
 
-const MIN = 60_000
-const HOUR = 60 * MIN
-const DAY = 24 * HOUR
-
-/** Компактная длительность по-русски: «<1 мин», «5 мин», «2 ч 15 мин», «3 д 4 ч». Секунды не показываем. */
-export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < MIN) return '<1 мин'
-  const days = Math.floor(ms / DAY)
-  const hours = Math.floor((ms % DAY) / HOUR)
-  const mins = Math.floor((ms % HOUR) / MIN)
-  if (days > 0) return hours > 0 ? `${days} д ${hours} ч` : `${days} д`
-  if (hours > 0) return mins > 0 ? `${hours} ч ${mins} мин` : `${hours} ч`
-  return `${mins} мин`
-}
+/** Компактная длительность на языке интерфейса; реализация — в i18n/format.ts. */
+export { formatDuration } from './i18n/format'
 
 /**
  * Время работы подзадачи: копится только в kind=in_progress (`Task.activeMs` + текущий отрезок до now).

@@ -1,18 +1,10 @@
 // Настройки системных уведомлений и фильтр по ним. Чистый модуль: нужен и main (фильтр, нормализация
-// файла настроек), и renderer (подписи, дефолты) — без electron и node.
+// файла настроек), и renderer (дефолты; подписи — словарь i18n `settings`) — без electron и node.
 
 /** Вид уведомления: то, что человек включает/выключает в «Настройки → Уведомления». */
 export type NotifyKind = 'workerDone' | 'answerReady' | 'question' | 'escalation' | 'runDone'
 
 export const NOTIFY_KINDS: NotifyKind[] = ['question', 'answerReady', 'workerDone', 'escalation', 'runDone']
-
-export const NOTIFY_KIND_TITLES: Record<NotifyKind, { title: string; hint: string }> = {
-  question: { title: 'Вопрос от воркера', hint: 'Воркер спросил через orca-board ask и ждёт ответа.' },
-  answerReady: { title: 'Ответ готов', hint: 'Задача-ответ для человека сдана — ждёт «Принять» или «Уточнить».' },
-  workerDone: { title: 'Воркер завершил задачу', hint: 'orca-board done: задача ушла на ревью.' },
-  escalation: { title: 'Эскалация', hint: 'Воркер упал без done или долго молчит.' },
-  runDone: { title: 'Прогон завершён', hint: 'Все задачи прогона в «Готово».' }
-}
 
 export interface QuietHours {
   enabled: boolean

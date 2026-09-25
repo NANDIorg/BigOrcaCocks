@@ -33,10 +33,15 @@ export interface TerminalSnapshot extends TerminalInfo {
   tail: string
 }
 
+/** Язык интерфейса (renderer/src/i18n). */
+export type AppLanguage = 'ru' | 'en'
+
 /** Глобальные настройки приложения (не проекта). */
 export interface AppSettings {
   /** Закрытие окна не завершает приложение: PTY живут, иконка в трее. По умолчанию true. */
   keepInBackground: boolean
+  /** Язык интерфейса; не выбран — renderer берёт язык системы (en-* → en, иначе ru). */
+  language?: AppLanguage
   /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
   notifications: NotificationSettings
 }
@@ -44,6 +49,7 @@ export interface AppSettings {
 /** Патч настроек приложения: notifications мержится по полям. */
 export interface AppSettingsPatch {
   keepInBackground?: boolean
+  language?: AppLanguage
   notifications?: NotificationSettingsPatch
 }
 

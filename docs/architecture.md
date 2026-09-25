@@ -983,7 +983,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим»); `projects:list`, `projects:setActive`, `projects:remove`,
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»); `projects:list`, `projects:setActive`, `projects:remove`,
   `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы; ролей, графа, правил и разрешений у проекта нет);
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
@@ -1474,6 +1474,49 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 На Windows уведомления показываются только при заданном AppUserModelID — `app.setAppUserModelId('orca-board')`
 в `app.whenReady()` (`src/main/index.ts`).
 
+## Язык интерфейса (i18n, `renderer/src/i18n/`)
+
+Свой лёгкий модуль без зависимостей: `t()` с параметрами, множественное число через `Intl.PluralRules`,
+форматирование через `Intl`. Языки — `ru` (по умолчанию) и `en`. Переводится только UI renderer: промпты агентов,
+skills, тексты main (уведомления, диалоги, ошибки IPC) и введённые человеком названия (колонки, роли, типы) — нет.
+
+- **Словари по областям** — отдельные файлы `i18n/ru/<область>.ts` и `i18n/en/<область>.ts`, чтобы задачи
+  перевода разных экранов не правили один файл: `common` (кнопки, состояния, единицы измерения), `settings`
+  (окно «Настройки»), `board` (доска, карточки, модалка задачи), `shell` (App, инбокс, лента внимания, координатор,
+  ассистент, терминал), `global` (глобальные задачи, статистика), `config` («О проекте»: роли, воркфлоу, типы задач,
+  документация). Области собраны в `i18n/dict.ts` (`RU`, `DICTS`). Ключи внутри области плоские, с точками
+  (`'general.title'`); в `t()` — с именем области: `t('settings.general.title')`. Тип `TKey` — объединение всех
+  ключей: опечатка — ошибка typecheck.
+- **ru — эталон ключей.** `ru/*.ts` — `export default {…} satisfies AreaDict`; `en/*.ts` —
+  `satisfies AreaTranslation<typeof ru>`: пропущенный или лишний ключ в en — ошибка типа. Тест
+  `renderer/src/i18n.test.ts` дополнительно сверяет ключи, plural-формы и параметры `{name}` во всех областях.
+- **Сообщение** — строка с параметрами `{name}` (`t('settings.nav.typeUsage', { count: 3 })`) или формы
+  множественного числа: ru — `{ one, few, many }`, en — `{ one, other }`; число — параметр `count`, форму выбирает
+  `pluralCategory(locale, count)`. Старый `plural.ts` (три русские формы) — только для ещё не переведённых строк.
+- **API** (`i18n/index.ts`): в компоненте — `const t = useT()` (перерисует компонент при смене языка), язык —
+  `useLocale()`; в модулях логики (`.ts`, тестируются под node) — `t()` и `getLocale()` на текущем языке.
+  `translate(locale, key, params)` — чистая функция для тестов. Смена языка — `setLocale()`: подписчики
+  `useSyncExternalStore` перерисовываются, корень `Root` в `main.tsx` зовёт `useLocale()` и пересоздаёт `<App />`,
+  поэтому обновляются и компоненты без `useT()` (кроме обёрнутых в `memo`). Нет ключа в словаре языка — русский
+  текст, нет и там — сам ключ.
+- **Форматирование** (`i18n/format.ts`): `intlLocale()` (`ru-RU` / `en-US`), `formatInteger`, `formatFixed`,
+  `formatShort`, `formatDateTime`, `formatDuration` (единицы — ключи `common.unit.*`). На них переведены
+  `duration.ts` (`formatDuration` — реэкспорт) и числа в `statsFormat.ts` (деньги, токены, время агентов, оси).
+  Не пиши `toLocaleString('ru-RU')` и `replace('.', ',')` — бери эти функции.
+- **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
+  (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
+  `app:setSettings` — нового IPC нет. Не выбран (первый запуск) — поля нет, renderer берёт язык системы:
+  `navigator.language` `en-*` → en, иначе ru (`systemLocale`, `settingsLocale`). При старте окна `initLocale`
+  (`main.tsx`) сразу ставит язык из кэша `localStorage['orca.locale']` или системы — чтобы окно не мигало
+  русским, — затем из настроек main. Старый preload без `window.orca.app` или ошибка IPC — язык системы, без падения;
+  старый main, который отбросил `language`, — язык меняется до перезапуска, в разделе «Общие» ошибка `common.staleApp`.
+- **Переключатель** «Язык / Language» — «Настройки → Общие» (`settings/GeneralSection.tsx`), сегменты
+  «Русский» / «English» (названия — каждое на своём языке, `LOCALE_NAMES`). Язык меняется сразу, до ответа main.
+
+**Добавить строку:** ключ в `i18n/ru/<область>.ts` и тот же ключ в `i18n/en/<область>.ts`, в компоненте —
+`t('<область>.<ключ>')`. **Добавить область:** файлы в `ru/` и `en/` и строки в `RU` и `DICTS.en` в `i18n/dict.ts`.
+Правило: новый UI-текст — только через `t()`, ключ сразу в ru и en.
+
 ## Кроссплатформенность
 
 Поддерживаются macOS и Windows (x64). Всё платформозависимое — ветки `process.platform === 'win32'`
@@ -1543,6 +1586,13 @@ ad-hoc, и приложение падает при запуске. Провер
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
 
 ## Грабли разработки
+
+- Тесты под `node --test` резолвят импорты хуком `apps/desktop/test/ts-resolve.mjs`: без него node не находит
+  модуль без расширения и не открывает папку. Хук пробует `<путь>.ts`, затем `<путь>/index.ts` — поэтому
+  `import { t } from './i18n'` работает и в тестах, и в vite. Новый вид импорта в модулях с тестами — проверяй хук.
+
+- В компоненте, где `const t = useT()`, не называй `t` локальные переменные (`const t = await types.create(…)`,
+  `(t: TaskType) => …`): тень ломает перевод, а typecheck ругается невнятно («not callable», «used before declaration»).
 
 - `mac.identity: null` в `electron-builder.yml` выключал подпись целиком. У бинарника оставалась только
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has

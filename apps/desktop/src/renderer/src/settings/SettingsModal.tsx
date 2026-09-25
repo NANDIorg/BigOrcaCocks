@@ -12,6 +12,7 @@ import { GeneralSection } from './GeneralSection'
 import { NotificationsSection } from './NotificationsSection'
 import { TaskTypePane } from './TaskTypePane'
 import { useTaskTypes } from './useTaskTypes'
+import { setLocale, useT } from '../i18n'
 
 /** Раздел меню: общий, уведомления или тип задачи (`type:<id>`). */
 type Section = 'general' | 'notifications' | `type:${string}`
@@ -58,6 +59,7 @@ interface Props {
  * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
  */
 export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const [section, setSection] = useState<Section>(initialSection)
   const [tab, setTab] = useState<TaskTypeTab>(initialTab)
   const [projectList, setProjectList] = useState<Project[]>([])
@@ -102,9 +104,13 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
   }
 
   async function saveApp(patch: AppSettingsPatch): Promise<void> {
+    // Язык меняется сразу, не дожидаясь main: окно переводится мгновенно.
+    if (patch.language) setLocale(patch.language)
     try {
-      setAppSettings(await window.orca.app.setSettings(patch))
-      setAppError(null)
+      const next = await window.orca.app.setSettings(patch)
+      setAppSettings(next)
+      // Старый main не знает поля language и молча его отбросит — выбор не переживёт перезапуск.
+      setAppError(patch.language && next.language !== patch.language ? t('common.staleApp') : null)
     } catch (e) {
       setAppError(ipcErrorMessage(e))
     }
@@ -112,9 +118,9 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
 
   async function createType(): Promise<void> {
     try {
-      const t = await types.create({ title: 'Новый тип', settings: {} })
+      const created = await types.create({ title: t('settings.newTypeTitle'), settings: {} })
       setCreateError(null)
-      selectType(t.id)
+      selectType(created.id)
     } catch (e) {
       setCreateError(ipcErrorMessage(e))
     }
@@ -132,27 +138,27 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
 
   // ---------- меню ----------
 
-  const general: NavEntry<Section> = { id: 'general', label: 'Общие', icon: Icon.gear }
+  const general: NavEntry<Section> = { id: 'general', label: t('settings.nav.general'), icon: Icon.gear }
   const notifyOn = appSettings?.notifications.enabled
   const notifications: NavEntry<Section> = {
-    id: 'notifications', label: 'Уведомления', icon: Icon.bell,
-    count: notifyOn === undefined ? undefined : notifyOn ? 'вкл' : 'выкл'
+    id: 'notifications', label: t('settings.nav.notifications'), icon: Icon.bell,
+    count: notifyOn === undefined ? undefined : notifyOn ? t('common.on') : t('common.off')
   }
   /** Текущий пункт меню: у типа — с фактическим id (пустой `type:` после удаления — тип по умолчанию). */
   const navCurrent: Section = currentId ? `${TYPE}${currentId}` : section
-  const typeItem = (t: TaskType): React.JSX.Element => {
-    const u = usage[t.id]
+  const typeItem = (type: TaskType): React.JSX.Element => {
+    const u = usage[type.id]
     const item: NavEntry<Section> = {
-      id: `${TYPE}${t.id}`, label: t.title, icon: Icon.layers,
-      count: state?.defaultTaskTypeId === t.id ? 'по умолч.' : u?.asDefault ? String(u.asDefault) : undefined,
-      title: [t.description, u?.asDefault ? `Тип по умолчанию в проектах: ${u.asDefault}` : ''].filter(Boolean).join('\n') || undefined
+      id: `${TYPE}${type.id}`, label: type.title, icon: Icon.layers,
+      count: state?.defaultTaskTypeId === type.id ? t('settings.nav.defaultType') : u?.asDefault ? String(u.asDefault) : undefined,
+      title: [type.description, u?.asDefault ? t('settings.nav.typeUsage', { count: u.asDefault }) : ''].filter(Boolean).join('\n') || undefined
     }
-    return <NavItem key={t.id} item={item} current={navCurrent} onGo={go} />
+    return <NavItem key={type.id} item={item} current={navCurrent} onGo={go} />
   }
 
   function renderType(): React.ReactNode {
     if (!state || !current) {
-      return types.error ? <div className="editor-error">{types.error}</div> : <div className="muted">Загрузка…</div>
+      return types.error ? <div className="editor-error">{types.error}</div> : <div className="muted">{t('common.loading')}</div>
     }
     return (
       <TaskTypePane
@@ -171,28 +177,28 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Настройки">
+      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('settings.title')}>
         <div className="settings-head">
-          <h3>Настройки</h3>
-          <button className="icon-btn task-modal-close" title="Закрыть" aria-label="Закрыть" onClick={onClose}>
+          <h3>{t('settings.title')}</h3>
+          <button className="icon-btn task-modal-close" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}>
             <Icon.close />
           </button>
         </div>
         {/* Контейнер @container about: на узком окне меню становится полосой над разделом, как во вкладке. */}
         <div className="about-host">
           <div className="about">
-            <nav className="about-nav" aria-label="Разделы настроек">
+            <nav className="about-nav" aria-label={t('settings.nav.aria')}>
               <NavItem item={general} current={section} onGo={go} />
               <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
-              <div className="about-nav-group">Типы задач</div>
+              <div className="about-nav-group">{t('settings.nav.taskTypes')}</div>
               {types.stale || (!state && types.error) ? (
-                <NavItem item={{ id: `${TYPE}`, label: 'Типы задач', icon: Icon.layers }} current={navCurrent} onGo={go} />
+                <NavItem item={{ id: `${TYPE}`, label: t('settings.nav.taskTypes'), icon: Icon.layers }} current={navCurrent} onGo={go} />
               ) : (
                 <div className="tpl-nav">
                   {state?.taskTypes.map(typeItem)}
                   <button type="button" className="about-nav-item tpl-nav-add" disabled={!state} onClick={() => void createType()}>
                     <Icon.plus />
-                    <span className="about-nav-label">Новый тип</span>
+                    <span className="about-nav-label">{t('settings.nav.newType')}</span>
                   </button>
                   {createError && <div className="editor-error tpl-nav-error">{createError}</div>}
                 </div>
