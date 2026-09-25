@@ -55,5 +55,6 @@ export const WF_NODE_HELP: Readonly<Record<WfNodeType, WfNodeHelp>> = {
     return help('condition', ['yes', 'no'], ['config.wf.help.condition.fieldAttempts', 'config.wf.help.condition.fieldRole'])
   },
   get merge() { return help('merge', ['ok', 'conflict'], [TITLE]) },
+  get git() { return help('git', ['ok', 'error'], ['config.wf.help.git.fieldOperation']) },
   get end() { return help('end', [], ['config.wf.help.end.fieldMerged', 'config.wf.help.end.fieldColumn']) }
 }

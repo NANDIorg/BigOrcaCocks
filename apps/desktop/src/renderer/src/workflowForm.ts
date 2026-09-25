@@ -19,6 +19,7 @@ export const WF_TYPE_TITLES: Readonly<Record<WfNodeType, string>> = {
   get human() { return t('config.wf.type.human') },
   get condition() { return t('config.wf.type.condition') },
   get merge() { return t('config.wf.type.merge') },
+  get git() { return t('config.wf.type.git') },
   get end() { return t('config.wf.type.end') }
 }
 

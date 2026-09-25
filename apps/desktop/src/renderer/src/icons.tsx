@@ -49,5 +49,6 @@ export const WfNodeIcon: Record<WfNodeType, () => React.JSX.Element> = {
   human: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>,
   condition: (): React.JSX.Element => <svg {...base}><path d="M12 3l9 9-9 9-9-9z" /><path d="M10 10a2 2 0 1 1 2.8 1.8c-.5.2-.8.6-.8 1.2M12 16h.01" /></svg>,
   merge: (): React.JSX.Element => <svg {...base}><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="12" r="2" /><path d="M6 7v10M6 7c0 4 4 5 10 5" /></svg>,
+  git: (): React.JSX.Element => <svg {...base}><circle cx="6" cy="6" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="9" r="2" /><path d="M6 8v8M18 11c0 4-6 3-12 5" /></svg>,
   end: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><rect x="9" y="9" width="6" height="6" rx="1" /></svg>
 }

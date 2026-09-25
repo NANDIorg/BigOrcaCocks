@@ -17,7 +17,8 @@ export const WF_OUTCOME_LABELS: Readonly<Record<WfOutcome, string>> = {
   get yes() { return t('config.wf.outcome.yes') },
   get no() { return t('config.wf.outcome.no') },
   get ok() { return t('config.wf.outcome.ok') },
-  get conflict() { return t('config.wf.outcome.conflict') }
+  get conflict() { return t('config.wf.outcome.conflict') },
+  get error() { return t('config.wf.outcome.error') }
 }
 
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
@@ -46,6 +47,8 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
       const work = wf.nodes.find((n) => n.type === 'work')
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }
     }
+    case 'git':
+      return { ...pos, type, operation: 'create_branch', branch: '' }
     case 'end':
       return { ...pos, type, merged: false }
     default:
