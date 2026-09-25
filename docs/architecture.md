@@ -1043,7 +1043,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
   (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
   агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
   веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
   **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
