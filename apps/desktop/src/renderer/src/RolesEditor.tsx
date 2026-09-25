@@ -27,6 +27,8 @@ import { useAutoSave } from './useAutoSave'
 import { agentChangePatch, withPatch } from './roleEdit'
 import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
+import { agentTitle, builtinText, modelTitle } from './defaultTitles'
+import { ipcErrorMessage } from './ipcError'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -160,8 +162,8 @@ export function RolesEditor({
     const state = agentState(info)
     const isService = !isTaskRole(r.id)
     const summary = [
-      info?.title ?? r.agent,
-      state === 'on' ? modelLabel(info, r.model) : state === 'off' ? t('config.roles.summaryOff') : t('config.roles.summaryUnknown'),
+      agentTitle(r.agent),
+      state === 'on' ? modelTitle(modelLabel(info, r.model)) : state === 'off' ? t('config.roles.summaryOff') : t('config.roles.summaryUnknown'),
       state === 'on' ? r.effort : undefined
     ].filter(Boolean).join(' · ')
     const count = taskCounts?.[r.id]
@@ -206,7 +208,7 @@ export function RolesEditor({
           }}
         >
           <span className="roles-title">
-            <span className="roles-name">{r.title || t('config.roles.untitled')}</span>
+            <span className="roles-name">{r.title ? builtinText(r.title) : t('config.roles.untitled')}</span>
             {!isService && state !== 'on' && (
               <span className={`roles-dot ${state}`} role="img" aria-label={t(AGENT_STATE_TEXT[state])} title={t(AGENT_STATE_TEXT[state])} />
             )}
@@ -311,7 +313,7 @@ function RolePanel({
   const defaults = current?.defaults
   const models = current ? modelOptions(current) : []
   const customModel = r.model && !models.some((m) => m.id === r.model) ? r.model : undefined
-  const defaultModel = modelLabel(current, defaults?.model)
+  const defaultModel = modelTitle(modelLabel(current, defaults?.model))
   const efforts = effortsOf(current, r.agent, r.model)
   const isSystem = isSystemRole(r.id)
   const isService = !isTaskRole(r.id)
@@ -355,7 +357,7 @@ function RolePanel({
       {state !== 'on' && (
         <div className="roles-warn" role="alert">
           {state === 'off'
-            ? t('config.roles.warnOff', { agent: current?.title ?? r.agent })
+            ? t('config.roles.warnOff', { agent: agentTitle(r.agent) })
             : t('config.roles.warnUnknown', { agent: r.agent })}
         </div>
       )}
@@ -401,7 +403,7 @@ function RolePanel({
                 onChange={(e) => onAgent(e.target.value as AgentKind)}
               >
                 {enabled.map((a) => (
-                  <option key={a.id} value={a.id}>{a.title}</option>
+                  <option key={a.id} value={a.id}>{agentTitle(a.id)}</option>
                 ))}
                 {state === 'off' && current && <option value={current.id} disabled>{t('config.roles.agentOffOption', { agent: current.title })}</option>}
                 {state === 'unknown' && <option value={r.agent} disabled>{t('config.roles.agentUnknownOption', { agent: r.agent })}</option>}
@@ -414,7 +416,7 @@ function RolePanel({
               <select value={r.model ?? ''} aria-label={t('config.roles.model')} onChange={(e) => onModel(e.target.value)}>
                 <option value="">{defaultModel ? t('config.roles.modelDefaultOf', { model: defaultModel }) : t('config.roles.modelDefault')}</option>
                 {models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
+                  <option key={m.id} value={m.id}>{modelTitle(m.label)}</option>
                 ))}
                 {customModel && <option value={customModel}>{t('config.roles.modelCustom', { model: customModel })}</option>}
               </select>
@@ -527,7 +529,7 @@ function RolePanel({
           {tab === 'start' && (
             <>
               <div className="roles-hint">
-                {t('config.roles.startLead', { agent: current?.title ?? r.agent, channel: t(CHANNEL_TEXT[promptChannel(getAgent(r.agent))]) })}{' '}
+                {t('config.roles.startLead', { agent: agentTitle(r.agent), channel: t(CHANNEL_TEXT[promptChannel(getAgent(r.agent))]) })}{' '}
                 {t(START_TEXT[kind])}
               </div>
               <pre className="role-text short">{startTemplate(t, kind)}</pre>
@@ -601,7 +603,7 @@ function useBuiltinPrompts(): BuiltinState {
     let alive = true
     window.orca.prompts.builtin().then(
       (prompts) => alive && setState({ prompts }),
-      (e: unknown) => alive && setState({ error: (e as Error).message ?? String(e) })
+      (e: unknown) => alive && setState({ error: ipcErrorMessage(e) })
     )
     return () => {
       alive = false

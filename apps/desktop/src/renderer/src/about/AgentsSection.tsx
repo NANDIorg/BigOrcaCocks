@@ -4,6 +4,7 @@ import { AgentLogo } from '../AgentLogo'
 import { Icon } from '../icons'
 import { useT } from '../i18n'
 import { SectionHead, Switch } from './parts'
+import { agentTitle } from '../defaultTitles'
 
 interface Props {
   /** Агенты из реестра; enabled — включённость в проекте или в дефолте. */
@@ -25,7 +26,7 @@ export function AgentsSection({ agents, all, error, onToggle, onRefresh }: Props
     <div key={a.id} className={`agent-card ${a.installed ? '' : 'off'}`}>
       <AgentLogo agent={a.id} size={22} />
       <div className="agent-card-text">
-        <b>{a.title}</b>
+        <b>{agentTitle(a.id)}</b>
         <span>{a.installed ? a.version ?? t('config.about.agents.installed') : t('config.about.agents.notInstalled')}</span>
       </div>
       <Switch

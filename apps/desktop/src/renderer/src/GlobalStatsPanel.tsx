@@ -13,6 +13,7 @@ import { useNow } from './useNow'
 import { useStatsLoad } from './useStatsLoad'
 import { Icon } from './icons'
 import { useT } from './i18n'
+import { builtinText } from './defaultTitles'
 
 interface Props {
   projectId: string
@@ -116,7 +117,7 @@ export function GlobalStatsPanel(props: Props): React.JSX.Element {
                           <span className="x">{r.title}</span>
                         </button>
                       ) : (
-                        <span className="x" title={r.title}>{r.title}</span>
+                        <span className="x" title={builtinText(r.title)}>{builtinText(r.title)}</span>
                       )}
                     </td>
                     {usage && <td className="r"><Cost usage={r.usage} /></td>}

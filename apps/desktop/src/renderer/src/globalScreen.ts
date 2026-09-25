@@ -1,7 +1,8 @@
-import { AGENT_TITLES, type AgentSession, type BoardColumn, type ColumnKind } from '@orca-board/core'
+import { type AgentSession, type BoardColumn, type ColumnKind } from '@orca-board/core'
 import { formatDuration } from './duration'
 import { globalTaskActions } from './globalReview'
 import { t } from './i18n'
+import { agentTitle } from './defaultTitles'
 
 /** Вкладки экрана глобальной задачи (`GlobalTaskView`), в порядке показа: номер вкладки = клавиша 1–5. */
 export type GlobalTabId = 'board' | 'overview' | 'coordinator' | 'history' | 'stats'
@@ -264,7 +265,7 @@ export function coordinatorPill(input: CoordinatorPillInput, now: number): Coord
   const list = sessions ?? []
   const last = list.length > 0 ? list[list.length - 1] : undefined
   const session = (live && ptyId ? list.find((s) => s.ptyId === ptyId) : undefined) ?? last
-  const model = session?.model ?? (session ? AGENT_TITLES[session.agent] : agent ? AGENT_TITLES[agent] : undefined)
+  const model = session?.model ?? (session ? agentTitle(session.agent) : agent ? agentTitle(agent) : undefined)
   const parts: string[] = []
   if (model) parts.push(model)
   if (list.length > 0 && session) parts.push(t('global.run.nth', { n: list.indexOf(session) + 1 }))

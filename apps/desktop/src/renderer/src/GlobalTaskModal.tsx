@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
-  AGENT_TITLES, PRIORITY_TITLES, isTaskPriority,
+  isTaskPriority,
   type AgentInfo, type BoardColumn, type ColumnKind, type GlobalTask, type TaskPriority, type TaskType
 } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
@@ -10,10 +10,11 @@ import { GlobalReturns } from './GlobalOverview'
 import { globalTaskActions } from './globalReview'
 import { formatStamp } from './boardSort'
 import { PriorityOptions } from './Priority'
-import { stalePriorityMessage, taskPriorityOf } from './taskPriority'
+import { priorityTitle, stalePriorityMessage, taskPriorityOf } from './taskPriority'
 import { rolesWithDisabledAgent } from './taskTypes'
 import { typeChangeOptions } from './globalTypeChange'
 import { useT } from './i18n'
+import { agentTitle, builtinText } from './defaultTitles'
 
 interface Props {
   /** Правка существующей; без неё — создание новой. */
@@ -168,7 +169,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
               </select>
             ) : (
               // main старый: приоритет не сохранится — показываем текущий и просим перезапустить.
-              <span className="muted" title={stalePriorityMessage()}>{PRIORITY_TITLES[priority]} · {t('global.modal.priorityStale')}</span>
+              <span className="muted" title={stalePriorityMessage()}>{priorityTitle(priority)} · {t('global.modal.priorityStale')}</span>
             )}
           </label>
         )}
@@ -177,7 +178,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             {t('global.modal.type')}
             <select value={selectedType?.id ?? ''} onChange={(e) => setTypeId(e.target.value)}>
               {types.map((ty) => (
-                <option key={ty.id} value={ty.id}>{ty.id === defaultTypeId ? t('global.modal.typeDefault', { title: ty.title }) : ty.title}</option>
+                <option key={ty.id} value={ty.id}>{ty.id === defaultTypeId ? t('global.modal.typeDefault', { title: builtinText(ty.title) }) : builtinText(ty.title)}</option>
               ))}
             </select>
             <span className="muted task-type-hint">
@@ -185,7 +186,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             </span>
             {offAgentRoles.length > 0 && (
               <span className="task-type-warn" role="status">
-                {t('global.modal.offAgents', { roles: offAgentRoles.map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ') })}
+                {t('global.modal.offAgents', { roles: offAgentRoles.map((r) => `${builtinText(r.title)} (${agentTitle(r.agent)})`).join(', ') })}
               </span>
             )}
           </label>
@@ -195,7 +196,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             {t('global.modal.type')}
             <select value={editTypeId ?? ''} onChange={(e) => setTypeId(e.target.value)}>
               {editTypes.map((ty) => (
-                <option key={ty.id} value={ty.id}>{ty.id === defaultTypeId ? t('global.modal.typeDefault', { title: ty.title }) : ty.title}</option>
+                <option key={ty.id} value={ty.id}>{ty.id === defaultTypeId ? t('global.modal.typeDefault', { title: builtinText(ty.title) }) : builtinText(ty.title)}</option>
               ))}
             </select>
             <span className="muted task-type-hint">
@@ -203,7 +204,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             </span>
             {editType && rolesWithDisabledAgent(editType, agents).length > 0 && (
               <span className="task-type-warn" role="status">
-                {t('global.modal.offAgents', { roles: rolesWithDisabledAgent(editType, agents).map((r) => `${r.title} (${AGENT_TITLES[r.agent] ?? r.agent})`).join(', ') })}
+                {t('global.modal.offAgents', { roles: rolesWithDisabledAgent(editType, agents).map((r) => `${builtinText(r.title)} (${agentTitle(r.agent)})`).join(', ') })}
               </span>
             )}
           </label>

@@ -4,6 +4,7 @@ import type { TaskType } from '@orca-board/core'
 import type { TaskTypeDetection } from '../../shared/ipc'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
+import { builtinText } from './defaultTitles'
 
 interface Props {
   detection: TaskTypeDetection
@@ -88,11 +89,11 @@ export function ProjectTypeModal({ detection, types, defaultTypeId, selected: in
               }}
             >
               <span className="project-type-title">
-                {type.title}
+                {builtinText(type.title)}
                 {type.id === defaultTypeId && <span className="project-type-badge">{t('config.projectType.default')}</span>}
                 {type.id === detected?.id && <span className="project-type-badge accent">{t('config.projectType.matches')}</span>}
               </span>
-              {type.description && <span className="project-type-desc">{type.description}</span>}
+              {type.description && <span className="project-type-desc">{builtinText(type.description)}</span>}
             </button>
           ))}
         </div>

@@ -6,6 +6,7 @@ import { NOTIFY_KINDS, isTime, type NotificationSettings, type NotificationSetti
 import { ipcErrorMessage } from '../useAutoSave'
 import { SectionHead, Switch } from '../about/parts'
 import { useT } from '../i18n'
+import { builtinText } from '../defaultTitles'
 
 /** Строка «подпись + пояснение + переключатель». */
 function SwitchRow({ title, hint, on, disabled, onChange }: {
@@ -114,7 +115,7 @@ export function NotificationsSection({ settings, roles, error, onChange }: {
                 onChange={(e) => onChange({ roles: { [r.id]: e.target.checked } })}
               />
               <span>
-                {r.title || r.id}
+                {r.title ? builtinText(r.title) : r.id}
                 <small>{r.id}</small>
               </span>
             </label>

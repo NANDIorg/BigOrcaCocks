@@ -10,6 +10,7 @@ import { Board } from './Board'
 import { attentionTaskIds, buildAttention } from './attention'
 import { revealInFeed } from './feedLink'
 import { wfNodeTitles } from './cardState'
+import { builtinText, displayColumns, displayRoles } from './defaultTitles'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
@@ -328,12 +329,14 @@ export function App(): React.JSX.Element {
   const runningTaskIds = new Set(terminals.filter((t) => t.taskId && !exited.has(t.ptyId)).map((t) => t.taskId!))
 
   // ---------- глобальные задачи (docs/nested-kanban.md) ----------
-  const columns = active?.columns ?? DEFAULT_COLUMNS
+  // Для показа: встроенные названия колонок — на языке интерфейса (редактор колонок берёт их из проекта как есть).
+  const columns = displayColumns(active?.columns ?? DEFAULT_COLUMNS)
   const kindById = new Map(columns.map((c) => [c.id, c.kind]))
   // Глобальный канбан — Бэклог / В работе / Нужен ответ / Проверка / Сделано; локальный канбан подзадач — все колонки.
   // «Нужен ответ» вычисляется (подзадачи ждут человека), поэтому в создание и перенос она не попадает.
-  const globalColumns = globalBoardColumns(columns)
-  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.requests ?? [])
+  const globalColumns = displayColumns(globalBoardColumns(columns))
+  // «Входящие» — служебная задача с встроенным названием из core: показываем на языке интерфейса.
+  const globals: GlobalTask[] = toGlobalTasks(snap.runs, tasks, columns, snap.requests ?? []).map((g) => (g.inbox ? { ...g, title: builtinText(g.title) } : g))
   const globalKindById = new Map(globalColumns.map((c) => [c.id, c.kind]))
   // Открытая глобальная задача; устаревший id (удалена, другой проект, снимок ещё не пришёл) — общая доска.
   const openGlobal = view.globalId ? globals.find((g) => g.id === view.globalId) : undefined
@@ -347,7 +350,7 @@ export function App(): React.JSX.Element {
       })
     : []
   /** Роли задач прогона — по типу его глобальной задачи; нет прогона — тип проекта по умолчанию. */
-  const rolesFor = (runId: string | undefined): Role[] => rolesForRun(runId, snap.runs, active, taskTypes)
+  const rolesFor = (runId: string | undefined): Role[] => displayRoles(rolesForRun(runId, snap.runs, active, taskTypes))
   const openGlobalRoles = rolesFor(openGlobal?.id)
   /** Живой координатор глобальной задачи → его PTY (реестр терминалов, runId). */
   const coordinatorPtys = new Map<string, string>()
@@ -703,7 +706,7 @@ export function App(): React.JSX.Element {
     const isActive = project !== undefined && project.id === active?.id
     // Роли — по типу прогона терминала; прогоны есть только у активного проекта, у чужого — тип по умолчанию.
     const rolesOf = (runId: string | undefined): Role[] =>
-      isActive ? rolesFor(runId) : rolesForRun(undefined, [], project, taskTypes)
+      isActive ? rolesFor(runId) : displayRoles(rolesForRun(undefined, [], project, taskTypes))
     if (term.role === 'coordinator') {
       const role = rolesOf(term.runId).find((r) => r.id === 'coordinator')
       const global = term.projectId === active?.id && term.runId ? globals.find((g) => g.id === term.runId) : undefined
@@ -1021,7 +1024,7 @@ export function App(): React.JSX.Element {
           statsSnapshot={statsSnapshot}
           task={openTask}
           tasks={tasks}
-          columns={active.columns ?? DEFAULT_COLUMNS}
+          columns={columns}
           roles={rolesFor(openTask.runId)}
           agents={agents}
           dispatches={snap.dispatches}

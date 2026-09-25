@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import {
-  AGENT_TITLES, isTaskPriority, modelLabel,
+  isTaskPriority, modelLabel,
   type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
   type RequestResolution
 } from '@orca-board/core'
@@ -23,6 +23,8 @@ import { TaskStatsBlock } from './TaskStatsBlock'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { answerForTitle, formatTaskDate as formatDate, outcomeLabel, resolutionText } from './taskModalText'
 import { useT } from './i18n'
+import { agentTitle, modelTitle } from './defaultTitles'
+import { ipcErrorMessage } from './ipcError'
 
 interface Props {
   /** Проект: id для `stats:task`. */
@@ -56,7 +58,7 @@ interface Props {
 }
 
 function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
+  return ipcErrorMessage(e)
 }
 
 export function TaskModal(props: Props): React.JSX.Element {
@@ -212,7 +214,7 @@ export function TaskModal(props: Props): React.JSX.Element {
             <div className="meta-row">
               <span className="meta-key">{t('board.task.role')}</span>
               <span className="meta-val">
-                {role?.title ?? task.roleId} · {AGENT_TITLES[task.agent]}{role?.model ? ` · ${modelLabel(agents?.find((a) => a.id === role.agent), role.model)}` : ''}
+                {role?.title ?? task.roleId} · {agentTitle(task.agent)}{role?.model ? ` · ${modelTitle(modelLabel(agents?.find((a) => a.id === role.agent), role.model))}` : ''}
               </span>
             </div>
             {task.answerFor && (

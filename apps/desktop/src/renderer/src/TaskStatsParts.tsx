@@ -5,6 +5,7 @@ import { Cost, NoData } from './StatsCells'
 import { formatAgentTime, formatTokens } from './statsFormat'
 import { useT } from './i18n'
 import { approxTitle, partLabel, partValue, roleRows, type StatCounter, type StatFact, type TimePart } from './taskStatsFormat'
+import { builtinText } from './defaultTitles'
 
 /** Строка фактов: значение крупно, подпись над ним, пояснение под ним. Неизвестное — приглушённо курсивом. */
 export function StatFacts({ facts }: { facts: StatFact[] }): React.JSX.Element {
@@ -42,7 +43,7 @@ export function TimeBar({ title, parts, empty }: { title: string; parts: TimePar
           {parts.map((p) => (
             <li key={p.key} className={p.ms === 0 ? 'zero' : undefined} title={p.approx ? approxTitle() : undefined}>
               <i className="swatch" style={{ background: p.color }} />
-              <span className="x">{p.title}</span>
+              <span className="x">{builtinText(p.title)}</span>
               <b>{p.entries > 0 ? partValue(p) : '—'}</b>
             </li>
           ))}
@@ -70,7 +71,7 @@ export function RolesTable({ rows }: { rows: StatsRow[] }): React.JSX.Element {
         <tbody>
           {roleRows(rows).map((r) => (
             <tr key={r.key}>
-              <td className="t"><span className="x" title={r.title}>{r.title}</span></td>
+              <td className="t"><span className="x" title={builtinText(r.title)}>{builtinText(r.title)}</span></td>
               <td className="r">{formatAgentTime(r.agentMs)}</td>
               <td className="r">{r.tokens !== undefined ? formatTokens(r.tokens) : <NoData />}</td>
               <td className="r"><Cost usage={r.usage} /></td>

@@ -6,6 +6,7 @@ import {
 import type { OrcaApi } from '../../shared/ipc'
 import { formatDuration } from './duration'
 import { t } from './i18n'
+import { builtinText } from './defaultTitles'
 import {
   costCell, formatAgentTime, formatTokens, isStaleStatsError, statsStaleMessage, missingLabel, missingSessions, sessionsLabel, statsApi, totalTokens
 } from './statsFormat'
@@ -322,7 +323,7 @@ export function partValue(p: TimePart): string {
 
 /** Подпись части полосы для подсказки: «Работа — 2 ч 10 мин · 3 захода». */
 export function partLabel(p: TimePart): string {
-  return `${p.title} — ${partValue(p)}`
+  return `${builtinText(p.title)} — ${partValue(p)}`
 }
 
 // ---------- роли и счётчики ----------

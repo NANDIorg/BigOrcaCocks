@@ -1,5 +1,5 @@
 import type React from 'react'
-import { AGENT_TITLES, type Role, type Run, type Task } from '@orca-board/core'
+import { type Role, type Run, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { AgentLogo } from './AgentLogo'
 import { RunBadge } from './runs'
@@ -9,11 +9,12 @@ import { formatDuration, taskDuration, taskTicking } from './duration'
 import { cardStateLabel, type CardEssence, type CardState, type DepsLabel, type StageLabel } from './cardState'
 import { useNow } from './useNow'
 import { useT } from './i18n'
+import { agentTitle } from './defaultTitles'
 
 /** «роль · модель» в мета-строке; модели нет — «роль · агент». Полная строка «роль · агент · модель» — в подсказке. */
 function who(task: Task, role: Role | undefined): { short: string; full: string } {
   const title = role?.title ?? task.roleId
-  const agent = AGENT_TITLES[task.agent]
+  const agent = agentTitle(task.agent)
   return {
     short: `${title} · ${role?.model || agent}`,
     full: [title, agent, role?.model].filter(Boolean).join(' · ')

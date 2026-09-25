@@ -15,6 +15,7 @@ import {
 } from '../taskTypeEdit'
 import { TaskTypeWorkflow } from './TaskTypeWorkflow'
 import type { TaskTypesHook } from './useTaskTypes'
+import { builtinText } from '../defaultTitles'
 
 interface Props {
   type: TaskType
@@ -156,10 +157,10 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
       <div className="tpl-head">
         <div className="tpl-head-text">
           <h2>
-            {type.title}
+            {builtinText(type.title)}
             {isDefault && <span className="chip ok">{t('config.taskType.defaultChip')}</span>}
           </h2>
-          {type.description && <p>{type.description}</p>}
+          {type.description && <p>{builtinText(type.description)}</p>}
           <p className="tpl-usage">{usageText(t, usage)}</p>
         </div>
         <div className="tpl-actions">

@@ -7,7 +7,9 @@ import { Icon } from '../icons'
 import type { WfSelection } from '../workflowEdit'
 import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName } from '../workflowForm'
 import { SectionHead } from '../about/parts'
-import { useT } from '../i18n'
+import { useLocale, useT } from '../i18n'
+import { nodeTitle, wfIssueText } from '../defaultTitles'
+import { ipcErrorMessage } from '../ipcError'
 
 interface Props {
   /** Название типа — имя файла экспорта. */
@@ -32,6 +34,7 @@ interface Props {
  */
 export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, onSave }: Props): React.JSX.Element {
   const t = useT()
+  const locale = useLocale()
   const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
   const [draft, setDraft] = useState<Workflow>(saved)
   const [selection, setSelection] = useState<WfSelection>(null)
@@ -43,7 +46,8 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Без колонок и агентов: и то и другое у проекта, а тип общий для всех проектов.
-  const issues = useMemo(() => validateWorkflow(draft, { roles }), [draft, roles])
+  // Язык — в зависимостях: тексты проблем и названия нод в них переводятся при проверке.
+  const issues = useMemo(() => validateWorkflow(draft, { roles, nodeTitle }), [draft, roles, locale])
   const dirty = stableJson(draft) !== stableJson(saved)
   const custom = workflow !== undefined
   const { errors, warnings } = issues
@@ -68,7 +72,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
       setError(null)
       setNotice(message)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(ipcErrorMessage(e))
     } finally {
       setBusy(false)
     }
@@ -173,7 +177,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
                 onClick={() => selectIssue(i.nodeId, i.edgeId)}
               >
                 <span className="wf-problem-kind">{i.level === 'error' ? t('config.wf.tab.problemError') : t('config.wf.tab.problemWarning')}</span>
-                {i.message}
+                {wfIssueText(i)}
               </button>
             ))}
           </div>

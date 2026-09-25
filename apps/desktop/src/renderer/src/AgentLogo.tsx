@@ -1,5 +1,5 @@
 import type React from 'react'
-import { AGENT_TITLES, isAgentKind, type AgentKind } from '@orca-board/core'
+import { isAgentKind, type AgentKind } from '@orca-board/core'
 import claude from './logos/claude.svg?raw'
 import codex from './logos/codex.svg?raw'
 import gemini from './logos/gemini.svg?raw'
@@ -9,6 +9,7 @@ import amp from './logos/amp.svg?raw'
 import opencode from './logos/opencode.svg?raw'
 import goose from './logos/goose.svg?raw'
 import shell from './logos/shell.svg?raw'
+import { agentTitle } from './defaultTitles'
 
 /** Внутренности svg-файла без обёртки `<svg>` и `<title>`: рисуем их в своём `<svg>` с currentColor. */
 function inner(svg: string): string {
@@ -61,7 +62,7 @@ export function AgentLogo({ agent, size = 28, className }: Props): React.JSX.Ele
       height={size}
       fill="currentColor"
       role="img"
-      aria-label={AGENT_TITLES[kind]}
+      aria-label={agentTitle(kind)}
       className={className}
       style={{ color: COLORS[kind], flexShrink: 0, display: 'block' }}
       dangerouslySetInnerHTML={{ __html: LOGOS[kind] }}

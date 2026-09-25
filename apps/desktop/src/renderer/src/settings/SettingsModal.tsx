@@ -13,6 +13,7 @@ import { NotificationsSection } from './NotificationsSection'
 import { TaskTypePane } from './TaskTypePane'
 import { useTaskTypes } from './useTaskTypes'
 import { setLocale, useT } from '../i18n'
+import { builtinText } from '../defaultTitles'
 
 /** Раздел меню: общий, уведомления или тип задачи (`type:<id>`). */
 type Section = 'general' | 'notifications' | `type:${string}`
@@ -149,7 +150,7 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
   const typeItem = (type: TaskType): React.JSX.Element => {
     const u = usage[type.id]
     const item: NavEntry<Section> = {
-      id: `${TYPE}${type.id}`, label: type.title, icon: Icon.layers,
+      id: `${TYPE}${type.id}`, label: builtinText(type.title), icon: Icon.layers,
       count: state?.defaultTaskTypeId === type.id ? t('settings.nav.defaultType') : u?.asDefault ? String(u.asDefault) : undefined,
       title: [type.description, u?.asDefault ? t('settings.nav.typeUsage', { count: u.asDefault }) : ''].filter(Boolean).join('\n') || undefined
     }

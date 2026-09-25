@@ -1,5 +1,6 @@
 import { WF_PORTS, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
+import { wfIssueText } from './defaultTitles'
 
 // Правка графа воркфлоу в редакторе — чистые функции: на вход граф, на выход новый граф (исходный не меняется).
 // Недопустимая операция возвращает граф как есть: холст и инспектор не обязаны проверять её заранее.
@@ -127,8 +128,9 @@ export function issueTargets(issues: { errors: readonly WfIssue[]; warnings: rea
   }
   for (const [level, list] of [['error', issues.errors], ['warning', issues.warnings]] as const) {
     for (const i of list) {
-      if (i.nodeId) add(res.nodes, i.nodeId, level, i.message)
-      if (i.edgeId) add(res.edges, i.edgeId, level, i.message)
+      const text = wfIssueText(i)
+      if (i.nodeId) add(res.nodes, i.nodeId, level, text)
+      if (i.edgeId) add(res.edges, i.edgeId, level, text)
     }
   }
   return res

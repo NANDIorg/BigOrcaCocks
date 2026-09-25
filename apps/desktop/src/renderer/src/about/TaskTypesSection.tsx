@@ -10,6 +10,7 @@ import {
   projectDefaultTypeId, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi, taskTypesError,
   settingsTypeSection, toggledProjectTypes
 } from '../taskTypeEdit'
+import { builtinText } from '../defaultTitles'
 
 interface Props {
   project: Project
@@ -114,18 +115,18 @@ export function TaskTypesSection({ project, agents, onProjectChanged }: Props): 
                 checked={on}
                 disabled={busy || (on && isDef)}
                 title={on && isDef ? t('config.about.types.defaultLocked') : on ? t('config.about.types.disable') : t('config.about.types.enable')}
-                aria-label={t('config.about.types.availableAria', { title: type.title })}
+                aria-label={t('config.about.types.availableAria', { title: builtinText(type.title) })}
                 onChange={(e) => void save(toggledProjectTypes(project, state, type.id, e.target.checked))}
               />
               <div className="tt-text">
                 <div className="tt-title">
-                  <b>{type.title}</b>
+                  <b>{builtinText(type.title)}</b>
                   {isDef && <span className="chip ok">{t('config.about.types.default')}</span>}
                 </div>
-                {type.description && <span className="hint">{type.description}</span>}
+                {type.description && <span className="hint">{builtinText(type.description)}</span>}
                 <span className="tt-roles">
                   {t('config.about.types.roles', {
-                    roles: s.roles.map((r) => r.title).join(', '),
+                    roles: s.roles.map((r) => builtinText(r.title)).join(', '),
                     workflow: s.workflow ? t('config.about.types.wfOwn') : t('config.about.types.wfDefault')
                   })}
                 </span>

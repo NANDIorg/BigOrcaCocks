@@ -1,7 +1,8 @@
-import { AGENT_TITLES, type AgentSession, type ColumnKind } from '@orca-board/core'
+import { type AgentSession, type ColumnKind } from '@orca-board/core'
 import { formatDuration } from './duration'
 import { t } from './i18n'
 import { formatDateTime } from './i18n/format'
+import { agentTitle } from './defaultTitles'
 
 /** Состояние координатора на вкладке: работает, ждёт человека или не запущен. */
 export type CoordState = 'working' | 'waiting' | 'stopped'
@@ -64,7 +65,7 @@ export function sessionRows(sessions: readonly AgentSession[] | undefined, liveP
   return ordered
     .map((s, i): SessionRow => {
       const live = s.endedAt === undefined && livePty !== undefined && s.ptyId === livePty
-      const title = AGENT_TITLES[s.agent] ?? s.agent
+      const title = agentTitle(s.agent)
       const end = s.endedAt ?? (live ? now : undefined)
       return {
         key: `${s.ptyId}:${s.startedAt}`,

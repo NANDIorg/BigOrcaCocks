@@ -1,8 +1,9 @@
-import { AGENT_TITLES, type AgentSession, type BoardColumn, type ColumnKind, type GlobalTask } from '@orca-board/core'
+import { type AgentSession, type BoardColumn, type ColumnKind, type GlobalTask } from '@orca-board/core'
 import { formatDuration } from './duration'
 import { STATUS_SOURCE_TITLES, statusDurationLabel } from './statusHistory'
 import { t } from './i18n'
 import { formatDateTime } from './i18n/format'
+import { agentTitle } from './defaultTitles'
 
 /**
  * Вид события ленты «История». От порядка зависит разбор записей с одинаковой меткой времени — см. `KIND_RANK`.
@@ -85,7 +86,7 @@ export function summaryExcerpt(text: string | undefined): string | undefined {
 
 /** Название запуска координатора: «Claude Opus», без модели — «Claude». */
 function agentLabel(s: AgentSession): string {
-  const agent = (AGENT_TITLES as Record<string, string>)[s.agent] ?? String(s.agent)
+  const agent = agentTitle(String(s.agent))
   return s.model ? `${agent} · ${s.model}` : agent
 }
 

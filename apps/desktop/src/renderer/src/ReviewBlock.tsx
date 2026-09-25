@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import type { ReviewInfo } from '../../shared/ipc'
 import { useT } from './i18n'
+import { ipcErrorMessage } from './ipcError'
 
 interface Props {
   taskId: string
@@ -19,7 +20,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): Rea
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    window.orca.review.info(taskId).then(setInfo).catch((e: Error) => setError(e.message))
+    window.orca.review.info(taskId).then(setInfo).catch((e: unknown) => setError(ipcErrorMessage(e)))
   }, [taskId])
 
   async function run(fn: () => Promise<void>): Promise<void> {
@@ -28,7 +29,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): Rea
     try {
       await fn()
     } catch (e) {
-      setError((e as Error).message)
+      setError(ipcErrorMessage(e))
     } finally {
       setBusy(false)
     }
