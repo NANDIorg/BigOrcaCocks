@@ -297,11 +297,13 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 валидации в редакторе.
 
 - **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 1`. Ноды (`WfNode`): `start`, `work`
-  (без `roleId` — роль задачи), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
+  (без `roleId` — роль задачи), `ask` («Вопрос человеку»: `roleId?`, `instructions` — обязательны; агент спрашивает
+  человека штатным `orca-board ask`, `stageAction` — тот же `start_worker`, что у `work`; `WfWorkStage.type`
+  различает этапы; `Question.nodeId` — нода, на которой спросили), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
   (закрытый список предикатов `WfCondition`: `attempts` — сколько раз задача заходила в ноду, `role` — роль
   задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `end` (`merged`). У каждой ноды
   опциональные `title` и `column`. Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
-  `WF_PORTS` (gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
+  `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, end — без выходов).
 - **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
   ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
   ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).

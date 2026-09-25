@@ -50,6 +50,12 @@ export type WfNode = WfNodeBase &
      * в промпт воркера разделом «Этап» (`workerTaskPrompt`); нормализованный вид — `wfWorkStage`.
      */
     | { type: 'work'; roleId?: string; instructions?: string; showcase?: WfShowcase }
+    /**
+     * Вопрос человеку: агент роли ноды (пусто — роль задачи) задаёт вопросы штатным `orca-board ask`, они идут
+     * человеку, минуя координатора; ответы попадают в промпт следующих этапов. Код на этапе не меняется.
+     * `instructions` — о чём спросить, обязательны. Роль этапа не становится ролью задачи (в отличие от `work`).
+     */
+    | { type: 'ask'; roleId?: string; instructions: string }
     /** Гейт-агент: отдельная задача-проверка ветки рабочей задачи; исход — accept/reject. */
     | { type: 'gate'; roleId: string; instructions?: string }
     /** Гейт-человек: запрос в Инбоксе «Принять» / «Вернуть». */
@@ -79,6 +85,7 @@ export interface Workflow {
 export const WF_PORTS: Record<WfNodeType, WfOutcome[]> = {
   start: ['next'],
   work: ['next'],
+  ask: ['next'],
   gate: ['accept', 'reject'],
   human: ['accept', 'reject'],
   condition: ['yes', 'no'],
@@ -89,6 +96,7 @@ export const WF_PORTS: Record<WfNodeType, WfOutcome[]> = {
 const NODE_TYPE_TITLES: Record<WfNodeType, string> = {
   start: 'Старт',
   work: 'Работа',
+  ask: 'Вопрос человеку',
   gate: 'Проверка',
   human: 'Человек',
   condition: 'Условие',
@@ -101,9 +109,13 @@ export function wfNodeTitle(node: WfNode): string {
   return node.title?.trim() || NODE_TYPE_TITLES[node.type] || node.id
 }
 
-/** Этап «Работа» для промпта воркера и проверки `done`: без пустых полей, тексты обрезаны по краям. */
+/**
+ * Этап «Работа» или «Вопрос человеку» для промпта воркера и проверки `done`: без пустых полей, тексты обрезаны
+ * по краям. `showcase` бывает только у `work`.
+ */
 export interface WfWorkStage {
   nodeId: string
+  type: 'work' | 'ask'
   title: string
   instructions?: string
   showcase?: WfShowcase
@@ -120,14 +132,14 @@ export function wfShowcase(node: WfNode): WfShowcase | undefined {
   return node.showcase.required === true ? { what, required: true } : { what }
 }
 
-/** Этап `nodeId`, если это нода «Работа»; иначе (нет ноды, другой тип) — undefined. */
+/** Этап `nodeId`, если это нода «Работа» или «Вопрос человеку»; иначе (нет ноды, другой тип) — undefined. */
 export function wfWorkStage(wf: Workflow, nodeId: string): WfWorkStage | undefined {
   const node = wf.nodes.find((n) => n.id === nodeId)
-  if (!node || node.type !== 'work') return undefined
+  if (!node || (node.type !== 'work' && node.type !== 'ask')) return undefined
   const instructions = typeof node.instructions === 'string' ? node.instructions.trim() : ''
   const showcase = wfShowcase(node)
   return {
-    nodeId: node.id, title: wfNodeTitle(node),
+    nodeId: node.id, type: node.type, title: wfNodeTitle(node),
     ...(instructions ? { instructions } : {}),
     ...(showcase ? { showcase } : {})
   }
@@ -406,7 +418,10 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       if (!n.roleId) errors.push({ message: `${nodeLabel(n)}: не выбрана роль проверяющего`, nodeId: n.id })
       else checkRole(n, n.roleId)
     }
-    if (n.type === 'work' && n.roleId) checkRole(n, n.roleId)
+    if ((n.type === 'work' || n.type === 'ask') && n.roleId) checkRole(n, n.roleId)
+    if (n.type === 'ask' && (typeof n.instructions !== 'string' || !n.instructions.trim())) {
+      errors.push({ message: `${nodeLabel(n)}: не задано, о чём спросить человека`, nodeId: n.id })
+    }
     if (n.type === 'work') {
       if (n.instructions !== undefined && typeof n.instructions !== 'string') {
         errors.push({ message: `${nodeLabel(n)}: «Что сделать на этапе» должно быть строкой`, nodeId: n.id })
@@ -541,6 +556,8 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
   if (!node) return { type: 'blocked', nodeId: stage.nodeId, reason: `в воркфлоу нет ноды «${stage.nodeId}»` }
   switch (node.type) {
     case 'work':
+    case 'ask':
+      // Тот же start_worker: исполнитель (main) различает работу и вопрос по типу ноды.
       return node.roleId ? { type: 'start_worker', nodeId: node.id, roleId: node.roleId } : { type: 'start_worker', nodeId: node.id }
     case 'gate':
       if (ctx.roleIds && !ctx.roleIds.includes(node.roleId)) {
@@ -652,7 +669,7 @@ export interface WfStageInfo {
   id: string
   type: WfNodeType
   title: string
-  /** Роль гейта или работы (у работы без роли — роль задачи). */
+  /** Роль гейта, работы или вопроса (без роли — роль задачи). */
   roleId?: string
   instructions?: string
   /** Условие ноды `condition` человеческими словами. */
@@ -688,9 +705,9 @@ export function describeWorkflow(wf: Workflow): WfStageInfo[] {
     const next: Partial<Record<WfOutcome, string>> = {}
     for (const e of wf.edges) if (e.from === id) next[e.outcome] = label(e.to)
     const info: WfStageInfo = { id, type: n.type, title: wfNodeTitle(n), next }
-    if ((n.type === 'gate' || n.type === 'work') && n.roleId) info.roleId = n.roleId
+    if ((n.type === 'gate' || n.type === 'work' || n.type === 'ask') && n.roleId) info.roleId = n.roleId
     if ((n.type === 'gate' || n.type === 'human') && n.instructions?.trim()) info.instructions = n.instructions.trim()
-    if (n.type === 'work') {
+    if (n.type === 'work' || n.type === 'ask') {
       const stage = wfWorkStage(wf, n.id)
       if (stage?.instructions) info.instructions = stage.instructions
       if (stage?.showcase) info.showcase = stage.showcase

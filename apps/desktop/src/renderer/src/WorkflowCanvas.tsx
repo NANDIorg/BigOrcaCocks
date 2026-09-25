@@ -36,6 +36,7 @@ function clip(s: string, max: number): string {
 function nodeSubtitle(node: WfNode): string {
   switch (node.type) {
     case 'work': return node.roleId ? `роль ${node.roleId}` : 'роль задачи'
+    case 'ask': return node.roleId ? `роль ${node.roleId}` : 'роль задачи'
     case 'gate': return node.roleId ? `роль ${node.roleId}` : 'роль не выбрана'
     case 'human': return 'через Инбокс'
     case 'condition':

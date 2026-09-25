@@ -10,7 +10,7 @@ import { connect, makeNode, uniqueId } from './workflowEdit'
 
 /** Названия типов нод в инспекторе и подсказках холста. */
 export const WF_TYPE_TITLES: Record<WfNodeType, string> = {
-  start: 'Старт', work: 'Работа', gate: 'Проверка агентом', human: 'Решение человека',
+  start: 'Старт', work: 'Работа', ask: 'Вопрос человеку', gate: 'Проверка агентом', human: 'Решение человека',
   condition: 'Условие', merge: 'Мерж', end: 'Конец'
 }
 
