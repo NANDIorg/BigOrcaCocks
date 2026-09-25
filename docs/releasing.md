@@ -53,9 +53,11 @@
    новые возможности, исправления, изменения совместимости и данных, шаги обновления,
    известные ограничения. Добавь ссылки на PR и сравнение тегов. Не выдавай планы
    за сделанное; пустые разделы и служебные merge-коммиты перечислять не нужно.
-4. Укажи сборки: macOS arm64/x64, Windows x64 NSIS/portable. Отрази текущие ограничения:
-   macOS ad-hoc без нотаризации, Windows без подписи; реальные результаты ручных
-   проверок записывай после их выполнения. Не заявляй поддержку Linux-сборки.
+4. Укажи сборки: macOS arm64/x64 с Developer ID и notarization, Windows x64 NSIS/portable
+   без подписи. Фактические результаты подписи и ручных проверок записывай после выполнения.
+   Пока credentials не предоставлены и новый артефакт не проверен, называй это готовностью
+   кода цепочки выпуска. Исторический v1.0.0 остаётся ad-hoc без notarization.
+   Не заявляй поддержку Linux-сборки.
 5. Выполни `pnpm verify`, открой PR с версией, составом выпуска и проверками.
    После approval и CI слей подготовку в release, затем release в master merge-коммитами.
    Последующие изменения требуют нового approval. По возможности дождись всех
@@ -93,7 +95,11 @@
 1. Проверяет тег, обе версии, master и непустое описание `docs/releases/vX.Y.Z.md`.
 2. Ставит зависимости, выполняет `pnpm verify` и упаковывает приложение на macOS/Windows.
    Обе mac-архитектуры строятся одной job, чтобы `latest-mac.yml` включал обе.
-   Проверяет `codesign --verify --deep --strict` для обоих `.app`.
+   На macOS до упаковки проверяет credentials и импортированный Developer ID Application нужной Team.
+   Builder подписывает весь код с hardened runtime и notarize/staple `.app` до ZIP/DMG.
+   Hook завершает подпись DMG с timestamp, notarize/staple каждый образ. Затем проверяются
+   оба финальных ZIP и оба DMG, включая `.app` внутри них, подписи native-кода,
+   Gatekeeper, tickets и SHA-512/size update-манифеста. Любая ошибка останавливает job до upload.
 3. Передаёт сборки отдельной job. У упаковщиков только `contents: read`, публикация
    electron-builder выключена. Только job `draft` имеет право записи в GitHub Releases.
 4. Проверяет непустые обязательные файлы, версии и ссылки в манифестах, создаёт
@@ -111,7 +117,9 @@
 | `latest-mac.yml`, `latest.yml` | Манифесты автообновления; имена файлов менять нельзя |
 | `RELEASE_NOTES.md`, `SHA256SUMS` | Описание выпуска и SHA-256 всех приложенных файлов, кроме самого SHA256SUMS |
 
-Отдельные `.dmg.blockmap`, если их создал упаковщик, тоже прикрепляются и входят в суммы.
+DMG исключены из update-манифеста и не имеют blockmap: после упаковки stapling меняет байты
+образа. `SHA256SUMS` вычисляется job `draft` только после всей обработки и проверки файлов.
+ZIP содержит уже stapled `.app`, а его blockmap/metadata создаются по финальным байтам ZIP.
 Архивы исходников GitHub добавляет сам. Другие файлы (например, инструкция миграции)
 прикладывай по поручению пользователя: проверь содержимое, загрузи конкретные пути,
 дополни SHA256SUMS и проверь скачивание. Не прикладывай весь рабочий каталог.
@@ -146,6 +154,104 @@
 В итоговом ответе: версия, ссылка на черновик/релиз, SHA и тег, релизный и sync-PR,
 ссылка на успешный workflow, приложенные файлы и результаты/ограничения smoke-проверки.
 Пока нужны review, CI или ручная проверка, называй конкретный незавершённый шаг.
+
+## Подпись macOS и CI secrets
+
+Публичная сборка требует действующего участия издателя в **Apple Developer Program** и
+сертификата **Developer ID Application** с закрытым ключом. Apple Development, Apple Distribution
+и Developer ID Installer не заменяют его. Для текущих ZIP/DMG сертификат Installer не нужен.
+Владелец выбирает публичного издателя/Team и предоставляет credentials через защищённые
+настройки GitHub Actions. Не присылай значения в задачи, коммиты или логи.
+
+Workflow использует один способ авторизации — Apple ID. Нужны ровно эти secrets
+репозитория либо организационные secrets с подтверждённым доступом этого репозитория:
+
+| Secret | Формат и назначение |
+| --- | --- |
+| `CSC_LINK` | Одна строка стандартного base64 **содержимого** защищённого паролем `.p12`, без переносов, кавычек, URL и `data:`. Экспорт включает сертификат и закрытый ключ; ровно один действующий Developer ID Application выбранной Team |
+| `CSC_KEY_PASSWORD` | Непустой пароль этого `.p12`, как есть, без внешних кавычек |
+| `APPLE_ID` | Email Apple Account с правом notarization для выбранной Team |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific пароль этого Apple Account, четыре группы по четыре строчные латинские буквы через дефис; **не основной пароль аккаунта** |
+| `APPLE_TEAM_ID` | Десять заглавных латинских букв/цифр Team ID; используется и для notarization, и как ожидаемый издатель всех подписей |
+
+API-key/keychain-profile авторизация в этой цепочке намеренно не поддерживается; guard
+отвергает смешанные способы. Если владелец выбирает App Store Connect API key, сначала
+отдельно адаптируй workflow и tests: в builder 26 `APPLE_API_KEY` — путь к `.p8` во временной
+папке runner, дополнительно нужны `APPLE_API_KEY_ID` и `APPLE_API_ISSUER`, а ожидаемый Team ID
+должен остаться независимой проверкой. Не передавай base64 вместо пути и не копируй API v27.
+
+Credentials получает только шаг упаковки macOS; `GITHUB_TOKEN` не заменяет Apple credentials.
+Builder импортирует `.p12` во временный keychain runner и очищает его при завершении;
+не импортируй сертификат в личный keychain ради проверки кода. Runner нужен доступ к Apple
+notary/timestamp/ticket-сервисам и Xcode с `notarytool`/`stapler`.
+Разрешение настроить secrets, сертификат или аккаунт не следует из поручения исправить код.
+По диагностике v1.0.0 локального Developer ID Application нет; repository secrets отсутствовали,
+а доступ к организационным secrets не подтверждён. Пока владелец не предоставил доступ,
+реальный подписанный выпуск и первый запуск **не проверены**.
+
+Порядок в коде (закреплённый **electron-builder 26.15.3**):
+
+1. `apps/desktop/build/macos-release-hooks.mjs:beforePack` проверяет обязательные env,
+   запрет прямой публикации, эффективный release-конфиг и единственный Developer ID в
+   импортированном временном keychain. Отказ происходит до упаковки; `notarize: true`
+   самого builder недостаточно — без credentials он может пропустить notarization.
+2. Основной `electron-builder.yml` задаёт `mac.type: distribution`, `forceCodeSigning`,
+   hardened runtime, два явных plist entitlements. Штатная подпись охватывает Electron Framework,
+   helpers, `pty.node` и `spawn-helper`. Набор соответствует шаблону v26: allow-jit,
+   allow-unsigned-executable-memory, disable-library-validation; без get-task-allow/App Sandbox.
+   Сужение этих исключений требует отдельного smoke Electron/JIT/PTY на обеих архитектурах.
+   Встроенный builder notarize/staple `.app` **до** формирования контейнеров; второго afterSign нет.
+3. `artifactBuildCompleted` завершает Developer ID подпись DMG с явным secure timestamp,
+   пока временный keychain ещё доступен. `notarytool submit --wait` должен вернуть `Accepted`,
+   затем обязательны `stapler staple` и `validate`. Submission ID/status и доступный лог Apple
+   сохраняются в `release/notarization/` и отдельном CI-артефакте `macos-notarization` на 14 дней.
+   Ошибка, неизвестный ответ или timeout останавливают выпуск; диагностический артефакт не установщик.
+4. `scripts/verify-macos-release.mjs` распаковывает оба финальных ZIP и подключает оба DMG
+   read-only во временных папках. Проверяет bundle ID/версию, архитектуры приложения и собранного
+   node-pty, Developer ID/Team/runtime/timestamp всех Mach-O, entitlements, `codesign --verify
+   --deep --strict`, `spctl` и stapled tickets. Native prebuilds других архитектур тоже проверяются
+   по подписи; используемые `build/Release` должны поддерживать архитектуру контейнера.
+   На macOS 15+ `codesign` по умолчанию не встраивает entitlements в библиотеки: пустой успешный
+   вывод для Framework/dylib/`.node` допустим. Главный Electron executable и helpers обязаны иметь
+   `allow-jit`; непустые entitlements любого Mach-O проверяются на запрет debug/App Sandbox.
+   Отсутствие entitlements не отменяет проверки Developer ID, runtime и timestamp.
+   Проверяет ровно два ZIP в manifest, SHA-512/size, верхнеуровневые path/sha512 и комплект blockmap.
+5. Только затем upload установщиков и job `draft`: SHA256SUMS по окончательным байтам.
+   `dmg.writeUpdateInfo: false` поддерживается схемой v26.15.3, но в типах помечено private;
+   при обновлении builder заново проверь отсутствие DMG в manifest и DMG blockmap. Регрессионные
+   тесты фиксируют версию и схему. Если DMG metadata снова понадобится, пересчитывай её **после**
+   stapling. Просто добавить stapling после вычисления хешей нельзя.
+
+Локальный `pack` использует `electron-builder.local.yml`, ad-hoc подпись, выключенные runtime/
+notarization и отдельный `release/local/`; не требует credentials, запрещён в CI и с publish.
+Релизный `dist:mac` выполняет полную цепочку и проверку; запускать его с настоящими credentials
+можно только с полномочиями на работу с сертификатом и отправку в Apple. `dist:publish` удалён.
+Windows-упаковка не получает Apple secrets и не требует подписи Windows.
+
+### Приёмка первой установки
+
+Для Intel и Apple Silicon отдельно скачай новый DMG через браузер на чистой macOS со штатным
+Gatekeeper. Подтверди наличие quarantine чтением `xattr -p com.apple.quarantine <файл.dmg>`;
+открой DMG, перенеси `.app` в Applications и запусти. Повтори на свежем тестовом окружении без
+сети: кеш предыдущего онлайн-разрешения не доказывает работоспособность stapling.
+Нельзя принимать результат, полученный через «Всё равно открыть», отключение Gatekeeper
+или удаление quarantine. Обычный вопрос «приложение загружено из Интернета — открыть?» допустим
+и у подписанного/notarized приложения. Блокировка неизвестного разработчика/невозможности
+проверки — другой результат. TCC-запросы доступа к папкам и политика управляемого Mac отдельны.
+
+Проверь renderer/JIT, создание проекта, старт агента и PTY/spawn-helper, CLI, завершение задачи
+и перезапуск. Сохрани результаты `codesign`, `spctl`, `stapler validate` для `.app` из обоих
+ZIP/DMG и для самих DMG. Проверь SHA256SUMS скачанного черновика. Отдельно нужен переход
+с ad-hoc 1.0.0 на новый подписанный выпуск и повторный запуск: до публикации — в контролируемом
+канале, иначе явно отложи сквозное автообновление до отдельно разрешённой публикации.
+Новые конфиги/зелёные unit-тесты не заменяют эти проверки. Исправление выпускается новой
+patch-версией по отдельному поручению; существующие v1.0.0, тег и файлы не заменяются.
+
+Источники: [Apple — Developer ID](https://developer.apple.com/developer-id/),
+[подпись и entitlements библиотек](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/),
+[notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
+[порядок stapling](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
+[системные диалоги macOS](https://support.apple.com/en-us/102445).
 
 ## Повторный запуск и ошибки
 

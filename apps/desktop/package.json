@@ -9,11 +9,10 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "postinstall": "electron-builder install-app-deps",
-    "pack": "electron-vite build && electron-builder --mac --dir && electron-builder install-app-deps",
-    "dist": "electron-vite build && electron-builder --mac --publish never && electron-builder install-app-deps",
-    "dist:mac": "electron-vite build && electron-builder --mac --publish never && electron-builder install-app-deps",
+    "pack": "electron-vite build && electron-builder --config electron-builder.local.yml --mac --dir --publish never && electron-builder install-app-deps",
+    "dist": "pnpm run dist:mac",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never && node ../../scripts/verify-macos-release.mjs && electron-builder install-app-deps",
     "dist:win": "electron-vite build && electron-builder --win --config.npmRebuild=false --publish never && electron-builder install-app-deps",
-    "dist:publish": "electron-vite build && electron-builder --mac --publish always && electron-builder --win --config.npmRebuild=false --publish always && electron-builder install-app-deps",
     "test": "node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/*.test.ts src/renderer/src/*.test.ts"
   },
   "dependencies": {
