@@ -57,6 +57,11 @@ export interface PlatformUpdater {
    * возврата сам добивает выход (`UpdaterHost.quit`) — бэкенду выходить самому не обязательно.
    */
   install(): Promise<void>
+  /**
+   * Версия, с которой обновились, по собственному маркеру бэкенда (macOS: `pending.json` установщика); null — маркера нет.
+   * Заодно убирает остатки скачивания. `Updater.getJustUpdated` зовёт всегда, а не только когда хост ничего не знает.
+   */
+  consumeJustUpdated?(): string | null
 }
 
 /** Кто и почему просит подтвердить установку — от этого зависит текст диалога в main. */
@@ -196,7 +201,9 @@ export class Updater {
   getJustUpdated(): string | null {
     if (this.justUpdatedTaken) return null
     this.justUpdatedTaken = true
-    return this.host.takeJustUpdated?.() ?? null
+    // Оба источника читаем всегда: бэкенд заодно чистит остатки скачивания, а бэкап знает о смене версии и без него.
+    const fromBackend = this.backend?.consumeJustUpdated?.() ?? null
+    return this.host.takeJustUpdated?.() ?? fromBackend
   }
 
   onChanged(cb: (s: UpdateState) => void): () => void {

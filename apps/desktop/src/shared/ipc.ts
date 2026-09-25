@@ -90,7 +90,7 @@ export type UpdateUnsupportedReason =
   | 'no-write-access'
   /** macOS: App Translocation — система запустила копию из read-only образа, подменять нечего. */
   | 'translocated'
-  /** Для этой платформы установщика нет (Linux; macOS, пока не подключён свой установщик). */
+  /** Для этой платформы установщика нет (Linux). */
   | 'platform'
 
 /** Что известно о новой версии; отдаёт `PlatformUpdater.check()`. */

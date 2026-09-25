@@ -1,9 +1,10 @@
-import { test } from 'node:test'
+import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  alsoIn, buildTree, chainLabel, dirAncestors, excerpt, findAll, highlight, longTime, matchPath, plural,
+  alsoIn, buildTree, chainLabel, dayTime, dirAncestors, excerpt, findAll, highlight, longTime, matchPath,
   readingMinutes, shortTime, type TreeNode
 } from './docTree'
+import { setLocale, translate } from './i18n'
 import type { DocFile, DocGroup } from '../../shared/ipc'
 
 const file = (path: string, mtime = 0): DocFile => ({ path, size: 1, mtime, untracked: false })
@@ -114,12 +115,30 @@ test('shortTime / longTime — сегодня, вчера, дата', () => {
   assert.equal(longTime(new Date(2026, 8, 18, 10, 0).getTime(), now), '18.09 в 10:00')
 })
 
-test('plural', () => {
-  assert.equal(plural(1, ['файл', 'файла', 'файлов']), '1 файл')
-  assert.equal(plural(3, ['файл', 'файла', 'файлов']), '3 файла')
-  assert.equal(plural(11, ['файл', 'файла', 'файлов']), '11 файлов')
-  assert.equal(plural(22, ['файл', 'файла', 'файлов']), '22 файла')
-  assert.equal(plural(0, ['файл', 'файла', 'файлов']), '0 файлов')
+afterEach(() => setLocale('ru'))
+
+test('shortTime / longTime / dayTime — по-английски', () => {
+  setLocale('en')
+  const now = new Date(2026, 8, 22, 15, 0).getTime()
+  assert.equal(shortTime(new Date(2026, 8, 21, 23, 59).getTime(), now), 'yesterday')
+  assert.equal(shortTime(new Date(2026, 8, 18, 9, 0).getTime(), now), '09/18')
+  assert.equal(longTime(new Date(2026, 8, 22, 9, 5).getTime(), now), 'today at 09:05 AM')
+  assert.equal(dayTime(new Date(2026, 8, 18, 10, 0).getTime(), now), '09/18 10:00 AM')
+})
+
+test('dayTime — без предлога', () => {
+  const now = new Date(2026, 8, 22, 15, 0).getTime()
+  assert.equal(dayTime(new Date(2026, 8, 21, 19, 5).getTime(), now), 'вчера 19:05')
+})
+
+test('число файлов в проекте — формы по языку', () => {
+  const files = (locale: 'ru' | 'en', count: number): string => translate(locale, 'config.docs.start.files', { count })
+  assert.equal(files('ru', 1), '1 файл в проекте')
+  assert.equal(files('ru', 3), '3 файла в проекте')
+  assert.equal(files('ru', 11), '11 файлов в проекте')
+  assert.equal(files('ru', 22), '22 файла в проекте')
+  assert.equal(files('en', 1), '1 file in the project')
+  assert.equal(files('en', 5), '5 files in the project')
 })
 
 test('readingMinutes — ≈200 слов в минуту, минимум 1', () => {

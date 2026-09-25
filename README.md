@@ -105,6 +105,8 @@ pnpm dev
   и как опубликовать черновик — в `docs/architecture.md`, «Сборка → Выпуск релиза». Коротко: в релизе должны быть
   2 zip, 2 dmg, `orca-board-<версия>-x64.exe`, portable exe, `latest-mac.yml`, `latest.yml` и blockmap;
   без `.yml` приложение обновления не найдёт. Пока релиз — черновик, клиенты его не видят: нажмите «Publish release».
+- **Релиз через CI:** push тега `vX.Y.Z` запускает `.github/workflows/release.yml` — сборка mac и Windows
+  в черновик релиза (порядок — `docs/architecture.md`, «Выпуск через CI»).
 - **CLI `orca-board`** кладётся в ресурсы приложения (`Resources/cli`, см. `docs/architecture.md`),
   отдельно ставить его не нужно.
 

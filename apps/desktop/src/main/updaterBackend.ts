@@ -2,6 +2,7 @@
 // а `Updater` должен тестироваться в node:test без electron.
 import type { PlatformUpdater } from './updater'
 import type { UpdateSupport } from './updateMachine'
+import { createMacUpdater, macUpdateSupport, type ElectronLike } from './macUpdater'
 import { createWinUpdater } from './winUpdater'
 
 export interface BackendEnv {
@@ -11,6 +12,8 @@ export interface BackendEnv {
   platform: NodeJS.Platform
   /** `process.env.PORTABLE_EXECUTABLE_FILE` — задан только в portable-сборке Windows. */
   portableExe: string | undefined
+  /** `{ app, net }` из electron: нужны macOS-бэкенду (`net.fetch` учитывает системный прокси). */
+  electron: ElectronLike
 }
 
 /** Бэкенд null — обновлять нельзя (`support.unsupportedReason` объясняет почему). */
@@ -20,10 +23,11 @@ export function createPlatformUpdater(env: BackendEnv): { support: UpdateSupport
   switch (env.platform) {
     case 'win32':
       return createWinUpdater({ version: env.version, portableExe: env.portableExe })
-    case 'darwin':
-      // macOS — свой установщик (macUpdater.ts, отдельная задача). Подключается заменой этой строки на
-      // `return createMacUpdater({ version: env.version })`; до тех пор — unsupported.
-      return { support: { mode: 'auto', unsupportedReason: 'platform' }, backend: null }
+    case 'darwin': {
+      // Свой установщик (macUpdater.ts): dmg, App Translocation и каталог без права записи дают unsupported с причиной.
+      const support = macUpdateSupport({ isPackaged: env.isPackaged })
+      return { support, backend: support.unsupportedReason === null ? createMacUpdater(env.electron) : null }
+    }
     default:
       return { support: { mode: 'auto', unsupportedReason: 'platform' }, backend: null }
   }

@@ -1,11 +1,12 @@
 import type React from 'react'
 import type { DocFile, DocGroup } from '../../shared/ipc'
 import { formatSize } from './docLinks'
-import { longTime, plural, shortTime, type DocRef, type TaskMark } from './docTree'
+import { dayTime, shortTime, type DocRef, type TaskMark } from './docTree'
 import { DocBadge, TaskDot } from './DocsTree'
 import { DocIcon } from './docsIcons'
+import { t as translateNow, useT } from './i18n'
 
-const dirLabel = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '/ (корень)')
+const dirLabel = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : translateNow('config.docs.rootDir'))
 const nameOf = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
 
 export interface DocsStartProps {
@@ -40,18 +41,19 @@ export function DocsStart(p: DocsStartProps): React.JSX.Element {
   const taskTotal = p.groups.filter((g) => g.source !== 'project').reduce((n, g) => n + g.files.length, 0)
   const recent = [...(project?.files ?? [])].sort((a, b) => b.mtime - a.mtime).slice(0, START_RECENT_CARDS)
   const projectCount = project?.files.length ?? 0
+  const t = useT()
 
   return (
     <section className="docs-start">
       {p.notice}
-      <h2>Документы {p.projectName}</h2>
+      <h2>{t('config.docs.start.title', { project: p.projectName })}</h2>
       <p className="sub">
-        {plural(projectCount, ['файл', 'файла', 'файлов'])} в проекте
-        {taskTotal > 0 && `, ${taskTotal} ${taskTotal % 10 === 1 && taskTotal % 100 !== 11 ? 'изменён' : 'изменены'} задачами в работе`}. Выберите файл слева или нажмите <kbd>⌘P</kbd>.
+        {t('config.docs.start.files', { count: projectCount })}
+        {taskTotal > 0 && t('config.docs.start.byTasksCount', { count: taskTotal })}{t('config.docs.start.pick')} <kbd>⌘P</kbd>.
       </p>
       {byTasks.length > 0 && (
         <>
-          <h5>Изменены задачами в работе</h5>
+          <h5>{t('config.docs.start.byTasks')}</h5>
           <div className="docs-cards">
             {byTasks.map(({ group, file }) => (
               <button key={`${group.source}:${file.path}`} className="docs-card" onClick={() => p.onOpen({ source: group.source, path: file.path })} title={file.path}>
@@ -66,13 +68,13 @@ export function DocsStart(p: DocsStartProps): React.JSX.Element {
       )}
       {recent.length > 0 && (
         <>
-          <h5>Недавние в проекте</h5>
+          <h5>{t('config.docs.start.recent')}</h5>
           <div className="docs-cards">
             {recent.map((file) => (
               <button key={file.path} className="docs-card" onClick={() => p.onOpen({ source: 'project', path: file.path })} title={file.path}>
                 <span className="t"><DocIcon.file /><span className="docs-ellipsis">{nameOf(file.path)}</span><DocBadge file={file} now={p.now} /></span>
                 <span className="p">{dirLabel(file.path)}</span>
-                <span className="f"><DocIcon.clock />{longTime(file.mtime, p.now).replace(' в ', ' ')} · {formatSize(file.size)}</span>
+                <span className="f"><DocIcon.clock />{dayTime(file.mtime, p.now)} · {formatSize(file.size)}</span>
               </button>
             ))}
           </div>
@@ -84,16 +86,17 @@ export function DocsStart(p: DocsStartProps): React.JSX.Element {
 
 /** В проекте и задачах нет ни одного .md. */
 export function DocsBlank({ onRefresh }: { onRefresh(): void }): React.JSX.Element {
+  const t = useT()
   return (
     <section className="docs-blank">
       <div className="box">
         <div className="ill"><DocIcon.doc /></div>
-        <h2>В проекте пока нет markdown-файлов</h2>
+        <h2>{t('config.docs.blank.title')}</h2>
         <p>
-          Здесь появятся <code>.md</code> из репозитория (кроме игнорируемых git'ом) и файлы, которые пишут воркеры в своих worktree — например, ответы и планы.
+          {t('config.docs.blank.before')} <code>.md</code> {t('config.docs.blank.after')}
         </p>
         <div className="acts">
-          <button className="btn-sm" onClick={onRefresh}><DocIcon.refresh />Обновить</button>
+          <button className="btn-sm" onClick={onRefresh}><DocIcon.refresh />{t('config.docs.refresh')}</button>
         </div>
       </div>
     </section>

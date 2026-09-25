@@ -4,14 +4,15 @@ import { RULE_FILE_NAMES, type RuleFile, type RuleFileName } from '../../../shar
 import { Markdown } from '../Markdown'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
-import { isDirty, isStaleRulesError, pickRule, ruleByName, rulesApi, RULES_STALE_MESSAGE, RULE_HINTS, RULE_TEMPLATES } from '../rules'
-import { SectionHead } from './parts'
+import { isDirty, isStaleRulesError, pickRule, ruleByName, rulesApi, rulesStaleMessage, RULE_HINTS, RULE_TEMPLATES } from '../rules'
+import { useT } from '../i18n'
+import { SectionHead, withCode } from './parts'
 
 const FILE_KEY = 'orca.rulesFile'
 
 function errorText(e: unknown): string {
   const msg = ipcErrorMessage(e)
-  return isStaleRulesError(msg) ? RULES_STALE_MESSAGE : msg
+  return isStaleRulesError(msg) ? rulesStaleMessage() : msg
 }
 
 function storedFile(): string | null {
@@ -36,6 +37,7 @@ function storeFile(name: RuleFileName): void {
  * Монтируется с key = id проекта: черновик не переезжает в чужой проект.
  */
 export function RulesSection({ root }: { root: string }): React.JSX.Element {
+  const t = useT()
   const [files, setFiles] = useState<RuleFile[] | null>(null)
   const [current, setCurrent] = useState<RuleFileName | null>(null)
   /** null — режим просмотра; строка — черновик в редакторе. */
@@ -63,7 +65,7 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
 
   /** Уйти из черновика; с несохранёнными изменениями — только после подтверждения. */
   function leaveDraft(): boolean {
-    if (dirty && !confirm(`В ${current} есть несохранённые изменения. Отменить их?`)) return false
+    if (dirty && !confirm(t('config.about.rules.discardConfirm', { file: current ?? '' }))) return false
     setDraft(null)
     return true
   }
@@ -105,23 +107,22 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
   return (
     <>
       <SectionHead
-        title="Правила"
-        hint={<>Инструкции в корне репозитория <code>{root}</code>: их читает любая сессия агента, не только доска.
-          Сохранение только записывает файл — закоммитьте его сами. Правила только для воркеров и координатора — в «Правилах доски».</>}
+        title={t('config.about.nav.rules')}
+        hint={<>{t('config.about.rules.hintBefore')} <code>{root}</code>{t('config.about.rules.hintAfter')}</>}
       >
         {file && !editing && file.exists && (
           <div className="rules-actions">
-            <button type="button" className="btn-sm" onClick={() => void load()} title="Перечитать с диска">
-              <Icon.refresh /> Обновить
+            <button type="button" className="btn-sm" onClick={() => void load()} title={t('config.about.rules.reloadTitle')}>
+              <Icon.refresh /> {t('config.about.rules.reload')}
             </button>
             <button type="button" className="btn-sm primary" onClick={() => setDraft(file.text)}>
-              <Icon.edit /> Редактировать
+              <Icon.edit /> {t('config.about.rules.edit')}
             </button>
           </div>
         )}
       </SectionHead>
 
-      <div className="rules-tabs" role="tablist" aria-label="Файл правил">
+      <div className="rules-tabs" role="tablist" aria-label={t('config.about.rules.tabsAria')}>
         {RULE_FILE_NAMES.map((name) => {
           const f = files ? ruleByName(files, name) : null
           return (
@@ -134,8 +135,8 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
               onClick={() => choose(name)}
             >
               {name}
-              {f && !f.exists && <span className="rules-tab-note">нет</span>}
-              {name === current && dirty && <span className="rules-dirty" title="Есть несохранённые изменения">●</span>}
+              {f && !f.exists && <span className="rules-tab-note">{t('config.about.rules.missingTab')}</span>}
+              {name === current && dirty && <span className="rules-dirty" title={t('config.about.rules.dirty')}>●</span>}
             </button>
           )
         })}
@@ -144,7 +145,7 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
 
       {error && <p className="error-text rules-error">{error}</p>}
 
-      {!files && !error && <p className="rules-loading">Загрузка…</p>}
+      {!files && !error && <p className="rules-loading">{t('common.loading')}</p>}
 
       {file && editing && (
         <div className="rules-editor">
@@ -152,16 +153,16 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
             value={draft}
             spellCheck={false}
             autoFocus
-            aria-label={`Исходный markdown ${file.name}`}
+            aria-label={t('config.about.rules.sourceAria', { file: file.name })}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
           />
           <div className="rules-editor-foot">
             <span className={`rules-status ${dirty ? 'dirty' : ''}`}>
-              {dirty ? 'Есть несохранённые изменения' : file.exists ? 'Без изменений' : 'Новый файл — ещё не сохранён'}
-              {file.eol === 'crlf' && ' · переводы строк CRLF сохранятся'}
+              {dirty ? t('config.about.rules.dirty') : file.exists ? t('config.about.rules.clean') : t('config.about.rules.newFile')}
+              {file.eol === 'crlf' && t('config.about.rules.crlf')}
             </span>
-            <button type="button" className="btn-sm" disabled={saving} onClick={() => leaveDraft()}>Отмена</button>
+            <button type="button" className="btn-sm" disabled={saving} onClick={() => leaveDraft()}>{t('config.about.rules.cancel')}</button>
             <button
               type="button"
               className="btn-sm primary"
@@ -169,7 +170,7 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
               title="⌘S / Ctrl+S"
               onClick={() => void save()}
             >
-              {saving ? 'Сохранение…' : file.exists ? 'Сохранить' : 'Создать файл'}
+              {saving ? t('config.about.rules.saving') : file.exists ? t('config.about.rules.save') : t('config.about.rules.createFile')}
             </button>
           </div>
         </div>
@@ -177,10 +178,10 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
 
       {file && !editing && !file.exists && (
         <div className="about-box rules-empty">
-          <p><b>{file.name}</b> в корне проекта нет.</p>
-          <p className="hint">«Создать» откроет редактор с заготовкой — файл появится на диске после сохранения.</p>
+          <p>{withCode(t('config.about.rules.absent'), file.name, 'file', 'b')}</p>
+          <p className="hint">{t('config.about.rules.createHint')}</p>
           <button type="button" className="btn-sm primary" onClick={() => setDraft(RULE_TEMPLATES[file.name])}>
-            <Icon.plus /> Создать
+            <Icon.plus /> {t('config.about.rules.create')}
           </button>
         </div>
       )}
@@ -188,7 +189,7 @@ export function RulesSection({ root }: { root: string }): React.JSX.Element {
       {file && !editing && file.exists && (
         file.text.trim()
           ? <div className="about-box rules-view"><Markdown text={file.text} variant="doc" /></div>
-          : <div className="about-box rules-empty"><p className="hint">Файл пустой — нажмите «Редактировать».</p></div>
+          : <div className="about-box rules-empty"><p className="hint">{t('config.about.rules.empty')}</p></div>
       )}
     </>
   )

@@ -474,6 +474,19 @@ describe('Updater: прочее', () => {
     assert.equal(u.getJustUpdated(), null)
   })
 
+  it('getJustUpdated: маркер бэкенда вызывается всегда (чистка), но приоритет у хоста', () => {
+    let consumed = 0
+    const backend = Object.assign(fakeBackend(), { consumeJustUpdated: () => (consumed++, '1.0.0') })
+    const a = make({ backend })
+    assert.equal(a.u.getJustUpdated(), '1.0.0', 'хост молчит — берём у бэкенда')
+    assert.equal(a.u.getJustUpdated(), null)
+    assert.equal(consumed, 1)
+    const b = make({ backend })
+    b.h.justUpdated = '0.9.0'
+    assert.equal(b.u.getJustUpdated(), '0.9.0')
+    assert.equal(consumed, 2, 'маркер всё равно убран')
+  })
+
   it('onChanged отписывается; dispose гасит таймеры', () => {
     const { u, h } = make()
     const seen: string[] = []

@@ -12,7 +12,7 @@ import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 /**
  * `window.orca.taskTypes` или undefined: в `pnpm dev` renderer приходит по HMR, а preload может быть старым —
  * без типов. Тогда выбора типа нет, подписи ролей — встроенные (`DEFAULT_ROLES`), а разделы «Типы задач»
- * просят перезапустить приложение (`TASK_TYPES_STALE_MESSAGE`).
+ * просят перезапустить приложение (`taskTypesStaleMessage()`).
  */
 export function taskTypesApi(api: TaskTypesHost | undefined): Pick<OrcaApi['taskTypes'], 'list'> | undefined {
   const types = api?.taskTypes

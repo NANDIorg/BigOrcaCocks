@@ -5,13 +5,15 @@ import { isRecent } from './docLinks'
 import { buildTree, chainLabel, highlight, matchPath, sameDoc, shortTime, type DocRef, type PathMatch, type TaskMark, type TreeNode } from './docTree'
 import type { TextMatch } from './docFind'
 import { DocIcon } from './docsIcons'
+import { useT } from './i18n'
 
 export type TreeMode = 'tree' | 'recent'
 
 /** «новый» (не в git) — бирюзовый, «изменён» (за сутки) — жёлтый. */
 export function DocBadge({ file, now }: { file: DocFile; now: number }): React.JSX.Element | null {
-  if (file.untracked) return <span className="chip docs-chip new">новый</span>
-  if (isRecent(file, now)) return <span className="chip docs-chip mod">изменён</span>
+  const t = useT()
+  if (file.untracked) return <span className="chip docs-chip new">{t('config.docs.badge.new')}</span>
+  if (isRecent(file, now)) return <span className="chip docs-chip mod">{t('config.docs.badge.modified')}</span>
   return null
 }
 
@@ -64,6 +66,7 @@ export interface DocsTreeProps {
 
 /** Левая колонка «Документов»: поиск, «Папки / Недавние», дерево проекта и файлы задач в работе. */
 export function DocsTree(p: DocsTreeProps): React.JSX.Element {
+  const t = useT()
   const { groups, now, current, marks, query } = p
   const [focus, setFocus] = useState(false)
   const [kb, setKb] = useState(0)
@@ -164,7 +167,7 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
         </span>
         <span className="docs-hit-l2">
           {sub}
-          {dir ? <Marked text={dir} hit={h.match} /> : '/ (корень)'}
+          {dir ? <Marked text={dir} hit={h.match} /> : t('config.docs.rootDir')}
         </span>
       </button>
     )
@@ -173,7 +176,7 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
   const empty = groups !== null && total === 0
 
   return (
-    <nav className="docs-tree" aria-label="Markdown-файлы">
+    <nav className="docs-tree" aria-label={t('config.docs.tree.aria')}>
       <div className={`docs-tree-search ${focus ? 'focus' : ''} ${empty ? 'off' : ''}`}>
         <DocIcon.search />
         <input
@@ -184,11 +187,11 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
           onKeyDown={onKeyDown}
           onFocus={() => setFocus(true)}
           onBlur={() => setFocus(false)}
-          placeholder="Найти файл…  ⌘P"
-          aria-label="Найти файл"
+          placeholder={t('config.docs.tree.search')}
+          aria-label={t('config.docs.tree.searchAria')}
         />
         {query && (
-          <button className="icon-btn docs-clear" title="Сбросить (Esc)" aria-label="Сбросить поиск" onClick={() => p.onQuery('')}>
+          <button className="icon-btn docs-clear" title={t('config.docs.tree.clear')} aria-label={t('config.docs.tree.clearAria')} onClick={() => p.onQuery('')}>
             <DocIcon.close />
           </button>
         )}
@@ -196,12 +199,12 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
       {!searching && !empty && (
         <div className="docs-tree-tools">
           <span className="docs-seg" role="tablist">
-            <button className={p.mode === 'tree' ? 'on' : ''} onClick={() => p.onMode('tree')}>Папки</button>
-            <button className={p.mode === 'recent' ? 'on' : ''} onClick={() => p.onMode('recent')}>Недавние</button>
+            <button className={p.mode === 'tree' ? 'on' : ''} onClick={() => p.onMode('tree')}>{t('config.docs.tree.folders')}</button>
+            <button className={p.mode === 'recent' ? 'on' : ''} onClick={() => p.onMode('recent')}>{t('config.docs.tree.recent')}</button>
           </span>
           <span className="docs-grow" />
           {p.mode === 'tree' && (
-            <button className="icon-btn docs-tool" title="Свернуть всё" aria-label="Свернуть всё" onClick={p.onCollapseAll}>
+            <button className="icon-btn docs-tool" title={t('config.docs.tree.collapseAll')} aria-label={t('config.docs.tree.collapseAll')} onClick={p.onCollapseAll}>
               <DocIcon.toc />
             </button>
           )}
@@ -209,27 +212,27 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
       )}
       <div className="docs-tree-body">
         {p.listError && <div className="editor-error docs-hint">{p.listError}</div>}
-        {groups === null && !p.listError && <div className="muted docs-hint">Загрузка…</div>}
+        {groups === null && !p.listError && <div className="muted docs-hint">{t('common.loading')}</div>}
         {groups !== null && searching && (
           <>
-            <div className="docs-grp">Проект<span className="n">{projectHits.length} из {project?.files.length ?? 0}</span></div>
-            {projectHits.length ? projectHits.map((h) => hitRow(h)) : <div className="muted docs-hint">Нет совпадений</div>}
-            <div className="docs-grp">Задачи в работе<span className="n">{taskHits.length}</span></div>
+            <div className="docs-grp">{t('config.docs.tree.project')}<span className="n">{t('config.docs.tree.ofTotal', { n: projectHits.length, total: project?.files.length ?? 0 })}</span></div>
+            {projectHits.length ? projectHits.map((h) => hitRow(h)) : <div className="muted docs-hint">{t('config.docs.tree.noMatches')}</div>}
+            <div className="docs-grp">{t('config.docs.tree.tasks')}<span className="n">{taskHits.length}</span></div>
             {taskHits.length ? (
               taskHits.map((h) => hitRow(h, <><TaskDot mark={marks.get(h.source)} />{tasks.find((g) => g.source === h.source)?.title} · </>))
             ) : (
-              <div className="muted docs-hint">Нет совпадений</div>
+              <div className="muted docs-hint">{t('config.docs.tree.noMatches')}</div>
             )}
             {current && (
               <>
-                <div className="docs-grp">В тексте открытого документа{p.textHits.length > 0 && <span className="n">{p.textHits.length}</span>}</div>
-                {textHits.length === 0 && <div className="muted docs-hint">Нет совпадений</div>}
-                {textHits.map((t, j) => {
+                <div className="docs-grp">{t('config.docs.tree.inText')}{p.textHits.length > 0 && <span className="n">{p.textHits.length}</span>}</div>
+                {textHits.length === 0 && <div className="muted docs-hint">{t('config.docs.tree.noMatches')}</div>}
+                {textHits.map((hit, j) => {
                   const i = hitIndex++
                   return (
                     <button key={`text:${j}`} ref={i === kb ? kbRef : undefined} className={`docs-hit ${i === kb ? 'kb' : ''}`} onMouseEnter={() => setKb(i)} onClick={() => activate(i)}>
-                      <span className="docs-hit-l1 text">{t.before}<b>{t.match}</b>{t.after}</span>
-                      <span className="docs-hit-l2">{current.path.slice(current.path.lastIndexOf('/') + 1)}{t.section && ` · «${t.section}»`}</span>
+                      <span className="docs-hit-l1 text">{hit.before}<b>{hit.match}</b>{hit.after}</span>
+                      <span className="docs-hit-l2">{current.path.slice(current.path.lastIndexOf('/') + 1)}{hit.section && ` · «${hit.section}»`}</span>
                     </button>
                   )
                 })}
@@ -239,10 +242,10 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
         )}
         {groups !== null && !searching && (
           <>
-            <div className="docs-grp">Проект<span className="n">{project?.files.length ?? 0}</span></div>
+            <div className="docs-grp">{t('config.docs.tree.project')}<span className="n">{project?.files.length ?? 0}</span></div>
             {p.mode === 'tree' ? nodes(tree, 0) : recent.map((f) => fileRow('project', f, 0, <>{f.path.slice(f.path.lastIndexOf('/') + 1)}{f.path.includes('/') && <span className="docs-row-dir">{dirOf(f.path)}</span>}</>))}
-            <div className="docs-grp">Задачи в работе<span className="n">{taskFiles}</span></div>
-            {!empty && taskFiles === 0 && <div className="muted docs-hint">Задачи в работе не меняли .md</div>}
+            <div className="docs-grp">{t('config.docs.tree.tasks')}<span className="n">{taskFiles}</span></div>
+            {!empty && taskFiles === 0 && <div className="muted docs-hint">{t('config.docs.tree.noTaskFiles')}</div>}
             {tasks
               .filter((g) => g.files.length > 0)
               .map((g) => (
@@ -260,9 +263,9 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
       </div>
       {searching && (
         <div className="docs-tree-foot">
-          <span><kbd>↑</kbd><kbd>↓</kbd> выбрать</span>
-          <span><kbd>↵</kbd> открыть</span>
-          <span><kbd>Esc</kbd> сбросить</span>
+          <span><kbd>↑</kbd><kbd>↓</kbd> {t('config.docs.tree.keySelect')}</span>
+          <span><kbd>↵</kbd> {t('config.docs.tree.keyOpen')}</span>
+          <span><kbd>Esc</kbd> {t('config.docs.tree.keyReset')}</span>
         </div>
       )}
     </nav>

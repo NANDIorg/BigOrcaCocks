@@ -2,7 +2,7 @@
 // Время работы задачи: копится только в kind=in_progress (active-time.ts, TaskStore.setStatus).
 import { describe, it, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { TaskStore, type Persistence, type StoreSnapshot } from './store.ts'
+import { TaskStore, STORE_FORMAT_VERSION, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS, type Task } from './types.ts'
 import { activeDuration, taskActiveTime, trackActiveTime } from './active-time.ts'
 import { toGlobalTask, globalOwnDuration, globalSubtasksDuration, type GlobalTask } from './global-tasks.ts'
@@ -277,6 +277,8 @@ describe('миграция времени работы при загрузке',
   it('уже мигрированные данные не трогаются', (t) => {
     clock(t, 100 * MIN)
     const { store, saved } = load({
+      // formatVersion — иначе файл без него мигрирует и сохраняется (migrateFormatVersion).
+      formatVersion: STORE_FORMAT_VERSION,
       // priority и startedAt у прогона — иначе его мигрируют migrateRunPriority и migrateRunStarted,
       // statusHistory (и у задачи) — иначе migrateStatusHistory.
       runs: [{
