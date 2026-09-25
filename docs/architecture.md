@@ -2294,6 +2294,10 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 - Путь подзадачи (`work.subflow`): **id нод пути живут в своём пространстве** — `work`, `merge`, `end` внутри пути и в графе прогона могут совпасть. `Task.stage.nodeId` подзадачи прогона —
   нода **пути**, а `Task.stageOf.nodeId` — нода **графа прогона**; искать ноду по `stage` в `runWorkflow(...)` нельзя, только в `taskWorkflow(task)` (или `taskNodeGraph`, если задача ещё не вошла в путь).
   Новый код в `WF_ISSUE_TEXTS` сразу требует ключ `wf.issue.<код>` в `i18n/ru/config.ts` и `en/config.ts` (`defaultTitles.test.ts` сверяет их с core).
+- Тест воркфлоу прогона (`workflow-run-e2e.test.ts`) с настоящими git и `ProjectManager` держится на фикстуре, которая повторяет контракт main: воркер стартует в worktree **от ветки прогона**
+  (`ensureRunBranch`), иначе автомерж слил бы подзадачу в ветку корня, а не прогона; роль задачи проверяется по типу прогона (`pm.resolveRun`), как в `runWorker`; «перезапуск приложения» —
+  новый `ProjectManager` над тем же каталогом (доска читается из `boards/`), а не второй `store` в памяти. Не проверяй в таких тестах то, чего нет в контракте: `stage_tasks_done` несёт только
+  `{runId, nodeId}` (без `visit`), в `Run.stageHistory` нет `start`, а слияние в `master` по умолчанию `protected` — тест merge снимает защиту (`protected: []`) явно.
 
 ## Открытые вопросы
 

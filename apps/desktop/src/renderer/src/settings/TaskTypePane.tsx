@@ -10,7 +10,7 @@ import { SectionHead } from '../about/parts'
 import { useT, type TFunction, type TKey } from '../i18n'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import {
-  TASK_TYPE_TABS, libraryAgents, resolveTypeSettings, typeColumnChoices,
+  TASK_TYPE_TABS, libraryAgents, resolveTypeSettings, storedWorkflowNotes, typeColumnChoices,
   typeEditorKey, typeRemovalConfirm, type TaskTypeTab, type TypeUsage
 } from '../taskTypeEdit'
 import { TaskTypeWorkflow } from './TaskTypeWorkflow'
@@ -100,7 +100,7 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
 
   const counts: Record<TaskTypeTab, string> = {
     roles: rolesOff ? `${s.roles.length} · ${rolesOff} !` : String(s.roles.length),
-    workflow: s.workflow ? t('config.taskType.count.own') : t('config.taskType.count.default'),
+    workflow: `${s.workflow ? t('config.taskType.count.own') : t('config.taskType.count.default')}${storedWorkflowNotes(type.workflowNotes, false, false) ? ' !' : ''}`,
     perm: permissionParts(s.permissionMode).title,
     rules: s.agentRules.trim() ? t('config.taskType.count.yes') : t('config.taskType.count.no')
   }
