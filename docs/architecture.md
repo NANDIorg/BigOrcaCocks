@@ -1098,7 +1098,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   Реализация — `ProjectManager` (`main/projects.ts`: `groups`, `createGroup`, `renameGroup`, `removeGroup`, `setGroupCollapsed`,
   `setProjectGroup`, `reorderGroups`); `reorderGroups` требует ровно все id по одному разу, иначе `groupNotFound` на лишнем/пропущенном;
   неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
-  `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
+  `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}` (у типа может быть `workflowNotes` — предупреждения автомиграции графа), `taskTypes:save(input)` → `TaskType`
+  (`input.workflowNotes` необязателен: не передан — прежние остаются, пока граф не менялся; передан — сохраняется, `[]` закрывает),
   `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
   (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
   `projects:add(typeId?, path?)` (без `path` — диалог выбора папки, отмена → `null`),
@@ -1402,6 +1403,21 @@ UI работает с активным проектом; воркеры и ко
 проекта. Незакрытый dispatch и задача на гейте после миграции продолжают: граф — из `Run.workflow`, роли — из типа
 «<имя проекта>» = бывших ролей проекта. Правка или удаление этого типа (`saveTaskType`, `deleteTaskType`) сначала
 загружает доски проектов с таким `legacyTypeId` (`settleLegacyRuns`): старые прогоны получают снимок прежнего типа.
+
+**Миграция графов типов v1 → v2** (`migrateTypeWorkflows` в `task-types-migration.ts`, чистая функция; вызывает `load()` **после** засева заготовок
+и для файла любой версии — не только «до типов»): граф типа с `version` < `WORKFLOW_VERSION` переводится `migrateWorkflowReport(wf, roles типа)`, а
+предупреждения (снят `merge` v1, `condition: role`, `git create_branch/checkout`, осиротевшие ноды, роль вопроса, «нет `human` перед концом») кладутся в
+**`TaskType.workflowNotes`** (`WfMigrationNote[]`, по-русски, готовый текст) — это и есть место, где renderer показывает их человеку: поле приходит в
+`taskTypes:list` вместе с типом, необязательное. Форму графа при чтении файла проверяет `loadedTaskType` (без миграции версии — её делает один вызов
+`migrateTypeWorkflows`, поэтому и граф проекта старого формата, ставший типом, и шаблон, и правка встроенного типа идут одним путём и с ролями типа).
+Записи `workflowNotes` из файла читаются с отбраковкой битых. Файл пишется сразу (иначе предупреждения пересчитывались бы каждый запуск), а исходный текст
+— в `projects.workflow-v1.bak.json` (`PROJECTS_WORKFLOW_BACKUP_NAME`, если бэкапа ещё нет; для файла «до типов» хватает `projects.v1.bak.json`): миграция
+снимает ноды, а приложение до воркфлоу глобальной задачи граф v2 не исполняет (`runnableWorkflow` → дефолтный). Повторная загрузка ничего не меняет;
+граф будущей версии и тип без графа не трогаются. `saveTaskType`: предупреждения остаются, пока граф типа не менялся (правка ролей, названия,
+правил), правка графа их снимает; `TaskTypeInput.workflowNotes` — явный список (пустой закрывает предупреждения без нового IPC-канала). Копия типа
+(`duplicateTaskType`) и прогоны (`runTypeInput`, `snapshotTaskType`) предупреждений не получают. **Копии графа у прогонов (`Run.workflow`) миграция не
+трогает**: прогон без `workflowScope` доживает на движке подзадач со своим снимком v1, а без снимка — по графу типа через `toTaskScopeWorkflow`
+(мерж и конфликт возвращаются, `condition: role` из типа уже снят). Тесты — `projects-workflow-migration.test.ts` (main) и `workflow-restart.test.ts` (core).
 
 
 ### Безопасность состояния
@@ -2231,6 +2247,11 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
   библиотеки уже версии 2 (`migrateWorkflow` при загрузке), поэтому «Входящие» и прогон без снимка получают его через `toTaskScopeWorkflow`, а не как есть.
   Конструкторы графов версии 1 — `legacyPipelineWorkflow` / `legacyDefaultWorkflow`; тесты старого движка строят графы ими и версией `WORKFLOW_VERSION_TASK_SCOPE`,
   а прогон по типу из библиотеки — через `toTaskScopeWorkflow(type.workflow)`.
+- Миграция графов типов v1 → v2 **необратима для старого приложения**: `merge` снят, роль `work` переехала в `roleIds`, версия 2. Приложение до воркфлоу
+  глобальной задачи такой граф не исполняет (`versionFuture` → дефолтный граф), поэтому перед первой записью `load()` кладёт исходный `projects.json` в
+  `projects.workflow-v1.bak.json`. Не переноси миграцию графа в `loadedTaskType`/`normalizeLegacy`: там ещё нет ролей типа и некуда положить предупреждения, а
+  граф проекта старого формата дошёл бы до типа уже без замечаний. Копию графа в `Run.workflow` не мигрируй: по ней идущий прогон без `workflowScope` ходит
+  по подзадачам, и подмена смысла `merge` (подзадача → ветка задачи против ветка задачи → база) сломала бы его после рестарта.
 - `HumanRequest.taskId` необязателен (approval прогона): не пиши `store.getTask(request.taskId)` и `ids.has(r.taskId)` без проверки, иначе approval прогона уронит
   код или потеряется. Название финальной human-ноды `pipelineWorkflow` — «Проверка человеком», не «Проверка»: перевод встроенных названий (`builtinText`) узнаёт их
   по тексту, и «Проверка» показалась бы на английском как «Agent check».
