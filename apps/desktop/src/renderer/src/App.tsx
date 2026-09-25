@@ -33,6 +33,8 @@ import { ReturnGlobalModal } from './ReturnGlobalModal'
 import { ProjectTypeModal } from './ProjectTypeModal'
 import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
 import { loadOnboarding, shouldShowOnboarding } from './onboarding'
+import { branchBadge } from './projectBranch'
+import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
 import { globalReviewApi, reviewErrorMessage } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
@@ -138,6 +140,7 @@ export function App(): React.JSX.Element {
   const [snap, setSnap] = useState<StoreSnapshot>(EMPTY)
   const [projects, setProjects] = useState<Project[]>([])
   const [active, setActive] = useState<Project | null>(null)
+  const badge = branchBadge(useProjectBranch(active?.id))
   /** Задач в работе по id проекта — бейдж в сайдбаре «Проекты». */
   const [inProgress, setInProgress] = useState<Record<string, number>>({})
   const [socketPath, setSocketPath] = useState('')
@@ -794,7 +797,16 @@ export function App(): React.JSX.Element {
       <main className="main">
         <div className="main-head">
           <div className="row">
-            <h1>{active?.name ?? 'orca-board'}</h1>
+            <div className="head-title">
+              <h1>{active?.name ?? 'orca-board'}</h1>
+              {badge && (
+                <span className={`branch-badge ${badge.detached ? 'detached' : ''}`} title={badge.title}>
+                  <Icon.branch />
+                  <span className="branch-name">{badge.label}</span>
+                  {badge.mark && <span className="branch-mark">{badge.mark}</span>}
+                </span>
+              )}
+            </div>
             <button
               className={`inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
               onClick={() => {

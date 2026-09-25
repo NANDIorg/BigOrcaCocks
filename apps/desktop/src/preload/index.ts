@@ -30,6 +30,7 @@ const api: OrcaApi = {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
+    branch: (id) => ipcRenderer.invoke('projects:branch', id),
     add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
     detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
     setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
