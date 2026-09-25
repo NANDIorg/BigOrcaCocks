@@ -5,7 +5,7 @@ import {
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
   type TaskPriority
 } from '@orca-board/core'
-import type { GlobalTaskPatch, Project, TaskTypesState, TerminalInfo } from '../../shared/ipc'
+import type { GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { attentionTaskIds, buildAttention } from './attention'
 import { revealInFeed } from './feedLink'
@@ -34,6 +34,8 @@ import { ProjectTypeModal } from './ProjectTypeModal'
 import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
 import { loadOnboarding, shouldShowOnboarding } from './onboarding'
 import { startAddProject, type AddProjectStart } from './projectAdd'
+import { ProjectList } from './ProjectList'
+import { groupsFromList } from './projectGroups'
 import { globalReviewApi, reviewErrorMessage } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
@@ -137,6 +139,8 @@ export function App(): React.JSX.Element {
   const t = useT()
   const [snap, setSnap] = useState<StoreSnapshot>(EMPTY)
   const [projects, setProjects] = useState<Project[]>([])
+  /** Группы проектов в меню; со старым main (`list()` без `groups`) — пусто. */
+  const [projectGroups, setProjectGroups] = useState<ProjectGroup[]>([])
   const [active, setActive] = useState<Project | null>(null)
   /** Задач в работе по id проекта — бейдж в сайдбаре «Проекты». */
   const [inProgress, setInProgress] = useState<Record<string, number>>({})
@@ -242,10 +246,18 @@ export function App(): React.JSX.Element {
     refreshTaskTypes()
     const res = await window.orca.projects.list()
     setProjects(res.projects)
+    setProjectGroups(groupsFromList(res))
     setActive(res.active)
     void refreshInProgress()
     setSnap(res.active ? await window.orca.board.get() : EMPTY)
     await refreshAgents()
+  }
+
+  /** Только список проектов и групп: после действий с группами доска и агенты не перечитываются. */
+  async function reloadProjectList(): Promise<void> {
+    const res = await window.orca.projects.list()
+    setProjects(res.projects)
+    setProjectGroups(groupsFromList(res))
   }
 
   async function refreshInProgress(): Promise<void> {
@@ -769,24 +781,16 @@ export function App(): React.JSX.Element {
 
       {showProjects && (
         <aside className="sidebar">
-          <div className="head">
-            <h2>{t('shell.projects.title')}</h2>
-            <button className="icon-btn fill" title={t('shell.projects.add')} onClick={addProject}><Icon.plus /></button>
-          </div>
-          <div className="list">
-            {projects.length === 0 && <div className="empty">{t('shell.projects.empty')}</div>}
-            {projects.map((p) => (
-              <div key={p.id} className={`item ${p.id === active?.id ? 'active' : ''}`} onClick={() => switchProject(p)}>
-                <div className="name-row">
-                  <div className="name">{p.name}</div>
-                  {(inProgress[p.id] ?? 0) > 0 && (
-                    <span className="tab-badge" title={t('shell.projects.inProgress', { count: inProgress[p.id] })}>{inProgress[p.id]}</span>
-                  )}
-                </div>
-                <div className="sub" title={p.root}>{p.root.replace(/^\/Users\/[^/]+/, '~')}</div>
-              </div>
-            ))}
-          </div>
+          <ProjectList
+            projects={projects}
+            groups={projectGroups}
+            inProgress={inProgress}
+            activeId={active?.id}
+            onSwitch={(p) => void switchProject(p)}
+            onAdd={() => void addProject()}
+            onReload={reloadProjectList}
+            onGroupsChange={setProjectGroups}
+          />
           <UpdateBanner updates={updates} />
         </aside>
       )}

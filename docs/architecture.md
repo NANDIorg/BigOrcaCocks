@@ -761,6 +761,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   внутри него (`findProjectForPath`; renderer git не запускает) — модалки нет, `projects.add(undefined, path)`
   переключает на существующий проект. Старый preload без `detectTaskType`/`taskTypes` или старый main
   («No handler registered for 'projects:detectTaskType'») — прежний `projects.add()` без выбора типа.
+- **Группы проектов в левом меню** (`ProjectList.tsx`; логика — `renderer/src/projectGroups.ts` `buildSidebar`, меню — `PopupMenu.tsx`,
+  диалоги имени и подтверждения — `GroupDialogs.tsx`). Сверху сворачиваемые группы (заголовок — кнопка с `aria-expanded`, число проектов,
+  в свёрнутом виде — сумма бейджей «в работе»), ниже проекты без группы; `groupId` несуществующей группы читается как «без группы»,
+  пустая группа остаётся в меню. Свёрнутая группа с активным проектом подсвечена. Сворачивание — оптимистично, затем
+  `projects.setGroupCollapsed`. Действия — кнопка «…» или правая кнопка на проекте/группе: перенос в группу / из группы / в новую группу
+  (`setProjectGroup`), переименование, удаление (подтверждение — модалка приложения, не `window.confirm`; проекты остаются без группы).
+  После действия перечитывается только `projects.list()` (`reloadProjectList` в `App.tsx`), доска не трогается. Старый main/preload:
+  `list()` без `groups` — меню без групп; нет методов групп (`groupsApi`) или нет хендлера в main
+  (`isStaleGroupsError`: «No handler registered for 'projects:createGroup'…») — «перезапустите приложение» (`shell.projects.staleApp`).
+  Drag-and-drop проектов между группами нет.
 - **Колонки доски** (`Board.tsx`) рендерятся из `Project.columns` (порядок, название, цвет кромки заголовка).
   Все проверки статуса на доске — по `kind` колонки, а не по её id.
   Колонку «Готовы» (kind `ready`) локальная доска отдельно не показывает: её карточки лежат в колонке kind `backlog`
