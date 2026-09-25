@@ -92,7 +92,7 @@ export function UpdateBanner({ updates, liveAgents }: { updates: UpdatesControll
     openRelease: t('shell.update.download'),
     cancelPending: t('shell.update.cancel')
   }
-  const primary = view.actions[0]
+  const primary = view.primary
 
   return (
     <div className={`update-banner ${view.kind}`} role="status" aria-label={t('shell.update.aria')}>

@@ -19,8 +19,10 @@ export interface UpdateBannerView {
   detail?: string
   /** Прогресс 0–100 (`downloading`); null — размер ещё неизвестен, полоса без значения. */
   percent?: number | null
-  /** Кнопки по порядку; первая — главная. */
+  /** Кнопки по порядку показа. */
   actions: UpdateAction[]
+  /** Главная кнопка (акцент) — то, ради чего плашка появилась; не всегда первая («Что нового» идёт раньше «Скачать»). */
+  primary?: UpdateAction
 }
 
 /** `0.4.2` → `v0.4.2`. */
@@ -59,7 +61,7 @@ export function bannerView(s: UpdateState | null): UpdateBannerView | null {
   const notes: UpdateAction[] = s.releaseNotes ? ['whatsNew'] : []
   switch (s.status) {
     case 'available':
-      return { kind: 'available', title: t('shell.update.available', { version }), actions: [...notes, 'download'] }
+      return { kind: 'available', title: t('shell.update.available', { version }), actions: [...notes, 'download'], primary: 'download' }
     case 'downloading':
       return { kind: 'downloading', title: t('shell.update.downloading', { version }), percent: s.percent, actions: [] }
     case 'ready':
@@ -68,12 +70,13 @@ export function bannerView(s: UpdateState | null): UpdateBannerView | null {
         title: t('shell.update.ready', { version }),
         detail: pendingText(s.installPending),
         // «Отменить» — только пока установка отложена; иначе главная кнопка — «Перезапустить и обновить».
-        actions: s.installPending ? ['install', 'cancelPending', ...notes] : ['install', ...notes]
+        actions: s.installPending ? ['install', 'cancelPending', ...notes] : ['install', ...notes],
+        primary: 'install'
       }
     case 'installing':
       return { kind: 'installing', title: t('shell.update.installing', { version }), actions: [] }
     case 'error':
-      return { kind: 'error', title: t('shell.update.error'), detail: s.error ?? undefined, actions: ['retry'] }
+      return { kind: 'error', title: t('shell.update.error'), detail: s.error ?? undefined, actions: ['retry'], primary: 'retry' }
     case 'unsupported': {
       // Найденная версия при unsupported бывает только в manual-download (portable, macOS вне «Программ»): ставить нельзя, скачать — можно.
       if (s.mode !== 'manual-download' || !s.availableVersion || !s.releaseUrl) return null
@@ -81,7 +84,8 @@ export function bannerView(s: UpdateState | null): UpdateBannerView | null {
         kind: 'manual',
         title: t('shell.update.available', { version }),
         detail: unsupportedText(s.unsupportedReason),
-        actions: [...notes, 'openRelease']
+        actions: [...notes, 'openRelease'],
+        primary: 'openRelease'
       }
     }
     default:

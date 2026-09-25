@@ -34,6 +34,7 @@ describe('bannerView', () => {
     assert.equal(v?.kind, 'available')
     assert.equal(v?.title, 'Доступна v0.4.2')
     assert.deepEqual(v?.actions, ['whatsNew', 'download'])
+    assert.equal(v?.primary, 'download')
   })
 
   it('available без заметок: «Что нового» не предлагается', () => {
@@ -53,6 +54,7 @@ describe('bannerView', () => {
     const v = bannerView(st({ ...found, status: 'ready' }))
     assert.equal(v?.title, 'v0.4.2 готова')
     assert.deepEqual(v?.actions, ['install', 'whatsNew'])
+    assert.equal(v?.primary, 'install')
     assert.equal(v?.detail, undefined)
   })
 
@@ -75,6 +77,7 @@ describe('bannerView', () => {
     assert.equal(v?.kind, 'error')
     assert.equal(v?.detail, 'Не совпала контрольная сумма')
     assert.deepEqual(v?.actions, ['retry'])
+    assert.equal(v?.primary, 'retry')
     assert.equal(bannerView(st({ status: 'error' }))?.detail, undefined)
   })
 
@@ -83,6 +86,7 @@ describe('bannerView', () => {
     assert.equal(v?.kind, 'manual')
     assert.match(v?.detail ?? '', /Portable/)
     assert.deepEqual(v?.actions, ['whatsNew', 'openRelease'])
+    assert.equal(v?.primary, 'openRelease')
   })
 
   it('manual-download на macOS вне «Программ»: причина из unsupportedReason', () => {
