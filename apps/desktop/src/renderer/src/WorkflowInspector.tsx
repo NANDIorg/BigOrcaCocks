@@ -4,13 +4,16 @@ import {
   type BoardColumn, type Role, type WfCondition, type WfNode, type WfOutcome, type WfValidation, type Workflow
 } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
-import { WF_OUTCOME_LABELS, issueTargets, removeSelected, type WfSelection } from './workflowEdit'
+import { issueTargets, removeSelected, wfOutcomeLabel, type WfSelection } from './workflowEdit'
 import { WF_NODE_HELP } from './workflowHelp'
+import {
+  GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
+} from './workflowGit'
 import {
   WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, conditionOfKind, hasColumn, nodeOptionLabel, patchNode, portTarget,
   setPortTarget, stageRoles, targetOptions, type WfNodePatch
 } from './workflowForm'
-import { useT } from './i18n'
+import { useT, type TKey } from './i18n'
 
 interface Props {
   workflow: Workflow
@@ -49,7 +52,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
           <fieldset className="wf-ports">
             <legend>{t('config.wf.insp.ports')}</legend>
             {WF_PORTS[node.type].map((outcome) => (
-              <PortSelect key={outcome} workflow={workflow} nodeId={node.id} outcome={outcome} onChange={onChange} />
+              <PortSelect key={outcome} workflow={workflow} nodeId={node.id} nodeType={node.type} outcome={outcome} onChange={onChange} />
             ))}
           </fieldset>
         )}
@@ -67,7 +70,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
     return (
       <aside className="wf-insp" aria-label={t('config.wf.insp.edge')}>
         <div className="wf-insp-head">
-          <b>{t('config.wf.insp.edgeTitle', { outcome: WF_OUTCOME_LABELS[edge.outcome] })}</b>
+          <b>{t('config.wf.insp.edgeTitle', { outcome: wfOutcomeLabel(from?.type ?? 'work', edge.outcome) })}</b>
           <span className="chip mono">{edge.id}</span>
         </div>
         <div className="wf-field">
@@ -76,7 +79,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
             {from ? nodeOptionLabel(from) : edge.from}
           </button>
         </div>
-        <PortSelect workflow={workflow} nodeId={edge.from} outcome={edge.outcome} onChange={onChange} />
+        <PortSelect workflow={workflow} nodeId={edge.from} nodeType={from?.type ?? 'work'} outcome={edge.outcome} onChange={onChange} />
         {issue && <IssueList level={issue.level} messages={issue.messages} />}
         <div className="wf-insp-foot">
           <button type="button" className="btn-sm danger" onClick={remove}><Icon.trash /> {t('config.wf.insp.removeEdge')}</button>
@@ -152,7 +155,7 @@ function NodeHelp({ type }: { type: WfNode['type'] }): React.JSX.Element {
           <dd>
             {ports.length === 0 ? t('config.wf.insp.noOutcomes') : (
               <ul>
-                {ports.map((o) => <li key={o}><b className={`wf-help-port wf-port--${o}`}>{WF_OUTCOME_LABELS[o]}</b> — {help.outcomes[o]}</li>)}
+                {ports.map((o) => <li key={o}><b className={`wf-help-port wf-port--${o}`}>{wfOutcomeLabel(type, o)}</b> — {help.outcomes[o]}</li>)}
               </ul>
             )}
           </dd>
@@ -270,6 +273,7 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
         </label>
       )}
       {node.type === 'condition' && <ConditionFields node={node} workflow={workflow} roles={taskRoles} onChange={(test) => patch({ test })} />}
+      {node.type === 'git' && <GitFields node={node} onChange={(git) => patch({ git })} />}
       {node.type === 'end' && (
         <label className="wf-check">
           <input type="checkbox" checked={node.merged ?? false} onChange={(e) => patch({ merged: e.target.checked })} />
@@ -288,6 +292,49 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
           </select>
         </label>
       )}
+    </>
+  )
+}
+
+/**
+ * Поля ноды «Git»: операция и только её параметры (`gitFieldsFor`). Для имени ветки и сообщения под полем —
+ * подстановки и превью на образцовой задаче: красный текст — имя недопустимо для git.
+ */
+function GitFields({ node, onChange }: { node: WfGitNode; onChange(patch: WfGitPatch): void }): React.JSX.Element {
+  const t = useT()
+  return (
+    <>
+      <label className="wf-field">
+        <span>{t('config.wf.git.operation')}</span>
+        <select value={node.operation} onChange={(e) => onChange({ operation: e.target.value as WfGitNode['operation'] })}>
+          {GIT_OPERATIONS.map((op) => <option key={op} value={op}>{gitOperationTitle(op)}</option>)}
+          {!GIT_OPERATIONS.includes(node.operation) && <option value={node.operation}>{String(node.operation)}</option>}
+        </select>
+      </label>
+      {gitFieldsFor(node.operation).map(({ field, required }) => {
+        const value = node[field] ?? ''
+        const hint = gitPlaceholdersHint(field)
+        const preview = field === 'branch' || field === 'message' ? gitPreview(field, value) : null
+        const label = t(`config.wf.git.field.${field}` as TKey)
+        return (
+          <label key={field} className="wf-field">
+            <span>{required ? label : `${label} ${t('config.wf.git.optional')}`}</span>
+            <input
+              value={value}
+              className="mono"
+              placeholder={t(`config.wf.git.placeholder.${field}` as TKey)}
+              onChange={(e) => onChange({ [field]: e.target.value })}
+            />
+            {hint && <small className="hint">{hint}</small>}
+            {preview && (
+              <small className={`wf-git-preview${preview.valid ? '' : ' bad'}`}>
+                {t('config.wf.git.preview', { text: preview.text })}
+                {!preview.valid && ` — ${t('config.wf.git.previewBad')}`}
+              </small>
+            )}
+          </label>
+        )
+      })}
     </>
   )
 }
@@ -369,9 +416,10 @@ function ConditionFields({ node, workflow, roles, onChange }: {
 }
 
 /** Select «куда ведёт» одного порта; пустое значение — перехода нет (это ошибка валидации). */
-function PortSelect({ workflow, nodeId, outcome, onChange }: {
+function PortSelect({ workflow, nodeId, nodeType, outcome, onChange }: {
   workflow: Workflow
   nodeId: string
+  nodeType: WfNode['type']
   outcome: WfOutcome
   onChange(wf: Workflow): void
 }): React.JSX.Element {
@@ -379,7 +427,7 @@ function PortSelect({ workflow, nodeId, outcome, onChange }: {
   const to = portTarget(workflow, nodeId, outcome) ?? ''
   return (
     <label className={`wf-field wf-port-field wf-port--${outcome}`}>
-      <span>{WF_OUTCOME_LABELS[outcome]}</span>
+      <span>{wfOutcomeLabel(nodeType, outcome)}</span>
       <select value={to} onChange={(e) => onChange(setPortTarget(workflow, nodeId, outcome, e.target.value || null))}>
         <option value="">{t('config.wf.insp.noTarget')}</option>
         {targetOptions(workflow).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}

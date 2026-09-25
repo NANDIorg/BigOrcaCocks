@@ -21,8 +21,16 @@ export const WF_OUTCOME_LABELS: Readonly<Record<WfOutcome, string>> = {
   get error() { return t('config.wf.outcome.error') }
 }
 
+/**
+ * Подпись исхода у ноды типа `type`. Общий `ok` — «слито» (мерж), а у ноды `git` это «выполнено»: слияния там нет.
+ */
+export function wfOutcomeLabel(type: WfNodeType, outcome: WfOutcome): string {
+  if (type === 'git' && outcome === 'ok') return t('config.wf.outcome.gitOk')
+  return WF_OUTCOME_LABELS[outcome]
+}
+
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
-export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'human', 'condition', 'merge', 'end', 'start']
+export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'human', 'condition', 'merge', 'git', 'end', 'start']
 
 /** Свободный id вида `<prefix>`, `<prefix>_2`, `<prefix>_3`… */
 export function uniqueId(prefix: string, taken: Iterable<string>): string {

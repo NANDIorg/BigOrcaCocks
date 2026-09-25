@@ -6,6 +6,7 @@ import { NODE_H, NODE_W } from './workflowGeometry'
 import { connect, makeNode, uniqueId } from './workflowEdit'
 import { t } from './i18n'
 import { nodeTitle } from './defaultTitles'
+import { patchGit, type WfGitPatch } from './workflowGit'
 
 // Логика инспектора ноды и вкладки «Настройки → Типы задач → Воркфлоу»: правка полей ноды, переходы портов с клавиатуры,
 // импорт/экспорт JSON, пресет лимита повторов. Как и workflowEdit.ts — чистые функции над графом.
@@ -24,7 +25,7 @@ export const WF_TYPE_TITLES: Readonly<Record<WfNodeType, string>> = {
 }
 
 /** Порядок типов в select «Тип» инспектора. */
-export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'human', 'condition', 'merge', 'end']
+export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'human', 'condition', 'merge', 'git', 'end']
 
 /** Роли, которые можно поставить на этап: без служебных (coordinator, assistant) — они задачам не назначаются. */
 export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[] {
@@ -34,9 +35,10 @@ export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[]
 /**
  * Ноды, у которых есть поле «Колонка»: start и condition задача проходит насквозь, стоять в них она не может.
  * У ask колонку не задают: пока агент работает, задача в «В работе», а при вопросе store сам держит её в «Нужен ответ».
+ * Git выполняется приложением синхронно и сразу передаёт ход дальше — задача на нём не стоит.
  */
 export function hasColumn(type: WfNodeType): boolean {
-  return type !== 'start' && type !== 'condition' && type !== 'ask'
+  return type !== 'start' && type !== 'condition' && type !== 'ask' && type !== 'git'
 }
 
 /** Поля ноды, которые правит инспектор. Пустая строка у необязательного поля — «не задано» (поле удаляется). */
@@ -49,6 +51,8 @@ export interface WfNodePatch {
   showcase?: { what?: string; required?: boolean }
   merged?: boolean
   test?: WfCondition
+  /** Операция и параметры ноды `git`; см. `patchGit` (смена операции убирает лишние поля). */
+  git?: WfGitPatch
 }
 
 /** Меняет поля ноды; поля, которых у её типа нет, игнорируются. */
@@ -87,7 +91,8 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
   }
   if (patch.merged !== undefined && n.type === 'end') n.merged = patch.merged
   if (patch.test !== undefined && n.type === 'condition') n.test = patch.test
-  return { ...wf, nodes: wf.nodes.map((x) => (x.id === nodeId ? n : x)) }
+  const patched = patch.git !== undefined && n.type === 'git' ? patchGit(n, patch.git) : n
+  return { ...wf, nodes: wf.nodes.map((x) => (x.id === nodeId ? patched : x)) }
 }
 
 /**

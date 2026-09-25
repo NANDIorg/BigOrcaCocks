@@ -1398,7 +1398,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node--gate .wf-node-icon { color: var(--col-review); }
 .wf-node--ask .wf-node-icon { color: var(--col-input); }
 .wf-node--human .wf-node-icon { color: var(--col-input); }
-.wf-node--merge .wf-node-icon { color: var(--accent); }
+.wf-node--merge .wf-node-icon, .wf-node--git .wf-node-icon { color: var(--accent); }
 .wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
 .wf-node-sub { fill: var(--muted); font-size: 11px; }
 .wf-node text { pointer-events: none; }
@@ -1409,13 +1409,13 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-port-label { fill: var(--muted); font-size: 10px; }
 .wf-port--accept circle, .wf-port--ok circle { stroke: var(--wf-accept); }
 .wf-port--accept .wf-port-label, .wf-port--ok .wf-port-label { fill: var(--wf-accept); }
-.wf-port--reject circle, .wf-port--conflict circle { stroke: var(--wf-reject); }
-.wf-port--reject .wf-port-label, .wf-port--conflict .wf-port-label { fill: var(--wf-reject); }
+.wf-port--reject circle, .wf-port--conflict circle, .wf-port--error circle { stroke: var(--wf-reject); }
+.wf-port--reject .wf-port-label, .wf-port--conflict .wf-port-label, .wf-port--error .wf-port-label { fill: var(--wf-reject); }
 .wf-port-in { fill: var(--chip); }
 
 .wf-edge { --edge: var(--muted); cursor: pointer; }
 .wf-edge--accept, .wf-edge--ok { --edge: var(--wf-accept); }
-.wf-edge--reject, .wf-edge--conflict { --edge: var(--wf-reject); }
+.wf-edge--reject, .wf-edge--conflict, .wf-edge--error { --edge: var(--wf-reject); }
 .wf-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.8; opacity: .75; }
 .wf-edge-arrow { fill: var(--edge); opacity: .75; }
 .wf-edge:hover .wf-edge-line, .wf-edge:hover .wf-edge-arrow { opacity: 1; }
@@ -1459,7 +1459,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-insp-icon.wf-node--gate { color: var(--col-review); }
 .wf-insp-icon.wf-node--ask { color: var(--col-input); }
 .wf-insp-icon.wf-node--human { color: var(--col-input); }
-.wf-insp-icon.wf-node--merge { color: var(--accent); }
+.wf-insp-icon.wf-node--merge, .wf-insp-icon.wf-node--git { color: var(--accent); }
 .wf-insp-icon.wf-node--start, .wf-insp-icon.wf-node--end { color: var(--col-done); }
 .wf-insp-icon.wf-node--condition { color: var(--muted); }
 .about-sec .wf-insp-hint { margin: 0; }
@@ -1468,6 +1468,9 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-insp select.off { color: var(--muted); }
 .wf-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .wf-field > span { font-size: 12px; color: var(--muted); }
+.wf-field > small { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.wf-git-preview { font-family: var(--mono, ui-monospace, monospace); }
+.wf-git-preview.bad { color: var(--wf-reject); }
 .wf-row { display: flex; gap: 8px; }
 .wf-row .wf-field { flex: 1; }
 .wf-row .wf-num { flex: 0 0 90px; }
@@ -1476,7 +1479,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-ports legend, .wf-roles legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
 .wf-port-field > span { font-weight: 600; }
 .wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
-.wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span { color: var(--wf-reject); }
+.wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span, .wf-port-field.wf-port--error > span { color: var(--wf-reject); }
 .wf-issues { margin: 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
 .wf-issues--error { color: var(--danger); }
 .wf-issues--warning { color: var(--col-input); }
@@ -1500,7 +1503,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-help-body dd, .wf-legend dd { margin: 0 0 6px; }
 .wf-help-body ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .wf-help-port.wf-port--accept, .wf-help-port.wf-port--ok { color: var(--wf-accept); }
-.wf-help-port.wf-port--reject, .wf-help-port.wf-port--conflict { color: var(--wf-reject); }
+.wf-help-port.wf-port--reject, .wf-help-port.wf-port--conflict, .wf-help-port.wf-port--error { color: var(--wf-reject); }
 .wf-legend dt { display: flex; align-items: center; gap: 6px; }
 .wf-legend .wf-insp-icon svg { width: 14px; height: 14px; }
 .wf-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--col-input); }
