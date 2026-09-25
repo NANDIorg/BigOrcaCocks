@@ -64,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     | `human` | `handle()` в `registerIpc` (`src/main/index.ts`) — любой IPC-вызов renderer |
     | `cli` | `handle()` в `src/main/socket.ts` — запрос без `dispatchId` (координатор или человек в терминале) |
     | `worker` | там же — запрос с `dispatchId` (ORCA_DISPATCH_ID воркера) |
-    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts` — колонку двигает граф |
+    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts`, `advanceRun`, `handleRunWorkflowEvents`, `handleRunApproval` в `src/main/workflow-run.ts` — колонку двигает граф |
     | `app` | всё остальное: `promoteReady` (backlog → ready), автозакрытие в `commit`, смерть PTY, миграции |
 
     Ограничение: источник действует только в синхронной части вызова — смены статуса после `await` пишутся как `app`.
@@ -1158,7 +1158,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`). Прогон с воркфлоу глобальной задачи (`workflowScope: 'run'`) до `run_done` — ошибка: этап закрывает `stage.finish` (`store.finishRun`); после `run_done` — сигнал «закончил» |
-| `stage.finish` | `run` (обязателен; CLI подставляет `$ORCA_RUN_ID`), `summary?` (markdown) | `{run, finished, stage: {nodeId, visits}, next: {type, nodeId, reason?}}`: `store.finishStage` закрывает этап «Работа» (все подзадачи захода в done и хотя бы одна) и двигает граф исходом `next`; `next` — действие новой ноды (`WfAction`), эффекты выполняет движок прогона по `stage_changed`. Вне этапа «Работа», без подзадач, с незакрытыми, прогон старого формата — ошибка с подсказкой (текст из store доходит до CLI как есть) |
+| `stage.finish` | `run` (обязателен; CLI подставляет `$ORCA_RUN_ID`), `summary?` (markdown) | `{run, finished, stage: {nodeId, visits}, next: {type, nodeId, reason?}}`: `store.finishStage` закрывает этап «Работа» (все подзадачи захода в done и хотя бы одна) и двигает граф исходом `next`; `next` — действие новой ноды (`WfAction`); эффекты (проверка, запрос человеку, мерж, git, конец) выполняет движок прогона: сокет зовёт `ProjectDeps.finishStage` → `finishRunStage` (`workflow-run.ts`), а не `store.finishStage` напрямую — событие `stage_changed` эффектов не запускает. Вне этапа «Работа», без подзадач, с незакрытыми, прогон старого формата — ошибка с подсказкой (текст из store доходит до CLI как есть) |
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?}]}]` (`resolveTaskType`, `describeWorkflow`) |
@@ -1237,6 +1237,10 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
+Это движок по подзадачам (версия 1: старые прогоны и «Входящие»); воркфлоу **глобальной задачи** (`Run.workflowScope: 'run'`) исполняет
+`src/main/workflow-run.ts` — эффекты нод прогона, слияние ветки прогона в базу (`mergeRunBranch` в `run-branch.ts`), автомерж подзадач,
+подписки на решения (`docs/workflow.md`, «Движок main»). `review accept|reject` по задаче-проверке ветки прогона (`gateFor.runId`) идёт в
+`runGateDecision` через `reviewDecision` в `index.ts`; `globalTasks:accept` / `globalTasks:returnToWork` прогона нового формата — `acceptRun` / `returnRun`.
 
 - **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
   старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
@@ -1267,10 +1271,10 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
   проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
   `mergeTaskBranch`, конфликт — ошибка). На другом этапе — ошибка «принимать нечего».
 - **Проверка ветки глобальной задачи** (`Task.gateFor.runId`, воркфлоу scope `run`): `review accept|reject --task <id проверки>` — свой id проверяющего,
-  прогон приложение находит по `gateFor` (`decideRunGate`). Решение принимается, только пока прогон стоит на ноде `gate` этой проверки и
-  она последняя у ноды (`runGatePending`); иначе ошибка «уже не актуальна». Переход делает `store.advanceRunStage` (замечания `reject` — в `feedback`,
-  решение `accept` — в `decision`), задачу-проверку закрывает `orca-board done` проверяющего (`settleGate`), а если она уже сдана —
-  само решение. `done` без решения — `workflow_blocked` по прогону (`blockRunStage`, без `taskId`); эффекты новой ноды — движок прогона.
+  прогон приложение находит по `gateFor`. Единственный путь — `reviewDecision` в `index.ts` → `runGateDecision` (`workflow-run.ts`; `reviewAccept`/`reviewReject` из `workflow.ts`
+  для такой задачи бросают ошибку). Решение принимается, только пока прогон стоит на ноде `gate` этой проверки и она последняя у ноды (`gatePending`); иначе ошибка
+  «уже не актуальна». Переход делает `store.advanceRunStage` (замечания `reject` — в `feedback`, комментарий `accept` — в `decision`) и тут же — эффекты новой ноды.
+  Задачу-проверку закрывает `orca-board done` проверяющего (`settleGate`), а если она уже сдана — само решение. `done` без решения — `workflow_blocked` по прогону (`blockRunStage`, без `taskId`).
 - **`review reject --feedback` / «Вернуть»** — `reviewReject`: на ноде проверки — `feedback` и исход `reject`
   (дефолт — снова в работу, воркер стартует сразу); иначе `store.rejectReview` (ready с замечаниями, у ответа —
   «Уточнить»). `task.feedback` добавляется в промпт при следующем старте.
@@ -2276,6 +2280,11 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 - `HumanRequest.taskId` необязателен (approval прогона): не пиши `store.getTask(request.taskId)` и `ids.has(r.taskId)` без проверки, иначе approval прогона уронит
   код или потеряется. Название финальной human-ноды `pipelineWorkflow` — «Проверка человеком», не «Проверка»: перевод встроенных названий (`builtinText`) узнаёт их
   по тексту, и «Проверка» показалась бы на английском как «Agent check».
+- Воркфлоу глобальной задачи (`workflow-run.ts`): **`returnGlobalTaskToWork` для прогона нового формата не нужен** — он закрыл бы терминал координатора, который ждёт `stage_started`
+  в Monitor; «Вернуть» — это `returnRun` (approval `reject`, координатор жив — получает событие, мёртв — запускается на входе в «Работу»). **`startCoordinator` из движка не зовёт `startRunWorkflow`**
+  (это делает только `runCoordinator` после запуска человеком): иначе повторный вход в «Работу» зациклил бы `ensureCoordinator`. Решение approval прогона (`requests:resolve`, «Подтвердить»,
+  «Вернуть») ведёт **одна** цепочка вызовов — `handleRunApproval`, а не событие `request_resolved`: подписка на событие дублировала бы переход.
+  Автомерж закрывает подзадачу только после слияния: закрыть её раньше значило бы дать `stage_tasks_done` по коду, которого ещё нет в ветке прогона.
 
 ## Открытые вопросы
 

@@ -133,6 +133,8 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
             roles={s.roles}
             columns={typeColumnChoices(projects)}
             readOnly={false}
+            notes={type.workflowNotes}
+            onDismissNotes={() => api.patch(type.id, { workflowNotes: [] })}
             onSave={(wf) => api.patch(type.id, { workflow: wf })}
           />
         )

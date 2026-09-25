@@ -9,10 +9,10 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, legacyDefaultWorkflow, pipelineWorkflow, presetTaskType, resolveTaskType,
-  runTypeInput, type AgentInfo, type HumanRequest, type OrcaEvent, type Role, type Run, type Task, type Workflow
+  normalizeRunBranchSettings, runTypeInput, type AgentInfo, type HumanRequest, type OrcaEvent, type Role, type Run, type Task, type Workflow
 } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
-import { handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
+import { finishRunStage, handleRunWorkflowEvents, runGateDecision, type RunWorkflowDeps } from './workflow-run'
 
 let tmp: string
 let sockPath: string
@@ -23,7 +23,11 @@ let agents: AgentInfo[]
 /** Граф типа прогона в `resolveRun` (нужен прогону без снимка и при перезапуске приложения). */
 let typeWorkflow: Workflow
 
-function workflowDeps(): WorkflowDeps {
+/** Что вызвал сокет у движка прогона: `stage.finish` идёт через него, а не напрямую в store. */
+let finishCalls: Array<{ runId: string; summary?: string }>
+
+/** Движок прогона без git и PTY: координатор всегда жив, воркеры — фейковые dispatch'и (ветка прогона задана в `startedRun`, но не существует). */
+function workflowDeps(): RunWorkflowDeps {
   return {
     store,
     repoRoot: tmp,
@@ -31,7 +35,10 @@ function workflowDeps(): WorkflowDeps {
     startWorker: (taskId) => {
       const d = store.startDispatch(taskId, `pty_${taskId}`)
       return { ptyId: d.ptyId, dispatchId: d.id }
-    }
+    },
+    isAlive: () => true,
+    startCoordinator: () => { throw new Error('координатор жив — перезапуск не нужен') },
+    gitSettings: () => normalizeRunBranchSettings(undefined)
   }
 }
 
@@ -44,8 +51,17 @@ function fakeDeps(): ProjectDeps {
     },
     stopWorker: () => ({ stopped: [] }),
     review: () => ({}),
-    accept: (taskId, decision) => reviewAccept(workflowDeps(), taskId, decision),
-    reject: (taskId, feedback) => reviewReject(workflowDeps(), taskId, feedback),
+    // Как `reviewDecision` в index.ts для проверки ветки прогона: решение двигает граф и делает эффекты следующей ноды.
+    accept: (taskId, decision) => runGateDecision(workflowDeps(), taskId, 'accept', decision),
+    reject: (taskId, feedback) => {
+      runGateDecision(workflowDeps(), taskId, 'reject', feedback)
+      return store.getTask(taskId)
+    },
+    // Как в index.ts: `finishRunStage` движка — эффекты новой ноды (задача-проверка) делает он, а не тест.
+    finishStage: (runId, summary) => {
+      finishCalls.push({ runId, ...(summary !== undefined ? { summary } : {}) })
+      return finishRunStage(workflowDeps(), runId, summary)
+    },
     resolveRequest: (id, resolution) => store.resolveRequest(id, resolution),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
@@ -92,6 +108,7 @@ function call<T = Record<string, unknown>>(method: string, params: Record<string
 }
 
 beforeEach(async () => {
+  finishCalls = []
   tmp = mkdtempSync(path.join(tmpdir(), 'orca-sock-stage-'))
   sockPath = process.platform === 'win32' ? `\\\\.\\pipe\\orca-sock-stage-${process.pid}-${Date.now()}` : path.join(tmp, 'orca.sock')
   store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
@@ -111,6 +128,7 @@ afterEach(async () => {
 function startedRun(wf: Workflow = typeWorkflow): Run {
   typeWorkflow = wf
   const run = store.createRun('цель', 'pty_coord', wf)
+  store.setRunGit(run.id, { branch: `feature/${run.id}`, base: 'master' })
   store.enterRunStage(run.id, { roleIds: roles.map((r) => r.id), workflow: wf })
   return run
 }
@@ -124,8 +142,9 @@ async function atGate(): Promise<{ run: Run; gate: Task }> {
   const work = store.createTask({ title: 'Работа', roleId: 'developer', runId: run.id })
   done(work.id)
   assert.equal((await call('stage.finish', { run: run.id, summary: 'сделано' })).ok, true)
-  const gate = store.createTask({ title: 'Проверка', roleId: 'reviewer', runId: run.id, gateFor: { runId: run.id, nodeId: 'review' } })
-  store.startDispatch(gate.id, 'pty_gate')
+  // Задачу-проверку создал и запустил движок прогона по `stage.finish`.
+  const gate = store.listTasks().find((t) => t.gateFor?.runId === run.id)!
+  assert.ok(gate.dispatchId, 'воркер проверки запущен')
   return { run, gate }
 }
 
@@ -143,6 +162,10 @@ describe('stage finish', () => {
     assert.equal(store.getRun(run.id)!.stage!.nodeId, 'review')
     assert.equal(store.getRun(run.id)!.summary!.text, '## Сделано')
     assert.equal(events('stage_changed').length >= 2, true, 'переход отмечен событием stage_changed')
+    assert.deepEqual(finishCalls, [{ runId: run.id, summary: '## Сделано' }], 'закрытие этапа — через движок прогона')
+    const gate = store.listTasks().find((t) => t.gateFor?.runId === run.id)
+    assert.deepEqual(gate?.gateFor, { runId: run.id, nodeId: 'review' }, 'эффект новой ноды сделан: задача-проверка создана без stage_changed-подписчика')
+    assert.equal(events('workflow_blocked').length, 0)
   })
 
   it('без подзадач и с незакрытой подзадачей — ошибка с подсказкой, этап не сдвинут', async () => {
@@ -168,7 +191,7 @@ describe('stage finish', () => {
     assert.match((await call('stage.finish', {})).error!, /--run обязателен/)
     const run = startedRun()
     assert.match((await call('stage.finish', { run: run.id, summary: true })).error!, /--summary требует текста/)
-    assert.match((await call('stage.finish', { run: 'run_nope' })).error!, /run not found|нет/)
+    assert.match((await call('stage.finish', { run: 'run_nope' })).error!, /не найдена|not found/)
   })
 })
 
@@ -270,6 +293,7 @@ describe('review accept/reject по проверке ветки глобальн
     const res = await call('review.accept', { task: gate.id })
     assert.equal(res.ok, true, res.error)
     assert.equal(store.getRun(run.id)!.stage!.nodeId, 'check', 'дальше — «Проверка человеком»')
+    assert.equal(store.pendingRequests(run.id).filter((r) => r.kind === 'approval' && r.nodeId === 'check').length, 1, 'эффект новой ноды: approval человеку создан')
     assert.equal(events('stage_changed').at(-1)!.payload.outcome, 'accept')
   })
 
@@ -298,7 +322,7 @@ describe('review accept/reject по проверке ветки глобальн
     const { run, gate } = await atGate()
     // Сдала done, решения нет: граф остаётся на проверке, человек получает workflow_blocked (без taskId).
     store.finishDispatch(store.getTask(gate.id)!.dispatchId!, 'проверил', [])
-    handleWorkflowEvents(workflowDeps(), events('worker_done'))
+    handleRunWorkflowEvents(workflowDeps(), events('worker_done'))
     assert.equal(store.getRun(run.id)!.stage!.nodeId, 'review')
     const blocked = events('workflow_blocked').at(-1)!
     assert.equal(blocked.taskId, undefined)
@@ -315,7 +339,7 @@ describe('review accept/reject по проверке ветки глобальн
     assert.equal((await call('review.accept', { task: gate.id })).ok, true)
     assert.equal(store.columnKind(store.getTask(gate.id)!.status), 'in_progress')
     store.finishDispatch(store.getTask(gate.id)!.dispatchId!, 'проверил', [])
-    handleWorkflowEvents(workflowDeps(), events('worker_done'))
+    handleRunWorkflowEvents(workflowDeps(), events('worker_done'))
     assert.equal(store.columnKind(store.getTask(gate.id)!.status), 'done')
     assert.equal(events('workflow_blocked').length, 0)
     assert.equal(store.getRun(run.id)!.stage!.nodeId, 'check')

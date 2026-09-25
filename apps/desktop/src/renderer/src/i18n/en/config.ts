@@ -591,6 +591,8 @@ export default {
   'wf.tab.importError': 'Import “{file}”: {error}',
   'wf.tab.imported': 'Imported “{file}”. Check the graph and click “Save”.',
   'wf.tab.importMigrated': 'The graph in the file is in an old format (version {version}); it was upgraded to version 2 — the workflow now runs on the global task. What changed:',
+  'wf.tab.storedMigrated': 'This type’s graph was in an old format and has been upgraded to version 2 — the workflow now runs on the global task. Check the graph; what changed:',
+  'wf.tab.storedMigratedDismiss': 'Got it',
   'wf.tab.limitAdded': 'Limit added: after the third rejected check, a human decides. Check the graph and click “Save”.',
 
   'docs.title': 'Docs',

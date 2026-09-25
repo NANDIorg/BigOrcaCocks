@@ -44,6 +44,7 @@ function fakeDeps(): ProjectDeps {
     review: () => ({}),
     accept: () => undefined,
     reject: (taskId, feedback) => store.rejectReview(taskId, feedback),
+    finishStage: () => { throw new Error('не нужен') },
     resolveRequest: () => ({}),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),

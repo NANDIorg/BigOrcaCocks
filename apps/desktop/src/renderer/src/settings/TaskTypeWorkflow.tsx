@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useMemo, useRef, useState } from 'react'
-import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type Workflow } from '@orca-board/core'
+import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type WfMigrationNote, type Workflow } from '@orca-board/core'
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
@@ -23,6 +23,10 @@ interface Props {
    */
   columns: BoardColumn[]
   readOnly: boolean
+  /** Предупреждения автомиграции сохранённого графа (`TaskType.workflowNotes`); показываются, пока их не закрыли. */
+  notes?: WfMigrationNote[]
+  /** «Понятно»: убрать предупреждения из типа. Нет (старый main) — кнопки нет, замечания уйдут с правкой графа. */
+  onDismissNotes?(): Promise<void>
   /** null — вернуть дефолтный граф (поле удаляется из типа). Ошибка — наружу, покажем под кнопками. */
   onSave(wf: Workflow | null): Promise<void>
 }
@@ -32,7 +36,7 @@ interface Props {
  * невалиден. `readOnly` — только просмотр: холст не меняет граф, инспектор недоступен. Компонент монтируется
  * с `key` по id типа, поэтому черновик другого типа сюда не протекает.
  */
-export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, onSave }: Props): React.JSX.Element {
+export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, notes, onDismissNotes, onSave }: Props): React.JSX.Element {
   const t = useT()
   const locale = useLocale()
   const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
@@ -117,6 +121,18 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
     if (res.migration) setMigration(res.migration)
   }
 
+  async function dismissNotes(dismiss: () => Promise<void>): Promise<void> {
+    setBusy(true)
+    try {
+      await dismiss()
+      setError(null)
+    } catch (e) {
+      setError(ipcErrorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function presetLimit(): void {
     const res = addRetryLimit(draft)
     if ('error' in res) {
@@ -177,6 +193,20 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, on
           <div className="wf-migration" role="status">
             <span>{t('config.wf.tab.importMigrated', { version: migration.fromVersion })}</span>
             {migration.notes.length > 0 && <ul>{migration.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+          </div>
+        )}
+
+        {notes && notes.length > 0 && (
+          <div className="wf-migration" role="status">
+            <span>{t('config.wf.tab.storedMigrated')}</span>
+            <ul>{notes.map((n, i) => <li key={i}>{n.message}</li>)}</ul>
+            {!readOnly && onDismissNotes && (
+              <div>
+                <button type="button" className="btn-sm" disabled={busy} onClick={() => void dismissNotes(onDismissNotes)}>
+                  {t('config.wf.tab.storedMigratedDismiss')}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
