@@ -908,10 +908,14 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     (`enabledAgents`), не установленные — под спойлером; «Обновить» пересканирует PATH.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog). Сохраняется через `projects:setColumns`.
-  - «Git» (`about/GitSection.tsx`) — ветка на каждую глобальную задачу (`Project.git`, `RunBranchSettings`): вкл/выкл,
-    база, шаблон имени с примером, push и remote, защищённые ветки строкой через запятую. Сохраняется кнопкой через
-    `projects:setGit`; ошибки формы — `runBranchSettingsProblems` по коду (`config.about.git.issue.*`). Нет метода у старого
-    preload — «перезапустите приложение». В меню — «ветки» / «выкл».
+  - «Git» (`about/GitSection.tsx`, логика — `renderer/src/gitSettingsForm.ts`) — куда сливается работа агентов
+    (`Project.git`, `RunBranchSettings`). Два режима-карточки со схемой пути (`gitFlow`): «В текущую ветку проекта»
+    (`enabled: false`; под ним — защищённые ветки и предупреждение, если ветка проекта сейчас защищена —
+    `currentBranchProtected`, ветка — `useProjectBranch`) и «Отдельная ветка на глобальную задачу» (`enabled: true`;
+    «Когда готово»: ничего / push / push + PR — `gitFinish`/`withGitFinish` над `push` и `pr`; база, шаблон имени,
+    remote и защищённые ветки — в свёрнутом «Дополнительно»). Модель не менялась, режимы — только форма. Сохраняется
+    кнопкой через `projects:setGit`; ошибки формы — `runBranchSettingsProblems` по коду (`config.about.git.issue.*`).
+    Нет метода у старого preload — «перезапустите приложение». В меню — «ветка на задачу» / «в текущую».
   - «Типы задач» (`about/TaskTypesSection.tsx`, логика — `renderer/src/taskTypeEdit.ts`) — все типы библиотеки
     (`taskTypes:list`, перечитывается при каждом открытии раздела) с галочкой «доступен в проекте» и кнопкой
     «По умолчанию»; сверху переключатель «Все типы библиотеки» (`taskTypeIds` не задан — доступны и типы, созданные
