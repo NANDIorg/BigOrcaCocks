@@ -937,6 +937,8 @@ export function App(): React.JSX.Element {
                 columns={columns}
                 roles={openGlobalRoles}
                 stageTitles={wfNodeTitles(workflowForRun(openGlobal.id, snap.runs, active, taskTypes))}
+                stageWorkflow={workflowForRun(openGlobal.id, snap.runs, active, taskTypes)}
+                stageRun={openGlobal}
                 tasks={subtasks}
                 emptyText={t('shell.noSubtasks')}
                 questions={snap.questions}
@@ -1087,6 +1089,8 @@ export function App(): React.JSX.Element {
           tasks={tasks}
           columns={columns}
           roles={rolesFor(openTask.runId)}
+          workflow={workflowForRun(openTask.runId, snap.runs, active, taskTypes)}
+          stageRun={globals.find((g) => g.id === openTask.runId)}
           agents={agents}
           dispatches={snap.dispatches}
           questions={snap.questions}

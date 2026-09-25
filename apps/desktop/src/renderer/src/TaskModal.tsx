@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   isTaskPriority, modelLabel,
   type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
-  type RequestResolution
+  type RequestResolution, type GlobalTask, type Workflow
 } from '@orca-board/core'
 import type { TaskPatch } from '../../shared/ipc'
 import { AgentLogo } from './AgentLogo'
@@ -19,6 +19,8 @@ import { useNow } from './useNow'
 import { priorityEditable, priorityTitle, stalePriorityMessage, taskPriorityOf } from './taskPriority'
 import { PriorityOptions } from './Priority'
 import { StatusHistoryBlock } from './StatusHistoryBlock'
+import { SubtaskPathBlock } from './SubtaskPathBlock'
+import { pathNodeTitles, pathSummary } from './subtaskPath'
 import { TaskStatsBlock } from './TaskStatsBlock'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { answerForTitle, formatTaskDate as formatDate, outcomeLabel, resolutionText } from './taskModalText'
@@ -35,6 +37,9 @@ interface Props {
   columns: BoardColumn[]
   /** Роли типа глобальной задачи этой задачи (`rolesForRun`). */
   roles: Role[]
+  /** Граф глобальной задачи и её позиция на нём — для блока «Путь подзадачи»; нет (старый main, локальная доска) — блока нет. */
+  workflow?: Workflow
+  stageRun?: Partial<Pick<GlobalTask, 'stage' | 'workflowScope'>>
   /** Агенты — для подписи модели роли; без них показывается сырой id модели. */
   agents?: AgentInfo[]
   dispatches: Dispatch[]
@@ -63,7 +68,7 @@ function errorText(e: unknown): string {
 
 export function TaskModal(props: Props): React.JSX.Element {
   const {
-    projectId, task, tasks, columns, roles, agents, dispatches, questions, requests, statsSnapshot, running,
+    projectId, task, tasks, columns, roles, workflow, stageRun, agents, dispatches, questions, requests, statsSnapshot, running,
     onClose, onUpdate, onStart, onOpenTerminal, onRemove, onResolveRequest, onAccept, onReject
   } = props
   const t = useT()
@@ -391,8 +396,15 @@ export function TaskModal(props: Props): React.JSX.Element {
 
           <section className="task-modal-section" id="task-stats">
             <h4>{t('board.task.stats')}</h4>
-            <TaskStatsBlock key={task.id} projectId={projectId} task={task} columns={columns} snapshot={statsSnapshot} />
+            <TaskStatsBlock key={task.id} projectId={projectId} task={task} columns={columns} snapshot={statsSnapshot} stageTitles={stageRun?.workflowScope === 'run' ? pathNodeTitles(task, workflow) : undefined} />
           </section>
+
+          {stageRun?.workflowScope === 'run' && pathSummary(task, workflow) && (
+            <section className="task-modal-section">
+              <h4>{t('board.task.path')}</h4>
+              <SubtaskPathBlock task={task} workflow={workflow} run={stageRun} isDone={kind === 'done'} />
+            </section>
+          )}
 
           <section className="task-modal-section">
             <h4>{t('board.task.statusHistory')}</h4>
