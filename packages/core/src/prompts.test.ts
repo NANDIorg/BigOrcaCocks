@@ -282,7 +282,7 @@ describe('координатор — диспетчер этапов «Рабо�
     assert.match(intro, /`stage_started`/)
     assert.match(intro, /`stage_tasks_done`[\s\S]*`stage finish`/)
     assert.match(intro, /На этих этапах \*\*просто жди\*\*/)
-    assert.match(intro, /Подзадачи по графу не ходят/)
+    assert.match(intro, /Подзадача идёт \*\*своим путём\*\*/)
   })
 
   it('stage_started и stage_tasks_done — во всех трёх списках типов, после workflow_blocked', () => {
@@ -318,7 +318,22 @@ describe('координатор — диспетчер этапов «Рабо�
   })
 
   it('worker_done рабочей задачи — автомерж в ветку глобальной задачи, ничего не делать', () => {
-    assert.match(step4, /- `worker_done` по \*\*рабочей\*\* задаче → \*\*ничего не делай\*\*[\s\S]*сливает её ветку в ветку глобальной\s+задачи/)
+    assert.match(step4, /- `worker_done` по \*\*рабочей\*\* задаче → \*\*ничего не делай\*\*[\s\S]*слияние её ветки в ветку глобальной\s+задачи/)
+  })
+
+  it('подзадача на своём пути: ожидание проверки или человека — не повод для stage finish, жди stage_tasks_done', () => {
+    const intro = skill.slice(0, skill.indexOf('Подготовка:'))
+    assert.match(intro, /может какое-то время ждать проверки или человека \*\*внутри\s+этапа\*\*[\s\S]*не повод для `stage finish`, жди `stage_tasks_done`/)
+    assert.match(intro, /Путь ведёт приложение, а не ты/)
+    const done = step4.slice(step4.indexOf('- `worker_done` по **рабочей** задаче'), step4.indexOf('- `worker_done` с полем `gateFor`'))
+    assert.match(done, /\*\*ничего не делай\*\*[\s\S]*подзадачу ведёт её путь в приложении/)
+    assert.match(done, /`stage finish` не вызывай[\s\S]*`stage_tasks_done`/)
+    const blocked = step4.slice(step4.indexOf('- `workflow_blocked` →'), step4.indexOf('- `question` →'))
+    assert.match(blocked, /С `taskId` — блок на пути подзадачи[\s\S]*путь ведёт приложение, ты его не двигаешь[\s\S]*решает человек/)
+  })
+
+  it('в skills нет команд и флагов, которых нет в HELP, из-за пути подзадачи (subflow — только модель)', () => {
+    assert.doesNotMatch(skill, /subflow/)
   })
 
   it('нет ручного `runs finish` в цикле нового прогона', () => {

@@ -234,7 +234,8 @@ Store двигает граф и возвращает `WfAction`, **эффект
 - **`skills/coordinator.md`.** Координатор — диспетчер этапов `work`: этап начинается с `stage_started` (роли `roleIds` — пусто значит любые рабочие роли типа по
   описанию, инструкции, `feedback`/`decision`/`answers`), он создаёт подзадачи и запускает воркеров; `stage_tasks_done` — нужны ли ещё задачи, иначе `stage finish --summary`
   (сигнал «набор закончен», а не отчёт); на `gate`/`human`/`ask`/`git`/`merge` ждёт; `run_done` (с `nodeId`) — граф дошёл до `end`, выход без `runs finish`.
-  `stage_started` и `stage_tasks_done` — в трёх местах `--types` шага 3 (после `workflow_blocked`). `workflow_blocked` может быть без `taskId`. Прогоны старого формата
+  `stage_started` и `stage_tasks_done` — в трёх местах `--types` шага 3 (после `workflow_blocked`). `workflow_blocked` может быть без `taskId`. Подзадача ходит по пути своей ноды `work`:
+  ожидание проверки или человека внутри этапа — не повод для `stage finish`; `worker_done`/`workflow_blocked` по подзадаче на пути координатор не обрабатывает, путь ведёт приложение. Прогоны старого формата
   (`workflow show` → `scope: task`) описаны отдельным разделом в конце: `run_done` «все подзадачи закрыты» и `runs finish`.
 - **Повторный запуск координатора.** Цель (`resumeCoordinatorObjective(goal, subtasks, returns, stage?)`) с `stage` (`CoordinatorStage` — то, что отдаёт `TaskStore.runStage`, плюс
   `tasksDone`) несёт блок `# Этап: <название>` (`COORDINATOR_STAGE_HEADING`): роли, инструкции, замечания, решение, ответы и подзадачи захода / прошлых заходов, а в конце — что делать
