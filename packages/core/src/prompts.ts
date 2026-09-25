@@ -1,7 +1,7 @@
 // Только type-импорты: модуль тестируется node --test без бандлера.
 import type { AgentSpec } from './agents'
 import type { Question, Role, Task } from './types'
-import type { WfWorkStage } from './workflow'
+import type { WfNodeType, WfWorkStage } from './workflow'
 
 /**
  * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
@@ -209,4 +209,79 @@ export function resumeCoordinatorObjective(
     )
   }
   return parts.join('\n')
+}
+
+// ---------- воркфлоу глобальной задачи: блок «# Этап» в цели координатора ----------
+
+/** Где стоит глобальная задача на графе — то, что координатору нужно знать при (пере)запуске (`TaskStore.runStage`). */
+export interface CoordinatorStageInfo {
+  nodeId: string
+  type: WfNodeType
+  title: string
+  /** Какой по счёту заход в ноду (после `reject` растёт). */
+  visit: number
+  /** Роли этапа «Работа»; нет — любые рабочие роли типа. */
+  roleIds?: readonly string[]
+  instructions?: string
+  feedback?: string
+  decision?: string
+  answers?: string
+  /** Подзадачи текущего захода: `status` — название колонки. */
+  tasks: ReadonlyArray<{ id: string; title: string; status: string }>
+  /** Все подзадачи захода уже закрыты (`stage_tasks_done` ушёл раньше). */
+  tasksDone: boolean
+}
+
+/** Заголовок блока цели с текущим этапом воркфлоу глобальной задачи. */
+export const COORDINATOR_STAGE_HEADING = 'Этап'
+
+/**
+ * Блок «# Этап: …» цели координатора глобальной задачи с воркфлоу прогона. На этапе «Работа» это то же, что событие
+ * `stage_started`, но целиком: роли, инструкции ноды, замечания проверки или человека, уже созданные подзадачи
+ * захода. Приложение перезапускает координатора именно на входе в «Работу» (или человек запускает его руками),
+ * а событие мог получить прошлый координатор — поэтому блок самодостаточен, а дубли подзадач запрещены.
+ * На остальных этапах координатору делать нечего: этап ведёт приложение, он ждёт `stage_started` или `run_done`.
+ */
+export function coordinatorStageSection(stage: CoordinatorStageInfo): string {
+  const where = `${COORDINATOR_STAGE_HEADING} «${stage.title}»${stage.visit > 1 ? ` (заход ${stage.visit})` : ''}`
+  if (stage.type !== 'work') {
+    return [
+      `# ${where}`,
+      '',
+      'Воркфлоу этой глобальной задачи сейчас на этапе, который ведёт приложение (проверка, человек, git, мерж): подзадачи не создавай.',
+      'Жди `stage_started` — следующий этап «Работа» — или `run_done` (воркфлоу дошёл до конца, тогда выходи).'
+    ].join('\n')
+  }
+  const roles = stage.roleIds && stage.roleIds.length > 0
+    ? `Роли подзадач: ${stage.roleIds.map((r) => `\`${r}\``).join(', ')} — других ролей \`task create\` не примет.`
+    : 'Роли подзадач не заданы: выбери их сам из рабочих ролей типа задачи по их описаниям (\`orca-board roles list\`).'
+  const parts = [
+    `# ${where}`,
+    '',
+    'Ты — диспетчер этого этапа: нарежь работу на подзадачи и запусти воркеров; проверки, мерж и переходы по воркфлоу делает приложение.',
+    roles
+  ]
+  if (stage.instructions?.trim()) parts.push('', 'Что сделать на этапе:', stage.instructions.trim())
+  if (stage.feedback?.trim()) parts.push('', 'Замечания проверки или человека — учти их в новых подзадачах:', stage.feedback.trim())
+  if (stage.decision?.trim()) parts.push('', 'Решение человека на прошлом этапе:', stage.decision.trim())
+  if (stage.answers?.trim()) parts.push('', 'Ответы человека на вопросы прошлого этапа:', stage.answers.trim())
+  if (stage.tasks.length > 0) {
+    parts.push('', 'Подзадачи этого захода уже есть — не создавай дубли (сверься с `orca-board global tasks`):', ...stage.tasks.map((t) => `- ${t.id} [${t.status}] ${t.title}`))
+  }
+  parts.push(
+    '',
+    stage.tasksDone
+      ? 'Все подзадачи захода уже закрыты: если работы больше нет — сразу закрой этап `orca-board stage finish --summary "что сделано и что проверить"`.'
+      : 'Когда все подзадачи закрыты, придёт `stage_tasks_done`: реши, нужно ли ещё что-то, и закрой этап `orca-board stage finish --summary "что сделано и что проверить"`.'
+  )
+  return parts.join('\n')
+}
+
+/**
+ * Цель повторного запуска координатора на глобальной задаче с воркфлоу прогона: исходная цель и блок этапа
+ * (`coordinatorStageSection`). Уточнений «после проверки» здесь нет: «Вернуть» человека на ноде `human` — это `reject`,
+ * его замечания приходят в блоке этапа как `feedback`. Нет позиции на графе (воркфлоу ещё не начат) — цель без изменений.
+ */
+export function runResumeCoordinatorObjective(goal: string, stage: CoordinatorStageInfo | undefined): string {
+  return stage ? [goal, '', coordinatorStageSection(stage)].join('\n') : goal
 }

@@ -64,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     | `human` | `handle()` в `registerIpc` (`src/main/index.ts`) — любой IPC-вызов renderer |
     | `cli` | `handle()` в `src/main/socket.ts` — запрос без `dispatchId` (координатор или человек в терминале) |
     | `worker` | там же — запрос с `dispatchId` (ORCA_DISPATCH_ID воркера) |
-    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts` — колонку двигает граф |
+    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts`, `advanceRun`, `handleRunWorkflowEvents`, `handleRunApproval` в `src/main/workflow-run.ts` — колонку двигает граф |
     | `app` | всё остальное: `promoteReady` (backlog → ready), автозакрытие в `commit`, смерть PTY, миграции |
 
     Ограничение: источник действует только в синхронной части вызова — смены статуса после `await` пишутся как `app`.
@@ -1220,6 +1220,10 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
+Это движок по подзадачам (версия 1: старые прогоны и «Входящие»); воркфлоу **глобальной задачи** (`Run.workflowScope: 'run'`) исполняет
+`src/main/workflow-run.ts` — эффекты нод прогона, слияние ветки прогона в базу (`mergeRunBranch` в `run-branch.ts`), автомерж подзадач,
+подписки на решения (`docs/workflow.md`, «Движок main»). `review accept|reject` по задаче-проверке ветки прогона (`gateFor.runId`) идёт в
+`runGateDecision` через `reviewDecision` в `index.ts`; `globalTasks:accept` / `globalTasks:returnToWork` прогона нового формата — `acceptRun` / `returnRun`.
 
 - **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
   старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
@@ -2234,6 +2238,11 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 - `HumanRequest.taskId` необязателен (approval прогона): не пиши `store.getTask(request.taskId)` и `ids.has(r.taskId)` без проверки, иначе approval прогона уронит
   код или потеряется. Название финальной human-ноды `pipelineWorkflow` — «Проверка человеком», не «Проверка»: перевод встроенных названий (`builtinText`) узнаёт их
   по тексту, и «Проверка» показалась бы на английском как «Agent check».
+- Воркфлоу глобальной задачи (`workflow-run.ts`): **`returnGlobalTaskToWork` для прогона нового формата не нужен** — он закрыл бы терминал координатора, который ждёт `stage_started`
+  в Monitor; «Вернуть» — это `returnRun` (approval `reject`, координатор жив — получает событие, мёртв — запускается на входе в «Работу»). **`startCoordinator` из движка не зовёт `startRunWorkflow`**
+  (это делает только `runCoordinator` после запуска человеком): иначе повторный вход в «Работу» зациклил бы `ensureCoordinator`. Решение approval прогона (`requests:resolve`, «Подтвердить»,
+  «Вернуть») ведёт **одна** цепочка вызовов — `handleRunApproval`, а не событие `request_resolved`: подписка на событие дублировала бы переход.
+  Автомерж закрывает подзадачу только после слияния: закрыть её раньше значило бы дать `stage_tasks_done` по коду, которого ещё нет в ветке прогона.
 
 ## Открытые вопросы
 

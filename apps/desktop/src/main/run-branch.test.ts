@@ -6,8 +6,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, normalizeRunBranchSettings, type RunBranchSettings, type Task } from '@orca-board/core'
-import { ensureRunBranch, mergeTarget, reviewBase, RunBranchSync, runWorktreePath } from './run-branch'
+import { TaskStore, DEFAULT_COLUMNS, normalizeRunBranchSettings, pipelineWorkflow, type RunBranchSettings, type Task, type WfNode, type Workflow } from '@orca-board/core'
+import { ensureRunBranch, mergeRunBranch, mergeTarget, reviewBase, RunBranchSync, runWorktreePath, workflowPushes } from './run-branch'
 import { acceptReview, mergeTaskBranch } from './review'
 
 const git = (cwd: string, ...args: string[]): string =>
@@ -216,5 +216,122 @@ describe('RunBranchSync', () => {
     store.moveGlobalTask(run.id, 'done')
     new RunBranchSync({ isAlive: (id) => id === 'pty-coord' }).sync(store, repo, settings())
     assert.equal(existsSync(g.worktree!), true)
+  })
+})
+
+/** Ветка фичи с одним коммитом (`f.md`) от `master`, worktree на ней. */
+function featureBranch(store: TaskStore, base = 'master'): { runId: string; branch: string; worktree: string } {
+  const run = store.createGlobalTask({ title: 'Фича' })
+  const g = ensureRunBranch(store, repo, run.id, settings({ base }))!
+  writeFileSync(path.join(g.worktree!, 'f.md'), 'f\n')
+  git(g.worktree!, 'add', '-A')
+  git(g.worktree!, 'commit', '-qm', 'f')
+  return { runId: run.id, branch: g.branch, worktree: g.worktree! }
+}
+
+describe('mergeRunBranch: ветка глобальной задачи → её база', () => {
+  it('база выгружена в корне и там чисто — сливаем прямо в корне, ветку корня не переключаем', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, settings({ protected: [] }), 'Merge orca run: Фича')
+    assert.deepEqual(r, { kind: 'ok', into: 'master' })
+    assert.equal(existsSync(path.join(repo, 'f.md')), true)
+    assert.equal(head(repo), 'master')
+    assert.match(git(repo, 'log', '-1', '--format=%s'), /Merge orca run: Фича/)
+  })
+
+  it('база не выгружена нигде — временный worktree: корень не тронут, worktree и папка убраны', () => {
+    const store = newStore()
+    git(repo, 'branch', 'integration')
+    const f = featureBranch(store, 'integration')
+    const before = git(repo, 'worktree', 'list', '--porcelain')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, settings({ protected: [] }), 'Merge orca run: Фича')
+    assert.deepEqual(r, { kind: 'ok', into: 'integration' })
+    assert.equal(git(repo, 'ls-tree', '-r', '--name-only', 'integration').includes('f.md'), true)
+    assert.equal(existsSync(path.join(repo, 'f.md')), false, 'корень остался на master')
+    assert.equal(git(repo, 'worktree', 'list', '--porcelain'), before, 'временный worktree убран')
+  })
+
+  it('база на remote (origin/develop) — сливаем в локальную develop', () => {
+    const store = newStore()
+    git(repo, 'branch', 'develop', 'origin/develop')
+    const f = featureBranch(store, 'origin/develop')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, settings({ protected: [] }), 'm')
+    assert.deepEqual(r, { kind: 'ok', into: 'develop' })
+    assert.equal(git(repo, 'ls-tree', '-r', '--name-only', 'develop').includes('f.md'), true)
+  })
+
+  it('защищённая база — blocked с подсказкой про push и PR, ничего не слито', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    const before = git(repo, 'rev-parse', 'master')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, settings(), 'm')
+    assert.equal(r.kind, 'blocked')
+    assert.match((r as { reason: string }).reason, /защищённую ветку «master» запрещено[\s\S]*git push/)
+    assert.equal(git(repo, 'rev-parse', 'master'), before)
+    // remote-база защищена по локальному имени: origin/develop → develop
+    const g = { ...store.getRun(f.runId)!.git!, base: 'origin/develop' }
+    assert.equal(mergeRunBranch(repo, g, settings(), 'm').kind, 'blocked')
+  })
+
+  it('в корне с базой — незакоммиченные правки: blocked, а не мерж в грязное дерево', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    writeFileSync(path.join(repo, 'wip.md'), 'wip\n')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, settings({ protected: [] }), 'm')
+    assert.equal(r.kind, 'blocked')
+    assert.match((r as { reason: string }).reason, /незакоммиченными изменениями/)
+  })
+
+  it('конфликт — conflict с текстом git, база и корень чистые (merge --abort)', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    writeFileSync(path.join(repo, 'f.md'), 'другое\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'конфликтующий')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, settings({ protected: [] }), 'm')
+    assert.equal(r.kind, 'conflict')
+    assert.match((r as { error: string }).error, /мерж не удался/)
+    assert.equal(git(repo, 'status', '--porcelain'), '')
+  })
+
+  it('база — не ветка (коммит) или локальной ветки нет — blocked', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    const g = store.getRun(f.runId)!.git!
+    const sha = git(repo, 'rev-parse', 'master')
+    assert.match((mergeRunBranch(repo, { ...g, base: sha }, settings({ protected: [] }), 'm') as { reason: string }).reason, /не ветка/)
+    assert.match((mergeRunBranch(repo, { ...g, base: 'origin/nowhere' }, settings({ protected: [] }), 'm') as { reason: string }).reason, /локальной ветки «nowhere» нет/)
+  })
+})
+
+describe('workflowPushes: push в графе выключает авто-push при закрытии', () => {
+  const graph = (op: 'commit' | 'push'): Workflow => {
+    const wf = pipelineWorkflow([])
+    const git: WfNode = op === 'push' ? { id: 'push', type: 'git', operation: 'push', x: 0, y: 0 } : { id: 'commit', type: 'git', operation: 'commit', message: 'm', x: 0, y: 0 }
+    return { ...wf, nodes: [...wf.nodes, git] }
+  }
+
+  it('только у прогона нового формата и только при push', () => {
+    const store = newStore()
+    assert.equal(workflowPushes(store.getRun(store.createGlobalTask({ title: 'a', workflow: graph('push') }).id)!), true)
+    assert.equal(workflowPushes(store.getRun(store.createGlobalTask({ title: 'b', workflow: graph('commit') }).id)!), false)
+    assert.equal(workflowPushes(store.getRun(store.createGlobalTask({ title: 'c' }).id)!), false)
+  })
+
+  it('RunBranchSync не пушит закрытый прогон с git push в графе, а без него — пушит', async () => {
+    const store = newStore()
+    const s = settings({ push: true })
+    const withPush = store.createGlobalTask({ title: 'с пушем', workflow: graph('push') })
+    const plain = store.createGlobalTask({ title: 'без пуша', workflow: graph('commit') })
+    const a = ensureRunBranch(store, repo, withPush.id, s)!
+    const b = ensureRunBranch(store, repo, plain.id, s)!
+    store.moveGlobalTask(withPush.id, 'review')
+    store.moveGlobalTask(plain.id, 'review')
+    new RunBranchSync({ isAlive: () => false }).sync(store, repo, s)
+    await waitFor(() => store.getRun(plain.id)!.git!.pushedAt !== undefined, 'push прогона без git push в графе')
+    assert.equal(store.getRun(withPush.id)!.git!.pushedAt, undefined)
+    assert.equal(git(repo, 'ls-remote', 'origin', a.branch), '')
+    assert.notEqual(git(repo, 'ls-remote', 'origin', b.branch), '')
   })
 })

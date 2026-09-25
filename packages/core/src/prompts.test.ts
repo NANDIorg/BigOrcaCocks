@@ -2,7 +2,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION, COORDINATOR_RETURN_HEADING } from './prompts.ts'
+import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION, COORDINATOR_RETURN_HEADING, coordinatorStageSection, runResumeCoordinatorObjective, type CoordinatorStageInfo } from './prompts.ts'
 import { getAgent } from './agents.ts'
 import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
 
@@ -454,5 +454,46 @@ describe('язык общения агентов с человеком (agentSys
     for (const [, cmd] of agentLanguageDirective('en').matchAll(/`orca-board ([a-z]+(?: [a-z]+)?)`/g)) {
       assert.match(cli, new RegExp(`\\n  ${cmd} `), `нет команды ${cmd} в HELP`)
     }
+  })
+})
+
+describe('блок «# Этап» в цели координатора (воркфлоу глобальной задачи)', () => {
+  const work: CoordinatorStageInfo = { nodeId: 'work', type: 'work', title: 'Реализация', visit: 1, tasks: [], tasksDone: false }
+
+  it('«Работа» без ролей: координатор выбирает роли сам, закрывает этап stage finish по stage_tasks_done', () => {
+    const text = coordinatorStageSection(work)
+    assert.match(text, /^# Этап «Реализация»\n/)
+    assert.match(text, /Роли подзадач не заданы: выбери их сам/)
+    assert.match(text, /придёт `stage_tasks_done`[\s\S]*orca-board stage finish --summary/)
+    assert.doesNotMatch(text, /заход/, 'первый заход не помечается')
+  })
+
+  it('роли ноды, инструкции, замечания, решение, ответы и подзадачи захода — в тексте; дубли запрещены', () => {
+    const text = coordinatorStageSection({
+      ...work, visit: 2, roleIds: ['developer', 'qa'], instructions: 'Сделай логин', feedback: 'нет тестов', decision: 'вариант 2', answers: '- Когда?\n  Ответ: завтра',
+      tasks: [{ id: 'task_1', title: 'Форма', status: 'В работе' }]
+    })
+    assert.match(text, /^# Этап «Реализация» \(заход 2\)/)
+    assert.match(text, /Роли подзадач: `developer`, `qa`/)
+    assert.match(text, /Что сделать на этапе:\nСделай логин/)
+    assert.match(text, /Замечания проверки или человека[\s\S]*нет тестов/)
+    assert.match(text, /Решение человека[\s\S]*вариант 2/)
+    assert.match(text, /Ответы человека[\s\S]*завтра/)
+    assert.match(text, /не создавай дубли[\s\S]*- task_1 \[В работе\] Форма/)
+  })
+
+  it('все подзадачи уже закрыты — сразу stage finish; этап не «Работа» — подзадач не создавать, ждать stage_started', () => {
+    assert.match(coordinatorStageSection({ ...work, tasksDone: true }), /Все подзадачи захода уже закрыты[\s\S]*stage finish/)
+    const gate = coordinatorStageSection({ ...work, nodeId: 'review', type: 'gate', title: 'Ревью' })
+    assert.match(gate, /# Этап «Ревью»/)
+    assert.match(gate, /подзадачи не создавай/)
+    assert.match(gate, /`stage_started`[\s\S]*`run_done`/)
+    assert.doesNotMatch(gate, /stage finish/)
+  })
+
+  it('цель перезапуска прогона: исходная цель и блок этапа; нет позиции на графе — цель как есть', () => {
+    assert.equal(runResumeCoordinatorObjective('цель', undefined), 'цель')
+    assert.match(runResumeCoordinatorObjective('цель', work), /^цель\n\n# Этап «Реализация»/)
+    assert.doesNotMatch(runResumeCoordinatorObjective('цель', work), /Повторный запуск|runs finish/, 'старая схема возврата с проверки к воркфлоу прогона не относится')
   })
 })

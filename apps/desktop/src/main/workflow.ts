@@ -13,7 +13,8 @@ import {
 
 // Исполнитель воркфлоу (docs/workflow.md): store решает, куда задача переходит (`advanceStage`, чистый
 // `nextStage` в core), здесь выполняются эффекты этапа — запуск воркера, задача-проверка, запрос человеку,
-// мерж, конец. Координатор в жизненном цикле рабочей задачи больше не участвует.
+// мерж, конец. Координатор в жизненном цикле рабочей задачи больше не участвует. Это движок прогонов старого формата
+// (без `Run.workflowScope`) и «Входящих»; воркфлоу глобальной задачи — `workflow-run.ts`.
 
 export interface WorkflowDeps {
   store: TaskStore
@@ -407,6 +408,8 @@ function handleEvents(deps: WorkflowDeps, events: readonly OrcaEvent[]): void {
     if (!e.taskId || (e.type !== 'worker_done' && e.type !== 'escalation' && e.type !== 'question_answered')) continue
     const task = deps.store.getTask(e.taskId)
     if (!task || task.answerFor) continue
+    // Воркфлоу прогона (`workflowScope: 'run'`) ведёт `workflow-run.ts`: подзадачи по графу не ходят.
+    if (task.runId !== undefined && deps.store.getRun(task.runId)?.workflowScope === 'run') continue
     try {
       if (e.type === 'question_answered') {
         restartAsk(deps, task, e.payload.workerLive === true)

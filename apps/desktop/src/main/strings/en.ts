@@ -78,6 +78,8 @@ export default {
   'coordinator.alreadyRunning': 'the coordinator of this global task is already running (terminal {pty})',
   'coordinator.finishing': 'the coordinator of this global task is still finishing — try again in a few seconds',
 
+  'workflow.runFinished': 'the global task workflow has already finished — no coordinator is needed',
+  'workflow.coordinatorNotRunning': 'your notes are saved, but the coordinator did not start — start it from the global task card (“Start coordinator”)',
   'global.notFound': 'global task not found: {id}',
   'global.coordinatorAlive': 'the coordinator of this global task is still running — close its terminal first',
   'global.typeRequired': 'choose a task type',
