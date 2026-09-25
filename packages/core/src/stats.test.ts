@@ -62,6 +62,53 @@ describe('статистика: цены', () => {
   })
 })
 
+describe('статистика: цены GPT (codex)', () => {
+  it('id модели: снапшот с датой, регистр и префикс провайдера — те же цены; сосед по префиксу — нет', () => {
+    assert.equal(findModelPrice('gpt-5.5')?.output, 30)
+    assert.equal(findModelPrice('gpt-5.5-2026-04-23')?.output, 30)
+    assert.equal(findModelPrice('gpt-5.4-20260305')?.output, 15)
+    assert.equal(findModelPrice('GPT-5.5')?.output, 30)
+    assert.equal(findModelPrice('openai/gpt-5.5')?.output, 30)
+    // gpt-5.4-mini не путается с gpt-5.4, а gpt-5.6-sol — с gpt-5
+    assert.equal(findModelPrice('gpt-5.4-mini-2026-03-05')?.input, 0.75)
+    assert.equal(findModelPrice('gpt-5.6-sol')?.input, 4)
+    // неизвестные версии и служебные модели — без цены, а не по цене «ближайшего» префикса
+    assert.equal(findModelPrice('gpt-5.7'), undefined)
+    assert.equal(findModelPrice('gpt-5.5-preview'), undefined)
+    assert.equal(findModelPrice('gpt-5-codex'), undefined)
+    assert.equal(findModelPrice('codex-auto-review'), undefined)
+    assert.equal(findModelPrice('gpt-reserve'), undefined)
+  })
+
+  it('стоимость: обычный вход, кэшированный вход и выход по своим ценам', () => {
+    // gpt-5.5: 5 вход, 0.5 кэш, 30 выход ($ за миллион); запись в кэш отдельной цены не имеет — как вход
+    const t = { input: 1e6, output: 1e6, cacheRead: 1e6, cacheWrite5m: 0, cacheWrite1h: 0 }
+    assert.equal(tokensCost('gpt-5.5', t), 5 + 30 + 0.5)
+    assert.equal(tokensCost('gpt-5.5-2026-04-23', t), 5 + 30 + 0.5)
+    // gpt-5.6-sol: отдельная цена записи в кэш 5
+    const w = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 2e6, cacheWrite1h: 0 }
+    assert.equal(tokensCost('gpt-5.6-sol', w), 10)
+    assert.equal(tokensCost('gpt-5.5', w), 10)
+  })
+
+  it('сводка: токены codex считаются в $, неизвестная модель — в unpricedTokens, а не нулём', () => {
+    const now = Date.UTC(2026, 8, 25, 12)
+    const usage: Record<string, SessionUsage> = {
+      d1: { records: [rec(now - H, 'gpt-5.5', 1_000_000, 100_000, { cacheRead: 2_000_000 }), rec(now - H, 'codex-auto-review', 300, 50)] }
+    }
+    const s = buildProjectStats({
+      projectId: 'p', range: 'all', now, tasks: [task({ id: 't1', agent: 'codex' })], runs: [], columns: DEFAULT_COLUMNS,
+      dispatches: [{ id: 'd1', taskId: 't1', ptyId: 'p1', startedAt: now - 2 * H, endedAt: now, roleId: 'developer', agent: 'codex' }],
+      usage: (x: StatsSession) => usage[x.key],
+      isAlive: () => false
+    })
+    // gpt-5.5: 5 (вход) + 3 (100K выхода по 30) + 1 (2M кэша по 0.5)
+    assert.equal(s.totals.costUsd, 9)
+    assert.equal(s.totals.unpricedTokens, 350)
+    assert.deepEqual(s.totals.unpricedModels, ['codex-auto-review'])
+  })
+})
+
 describe('статистика: сбор по store', () => {
   const now = Date.UTC(2026, 8, 24, 12)
   const old = now - 20 * D

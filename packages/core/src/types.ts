@@ -693,6 +693,12 @@ export interface TokenUsage {
 export interface ModelPrice {
   /** Префиксы id модели из транскрипта (`claude-opus-5` покрывает `claude-opus-5-20260101`); самый длинный выигрывает. */
   match: string[]
+  /**
+   * Точные id (модели OpenAI): подходит id целиком либо с датой-снапшотом (`gpt-5.5-2026-04-23`, `gpt-5.5-20260423`),
+   * регистр и префикс провайдера (`openai/`) не важны. Префикс тут нельзя: `gpt-5` покрыл бы неизвестную `gpt-5.7-x`
+   * чужой ценой, а стоимость неизвестной модели — «неизвестна», не цена соседа.
+   */
+  exact?: string[]
   input: number
   output: number
   cacheRead: number

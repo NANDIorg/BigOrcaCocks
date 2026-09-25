@@ -1335,8 +1335,14 @@ Renderer вызывает канал через проверку наличия 
 
 Таблица цен — одна: `MODEL_PRICES: ModelPrice[]` в `packages/core/src/pricing.ts` (core, без Node — её же может
 показать renderer), $ за миллион токенов, значения — с официальных страниц цен провайдера, с датой проверки в комментарии.
-`ModelPrice { match[], input, output, cacheRead, cacheWrite5m, cacheWrite1h }`: `match` — префиксы id модели из
-транскрипта, выигрывает самый длинный (`claude-opus-5` покрывает датированные версии). Стоимость считается по каждой
+`ModelPrice { match[], exact?[], input, output, cacheRead, cacheWrite5m, cacheWrite1h }`: `match` — префиксы id модели из
+транскрипта, выигрывает самый длинный (`claude-opus-5` покрывает датированные версии); `exact` — точные id моделей
+OpenAI (id целиком или со снапшотом `-YYYY-MM-DD` / `-YYYYMMDD`, регистр и префикс `openai/` не важны): префиксом
+их не сопоставить — `gpt-5` покрыл бы неизвестную `gpt-5.7-x` чужой ценой. Цены GPT (`OPENAI_PRICES` в `pricing.ts`) —
+Standard-tier со страницы developers.openai.com/api/docs/pricing; у codex токены собирает `parseCodexLine`
+(кэшированная часть входа идёт по `cacheRead`), модели без цены на странице (`codex-auto-review`, `gpt-5-codex`,
+`gpt-5.1-codex*`…) остаются «без цены». Надбавка длинного контекста OpenAI (>272K входа: вход ×2, выход ×1,5) не
+учитывается — размер отдельного запроса из накопительного счётчика rollout не виден, стоимость таких запросов занижена. Стоимость считается по каждой
 записи с её моделью: `input·input + output·output + cacheRead·cacheRead + write5m·cacheWrite5m + write1h·cacheWrite1h`
 (у Anthropic запись в кэш 5 мин — 1,25× входа, 1 час — 2×, чтение — 0,1×; если транскрипт не делит запись по TTL —
 считается как 5 мин). Модель не найдена в таблице — её токены идут в `unpricedTokens`, id — в `unpricedModels`,
