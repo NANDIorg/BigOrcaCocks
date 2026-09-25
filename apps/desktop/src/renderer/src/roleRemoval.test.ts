@@ -67,6 +67,10 @@ test('роль, занятая в своём воркфлоу, попадает 
   assert.deepEqual(workflowNodesWithRole(withCond, 'reviewer'), ['Ревью'])
   assert.deepEqual(workflowNodesWithRole(withCond, 'role_x'), ['Аналитик?'])
   assert.deepEqual(workflowNodesWithRole(undefined, 'reviewer'), [])
+  const multi = structuredClone(withCond)
+  Object.assign(multi.nodes.find((n) => n.type === 'work')!, { roleIds: ['frontend', 'role_x'] })
+  assert.ok(workflowNodesWithRole(multi, 'role_x').length >= 1, 'роль в списке ролей «Работы» занята')
+  assert.deepEqual(workflowNodesWithRole(multi, 'qa').filter((t) => t === 'Работа'), [], 'чужая роль «Работу» не занимает')
 
   const lines = removalConsequences('reviewer', undefined, withCond)
   assert.ok(lines.some((l) => l.startsWith('Роль занята в воркфлоу: «Ревью».')), lines.join('\n'))

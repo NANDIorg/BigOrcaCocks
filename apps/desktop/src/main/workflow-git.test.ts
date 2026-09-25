@@ -436,6 +436,6 @@ describe('git.ts: функции ноды', () => {
 
   it('граф с нодой git — граф старого движка по подзадачам: валидация ругается только на формат версии 1 (проверка тестового графа)', () => {
     const { errors } = validateWorkflow(graph({ operation: 'create_branch', branch: 'feature/{taskId}-{slug}' }), { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS })
-    assert.deepEqual(errors.map((e) => e.code).sort(), ['gitRunOperation', 'versionOld', 'workNoRole'])
+    assert.deepEqual(errors.map((e) => e.code).sort(), ['gitRunOperation', 'versionOld'])
   })
 })

@@ -549,10 +549,10 @@ describe('этап «Вопрос человеку» (ask)', () => {
 
 /**
  * Ошибки графа старого движка по подзадачам (версия 1) без тех, что валидация видит у любого такого графа: формат
- * версии 1 и роль «Работы». Остальное (порты, ссылки, роли гейтов) — проверка того, что тестовый граф собран верно.
+ * версии 1. Остальное (порты, ссылки, роли гейтов) — проверка того, что тестовый граф собран верно.
  */
 function structuralErrors(wf: Workflow): string[] {
-  const legacy = ['versionOld', 'workNoRole']
+  const legacy = ['versionOld']
   return validateWorkflow(wf, { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }).errors.filter((e) => !legacy.includes(e.code ?? '')).map((e) => e.message)
 }
 

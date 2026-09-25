@@ -5,7 +5,7 @@ import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
   WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, WF_PORTS, defaultWorkflow, defaultWorkRole, legacyDefaultWorkflow, legacyPipelineWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, migrateWorkflowReport, nextStage, nextRunStage, startRunStage, wfNodeTitle, pipelineWorkflow,
-  startStage, stageAction, runStageAction, validateWorkflow, stableJson, wfWorkStage, describeWorkflow, WF_ISSUE_TEXTS,
+  startStage, stageAction, runStageAction, validateWorkflow, stableJson, wfWorkStage, wfWorkRoleIds, describeWorkflow, WF_ISSUE_TEXTS,
   WF_GIT_OPERATIONS, WF_GIT_FIELD_USE, wfGitSlug, wfGitVars, renderGitTemplate, isValidGitBranchName, isValidGitRemoteName
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfValidation, Workflow } from './workflow.ts'
@@ -21,10 +21,12 @@ const noReviewer = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
 const base = (): Workflow => {
   const wf = structuredClone(legacyDefaultWorkflow(DEFAULT_ROLES))
   wf.version = WORKFLOW_VERSION
-  ;(node(wf, 'work') as { roleId?: string }).roleId = 'developer'
+  ;(node(wf, 'work') as { roleIds?: string[] }).roleIds = ['developer']
   return wf
 }
 const node = (wf: Workflow, id: string): WfNode => wf.nodes.find((n) => n.id === id)!
+/** Роли ноды «Работа» как в графе (без нормализации `wfWorkRoleIds`). */
+const workRoles = (wf: Workflow, id = 'work'): string[] | undefined => (node(wf, id) as { roleIds?: string[] }).roleIds
 const edge = (wf: Workflow, id: string): WfEdge => wf.edges.find((e) => e.id === id)!
 const messages = (list: WfValidation['errors']): string => list.map((i) => i.message).join('\n')
 
@@ -67,7 +69,8 @@ describe('defaultWorkflow', () => {
     const wf = defaultWorkflow(DEFAULT_ROLES)
     assert.equal(wf.version, WORKFLOW_VERSION)
     const work = node(wf, 'work')
-    assert.equal(work.type === 'work' && work.roleId, 'developer')
+    assert.equal(work.type, 'work')
+    assert.equal(workRoles(wf), undefined, '«Реализация» без роли: роли подзадач выбирает координатор')
     assert.equal(wfNodeTitle(work), 'Реализация')
     const review = node(wf, 'review')
     assert.equal(review.type === 'gate' && review.roleId, 'reviewer')
@@ -85,12 +88,12 @@ describe('defaultWorkflow', () => {
     assert.deepEqual(warnings.map((w) => w.nodeId), ['work'])
   })
 
-  it('без reviewer проверка одна — человек; роль работы — developer или первая рабочая', () => {
+  it('без reviewer проверка одна — человек; работа без роли при любом наборе ролей', () => {
     const wf = defaultWorkflow(noReviewer)
     assert.deepEqual(wf.nodes.map((n) => n.id), ['start', 'work', 'check', 'end'])
     assert.deepEqual(validateWorkflow(wf, { roles: noReviewer, columns: COLUMNS }).errors, [])
     const custom = defaultWorkflow([{ id: 'coordinator' }, { id: 'writer' }, { id: 'reviewer' }])
-    assert.equal((node(custom, 'work') as { roleId?: string }).roleId, 'writer')
+    assert.equal(workRoles(custom), undefined)
     assert.equal(defaultWorkRole([{ id: 'reviewer' }]), 'reviewer')
     assert.equal(defaultWorkRole([]), 'developer')
   })
@@ -111,7 +114,7 @@ describe('legacyDefaultWorkflow: граф по подзадачам (верси�
     assert.equal(node(wf, edge(wf, 'e_merge_conflict').to).type, 'human')
     assert.equal((node(wf, 'work') as { roleId?: string }).roleId, undefined)
     assert.equal(legacyDefaultWorkflow(noReviewer).nodes.find((n) => n.id === 'review')!.type, 'human')
-    assert.deepEqual(validateWorkflow(wf, ctx).errors.map((e) => e.code), ['versionOld', 'workNoRole'])
+    assert.deepEqual(validateWorkflow(wf, ctx).errors.map((e) => e.code), ['versionOld'])
   })
 })
 
@@ -125,7 +128,7 @@ describe('migrateWorkflow', () => {
     assert.deepEqual(migrateWorkflowReport(wf).notes, [])
   })
 
-  it('v1 → v2: merge снимается, ребро идёт в конец, «Конфликт мержа» снимается, работа получает роль; предупреждения человеку', () => {
+  it('v1 → v2: merge снимается, ребро идёт в конец, «Конфликт мержа» снимается, работа остаётся без роли; предупреждения человеку', () => {
     const v1 = legacyDefaultWorkflow(DEFAULT_ROLES)
     const snapshot = structuredClone(v1)
     const { workflow: wf, notes } = migrateWorkflowReport(v1, DEFAULT_ROLES)
@@ -135,8 +138,8 @@ describe('migrateWorkflow', () => {
     assert.equal(edge(wf, 'e_review_accept').to, 'end')
     assert.equal(edge(wf, 'e_review_reject').to, 'work')
     assert.ok(!wf.edges.some((e) => e.from === 'merge' || e.to === 'merge' || e.from === 'conflict' || e.to === 'conflict'))
-    assert.equal((node(wf, 'work') as { roleId?: string }).roleId, 'developer')
-    assert.deepEqual(notes.map((n) => n.code), ['mergeRemoved', 'nodeOrphaned', 'workRoleSet', 'noHumanBeforeEnd'])
+    assert.equal(workRoles(wf), undefined)
+    assert.deepEqual(notes.map((n) => n.code), ['mergeRemoved', 'nodeOrphaned', 'noHumanBeforeEnd'], 'про роль работы предупреждения нет')
     assert.match(notes[0].message, /снята: подзадачи теперь сливаются в ветку глобальной задачи автоматически/)
     // Итог — валидный граф; человека перед концом нет — предупреждение, а не ошибка.
     const v = validateWorkflow(wf, ctx)
@@ -169,18 +172,21 @@ describe('migrateWorkflow', () => {
     assert.equal(edge(wf, 'e_review_accept').to, 'eyes', 'через снятое условие — по «Да»')
     assert.deepEqual(validateWorkflow(wf, ctx).errors, [])
     const codes = notes.map((n) => n.code)
-    for (const c of ['roleConditionRemoved', 'gitNodeRemoved', 'mergeRemoved', 'workRoleSet']) assert.ok(codes.includes(c as never), c)
+    for (const c of ['roleConditionRemoved', 'gitNodeRemoved', 'mergeRemoved']) assert.ok(codes.includes(c as never), c)
     assert.ok(!codes.includes('noHumanBeforeEnd'), 'человек перед концом есть')
   })
 
-  it('v1 → v2: работа и вопрос без роли — роль по умолчанию, у уже заданной роль сохраняется; без roles — developer', () => {
+  it('v1 → v2: роль работы переходит в roleIds, работа без роли остаётся без роли; вопрос без роли — роль по умолчанию, без roles — developer', () => {
     const v1 = legacyDefaultWorkflow(DEFAULT_ROLES)
-    v1.nodes.push({ id: 'q', type: 'ask', instructions: 'спроси', roleId: 'analyst', x: 0, y: 0 }, { id: 'q2', type: 'ask', instructions: 'ещё', x: 0, y: 0 })
+    v1.nodes.push({ id: 'w2', type: 'work', roleId: 'qa', x: 0, y: 0 }, { id: 'w3', type: 'work', roleId: '  ', x: 0, y: 0 }, { id: 'q', type: 'ask', instructions: 'спроси', roleId: 'analyst', x: 0, y: 0 }, { id: 'q2', type: 'ask', instructions: 'ещё', x: 0, y: 0 })
     const migrated = migrateWorkflowReport(v1, [{ id: 'writer' }, { id: 'reviewer' }]).workflow
-    assert.equal((node(migrated, 'work') as { roleId?: string }).roleId, 'writer')
+    assert.equal(workRoles(migrated), undefined)
+    assert.deepEqual(workRoles(migrated, 'w2'), ['qa'])
+    assert.ok(!('roleId' in node(migrated, 'w2')), 'одиночное поле убрано')
+    assert.equal(workRoles(migrated, 'w3'), undefined, 'пустая роль — как её отсутствие')
     assert.equal((node(migrated, 'q') as { roleId?: string }).roleId, 'analyst')
     assert.equal((node(migrated, 'q2') as { roleId?: string }).roleId, 'writer')
-    assert.equal((node(migrateWorkflow(legacyDefaultWorkflow([])), 'work') as { roleId?: string }).roleId, 'developer')
+    assert.ok(!migrateWorkflowReport(v1, DEFAULT_ROLES).notes.some((n) => n.nodeId === 'w2' || n.nodeId === 'work'), 'миграция роли работы не предупреждает')
   })
 
   it('v1 → v2: цикл из снимаемых нод и merge без ok не роняют миграцию', () => {
@@ -302,6 +308,24 @@ describe('validateWorkflow: ошибки', () => {
     hasError(wf, 'цикл из одних условий', { nodeId: 'c2' })
   })
 
+  it('п.6: роли «Работы» необязательны; заданные — существующие рабочие роли типа; roleIds — список строк', () => {
+    const ok = base()
+    assert.deepEqual(validateWorkflow(ok, ctx).errors, [])
+    const set = (roleIds: unknown): Workflow => {
+      const wf = base()
+      Object.assign(node(wf, 'work'), { roleIds })
+      return wf
+    }
+    for (const none of [undefined, []]) assert.deepEqual(validateWorkflow(set(none), ctx).errors, [], 'нет ролей — допустимо')
+    assert.deepEqual(validateWorkflow(set(['developer', 'qa']), ctx).errors, [], 'несколько ролей')
+    hasError(set(['developer', 'ghost']), 'нет роли «ghost»', { nodeId: 'work' })
+    hasError(set(['coordinator']), 'служебная', { nodeId: 'work' })
+    hasError(set('developer'), 'должны быть списком id ролей', { nodeId: 'work' })
+    hasError(set(['developer', 7]), 'должны быть списком id ролей', { nodeId: 'work' })
+    const off = validateWorkflow(set(['developer']), { ...ctx, enabledAgents: ['other-agent'] })
+    assert.ok(off.warnings.some((w) => w.code === 'roleAgentOff' && w.nodeId === 'work'), 'выключенный агент роли этапа — предупреждение')
+  })
+
   it('п.6: роль гейта есть и не служебная, ссылки условий и колонки существуют', () => {
     const unknownRole = base()
     const review = node(unknownRole, 'review')
@@ -397,10 +421,9 @@ describe('validateWorkflow: предупреждения', () => {
     assert.ok(!validateWorkflow(defaultWorkflow(DEFAULT_ROLES), ctx).warnings.some((w) => w.code === 'noHumanBeforeEnd'))
   })
 
-  it('этапы «Работа» и «Вопрос человеку» без роли — ошибка; условие по роли и git create_branch/checkout — ошибка', () => {
+  it('«Вопрос человеку» без роли — ошибка, «Работа» без роли — нет; условие по роли и git create_branch/checkout — ошибка', () => {
     const wf = defaultWorkflow(DEFAULT_ROLES)
-    ;(node(wf, 'work') as { roleId?: string }).roleId = undefined
-    hasError(wf, 'не выбрана роль — этап «Работа»', { nodeId: 'work' })
+    assert.deepEqual(validateWorkflow(wf, ctx).errors, [], 'работа без роли допустима')
     const ask = defaultWorkflow(DEFAULT_ROLES)
     ask.nodes.push({ id: 'q', type: 'ask', instructions: 'о чём спросить', x: 0, y: 0 })
     ask.edges = ask.edges.filter((e) => e.id !== 'e_start')
@@ -556,7 +579,8 @@ describe('gateTaskSpec', () => {
 
 describe('pipelineWorkflow', () => {
   it('без проверок: работа → «Проверка» человеком → конец, граф валиден', () => {
-    const wf = pipelineWorkflow([], { roleId: 'developer' })
+    const wf = pipelineWorkflow([], { roleIds: ['developer'] })
+    assert.deepEqual(workRoles(wf), ['developer'])
     assert.equal(edge(wf, 'e_work').to, 'check')
     assert.equal(edge(wf, 'e_check_accept').to, 'end')
     assert.equal(edge(wf, 'e_check_reject').to, 'work')
@@ -567,7 +591,7 @@ describe('pipelineWorkflow', () => {
     const wf = pipelineWorkflow([
       { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
       { type: 'human', id: 'eyes', title: 'Глазами' }
-    ], { roleId: 'developer' })
+    ], { roleIds: ['developer'] })
     assert.ok(!wf.nodes.some((n) => n.id === 'check'))
     assert.equal(edge(wf, 'e_review_accept').to, 'eyes')
     assert.equal(edge(wf, 'e_eyes_accept').to, 'end')
@@ -577,12 +601,18 @@ describe('pipelineWorkflow', () => {
 
   it('несколько «Работ» по порядку: отказ возвращает в последнюю, роли у каждой свои', () => {
     const wf = pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer' }], {
-      work: [{ id: 'backend', roleId: 'developer', title: 'Бэкенд' }, { id: 'work', roleId: 'qa', title: 'Тесты' }]
+      work: [{ id: 'backend', roleIds: ['developer'], title: 'Бэкенд' }, { id: 'work', roleIds: ['qa', 'developer'], title: 'Тесты' }]
     })
     assert.equal(edge(wf, 'e_start').to, 'backend')
     assert.equal(edge(wf, 'e_backend').to, 'work')
     assert.equal(edge(wf, 'e_review_reject').to, 'work')
+    assert.deepEqual(workRoles(wf, 'work'), ['qa', 'developer'])
     assert.deepEqual(validateWorkflow(wf, ctx).errors, [])
+  })
+
+  it('без опций — одна «Реализация» без роли; пустой roleIds роль не задаёт', () => {
+    assert.equal(workRoles(pipelineWorkflow([])), undefined)
+    assert.equal(workRoles(pipelineWorkflow([], { roleIds: [] })), undefined)
   })
 })
 
@@ -610,9 +640,9 @@ describe('legacyPipelineWorkflow', () => {
 describe('переходы глобальной задачи (scope: run)', () => {
   const wf = defaultWorkflow(DEFAULT_ROLES)
 
-  it('старт → start_stage с ролью этапа; работа → гейт; accept гейта → запрос человеку; accept человека → конец', () => {
+  it('старт → start_stage без ролей (любые рабочие); работа → гейт; accept гейта → запрос человеку; accept человека → конец', () => {
     const s0 = startRunStage(wf)
-    assert.deepEqual(s0.action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(s0.action, { type: 'start_stage', nodeId: 'work', roleIds: [] })
     assert.equal(s0.stage.visits.work, 1)
     const s1 = nextRunStage(wf, s0.stage, 'next')
     assert.deepEqual(s1.action, { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' })
@@ -625,7 +655,7 @@ describe('переходы глобальной задачи (scope: run)', () =
   it('reject возвращает в работу: заходы растут, стадия входа не мутируется', () => {
     const at = { nodeId: 'check', visits: { work: 1, review: 1, check: 1 } }
     const step = nextRunStage(wf, at, 'reject')
-    assert.deepEqual(step.action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(step.action, { type: 'start_stage', nodeId: 'work', roleIds: [] })
     assert.equal(step.stage.visits.work, 2)
     assert.equal(at.visits.work, 1)
   })
@@ -677,13 +707,35 @@ describe('переходы глобальной задачи (scope: run)', () =
     const gone = startRunStage(w, { roleIds: ['developer', 'reviewer'] })
     assert.equal(gone.action.type, 'blocked')
     assert.match(gone.action.type === 'blocked' ? gone.action.reason : '', /нет роли «analyst»/)
-    const noRole = structuredClone(wf)
-    ;(node(noRole, 'work') as { roleId?: string }).roleId = undefined
-    assert.equal(startRunStage(noRole).action.type, 'blocked')
+  })
+
+  it('work с ролями: start_stage несёт roleIds; удалённая роль — blocked; без ролей blocked не бывает', () => {
+    const w = structuredClone(wf)
+    ;(node(w, 'work') as { roleIds?: string[] }).roleIds = ['frontend', 'backend']
+    assert.deepEqual(startRunStage(w).action, { type: 'start_stage', nodeId: 'work', roleIds: ['frontend', 'backend'] })
+    assert.deepEqual(startRunStage(w, { roleIds: ['frontend', 'backend', 'reviewer'] }).action, { type: 'start_stage', nodeId: 'work', roleIds: ['frontend', 'backend'] })
+    const gone = startRunStage(w, { roleIds: ['frontend', 'reviewer'] })
+    assert.equal(gone.action.type, 'blocked')
+    assert.match(gone.action.type === 'blocked' ? gone.action.reason : '', /нет роли «backend» в проекте/)
+    const goneAll = startRunStage(w, { roleIds: ['reviewer'] })
+    assert.match(goneAll.action.type === 'blocked' ? goneAll.action.reason : '', /нет ролей «frontend», «backend» в проекте/)
+    // Без ролей у ноды проверять нечего: проект без единой рабочей роли не мешает.
+    assert.deepEqual(startRunStage(wf, { roleIds: [] }).action, { type: 'start_stage', nodeId: 'work', roleIds: [] })
+  })
+
+  it('прежний roleId у work читается как список из одной роли; дубли и пустые роли отбрасываются', () => {
+    const w = structuredClone(wf)
+    Object.assign(node(w, 'work'), { roleId: 'developer' })
+    assert.deepEqual(runStageAction(w, { nodeId: 'work', visits: {} }), { type: 'start_stage', nodeId: 'work', roleIds: ['developer'] })
+    assert.deepEqual(validateWorkflow(w, ctx).errors, [])
+    assert.deepEqual(wfWorkRoleIds({ roleIds: ['a', ' a ', '', 'b'], roleId: 'zzz' }), ['a', 'b'], 'roleIds важнее roleId')
+    assert.deepEqual(wfWorkRoleIds({ roleId: 'a' }), ['a'])
+    assert.deepEqual(wfWorkRoleIds({}), [])
+    assert.deepEqual(wfWorkRoleIds({ roleIds: 'a' }), [], 'не массив — ролей нет')
   })
 
   it('runStageAction повторяет эффект текущей ноды', () => {
-    assert.deepEqual(runStageAction(wf, { nodeId: 'work', visits: { work: 2 } }), { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(runStageAction(wf, { nodeId: 'work', visits: { work: 2 } }), { type: 'start_stage', nodeId: 'work', roleIds: [] })
     assert.deepEqual(runStageAction(wf, { nodeId: 'check', visits: {} }), { type: 'request_human', nodeId: 'check' })
   })
 })
@@ -707,8 +759,8 @@ describe('показ человеку на «Работе»', () => {
 
   it('wfWorkStage: тексты обрезаны, пустой показ — нет показа, required только true', () => {
     const wf = withShowcase({ what: '  макеты  ', required: true }, '  сделай  ')
-    assert.deepEqual(wfWorkStage(wf, 'work'), { nodeId: 'work', type: 'work', title: 'Реализация', roleId: 'developer', instructions: 'сделай', showcase: { what: 'макеты', required: true } })
-    assert.deepEqual(wfWorkStage(withShowcase({ what: ' ' }), 'work'), { nodeId: 'work', type: 'work', title: 'Реализация', roleId: 'developer' })
+    assert.deepEqual(wfWorkStage(wf, 'work'), { nodeId: 'work', type: 'work', title: 'Реализация', instructions: 'сделай', showcase: { what: 'макеты', required: true } })
+    assert.deepEqual(wfWorkStage(withShowcase({ what: ' ' }), 'work'), { nodeId: 'work', type: 'work', title: 'Реализация' })
     assert.deepEqual(wfWorkStage(withShowcase({ what: 'x', required: false }), 'work')!.showcase, { what: 'x' })
     assert.equal(wfWorkStage(wf, 'review'), undefined)
     assert.equal(wfWorkStage(wf, 'nope'), undefined)
@@ -735,7 +787,7 @@ describe('показ человеку на «Работе»', () => {
     hasWarning(gated, 'показ никто не увидит', 'work')
     const withHuman = structuredClone(pipelineWorkflow([
       { type: 'gate', id: 'review', roleId: 'reviewer' }, { type: 'human', id: 'eyes' }
-    ], { roleId: 'developer' }))
+    ], { roleIds: ['developer'] }))
     Object.assign(node(withHuman, 'work'), { showcase: { what: 'макеты' } })
     assert.ok(!validateWorkflow(withHuman, ctx).warnings.some((w) => w.message.includes('показ')))
   })
@@ -819,7 +871,7 @@ describe('этап «Вопрос человеку» (ask)', () => {
     assert.equal(first.stage.visits.ask, 1)
     const second = nextStage(wf, first.stage, 'next', { roleId: 'developer' })
     assert.equal(second.stage.nodeId, 'work')
-    assert.deepEqual(second.action, { type: 'start_worker', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(second.action, { type: 'start_worker', nodeId: 'work' }, 'работа без роли — роль задачи')
     assert.equal(second.stage.visits.work, 1)
     assert.equal(second.stage.visits.ask, 1)
   })

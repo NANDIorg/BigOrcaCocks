@@ -22,7 +22,7 @@ function memory(): Persistence & { data: Partial<StoreSnapshot> | null } {
 }
 
 const store = (p?: Persistence) => new TaskStore(p, () => DEFAULT_COLUMNS)
-const ROLES = ['developer', 'reviewer', 'qa']
+const ROLES = ['developer', 'reviewer', 'qa', 'frontend', 'backend']
 const opts = { roleIds: ROLES }
 
 /** Прогон с дефолтным графом (работа → ревью агентом → «Проверка» человеком → конец), граф уже начат. */
@@ -81,7 +81,7 @@ describe('прогон с воркфлоу глобальной задачи: wo
 describe('enterRunStage / advanceRunStage', () => {
   it('вход: стартовая позиция, история с коммитом, stage_changed и stage_started; карточка «В работе»', () => {
     const { s, run, entered } = started()
-    assert.deepEqual(entered.action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(entered.action, { type: 'start_stage', nodeId: 'work', roleIds: [] })
     const r = s.getRun(run.id)!
     assert.deepEqual(r.stage, { nodeId: 'work', visits: { start: 1, work: 1 } })
     assert.equal(r.stageHistory?.length, 1)
@@ -90,7 +90,7 @@ describe('enterRunStage / advanceRunStage', () => {
     assert.ok(r.workflow, 'граф зафиксирован снимком, если у прогона его не было')
     const started1 = events(s, 'stage_started')
     assert.equal(started1.length, 1)
-    assert.deepEqual(started1[0].payload, { runId: run.id, nodeId: 'work', title: 'Реализация', roleId: 'developer', visit: 1 })
+    assert.deepEqual(started1[0].payload, { runId: run.id, nodeId: 'work', title: 'Реализация', roleIds: [], visit: 1 })
     assert.equal(started1[0].taskId, undefined, 'событие прогона без taskId')
     const changed = events(s, 'stage_changed')[0].payload
     assert.deepEqual([changed.runId, changed.to, changed.nodeType], [run.id, 'work', 'work'])
@@ -99,7 +99,7 @@ describe('enterRunStage / advanceRunStage', () => {
   it('повторный enterRunStage позицию не двигает и возвращает действие текущей ноды; события не дублируются', () => {
     const { s, run } = started()
     const again = s.enterRunStage(run.id, opts)
-    assert.deepEqual(again.action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(again.action, { type: 'start_stage', nodeId: 'work', roleIds: [] })
     assert.equal(events(s, 'stage_started').length, 1)
     assert.equal(s.getRun(run.id)!.stageHistory!.length, 1)
   })
@@ -125,7 +125,7 @@ describe('enterRunStage / advanceRunStage', () => {
 
   it('роль этапа удалили после сохранения графа — blocked с причиной на входе', () => {
     const s = store()
-    const run = s.createRun('цель', undefined, defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }]))
+    const run = s.createRun('цель', undefined, pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer' }], { roleIds: ['developer'] }))
     const { action } = s.enterRunStage(run.id, { roleIds: ['reviewer'] })
     assert.equal(action.type, 'blocked')
     assert.match(action.type === 'blocked' ? action.reason : '', /нет роли «developer» в проекте/)
@@ -135,16 +135,63 @@ describe('enterRunStage / advanceRunStage', () => {
 })
 
 describe('createTask в воркфлоу прогона: роль и этап', () => {
-  it('без --role берётся роль этапа, задача привязана к заходу (stageOf); чужая роль — ошибка с понятным текстом', () => {
-    const { s, run } = started()
+  const stageWithRoles = (roleIds: string[] | undefined) => started(pipelineWorkflow(
+    [{ type: 'gate', id: 'review', roleId: 'reviewer' }], roleIds ? { roleIds } : {}
+  ))
+
+  it('этап без ролей: подойдёт любая рабочая роль типа, задача привязана к заходу (stageOf); роль на выбор вызывающего', () => {
+    const { s, run } = stageWithRoles(undefined)
+    assert.deepEqual(s.runStage(run.id)!.roleIds, undefined, 'этап не ограничивает роли')
+    const t = s.createTask({ title: 'A', runId: run.id })
+    assert.deepEqual(t.stageOf, { nodeId: 'work', visit: 1 })
+    assert.equal(t.roleId, 'developer', 'роль не передана — как у обычной задачи')
+    for (const roleId of ['developer', 'qa', 'frontend']) assert.equal(s.createTask({ title: roleId, runId: run.id, roleId }).roleId, roleId)
+    assert.equal(s.stageDefaultRole(run.id), undefined, 'роли по умолчанию у этапа без ролей нет')
+  })
+
+  it('этап без ролей: служебные роли и роль gate графа не подходят', () => {
+    const { s, run } = stageWithRoles(undefined)
+    assert.throws(() => s.createTask({ title: 'X', runId: run.id, roleId: 'coordinator' }), /роль «coordinator» не разрешена на этапе «Реализация».*рабочие роли типа/)
+    assert.throws(() => s.createTask({ title: 'X', runId: run.id, roleId: 'assistant' }), /не разрешена/)
+    assert.throws(() => s.createTask({ title: 'X', runId: run.id, roleId: 'reviewer' }), /роль «reviewer» не разрешена/)
+  })
+
+  it('этап с несколькими ролями: только из списка, роль без --role не угадывается', () => {
+    const { s, run } = stageWithRoles(['frontend', 'backend'])
+    assert.deepEqual(events(s, 'stage_started')[0].payload.roleIds, ['frontend', 'backend'], 'stage_started несёт роли этапа')
+    assert.equal(s.createTask({ title: 'F', runId: run.id, roleId: 'frontend' }).roleId, 'frontend')
+    assert.equal(s.createTask({ title: 'B', runId: run.id, roleId: 'backend' }).roleId, 'backend')
+    assert.throws(
+      () => s.createTask({ title: 'C', runId: run.id, roleId: 'qa' }),
+      /роль «qa» не разрешена на этапе «Реализация»: его ведут агенты ролей «frontend», «backend»/
+    )
+    assert.equal(s.stageDefaultRole(run.id), undefined)
+    assert.deepEqual(s.runStage(run.id)!.roleIds, ['frontend', 'backend'])
+  })
+
+  it('этап с одной ролью: без --role берётся она, чужая — ошибка с понятным текстом', () => {
+    const { s, run } = stageWithRoles(['developer'])
     const t = s.createTask({ title: 'A', runId: run.id })
     assert.equal(t.roleId, 'developer')
     assert.deepEqual(t.stageOf, { nodeId: 'work', visit: 1 })
     assert.equal(s.createTask({ title: 'B', runId: run.id, roleId: 'developer' }).roleId, 'developer')
+    assert.equal(s.stageDefaultRole(run.id), 'developer')
     assert.throws(
       () => s.createTask({ title: 'C', runId: run.id, roleId: 'qa' }),
-      /роль «qa» не разрешена на этапе «Реализация»: его ведут агенты роли «developer»/
+      /роль «qa» не разрешена на этапе «Реализация»: его ведут агенты ролей «developer»/
     )
+  })
+
+  it('stageDefaultRole: вне этапа «Работа», до входа в граф и у старого прогона — undefined', () => {
+    const { s, run } = stageWithRoles(['developer'])
+    finish(s, s.createTask({ title: 'A', runId: run.id }).id)
+    s.finishStage(run.id, opts)
+    assert.equal(s.getRun(run.id)!.stage!.nodeId, 'review')
+    assert.equal(s.stageDefaultRole(run.id), undefined)
+    const fresh = s.createRun('цель', undefined, defaultWorkflow([]))
+    assert.equal(s.stageDefaultRole(fresh.id), undefined)
+    assert.equal(s.stageDefaultRole(s.createRun('старый', undefined, legacyDefaultWorkflow([])).id), undefined)
+    assert.equal(s.stageDefaultRole('run_none'), undefined)
   })
 
   it('вне этапа «Работа» — ошибка «дождись stage_started»; проверка ветки прогона (gateFor.runId) и вопрос этапа — можно', () => {
@@ -262,7 +309,7 @@ describe('reject: возврат в работу с замечаниями', () 
     finish(s, a.id)
     s.finishStage(run.id, { ...opts, summary: 'сделано' })
     const { action } = s.advanceRunStage(run.id, 'reject', { ...opts, feedback: '  Нет тестов  ', commit: 'def456' })
-    assert.deepEqual(action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(action, { type: 'start_stage', nodeId: 'work', roleIds: [] })
     const r = s.getRun(run.id)!
     assert.equal(r.stage!.visits.work, 2)
     assert.equal(r.returns?.length, 1)
@@ -304,7 +351,7 @@ describe('reject: возврат в работу с замечаниями', () 
     s.enterRunStage(run.id)
     const t = s.createTask({ title: 'A', runId: run.id })
     assert.deepEqual(s.runStage(run.id), {
-      runId: run.id, nodeId: 'work', type: 'work', title: 'Реализация', visit: 1, roleId: 'developer', instructions: 'Сделай',
+      runId: run.id, nodeId: 'work', type: 'work', title: 'Реализация', visit: 1, instructions: 'Сделай',
       showcase: { what: 'макеты', required: true }, tasks: [t.id]
     })
     assert.equal(s.runStage(s.createRun('старый', undefined, legacyDefaultWorkflow([])).id), undefined)
@@ -407,7 +454,7 @@ describe('approval прогона: нода human', () => {
 
 describe('граф без человека и ноды merge/git/условия в прогоне', () => {
   it('граф без human: гейт → конец; прогон закрывается сам, карточка в «Сделано»', () => {
-    const wf = pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer' }], { roleId: 'developer' })
+    const wf = pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer' }], { roleIds: ['developer'] })
     wf.edges.find((e) => e.id === 'e_check_accept')!.to = 'end'
     const { s, run } = started(wf)
     const a = s.createTask({ title: 'A', runId: run.id })
@@ -548,7 +595,7 @@ describe('рестарт приложения посреди графа', () => 
   })
 
   it('история этапов прогона обрезается до STATUS_HISTORY_LIMIT', () => {
-    const { s, run } = started(pipelineWorkflow([], { roleId: 'developer' }))
+    const { s, run } = started(pipelineWorkflow([], { roleIds: ['developer'] }))
     for (let i = 0; i < STATUS_HISTORY_LIMIT; i += 1) {
       s.advanceRunStage(run.id, 'next', opts)
       s.advanceRunStage(run.id, 'reject', { ...opts, feedback: 'нет' })

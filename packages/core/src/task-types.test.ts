@@ -69,13 +69,11 @@ describe('заготовки типов', () => {
     assert.deepEqual(general.settings.workflow, defaultWorkflow(DEFAULT_ROLES))
   })
 
-  it('«Фронтенд и бэкенд»: два этапа «Работа» по порядку — бэкенд, затем фронтенд; после ревью — человек', () => {
+  it('«Фронтенд и бэкенд»: одна «Работа» с ролями frontend и backend; после ревью — человек', () => {
     const wf = presetTaskType('fullstack')!.settings.workflow!
     const first = startRunStage(wf)
-    assert.deepEqual(first.action, { type: 'start_stage', nodeId: 'backend', roleId: 'backend' })
-    const second = nextRunStage(wf, first.stage, 'next')
-    assert.deepEqual(second.action, { type: 'start_stage', nodeId: 'work', roleId: 'frontend' })
-    const review = nextRunStage(wf, second.stage, 'next')
+    assert.deepEqual(first.action, { type: 'start_stage', nodeId: 'work', roleIds: ['frontend', 'backend'] })
+    const review = nextRunStage(wf, first.stage, 'next')
     assert.equal(review.stage.nodeId, 'review')
     assert.equal(nextRunStage(wf, review.stage, 'accept').stage.nodeId, 'eyes')
     assert.equal(nextRunStage(wf, review.stage, 'reject').stage.nodeId, 'work', 'отказ — в последнюю работу')
@@ -84,7 +82,7 @@ describe('заготовки типов', () => {
   it('«Бэкенд»: после ревью — прогон тестов ролью qa, затем проверка человеком', () => {
     const wf = presetTaskType('backend')!.settings.workflow!
     const work = startRunStage(wf)
-    assert.deepEqual(work.action, { type: 'start_stage', nodeId: 'work', roleId: 'developer' })
+    assert.deepEqual(work.action, { type: 'start_stage', nodeId: 'work', roleIds: ['developer'] })
     const review = nextRunStage(wf, work.stage, 'next')
     const tests = nextRunStage(wf, review.stage, 'accept')
     assert.deepEqual(tests.action, { type: 'create_gate', nodeId: 'tests', roleId: 'qa' })

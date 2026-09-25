@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type React from 'react'
-import { WF_PORTS, type WfNode, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
+import { WF_PORTS, wfWorkRoleIds, type WfNode, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import {
   NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, panBy,
@@ -38,7 +38,10 @@ function clip(s: string, max: number): string {
 /** Вторая строка ноды: что на этапе происходит. */
 function nodeSubtitle(node: WfNode, t: TFunction): string {
   switch (node.type) {
-    case 'work':
+    case 'work': {
+      const roleIds = wfWorkRoleIds(node)
+      return roleIds.length > 0 ? t('config.wf.sub.roles', { roles: roleIds.join(', ') }) : t('config.wf.sub.anyRole')
+    }
     case 'ask': return node.roleId ? t('config.wf.sub.role', { role: node.roleId }) : t('config.wf.sub.taskRole')
     case 'gate': return node.roleId ? t('config.wf.sub.role', { role: node.roleId }) : t('config.wf.sub.noRole')
     case 'human': return t('config.wf.sub.inbox')

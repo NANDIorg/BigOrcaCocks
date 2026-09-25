@@ -1,6 +1,6 @@
 import type React from 'react'
 import {
-  WF_PORTS, wfNodeTitle,
+  WF_PORTS, wfNodeTitle, wfWorkRoleIds,
   type BoardColumn, type Role, type WfCondition, type WfNode, type WfOutcome, type WfValidation, type Workflow
 } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
@@ -206,10 +206,22 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
 
       {node.type === 'work' && (
         <>
-          <label className="wf-field">
-            <span>{t('config.wf.insp.role')}</span>
-            <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty={t('config.wf.insp.roleOfTask')} onChange={(roleId) => patch({ roleId })} />
-          </label>
+          <fieldset className="wf-roles" title={t('config.wf.insp.workRolesHint')}>
+            <legend>{t('config.wf.insp.workRolesLegend')}</legend>
+            {taskRoles.map((r) => {
+              const chosen = wfWorkRoleIds(node)
+              return (
+                <label key={r.id} className="wf-check">
+                  <input
+                    type="checkbox"
+                    checked={chosen.includes(r.id)}
+                    onChange={(e) => patch({ roleIds: e.target.checked ? [...chosen, r.id] : chosen.filter((x) => x !== r.id) })}
+                  />
+                  <span>{r.title}</span>
+                </label>
+              )
+            })}
+          </fieldset>
           <label className="wf-field">
             <span>{t('config.wf.insp.instructions')}</span>
             <textarea

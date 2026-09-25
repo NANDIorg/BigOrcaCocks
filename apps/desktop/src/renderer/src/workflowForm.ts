@@ -1,5 +1,5 @@
 import {
-  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflow,
+  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflow, wfWorkRoleIds,
   type Role, type WfCondition, type WfNode, type WfNodeType, type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { NODE_H, NODE_W } from './workflowGeometry'
@@ -46,6 +46,8 @@ export interface WfNodePatch {
   title?: string
   column?: string
   roleId?: string
+  /** Роли этапа «Работа»; пустой список — роли не заданы (координатор выбирает сам). */
+  roleIds?: string[]
   instructions?: string
   /** Показ человеку у «Работы»: меняются только переданные поля. Пустое «что» без «обязательно» — показа нет. */
   showcase?: { what?: string; required?: boolean }
@@ -69,12 +71,18 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     else delete n.column
   }
   if (patch.roleId !== undefined) {
-    // У гейта роль обязательна (пустую подсветит валидация), у работы и вопроса пустая — «роль задачи».
+    // У гейта роль обязательна (пустую подсветит валидация), у вопроса пустая — «роль задачи».
     if (n.type === 'gate') n.roleId = patch.roleId
-    else if (n.type === 'work' || n.type === 'ask') {
+    else if (n.type === 'ask') {
       if (patch.roleId) n.roleId = patch.roleId
       else delete n.roleId
     }
+  }
+  if (patch.roleIds !== undefined && n.type === 'work') {
+    // Одиночный roleId старого формата уходит: список его заменяет.
+    delete n.roleId
+    if (patch.roleIds.length > 0) n.roleIds = [...patch.roleIds]
+    else delete n.roleIds
   }
   if (patch.instructions !== undefined && (n.type === 'gate' || n.type === 'human' || n.type === 'work')) {
     if (patch.instructions.trim()) n.instructions = patch.instructions
@@ -108,10 +116,11 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
   const node: WfNode = { ...fresh, id: cur.id }
   if (cur.title) node.title = cur.title
   if (cur.column && hasColumn(type)) node.column = cur.column
-  const role = cur.type === 'gate' || cur.type === 'work' || cur.type === 'ask' ? cur.roleId : undefined
+  const role = cur.type === 'work' ? wfWorkRoleIds(cur)[0] : cur.type === 'gate' || cur.type === 'ask' ? cur.roleId : undefined
   const instructions =
     cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' || cur.type === 'ask' ? cur.instructions : undefined
-  if (role && (node.type === 'gate' || node.type === 'work' || node.type === 'ask')) node.roleId = role
+  if (role && node.type === 'work') node.roleIds = [role]
+  else if (role && (node.type === 'gate' || node.type === 'ask')) node.roleId = role
   if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work' || node.type === 'ask')) {
     node.instructions = instructions
   }
