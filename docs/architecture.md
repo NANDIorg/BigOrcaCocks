@@ -500,6 +500,18 @@ Store хранит позицию и решает, куда задача пер�
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
   третий отказ. Повторное применение — ошибка «лимит уже стоит».
+- **Свои ноды** (`nodeTemplates.ts`, `settings/useNodeTemplates.ts`, `settings/NodeTemplatesSection.tsx`, `WorkflowTemplateBlock.tsx`). Библиотека
+  шаблонов (`window.orca.nodeTemplates`, IPC `nodeTemplates:*`) грузится один раз хуком `useNodeTemplates` в `SettingsModal` и раздаётся
+  трём местам: палитре холста, блоку инспектора и разделу «Настройки → Свои ноды». Палитра — кнопка-звезда в тулбаре холста (проп `library`)
+  открывает панель со списком; вставка — `insertTemplate` (копия ноды, свободный id по типу, `templateId` на шаблон). В пути подзадачи шаблон
+  с «Вопросом человеку» или вложенным путём недоступен (`templateMisfit` — та же `validateNodeTemplate({scope})`, причина в подсказке).
+  Инспектор (`WorkflowTemplateBlock`, у любой ноды, кроме `start`): «Сохранить как свою ноду» (`templateInput`, после записи нода получает
+  `templateId` — `linkTemplate`); у ноды с `templateId` — сверка с шаблоном `templateSync`: `same` / `differs` / `missing` (шаблон удалён) /
+  `unknown` (библиотека недоступна). Ноды **сверяются по содержимому** (`templateNodeOf` без `id`/`x`/`y`/`templateId` против `template.node`), а не
+  по `updatedAt`: копия не хранит момент вставки, а поле в контракт узла ради этого не добавляли; `updatedAt` показывается в подсказке. При
+  расхождении — «Обновить из шаблона» (`applyTemplate`: тело заменяется, `id`, позиция и переходы остаются, переходы по портам, которых нет
+  у нового типа, убираются) и «Записать в шаблон» (в обратную сторону, с `confirm`). Список в «Настройках» — переименовать (`renamedTemplateInput`,
+  название и описание) и удалить. Старый main/preload — `nodeTemplatesApi`/`nodeTemplatesError` (`config.nodeTpl.stale`), как `docsApi()`.
 - **Раздел «Воркфлоу» типа** (`settings/TaskTypeWorkflow.tsx`): черновик графа — `TaskType.settings.workflow`, а без
   него `defaultWorkflow(roles)`. В отличие от ролей **без автосохранения**: промежуточный граф почти всегда
   невалиден, и main его не примет. `validateWorkflow` по ролям типа (без колонок и агентов — они у проекта) считается

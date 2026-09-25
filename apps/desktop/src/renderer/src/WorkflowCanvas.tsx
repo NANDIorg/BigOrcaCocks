@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type React from 'react'
-import { WF_PORTS, wfWorkRoleIds, type WfNode, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
+import { WF_PORTS, wfWorkRoleIds, type WfNode, type WfNodeTemplate, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import {
   NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, panBy,
@@ -16,6 +16,7 @@ import { WF_NODE_HELP } from './workflowHelp'
 import { gitNodeSubtitle } from './workflowGit'
 import { useT, type TFunction } from './i18n'
 import { nodeTitle } from './defaultTitles'
+import { insertTemplate, templateHint, templateMisfit, templateSummary, type NodeTemplatesHook } from './nodeTemplates'
 
 interface Props {
   workflow: Workflow
@@ -31,6 +32,8 @@ interface Props {
   scope?: WfScope
   /** Двойной клик по ноде «Работа»: открыть путь её подзадачи. Нет — двойной клик ничего не делает. */
   onOpenNode?: (nodeId: string) => void
+  /** Библиотека своих нод: в панели над холстом появляется «Свои ноды» со вставкой копии. Нет — панели нет. */
+  library?: NodeTemplatesHook
 }
 
 /** Текущий жест мышью. Перетаскивание ноды живёт локально и уходит в onChange одним изменением на отпускании. */
@@ -73,7 +76,7 @@ function nodeSubtitle(node: WfNode, t: TFunction): string {
  * (workflowGeometry.ts), а не по DOM-событиям элементов: при захвате указателя (setPointerCapture)
  * элемент под курсором события не получает.
  */
-export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues, scope = 'run', onOpenNode }: Props): React.JSX.Element {
+export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues, scope = 'run', onOpenNode, library }: Props): React.JSX.Element {
   const t = useT()
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -81,6 +84,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
   const [view, setView] = useState<View>({ x: -32, y: -32, scale: 1 })
   const [gesture, setGesture] = useState<Gesture | null>(null)
   const fitted = useRef(false)
+  const [libOpen, setLibOpen] = useState(false)
   const gridId = `wf-grid-${useId().replace(/:/g, '')}`
 
   useEffect(() => {
@@ -189,16 +193,47 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
     }
   }
 
-  const add = (type: WfNodeType): void => {
+  /** Свободное место у центра окна: каждая следующая нода чуть ниже предыдущей, чтобы новые не ложились стопкой. */
+  const freeSpot = (): Point => {
     const c = screenToWorld(view, { x: size.w / 2, y: size.h / 2 })
-    // Каждая следующая нода чуть ниже предыдущей, чтобы новые не ложились стопкой одна на другую.
     let x = snap(c.x - NODE_W / 2)
     let y = snap(c.y - NODE_H / 2)
     while (workflow.nodes.some((n) => n.x === x && n.y === y)) { x += 20; y += 20 }
+    return { x, y }
+  }
+
+  const add = (type: WfNodeType): void => {
+    const { x, y } = freeSpot()
     const res = addNode(workflow, type, x, y)
     onChange(res.workflow)
     onSelect({ kind: 'node', id: res.nodeId })
   }
+
+  /** Вставка копии своей ноды (`templateId` — на шаблон). */
+  const addTemplate = (template: WfNodeTemplate): void => {
+    const { x, y } = freeSpot()
+    const res = insertTemplate(workflow, template, x, y)
+    onChange(res.workflow)
+    onSelect({ kind: 'node', id: res.nodeId })
+    setLibOpen(false)
+  }
+
+  // Панель «Свои ноды» закрывается кликом мимо и Esc.
+  useEffect(() => {
+    if (!libOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (!(e.target as Element).closest('.wf-lib, .wf-lib-btn')) setLibOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setLibOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [libOpen])
 
   // Двойной клик по ноде «Работа» — вход в её путь подзадачи. Попадание считаем по геометрии, как и остальные жесты.
   const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>): void => {
@@ -324,6 +359,18 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
             </button>
           )
         })}
+        {library && (
+          <button
+            type="button"
+            className={`icon-btn wf-lib-btn${libOpen ? ' active' : ''}`}
+            title={t('config.nodeTpl.paletteHint')}
+            aria-label={t('config.nodeTpl.palette')}
+            aria-expanded={libOpen}
+            onClick={() => setLibOpen((v) => !v)}
+          >
+            <Icon.star />
+          </button>
+        )}
         <span className="wf-toolbar-sep" />
         <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomOut')} onClick={() => zoomCenter(1 / 1.2)}>−</button>
         <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomIn')} onClick={() => zoomCenter(1.2)}><Icon.plus /></button>
@@ -341,6 +388,42 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
           <Icon.columns />
         </button>
       </div>
+
+      {library && libOpen && (
+        <div className="wf-lib" role="dialog" aria-label={t('config.nodeTpl.paletteAria')}>
+          <div className="wf-lib-head">{t('config.nodeTpl.palette')}</div>
+          {library.templates === null ? (
+            <p className="hint">{library.error ?? t('config.nodeTpl.paletteLoading')}</p>
+          ) : library.templates.length === 0 ? (
+            <p className="hint">{t('config.nodeTpl.paletteEmpty')}</p>
+          ) : (
+            <ul className="wf-lib-list">
+              {library.templates.map((tpl) => {
+                const NodeIcon = WfNodeIcon[tpl.node.type]
+                const misfit = templateMisfit(tpl, scope)
+                return (
+                  <li key={tpl.id}>
+                    <button
+                      type="button"
+                      className="wf-lib-item"
+                      disabled={misfit !== null}
+                      title={misfit !== null ? t('config.nodeTpl.misfit', { reason: misfit }) : templateHint(tpl)}
+                      aria-label={t('config.nodeTpl.insert', { title: tpl.title })}
+                      onClick={() => addTemplate(tpl)}
+                    >
+                      <span className={`wf-insp-icon wf-node--${tpl.node.type}`}><NodeIcon /></span>
+                      <span className="wf-lib-text">
+                        <b>{tpl.title}</b>
+                        <small>{templateSummary(tpl)}</small>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -15,6 +15,8 @@ import {
   setPortTarget, stageRoles, targetOptions, type WfNodePatch
 } from './workflowForm'
 import { useT, type TKey } from './i18n'
+import { WorkflowTemplateBlock } from './WorkflowTemplateBlock'
+import type { NodeTemplatesHook } from './nodeTemplates'
 
 interface Props {
   workflow: Workflow
@@ -29,13 +31,15 @@ interface Props {
   scope?: WfScope
   /** Открыть путь подзадачи ноды «Работа» (только из графа типа). Нет — кнопки «Открыть» нет. */
   onOpenPath?(nodeId: string): void
+  /** Библиотека своих нод: блок «Своя нода» (сохранить, обновить из шаблона). Нет — блока нет. */
+  library?: NodeTemplatesHook
 }
 
 /**
  * Инспектор воркфлоу — форма выбранной ноды или перехода. Каждый порт ноды — select «куда ведёт», поэтому
  * весь граф можно собрать с клавиатуры, не трогая холст; без выделения — список нод для выбора.
  */
-export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues, scope = 'run', onOpenPath }: Props): React.JSX.Element {
+export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues, scope = 'run', onOpenPath, library }: Props): React.JSX.Element {
   const t = useT()
   const targets = issueTargets(issues)
   const node = selection?.kind === 'node' ? workflow.nodes.find((n) => n.id === selection.id) : undefined
@@ -53,6 +57,9 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
         <NodeHead node={node} />
         <NodeHelp type={node.type} scope={scope} />
         <NodeForm node={node} workflow={workflow} roles={roles} columns={columns} onChange={onChange} scope={scope} onOpenPath={onOpenPath} />
+        {library && node.type !== 'start' && (
+          <WorkflowTemplateBlock key={node.id} node={node} workflow={workflow} onChange={onChange} library={library} scope={scope} />
+        )}
         {WF_PORTS[node.type].length > 0 && (
           <fieldset className="wf-ports">
             <legend>{t('config.wf.insp.ports')}</legend>
