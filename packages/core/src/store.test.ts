@@ -5,7 +5,10 @@ import assert from 'node:assert/strict'
 import { STATUS_HISTORY_LIMIT } from './status-history.ts'
 import { TaskStore, EVENT_ANSWER_LIMIT, type Persistence, type StoreSnapshot } from './store.ts'
 import { DEFAULT_COLUMNS } from './types.ts'
-import { WORKFLOW_VERSION_TASK_SCOPE, legacyDefaultWorkflow, describeWorkflow, legacyPipelineWorkflow, type Workflow } from './workflow.ts'
+import {
+  WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, describeWorkflow, legacyPipelineWorkflow,
+  type WfSubflow, type Workflow
+} from './workflow.ts'
 import { presetTaskType, runTypeInput, snapshotTaskType, type TaskType } from './task-types.ts'
 
 /** Хранилище в памяти: снапшот проходит через JSON, как файл на диске. */
@@ -589,5 +592,244 @@ describe('describeWorkflow', () => {
     assert.equal(stages.find((x) => x.id === 'limit')!.condition, 'задача заходила в «Работа» не меньше 3 раз')
     assert.match(stages.find((x) => x.id === 'conflict')!.instructions!, /Разрешите конфликт/)
     assert.deepEqual(stages.find((x) => x.id === 'end')!.next, {})
+  })
+})
+
+describe('путь подзадачи: подзадача прогона ходит по графу ноды «Работа»', () => {
+  const opts = { roleIds: ['developer', 'reviewer'] }
+  /** Путь «работа → проверка агентом → мерж»: отказ — в работу. */
+  const reviewPath = (): WfSubflow => ({
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'impl', type: 'work', instructions: 'внутри пути', x: 0, y: 0 },
+      { id: 'rev', type: 'gate', roleId: 'reviewer', x: 0, y: 0 },
+      { id: 'merge', type: 'merge', x: 0, y: 0 },
+      { id: 'conflict', type: 'human', title: 'Конфликт мержа', x: 0, y: 0 },
+      { id: 'end', type: 'end', merged: true, x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e1', from: 'start', outcome: 'next', to: 'impl' },
+      { id: 'e2', from: 'impl', outcome: 'next', to: 'rev' },
+      { id: 'e3', from: 'rev', outcome: 'accept', to: 'merge' },
+      { id: 'e4', from: 'rev', outcome: 'reject', to: 'impl' },
+      { id: 'e5', from: 'merge', outcome: 'ok', to: 'end' },
+      { id: 'e6', from: 'merge', outcome: 'conflict', to: 'conflict' },
+      { id: 'e7', from: 'conflict', outcome: 'accept', to: 'merge' },
+      { id: 'e8', from: 'conflict', outcome: 'reject', to: 'impl' }
+    ]
+  })
+  /** Прогон «Работа → человек → конец» с начатым графом; `subflow` — путь «Работы» (нет — по умолчанию). */
+  function started(subflow?: WfSubflow, p?: Persistence) {
+    const s = store(p)
+    const wf = defaultWorkflow([{ id: 'developer' }])
+    const work = wf.nodes.find((n) => n.id === 'work')!
+    work.type === 'work' && Object.assign(work, { instructions: 'снаружи', showcase: { what: 'макеты', required: true } })
+    if (subflow) Object.assign(work, { subflow })
+    const run = s.createRun('цель', undefined, wf)
+    s.setRunPty(run.id, 'pty_c', 'claude')
+    s.enterRunStage(run.id, opts)
+    const task = s.createTask({ title: 'Подзадача', runId: run.id, roleId: 'developer' })
+    return { s, run, task }
+  }
+  const events = (s: TaskStore, type: string) => s.listEvents().filter((e) => e.type === type)
+
+  it('taskWorkflow: путь ноды или путь по умолчанию; вне пути — граф прогона', () => {
+    const { s, task } = started()
+    const path = s.taskWorkflow(s.getTask(task.id)!)
+    assert.equal(path.version, WORKFLOW_VERSION)
+    assert.deepEqual({ nodes: path.nodes, edges: path.edges }, defaultSubflow())
+
+    const own = started(reviewPath())
+    const ownPath = own.s.taskWorkflow(own.s.getTask(own.task.id)!)
+    assert.deepEqual(ownPath.nodes.map((n) => n.id), reviewPath().nodes.map((n) => n.id))
+
+    // Задача старого движка и «Входящие» — граф прогона, как runWorkflow.
+    const legacy = store()
+    const old = legacy.createRun('старый', undefined, legacyDefaultWorkflow([]))
+    const t = legacy.createTask({ title: 'A', runId: old.id })
+    assert.deepEqual(legacy.taskWorkflow(legacy.getTask(t.id)!), legacy.runWorkflow(old.id))
+    const orphan = legacy.createTask({ title: 'Во «Входящих»' })
+    assert.deepEqual(legacy.taskWorkflow(legacy.getTask(orphan.id)!), legacy.runWorkflow(orphan.runId))
+  })
+
+  it('advanceStage ведёт подзадачу по пути: вход, проверка, отказ, мерж, конец; позиция прогона не двигается', () => {
+    const { s, run, task } = started(reviewPath())
+    const before = structuredClone(s.getRun(run.id)!.stage)
+
+    let step = s.advanceStage(task.id, 'next', opts)
+    assert.deepEqual(step.action, { type: 'start_worker', nodeId: 'impl' })
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'impl')
+    assert.equal(events(s, 'stage_changed').at(-1)!.payload.taskId, task.id)
+    assert.equal(events(s, 'stage_changed').at(-1)!.payload.to, 'impl')
+
+    step = s.advanceStage(task.id, 'next', opts)
+    assert.deepEqual(step.action, { type: 'create_gate', nodeId: 'rev', roleId: 'reviewer' })
+    step = s.advanceStage(task.id, 'reject', opts)
+    assert.deepEqual(step.action, { type: 'start_worker', nodeId: 'impl' })
+    assert.equal(s.getTask(task.id)!.stage!.visits.impl, 2)
+    s.advanceStage(task.id, 'next', opts)
+    step = s.advanceStage(task.id, 'accept', opts)
+    assert.deepEqual(step.action, { type: 'merge', nodeId: 'merge' })
+    step = s.advanceStage(task.id, 'ok', opts)
+    assert.deepEqual(step.action, { type: 'done', nodeId: 'end', merged: true })
+
+    assert.deepEqual(s.getRun(run.id)!.stage, before, 'Run.stage независим от Task.stage')
+    assert.deepEqual(s.getTask(task.id)!.stageHistory!.map((h) => h.nodeId), ['impl', 'rev', 'impl', 'rev', 'merge', 'end'])
+    assert.equal(s.getTask(task.id)!.stageOf!.nodeId, 'work', 'stageOf по-прежнему указывает на «Работу» прогона')
+  })
+
+  it('без subflow — путь по умолчанию: работа → мерж → конец, конфликт — человеку', () => {
+    const { s, task } = started()
+    assert.deepEqual(s.advanceStage(task.id, 'next', opts).action, { type: 'start_worker', nodeId: 'work' })
+    assert.deepEqual(s.advanceStage(task.id, 'next', opts).action, { type: 'merge', nodeId: 'merge' })
+    assert.deepEqual(s.advanceStage(task.id, 'conflict', opts).action, { type: 'request_human', nodeId: 'conflict' })
+    assert.deepEqual(s.advanceStage(task.id, 'reject', opts).action, { type: 'start_worker', nodeId: 'work' })
+    s.advanceStage(task.id, 'next', opts)
+    assert.deepEqual(s.advanceStage(task.id, 'ok', opts).action, { type: 'done', nodeId: 'end', merged: true })
+  })
+
+  it('«Вопрос человеку» в пути — blocked с событием (граф с ask в пути отвергает валидация, но исполнитель не падает)', () => {
+    const path = reviewPath()
+    path.nodes.push({ id: 'q', type: 'ask', roleId: 'developer', instructions: 'вопрос', x: 0, y: 0 })
+    path.edges = path.edges.map((e) => (e.id === 'e2' ? { ...e, to: 'q' } : e))
+    path.edges.push({ id: 'eq', from: 'q', outcome: 'next', to: 'rev' })
+    const { s, task } = started(path)
+    s.advanceStage(task.id, 'next', opts)
+    const step = s.advanceStage(task.id, 'next', opts)
+    assert.equal(step.action.type, 'blocked')
+    assert.equal(events(s, 'workflow_blocked').at(-1)!.payload.nodeId, 'q')
+  })
+
+  it('enterWork: первый вход — путь; на «Работе» пути — ничего; с проверки — назад в работу с копящимися заходами', () => {
+    const { s, task } = started(reviewPath())
+    assert.deepEqual(s.enterWork(task.id, opts), { type: 'start_worker', nodeId: 'impl' })
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'impl')
+    assert.equal(s.enterWork(task.id, opts), undefined, 'уже на «Работе» пути')
+    s.advanceStage(task.id, 'next', opts)
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'rev')
+    assert.deepEqual(s.enterWork(task.id, opts), { type: 'start_worker', nodeId: 'impl' })
+    assert.equal(s.getTask(task.id)!.stage!.visits.impl, 2)
+    assert.equal(events(s, 'stage_changed').at(-1)!.payload.outcome, 'restart')
+  })
+
+  it('запрет остаётся: проверки, задачи-ответы и задачи этапа ask, подзадачи вне «Работы»', () => {
+    const s = store()
+    const wf: Workflow = {
+      version: WORKFLOW_VERSION,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'ask', type: 'ask', roleId: 'developer', instructions: 'о чём спросить', x: 0, y: 0 },
+        { id: 'work', type: 'work', x: 0, y: 0 },
+        { id: 'end', type: 'end', x: 0, y: 0 }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'ask' },
+        { id: 'e2', from: 'ask', outcome: 'next', to: 'work' },
+        { id: 'e3', from: 'work', outcome: 'next', to: 'end' }
+      ]
+    }
+    const run = s.createRun('цель', undefined, wf)
+    s.setRunPty(run.id, 'pty_c', 'claude')
+    // Пока граф не начат, подзадачи можно заготовить: к этапу они не привязаны.
+    const answer = s.createTask({ title: 'Ответ', runId: run.id, roleId: 'developer', answerFor: 'human' })
+    const free = s.createTask({ title: 'Заготовка', runId: run.id, roleId: 'developer' })
+    s.enterRunStage(run.id, opts)
+    const question = s.createTask({ title: 'Вопросы', runId: run.id, roleId: 'developer', stageOf: { nodeId: 'ask', visit: 1 } })
+    assert.throws(() => s.advanceStage(question.id, 'next', opts), /вне этапа «Работа»/)
+    assert.equal(s.enterWork(question.id, opts), undefined)
+    assert.equal(s.getTask(question.id)!.stage, undefined)
+    assert.equal(s.taskWorkflow(s.getTask(question.id)!), s.runWorkflow(run.id), 'у задачи этапа ask граф прогона')
+
+    assert.throws(() => s.advanceStage(answer.id, 'next', opts), /задача-ответ/)
+    assert.equal(s.enterWork(answer.id, opts), undefined)
+
+    // Подзадача без привязки к «Работе» (stageOf нет) тоже мимо пути.
+    assert.throws(() => s.advanceStage(free.id, 'next', opts), /вне этапа «Работа»/)
+  })
+
+  it('проверка подзадачи и проверка ветки прогона: advanceStage запрещён по-прежнему', () => {
+    const { s, run, task } = started(reviewPath())
+    s.advanceStage(task.id, 'next', opts)
+    s.advanceStage(task.id, 'next', opts)
+    const gate = s.createTask({ title: 'Проверка', runId: run.id, roleId: 'reviewer', gateFor: { taskId: task.id, nodeId: 'rev' } })
+    assert.throws(() => s.advanceStage(gate.id, 'next', opts), /проверка задачи/)
+    assert.equal(s.enterWork(gate.id, opts), undefined)
+    const runGate = s.createTask({ title: 'Ревью ветки', runId: run.id, roleId: 'reviewer', gateFor: { runId: run.id, nodeId: 'review' } })
+    assert.throws(() => s.advanceStage(runGate.id, 'next', opts), /проверка глобальной задачи/)
+  })
+
+  it('taskWorkStage и taskStageNode: до входа — «Работа» прогона, в пути — нода пути с наследованием инструкций и показа', () => {
+    const { s, task } = started(reviewPath())
+    const outer = s.taskWorkStage(task.id, opts)!
+    assert.equal(outer.nodeId, 'work')
+    assert.equal(outer.instructions, 'снаружи')
+    assert.equal(s.taskStageNode(task.id, opts)!.id, 'work')
+
+    s.advanceStage(task.id, 'next', opts)
+    const inner = s.taskWorkStage(task.id, opts)!
+    assert.equal(inner.nodeId, 'impl')
+    assert.equal(inner.instructions, 'внутри пути', 'заданное нодой пути перекрывает внешнее')
+    assert.deepEqual(inner.showcase, { what: 'макеты', required: true }, 'показ наследуется от внешней «Работы»')
+    assert.equal(s.taskStageNode(task.id, opts)!.id, 'impl')
+
+    s.advanceStage(task.id, 'next', opts)
+    assert.equal(s.taskWorkStage(task.id, opts), undefined, 'на проверке этапа «Работа» нет')
+    assert.equal(s.taskStageNode(task.id, opts)!.type, 'gate')
+
+    // Путь по умолчанию: у ноды пути своих инструкций нет — действуют внешние.
+    const def = started()
+    def.s.advanceStage(def.task.id, 'next', opts)
+    assert.equal(def.s.taskWorkStage(def.task.id, opts)!.instructions, 'снаружи')
+
+    // Заголовок: путь по умолчанию без title у ноды — название внешней «Работы», а не «Работа».
+    assert.equal(def.s.taskWorkStage(def.task.id, opts)!.title, outer.title)
+    assert.notEqual(outer.title, 'Работа')
+    assert.equal(def.s.taskWorkStage(def.task.id, opts)!.nodeId, 'work')
+  })
+
+  it('taskWorkStage: заголовок пути — явный title ноды пути, иначе название внешней «Работы»', () => {
+    const before = started()
+    const outerTitle = before.s.taskWorkStage(before.task.id, opts)!.title
+    assert.equal(outerTitle, 'Реализация')
+    before.s.enterWork(before.task.id, opts)
+    assert.equal(before.s.taskWorkStage(before.task.id, opts)!.title, outerTitle, 'путь по умолчанию: заголовок не меняется на «Работа»')
+
+    const path = reviewPath()
+    Object.assign(path.nodes.find((n) => n.id === 'impl')!, { title: 'Кодинг' })
+    const own = started(path)
+    assert.equal(own.s.taskWorkStage(own.task.id, opts)!.title, outerTitle)
+    own.s.advanceStage(own.task.id, 'next', opts)
+    assert.equal(own.s.taskWorkStage(own.task.id, opts)!.title, 'Кодинг', 'явный title ноды пути перекрывает внешний')
+
+    // Нода пути без title при заданном пути: заголовок внешней «Работы».
+    const noTitle = started(reviewPath())
+    noTitle.s.advanceStage(noTitle.task.id, 'next', opts)
+    assert.equal(noTitle.s.taskWorkStage(noTitle.task.id, opts)!.title, outerTitle)
+  })
+
+  it('рестарт: Task.stage и Run.stage переживают перезагрузку, путь продолжается', () => {
+    const p = memory()
+    const first = started(reviewPath(), p)
+    first.s.advanceStage(first.task.id, 'next', opts)
+    first.s.advanceStage(first.task.id, 'next', opts)
+    const runStage = structuredClone(first.s.getRun(first.run.id)!.stage)
+
+    const s2 = store(p)
+    const task = s2.getTask(first.task.id)!
+    assert.equal(task.stage!.nodeId, 'rev')
+    assert.deepEqual(s2.getRun(first.run.id)!.stage, runStage)
+    assert.equal(s2.taskWorkflow(task).nodes.some((n) => n.id === 'rev'), true)
+    assert.deepEqual(s2.advanceStage(task.id, 'accept', opts).action, { type: 'merge', nodeId: 'merge' })
+  })
+
+  it('этап прогона закрывается, когда подзадачи дошли до конца пути (kind=done) — как раньше', () => {
+    const { s, run, task } = started()
+    s.advanceStage(task.id, 'next', opts)
+    s.advanceStage(task.id, 'next', opts)
+    s.advanceStage(task.id, 'ok', opts)
+    assert.equal(events(s, 'stage_tasks_done').length, 0, 'путь пройден, но задача ещё не в done')
+    s.updateTask(task.id, { status: 'done' })
+    assert.equal(events(s, 'stage_tasks_done').length, 1)
+    assert.notEqual(s.getRun(run.id)!.stageTasksDoneAt, undefined)
   })
 })

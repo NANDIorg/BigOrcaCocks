@@ -13,7 +13,7 @@ import { isTaskRole } from './prompts.ts'
 import { trackActiveTime } from './active-time.ts'
 import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
-  WORKFLOW_VERSION, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction,
+  WORKFLOW_VERSION, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction,
   startRunStage, startStage, toTaskScopeWorkflow, wfNodeTitle, wfWorkRoleIds, wfWorkStage,
   type WfAction, type WfNode, type WfNodeType, type WfOutcome, type WfShowcase, type WfStage, type WfWorkStage, type Workflow
 } from './workflow.ts'
@@ -924,6 +924,33 @@ export class TaskStore {
   }
 
   /**
+   * Граф, по которому ходит подзадача (`Task.stage`). Подзадача воркфлоу глобальной задачи на этапе «Работа»
+   * (`Task.stageOf` — нода `work`) идёт по пути этой ноды: `work.subflow`, а нет его — `defaultSubflow()`. Все остальные
+   * задачи (старый движок по подзадачам, «Входящие», задачи этапа `ask`, проверки) — по графу прогона, как `runWorkflow`.
+   * Версия пути — `WORKFLOW_VERSION`: он часть графа версии 2, своей версии у него нет.
+   */
+  taskWorkflow(task: Task, fallback: readonly string[] | RunWorkflowFallback = {}): Workflow {
+    const owner = this.pathOwner(task, fallback)
+    if (!owner) return this.runWorkflow(task.runId, fallback)
+    return { version: WORKFLOW_VERSION, ...(owner.subflow ?? defaultSubflow()) }
+  }
+
+  /**
+   * Нода «Работа» глобальной задачи, путь которой проходит подзадача: только рабочая подзадача (не ответ и не
+   * проверка) прогона с воркфлоу прогона, привязанная к ноде `work`. Иначе undefined.
+   */
+  private pathOwner(task: Task, fallback: readonly string[] | RunWorkflowFallback): Extract<WfNode, { type: 'work' }> | undefined {
+    if (task.answerFor || task.gateFor || !task.stageOf || !this.isRunScope(task)) return undefined
+    const node = this.runWorkflow(task.runId, fallback).nodes.find((n) => n.id === task.stageOf!.nodeId)
+    return node?.type === 'work' ? node : undefined
+  }
+
+  /** Граф, в котором лежит нода `Task.stage` (внутри пути или в графе прогона) или, пока задача не вошла в путь, `Task.stageOf`. */
+  private taskNodeGraph(task: Task, fallback: readonly string[] | RunWorkflowFallback): Workflow {
+    return task.stage ? this.taskWorkflow(task, fallback) : this.runWorkflow(task.runId, fallback)
+  }
+
+  /**
    * Миграция на типы задач: прогоны без `typeId` (кроме «Входящих») получают тип и его снимок — тип, в который
    * main перенёс настройки проекта. `Run.workflow` не трогается: идущие задачи продолжают по своему графу.
    * Идемпотентна; возвращает число изменённых прогонов (0 — без записи на диск).
@@ -951,12 +978,15 @@ export class TaskStore {
     const task = this.mustTask(taskId)
     if (task.answerFor) throw new Error(`задача ${taskId} — задача-ответ, она идёт мимо воркфлоу`)
     if (task.gateFor) throw new Error(`задача ${taskId} — проверка ${task.gateFor.taskId !== undefined ? `задачи ${task.gateFor.taskId}` : `глобальной задачи ${task.gateFor.runId}`}, у неё нет своего этапа`)
-    if (this.isRunScope(task)) throw new Error(`задача ${taskId} — подзадача воркфлоу глобальной задачи: по графу ходит сама глобальная задача (advanceRunStage)`)
+    const onPath = this.pathOwner(task, opts) !== undefined
+    if (this.isRunScope(task) && !onPath) {
+      throw new Error(`задача ${taskId} — подзадача воркфлоу глобальной задачи вне этапа «Работа»: по графу ходит сама глобальная задача (advanceRunStage)`)
+    }
     if (!task.stage && outcome !== 'next') {
       throw new Error(`задача ${taskId} ещё не в воркфлоу: войти в него можно только исходом next, получено ${outcome}`)
     }
-    const wf = this.runWorkflow(task.runId, opts)
-    const ctx = { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}) }
+    const wf = this.taskWorkflow(task, opts)
+    const ctx = this.taskStageCtx(task, onPath, opts)
     const step = task.stage ? nextStage(wf, task.stage, outcome, ctx) : startStage(wf, ctx)
     const from = task.stage?.nodeId
     const moved = step.stage.nodeId !== from && step.stage.nodeId !== ''
@@ -992,12 +1022,13 @@ export class TaskStore {
    */
   enterWork(taskId: string, opts: RunWorkflowFallback = {}): WfAction | undefined {
     const task = this.mustTask(taskId)
-    if (task.answerFor || task.gateFor || this.isRunScope(task)) return undefined
-    const wf = this.runWorkflow(task.runId, opts)
+    const onPath = this.pathOwner(task, opts) !== undefined
+    if (task.answerFor || task.gateFor || (this.isRunScope(task) && !onPath)) return undefined
+    const wf = this.taskWorkflow(task, opts)
     const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
     if (current?.type === 'work' || current?.type === 'ask') return undefined
     if (!task.stage) return this.advanceStage(taskId, 'next', opts).action
-    const ctx = { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}) }
+    const ctx = this.taskStageCtx(task, onPath, opts)
     const step = startStage(wf, ctx)
     if (step.action.type === 'blocked') {
       this.pushEvent('workflow_blocked', { taskId, runId: task.runId, nodeId: step.action.nodeId, reason: short(step.action.reason) })
@@ -1019,7 +1050,12 @@ export class TaskStore {
     return step.action
   }
 
-  /** Задача принадлежит глобальной задаче с воркфлоу прогона: её позиции на графе нет. */
+  /** Контекст переходов подзадачи: на пути ноды `work` — `scope: 'subtask'` (в пути нет `ask`), иначе прежний (старый движок). */
+  private taskStageCtx(task: Task, onPath: boolean, opts: RunWorkflowFallback): { roleId: string; roleIds?: readonly string[]; scope?: 'subtask' } {
+    return { roleId: task.roleId, ...(opts.roleIds ? { roleIds: opts.roleIds } : {}), ...(onPath ? { scope: 'subtask' as const } : {}) }
+  }
+
+  /** Задача принадлежит глобальной задаче с воркфлоу прогона: своей позиции на графе прогона у неё нет (путь ноды `work` — отдельно, `pathOwner`). */
   private isRunScope(task: Task): boolean {
     return task.runId !== undefined && this.runs.get(task.runId)?.workflowScope === 'run'
   }
@@ -1782,13 +1818,31 @@ export class TaskStore {
   /**
    * Этап «Работа» или «Вопрос человеку», на котором стоит задача (`wfWorkStage` по графу прогона): для раздела
    * «Этап» в промпте воркера и проверки показа в `finishDispatch`. Задача вне воркфлоу или на другом этапе —
-   * undefined.
+   * undefined. Подзадача на пути ноды «Работа» (`taskWorkflow`) наследует инструкции, показ и роли этой ноды: ноде пути
+   * их задавать необязательно, а заданные перекрывают внешние. Заголовок — тоже: своим считается только явный
+   * `title` ноды пути, иначе остаётся название внешней «Работы» (в `defaultSubflow()` у ноды его нет — раздел «Этап»
+   * в промпте не должен превращаться в «Работа»).
    */
   taskWorkStage(taskId: string, fallback: RunWorkflowFallback = {}): WfWorkStage | undefined {
     const task = this.mustTask(taskId)
     const nodeId = task.stage?.nodeId ?? task.stageOf?.nodeId
     if (nodeId === undefined) return undefined
-    return wfWorkStage(this.runWorkflow(task.runId, fallback), nodeId)
+    const stage = wfWorkStage(this.taskNodeGraph(task, fallback), nodeId)
+    const owner = task.stage ? this.pathOwner(task, fallback) : undefined
+    if (!stage || !owner) return stage
+    const outer = wfWorkStage({ version: WORKFLOW_VERSION, nodes: [owner], edges: [] }, owner.id)
+    if (!outer) return stage
+    const instructions = stage.instructions ?? outer.instructions
+    const showcase = stage.showcase ?? outer.showcase
+    const roleIds = stage.roleIds ?? outer.roleIds
+    const ownTitle = this.taskNodeGraph(task, fallback).nodes.find((n) => n.id === nodeId)?.title?.trim()
+    return {
+      ...stage,
+      title: ownTitle || outer.title,
+      ...(instructions ? { instructions } : {}),
+      ...(showcase ? { showcase } : {}),
+      ...(roleIds ? { roleIds } : {})
+    }
   }
 
   /**
@@ -1799,7 +1853,7 @@ export class TaskStore {
     const task = this.mustTask(taskId)
     const nodeId = task.stage?.nodeId ?? task.stageOf?.nodeId
     if (nodeId === undefined) return undefined
-    return this.runWorkflow(task.runId, fallback).nodes.find((n) => n.id === nodeId)
+    return this.taskNodeGraph(task, fallback).nodes.find((n) => n.id === nodeId)
   }
 
   /**

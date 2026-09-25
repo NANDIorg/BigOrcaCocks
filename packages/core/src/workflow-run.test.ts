@@ -550,12 +550,10 @@ describe('граф без человека и ноды merge/git/условия 
 })
 
 describe('старый движок подзадач не задет', () => {
-  it('подзадача прогона с воркфлоу по графу не ходит: advanceStage — ошибка, enterWork — ничего, гейт-проверка ветки прогона — тоже', () => {
+  it('подзадача прогона на «Работе» ходит по пути ноды (store.test.ts, «путь подзадачи»); проверка ветки прогона и задача этапа ask — нет', () => {
     const { s, run } = started()
     const t = s.createTask({ title: 'A', runId: run.id })
-    assert.throws(() => s.advanceStage(t.id, 'next'), /по графу ходит сама глобальная задача/)
-    assert.equal(s.enterWork(t.id), undefined)
-    assert.equal(s.getTask(t.id)!.stage, undefined)
+    assert.equal(s.getTask(t.id)!.stage, undefined, 'создание задачи в путь не заводит')
     finish(s, t.id)
     s.finishStage(run.id, opts)
     const gate = s.createTask({ title: 'Ревью', runId: run.id, roleId: 'reviewer', gateFor: { runId: run.id, nodeId: 'review' } })
