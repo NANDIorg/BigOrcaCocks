@@ -784,11 +784,12 @@ button:disabled { opacity: .45; cursor: default; }
 .main-head .row { flex-wrap: wrap; row-gap: 10px; }
 .main-head h1 { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Бейдж текущей git-ветки рядом с названием проекта (useProjectBranch, projectBranch.ts) */
+/* Бейдж текущей git-ветки рядом с названием проекта (useProjectBranch, projectBranch.ts).
+   При нехватке места первым сжимается бейдж (flex-shrink 100), название проекта — в последнюю очередь. */
 .main-head .head-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
 .main-head .head-title h1 { flex: 0 1 auto; }
 .branch-badge {
-  flex: 0 1 auto; min-width: 0; max-width: 280px; height: 26px; padding: 0 10px; border-radius: 13px;
+  flex: 0 100 auto; min-width: 0; max-width: min(280px, 45%); height: 26px; padding: 0 10px; border-radius: 13px;
   border: 1px solid var(--chip); color: var(--muted); font-size: 12px; font-weight: 500;
   display: inline-flex; align-items: center; gap: 5px;
 }
