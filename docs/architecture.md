@@ -769,6 +769,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
   Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
+- **Меню веток у бейджа ветки** (`BranchMenu.tsx`, логика — `renderer/src/projectGit.ts`, ветка — `useProjectBranch.ts`):
+  бейдж текущей ветки в шапке — кнопка; по клику поповер с «Fetch», «Pull» (у Pull — ↑ahead ↓behind текущей ветки),
+  поиском и списками локальных / удалённых веток (текущая отмечена, занятая другим worktree недоступна, удалённые без
+  дублей локальных); выбор ветки — `projects.checkoutBranch`. Пока идёт операция, всё заблокировано; её состояние живёт
+  в `BranchMenu`, а не в поповере, поэтому закрытое меню не теряет идущий fetch/pull. Ошибки — по `ipcErrorCode`
+  (`gitErrorMessage`): у кодов `PROJECT_GIT_ERROR_CODES` свой текст в `i18n/*/shell.ts` (`branch.err.*`), у `git.opFailed`
+  и неизвестных — сообщение main (в нём stderr git). Нет git-методов в preload или канала в main
+  (`No handler registered for 'projects:…'`) — «перезапустите приложение» (`projectGitApi`, `isStaleGitError`).
+  После checkout и pull бейдж обновляется сразу (`useProjectBranch().update`), затем перечитывается.
 - **Смена проекта** (`useEffect` по `active?.id`: сайдбар или `projects:focus`) сбрасывает выбранную
   задачу и закрывает модалку задачи (`openTaskId = null`) — чужая задача в модалке не остаётся.
 - **Добавление проекта** (`addProject` в `App.tsx`, логика — `renderer/src/projectAdd.ts` `startAddProject`,
