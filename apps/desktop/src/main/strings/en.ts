@@ -146,6 +146,10 @@ export default {
 
   'review.noBranch': 'the task has no branch',
   'review.untracked': 'new files:',
+  'git.protectedBranch': 'merging into “{branch}” is not allowed: it is a shared branch (Project → Git → Protected branches). Run the task inside a global task with a feature branch, or open a working-branch worktree in Orca',
+  'git.runBranchFailed': 'could not create branch “{branch}” for the global task from “{base}”: {error}',
+  'git.runBranchMissing': 'branch “{branch}” of the global task no longer exists in the repository — restore it or detach the branch from the task',
+  'git.badSettings': 'project Git settings: {problems}',
   'request.alreadyCancelled': 'already decided: request {id} was cancelled',
   'request.alreadyResolved': 'already decided: request {id} was resolved',
 

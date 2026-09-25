@@ -35,6 +35,7 @@ export const Icon = {
   refresh: (): React.JSX.Element => <svg {...base}><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>,
   workflow: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="7" height="5" rx="1.5" /><rect x="14" y="15" width="7" height="5" rx="1.5" /><path d="M10 6.5h2.5a2 2 0 0 1 2 2V13M14.5 13l-2-2M14.5 13l2-2" /><path d="M6.5 9v6.5a2 2 0 0 0 2 2H14" /></svg>,
   runs: (): React.JSX.Element => <svg {...base}><path d="M7 5v14l12-7z" /></svg>,
+  branch: (): React.JSX.Element => <svg {...base}><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11.5 8.5" /></svg>,
   close: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 6l12 12M18 6L6 18" /></svg>,
   more: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth={3} /></svg>,
   chevron: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M9 6l6 6-6 6" /></svg>

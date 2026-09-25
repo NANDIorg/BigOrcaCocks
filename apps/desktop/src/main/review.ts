@@ -1,31 +1,46 @@
 import type { TaskStore, HumanRequest, RequestResolution, Task } from '@orca-board/core'
-import { reviewInfo, commitWorktree, mergeBranch, removeWorktree, type ReviewInfo } from './git'
+import { reviewInfo, commitWorktree, currentBranch, mergeBranch, removeWorktree, type ReviewInfo } from './git'
 import { OrcaError, mt } from './i18n'
+import { reviewBase, type MergeTarget } from './run-branch'
 
 export function getReview(store: TaskStore, repoRoot: string, taskId: string): ReviewInfo {
   const task = store.getTask(taskId)
   if (!task) throw new Error(`task not found: ${taskId}`)
   if (!task.worktree || !task.branch) throw new OrcaError('review.noBranch')
-  return reviewInfo(repoRoot, task.worktree, task.branch)
+  return reviewInfo(repoRoot, task.worktree, task.branch, reviewBase(store, repoRoot, task))
+}
+
+/**
+ * Цель мержа задачи (`mergeTarget` в `run-branch.ts`: ветка глобальной задачи с защитой общих веток). Нет —
+ * текущая ветка корня без проверок: так вызывают тесты и код, которому настройки проекта не нужны.
+ */
+export type MergeTargetOf = (task: Task) => MergeTarget
+
+function rootTarget(repoRoot: string): MergeTarget {
+  return { cwd: repoRoot, branch: currentBranch(repoRoot) }
 }
 
 /** Итог мержа ветки задачи: `conflict` — git не слил ветку (текст ошибки в `error`), ветка и worktree на месте. */
 export type MergeResult = { ok: true } | { ok: false; conflict: true; error: string }
 
 /**
- * Git-часть приёмки рабочей задачи: закоммитить хвосты worktree, слить ветку в текущую ветку репозитория
- * (если в ней есть коммиты), убрать worktree и ветку. Store не трогает — задачу в done переводит вызывающий
+ * Git-часть приёмки рабочей задачи: закоммитить хвосты worktree, слить ветку в цель — ветку глобальной задачи или
+ * текущую ветку корня (если в ней есть коммиты), убрать worktree и ветку. Store не трогает — задачу в done переводит вызывающий
  * (приёмка вне воркфлоу — `acceptReview`, нода `merge` — исполнитель воркфлоу, `src/main/workflow.ts`).
  * Не слилось — `conflict`, ничего не удалено: конфликт разрешают в ветке и сливают снова.
  * Ошибка коммита или удаления worktree — исключение (это не конфликт, повтор мержа не поможет).
  */
-export function mergeTaskBranch(repoRoot: string, task: Pick<Task, 'title' | 'worktree' | 'branch' | 'branchForeign'>): MergeResult {
+export function mergeTaskBranch(
+  repoRoot: string,
+  task: Pick<Task, 'title' | 'worktree' | 'branch' | 'branchForeign'>,
+  target: MergeTarget = rootTarget(repoRoot)
+): MergeResult {
   if (!task.worktree || !task.branch) return { ok: true }
   commitWorktree(task.worktree, `orca: ${task.title}`)
-  const info = reviewInfo(repoRoot, task.worktree, task.branch)
+  const info = reviewInfo(repoRoot, task.worktree, task.branch, target.branch)
   if (info.commits.length > 0) {
     try {
-      mergeBranch(repoRoot, task.branch, `Merge orca task: ${task.title}`)
+      mergeBranch(target.cwd, task.branch, `Merge orca task: ${task.title}`)
     } catch (e) {
       return { ok: false, conflict: true, error: (e as Error).message }
     }
@@ -43,17 +58,19 @@ export function mergeTaskBranch(repoRoot: string, task: Pick<Task, 'title' | 'wo
  * `decision` — решение человека по ответу, уходит координатору в answer_accepted.
  * Задачу на этапе воркфлоу принимает `reviewAccept` (`src/main/workflow.ts`).
  */
-export function acceptReview(store: TaskStore, repoRoot: string, taskId: string, decision?: string): void {
+export function acceptReview(store: TaskStore, repoRoot: string, taskId: string, decision?: string, targetOf?: MergeTargetOf): void {
   const task = store.getTask(taskId)
   if (!task) throw new Error(`task not found: ${taskId}`)
   // Устаревший ответ (последний запуск его не сдал) не принимаем — до git-части, ветку не трогаем.
   store.assertAnswerAcceptable(taskId)
-  if (task.answerFor && task.worktree && task.branch) {
-    const info = reviewInfo(repoRoot, task.worktree, task.branch)
-    if (info.commits.length > 0) mergeBranch(repoRoot, task.branch, `Merge orca answer: ${task.title}`)
+  // Цель — до git-части: защищённая ветка корня останавливает приёмку, ничего не тронув.
+  const target = task.worktree && task.branch ? (targetOf?.(task) ?? rootTarget(repoRoot)) : undefined
+  if (task.answerFor && task.worktree && task.branch && target) {
+    const info = reviewInfo(repoRoot, task.worktree, task.branch, target.branch)
+    if (info.commits.length > 0) mergeBranch(target.cwd, task.branch, `Merge orca answer: ${task.title}`)
     removeWorktree(repoRoot, task.worktree, task.branch)
   } else {
-    const merged = mergeTaskBranch(repoRoot, task)
+    const merged = mergeTaskBranch(repoRoot, task, target)
     if (!merged.ok) throw new Error(merged.error)
   }
   // Ответ для человека: store шлёт координатору answer_accepted.
@@ -83,13 +100,14 @@ export function resolveHumanRequest(
   id: string,
   resolution: RequestResolution,
   startWorker: (taskId: string) => { ptyId: string; dispatchId: string },
-  approved?: (request: HumanRequest) => void
+  approved?: (request: HumanRequest) => void,
+  targetOf?: MergeTargetOf
 ): ResolveOutcome {
   const pending = store.getRequest(id)
   if (!pending) throw new Error(`request not found: ${id}`)
   if (pending.status !== 'pending') throw new OrcaError(pending.status === 'cancelled' ? 'request.alreadyCancelled' : 'request.alreadyResolved', { id })
   if (resolution.action === 'accept' && pending.kind === 'answer') {
-    acceptReview(store, repoRoot, pending.taskId, resolution.text)
+    acceptReview(store, repoRoot, pending.taskId, resolution.text, targetOf)
     return { request: store.getRequest(id)! }
   }
   const request = store.resolveRequest(id, resolution)

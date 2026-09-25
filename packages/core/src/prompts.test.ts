@@ -124,6 +124,13 @@ describe('workerTaskPrompt: этап «Вопрос человеку»', () => {
     assert.match(skill, /- `question_answered` →[\s\S]*этапе\s+`ask`[\s\S]*`worker start` не нужен/)
     assert.match(skill, /- `request_created` →[\s\S]*`question`\s+с этапа `ask`[\s\S]*обрабатывать не нужно/)
   })
+
+  it('skills/coordinator.md: ветка глобальной задачи — координатор в её worktree и не ведёт её сам', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /worktree\s+\*\*ветки\s+своей\s+глобальной\s+задачи\*\*[\s\S]*`orca-board global get`[\s\S]*`git\.branch`/)
+    assert.match(skill, /Не\s+переключай\s+ветку,\s+не\s+коммить\s+и\s+не\s+мержи\s+сам/)
+    assert.match(skill, /слиты\s+в\s+ветку\s+глобальной\s+задачи/)
+  })
 })
 
 describe('promptChannel', () => {

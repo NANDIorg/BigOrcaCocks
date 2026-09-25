@@ -1,6 +1,7 @@
 import type { AgentKind } from './agents'
 import type { WfOutcome, WfStage, Workflow } from './workflow'
 import type { TaskTypeSnapshot } from './task-types'
+import type { RunGit } from './run-branch'
 export type { AgentKind }
 
 // ---------- роли ----------
@@ -355,6 +356,12 @@ export interface Run {
    * Нет — прогон от кода до статистики: время и токены координатора неизвестны.
    */
   coordinatorSessions?: AgentSession[]
+  /**
+   * Ветка глобальной задачи (`src/main/run-branch.ts`): подзадачи ответвляются от неё и сливаются в неё, а не в
+   * текущую ветку корня. Нет — «Входящие», выключенная настройка проекта или прогон, начатый до веток: подзадачи
+   * сливаются в корень, как раньше (миграция не нужна — у старых прогонов поле просто не появляется).
+   */
+  git?: RunGit
 }
 
 /** Запуск агента вне dispatch (координатор): для статистики времени и токенов. */

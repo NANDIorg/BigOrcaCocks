@@ -4,7 +4,7 @@ import {
   type HumanRequest, type OrcaEvent, type Role, type RunWorkflowFallback, type Task, type TaskStore, type WfAction, type WfNode,
   type WfOutcome, type Workflow
 } from '@orca-board/core'
-import { acceptReview, mergeTaskBranch } from './review'
+import { acceptReview, mergeTaskBranch, type MergeTargetOf } from './review'
 import { showcaseMarkdown } from '../shared/showcase'
 import {
   commitWorktree, gitCheckout, gitCommit, gitCreateBranch, gitPush, isBranchNameAcceptedByGit, removeWorktree,
@@ -28,6 +28,11 @@ export interface WorkflowDeps {
    * человеку»: она только на этот запуск, роль задачи не меняется (в отличие от роли «Работы»).
    */
   startWorker(taskId: string, opts?: { roleId?: string }): { ptyId: string; dispatchId: string }
+  /**
+   * Куда сливать ветку задачи на ноде `merge` и при приёмке вне графа (`mergeTarget` в `run-branch.ts`): ветка
+   * глобальной задачи или текущая ветка корня, если она не защищённая. Нет — текущая ветка корня (тесты).
+   */
+  mergeTarget?: MergeTargetOf
 }
 
 /** Сколько переходов подряд без ожидания (мерж → условие → мерж…) допускается, прежде чем считать граф зациклившимся. */
@@ -155,7 +160,9 @@ function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction, defer
       case 'merge': {
         let result: ReturnType<typeof mergeTaskBranch>
         try {
-          result = mergeTaskBranch(deps.repoRoot, task)
+          // Цель — только когда есть что сливать: защищённая ветка корня не должна останавливать задачу без ветки.
+          const target = task.worktree && task.branch ? deps.mergeTarget?.(task) : undefined
+          result = mergeTaskBranch(deps.repoRoot, task, target)
         } catch (e) {
           store.blockStage(taskId, `мерж не выполнен: ${message(e)}`)
           return
@@ -228,10 +235,14 @@ function runGitNode(deps: WorkflowDeps, task: Task, node: Extract<WfNode, { type
   const worktree = task.worktree ?? taskWorktreePath(repoRoot, task.id)
   try {
     switch (a.operation) {
-      case 'create_branch':
-        gitCreateBranch(repoRoot, worktree, branch!, a.base, task.branch === branch)
+      case 'create_branch': {
+        // База по умолчанию — ветка глобальной задачи (туда сольёт `merge`), как у `orca/<id>` в `startWorker`. Worktree
+        // уже есть — ветвимся от него (`base` не подставляем), иначе коммиты задачи остались бы в старой ветке.
+        const runBranch = task.runId ? store.getRun(task.runId)?.git?.branch : undefined
+        gitCreateBranch(repoRoot, worktree, branch!, a.base ?? (existsSync(worktree) ? undefined : runBranch), task.branch === branch)
         store.updateTask(task.id, { worktree, branch, branchForeign: undefined })
         break
+      }
       case 'checkout': {
         gitCheckout(repoRoot, worktree, branch!)
         // Ветку `orca/<id>` или ту, что задача уже вела как свою, чужой не считаем: уборка её удалит, как обычно.
@@ -454,7 +465,7 @@ export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: stri
   const task = mustTask(deps, taskId)
   if (task.answerFor || !task.stage) {
     if (task.gateFor) closeGate(deps, task)
-    else acceptReview(deps.store, deps.repoRoot, taskId, decision)
+    else acceptReview(deps.store, deps.repoRoot, taskId, decision, deps.mergeTarget)
     return
   }
   decide(deps, task, 'accept', decision)

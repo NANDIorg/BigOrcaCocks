@@ -146,6 +146,20 @@ describe('нода «Git»: create_branch до первой «Работы»', (
     assert.equal(existsSync(path.join(t.worktree!, 'dev.txt')), true)
   })
 
+  it('без base при ветке глобальной задачи — ветка создаётся от неё, а не от текущей ветки корня', () => {
+    git(repo, 'branch', 'feature/run')
+    const runWt = path.join(tmp, 'run-wt')
+    git(repo, 'worktree', 'add', '-q', runWt, 'feature/run')
+    writeFileSync(path.join(runWt, 'run.txt'), 'run\n')
+    git(runWt, 'add', '-A')
+    git(runWt, 'commit', '-qm', 'run')
+    const run = store.createRun('цель', undefined, graph({ operation: 'create_branch', branch: 'feature/{taskId}' }))
+    store.setRunGit(run.id, { branch: 'feature/run', base: 'master', worktree: runWt })
+    const t = store.createTask({ title: 'Подзадача', roleId: 'developer', runId: run.id })
+    deps.startWorker(t.id)
+    assert.equal(existsSync(path.join(task(t.id).worktree!, 'run.txt')), true)
+  })
+
   it('detached HEAD корня: базой служит его коммит, а не слово HEAD', () => {
     const sha = git(repo, 'rev-parse', 'HEAD')
     git(repo, 'switch', '-q', '--detach')
