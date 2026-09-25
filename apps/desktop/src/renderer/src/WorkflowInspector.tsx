@@ -230,6 +230,23 @@ function NodeForm({ node, workflow, roles, columns, onChange }: {
           </label>
         </>
       )}
+      {node.type === 'ask' && (
+        <>
+          <label className="wf-field">
+            <span>Роль</span>
+            <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty="Роль задачи" onChange={(roleId) => patch({ roleId })} />
+          </label>
+          <label className="wf-field">
+            <span>О чём спросить человека</span>
+            <textarea
+              rows={4}
+              value={node.instructions}
+              placeholder="Тема, что нужно выяснить, сколько вопросов и в какой форме. Обязательно: без этого агент спросит наугад"
+              onChange={(e) => patch({ instructions: e.target.value })}
+            />
+          </label>
+        </>
+      )}
       {node.type === 'gate' && (
         <label className="wf-field">
           <span>Роль проверяющего</span>
