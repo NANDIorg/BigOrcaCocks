@@ -6,11 +6,16 @@
 Полная картина — `docs/architecture.md`. Комментарии в коде, документация, коммиты и UI — на русском.
 Этот файл и `AGENTS.md` можно править и в приложении: «О проекте → Правила».
 
+Командный процесс — **[docs/git-flow.md](docs/git-flow.md), прочитай целиком перед работой**.
+Вход для разработчика — [CONTRIBUTING.md](CONTRIBUTING.md). Эти правила относятся к разработке
+orca-board; `skills/*.md` — инструкции самого продукта для любых пользовательских проектов.
+
 ## Нельзя
 
 - **Не запускать `git reset --hard`, `git checkout -- .`, `git clean` в скриптах и при проверках.**
   Так уже дважды стирали незакоммиченные правки (`docs/architecture.md`, «Грабли разработки»).
-  Для проверок — только read-only git-команды. Коммитить сразу после зелёного typecheck.
+  Для проверок — только read-only git-команды в рабочем репозитории. Коммитить после зелёных
+  проверок; Git-фикстуры тестов создавать только в отдельной временной папке.
 - **Не импортировать `@orca-board/core` и npm-пакеты в `packages/cli/bin/orca-board.js`.** CLI запускается
   Node из Electron прямо из `Resources/cli`, без сборки и без `node_modules`. Общие функции дублируются:
   так сделано с `defaultSocketPath()` (`packages/core/src/paths.ts` ↔ `orca-board.js`). Меняй обе копии вместе.
@@ -34,7 +39,8 @@
   Ревьюер сдаёт отчёт через `orca-board done`, а не файлом в ветке.
 - **Не запускать `pnpm pack`**: это встроенная команда pnpm. Сборка — `pnpm --filter @orca-board/desktop run pack`.
 - **Не менять версию** вне задачи на релиз. Релиз — коммит `chore: release vX.Y.Z`, версия меняется
-  одновременно в `/package.json` и `apps/desktop/package.json`.
+  одновременно в `/package.json` и `apps/desktop/package.json`, через PR подготовки в `release/*`
+  или `hotfix/*`. Существующие теги не передвигать. Полный порядок — в `docs/git-flow.md`.
 
 ## Обязательно
 
@@ -89,11 +95,14 @@
 Из корня worktree:
 
 ```
+pnpm install --frozen-lockfile # при первом запуске; Node 24, pnpm из packageManager
 pnpm typecheck   # pnpm -r typecheck: core — tsc, desktop — tsc node+web, cli — node --check
-pnpm test        # pnpm -r --if-present test: core, cli (test/cli.test.js), desktop (main + renderer)
+pnpm test        # scripts + пакеты: core, cli (test/cli.test.js), desktop (main + renderer)
+pnpm verify      # перед PR: check:git-flow + typecheck + test + build (как в CI)
 ```
 
-- Обе команды должны пройти. Упавший тест не выключать и не подгонять под фактическое поведение
+- Typecheck и тесты должны пройти; перед PR обязателен весь `pnpm verify`.
+  Упавший тест не выключать и не подгонять под фактическое поведение
   без объяснения.
 - Трогал skills, docs или HELP CLI — обязательно запусти `pnpm --filter @orca-board/core test`
   (`prompts.test.ts` сверяет команды).
@@ -104,8 +113,22 @@ pnpm test        # pnpm -r --if-present test: core, cli (test/cli.test.js), desk
 
 ## Git и ветки
 
-- Работаешь в своём worktree на ветке `orca/<taskId>`. Ветку не переключай, в `master` сам не мержи:
-  мержит приложение (`review accept` → `git merge --no-ff`, `mergeBranch` в `src/main/git.ts`).
+- **Обычная сессия агента:** отдельный worktree, `feature/<issue>-<slug>` от актуального
+  `origin/develop`; результат — PR в `develop`. `master` — выпущенные версии, `develop` — интеграция,
+  `release/X.Y.Z` — подготовка выпуска, `hotfix/X.Y.Z` — срочное исправление от `origin/master`.
+  Стабилизация общих release/hotfix-веток — через `fix/*` и PR. Работать прямо в общих ветках нельзя.
+- **Воркер Orca (`ORCA_DISPATCH_ID`):** используй назначенный worktree на `orca/<taskId>`,
+  не переключай ветку, не создавай внешний PR. Локально мержит приложение
+  (`review accept` → `git merge --no-ff`, `mergeBranch` в `src/main/git.ts`). Владелец должен
+  открыть в Orca worktree фичи/исправления, не `master` / `develop` / release / hotfix.
+  Если root открыт на общей ветке — сообщи координатору до сдачи результата.
+- У каждого разработчика свой clone. У каждой рабочей ветки один владелец; разные пишущие агенты
+  не делят worktree. Не трогай чужие правки и не переключай root проекта при живых воркерах Orca.
+- Агент самостоятельно делает проверки, коммиты, push своей ветки и готовит PR с явной базой.
+  Для мержа нужен зелёный CI (`git-flow`, `quality`), approval второго разработчика и полномочие
+  на слияние. Самоодобрение от другой модели под тем же аккаунтом не считается ревью коллеги.
+- Только merge commits; после release/hotfix обязательно перенеси `master` обратно в `develop`
+  и активную release-ветку через отдельные `sync/*` PR. Шаги и конфликты версий — в `docs/git-flow.md`.
 - Коммиты — Conventional Commits на русском: `feat(renderer): …`, `feat(main,cli): …`, `fix: …`,
   `docs: …`, `refactor: …`, `chore: release vX.Y.Z`. Scope — слой: `core`, `main`, `cli`, `renderer`, `skills`.
   В теле — список изменений по файлам, для `fix` — **первопричина** (образец — 086a654).

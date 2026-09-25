@@ -1,0 +1,100 @@
+name: Release draft
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-git-flow.mjs
+      - name: Выпускается только коммит из master
+        run: git merge-base --is-ancestor HEAD origin/master
+
+  package:
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+        env:
+          GIT_CONFIG_COUNT: '4'
+          GIT_CONFIG_KEY_0: user.name
+          GIT_CONFIG_VALUE_0: orca-board CI
+          GIT_CONFIG_KEY_1: user.email
+          GIT_CONFIG_VALUE_1: ci@orca-board.invalid
+          GIT_CONFIG_KEY_2: core.autocrlf
+          GIT_CONFIG_VALUE_2: 'false'
+          GIT_CONFIG_KEY_3: safe.directory
+          GIT_CONFIG_VALUE_3: ''
+      # На Windows собираем нативно с npmRebuild из electron-builder.yml.
+      # Публикация отключена; токена записи у упаковщика нет.
+      - run: pnpm --filter @orca-board/desktop exec electron-builder --${{ matrix.platform }} --publish never
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installers-${{ matrix.platform }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  draft:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installers-*
+          path: installers
+          merge-multiple: true
+      - name: Создать или обновить только черновик
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft > release.json; then
+            test "$(jq -r .isDraft release.json)" = true
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --title "$RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" installers/* --clobber

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, master, 'release/**', 'hotfix/**']
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
+    branches: [develop, master, 'feature/**', 'release/**', 'hotfix/**', 'fix/**', 'sync/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  git-flow:
+    name: git-flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-git-flow.mjs
+
+  checks:
+    name: checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4, версия из packageManager
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # Для typecheck, node:test и Vite не нужен нативный PTY/Electron.
+      # Полная установка и пересборка node-pty выполняются при сборке релиза.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm verify
+        # Git-фикстуры не должны зависеть от identity, CRLF и safe.directory=* образа runner.
+        env:
+          GIT_CONFIG_COUNT: '4'
+          GIT_CONFIG_KEY_0: user.name
+          GIT_CONFIG_VALUE_0: orca-board CI
+          GIT_CONFIG_KEY_1: user.email
+          GIT_CONFIG_VALUE_1: ci@orca-board.invalid
+          GIT_CONFIG_KEY_2: core.autocrlf
+          GIT_CONFIG_VALUE_2: 'false'
+          GIT_CONFIG_KEY_3: safe.directory
+          GIT_CONFIG_VALUE_3: ''
+
+  quality:
+    name: quality
+    if: always()
+    needs: [git-flow, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Все проверки обязательны
+        env:
+          FLOW_RESULT: ${{ needs.git-flow.result }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: test "$FLOW_RESULT" = success && test "$CHECKS_RESULT" = success
