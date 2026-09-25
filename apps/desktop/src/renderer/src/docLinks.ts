@@ -1,14 +1,18 @@
 import type { DocFile, OrcaApi } from '../../shared/ipc'
+import { t } from './i18n'
+import { formatFixed } from './i18n/format'
 
 /**
  * main и preload собираются только при запуске: после обновления кода в `electron-vite dev`
  * renderer приходит по HMR, а `window.orca` остаётся старым — без `docs` (или без хендлеров в main).
  */
-export const STALE_APP_MESSAGE = 'Приложение запущено со старой версией main/preload, где ещё нет «Документов». Перезапустите приложение.'
+export function staleAppMessage(): string {
+  return t('config.docs.staleApp')
+}
 
 /** `window.orca.docs` или понятная ошибка вместо «Cannot read properties of undefined». */
 export function docsApi(api: Partial<OrcaApi> | undefined): OrcaApi['docs'] {
-  if (!api?.docs) throw new Error(STALE_APP_MESSAGE)
+  if (!api?.docs) throw new Error(staleAppMessage())
   return api.docs
 }
 
@@ -67,7 +71,7 @@ export function matchesQuery(file: DocFile, query: string): boolean {
 
 /** Размер для списка: байты → КБ/МБ. */
 export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} Б`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`
-  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
+  if (bytes < 1024) return t('config.docs.size.b', { n: bytes })
+  if (bytes < 1024 * 1024) return t('config.docs.size.kb', { n: Math.round(bytes / 1024) })
+  return t('config.docs.size.mb', { n: formatFixed(bytes / 1024 / 1024, 1) })
 }

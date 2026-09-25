@@ -889,7 +889,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     предупреждение о ролях, чей агент выключен в проекте (`rolesWithAgentOff`: они здесь не запустятся). «Изменить в
     Настройках» кладёт `type:<id>` в `orca.settingsSection` — «Настройки» откроются на этом типе (App не трогаем, окно
     открывается шестерёнкой). Старый preload без `taskTypes` / `projects.setTaskTypes` (`hasProjectTaskTypes`) или
-    старый main («No handler registered», `taskTypesError`) — `TASK_TYPES_STALE_MESSAGE` «перезапустите приложение».
+    старый main («No handler registered», `taskTypesError`) — `taskTypesStaleMessage()` «перезапустите приложение».
   - «Правила» (`about/RulesSection.tsx`, логика — `renderer/src/rules.ts`) — `CLAUDE.md` и `AGENTS.md` из **корня
     репозитория** проекта (`Project.root`, не worktree задач), вкладки между ними (выбор — `localStorage` `orca.rulesFile`).
     Просмотр — `Markdown variant="doc"`; «Редактировать» — textarea с исходником, «Сохранить» (⌘S/Ctrl+S) / «Отмена»
@@ -898,7 +898,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     Стиль кода / Проверки перед сдачей / Git и ветки», AGENTS.md — отсылка к CLAUDE.md). Пишет main (`src/main/rules.ts`):
     имя только из белого списка `RULE_FILE_NAMES` (`shared/ipc.ts`), симлинк — только внутрь проекта (пишется цель),
     запись атомарная (tmp рядом + `rename`, права сохраняются), перевод строк — как в файле (renderer получает `\n` и
-    `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `RULES_STALE_MESSAGE`.
+    `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `rulesStaleMessage()`.
   - «Прогоны» (`RunsSection` в `runs.tsx`) — свежие сверху: метка, дата создания, «задач N / закрыто M»
     (задачи с этим `runId`, закрыто — в колонках `kind=done`), статус «идёт» / «закрыт <дата>», полная цель.
     У идущего прогона кнопка «Закрыть» (`confirm` → IPC `runs:close`). Пусто — заглушка.
@@ -932,7 +932,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     сохраняются с задержкой, поэтому правка раздела (`patch(id, patch)` → `patchedTaskType`, null удаляет поле)
     собирается из последней сохранённой версии типа и идёт через очередь.
   - Логика без React — `renderer/src/taskTypeEdit.ts` (тест рядом). Старый main/preload: нет `window.orca.taskTypes`
-    или хендлера `taskTypes:*` → `TASK_TYPES_STALE_MESSAGE` («перезапустите приложение») вместо списка.
+    или хендлера `taskTypes:*` → `taskTypesStaleMessage()` («перезапустите приложение») вместо списка.
 - **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» у колонок `storageKey = active.id`, в «Настройках» у типа — `typeEditorKey(t, rev)`: `type:<id>:b|u:<rev>` — у встроенного и его изменённой копии признак один (`b`), поэтому первая правка исполнителя не сбрасывает черновик посреди быстрых кликов, а после «Вернуть встроенный» `rev` растёт и редакторы берут встроенные значения. `executorOnly` — меняются только исполнитель и инструкции роли.
 
 ## Реестр терминалов (`src/main/pty.ts`)
@@ -1636,6 +1636,16 @@ skills, тексты main (уведомления, диалоги, ошибки 
   в разделе «Общие» ошибка `common.staleApp`.
 - **Переключатель** «Язык / Language» — «Настройки → Общие» (`settings/GeneralSection.tsx`), сегменты
   «Русский» / «English» (названия — каждое на своём языке, `LOCALE_NAMES`). Язык меняется сразу, до ответа main.
+
+- **Строки в модулях логики.** Экспорт-константа с текстом вычислялась бы один раз на языке загрузки, поэтому:
+  `Record` с подписями — объект с геттерами (`WF_TYPE_TITLES`, `WF_OUTCOME_LABELS`, `WF_NODE_HELP`, `RULE_HINTS`,
+  `RULE_TEMPLATES`: API прежний, текст на текущем языке), одиночная строка — функция (`rulesStaleMessage()`,
+  `taskTypesStaleMessage()`, `staleAppMessage()`, `agentRulesPlaceholder()`; константа `STALE_APP_MESSAGE`
+  удалена — вместо неё `staleAppMessage()`).
+- **Код внутри фразы** — `withCode(t('…'), value, name)` из `about/parts.tsx`: `{name}` в переводе заменяется на
+  `<code>` (или `<b>`). Фразу не собирают из кусков вокруг кода: порядок слов в языках разный.
+- **Режимы разрешений** — `permissionParts(mode)` переводит по ключу режима (`config.about.perm.<mode>`), а не
+  режет русскую строку `PERMISSION_MODES` из shared (её по-прежнему использует main).
 
 **Добавить строку:** ключ в `i18n/ru/<область>.ts` и тот же ключ в `i18n/en/<область>.ts`, в компоненте —
 `t('<область>.<ключ>')`. **Добавить область:** файлы в `ru/` и `en/` и строки в `RU` и `DICTS.en` в `i18n/dict.ts`.
