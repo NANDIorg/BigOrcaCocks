@@ -10,12 +10,15 @@ import {
 } from '../taskTypeEdit'
 import { GeneralSection } from './GeneralSection'
 import { NotificationsSection } from './NotificationsSection'
+import { UpdatesSection } from './UpdatesSection'
 import { TaskTypePane } from './TaskTypePane'
 import { useTaskTypes } from './useTaskTypes'
 import { setLocale, useT } from '../i18n'
+import { versionLabel } from '../updateState'
+import type { UpdatesController } from '../useUpdates'
 
-/** Раздел меню: общий, уведомления или тип задачи (`type:<id>`). */
-type Section = 'general' | 'notifications' | `type:${string}`
+/** Раздел меню: общий, уведомления, обновления или тип задачи (`type:<id>`). */
+type Section = 'general' | 'notifications' | 'updates' | `type:${string}`
 
 const TAB_KEY = 'orca.settingsTypeTab'
 const TYPE = 'type:'
@@ -33,7 +36,7 @@ function stored(key: string): string | null {
 /** Запомненный раздел. Старые разделы шаблонов (`tpl:<id>`) и «Для новых проектов» ведут в типы задач. */
 function initialSection(): Section {
   const v = stored(SETTINGS_SECTION_KEY)
-  if (v === 'general' || v === 'notifications') return v
+  if (v === 'general' || v === 'notifications' || v === 'updates') return v
   if (v?.startsWith(TYPE)) return v as Section
   if (v?.startsWith(OLD_TPL)) return `${TYPE}${v.slice(OLD_TPL.length)}`
   return v ? `${TYPE}` : 'general'
@@ -49,6 +52,8 @@ interface Props {
   agents: AgentInfo[]
   /** Заново просканировать PATH. */
   onRefreshAgents(): Promise<void>
+  /** Состояние обновления приложения (общее с плашкой в сайдбаре). */
+  updates: UpdatesController
   /** Типы изменились: перечитать проекты в приложении (роли типа по умолчанию, выбор типов в «О проекте»). */
   onProjectsChanged(): Promise<void>
   onClose(): void
@@ -58,7 +63,7 @@ interface Props {
  * «Настройки» (шестерёнка в rail): общие настройки приложения и библиотека типов задач (taskTypes:*).
  * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
  */
-export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): React.JSX.Element {
+export function SettingsModal({ agents, updates, onProjectsChanged, onClose }: Props): React.JSX.Element {
   const t = useT()
   const [section, setSection] = useState<Section>(initialSection)
   const [tab, setTab] = useState<TaskTypeTab>(initialTab)
@@ -110,7 +115,9 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
       const next = await window.orca.app.setSettings(patch)
       setAppSettings(next)
       // Старый main не знает поля language и молча его отбросит — выбор не переживёт перезапуск.
-      setAppError(patch.language && next.language !== patch.language ? t('common.staleApp') : null)
+      // Так же с updates: без поля в ответе main не сохранил патч.
+      const dropped = (patch.language && next.language !== patch.language) || (patch.updates && !next.updates)
+      setAppError(dropped ? t('common.staleApp') : null)
     } catch (e) {
       setAppError(ipcErrorMessage(e))
     }
@@ -143,6 +150,12 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
   const notifications: NavEntry<Section> = {
     id: 'notifications', label: t('settings.nav.notifications'), icon: Icon.bell,
     count: notifyOn === undefined ? undefined : notifyOn ? t('common.on') : t('common.off')
+  }
+  const updateState = updates.state
+  const updatesNav: NavEntry<Section> = {
+    id: 'updates', label: t('settings.nav.updates'), icon: Icon.download,
+    count: updateState?.availableVersion ? versionLabel(updateState.availableVersion) : undefined,
+    tone: updateState?.status === 'available' || updateState?.status === 'ready' ? 'warn' : undefined
   }
   /** Текущий пункт меню: у типа — с фактическим id (пустой `type:` после удаления — тип по умолчанию). */
   const navCurrent: Section = currentId ? `${TYPE}${currentId}` : section
@@ -190,6 +203,7 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
             <nav className="about-nav" aria-label={t('settings.nav.aria')}>
               <NavItem item={general} current={section} onGo={go} />
               <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
+              <NavItem item={updatesNav} current={section} onGo={go} />
               <div className="about-nav-group">{t('settings.nav.taskTypes')}</div>
               {types.stale || (!state && types.error) ? (
                 <NavItem item={{ id: `${TYPE}`, label: t('settings.nav.taskTypes'), icon: Icon.layers }} current={navCurrent} onGo={go} />
@@ -215,6 +229,8 @@ export function SettingsModal({ agents, onProjectsChanged, onClose }: Props): Re
                     error={appError}
                     onChange={(p) => void saveApp({ notifications: p })}
                   />
+                ) : section === 'updates' ? (
+                  <UpdatesSection settings={appSettings} updates={updates} error={appError} onChange={(p) => void saveApp({ updates: p })} />
                 ) : (
                   renderType()
                 )}

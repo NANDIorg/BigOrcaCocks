@@ -1875,3 +1875,43 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
   .ts-table .share-col { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .ts.refreshing > :not(.ts-note):not(.ts-state) { transition: none; } }
+
+/* ---------- обновление приложения: плашка в сайдбаре, «Что нового», тост ---------- */
+.update-banner {
+  margin: 8px 12px 12px; padding: 12px; border-radius: 12px; background: var(--side-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+}
+.update-banner.error { border-color: rgba(239,107,107,.55); }
+.update-banner.manual { border-color: rgba(232,176,74,.55); }
+.update-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.update-title svg { flex-shrink: 0; color: var(--accent); }
+.update-banner.error .update-title svg { color: var(--danger); }
+.update-banner.manual .update-title svg { color: var(--col-input); }
+.update-percent { margin-left: auto; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.update-detail { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.update-problem { color: var(--danger); }
+.update-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.update-actions .btn-sm { height: 28px; padding: 0 12px; text-decoration: none; }
+.update-progress { height: 6px; border-radius: 3px; background: var(--frame); overflow: hidden; }
+.update-progress > div { height: 100%; background: var(--accent); border-radius: 3px; transition: width .2s; }
+.update-progress.indeterminate > div { animation: update-slide 1.2s ease-in-out infinite alternate; }
+.update-spin { display: inline-flex; animation: update-rotate 1s linear infinite; }
+@keyframes update-rotate { to { transform: rotate(360deg); } }
+@keyframes update-slide { from { margin-left: 0; } to { margin-left: 60%; } }
+@media (prefers-reduced-motion: reduce) { .update-spin, .update-progress.indeterminate > div { animation: none; } }
+.update-notes { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 96px); }
+.update-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.update-notes-body { overflow-y: auto; min-height: 0; padding: 12px 14px; background: var(--frame); border-radius: 10px; }
+.update-notes .row a.btn-sm { text-decoration: none; }
+.updates-status { margin: 4px 0 0; }
+.rail .icon { position: relative; }
+.rail-dot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--page); }
+.toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 50; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px 10px 14px; border-radius: 12px; background: var(--side); border: 1px solid var(--line);
+  box-shadow: 0 12px 40px rgba(0,0,0,.45); font-size: 13px;
+}
+.toast > svg { color: var(--col-done); flex-shrink: 0; }
+.toast .icon-btn { background: transparent; border: 0; color: var(--muted); width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; }
+.toast .icon-btn:hover { background: var(--side-2); color: var(--text); }

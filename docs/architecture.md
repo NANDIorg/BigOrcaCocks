@@ -1630,6 +1630,21 @@ electron (`net.fetch` учитывает системный прокси). `macU
   Настоящую подмену на установленном приложении в тестах не проверить: `macUpdater.test.ts` гоняет настоящий `install.sh` (успех, откат при
   падении `ditto`, повторный запуск, lock от параллельного скрипта, пути с пробелами и кавычками) на подставных каталогах, `open` и `ditto` подменяются через PATH.
 
+**UI в renderer.** Состояние — хук `useUpdates` (`renderer/src/useUpdates.ts`): `getState()` при старте + подписка `onChanged`,
+одно на приложение, передаётся плашке и «Настройкам». Что показывать при каком состоянии — чистые функции в `renderer/src/updateState.ts`
+(`bannerView`, `statusLine`, `canCheck`; тест `updateState.test.ts`), компоненты только рисуют:
+- **Плашка** (`UpdateBanner.tsx`, низ сайдбара): «Доступна X · Что нового · Скачать» → прогресс скачивания → «X готова · Перезапустить и обновить»
+  (при отложенной установке — подпись «при выходе / когда агенты закончат» и «Отменить») → ошибка с «Повторить» (`check()`);
+  `unsupported` с найденной версией (portable, macOS вне «Программ») — «Скачать» ссылкой на `releaseUrl` и причина.
+  Если сайдбар скрыт, о плашке напоминает точка на шестерёнке в rail.
+- **Живые агенты:** «Перезапустить и обновить» просто вызывает `install({when:'now'})`. Выбор «Сейчас / Когда агенты закончат / Отмена»
+  при живых воркерах делает диалог main (`confirmInstall`, считает `liveWorkerCount`) — в плашке своего вопроса нет, чтобы не спрашивать дважды.
+- **«Что нового»** (`UpdateNotesModal`): `releaseNotes` только через `Markdown.tsx`; ссылка на релиз — только `http(s)` (`isReleaseUrl`).
+- **«Настройки → Обновления»** (`settings/UpdatesSection.tsx`): версия, статус, «Проверить сейчас», переключатели `autoCheck`/`autoDownload`/`installWhenIdle`
+  (пишутся через `app:setSettings({updates})`; старый main поле отбросит — показывается `common.staleApp`).
+- **Тост «Обновлено до X»** (`UpdateToast`): один вызов `getJustUpdated()` при старте окна, скрывается сам через 10 с.
+- Старый preload без `window.orca.updates` (`pnpm dev` после HMR): `updatesApi()` возвращает null, вместо падения — `common.staleApp`.
+
 ## Уведомления
 
 `ProjectManager.onEvents` отдаёт новые события store; main показывает `Notification` по `notifyKind` (`src/main/notify.ts`):
