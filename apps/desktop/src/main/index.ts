@@ -251,22 +251,30 @@ function closeDoneWorkers(store: TaskStore): void {
   for (const taskId of doneTasks) closeTaskWorkers(store, taskId)
 }
 
-function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number): ReturnType<typeof startWorker> {
+/**
+ * Запуск воркера с проверками роли и агента. `opts.roleId` — роль этапа «Вопрос человеку» (`WorkflowDeps.startWorker`);
+ * без неё роль этапа берётся из графа (`worker start`, перезапуск), иначе — роль задачи.
+ */
+function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number, opts: { roleId?: string } = {}): ReturnType<typeof startWorker> {
   const p = resolveProject(projectId)
   // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
   const task0 = p.store.getTask(taskId)
   if (task0) {
     if (p.store.columnKind(task0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
     const type = projects.resolveRun(p.id, task0.runId)
-    const role = type.roles.find((r) => r.id === task0.roleId)
-    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(task0.roleId, type)}`)
+    // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды «Работа» становится ролью
+    // задачи). Роль этапа «Вопрос человеку» на задачу не переносится: она едет в запуск отдельным параметром.
+    const entered = enterWork(workflowDeps(p.id), taskId)
+    const stageRoleId = opts.roleId ?? entered.roleId
+    const roleId = stageRoleId ?? p.store.getTask(taskId)?.roleId ?? task0.roleId
+    const role = type.roles.find((r) => r.id === roleId)
+    if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(roleId, type)}`)
     assertAgentUsable(projectAgents(p.id), role.agent)
     // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
     closeTaskWorkers(p.store, taskId)
-    // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды может сменить роль задачи).
-    enterWork(workflowDeps(p.id), taskId)
+    return startWorker(p.store, p.root, ctx(p.id, task0.runId), taskId, cols, rows, stageRoleId)
   }
-  return startWorker(p.store, p.root, ctx(p.id, task0?.runId), taskId, cols, rows)
+  return startWorker(p.store, p.root, ctx(p.id, undefined), taskId, cols, rows)
 }
 
 /**
@@ -283,7 +291,7 @@ function workflowDeps(projectId: string): WorkflowDeps {
       const workflow = runnableWorkflow(t.workflow)
       return { roles: t.roles, ...(workflow ? { workflow } : {}) }
     },
-    startWorker: (taskId) => runWorker(taskId, p.id)
+    startWorker: (taskId, opts) => runWorker(taskId, p.id, undefined, undefined, opts)
   }
 }
 
@@ -292,7 +300,7 @@ function workflowDeps(projectId: string): WorkflowDeps {
  * и запуска проверки, а вложенные commit перемешали бы порядок событий у подписчиков.
  */
 function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
-  if (!events.some((e) => e.type === 'worker_done' || e.type === 'escalation')) return
+  if (!events.some((e) => e.type === 'worker_done' || e.type === 'escalation' || e.type === 'question_answered')) return
   setImmediate(() => {
     if (!projects.get(projectId)) return
     handleWorkflowEvents(workflowDeps(projectId), events)
