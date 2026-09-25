@@ -1524,8 +1524,9 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 `cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
 `pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
 
-Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac`, dmg arm64 + x64;
-`dist:win` — `electron-builder --win`. Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
+Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac --publish never`, dmg + zip
+arm64 и x64; `dist:win` — `electron-builder --win --publish never`; `dist:publish` — те же сборки mac и win с
+`--publish always` (нужен `GH_TOKEN`), см. «Выпуск релиза». Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
 папки) → `orca-board-<версия>-x64.exe` и `portable` x64 → `orca-board-<версия>-portable-x64.exe`
 (отдельный `artifactName`, иначе portable перезаписывал бы установщик). В `Resources/cli` попадают
 обе обёртки CLI — `orca-board` и `orca-board.cmd`. Windows-сборка делается кросс с macOS; тестировать
@@ -1541,6 +1542,51 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 ad-hoc, и приложение падает при запуске. Проверка после сборки — `codesign --verify --deep --strict` на `.app`.
 Скачанная сборка всё равно не проходит Gatekeeper («Apple не удалось подтвердить…»), её открывают через
 «Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
+
+### Выпуск релиза (`publish` в `electron-builder.yml`, скрипт `dist:publish`)
+
+Релизы — GitHub Releases публичного репозитория `NANDIorg/BigOrcaCocks`. `publish: {provider: github,
+owner, repo, releaseType: draft}` в `electron-builder.yml` — публикация создаёт **черновик** релиза с тегом
+`v<version>`, человек проверяет его и публикует сам. Токен в конфиг не кладётся. Поле `repository` в
+`apps/desktop/package.json` указывает на тот же репозиторий (метаданные пакета).
+Обычные `dist`/`dist:mac`/`dist:win` вызывают electron-builder с `--publish never`: локальная сборка ничего не
+выкладывает даже при заданном `GH_TOKEN`.
+
+Что генерирует сборка (проверено `dist:mac` и `dist:win`, всё в `apps/desktop/release/`):
+
+| Файл | Откуда | Зачем |
+|---|---|---|
+| `orca-board-<v>-arm64.zip`, `-x64.zip` | `mac.target: zip` | то, что скачивает автообновление macOS (dmg на месте не подменить) |
+| `orca-board-<v>-arm64.dmg`, `-x64.dmg` | `mac.target: dmg` | ручная установка |
+| `orca-board-<v>-x64.exe` | `win.target: nsis` | установщик Windows и цель `electron-updater` |
+| `orca-board-<v>-portable-x64.exe` | `win.target: portable` | portable, обновление — только «скачать новый exe» |
+| `latest-mac.yml` | mac-сборка | манифест обновлений macOS |
+| `latest.yml` | nsis | манифест обновлений Windows (portable в него не входит) |
+| `*.blockmap` (zip, dmg, nsis-exe) | electron-builder | дифференциальная загрузка `electron-updater`; для zip-установщика macOS не обязателен |
+
+Про манифесты: `latest-mac.yml` **один на обе архитектуры** — в `files` лежат zip и dmg для arm64 и x64, а верхнеуровневые
+`path`/`sha512` указывают на x64-zip (это артефакт порядка сборки, не «текущая» архитектура).
+Клиент macOS обязан выбирать запись из `files` по своей архитектуре (`-arm64.zip` / `-x64.zip`), а не по `path`.
+Имена в `url` — без базового пути, относительно ассетов релиза, поэтому файлы нельзя переименовывать
+после сборки: sha512 и имена в yml должны совпадать с загруженными ассетами.
+
+Чек-лист релиза:
+
+1. Версия поднята коммитом `chore: release vX.Y.Z` (одновременно `/package.json` и `apps/desktop/package.json`).
+2. `pnpm typecheck && pnpm test`.
+3. `GH_TOKEN=<токен с правом repo> pnpm --filter @orca-board/desktop run dist:publish` — собирает mac
+   (arm64 + x64), затем win и загружает ассеты в черновик релиза `vX.Y.Z` (второй вызов дописывает в тот же черновик).
+   Токен — только в окружении команды, не в файлах.
+4. Открыть черновик на GitHub и проверить, что есть **все** ассеты: 2 zip, 2 dmg, `orca-board-<v>-x64.exe`,
+   `orca-board-<v>-portable-x64.exe`, `latest-mac.yml`, `latest.yml`, blockmap-файлы. Без `.yml` приложение
+   обновления не найдёт: манифест — единственное, что оно читает; без zip macOS нечего скачивать.
+5. Нажать «Publish release» (снять «Set as a pre-release», если стоит). Пока релиз — черновик, он не виден
+   клиентам и не отдаётся по `releases/latest`: обновления начнутся только после публикации.
+6. После публикации проверить `https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/latest-mac.yml`
+   и `.../latest.yml` (должны отдавать yml версии релиза).
+
+Если релиз опубликован без `.yml` или с неполным набором — дописать недостающие ассеты в опубликованный релиз
+(Edit → Attach binaries) из `apps/desktop/release/`; версию менять не нужно.
 
 ## Грабли разработки
 
