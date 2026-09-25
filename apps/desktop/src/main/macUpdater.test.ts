@@ -127,6 +127,24 @@ describe('MacUpdater.download', () => {
     assert.ok(!existsSync(path.join(stage, 'update.zip')), 'zip удаляется после распаковки')
   })
 
+  it('zip качается по тегу найденной версии, а не по latest: новый релиз между check и download не ломает sha512', async () => {
+    const env = makeEnv({ manifest: yml(), notes: '', zip: ZIP_BYTES })
+    const requested: string[] = []
+    const inner = env.fetch
+    env.fetch = async (url, init) => {
+      requested.push(url)
+      return inner(url, init)
+    }
+    const u = new MacUpdater(env)
+    await u.check()
+    await u.download(() => {})
+    const zipUrls = requested.filter((r) => r.endsWith('.zip'))
+    assert.deepEqual(zipUrls, [`https://github.com/NANDIorg/BigOrcaCocks/releases/download/v0.2.0/${zipName}`])
+    // Манифест — единственное, что берётся с latest; заметки — по тегу той же версии.
+    assert.ok(requested.some((r) => r.endsWith('/releases/latest/download/latest-mac.yml')))
+    assert.ok(requested.some((r) => r.endsWith('/releases/tags/v0.2.0')))
+  })
+
   it('sha512 не совпал — ошибка, каталог загрузки убран, ditto не вызывался', async () => {
     const u = new MacUpdater(makeEnv({ manifest: yml('WRONG=='), notes: '', zip: ZIP_BYTES }))
     await u.check()
@@ -204,6 +222,13 @@ describe('MacUpdater.install', () => {
     assert.equal(log, path.join(env.userData, 'updates', 'install.log'))
     assert.equal(readFileSync(script, 'utf8'), INSTALL_SCRIPT)
     assert.match(readFileSync(log, 'utf8'), /0\.1\.0 → 0\.2\.0/)
+  })
+
+  it('повторный install не запускает второй скрипт', async () => {
+    const { u } = await ready()
+    await u.install()
+    await u.install()
+    assert.equal(spawned.length, 1)
   })
 
   it('consumeJustUpdated: после успешного перезапуска отдаёт прежнюю версию один раз и чистит остатки', async () => {
@@ -292,6 +317,31 @@ describe('INSTALL_SCRIPT', { skip: process.platform !== 'darwin' }, () => {
     assert.ok(existsSync(d.staged))
     assert.equal(readFileSync(path.join(tmp, 'open.log'), 'utf8').trim(), d.target)
     assert.match(readFileSync(d.log, 'utf8'), /старое приложение восстановлено/)
+  })
+
+  it('lock: второй скрипт при живом владельце выходит и ничего не трогает; lock после успеха снят', () => {
+    const d = dirs()
+    // Живой владелец lock — этот тестовый процесс.
+    mkdirSync(`${d.previous}.lock`, { recursive: true })
+    writeFileSync(path.join(`${d.previous}.lock`, 'pid'), String(process.pid))
+    const busy = run()
+    assert.equal(busy.status, 0, busy.stderr)
+    assert.equal(readFileSync(path.join(d.target, 'Contents', 'v.txt'), 'utf8'), 'old')
+    assert.ok(!existsSync(d.previous))
+    assert.match(readFileSync(d.log, 'utf8'), /другая установка уже идёт/)
+    // Владелец умер — lock забирается, установка проходит, lock убирается.
+    writeFileSync(path.join(`${d.previous}.lock`, 'pid'), String(dead))
+    const r = run()
+    assert.equal(r.status, 0, r.stderr)
+    assert.equal(readFileSync(path.join(d.target, 'Contents', 'v.txt'), 'utf8'), 'new')
+    assert.ok(!existsSync(`${d.previous}.lock`))
+  })
+
+  it('lock снимается и после неудачи', () => {
+    const d = dirs()
+    rmSync(d.stage, { recursive: true })
+    assert.equal(run().status, 1)
+    assert.ok(!existsSync(`${d.previous}.lock`))
   })
 
   it('нового приложения нет (повторный запуск) — ничего не трогает', () => {

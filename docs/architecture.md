@@ -1538,7 +1538,7 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 `releaseNotes` (markdown; на Windows/NSIS — то, что отдаёт electron-updater из GitHub, то есть HTML: `Markdown.tsx` санитизирует его
 DOMPurify), `releaseUrl`, `percent` (только `downloading`), `installPending` (`'idle' | 'quit' | null`),
 `mode` (`'auto' | 'manual-download'`), `unsupportedReason` (только `unsupported`: `dev`, `portable`, `not-in-applications`,
-`no-write-access`, `translocated`, `platform` — установщика для этой ОС нет: Linux и macOS до `macUpdater`), `error` (только `error`, по-русски).
+`no-write-access`, `translocated`, `platform` — установщика для этой ОС нет: Linux), `error` (только `error`, по-русски).
 
 ```
 idle ─check→ checking ─новее нет→ idle
@@ -1575,7 +1575,10 @@ electron и таймеров. `updater.ts` — `Updater`: вызывает их,
 
 **Установка** (`runInstall`): `host.lockQuit()` (`quitting = true`, иначе `quitAndInstall` упрётся в диалог выхода из `before-quit`) →
 `installing` → `PlatformUpdater.install()` → `host.quit()` (`killAll` + `app.quit`). Сбой → `error`, `unlockQuit()` (при установке по
-выходу — выходим всё равно). `getJustUpdated()` отдаёт версию один раз: `host.takeJustUpdated()` (в `index.ts` — `getJustUpdatedFrom()`
+выходу — выходим всё равно). **`backend.install()` вызывается не больше одного раза за процесс:** повторный вход в `runInstall` блокирует
+статус `installing` (параллельные «установить» и `installOnQuit`), а флаг `installLaunched` — случай, когда `install()` отработал, но
+`host.quit()` сорвался и после новой загрузки человек снова дошёл до установки: тогда только добиваем выход. Иначе на macOS два
+одновременно ждущих `install.sh` гонялись бы за `previous/` и `.app`. `getJustUpdated()` отдаёт версию один раз: `host.takeJustUpdated()` (в `index.ts` — `getJustUpdatedFrom()`
 из `backup.ts`, работает на всех платформах) или, если её нет, `backend.consumeJustUpdated()` (маркер macOS-установщика; вызывается
 всегда, чтобы убрать остатки скачивания).
 
@@ -1610,12 +1613,15 @@ electron (`net.fetch` учитывает системный прокси). `macU
 - **download** → `userData/updates/<версия>-<arch>/`: скачивание в `update.zip.part` (таймаут 60 с без данных, прогресс — целые %),
   sha512 (base64) и размер из yml → `ditto -x -k` → `codesign --verify --deep --strict` → `CFBundleIdentifier` равен текущему, а
   `CFBundleShortVersionString` — версии релиза (`plutil -extract`). Любой сбой стирает каталог загрузки. Проверки сделаны здесь, а не в `install()`:
-  человек видит ошибку сразу, а не в момент выхода из приложения. Имя файла из yml — только простое (`assetUrl`: без `/`, `..`), адрес — всегда
-  `releases/latest/download/`. sha512 из того же релиза защищает от битой загрузки, но не от подмены самого релиза: доверие — к аккаунту GitHub.
+  человек видит ошибку сразу, а не в момент выхода из приложения. Имя файла из yml — только простое (`assetUrl`: без `/`, `..`), адрес — по тегу
+  найденной версии: `releases/download/v<версия>/<файл>` (`assetUrl(name, version)`), а не `latest/download` — иначе новый релиз между `check` и
+  `download` отдал бы файл другой версии и sha512 из манифеста не сошёлся бы. Только манифест берётся с `latest`. sha512 из того же релиза защищает от битой загрузки, но не от подмены самого релиза: доверие — к аккаунту GitHub.
 - **install**: `validateInstallPaths` (абсолютные пути, `.app`, ничего внутри заменяемого приложения) → пишет `updates/install.sh` (текст —
   `INSTALL_SCRIPT`) и маркер `updates/pending.json` → запускает `/bin/sh install.sh PID TARGET NEW STAGE PREVIOUS LOG` detached. Внешние
   команды — только `execFile`/`spawn` с массивом аргументов, пути в скрипт идут позиционными аргументами, а не текстом. Сам выход из приложения
-  делает `Updater` (обычное подтверждение). Скрипт ждёт выхода PID (не дольше 10 минут — если выход отменили, молча завершается), переносит
+  делает `Updater` (обычное подтверждение). Второй `install()` того же `MacUpdater` — no-op (`installLaunched`), а сам скрипт первым делом берёт lock
+  `updates/previous.lock` (`mkdir`, внутри pid скрипта): при живом владельце второй экземпляр выходит, lock мёртвого владельца забирается,
+  снимается по `trap EXIT`. Скрипт ждёт выхода PID (не дольше 10 минут — если выход отменили, молча завершается), переносит
   старый `.app` в `updates/previous/`, копирует новый `ditto`, снимает `com.apple.quarantine`, чистит каталог загрузки, `open`. Любая ошибка —
   откат: старый `.app` возвращается на место и запускается. Повторный запуск скрипта безвреден (нового `.app` уже нет). Лог — `updates/install.log`;
   `previous/` хранит одну прошлую версию для ручного отката.
@@ -1625,7 +1631,22 @@ electron (`net.fetch` учитывает системный прокси). `macU
   его по `unsupportedReason`, для логов main — `macUnsupportedMessage`).
 - **Грабли.** Ad-hoc подпись новой сборки другая — macOS может заново спросить разрешения (доступ к папкам и т. п.), это ожидаемо.
   Настоящую подмену на установленном приложении в тестах не проверить: `macUpdater.test.ts` гоняет настоящий `install.sh` (успех, откат при
-  падении `ditto`, повторный запуск, пути с пробелами и кавычками) на подставных каталогах, `open` и `ditto` подменяются через PATH.
+  падении `ditto`, повторный запуск, lock от параллельного скрипта, пути с пробелами и кавычками) на подставных каталогах, `open` и `ditto` подменяются через PATH.
+
+**UI в renderer.** Состояние — хук `useUpdates` (`renderer/src/useUpdates.ts`): `getState()` при старте + подписка `onChanged`,
+одно на приложение, передаётся плашке и «Настройкам». Что показывать при каком состоянии — чистые функции в `renderer/src/updateState.ts`
+(`bannerView`, `statusLine`, `canCheck`; тест `updateState.test.ts`), компоненты только рисуют:
+- **Плашка** (`UpdateBanner.tsx`, низ сайдбара): «Доступна X · Что нового · Скачать» → прогресс скачивания → «X готова · Перезапустить и обновить»
+  (при отложенной установке — подпись «при выходе / когда агенты закончат» и «Отменить») → ошибка с «Повторить» (`check()`);
+  `unsupported` с найденной версией (portable, macOS вне «Программ») — «Скачать» ссылкой на `releaseUrl` и причина.
+  Если сайдбар скрыт, о плашке напоминает точка на шестерёнке в rail.
+- **Живые агенты:** «Перезапустить и обновить» просто вызывает `install({when:'now'})`. Выбор «Сейчас / Когда агенты закончат / Отмена»
+  при живых воркерах делает диалог main (`confirmInstall`, считает `liveWorkerCount`) — в плашке своего вопроса нет, чтобы не спрашивать дважды.
+- **«Что нового»** (`UpdateNotesModal`): `releaseNotes` только через `Markdown.tsx`; ссылка на релиз — только `http(s)` (`isReleaseUrl`).
+- **«Настройки → Обновления»** (`settings/UpdatesSection.tsx`): версия, статус, «Проверить сейчас», переключатели `autoCheck`/`autoDownload`/`installWhenIdle`
+  (пишутся через `app:setSettings({updates})`; старый main поле отбросит — показывается `common.staleApp`).
+- **Тост «Обновлено до X»** (`UpdateToast`): один вызов `getJustUpdated()` при старте окна, скрывается сам через 10 с.
+- Старый preload без `window.orca.updates` (`pnpm dev` после HMR): `updatesApi()` возвращает null, вместо падения — `common.staleApp`.
 
 ## Уведомления
 

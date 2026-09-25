@@ -9,6 +9,7 @@ import {
   compareVersions,
   detectMacSupport,
   isNewerVersion,
+  releaseTag,
   macUnsupportedMessage,
   parseUpdateManifest,
   pickMacZip,
@@ -104,16 +105,22 @@ describe('версии', () => {
 })
 
 describe('assetUrl', () => {
-  it('простое имя → адрес latest/download, кодируется', () => {
+  it('простое имя → адрес releases/download/v<версия>/<файл> (по тегу, не latest), кодируется', () => {
     assert.equal(
-      assetUrl('orca-board-0.1.0-arm64.zip'),
-      'https://github.com/NANDIorg/BigOrcaCocks/releases/latest/download/orca-board-0.1.0-arm64.zip'
+      assetUrl('orca-board-0.1.0-arm64.zip', '0.1.0'),
+      'https://github.com/NANDIorg/BigOrcaCocks/releases/download/v0.1.0/orca-board-0.1.0-arm64.zip'
     )
-    assert.match(assetUrl('a b.zip'), /a%20b\.zip$/)
+    assert.match(assetUrl('a b.zip', '0.1.0'), /a%20b\.zip$/)
+    assert.match(assetUrl('a.zip', '1.2.3-beta.1'), /\/download\/v1\.2\.3-beta\.1\/a\.zip$/)
+    assert.ok(!assetUrl('a.zip', '0.1.0').includes('/latest/'))
+  })
+  it('releaseTag: v не дублируется', () => {
+    assert.equal(releaseTag('0.2.0'), 'v0.2.0')
+    assert.equal(releaseTag('v0.2.0'), 'v0.2.0')
   })
   it('путь, абсолютный URL и «..» отвергаются', () => {
     for (const bad of ['https://evil.example/a.zip', '../a.zip', 'x/a.zip', 'x\\a.zip', '', 'a..zip']) {
-      assert.throws(() => assetUrl(bad), /недопустимое имя/, bad)
+      assert.throws(() => assetUrl(bad, '0.1.0'), /недопустимое имя/, bad)
     }
   })
 })

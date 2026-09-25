@@ -20,6 +20,10 @@ import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
 import { AboutProject } from './about/AboutProject'
 import { SettingsModal } from './settings/SettingsModal'
+import { UpdateBanner, UpdateToast } from './UpdateBanner'
+import { needsAttention } from './updateState'
+import { useUpdates } from './useUpdates'
+import { useT } from './i18n'
 import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
@@ -35,7 +39,6 @@ import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
-import { useT } from './i18n'
 import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
 type Tab = 'board' | 'terminals' | 'stats' | 'info'
@@ -153,6 +156,8 @@ export function App(): React.JSX.Element {
   const [showSettings, setShowSettings] = useState(false)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
   const [showDocs, setShowDocs] = useState(false)
+  /** Обновление приложения: плашка в сайдбаре, «Настройки → Обновления», тост после старта. */
+  const updates = useUpdates()
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -729,10 +734,12 @@ export function App(): React.JSX.Element {
         <button className={`icon ${showProjects ? 'active' : ''}`} title={t('shell.rail.projects')} onClick={toggleProjects}><Icon.folder /></button>
         <button
           className={`icon ${showSettings ? 'active' : ''}`}
-          title={t('shell.rail.settings')}
+          title={!showProjects && needsAttention(updates.state) ? t('shell.update.railHint') : t('shell.rail.settings')}
           onClick={() => setShowSettings(true)}
         >
           <Icon.gear />
+          {/* Сайдбар скрыт — плашки обновления не видно, поэтому точка на шестерёнке. */}
+          {!showProjects && needsAttention(updates.state) && <span className="rail-dot" />}
         </button>
         <button className={`icon ${showDocs ? 'active' : ''}`} title={t('shell.rail.docs')} onClick={() => setShowDocs(true)} disabled={!active}>
           <Icon.doc />
@@ -772,6 +779,7 @@ export function App(): React.JSX.Element {
               </div>
             ))}
           </div>
+          <UpdateBanner updates={updates} />
         </aside>
       )}
 
@@ -998,6 +1006,7 @@ export function App(): React.JSX.Element {
       {showSettings && (
         <SettingsModal
           agents={agents}
+          updates={updates}
           onRefreshAgents={() => refreshAgents(true)}
           onProjectsChanged={refreshProjects}
           onClose={() => {
@@ -1094,6 +1103,7 @@ export function App(): React.JSX.Element {
           onSubmit={(text) => returnGlobalTask(returningGlobal.id, text)}
         />
       )}
+      <UpdateToast />
     </div>
   )
 }

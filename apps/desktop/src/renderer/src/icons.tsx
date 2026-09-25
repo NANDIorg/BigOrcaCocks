@@ -31,6 +31,7 @@ export const Icon = {
   cpu: (): React.JSX.Element => <svg {...base}><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" /></svg>,
   columns: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="5" height="16" rx="1.5" /><rect x="10" y="4" width="5" height="11" rx="1.5" /><rect x="17" y="4" width="4" height="7" rx="1.5" /></svg>,
   shield: (): React.JSX.Element => <svg {...base}><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></svg>,
+  download: (): React.JSX.Element => <svg {...base}><path d="M12 4v11M7 11l5 5 5-5M5 20h14" /></svg>,
   refresh: (): React.JSX.Element => <svg {...base}><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>,
   workflow: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="7" height="5" rx="1.5" /><rect x="14" y="15" width="7" height="5" rx="1.5" /><path d="M10 6.5h2.5a2 2 0 0 1 2 2V13M14.5 13l-2-2M14.5 13l2-2" /><path d="M6.5 9v6.5a2 2 0 0 0 2 2H14" /></svg>,
   runs: (): React.JSX.Element => <svg {...base}><path d="M7 5v14l12-7z" /></svg>,
