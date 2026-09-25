@@ -4,7 +4,7 @@
 // хранение библиотеки и миграция projects.json — в main.
 // Модуль импортирует renderer, поэтому без node-импортов; значения импортируются с расширением .ts.
 import type { Role, Run } from './types'
-import type { Workflow } from './workflow'
+import type { WfMigrationNote, Workflow } from './workflow'
 import { DEFAULT_ROLES } from './types.ts'
 import { defaultWorkflow, pipelineWorkflow } from './workflow.ts'
 
@@ -41,6 +41,12 @@ export interface TaskType {
   /** Одна строка в списке выбора типа. */
   description?: string
   settings: TaskTypeSettings
+  /**
+   * Что изменила автомиграция графа типа при загрузке (v1 → v2: снят `merge`, `condition: role`…) — предупреждения
+   * человеку, по-русски, для показа как есть. Живут, пока граф не правят (или пока человек их не убрал), и в прогоны
+   * не копируются: это состояние типа, а не его настройка.
+   */
+  workflowNotes?: WfMigrationNote[]
 }
 
 /**

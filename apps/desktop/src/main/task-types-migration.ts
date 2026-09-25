@@ -2,8 +2,8 @@
 // и разрешения уходят из проекта в пользовательский тип «<имя проекта>», шаблоны проектов становятся типами.
 // Чистая функция без ФС — её вызывает `ProjectManager.load()` после нормализации старого формата, а тесты — напрямую.
 import {
-  presetTaskTypes, taskTypeFromLegacyProject,
-  type Role, type TaskType, type TaskTypePermissionMode, type Workflow
+  DEFAULT_ROLES, WORKFLOW_VERSION, migrateWorkflowReport, presetTaskTypes, taskTypeFromLegacyProject,
+  type Role, type TaskType, type TaskTypePermissionMode, type WfMigrationNote, type Workflow
 } from '@orca-board/core'
 import type { Project, ProjectsFile } from './projects'
 
@@ -82,6 +82,38 @@ export function migrateProjectsFile(input: LegacyProjectsFile): { data: Projects
     },
     changed: true
   }
+}
+
+/** Пометки миграции графа при повторном заходе не дублируются: одинаковые (код, нода, текст) склеиваются. */
+function mergedNotes(old: readonly WfMigrationNote[] | undefined, added: readonly WfMigrationNote[]): WfMigrationNote[] {
+  const out = [...(old ?? [])]
+  for (const n of added) {
+    if (!out.some((x) => x.code === n.code && x.nodeId === n.nodeId && x.message === n.message)) out.push(n)
+  }
+  return out
+}
+
+/**
+ * Перевести графы типов на `WORKFLOW_VERSION` (v1 «по подзадачам» → v2 «по глобальной задаче», `migrateWorkflowReport`)
+ * и записать, что при этом изменилось, в `TaskType.workflowNotes` — человек увидит это в редакторе типа. Роли для
+ * миграции — роли самого типа (`settings.roles`, нет — встроенные): по ним `ask` без роли получает рабочую.
+ * Граф текущей или будущей версии не трогается (будущий не исполним — «обновите приложение»), тип без графа —
+ * тоже: его граф строится по ролям в рантайме. Идемпотентна: повторный вызов ничего не меняет. `changed` — есть ли
+ * что записать в projects.json. Копии графа в прогонах (`Run.workflow`) сюда не входят и остаются как были:
+ * идущие прогоны без `workflowScope` доживают на старом движке.
+ */
+export function migrateTypeWorkflows(types: readonly TaskType[]): { types: TaskType[]; changed: boolean } {
+  let changed = false
+  const out = types.map((t) => {
+    const wf = t.settings.workflow
+    if (!wf || !(wf.version < WORKFLOW_VERSION)) return t
+    const { workflow, notes } = migrateWorkflowReport(wf, t.settings.roles ?? DEFAULT_ROLES)
+    changed = true
+    const workflowNotes = mergedNotes(t.workflowNotes, notes)
+    const { workflowNotes: _old, ...rest } = t
+    return { ...rest, settings: { ...t.settings, workflow }, ...(workflowNotes.length ? { workflowNotes } : {}) }
+  })
+  return { types: out, changed }
 }
 
 /**
