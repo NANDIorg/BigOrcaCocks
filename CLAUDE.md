@@ -65,9 +65,13 @@ UI — на русском и английском через i18n (`renderer/sr
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).
 - **Новый UI-текст в renderer — только через `t()`, ключ сразу в ru и en.** Словари — по областям:
   `renderer/src/i18n/ru/<область>.ts` и `i18n/en/<область>.ts` (`common`, `settings`, `board`, `shell`, `global`,
-  `config`). В компоненте — `const t = useT()`, в `.ts`-модулях — `t()` из `./i18n`. Числа, даты и длительности —
-  через `i18n/format.ts`, не `toLocaleString('ru-RU')`. Не переводятся: промпты и skills, тексты main,
-  введённые человеком названия. Подробнее — «Язык интерфейса» в `docs/architecture.md`.
+  `config`, `builtin`). В компоненте — `const t = useT()`, в `.ts`-модулях — `t()` из `./i18n`. Числа, даты и
+  длительности — через `i18n/format.ts`, не `toLocaleString('ru-RU')`. Тексты main, которые видит человек (трей,
+  уведомления, диалоги, ошибки IPC), — ключ в `main/strings/ru.ts` и `en.ts`, `mt()` или `OrcaError` (`main/i18n.ts`);
+  `message` у `OrcaError` русский — его читают сокет и CLI. Ошибку main в renderer узнавать по `ipcErrorCode`, не по
+  тексту. Не переводятся: промпты и skills, всё, что агенты читают через сокет и CLI, введённые человеком названия.
+  Кириллица в литералах renderer вне `i18n/` роняет `noCyrillic.test.ts`. Подробнее — «Язык интерфейса» в
+  `docs/architecture.md`.
 - **Обновляй docs в том же коммите:** `docs/architecture.md` (модель, IPC, сокет, CLI),
   `docs/nested-kanban.md` (глобальные задачи), `docs/human-requests.md` (запросы к человеку),
   `docs/workflow.md` (воркфлоу задачи: этапы, проверки, мерж).

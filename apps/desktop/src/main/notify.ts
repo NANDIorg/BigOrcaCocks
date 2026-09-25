@@ -1,5 +1,6 @@
 import type { OrcaEvent, Task } from '@orca-board/core'
 import type { NotifyEvent, NotifyKind } from '../shared/notifications'
+import { mt } from './i18n'
 
 /** Роль, от имени которой уведомляет прогон (у run_done нет задачи). */
 export const RUN_ROLE_ID = 'coordinator'
@@ -64,12 +65,12 @@ export function describeEvent(e: OrcaEvent, task: Task | undefined, projectName:
   const text = (key: string): string => detail(requestId ? 'title' : key)
   let body: string
   switch (kind) {
-    case 'question': body = withDetail('Вопрос', text('question')); break
-    case 'escalation': body = withDetail(e.type === 'workflow_blocked' ? 'Воркфлоу остановлен' : 'Эскалация', text('reason')); break
-    case 'answerReady': body = withDetail('Ответ готов', text('summary')); break
-    case 'workerDone': body = requestId ? withDetail('Ждёт решения', text('summary')) : withDetail('Готово к ревью', detail('summary')); break
+    case 'question': body = withDetail(mt('notify.question'), text('question')); break
+    case 'escalation': body = withDetail(mt(e.type === 'workflow_blocked' ? 'notify.workflowBlocked' : 'notify.escalation'), text('reason')); break
+    case 'answerReady': body = withDetail(mt('notify.answerReady'), text('summary')); break
+    case 'workerDone': body = requestId ? withDetail(mt('notify.awaitingDecision'), text('summary')) : withDetail(mt('notify.readyForReview'), detail('summary')); break
     // Автозакрытие ставит глобальную задачу на «Проверку» — человеку её принимать; ручной перенос сделал он сам.
-    case 'runDone': body = withDetail(e.payload.manual === true ? 'Прогон завершён' : 'Подзадачи сделаны, скоро проверка', detail('objective')); break
+    case 'runDone': body = withDetail(mt(e.payload.manual === true ? 'notify.runDone' : 'notify.runSubtasksDone'), detail('objective')); break
   }
   return { kind, roleId, title, body: body.slice(0, 200), ...(requestId ? { requestId } : {}) }
 }

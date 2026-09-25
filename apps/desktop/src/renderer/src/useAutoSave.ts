@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
-/** Сообщение ошибки из main без обёртки ipcRenderer («Error invoking remote method '...': Error: ...»). */
-export function ipcErrorMessage(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e)
-  return msg.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '')
-}
+import { ipcErrorMessage } from './ipcError'
+
+export { ipcErrorCode, ipcErrorMessage } from './ipcError'
 
 const DEBOUNCE_MS = 300
 

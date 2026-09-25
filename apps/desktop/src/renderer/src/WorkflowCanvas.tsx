@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type React from 'react'
-import { WF_PORTS, wfNodeTitle, type WfNode, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
+import { WF_PORTS, type WfNode, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import {
   NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, panBy,
@@ -13,6 +13,7 @@ import {
 import { WF_TYPE_TITLES } from './workflowForm'
 import { WF_NODE_HELP } from './workflowHelp'
 import { useT, type TFunction } from './i18n'
+import { nodeTitle } from './defaultTitles'
 
 interface Props {
   workflow: Workflow
@@ -243,10 +244,10 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
           const sub = nodeSubtitle(node, t)
           return (
             <g key={node.id} className={cls} transform={`translate(${node.x} ${node.y})`}>
-              <title>{[`${wfNodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(issue?.messages ?? [])].join('\n')}</title>
+              <title>{[`${nodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(issue?.messages ?? [])].join('\n')}</title>
               <rect width={NODE_W} height={NODE_H} rx={10} className="wf-node-box" />
               <g className="wf-node-icon" transform={`translate(10 ${(NODE_H - 20) / 2})`}><NodeIcon /></g>
-              <text x={38} y={sub ? 26 : 35} className="wf-node-title">{clip(wfNodeTitle(node), 13)}</text>
+              <text x={38} y={sub ? 26 : 35} className="wf-node-title">{clip(nodeTitle(node), 13)}</text>
               {sub && <text x={38} y={43} className="wf-node-sub">{clip(sub, 19)}</text>}
               {node.type !== 'start' && <circle cx={0} cy={NODE_H / 2} r={4} className="wf-port-in" />}
               {WF_PORTS[node.type].map((outcome) => {

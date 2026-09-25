@@ -1,5 +1,6 @@
-import { DEFAULT_ROLES, wfNodeTitle, type Role, type Workflow } from '@orca-board/core'
+import { DEFAULT_ROLES, type Role, type Workflow } from '@orca-board/core'
 import { t, type TKey } from './i18n'
+import { nodeTitle } from './defaultTitles'
 
 /** Системные роли — id из DEFAULT_ROLES: у пустого назначения есть значение по умолчанию, их можно вернуть из дефолта. */
 export const SYSTEM_ROLE_IDS: ReadonlySet<string> = new Set(DEFAULT_ROLES.map((r) => r.id))
@@ -38,7 +39,7 @@ export function workflowNodesWithRole(wf: Workflow | undefined, roleId: string):
     .filter((n) =>
       ((n.type === 'gate' || n.type === 'work' || n.type === 'ask') && n.roleId === roleId) ||
       (n.type === 'condition' && n.test.kind === 'role' && n.test.roleIds.includes(roleId)))
-    .map((n) => wfNodeTitle(n))
+    .map((n) => nodeTitle(n))
 }
 
 /**

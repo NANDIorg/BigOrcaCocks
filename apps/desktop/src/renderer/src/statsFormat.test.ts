@@ -2,7 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { emptyProjectStats, emptyStatsUsage, type ProjectStats, type StatsDay, type StatsRow } from '@orca-board/core'
 import {
-  STATS_STALE_MESSAGE,
   axisLabelBudget,
   axisLabelIndexes,
   buildChart,
@@ -64,8 +63,8 @@ function stats(extra: Partial<ProjectStats> = {}): ProjectStats {
 }
 
 test('statsApi: нет stats в старом preload — ошибка «перезапустите», новый main — распознаётся', () => {
-  assert.throws(() => statsApi(undefined), { message: STATS_STALE_MESSAGE })
-  assert.throws(() => statsApi({}), { message: STATS_STALE_MESSAGE })
+  assert.throws(() => statsApi(undefined), { message: statsStaleMessage() })
+  assert.throws(() => statsApi({}), { message: statsStaleMessage() })
   assert.ok(isStaleStatsError("Error invoking remote method 'stats:project': Error: No handler registered for 'stats:project'"))
   assert.ok(!isStaleStatsError('проект не найден'))
 })
@@ -261,7 +260,7 @@ test('устаревший main/preload: сообщение на языке ин
     assert.match(statsStaleMessage(), /Restart the app/)
     assert.equal(isStaleStatsError(statsStaleMessage()), true)
   })
-  assert.equal(isStaleStatsError(STATS_STALE_MESSAGE), true)
+  assert.equal(isStaleStatsError(statsStaleMessage()), true)
   assert.equal(isStaleStatsError('другая ошибка'), false)
 })
 

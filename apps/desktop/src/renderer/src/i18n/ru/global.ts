@@ -272,5 +272,13 @@ export default {
   'panel.topEmpty': 'Агенты по подзадачам не запускались',
   'panel.subtask': 'Подзадача',
   'panel.open': 'Открыть: {title}',
-  'panel.returns': 'Возвраты с «Проверки»'
+  'panel.returns': 'Возвраты с «Проверки»',
+  // Время глобальной задачи (duration.ts: globalTimeLabel / globalTimeTitle).
+  'time.ownLine': 'В работе: {value}',
+  'time.ownClosed': 'за {value}',
+  'time.subtasksLine': 'Сумма подзадач: {value}',
+  'time.ownTicking': 'Время, пока сама глобальная задача в работе; идёт',
+  'time.ownPaused': 'Время, пока сама глобальная задача в работе; стоит: не «В работе» (бэклог, «Нужен ответ», сделано)',
+  'time.subtasksTicking': 'Сумма времени работы подзадач (параллельные складываются); идёт, пока хоть одна в работе',
+  'time.subtasksPaused': 'Сумма времени работы подзадач (параллельные складываются); сейчас ни одна не в работе'
 } satisfies AreaDict

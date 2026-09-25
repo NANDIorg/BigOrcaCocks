@@ -1,10 +1,11 @@
 import {
-  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflow, wfNodeTitle,
+  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflow,
   type Role, type WfCondition, type WfNode, type WfNodeType, type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { NODE_H, NODE_W } from './workflowGeometry'
 import { connect, makeNode, uniqueId } from './workflowEdit'
 import { t } from './i18n'
+import { nodeTitle } from './defaultTitles'
 
 // Логика инспектора ноды и вкладки «Настройки → Типы задач → Воркфлоу»: правка полей ноды, переходы портов с клавиатуры,
 // импорт/экспорт JSON, пресет лимита повторов. Как и workflowEdit.ts — чистые функции над графом.
@@ -137,7 +138,7 @@ export function targetOptions(wf: Workflow): { id: string; label: string }[] {
 
 /** Подпись ноды в select'ах: название, а если оно не совпадает с id — ещё и id (названия могут повторяться). */
 export function nodeOptionLabel(n: WfNode): string {
-  const title = wfNodeTitle(n)
+  const title = nodeTitle(n)
   return title === n.id ? title : `${title} (${n.id})`
 }
 

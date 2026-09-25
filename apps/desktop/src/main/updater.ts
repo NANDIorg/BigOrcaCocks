@@ -29,6 +29,7 @@ import {
   withPending,
   type UpdateSupport
 } from './updateMachine'
+import { OrcaError, mt } from './i18n'
 
 export { initialUpdateState, type UpdateSupport }
 
@@ -183,7 +184,7 @@ export class Updater {
     const s = this.state
     if (s.status === 'unsupported' || s.status === 'installing') return s
     if (s.status !== 'ready') {
-      throw new Error(`Обновление ещё не готово к установке (состояние: ${s.status}): дождитесь окончания загрузки`)
+      throw new OrcaError('update.notReady', { status: s.status })
     }
     if (opts.when === 'quit') {
       this.setState(withPending(s, 'quit'))
@@ -285,7 +286,7 @@ export class Updater {
       found = info && isNewer(info.version, this.state.currentVersion) ? info : null
       this.setState(manual ? manualInfo(this.state, found) : checkFinished(this.state, found))
     } catch (e) {
-      if (!manual) this.setState(silent ? before : checkFailed(this.state, errorText('Не удалось проверить обновления', e)))
+      if (!manual) this.setState(silent ? before : checkFailed(this.state, errorText(mt('update.checkFailed'), e)))
     } finally {
       this.busy = false
     }
@@ -300,7 +301,7 @@ export class Updater {
       await this.backend.download((percent) => this.setState(downloadProgress(this.state, percent)))
       this.setState(downloadDone(this.state, pendingAfterReady(this.host.settings())))
     } catch (e) {
-      this.setState(downloadFailed(this.state, errorText('Не удалось скачать обновление', e)))
+      this.setState(downloadFailed(this.state, errorText(mt('update.downloadFailed'), e)))
     } finally {
       this.busy = false
     }
@@ -346,7 +347,7 @@ export class Updater {
       }
       this.host.quit()
     } catch (e) {
-      this.setState(installFailed(this.state, errorText('Не удалось установить обновление', e)))
+      this.setState(installFailed(this.state, errorText(mt('update.installFailed'), e)))
       if (run.quitOnFailure) this.host.quit()
       else this.host.unlockQuit()
     }

@@ -14,6 +14,7 @@ import { UpdatesSection } from './UpdatesSection'
 import { TaskTypePane } from './TaskTypePane'
 import { useTaskTypes } from './useTaskTypes'
 import { setLocale, useT } from '../i18n'
+import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
 
@@ -162,9 +163,9 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onClose }: P
   const typeItem = (type: TaskType): React.JSX.Element => {
     const u = usage[type.id]
     const item: NavEntry<Section> = {
-      id: `${TYPE}${type.id}`, label: type.title, icon: Icon.layers,
+      id: `${TYPE}${type.id}`, label: builtinText(type.title), icon: Icon.layers,
       count: state?.defaultTaskTypeId === type.id ? t('settings.nav.defaultType') : u?.asDefault ? String(u.asDefault) : undefined,
-      title: [type.description, u?.asDefault ? t('settings.nav.typeUsage', { count: u.asDefault }) : ''].filter(Boolean).join('\n') || undefined
+      title: [type.description && builtinText(type.description), u?.asDefault ? t('settings.nav.typeUsage', { count: u.asDefault }) : ''].filter(Boolean).join('\n') || undefined
     }
     return <NavItem key={type.id} item={item} current={navCurrent} onGo={go} />
   }

@@ -1,4 +1,5 @@
 import { resumeCoordinatorObjective, globalTaskTitle, type TaskStore, type Run } from '@orca-board/core'
+import { OrcaError } from './i18n'
 
 /**
  * Жив ли терминал: в приложении — `isAlive` из `pty.ts`. Передаётся параметром, чтобы модуль не тянул
@@ -15,10 +16,10 @@ export type PtyAlive = (ptyId: string) => boolean
  */
 export function resumeObjective(store: TaskStore, runId: string, alive: PtyAlive): { run: Run; objective: string } {
   const run = store.getRun(runId)
-  if (!run) throw new Error(`глобальная задача не найдена: ${runId}`)
-  if (run.inbox) throw new Error('«Входящие» — не цель для координатора: создай глобальную задачу')
+  if (!run) throw new OrcaError('global.notFound', { id: runId })
+  if (run.inbox) throw new OrcaError('coordinator.inboxNotTarget')
   if (run.coordinatorPtyId && alive(run.coordinatorPtyId)) {
-    throw new Error(`координатор этой глобальной задачи уже работает (терминал ${run.coordinatorPtyId})`)
+    throw new OrcaError('coordinator.alreadyRunning', { pty: run.coordinatorPtyId })
   }
   const goal = run.objective.trim() || globalTaskTitle(run)
   const title = (status: string): string => store.columns().find((c) => c.id === status)?.title ?? status
@@ -44,10 +45,10 @@ export function returnGlobalTaskToWork(
   stop?: (ptyId: string) => void
 ): void {
   const run = store.getRun(runId)
-  if (!run) throw new Error(`глобальная задача не найдена: ${runId}`)
+  if (!run) throw new OrcaError('global.notFound', { id: runId })
   const ptyId = run.coordinatorPtyId
   if (ptyId && alive(ptyId) && !stop) {
-    throw new Error('координатор этой глобальной задачи ещё завершается — повторите через несколько секунд')
+    throw new OrcaError('coordinator.finishing')
   }
   store.returnGlobalTask(runId, text)
   if (ptyId && alive(ptyId) && stop) stop(ptyId)

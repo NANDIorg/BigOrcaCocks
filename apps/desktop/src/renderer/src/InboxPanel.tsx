@@ -8,6 +8,7 @@ import { requestStageLabel, wfNodeTitles } from './cardState'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
+import { builtinText } from './defaultTitles'
 
 interface Props {
   open: boolean
@@ -59,7 +60,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
   const where = (r: HumanRequest): string => {
     const run = runById.get(r.runId)
     const task = taskById.get(r.taskId)
-    return [run ? globalTaskTitle(run) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
+    return [run ? builtinText(globalTaskTitle(run)) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
   }
 
   const stageOf = (r: HumanRequest): string | undefined =>

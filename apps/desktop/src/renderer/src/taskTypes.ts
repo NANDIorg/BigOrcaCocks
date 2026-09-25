@@ -3,6 +3,7 @@ import {
   type AgentInfo, type GlobalTask, type Role, type Run, type TaskType, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
+import { builtinText } from './defaultTitles'
 
 /**
  * Типы задач в renderer (docs/architecture.md → «Типы задач»): тип выбирается у глобальной задачи и задаёт
@@ -115,7 +116,8 @@ export function libraryDefaultRoles(state: TaskTypesState): Role[] {
  */
 export function globalTypeTitle(global: Pick<GlobalTask, 'typeId' | 'typeTitle' | 'inbox'>, state: TaskTypesState | null): string | undefined {
   if (global.inbox || global.typeId === undefined) return undefined
-  return state?.taskTypes.find((t) => t.id === global.typeId)?.title ?? global.typeTitle ?? global.typeId
+  const title = state?.taskTypes.find((t) => t.id === global.typeId)?.title ?? global.typeTitle
+  return title ? builtinText(title) : global.typeId
 }
 
 /**

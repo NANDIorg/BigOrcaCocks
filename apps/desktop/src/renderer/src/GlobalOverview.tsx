@@ -1,13 +1,12 @@
 import type React from 'react'
 import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, Task } from '@orca-board/core'
-import { PRIORITY_TITLES } from '@orca-board/core'
 import { Icon } from './icons'
 import { GlobalDuration, relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
 import { globalTaskActions, returnsNewestFirst } from './globalReview'
 import { globalDoneReport } from './globalDoneReport'
 import { launchChecklist, showsLaunchHint, showsSummary } from './globalScreen'
-import { taskPriorityOf } from './taskPriority'
+import { priorityTitle, taskPriorityOf } from './taskPriority'
 import { Markdown } from './Markdown'
 import { useT } from './i18n'
 
@@ -53,7 +52,7 @@ export function GlobalOverview(props: Props): React.JSX.Element {
       <dl className="gt-kv">
         {typeTitle && (<><dt>{t('global.overview.type')}</dt><dd>{typeTitle}</dd></>)}
         <dt>{t('global.overview.priority')}</dt>
-        <dd>{PRIORITY_TITLES[taskPriorityOf(global)]}</dd>
+        <dd>{priorityTitle(taskPriorityOf(global))}</dd>
         {!global.inbox && (<><dt>{t('global.overview.time')}</dt><dd><GlobalDuration global={global} variant="line" /></dd></>)}
         <dt>{t('global.overview.created')}</dt>
         <dd>{formatStamp(global.createdAt)}{global.closedAt !== undefined ? ` · ${t('global.overview.closed', { date: formatStamp(global.closedAt) })}` : ''}</dd>

@@ -9,6 +9,7 @@ import {
   type TaskStore, type Workflow
 } from '@orca-board/core'
 import { collectSessionUsage, TranscriptCache, transcriptEnv, type TranscriptEnv } from './transcripts'
+import { OrcaError } from './i18n'
 
 /** Что нужно любой статистике из main: store, корень репозитория и то, что знает только main. */
 export interface StatsDeps {
@@ -83,7 +84,7 @@ export async function projectStats(deps: ProjectStatsDeps): Promise<ProjectStats
 export async function taskStats(deps: TaskStatsDeps): Promise<TaskStats> {
   const now = deps.now ?? Date.now()
   const snap = deps.store.snapshot()
-  if (!snap.tasks.some((t) => t.id === deps.taskId)) throw new Error(`статистика: задачи ${deps.taskId} нет в проекте`)
+  if (!snap.tasks.some((t) => t.id === deps.taskId)) throw new OrcaError('stats.noTask', { id: deps.taskId })
   const ids = new Set([deps.taskId, ...snap.tasks.filter((t) => t.gateFor?.taskId === deps.taskId).map((t) => t.id)])
   const collected = await collectUsage(deps, snap, now, (s) => s.taskId !== undefined && ids.has(s.taskId))
   return buildTaskStats({
@@ -106,7 +107,7 @@ export async function taskStats(deps: TaskStatsDeps): Promise<TaskStats> {
 export async function globalTaskStats(deps: GlobalTaskStatsDeps): Promise<GlobalTaskStats> {
   const now = deps.now ?? Date.now()
   const snap = deps.store.snapshot()
-  if (!snap.runs.some((r) => r.id === deps.runId)) throw new Error(`статистика: глобальной задачи ${deps.runId} нет в проекте`)
+  if (!snap.runs.some((r) => r.id === deps.runId)) throw new OrcaError('stats.noGlobal', { id: deps.runId })
   const ids = new Set(snap.tasks.filter((t) => t.runId === deps.runId).map((t) => t.id))
   const collected = await collectUsage(
     deps, snap, now,

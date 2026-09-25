@@ -982,7 +982,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Tray** (`createTray` в `app.whenReady()`, ссылка хранится в модуле — иначе GC уберёт иконку): строка меню
   на macOS, трей на Windows/Linux, tooltip `orca-board`. Меню: «Открыть orca-board», неактивный пункт
   «Задач в работе: N» (`activeDispatchCount` — незавершённые dispatch'и всех загруженных проектов;
-  меню пересобирает `refreshTray()` на каждый `projects.onChange`), «Выйти» (`requestQuit`).
+  меню пересобирает `refreshTray()` на каждый `projects.onChange` и при смене языка), «Выйти» (`requestQuit`).
+  Подписи — на языке интерфейса (`mt()`, «Язык интерфейса» → «main»).
   На macOS клик по иконке открывает меню, на Windows/Linux клик — `showWindow()`.
 - **Вернуть окно**: `showWindow()` — существующее развернуть/показать/сфокусировать, закрытое — `createWindow()`.
   Вызывается из пункта трея, клика по трею (Windows/Linux), `app.on('activate')` (клик по Dock на macOS)
@@ -1021,6 +1022,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»),
   `stats:task(projectId, taskId)` → `TaskStats`, `stats:global(projectId, runId)` → `GlobalTaskStats` (за всё время жизни; неизвестная задача или прогон —
   ошибка по-русски; см. «Статистика задачи»).
+- Ошибки `invoke`: обёртка `handle()` переводит `OrcaError` на язык интерфейса и кладёт код в имя —
+  `OrcaError[<ключ>]: <текст>` (renderer: `ipcErrorMessage` / `ipcErrorCode`, см. «Язык интерфейса» → «main»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `updates:changed` (полный `UpdateState`), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
@@ -1487,7 +1490,7 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 `costCell` («нет данных» / «без цены» / «не менее»), `buildChart` — столбцы периода: 7 / 30 дней до даты `generatedAt`,
 «всё время» — от первого дня `byDay`, длиннее 62 дней — по неделям, длиннее 420 — по месяцам. Цвет модели и роли —
 `seriesColor` по месту строки в `byModel` / `byRole` (`--s1`…`--s5`, `unknown` — `--s-unknown`, дальше — `--s-other`).
-Старый preload без `stats` — `statsApi()` бросает `STATS_STALE_MESSAGE`, старый main — `isStaleStatsError` (как `docsApi`).
+Старый preload без `stats` — `statsApi()` бросает `statsStaleMessage()`, старый main — `isStaleStatsError` (как `docsApi`).
 Период и метрика графика запоминаются в `localStorage` (`orca.stats.range`, `orca.stats.metric`), общие для проектов.
 
 ### Интерфейс — статистика задачи и глобальной задачи
@@ -1511,7 +1514,7 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
   `useNow` раз в 30 с): время жизни, «в работе» (пока открыт отрезок — `taskTicking` / `globalTaskTicking('own')`), колонка задачи, ожидание
   человека (пока есть pending), время агентов идущих сессий (у глобальной — координатор по живому PTY и подзадачи по их незавершённым
   `Dispatch`). Роли и этапы не тикают — обновляются при перечитывании.
-- **Старый main/preload** (HMR: renderer новый, main — нет). Нет `stats.task` в preload (`taskStatsApi` бросает `STATS_STALE_MESSAGE`) или нет
+- **Старый main/preload** (HMR: renderer новый, main — нет). Нет `stats.task` в preload (`taskStatsApi` бросает `statsStaleMessage()`) или нет
   обработчика в main (`isStaleStatsError`) — время считается в renderer теми же `buildTaskStats` / `buildGlobalTaskStats` по снимку доски
   (`StatsSnapshot`, собирает `App.tsx`) без `usage`: токенов и стоимости нет, над секцией — «перезапустите приложение».
 - Карточка на доске статистику не показывает: стоимость потребовала бы читать транскрипты для всей доски.
@@ -1661,8 +1664,11 @@ electron (`net.fetch` учитывает системный прокси). `macU
 ## Язык интерфейса (i18n, `renderer/src/i18n/`)
 
 Свой лёгкий модуль без зависимостей: `t()` с параметрами, множественное число через `Intl.PluralRules`,
-форматирование через `Intl`. Языки — `ru` (по умолчанию) и `en`. Переводится только UI renderer: промпты агентов,
-skills, тексты main (уведомления, диалоги, ошибки IPC) и введённые человеком названия (колонки, роли, типы) — нет.
+форматирование через `Intl`. Языки — `ru` (по умолчанию) и `en`. Переводится всё, что видит человек: UI renderer и
+тексты main (трей, системные уведомления, нативные диалоги, ошибки IPC — см. «main» ниже), а также встроенные
+названия из core, пока их не переименовали («Встроенные названия»). Не переводятся: промпты агентов, skills, всё, что
+агенты читают через сокет и CLI (ошибки сокета, записи журнала задачи, тексты запросов), и введённые человеком
+названия (колонки, роли, типы).
 
 - **Словари по областям** — отдельные файлы `i18n/ru/<область>.ts` и `i18n/en/<область>.ts`, чтобы задачи
   перевода разных экранов не правили один файл: `common` (кнопки, состояния, единицы измерения), `settings`
@@ -1697,14 +1703,18 @@ skills, тексты main (уведомления, диалоги, ошибки 
   `BOARD_SORT_OPTIONS[].title` (`boardSort.ts`, берёт и GlobalBoard), `STATUS_SOURCE_TITLES` (`statusHistory.ts`,
   берёт globalTimeline). Подписи из core только русские: они нужны CLI и промптам (`PRIORITY_TITLES`,
   `COLUMN_COLORS[].title`). В renderer их заменяют `priorityTitle()` (`taskPriority.ts`) и `columnColorTitle()`
-  (`boardColumns.ts`). Названия колонок доски — данные проекта, их не переводим, как и дефолтные «Бэклог»,
-  «Готовы» из `DEFAULT_COLUMNS`.
+  (`boardColumns.ts`). Названия колонок доски — данные проекта; встроенные «Бэклог», «Готовы» из `DEFAULT_COLUMNS`
+  показываются переведёнными, пока их не переименовали (см. «Встроенные названия»).
 - **Строка с элементами внутри** («В работе в среднем **3 ч**») — один ключ с параметром-слотом
   (`'В работе в среднем {time}'`) и `<Rich text={t(…)} slots={{ time: <b>…</b> }} />` (`StatsCells.tsx`,
   разбор — `richParts` в `globalFormat.ts`), а не склейка кусков фраз: порядок слов в языках разный.
 - **Ошибки «перезапустите приложение»** (`staleReviewMessage()`, `statsStaleMessage()`) сравнивать — на всех
-  языках (`isStaleStatsError`): язык могли сменить между запросом и ответом. Текст ошибок main не переводится,
-  поэтому регэкспы по нему (`reviewErrorMessage`) остаются русскими.
+  языках (`isStaleStatsError`): язык могли сменить между запросом и ответом. Русских констант-копий
+  (`STATS_STALE_MESSAGE`, `STALE_PRIORITY_MESSAGE`) больше нет — только функции.
+- **Ошибку main узнают по коду, а не по тексту** (текст уже на языке интерфейса): `ipcErrorCode(e)` из
+  `renderer/src/ipcError.ts` — `reviewErrorMessage` (`coordinator.finishing`), «файл не найден» в `DocsModal`
+  (`docs.notFound`). Русский регэксп рядом оставлен только для main до перевода (HMR: renderer новее main).
+  Показывать ошибку invoke — через `ipcErrorMessage(e)`: он срезает и обёртку ipcRenderer, и имя `OrcaError[код]`.
 - **Хранение**: `AppSettings.language?: 'ru' | 'en'` в `settings` файла `userData/projects.json`
   (`ProjectManager.settings()` / `setSettings`, чужое значение — ошибка), через существующие `app:getSettings` /
   `app:setSettings` — нового IPC нет. Не выбран (первый запуск, обновление со старой версии) — поля нет, язык
@@ -1727,9 +1737,43 @@ skills, тексты main (уведомления, диалоги, ошибки 
 - **Режимы разрешений** — `permissionParts(mode)` переводит по ключу режима (`config.about.perm.<mode>`), а не
   режет русскую строку `PERMISSION_MODES` из shared (её по-прежнему использует main).
 
+- **main** (`src/main/i18n.ts`, словари `src/main/strings/ru.ts` и `en.ts`; en сверяется с ru по типу и тестом
+  `main/i18n.test.ts`). Не импортирует i18n renderer (тот тянет React). Язык — модульное состояние: `setMainLocale()`
+  из `AppSettings.language` при старте (`index.ts`, сразу после `ProjectManager`) и в `app:setSettings`; там же
+  `refreshTray()` — меню трея пересобирается без перезапуска, диалоги и уведомления берут язык при показе.
+  `mt(key, params)` — на текущем языке, `mtIn(locale, …)` — на заданном; параметр может быть вложенным сообщением
+  `{key, params}` (`MText`, переводится на тот же язык). Меню приложения своё не задаём — стандартное меню Electron.
+- **Ошибки main — `OrcaError(key, params)`**: `message` всегда русский (его получают сокет и CLI, по нему проверяют
+  тесты), а обёртка `handle()` в `index.ts` отдаёт в renderer `ipcError(e)` — текст на языке интерфейса и код в имени.
+  Electron передаёт в renderer только `String(error)` («имя: сообщение»), поэтому код едет в имени:
+  `Error invoking remote method 'docs:read': OrcaError[docs.notFound]: file not found: a.md`. Ошибки без ключа
+  (`task not found`, ошибки store из core, git) идут как есть. Текст, который уходит и человеку, и в журнал задачи
+  (`startError` в `resolveHumanRequest`), — человеку `mt()`, в журнал — русский `message`.
+- **Встроенные названия** (`renderer/src/defaultTitles.ts`, область словаря `builtin`). Core кладёт в данные русские
+  тексты: колонки по умолчанию, системные роли, заготовки типов задач (их роли, описания, ноды воркфлоу),
+  «Входящие», «Проверка» глобальной доски, «Оболочка», подписи моделей, цель координатора по одним картинкам
+  (`DEFAULT_IMAGE_OBJECTIVE` — агент получает русский текст, в подсказке окна координатора — перевод). Формат состояния не меняем: `builtinText()`
+  узнаёт не переименованное название по точному тексту из `i18n/ru/builtin.ts` и показывает перевод. Колонки и роли
+  переводятся один раз в `App` (`displayColumns`, `displayRoles`) для доски, модалок и статистики; редакторы
+  (колонки, роли, типы) получают данные из проекта как есть — иначе автосохранение записало бы перевод. «Проверка»
+  глобальной доски совпадает по тексту с нодой «Проверка» — её узнаём по виду колонки. `defaultTitles.test.ts`
+  сверяет словарь `builtin` с core: поменял текст в core — поправь словарь.
+- **Проблемы воркфлоу** (`validateWorkflow` в core): у `WfIssue` есть `code` и `params` (`WF_ISSUE_TEXTS` — русские
+  шаблоны, `message` прежний). renderer переводит по коду — `wfIssueText()`, ключи `config.wf.issue.<код>`; названия
+  нод в параметрах — через `ctx.nodeTitle` (renderer передаёт `nodeTitle` из `defaultTitles.ts`). Ошибка main
+  «воркфлоу не сохранён: …» перечисляет проблемы русским `message`: renderer проверяет граф сам до сохранения.
+- **Страж** `renderer/src/noCyrillic.test.ts`: кириллица в строковых литералах, шаблонах и JSX-тексте `.ts/.tsx`
+  renderer вне `i18n/` (тесты и комментарии не смотрятся) — падение с файлом и строкой. Исключения — `ALLOWED` с
+  причиной (клавиши русской раскладки в Инбоксе).
+- **Остаётся русским при английском интерфейсе:** данные человека; тексты агентов (вопросы, сводки, эскалации и их
+  причины от исполнителя воркфлоу — журнал задачи читает координатор); ошибки store из core (`task not found` —
+  английские, отказы store вроде «тип меняется только, пока задача в бэклоге» — русские: их же получает CLI);
+  технические детали ошибок обновления macOS/Windows и сообщения валидации формы данных, которые UI не посылает.
+
 **Добавить строку:** ключ в `i18n/ru/<область>.ts` и тот же ключ в `i18n/en/<область>.ts`, в компоненте —
 `t('<область>.<ключ>')`. **Добавить область:** файлы в `ru/` и `en/` и строки в `RU` и `DICTS.en` в `i18n/dict.ts`.
-Правило: новый UI-текст — только через `t()`, ключ сразу в ru и en.
+Правило: новый UI-текст — только через `t()`, ключ сразу в ru и en. Новый текст main, который видит человек, —
+ключ в `main/strings/ru.ts` и `en.ts`, `mt()` или `OrcaError`.
 
 ## Кроссплатформенность
 
@@ -1895,6 +1939,17 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
   сломался бы (поймал тест).
 - Тесты, отдающие `TaskStore` готовый снапшот и проверяющие «не сохраняется» (`saved.length === 0`), должны класть в него
   `formatVersion: STORE_FORMAT_VERSION`, иначе миграция формата сохранит файл (`active-time.test.ts`).
+
+- Electron отдаёт в renderer ошибку `ipcMain.handle` только строкой `String(error)` — поля `code` и свои свойства
+  теряются. Стабильный код ошибки main едет в `name` (`OrcaError[docs.notFound]`), а renderer распознаёт ошибку по
+  `ipcErrorCode`, а не по тексту: текст переведён. Русские константы-копии сообщений (`STATS_STALE_MESSAGE`) при
+  английском интерфейсе давали русскую ошибку — сообщения только функциями на текущем языке.
+- Изолированный `pnpm dev` с сокетом в глубоком временном каталоге падал при старте: путь unix-сокета длиннее
+  ~104 байт (`sun_path`) — `listen` бросает, Electron показывает модальное окно ошибки main, и renderer не отвечает
+  даже на CDP (`Runtime.evaluate` висит). Для dev-экземпляра — короткий `ORCA_SOCKET` (например, относительный путь).
+- Встроенные названия core живут в данных пользователя (`projects.json`: засеянные типы, колонки проекта), поэтому
+  перевод — только при показе и не в полях редакторов: переведённый заголовок в `<input>` автосохранение записало бы
+  в проект, и при обратной смене языка название осталось бы английским.
 
 - Тесты под `node --test` резолвят импорты хуком `apps/desktop/test/ts-resolve.mjs`: без него node не находит
   модуль без расширения и не открывает папку. Хук пробует `<путь>.ts`, затем `<путь>/index.ts` — поэтому

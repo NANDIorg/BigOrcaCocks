@@ -1,5 +1,5 @@
 import { isTaskPriority, type TaskPriority } from '@orca-board/core'
-import { t, translate } from './i18n'
+import { t } from './i18n'
 
 /**
  * Название приоритета на языке интерфейса. `PRIORITY_TITLES` из core — только русские, для CLI и промптов;
@@ -27,11 +27,6 @@ export function priorityBadge(t: { priority?: unknown }): { priority: TaskPriori
 export function priorityEditable(t: { priority?: unknown }): boolean {
   return isTaskPriority(t.priority)
 }
-
-/**
- * @deprecated Только русский текст — для ещё не переведённых модулей (GlobalTaskModal). Свои — `stalePriorityMessage()`.
- */
-export const STALE_PRIORITY_MESSAGE = translate('ru', 'board.priority.stale')
 
 /** Подсказка у приоритета, когда main старее приоритетов. */
 export function stalePriorityMessage(): string {

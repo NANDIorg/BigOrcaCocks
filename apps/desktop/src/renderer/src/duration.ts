@@ -1,5 +1,6 @@
 import { activeDuration, globalOwnDuration, globalSubtasksDuration, taskActiveTime, type GlobalTask, type Task } from '@orca-board/core'
 import { formatDuration } from './i18n/format'
+import { t } from './i18n'
 
 /** Компактная длительность на языке интерфейса; реализация — в i18n/format.ts. */
 export { formatDuration } from './i18n/format'
@@ -66,15 +67,18 @@ export function globalTimeLabel(g: GlobalTimeFields, part: GlobalTimePart, now: 
   if (ms === undefined) return undefined
   const ticking = globalTaskTicking(g, part)
   const value = `${ticking ? '⏱' : g.closedAt !== undefined ? '' : '⏸'} ${formatDuration(ms)}`.trim()
-  if (part === 'own') return variant === 'line' ? `В работе: ${value}` : g.closedAt !== undefined && !ticking ? `за ${value}` : value
-  return variant === 'line' ? `Сумма подзадач: ${value}` : `Σ ${value}`
+  if (part === 'own') {
+    if (variant === 'line') return t('global.time.ownLine', { value })
+    return g.closedAt !== undefined && !ticking ? t('global.time.ownClosed', { value }) : value
+  }
+  return variant === 'line' ? t('global.time.subtasksLine', { value }) : `Σ ${value}`
 }
 
 /** Всплывающая подсказка к времени: что считается и идёт ли оно сейчас. */
 export function globalTimeTitle(g: GlobalTimeFields, part: GlobalTimePart): string {
   const ticking = globalTaskTicking(g, part)
   if (part === 'own') {
-    return `Время, пока сама глобальная задача в работе; ${ticking ? 'идёт' : 'стоит: не «В работе» (бэклог, «Нужен ответ», сделано)'}`
+    return t(ticking ? 'global.time.ownTicking' : 'global.time.ownPaused')
   }
-  return `Сумма времени работы подзадач (параллельные складываются); ${ticking ? 'идёт, пока хоть одна в работе' : 'сейчас ни одна не в работе'}`
+  return t(ticking ? 'global.time.subtasksTicking' : 'global.time.subtasksPaused')
 }

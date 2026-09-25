@@ -6,8 +6,9 @@ import {
 import type { OrcaApi } from '../../shared/ipc'
 import { formatDuration } from './duration'
 import { t } from './i18n'
+import { builtinText } from './defaultTitles'
 import {
-  STATS_STALE_MESSAGE, costCell, formatAgentTime, formatTokens, isStaleStatsError, missingLabel, missingSessions, sessionsLabel, statsApi, totalTokens
+  costCell, formatAgentTime, formatTokens, isStaleStatsError, statsStaleMessage, missingLabel, missingSessions, sessionsLabel, statsApi, totalTokens
 } from './statsFormat'
 
 /**
@@ -25,18 +26,18 @@ export function taskStatsStaleHint(): string {
 export type TaskStatsApi = Pick<OrcaApi['stats'], 'task' | 'global'>
 
 /**
- * `window.orca.stats.task` / `.global` или ошибка `STATS_STALE_MESSAGE`. Старый preload может быть уже со `stats`
+ * `window.orca.stats.task` / `.global` или ошибка `statsStaleMessage()` (на языке интерфейса). Старый preload может быть уже со `stats`
  * (проектная статистика), но без задачи — тогда `stats.task` не функция.
  */
 export function taskStatsApi(api: Partial<OrcaApi> | undefined): TaskStatsApi {
   const stats = statsApi(api)
-  if (typeof stats.task !== 'function' || typeof stats.global !== 'function') throw new Error(STATS_STALE_MESSAGE)
+  if (typeof stats.task !== 'function' || typeof stats.global !== 'function') throw new Error(statsStaleMessage())
   return stats
 }
 
 /** Ошибка «main/preload устарели»: нет API в preload или нет обработчика в main. Тогда считаем время сами. */
 export function isStatsStale(message: string): boolean {
-  return message === STATS_STALE_MESSAGE || isStaleStatsError(message)
+  return isStaleStatsError(message)
 }
 
 /** То, что renderer знает о проекте: этого хватает `buildTaskStats` / `buildGlobalTaskStats` без токенов. */
@@ -322,7 +323,7 @@ export function partValue(p: TimePart): string {
 
 /** Подпись части полосы для подсказки: «Работа — 2 ч 10 мин · 3 захода». */
 export function partLabel(p: TimePart): string {
-  return `${p.title} — ${partValue(p)}`
+  return `${builtinText(p.title)} — ${partValue(p)}`
 }
 
 // ---------- роли и счётчики ----------

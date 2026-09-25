@@ -1,13 +1,14 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
-  AGENT_TITLES, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, isTaskPriority, isTaskRole, modelLabel,
+  DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, isTaskPriority, isTaskRole, modelLabel,
   type AgentInfo, type Role, type Task, type TaskPriority
 } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { PriorityOptions } from './Priority'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
+import { agentTitle, modelTitle } from './defaultTitles'
 
 interface Props {
   /** Глобальная задача, куда попадёт подзадача, — для заголовка. */
@@ -95,7 +96,7 @@ export function NewTaskModal({ globalTitle, tasks, roles, agents, onClose, onCre
             >
               {available.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.title} · {AGENT_TITLES[r.agent]}{r.model ? ` (${modelLabel(agents.find((a) => a.id === r.agent), r.model)})` : ''}
+                  {r.title} · {agentTitle(r.agent)}{r.model ? ` (${modelTitle(modelLabel(agents.find((a) => a.id === r.agent), r.model))})` : ''}
                 </option>
               ))}
             </select>

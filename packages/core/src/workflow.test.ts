@@ -5,7 +5,7 @@ import { DEFAULT_ROLES } from './types.ts'
 import type { BoardColumn } from './types.ts'
 import {
   WORKFLOW_VERSION, WF_PORTS, defaultWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, nextStage, pipelineWorkflow,
-  startStage, stageAction, validateWorkflow, stableJson, wfWorkStage, describeWorkflow
+  startStage, stageAction, validateWorkflow, stableJson, wfWorkStage, describeWorkflow, WF_ISSUE_TEXTS
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfValidation, Workflow } from './workflow.ts'
 
@@ -600,5 +600,31 @@ describe('этап «Вопрос человеку» (ask)', () => {
     assert.equal(info.roleId, 'analyst')
     assert.equal(info.instructions, 'что нужно?')
     assert.equal(info.showcase, undefined)
+  })
+})
+
+describe('validateWorkflow: код и параметры проблем для перевода в UI', () => {
+  it('у каждой проблемы есть код, а message — русский шаблон кода с параметрами', () => {
+    const wf = defaultWorkflow(DEFAULT_ROLES)
+    const broken: Workflow = {
+      ...wf,
+      nodes: [...wf.nodes.map((n) => (n.type === 'gate' ? { ...n, roleId: 'nope' } : n)), { id: 'lost', type: 'work', x: 0, y: 0 }],
+      edges: wf.edges.filter((e) => e.outcome !== 'reject')
+    }
+    const { errors, warnings } = validateWorkflow(broken, ctx)
+    assert.ok(errors.length > 0 && warnings.length > 0)
+    for (const i of [...errors, ...warnings]) {
+      assert.ok(i.code, i.message)
+      const text = WF_ISSUE_TEXTS[i.code].replace(/\{(\w+)\}/g, (_, k: string) => String(i.params?.[k]))
+      assert.equal(i.message, text)
+    }
+  })
+
+  it('название ноды в параметрах — через ctx.nodeTitle', () => {
+    const wf = defaultWorkflow(DEFAULT_ROLES)
+    const lost: WfNode = { id: 'lost', type: 'work', x: 0, y: 0 }
+    const { warnings } = validateWorkflow({ ...wf, nodes: [...wf.nodes, lost] }, { ...ctx, nodeTitle: (n) => `T:${n.id}` })
+    const w = warnings.find((i) => i.code === 'unreachable')
+    assert.equal(w?.params?.node, 'T:lost')
   })
 })

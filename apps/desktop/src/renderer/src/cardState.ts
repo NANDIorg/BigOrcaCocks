@@ -1,5 +1,6 @@
-import { wfNodeTitle, type ColumnKind, type Dispatch, type HumanRequest, type Question, type Task, type Workflow } from '@orca-board/core'
+import { type ColumnKind, type Dispatch, type HumanRequest, type Question, type Task, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
+import { nodeTitle } from './defaultTitles'
 
 /**
  * Состояние карточки локальной доски — что с задачей сейчас, а не в какой она колонке. От него зависят полоса
@@ -130,7 +131,7 @@ export interface StageLabel {
 /** Названия нод воркфлоу по id — для подписи этапа на карточках; `Board` получает их из `App`. */
 export function wfNodeTitles(wf: Workflow | undefined): Record<string, string> {
   const titles: Record<string, string> = {}
-  for (const node of wf?.nodes ?? []) titles[node.id] = wfNodeTitle(node)
+  for (const node of wf?.nodes ?? []) titles[node.id] = nodeTitle(node)
   return titles
 }
 

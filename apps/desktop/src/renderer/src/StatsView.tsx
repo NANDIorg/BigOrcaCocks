@@ -38,6 +38,7 @@ import {
   totalTokens,
   type ChartMetric
 } from './statsFormat'
+import { builtinText } from './defaultTitles'
 
 const RANGE_KEY = 'orca.stats.range'
 const METRIC_KEY = 'orca.stats.metric'
@@ -373,7 +374,7 @@ function DayChart({ stats, metric }: { stats: ProjectStats; metric: ChartMetric 
             <>
               {metric === 'cost' && hovered.segments.map((s) => (
                 <div className="r" key={s.key}>
-                  <span><i className="swatch" style={{ background: color(s.key) }} />{stats.byModel.find((r) => r.key === s.key)?.title ?? s.key}</span>
+                  <span><i className="swatch" style={{ background: color(s.key) }} />{builtinText(stats.byModel.find((r) => r.key === s.key)?.title ?? s.key)}</span>
                   <span>{formatUsd(s.value)}</span>
                 </div>
               ))}
@@ -386,7 +387,7 @@ function DayChart({ stats, metric }: { stats: ProjectStats; metric: ChartMetric 
       {legend.length > 0 && (
         <div className="stats-legend">
           {legend.map((r) => (
-            <span key={r.key}><i className="swatch" style={{ background: seriesColor(stats.byModel, r.key) }} /><span className={r.key === 'unknown' ? 'stats-unknown' : ''}>{r.title}</span></span>
+            <span key={r.key}><i className="swatch" style={{ background: seriesColor(stats.byModel, r.key) }} /><span className={r.key === 'unknown' ? 'stats-unknown' : ''}>{builtinText(r.title)}</span></span>
           ))}
         </div>
       )}
@@ -411,7 +412,7 @@ function ShareList({ rows, byCost, colorRows, empty }: { rows: StatsRow[]; byCos
         <div className="it" key={row.key}>
           <div className="n">
             <i className="swatch" style={{ background: seriesColor(colorRows, row.key) }} />
-            <span className={`x ${row.key === 'unknown' ? 'stats-unknown' : ''}`} title={row.title}>{row.title}</span>
+            <span className={`x ${row.key === 'unknown' ? 'stats-unknown' : ''}`} title={builtinText(row.title)}>{builtinText(row.title)}</span>
           </div>
           <b>{byCost ? <Cost usage={row} /> : formatAgentTime(row.agentMs)}</b>
           <div className="stats-share" aria-hidden="true"><i style={{ width: `${Math.max(2, share * 100)}%`, background: seriesColor(colorRows, row.key) }} /></div>
@@ -492,7 +493,7 @@ function TopTable({ rows, head, usage }: { rows: StatsRow[]; head: string; usage
         <tbody>
           {items.map(({ row, share }) => (
             <tr key={row.key}>
-              <td className="t"><span className="x" title={row.title}>{row.title}</span></td>
+              <td className="t"><span className="x" title={builtinText(row.title)}>{builtinText(row.title)}</span></td>
               {usage && (
                 <td className="r">
                   <Cost usage={row} />

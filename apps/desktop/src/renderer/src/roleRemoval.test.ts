@@ -94,7 +94,8 @@ test('последствия удаления — на языке интерфе
   assert.equal(removeBlocker([custom]), 'Can’t delete the last role')
   assert.deepEqual(removalConsequences(custom.id, 3), ['Tasks with this role (3) won’t start until the role is back.'])
   const lines = removalConsequences('reviewer', undefined, defaultWorkflow([{ id: 'reviewer' }])).join('\n')
-  assert.match(lines, /used in the workflow: “Ревью”/)
+  // Встроенное название ноды «Ревью» из core на английском показывается переведённым (defaultTitles.ts).
+  assert.match(lines, /used in the workflow: “Review”/)
   assert.match(lines, /Restore system roles/)
 })
 

@@ -261,5 +261,12 @@ export default {
   'panel.topEmpty': 'No agent runs on subtasks',
   'panel.subtask': 'Subtask',
   'panel.open': 'Open: {title}',
-  'panel.returns': 'Returns from Review'
+  'panel.returns': 'Returns from Review',
+  'time.ownLine': 'In progress: {value}',
+  'time.ownClosed': 'in {value}',
+  'time.subtasksLine': 'Subtasks total: {value}',
+  'time.ownTicking': 'Time the global task itself is in progress; running',
+  'time.ownPaused': 'Time the global task itself is in progress; paused: not “In progress” (backlog, “Needs input”, done)',
+  'time.subtasksTicking': 'Total working time of subtasks (parallel ones add up); running while at least one is in progress',
+  'time.subtasksPaused': 'Total working time of subtasks (parallel ones add up); none is in progress now'
 } satisfies AreaTranslation<typeof ru>
