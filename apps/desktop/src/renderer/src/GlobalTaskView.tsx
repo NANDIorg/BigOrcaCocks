@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { AgentSession, BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task, Workflow } from '@orca-board/core'
+import type { AgentSession, BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, ImageAttachmentInput, RequestResolution, Task, Workflow } from '@orca-board/core'
 import { AttentionFeed } from './AttentionFeed'
 import type { AttentionItem } from './attention'
 import { focusBoard, focusFeed, onRevealOnBoard } from './feedLink'
@@ -57,7 +57,7 @@ interface Props {
   dispatches: Dispatch[]
   /** Снимок проекта для вкладки «Статистика»: когда её перечитывать и запасной расчёт при старом main. */
   statsSnapshot: StatsSnapshot
-  onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
   /** «Открыть полностью» у ответа — модалка подзадачи. */
   onOpenTask(taskId: string): void
   onOpenTerminal(taskId: string): void
@@ -65,7 +65,7 @@ interface Props {
   onAnswerQuestion(questionId: string, answer: string): Promise<void>
   /** «Принять» / «Вернуть» / «Уточнить» готовой задачи прямо в ленте (`review.accept` / `review.reject`). */
   onAcceptTask(taskId: string): Promise<void>
-  onRejectTask(taskId: string, feedback: string): Promise<void>
+  onRejectTask(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
   /** «↻ Перезапустить» упавшего воркера в ленте. */
   onStartTask(task: Task): void | Promise<void>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */

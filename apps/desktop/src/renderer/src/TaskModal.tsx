@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   isTaskPriority, modelLabel,
   type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
-  type RequestResolution, type GlobalTask, type Workflow
+  type RequestResolution, type GlobalTask, type Workflow, type ImageAttachmentInput
 } from '@orca-board/core'
 import type { TaskPatch } from '../../shared/ipc'
 import { AgentLogo } from './AgentLogo'
@@ -56,10 +56,10 @@ interface Props {
   onOpenTerminal(taskId: string): void
   onRemove(id: string): Promise<void>
   /** Ответ на вопрос, приёмка и уточнение ответа, перезапуск эскалации — всё через requests.resolve. */
-  onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
   /** Ревью кода (не задачи-ответа). */
   onAccept(taskId: string): Promise<void>
-  onReject(taskId: string, feedback: string): Promise<void>
+  onReject(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
 }
 
 function errorText(e: unknown): string {
@@ -205,7 +205,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                   key={r.id}
                   request={r}
                   showcase={requestShowcase(r, dispatches)}
-                  onResolve={(res) => onResolveRequest(r, res)}
+                  onResolve={(res, images) => onResolveRequest(r, res, images)}
                   onOpenTerminal={(taskId) => {
                     onOpenTerminal(taskId)
                     onClose()
@@ -350,8 +350,8 @@ export function TaskModal(props: Props): React.JSX.Element {
                   await onAccept(task.id)
                   onClose()
                 }}
-                onReject={async (fb) => {
-                  await onReject(task.id, fb)
+                onReject={async (fb, images) => {
+                  await onReject(task.id, fb, images)
                   onClose()
                 }}
               />

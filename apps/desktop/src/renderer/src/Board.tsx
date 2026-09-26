@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Task, Question, Dispatch, BoardColumn, ColumnKind, GlobalTask, Role, Run, Workflow } from '@orca-board/core'
+import type { ImageAttachmentInput, Task, Question, Dispatch, BoardColumn, ColumnKind, GlobalTask, Role, Run, Workflow } from '@orca-board/core'
 import { type RunFilter, runShortLabel } from './runs'
 import { BOARD_SORT_KEY, BOARD_SORT_OPTIONS, compareTasks, isBoardSort, readSort, writeSort, type BoardSort } from './boardSort'
 import { compareInColumn, dropStatus, localBoardColumns, pendingDeps, type DisplayColumn } from './boardColumns'
@@ -55,7 +55,7 @@ interface Props {
   onRemove(id: string): void
   onAnswer(questionId: string, answer: string): void
   onAccept(taskId: string): Promise<void>
-  onReject(taskId: string, feedback: string): Promise<void>
+  onReject(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
   /** Открыть карточку целиком (модалка задачи): клик по карточке и кнопка «Открыть». */
   onOpenTask?: (task: Task) => void
   /**
