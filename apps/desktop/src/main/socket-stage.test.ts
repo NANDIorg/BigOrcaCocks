@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, legacyDefaultWorkflow, pipelineWorkflow, presetTaskType, resolveTaskType,
-  normalizeRunBranchSettings, runTypeInput, type AgentInfo, type HumanRequest, type OrcaEvent, type Role, type Run, type Task, type Workflow
+  runTypeInput, type AgentInfo, type HumanRequest, type OrcaEvent, type Role, type Run, type Task, type Workflow
 } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { finishRunStage, handleRunWorkflowEvents, runGateDecision, type RunWorkflowDeps } from './workflow-run'
@@ -38,7 +38,6 @@ function workflowDeps(): RunWorkflowDeps {
     },
     isAlive: () => true,
     startCoordinator: () => { throw new Error('координатор жив — перезапуск не нужен') },
-    gitSettings: () => normalizeRunBranchSettings(undefined)
   }
 }
 

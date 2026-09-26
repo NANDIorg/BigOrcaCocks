@@ -31,6 +31,10 @@ const api: OrcaApi = {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
     branch: (id) => ipcRenderer.invoke('projects:branch', id),
+    branches: (id) => ipcRenderer.invoke('projects:branches', id),
+    gitFetch: (id) => ipcRenderer.invoke('projects:gitFetch', id),
+    gitPull: (id) => ipcRenderer.invoke('projects:gitPull', id),
+    checkoutBranch: (id, branch) => ipcRenderer.invoke('projects:checkoutBranch', id, branch),
     add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
     detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
     setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
@@ -44,7 +48,6 @@ const api: OrcaApi = {
     setGroupCollapsed: (id, collapsed) => ipcRenderer.invoke('projects:setGroupCollapsed', id, collapsed),
     setProjectGroup: (projectId, groupId) => ipcRenderer.invoke('projects:setProjectGroup', projectId, groupId),
     reorderGroups: (ids) => ipcRenderer.invoke('projects:reorderGroups', ids),
-    setGit: (id, patch) => ipcRenderer.invoke('projects:setGit', id, patch),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {

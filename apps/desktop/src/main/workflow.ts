@@ -33,7 +33,7 @@ export interface WorkflowDeps {
   startWorker(taskId: string, opts?: { roleId?: string }): { ptyId: string; dispatchId: string }
   /**
    * Куда сливать ветку задачи на ноде `merge` и при приёмке вне графа (`mergeTarget` в `run-branch.ts`): ветка
-   * глобальной задачи или текущая ветка корня, если она не защищённая. Нет — текущая ветка корня (тесты).
+   * глобальной задачи или текущая ветка корня. Нет — текущая ветка корня (тесты).
    */
   mergeTarget?: MergeTargetOf
 }
@@ -191,7 +191,7 @@ function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction, defer
       case 'merge': {
         let result: ReturnType<typeof mergeTaskBranch>
         try {
-          // Цель — только когда есть что сливать: защищённая ветка корня не должна останавливать задачу без ветки.
+          // Цель — только когда есть что сливать: без ветки задачи восстанавливать worktree фичи незачем.
           const target = task.worktree && task.branch ? deps.mergeTarget?.(task) : undefined
           result = mergeTaskBranch(deps.repoRoot, task, target)
         } catch (e) {

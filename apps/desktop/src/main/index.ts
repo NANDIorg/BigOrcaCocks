@@ -15,7 +15,7 @@ import {
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, writeRule } from './rules'
-import { currentBranch, projectBranchInfo } from './git'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
@@ -67,7 +67,7 @@ else app.on('second-instance', () => { if (app.isReady()) showWindow() })
 let win: BrowserWindow | null = null
 let projects: ProjectManager
 let updater: Updater
-/** Push и уборка worktree веток глобальных задач (`run-branch.ts`): попытки помнит между изменениями доски. */
+/** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
 const runBranchSync = new RunBranchSync({ isAlive })
 /** Выход подтверждён (или подтверждать нечего) — before-quit больше не перехватываем. */
 let quitting = false
@@ -211,7 +211,6 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
   return {
     socketPath: SOCKET_PATH,
     projectId,
-    git: projects.gitSettings(projectId),
     permissionMode: type.permissionMode,
     roles: type.roles,
     typeTitle: type.title,
@@ -337,13 +336,13 @@ function workflowDeps(projectId: string): WorkflowDeps {
       return { roles: t.roles, ...(workflow ? { workflow } : {}) }
     },
     startWorker: (taskId, opts) => runWorker(taskId, p.id, undefined, undefined, opts),
-    mergeTarget: (task) => mergeTarget(p.store, p.root, task, projects.gitSettings(p.id))
+    mergeTarget: (task) => mergeTarget(p.store, p.root, task)
   }
 }
 
 /**
  * Исполнитель воркфлоу глобальных задач проекта (`workflow-run.ts`): те же store, тип прогона и запуск воркера, плюс
- * координатор (его перезапускает граф на входе в «Работу») и настройки веток (защищённая база у слияния прогона).
+ * координатор (его перезапускает граф на входе в «Работу»).
  */
 function runWorkflowDeps(projectId: string): RunWorkflowDeps {
   const p = resolveProject(projectId)
@@ -358,7 +357,6 @@ function runWorkflowDeps(projectId: string): RunWorkflowDeps {
     startCoordinator: (runId) => {
       startCoordinator(p.store, p.root, ctx(p.id, runId), '', undefined, undefined, [], runId)
     },
-    gitSettings: () => projects.gitSettings(p.id),
     ...(legacy.mergeTarget ? { mergeTarget: legacy.mergeTarget } : {})
   }
 }
@@ -650,6 +648,24 @@ function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent
   })
 }
 
+/** Корень проекта по id (не обязательно активного); неизвестный id — ошибка. */
+function projectRoot(id: string): string {
+  const p = projects.get(id)
+  if (!p) throw new Error(`project not found: ${id}`)
+  return p.root
+}
+
+/**
+ * Живые воркеры и координаторы проекта: у них worktree и рабочая ветка растут от корня, переключать его нельзя
+ * (CLAUDE.md, «Git и ветки»). Считаются процессы, а не записи: dispatch без живого PTY — уже мёртвый.
+ */
+function liveAgentCount(projectId: string): number {
+  const store = projects.store(projectId)
+  const workers = store.activeDispatches().filter((d) => isAlive(d.ptyId)).length
+  const coordinators = store.listRuns().filter((r) => r.coordinatorPtyId && isAlive(r.coordinatorPtyId)).length
+  return workers + coordinators
+}
+
 function registerIpc(): void {
   handle('app:getSettings', () => projects.settings())
   handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
@@ -683,11 +699,18 @@ function registerIpc(): void {
     const p = projects.get(id)
     return p ? projectBranchInfo(p.root) : { isGitRepo: false, branch: null, detached: false }
   })
+  // Git корня проекта. Renderer сам перезапрашивает ветку по результату (`ProjectGitResult.branch` / возврат checkout).
+  handle('projects:branches', (_e, id: string) => projectBranches(projectRoot(id)))
+  handle('projects:gitFetch', (_e, id: string) => projectFetch(projectRoot(id)))
+  handle('projects:gitPull', (_e, id: string) => projectPull(projectRoot(id)))
+  handle('projects:checkoutBranch', (_e, id: string, branch: string) => {
+    const root = projectRoot(id)
+    return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
+  })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
-  handle('projects:setGit', (_e, id: string, patch: unknown) => projects.setGitSettings(id, patch))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
   handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
   handle('projects:add', async (_e, typeId?: string, path?: string) => {
@@ -868,7 +891,7 @@ app.whenReady().then(() => {
     closeDoneWorkers(store)
     // Закрытие и «Сделано» глобальной задачи — тоже любой путь (runs finish, перенос, выход координатора).
     const project = projects.get(projectId)
-    if (project) runBranchSync.sync(store, project.root, projects.gitSettings(projectId))
+    if (project) runBranchSync.sync(store, project.root)
     refreshTray()
   })
   projects.onEvents(notify)

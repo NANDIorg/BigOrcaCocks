@@ -107,7 +107,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   живут в настройках проекта.
 - `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, workflowScope?, stage?, stageHistory?, stageInput?, stageTasksDoneAt?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
   (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
-  `git: RunGit {branch, base, worktree?, pushedAt?, pushError?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»;
+  `git: RunGit {branch, base, worktree?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»;
   `workflowScope: 'run'` — воркфлоу идёт по глобальной задаче: позиция `stage`, история входов в этапы `stageHistory` (с коммитом входа и сводкой закрытия),
   `stageInput` — замечания/решение/ответы при входе в текущую «Работу», `stageTasksDoneAt` — метка `stage_tasks_done`; нет `workflowScope` —
   старый формат и «Входящие», `migrateGlobalTasks` их не трогает; контракт — `docs/workflow.md`, «Воркфлоу глобальной задачи (версия 2)»):
@@ -830,6 +830,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
   Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
+- **Меню веток у бейджа ветки** (`BranchMenu.tsx`, логика — `renderer/src/projectGit.ts`, ветка — `useProjectBranch.ts`):
+  бейдж текущей ветки в шапке — кнопка; по клику поповер с «Fetch», «Pull» (у Pull — ↑ahead ↓behind текущей ветки),
+  поиском и списками локальных / удалённых веток (текущая отмечена, занятая другим worktree недоступна, удалённые без
+  дублей локальных); выбор ветки — `projects.checkoutBranch`. Пока идёт операция, всё заблокировано; её состояние живёт
+  в `BranchMenu`, а не в поповере, поэтому закрытое меню не теряет идущий fetch/pull. Ошибки — по `ipcErrorCode`
+  (`gitErrorMessage`): у кодов `PROJECT_GIT_ERROR_CODES` свой текст в `i18n/*/shell.ts` (`branch.err.*`), у `git.opFailed`
+  и неизвестных — сообщение main (в нём stderr git). Нет git-методов в preload или канала в main
+  (`No handler registered for 'projects:…'`) — «перезапустите приложение» (`projectGitApi`, `isStaleGitError`).
+  После checkout и pull бейдж обновляется сразу (`useProjectBranch().update`), затем перечитывается.
 - **Смена проекта** (`useEffect` по `active?.id`: сайдбар или `projects:focus`) сбрасывает выбранную
   задачу и закрывает модалку задачи (`openTaskId = null`) — чужая задача в модалке не остаётся.
 - **Добавление проекта** (`addProject` в `App.tsx`, логика — `renderer/src/projectAdd.ts` `startAddProject`,
@@ -981,10 +990,6 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     (`enabledAgents`), не установленные — под спойлером; «Обновить» пересканирует PATH.
   - «Колонки» (`ColumnsEditor.tsx`) — порядок, название, цвет из `COLUMN_COLORS`, kind;
     системные колонки нельзя удалить, кастомные — можно (задачи уедут в backlog). Сохраняется через `projects:setColumns`.
-  - «Git» (`about/GitSection.tsx`) — ветка на каждую глобальную задачу (`Project.git`, `RunBranchSettings`): вкл/выкл,
-    база, шаблон имени с примером, push и remote, защищённые ветки строкой через запятую. Сохраняется кнопкой через
-    `projects:setGit`; ошибки формы — `runBranchSettingsProblems` по коду (`config.about.git.issue.*`). Нет метода у старого
-    preload — «перезапустите приложение». В меню — «ветки» / «выкл».
   - «Типы задач» (`about/TaskTypesSection.tsx`, логика — `renderer/src/taskTypeEdit.ts`) — все типы библиотеки
     (`taskTypes:list`, перечитывается при каждом открытии раздела) с галочкой «доступен в проекте» и кнопкой
     «По умолчанию»; сверху переключатель «Все типы библиотеки» (`taskTypeIds` не задан — доступны и типы, созданные
@@ -1133,9 +1138,24 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
   (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
-  агенты, типы, `groupId`, `git`; ролей, графа, правил и разрешений у проекта нет); `projects:setGit(id, patch)` → `Project` — настройки
-  веток глобальных задач поверх текущих, ошибки — `OrcaError` `git.badSettings` (см. «Ветка глобальной задачи»);
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
+  `projects:gitFetch(id)` (`git fetch --all --prune`) и `projects:gitPull(id)` (`git pull --ff-only` текущей ветки) → `ProjectGitResult {output, branch: ProjectBranchInfo}`,
+  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking); все четыре — опциональные методы `OrcaApi.projects`
+  (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
+  `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
+  воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
+  Реализация — `src/main/git.ts` («git корня проекта»): все вызовы через `execFile('git', [...])` без shell, **асинхронные** (`fetch` идёт до 120 с,
+  синхронный вызов заморозил бы окно и терминалы), `GIT_TERMINAL_PROMPT=0`, таймаут 120 с для сети и 30 с для локальных команд; операции над одним
+  корнем идут по очереди (`serial`). `projectBranches` — `for-each-ref` (локальные, `refs/remotes` без `*/HEAD`), `worktree list --porcelain`
+  (`busy`), `for-each-ref %(upstream:short/track)` + `rev-list --left-right --count` (upstream, ahead/behind, `[gone]`), `status --porcelain` (`dirty`).
+  `projectPull` — не голый `git pull`, а `fetch <remote upstream>` + `merge --ff-only`: `git.notFastForward` определяется по факту (HEAD — не предок
+  upstream), а не по тексту git, зависящему от локали; правки в дереве, мешающие обновлению, дают `git.opFailed`. `checkoutProjectBranch` проверяет по порядку:
+  репозиторий → та же ветка (успех без остальных проверок) → ветка есть (`git.branchNotFound`; имена вроде `--orphan` сюда не доходят) →
+  `liveAgents > 0` (`git.workersActive`; `liveAgentCount(projectId)` в `index.ts` — активные dispatch с живым PTY + координаторы прогонов с живым PTY) →
+  ветка в другом worktree (`git.branchBusy`) → грязное дерево, включая untracked (`git.dirtyTree`); удалённая `origin/x` без локальной `x` —
+  `checkout --track -b x origin/x`. Отдельного события «ветка сменилась» нет: `ProjectGitResult.branch` и результат `checkoutBranch` уже несут новую ветку;
+  `projects:setEnabledAgents`, `projects:setColumns` (проекты — как в projects.json: колонки,
+  агенты, типы, `groupId`; ролей, графа, правил и разрешений у проекта нет);
   **группы проектов** в левом меню (необязательны; `ProjectGroup {id, name, collapsed?}`, порядок — порядок массива):
   `projects:createGroup(name)` → `ProjectGroup`, `projects:renameGroup(id, name)` → `ProjectGroup`,
   `projects:removeGroup(id)` (проекты группы становятся без группы, сами не удаляются), `projects:setGroupCollapsed(id, collapsed)` →
@@ -1236,39 +1256,34 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 
 У каждой глобальной задачи — своя ветка и свой worktree; подзадачи ответвляются от неё и сливаются в неё, ветка корня
 проекта не меняется. Так несколько глобальных задач одного проекта идут параллельно и не смешиваются, а Orca, открытый
-на `master`, не пишет в `master`.
+на `master`, не пишет в `master`. Что делать с веткой после «Проверки» (push, PR, мерж в основную ветку) — решает
+человек: приложение её никуда не отправляет.
 
-- **Настройки** — `Project.git` (`RunBranchSettings`, нет — `DEFAULT_RUN_BRANCH_SETTINGS`): `enabled` (по умолчанию да),
-  `base` (пусто — текущая ветка корня; `origin/develop` — сначала `git fetch origin develop`, офлайн — от того, что есть),
-  `template` (`feature/{runId}-{slug}`; `{runId}` обязателен, `{slug}` — `branchSlug`: название латиницей, кириллица
-  транслитерируется, ≤ 40 символов), `push` (по умолчанию нет), `remote` (`origin`), `protected`
-  (`master`, `main`, `develop`, `release/*`, `hotfix/*`). Проверка — `runBranchSettingsProblems` (коды для renderer,
-  русский `text` для main), имя ветки — `branchNameProblem` (подмножество `git check-ref-format`).
+- **Настроек нет** (раньше были `Project.git`: вкл/выкл, база, шаблон, push, remote, защищённые ветки — убраны вместе
+  с разделом «О проекте → Git»; `normalizeProject` в `projects.ts` удаляет старое поле, `migrateRunGit` в store —
+  `Run.git.pushedAt`/`pushError`). Имя — `runBranchName`: `feature/<runId>-<slug>` (`branchSlug`: название латиницей,
+  кириллица транслитерируется, ≤ 40 символов), база — ветка, открытая в корне при старте (detached HEAD — коммит).
 - **`ensureRunBranch`** — при запуске координатора (до PTY) и воркера: `Run.git` есть — вернуть, восстановив worktree
   (`worktree prune` + `worktree add` на существующую ветку; ветки нет — `git.runBranchMissing`). Нет — завести:
   `git worktree add --no-track -b <ветка> <repo>/../.orca-worktrees/<runId> <база>` и `store.setRunGit`. `--no-track` —
-  иначе upstream новой ветки стал бы `origin/develop`, и голый `git push` отказал бы или ушёл в базу. Ветку **не** заводит:
-  «Входящим», при выключенной настройке и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина
-  фичи уже в корне) — такие работают по-старому.
+  иначе upstream новой ветки стал бы базой, и голый `git push` отказал бы или ушёл в неё. Ветку **не** заводит:
+  «Входящим» и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина фичи уже в корне) —
+  такие работают по-старому.
 - **Координатор** запускается в worktree ветки (`cwd`), туда же — `.orca-attachments`. **Воркер**: `orca/<taskId>`
   ответвляется от `Run.git.branch` (без неё — от HEAD корня).
-- **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки, `{cwd: корень, branch: текущая}`, но
-  не в защищённую (`OrcaError` `git.protectedBranch`: нода `merge` → `workflow_blocked`, приёмка вне графа — ошибка, до
-  git-части). Передаётся как `WorkflowDeps.mergeTarget` и `targetOf` в `acceptReview` / `resolveHumanRequest`.
+- **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки («Входящие», старые прогоны),
+  `{cwd: корень, branch: текущая}` — любая, защищённых веток нет. Передаётся как `WorkflowDeps.mergeTarget` и `targetOf` в `acceptReview` / `resolveHumanRequest`.
   **`reviewBase`** — база `review info`: ветка фичи или текущая ветка корня.
-- **`RunBranchSync`** — на каждое `projects.onChange`: прогон закрыт (`closedAt`, карточка на «Проверке») и `push` —
-  `git push -u <remote> refs/heads/<b>:refs/heads/<b>` в фоне (`execFile`, `GIT_TERMINAL_PROMPT=0`), итог — `pushedAt` /
-  `pushError`; неудача не повторяется до нового закрытия или перезапуска. Карточка в «Сделано», координатора и воркеров
-  нет — `git worktree remove` **без `--force`** (грязный worktree остаётся), `Run.git.worktree` снимается, ветка остаётся.
+- **`RunBranchSync`** — на каждое `projects.onChange`: карточка в «Сделано», координатора и воркеров нет — `git worktree remove` **без `--force`** (грязный worktree остаётся), `Run.git.worktree` снимается, ветка остаётся.
   Удаление глобальной задачи (`removeGlobalTask`) тоже убирает worktree, ветку оставляет.
 - **UI**: чип ветки в шапке глобальной задачи (`GlobalTaskHeader` → `BranchChip`, логика — `renderer/src/runBranch.ts`):
-  имя, тон по push, подсказка — база, папка, push; клик копирует имя. **CLI**: `global get` → поле `git`.
+  имя, подсказка — база и папка; клик копирует имя. **CLI**: `global get` → поле `git`.
 
 ## Ревью и мерж (`src/main/review.ts`, `src/main/workflow.ts`, `src/main/git.ts`)
 
 Это **локальная** интеграция без GitHub PR и CI: ветка подзадачи сливается в ветку её глобальной задачи (см. «Ветка
-глобальной задачи»), а без неё — в текущую ветку root проекта, если та не защищённая. Ветку фичи в общие ветки
-переносит человек через GitHub PR по [Git Flow](git-flow.md).
+глобальной задачи»), а без неё — в текущую ветку root проекта. Ветку фичи дальше ведёт человек (для этого репозитория —
+GitHub PR по [Git Flow](git-flow.md)).
 
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
@@ -1747,7 +1762,9 @@ IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, 
 
 ## Обновление (`src/main/updater.ts`, `updateMachine.ts`, `winUpdater.ts`; типы — `shared/ipc.ts`)
 
-Решение (вариант B, «гибрид»): Windows NSIS — electron-updater; macOS (ad-hoc подпись, Squirrel.Mac не работает) — свой установщик:
+Решение (вариант B, «гибрид»): Windows NSIS — electron-updater; macOS — свой ZIP-установщик,
+введённый для исторических ad-hoc сборок, с которыми Squirrel.Mac не работал. Новый signed/notarized
+ZIP использует тот же путь; переход на Squirrel.Mac не нужен для исправления первой установки:
 скачать zip из GitHub Releases (репозиторий NANDIorg/BigOrcaCocks) по `latest-mac.yml`, проверить sha512 и codesign, после выхода
 подменить `.app` detached-скриптом и перезапустить; portable Windows — только «скачать новый exe». Каналов (бета) нет; в dev
 (`!app.isPackaged`) обновление выключено. **Реализовано:** машина состояний, расписание, отложенная установка, Windows (NSIS и portable)
@@ -1855,7 +1872,10 @@ electron (`net.fetch` учитывает системный прокси). `macU
   dmg) — `not-in-applications`; путь с `/AppTranslocation/` — `translocated`; нет права записи в бандл или его папку — `no-write-access`. Во
   всех трёх случаях `mode: 'manual-download'`, `status: 'unsupported'`; текст для человека — «переместите приложение в „Программы“» (UI берёт
   его по `unsupportedReason`, для логов main — `macUnsupportedMessage`).
-- **Грабли.** Ad-hoc подпись новой сборки другая — macOS может заново спросить разрешения (доступ к папкам и т. п.), это ожидаемо.
+- **Грабли.** У исторических ad-hoc сборок подпись каждого выпуска менялась. При переходе на
+  Developer ID отдельно проверяется обновление с 1.0.0; macOS может заново спросить доступ к папкам.
+  Установщик проверяет целостность, bundle ID и версию, но пока не закрепляет Team ID. Это отдельное
+  ограничение автообновлений; первая установка проверяется с сохранённым браузерным quarantine.
   Настоящую подмену на установленном приложении в тестах не проверить: `macUpdater.test.ts` гоняет настоящий `install.sh` (успех, откат при
   падении `ditto`, повторный запуск, lock от параллельного скрипта, пути с пробелами и кавычками) на подставных каталогах, `open` и `ditto` подменяются через PATH.
 
@@ -2065,9 +2085,11 @@ electron (`net.fetch` учитывает системный прокси). `macU
 `cliBinDir()` в проде берёт его оттуда. `npmRebuild: true` пересобирает node-pty под Electron.
 `pnpm run pack` (не `pnpm pack` — это встроенная команда pnpm).
 
-Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — `electron-builder --mac --publish never`, dmg + zip
-arm64 и x64; `dist:win` — `electron-builder --win --publish never`; `dist:publish` — те же сборки mac и win с
-`--publish always` (нужен `GH_TOKEN`), см. «Выпуск релиза». Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
+Скрипты `apps/desktop/package.json`: `dist:mac` (= `dist`) — подписанные/notarized dmg + zip
+arm64 и x64 с финальной проверкой контейнеров, требует Apple credentials; `dist:win` —
+`electron-builder --win --publish never`. Прямая публикация builder запрещена, `dist:publish` удалён.
+Локальный `pack` использует `electron-builder.local.yml` и `release/local/` без credentials.
+Цели win в `electron-builder.yml`: `nsis` x64 (не one-click, с выбором
 папки) → `orca-board-<версия>-x64.exe` и `portable` x64 → `orca-board-<версия>-portable-x64.exe`
 (отдельный `artifactName`, иначе portable перезаписывал бы установщик). В `Resources/cli` попадают
 обе обёртки CLI — `orca-board` и `orca-board.cmd`. Windows-сборка делается кросс с macOS; тестировать
@@ -2077,12 +2099,15 @@ arm64 и x64; `dist:win` — `electron-builder --win --publish never`; `dist:pub
 на arm64 падает с `posix_spawnp failed` (spawn-helper не той архитектуры). Поэтому скрипты
 `dist`/`pack` в конце вызывают `electron-builder install-app-deps` — пересборку под текущую машину.
 
-**Подпись macOS.** `mac.identity: '-'` — ad-hoc подпись всего бандла (Electron Framework, helpers, `pty.node`,
-`spawn-helper`) штатными средствами electron-builder ≥ 26; сертификата Apple и нотаризации нет.
-`hardenedRuntime: false` обязателен: с hardened runtime library validation отвергает фреймворки, подписанные
-ad-hoc, и приложение падает при запуске. Проверка после сборки — `codesign --verify --deep --strict` на `.app`.
-Скачанная сборка всё равно не проходит Gatekeeper («Apple не удалось подтвердить…»), её открывают через
-«Всё равно открыть» — инструкция в README, раздел «Установка». На Windows и Linux ключ не влияет (только `mac`).
+**Подпись macOS.** Основной профиль требует Developer ID Application ожидаемой Team, hardened runtime,
+явные entitlements для Electron и вложенного native-кода. `beforePack` проверяет credentials,
+эффективный конфиг и identity; отсутствие любого условия прерывает сборку. Встроенный electron-builder
+26.15.3 notarize/staple `.app` до ZIP/DMG. Hook `artifactBuildCompleted` завершает timestamp-подпись,
+notarization и stapling DMG, пока доступен временный keychain builder. `verify-macos-release.mjs`
+проверяет `.app` из обоих ZIP и DMG, все Mach-O, Gatekeeper/tickets и update metadata до upload.
+Точная цепочка и secrets — [releasing.md](releasing.md#подпись-macos-и-ci-secrets).
+Ad-hoc/runtime=false остались только в локальном профиле, запрещённом для CI.
+Исторический v1.0.0 не исправляется изменением конфигурации; нужна новая версия и реальный QA.
 
 ### Выпуск релиза (`publish` в `electron-builder.yml`)
 
@@ -2094,7 +2119,8 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
 Обычные `dist`/`dist:mac`/`dist:win` вызывают electron-builder с `--publish never`: локальная сборка ничего не
 выкладывает даже при заданном `GH_TOKEN`.
 
-Что генерирует сборка (проверено `dist:mac` и `dist:win`, всё в `apps/desktop/release/`):
+Комплект сборки (новая подписанная macOS-цепочка требует реального запуска с credentials;
+всё в `apps/desktop/release/`):
 
 | Файл | Откуда | Зачем |
 |---|---|---|
@@ -2104,9 +2130,9 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
 | `orca-board-<v>-portable-x64.exe` | `win.target: portable` | portable, обновление — только «скачать новый exe» |
 | `latest-mac.yml` | mac-сборка | манифест обновлений macOS |
 | `latest.yml` | nsis | манифест обновлений Windows (portable в него не входит) |
-| `*.blockmap` (zip, dmg, nsis-exe) | electron-builder | дифференциальная загрузка `electron-updater`; для zip-установщика macOS не обязателен |
+| `*.blockmap` (zip, nsis-exe) | electron-builder | дифференциальная загрузка `electron-updater`; DMG blockmap запрещён из-за последующего stapling |
 
-Про манифесты: `latest-mac.yml` **один на обе архитектуры** — в `files` лежат zip и dmg для arm64 и x64, а верхнеуровневые
+Про манифесты: `latest-mac.yml` **один на обе архитектуры** — в `files` лежат только zip для arm64 и x64, а верхнеуровневые
 `path`/`sha512` указывают на x64-zip (это артефакт порядка сборки, не «текущая» архитектура).
 Клиент macOS обязан выбирать запись из `files` по своей архитектуре (`-arm64.zip` / `-x64.zip`), а не по `path`.
 Имена в `url` — без базового пути, относительно ассетов релиза, поэтому файлы нельзя переименовывать
@@ -2115,18 +2141,20 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
 Основной путь выпуска — [инструкция для человека и агента](releasing.md) и
 [Git Flow](git-flow.md): подготовка версии/описания через PR, release/hotfix → master,
 аннотированный тег на merge SHA, проверенный черновик и отдельная публикация.
-`dist:publish` остаётся техническим локальным скриптом; обычные выпуски делает CI.
-Не запускай его вместо релизных проверок или для замены файлов опубликованной версии.
+Файлы загружает job `draft` после финальных проверок. `SHA256SUMS` считается после stapling DMG;
+ZIP и его metadata после формирования не меняются. Опубликованные файлы не заменяются.
 
 #### Выпуск через CI (`.github/workflows/release.yml`)
 
-Workflow запускается push тега `vX.Y.Z`. Ручной выпуск нетегированной ветки отключён:
-тег фиксирует проверенный релизный коммит из master. Внешний секрет не требуется.
+Релизные jobs явно требуют push тега `vX.Y.Z`: тег фиксирует проверенный релизный коммит
+из master. Отдельный `workflow_dispatch` проверяет подписанную macOS-сборку без выпуска.
+Для macOS обязательны signing/Apple secrets.
 
 | Джоба | Раннер | Что делает |
 |---|---|---|
+| `macos-validation` | macos-14 | Только dispatch: проверяет feature/develop и полный expected_sha до checkout/зависимостей, закрепляет checkout на SHA, собирает обе архитектуры существующими hooks и verifier, считает SHA256SUMS; загружает только Actions artifacts |
 | `validate` | ubuntu | Проверяет совпадение версий, тег, принадлежность master и `docs/releases/vX.Y.Z.md`; передаёт описание артефактом |
-| `package` (mac) | macos-14 | `pnpm verify`, упаковка dmg/zip arm64 и x64 через `--publish never`, проверка ad-hoc подписи обоих `.app` |
+| `package` (mac) | macos-14 | `pnpm verify`, Developer ID/runtime, notarize/staple `.app` и DMG обеих архитектур, проверка финальных ZIP/DMG и manifest; без credentials падает |
 | `package` (win) | windows-latest | `pnpm verify`, нативная сборка node-pty и упаковка NSIS/portable x64 через `--publish never` |
 | `draft` | ubuntu | Проверяет полный комплект, обе архитектуры в latest-mac.yml и версии манифестов; создаёт SHA256SUMS, загружает файлы и описание в единственный черновик, сверяет имена/размеры/state через API |
 
@@ -2137,6 +2165,16 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 сборок, поэтому гонки между mac/win нет. По одному тегу workflow выполняются последовательно.
 Опубликованные релизы и существующие теги не перезаписываются.
 
+Manual job независима от релизных jobs и имеет явное `contents: read`; `draft` и её write-token
+при dispatch недоступны. Пять secrets передаются только шагу builder/verifier после `pnpm build`.
+Ошибка любого обязательного шага запрещает upload установщиков. Артефакт
+`macos-validation-<SHA>-<run_id>-<run_attempt>` содержит ровно два DMG, два ZIP, ZIP blockmaps,
+`latest-mac.yml` и SHA256SUMS окончательных байтов. При ошибке отдельный артефакт сохраняет
+только существующие `.dmg.json`/`.dmg.log` notarization. Версия, теги и Releases не меняются.
+Workflow ID 366875950 зарегистрирован в default master, но dispatch новой feature и успешная
+проверка credentials пока не выполнены. Требования GitHub, предел уверенности и команды —
+[ручная проверка без выпуска](releasing.md#ручная-проверка-подписанной-macos-сборки-без-выпуска).
+
 Зелёный CI не подтверждает ручную проверку приложения: скачивание сборок, smoke-тесты
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
@@ -2144,14 +2182,18 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 
 - Orca сливал подзадачи в **текущую ветку корня**, а root был открыт на `master`: две фичи ушли прямо в `master` и
   перемешались (правило «открой в Orca worktree фичи» в CLAUDE.md и `git-flow.md` агенты не могли выполнить — ветку корня
-  выбирает человек). Теперь у глобальной задачи своя ветка (`run-branch.ts`), а в защищённые ветки корня приложение не
-  сливает. Правило процесса, которое нельзя проверить кодом, — не защита: ставь проверку в код.
+  выбирает человек). Теперь у глобальной задачи своя ветка (`run-branch.ts`). Правило процесса, которое нельзя проверить
+  кодом, — не защита: ставь проверку в код.
 
 - CI выполняет тесты на трёх ОС. Фикстура живого PTY запускает Node, а не отсутствующий
   в Windows `sleep`. Интеграционные тесты `MacUpdater.install` используют реальные пути
   временного каталога и валидатор POSIX-путей: они выполняются на macOS/Linux.
   Нативную Windows-установку эта группа не проверяет. Общие тесты check/download
   и чистой валидации идут на всех ОС.
+- Фикстуры macOS verifier выполняются и на Windows: структуру bundle сравнивай после
+  нормализации разделителей, но в codesign/lipo передавай исходный путь. Реальный builder
+  на Windows запрещает macOS-упаковку ещё до beforePack; CLI-тест проверяет этот отказ,
+  а проверка credentials через hook остаётся общей для всех ОС.
 - Чистая CI-установка с `--ignore-scripts` не собирает `node-pty`. В пакете 1.1.0 есть
   prebuilds для macOS/Windows, но Linux socket-тесты падают при импорте с `Failed to load
   native module: pty.node`. CI отдельно выполняет `pnpm --filter @orca-board/desktop rebuild node-pty`
@@ -2199,8 +2241,10 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
   linker-подпись (`flags=adhoc,linker-signed`, `Sealed Resources=none`), `codesign --verify` падал с «code has
   no resources but signature indicates they must be present». Пока .app собран локально, macOS его запускает, но
   после скачивания браузером (атрибут `com.apple.quarantine`) Gatekeeper на Apple Silicon пишет «повреждён и не
-  может быть открыт», и не помогает даже ПКМ → «Открыть». Теперь `identity: '-'` (ad-hoc, см. «Сборка»).
-  Проверять подпись на скачанной копии: `xattr -w com.apple.quarantine "0081;00000000;Arc;" <копия .app>`,
+  может быть открыт», и не помогает даже ПКМ → «Открыть». Промежуточное исправление `identity: '-'`
+  дало целую ad-hoc подпись, но опубликованный v1.0.0 всё равно отвергается Gatekeeper без Developer ID
+  и notarization. Поэтому публичный профиль теперь требует полную цепочку доверия (см. «Сборка»).
+  Проверять подпись на скачанной браузером копии с сохранённым quarantine,
   `spctl -a -vv`, `syspolicy_check distribution`.
 
 - Настройки типа сохраняются целиком (`saveTaskType`), и каждое сохранение раньше заново проверяло граф. Правка ролей
@@ -2329,10 +2373,11 @@ Workflow запускается push тега `vX.Y.Z`. Ручной выпус�
 - Тест воркфлоу прогона (`workflow-run-e2e.test.ts`) с настоящими git и `ProjectManager` держится на фикстуре, которая повторяет контракт main: воркер стартует в worktree **от ветки прогона**
   (`ensureRunBranch`), иначе автомерж слил бы подзадачу в ветку корня, а не прогона; роль задачи проверяется по типу прогона (`pm.resolveRun`), как в `runWorker`; «перезапуск приложения» —
   новый `ProjectManager` над тем же каталогом (доска читается из `boards/`), а не второй `store` в памяти. Не проверяй в таких тестах то, чего нет в контракте: `stage_tasks_done` несёт только
-  `{runId, nodeId}` (без `visit`), в `Run.stageHistory` нет `start`, а слияние в `master` по умолчанию `protected` — тест merge снимает защиту (`protected: []`) явно.
+  `{runId, nodeId}` (без `visit`), в `Run.stageHistory` нет `start`.
 
 ## Открытые вопросы
 
 - Удалённый запуск по SSH, мобильный просмотр.
 - SQLite вместо JSON, если событий станет много.
-- Подпись Developer ID и нотаризация .app (сейчас только ad-hoc, см. «Сборка»).
+- Предоставление владельцем Apple credentials и реальная проверка первого signed/notarized выпуска
+  на Intel/Apple Silicon, включая переход с ad-hoc 1.0.0 (цепочка подготовлена, см. «Сборка»).

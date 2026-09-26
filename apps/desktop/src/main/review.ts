@@ -63,7 +63,7 @@ export function acceptReview(store: TaskStore, repoRoot: string, taskId: string,
   if (!task) throw new Error(`task not found: ${taskId}`)
   // Устаревший ответ (последний запуск его не сдал) не принимаем — до git-части, ветку не трогаем.
   store.assertAnswerAcceptable(taskId)
-  // Цель — до git-части: защищённая ветка корня останавливает приёмку, ничего не тронув.
+  // Цель — до git-части: пропавшая ветка фичи (`git.runBranchMissing`) останавливает приёмку, ничего не тронув.
   const target = task.worktree && task.branch ? (targetOf?.(task) ?? rootTarget(repoRoot)) : undefined
   if (task.answerFor && task.worktree && task.branch && target) {
     const info = reviewInfo(repoRoot, task.worktree, task.branch, target.branch)

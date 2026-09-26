@@ -13,8 +13,8 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  DEFAULT_ROLES, normalizeRunBranchSettings,
-  type OrcaEvent, type Role, type RunBranchSettings, type Task, type TaskStore, type WfEdge, type WfNode, type WfSubflow, type Workflow
+  DEFAULT_ROLES,
+  type OrcaEvent, type Role, type Task, type TaskStore, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
 import {
   finishRunStage, handleRunApproval, handleRunWorkflowEvents, runGateDecision, startRunWorkflow, type RunWorkflowDeps
@@ -73,7 +73,6 @@ interface App {
   launches: Launch[]
   coordinatorStarts: string[]
   alive: Set<string>
-  settings: RunBranchSettings
 }
 
 let tmp: string
@@ -93,14 +92,14 @@ beforeEach(() => {
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 /** Приложение над каталогом данных `tmp/user`: повторный вызов — «перезапуск» (тот же projects.json и доска, новые объекты). */
-function startApp(settings: RunBranchSettings = normalizeRunBranchSettings(undefined), implPath?: WfSubflow): App {
+function startApp(implPath?: WfSubflow): App {
   const pm = new ProjectManager(path.join(tmp, 'user'))
   if (pid === undefined || !pm.get(pid)) {
     pid = pm.add(repo).id
     typeId = pm.saveTaskType({ title: 'Фича', settings: { roles: ROLES, workflow: featureWorkflow(implPath) } }).id
   }
   const store = pm.store(pid)
-  const app: App = { pm, store, launches: [], coordinatorStarts: [], alive: new Set(), settings, deps: undefined as never }
+  const app: App = { pm, store, launches: [], coordinatorStarts: [], alive: new Set(), deps: undefined as never }
   app.deps = {
     store,
     repoRoot: repo,
@@ -116,7 +115,7 @@ function startApp(settings: RunBranchSettings = normalizeRunBranchSettings(undef
       const t = store.getTask(taskId)!
       const role = app.deps.run(t.runId).roles.find((r) => r.id === t.roleId)
       if (!role) throw new Error(`воркер не запустится: роли «${t.roleId}» нет в типе задачи`)
-      const runGit = ensureRunBranch(store, repo, t.runId, app.settings)
+      const runGit = ensureRunBranch(store, repo, t.runId)
       const branch = t.branch ?? `orca/${taskId}`
       const worktree = t.worktree ?? taskWorktreePath(repo, taskId)
       if (!existsSync(worktree)) git(repo, 'worktree', 'add', '-q', '-b', branch, worktree, ...(runGit ? [runGit.branch] : []))
@@ -132,8 +131,7 @@ function startApp(settings: RunBranchSettings = normalizeRunBranchSettings(undef
       app.alive.add(pty)
       store.setRunPty(runId, pty)
     },
-    gitSettings: () => app.settings,
-    mergeTarget: (t) => mergeTarget(store, repo, t, app.settings)
+    mergeTarget: (t) => mergeTarget(store, repo, t)
   }
   return app
 }
@@ -142,7 +140,7 @@ function startApp(settings: RunBranchSettings = normalizeRunBranchSettings(undef
 function startRun(app: App, title: string): string {
   const g = app.store.createGlobalTask({ title, description: `цель: ${title}`, type: app.pm.runType(pid, typeId) })
   assert.equal(app.store.getRun(g.id)!.workflowScope, 'run', 'граф типа версии 2 — прогон идёт по глобальной задаче')
-  ensureRunBranch(app.store, repo, g.id, app.settings)
+  ensureRunBranch(app.store, repo, g.id)
   const pty = `pty_coord_start_${g.id}`
   app.alive.add(pty)
   app.store.setRunPty(g.id, pty)
@@ -317,22 +315,11 @@ describe('воркфлоу глобальной задачи: сквозной �
     runGateDecision(app.deps, gate2.id, 'accept')
     assert.equal(stageId(app, runId), 'check')
 
-    // --- Человек «Проверка» → merge: защищённая master → blocked, после снятия защиты слито ---
+    // --- Человек «Проверка» → merge: слито в базу (master; защищённых веток нет) ---
     const check = approvalOf(app, runId)!
     assert.equal(check.nodeId, 'check')
     assert.match(check.body!, /Ветка: `feature\//)
-    const masterBefore = git(repo, 'rev-parse', 'master')
     resolve(app, check.id, 'accept')
-    assert.equal(stageId(app, runId), 'merge', 'позиция остаётся на merge')
-    const blocked = lastEvent(app, 'workflow_blocked')
-    assert.equal(blocked.payload.runId, runId)
-    assert.equal(blocked.taskId, undefined, 'у прогона workflow_blocked без taskId')
-    assert.match(String(blocked.payload.reason), /защищённую ветку «master» запрещено[\s\S]*git push/)
-    assert.equal(git(repo, 'rev-parse', 'master'), masterBefore, 'в защищённую ветку ничего не слито')
-    assert.equal(events(app, 'run_done').length, 0)
-
-    app.settings = { ...app.settings, protected: [] }
-    startRunWorkflow(app.deps, runId)
     assert.equal(stageId(app, runId), 'end')
     for (const f of ['analysis.md', 'a.ts', 'b.ts', 'tests.ts']) assert.equal(existsSync(path.join(repo, f)), true, `${f} слит в master`)
     assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'master', 'корень не переключался')
@@ -375,7 +362,7 @@ describe('воркфлоу глобальной задачи: сквозной �
   })
 
   it('перезапуск приложения: подзадачи на gate и human пути — Run.stage и Task.stage восстанавливаются вместе и путь продолжается', () => {
-    const app = startApp(undefined, reviewedPath())
+    const app = startApp(reviewedPath())
     const runId = startRun(app, 'Фича')
     const plan = spawn(app, runId, 'План')
     deliverFile(app, plan, 'analysis.md')

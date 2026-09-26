@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, normalizeRunBranchSettings, pipelineWorkflow,
-  type OrcaEvent, type RunBranchSettings, type Task, type WfEdge, type WfNode, type WfSubflow, type Workflow
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, pipelineWorkflow,
+  type OrcaEvent, type Task, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
 import {
   SUBTASK_MERGE_NODE, acceptRun, advanceRun, finishRunStage, handleRunApproval, handleRunWorkflowEvents, returnRun, runGateDecision,
@@ -28,7 +28,6 @@ let tmp: string
 let repo: string
 let remote: string
 let store: TaskStore
-let settings: RunBranchSettings
 let started: string[]
 let coordinatorStarts: string[]
 let coordinatorFails: boolean
@@ -46,8 +45,6 @@ beforeEach(() => {
   git(repo, 'commit', '-qm', 'init')
   git(repo, 'remote', 'add', 'origin', remote)
   store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
-  // По умолчанию — как в проекте: `master` защищён. Тесты слияния в базу снимают защиту.
-  settings = normalizeRunBranchSettings(undefined)
   started = []
   coordinatorStarts = []
   coordinatorFails = false
@@ -60,7 +57,7 @@ beforeEach(() => {
     startWorker(taskId) {
       enterWork(deps as unknown as WorkflowDeps, taskId)
       const t = task(taskId)
-      const runGit = ensureRunBranch(store, repo, t.runId, settings)
+      const runGit = ensureRunBranch(store, repo, t.runId)
       const branch = t.branch ?? `orca/${taskId}`
       const worktree = t.worktree ?? taskWorktreePath(repo, taskId)
       if (!existsSync(worktree)) git(repo, 'worktree', 'add', '-q', '-b', branch, worktree, ...(runGit ? [runGit.branch] : []))
@@ -77,8 +74,7 @@ beforeEach(() => {
       alive.add(pty)
       store.setRunPty(runId, pty)
     },
-    gitSettings: () => settings,
-    mergeTarget: (t) => mergeTarget(store, repo, t, settings)
+    mergeTarget: (t) => mergeTarget(store, repo, t)
   }
 })
 
@@ -94,7 +90,7 @@ const reviewer = DEFAULT_ROLES.find((r) => r.id === 'reviewer')!
 /** Прогон нового формата с веткой и живым координатором — как «Запустить координатора»: enter в граф. */
 function newRun(wf: Workflow = defaultWorkflow(DEFAULT_ROLES), title = 'Фича'): string {
   const g = store.createGlobalTask({ title, description: 'сделать фичу', workflow: wf })
-  ensureRunBranch(store, repo, g.id, settings)
+  ensureRunBranch(store, repo, g.id)
   const pty = `pty_coord_start_${g.id}`
   alive.add(pty)
   store.setRunPty(g.id, pty)
@@ -364,8 +360,7 @@ describe('нода merge: ветка прогона → база', () => {
     ]
   })
 
-  it('база не защищена — слито в базу, корень не переключался, дальше end', () => {
-    settings = { ...settings, protected: [] }
+  it('слито в базу (master тоже: защищённых веток нет), корень не переключался, дальше end', () => {
     const runId = newRun(mergeGraph())
     work(runId, 'login.ts')
     finishRunStage(deps, runId, 'ok')
@@ -375,24 +370,7 @@ describe('нода merge: ветка прогона → база', () => {
     assert.equal(events('run_done').length, 1)
   })
 
-  it('защищённая база — workflow_blocked по runId с подсказкой, позиция остаётся; после снятия защиты «повторить» проходит', () => {
-    const runId = newRun(mergeGraph())
-    work(runId, 'login.ts')
-    const masterBefore = git(repo, 'rev-parse', 'master')
-    finishRunStage(deps, runId, 'ok')
-    assert.equal(stageId(runId), 'merge')
-    const blocked = lastEvent('workflow_blocked')
-    assert.equal(blocked.payload.runId, runId)
-    assert.match(String(blocked.payload.reason), /защищённую ветку «master» запрещено[\s\S]*git push/)
-    assert.equal(git(repo, 'rev-parse', 'master'), masterBefore)
-
-    settings = { ...settings, protected: [] }
-    startRunWorkflow(deps, runId)
-    assert.equal(stageId(runId), 'end')
-  })
-
   it('конфликт → human «Конфликт мержа» с текстом git; «Принять» повторяет мерж', () => {
-    settings = { ...settings, protected: [] }
     const runId = newRun(mergeGraph())
     work(runId, 'f.md')
     // Кто-то другой изменил тот же файл в базе.
@@ -438,7 +416,7 @@ describe('нода git: commit и push в worktree ветки прогона', (
     return { version: 2, nodes, edges }
   }
 
-  it('commit (с {title}) и push на remote; в Run.git — pushedAt; конец', () => {
+  it('commit (с {title}) и push на remote; конец', () => {
     const runId = newRun(gitGraph([{ operation: 'commit', message: 'feat: {title}' }, { operation: 'push' }]), 'Логин')
     work(runId, 'a.ts')
     const wt = run(runId).git!.worktree!
@@ -448,16 +426,15 @@ describe('нода git: commit и push в worktree ветки прогона', (
     assert.equal(stageId(runId), 'end')
     assert.equal(git(wt, 'log', '-1', '--format=%s'), 'feat: Логин')
     assert.equal(git(remote, 'rev-parse', run(runId).git!.branch), git(repo, 'rev-parse', run(runId).git!.branch))
-    assert.notEqual(run(runId).git!.pushedAt, undefined)
+    assert.equal('pushedAt' in run(runId).git!, false, 'итог push — исход ноды, в Run.git не пишется')
   })
 
-  it('push не удался (нет remote) — исход error без ребра: workflow_blocked с текстом git, ошибка в Run.git', () => {
+  it('push не удался (нет remote) — исход error без ребра: workflow_blocked с текстом git', () => {
     const runId = newRun(gitGraph([{ operation: 'push', remote: 'nope' }]))
     work(runId, 'a.ts')
     finishRunStage(deps, runId, 'ok')
     assert.equal(stageId(runId), 'git0')
     assert.match(String(lastEvent('workflow_blocked').payload.reason), /у ноды нет перехода «error»/)
-    assert.notEqual(run(runId).git!.pushError, undefined)
   })
 
   it('error ведёт к человеку — текст git в approval', () => {
@@ -736,7 +713,7 @@ describe('путь подзадачи: движок по подзадачам и
 
   it('подзадача без привязки к этапу (создана до входа в граф) пути не имеет: workflow_blocked, приёмка вручную', () => {
     const g = store.createGlobalTask({ title: 'Ф', description: 'x', workflow: defaultWorkflow(DEFAULT_ROLES) })
-    ensureRunBranch(store, repo, g.id, settings)
+    ensureRunBranch(store, repo, g.id)
     const pty = `pty_coord_start_${g.id}`
     alive.add(pty)
     store.setRunPty(g.id, pty)

@@ -135,7 +135,7 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
   )
 }
 
-/** Ветка глобальной задачи: имя, тон по итогу push; клик копирует имя (для PR и `git switch`). */
+/** Ветка глобальной задачи: имя; клик копирует имя (для PR и `git switch`). */
 function BranchChip({ git }: { git: RunGit }): React.JSX.Element {
   const t = useT()
   const chip = branchChip(git)
@@ -148,7 +148,7 @@ function BranchChip({ git }: { git: RunGit }): React.JSX.Element {
   return (
     <button
       type="button"
-      className={`g-chip gt-branch ${chip.tone}`}
+      className="g-chip gt-branch"
       title={chip.title}
       onClick={() => void navigator.clipboard.writeText(git.branch).then(() => setCopied(true), () => undefined)}
     >

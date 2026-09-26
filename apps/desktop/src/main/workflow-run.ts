@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
   globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runGateTaskSpec, runGateTaskTitle, wfGitVars, wfNodeTitle, withStatusSource,
-  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunBranchSettings, type RunStageOptions, type RunTaskContext, type Task,
+  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunStageOptions, type RunTaskContext, type Task,
   type TaskStore, type WfAction, type WfNode, type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { gitCommit, gitPush, isBranchNameAcceptedByGit, removeWorktree } from './git'
@@ -33,8 +33,6 @@ export interface RunWorkflowDeps {
    * `resumeObjective`). Не вызывает `startRunWorkflow`. Бросает, если координатор не запустился.
    */
   startCoordinator(runId: string): void
-  /** Настройки веток глобальных задач проекта: защищённые ветки, remote и шаблон имени. */
-  gitSettings(): RunBranchSettings
   /** Куда сливать ветку подзадачи (`mergeTarget` в `run-branch.ts`). Нет — текущая ветка корня (тесты). */
   mergeTarget?: MergeTargetOf
 }
@@ -101,7 +99,7 @@ function graphOf(deps: RunWorkflowDeps, runId: string): Workflow {
  * (обычно `stage_started` на «Работе»); граф идёт (перезапуск координатора) — повторяем эффект текущей ноды. Повтор
  * безопасен: проверка и вопрос не дублируются, approval ждущий возвращается, слияние и git идемпотентны, а «Работа»
  * при живом координаторе ничего не делает — его цель уже несёт блок «# Этап». Так же — «повторить этап» после правки
- * причины `workflow_blocked` (защищённая база, роль проверки).
+ * причины `workflow_blocked` (грязный корень с базой, роль проверки).
  */
 export function startRunWorkflow(deps: RunWorkflowDeps, runId: string): void {
   const run = mustRun(deps, runId)
@@ -201,12 +199,12 @@ function executeSteps(deps: RunWorkflowDeps, runId: string, first: WfAction): vo
       case 'merge': {
         const g = run.git
         if (!g) {
-          store.blockRunStage(runId, 'слияние в базу невозможно: у глобальной задачи нет ветки (настройка веток выключена или прогон начат без ветки)')
+          store.blockRunStage(runId, 'слияние в базу невозможно: у глобальной задачи нет ветки (глобальная задача начата до веток)')
           return
         }
         let result: ReturnType<typeof mergeRunBranch>
         try {
-          result = mergeRunBranch(deps.repoRoot, g, deps.gitSettings(), `Merge orca run: ${globalTaskTitle(run)}`)
+          result = mergeRunBranch(deps.repoRoot, g, `Merge orca run: ${globalTaskTitle(run)}`)
         } catch (e) {
           store.blockRunStage(runId, `мерж не выполнен: ${message(e)}`)
           return
@@ -342,7 +340,7 @@ function createGate(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { typ
     return
   }
   if (!run.git) {
-    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: у глобальной задачи нет ветки — проверять нечего (настройка веток выключена или прогон начат без ветки)`)
+    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: у глобальной задачи нет ветки — проверять нечего (глобальная задача начата до веток)`)
     return
   }
   const { at } = currentEntry(run)
@@ -418,22 +416,20 @@ function runGitNode(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { typ
   const vars = wfGitVars({ id: run.id, title: globalTaskTitle(run) })
   const commitMessage = a.message !== undefined ? renderGitTemplate(a.message, vars).trim() : undefined
   if (a.operation === 'commit' && !commitMessage) return { kind: 'blocked', reason: `нода «${title}»: сообщение коммита после подстановки пустое` }
-  if (!run.git) return { kind: 'error', text: 'у глобальной задачи нет ветки — коммитить и пушить нечего (настройка веток выключена или прогон начат без ветки)' }
+  if (!run.git) return { kind: 'error', text: 'у глобальной задачи нет ветки — коммитить и пушить нечего (глобальная задача начата до веток)' }
   try {
-    const g = ensureRunBranch(deps.store, deps.repoRoot, run.id, deps.gitSettings()) ?? run.git
+    const g = ensureRunBranch(deps.store, deps.repoRoot, run.id) ?? run.git
     if (a.operation === 'commit') {
       if (!g.worktree) return { kind: 'error', text: 'у ветки глобальной задачи нет worktree — коммитить нечего' }
       gitCommit(g.worktree, commitMessage!)
     } else {
       const remote = a.remote ?? 'origin'
       if (!isBranchNameAcceptedByGit(deps.repoRoot, g.branch)) return { kind: 'error', text: `имя ветки «${g.branch}» недопустимо для git` }
+      // Итог push — исход ноды (`ok` / `error` с текстом git): в `Run.git` его не пишем, поля push убраны (`migrateRunGit`).
       gitPush(deps.repoRoot, g.worktree && existsSync(g.worktree) ? g.worktree : undefined, remote, g.branch)
-      deps.store.setRunGit(run.id, { pushedAt: Date.now(), pushError: undefined })
     }
   } catch (e) {
-    const text = message(e)
-    if (a.operation === 'push') deps.store.setRunGit(run.id, { pushError: text.slice(0, 2000) })
-    return { kind: 'error', text }
+    return { kind: 'error', text: message(e) }
   }
   return { kind: 'ok' }
 }

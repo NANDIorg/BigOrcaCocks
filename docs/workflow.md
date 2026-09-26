@@ -6,7 +6,7 @@
 сама (`Task.stage`); так работают только старые прогоны (без `Run.workflowScope`) и «Входящие», а всё, что описано после
 раздела о версии 2 (кроме особо отмеченного), — их движок. Командный процесс разработки
 самого orca-board — [git-flow.md](git-flow.md). Нода `merge` версии 1 сливает ветку задачи в ветку её глобальной задачи
-(«Ветка глобальной задачи» в `docs/architecture.md`), а без неё — в текущую ветку root, если та не защищённая. Это
+(«Ветка глобальной задачи» в `docs/architecture.md`), а без неё — в текущую ветку root. Это
 локальный мерж: он не создаёт GitHub PR, не проверяет CI и не заменяет ревью второго разработчика.
 
 Воркфлоу версии 1 — граф этапов, которые проходит **одна рабочая задача** после того, как её создал координатор:
@@ -42,7 +42,7 @@
 | `human` | решение человека | человек: approval уровня прогона, карточка на «Проверке» | нет |
 | `condition` | ветвление: `attempts` по `Run.stage.visits`; `role` не бывает | приложение | нет |
 | `git` | `commit` / `push` в worktree глобальной задачи (`RunGit.worktree`) | приложение | нет |
-| `merge` | слияние ветки глобальной задачи в `RunGit.base` локально через временный worktree; в защищённые ветки — нет (`workflow_blocked` с подсказкой) | приложение (`execFileSync('git', …)`) | нет |
+| `merge` | слияние ветки глобальной задачи в `RunGit.base` локально (в корне, если база выгружена там, иначе через временный worktree); защищённых веток нет — кому нужен PR, ставит вместо неё `git push` | приложение (`execFileSync('git', …)`) | нет |
 | `end` | прогон закрыт, карточка в «Сделано», координатору `run_done` | приложение | выходит по `run_done` |
 
 Решения о переходах принимает **приложение**: этап закрывается, когда закрыты его подзадачи, а исход ноды (`accept`, `ok`, …)
@@ -74,7 +74,7 @@
 | `stage_started` | граф вошёл в этап `work` — координатору набрать агентов | `{runId, nodeId, title, roleIds, visit, instructions?, feedback?, decision?, answers?}`, `roleIds` — роли ноды, пустой массив = любые рабочие роли типа; текст длиннее `EVENT_ANSWER_LIMIT` обрезан с `…Truncated`, целиком — `TaskStore.runStage` |
 | `stage_tasks_done` | закрыты все подзадачи текущего захода `work` (и есть хотя бы одна) | `{runId, nodeId}`; приходит один раз, новая подзадача или подзадача, ушедшая из done, снимает метку и гасит непрочитанное событие |
 | `stage_changed` | любой переход | `{runId, from?, to, outcome, nodeType?, title?}` (без `taskId`) |
-| `workflow_blocked` | дальше идти нельзя: нет перехода, роль этапа удалена, слияние в защищённую ветку, git настроен неверно | у прогона — `{runId, nodeId?, reason}` **без `taskId`**; у движка подзадач по-прежнему `{taskId, …}` |
+| `workflow_blocked` | дальше идти нельзя: нет перехода, роль этапа удалена, слить в базу нельзя (база — коммит, грязный корень), git настроен неверно | у прогона — `{runId, nodeId?, reason}` **без `taskId`**; у движка подзадач по-прежнему `{taskId, …}` |
 | `run_done` | граф дошёл до `end` (для прогона с `workflowScope: 'run'`) | `{runId, objective, nodeId}`; старый смысл «все подзадачи закрыты» относится только к старым прогонам |
 | `request_created`, `request_resolved` | approval прогона | `runId` вместо `taskId`; у `request_resolved` — `decision` (текст «Принять»/замечания «Вернуть», обрезан) |
 
@@ -91,7 +91,7 @@
 | `advanceRunStage(runId, outcome, opts)` | переход по исходу текущей ноды; `opts.feedback`/`decision`/`answers` уходят в `stage_started` и `Run.stageInput`, `opts.commit` — в историю. На `end` закрывает прогон и шлёт `run_done` |
 | `finishStage(runId, {summary, …})` | закрыть этап `work` (`stage finish`): все подзадачи текущего захода в done и их хотя бы одна, иначе ошибка с подсказкой; сводка — в `stageHistory` и `Run.summary` |
 | `settleIdleStages(isAlive, fallback)` | страховка: координатор мёртв, а закрытые подзадачи ждут `stage finish` — этап закрывается без сводки (аналог `settleIdleRuns`) |
-| `blockRunStage(runId, reason)` | `workflow_blocked` по `runId`: эффект не выполнился (слияние в защищённую ветку, проверка не создалась) |
+| `blockRunStage(runId, reason)` | `workflow_blocked` по `runId`: эффект не выполнился (слить в базу нельзя, проверка не создалась) |
 | `requestRunApproval(runId, {nodeId, title, body?, showcaseDispatchId?})` | approval без задачи; ждущий не дублируется |
 | `runStage(runId, fallback)` | где стоит прогон и что знает координатор: роль, инструкции, показ, `feedback`/`decision`/`answers` целиком, подзадачи захода |
 
@@ -139,8 +139,8 @@ start → «Реализация» (work, без роли) ──next──▶ �
 `validateWorkflow` (ошибки): у `ask` обязательна роль (`askNoRole`); у `work` роли необязательны, но `roleIds` — список id (`workRolesNotList`), а каждая роль — существующая рабочая роль типа (`roleMissing`, `roleService`; выключенный агент — предупреждение `roleAgentOff`); `condition: role` (`conditionRoleRun`) и `git` с
 `create_branch`/`checkout` (`gitRunOperation`) запрещены; прочие правила (порты, пути к концу, роли, колонки, git-поля) прежние. Предупреждение
 `noHumanBeforeEnd`: есть путь от старта к `end` без ноды `human` — прогон уйдёт в «Сделано» без человека (граф без `human` разрешён). Предупреждение
-`acceptWithoutMerge` убрано: слияние в базу — необязательная нода графа. Тексты проблем — `WF_ISSUE_TEXTS` и i18n `config.wf.issue.*`. Если в графе есть `git push`, авто-push
-при закрытии прогона (`RunBranchSync`) выключается — эту часть делает main.
+`acceptWithoutMerge` убрано: слияние в базу — необязательная нода графа. Тексты проблем — `WF_ISSUE_TEXTS` и i18n `config.wf.issue.*`.
+Автоматического push нет: ветку прогона отправляет только нода `git push` графа (или человек).
 
 ### Путь подзадачи (`work.subflow`)
 
@@ -228,7 +228,7 @@ node, updatedAt}`, где `node` — любая нода без `id`, `x`, `y`, 
 ### Движок main, промпты и skills прогона
 
 Store двигает граф и возвращает `WfAction`, **эффекты выполняет main**: модуль `workflow-run.ts` со своими `RunWorkflowDeps` (store, корень репозитория,
-`run(runId)` — роли и граф типа, `startWorker`, `isAlive`, `startCoordinator(runId)`, `gitSettings()`, `mergeTarget`). Подключение — `runWorkflowDeps` в `index.ts`.
+`run(runId)` — роли и граф типа, `startWorker`, `isAlive`, `startCoordinator(runId)`, `mergeTarget`). Подключение — `runWorkflowDeps` в `index.ts`.
 Прогоны без `workflowScope: 'run'` идут прежним `workflow.ts`: `handleEvents` там пропускает задачи прогонов нового формата, а новый движок — старого. Решения проверки прогона в `workflow.ts` нет: `reviewAccept`/`reviewReject` для `gateFor.runId` бросают ошибку, единственный путь — `runGateDecision`.
 
 **Промпты и skills.** Код — `packages/core/src/prompts.ts`, инструкции — `skills/coordinator.md` и `skills/worker.md`; проверки — `prompts.test.ts`. Единственный источник текстов — core: main их только вызывает.
@@ -257,14 +257,14 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `ask` (`create_ask`) | одна задача роли ноды (`createTask` со спекой `runAskTaskSpec` и `stageOf {nodeId, visit}`) и сразу её воркер; вопросы идут человеку (`worker.ask` узнаёт ноду по `stageOf`), координатор не участвует. Сдала `done` → задача закрывается, переход по `next` с `answers` (вопросы и ответы человека) в `stage_started` следующей «Работы». Агент упал, человек ответил — воркер стартует сам |
 | `gate` (`create_gate`) | одна задача-проверка роли ноды с `gateFor {runId, nodeId}` и спекой `runGateTaskSpec` (title — `runGateTaskTitle`): ветка прогона целиком против `RunGit.base` (`git log`/`git diff base...ветка`), цель прогона, сводки этапов (`stage finish`), «Как проверять». Решение — `orca-board review accept|reject --task "$ORCA_TASK_ID"` (id проверки воркер берёт из окружения). Нет ветки у прогона или роли в типе — `workflow_blocked` |
 | `human` (`request_human`) | `requestRunApproval`: approval уровня прогона. Тело — инструкция ноды, конфликт мержа/отказ git (если пришли оттуда), сводка этапа (нет — итоги подзадач последней «Работы»), показ их последних `done` (`showcaseDispatchId` — последний с показом), ветка и база |
-| `git` | `commit` / `push` в worktree ветки прогона (`ensureRunBranch` восстанавливает убранный); шаблоны `{taskId}` — id прогона, `{title}`/`{slug}` — его название. Исход `ok`/`error`, текст отказа git — в approval, если `error` ведёт к человеку, и в `feedback` следующей «Работы», если в неё. Успешный `push` пишет `Run.git.pushedAt`, неудачный — `pushError`. `create_branch`/`checkout` — `workflow_blocked` (валидация их запрещает) |
+| `git` | `commit` / `push` в worktree ветки прогона (`ensureRunBranch` восстанавливает убранный); шаблоны `{taskId}` — id прогона, `{title}`/`{slug}` — его название. Исход `ok`/`error`, текст отказа git — в approval, если `error` ведёт к человеку, и в `feedback` следующей «Работы», если в неё. Итог `push` — только исход ноды: в `Run.git` он не пишется (поля push убраны, `migrateRunGit`). `create_branch`/`checkout` — `workflow_blocked` (валидация их запрещает) |
 | `merge` | `mergeRunBranch` (`run-branch.ts`): ветку прогона в базу `RunGit.base` локально, см. ниже. Исход `ok` / `conflict` |
 | `end` | ничего: прогон закрыл store (`closedAt`, «Сделано», `run_done`). Worktree ветки убирает `RunBranchSync`, когда в прогоне никто не работает |
 | `blocked`, ошибка эффекта | `blockRunStage` — `workflow_blocked {runId, nodeId?, reason}` без `taskId`, позиция остаётся; больше 50 переходов подряд без ожидания — тоже |
 
-**`merge` прогона.** База — `RunGit.base`: локальная ветка или `<remote>/<ветка>` (сливаем в одноимённую локальную). Защищённые ветки (`RunBranchSettings.protected`,
-как у `mergeTarget`; проверяются и `develop`, и `origin/develop`) не сливаются никогда — `workflow_blocked` с подсказкой заменить `merge` на `git push` и PR; так же — база-коммит
-или отсутствие локальной ветки. Корень проекта не переключается: если база выгружена в корне (или другом worktree) и там чисто — `git merge --no-ff` прямо там, с
+**`merge` прогона.** База — `RunGit.base`: локальная ветка или `<remote>/<ветка>` (сливаем в одноимённую локальную). Защищённых веток нет: `merge` в графе — решение человека, в том числе в `master` /
+`develop`; кому нужен PR — ставит вместо `merge` `git push`. База-коммит или отсутствие локальной ветки — `workflow_blocked` с подсказкой заменить
+`merge` на `git push` и PR. Корень проекта не переключается: если база выгружена в корне (или другом worktree) и там чисто — `git merge --no-ff` прямо там, с
 незакоммиченными правками — `workflow_blocked` (мерж в грязное дерево может их задеть); иначе **временный worktree** базы (`git worktree add <os.tmpdir()>/orca-merge-*/base <база>`
 → мерж → `worktree remove --force`, папка удаляется). Конфликт (`git merge --abort` уже выполнен) — исход `conflict`, обычно «Конфликт мержа» (`human`) с текстом git; «Принять»
 повторяет слияние (ветку разрешает человек). Повтор ноды после `workflow_blocked` — `startRunWorkflow` (см. ниже). Платформенных веток нет: только `execFileSync('git', […])` и `os.tmpdir()`.
@@ -292,8 +292,8 @@ Store двигает граф и возвращает `WfAction`, **эффект
 `executeSteps`, `enterWork`, `reviewAccept`/`reviewReject`, `approvalResolved`); движок прогона (`workflow-run.ts`) эффекты пути не делает. Автомержа «в лоб» больше нет: слияние ветки подзадачи
 в ветку прогона — нода `merge` пути (по умолчанию `work → merge → end`), конфликт — нода `conflict` (`human` «Конфликт мержа»: approval на **самой задаче**, задача в «Нужен ответ»; «Принять» — после
 правки ветки задачи `merge` повторяется, «Вернуть» — замечания в `feedback`, воркер стартует заново). Этап закрывается, когда все подзадачи захода дошли до `end` пути и стоят в done
-(`stage_tasks_done`), поэтому слито всё, что координатор видит закрытым; подзадача, ждущая проверки или человека внутри пути, держит этап. Ошибка не конфликтом (защищённая ветка корня у прогона
-без ветки) — `workflow_blocked` по задаче с `taskId`.
+(`stage_tasks_done`), поэтому слито всё, что координатор видит закрытым; подзадача, ждущая проверки или человека внутри пути, держит этап. Ошибка не конфликтом (например, пропала ветка прогона) —
+`workflow_blocked` по задаче с `taskId`.
 
 *Маршрутизация — «один исполнитель на событие».* `taskEngine(deps, task)` (`main/workflow.ts`) относит задачу к одному из трёх: `path` — подзадача со `stageOf` на ноде `work` и проверка **ветки подзадачи**
 (`gateFor.taskId`); `run` — проверка ветки прогона (`gateFor.runId`), задача `ask`, подзадача без `stageOf`; `legacy` — прогон старого формата и «Входящие». `handleWorkflowEvents` (`legacy` и `path`)
@@ -307,14 +307,13 @@ Store двигает граф и возвращает `WfAction`, **эффект
 Задачи-ответы (`answerFor`) идут своим циклом «Принять» / «Уточнить».
 
 **Ограничения.** Эффект, не доведённый до конца из-за выхода приложения, повторяется при следующем запуске координатора (`startRunWorkflow`) или, для закрытия этапа, фолбэком. Файлы показа
-читаются из worktree задачи, а после автомержа он убран — файлы остаются в ветке прогона (IPC отвечает ошибкой с её именем). `RunBranchSync`: если в графе есть `git push`, авто-push при закрытии
-для прогона выключен (`workflowPushes`).
+читаются из worktree задачи, а после автомержа он убран — файлы остаются в ветке прогона (IPC отвечает ошибкой с её именем). `RunBranchSync` только убирает worktree после «Сделано»:
+push ветки прогона — нода `git push` или человек.
 
 ### Renderer
 
 Редактор типа («Настройки → Типы задач → Воркфлоу», `docs/architecture.md`, «Воркфлоу: редактор»): у «Работы» — необязательный мультивыбор ролей, справка
-`WF_NODE_HELP` описывает роли нод по этому разделу (координатор набирает агентов; гейт проверяет ветку прогона; `human` — approval прогона; мерж — в базовую ветку без
-защищённых; git — только `commit`/`push`), условие по роли и `create_branch`/`checkout` не предлагаются, ошибки и предупреждения (в том числе `noHumanBeforeEnd`) идут
+`WF_NODE_HELP` описывает роли нод по этому разделу (координатор набирает агентов; гейт проверяет ветку прогона; `human` — approval прогона; мерж — в базовую ветку, защищённых нет; git — только `commit`/`push`), условие по роли и `create_branch`/`checkout` не предлагаются, ошибки и предупреждения (в том числе `noHumanBeforeEnd`) идут
 из `validateWorkflow` с переводом по `code`, импорт графа v1 показывает, что снято миграцией, а замечания автомиграции сохранённого типа (`TaskType.workflowNotes`) — рамка над холстом (`storedWorkflowNotes`, `taskTypeEdit.ts`) и «!» у вкладки «Воркфлоу», до «Понятно» (`patch` с `workflowNotes: []`); без поля у старого main блока нет. Экран глобальной задачи: чип «Этап: …» (`runStageLabel`), входы в этапы
 в «Истории», подзадачи по этапам на доске (`Task.stageOf`), «Подтвердить» с полем решения и «Вернуть в работу…» решают approval ноды `human` (`docs/nested-kanban.md`,
 «Проверка»), Инбокс показывает approval без задачи (`docs/human-requests.md`). Все поля снимка (`Run.stage`, `stageOf`, `workflowScope`) читаются как необязательные —
@@ -333,7 +332,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 `workflow-run-e2e.test.ts`: настоящие git-репозиторий (во временной папке), `ProjectManager` (тип «Фича» с ролью `planner` и графом «Анализ → человек → Реализация (без ролей, 2 подзадачи) →
 проверка → человек → merge → end») и движок `workflow-run.ts`; PTY нет, координатор и воркеры — фейки по контракту `index.ts`. Проверяет: `stage_started` (`roleIds`, `decision`, `feedback`), ошибки
 `task create` (чужая роль, не «Работа»), слияние подзадач в ветку прогона по пути (корень не тронут), `stage_tasks_done` один раз на заход, `stage finish` → задача-проверка по ветке прогона,
-`reject` → новый заход «Реализации» без старых задач, `merge` в защищённую `master` (`workflow_blocked` без `taskId`, база не тронута) и после снятия защиты (корень не переключается),
+`reject` → новый заход «Реализации» без старых задач, `merge` в `master` (корень не переключается),
 `run_done` ровно один раз на `end`, старый прогон рядом идёт прежним движком, перезапуск приложения на approval с мёртвым координатором. Перезапуск на подзадачах, стоящих на `gate` и `human` своего пути (`Run.stage` и `Task.stage` восстанавливаются вместе). Конфликты мержа (ветка прогона и подзадача), путь подзадачи (проверка → `reject` → работа → `accept` → мерж, конфликт, повторный заход во внешний этап, совместимость со старым approval, маршрутизация «один исполнитель на событие»), `git`-ноды,
 `ask`, фолбэк `settleIdleRunStages` и цель перезапущенного координатора — в `workflow-run.test.ts`.
 
@@ -397,7 +396,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `gate` | рабочая задача в колонку ноды (по умолчанию «Ревью»), задача-проверка на роль `roleId` со спекой `gateTaskSpec` и сразу её воркер | проверяющий: `review accept` → `accept`, `review reject --feedback` → `reject` |
 | `human` | запрос `approval` в Инбокс, задача в «Нужен ответ» | человек: «Принять» → `accept`, «Вернуть» с замечаниями → `reject` |
 | `condition` | — (считается сразу: `attempts`, `role`) | `yes` / `no` |
-| `merge` | закоммитить хвосты, `git merge --no-ff` ветки в цель (`mergeTarget`: ветка глобальной задачи или текущая ветка корня; в защищённую корня — `workflow_blocked`), убрать worktree и ветку | `ok` / `conflict` (ветка и worktree на месте) |
+| `merge` | закоммитить хвосты, `git merge --no-ff` ветки в цель (`mergeTarget`: ветка глобальной задачи или текущая ветка корня), убрать worktree и ветку | `ok` / `conflict` (ветка и worktree на месте) |
 | `git` | выполнить `operation` в worktree задачи (`WfAction {type: 'git'}`), обновить `Task.branch`, если ветка сменилась — см. «Нода Git» | `ok` / `error` — текст ошибки git в `task.feedback` |
 | `end` | задача в done; ветка не слита (конец без мержа) — worktree убирается, **ветка остаётся** | — |
 

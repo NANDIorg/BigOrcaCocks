@@ -5,13 +5,10 @@ import { setLocale } from './i18n'
 
 const base = { branch: 'feature/run_a1-x', base: 'origin/develop', worktree: '/w/run_a1' }
 
-test('чип ветки: без push — обычный, с push — ok, ошибка push важнее прошлого успеха', () => {
-  assert.equal(branchChip(base).tone, 'plain')
-  assert.equal(branchChip({ ...base, pushedAt: 1 }).tone, 'ok')
-  const failed = branchChip({ ...base, pushedAt: 1, pushError: 'rejected' })
-  assert.equal(failed.tone, 'warn')
-  assert.match(failed.title, /rejected/)
-  assert.equal(failed.label, 'feature/run_a1-x')
+test('чип ветки: подпись — имя, про push ничего (ветку ведёт человек)', () => {
+  const chip = branchChip(base)
+  assert.equal(chip.label, 'feature/run_a1-x')
+  assert.doesNotMatch(chip.title, /remote|push/i)
 })
 
 test('подсказка: база, папка или что она убрана, на английском — по-английски', () => {

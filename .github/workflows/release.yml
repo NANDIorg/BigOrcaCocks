@@ -4,16 +4,128 @@ name: Release draft
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Полный проверенный commit SHA опубликованной feature/* или develop
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  macos-validation:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      # Проверка до checkout, установки зависимостей и доступа к Apple credentials.
+      - name: Проверить ref и ожидаемый SHA ручного запуска
+        id: validation-ref
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF_TYPE" = branch
+          git check-ref-format "$GITHUB_REF"
+          case "$GITHUB_REF" in
+            refs/heads/develop|refs/heads/feature/?*) ;;
+            *) echo '::error::Validation разрешена только для feature/* или develop'; exit 1 ;;
+          esac
+          if ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::expected_sha должен быть полным commit SHA'; exit 1
+          fi
+          test "$EXPECTED_SHA" = "$GITHUB_SHA" || { echo '::error::SHA запуска отличается от ожидаемого'; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Проверить SHA checkout
+        id: validation-checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Тот же release-конфиг: обе архитектуры за один вызов, .app stapled до ZIP,
+      # DMG завершает существующий hook; verifier обязателен до контрольных сумм/upload.
+      - name: Подпись, notarization и проверка финальных macOS-артефактов
+        id: validation-sign
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @orca-board/desktop exec electron-builder --mac --publish never
+          node scripts/verify-macos-release.mjs
+      - name: Контрольные суммы окончательных файлов validation
+        id: validation-checksums
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          import { join } from 'node:path'
+          import { verifyUpdateMetadata } from './scripts/macos-release.mjs'
+          const { version } = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'))
+          if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Неверная версия validation')
+          const directory = 'apps/desktop/release'
+          verifyUpdateMetadata(directory, version)
+          const files = ['latest-mac.yml', ...['arm64', 'x64'].flatMap(arch =>
+            ['dmg', 'zip', 'zip.blockmap'].map(ext => `orca-board-${version}-${arch}.${ext}`))]
+          const sums = files.map(file => `${createHash('sha256').update(readFileSync(join(directory, file))).digest('hex')}  ${file}\n`).join('')
+          writeFileSync(join(directory, 'SHA256SUMS'), sums)
+          writeFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`, { flag: 'a' })
+          NODE
+      - name: Диагностика неуспешной notarization (не установщики)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-validation-notarization-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/desktop/release/notarization/orca-board-*-arm64.dmg.json
+            apps/desktop/release/notarization/orca-board-*-arm64.dmg.log
+            apps/desktop/release/notarization/orca-board-*-x64.dmg.json
+            apps/desktop/release/notarization/orca-board-*-x64.dmg.log
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Проверенные установщики validation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-validation-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/desktop/release/orca-board-${{ steps.validation-checksums.outputs.version }}-arm64.dmg
+            apps/desktop/release/orca-board-${{ steps.validation-checksums.outputs.version }}-x64.dmg
+            apps/desktop/release/orca-board-${{ steps.validation-checksums.outputs.version }}-arm64.zip
+            apps/desktop/release/orca-board-${{ steps.validation-checksums.outputs.version }}-x64.zip
+            apps/desktop/release/orca-board-${{ steps.validation-checksums.outputs.version }}-arm64.zip.blockmap
+            apps/desktop/release/orca-board-${{ steps.validation-checksums.outputs.version }}-x64.zip.blockmap
+            apps/desktop/release/latest-mac.yml
+            apps/desktop/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
   validate:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -46,9 +158,10 @@ jobs:
           retention-days: 14
 
   package:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: validate
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -79,20 +192,32 @@ jobs:
           GIT_CONFIG_VALUE_2: 'false'
           GIT_CONFIG_KEY_3: safe.directory
           GIT_CONFIG_VALUE_3: ''
-      # На Windows собираем нативно с npmRebuild из electron-builder.yml.
-      # Публикация отключена; токена записи у упаковщика нет.
-      - run: pnpm --filter @orca-board/desktop exec electron-builder --${{ matrix.platform }} --publish never
-      - name: Проверка ad-hoc подписи обеих macOS-сборок
+      # Секреты получает только macOS-упаковка. Hook отклоняет отсутствующие credentials,
+      # чужую Team и ad-hoc; встроенный builder notarize/staple .app, hook завершает DMG.
+      - name: Подпись, notarization и проверка финальных macOS-артефактов
         if: matrix.platform == 'mac'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
           set -euo pipefail
-          count=0
-          while IFS= read -r -d '' app; do
-            codesign --verify --deep --strict "$app"
-            count=$((count + 1))
-          done < <(find apps/desktop/release -maxdepth 2 -name '*.app' -type d -print0)
-          test "$count" -eq 2
+          pnpm --filter @orca-board/desktop exec electron-builder --mac --publish never
+          node scripts/verify-macos-release.mjs
+      # На Windows собираем нативно с npmRebuild из electron-builder.yml, без Apple secrets.
+      - if: matrix.platform == 'win'
+        run: pnpm --filter @orca-board/desktop exec electron-builder --win --publish never
+      - name: Диагностика notarization DMG (не файлы релиза)
+        if: always() && matrix.platform == 'mac'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-notarization
+          path: apps/desktop/release/notarization/
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installers-${{ matrix.platform }}
@@ -106,6 +231,7 @@ jobs:
           retention-days: 14
 
   draft:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [validate, package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -143,10 +269,11 @@ jobs:
           for file in "${files[@]}"; do
             test -s "$file" || { echo "::error::Нет непустого файла $file"; exit 1; }
           done
-          # В разных версиях упаковщика dmg blockmap бывает отдельным файлом либо встроен в dmg.
+          # Stapling изменяет DMG. Его metadata отключена; updater использует ZIP.
           for file in *.dmg.blockmap; do
-            if [ -f "$file" ]; then test -s "$file"; files+=("$file"); fi
+            if [ -f "$file" ]; then echo "::error::Недопустимый DMG blockmap: $file"; exit 1; fi
           done
+          if grep -q '\.dmg' latest-mac.yml; then echo '::error::DMG в update manifest'; exit 1; fi
           for manifest in latest.yml latest-mac.yml; do
             grep -qxF "version: $RELEASE_VERSION" "$manifest"
           done
