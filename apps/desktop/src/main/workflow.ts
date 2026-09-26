@@ -476,9 +476,10 @@ function restartAsk(deps: WorkflowDeps, task: Task, workerLive: boolean): void {
 
 /**
  * Решение по задаче на этапе проверки (gate или human) — `review accept/reject`, кнопки ревью в UI.
- * На ноде human это решение её запроса approval. Замечания при reject — в feedback для следующего запуска.
+ * На ноде human это решение её запроса approval. Замечания при reject — в feedback для следующего запуска,
+ * `images` — пути картинок к ним (в worktree задачи, их сохранил main).
  */
-function decide(deps: WorkflowDeps, task: Task, outcome: 'accept' | 'reject', text?: string): void {
+function decide(deps: WorkflowDeps, task: Task, outcome: 'accept' | 'reject', text?: string, images?: string[]): void {
   const node = stageNode(deps, task)
   if (node?.type !== 'gate' && node?.type !== 'human') {
     const where = node ? `«${wfNodeTitle(node)}»` : `«${task.stage?.nodeId ?? '—'}»`
@@ -486,8 +487,9 @@ function decide(deps: WorkflowDeps, task: Task, outcome: 'accept' | 'reject', te
   }
   const request = deps.store.pendingRequests().find((r) => r.taskId === task.id && r.kind === 'approval')
   const comment = text?.trim() || undefined
-  if (request) deps.store.resolveRequest(request.id, { action: outcome, ...(comment ? { text: comment } : {}) })
-  else if (outcome === 'reject' && comment) deps.store.updateTask(task.id, { feedback: comment })
+  const attached = outcome === 'reject' && comment && images?.length ? images : undefined
+  if (request) deps.store.resolveRequest(request.id, { action: outcome, ...(comment ? { text: comment } : {}), ...(attached ? { images: attached } : {}) })
+  else if (outcome === 'reject' && comment) deps.store.updateTask(task.id, { feedback: comment, feedbackImages: attached })
   advance(deps, task.id, outcome)
 }
 
@@ -519,11 +521,11 @@ export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: stri
  * `review reject` / «Вернуть»: задача на этапе проверки — исход reject с замечаниями (обычно обратно в работу,
  * воркер стартует сразу); остальные — прежний `rejectReview` (ready с замечаниями, у ответа — «Уточнить»).
  */
-export function reviewReject(deps: WorkflowDeps, taskId: string, feedback: string): Task {
+export function reviewReject(deps: WorkflowDeps, taskId: string, feedback: string, images?: string[]): Task {
   const task = mustTask(deps, taskId)
   assertNotRunGate(task)
-  if (task.answerFor || task.gateFor || !task.stage) return deps.store.rejectReview(taskId, feedback)
-  decide(deps, task, 'reject', feedback)
+  if (task.answerFor || task.gateFor || !task.stage) return deps.store.rejectReview(taskId, feedback, images)
+  decide(deps, task, 'reject', feedback, images)
   return mustTask(deps, taskId)
 }
 

@@ -380,7 +380,7 @@ export interface Run {
    * Описание (`objective`) не трогают: уточнения попадают в цель повторного запуска координатора
    * (`resumeCoordinatorObjective`), в том числе при ручном «Запустить координатора», если старт упал.
    */
-  returns?: Array<{ at: number; text: string }>
+  returns?: Array<{ at: number; text: string; images?: string[] }>
   /**
    * Итоговая сводка координатора «что сделано и что проверить» (`runs finish --summary`, markdown) — её
    * человек видит в блоке «Что сделал» на «Проверке». Хранится одна, последняя: новый `runs finish` со
@@ -429,7 +429,7 @@ export interface Run {
    * ответы этапа «Вопрос человеку» — то же, что в `stage_started`, но целиком (в событии текст обрезан). Нужно
    * перезапущенному координатору (`TaskStore.runStage`). Сбрасывается при каждом переходе.
    */
-  stageInput?: { feedback?: string; decision?: string; answers?: string }
+  stageInput?: { feedback?: string; decision?: string; answers?: string; images?: string[] }
   /**
    * Все подзадачи текущего этапа «Работа» дошли до done: координатору отправлен `stage_tasks_done`, но этап не
    * закрыт — он решает, нужны ли ещё задачи, и вызывает `stage finish`. Как `runDoneAt` у старого движка: новая
@@ -559,6 +559,11 @@ export interface Task {
   dispatchId?: string
   /** Замечания после ревью (у задачи-ответа — уточнение), попадут в промпт при перезапуске. */
   feedback?: string
+  /**
+   * Изображения к `feedback`: абсолютные пути файлов в worktree задачи (`.orca-attachments/`), не байты.
+   * Пишет только main после сохранения файлов. Любая запись `feedback` без картинок сбрасывает поле.
+   */
+  feedbackImages?: string[]
   /**
    * Задача-ответ («посмотри», «разберись», «предложи»): результат — текст в markdown (`Dispatch.answer`),
    * а не изменения в коде; ревью кода не нужно. Значение — кто читает ответ. Нет поля — обычная задача.
@@ -722,6 +727,11 @@ export interface RequestResolution {
   optionId?: string
   /** Свободный текст: ответ на вопрос, решение при «Принять», уточнение при «Уточнить», замечания при «Вернуть». */
   text?: string
+  /**
+   * Изображения к `text` при «Уточнить»/«Вернуть»: абсолютные пути в cwd читателя (воркера или координатора).
+   * Ставит только main после записи файлов; пришедшее из renderer или сокета main отбрасывает.
+   */
+  images?: string[]
 }
 
 /**
@@ -783,9 +793,9 @@ export type EventType =
   | 'run_done'
   /** Появился запрос к человеку (HumanRequest pending) — по нему уведомление. */
   | 'request_created'
-  /** Эскалацию решил человек: `restart` (main стартует воркера) или `dismiss`. */
+  /** Запрос решил человек (эскалация `restart`/`dismiss`, approval, ответ). Payload может нести `images` — пути картинок к замечаниям. */
   | 'request_resolved'
-  /** Человек уточнил ответ задачи-ответа: задача в ready с feedback, main стартует воркера. */
+  /** Человек уточнил ответ задачи-ответа: задача в ready с feedback, main стартует воркера. Payload может нести `images` (пути). */
   | 'answer_clarified'
   /** Задача перешла на другой этап воркфлоу (`advanceStage`); в основном для UI. */
   | 'stage_changed'
@@ -796,8 +806,8 @@ export type EventType =
   | 'workflow_blocked'
   /**
    * Воркфлоу глобальной задачи вошёл в этап «Работа»: координатору — набрать агентов роли этапа. Payload:
-   * `{runId, nodeId, title, roleId, visit, instructions?, feedback?, decision?, answers?}`; текстовые поля
-   * обрезаны (`…Truncated`), целиком — `TaskStore.runStage`.
+   * `{runId, nodeId, title, roleId, visit, instructions?, feedback?, decision?, answers?, images?}`; текстовые
+   * поля обрезаны (`…Truncated`), целиком — `TaskStore.runStage`; `images` — абсолютные пути картинок к замечаниям.
    */
   | 'stage_started'
   /** Все подзадачи текущего этапа «Работа» закрыты: координатор решает, нужен ли ещё кто-то, и зовёт `stage finish`. Payload `{runId, nodeId}`. */

@@ -43,6 +43,7 @@ function workStage(store: TaskStore, runId: string): CoordinatorStage | undefine
     ...(stage.roleIds ? { roleIds: stage.roleIds } : {}),
     ...(stage.instructions ? { instructions: stage.instructions } : {}),
     ...(stage.feedback ? { feedback: stage.feedback } : {}),
+    ...(stage.feedback && stage.images ? { images: stage.images } : {}),
     ...(stage.decision ? { decision: stage.decision } : {}),
     ...(stage.answers ? { answers: stage.answers } : {}),
     tasks: stage.tasks,
@@ -65,7 +66,8 @@ export function returnGlobalTaskToWork(
   runId: string,
   text: string,
   alive: PtyAlive,
-  stop?: (ptyId: string) => void
+  stop?: (ptyId: string) => void,
+  images?: string[]
 ): void {
   const run = store.getRun(runId)
   if (!run) throw new OrcaError('global.notFound', { id: runId })
@@ -73,6 +75,6 @@ export function returnGlobalTaskToWork(
   if (ptyId && alive(ptyId) && !stop) {
     throw new OrcaError('coordinator.finishing')
   }
-  store.returnGlobalTask(runId, text)
+  store.returnGlobalTask(runId, text, images)
   if (ptyId && alive(ptyId) && stop) stop(ptyId)
 }

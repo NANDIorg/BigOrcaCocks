@@ -17,7 +17,7 @@
 type HumanRequestKind = 'question' | 'answer' | 'escalation' | 'approval' | 'decision'
 type HumanRequestStatus = 'pending' | 'resolved' | 'cancelled'
 interface RequestOption { id: string; label: string; hint?: string; recommended?: boolean }  // id — номер варианта: "1", "2"…
-interface RequestResolution { action: 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss' | 'reject'; optionId?: string; text?: string }
+interface RequestResolution { action: 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss' | 'reject'; optionId?: string; text?: string; images?: string[] }
 
 interface HumanRequest {
   id: string                 // req_…
@@ -86,14 +86,22 @@ interface HumanRequest {
 |---|---|---|
 | `question` + `answer` | ответ на `Question`: метка варианта и текст через « — »; вопрос закрыт | `question_answered` |
 | `answer` + `accept` | git-часть приёмки (`acceptReview`: слить коммиты, убрать worktree), задача → done | `answer_accepted` (`decision` = `text`) |
-| `answer` + `clarify` | `feedback` = уточнение, задача → ready, **main сразу стартует воркера** | `answer_clarified` |
+| `answer` + `clarify` | `feedback` = уточнение, задача → ready, **main сразу стартует воркера** | `answer_clarified {…, images?}` |
 | `escalation` + `restart` | задача → ready, **main сразу стартует воркера** | `request_resolved {action: 'restart'}` |
 | `escalation` + `dismiss` | запрос скрыт, задача из needs_input → ready | `request_resolved {action: 'dismiss'}` |
 | `approval` + `accept` | запрос решён, задача из needs_input; **main переводит задачу по исходу accept** (дефолт — мерж и done) | `request_resolved {kind: 'approval', action: 'accept', nodeId, decision?}` (`decision` = `text`, например выбранный вариант) |
-| `approval` + `reject` | `feedback` = замечания, **main переводит по исходу reject** (дефолт — снова в работу, воркер стартует сразу) | `request_resolved {kind: 'approval', action: 'reject', nodeId, decision?}` (`decision` = замечания) |
-| `approval` прогона (без `taskId`) + `accept` / `reject` | запрос решён; движок прогона (`handleRunRequest`) идёт по исходу ноды `human`, если прогон всё ещё стоит на ней: `accept` — `decision` (текст) в `stage_started` следующей «Работы», `reject` — `feedback` (замечания, они же в `Run.returns`); решение по уже неактуальной ноде ничего не двигает | `request_resolved {runId, kind: 'approval', action, nodeId, decision?}` (без `taskId`) |
+| `approval` + `reject` | `feedback` = замечания, **main переводит по исходу reject** (дефолт — снова в работу, воркер стартует сразу) | `request_resolved {kind: 'approval', action: 'reject', nodeId, decision?, images?}` (`decision` = замечания) |
+| `approval` прогона (без `taskId`) + `accept` / `reject` | запрос решён; движок прогона (`handleRunRequest`) идёт по исходу ноды `human`, если прогон всё ещё стоит на ней: `accept` — `decision` (текст) в `stage_started` следующей «Работы», `reject` — `feedback` (замечания, они же в `Run.returns`; `images` — в `stageInput` и `stage_started`); решение по уже неактуальной ноде ничего не двигает | `request_resolved {runId, kind: 'approval', action, nodeId, decision?, images?}` (без `taskId`) |
 | `decision` + `answer` | `optionId` обязателен и должен быть среди `options` (иначе ошибки `запрос <id>: выбери вариант — optionId обязателен` / `варианта «<x>» у запроса <id> нет`), запрос решён; движок прогона (`handleRunRequest` → `runDecisionResolved`) ведёт граф по ребру варианта, если прогон всё ещё на развилке, и пишет `StageDecision {by: 'human', fallback, agentNote, reason: text}` в историю; варианта уже нет в графе — `workflow_blocked` | `request_resolved {runId, kind: 'decision', action: 'answer', nodeId, optionId, decision?}` (`decision` = `text`, без `taskId`) |
 | не `pending` | ошибка «уже решено: запрос … решён/отменён» | — |
+
+**Картинки к «Уточнить» / «Вернуть».** IPC `requests:resolve(id, resolution, images?)` принимает байты картинок (PNG/JPEG/GIF/WebP, лимиты
+`IMAGE_ATTACHMENT_LIMITS`) только для `clarify` и `reject` — к остальным действиям они дают ошибку `attachments.notForAction`, а без текста — `attachments.needText`.
+Main пишет файлы в cwd читателя (`resolveWithImages`, `src/main/attachments.ts`): запрос на задаче — в worktree воркера, approval прогона (без `taskId`) — в cwd
+координатора — и ставит `resolution.images` (абсолютные пути). `resolution.images`, присланные renderer-ом или сокетом (`request resolve` картинок не принимает),
+вырезаются. Пути идут дальше вместе с текстом: `task.feedbackImages` (воркер видит их в промпте под замечаниями/уточнением), `stageInput.images` и `stage_started.images`
+(координатор), в событиях `answer_clarified` / `request_resolved`. Не удалось записать файлы (нет worktree, ошибка диска) — ошибка **до** решения: запрос остаётся ждать,
+текст в форме. Подробности и откат — `docs/architecture.md`, «Изображения при возврате в работу».
 
 Не удалось стартовать воркера после `clarify`/`restart` — запрос всё равно решён (задача в ready с уточнением),
 координатору уходит `escalation {reason: «… воркер не запустился: …», requestId, startFailed: true}`.
@@ -122,8 +130,8 @@ Payload короткие: строка события в мониторе коо
 | `question` | `taskId, dispatchId, questionId, question` (≤ 300), `forHuman?: true, options` (метки) | `orca-board question get --question <id>` |
 | `question_answered` | `taskId, dispatchId, questionId, requestId?, question, answer, workerLive, status` | — |
 | `answer_accepted` | `taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
-| `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId` | `orca-board request get --request <id>` (`resolution.text`) |
-| `request_resolved` | `taskId` (у approval и decision прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`/`answer`), `requestId, kind, dispatchId?, nodeId?` (approval, decision), `optionId` (decision — выбранный вариант), `decision` (≤ 2000, текст решения по approval, обоснование по decision), `decisionTruncated?` | `orca-board request get --request <id>` (`resolution.text`) |
+| `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId`, `images?` (пути картинок к уточнению) | `orca-board request get --request <id>` (`resolution.text`) |
+| `request_resolved` | `taskId` (у approval и decision прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`/`answer`), `requestId, kind, dispatchId?, nodeId?` (approval, decision), `optionId` (decision — выбранный вариант), `decision` (≤ 2000, текст решения по approval, обоснование по decision), `decisionTruncated?`, `images?` (пути картинок к замечаниям `reject`) | `orca-board request get --request <id>` (`resolution.text`) |
 | `worker_done` | `taskId, dispatchId, summary, files, answerFor?, gateFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 
 Уведомление «нужен ваш ответ» (`notifyKind`, `notify.ts`) приходит только на `request_created` (вопрос / ответ

@@ -2,6 +2,7 @@
 import type { AgentSpec } from './agents'
 import type { Question, Role, StageDecision, Task } from './types'
 import type { WfDecisionOption, WfWorkStage } from './workflow'
+import { returnImagesSection } from './attachments.ts'
 
 /**
  * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
@@ -126,13 +127,14 @@ function stageSection(stage: WfWorkStage | undefined, answered = false): string[
  * результат — ответ в markdown, а замечания — уточнение к прошлому ответу (`previousAnswer`); этапа у неё нет.
  */
 export function workerTaskPrompt(
-  task: Pick<Task, 'title' | 'spec' | 'feedback' | 'answerFor'>,
+  task: Pick<Task, 'title' | 'spec' | 'feedback' | 'feedbackImages' | 'answerFor'>,
   previousAnswer?: string,
   answers: AnsweredQuestion[] = [],
   stage?: WfWorkStage
 ): string {
   if (!task.answerFor) {
-    const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
+    const images = returnImagesSection(task.feedbackImages, 'worker')
+    const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}${images ? `\n\n${images}` : ''}` : ''
     return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', ...answersSection(answers), ...stageSection(stage, answers.some((q) => q.answer !== undefined)), feedback].join('\n')
   }
   const parts = [
@@ -149,7 +151,10 @@ export function workerTaskPrompt(
   ]
   if (task.feedback) {
     if (previousAnswer) parts.push('', '# Прошлый ответ', '', previousAnswer)
-    parts.push('', '# Уточнение к прошлому ответу', '', task.feedback, '', 'Дай новый полный ответ с учётом уточнения.')
+    parts.push('', '# Уточнение к прошлому ответу', '', task.feedback)
+    const images = returnImagesSection(task.feedbackImages, 'worker')
+    if (images) parts.push('', images)
+    parts.push('', 'Дай новый полный ответ с учётом уточнения.')
   }
   return parts.join('\n')
 }
@@ -385,6 +390,8 @@ export interface CoordinatorStage {
   decision?: string
   /** Ответы человека на этапе «Вопрос человеку». */
   answers?: string
+  /** Картинки к `feedback`: абсолютные пути в cwd координатора. */
+  images?: readonly string[]
   /** Id подзадач текущего захода: остальные подзадачи — прошлых заходов. */
   tasks?: readonly string[]
   /** Все подзадачи захода уже закрыты (`stage_tasks_done` уже отправлен). */
@@ -412,7 +419,12 @@ function coordinatorStageSection(
       : 'Роли этапа не заданы: роль каждой подзадачи выбирай сам из включённых рабочих ролей типа (`orca-board roles list`, по описанию).'
   ]
   if (stage.instructions?.trim()) parts.push('', '## Инструкции этапа', '', stage.instructions.trim())
-  if (stage.feedback?.trim()) parts.push('', '## Замечания проверки или человека', '', stage.feedback.trim(), '', 'Это возврат в этап: создай подзадачи-исправления по замечаниям.')
+  if (stage.feedback?.trim()) {
+    parts.push('', '## Замечания проверки или человека', '', stage.feedback.trim())
+    const images = returnImagesSection(stage.images, 'coordinator')
+    if (images) parts.push('', images)
+    parts.push('', 'Это возврат в этап: создай подзадачи-исправления по замечаниям.')
+  }
   if (stage.decision?.trim()) parts.push('', '## Решение человека', '', stage.decision.trim())
   if (stage.answers?.trim()) parts.push('', '## Ответы человека на вопросы', '', stage.answers.trim())
   if (current.length > 0) {
@@ -442,7 +454,7 @@ function coordinatorStageSection(
 export function resumeCoordinatorObjective(
   goal: string,
   subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>,
-  returns: ReadonlyArray<{ text: string }> = [],
+  returns: ReadonlyArray<{ text: string; images?: readonly string[] }> = [],
   stage?: CoordinatorStage
 ): string {
   if (stage) {
@@ -462,6 +474,8 @@ export function resumeCoordinatorObjective(
       `${COORDINATOR_RETURN_HEADING}: человек проверил результат и вернул задачу в работу — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции:`,
       last.text
     )
+    const images = returnImagesSection(last.images, 'coordinator')
+    if (images) parts.push('', images)
     const earlier = returns.slice(0, -1)
     if (earlier.length > 0) parts.push('', 'Прошлые уточнения (уже учтены в прошлых запусках):', ...earlier.map((r) => `- ${r.text}`))
   }

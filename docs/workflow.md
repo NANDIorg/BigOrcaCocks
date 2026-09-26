@@ -58,8 +58,8 @@ id варианта «Решения ИИ», …) приходит от пров
 - `Run.stage: WfStage` — нода и `visits` (заходы в каждую ноду, `start` тоже: `{start: 1, work: 1}`); `Run.stageHistory: StageChange[]` —
   вход в этап (`start` в историю не пишется, `end` — да; повтор эффекта после `workflow_blocked` запись не дублирует): нода, название, время, исход, `visit`, `commit` (коммит ветки прогона на входе — от него считается дифф этапа; ставит main),
   `summary` (сводка `stage finish`). Не длиннее `STATUS_HISTORY_LIMIT`.
-- `Run.stageInput {feedback?, decision?, answers?}` — что человек или проверка сказали при входе в текущую «Работу» целиком
-  (в `stage_started` текст обрезан). Сбрасывается при каждом переходе. `Run.stageTasksDoneAt` — метка «все подзадачи этапа закрыты»
+- `Run.stageInput {feedback?, images?, decision?, answers?}` — что человек или проверка сказали при входе в текущую «Работу» целиком
+  (в `stage_started` текст обрезан; `images` — абсолютные пути картинок к `feedback` в cwd координатора, только вместе с текстом замечаний). Сбрасывается при каждом переходе. `Run.stageTasksDoneAt` — метка «все подзадачи этапа закрыты»
   (аналог `runDoneAt` старого движка). `Run.returns` пополняется замечаниями `reject` (и «Вернуть» человека).
 - `Task.stageOf {nodeId, visit}` — подзадача этапа; `visit` — какой по счёту заход в `work` (после `reject` начинается новый: задачи
   прошлых заходов в счёт закрытия не идут). `Task.gateFor {nodeId, taskId?, runId?}` — задача-проверка: `taskId` (ветка рабочей задачи,
@@ -72,7 +72,7 @@ id варианта «Решения ИИ», …) приходит от пров
 
 | Событие | Когда | Payload |
 |---|---|---|
-| `stage_started` | граф вошёл в этап `work` — координатору набрать агентов | `{runId, nodeId, title, roleIds, visit, instructions?, feedback?, decision?, answers?}`, `roleIds` — роли ноды, пустой массив = любые рабочие роли типа; текст длиннее `EVENT_ANSWER_LIMIT` обрезан с `…Truncated`, целиком — `TaskStore.runStage` |
+| `stage_started` | граф вошёл в этап `work` — координатору набрать агентов | `{runId, nodeId, title, roleIds, visit, instructions?, feedback?, images?, decision?, answers?}`, `roleIds` — роли ноды, пустой массив = любые рабочие роли типа; текст длиннее `EVENT_ANSWER_LIMIT` обрезан с `…Truncated`, целиком — `TaskStore.runStage` |
 | `stage_tasks_done` | закрыты все подзадачи текущего захода `work` (и есть хотя бы одна) | `{runId, nodeId}`; приходит один раз, новая подзадача или подзадача, ушедшая из done, снимает метку и гасит непрочитанное событие |
 | `stage_changed` | любой переход | `{runId, from?, to, outcome, nodeType?, title?}` (без `taskId`) |
 | `workflow_blocked` | дальше идти нельзя: нет перехода, роль этапа удалена, слить в базу нельзя (база — коммит, грязный корень), git настроен неверно | у прогона — `{runId, nodeId?, reason}` **без `taskId`**; у движка подзадач по-прежнему `{taskId, …}` |
@@ -89,12 +89,12 @@ id варианта «Решения ИИ», …) приходит от пров
 | Метод | Что делает |
 |---|---|
 | `enterRunStage(runId, opts)` | первый вход из старта; фиксирует граф снимком (`Run.workflow`), если его не было. Граф уже начат — позицию не меняет, отдаёт действие текущей ноды (повтор эффекта после рестарта) |
-| `advanceRunStage(runId, outcome, opts)` | переход по исходу текущей ноды; `opts.feedback`/`decision`/`answers` уходят в `stage_started` и `Run.stageInput`, `opts.commit` — в историю. На `end` закрывает прогон и шлёт `run_done` |
+| `advanceRunStage(runId, outcome, opts)` | переход по исходу текущей ноды; `opts.feedback`/`images`/`decision`/`answers` уходят в `stage_started` и `Run.stageInput` (`images` — в `Run.returns[].images`), `opts.commit` — в историю. На `end` закрывает прогон и шлёт `run_done` |
 | `finishStage(runId, {summary, …})` | закрыть этап `work` (`stage finish`): все подзадачи текущего захода в done и их хотя бы одна, иначе ошибка с подсказкой; сводка — в `stageHistory` и `Run.summary` |
 | `settleIdleStages(isAlive, fallback)` | страховка: координатор мёртв, а закрытые подзадачи ждут `stage finish` — этап закрывается без сводки (аналог `settleIdleRuns`) |
 | `blockRunStage(runId, reason)` | `workflow_blocked` по `runId`: эффект не выполнился (слить в базу нельзя, проверка не создалась) |
 | `requestRunApproval(runId, {nodeId, title, body?, showcaseDispatchId?})` | approval без задачи; ждущий не дублируется |
-| `runStage(runId, fallback)` | где стоит прогон и что знает координатор: роль, инструкции, показ, `feedback`/`decision`/`answers` целиком, подзадачи захода |
+| `runStage(runId, fallback)` | где стоит прогон и что знает координатор: роль, инструкции, показ, `feedback`/`images`/`decision`/`answers` целиком, подзадачи захода |
 
 Каждый метод возвращает `{run, action}` — `WfAction` ноды, куда пришли: **эффекты выполняет main**, store их не запускает.
 `opts` — `RunStageOptions`: роли проекта сейчас (`roleIds`: удалили роль этапа — `blocked` с причиной), запасной граф типа и `commit`.
@@ -235,7 +235,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 **Промпты и skills.** Код — `packages/core/src/prompts.ts`, инструкции — `skills/coordinator.md` и `skills/worker.md`; проверки — `prompts.test.ts`. Единственный источник текстов — core: main их только вызывает.
 
 - **`skills/coordinator.md`.** Координатор — диспетчер этапов `work`: этап начинается с `stage_started` (роли `roleIds` — пусто значит любые рабочие роли типа по
-  описанию, инструкции, `feedback`/`decision`/`answers`), он создаёт подзадачи и запускает воркеров; `stage_tasks_done` — нужны ли ещё задачи, иначе `stage finish --summary`
+  описанию, инструкции, `feedback`/`images`/`decision`/`answers`), он создаёт подзадачи и запускает воркеров; `stage_tasks_done` — нужны ли ещё задачи, иначе `stage finish --summary`
   (сигнал «набор закончен», а не отчёт); на `gate`/`human`/`ask`/`git`/`merge` ждёт; `run_done` (с `nodeId`) — граф дошёл до `end`, выход без `runs finish`.
   `stage_started` и `stage_tasks_done` — в трёх местах `--types` шага 3 (после `workflow_blocked`). `workflow_blocked` может быть без `taskId`. Подзадача ходит по пути своей ноды `work`:
   ожидание проверки или человека внутри этапа — не повод для `stage finish`; `worker_done`/`workflow_blocked` по подзадаче на пути координатор не обрабатывает, путь ведёт приложение. Прогоны старого формата
@@ -292,8 +292,8 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `review accept|reject` по решателю | `reviewDecision` → `runGateDecision` | ошибка «выбирает ветку ноды … — используй decision choose, а не review» |
 | `worker_done` задачи `ask` | то же | закрыть, `advanceRunStage(next, {answers})`, если прогон стоит на этом заходе ноды |
 | `question_answered` (агент `ask` не жив) | то же | воркер стартует сам |
-| approval `human` решён | IPC `requests:resolve`, сокет `request resolve` → `resolveHumanRequest` → `handleRunRequest` | `accept` → исход `accept` (текст «Принять» → `decision` следующей «Работы»), `reject` → исход `reject` (замечания → `feedback`) |
-| «Подтвердить» / «Вернуть в работу» на карточке | IPC `globalTasks:accept` → `acceptRun`, `globalTasks:returnToWork` → `returnRun` | то же решение approval; «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
+| approval `human` решён | IPC `requests:resolve`, сокет `request resolve` → `resolveHumanRequest` → `handleRunRequest` | `accept` → исход `accept` (текст «Принять» → `decision` следующей «Работы»), `reject` → исход `reject` (замечания → `feedback`, картинки к ним → `images`) |
+| «Подтвердить» / «Вернуть в работу» на карточке | IPC `globalTasks:accept` → `acceptRun`, `globalTasks:returnToWork(…, images?)` → `returnRun` | то же решение approval (картинки к «Вернуть» main пишет в cwd координатора до перехода); «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
 | Координатор умер, `stage finish` не пришёл | раз в 5 с `watchFinishedCoordinators` → `settleIdleRunStages` | `settleIdleStages`: этап закрывается по `next` без сводки, эффект следующей ноды |
 
 **Путь подзадачи в движке main.** Подзадача этапа «Работа» идёт по своему пути (`Task.stage`), его исполняет **движок по подзадачам** (`main/workflow.ts`: `advance`,
@@ -424,7 +424,9 @@ push ветки прогона — нода `git push` или человек.
 раз задачу возвращали с ревью (`outcome: 'reject'`) и когда был перезапуск (`restart`). Подробности — «История этапов»
 в `docs/architecture.md`.
 
-Отказ (`reject`) с замечаниями кладёт их в `task.feedback`: следующий запуск воркера получает их в промпте.
+Отказ (`reject`) с замечаниями кладёт их в `task.feedback`: следующий запуск воркера получает их в промпте. К замечаниям человек может приложить
+картинки: main сохраняет их в worktree задачи, пути — в `task.feedbackImages`, воркер видит их под «# Замечания после ревью» (`docs/architecture.md`,
+«Изображения при возврате в работу»); новое замечание без картинок их сбрасывает.
 Если отказ ведёт в `work`, воркер стартует сразу — координатору делать ничего не нужно.
 
 ### Вопрос человеку (`ask`)

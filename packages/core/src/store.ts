@@ -134,6 +134,11 @@ export interface RunStageOptions extends RunWorkflowFallback {
   commit?: string
   /** Замечания проверки или человека, вернувших в работу; в `Run.returns` и `stage_started`. */
   feedback?: string
+  /**
+   * Картинки к `feedback`: абсолютные пути в cwd координатора (их пишет main). Учитываются только вместе
+   * с `feedback` — картинки без текста замечаний не хранятся.
+   */
+  images?: string[]
   /** Решение человека на ноде `human` (текст «Принять»). */
   decision?: string
   /** Ответы человека на этапе «Вопрос человеку». */
@@ -160,6 +165,8 @@ export interface RunStageInfo {
   instructions?: string
   showcase?: WfShowcase
   feedback?: string
+  /** Картинки к `feedback` (абсолютные пути в cwd координатора). */
+  images?: string[]
   decision?: string
   answers?: string
   /** Вопрос ноды `decision`. */
@@ -835,6 +842,8 @@ export class TaskStore {
     // Время работы ведёт только setStatus: правка не должна сбить накопленное.
     delete rest.activeMs
     delete rest.activeSince
+    // Картинки принадлежат тексту замечаний: новый `feedback` без своих картинок не должен унаследовать старые.
+    if ('feedback' in rest && !('feedbackImages' in rest)) rest.feedbackImages = undefined
     Object.assign(task, rest, { updatedAt: Date.now() })
     if (status !== undefined) this.setStatus(task, status)
     this.promoteReady()
@@ -1335,8 +1344,10 @@ export class TaskStore {
     run.workflow ??= snapshotWorkflow(wf)
     if (moved) {
       const node = nodeAt(step.stage.nodeId)
+      const feedback = opts.feedback?.trim()
       const input = {
-        ...(opts.feedback?.trim() ? { feedback: opts.feedback.trim() } : {}),
+        ...(feedback ? { feedback } : {}),
+        ...(feedback && opts.images?.length ? { images: [...opts.images] } : {}),
         ...(opts.decision?.trim() ? { decision: opts.decision.trim() } : {}),
         ...(opts.answers?.trim() ? { answers: opts.answers.trim() } : {})
       }
@@ -1358,7 +1369,9 @@ export class TaskStore {
         ...(fromId !== undefined ? { from: fromId } : {}),
         ...(opts.commit ? { commit: opts.commit } : {})
       })
-      if (outcome === 'reject' && input.feedback) run.returns = [...(run.returns ?? []), { at: now, text: input.feedback }]
+      if (outcome === 'reject' && input.feedback) {
+        run.returns = [...(run.returns ?? []), { at: now, text: input.feedback, ...(input.images ? { images: input.images } : {}) }]
+      }
       this.pushEvent('stage_changed', {
         runId: run.id, ...(fromId !== undefined ? { from: fromId } : {}), to: step.stage.nodeId, outcome,
         ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
@@ -1387,6 +1400,7 @@ export class TaskStore {
           runId: run.id, nodeId: action.nodeId, title: info?.title ?? action.nodeId, roleIds: action.roleIds, visit: info?.visit ?? 1,
           ...(info?.instructions ? eventText('instructions', info.instructions) : {}),
           ...(info?.feedback ? eventText('feedback', info.feedback) : {}),
+          ...(info?.feedback && info.images ? { images: info.images } : {}),
           ...(info?.decision ? eventText('decision', info.decision) : {}),
           ...(info?.answers ? eventText('answers', info.answers) : {})
         }
@@ -1683,15 +1697,16 @@ export class TaskStore {
    * Координатора запускает main (store не знает о PTY): уточнение он получит в цели повторного запуска
    * (`resumeCoordinatorObjective`), поэтому отдельного события нет. У «Входящих» координатора нет — ошибка.
    */
-  returnGlobalTask(id: string, text: string): GlobalTask {
+  returnGlobalTask(id: string, text: string, images?: string[]): GlobalTask {
     const run = this.mustRun(id)
     const clarification = text.trim()
     if (!clarification) throw new Error('напиши, что доделать: уточнение получит координатор')
-    if (run.workflowScope === 'run') return this.resolveRunApproval(run, { action: 'reject', text: clarification })
+    const attached = images?.length ? [...images] : undefined
+    if (run.workflowScope === 'run') return this.resolveRunApproval(run, { action: 'reject', text: clarification, ...(attached ? { images: attached } : {}) })
     if (run.inbox) throw new Error('«Входящие» нельзя вернуть в работу: у них нет координатора')
     if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — вернуть в работу можно только из колонки «Проверка»`)
     const at = Date.now()
-    run.returns = [...(run.returns ?? []), { at, text: clarification }]
+    run.returns = [...(run.returns ?? []), { at, text: clarification, ...(attached ? { images: attached } : {}) }]
     this.reopenRun(run)
     this.setRunStatus(run, this.columnId('in_progress'))
     this.commit()
@@ -2149,12 +2164,12 @@ export class TaskStore {
    * Ревью не прошло: задача обратно в ready с замечаниями. У ответа для человека, который ждёт решения,
    * это «Уточнить» (resolveRequest clarify): запрос решён, событие answer_clarified.
    */
-  rejectReview(taskId: string, feedback: string): Task {
+  rejectReview(taskId: string, feedback: string, images?: string[]): Task {
     const task = this.mustTask(taskId)
     const request = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer')
-    if (request) this.applyClarify(task, request, feedback)
+    if (request) this.applyClarify(task, request, feedback, images)
     else {
-      task.feedback = feedback
+      this.setFeedback(task, feedback, images)
       this.setStatus(task, this.columnId('ready'))
     }
     this.commit()
@@ -2176,7 +2191,7 @@ export class TaskStore {
     const request = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer')
     if (request) this.applyClarify(task, request, text ?? '')
     else {
-      if (text) task.feedback = text
+      if (text) this.setFeedback(task, text)
       this.setStatus(task, this.columnId('ready'))
     }
     this.cancelRequests((r) => r.taskId === task.id)
@@ -2190,17 +2205,20 @@ export class TaskStore {
    * Текст решения («вариант 2») — в `decision` события, последним и обрезанным: координатор учтёт выбор человека,
    * полный текст — `resolution.text` запроса (`orca-board request get`).
    */
-  private applyApproval(task: Task | undefined, request: HumanRequest, action: 'accept' | 'reject', text?: string): void {
-    this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}) })
+  private applyApproval(task: Task | undefined, request: HumanRequest, action: 'accept' | 'reject', text?: string, images?: string[]): void {
+    // Картинки — только к замечаниям «Вернуть» и только вместе с их текстом.
+    const attached = action === 'reject' && text && images?.length ? [...images] : undefined
+    this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}), ...(attached ? { images: attached } : {}) })
     if (task) {
-      if (action === 'reject' && text) task.feedback = text
+      if (action === 'reject' && text) this.setFeedback(task, text, attached)
       this.settleTask(task)
       task.updatedAt = Date.now()
     }
     // У approval прогона задачи нет: событие адресовано по `runId`, а замечания несёт `resolution.text`.
     this.pushEvent('request_resolved', {
       ...(task ? { taskId: task.id } : { runId: request.runId }), action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {}),
-      ...(text ? eventDecision(text) : {})
+      ...(text ? eventDecision(text) : {}),
+      ...(attached ? { images: attached } : {})
     })
   }
 
@@ -2221,13 +2239,25 @@ export class TaskStore {
   }
 
   /** «Уточнить» без commit: feedback, ready, answer_clarified (воркера стартует main). */
-  private applyClarify(task: Task, request: HumanRequest, feedback: string): void {
+  private applyClarify(task: Task, request: HumanRequest, feedback: string, images?: string[]): void {
     const text = feedback.trim()
     if (!text) throw new Error('уточнение не может быть пустым')
-    this.closeRequest(request, 'resolved', { action: 'clarify', text })
-    task.feedback = text
+    const attached = images?.length ? [...images] : undefined
+    this.closeRequest(request, 'resolved', { action: 'clarify', text, ...(attached ? { images: attached } : {}) })
+    this.setFeedback(task, text, attached)
     this.setStatus(task, this.columnId('ready'))
-    this.pushEvent('answer_clarified', { taskId: task.id, feedback: short(text), requestId: request.id, dispatchId: request.dispatchId })
+    this.pushEvent('answer_clarified', {
+      taskId: task.id, feedback: short(text), requestId: request.id, dispatchId: request.dispatchId, ...(attached ? { images: attached } : {})
+    })
+  }
+
+  /**
+   * Замечания задачи для следующего запуска воркера. Картинки перезаписываются вместе с текстом: без своих
+   * картинок новое замечание не наследует старые (иначе воркер увидел бы скриншот от прошлого возврата).
+   */
+  private setFeedback(task: Task, text: string, images?: string[]): void {
+    task.feedback = text
+    task.feedbackImages = images?.length ? [...images] : undefined
   }
 
   // ---------- questions ----------
@@ -2427,10 +2457,10 @@ export class TaskStore {
         this.promoteReady()
         break
       case 'clarify':
-        this.applyClarify(task!, request, text ?? '')
+        this.applyClarify(task!, request, text ?? '', resolution.images)
         break
       case 'reject':
-        this.applyApproval(task, request, 'reject', text)
+        this.applyApproval(task, request, 'reject', text, resolution.images)
         break
       case 'restart':
       case 'dismiss':

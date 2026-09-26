@@ -83,6 +83,19 @@ test('globalReviewApi: новый preload — вызовы уходят в ме�
   assert.deepEqual(calls, [['accept', 'g1', undefined], ['accept', 'g2', 'вариант B'], ['return', 'g1', 'доделай', 120, 30]])
 })
 
+test('globalReviewApi: картинки к возврату доходят до returnToWork пятым аргументом', async () => {
+  const seen: unknown[][] = []
+  const api = {
+    globalTasks: {
+      accept: async () => ({}),
+      returnToWork: async (...args: unknown[]) => { seen.push(args); return 'pty1' }
+    }
+  } as unknown as Partial<OrcaApi>
+  const images = [{ mime: 'image/png', data: new Uint8Array([1, 2, 3]) }]
+  await globalReviewApi(api).returnToWork('g1', 'доделай', 120, 30, images)
+  assert.deepEqual(seen, [['g1', 'доделай', 120, 30, images]])
+})
+
 test('isRunWorkflow: только прогон с воркфлоу глобальной задачи; «Входящие», прогон старого формата и старый main — нет', () => {
   assert.equal(isRunWorkflow({ workflowScope: 'run' }), true)
   assert.equal(isRunWorkflow({ workflowScope: 'run', inbox: false }), true)

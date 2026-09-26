@@ -1,11 +1,13 @@
 import type React from 'react'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
-import type { DispatchShowcase, HumanRequest, HumanRequestKind, RequestOption, RequestResolution } from '@orca-board/core'
+import type { DispatchShowcase, HumanRequest, HumanRequestKind, ImageAttachmentInput, RequestOption, RequestResolution } from '@orca-board/core'
 import { Markdown } from './Markdown'
 import { ShowcaseBlock } from './ShowcaseBlock'
 import { bodyWithoutShowcase } from './showcase'
 import { ipcErrorMessage } from './useAutoSave'
 import { t as tr, useT, type TKey } from './i18n'
+import { ImageAttachField } from './ImageAttachField'
+import { useImageAttachments } from './imageAttachments'
 
 /** Подпись вида запроса на текущем языке. */
 export function requestKindTitle(kind: HumanRequestKind): string {
@@ -42,8 +44,11 @@ export interface RequestCardHandle {
 
 interface Props {
   request: HumanRequest
-  /** Решить запрос; ошибка (reject) показывается на карточке. */
-  onResolve(resolution: RequestResolution): Promise<void>
+  /**
+   * Решить запрос; ошибка (reject) показывается на карточке. `images` — картинки к «Уточнить»/«Вернуть» (байты);
+   * пути в `resolution` ставит main после записи файлов, renderer их не присылает.
+   */
+  onResolve(resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
   /** Короткий вид (карточка на доске): без контекста и тела ответа, мелкие кнопки. */
   compact?: boolean
   /** Где запрос: «глобальная › подзадача». */
@@ -112,15 +117,18 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const clarifyRef = useRef<HTMLTextAreaElement>(null)
+  // Картинки — только у режима замечаний («Уточнить» ответа, «Вернуть» этапа): к «Принять» и ответу на вопрос они не относятся.
+  const attachments = useImageAttachments()
   const hints = active && !compact
   const t = useT()
 
-  async function resolve(resolution: RequestResolution): Promise<void> {
+  async function resolve(resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
     if (busy) return
     setBusy(true)
     setError(null)
     try {
-      await onResolve(resolution)
+      await onResolve(resolution, images)
+      attachments.clear()
     } catch (e) {
       setError(ipcErrorMessage(e))
     } finally {
@@ -128,6 +136,8 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
     }
   }
 
+  // Пока картинка читается, отправлять рано: её ещё нет в списке.
+  const canSendNote = clarifyText.trim() !== '' && !attachments.reading
   // Ветка ноды `decision` уходит тем же `answer` + `optionId`, что и вариант вопроса; обоснование человека — `text`.
   const choose = (o: RequestOption): void => {
     const reason = r.kind === 'decision' ? text.trim() : ''
@@ -138,11 +148,15 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
   }
   const accept = (): void => void resolve({ action: 'accept', ...(decision.trim() ? { text: decision.trim() } : {}) })
   const sendClarify = (): void => {
-    if (clarifyText.trim()) void resolve({ action: 'clarify', text: clarifyText.trim() })
+    if (canSendNote) void resolve({ action: 'clarify', text: clarifyText.trim() }, attachments.payload())
   }
   // Этап воркфлоу «человек»: «Вернуть» — с замечаниями, они уйдут воркеру при следующем запуске.
   const sendReject = (): void => {
-    if (clarifyText.trim()) void resolve({ action: 'reject', text: clarifyText.trim() })
+    if (canSendNote) void resolve({ action: 'reject', text: clarifyText.trim() }, attachments.payload())
+  }
+  const closeClarify = (): void => {
+    attachments.clear()
+    setClarifying(false)
   }
   const openClarify = (): void => {
     setClarifying(true)
@@ -269,20 +283,22 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
           )}
           {clarifying ? (
             <div className="rq-free rq-stack">
-              <textarea
-                ref={clarifyRef}
-                value={clarifyText}
-                placeholder={t('shell.request.clarifyPlaceholder')}
-                aria-label={t('shell.request.clarifyLabel')}
-                disabled={busy}
-                onChange={(e) => setClarifyText(e.target.value)}
-                onKeyDown={submitKeys(sendClarify, onEscape)}
-              />
+              <ImageAttachField attachments={attachments} disabled={busy} compact={compact}>
+                <textarea
+                  ref={clarifyRef}
+                  value={clarifyText}
+                  placeholder={t('shell.request.clarifyPlaceholder')}
+                  aria-label={t('shell.request.clarifyLabel')}
+                  disabled={busy}
+                  onChange={(e) => setClarifyText(e.target.value)}
+                  onKeyDown={submitKeys(sendClarify, onEscape)}
+                />
+              </ImageAttachField>
               <div className="rq-actions">
-                <button className="btn-sm primary" disabled={busy || !clarifyText.trim()} onClick={sendClarify}>
+                <button className="btn-sm primary" disabled={busy || !canSendNote} onClick={sendClarify}>
                   {busy ? '…' : t('shell.request.sendClarify')}
                 </button>
-                <button className="btn-text" disabled={busy} onClick={() => setClarifying(false)}>{t('shell.cancel')}</button>
+                <button className="btn-text" disabled={busy} onClick={closeClarify}>{t('shell.cancel')}</button>
               </div>
             </div>
           ) : (
@@ -314,20 +330,22 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
         <div className="rq-free rq-stack">
           {clarifying ? (
             <>
-              <textarea
-                ref={clarifyRef}
-                value={clarifyText}
-                placeholder={t('shell.request.rejectPlaceholder')}
-                aria-label={t('shell.request.rejectLabel')}
-                disabled={busy}
-                onChange={(e) => setClarifyText(e.target.value)}
-                onKeyDown={submitKeys(sendReject, onEscape)}
-              />
+              <ImageAttachField attachments={attachments} disabled={busy} compact={compact}>
+                <textarea
+                  ref={clarifyRef}
+                  value={clarifyText}
+                  placeholder={t('shell.request.rejectPlaceholder')}
+                  aria-label={t('shell.request.rejectLabel')}
+                  disabled={busy}
+                  onChange={(e) => setClarifyText(e.target.value)}
+                  onKeyDown={submitKeys(sendReject, onEscape)}
+                />
+              </ImageAttachField>
               <div className="rq-actions">
-                <button className="btn-sm primary" disabled={busy || !clarifyText.trim()} onClick={sendReject}>
+                <button className="btn-sm primary" disabled={busy || !canSendNote} onClick={sendReject}>
                   {busy ? '…' : t('shell.request.reject')}
                 </button>
-                <button className="btn-text" disabled={busy} onClick={() => setClarifying(false)}>{t('shell.cancel')}</button>
+                <button className="btn-text" disabled={busy} onClick={closeClarify}>{t('shell.cancel')}</button>
               </div>
             </>
           ) : (

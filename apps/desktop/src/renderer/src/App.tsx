@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_COLUMNS, STORE_FORMAT_VERSION, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
-  type TaskPriority
+  type TaskPriority, type ImageAttachmentInput
 } from '@orca-board/core'
 import type { GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
@@ -456,8 +456,8 @@ export function App(): React.JSX.Element {
   }
 
   /** Решить запрос вне Инбокса (карточка, экран глобальной задачи, модалка задачи). Ошибка — на карточке. */
-  async function resolveRequest(r: HumanRequest, resolution: RequestResolution): Promise<void> {
-    const res = await window.orca.requests.resolve(r.id, resolution)
+  async function resolveRequest(r: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
+    const res = await window.orca.requests.resolve(r.id, resolution, images)
     if (res.startError) alert(t('shell.app.startError', { title: r.title, error: res.startError }))
   }
   const returningGlobal = returnGlobalId ? globals.find((g) => g.id === returnGlobalId) : undefined
@@ -521,11 +521,11 @@ export function App(): React.JSX.Element {
    * «Вернуть в работу» с уточнением: main переводит задачу в работу и запускает координатора — открываем
    * его терминал, как startGlobalCoordinator. Старый preload — ошибка остаётся в модалке.
    */
-  async function returnGlobalTask(id: string, text: string): Promise<void> {
+  async function returnGlobalTask(id: string, text: string, images?: ImageAttachmentInput[]): Promise<void> {
     const projectId = active?.id
     const api = globalReviewApi(window.orca)
     try {
-      const ptyId = await api.returnToWork(id, text, 120, 30)
+      const ptyId = await api.returnToWork(id, text, 120, 30, images)
       setReturnGlobalId(null)
       // У прогона с воркфлоу main «вернуть» не гасит живого координатора (он ждёт этап в Monitor) и отдаёт его же терминал;
       // мёртвого запускает заново. Терминала может не оказаться у старого main — тогда ошибка ниже.
@@ -926,7 +926,7 @@ export function App(): React.JSX.Element {
               onOpenTerminal={openTerminalForTask}
               onAnswerQuestion={(qid, a) => window.orca.questions.answer(qid, a)}
               onAcceptTask={(id) => window.orca.review.accept(id)}
-              onRejectTask={(id, fb) => window.orca.review.reject(id, fb)}
+              onRejectTask={(id, fb, images) => window.orca.review.reject(id, fb, images)}
               onStartTask={startTask}
               typeTitle={globalTypeTitle(openGlobal, taskTypes)}
               workflow={workflowForRun(openGlobal.id, snap.runs, active, taskTypes)}
@@ -952,7 +952,7 @@ export function App(): React.JSX.Element {
                 onRemove={(id) => window.orca.tasks.remove(id)}
                 onAnswer={(qid, a) => window.orca.questions.answer(qid, a)}
                 onAccept={(id) => window.orca.review.accept(id)}
-                onReject={(id, fb) => window.orca.review.reject(id, fb)}
+                onReject={(id, fb, images) => window.orca.review.reject(id, fb, images)}
               />
             </GlobalTaskView>
           )}
@@ -1101,7 +1101,7 @@ export function App(): React.JSX.Element {
           onRemove={(id) => window.orca.tasks.remove(id)}
           onResolveRequest={resolveRequest}
           onAccept={(id) => window.orca.review.accept(id)}
-          onReject={(id, fb) => window.orca.review.reject(id, fb)}
+          onReject={(id, fb, images) => window.orca.review.reject(id, fb, images)}
         />
       )}
       {showNew && active && openGlobal && (
@@ -1164,7 +1164,7 @@ export function App(): React.JSX.Element {
           global={returningGlobal}
           closesCoordinator={coordinatorPtys.has(returningGlobal.id)}
           onClose={() => setReturnGlobalId(null)}
-          onSubmit={(text) => returnGlobalTask(returningGlobal.id, text)}
+          onSubmit={(text, images) => returnGlobalTask(returningGlobal.id, text, images)}
         />
       )}
       {acceptingGlobal && (
