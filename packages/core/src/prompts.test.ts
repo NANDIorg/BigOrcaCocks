@@ -520,6 +520,33 @@ describe('задача-решатель ноды «Решение ИИ»', () =>
     assert.match(spec, /## Цель глобальной задачи\n\nT/)
     assert.match(spec, /## Как сдать решение/)
   })
+
+  it('skills/worker.md: задача-решение — ровно один вариант через decision choose с --reason, escalate, done последним', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    const part = worker.slice(worker.indexOf('- Задача-решение'))
+    assert.ok(part.length > 0 && worker.includes('- Задача-решение'))
+    // Узнаётся по началу спеки задачи-решателя — заголовок в skill совпадает с runDecisionTaskSpec.
+    assert.match(part, /«Ты — нода «Решение ИИ»/)
+    assert.match(runDecisionTaskSpec(ctx), /^Ты — нода «Решение ИИ»/)
+    assert.match(part, /код не меняй и не коммить/)
+    assert.match(part, /\*\*ровно один\*\* вариант/)
+    assert.match(part, /orca-board decision choose --task "\$ORCA_TASK_ID" --option <id> --reason "[^"]+"/)
+    assert.match(part, /`--reason`\s+обязателен/)
+    assert.match(part, /orca-board decision escalate --task "\$ORCA_TASK_ID" --reason "[^"]+"/)
+    assert.match(part, /Последней командой — `orca-board done --summary/)
+    assert.match(part, /`review accept\|reject` для такой задачи не работает/)
+  })
+
+  it('skills/coordinator.md: decision делает приложение и человек — координатор ничего не делает', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /Всё остальное делает не ты:[\s\S]*`decision` — агент выбирает ветку графа[\s\S]*\*\*просто жди\*\*/)
+    assert.match(skill, /`decision` — «Решение ИИ»: агент роли `roleId` отвечает на `question` и выбирает один из `options`/)
+    assert.match(skill, /- `worker_done` с полем `gateFor` —[^\n]*\*\*задача-решение\*\*[\s\S]*ничего не делай/)
+    assert.match(skill, /- `request_created` →[\s\S]*`decision`\)\. Ничего не делай[\s\S]*`decision` —\s+агент «Решения ИИ» не выбрал ветку/)
+    assert.match(skill, /- `request_resolved` →[\s\S]*`kind: decision`[^\n]*— тоже ничего/)
+    // Команды агента-решателя координатору не нужны: решает задача, созданная приложением.
+    assert.doesNotMatch(skill, /decision choose|decision escalate/)
+  })
 })
 
 describe('события после ответа человека в инструкции координатора', () => {
