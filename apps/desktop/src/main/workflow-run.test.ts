@@ -12,8 +12,8 @@ import {
   type OrcaEvent, type Task, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
 import {
-  SUBTASK_MERGE_NODE, acceptRun, advanceRun, finishRunStage, handleRunApproval, handleRunWorkflowEvents, returnRun, runGateDecision,
-  settleIdleRunStages, startRunWorkflow, type RunWorkflowDeps
+  SUBTASK_MERGE_NODE, acceptRun, advanceRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunDecider,
+  returnRun, runDecision, runGateDecision, settleIdleRunStages, startRunWorkflow, type RunWorkflowDeps
 } from './workflow-run'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, taskEngine, type WorkflowDeps } from './workflow'
 import { resolveHumanRequest } from './review'
@@ -137,7 +137,7 @@ function work(runId: string, file: string, title = file): Task {
 /** Решение запроса человеком (Инбокс / `request resolve`), как `resolveRequest` в index.ts. */
 function resolve(requestId: string, action: 'accept' | 'reject', text?: string): void {
   resolveHumanRequest(store, repo, requestId, { action, ...(text ? { text } : {}) }, deps.startWorker, (r) => {
-    if (!handleRunApproval(deps, r)) approvalResolved(deps as unknown as WorkflowDeps, r)
+    if (!handleRunRequest(deps, r)) approvalResolved(deps as unknown as WorkflowDeps, r)
   }, deps.mergeTarget)
 }
 
@@ -277,7 +277,7 @@ describe('дефолтный граф: работа → ревью → пров�
     const request = approvalOf(runId)!
     resolve(request.id, 'accept')
     assert.equal(stageId(runId), 'end')
-    assert.equal(handleRunApproval(deps, store.getRequest(request.id)!), true)
+    assert.equal(handleRunRequest(deps, store.getRequest(request.id)!), true)
     assert.equal(stageId(runId), 'end')
     assert.equal(events('run_done').length, 1, 'run_done не дублируется')
   })
@@ -837,7 +837,7 @@ describe('путь подзадачи: событие обрабатывает �
     approvalResolved(deps as unknown as WorkflowDeps, store.getRequest(runRequest.id)!)
     assert.equal(stageId(runId), 'check', 'approvalResolved на запросе прогона ничего не двигает')
     assert.deepEqual(task(t.id).stage, stageBefore)
-    assert.equal(handleRunApproval(deps, store.getRequest(runRequest.id)!), true)
+    assert.equal(handleRunRequest(deps, store.getRequest(runRequest.id)!), true)
     assert.equal(stageId(runId), 'end')
   })
 })
@@ -919,5 +919,233 @@ describe('цель перезапущенного координатора: бл
     assert.throws(() => resumeObjective(store, runId, () => true), /уже работает/)
     const g = store.createGlobalTask({ title: 'Ещё не начата', description: 'цель', workflow: defaultWorkflow(DEFAULT_ROLES) })
     assert.equal(resumeObjective(store, g.id, () => false).objective, 'цель')
+  })
+})
+
+describe('нода decision: ветку выбирает агент, фоллбэк — человек', () => {
+  /** «Анализ» → «Нужен ли дизайн?» → да: «Дизайн», нет: «Реализация» → конец. Решает роль reviewer. */
+  function forkGraph(): Workflow {
+    return {
+      version: 2,
+      nodes: [
+        node({ id: 'start', type: 'start' }),
+        node({ id: 'analysis', type: 'work', title: 'Анализ' }),
+        node({
+          id: 'need_design', type: 'decision', title: 'Нужен ли дизайн?', roleId: 'reviewer', question: 'Нужен ли дизайн для этой задачи?',
+          instructions: 'Смотри на UI', options: [{ id: 'yes', label: 'Да', description: 'есть новый экран' }, { id: 'no', label: 'Нет' }]
+        }),
+        node({ id: 'design', type: 'work', title: 'Дизайн' }),
+        node({ id: 'impl', type: 'work', title: 'Реализация' }),
+        node({ id: 'end', type: 'end' })
+      ],
+      edges: [
+        edge('start', 'next', 'analysis'), edge('analysis', 'next', 'need_design'), edge('need_design', 'yes', 'design'),
+        edge('need_design', 'no', 'impl'), edge('design', 'next', 'end'), edge('impl', 'next', 'end')
+      ]
+    }
+  }
+
+  /** Прогон дошёл до развилки: анализ сделан и закрыт со сводкой. Возвращает прогон и задачу-решатель. */
+  function atFork(): { runId: string; decider: Task } {
+    const runId = newRun(forkGraph())
+    work(runId, 'analysis.md')
+    finishRunStage(deps, runId, 'нужен новый экран настроек')
+    assert.equal(stageId(runId), 'need_design')
+    return { runId, decider: gateOf(runId) }
+  }
+
+  const decisionRequests = (runId: string) => store.pendingRequests(runId).filter((r) => r.kind === 'decision')
+  const forkEntry = (runId: string) => run(runId).stageHistory!.filter((h) => h.nodeId === 'need_design').at(-1)!
+
+  /** Человек выбирает ветку в Инбоксе (`request resolve --option`), как `resolveRequest` в index.ts. */
+  function choose(requestId: string, optionId: string, text?: string): void {
+    resolveHumanRequest(store, repo, requestId, { action: 'answer', optionId, ...(text ? { text } : {}) }, deps.startWorker, (r) => {
+      if (!handleRunRequest(deps, r)) approvalResolved(deps as unknown as WorkflowDeps, r)
+    }, deps.mergeTarget)
+  }
+
+  it('задача-решатель: gateFor на развилку, спека с вопросом, вариантами, сводкой и путём; координатора не будит', () => {
+    const { runId, decider } = atFork()
+    assert.deepEqual(decider.gateFor, { runId, nodeId: 'need_design' })
+    assert.equal(decider.roleId, 'reviewer')
+    assert.equal(decider.title, 'Нужен ли дизайн?: Фича')
+    assert.equal(started.at(-1), decider.id, 'воркер решателя запущен приложением')
+    assert.match(decider.spec, /## Вопрос\n\nНужен ли дизайн для этой задачи\?/)
+    assert.match(decider.spec, /- `yes` — Да: есть новый экран\n- `no` — Нет/)
+    assert.match(decider.spec, /нужен новый экран настроек/, 'сводка «Анализа»')
+    assert.match(decider.spec, /## Путь по графу\n\n1\. «Анализ» \(пришли по исходу `next`\)\n2\. «Нужен ли дизайн\?» \(пришли по исходу `next`\)/)
+    assert.match(decider.spec, /## Как решать\n\nСмотри на UI/)
+    assert.match(decider.spec, /decision choose --task "\$ORCA_TASK_ID"/)
+    assert.equal(taskEngine(deps as unknown as WorkflowDeps, decider), 'run')
+    assert.equal(isRunDecider(deps, decider), true)
+    assert.equal(events('stage_started').length, 1, 'на развилке координатору делать нечего')
+    assert.deepEqual(store.runStage(runId)!.tasks, [], 'решатель — не подзадача этапа')
+  })
+
+  it('агент выбирает «yes» → «Дизайн»: решение и обоснование в истории, следующая «Работа» получает decision', () => {
+    const { runId, decider } = atFork()
+    const out = runDecision(deps, decider.id, 'yes', 'новый экран — нужен макет')
+    assert.deepEqual(out, { runId, nodeId: 'need_design', optionId: 'yes', label: 'Да', to: 'design' })
+    assert.equal(stageId(runId), 'design')
+    assert.deepEqual(forkEntry(runId).decision, { optionId: 'yes', label: 'Да', reason: 'новый экран — нужен макет', by: 'agent' })
+    assert.equal(run(runId).stageHistory!.at(-1)!.outcome, 'yes')
+    const s = lastEvent('stage_started')
+    assert.equal(s.payload.nodeId, 'design')
+    assert.equal(s.payload.decision, '«Нужен ли дизайн для этой задачи?» → Да. новый экран — нужен макет')
+    assert.equal(lastEvent('stage_changed').payload.outcome, 'yes')
+
+    // Решатель сдаёт done после выбора — просто закрывается, повторно решить нельзя.
+    done(decider.id, 'выбрано: Да')
+    assert.equal(task(decider.id).status, 'done')
+    assert.equal(decisionRequests(runId).length, 0)
+    assert.throws(() => runDecision(deps, decider.id, 'no', 'передумал'), /решение по задаче \w+ уже принято или передано человеку/)
+    assert.throws(() => escalateDecision(deps, decider.id, 'не знаю'), /уже принято или передано человеку/)
+    assert.equal(stageId(runId), 'design', 'устаревшее решение граф не трогает')
+  })
+
+  it('агент выбирает «no» по метке (без учёта регистра) → «Реализация»; уже сданный решатель закрывается сразу', () => {
+    const { runId, decider } = atFork()
+    store.finishDispatch(task(decider.id).dispatchId!, 'думаю', [])
+    assert.equal(stageId(runId), 'need_design', 'done без выбора ещё не обработан движком — решение принимается')
+    const out = runDecision(deps, decider.id, '  нЕт ', 'дизайн уже есть')
+    assert.equal(out.to, 'impl')
+    assert.equal(stageId(runId), 'impl')
+    assert.equal(forkEntry(runId).decision!.optionId, 'no')
+    assert.equal(task(decider.id).status, 'done')
+  })
+
+  it('неизвестный вариант или не решатель — ошибка, граф не тронут', () => {
+    const { runId, decider } = atFork()
+    assert.throws(() => runDecision(deps, decider.id, 'maybe', 'x'), /нет варианта «maybe» — допустимы: yes \(Да\), no \(Нет\)/)
+    assert.throws(() => runDecision(deps, decider.id, 'yes', 'x'.repeat(4001)), /обоснование длиннее 4000 символов/)
+    const sub = store.listTasks().find((t) => t.runId === runId && !t.gateFor)!
+    assert.throws(() => runDecision(deps, sub.id, 'yes', 'x'), /не выбирает ветку — decision choose только для задачи ноды «Решение ИИ»/)
+    assert.throws(() => escalateDecision(deps, sub.id, 'x'), /не выбирает ветку/)
+    assert.equal(stageId(runId), 'need_design')
+    assert.equal(forkEntry(runId).decision, undefined)
+    assert.equal(decisionRequests(runId).length, 0)
+  })
+
+  it('review accept|reject по задаче-решателю — понятная ошибка', () => {
+    const { runId, decider } = atFork()
+    assert.throws(() => runGateDecision(deps, decider.id, 'accept'), /выбирает ветку ноды «Нужен ли дизайн\?» — используй decision choose, а не review/)
+    assert.throws(() => runGateDecision(deps, decider.id, 'reject', 'нет'), /используй decision choose/)
+    assert.equal(stageId(runId), 'need_design')
+  })
+
+  it('escalate → один запрос decision с теми же вариантами; решение человека двигает граф с by: human и agentNote', () => {
+    const { runId, decider } = atFork()
+    const { requestId } = escalateDecision(deps, decider.id, 'не ясно, есть ли макет')
+    assert.deepEqual(escalateDecision(deps, decider.id, 'ещё раз'), { requestId }, 'повтор возвращает тот же запрос')
+    const req = store.getRequest(requestId)!
+    assert.deepEqual(
+      [req.kind, req.taskId, req.nodeId, req.fallback, req.agentNote, req.title],
+      ['decision', undefined, 'need_design', 'unsure', 'не ясно, есть ли макет', 'Нужен ли дизайн для этой задачи?']
+    )
+    assert.deepEqual(req.options, [{ id: 'yes', label: 'Да', hint: 'есть новый экран' }, { id: 'no', label: 'Нет' }])
+    assert.match(req.body!, /\*\*Комментарий агента:\*\* не ясно, есть ли макет/)
+    assert.match(req.body!, /нужен новый экран настроек/)
+    assert.equal(store.getGlobalTask(runId).status, 'needs_input')
+    assert.throws(() => runDecision(deps, decider.id, 'yes', 'всё же да'), /уже принято или передано человеку/, 'агент не спорит с человеком')
+
+    done(decider.id, 'передано человеку')
+    assert.equal(task(decider.id).status, 'done')
+    assert.equal(decisionRequests(runId).length, 1, 'done после escalate второй запрос не создаёт')
+
+    choose(requestId, 'no', 'дизайн уже есть в Figma')
+    assert.equal(stageId(runId), 'impl')
+    assert.deepEqual(forkEntry(runId).decision, {
+      optionId: 'no', label: 'Нет', reason: 'дизайн уже есть в Figma', by: 'human', fallback: 'unsure', agentNote: 'не ясно, есть ли макет'
+    })
+    assert.equal(lastEvent('stage_started').payload.decision, '«Нужен ли дизайн для этой задачи?» → Нет (решил человек). дизайн уже есть в Figma')
+  })
+
+  it('done без выбора → запрос no_answer со сводкой агента; повтор эффекта не дублирует задачу и запрос', () => {
+    const { runId, decider } = atFork()
+    done(decider.id, 'данных не хватило')
+    assert.equal(task(decider.id).status, 'done')
+    const [req] = decisionRequests(runId)
+    assert.deepEqual([req.fallback, req.agentNote], ['no_answer', 'данных не хватило'])
+    assert.match(req.body!, /не выбрав вариант/)
+
+    const startsBefore = started.length
+    startRunWorkflow(deps, runId)
+    assert.equal(store.listTasks().filter((t) => t.gateFor?.nodeId === 'need_design').length, 1)
+    assert.equal(decisionRequests(runId).length, 1)
+    assert.equal(started.length, startsBefore, 'при ждущем запросе агент заново не стартует')
+    assert.equal(events('workflow_blocked').length, 0)
+
+    choose(req.id, 'yes')
+    assert.equal(stageId(runId), 'design')
+    assert.deepEqual(forkEntry(runId).decision, { optionId: 'yes', label: 'Да', by: 'human', fallback: 'no_answer', agentNote: 'данных не хватило' })
+  })
+
+  it('повтор эффекта при живом решателе (рестарт) задачу не дублирует и воркера не перезапускает', () => {
+    const { runId, decider } = atFork()
+    const startsBefore = started.length
+    startRunWorkflow(deps, runId)
+    assert.equal(store.listTasks().filter((t) => t.gateFor?.nodeId === 'need_design').length, 1)
+    assert.equal(started.length, startsBefore)
+    assert.equal(gateOf(runId).id, decider.id)
+  })
+
+  it('воркер решателя не запустился → запрос start_failed, не workflow_blocked; рестарт не дублирует; выбор человека закрывает задачу', () => {
+    const realStart = deps.startWorker
+    deps.startWorker = (taskId) => {
+      if (task(taskId).gateFor) throw new Error('агент выключен')
+      return realStart(taskId)
+    }
+    const runId = newRun(forkGraph())
+    work(runId, 'analysis.md')
+    finishRunStage(deps, runId, 'готово')
+    const decider = gateOf(runId)
+    assert.equal(events('workflow_blocked').length, 0)
+    const [req] = decisionRequests(runId)
+    assert.equal(req.fallback, 'start_failed')
+    assert.equal(req.agentNote, undefined)
+    assert.match(req.body!, new RegExp(`Агент не запустился\\. агент-решатель \\(задача ${decider.id}\\) не запустился: агент выключен`))
+
+    startRunWorkflow(deps, runId)
+    assert.equal(store.listTasks().filter((t) => t.gateFor?.nodeId === 'need_design').length, 1)
+    assert.equal(decisionRequests(runId).length, 1)
+
+    choose(req.id, 'no')
+    assert.equal(stageId(runId), 'impl')
+    assert.equal(forkEntry(runId).decision!.fallback, 'start_failed')
+    assert.equal(task(decider.id).status, 'done', 'незапущенный решатель закрыт')
+  })
+
+  it('воркер решателя упал без done — штатная эскалация, фоллбэка нет', () => {
+    const { runId, decider } = atFork()
+    const before = store.listEvents().length
+    store.ptyExited(store.getDispatch(task(decider.id).dispatchId!)!.ptyId, 1)
+    deliver(before)
+    assert.equal(decisionRequests(runId).length, 0)
+    assert.equal(store.pendingRequests(runId).filter((r) => r.kind === 'escalation' && r.taskId === decider.id).length, 1)
+    assert.equal(stageId(runId), 'need_design')
+  })
+
+  it('возврат в развилку (второй заход): новая задача-решатель, старая не решает', () => {
+    const wf = forkGraph()
+    // «Дизайн» возвращает к развилке: human → reject ведёт снова в need_design.
+    wf.nodes.push(node({ id: 'check', type: 'human', title: 'Посмотреть' }))
+    wf.edges = wf.edges.filter((e) => !(e.from === 'design' && e.outcome === 'next'))
+    wf.edges.push(edge('design', 'next', 'check'), edge('check', 'accept', 'end'), edge('check', 'reject', 'need_design'))
+    const runId = newRun(wf)
+    work(runId, 'analysis.md')
+    finishRunStage(deps, runId, 'ok')
+    const first = gateOf(runId)
+    runDecision(deps, first.id, 'yes', 'нужен')
+    done(first.id)
+    work(runId, 'design.md')
+    finishRunStage(deps, runId, 'макет')
+    returnRun(deps, runId, 'подумай ещё')
+    assert.equal(stageId(runId), 'need_design')
+    const second = gateOf(runId)
+    assert.notEqual(second.id, first.id)
+    assert.match(second.spec, /выбрано «Да» \(решил агент\): нужен/, 'прошлое решение в пути по графу')
+    assert.throws(() => runDecision(deps, first.id, 'no', 'x'), /уже принято/)
+    runDecision(deps, second.id, 'no', 'макет не нужен')
+    assert.equal(stageId(runId), 'impl')
   })
 })

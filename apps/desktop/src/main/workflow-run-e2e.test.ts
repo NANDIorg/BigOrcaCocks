@@ -17,7 +17,8 @@ import {
   type OrcaEvent, type Role, type Task, type TaskStore, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
 import {
-  finishRunStage, handleRunApproval, handleRunWorkflowEvents, runGateDecision, startRunWorkflow, type RunWorkflowDeps
+  escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, runDecision, runGateDecision, startRunWorkflow,
+  type RunWorkflowDeps
 } from './workflow-run'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, type WorkflowDeps } from './workflow'
 import { resolveHumanRequest } from './review'
@@ -92,11 +93,11 @@ beforeEach(() => {
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 /** Приложение над каталогом данных `tmp/user`: повторный вызов — «перезапуск» (тот же projects.json и доска, новые объекты). */
-function startApp(implPath?: WfSubflow): App {
+function startApp(implPath?: WfSubflow, workflow?: Workflow): App {
   const pm = new ProjectManager(path.join(tmp, 'user'))
   if (pid === undefined || !pm.get(pid)) {
     pid = pm.add(repo).id
-    typeId = pm.saveTaskType({ title: 'Фича', settings: { roles: ROLES, workflow: featureWorkflow(implPath) } }).id
+    typeId = pm.saveTaskType({ title: 'Фича', settings: { roles: ROLES, workflow: workflow ?? featureWorkflow(implPath) } }).id
   }
   const store = pm.store(pid)
   const app: App = { pm, store, launches: [], coordinatorStarts: [], alive: new Set(), deps: undefined as never }
@@ -184,7 +185,7 @@ function deliverFile(app: App, t: Task, file: string): void {
 /** Решение запроса человеком (Инбокс / `request resolve`), как `resolveRequest` в index.ts. */
 function resolve(app: App, requestId: string, action: 'accept' | 'reject', text?: string): void {
   resolveHumanRequest(app.store, repo, requestId, { action, ...(text ? { text } : {}) }, app.deps.startWorker, (r) => {
-    if (!handleRunApproval(app.deps, r)) approvalResolved(app.deps as unknown as WorkflowDeps, r)
+    if (!handleRunRequest(app.deps, r)) approvalResolved(app.deps as unknown as WorkflowDeps, r)
   }, app.deps.mergeTarget)
 }
 
@@ -405,5 +406,105 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.equal(task(again, b.id).status, 'done')
     assert.equal(events(again, 'stage_tasks_done').length, tasksDone + 1)
     assert.equal(stageId(again, runId), 'impl')
+  })
+})
+
+/** Развилка «Решение ИИ»: Анализ (planner) → «Нужен ли дизайн?» (reviewer) → да: Дизайн → Реализация, нет: Реализация → merge → end. */
+function forkWorkflow(): Workflow {
+  return {
+    version: 2,
+    nodes: [
+      node({ id: 'start', type: 'start' }),
+      node({ id: 'analysis', type: 'work', title: 'Анализ', roleIds: ['planner'] }),
+      node({
+        id: 'need_design', type: 'decision', title: 'Нужен ли дизайн?', roleId: 'reviewer', question: 'Нужен ли дизайн для этой задачи?',
+        options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }]
+      }),
+      node({ id: 'design', type: 'work', title: 'Дизайн' }),
+      node({ id: 'impl', type: 'work', title: 'Реализация' }),
+      node({ id: 'merge', type: 'merge' }),
+      node({ id: 'conflict', type: 'human', title: 'Конфликт мержа' }),
+      node({ id: 'end', type: 'end' })
+    ],
+    edges: [
+      edge('start', 'next', 'analysis'), edge('analysis', 'next', 'need_design'),
+      edge('need_design', 'yes', 'design'), edge('need_design', 'no', 'impl'),
+      edge('design', 'next', 'impl'), edge('impl', 'next', 'merge'),
+      edge('merge', 'ok', 'end'), edge('merge', 'conflict', 'conflict'), edge('conflict', 'accept', 'merge'), edge('conflict', 'reject', 'impl')
+    ]
+  }
+}
+
+describe('воркфлоу глобальной задачи: развилка «Решение ИИ»', () => {
+  /** Анализ сделан и закрыт — граф на развилке, решатель запущен. */
+  function toFork(app: App): { runId: string; decider: Task } {
+    const runId = startRun(app, 'Фича')
+    deliverFile(app, spawn(app, runId, 'План'), 'analysis.md')
+    finishRunStage(app.deps, runId, 'затронут экран настроек')
+    assert.equal(stageId(app, runId), 'need_design')
+    return { runId, decider: gateOf(app, runId) }
+  }
+
+  const decisionRequest = (app: App, runId: string) => app.store.pendingRequests(runId).find((r) => r.kind === 'decision')
+
+  it('агент выбирает «Да» → Дизайн → Реализация → merge → end; решение в истории и в stage_started', () => {
+    const app = startApp(undefined, forkWorkflow())
+    const { runId, decider } = toFork(app)
+    assert.deepEqual(app.launches.at(-1), { taskId: decider.id, roleId: 'reviewer', agent: DEFAULT_ROLES.find((r) => r.id === 'reviewer')!.agent })
+    assert.equal(events(app, 'stage_started').length, 1, 'координатор ждёт, пока агент решает')
+
+    // Агент: decision choose, затем done — задача-решатель закрывается, worktree убран.
+    runDecision(app.deps, decider.id, 'yes', 'новый экран — нужен макет')
+    const before = app.store.listEvents().length
+    app.store.finishDispatch(task(app, decider.id).dispatchId!, 'выбрано: Да', [])
+    deliver(app, before)
+    assert.equal(task(app, decider.id).status, 'done')
+    assert.equal(task(app, decider.id).worktree, undefined)
+
+    assert.equal(stageId(app, runId), 'design')
+    const s = lastEvent(app, 'stage_started')
+    assert.equal(s.payload.nodeId, 'design')
+    assert.match(String(s.payload.decision), /Нужен ли дизайн для этой задачи\?» → Да\. новый экран — нужен макет/)
+    deliverFile(app, spawn(app, runId, 'Макет'), 'mockup.html')
+    finishRunStage(app.deps, runId, 'макет готов')
+    deliverFile(app, spawn(app, runId, 'Код'), 'settings.ts')
+    finishRunStage(app.deps, runId, 'экран сделан')
+    assert.equal(stageId(app, runId), 'end')
+    assert.equal(existsSync(path.join(repo, 'settings.ts')), true, 'ветка прогона слита в базу')
+
+    const history = app.store.getRun(runId)!.stageHistory!
+    assert.deepEqual(history.map((h) => h.nodeId), ['analysis', 'need_design', 'design', 'impl', 'merge', 'end'])
+    assert.deepEqual(history[1].decision, { optionId: 'yes', label: 'Да', reason: 'новый экран — нужен макет', by: 'agent' })
+    assert.equal(history[2].outcome, 'yes')
+    assert.equal(app.store.getGlobalTask(runId).stageHistory?.[1].decision?.by, 'agent', 'история видна и в глобальной задаче')
+  })
+
+  it('escalate → перезапуск приложения → человек выбирает «Нет» в Инбоксе → Реализация, мёртвый координатор поднимается', () => {
+    const app = startApp(undefined, forkWorkflow())
+    const { runId, decider } = toFork(app)
+    assert.throws(() => runGateDecision(app.deps, decider.id, 'accept'), /используй decision choose/)
+    const { requestId } = escalateDecision(app.deps, decider.id, 'не знаю, есть ли макет')
+
+    // Приложение закрыли и открыли: ни задача, ни запрос не дублируются, агент заново не стартует.
+    const again = startApp(undefined, forkWorkflow())
+    startRunWorkflow(again.deps, runId)
+    assert.equal(stageId(again, runId), 'need_design')
+    assert.equal(again.store.listTasks().filter((t) => t.gateFor?.nodeId === 'need_design').length, 1)
+    assert.equal(again.store.pendingRequests(runId).filter((r) => r.kind === 'decision').length, 1)
+    assert.equal(decisionRequest(again, runId)?.id, requestId)
+    assert.deepEqual(again.launches, [])
+    assert.equal(again.store.getGlobalTask(runId).status, 'needs_input')
+
+    resolveHumanRequest(again.store, repo, requestId, { action: 'answer', optionId: 'no', text: 'макет уже в Figma' }, again.deps.startWorker, (r) => {
+      if (!handleRunRequest(again.deps, r)) approvalResolved(again.deps as unknown as WorkflowDeps, r)
+    }, again.deps.mergeTarget)
+    assert.equal(stageId(again, runId), 'impl')
+    assert.deepEqual(again.coordinatorStarts, [runId], 'координатор после перезапуска не жив — «Работа» поднимает его')
+    assert.equal(lastEvent(again, 'stage_started').payload.decision, '«Нужен ли дизайн для этой задачи?» → Нет (решил человек). макет уже в Figma')
+    const fork = again.store.getRun(runId)!.stageHistory!.find((h) => h.nodeId === 'need_design')!
+    assert.deepEqual(fork.decision, {
+      optionId: 'no', label: 'Нет', reason: 'макет уже в Figma', by: 'human', fallback: 'unsure', agentNote: 'не знаю, есть ли макет'
+    })
+    assert.throws(() => runDecision(again.deps, decider.id, 'yes', 'поздно'), /уже принято или передано человеку/)
   })
 })

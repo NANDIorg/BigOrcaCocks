@@ -57,7 +57,7 @@ interface HumanRequest {
 (`settleTask`: живой воркер → in_progress, иначе ready).
 
 У approval прогона (без `taskId`) задачи нет, потока задачи тоже: пока запрос `pending`, карточка глобальной задачи стоит в «Проверке» (`kind=review`) и в «Нужен ответ» не
-поднимается; решение двигает граф прогона (`handleRunApproval` в `workflow-run.ts`), а не задачу.
+поднимается; решение двигает граф прогона (`handleRunRequest` в `workflow-run.ts`), а не задачу.
 
 ### Создание (`createRequest`, событие `request_created`)
 
@@ -86,7 +86,7 @@ interface HumanRequest {
 | `escalation` + `dismiss` | запрос скрыт, задача из needs_input → ready | `request_resolved {action: 'dismiss'}` |
 | `approval` + `accept` | запрос решён, задача из needs_input; **main переводит задачу по исходу accept** (дефолт — мерж и done) | `request_resolved {kind: 'approval', action: 'accept', nodeId, decision?}` (`decision` = `text`, например выбранный вариант) |
 | `approval` + `reject` | `feedback` = замечания, **main переводит по исходу reject** (дефолт — снова в работу, воркер стартует сразу) | `request_resolved {kind: 'approval', action: 'reject', nodeId, decision?}` (`decision` = замечания) |
-| `approval` прогона (без `taskId`) + `accept` / `reject` | запрос решён; движок прогона (`handleRunApproval`) идёт по исходу ноды `human`, если прогон всё ещё стоит на ней: `accept` — `decision` (текст) в `stage_started` следующей «Работы», `reject` — `feedback` (замечания, они же в `Run.returns`); решение по уже неактуальной ноде ничего не двигает | `request_resolved {runId, kind: 'approval', action, nodeId, decision?}` (без `taskId`) |
+| `approval` прогона (без `taskId`) + `accept` / `reject` | запрос решён; движок прогона (`handleRunRequest`) идёт по исходу ноды `human`, если прогон всё ещё стоит на ней: `accept` — `decision` (текст) в `stage_started` следующей «Работы», `reject` — `feedback` (замечания, они же в `Run.returns`); решение по уже неактуальной ноде ничего не двигает | `request_resolved {runId, kind: 'approval', action, nodeId, decision?}` (без `taskId`) |
 | не `pending` | ошибка «уже решено: запрос … решён/отменён» | — |
 
 Не удалось стартовать воркера после `clarify`/`restart` — запрос всё равно решён (задача в ready с уточнением),

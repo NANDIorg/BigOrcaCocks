@@ -64,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     | `human` | `handle()` в `registerIpc` (`src/main/index.ts`) — любой IPC-вызов renderer |
     | `cli` | `handle()` в `src/main/socket.ts` — запрос без `dispatchId` (координатор или человек в терминале) |
     | `worker` | там же — запрос с `dispatchId` (ORCA_DISPATCH_ID воркера) |
-    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts`, `advanceRun`, `handleRunWorkflowEvents`, `handleRunApproval` в `src/main/workflow-run.ts` — колонку двигает граф |
+    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts`, `advanceRun`, `handleRunWorkflowEvents`, `handleRunRequest` в `src/main/workflow-run.ts` — колонку двигает граф |
     | `app` | всё остальное: `promoteReady` (backlog → ready), автозакрытие в `commit`, смерть PTY, миграции |
 
     Ограничение: источник действует только в синхронной части вызова — смены статуса после `await` пишутся как `app`.
@@ -2369,8 +2369,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 - Воркфлоу глобальной задачи (`workflow-run.ts`): **`returnGlobalTaskToWork` для прогона нового формата не нужен** — он закрыл бы терминал координатора, который ждёт `stage_started`
   в Monitor; «Вернуть» — это `returnRun` (approval `reject`, координатор жив — получает событие, мёртв — запускается на входе в «Работу»). **`startCoordinator` из движка не зовёт `startRunWorkflow`**
   (это делает только `runCoordinator` после запуска человеком): иначе повторный вход в «Работу» зациклил бы `ensureCoordinator`. Решение approval прогона (`requests:resolve`, «Подтвердить»,
-  «Вернуть») ведёт **одна** цепочка вызовов — `handleRunApproval`, а не событие `request_resolved`: подписка на событие дублировала бы переход.
+  «Вернуть») ведёт **одна** цепочка вызовов — `handleRunRequest`, а не событие `request_resolved`: подписка на событие дублировала бы переход.
   Подзадачу закрывает нода `end` пути только после `merge`: закрыть её раньше значило бы дать `stage_tasks_done` по коду, которого ещё нет в ветке прогона.
+- **Задача-решатель ноды `decision` тоже помечена `gateFor {runId, nodeId}`** — `isRunGate` для неё истинно. В `workflow-run.ts` любую ветку «это проверка прогона»
+  сначала проверяй `isRunDecider` (тип ноды по графу): иначе `done` решателя уйдёт в `settleGate` (`workflow_blocked` «сдана без решения» вместо фоллбэка к человеку), а
+  «Принять» на карточке — в `runGateDecision` по несуществующему исходу `accept` (сейчас там явная ошибка «используй decision choose»).
 - **Событие и задача — ровно одному исполнителю** (`taskEngine` в `main/workflow.ts`): `handleWorkflowEvents` берёт `legacy` и `path`, `handleRunWorkflowEvents` — `run`. Новый вид задачи в прогоне
   сначала получает ветку в `taskEngine`, иначе её либо не поведёт никто, либо поведут оба (двойной мерж, двойная проверка). Ноду задачи в путях ищи через `taskWorkflow` — `stageNode`/`graphOf`
   в `workflow.ts`, не через `runWorkflow`.
