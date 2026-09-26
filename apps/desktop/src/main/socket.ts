@@ -2,13 +2,13 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  DECISION_REASON_LIMIT, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type Run, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
+  type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
-import { askOptions, resolutionFromParams } from './request-params'
+import { askOptions, resolutionFromParams, singleOption } from './request-params'
 import { runnableWorkflow } from './projects'
 
 /**
@@ -34,6 +34,14 @@ export interface ProjectDeps {
    * Только через него: store делает лишь переход, а проверку, запрос человеку, мерж и конец создаёт движок прогона.
    */
   finishStage(runId: string, summary?: string): { run: Run; action: WfAction }
+  /**
+   * `decision choose`: агент выбрал вариант ноды «Решение ИИ» — граф идёт по ребру варианта, решение с `by: 'agent'`
+   * пишется в историю (`runDecision` в workflow-run.ts). `option` — как ввёл агент (id или метка): сопоставляет с
+   * вариантами и проверяет задачу-решатель движок. Нет метода — движка решений в main нет, команда отвечает ошибкой.
+   */
+  decide?(taskId: string, option: string, reason: string): { runId: string; nodeId: string; optionId: string; label: string; to: string }
+  /** `decision escalate`: передать решение человеку — запрос `decision` с теми же вариантами; повтор возвращает тот же. */
+  escalateDecision?(taskId: string, reason: string): { requestId: string }
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
   resolveRequest(id: string, resolution: RequestResolution): unknown
   /**
@@ -255,6 +263,12 @@ function ruleRole(r: Request, type: ResolvedRunType): Role | undefined {
 /** Тип в ответе `types list`: роли с признаком «агент включён» и этапы графа кратко. */
 function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): unknown {
   const resolved = resolveTaskType(t)
+  // Варианты «Решения ИИ» — прямо из ноды: координатору видно, что в типе есть развилка и какие у неё исходы.
+  const nodes = new Map(resolved.workflow.nodes.map((n) => [n.id, n]))
+  const options = (id: string): { options?: string[] } => {
+    const n = nodes.get(id)
+    return n?.type === 'decision' && Array.isArray(n.options) ? { options: n.options.map((o) => o.id) } : {}
+  }
   return {
     id: t.id,
     title: t.title,
@@ -268,7 +282,9 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
       ...(role.model ? { model: role.model } : {}),
       agentEnabled: enabled.has(role.agent)
     })),
-    stages: describeWorkflow(resolved.workflow).map((s) => ({ id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}) }))
+    stages: describeWorkflow(resolved.workflow).map((s) => ({
+      id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}), ...options(s.id)
+    }))
   }
 }
 
@@ -283,6 +299,41 @@ function globalId(r: Request): string {
   const id = str(r.params.global)
   if (!id) throw new Error('--global обязателен (id глобальной задачи из global list)')
   return id
+}
+
+/** Сколько последних записей `Run.stageHistory` отдаёт `workflow show --run`: у долгого прогона история длинная. */
+const WORKFLOW_HISTORY_LIMIT = 50
+
+/**
+ * Запись истории этапов в `workflow show --run`: путь по графу и решения «Решения ИИ». Без `commit` и `summary` —
+ * сводки координатор получает в `stage_started`, а полная история — в `global get`.
+ */
+function historyEntry(h: StageChange): Pick<StageChange, 'nodeId' | 'title' | 'visit' | 'at' | 'outcome' | 'from' | 'decision'> {
+  return {
+    nodeId: h.nodeId,
+    ...(h.title !== undefined ? { title: h.title } : {}),
+    ...(h.visit !== undefined ? { visit: h.visit } : {}),
+    at: h.at,
+    ...(h.outcome !== undefined ? { outcome: h.outcome } : {}),
+    ...(h.from !== undefined ? { from: h.from } : {}),
+    ...(h.decision ? { decision: h.decision } : {})
+  }
+}
+
+/**
+ * Общая часть `decision choose|escalate`: задача (`--task`, иначе задача запуска), обоснование и проверка, что
+ * агент решает свою задачу, а не чужую (`ORCA_DISPATCH_ID` должен принадлежать ей). `required` — текст ошибки
+ * при пустых обязательных флагах, `missing` — не хватает ещё одного (у choose — `--option`).
+ */
+function decisionParams(r: Request, store: TaskStore, required: string, missing = false): { taskId: string; reason: string } {
+  const taskId = str(r.params.task) ?? r.taskId
+  const reason = str(r.params.reason)?.trim()
+  if (!taskId || !reason || missing) throw new Error(required)
+  if (reason.length > DECISION_REASON_LIMIT) throw new Error(`обоснование длиннее ${DECISION_REASON_LIMIT} символов — сократи --reason`)
+  if (r.dispatchId !== undefined && store.getDispatch(r.dispatchId)?.taskId !== taskId) {
+    throw new Error(`запуск ${r.dispatchId} не относится к задаче ${taskId}`)
+  }
+  return { taskId, reason }
 }
 
 const handlers: Record<string, Handler> = {
@@ -526,6 +577,22 @@ const handlers: Record<string, Handler> = {
     if (!id || !feedback) throw new Error('--task и --feedback обязательны')
     return deps.reject(id, feedback)
   },
+  // «Решение ИИ»: задача-решатель выбирает ветку. --option в CLI повторяемый (он нужен ask) — приходит массивом,
+  // берём ровно одно значение. Задачу, вариант и «решение уже принято» проверяет движок прогона (deps.decide).
+  'decision.choose': (r, deps, store) => {
+    const raw = r.params.option
+    const hasOption = typeof raw === 'string' || (Array.isArray(raw) && raw.length > 0)
+    const { taskId, reason } = decisionParams(r, store, '--task, --option и --reason обязательны', !hasOption)
+    const option = singleOption(r.params.option)?.trim()
+    if (!option) throw new Error('--task, --option и --reason обязательны')
+    if (!deps.decide) throw new Error('decision choose не поддерживается этой сборкой приложения')
+    return deps.decide(taskId, option, reason)
+  },
+  'decision.escalate': (r, deps, store) => {
+    const { taskId, reason } = decisionParams(r, store, '--task и --reason обязательны')
+    if (!deps.escalateDecision) throw new Error('decision escalate не поддерживается этой сборкой приложения')
+    return deps.escalateDecision(taskId, reason)
+  },
   // Граф этапов задачи: с --run (координатору CLI подставляет ORCA_RUN_ID) — снимок прогона, по нему идут его
   // задачи (прогон без снимка — граф его типа, `source: type`); без --run — граф типа --type или типа проекта
   // по умолчанию, с которым начнутся новые глобальные задачи.
@@ -548,7 +615,9 @@ const handlers: Record<string, Handler> = {
         typeId: type.typeId,
         typeTitle: type.title,
         ...(stage ? { stage } : {}),
-        stages: describeWorkflow(wf)
+        stages: describeWorkflow(wf),
+        // Путь глобальной задачи по графу с решениями «Решения ИИ»; у старого формата позиции и истории нет.
+        ...(run.workflowScope === 'run' ? { history: (run.stageHistory ?? []).slice(-WORKFLOW_HISTORY_LIMIT).map(historyEntry) } : {})
       }
     }
     const { typeId: id, title, workflow, custom } = deps.workflow(typeId)
