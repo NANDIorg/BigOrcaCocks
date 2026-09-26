@@ -278,13 +278,14 @@ export interface RunTypeLockInput {
  * поэтому он меняется только до начала работы: карточка в бэклоге, ни разу не была «В работе» (`startedAt`),
  * координатор не запускался и подзадач нет — иначе идущие подзадачи остались бы с ролями и этапами старого типа.
  * «Входящие» — служебная задача без типа.
+ * То же правило — для картинок задачи (`addRunImages` / `removeRunImage`): после начала работы они не меняются.
  */
 export function runTypeLockReason(x: RunTypeLockInput): string | undefined {
   if (x.inbox) return '«Входящие» — служебная задача, у неё нет своего типа'
   if (x.startedAt !== undefined) return 'задача уже была «В работе»'
   if (x.coordinatorPtyId !== undefined) return 'по задаче уже запускался координатор'
   if (x.subtasks > 0) return `у задачи уже есть подзадачи (${x.subtasks})`
-  if (x.statusKind !== 'backlog') return 'тип меняется только, пока задача в бэклоге'
+  if (x.statusKind !== 'backlog') return 'правка возможна только, пока задача в бэклоге'
   return undefined
 }
 

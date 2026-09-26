@@ -87,6 +87,10 @@ export default {
   'global.coordinatorAlive': 'координатор этой глобальной задачи ещё работает — сначала закрой его терминал',
   'global.typeRequired': 'укажи тип задачи',
   'global.subtaskTitleEmpty': 'название подзадачи не может быть пустым',
+  'global.imageNotFound': 'у глобальной задачи нет изображения {imageId}',
+  'global.imageFileMissing': 'файл изображения {imageId} не найден на диске — удалите картинку и приложите её заново',
+  'global.imagesEmpty': 'нет изображений для добавления',
+  'global.imagesSaveFailed': 'не удалось сохранить изображения задачи: {reason}',
 
   'column.noneLeft': 'нужна хотя бы одна колонка',
   'column.emptyId': 'колонка №{n}: пустой id',
