@@ -1347,7 +1347,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 }
 .rq-option:hover:not(:disabled) { border-color: var(--text); }
 .rq-option.recommended { border-color: color-mix(in srgb, var(--accent) 70%, transparent); background: rgba(123,134,245,.1); }
-.rq-option-label { font-weight: 500; }
+/* Метка не сжимается под длинную подсказку («Д/а» по буквам на узкой ширине), но и не шире кнопки. */
+.rq-option-label { flex-shrink: 0; max-width: 100%; font-weight: 500; }
 .rq-star { color: var(--col-input); }
 .rq-hint { color: var(--muted); font-size: 12px; }
 .rq-free { display: flex; gap: 8px; align-items: flex-end; }
@@ -1360,6 +1361,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .rq.compact { padding: 8px 10px; gap: 8px; }
 .rq.compact .rq-title { font-size: 13px; }
 .rq.compact .btn-sm, .rq.compact .rq-option { height: 26px; min-height: 26px; padding: 0 10px; font-size: 12px; }
+/* Длинная метка варианта переносится, а не вылезает за кнопку фиксированной высоты. */
+.rq.compact .rq-option { height: auto; }
 .rq.compact .rq-free.rq-stack textarea, .rq.compact .rq-free textarea { min-height: 30px; padding: 5px 8px; }
 
 .rq-free.rq-stack textarea.rq-decision { min-height: 36px; }

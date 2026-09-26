@@ -27,6 +27,17 @@ test('runStageLabel: гейт — отдельный вид, подсказка 
   assert.match(runStageLabel(stage(nodeId('human')), wf)!.title, /ждёт решения человека/)
 })
 
+test('runStageLabel: нода «Решение ИИ» — обычная пилюля этапа с подсказкой, что агент выбирает ветку', () => {
+  const decision: Workflow = {
+    ...wf,
+    nodes: [...wf.nodes, { id: 'd1', x: 0, y: 0, type: 'decision', title: 'Нужен ли дизайн?', question: 'Нужен ли дизайн?', roleId: 'reviewer', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] }]
+  }
+  const label = runStageLabel(stage('d1'), decision)
+  assert.equal(label?.kind, 'stage')
+  assert.equal(label?.text, 'Нужен ли дизайн?')
+  assert.match(label!.title, /агент выбирает, по какой ветке идти дальше/)
+})
+
 test('runStageLabel: прогон старого формата, граф не начат, нет графа, неизвестная нода, старт и конец — пилюли нет', () => {
   const work = nodeId('work')
   assert.equal(runStageLabel({ stage: { nodeId: work, visits: {} } }, wf), null, 'без workflowScope: движок подзадач')

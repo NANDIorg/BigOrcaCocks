@@ -64,6 +64,7 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions, workf
                       </div>
                       {e.sub && <div className="muted gt-hist-sub">{e.sub}</div>}
                       {e.text && <div className={e.highlight ? 'gt-hist-quote' : 'muted gt-hist-excerpt'}>{e.text}</div>}
+                      {e.note && <div className="muted gt-hist-excerpt">{e.note}</div>}
                     </div>
                   </li>
                 ))}
