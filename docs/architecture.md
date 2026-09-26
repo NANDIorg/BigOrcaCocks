@@ -105,7 +105,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, workflowScope?, stage?, stageHistory?, stageInput?, stageTasksDoneAt?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, workflowScope?, stage?, stageHistory?, stageInput?, stageTasksDoneAt?, statusHistory?, coordinatorSessions?, git?, images?: RunImage[], ... }` — прогон
   (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
   `git: RunGit {branch, base, worktree?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»;
   `workflowScope: 'run'` — воркфлоу идёт по глобальной задаче: позиция `stage`, история входов в этапы `stageHistory` (с коммитом входа и сводкой закрытия),
@@ -702,6 +702,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ### Изображения в цели координатора
 
+У глобальной задачи картинки могут быть сохранены заранее: `Run.images?: RunImage[]` (только метаданные `{id, mime, ext, bytes, addedAt}`, файлы — в `userData` рядом с данными проекта, не в worktree; байты в store/снапшот не попадают), `GlobalTask.images?`, IPC `globalTasks:create(input, images?)` / `addImages` / `removeImage` / `image` — контракт в `docs/nested-kanban.md` → «Картинки задачи». При запуске координатора на такой задаче сохранённые картинки и вставленные в момент запуска идут одним списком (сохранённые первыми) по тому же механизму ниже, в пределах тех же лимитов.
+
 Сценарий: в модалке «Запустить координатора» (`renderer/src/CoordinatorModal.tsx`) человек вставляет
 скриншот в поле «Цель» через ⌘V/Ctrl+V — появляется миниатюра с крестиком; вставок может быть несколько,
 текст вставляется как обычно (если в буфере есть и текст, и картинка — вставляются оба). Цель без текста
@@ -1174,7 +1176,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
   `projects:add(typeId?, path?)` (без `path` — диалог выбора папки, отмена → `null`),
   `projects:detectTaskType(path?)` → `TaskTypeDetection {path, typeId, reason} | null` (без `path` — диалог; проект не добавляет);
-  `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `globalTasks:changeType(id, typeId)` → `GlobalTask`
+  `globalTasks:create(input, images?)` принимает `typeId?` (недоступный проекту — ошибка) и картинки вторым аргументом (`ImageAttachmentInput[]`, лимиты — `IMAGE_ATTACHMENT_LIMITS` на задачу суммарно); `globalTasks:addImages(id, images)` / `globalTasks:removeImage(id, imageId)` → `GlobalTask` (только до начала работы, правило `canChangeRunType`) и `globalTasks:image(id, imageId)` → `{mime, data: Uint8Array}` — картинки глобальной задачи, контракт в `docs/nested-kanban.md` → «Картинки задачи»; `startCoordinator`/`returnToWork` передают координатору сохранённые картинки задачи вместе с вставленными при запуске; `globalTasks:changeType(id, typeId)` → `GlobalTask`
   (смена типа до начала работы: `TaskStore.changeGlobalTaskType`, правило — `canChangeRunType`, см. `docs/nested-kanban.md`); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id, decision?)` → `GlobalTask` (`decision` — решение при «Подтвердить» у прогона с воркфлоу) и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;

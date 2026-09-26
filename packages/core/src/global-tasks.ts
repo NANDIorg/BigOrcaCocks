@@ -5,6 +5,7 @@
  */
 import type { BoardColumn, ColumnKind, HumanRequest, Run, StageChange, StatusChange, Task, TaskPriority } from './types'
 import type { RunGit } from './run-branch'
+import type { RunImage } from './attachments'
 import type { WfStage } from './workflow'
 import { DEFAULT_TASK_PRIORITY, isTaskPriority } from './types.ts'
 import { activeDuration, taskActiveTime } from './active-time.ts'
@@ -91,6 +92,11 @@ export interface GlobalTask {
   coordinatorAgent?: Run['coordinatorAgent']
   /** Уточнения человека при возвратах с проверки в работу, по порядку (`Run.returns`); нет — не возвращали. */
   returns?: GlobalTaskReturn[]
+  /**
+   * Картинки задачи (`Run.images`, копия метаданных, порядок сохранён): превью в карточке и просмотре.
+   * Байты — `window.orca.globalTasks.image(id, imageId)`. Нет — картинок нет или карточка от старого main.
+   */
+  images?: RunImage[]
   /** Итоговая сводка координатора (`Run.summary`); нет — не передавал. */
   summary?: GlobalTaskSummary
   /** Ветка глобальной задачи (`Run.git`, копия); нет — подзадачи сливаются в текущую ветку корня. */
@@ -317,6 +323,7 @@ export function toGlobalTask(
     coordinatorPtyId: run.coordinatorPtyId,
     coordinatorAgent: run.coordinatorAgent,
     ...(run.returns && run.returns.length > 0 ? { returns: run.returns.map((r) => ({ ...r })) } : {}),
+    ...(run.images && run.images.length > 0 ? { images: run.images.map((i) => ({ ...i })) } : {}),
     ...(run.summary ? { summary: { ...run.summary } } : {}),
     ...(run.git ? { git: { ...run.git } } : {}),
     ...(run.statusHistory ? { statusHistory: run.statusHistory.map((h) => ({ ...h })) } : {}),

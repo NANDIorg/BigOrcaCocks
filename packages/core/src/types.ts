@@ -2,6 +2,7 @@ import type { AgentKind } from './agents'
 import type { WfOutcome, WfStage, Workflow } from './workflow'
 import type { TaskTypeSnapshot } from './task-types'
 import type { RunGit } from './run-branch'
+import type { RunImage } from './attachments'
 export type { AgentKind }
 
 // ---------- роли ----------
@@ -343,6 +344,12 @@ export interface Run {
    * воркфлоу или «Входящие»: граф даёт вызывающий код (`TaskStore.runWorkflow`, граф типа по умолчанию).
    */
   workflow?: Workflow
+  /**
+   * Картинки, приложенные к глобальной задаче человеком (вставка из буфера в `GlobalTaskModal`), от старых к
+   * новым — только метаданные, файлы хранит main (`RunImage`). Не больше `IMAGE_ATTACHMENT_LIMITS` на задачу
+   * суммарно. Нет — картинок не было (все прогоны до поля): миграция store не нужна, читать как пустой список.
+   */
+  images?: RunImage[]
   /**
    * Уточнения человека при возвратах с «Проверки» в работу (`TaskStore.returnGlobalTask`), по порядку.
    * Описание (`objective`) не трогают: уточнения попадают в цель повторного запуска координатора
