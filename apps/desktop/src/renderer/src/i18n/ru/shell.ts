@@ -172,6 +172,12 @@ export default {
   'request.terminal': 'Терминал',
   'request.dismiss': 'Скрыть',
   'request.dismissHint': 'Оставить задачу как есть',
+  'request.decisionReasonPlaceholder': 'Обоснование (необязательно), затем выберите ветку',
+  'request.decisionReasonHint': 'Обоснование попадёт в историю этапов вместе с выбранной веткой',
+  'request.decisionReasonLabel': 'Обоснование',
+  'request.decisionFallback.unsure': 'ИИ не уверен и передал выбор вам — его комментарий в контексте',
+  'request.decisionFallback.no_answer': 'ИИ завершил работу, не выбрав ветку',
+  'request.decisionFallback.start_failed': 'Агент для решения не запустился — выберите ветку сами',
 
   // Пункты ленты «Ждут вас» (attention.ts)
   'attention.failure.failed': 'Процесс воркера упал',

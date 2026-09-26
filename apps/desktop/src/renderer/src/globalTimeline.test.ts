@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { defaultWorkflow, type BoardColumn, type StageChange, type StatusChange } from '@orca-board/core'
-import { dayLabel, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
+import { dayLabel, DECISION_EXCERPT_LIMIT, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
 import { setLocale } from './i18n'
 
 /** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
@@ -246,6 +246,59 @@ test('globalTimeline: вход в этап — причина, поэтому п
     workflow: wf
   }, columns, NOW)
   assert.deepEqual(events.map((e) => e.kind), ['status', 'stage'])
+})
+
+const decisionWf = {
+  ...wf,
+  nodes: [...wf.nodes, { id: 'd1', x: 0, y: 0, type: 'decision' as const, title: 'Нужен ли дизайн?', question: 'Нужен ли дизайн?', roleId: 'reviewer', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] }]
+}
+
+test('globalTimeline: решение ИИ — выбранная ветка и обоснование; исход-вариант следующей записи не подписан', () => {
+  const events = globalTimeline({
+    stageHistory: [
+      stageAt('d1', at(23, 10), { decision: { optionId: 'no', label: 'Нет', by: 'agent', reason: 'Только бэкенд,\n\nUI не трогаем' } }),
+      stageAt('work', at(23, 11), { outcome: 'no', from: 'd1' })
+    ],
+    workflow: decisionWf
+  }, columns, NOW)
+  assert.deepEqual(events.map((e) => [e.title, e.sub, e.text, e.note]), [
+    ['Этап «Реализация»', undefined, undefined, undefined],
+    ['Этап «Нужен ли дизайн?»', 'Решение ИИ: Нет', 'Только бэкенд, UI не трогаем', undefined]
+  ])
+})
+
+test('globalTimeline: решил человек после ИИ — причина фоллбэка и комментарий агента', () => {
+  const [e] = globalTimeline({
+    stageHistory: [stageAt('d1', at(23, 10), {
+      visit: 2,
+      decision: { optionId: 'yes', label: 'Да', by: 'human', fallback: 'unsure', agentNote: 'Не понял, есть ли экраны', reason: 'Нужны макеты' }
+    })],
+    workflow: decisionWf
+  }, columns, NOW)
+  assert.equal(e.detail, '2-й заход')
+  assert.equal(e.sub, 'Решил человек: Да · ИИ передал решение человеку')
+  assert.equal(e.text, 'Нужны макеты')
+  assert.equal(e.note, 'ИИ: Не понял, есть ли экраны')
+  const [bare] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: { optionId: 'yes', label: 'Да', by: 'human', fallback: 'start_failed' } })] }, columns, NOW)
+  assert.equal(bare.sub, 'Решил человек: Да · агент не запустился', 'без графа и без обоснования — только подпись')
+  assert.equal(bare.text, undefined)
+})
+
+test('globalTimeline: длинное обоснование обрезается; неполное решение от старого main не роняет ленту', () => {
+  const [long] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: { optionId: 'no', label: 'Нет', by: 'agent', reason: 'x'.repeat(DECISION_EXCERPT_LIMIT + 50) } })] }, columns, NOW)
+  assert.equal(long.text?.length, DECISION_EXCERPT_LIMIT)
+  assert.ok(long.text?.endsWith('…'))
+  const partial = { optionId: 'no' } as StageChange['decision']
+  const [e] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: partial })] }, columns, NOW)
+  assert.equal(e.sub, 'Решение ИИ: no', 'нет метки — id варианта')
+})
+
+test('globalTimeline: решение на английском', () => {
+  inEnglish(() => {
+    const [e] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: { optionId: 'yes', label: 'Yes', by: 'human', fallback: 'no_answer', agentNote: 'unsure' } })] }, columns, NOW)
+    assert.equal(e.sub, 'Decided by a human: Yes · the AI did not choose a branch')
+    assert.equal(e.note, 'AI: unsure')
+  })
 })
 
 test('globalTimeline: этапы на английском', () => {
