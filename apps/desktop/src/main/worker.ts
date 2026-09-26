@@ -12,6 +12,7 @@ import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 import { ensureRunBranch } from './run-branch'
+import { coordinatorImages } from './run-images'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -33,6 +34,11 @@ export interface WorkerEnvContext {
   workflow?: Workflow
   /** Тип нового прогона координатора: id, снимок и граф уходят в `Run.typeId`, `Run.taskType`, `Run.workflow`. */
   type?: RunTypeInput
+  /**
+   * Корень хранилища картинок глобальных задач (`runImagesRoot`). Нет — сохранённые картинки задачи координатору
+   * не передаются (тесты, окружение без userData).
+   */
+  runImagesRoot?: string
 }
 
 /** Путь к bin CLI. В dev — из monorepo, в сборке — рядом с ресурсами. */
@@ -352,6 +358,14 @@ export function startCoordinator(
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
   if (resume) objective = resume.objective
+  // Картинки, сохранённые у задачи, идут координатору при каждом запуске (первом, повторном и «Вернуть в работу»):
+  // сохранённые первыми, потом вставленные при запуске. Сумма — в тех же лимитах: превышение — ошибка до старта
+  // агента (молча отбрасывать чьи-то картинки нельзя). Пришедшие в `images` в задаче не сохраняются.
+  if (resume && ctx.runImagesRoot) {
+    const merged = coordinatorImages(ctx.runImagesRoot, ctx.projectId, resume.run, images)
+    if (merged.missing.length > 0) console.error(`[orca] у задачи ${runId} нет на диске сохранённых изображений: ${merged.missing.map((m) => m.id).join(', ')}`)
+    images = merged.images
+  }
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
   let root: string | undefined

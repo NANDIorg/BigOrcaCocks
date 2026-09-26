@@ -7,6 +7,7 @@ import {
   hasPendingRequest, pendingRequestsOf, canChangeRunType, runTypeLockReason
 } from './global-tasks.ts'
 import { defaultWorkflow } from './workflow.ts'
+import { IMAGE_ATTACHMENT_LIMITS } from './attachments.ts'
 import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
 import { DEFAULT_COLUMNS, type BoardColumn, type HumanRequest, type Run, type Task } from './types.ts'
 
@@ -867,5 +868,99 @@ describe('«Проверка»: приёмка глобальной задачи
     store.returnGlobalTask('run_rev', 'ещё')
     const again = newStore(memory(p.saved()))
     assert.deepEqual(again.getRun('run_rev')!.returns?.map((r) => r.text), ['было', 'ещё'])
+  })
+})
+
+describe('глобальные задачи: картинки (только метаданные)', () => {
+  const img = (id: string, bytes = 100, addedAt = 1) => ({ id, mime: 'image/png', ext: 'png', bytes, addedAt })
+
+  it('создание с картинками: они в задаче и в снапшоте; одних картинок без названия и описания мало', () => {
+    const p = memory()
+    const store = newStore(p)
+    assert.throws(() => store.createGlobalTask({ images: [img('x')] }), /название или описание/)
+    const g = store.createGlobalTask({ title: 'G', images: [img('a'), img('b')] })
+    assert.deepEqual(g.images?.map((i) => i.id), ['a', 'b'])
+    assert.equal(store.getGlobalTask(g.id).images?.length, 2)
+    assert.deepEqual(p.saved()!.runs!.find((r) => r.id === g.id)!.images?.map((i) => i.id), ['a', 'b'])
+  })
+
+  it('без картинок поля images нет; старый снапшот читается как «картинок нет»', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G' })
+    assert.equal('images' in store.getGlobalTask(g.id), false)
+    const again = newStore(memory({ ...store.snapshot() }))
+    assert.equal(again.getGlobalTask(g.id).images, undefined)
+  })
+
+  it('после рестарта картинки на месте', () => {
+    const p = memory()
+    const store = newStore(p)
+    const g = store.createGlobalTask({ title: 'G', images: [img('a')] })
+    store.addRunImages(g.id, [img('b')])
+    const again = newStore(memory(p.saved()))
+    assert.deepEqual(again.getGlobalTask(g.id).images?.map((i) => i.id), ['a', 'b'])
+  })
+
+  it('лимиты на создании: число и размер — задача не создаётся', () => {
+    const store = newStore()
+    const { maxCount, maxTotalBytes } = IMAGE_ATTACHMENT_LIMITS
+    assert.throws(() => store.createGlobalTask({ title: 'G', images: Array.from({ length: maxCount + 1 }, (_, i) => img(`i${i}`)) }), /не больше 8/)
+    assert.throws(() => store.createGlobalTask({ title: 'G', images: [img('a', maxTotalBytes), img('b', 1)] }), /вместе были бы больше/)
+    assert.equal(store.listGlobalTasks().length, 0)
+  })
+
+  it('addRunImages: суммарный лимит с уже сохранёнными, отказ ничего не меняет', () => {
+    const store = newStore()
+    const { maxCount } = IMAGE_ATTACHMENT_LIMITS
+    const g = store.createGlobalTask({ title: 'G', images: Array.from({ length: maxCount - 1 }, (_, i) => img(`i${i}`)) })
+    assert.throws(() => store.addRunImages(g.id, [img('x'), img('y')]), /не больше 8/)
+    assert.equal(store.getGlobalTask(g.id).images?.length, maxCount - 1)
+    assert.equal(store.addRunImages(g.id, [img('x')]).images?.length, maxCount)
+  })
+
+  it('addRunImages: пустой список и повторный id — ошибка', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', images: [img('a')] })
+    assert.throws(() => store.addRunImages(g.id, []), /нет изображений/)
+    assert.throws(() => store.addRunImages(g.id, [img('a')]), /уже есть/)
+    assert.throws(() => store.addRunImages(g.id, [img('n'), img('n')]), /уже есть/)
+    assert.throws(() => store.addRunImages('run_нет', [img('n')]), /не найд|not found/)
+  })
+
+  it('removeRunImage: убирает; последняя — поле исчезает; чужой id — ошибка', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', images: [img('a'), img('b')] })
+    assert.throws(() => store.removeRunImage(g.id, 'zzz'), /нет изображения zzz/)
+    assert.deepEqual(store.removeRunImage(g.id, 'a').images?.map((i) => i.id), ['b'])
+    assert.equal(store.removeRunImage(g.id, 'b').images, undefined)
+    assert.equal('images' in store.getGlobalTask(g.id), false)
+  })
+
+  it('правка картинок — по правилу смены типа: после «В работе», координатора, подзадач — нельзя', () => {
+    const store = newStore()
+    const started = store.createGlobalTask({ title: 'S', images: [img('a')] })
+    store.moveGlobalTask(started.id, 'wip')
+    assert.throws(() => store.addRunImages(started.id, [img('b')]), /нельзя менять: задача уже была «В работе»/)
+    assert.throws(() => store.removeRunImage(started.id, 'a'), /нельзя менять/)
+    store.moveGlobalTask(started.id, 'plan')
+    assert.throws(() => store.addRunImages(started.id, [img('b')]), /уже была «В работе»/)
+
+    const withPty = store.createGlobalTask({ title: 'P' })
+    store.setRunPty(withPty.id, 'pty_1')
+    assert.throws(() => store.addRunImages(withPty.id, [img('b')]), /нельзя менять/)
+
+    const withTasks = store.createGlobalTask({ title: 'T', images: [img('a')] })
+    store.createTask({ title: 'a', runId: withTasks.id })
+    assert.throws(() => store.removeRunImage(withTasks.id, 'a'), /есть подзадачи \(1\)/)
+
+    const inbox = store.createTask({ title: 'x' }).runId!
+    assert.throws(() => store.addRunImages(inbox, [img('b')]), /«Входящие»/)
+  })
+
+  it('удаление задачи убирает её вместе с метаданными картинок', () => {
+    const store = newStore()
+    const g = store.createGlobalTask({ title: 'G', images: [img('a')] })
+    store.deleteGlobalTask(g.id)
+    assert.equal(store.getRun(g.id), undefined)
   })
 })

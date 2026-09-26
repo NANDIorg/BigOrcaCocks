@@ -107,6 +107,37 @@ export function validateImageAttachments(input: unknown): ImageAttachment[] {
   })
 }
 
+/** Размер вложения: у `RunImage` это `bytes`, у `ImageAttachment` — длина `data`. */
+function sizeOf(x: RunImage | ImageAttachment): number {
+  return 'bytes' in x ? x.bytes : x.data.byteLength
+}
+
+/**
+ * Суммарные лимиты `IMAGE_ATTACHMENT_LIMITS` на **задачу**: уже сохранённые (`existing`) плюс `added`.
+ * `validateImageAttachments` проверяет только одну присланную пачку, а картинки задачи копятся между вызовами
+ * (`addImages`) и складываются с вставленными при запуске координатора — эту сумму проверяет функция.
+ * `context`: `'task'` — правка картинок задачи, `'launch'` — сохранённые + вставленные при запуске
+ * координатора (в тексте ошибки — что именно сложилось и что делать). «Всё или ничего»: бросает до любых правок.
+ */
+export function assertImageBudget(
+  existing: ReadonlyArray<RunImage | ImageAttachment>,
+  added: ReadonlyArray<RunImage | ImageAttachment>,
+  context: 'task' | 'launch' = 'task'
+): void {
+  const { maxCount, maxTotalBytes } = IMAGE_ATTACHMENT_LIMITS
+  const count = existing.length + added.length
+  const total = [...existing, ...added].reduce((sum, x) => sum + sizeOf(x), 0)
+  if (count <= maxCount && total <= maxTotalBytes) return
+  if (context === 'launch') {
+    const parts = `сохранённые изображения задачи (${existing.length}) и вставленные при запуске (${added.length})`
+    const hint = ' — уберите лишние: сохранённые убираются до начала работы, вставленные — в окне запуска'
+    if (count > maxCount) throw new Error(`${parts}: вместе ${count}, можно не больше ${maxCount}${hint}`)
+    throw new Error(`${parts} вместе больше ${mb(maxTotalBytes)}${hint}`)
+  }
+  if (count > maxCount) throw new Error(`у задачи было бы ${count} изображений (сейчас ${existing.length}), можно не больше ${maxCount}`)
+  throw new Error(`изображения задачи вместе были бы больше ${mb(maxTotalBytes)}`)
+}
+
 /** Имя файла вложения: только номер и расширение — ничего из буфера обмена в путь не попадает. */
 export function imageAttachmentFileName(index: number, ext: string): string {
   return `image-${index + 1}.${ext}`

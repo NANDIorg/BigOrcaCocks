@@ -24,6 +24,7 @@ import {
 } from './global-tasks.ts'
 import type { RunTypeInput, TaskTypeSnapshot } from './task-types.ts'
 import type { RunGit } from './run-branch.ts'
+import { assertImageBudget, type RunImage } from './attachments.ts'
 
 /**
  * Версия формата файла доски. Растёт, когда снапшот меняется так, что старая версия приложения его не поймёт
@@ -1502,15 +1503,20 @@ export class TaskStore {
    */
   createGlobalTask(input: {
     title?: string; description?: string; status?: string; priority?: TaskPriority; workflow?: Workflow; type?: RunTypeInput
+    /** Метаданные картинок (файлы пишет main): не больше `IMAGE_ATTACHMENT_LIMITS` на задачу. Картинки не заменяют название/описание: цель координатора берётся из них. */
+    images?: RunImage[]
   }): GlobalTask {
     const title = input.title?.trim() || undefined
     const objective = input.description ?? ''
     if (!title && !objective.trim()) throw new Error('укажи название или описание глобальной задачи')
     if (input.status !== undefined) this.assertGlobalColumn(input.status)
     if (input.priority !== undefined) assertPriority(input.priority)
+    const images = input.images ?? []
+    assertImageBudget([], images)
     const run = this.addRun({
       objective,
       ...(title ? { title } : {}),
+      ...(images.length > 0 ? { images: images.map((i) => ({ ...i })) } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...runTypeFields(input.type ?? input.workflow)
@@ -1559,6 +1565,48 @@ export class TaskStore {
     run.updatedAt = Date.now()
     this.commit()
     return this.getGlobalTask(id)
+  }
+
+  /**
+   * Добавить картинки (метаданные; файлы пишет main) к глобальной задаче до начала работы — правило смены типа
+   * (`runTypeLockReason`). Лимиты `IMAGE_ATTACHMENT_LIMITS` — на задачу суммарно с уже сохранёнными
+   * (`assertImageBudget`); нарушение — ошибка, ничего не меняется. Порядок — по добавлению.
+   */
+  addRunImages(id: string, images: RunImage[]): GlobalTask {
+    const run = this.mustRun(id)
+    if (images.length === 0) throw new Error('нет изображений для добавления')
+    this.assertRunImagesEditable(run)
+    const ids = new Set((run.images ?? []).map((i) => i.id))
+    for (const img of images) {
+      if (ids.has(img.id)) throw new Error(`изображение с id ${img.id} у задачи уже есть`)
+      ids.add(img.id)
+    }
+    assertImageBudget(run.images ?? [], images)
+    run.images = [...(run.images ?? []), ...images.map((i) => ({ ...i }))]
+    run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /** Убрать картинку из задачи (метаданные; файл удаляет main). Правило то же, что у `addRunImages`. Последняя — поле `images` исчезает. */
+  removeRunImage(id: string, imageId: string): GlobalTask {
+    const run = this.mustRun(id)
+    this.assertRunImagesEditable(run)
+    const rest = (run.images ?? []).filter((i) => i.id !== imageId)
+    if (rest.length === (run.images ?? []).length) throw new Error(`у глобальной задачи ${id} нет изображения ${imageId}`)
+    if (rest.length > 0) run.images = rest
+    else delete run.images
+    run.updatedAt = Date.now()
+    this.commit()
+    return this.getGlobalTask(id)
+  }
+
+  /** Картинки задачи правятся, пока тип задачи можно сменить (`runTypeLockReason`): до начала работы. */
+  private assertRunImagesEditable(run: Run): void {
+    const subtasks = [...this.tasks.values()].filter((t) => t.runId === run.id).length
+    const statusKind = run.status === undefined ? undefined : this.columnKind(run.status)
+    const reason = runTypeLockReason({ ...run, subtasks, statusKind })
+    if (reason) throw new Error(`изображения глобальной задачи «${globalTaskTitle(run)}» (${run.id}) нельзя менять: ${reason}`)
   }
 
   /**
