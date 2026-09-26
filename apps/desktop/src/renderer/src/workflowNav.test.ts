@@ -135,10 +135,12 @@ test('крошки: «Граф типа › Реализация»', () => {
   assert.deepEqual(crumbs(named, []).map((x) => x.title), ['Граф типа'])
 })
 
-test('палитра пути без «Вопроса человеку», палитра графа типа — с ним', () => {
+test('палитра пути без «Вопроса человеку» и «Решения ИИ», палитра графа типа — с ними', () => {
   assert.equal(wfAddableTypes('run').includes('ask'), true)
+  assert.equal(wfAddableTypes('run').includes('decision'), true)
   assert.equal(wfAddableTypes('subtask').includes('ask'), false)
-  assert.deepEqual(wfAddableTypes('subtask'), wfAddableTypes('run').filter((t) => t !== 'ask'))
+  assert.equal(wfAddableTypes('subtask').includes('decision'), false)
+  assert.deepEqual(wfAddableTypes('subtask'), wfAddableTypes('run').filter((t) => t !== 'ask' && t !== 'decision'))
 })
 
 test('locateId: адрес проблемы `impl/rev` → путь и id внутри', () => {
@@ -200,4 +202,21 @@ test('wfIssueText: проблема пути получает префикс н�
   assert.ok(wfIssueText(ask).startsWith('нода «Работа» → путь подзадачи: нода «'))
   const { subflowOf: _subflowOf, ...plain } = ask
   assert.ok(!wfIssueText(plain).includes('→ путь подзадачи'))
+})
+
+test('subflowSteps: развилка decision обходится по всем вариантам', () => {
+  const sub = {
+    nodes: [
+      { id: 'start', type: 'start' as const, x: 0, y: 0 },
+      { id: 'd', type: 'decision' as const, x: 0, y: 0, question: 'Нужен дизайн?', roleId: 'analyst', options: [{ id: 'a', label: 'А' }, { id: 'b', label: 'Б' }] },
+      { id: 'rev', type: 'gate' as const, x: 0, y: 0, roleId: 'reviewer' },
+      { id: 'end', type: 'end' as const, x: 0, y: 0, merged: false }
+    ],
+    edges: [
+      { id: 'e1', from: 'start', outcome: 'next', to: 'd' },
+      { id: 'e2', from: 'd', outcome: 'a', to: 'end' },
+      { id: 'e3', from: 'd', outcome: 'b', to: 'rev' }
+    ]
+  }
+  assert.deepEqual(subflowSteps(sub), ['review'], 'проверка за вторым вариантом найдена')
 })

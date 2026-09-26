@@ -1,7 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateWorkflow, DEFAULT_ROLES, DEFAULT_COLUMNS } from '@orca-board/core'
-import { WF_ADDABLE_TYPES, addNode, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId } from './workflowEdit'
+import { WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS, WF_DECISION_OPTION_ID, validateWorkflow, wfPorts, DEFAULT_ROLES, DEFAULT_COLUMNS } from '@orca-board/core'
+import {
+  WF_ADDABLE_TYPES, addNode, canConnect, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId, wfPortClass, wfPortLabel
+} from './workflowEdit'
+import { setLocale } from './i18n'
 import { graphWithMerge } from './workflowFixture'
 
 const wf = graphWithMerge([{ id: 'reviewer' }])
@@ -90,4 +93,61 @@ test('ask: есть в палитре после «Работы», добавл�
   assert.ok(errors.some((e) => e.nodeId === 'ask'), 'пустое «О чём спросить» — ошибка на ноде')
   // Порт next ведёт дальше: ask можно вставить в граф.
   assert.equal(connect(workflow, 'ask', 'next', 'work').workflow.edges.some((e) => e.from === 'ask' && e.to === 'work'), true)
+})
+
+test('decision: в палитре после «Проверки», заготовка — пустые вопрос и роль, варианты «Да / Нет»', () => {
+  assert.equal(WF_ADDABLE_TYPES[WF_ADDABLE_TYPES.indexOf('gate') + 1], 'decision')
+  const { workflow, nodeId } = addNode(wf, 'decision', 5, 6)
+  assert.equal(nodeId, 'decision')
+  const node = workflow.nodes.at(-1)!
+  assert.deepEqual(node, {
+    id: 'decision', x: 5, y: 6, type: 'decision', question: '', roleId: '',
+    options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }]
+  })
+  assert.ok(node.type === 'decision')
+  assert.ok(node.options.length >= WF_DECISION_MIN_OPTIONS && node.options.length <= WF_DECISION_MAX_OPTIONS)
+  assert.ok(node.options.every((o) => WF_DECISION_OPTION_ID.test(o.id)))
+  assert.deepEqual(wfPorts(node), ['yes', 'no'])
+  setLocale('en')
+  try {
+    const en = addNode(wf, 'decision', 0, 0).workflow.nodes.at(-1)!
+    assert.deepEqual(en.type === 'decision' && en.options.map((o) => o.label), ['Yes', 'No'])
+  } finally {
+    setLocale('ru')
+  }
+})
+
+test('decision: переходы проводятся по id варианта, чужой порт отвергается', () => {
+  const base = addNode(wf, 'decision', 0, 0).workflow
+  const g = {
+    ...base,
+    nodes: base.nodes.map((n) => (n.type === 'decision' ? { ...n, options: [{ id: 'design', label: 'Дизайн' }, { id: 'impl', label: 'Сразу код' }] } : n))
+  }
+  assert.equal(canConnect(g, 'decision', 'design', 'work'), true)
+  assert.equal(canConnect(g, 'decision', 'yes', 'work'), false, 'у ноды нет варианта yes')
+  assert.equal(canConnect(g, 'decision', 'next', 'work'), false)
+  const { workflow, edgeId } = connect(g, 'decision', 'design', 'work')
+  assert.equal(edgeId, 'e_decision_design')
+  assert.deepEqual(workflow.edges.at(-1), { id: 'e_decision_design', from: 'decision', outcome: 'design', to: 'work' })
+  assert.equal(connect(workflow, 'decision', 'design', 'review').edgeId, 'e_decision_design', 'у порта одно ребро — заменяется')
+  assert.equal(connect(g, 'decision', 'other', 'work').workflow, g)
+})
+
+test('wfPortLabel: у decision — метка варианта (пустая — id), у остальных — подпись исхода', () => {
+  const d = {
+    id: 'd', type: 'decision' as const, x: 0, y: 0, question: 'q', roleId: 'r',
+    options: [{ id: 'design', label: 'Дизайн' }, { id: 'impl', label: '  ' }]
+  }
+  assert.equal(wfPortLabel(d, 'design'), 'Дизайн')
+  assert.equal(wfPortLabel(d, 'impl'), 'impl')
+  assert.equal(wfPortLabel(d, 'missing'), 'missing')
+  assert.equal(wfPortLabel(wf.nodes.find((n) => n.id === 'review')!, 'reject'), 'вернуть')
+  assert.equal(wfPortLabel({ id: 'g', type: 'git', x: 0, y: 0, operation: 'commit', message: '' }, 'ok'), 'выполнено')
+})
+
+test('wfPortClass: фиксированный порт — сам исход, вариант «Решения ИИ» — общий opt (id варианта не идёт в класс)', () => {
+  assert.equal(wfPortClass('gate', 'reject'), 'reject')
+  assert.equal(wfPortClass('condition', 'yes'), 'yes')
+  assert.equal(wfPortClass('decision', 'yes'), 'opt')
+  assert.equal(wfPortClass('decision', 'needs_design'), 'opt')
 })

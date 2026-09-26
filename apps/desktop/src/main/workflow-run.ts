@@ -1,19 +1,23 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
-  globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runGateTaskSpec, runGateTaskTitle, wfGitVars, wfNodeTitle, withStatusSource,
-  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunStageOptions, type RunTaskContext, type Task,
-  type TaskStore, type WfAction, type WfNode, type WfOutcome, type Workflow
+  DECISION_REASON_LIMIT, decisionOptions, globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec,
+  runDecisionTaskTitle, runGateTaskSpec, runGateTaskTitle, wfGitVars, wfNodeTitle, withStatusSource,
+  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunPathStep, type RunStageOptions, type RunTaskContext,
+  type StageDecision, type StageDecisionFallback, type Task, type TaskStore, type WfAction, type WfDecisionOption, type WfNode, type WfPort,
+  type Workflow
 } from '@orca-board/core'
 import { gitCommit, gitPush, isBranchNameAcceptedByGit, removeWorktree } from './git'
 import type { MergeTargetOf } from './review'
+import { findOption } from './request-params'
 import { ensureRunBranch, mergeRunBranch } from './run-branch'
 import { advance, enterWork, taskEngine } from './workflow'
 import { showcaseMarkdown } from '../shared/showcase'
 
 // Исполнитель воркфлоу глобальной задачи (docs/workflow.md → «Воркфлоу глобальной задачи»): позицию на графе хранит
 // `Run.stage`, переходы делает store (`advanceRunStage`, `finishStage`), здесь выполняются эффекты нод — событие и
-// перезапуск координатора на «Работе», задачи проверки и вопроса, approval человека, git, слияние ветки прогона в базу.
+// перезапуск координатора на «Работе», задачи проверки, вопроса и решения ветки, запросы человеку, git, слияние ветки
+// прогона в базу.
 // Подзадачи по графу прогона не ходят: каждая идёт по пути своей ноды «Работа» (`work.subflow`, по умолчанию
 // `defaultSubflow()`: воркер → мерж в ветку прогона → конец), его исполняет движок по подзадачам (`workflow.ts`, `Task.stage`).
 // Событие и задачу делят по `taskEngine`: здесь — только то, что он отдаёт прогону (проверки и вопросы этапов, подзадачи вне
@@ -80,8 +84,11 @@ function branchHead(deps: RunWorkflowDeps, run: Run): string | undefined {
   }
 }
 
+/** Что человек, проверка или решатель сказали при переходе: уходит в следующую «Работу», решение ветки — в историю. */
+type StageExtra = Pick<RunStageOptions, 'feedback' | 'images' | 'decision' | 'answers' | 'chosen'>
+
 /** Опции переходов store: роли и граф типа (запасные), коммит входа в этап и то, что человек или проверка сказали. */
-function stageOpts(deps: RunWorkflowDeps, runId: string, extra: Pick<RunStageOptions, 'feedback' | 'images' | 'decision' | 'answers'> = {}): RunStageOptions {
+function stageOpts(deps: RunWorkflowDeps, runId: string, extra: StageExtra = {}): RunStageOptions {
   const type = deps.run(runId)
   const commit = branchHead(deps, mustRun(deps, runId))
   return { roleIds: type.roles.map((r) => r.id), ...(type.workflow ? { workflow: type.workflow } : {}), ...(commit ? { commit } : {}), ...extra }
@@ -127,7 +134,7 @@ function runEffects(deps: RunWorkflowDeps, runId: string, action: WfAction): voi
 }
 
 /** Исход текущей ноды прогона → переход по графу и эффекты новых нод. */
-export function advanceRun(deps: RunWorkflowDeps, runId: string, outcome: WfOutcome, extra: Pick<RunStageOptions, 'feedback' | 'images' | 'decision' | 'answers'> = {}): void {
+export function advanceRun(deps: RunWorkflowDeps, runId: string, outcome: WfPort, extra: StageExtra = {}): void {
   withStatusSource('workflow', () => {
     const { action } = deps.store.advanceRunStage(runId, outcome, stageOpts(deps, runId, extra))
     runEffects(deps, runId, action)
@@ -192,6 +199,9 @@ function executeSteps(deps: RunWorkflowDeps, runId: string, first: WfAction): vo
         return
       case 'create_gate':
         if (node?.type === 'gate') createGate(deps, run, node, action.roleId)
+        return
+      case 'create_decision':
+        if (node?.type === 'decision') createDecision(deps, run, node, action.roleId)
         return
       case 'request_human':
         if (node?.type === 'human') requestHuman(deps, run, node, note)
@@ -357,6 +367,101 @@ function createGate(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { typ
   startStageWorker(deps, run, gate, 'проверка')
 }
 
+type DecisionNode = Extract<WfNode, { type: 'decision' }>
+
+/** Пройденный путь по графу для задачи-решателя (последние записи `Run.stageHistory`, последняя — сама развилка). */
+function runPath(deps: RunWorkflowDeps, run: Run): RunPathStep[] {
+  const nodes = graphOf(deps, run.id).nodes
+  return (run.stageHistory ?? []).slice(-30).map((h) => {
+    const node = nodes.find((n) => n.id === h.nodeId)
+    return {
+      title: h.title ?? (node ? wfNodeTitle(node) : h.nodeId),
+      ...(h.visit !== undefined ? { visit: h.visit } : {}),
+      ...(h.outcome !== undefined ? { outcome: h.outcome } : {}),
+      ...(h.decision ? { decision: { label: h.decision.label, by: h.decision.by, ...(h.decision.reason ? { reason: h.decision.reason } : {}) } } : {})
+    }
+  })
+}
+
+/** Задача-решатель этого захода в развилку (`gateFor` на ноду, создана после входа в неё); нет — undefined. */
+function currentDecider(deps: RunWorkflowDeps, run: Run, nodeId: string): Task | undefined {
+  const { at } = currentEntry(run)
+  return deps.store.listTasks().filter((t) => t.gateFor?.runId === run.id && t.gateFor.nodeId === nodeId && t.createdAt >= at).at(-1)
+}
+
+/** Ждущий запрос `decision` развилки (фоллбэк к человеку уже заведён). */
+function pendingDecisionRequest(deps: RunWorkflowDeps, runId: string, nodeId: string): HumanRequest | undefined {
+  return deps.store.pendingRequests(runId).find((r) => r.kind === 'decision' && r.nodeId === nodeId)
+}
+
+/**
+ * Нода `decision`: задача-решатель роли ноды (помечена `gateFor` — как проверка, поэтому не входит в подзадачи этапа и не
+ * будит координатора). Агент выбирает вариант `decision choose` или передаёт решение человеку `decision escalate`
+ * (спека `runDecisionTaskSpec`). Воркер не запустился — сразу фоллбэк к человеку: граф не должен вставать из-за агента.
+ * Повтор эффекта (рестарт) не дублирует ни задачу захода, ни запрос; при ждущем запросе воркер заново не стартует.
+ */
+function createDecision(deps: RunWorkflowDeps, run: Run, node: DecisionNode, roleId: string): void {
+  const { store } = deps
+  const role = deps.run(run.id).roles.find((r) => r.id === roleId)
+  if (!role) {
+    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: нет роли «${roleId}» в типе задачи`)
+    return
+  }
+  let decider = currentDecider(deps, run, node.id)
+  if (pendingDecisionRequest(deps, run.id, node.id) || (decider && !needsStart(deps, decider))) return
+  decider ??= store.createTask({
+    title: runDecisionTaskTitle(wfNodeTitle(node), globalTaskTitle(run)),
+    spec: runDecisionTaskSpec({
+      ...taskContext(deps, run, node.instructions),
+      question: node.question,
+      options: decisionOptions(node),
+      path: runPath(deps, run)
+    }),
+    roleId: role.id,
+    agent: role.agent,
+    runId: run.id,
+    gateFor: { runId: run.id, nodeId: node.id }
+  })
+  try {
+    deps.startWorker(decider.id)
+  } catch (e) {
+    requestDecision(deps, run, node, 'start_failed', { problem: `агент-решатель (задача ${decider.id}) не запустился: ${message(e)}` })
+  }
+}
+
+/** Почему решает человек — строка в теле запроса. */
+const FALLBACK_TEXT: Record<StageDecisionFallback, string> = {
+  unsure: 'Агент не смог выбрать уверенно и передал решение вам.',
+  no_answer: 'Агент завершил работу, не выбрав вариант.',
+  start_failed: 'Агент не запустился.'
+}
+
+/**
+ * Фоллбэк развилки к человеку: запрос `decision` уровня прогона с теми же вариантами. В теле — вопрос, варианты,
+ * почему решает человек, комментарий агента, сводки этапов и ветка. Ждущий запрос ноды не дублируется (store).
+ */
+function requestDecision(
+  deps: RunWorkflowDeps, run: Run, node: DecisionNode, fallback: StageDecisionFallback, extra: { agentNote?: string; problem?: string } = {}
+): HumanRequest {
+  const options = decisionOptions(node)
+  const note = extra.agentNote?.trim()
+  const stages = taskContext(deps, run, undefined).stages ?? []
+  const body = [
+    `**Вопрос:** ${node.question.trim()}`,
+    `**Варианты:**\n${options.map((o) => `- ${o.label}${o.description?.trim() ? ` — ${o.description.trim()}` : ''}`).join('\n')}`,
+    FALLBACK_TEXT[fallback] + (extra.problem ? ` ${extra.problem}` : ''),
+    note ? `**Комментарий агента:** ${note}` : undefined,
+    stages.length > 0 ? `**Что сделано на прошлых этапах:**\n${stages.map((x) => `- «${x.title}»: ${x.summary.trim()}`).join('\n')}` : undefined,
+    run.git ? `Ветка: \`${run.git.branch}\` (база \`${run.git.base}\`)` : undefined,
+    'Выберите вариант — граф глобальной задачи пойдёт по его ветке.'
+  ].filter(Boolean).join('\n\n')
+  return deps.store.requestRunDecision(run.id, {
+    nodeId: node.id, title: node.question.trim() || wfNodeTitle(node), body, fallback,
+    options: options.map((o) => ({ id: o.id, label: o.label, ...(o.description?.trim() ? { hint: o.description.trim() } : {}) })),
+    ...(note ? { agentNote: note } : {})
+  })
+}
+
 /** Подзадачи последнего закрытого захода «Работы»: их итоги и показ человек видит на следующей ноде `human`. */
 function lastWorkTasks(deps: RunWorkflowDeps, run: Run): Task[] {
   const nodes = graphOf(deps, run.id).nodes
@@ -472,11 +577,16 @@ function legacyConflictResolved(deps: RunWorkflowDeps, request: HumanRequest): v
 }
 
 /**
- * Решён запрос approval (IPC `requests:resolve`, `request resolve`, «Подтвердить»/«Вернуть» на карточке): прогон идёт по
- * исходу ноды `human`. `false` — запрос на задаче: его ведёт движок по подзадачам (`approvalResolved` в `workflow.ts`:
- * нода `human` пути подзадачи, в том числе «Конфликт мержа»), кроме устаревшего `SUBTASK_MERGE_NODE`.
+ * Решён запрос прогона (IPC `requests:resolve`, `request resolve`, «Подтвердить»/«Вернуть» на карточке): approval — прогон
+ * идёт по исходу ноды `human`, decision — по ветке, выбранной человеком. `false` — approval на задаче: его ведёт движок по
+ * подзадачам (`approvalResolved` в `workflow.ts`: нода `human` пути подзадачи, в том числе «Конфликт мержа»), кроме
+ * устаревшего `SUBTASK_MERGE_NODE`.
  */
-export function handleRunApproval(deps: RunWorkflowDeps, request: HumanRequest): boolean {
+export function handleRunRequest(deps: RunWorkflowDeps, request: HumanRequest): boolean {
+  if (request.kind === 'decision') {
+    withStatusSource('workflow', () => runDecisionResolved(deps, request))
+    return true
+  }
   if (request.kind !== 'approval') return false
   if (request.taskId === undefined) {
     withStatusSource('workflow', () => runApprovalResolved(deps, request))
@@ -506,7 +616,7 @@ function decideRun(deps: RunWorkflowDeps, runId: string, decide: (runId: string)
   const pending = store.pendingRequests(runId).find((r) => r.taskId === undefined && r.kind === 'approval')
   decide(runId)
   const request = pending ? store.getRequest(pending.id) : undefined
-  if (request) handleRunApproval(deps, request)
+  if (request) handleRunRequest(deps, request)
   return store.getGlobalTask(runId)
 }
 
@@ -538,6 +648,11 @@ export function runGateDecision(deps: RunWorkflowDeps, gateTaskId: string, outco
   const gate = mustTask(deps, gateTaskId)
   const runId = gate.gateFor?.runId
   if (runId === undefined) throw new Error(`задача ${gateTaskId} — не проверка ветки глобальной задачи`)
+  // Задача-решатель тоже помечена `gateFor`, но исходов accept/reject у развилки нет — граф пошёл бы в никуда.
+  const decisionNode = deciderNode(deps, gate)
+  if (decisionNode) {
+    throw new Error(`задача ${gateTaskId} выбирает ветку ноды «${wfNodeTitle(decisionNode)}» — используй decision choose, а не review`)
+  }
   if (!gatePending(deps, gate)) {
     const run = mustRun(deps, runId)
     const node = run.stage ? graphOf(deps, runId).nodes.find((n) => n.id === run.stage!.nodeId) : undefined
@@ -577,6 +692,155 @@ function settleGate(deps: RunWorkflowDeps, gate: Task, why: 'done' | 'exit'): vo
       `проверка ${gate.id} сдана без решения (нет review accept/reject по задаче ${gate.id}). ` +
         `Перезапустить проверку: orca-board task reopen --task ${gate.id} --start; или решите в приложении: «Принять» / «Вернуть» у задачи ${gate.id}`
     )
+  }
+}
+
+// ---------- развилка «Решение ИИ» ----------
+
+/** Нода `decision`, ветку которой выбирает задача (`gateFor` на ноду этого типа); иначе undefined. */
+function deciderNode(deps: RunWorkflowDeps, task: Task): DecisionNode | undefined {
+  const g = task.gateFor
+  if (g?.runId === undefined || g.taskId !== undefined) return undefined
+  const node = graphOf(deps, g.runId).nodes.find((n) => n.id === g.nodeId)
+  return node?.type === 'decision' ? node : undefined
+}
+
+/** Задача — решатель ноды `decision` (не проверка): у неё свои команды `decision choose|escalate`. */
+export function isRunDecider(deps: RunWorkflowDeps, task: Task | undefined): boolean {
+  return task !== undefined && deciderNode(deps, task) !== undefined
+}
+
+/**
+ * Решатель ещё отвечает за развилку: граф стоит на её ноде, прогон не закрыт и это задача текущего захода (после возврата
+ * в развилку старая задача уже не в счёт). Ждущий запрос человеку здесь не учитывается — его проверяют вызывающие.
+ */
+function deciderCurrent(deps: RunWorkflowDeps, task: Task): { run: Run; node: DecisionNode } | undefined {
+  const node = deciderNode(deps, task)
+  const run = node ? deps.store.getRun(task.gateFor!.runId!) : undefined
+  if (!node || !run || run.closedAt !== undefined || run.stage?.nodeId !== node.id) return undefined
+  return currentDecider(deps, run, node.id)?.id === task.id ? { run, node } : undefined
+}
+
+/** Задача-решатель по id; не решатель — ошибка из контракта `decision choose|escalate`. */
+function mustDecider(deps: RunWorkflowDeps, taskId: string): Task {
+  const task = mustTask(deps, taskId)
+  if (!deciderNode(deps, task)) throw new Error(`задача ${taskId} не выбирает ветку — decision choose только для задачи ноды «Решение ИИ»`)
+  return task
+}
+
+/** Текст решения для следующей «Работы» (`stage_started.decision`, `Run.stageInput`). */
+function decisionText(node: DecisionNode, d: StageDecision): string {
+  const head = `«${node.question.trim()}» → ${d.label}${d.by === 'human' ? ' (решил человек)' : ''}.`
+  return d.reason?.trim() ? `${head} ${d.reason.trim()}` : head
+}
+
+/** Куда ведёт ребро варианта (id ноды); нет ребра — id варианта: store всё равно отдаст `blocked`. */
+function optionTarget(deps: RunWorkflowDeps, runId: string, nodeId: string, optionId: string): string {
+  return graphOf(deps, runId).edges.find((e) => e.from === nodeId && e.outcome === optionId)?.to ?? optionId
+}
+
+/** Переход по выбранной ветке с решением в истории развилки; ошибки store (решение не согласовано) — как есть. */
+function applyChoice(deps: RunWorkflowDeps, runId: string, node: DecisionNode, chosen: StageDecision): void {
+  advanceRun(deps, runId, chosen.optionId, { chosen, decision: decisionText(node, chosen) })
+}
+
+/** Закрыть задачу-решатель, если её воркер уже не работает (сдал `done`, не запустился); живую закроет её `done`. */
+function closeIdleDecider(deps: RunWorkflowDeps, task: Task | undefined): void {
+  if (!task) return
+  const kind = deps.store.columnKind(mustTask(deps, task.id).status)
+  if (kind !== 'in_progress' && kind !== 'done') closeStageTask(deps, mustTask(deps, task.id))
+}
+
+/**
+ * `decision choose` агента-решателя (сокет → `ProjectDeps.decide` в index.ts): вариант по id или метке, граф идёт по его
+ * ветке, решение `by: 'agent'` с обоснованием — в историю развилки. Решение уже принято, граф ушёл, есть более новый
+ * решатель или решение передано человеку — ошибка, граф не трогается. Неизвестный вариант — ошибка со списком id.
+ */
+export function runDecision(
+  deps: RunWorkflowDeps, taskId: string, option: string, reason: string
+): { runId: string; nodeId: string; optionId: string; label: string; to: string } {
+  const task = mustDecider(deps, taskId)
+  const text = reason.trim()
+  if (!text) throw new Error('--task, --option и --reason обязательны')
+  if (text.length > DECISION_REASON_LIMIT) throw new Error(`обоснование длиннее ${DECISION_REASON_LIMIT} символов — сократи --reason`)
+  const current = deciderCurrent(deps, task)
+  if (!current || pendingDecisionRequest(deps, current.run.id, current.node.id)) {
+    throw new Error(`решение по задаче ${taskId} уже принято или передано человеку`)
+  }
+  const { run, node } = current
+  const options = decisionOptions(node)
+  const picked: WfDecisionOption | undefined = findOption(options, option)
+  if (!picked) throw new Error(`нет варианта «${option.trim()}» — допустимы: ${options.map((o) => `${o.id} (${o.label})`).join(', ')}`)
+  const to = optionTarget(deps, run.id, node.id, picked.id)
+  withStatusSource('workflow', () => applyChoice(deps, run.id, node, { optionId: picked.id, label: picked.label, reason: text, by: 'agent' }))
+  if (deps.store.columnKind(mustTask(deps, taskId).status) === 'review') closeStageTask(deps, mustTask(deps, taskId))
+  return { runId: run.id, nodeId: node.id, optionId: picked.id, label: picked.label, to }
+}
+
+/**
+ * `decision escalate` агента-решателя: запрос `decision` человеку с теми же вариантами, `fallback: 'unsure'`, комментарий
+ * агента — `agentNote`. Повтор при уже ждущем запросе возвращает его; решение уже принято — ошибка.
+ */
+export function escalateDecision(deps: RunWorkflowDeps, taskId: string, reason: string): { requestId: string } {
+  const task = mustDecider(deps, taskId)
+  const text = reason.trim()
+  if (!text) throw new Error('--task и --reason обязательны')
+  if (text.length > DECISION_REASON_LIMIT) throw new Error(`обоснование длиннее ${DECISION_REASON_LIMIT} символов — сократи --reason`)
+  const current = deciderCurrent(deps, task)
+  if (!current) throw new Error(`решение по задаче ${taskId} уже принято или передано человеку`)
+  const request = withStatusSource('workflow', () => requestDecision(deps, current.run, current.node, 'unsure', { agentNote: text }))
+  return { requestId: request.id }
+}
+
+/**
+ * Решатель сдал `done` или его воркер вышел. Граф уже ушёл с развилки (агент выбрал, решил человек) — задача закрывается.
+ * `done` без выбора — фоллбэк к человеку (`no_answer`, сводка агента — `agentNote`) и задача закрывается: ветку выберут
+ * в Инбоксе. Воркер вышел без `done` — ничего: штатную эскалацию с «Перезапустить» уже завёл store.
+ */
+function settleDecision(deps: RunWorkflowDeps, task: Task, why: 'done' | 'exit', dispatchId?: string): void {
+  if (dispatchId !== undefined && task.dispatchId !== dispatchId) return
+  const current = deciderCurrent(deps, task)
+  if (!current) {
+    closeStageTask(deps, task)
+    return
+  }
+  if (why === 'exit') return
+  if (!pendingDecisionRequest(deps, current.run.id, current.node.id)) {
+    const summary = task.dispatchId ? deps.store.getDispatch(task.dispatchId)?.summary : undefined
+    requestDecision(deps, current.run, current.node, 'no_answer', summary?.trim() ? { agentNote: summary } : {})
+  }
+  closeStageTask(deps, task)
+}
+
+/**
+ * Человек выбрал ветку по запросу `decision` (Инбокс, `request resolve --option`): переход по ней с решением `by: 'human'`,
+ * `fallback` и комментарием агента из запроса; задача-решатель закрывается, если её воркер уже не работает. Граф ушёл с
+ * развилки — ничего (store уже отменил бы запрос). Варианта больше нет в графе (граф поменяли) — `workflow_blocked`.
+ */
+function runDecisionResolved(deps: RunWorkflowDeps, request: HumanRequest): void {
+  const run = deps.store.getRun(request.runId)
+  const optionId = request.resolution?.optionId
+  if (!run || run.workflowScope !== 'run' || !run.stage || request.taskId !== undefined || optionId === undefined) return
+  if (request.nodeId === undefined || run.stage.nodeId !== request.nodeId || run.closedAt !== undefined) return
+  const node = graphOf(deps, run.id).nodes.find((n) => n.id === request.nodeId)
+  if (node?.type !== 'decision') return
+  const option = decisionOptions(node).find((o) => o.id === optionId)
+  if (!option) {
+    deps.store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: варианта «${optionId}» больше нет в воркфлоу — выберите ветку заново или верните граф руками`)
+    return
+  }
+  const decider = currentDecider(deps, run, node.id)
+  const text = request.resolution?.text?.trim()
+  try {
+    applyChoice(deps, run.id, node, {
+      optionId: option.id, label: option.label, by: 'human',
+      ...(text ? { reason: text.slice(0, DECISION_REASON_LIMIT) } : {}),
+      ...(request.fallback ? { fallback: request.fallback } : {}),
+      ...(request.agentNote ? { agentNote: request.agentNote } : {})
+    })
+    closeIdleDecider(deps, decider)
+  } catch (e) {
+    deps.store.blockRunStage(run.id, `ошибка исполнителя воркфлоу: ${message(e)}`)
   }
 }
 
@@ -630,7 +894,8 @@ function unboundSubtaskDone(deps: RunWorkflowDeps, task: Task): void {
 
 /**
  * События store → шаги воркфлоу прогона (подписка `projects.onEvents` в index.ts): `worker_done` задачи `ask` — переход
- * дальше, проверки ветки прогона — закрытие; `escalation` проверки — закрытие, если решение уже есть;
+ * дальше, проверки ветки прогона — закрытие; решателя развилки — закрытие или фоллбэк к человеку без выбора (`settleDecision`);
+ * `escalation` проверки или решателя — закрытие, если решение уже есть;
  * `question_answered` на этапе `ask` без живого воркера — автоперезапуск. Задачи-ответы идут мимо воркфлоу; подзадачи
  * этапа «Работа» (их путь) и проверки их веток, как и прогоны старого формата, — на движке по подзадачам
  * (`handleWorkflowEvents`): `taskEngine` отдаёт каждую задачу ровно одному. Ошибки не выбрасываются из подписки — они
@@ -646,12 +911,15 @@ export function handleRunWorkflowEvents(deps: RunWorkflowDeps, events: readonly 
         if (e.type === 'question_answered') {
           restartAsk(deps, task, e.payload.workerLive === true)
         } else if (e.type === 'worker_done') {
-          if (isRunGate(task)) settleGate(deps, task, 'done')
+          if (isRunDecider(deps, task)) settleDecision(deps, task, 'done', e.dispatchId)
+          else if (isRunGate(task)) settleGate(deps, task, 'done')
           else if (!task.gateFor) {
             const node = task.stageOf ? deps.store.taskStageNode(task.id, { roleIds: deps.run(task.runId).roles.map((r) => r.id) }) : undefined
             if (node?.type === 'ask') askDone(deps, task, e.dispatchId)
             else if (e.dispatchId === undefined || task.dispatchId === e.dispatchId) unboundSubtaskDone(deps, task)
           }
+        } else if (isRunDecider(deps, task) && e.payload.stuck !== true) {
+          settleDecision(deps, task, 'exit')
         } else if (isRunGate(task) && e.payload.stuck !== true) {
           settleGate(deps, task, 'exit')
         }

@@ -11,7 +11,8 @@ import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages
 import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
-  acceptRun, finishRunStage, handleRunApproval, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runGateDecision, settleIdleRunStages, startRunWorkflow,
+  acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
+  settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
@@ -379,7 +380,8 @@ function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
 
 /**
  * Решение по задаче на этапе проверки (`review accept|reject`, «Принять»/«Вернуть» на карточке проверки): проверка ветки
- * глобальной задачи — исход ноды `gate` (`workflow-run.ts`), остальное — прежний движок (`workflow.ts`).
+ * глобальной задачи — исход ноды `gate` (`workflow-run.ts`), остальное — прежний движок (`workflow.ts`). Задачу-решатель
+ * развилки `runGateDecision` отвергает: её ветку выбирают `decision choose` или человек по запросу `decision`.
  */
 function reviewDecision(projectId: string, taskId: string, decision: 'accept' | 'reject', text?: string, images?: unknown): Task | undefined {
   const p = resolveProject(projectId)
@@ -595,12 +597,12 @@ function resolveRequest(projectId: string | undefined, id: string, resolution: R
   if (request?.taskId) syncWorkerLiveness(p.store, request.taskId)
   const deps = workflowDeps(p.id)
   const runDeps = runWorkflowDeps(p.id)
-  // Approval прогона (нода `human`, без задачи) ведёт `workflow-run.ts`; запрос на задаче (нода `human` пути подзадачи, в том числе
-  // «Конфликт мержа») — движок по подзадачам (`workflow.ts`).
+  // Approval прогона (нода `human`, без задачи) и выбор ветки развилки (decision) ведёт `workflow-run.ts`; approval на задаче
+  // (нода `human` пути подзадачи, в том числе «Конфликт мержа») — движок по подзадачам (`workflow.ts`).
   // `resolution.images` из IPC и сокета вырезается: пути к картинкам ставит только main после записи файлов.
   return resolveWithImages(p.store, p.root, id, resolution, images, (clean) =>
     resolveHumanRequest(p.store, p.root, id, clean, deps.startWorker, (r) => {
-      if (!handleRunApproval(runDeps, r)) approvalResolved(deps, r)
+      if (!handleRunRequest(runDeps, r)) approvalResolved(deps, r)
     }, deps.mergeTarget))
 }
 
@@ -954,6 +956,8 @@ app.whenReady().then(() => {
         accept: (taskId, decision) => void reviewDecision(p.id, taskId, 'accept', decision),
         reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),
         finishStage: (runId, summary) => finishRunStage(runWorkflowDeps(p.id), runId, summary),
+        decide: (taskId, option, reason) => runDecision(runWorkflowDeps(p.id), taskId, option, reason),
+        escalateDecision: (taskId, reason) => escalateDecision(runWorkflowDeps(p.id), taskId, reason),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),

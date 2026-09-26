@@ -44,20 +44,20 @@ export function askOptions(params: Record<string, unknown>): RequestOption[] {
   return options
 }
 
-/** Вариант по id или метке (без учёта регистра). */
-function findOption<T extends RequestOption>(options: T[], key: string): T | undefined {
+/** Вариант по id или метке (без учёта регистра). Им же движок прогона сопоставляет `decision choose --option`. */
+export function findOption<T extends RequestOption>(options: T[], key: string): T | undefined {
   const k = key.trim()
   return options.find((o) => o.id === k) ?? options.find((o) => o.label.toLowerCase() === k.toLowerCase())
 }
 
 /**
- * `--option` в `request resolve`: CLI считает флаг повторяемым (он нужен `ask`) и присылает массив даже
- * для одного вхождения — принимаем и строку, и массив из одного элемента.
+ * `--option` в `request resolve` и `decision choose`: CLI считает флаг повторяемым (он нужен `ask`) и присылает
+ * массив даже для одного вхождения — принимаем и строку, и массив из одного элемента.
  */
-function singleOption(v: unknown): string | undefined {
+export function singleOption(v: unknown): string | undefined {
   if (v === undefined) return undefined
   const values = Array.isArray(v) ? v : [v]
-  if (values.length > 1) throw new Error('--option — только один вариант (id или метка)')
+  if (values.length > 1) throw new Error('--option: нужен один вариант, а не несколько')
   if (typeof values[0] !== 'string') throw new Error('--option требует значения')
   return values[0]
 }

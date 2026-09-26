@@ -324,7 +324,7 @@ export function toGlobalTask(
     ...(run.statusHistory ? { statusHistory: run.statusHistory.map((h) => ({ ...h })) } : {}),
     ...(run.workflowScope ? { workflowScope: run.workflowScope } : {}),
     ...(run.stage ? { stage: { nodeId: run.stage.nodeId, visits: { ...run.stage.visits } } } : {}),
-    ...(run.stageHistory ? { stageHistory: run.stageHistory.map((h) => ({ ...h })) } : {}),
+    ...(run.stageHistory ? { stageHistory: run.stageHistory.map((h) => ({ ...h, ...(h.decision ? { decision: { ...h.decision } } : {}) })) } : {}),
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),

@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { type Workflow } from '@orca-board/core'
+import { type WfNode, type Workflow } from '@orca-board/core'
 import {
-  LAYOUT_DX, LAYOUT_DY, NODE_H, NODE_W, autoLayout, curvePoint, distanceToCurve, edgeCurve, edgeCurveOf, fitView,
+  LAYOUT_DX, LAYOUT_DY, NODE_H, NODE_W, PORT_HIT_R, PORT_STEP, autoLayout, graphBounds, nodeHeight, nodeRect, curvePoint, distanceToCurve, edgeCurve, edgeCurveOf, fitView,
   hitEdge, hitNode, hitPort, inputPoint, panBy, portPoint, screenToWorld, zoomAt
 } from './workflowGeometry'
 import { graphWithMerge } from './workflowFixture'
@@ -106,4 +106,85 @@ test('вписать граф: вся рамка видна, крупнее 1:1 
     assert.ok(n.y >= tl.y && n.y + NODE_H <= br.y, n.id)
   }
   assert.equal(fitView({ version: 1, nodes: [{ id: 's', type: 'start', x: 0, y: 0 }], edges: [] }, 2000, 2000).scale, 1)
+})
+
+// ---------- decision: порты по вариантам, высота по числу портов ----------
+
+const decision = (count: number, x = 0, y = 0): Extract<WfNode, { type: 'decision' }> => ({
+  id: 'd', type: 'decision', x, y, question: 'q', roleId: 'analyst',
+  options: Array.from({ length: count }, (_, i) => ({ id: `o${i}`, label: `v${i}` }))
+})
+
+test('высота ноды: фиксированные типы — NODE_H, decision растёт с числом вариантов', () => {
+  for (const n of wf.nodes) assert.equal(nodeHeight(n), NODE_H, n.id)
+  assert.equal(nodeHeight(decision(2)), NODE_H)
+  assert.equal(nodeHeight(decision(8)), PORT_STEP * 9)
+  assert.deepEqual(nodeRect(decision(8, 10, 20)), { x: 10, y: 20, w: NODE_W, h: PORT_STEP * 9 })
+  assert.deepEqual(inputPoint(decision(8, 10, 20)), { x: 10, y: 20 + (PORT_STEP * 9) / 2 })
+  assert.ok(PORT_STEP >= 2 * PORT_HIT_R, 'соседние порты не перекрываются зонами попадания')
+})
+
+test('порты decision — по вариантам в их порядке, с шагом не меньше PORT_STEP; hit-test по id варианта', () => {
+  const d = decision(8, 100, 100)
+  const ys = d.options.map((o) => portPoint(d, o.id).y)
+  for (let i = 1; i < ys.length; i++) assert.ok(ys[i] - ys[i - 1] >= PORT_STEP - 1e-9, `шаг ${i}`)
+  assert.ok(ys[0] > d.y && ys.at(-1)! < d.y + nodeHeight(d), 'все порты на стороне ноды')
+  const g: Workflow = { version: 2, nodes: [d], edges: [] }
+  const p = portPoint(d, 'o5')
+  assert.deepEqual(hitPort(g, { x: p.x + 2, y: p.y + 3 }), { nodeId: 'd', outcome: 'o5' })
+  assert.equal(hitNode(g, { x: d.x + 5, y: d.y + nodeHeight(d) - 5 }), 'd', 'низ высокой ноды — тоже нода')
+})
+
+test('петля назад из высокой ноды уходит ниже её низа; рамка графа включает высокую ноду', () => {
+  const d = decision(8, 300, 0)
+  const g: Workflow = {
+    version: 2,
+    nodes: [{ id: 'w', type: 'work', x: 0, y: 0 }, d],
+    edges: [{ id: 'back', from: 'd', outcome: 'o0', to: 'w' }]
+  }
+  const mid = curvePoint(edgeCurveOf(g, g.edges[0])!, 0.5)
+  assert.ok(mid.y > d.y + nodeHeight(d), `петля ${mid.y} ниже ${d.y + nodeHeight(d)}`)
+  const b = graphBounds(g)!
+  assert.ok(b.y + b.h >= d.y + nodeHeight(d) + NODE_H, 'под нодой есть место для петель')
+})
+
+test('авторасстановка: под высокой нодой decision следующая нода слоя не налезает', () => {
+  const g: Workflow = {
+    version: 2,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 's2', type: 'work', x: 0, y: 0 },
+      decision(8),
+      { id: 'a', type: 'work', x: 0, y: 0 },
+      { id: 'b', type: 'work', x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e0', from: 'start', outcome: 'next', to: 's2' },
+      { id: 'e1', from: 's2', outcome: 'next', to: 'd' },
+      { id: 'e2', from: 'd', outcome: 'o0', to: 'a' },
+      { id: 'e3', from: 'd', outcome: 'o1', to: 'b' }
+    ]
+  }
+  const laid = autoLayout(g)
+  const at = (id: string) => laid.nodes.find((n) => n.id === id)!
+  assert.deepEqual([at('a').y, at('b').y], [0, LAYOUT_DY], 'обычные ноды — прежний шаг')
+  // Высокая нода первой в слое: следующая — ниже её низа на тот же зазор, что между обычными нодами.
+  const hub: Workflow = {
+    version: 2,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'hub', type: 'condition', x: 0, y: 0, test: { kind: 'attempts', node: 'd', atLeast: 1 } },
+      decision(8),
+      { id: 'w', type: 'work', x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e0', from: 'start', outcome: 'next', to: 'hub' },
+      { id: 'e1', from: 'hub', outcome: 'yes', to: 'd' },
+      { id: 'e2', from: 'hub', outcome: 'no', to: 'w' }
+    ]
+  }
+  const l2 = autoLayout(hub)
+  const [d, w] = ['d', 'w'].map((id) => l2.nodes.find((n) => n.id === id)!)
+  assert.deepEqual([d.x, d.y, w.x], [2 * LAYOUT_DX, 0, 2 * LAYOUT_DX])
+  assert.equal(w.y, nodeHeight(d) + LAYOUT_DY - NODE_H)
 })
