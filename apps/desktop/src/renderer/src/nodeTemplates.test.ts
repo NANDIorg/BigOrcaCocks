@@ -192,3 +192,31 @@ test('withTemplate: существующий заменяется на мест�
   assert.deepEqual(withTemplate([a, b], b2).map((x) => x.title), ['Ревьюер', 'Новое'])
   assert.deepEqual(withTemplate([a], b).map((x) => x.id), ['a', 'b'])
 })
+
+test('decision: шаблон вставляется в граф типа, но не в путь подзадачи; обновление сохраняет рёбра вариантов', () => {
+  const tpl: WfNodeTemplate = {
+    id: 'tpl_d', title: 'Нужен дизайн?', updatedAt: 1,
+    node: { type: 'decision', question: 'Нужен дизайн?', roleId: 'analyst', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] }
+  }
+  assert.equal(templateMisfit(tpl, 'run'), null)
+  const inserted = insertTemplate(root, tpl, 10, 20)
+  assert.equal(inserted.nodeId, 'decision')
+  const withEdges = {
+    ...inserted.workflow,
+    edges: [
+      ...inserted.workflow.edges,
+      { id: 'e_d_yes', from: 'decision', outcome: 'yes', to: 'work' },
+      { id: 'e_d_no', from: 'decision', outcome: 'no', to: 'review' }
+    ]
+  }
+  // Шаблон изменился: вариант no заменён на later — ребро no уходит, yes остаётся.
+  const changed: WfNodeTemplate = {
+    ...tpl,
+    node: { ...tpl.node, type: 'decision', question: 'Нужен дизайн?', roleId: 'analyst', options: [{ id: 'yes', label: 'Да' }, { id: 'later', label: 'Потом' }] }
+  }
+  const next = applyTemplate(withEdges, 'decision', changed)
+  assert.deepEqual(next.edges.filter((e) => e.from === 'decision').map((e) => e.outcome), ['yes'])
+  // Шаблон другого типа поверх решения: рёбра вариантов уходят.
+  const gate = applyTemplate(withEdges, 'decision', reviewerTemplate())
+  assert.equal(gate.edges.some((e) => e.from === 'decision'), false)
+})

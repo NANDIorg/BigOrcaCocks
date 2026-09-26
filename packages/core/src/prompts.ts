@@ -1,7 +1,8 @@
 // Только type-импорты: модуль тестируется node --test без бандлера.
 import type { AgentSpec } from './agents'
-import type { Question, Role, Task } from './types'
-import type { WfWorkStage } from './workflow'
+import type { Question, Role, StageDecision, Task } from './types'
+import type { WfDecisionOption, WfWorkStage } from './workflow'
+import { returnImagesSection } from './attachments.ts'
 
 /**
  * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
@@ -126,13 +127,14 @@ function stageSection(stage: WfWorkStage | undefined, answered = false): string[
  * результат — ответ в markdown, а замечания — уточнение к прошлому ответу (`previousAnswer`); этапа у неё нет.
  */
 export function workerTaskPrompt(
-  task: Pick<Task, 'title' | 'spec' | 'feedback' | 'answerFor'>,
+  task: Pick<Task, 'title' | 'spec' | 'feedback' | 'feedbackImages' | 'answerFor'>,
   previousAnswer?: string,
   answers: AnsweredQuestion[] = [],
   stage?: WfWorkStage
 ): string {
   if (!task.answerFor) {
-    const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}` : ''
+    const images = returnImagesSection(task.feedbackImages, 'worker')
+    const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}${images ? `\n\n${images}` : ''}` : ''
     return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', ...answersSection(answers), ...stageSection(stage, answers.some((q) => q.answer !== undefined)), feedback].join('\n')
   }
   const parts = [
@@ -149,7 +151,10 @@ export function workerTaskPrompt(
   ]
   if (task.feedback) {
     if (previousAnswer) parts.push('', '# Прошлый ответ', '', previousAnswer)
-    parts.push('', '# Уточнение к прошлому ответу', '', task.feedback, '', 'Дай новый полный ответ с учётом уточнения.')
+    parts.push('', '# Уточнение к прошлому ответу', '', task.feedback)
+    const images = returnImagesSection(task.feedbackImages, 'worker')
+    if (images) parts.push('', images)
+    parts.push('', 'Дай новый полный ответ с учётом уточнения.')
   }
   return parts.join('\n')
 }
@@ -261,6 +266,84 @@ export function runAskTaskSpec(ctx: RunTaskContext): string {
 }
 
 /**
+ * Правила задачи-решателя ноды `decision`: выбрать ровно один вариант командой `decision choose` или передать решение
+ * человеку (`decision escalate`), код не трогать. `done` без выбора — тоже передача человеку (фоллбэк `no_answer`).
+ */
+const DECISION_STAGE_RULES = [
+  'Твоя цель — выбрать ровно один вариант из списка выше. Код не меняй и ничего не коммить: задачу, сводки и ветку изучай только затем, чтобы решить точно.',
+  'Выбери вариант: `orca-board decision choose --task "$ORCA_TASK_ID" --option <id> --reason "почему этот вариант"`. `--reason` обязателен — коротко и по делу: обоснование увидят координатор и человек. Граф сразу пойдёт по ветке варианта. Ошибка «нет варианта» — возьми id из списка вариантов и повтори.',
+  'Не можешь решить уверенно (не хватает данных, варианты равноценны) — передай решение человеку: `orca-board decision escalate --task "$ORCA_TASK_ID" --reason "что неясно"`. Человек выберет из тех же вариантов и увидит твой комментарий.',
+  'Последней командой обязательно `orca-board done --summary "выбрано: <название варианта>"` (или `"передано человеку: …"`). `done` без выбора и без escalate тоже передаст решение человеку.'
+]
+
+/** Пройденный этап глобальной задачи для задачи-решателя: запись `Run.stageHistory` без коммита и сводки. */
+export interface RunPathStep {
+  title: string
+  /** Какой по счёту заход в ноду. */
+  visit?: number
+  /** Исход, с которым граф пришёл в ноду (порт прошлой ноды или id варианта развилки). */
+  outcome?: string
+  /** Решение прошлого захода в развилку. */
+  decision?: Pick<StageDecision, 'label' | 'reason' | 'by'>
+}
+
+/**
+ * Что знает приложение, когда создаёт задачу-решатель ноды `decision`: общий контекст задач прогона плюс вопрос,
+ * варианты и пройденный путь по графу (от старых записей к новым; последняя — сама развилка).
+ */
+export interface RunDecisionContext extends RunTaskContext {
+  question: string
+  options: readonly Pick<WfDecisionOption, 'id' | 'label' | 'description'>[]
+  path?: readonly RunPathStep[]
+}
+
+/** Название задачи-решателя прогона: «<название ноды>: <название глобальной задачи>». */
+export function runDecisionTaskTitle(nodeTitle: string, runTitle: string): string {
+  return `${nodeTitle}: ${runTitle}`
+}
+
+function pathSection(path: readonly RunPathStep[] = []): string[] {
+  if (path.length === 0) return []
+  const lines = path.map((p, i) => {
+    const notes = [
+      p.visit !== undefined && p.visit > 1 ? `заход ${p.visit}` : '',
+      p.outcome ? `пришли по исходу \`${p.outcome}\`` : ''
+    ].filter(Boolean)
+    const head = `${i + 1}. «${p.title}»${notes.length ? ` (${notes.join(', ')})` : ''}`
+    if (!p.decision) return head
+    const who = p.decision.by === 'human' ? 'решил человек' : 'решил агент'
+    const reason = p.decision.reason?.trim() ? `: ${p.decision.reason.trim().replace(/\s+/g, ' ')}` : ''
+    return `${head} — выбрано «${p.decision.label}» (${who})${reason}`
+  })
+  return ['## Путь по графу', '', ...lines]
+}
+
+/**
+ * Спека задачи-решателя ноды `decision` воркфлоу глобальной задачи: агент отвечает на вопрос ноды по смыслу задачи и
+ * выбирает ветку. Спека самодостаточна: вопрос, варианты (`id — метка — описание`), цель, сводки прошлых этапов, путь по
+ * графу, «Как решать» (`instructions` ноды), ветка только для чтения и правила сдачи (`DECISION_STAGE_RULES`). Свой id
+ * агент берёт из `$ORCA_TASK_ID` — задачу создают вместе с запуском.
+ */
+export function runDecisionTaskSpec(ctx: RunDecisionContext): string {
+  const options = ctx.options.map((o) => `- \`${o.id}\` — ${o.label}${o.description?.trim() ? `: ${o.description.trim()}` : ''}`)
+  const parts = [
+    `Ты — нода «Решение ИИ» воркфлоу глобальной задачи «${ctx.title}»: ответь на вопрос по смыслу задачи и выбери ветку, по которой граф пойдёт дальше.`,
+    `## Вопрос\n\n${ctx.question.trim()}`,
+    `## Варианты\n\n${options.join('\n')}`,
+    goalSection(ctx).join('\n')
+  ]
+  const stages = stageSummariesSection(ctx.stages)
+  if (stages.length > 0) parts.push(stages.join('\n'))
+  const path = pathSection(ctx.path)
+  if (path.length > 0) parts.push(path.join('\n'))
+  if (ctx.branch) parts.push(`Ветка глобальной задачи: \`${ctx.branch}\`${ctx.base ? ` (от \`${ctx.base}\`)` : ''} — читать можно (\`git log\`, \`git diff\`), менять нельзя.`)
+  const own = ctx.instructions?.trim()
+  if (own) parts.push(`## Как решать\n\n${own}`)
+  parts.push(`## Как сдать решение\n\n${DECISION_STAGE_RULES.join('\n\n')}`)
+  return parts.join('\n\n')
+}
+
+/**
  * Как агент получает системную инструкцию: `system` — отдельным system prompt (claude, `--append-system-prompt`),
  * `combined` — в начале стартового сообщения перед заданием, `none` — не получает (оболочка).
  * Выводится из `invoke` реестра, а не из отдельного списка.
@@ -307,6 +390,8 @@ export interface CoordinatorStage {
   decision?: string
   /** Ответы человека на этапе «Вопрос человеку». */
   answers?: string
+  /** Картинки к `feedback`: абсолютные пути в cwd координатора. */
+  images?: readonly string[]
   /** Id подзадач текущего захода: остальные подзадачи — прошлых заходов. */
   tasks?: readonly string[]
   /** Все подзадачи захода уже закрыты (`stage_tasks_done` уже отправлен). */
@@ -334,7 +419,12 @@ function coordinatorStageSection(
       : 'Роли этапа не заданы: роль каждой подзадачи выбирай сам из включённых рабочих ролей типа (`orca-board roles list`, по описанию).'
   ]
   if (stage.instructions?.trim()) parts.push('', '## Инструкции этапа', '', stage.instructions.trim())
-  if (stage.feedback?.trim()) parts.push('', '## Замечания проверки или человека', '', stage.feedback.trim(), '', 'Это возврат в этап: создай подзадачи-исправления по замечаниям.')
+  if (stage.feedback?.trim()) {
+    parts.push('', '## Замечания проверки или человека', '', stage.feedback.trim())
+    const images = returnImagesSection(stage.images, 'coordinator')
+    if (images) parts.push('', images)
+    parts.push('', 'Это возврат в этап: создай подзадачи-исправления по замечаниям.')
+  }
   if (stage.decision?.trim()) parts.push('', '## Решение человека', '', stage.decision.trim())
   if (stage.answers?.trim()) parts.push('', '## Ответы человека на вопросы', '', stage.answers.trim())
   if (current.length > 0) {
@@ -364,7 +454,7 @@ function coordinatorStageSection(
 export function resumeCoordinatorObjective(
   goal: string,
   subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>,
-  returns: ReadonlyArray<{ text: string }> = [],
+  returns: ReadonlyArray<{ text: string; images?: readonly string[] }> = [],
   stage?: CoordinatorStage
 ): string {
   if (stage) {
@@ -384,6 +474,8 @@ export function resumeCoordinatorObjective(
       `${COORDINATOR_RETURN_HEADING}: человек проверил результат и вернул задачу в работу — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции:`,
       last.text
     )
+    const images = returnImagesSection(last.images, 'coordinator')
+    if (images) parts.push('', images)
     const earlier = returns.slice(0, -1)
     if (earlier.length > 0) parts.push('', 'Прошлые уточнения (уже учтены в прошлых запусках):', ...earlier.map((r) => `- ${r.text}`))
   }

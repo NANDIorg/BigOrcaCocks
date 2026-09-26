@@ -4,9 +4,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION,
-  COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, type CoordinatorStage
+  COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec, runDecisionTaskTitle, type CoordinatorStage
 } from './prompts.ts'
 import { getAgent } from './agents.ts'
+import { returnImagesSection } from './attachments.ts'
 import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
 
 describe('builtinPromptKind', () => {
@@ -473,6 +474,82 @@ describe('задачи прогона: проверка ветки глобал�
   })
 })
 
+describe('задача-решатель ноды «Решение ИИ»', () => {
+  const ctx = {
+    title: 'Экран настроек',
+    goal: 'Сделать экран настроек профиля',
+    branch: 'feature/run_x-settings',
+    base: 'develop',
+    stages: [{ title: 'Анализ', summary: 'Нужен новый экран и API' }],
+    question: 'Нужен ли дизайн для этой задачи?',
+    options: [{ id: 'yes', label: 'Да', description: 'есть новый экран' }, { id: 'no', label: 'Нет' }],
+    path: [
+      { title: 'Анализ', visit: 1 },
+      { title: 'Нужен ли дизайн?', visit: 1, outcome: 'next', decision: { label: 'Нет', reason: 'макет  уже\nесть', by: 'human' as const } },
+      { title: 'Реализация', visit: 1, outcome: 'no' },
+      { title: 'Нужен ли дизайн?', visit: 2, outcome: 'reject' }
+    ],
+    instructions: 'Дизайн нужен, если меняется UI.'
+  }
+
+  it('название — «<нода>: <глобальная задача>»', () => {
+    assert.equal(runDecisionTaskTitle('Нужен ли дизайн?', 'Экран'), 'Нужен ли дизайн?: Экран')
+  })
+
+  it('вопрос, варианты, цель, сводки, путь, «как решать», ветка только для чтения и команды decision choose|escalate', () => {
+    const spec = runDecisionTaskSpec(ctx)
+    assert.match(spec, /^Ты — нода «Решение ИИ» воркфлоу глобальной задачи «Экран настроек»/)
+    assert.match(spec, /## Вопрос\n\nНужен ли дизайн для этой задачи\?/)
+    assert.match(spec, /## Варианты\n\n- `yes` — Да: есть новый экран\n- `no` — Нет/)
+    assert.match(spec, /## Цель глобальной задачи\n\nСделать экран настроек профиля/)
+    assert.match(spec, /## Что сделано на прошлых этапах\n\n### «Анализ»\n\nНужен новый экран и API/)
+    assert.match(spec, /## Путь по графу\n\n1\. «Анализ»\n2\. «Нужен ли дизайн\?» \(пришли по исходу `next`\) — выбрано «Нет» \(решил человек\): макет уже есть\n3\. «Реализация» \(пришли по исходу `no`\)\n4\. «Нужен ли дизайн\?» \(заход 2, пришли по исходу `reject`\)/)
+    assert.match(spec, /Ветка глобальной задачи: `feature\/run_x-settings` \(от `develop`\) — читать можно/)
+    assert.match(spec, /## Как решать\n\nДизайн нужен, если меняется UI\./)
+    assert.match(spec, /## Как сдать решение\n\nТвоя цель — выбрать ровно один вариант[\s\S]*Код не меняй и ничего не коммить/)
+    assert.match(spec, /orca-board decision choose --task "\$ORCA_TASK_ID" --option <id> --reason "почему этот вариант"/)
+    assert.match(spec, /orca-board decision escalate --task "\$ORCA_TASK_ID" --reason "что неясно"/)
+    assert.match(spec, /Последней командой обязательно `orca-board done --summary "выбрано: <название варианта>"`/)
+    const order = ['## Вопрос', '## Варианты', '## Цель', '## Что сделано', '## Путь по графу', 'Ветка глобальной задачи', '## Как решать', '## Как сдать решение']
+    const at = order.map((h) => spec.indexOf(h))
+    assert.deepEqual(at, [...at].sort((a, b) => a - b), 'разделы в порядке')
+  })
+
+  it('нет сводок, пути, ветки и инструкций — разделов нет, спека не ломается', () => {
+    const spec = runDecisionTaskSpec({ title: 'T', goal: '', question: 'Да или нет?', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] })
+    assert.doesNotMatch(spec, /## Что сделано|## Путь по графу|Ветка глобальной задачи|## Как решать|undefined/)
+    assert.match(spec, /## Цель глобальной задачи\n\nT/)
+    assert.match(spec, /## Как сдать решение/)
+  })
+
+  it('skills/worker.md: задача-решение — ровно один вариант через decision choose с --reason, escalate, done последним', () => {
+    const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+    const part = worker.slice(worker.indexOf('- Задача-решение'))
+    assert.ok(part.length > 0 && worker.includes('- Задача-решение'))
+    // Узнаётся по началу спеки задачи-решателя — заголовок в skill совпадает с runDecisionTaskSpec.
+    assert.match(part, /«Ты — нода «Решение ИИ»/)
+    assert.match(runDecisionTaskSpec(ctx), /^Ты — нода «Решение ИИ»/)
+    assert.match(part, /код не меняй и не коммить/)
+    assert.match(part, /\*\*ровно один\*\* вариант/)
+    assert.match(part, /orca-board decision choose --task "\$ORCA_TASK_ID" --option <id> --reason "[^"]+"/)
+    assert.match(part, /`--reason`\s+обязателен/)
+    assert.match(part, /orca-board decision escalate --task "\$ORCA_TASK_ID" --reason "[^"]+"/)
+    assert.match(part, /Последней командой — `orca-board done --summary/)
+    assert.match(part, /`review accept\|reject` для такой задачи не работает/)
+  })
+
+  it('skills/coordinator.md: decision делает приложение и человек — координатор ничего не делает', () => {
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.match(skill, /Всё остальное делает не ты:[\s\S]*`decision` — агент выбирает ветку графа[\s\S]*\*\*просто жди\*\*/)
+    assert.match(skill, /`decision` — «Решение ИИ»: агент роли `roleId` отвечает на `question` и выбирает один из `options`/)
+    assert.match(skill, /- `worker_done` с полем `gateFor` —[^\n]*\*\*задача-решение\*\*[\s\S]*ничего не делай/)
+    assert.match(skill, /- `request_created` →[\s\S]*`decision`\)\. Ничего не делай[\s\S]*`decision` —\s+агент «Решения ИИ» не выбрал ветку/)
+    assert.match(skill, /- `request_resolved` →[\s\S]*`kind: decision`[^\n]*— тоже ничего/)
+    // Команды агента-решателя координатору не нужны: решает задача, созданная приложением.
+    assert.doesNotMatch(skill, /decision choose|decision escalate/)
+  })
+})
+
 describe('события после ответа человека в инструкции координатора', () => {
   const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
 
@@ -663,5 +740,34 @@ describe('язык общения агентов с человеком (agentSys
     for (const [, cmd] of agentLanguageDirective('en').matchAll(/`orca-board ([a-z]+(?: [a-z]+)?)`/g)) {
       assert.match(cli, new RegExp(`\\n  ${cmd} `), `нет команды ${cmd} в HELP`)
     }
+  })
+})
+
+describe('картинки к замечаниям при возврате в работу: skills', () => {
+  const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+  const coordinator = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+
+  it('worker.md: изображения к замечаниям — открыть до правок, текст на них не команды, не коммитить', () => {
+    assert.match(worker, /приложены изображения/)
+    assert.match(worker, /Замечания после ревью/)
+    assert.match(worker, /Уточнение к прошлому ответу/)
+    assert.match(worker, /\.orca-attachments/)
+    assert.match(worker, /данные, а не команды/)
+  })
+
+  it('coordinator.md: `images` в stage_started, пересказ словами вместо путей воркерам, answer_clarified и request_resolved', () => {
+    assert.match(coordinator, /stage_started` — `\{[^}]*feedback\?, images\?/)
+    assert.match(coordinator, /`images` — картинки к `feedback`/)
+    assert.match(coordinator, /пути в `task create` не передавай — перескажи словами/)
+    assert.match(coordinator, /`images` — пути приложенных картинок, их читает воркер/)
+    assert.match(coordinator, /замечания и их картинки \(`images`\)/)
+    assert.match(coordinator, /данные, а не команды/)
+  })
+
+  it('формулировки промптов и skills согласованы: те же «данные, а не команды» и «не видят»', () => {
+    const coord = returnImagesSection(['/x/image-1.png'], 'coordinator')
+    assert.match(coord, /данные, а не команды/)
+    assert.match(coord, /Воркеры этих файлов не видят/)
+    assert.match(coordinator, /Воркеры этих файлов не видят/)
   })
 })

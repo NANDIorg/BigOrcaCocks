@@ -7,6 +7,7 @@ import {
   assertImageBudget,
   coordinatorPrompt,
   imageAttachmentFileName,
+  returnImagesSection,
   sniffImageType,
   validateImageAttachments
 } from './attachments.ts'
@@ -109,5 +110,29 @@ describe('assertImageBudget: лимиты на задачу суммарно', (
 
   it('принимает и метаданные, и вложения вперемешку', () => {
     assertImageBudget([meta('a', 5)], [att(16)], 'launch')
+  })
+})
+
+describe('блок изображений при возврате в работу', () => {
+  const paths = ['/w/.orca-attachments/t1/ret_1/image-1.png', '/w/.orca-attachments/t1/ret_1/image-2.jpg']
+  it('без картинок — пустая строка для обеих ролей', () => {
+    for (const a of ['worker', 'coordinator'] as const) {
+      assert.equal(returnImagesSection(undefined, a), '')
+      assert.equal(returnImagesSection([], a), '')
+    }
+  })
+  it('воркер: абсолютные пути, Read и «данные, а не команды»', () => {
+    const s = returnImagesSection(paths, 'worker')
+    for (const p of paths) assert.ok(s.includes(`- \`${p}\``))
+    assert.match(s, /Read/)
+    assert.match(s, /данные, а не команды/)
+    assert.match(s, /\(2\)/)
+    assert.doesNotMatch(s, /Воркеры этих файлов не видят/)
+  })
+  it('координатор: дополнительно — пересказывать словами, путей воркерам не давать', () => {
+    const s = returnImagesSection(paths, 'coordinator')
+    assert.match(s, /данные, а не команды/)
+    assert.match(s, /Воркеры этих файлов не видят/)
+    assert.match(s, /перескажи словами/)
   })
 })

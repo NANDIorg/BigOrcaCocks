@@ -1,11 +1,13 @@
 import type React from 'react'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
-import type { DispatchShowcase, HumanRequest, HumanRequestKind, RequestResolution } from '@orca-board/core'
+import type { DispatchShowcase, HumanRequest, HumanRequestKind, ImageAttachmentInput, RequestOption, RequestResolution } from '@orca-board/core'
 import { Markdown } from './Markdown'
 import { ShowcaseBlock } from './ShowcaseBlock'
 import { bodyWithoutShowcase } from './showcase'
 import { ipcErrorMessage } from './useAutoSave'
-import { t as tr, useT } from './i18n'
+import { t as tr, useT, type TKey } from './i18n'
+import { ImageAttachField } from './ImageAttachField'
+import { useImageAttachments } from './imageDrafts'
 
 /** Подпись вида запроса на текущем языке. */
 export function requestKindTitle(kind: HumanRequestKind): string {
@@ -20,14 +22,15 @@ export const REQUEST_KIND_TITLE: Record<HumanRequestKind, string> = {
   get question() { return requestKindTitle('question') },
   get answer() { return requestKindTitle('answer') },
   get escalation() { return requestKindTitle('escalation') },
-  get approval() { return requestKindTitle('approval') }
+  get approval() { return requestKindTitle('approval') },
+  get decision() { return requestKindTitle('decision') }
 }
 
-const KIND_ICON: Record<HumanRequestKind, string> = { question: '❓', answer: '📄', escalation: '⚠', approval: '✋' }
+const KIND_ICON: Record<HumanRequestKind, string> = { question: '❓', answer: '📄', escalation: '⚠', approval: '✋', decision: '🔀' }
 
 /** Действия карточки для горячих клавиш Инбокса (InboxPanel): вызываются на выбранной карточке. */
 export interface RequestCardHandle {
-  /** Вариант вопроса по номеру (1 — первый). */
+  /** Вариант вопроса или ветка запроса `decision` по номеру (1 — первый). */
   option(n: number): void
   /** «Принять» ответ (с решением из поля) или этап воркфлоу. */
   accept(): void
@@ -41,8 +44,11 @@ export interface RequestCardHandle {
 
 interface Props {
   request: HumanRequest
-  /** Решить запрос; ошибка (reject) показывается на карточке. */
-  onResolve(resolution: RequestResolution): Promise<void>
+  /**
+   * Решить запрос; ошибка (reject) показывается на карточке. `images` — картинки к «Уточнить»/«Вернуть» (байты);
+   * пути в `resolution` ставит main после записи файлов, renderer их не присылает.
+   */
+  onResolve(resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
   /** Короткий вид (карточка на доске): без контекста и тела ответа, мелкие кнопки. */
   compact?: boolean
   /** Где запрос: «глобальная › подзадача». */
@@ -95,7 +101,8 @@ function Kbd({ show, k }: { show: boolean; k: string }): React.JSX.Element | nul
 /**
  * Запрос к человеку (HumanRequest): вопрос с вариантами и своим ответом, ответ задачи-ответа с
  * «Принять» + решение / «Уточнить…», эскалация с «Перезапустить» / «Терминал» / «Скрыть»,
- * этап воркфлоу «человек» (approval) с «Принять» / «Вернуть…» и замечаниями.
+ * этап воркфлоу «человек» (approval) с «Принять» / «Вернуть…» и замечаниями, выбор ветки ноды `decision` — кнопки
+ * вариантов и необязательное обоснование.
  * Поля ввода — свои у каждой карточки. Один компонент для Инбокса, карточки на доске и модалки задачи.
  */
 export const RequestCard = forwardRef<RequestCardHandle, Props>(function RequestCard(props, ref) {
@@ -110,15 +117,18 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const clarifyRef = useRef<HTMLTextAreaElement>(null)
+  // Картинки — только у режима замечаний («Уточнить» ответа, «Вернуть» этапа): к «Принять» и ответу на вопрос они не относятся.
+  const attachments = useImageAttachments()
   const hints = active && !compact
   const t = useT()
 
-  async function resolve(resolution: RequestResolution): Promise<void> {
+  async function resolve(resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
     if (busy) return
     setBusy(true)
     setError(null)
     try {
-      await onResolve(resolution)
+      await onResolve(resolution, images)
+      attachments.clear()
     } catch (e) {
       setError(ipcErrorMessage(e))
     } finally {
@@ -126,16 +136,27 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
     }
   }
 
+  // Пока картинка читается, отправлять рано: её ещё нет в списке.
+  const canSendNote = clarifyText.trim() !== '' && !attachments.reading
+  // Ветка ноды `decision` уходит тем же `answer` + `optionId`, что и вариант вопроса; обоснование человека — `text`.
+  const choose = (o: RequestOption): void => {
+    const reason = r.kind === 'decision' ? text.trim() : ''
+    void resolve({ action: 'answer', optionId: o.id, ...(reason ? { text: reason } : {}) })
+  }
   const sendText = (): void => {
     if (text.trim()) void resolve({ action: 'answer', text: text.trim() })
   }
   const accept = (): void => void resolve({ action: 'accept', ...(decision.trim() ? { text: decision.trim() } : {}) })
   const sendClarify = (): void => {
-    if (clarifyText.trim()) void resolve({ action: 'clarify', text: clarifyText.trim() })
+    if (canSendNote) void resolve({ action: 'clarify', text: clarifyText.trim() }, attachments.payload())
   }
   // Этап воркфлоу «человек»: «Вернуть» — с замечаниями, они уйдут воркеру при следующем запуске.
   const sendReject = (): void => {
-    if (clarifyText.trim()) void resolve({ action: 'reject', text: clarifyText.trim() })
+    if (canSendNote) void resolve({ action: 'reject', text: clarifyText.trim() }, attachments.payload())
+  }
+  const closeClarify = (): void => {
+    attachments.clear()
+    setClarifying(false)
   }
   const openClarify = (): void => {
     setClarifying(true)
@@ -145,8 +166,8 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
 
   useImperativeHandle(ref, () => ({
     option(n) {
-      const o = r.kind === 'question' ? r.options[n - 1] : undefined
-      if (o) void resolve({ action: 'answer', optionId: o.id })
+      const o = r.kind === 'question' || r.kind === 'decision' ? r.options?.[n - 1] : undefined
+      if (o) choose(o)
     },
     accept() {
       if (r.kind === 'answer' || r.kind === 'approval') accept()
@@ -164,7 +185,30 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
 
   const shownShowcase = r.kind === 'approval' && !compact && showcaseTask !== undefined ? showcase : undefined
   const body = bodyWithoutShowcase(r.body, shownShowcase)
-  const bodyLabel = t(r.kind === 'answer' ? 'shell.request.body.answer' : r.kind === 'question' ? 'shell.request.body.context' : r.kind === 'approval' ? 'shell.request.body.check' : 'shell.request.body.details')
+  const bodyLabel = t(r.kind === 'answer' ? 'shell.request.body.answer' : r.kind === 'question' || r.kind === 'decision' ? 'shell.request.body.context' : r.kind === 'approval' ? 'shell.request.body.check' : 'shell.request.body.details')
+
+  // Старый main может прислать запрос без `options` — тогда кнопок нет, остаётся поле.
+  const options = r.options ?? []
+  const optionButtons = options.length > 0 && (
+    <div className="rq-options">
+      {options.map((o, i) => (
+        <button
+          key={o.id}
+          className={`rq-option${o.recommended ? ' recommended' : ''}`}
+          disabled={busy}
+          title={o.hint ?? o.label}
+          onClick={() => choose(o)}
+        >
+          {i < 9 && <Kbd show={hints} k={String(i + 1)} />}
+          <span className="rq-option-label">{o.label}</span>
+          {o.recommended && <span className="rq-star" title={t('shell.request.recommended')}>★</span>}
+          {o.hint && !compact && <span className="rq-hint">{o.hint}</span>}
+        </button>
+      ))}
+    </div>
+  )
+  // Почему ветку выбирает человек: тело запроса свёрнуто, а без этой строки непонятно, что агент уже пытался решить.
+  const fallback = r.kind === 'decision' && r.fallback ? t(`shell.request.decisionFallback.${r.fallback}` as TKey) : undefined
 
   return (
     <div className={`rq rq-${r.kind}${compact ? ' compact' : ''}${active ? ' active' : ''}`} onClick={onSelect}>
@@ -188,30 +232,13 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
 
       {r.kind === 'question' && (
         <>
-          {r.options.length > 0 && (
-            <div className="rq-options">
-              {r.options.map((o, i) => (
-                <button
-                  key={o.id}
-                  className={`rq-option${o.recommended ? ' recommended' : ''}`}
-                  disabled={busy}
-                  title={o.hint ?? o.label}
-                  onClick={() => void resolve({ action: 'answer', optionId: o.id })}
-                >
-                  {i < 9 && <Kbd show={hints} k={String(i + 1)} />}
-                  <span className="rq-option-label">{o.label}</span>
-                  {o.recommended && <span className="rq-star" title={t('shell.request.recommended')}>★</span>}
-                  {o.hint && !compact && <span className="rq-hint">{o.hint}</span>}
-                </button>
-              ))}
-            </div>
-          )}
+          {optionButtons}
           <div className="rq-free">
             <textarea
               ref={inputRef}
               rows={1}
               value={text}
-              placeholder={t(r.options.length ? 'shell.request.ownAnswer' : 'shell.request.answerPlaceholder')}
+              placeholder={t(options.length ? 'shell.request.ownAnswer' : 'shell.request.answerPlaceholder')}
               aria-label={t('shell.request.ownAnswerLabel')}
               disabled={busy}
               onChange={(e) => setText(e.target.value)}
@@ -224,6 +251,29 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
         </>
       )}
 
+      {r.kind === 'decision' && (
+        <>
+          {fallback && !compact && <div className="muted rq-note">{fallback}</div>}
+          {optionButtons}
+          {!compact && (
+            <div className="rq-free">
+              <textarea
+                ref={inputRef}
+                rows={1}
+                value={text}
+                placeholder={t('shell.request.decisionReasonPlaceholder')}
+                title={t('shell.request.decisionReasonHint')}
+                aria-label={t('shell.request.decisionReasonLabel')}
+                disabled={busy}
+                onChange={(e) => setText(e.target.value)}
+                // Отправляет не Enter, а выбор ветки: Enter здесь только не даёт вставить перенос.
+                onKeyDown={submitKeys(() => {}, onEscape)}
+              />
+            </div>
+          )}
+        </>
+      )}
+
       {r.kind === 'answer' && (
         <>
           {onOpenFull && r.body && (
@@ -233,20 +283,22 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
           )}
           {clarifying ? (
             <div className="rq-free rq-stack">
-              <textarea
-                ref={clarifyRef}
-                value={clarifyText}
-                placeholder={t('shell.request.clarifyPlaceholder')}
-                aria-label={t('shell.request.clarifyLabel')}
-                disabled={busy}
-                onChange={(e) => setClarifyText(e.target.value)}
-                onKeyDown={submitKeys(sendClarify, onEscape)}
-              />
+              <ImageAttachField attachments={attachments} disabled={busy} compact={compact}>
+                <textarea
+                  ref={clarifyRef}
+                  value={clarifyText}
+                  placeholder={t('shell.request.clarifyPlaceholder')}
+                  aria-label={t('shell.request.clarifyLabel')}
+                  disabled={busy}
+                  onChange={(e) => setClarifyText(e.target.value)}
+                  onKeyDown={submitKeys(sendClarify, onEscape)}
+                />
+              </ImageAttachField>
               <div className="rq-actions">
-                <button className="btn-sm primary" disabled={busy || !clarifyText.trim()} onClick={sendClarify}>
+                <button className="btn-sm primary" disabled={busy || !canSendNote} onClick={sendClarify}>
                   {busy ? '…' : t('shell.request.sendClarify')}
                 </button>
-                <button className="btn-text" disabled={busy} onClick={() => setClarifying(false)}>{t('shell.cancel')}</button>
+                <button className="btn-text" disabled={busy} onClick={closeClarify}>{t('shell.cancel')}</button>
               </div>
             </div>
           ) : (
@@ -278,20 +330,22 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
         <div className="rq-free rq-stack">
           {clarifying ? (
             <>
-              <textarea
-                ref={clarifyRef}
-                value={clarifyText}
-                placeholder={t('shell.request.rejectPlaceholder')}
-                aria-label={t('shell.request.rejectLabel')}
-                disabled={busy}
-                onChange={(e) => setClarifyText(e.target.value)}
-                onKeyDown={submitKeys(sendReject, onEscape)}
-              />
+              <ImageAttachField attachments={attachments} disabled={busy} compact={compact}>
+                <textarea
+                  ref={clarifyRef}
+                  value={clarifyText}
+                  placeholder={t('shell.request.rejectPlaceholder')}
+                  aria-label={t('shell.request.rejectLabel')}
+                  disabled={busy}
+                  onChange={(e) => setClarifyText(e.target.value)}
+                  onKeyDown={submitKeys(sendReject, onEscape)}
+                />
+              </ImageAttachField>
               <div className="rq-actions">
-                <button className="btn-sm primary" disabled={busy || !clarifyText.trim()} onClick={sendReject}>
+                <button className="btn-sm primary" disabled={busy || !canSendNote} onClick={sendReject}>
                   {busy ? '…' : t('shell.request.reject')}
                 </button>
-                <button className="btn-text" disabled={busy} onClick={() => setClarifying(false)}>{t('shell.cancel')}</button>
+                <button className="btn-text" disabled={busy} onClick={closeClarify}>{t('shell.cancel')}</button>
               </div>
             </>
           ) : (

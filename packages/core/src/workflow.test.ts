@@ -7,7 +7,7 @@ import {
   WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, WF_PORTS, defaultWorkflow, defaultWorkRole, legacyDefaultWorkflow, legacyPipelineWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, migrateWorkflowReport, nextStage, nextRunStage, startRunStage, wfNodeTitle, pipelineWorkflow,
   startStage, stageAction, runStageAction, validateWorkflow, stableJson, wfWorkStage, wfWorkRoleIds, describeWorkflow, WF_ISSUE_TEXTS,
   WF_GIT_OPERATIONS, WF_GIT_FIELD_USE, wfGitSlug, wfGitVars, renderGitTemplate, isValidGitBranchName, isValidGitRemoteName,
-  defaultSubflow, WF_SUBFLOW_PREFIX, toTaskScopeWorkflow
+  defaultSubflow, WF_SUBFLOW_PREFIX, toTaskScopeWorkflow, wfPorts, WF_DECISION_OPTION_ID
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfSubflow, WfValidation, Workflow } from './workflow.ts'
 
@@ -104,6 +104,229 @@ describe('defaultWorkflow', () => {
     for (const n of wf.nodes) {
       assert.deepEqual(wf.edges.filter((e) => e.from === n.id).map((e) => e.outcome).sort(), [...WF_PORTS[n.type]].sort(), n.id)
     }
+  })
+})
+
+describe('wfPorts: порты ноды', () => {
+  it('у фиксированных типов — WF_PORTS, у decision — id вариантов в их порядке', () => {
+    for (const type of Object.keys(WF_PORTS) as WfNode['type'][]) {
+      if (type === 'decision') continue
+      assert.deepEqual(wfPorts({ id: 'n', x: 0, y: 0, type } as WfNode), WF_PORTS[type], type)
+    }
+    assert.deepEqual(WF_PORTS.decision, [])
+    const decision: WfNode = {
+      id: 'd', x: 0, y: 0, type: 'decision', question: 'Нужен ли дизайн?', roleId: 'analyst',
+      options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет', description: 'сразу в реализацию' }, { id: 'opt_3', label: 'Не знаю' }]
+    }
+    assert.deepEqual(wfPorts(decision), ['yes', 'no', 'opt_3'])
+    // Граф в обход валидации (варианты не массив) — портов нет, а не исключение.
+    assert.deepEqual(wfPorts({ ...decision, options: undefined } as unknown as WfNode), [])
+  })
+
+  it('маска id варианта: латиница в нижнем регистре, цифры, _ и -, до 32 символов', () => {
+    for (const id of ['yes', 'opt_3', 'a-b', '0', 'x'.repeat(32)]) assert.ok(WF_DECISION_OPTION_ID.test(id), id)
+    for (const id of ['', 'Yes', 'да', '_a', '-a', 'a b', 'x'.repeat(33)]) assert.ok(!WF_DECISION_OPTION_ID.test(id), id)
+  })
+
+})
+
+/** Граф «Нужен ли дизайн?»: анализ → развилка → да: «Дизайн» → «Реализация», нет: сразу «Реализация» → конец. */
+function decisionWorkflow(patch: Partial<Extract<WfNode, { type: 'decision' }>> = {}): Workflow {
+  return {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', x: 0, y: 0, type: 'start' },
+      { id: 'analysis', x: 0, y: 0, type: 'work', title: 'Анализ' },
+      {
+        id: 'need_design', x: 0, y: 0, type: 'decision', title: 'Нужен ли дизайн?', question: 'Нужен ли дизайн для этой задачи?', roleId: 'developer',
+        options: [{ id: 'yes', label: 'Да', description: 'новый экран' }, { id: 'no', label: 'Нет' }], ...patch
+      },
+      { id: 'design', x: 0, y: 0, type: 'work', title: 'Дизайн' },
+      { id: 'impl', x: 0, y: 0, type: 'work', title: 'Реализация' },
+      { id: 'check', x: 0, y: 0, type: 'human' },
+      { id: 'end', x: 0, y: 0, type: 'end' }
+    ],
+    edges: [
+      { id: 'e_start', from: 'start', outcome: 'next', to: 'analysis' },
+      { id: 'e_analysis', from: 'analysis', outcome: 'next', to: 'need_design' },
+      { id: 'e_need_design_yes', from: 'need_design', outcome: 'yes', to: 'design' },
+      { id: 'e_need_design_no', from: 'need_design', outcome: 'no', to: 'impl' },
+      { id: 'e_design', from: 'design', outcome: 'next', to: 'impl' },
+      { id: 'e_impl', from: 'impl', outcome: 'next', to: 'check' },
+      { id: 'e_check_accept', from: 'check', outcome: 'accept', to: 'end' },
+      { id: 'e_check_reject', from: 'check', outcome: 'reject', to: 'need_design' }
+    ]
+  }
+}
+
+describe('нода decision: переходы', () => {
+  it('граф с развилкой валиден', () => {
+    assert.deepEqual(validateWorkflow(decisionWorkflow(), ctx), { errors: [], warnings: [] })
+  })
+
+  it('выбор ветки: yes → «Дизайн», no → «Реализация»; visits растут, развилка — позиция, а не проход насквозь', () => {
+    const wf = decisionWorkflow()
+    const start = startRunStage(wf, { roleIds: ['developer'] })
+    const atDecision = nextRunStage(wf, start.stage, 'next', { roleIds: ['developer'] })
+    assert.equal(atDecision.stage.nodeId, 'need_design')
+    assert.deepEqual(atDecision.action, { type: 'create_decision', nodeId: 'need_design', roleId: 'developer' })
+    const yes = nextRunStage(wf, atDecision.stage, 'yes')
+    assert.deepEqual([yes.stage.nodeId, yes.action.type], ['design', 'start_stage'])
+    const no = nextRunStage(wf, atDecision.stage, 'no')
+    assert.deepEqual([no.stage.nodeId, no.action.type], ['impl', 'start_stage'])
+    assert.deepEqual(no.stage.visits, { start: 1, analysis: 1, need_design: 1, impl: 1 })
+    // «Вернуть» человеком — снова в развилку: второй заход.
+    const check = nextRunStage(wf, nextRunStage(wf, no.stage, 'next').stage, 'next')
+    assert.equal(check.stage.nodeId, 'check')
+    const again = nextRunStage(wf, check.stage, 'reject')
+    assert.deepEqual([again.stage.nodeId, again.stage.visits.need_design, again.action.type], ['need_design', 2, 'create_decision'])
+    // Исход, которого нет у развилки, — blocked без движения.
+    const bad = nextRunStage(wf, atDecision.stage, 'maybe')
+    assert.deepEqual([bad.stage, bad.action.type], [atDecision.stage, 'blocked'])
+    assert.match((bad.action as { reason: string }).reason, /нет перехода для maybe/)
+  })
+
+  it('stageAction: роль не выбрана или удалена, путь подзадачи и граф по подзадачам — blocked с причиной', () => {
+    const at = { nodeId: 'need_design', visits: { need_design: 1 } }
+    const reason = (wf: Workflow, c: Parameters<typeof stageAction>[2]): string => {
+      const a = stageAction(wf, at, c)
+      assert.equal(a.type, 'blocked')
+      return (a as { reason: string }).reason
+    }
+    assert.deepEqual(runStageAction(decisionWorkflow(), at), { type: 'create_decision', nodeId: 'need_design', roleId: 'developer' })
+    assert.match(reason(decisionWorkflow({ roleId: '' }), { scope: 'run' }), /нода «Нужен ли дизайн\?»: не выбрана роль, которая выбирает ветку/)
+    assert.match(reason(decisionWorkflow(), { scope: 'run', roleIds: ['reviewer'] }), /нет роли «developer» в проекте/)
+    assert.match(reason(decisionWorkflow(), { scope: 'subtask' }), /«Решение ИИ» недоступно в пути подзадачи/)
+    assert.match(reason(decisionWorkflow(), {}), /«Решение ИИ» работает только в воркфлоу глобальной задачи/)
+  })
+
+  it('граф по подзадачам (toTaskScopeWorkflow): развилка остаётся, ветку не угадываем — blocked', () => {
+    const scoped = toTaskScopeWorkflow(decisionWorkflow())
+    assert.equal(scoped.nodes.find((n) => n.id === 'need_design')?.type, 'decision')
+    const step = nextStage(scoped, { nodeId: 'analysis', visits: { analysis: 1 } }, 'next', {})
+    assert.equal(step.stage.nodeId, 'need_design')
+    assert.equal(step.action.type, 'blocked')
+  })
+
+  it('describeWorkflow: роль, вопрос, варианты и переходы по id вариантов', () => {
+    const d = describeWorkflow(decisionWorkflow({ instructions: '  Смотри на UI  ' })).find((s) => s.id === 'need_design')!
+    assert.deepEqual(d, {
+      id: 'need_design', type: 'decision', title: 'Нужен ли дизайн?', roleId: 'developer', instructions: 'Смотри на UI',
+      question: 'Нужен ли дизайн для этой задачи?',
+      options: [{ id: 'yes', label: 'Да', description: 'новый экран' }, { id: 'no', label: 'Нет' }],
+      next: { yes: 'Дизайн (design)', no: 'Реализация (impl)' }
+    })
+  })
+})
+
+describe('нода decision: валидация', () => {
+  const errs = (wf: Workflow): (string | undefined)[] => validateWorkflow(wf, ctx).errors.map((e) => e.code)
+  const warns = (wf: Workflow): (string | undefined)[] => validateWorkflow(wf, ctx).warnings.map((e) => e.code)
+
+  it('меньше двух и больше восьми вариантов', () => {
+    const one = decisionWorkflow({ options: [{ id: 'yes', label: 'Да' }] })
+    one.edges = one.edges.filter((e) => e.outcome !== 'no')
+    assert.deepEqual(errs(one), ['decisionTooFewOptions'])
+    assert.match(validateWorkflow(one, ctx).errors[0].message, /вариантов 1, нужно не меньше 2/)
+    const nine = decisionWorkflow({ options: Array.from({ length: 9 }, (_, i) => ({ id: `o${i}`, label: `В${i}` })) })
+    nine.edges = nine.edges.filter((e) => e.from !== 'need_design')
+    for (let i = 0; i < 9; i++) nine.edges.push({ id: `e_o${i}`, from: 'need_design', outcome: `o${i}`, to: 'impl' })
+    assert.deepEqual(errs(nine), ['decisionTooManyOptions'])
+  })
+
+  it('плохой и повторяющийся id, вариант без названия, варианты не списком', () => {
+    const bad = decisionWorkflow({ options: [{ id: 'Да', label: 'Да' }, { id: 'no', label: 'Нет' }] })
+    bad.edges.find((e) => e.outcome === 'yes')!.outcome = 'Да'
+    assert.deepEqual(errs(bad), ['decisionOptionBadId'])
+    assert.match(validateWorkflow(bad, ctx).errors[0].message, /id варианта «Да» недопустим/)
+    const dup = decisionWorkflow({ options: [{ id: 'yes', label: 'Да' }, { id: 'yes', label: 'Конечно' }, { id: 'no', label: 'Нет' }] })
+    assert.deepEqual(errs(dup), ['decisionOptionDuplicateId'])
+    const noLabel = decisionWorkflow({ options: [{ id: 'yes', label: ' ' }, { id: 'no', label: 'Нет' }] })
+    assert.deepEqual(errs(noLabel), ['decisionOptionNoLabel'])
+    const notList = decisionWorkflow({ options: 'да, нет' as unknown as [] })
+    assert.deepEqual(errs(notList), ['extraOutcome', 'extraOutcome', 'decisionOptionsNotList'])
+    const nulls = decisionWorkflow({ options: [null, { id: 'no', label: 'Нет' }] as unknown as [] })
+    assert.ok(errs(nulls).includes('decisionOptionsNotList'))
+  })
+
+  it('нет ребра варианта (в тексте — название варианта), лишнее ребро', () => {
+    const missing = decisionWorkflow()
+    missing.edges = missing.edges.filter((e) => e.id !== 'e_need_design_no')
+    const issues = validateWorkflow(missing, ctx).errors
+    assert.deepEqual(issues.map((e) => e.code), ['missingOutcome'])
+    assert.match(issues[0].message, /нода «Нужен ли дизайн\?»: нет перехода для Нет/)
+    assert.equal(issues[0].nodeId, 'need_design')
+    const extra = decisionWorkflow()
+    extra.edges.push({ id: 'e_need_design_maybe', from: 'need_design', outcome: 'maybe', to: 'impl' })
+    assert.deepEqual(errs(extra), ['extraOutcome'])
+  })
+
+  it('проблемы портов называют вариант меткой, а id — в params.optionId', () => {
+    const missing = decisionWorkflow()
+    missing.edges = missing.edges.filter((e) => e.id !== 'e_need_design_yes')
+    const [noYes] = validateWorkflow(missing, ctx).errors.filter((e) => e.code === 'missingOutcome')
+    assert.match(noYes.message, /нет перехода для Да$/)
+    assert.doesNotMatch(noYes.message, /yes/)
+    assert.deepEqual(noYes.params, { node: 'Нужен ли дизайн?', port: 'Да', optionId: 'yes' })
+    const dup = decisionWorkflow()
+    dup.edges.push({ id: 'e_need_design_yes2', from: 'need_design', outcome: 'yes', to: 'impl' })
+    const [twice] = validateWorkflow(dup, ctx).errors.filter((e) => e.code === 'duplicateOutcome')
+    assert.match(twice.message, /больше одного перехода для Да$/)
+    assert.deepEqual([twice.params?.optionId, twice.edgeId], ['yes', 'e_need_design_yes2'])
+    const extra = decisionWorkflow()
+    extra.edges.push({ id: 'e_need_design_maybe', from: 'need_design', outcome: 'maybe', to: 'impl' })
+    assert.match(validateWorkflow(extra, ctx).errors[0].message, /лишний переход «maybe» — у ноды этого типа есть только Да, Нет$/)
+  })
+
+  it('у фиксированных типов порт в тексте — исход, без optionId', () => {
+    const wf = decisionWorkflow()
+    wf.edges = wf.edges.filter((e) => e.id !== 'e_check_reject')
+    const [issue] = validateWorkflow(wf, ctx).errors.filter((e) => e.code === 'missingOutcome')
+    assert.deepEqual(issue.params, { node: issue.params?.node, port: 'reject' })
+  })
+
+  it('нет вопроса, нет роли, роль удалена или служебная', () => {
+    assert.deepEqual(errs(decisionWorkflow({ question: '  ' })), ['decisionNoQuestion'])
+    assert.deepEqual(errs(decisionWorkflow({ roleId: '' })), ['decisionNoRole'])
+    assert.deepEqual(errs(decisionWorkflow({ roleId: 'ghost' })), ['roleMissing'])
+    assert.deepEqual(errs(decisionWorkflow({ roleId: 'coordinator' })), ['roleService'])
+  })
+
+  it('в пути подзадачи запрещена', () => {
+    const inner: WfSubflow = {
+      nodes: [
+        { id: 'start', x: 0, y: 0, type: 'start' },
+        { id: 'w', x: 0, y: 0, type: 'work' },
+        { id: 'd', x: 0, y: 0, type: 'decision', question: 'Ещё раз?', roleId: 'developer', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] },
+        { id: 'merge', x: 0, y: 0, type: 'merge' },
+        { id: 'end', x: 0, y: 0, type: 'end' }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'w' },
+        { id: 'e2', from: 'w', outcome: 'next', to: 'd' },
+        { id: 'e3', from: 'd', outcome: 'yes', to: 'w' },
+        { id: 'e4', from: 'd', outcome: 'no', to: 'merge' },
+        { id: 'e5', from: 'merge', outcome: 'ok', to: 'end' },
+        { id: 'e6', from: 'merge', outcome: 'conflict', to: 'end' }
+      ]
+    }
+    const wf = decisionWorkflow()
+    const impl = wf.nodes.find((n) => n.id === 'impl') as Extract<WfNode, { type: 'work' }>
+    impl.subflow = inner
+    const issue = validateWorkflow(wf, ctx).errors.find((e) => e.code === 'subflowDecisionNotAllowed')
+    assert.ok(issue, validateWorkflow(wf, ctx).errors.map((e) => e.code).join(', '))
+    assert.equal(issue.nodeId, 'impl/d')
+    assert.deepEqual(validateWorkflow({ version: WORKFLOW_VERSION, ...inner }, { ...ctx, scope: 'subtask' }).errors.map((e) => e.code), ['subflowDecisionNotAllowed'])
+  })
+
+  it('предупреждения: все варианты в одну ноду, одинаковые названия', () => {
+    const same = decisionWorkflow()
+    same.edges.find((e) => e.outcome === 'yes')!.to = 'impl'
+    assert.ok(warns(same).includes('decisionSameTarget'))
+    assert.deepEqual(errs(same), [])
+    const labels = decisionWorkflow({ options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: ' да ' }] })
+    assert.deepEqual(warns(labels), ['decisionDuplicateLabel'])
+    assert.match(validateWorkflow(labels, ctx).warnings[0].message, /одинаковое название «Да»/)
   })
 })
 

@@ -127,6 +127,7 @@ export default {
   'stats.kind.answer': 'ответов {n}',
   'stats.kind.escalation': 'эскалаций {n}',
   'stats.kind.approval': 'решений {n}',
+  'stats.kind.decision': 'выборов ветки {n}',
   'stats.humanTotal': 'Запросов к вам {n}: {kinds}',
   'stats.humanPending': 'ждут ответа {n}',
   'stats.humanCancelled': 'отменено {n}',

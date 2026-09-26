@@ -19,6 +19,7 @@ export default {
   'stage.hint.human': 'Stage “{name}” is waiting for the human’s decision',
   'stage.hint.git': 'Stage “{name}” is running: the app performs a git operation',
   'stage.hint.merge': 'Stage “{name}” is running: the app merges the branch into its base',
+  'stage.hint.decision': 'Stage “{name}” is running: an agent chooses which branch to take next',
   'stage.hint.other': 'Workflow stage: “{name}”',
 
   'stale.review': 'The app is running an old main/preload version without global task Review. Restart the app.',
@@ -159,6 +160,12 @@ export default {
   'timeline.stageOutcome.conflict': 'merge conflict',
   'timeline.stageOutcome.error': 'git error',
   'timeline.stageCommit': 'branch at entry: {commit}',
+  'timeline.stageDecision': 'AI decision: {label}',
+  'timeline.stageDecisionHuman': 'Decided by a human: {label}',
+  'timeline.stageDecisionFallback.unsure': 'the AI handed the decision to a human',
+  'timeline.stageDecisionFallback.no_answer': 'the AI did not choose a branch',
+  'timeline.stageDecisionFallback.start_failed': 'the agent failed to start',
+  'timeline.stageDecisionNote': 'AI: {note}',
 
   'modal.edit': 'Global task',
   'modal.new': 'New global task',

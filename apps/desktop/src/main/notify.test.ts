@@ -145,6 +145,8 @@ describe('describeEvent', () => {
     const blocked = describeEvent(ev('workflow_blocked', { reason: 'нет роли' }), task, 'P', true)
     assert.deepEqual(blocked && { kind: blocked.kind, body: blocked.body }, { kind: 'escalation', body: 'Воркфлоу остановлен: нет роли' })
     assert.equal(describeEvent(ev('worker_done', { summary: 'принято', gateFor: 't0' }), task, 'P', true), null)
+    // Агент не выбрал ветку «Решения ИИ» — человек выбирает её, как отвечает на вопрос.
+    assert.equal(describeEvent(ev('request_created', { kind: 'decision', requestId: 'r', title: 'Нужен ли дизайн?' }), task, 'P', true)?.kind, 'question')
     assert.equal(describeEvent(ev('stage_changed', { to: 'review' }), task, 'P', true), null)
   })
 

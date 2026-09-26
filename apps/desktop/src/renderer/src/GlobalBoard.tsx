@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
+import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, type GlobalTimePart } from './duration'
@@ -35,7 +35,7 @@ interface Props {
   requests: HumanRequest[]
   /** Подзадачи — подпись, чей запрос. */
   tasks: Task[]
-  onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
   onOpenInbox(requestId: string): void
   /** Карточка, из которой вернулись, — ей возвращается фокус. */
   focusId?: string
@@ -270,7 +270,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                             request={request}
                             compact
                             where={request.taskId !== undefined ? taskTitle.get(request.taskId) : undefined}
-                            onResolve={(res) => onResolveRequest(request, res)}
+                            onResolve={(res, images) => onResolveRequest(request, res, images)}
                           />
                           <button type="button" className="btn-text g-card-inbox" onClick={() => onOpenInbox(request.id)}>
                             {g.waiting > 1 ? t('global.board.openInboxMore', { count: g.waiting - 1 }) : t('global.board.openInbox')}

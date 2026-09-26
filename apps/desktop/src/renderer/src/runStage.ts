@@ -14,7 +14,8 @@ const HINT_KEYS: Partial<Record<WfNodeType, TKey>> = {
   gate: 'global.stage.hint.gate',
   human: 'global.stage.hint.human',
   git: 'global.stage.hint.git',
-  merge: 'global.stage.hint.merge'
+  merge: 'global.stage.hint.merge',
+  decision: 'global.stage.hint.decision'
 }
 
 /**

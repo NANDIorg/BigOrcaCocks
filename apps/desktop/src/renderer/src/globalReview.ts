@@ -79,7 +79,7 @@ export function globalReviewApi(api: Partial<OrcaApi> | undefined): Pick<OrcaApi
   const accept = g?.accept
   const returnToWork = g?.returnToWork
   if (typeof accept !== 'function' || typeof returnToWork !== 'function') throw new Error(staleReviewMessage())
-  return { accept: (id, decision) => accept(id, decision), returnToWork: (id, text, cols, rows) => returnToWork(id, text, cols, rows) }
+  return { accept: (id, decision) => accept(id, decision), returnToWork: (id, text, cols, rows, images) => returnToWork(id, text, cols, rows, images) }
 }
 
 /** Старый main отказал в возврате при живом координаторе — как обойти, на текущем языке. */

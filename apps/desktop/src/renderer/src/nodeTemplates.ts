@@ -1,5 +1,5 @@
 import {
-  WF_PORTS, stableJson, validateNodeTemplate,
+  wfPorts, stableJson, validateNodeTemplate,
   type WfNode, type WfNodeTemplate, type WfTemplateNode, type Workflow
 } from '@orca-board/core'
 import type { NodeTemplateInput, OrcaApi } from '../../shared/ipc'
@@ -125,7 +125,7 @@ export function applyTemplate(wf: Workflow, nodeId: string, template: WfNodeTemp
   return {
     ...wf,
     nodes: wf.nodes.map((n) => (n.id === nodeId ? next : n)),
-    edges: wf.edges.filter((e) => e.from !== nodeId || WF_PORTS[next.type].includes(e.outcome))
+    edges: wf.edges.filter((e) => e.from !== nodeId || wfPorts(next).includes(e.outcome))
   }
 }
 

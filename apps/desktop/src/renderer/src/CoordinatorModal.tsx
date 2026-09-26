@@ -42,7 +42,7 @@ export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element
     }
   }
 
-  const canStart = (objective.trim() !== '' || images.length > 0) && !busy && reading === 0
+  const canStart = (objective.trim() !== '' || images.length > 0) && !busy && !reading
   const close = (): void => {
     if (!busyRef.current) onClose()
   }

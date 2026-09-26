@@ -1,4 +1,4 @@
-import { WF_PORTS, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type Workflow } from '@orca-board/core'
+import { wfPorts, type WfDecisionOption, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
 import { wfIssueText } from './defaultTitles'
 
@@ -24,19 +24,54 @@ export const WF_OUTCOME_LABELS: Readonly<Record<WfOutcome, string>> = {
 /**
  * Подпись исхода у ноды типа `type`. Общий `ok` — «слито» (мерж), а у ноды `git` это «выполнено»: слияния там нет.
  */
-export function wfOutcomeLabel(type: WfNodeType, outcome: WfOutcome): string {
+export function wfOutcomeLabel(type: WfNodeType, outcome: WfPort): string {
   if (type === 'git' && outcome === 'ok') return t('config.wf.outcome.gitOk')
-  return WF_OUTCOME_LABELS[outcome]
+  // Порт ноды `decision` — id варианта: фиксированной подписи у него нет, подпись — метка варианта в самой ноде.
+  return outcome in WF_OUTCOME_LABELS ? WF_OUTCOME_LABELS[outcome as WfOutcome] : outcome
+}
+
+/**
+ * Подпись порта конкретной ноды: у `decision` — метка варианта (пустая — id, чтобы порт не остался без подписи),
+ * у остальных — `wfOutcomeLabel` по типу.
+ */
+export function wfPortLabel(node: WfNode, port: WfPort): string {
+  if (node.type === 'decision') {
+    const option = Array.isArray(node.options) ? node.options.find((o) => o.id === port) : undefined
+    return option?.label.trim() || port
+  }
+  return wfOutcomeLabel(node.type, port)
+}
+
+/**
+ * Суффикс CSS-класса порта и ребра (`wf-port--…`, `wf-edge--…`): у фиксированных портов — сам исход (цвет accept/reject),
+ * у вариантов `decision` — общий `opt`: id варианта — данные графа, класс по нему был бы мусорным.
+ */
+export function wfPortClass(type: WfNodeType, port: WfPort): string {
+  return type === 'decision' ? 'opt' : port
+}
+
+/** «да» → «Да»: метка варианта — данные графа, а подписи исходов в словаре — со строчной буквы. */
+const capitalized = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+
+/**
+ * Пресет вариантов «Да / Нет» ноды `decision`. id — `yes`/`no`, как порты `condition`: смена типа
+ * `condition ↔ decision` сохраняет рёбра. Метки — на языке интерфейса в момент создания (дальше это данные графа).
+ */
+export function yesNoOptions(): WfDecisionOption[] {
+  return [
+    { id: 'yes', label: capitalized(t('config.wf.outcome.yes')) },
+    { id: 'no', label: capitalized(t('config.wf.outcome.no')) }
+  ]
 }
 
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
-export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'human', 'condition', 'merge', 'git', 'end', 'start']
+export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'decision', 'human', 'condition', 'merge', 'git', 'end', 'start']
 
 /**
- * Типы нод, недоступные в пути подзадачи: вопросы человеку задаёт этап глобальной задачи, а не каждая подзадача
- * (валидатор: `subflowAskNotAllowed`).
+ * Типы нод, недоступные в пути подзадачи: вопросы человеку и развилки «Решение ИИ» — этапы глобальной задачи, а не
+ * каждой подзадачи (валидатор: `subflowAskNotAllowed`, `subflowDecisionNotAllowed`).
  */
-export const WF_SUBTASK_FORBIDDEN_TYPES: readonly WfNodeType[] = ['ask']
+export const WF_SUBTASK_FORBIDDEN_TYPES: readonly WfNodeType[] = ['ask', 'decision']
 
 /** Палитра холста по области: в пути подзадачи (`'subtask'`) без запрещённых там типов. */
 export function wfAddableTypes(scope: 'run' | 'subtask'): readonly WfNodeType[] {
@@ -52,7 +87,7 @@ export function uniqueId(prefix: string, taken: Iterable<string>): string {
 
 /**
  * Новая нода типа `type` с незаполненными полями. Гейт — без роли, условие — лимит повторов первой работы
- * графа: пустое поле сразу подсветит валидация, а инспектор предложит выбрать.
+ * графа, решение ИИ — без вопроса и роли, с вариантами «Да / Нет»: пустое поле сразу подсветит валидация, а инспектор предложит выбрать.
  */
 export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): WfNode {
   const id = uniqueId(type, wf.nodes.map((n) => n.id))
@@ -62,6 +97,9 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
       return { ...pos, type, roleId: '' }
     case 'ask':
       return { ...pos, type, instructions: '' }
+    case 'decision':
+      // Вопрос и роль задаются в инспекторе (пустые подсветит валидация), варианты — сразу «Да / Нет».
+      return { ...pos, type, question: '', roleId: '', options: yesNoOptions() }
     case 'condition': {
       const work = wf.nodes.find((n) => n.type === 'work')
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }
@@ -96,11 +134,11 @@ export function moveNode(wf: Workflow, nodeId: string, x: number, y: number): Wo
   return { ...wf, nodes: wf.nodes.map((n) => (n.id === nodeId ? { ...n, x, y } : n)) }
 }
 
-/** Можно ли провести ребро: порт есть у типа источника, обе ноды существуют, цель — не старт. */
-export function canConnect(wf: Workflow, from: string, outcome: WfOutcome, to: string): boolean {
+/** Можно ли провести ребро: порт есть у источника, обе ноды существуют, цель — не старт. */
+export function canConnect(wf: Workflow, from: string, outcome: WfPort, to: string): boolean {
   const src = wf.nodes.find((n) => n.id === from)
   const dst = wf.nodes.find((n) => n.id === to)
-  return !!src && !!dst && WF_PORTS[src.type].includes(outcome) && dst.type !== 'start'
+  return !!src && !!dst && wfPorts(src).includes(outcome) && dst.type !== 'start'
 }
 
 /**
@@ -108,7 +146,7 @@ export function canConnect(wf: Workflow, from: string, outcome: WfOutcome, to: s
  * заменяется (его id сохраняется — выделение на нём не пропадает). Возврат в себя разрешён: это законная
  * петля «вернуть на доработку».
  */
-export function connect(wf: Workflow, from: string, outcome: WfOutcome, to: string): { workflow: Workflow; edgeId?: string } {
+export function connect(wf: Workflow, from: string, outcome: WfPort, to: string): { workflow: Workflow; edgeId?: string } {
   if (!canConnect(wf, from, outcome, to)) return { workflow: wf }
   const old = wf.edges.filter((e) => e.from === from && e.outcome === outcome)
   const id = old[0]?.id ?? uniqueId(`e_${from}_${outcome}`, wf.edges.map((e) => e.id))

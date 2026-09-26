@@ -97,8 +97,9 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
   const items: AttentionItem[] = []
 
   for (const r of pending) {
-    // Запрос уровня прогона (approval ноды `human`) без задачи: лента строится по задачам и пока его не показывает.
-    if (r.taskId === undefined) continue
+    // Запрос уровня прогона (approval ноды `human`, выбор ветки `decision`) без задачи: лента строится по задачам и
+    // пока его не показывает.
+    if (r.taskId === undefined || r.kind === 'decision') continue
     const d = r.dispatchId ? dispatchById.get(r.dispatchId) : undefined
     const showcase = requestShowcase(r, dispatches)
     const kind: AttentionKind = r.kind === 'escalation' ? 'failure' : r.kind === 'approval' ? (showcase ? 'showcase' : 'approval') : r.kind

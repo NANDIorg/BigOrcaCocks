@@ -313,4 +313,25 @@ describe('orca-board CLI', () => {
     // Вне координатора прогона нет — тип проекта по умолчанию выбирает сервер.
     assert.deepEqual((await run(['roles', 'list'])).req.params, {})
   })
+  it('decision choose / escalate: --option уходит массивом, --reason и задача из ORCA_TASK_ID; без --reason — ошибка без запроса; есть в help', async () => {
+    const env = { ORCA_TASK_ID: 'task_1', ORCA_DISPATCH_ID: 'disp_1', ORCA_RUN_ID: 'run_1' }
+    const choose = await run(['decision', 'choose', '--option', 'yes', '--reason', 'новый экран — нужен макет'], env)
+    assert.equal(choose.req.method, 'decision.choose')
+    // --option повторяемый (он нужен ask): один вариант — тоже массив, одно значение выбирает сервер.
+    assert.deepEqual(choose.req.params, { option: ['yes'], reason: 'новый экран — нужен макет' })
+    assert.equal(choose.req.taskId, 'task_1')
+    assert.equal(choose.req.dispatchId, 'disp_1')
+    const explicit = await run(['decision', 'choose', '--task', 'task_2', '--option', 'Да, нужен', '--reason', 'r'], env)
+    assert.deepEqual(explicit.req.params, { task: 'task_2', option: ['Да, нужен'], reason: 'r' })
+    const escalate = await run(['decision', 'escalate', '--reason', 'не ясно, есть ли макет'], env)
+    assert.equal(escalate.req.method, 'decision.escalate')
+    assert.deepEqual(escalate.req.params, { reason: 'не ясно, есть ли макет' })
+    for (const args of [['decision', 'choose', '--option', 'yes'], ['decision', 'choose', '--option', 'yes', '--reason'], ['decision', 'escalate', '--reason', '  ']]) {
+      const bad = await run(args, env)
+      assert.equal(bad.req, null, args.join(' '))
+      assert.equal(bad.code, 1, args.join(' '))
+    }
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['\n  decision choose [--task <id>] --option <id|метка> --reason', '\n  decision escalate [--task <id>] --reason', 'history', 'options: id вариантов']) assert.ok(out.includes(cmd), cmd)
+  })
 })

@@ -1,6 +1,6 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Хендлеры сокета воркфлоу глобальной задачи (`scope: 'run'`):
 // `stage finish`, `workflow show` по прогону, `review accept/reject` по проверке ветки прогона, ошибки `task create`,
-// `runs finish`, запросы без `taskId`. Настоящий TaskStore и сокет; PTY и git не участвуют.
+// `runs finish`, запросы без `taskId`, история этапов с решением «Решения ИИ». Настоящий TaskStore и сокет; PTY и git не участвуют.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { connect, type Server } from 'node:net'
@@ -9,7 +9,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, legacyDefaultWorkflow, pipelineWorkflow, presetTaskType, resolveTaskType,
-  runTypeInput, type AgentInfo, type HumanRequest, type OrcaEvent, type Role, type Run, type Task, type Workflow
+  runTypeInput, WORKFLOW_VERSION, type AgentInfo, type HumanRequest, type OrcaEvent, type Role, type Run, type StageChange, type StageDecision,
+  type Task, type WfStageInfo, type Workflow
 } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { finishRunStage, handleRunWorkflowEvents, runGateDecision, type RunWorkflowDeps } from './workflow-run'
@@ -86,6 +87,11 @@ interface ShowReply {
   scope: string
   stage?: { nodeId: string; type: string; visit: number; roleIds?: string[]; instructions?: string; tasks: string[] }
   stages: Array<{ id: string }>
+}
+interface HistoryReply {
+  stage?: { nodeId: string; type: string }
+  stages: WfStageInfo[]
+  history?: StageChange[]
 }
 interface GlobalReply { stage?: { nodeId: string; visits: Record<string, number> }; stageHistory?: Array<{ nodeId: string }> }
 
@@ -251,6 +257,62 @@ describe('workflow show и global get по прогону', () => {
     assert.equal(g.result.stageHistory![0].nodeId, 'work')
     const legacy = store.createRun('старый', undefined, legacyDefaultWorkflow([]))
     assert.equal('stage' in (await call('global.get', { global: legacy.id })).result, false)
+  })
+})
+
+/** Граф с «Решением ИИ» после «Анализа»: «Да» — в «Дизайн», «Нет» — в «Реализацию». */
+function decisionWorkflow(): Workflow {
+  return {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'work', type: 'work', title: 'Анализ', x: 220, y: 0 },
+      {
+        id: 'need_design', type: 'decision', title: 'Нужен ли дизайн?', roleId: 'reviewer', question: 'Нужен ли дизайн для этой задачи?',
+        options: [{ id: 'yes', label: 'Да', description: 'новый экран' }, { id: 'no', label: 'Нет' }], x: 440, y: 0
+      },
+      { id: 'design', type: 'work', title: 'Дизайн', x: 660, y: -100 },
+      { id: 'impl', type: 'work', title: 'Реализация', x: 660, y: 100 },
+      { id: 'end', type: 'end', x: 880, y: 0 }
+    ],
+    edges: [
+      { id: 'e_start', from: 'start', outcome: 'next', to: 'work' },
+      { id: 'e_work', from: 'work', outcome: 'next', to: 'need_design' },
+      { id: 'e_need_design_yes', from: 'need_design', outcome: 'yes', to: 'design' },
+      { id: 'e_need_design_no', from: 'need_design', outcome: 'no', to: 'impl' },
+      { id: 'e_design', from: 'design', outcome: 'next', to: 'end' },
+      { id: 'e_impl', from: 'impl', outcome: 'next', to: 'end' }
+    ]
+  }
+}
+
+describe('workflow show --run: история этапов', () => {
+  it('history — путь по графу с решением «Решения ИИ», без commit и summary; у старого формата истории нет', async () => {
+    const run = startedRun(decisionWorkflow())
+    store.advanceRunStage(run.id, 'next')
+    // Решение в запись ноды кладёт движок (`RunStageOptions.chosen` в moveRunStage); здесь — как он её оставит.
+    const history = store.getRun(run.id)!.stageHistory!
+    const decision: StageDecision = { optionId: 'yes', label: 'Да', reason: 'Новый экран настроек — нужен макет', by: 'agent' }
+    Object.assign(history[0], { summary: 'анализ готов', commit: 'abc123' })
+    Object.assign(history[1], { decision, commit: 'def456' })
+    const res = await call<HistoryReply>('workflow.show', { run: run.id })
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.result.stage!.type, 'decision')
+    assert.deepEqual(res.result.stages.find((x) => x.id === 'need_design')!.next, { yes: 'Дизайн (design)', no: 'Реализация (impl)' })
+    const [work, decided] = res.result.history!
+    assert.deepEqual(work, { nodeId: 'work', title: 'Анализ', visit: 1, at: history[0].at, outcome: 'next' })
+    assert.deepEqual(decided, { nodeId: 'need_design', title: 'Нужен ли дизайн?', visit: 1, at: history[1].at, outcome: 'next', from: 'work', decision })
+    const legacy = store.createRun('старый', undefined, legacyDefaultWorkflow([]))
+    assert.equal('history' in (await call('workflow.show', { run: legacy.id })).result, false)
+  })
+
+  it('отдаёт только последние 50 записей', async () => {
+    const run = startedRun(decisionWorkflow())
+    const history = store.getRun(run.id)!.stageHistory!
+    for (let i = 0; i < 60; i++) history.push({ nodeId: 'work', at: i, visit: i + 2 })
+    const res = await call<HistoryReply>('workflow.show', { run: run.id })
+    assert.equal(res.result.history!.length, 50)
+    assert.equal(res.result.history!.at(-1)!.visit, 61)
   })
 })
 

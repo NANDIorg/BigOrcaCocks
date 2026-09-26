@@ -91,7 +91,7 @@ const api: OrcaApi = {
     createTask: (id, input) => ipcRenderer.invoke('globalTasks:createTask', id, input),
     startCoordinator: (id, cols, rows, images) => ipcRenderer.invoke('globalTasks:startCoordinator', id, cols, rows, images),
     accept: (id, decision) => ipcRenderer.invoke('globalTasks:accept', id, decision),
-    returnToWork: (id, text, cols, rows) => ipcRenderer.invoke('globalTasks:returnToWork', id, text, cols, rows)
+    returnToWork: (id, text, cols, rows, images) => ipcRenderer.invoke('globalTasks:returnToWork', id, text, cols, rows, images)
   },
   tasks: {
     create: (input) => ipcRenderer.invoke('tasks:create', input),
@@ -104,7 +104,7 @@ const api: OrcaApi = {
   },
   requests: {
     list: (opts) => ipcRenderer.invoke('requests:list', opts),
-    resolve: (id, resolution) => ipcRenderer.invoke('requests:resolve', id, resolution),
+    resolve: (id, resolution, images) => ipcRenderer.invoke('requests:resolve', id, resolution, images),
     onFocus: (cb) => on('requests:focus', cb)
   },
   pty: {
@@ -152,7 +152,10 @@ const api: OrcaApi = {
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),
     accept: (taskId, decision) => ipcRenderer.invoke('review:accept', taskId, decision),
-    reject: (taskId, feedback) => ipcRenderer.invoke('review:reject', taskId, feedback)
+    reject: (taskId, feedback, images) => ipcRenderer.invoke('review:reject', taskId, feedback, images)
+  },
+  attachments: {
+    ping: () => ipcRenderer.invoke('attachments:ping')
   }
 }
 

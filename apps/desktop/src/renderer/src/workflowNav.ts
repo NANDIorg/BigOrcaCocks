@@ -1,5 +1,5 @@
 import {
-  WF_PORTS, WORKFLOW_VERSION, defaultSubflow,
+  WORKFLOW_VERSION, defaultSubflow, wfPorts,
   type WfEdge, type WfIssue, type WfNode, type WfSubflow, type WfValidation, type Workflow
 } from '@orca-board/core'
 import { t } from './i18n'
@@ -132,7 +132,7 @@ type PathStep = 'review' | 'human' | 'merge' | 'git'
 const STEP_OF: Partial<Record<WfNode['type'], PathStep>> = { gate: 'review', human: 'human', merge: 'merge', git: 'git' }
 
 /**
- * Что делает путь помимо работы: проверки, человек, мерж, git — в порядке обхода от старта (порты — как в `WF_PORTS`),
+ * Что делает путь помимо работы: проверки, человек, мерж, git — в порядке обхода от старта (порты — как в `wfPorts`),
  * каждый вид один раз. Подпись ноды «Работа» со своим путём. Конфликт мержа (`merge` → `conflict`) не считается: это
  * запасной выход, он есть и у пути по умолчанию, а человек в подписи означает решение человека в основном ходе.
  */
@@ -150,7 +150,7 @@ export function subflowSteps(sub: WfSubflow): PathStep[] {
     seen.add(id)
     const step = STEP_OF[node.type]
     if (step && !steps.includes(step)) steps.push(step)
-    for (const outcome of WF_PORTS[node.type] ?? []) {
+    for (const outcome of wfPorts(node)) {
       if (node.type === 'merge' && outcome === 'conflict') continue
       const edge = sub.edges.find((e) => e.from === id && e.outcome === outcome)
       if (edge) queue.push(edge.to)

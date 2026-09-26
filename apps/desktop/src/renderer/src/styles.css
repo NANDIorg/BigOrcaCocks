@@ -422,17 +422,21 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 textarea { min-height: 96px; resize: vertical; }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
 .modal .btn-primary { height: 40px; padding: 0 20px; border-radius: 20px; font-size: 14px; }
-/* Модалка координатора: подсказка про вставку и миниатюры вставленных изображений */
-.coord-hint { font-size: 12px; margin-top: -6px; }
-.coord-images { display: flex; flex-wrap: wrap; gap: 8px; }
-.coord-image { position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--frame); }
-.coord-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.coord-image-loading { display: flex; align-items: center; justify-content: center; color: var(--muted); }
-.coord-image-remove {
+/* Приложенные изображения (ImageAttachField): кнопка, подсказка, миниатюры с «×». Тесный вид — карточка на доске, лента. */
+.attach { display: flex; flex-direction: column; gap: 6px; border-radius: 10px; }
+.attach.dragging { outline: 2px dashed var(--col-progress); outline-offset: 2px; }
+.attach-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.attach-hint { font-size: 12px; }
+.attach-images { display: flex; flex-wrap: wrap; gap: 8px; }
+.attach-image { position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--frame); }
+.attach.compact .attach-image { width: 48px; height: 48px; border-radius: 8px; }
+.attach-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach-image-loading { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.attach-image-remove {
   position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
   background: rgba(0,0,0,.65); color: #fff; font-size: 14px; line-height: 20px; cursor: pointer;
 }
-.coord-image-remove:hover { background: #ef6b6b; }
+.attach-image-remove:hover { background: #ef6b6b; }
 .btn-text { background: transparent; border: 0; color: var(--muted); padding: 0 14px; }
 .btn-text:hover { color: var(--text); }
 
@@ -1347,7 +1351,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 }
 .rq-option:hover:not(:disabled) { border-color: var(--text); }
 .rq-option.recommended { border-color: color-mix(in srgb, var(--accent) 70%, transparent); background: rgba(123,134,245,.1); }
-.rq-option-label { font-weight: 500; }
+/* Метка не сжимается под длинную подсказку («Д/а» по буквам на узкой ширине), но и не шире кнопки. */
+.rq-option-label { flex-shrink: 0; max-width: 100%; font-weight: 500; }
 .rq-star { color: var(--col-input); }
 .rq-hint { color: var(--muted); font-size: 12px; }
 .rq-free { display: flex; gap: 8px; align-items: flex-end; }
@@ -1360,6 +1365,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .rq.compact { padding: 8px 10px; gap: 8px; }
 .rq.compact .rq-title { font-size: 13px; }
 .rq.compact .btn-sm, .rq.compact .rq-option { height: 26px; min-height: 26px; padding: 0 10px; font-size: 12px; }
+/* Длинная метка варианта переносится, а не вылезает за кнопку фиксированной высоты. */
+.rq.compact .rq-option { height: auto; }
 .rq.compact .rq-free.rq-stack textarea, .rq.compact .rq-free textarea { min-height: 30px; padding: 5px 8px; }
 
 .rq-free.rq-stack textarea.rq-decision { min-height: 36px; }
@@ -1531,6 +1538,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node--ask .wf-node-icon { color: var(--col-input); }
 .wf-node--human .wf-node-icon { color: var(--col-input); }
 .wf-node--merge .wf-node-icon, .wf-node--git .wf-node-icon { color: var(--accent); }
+.wf-node--decision .wf-node-icon { color: var(--col-ready); }
 .wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
 .wf-node-sub { fill: var(--muted); font-size: 11px; }
 .wf-node text { pointer-events: none; }
@@ -1544,10 +1552,14 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-port--reject circle, .wf-port--conflict circle, .wf-port--error circle { stroke: var(--wf-reject); }
 .wf-port--reject .wf-port-label, .wf-port--conflict .wf-port-label, .wf-port--error .wf-port-label { fill: var(--wf-reject); }
 .wf-port-in { fill: var(--chip); }
+/* Порт варианта ноды «Решение ИИ»: id варианта — данные графа, поэтому класс общий (`--opt`), а не `--<id>`. */
+.wf-port--opt circle { stroke: var(--col-ready); }
+.wf-port--opt .wf-port-label { fill: var(--col-ready); }
 
 .wf-edge { --edge: var(--muted); cursor: pointer; }
 .wf-edge--accept, .wf-edge--ok { --edge: var(--wf-accept); }
 .wf-edge--reject, .wf-edge--conflict, .wf-edge--error { --edge: var(--wf-reject); }
+.wf-edge--opt { --edge: var(--col-ready); }
 .wf-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.8; opacity: .75; }
 .wf-edge-arrow { fill: var(--edge); opacity: .75; }
 .wf-edge:hover .wf-edge-line, .wf-edge:hover .wf-edge-arrow { opacity: 1; }
@@ -1611,6 +1623,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-insp-icon.wf-node--merge, .wf-insp-icon.wf-node--git { color: var(--accent); }
 .wf-insp-icon.wf-node--start, .wf-insp-icon.wf-node--end { color: var(--col-done); }
 .wf-insp-icon.wf-node--condition { color: var(--muted); }
+.wf-insp-icon.wf-node--decision { color: var(--col-ready); }
 .about-sec .wf-insp-hint { margin: 0; }
 .wf-insp input, .wf-insp select, .wf-insp textarea { padding: 7px 10px; font-size: 13px; border-radius: 8px; }
 .wf-insp textarea { min-height: 72px; }
@@ -1629,6 +1642,22 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-port-field > span { font-weight: 600; }
 .wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
 .wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span, .wf-port-field.wf-port--error > span { color: var(--wf-reject); }
+.wf-port-field.wf-port--opt > span { color: var(--col-ready); overflow-wrap: anywhere; }
+.wf-opts { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.wf-opts legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+.wf-opts > .hint { margin: 0; font-size: 11px; }
+.wf-opt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wf-opt { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.wf-opt:last-child { padding-bottom: 0; border-bottom: 0; }
+.wf-opt-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.wf-opt-row input { flex: 1; min-width: 0; }
+.wf-opt-row .chip { flex-shrink: 1; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-opt-row .icon-btn { width: 26px; height: 26px; flex-shrink: 0; }
+.wf-opt-row .icon-btn svg { width: 14px; height: 14px; }
+.wf-opt-desc { font-size: 12px; }
+.wf-opt-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.wf-opt-actions .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
+.wf-opt-actions .btn-sm svg { width: 14px; height: 14px; }
 .wf-issues { margin: 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
 .wf-issues--error { color: var(--danger); }
 .wf-issues--warning { color: var(--col-input); }
@@ -1653,6 +1682,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-help-body ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .wf-help-port.wf-port--accept, .wf-help-port.wf-port--ok { color: var(--wf-accept); }
 .wf-help-port.wf-port--reject, .wf-help-port.wf-port--conflict, .wf-help-port.wf-port--error { color: var(--wf-reject); }
+.wf-help-port.wf-port--opt { color: var(--col-ready); }
 .wf-legend dt { display: flex; align-items: center; gap: 6px; }
 .wf-legend .wf-insp-icon svg { width: 14px; height: 14px; }
 .wf-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--col-input); }

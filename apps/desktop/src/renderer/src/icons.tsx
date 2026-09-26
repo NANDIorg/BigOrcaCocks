@@ -41,7 +41,9 @@ export const Icon = {
   close: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 6l12 12M18 6L6 18" /></svg>,
   more: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth={3} /></svg>,
   image: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-8 8" /></svg>,
-  chevron: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M9 6l6 6-6 6" /></svg>
+  chevron: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M9 6l6 6-6 6" /></svg>,
+  up: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 15l6-6 6 6" /></svg>,
+  down: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 9l6 6 6-6" /></svg>
 }
 
 /** Иконки нод воркфлоу (WorkflowCanvas, инспектор) — по типу ноды. */
@@ -51,6 +53,7 @@ export const WfNodeIcon: Record<WfNodeType, () => React.JSX.Element> = {
   ask: (): React.JSX.Element => <svg {...base}><path d="M4 5h16v11H9l-5 4z" /><path d="M10 9.5a2 2 0 1 1 2.8 1.8c-.5.2-.8.6-.8 1.2M12 14.5h.01" /></svg>,
   gate: Icon.shield,
   human: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>,
+  decision: (): React.JSX.Element => <svg {...base}><circle cx="5" cy="12" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="19" cy="18" r="2" /><path d="M7 12h4c2 0 3-6 6-6M11 12c2 0 3 6 6 6" /></svg>,
   condition: (): React.JSX.Element => <svg {...base}><path d="M12 3l9 9-9 9-9-9z" /><path d="M10 10a2 2 0 1 1 2.8 1.8c-.5.2-.8.6-.8 1.2M12 16h.01" /></svg>,
   merge: (): React.JSX.Element => <svg {...base}><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="12" r="2" /><path d="M6 7v10M6 7c0 4 4 5 10 5" /></svg>,
   git: (): React.JSX.Element => <svg {...base}><circle cx="6" cy="6" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="9" r="2" /><path d="M6 8v8M18 11c0 4-6 3-12 5" /></svg>,

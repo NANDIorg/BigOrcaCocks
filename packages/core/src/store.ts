@@ -2,10 +2,11 @@ import type {
   AgentSession,
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
-  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, StageChange
+  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, StageChange, StageDecision,
+  StageDecisionFallback
 } from './types.ts'
 import {
-  ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, MAX_ANSWER_LENGTH, REQUEST_ACTIONS,
+  ANSWER_AUDIENCES, DECISION_REASON_LIMIT, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, MAX_ANSWER_LENGTH, REQUEST_ACTIONS,
   TASK_PRIORITIES, isTaskPriority, normalizeOptions, normalizeShowcase
 } from './types.ts'
 import { DEFAULT_AGENT } from './agents.ts'
@@ -13,9 +14,10 @@ import { isTaskRole } from './prompts.ts'
 import { trackActiveTime } from './active-time.ts'
 import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
-  WORKFLOW_VERSION, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction,
+  WORKFLOW_VERSION, decisionOptions, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction,
   startRunStage, startStage, toTaskScopeWorkflow, wfNodeTitle, wfWorkRoleIds, wfWorkStage,
-  type WfAction, type WfNode, type WfNodeType, type WfOutcome, type WfShowcase, type WfStage, type WfWorkStage, type Workflow
+  type WfAction, type WfDecisionOption, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type WfShowcase, type WfStage,
+  type WfWorkStage, type Workflow
 } from './workflow.ts'
 import {
   globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, globalTaskTitle, runTypeLockReason,
@@ -95,6 +97,19 @@ function eventDecision(text: string): { decision: string; decisionTruncated?: tr
 }
 
 /**
+ * Решение развилки (`RunStageOptions.chosen`) согласовано с переходом: граф стоит на ноде `decision`, исход — id
+ * выбранного варианта, обоснование не длиннее `DECISION_REASON_LIMIT`. Иначе в историю попало бы решение не той ноды.
+ */
+function checkChosen(wf: Workflow, stage: WfStage, outcome: WfPort, chosen: StageDecision): void {
+  const node = wf.nodes.find((n) => n.id === stage.nodeId)
+  if (node?.type !== 'decision') throw new Error(`решение ветки передано не на ноде «Решение ИИ» (нода «${stage.nodeId}»)`)
+  if (chosen.optionId !== outcome) throw new Error(`решение «${chosen.optionId}» не совпадает с исходом перехода «${outcome}»`)
+  if ((chosen.reason?.length ?? 0) > DECISION_REASON_LIMIT) {
+    throw new Error(`обоснование длиннее ${DECISION_REASON_LIMIT} символов — сократи --reason`)
+  }
+}
+
+/**
  * Текстовое поле payload события: не длиннее `EVENT_ANSWER_LIMIT`, обрезанное помечено `<ключ>Truncated`. Полный
  * текст — в самом прогоне (`TaskStore.runStage`): строка события в мониторе координатора обрезается.
  */
@@ -120,10 +135,20 @@ export interface RunStageOptions extends RunWorkflowFallback {
   commit?: string
   /** Замечания проверки или человека, вернувших в работу; в `Run.returns` и `stage_started`. */
   feedback?: string
+  /**
+   * Картинки к `feedback`: абсолютные пути в cwd координатора (их пишет main). Учитываются только вместе
+   * с `feedback` — картинки без текста замечаний не хранятся.
+   */
+  images?: string[]
   /** Решение человека на ноде `human` (текст «Принять»). */
   decision?: string
   /** Ответы человека на этапе «Вопрос человеку». */
   answers?: string
+  /**
+   * Решение ноды `decision`, с которым граф уходит из неё: `moveRunStage` кладёт его в последнюю запись
+   * `Run.stageHistory` этой ноды (`StageChange.decision`). Текст для следующего этапа — отдельно, в `decision`.
+   */
+  chosen?: StageDecision
 }
 
 /** Где стоит глобальная задача на графе и что для этого нужно знать координатору (`TaskStore.runStage`). */
@@ -134,15 +159,21 @@ export interface RunStageInfo {
   title: string
   /** Какой по счёту заход в ноду: возврат по reject увеличивает. */
   visit: number
-  /** Роль этапа «Вопрос человеку». */
+  /** Роль этапа «Вопрос человеку» или ноды `decision`. */
   roleId?: string
   /** Роли этапа «Работа»; нет — этап не ограничивает роли подзадач (любые рабочие роли типа). */
   roleIds?: string[]
   instructions?: string
   showcase?: WfShowcase
   feedback?: string
+  /** Картинки к `feedback` (абсолютные пути в cwd координатора). */
+  images?: string[]
   decision?: string
   answers?: string
+  /** Вопрос ноды `decision`. */
+  question?: string
+  /** Варианты ноды `decision` (их id — исходы переходов). */
+  options?: WfDecisionOption[]
   /** Подзадачи текущего захода этапа. */
   tasks: string[]
   /** Когда закрылась последняя из них (`Run.stageTasksDoneAt`); нет — этап ещё работает. */
@@ -812,6 +843,8 @@ export class TaskStore {
     // Время работы ведёт только setStatus: правка не должна сбить накопленное.
     delete rest.activeMs
     delete rest.activeSince
+    // Картинки принадлежат тексту замечаний: новый `feedback` без своих картинок не должен унаследовать старые.
+    if ('feedback' in rest && !('feedbackImages' in rest)) rest.feedbackImages = undefined
     Object.assign(task, rest, { updatedAt: Date.now() })
     if (status !== undefined) this.setStatus(task, status)
     this.promoteReady()
@@ -1138,6 +1171,14 @@ export class TaskStore {
     if (!node) return undefined
     const visit = run.stage.visits[node.id] ?? 1
     const stage = wfWorkStage({ version: WORKFLOW_VERSION, nodes: [node], edges: [] }, node.id)
+    const decision = node.type === 'decision'
+      ? {
+          ...(typeof node.roleId === 'string' && node.roleId ? { roleId: node.roleId } : {}),
+          ...(typeof node.instructions === 'string' && node.instructions.trim() ? { instructions: node.instructions.trim() } : {}),
+          ...(node.question?.trim() ? { question: node.question.trim() } : {}),
+          options: decisionOptions(node)
+        }
+      : {}
     return {
       runId: run.id,
       nodeId: node.id,
@@ -1148,6 +1189,7 @@ export class TaskStore {
       ...(stage?.roleIds ? { roleIds: stage.roleIds } : {}),
       ...(stage?.instructions ? { instructions: stage.instructions } : {}),
       ...(stage?.showcase ? { showcase: stage.showcase } : {}),
+      ...decision,
       ...run.stageInput,
       tasks: this.stageTasks(run).map((t) => t.id),
       ...(run.stageTasksDoneAt !== undefined ? { tasksDoneAt: run.stageTasksDoneAt } : {})
@@ -1219,13 +1261,14 @@ export class TaskStore {
    * `decision` — решение человека, `answers` — ответы этапа «Вопрос человеку»: они уходят координатору на следующую «Работу».
    * Этап «Работа» закрывает не этот метод, а `finishStage`.
    */
-  advanceRunStage(runId: string, outcome: WfOutcome, opts: RunStageOptions = {}): { run: Run; action: WfAction } {
+  advanceRunStage(runId: string, outcome: WfPort, opts: RunStageOptions = {}): { run: Run; action: WfAction } {
     const run = this.mustRunScope(runId)
     if (!run.stage) throw new Error(`граф глобальной задачи ${runId} ещё не начат — сначала enterRunStage`)
     if (run.closedAt !== undefined && this.runWorkflow(runId, opts).nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end') {
       throw new Error(`граф глобальной задачи ${runId} уже дошёл до конца`)
     }
     const wf = this.runWorkflow(runId, opts)
+    if (opts.chosen) checkChosen(wf, run.stage, outcome, opts.chosen)
     const action = this.moveRunStage(run, wf, run.stage, outcome, opts)
     this.commit()
     return { run, action }
@@ -1292,7 +1335,7 @@ export class TaskStore {
    * Переход по графу без commit (общий для enter/advance/finish/settle): двигает `Run.stage`, пишет историю,
    * колонку и события. Возвращает действие ноды, куда пришли; `blocked` без движения — позиция не меняется.
    */
-  private moveRunStage(run: Run, wf: Workflow, from: WfStage | undefined, outcome: WfOutcome, opts: RunStageOptions): WfAction {
+  private moveRunStage(run: Run, wf: Workflow, from: WfStage | undefined, outcome: WfPort, opts: RunStageOptions): WfAction {
     const ctx = this.stageCtx(opts)
     const step = from ? nextRunStage(wf, from, outcome, ctx) : startRunStage(wf, ctx)
     const now = Date.now()
@@ -1302,8 +1345,10 @@ export class TaskStore {
     run.workflow ??= snapshotWorkflow(wf)
     if (moved) {
       const node = nodeAt(step.stage.nodeId)
+      const feedback = opts.feedback?.trim()
       const input = {
-        ...(opts.feedback?.trim() ? { feedback: opts.feedback.trim() } : {}),
+        ...(feedback ? { feedback } : {}),
+        ...(feedback && opts.images?.length ? { images: [...opts.images] } : {}),
         ...(opts.decision?.trim() ? { decision: opts.decision.trim() } : {}),
         ...(opts.answers?.trim() ? { answers: opts.answers.trim() } : {})
       }
@@ -1312,13 +1357,22 @@ export class TaskStore {
       this.dropStageEvents(run.id)
       run.stageTasksDoneAt = undefined
       run.updatedAt = now
+      if (fromId !== undefined && nodeAt(fromId)?.type === 'decision') {
+        // Решение — свойство захода в развилку: пишется в её запись истории, пока не добавилась запись новой ноды.
+        const entry = opts.chosen ? [...(run.stageHistory ?? [])].reverse().find((h) => h.nodeId === fromId) : undefined
+        if (entry && opts.chosen) entry.decision = { ...opts.chosen }
+        // Граф ушёл с развилки — выбирать ветку человеку больше незачем.
+        this.cancelRequests((r) => r.runId === run.id && r.kind === 'decision' && r.nodeId === fromId)
+      }
       recordStage(run, {
         nodeId: step.stage.nodeId, at: now, outcome, visit: step.stage.visits[step.stage.nodeId] ?? 1,
         ...(node ? { title: wfNodeTitle(node) } : {}),
         ...(fromId !== undefined ? { from: fromId } : {}),
         ...(opts.commit ? { commit: opts.commit } : {})
       })
-      if (outcome === 'reject' && input.feedback) run.returns = [...(run.returns ?? []), { at: now, text: input.feedback }]
+      if (outcome === 'reject' && input.feedback) {
+        run.returns = [...(run.returns ?? []), { at: now, text: input.feedback, ...(input.images ? { images: input.images } : {}) }]
+      }
       this.pushEvent('stage_changed', {
         runId: run.id, ...(fromId !== undefined ? { from: fromId } : {}), to: step.stage.nodeId, outcome,
         ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
@@ -1347,6 +1401,7 @@ export class TaskStore {
           runId: run.id, nodeId: action.nodeId, title: info?.title ?? action.nodeId, roleIds: action.roleIds, visit: info?.visit ?? 1,
           ...(info?.instructions ? eventText('instructions', info.instructions) : {}),
           ...(info?.feedback ? eventText('feedback', info.feedback) : {}),
+          ...(info?.feedback && info.images ? { images: info.images } : {}),
           ...(info?.decision ? eventText('decision', info.decision) : {}),
           ...(info?.answers ? eventText('answers', info.answers) : {})
         }
@@ -1392,6 +1447,34 @@ export class TaskStore {
     const request = this.createRequest(run, {
       kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}),
       ...(fields.showcaseDispatchId ? { showcaseDispatchId: fields.showcaseDispatchId } : {})
+    })
+    this.commit()
+    return request
+  }
+
+  /**
+   * Нода `decision` воркфлоу глобальной задачи, агент не выбрал ветку (`fallback`): запрос `decision` уровня прогона без
+   * задачи, варианты — ветки ноды (`RequestOption {id, label, hint}`). Карточка поднимается в «Нужен ответ», пока запрос
+   * ждёт. Ждущий запрос этой ноды не дублируется — возвращается он (повтор эффекта после рестарта, повторный escalate).
+   * Решение — `resolveRequest` (`answer` + `optionId`); граф двигает main (`advanceRunStage` с `chosen`).
+   */
+  requestRunDecision(
+    runId: string,
+    fields: { nodeId: string; title: string; body?: string; options: readonly RequestOption[]; fallback: StageDecisionFallback; agentNote?: string }
+  ): HumanRequest {
+    const run = this.mustRunScope(runId)
+    const existing = this.pendingRequest((r) => r.runId === run.id && r.kind === 'decision' && r.nodeId === fields.nodeId)
+    if (existing) return existing
+    if (run.stage?.nodeId !== fields.nodeId) {
+      throw new Error(`глобальная задача ${runId} не стоит на ноде «${fields.nodeId}» — выбирать ветку не нужно`)
+    }
+    const options = fields.options.map((o) => ({ id: o.id, label: o.label, ...(o.hint?.trim() ? { hint: o.hint.trim() } : {}) }))
+    if (options.length === 0) throw new Error(`нода «${fields.nodeId}»: у запроса решения нет вариантов`)
+    const note = fields.agentNote?.trim()
+    const request = this.createRequest(run, {
+      kind: 'decision', title: fields.title, nodeId: fields.nodeId, options, fallback: fields.fallback,
+      ...(fields.body ? { body: fields.body } : {}),
+      ...(note ? { agentNote: note } : {})
     })
     this.commit()
     return request
@@ -1662,15 +1745,16 @@ export class TaskStore {
    * Координатора запускает main (store не знает о PTY): уточнение он получит в цели повторного запуска
    * (`resumeCoordinatorObjective`), поэтому отдельного события нет. У «Входящих» координатора нет — ошибка.
    */
-  returnGlobalTask(id: string, text: string): GlobalTask {
+  returnGlobalTask(id: string, text: string, images?: string[]): GlobalTask {
     const run = this.mustRun(id)
     const clarification = text.trim()
     if (!clarification) throw new Error('напиши, что доделать: уточнение получит координатор')
-    if (run.workflowScope === 'run') return this.resolveRunApproval(run, { action: 'reject', text: clarification })
+    const attached = images?.length ? [...images] : undefined
+    if (run.workflowScope === 'run') return this.resolveRunApproval(run, { action: 'reject', text: clarification, ...(attached ? { images: attached } : {}) })
     if (run.inbox) throw new Error('«Входящие» нельзя вернуть в работу: у них нет координатора')
     if (this.globalKind(run) !== 'review') throw new Error(`глобальная задача ${id} не на проверке — вернуть в работу можно только из колонки «Проверка»`)
     const at = Date.now()
-    run.returns = [...(run.returns ?? []), { at, text: clarification }]
+    run.returns = [...(run.returns ?? []), { at, text: clarification, ...(attached ? { images: attached } : {}) }]
     this.reopenRun(run)
     this.setRunStatus(run, this.columnId('in_progress'))
     this.commit()
@@ -2128,12 +2212,12 @@ export class TaskStore {
    * Ревью не прошло: задача обратно в ready с замечаниями. У ответа для человека, который ждёт решения,
    * это «Уточнить» (resolveRequest clarify): запрос решён, событие answer_clarified.
    */
-  rejectReview(taskId: string, feedback: string): Task {
+  rejectReview(taskId: string, feedback: string, images?: string[]): Task {
     const task = this.mustTask(taskId)
     const request = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer')
-    if (request) this.applyClarify(task, request, feedback)
+    if (request) this.applyClarify(task, request, feedback, images)
     else {
-      task.feedback = feedback
+      this.setFeedback(task, feedback, images)
       this.setStatus(task, this.columnId('ready'))
     }
     this.commit()
@@ -2155,7 +2239,7 @@ export class TaskStore {
     const request = this.pendingRequest((r) => r.taskId === task.id && r.kind === 'answer')
     if (request) this.applyClarify(task, request, text ?? '')
     else {
-      if (text) task.feedback = text
+      if (text) this.setFeedback(task, text)
       this.setStatus(task, this.columnId('ready'))
     }
     this.cancelRequests((r) => r.taskId === task.id)
@@ -2169,28 +2253,59 @@ export class TaskStore {
    * Текст решения («вариант 2») — в `decision` события, последним и обрезанным: координатор учтёт выбор человека,
    * полный текст — `resolution.text` запроса (`orca-board request get`).
    */
-  private applyApproval(task: Task | undefined, request: HumanRequest, action: 'accept' | 'reject', text?: string): void {
-    this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}) })
+  private applyApproval(task: Task | undefined, request: HumanRequest, action: 'accept' | 'reject', text?: string, images?: string[]): void {
+    // Картинки — только к замечаниям «Вернуть» и только вместе с их текстом.
+    const attached = action === 'reject' && text && images?.length ? [...images] : undefined
+    this.closeRequest(request, 'resolved', { action, ...(text ? { text } : {}), ...(attached ? { images: attached } : {}) })
     if (task) {
-      if (action === 'reject' && text) task.feedback = text
+      if (action === 'reject' && text) this.setFeedback(task, text, attached)
       this.settleTask(task)
       task.updatedAt = Date.now()
     }
     // У approval прогона задачи нет: событие адресовано по `runId`, а замечания несёт `resolution.text`.
     this.pushEvent('request_resolved', {
       ...(task ? { taskId: task.id } : { runId: request.runId }), action, requestId: request.id, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {}),
-      ...(text ? eventDecision(text) : {})
+      ...(text ? eventDecision(text) : {}),
+      ...(attached ? { images: attached } : {})
+    })
+  }
+
+  /**
+   * Выбор ветки человеком по запросу `decision` без commit: вариант обязателен и должен быть среди вариантов запроса,
+   * `text` — необязательное обоснование. Граф store не двигает — это делает main по `request_resolved`
+   * (`advanceRunStage(optionId, {chosen})`); обоснование в событии обрезано, как у approval.
+   */
+  private applyDecision(request: HumanRequest, optionId: string | undefined, text: string | undefined): void {
+    if (optionId === undefined || optionId === '') throw new Error(`запрос ${request.id}: выбери вариант — optionId обязателен`)
+    const option = request.options.find((o) => o.id === optionId)
+    if (!option) throw new Error(`варианта «${optionId}» у запроса ${request.id} нет`)
+    this.closeRequest(request, 'resolved', { action: 'answer', optionId: option.id, ...(text ? { text } : {}) })
+    this.pushEvent('request_resolved', {
+      runId: request.runId, kind: request.kind, ...(request.nodeId ? { nodeId: request.nodeId } : {}), action: 'answer',
+      requestId: request.id, optionId: option.id, ...(text ? eventDecision(text) : {})
     })
   }
 
   /** «Уточнить» без commit: feedback, ready, answer_clarified (воркера стартует main). */
-  private applyClarify(task: Task, request: HumanRequest, feedback: string): void {
+  private applyClarify(task: Task, request: HumanRequest, feedback: string, images?: string[]): void {
     const text = feedback.trim()
     if (!text) throw new Error('уточнение не может быть пустым')
-    this.closeRequest(request, 'resolved', { action: 'clarify', text })
-    task.feedback = text
+    const attached = images?.length ? [...images] : undefined
+    this.closeRequest(request, 'resolved', { action: 'clarify', text, ...(attached ? { images: attached } : {}) })
+    this.setFeedback(task, text, attached)
     this.setStatus(task, this.columnId('ready'))
-    this.pushEvent('answer_clarified', { taskId: task.id, feedback: short(text), requestId: request.id, dispatchId: request.dispatchId })
+    this.pushEvent('answer_clarified', {
+      taskId: task.id, feedback: short(text), requestId: request.id, dispatchId: request.dispatchId, ...(attached ? { images: attached } : {})
+    })
+  }
+
+  /**
+   * Замечания задачи для следующего запуска воркера. Картинки перезаписываются вместе с текстом: без своих
+   * картинок новое замечание не наследует старые (иначе воркер увидел бы скриншот от прошлого возврата).
+   */
+  private setFeedback(task: Task, text: string, images?: string[]): void {
+    task.feedback = text
+    task.feedbackImages = images?.length ? [...images] : undefined
   }
 
   // ---------- questions ----------
@@ -2345,7 +2460,9 @@ export class TaskStore {
    * - escalation + restart → задача в ready, `request_resolved`; воркера стартует main;
    * - escalation + dismiss → задача из «Нужен ответ» в ready (воркер мёртв), `request_resolved`;
    * - approval + accept / reject (`text` — комментарий, при reject — замечания в feedback) → запрос решён,
-   *   `request_resolved`; переход воркфлоу по этому исходу делает main (`src/main/workflow.ts`).
+   *   `request_resolved`; переход воркфлоу по этому исходу делает main (`src/main/workflow.ts`);
+   * - decision + answer (`optionId` обязателен, `text` — обоснование) → запрос решён, `request_resolved` с `optionId`;
+   *   граф по ветке двигает main.
    * Решённый или отменённый запрос — ошибка «уже решено».
    */
   resolveRequest(id: string, resolution: RequestResolution): HumanRequest {
@@ -2355,12 +2472,18 @@ export class TaskStore {
     if (!REQUEST_ACTIONS[request.kind].includes(resolution.action)) {
       throw new Error(`запрос ${request.kind}: действие ${resolution.action} недопустимо — ${REQUEST_ACTIONS[request.kind].join(', ')}`)
     }
-    // У approval уровня прогона задачи нет: его решают по `runId`, остальным видам запросов задача обязательна.
+    // У approval и decision уровня прогона задачи нет: их решают по `runId`, остальным видам запросов задача обязательна.
     const task = request.taskId !== undefined ? this.mustTask(request.taskId) : undefined
     const text = resolution.text?.trim() || undefined
-    if (!task && request.kind !== 'approval') throw new Error(`запрос ${id} (${request.kind}) без задачи — решить можно только approval прогона`)
+    if (!task && request.kind !== 'approval' && request.kind !== 'decision') {
+      throw new Error(`запрос ${id} (${request.kind}) без задачи — решить можно только approval или decision прогона`)
+    }
     switch (resolution.action) {
       case 'answer': {
+        if (request.kind === 'decision') {
+          this.applyDecision(request, resolution.optionId, text)
+          break
+        }
         const q = this.mustQuestion(request.questionId ?? '')
         const option = resolution.optionId !== undefined ? request.options.find((o) => o.id === resolution.optionId) : undefined
         if (resolution.optionId !== undefined && !option) throw new Error(`варианта «${resolution.optionId}» у запроса ${id} нет`)
@@ -2382,10 +2505,10 @@ export class TaskStore {
         this.promoteReady()
         break
       case 'clarify':
-        this.applyClarify(task!, request, text ?? '')
+        this.applyClarify(task!, request, text ?? '', resolution.images)
         break
       case 'reject':
-        this.applyApproval(task, request, 'reject', text)
+        this.applyApproval(task, request, 'reject', text, resolution.images)
         break
       case 'restart':
       case 'dismiss':
@@ -2408,10 +2531,10 @@ export class TaskStore {
    */
   private createRequest(
     subject: Task | Run,
-    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId' | 'showcaseDispatchId'>>,
+    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId' | 'showcaseDispatchId' | 'fallback' | 'agentNote'>>,
     emit = true
   ): HumanRequest {
-    // Запрос уровня прогона (approval ноды `human`) — без задачи: карточка «Нужен ответ» вычисляется по pending-запросам прогона.
+    // Запрос уровня прогона (approval ноды `human`, decision) — без задачи: карточка «Нужен ответ» вычисляется по pending-запросам прогона.
     const task = 'objective' in subject ? undefined : subject
     const request: HumanRequest = {
       id: newId('req'),
@@ -2426,6 +2549,8 @@ export class TaskStore {
       ...(fields.questionId !== undefined ? { questionId: fields.questionId } : {}),
       ...(fields.nodeId !== undefined ? { nodeId: fields.nodeId } : {}),
       ...(fields.showcaseDispatchId !== undefined ? { showcaseDispatchId: fields.showcaseDispatchId } : {}),
+      ...(fields.fallback !== undefined ? { fallback: fields.fallback } : {}),
+      ...(fields.agentNote !== undefined ? { agentNote: fields.agentNote } : {}),
       createdAt: Date.now()
     }
     this.requests.set(request.id, request)

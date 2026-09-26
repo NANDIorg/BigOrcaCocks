@@ -7,10 +7,12 @@ import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAg
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { getReview, resolveHumanRequest } from './review'
+import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
-  acceptRun, finishRunStage, handleRunApproval, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runGateDecision, settleIdleRunStages, startRunWorkflow,
+  acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
+  settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
@@ -380,19 +382,23 @@ function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
 
 /**
  * Решение по задаче на этапе проверки (`review accept|reject`, «Принять»/«Вернуть» на карточке проверки): проверка ветки
- * глобальной задачи — исход ноды `gate` (`workflow-run.ts`), остальное — прежний движок (`workflow.ts`).
+ * глобальной задачи — исход ноды `gate` (`workflow-run.ts`), остальное — прежний движок (`workflow.ts`). Задачу-решатель
+ * развилки `runGateDecision` отвергает: её ветку выбирают `decision choose` или человек по запросу `decision`.
  */
-function reviewDecision(projectId: string, taskId: string, decision: 'accept' | 'reject', text?: string): Task | undefined {
+function reviewDecision(projectId: string, taskId: string, decision: 'accept' | 'reject', text?: string, images?: unknown): Task | undefined {
   const p = resolveProject(projectId)
+  // Картинки — только к замечаниям «Вернуть»; их сохраняет main (в cwd читателя) и подставляет пути.
+  if (decision === 'accept' && hasImageInput(images)) throw new OrcaError('attachments.notForAction')
   if (isRunGate(p.store.getTask(taskId))) {
-    runGateDecision(runWorkflowDeps(p.id), taskId, decision, text)
+    if (decision === 'reject') rejectWithImages(p.store, p.root, taskId, images, text ?? '', (paths) => runGateDecision(runWorkflowDeps(p.id), taskId, decision, text, paths))
+    else runGateDecision(runWorkflowDeps(p.id), taskId, decision, text)
     return p.store.getTask(taskId)
   }
   if (decision === 'accept') {
     reviewAccept(workflowDeps(p.id), taskId, text)
     return p.store.getTask(taskId)
   }
-  return reviewReject(workflowDeps(p.id), taskId, text ?? '')
+  return rejectWithImages(p.store, p.root, taskId, images, text ?? '', (paths) => reviewReject(workflowDeps(p.id), taskId, text ?? '', paths))
 }
 
 /**
@@ -589,17 +595,19 @@ function notify(projectId: string, events: OrcaEvent[]): void {
 }
 
 /** Решение запроса к человеку (IPC и сокет): accept — с git-частью, clarify/restart — сразу старт воркера. */
-function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution): ReturnType<typeof resolveHumanRequest> {
+function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution, images?: unknown): ReturnType<typeof resolveHumanRequest> {
   const p = resolveProject(projectId)
   const request = p.store.getRequest(id)
   if (request?.taskId) syncWorkerLiveness(p.store, request.taskId)
   const deps = workflowDeps(p.id)
   const runDeps = runWorkflowDeps(p.id)
-  // Approval прогона (нода `human`, без задачи) ведёт `workflow-run.ts`; запрос на задаче (нода `human` пути подзадачи, в том числе
-  // «Конфликт мержа») — движок по подзадачам (`workflow.ts`).
-  return resolveHumanRequest(p.store, p.root, id, resolution, deps.startWorker, (r) => {
-    if (!handleRunApproval(runDeps, r)) approvalResolved(deps, r)
-  }, deps.mergeTarget)
+  // Approval прогона (нода `human`, без задачи) и выбор ветки развилки (decision) ведёт `workflow-run.ts`; approval на задаче
+  // (нода `human` пути подзадачи, в том числе «Конфликт мержа») — движок по подзадачам (`workflow.ts`).
+  // `resolution.images` из IPC и сокета вырезается: пути к картинкам ставит только main после записи файлов.
+  return resolveWithImages(p.store, p.root, id, resolution, images, (clean) =>
+    resolveHumanRequest(p.store, p.root, id, clean, deps.startWorker, (r) => {
+      if (!handleRunRequest(runDeps, r)) approvalResolved(deps, r)
+    }, deps.mergeTarget))
 }
 
 /** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */
@@ -802,18 +810,20 @@ function registerIpc(): void {
   )
   handle('globalTasks:accept', (_e, id: string, decision?: string) =>
     acceptRun(runWorkflowDeps(resolveProject().id), id, typeof decision === 'string' ? decision : undefined))
-  handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number) => {
+  // `images` — картинки к уточнению (байты): main проверяет их и пишет в cwd координатора, дальше по возврату идут пути.
+  handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number, images?: unknown) => {
     const p = resolveProject()
     const reason = typeof text === 'string' ? text : ''
     if (isRunScope(p.store, id)) {
       // «Вернуть» — reject ноды `human`: граф идёт по ребру reject, координатор получает `stage_started` с замечаниями (живой
       // не закрывается — он ждёт этап в Monitor, мёртвый запускается заново). Терминал — тот, что сейчас у координатора.
-      returnRun(runWorkflowDeps(p.id), id, reason)
+      // Проверка живости — после записи: файлы уже в `stageInput.images`, и «Запустить координатора» их подхватит.
+      returnRunWithImages(p.store, p.root, id, images, reason, (paths) => returnRun(runWorkflowDeps(p.id), id, reason, paths))
       const ptyId = p.store.getRun(id)?.coordinatorPtyId
       if (!ptyId || !isAlive(ptyId)) throw new OrcaError('workflow.coordinatorNotRunning')
       return ptyId
     }
-    return returnToWork(p.store, p.root, ctx(p.id, id), id, reason, cols, rows).ptyId
+    return returnRunWithImages(p.store, p.root, id, images, reason, (paths) => returnToWork(p.store, p.root, ctx(p.id, id), id, reason, cols, rows, paths)).ptyId
   })
   handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
   handle('requests:list', (_e, opts?: RequestListOptions) => {
@@ -821,7 +831,8 @@ function registerIpc(): void {
     const store = projects.activeStore()
     return store.listRequests().filter((r) => (!opts?.runId || r.runId === opts.runId) && (!opts?.pending || r.status === 'pending'))
   })
-  handle('requests:resolve', (_e, id: string, resolution: RequestResolution) => resolveRequest(undefined, id, resolution))
+  // `images` — картинки к «Уточнить»/«Вернуть» (см. returnToWork).
+  handle('requests:resolve', (_e, id: string, resolution: RequestResolution, images?: unknown) => resolveRequest(undefined, id, resolution, images))
 
   handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
     const p = projectId ? projects.get(projectId) : projects.active()
@@ -867,6 +878,8 @@ function registerIpc(): void {
     if (err) throw new Error(err)
   })
   handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
+  handle('attachments:ping', () => true)
   // Показ человеку: файлы из worktree задачи активного проекта, белый список расширений — main/showcase.ts.
   handle('showcase:read', (_e, taskId: unknown, path: unknown) => readShowcaseFile(showcaseRoot(resolveProject().store, taskId), path))
   handle('showcase:open', async (_e, taskId: unknown, path: unknown) => {
@@ -891,7 +904,8 @@ function registerIpc(): void {
     return getReview(p.store, p.root, taskId)
   })
   handle('review:accept', (_e, taskId: string, decision?: string) => void reviewDecision(resolveProject().id, taskId, 'accept', decision))
-  handle('review:reject', (_e, taskId: string, feedback: string) => reviewDecision(resolveProject().id, taskId, 'reject', feedback))
+  // `images` — картинки к замечаниям (см. returnToWork).
+  handle('review:reject', (_e, taskId: string, feedback: string, images?: unknown) => reviewDecision(resolveProject().id, taskId, 'reject', feedback, images))
 }
 
 app.whenReady().then(() => {
@@ -966,6 +980,8 @@ app.whenReady().then(() => {
         accept: (taskId, decision) => void reviewDecision(p.id, taskId, 'accept', decision),
         reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),
         finishStage: (runId, summary) => finishRunStage(runWorkflowDeps(p.id), runId, summary),
+        decide: (taskId, option, reason) => runDecision(runWorkflowDeps(p.id), taskId, option, reason),
+        escalateDecision: (taskId, reason) => escalateDecision(runWorkflowDeps(p.id), taskId, reason),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),

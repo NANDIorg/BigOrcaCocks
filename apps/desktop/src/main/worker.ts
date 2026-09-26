@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, imageAttachmentFileName, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { setupCommand, taskWorktreePath } from './git'
@@ -13,6 +13,7 @@ import { assistantEnv } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 import { ensureRunBranch } from './run-branch'
 import { coordinatorImages } from './run-images'
+import { attachmentsRoot, clearStartImages, pruneAttachments, writeAttachments } from './attachments'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -266,62 +267,6 @@ export function startWorker(
   return { ptyId, dispatchId, worktree, branch }
 }
 
-const ATTACHMENTS_DIR = '.orca-attachments'
-
-/**
- * Папка изображений координатора: `<cwd>/.orca-attachments` — внутри cwd координатора (чтение без лишних
- * разрешений агенту): worktree ветки глобальной задачи или корень. Внутри лежит свой `.gitignore` с `*`: папка
- * не попадает в `git status`/`git add -A`, не мешает `git worktree remove` без `--force`, а .gitignore
- * репозитория не трогаем.
- */
-function attachmentsRoot(cwd: string): string {
-  const root = join(cwd, ATTACHMENTS_DIR)
-  try {
-    mkdirSync(root, { recursive: true })
-    const ignore = join(root, '.gitignore')
-    if (!existsSync(ignore)) writeFileSync(ignore, '*\n')
-    return root
-  } catch (e) {
-    throw new Error(`не удалось создать папку ${ATTACHMENTS_DIR} для изображений координатора: ${(e as Error).message}`)
-  }
-}
-
-/** Удаляет папки изображений закрытых прогонов, чей координатор уже не работает. */
-function pruneAttachments(store: TaskStore, root: string): void {
-  let dirs: string[]
-  try {
-    dirs = readdirSync(root)
-  } catch {
-    return
-  }
-  for (const id of dirs) {
-    if (id === '.gitignore') continue
-    const run = store.getRun(id)
-    if (!run?.closedAt || (run.coordinatorPtyId && isAlive(run.coordinatorPtyId))) continue
-    try {
-      rmSync(join(root, id), { recursive: true, force: true })
-    } catch (e) {
-      console.error(`[orca] не удалось удалить вложения прогона ${id}:`, (e as Error).message)
-    }
-  }
-}
-
-/** Пишет изображения прогона в `<root>/<runId>/image-N.ext` и возвращает абсолютные пути. */
-function writeAttachments(root: string, runId: string, images: ImageAttachment[]): string[] {
-  const dir = join(root, runId)
-  try {
-    mkdirSync(dir, { recursive: true })
-    return images.map((img, i) => {
-      const file = join(dir, imageAttachmentFileName(i, img.ext))
-      writeFileSync(file, img.data, { flag: 'wx', mode: 0o600 })
-      return file
-    })
-  } catch (e) {
-    rmSync(dir, { recursive: true, force: true })
-    throw new Error(`не удалось сохранить изображения для координатора: ${(e as Error).message}`)
-  }
-}
-
 /**
  * Координатор: агент роли coordinator (нет такой роли — claude без модели) с инструкцией и целью — в worktree ветки
  * глобальной задачи (`ensureRunBranch`), а без неё — в корне репозитория.
@@ -374,9 +319,10 @@ export function startCoordinator(
     // Ветка фичи заводится до координатора: он декомпозирует по коду этой ветки, воркеры ответвятся от неё.
     const cwd = ensureRunBranch(store, repoRoot, run.id)?.worktree ?? repoRoot
     root = images.length > 0 ? attachmentsRoot(cwd) : undefined
-    if (root) pruneAttachments(store, root)
-    // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны.
-    if (root && resume) rmSync(join(root, run.id), { recursive: true, force: true })
+    if (root) pruneAttachments(store, root, isAlive)
+    // Изображения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны. Возвраты
+    // в работу (`returns/`) остаются: на них ссылаются `Run.stageInput.images` и `Run.returns`.
+    if (root && resume) clearStartImages(root, run.id)
     const paths = root ? writeAttachments(root, run.id, images) : []
     const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.coordinator, { projectRules: ctx.agentRules, role, language: mainLocale() }), coordinatorPrompt(objective, paths), {
       permissionMode: ctx.permissionMode,
@@ -410,7 +356,7 @@ export function startCoordinator(
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
     if (!resume) store.closeRun(run.id)
-    if (root) rmSync(join(root, run.id), { recursive: true, force: true })
+    if (root) clearStartImages(root, run.id, !resume)
     throw e
   }
   store.setRunPty(run.id, ptyId, role.agent, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
@@ -423,6 +369,8 @@ export function startCoordinator(
  * Прежний координатор, если его терминал ещё жив, закрывается после правки стора (`returnGlobalTaskToWork`):
  * иначе возврат был бы недоступен, пока агент сам не выйдет.
  * Упал запуск после возврата — карточка остаётся «В работе» с уточнением, «Запустить координатора» его подхватит.
+ * `images` — пути картинок к уточнению, уже сохранённые в cwd координатора (`withReturnImages`): они лежат в `Run.returns`
+ * и попадают в цель повторного запуска.
  */
 export function returnToWork(
   store: TaskStore,
@@ -431,9 +379,10 @@ export function returnToWork(
   runId: string,
   text: string,
   cols = 120,
-  rows = 30
+  rows = 30,
+  images: string[] = []
 ): { ptyId: string; runId: string } {
-  returnGlobalTaskToWork(store, runId, text, isAlive, killPty)
+  returnGlobalTaskToWork(store, runId, text, isAlive, killPty, images)
   return startCoordinator(store, repoRoot, ctx, '', cols, rows, [], runId)
 }
 
