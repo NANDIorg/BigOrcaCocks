@@ -656,13 +656,42 @@ export interface OrcaApi {
     /** Карточки с прогрессом подзадач, в порядке создания. Нет проекта — []. */
     list(): Promise<GlobalTask[]>
     get(id: string): Promise<GlobalTask>
-    create(input: GlobalTaskInput): Promise<GlobalTask>
+    /**
+     * Создать глобальную задачу. `images` — картинки, вставленные человеком в `GlobalTaskModal`: отдельным
+     * аргументом, а не полем `GlobalTaskInput`, чтобы байты не смешивались с JSON-описанием карточки (так же
+     * устроен `coordinator:start`). Main проверяет их `validateImageAttachments` (PNG/JPEG/GIF/WebP по сигнатуре,
+     * `IMAGE_ATTACHMENT_LIMITS`: ≤ 8 шт., ≤ 10 МБ каждая, ≤ 30 МБ всего на задачу), сохраняет файлы и кладёт
+     * метаданные в `Run.images`. Невалидная картинка — ошибка, задача при этом **не создаётся**.
+     * Без `images` (и у старого renderer) поведение прежнее.
+     */
+    create(input: GlobalTaskInput, images?: ImageAttachmentInput[]): Promise<GlobalTask>
     update(id: string, patch: GlobalTaskPatch): Promise<GlobalTask>
     /**
      * Сменить тип задачи (`typeId` из типов проекта) — только до начала работы (`canChangeRunType` из core):
      * в бэклоге, ни разу не была «В работе», без координатора и подзадач; иначе и для «Входящих» — ошибка.
      */
     changeType(id: string, typeId: string): Promise<GlobalTask>
+    /**
+     * Добавить картинки к существующей задаче. Лимиты `IMAGE_ATTACHMENT_LIMITS` действуют на задачу
+     * **суммарно**: уже сохранённые (`GlobalTask.images`) плюс новые; превышение количества или общего размера,
+     * неподдерживаемый формат, пустой массив — ошибка, ничего не сохраняется (всё или ничего).
+     * Править картинки можно только до начала работы — то же правило, что у `changeType` (`canChangeRunType` /
+     * `runTypeLockReason` из core: бэклог, ни разу не «В работе», без координатора и подзадач); «Входящие» —
+     * ошибка. Позже картинку можно приложить только при запуске координатора (`startCoordinator(..., images)`),
+     * но в задаче она не сохранится. Возвращает обновлённую карточку.
+     */
+    addImages(id: string, images: ImageAttachmentInput[]): Promise<GlobalTask>
+    /**
+     * Удалить картинку задачи (метаданные и файл). Правило то же, что у `addImages`; нет задачи или картинки
+     * с таким `imageId` — ошибка. Возвращает обновлённую карточку.
+     */
+    removeImage(id: string, imageId: string): Promise<GlobalTask>
+    /**
+     * Байты картинки для превью в renderer (`blob:` URL, CSP `img-src 'self' blob:`). `mime` — из метаданных
+     * (`RunImage.mime`). Доступно в любом статусе задачи, пока картинка есть; нет задачи, картинки или файла
+     * на диске — ошибка.
+     */
+    image(id: string, imageId: string): Promise<{ mime: string; data: Uint8Array }>
     /** status — id колонки проекта. Подзадачи не трогает. */
     move(id: string, status: string): Promise<GlobalTask>
     /**
@@ -676,6 +705,13 @@ export interface OrcaApi {
     /**
      * Запуск координатора на существующей глобальной задаче (цель — её описание и список подзадач).
      * Новые подзадачи координатора попадают в неё же. Второй живой координатор — ошибка.
+     *
+     * Картинки: координатору передаются **сохранённые картинки задачи** (`GlobalTask.images`) и `images` этого
+     * вызова (вставленные в момент запуска) — одним списком, сохранённые первыми, с абсолютными путями в промпте
+     * (`coordinatorPrompt`, как в `coordinator:start`). Так же — при повторных запусках и в `returnToWork`, где
+     * отдельного аргумента нет: там уходят только сохранённые. Суммарно те же `IMAGE_ATTACHMENT_LIMITS`;
+     * превышение (сохранённые + пришедшие) — ошибка запуска до старта агента. Пришедшие в `images` в задачу
+     * не сохраняются — для этого есть `addImages`.
      */
     startCoordinator(id: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
     /**
@@ -686,7 +722,7 @@ export interface OrcaApi {
     accept(id: string, decision?: string): Promise<GlobalTask>
     /**
      * «Вернуть в работу» с «Проверки» с уточнением (`text` обязателен): задача — в работу, координатор
-     * запускается повторно и получает уточнение в цели. Возвращает ptyId координатора.
+     * запускается повторно и получает уточнение в цели и сохранённые картинки задачи. Возвращает ptyId координатора.
      */
     returnToWork(id: string, text: string, cols: number, rows: number): Promise<string>
   }
