@@ -42,6 +42,14 @@ export function wfPortLabel(node: WfNode, port: WfPort): string {
   return wfOutcomeLabel(node.type, port)
 }
 
+/**
+ * Суффикс CSS-класса порта и ребра (`wf-port--…`, `wf-edge--…`): у фиксированных портов — сам исход (цвет accept/reject),
+ * у вариантов `decision` — общий `opt`: id варианта — данные графа, класс по нему был бы мусорным.
+ */
+export function wfPortClass(type: WfNodeType, port: WfPort): string {
+  return type === 'decision' ? 'opt' : port
+}
+
 /** «да» → «Да»: метка варианта — данные графа, а подписи исходов в словаре — со строчной буквы. */
 const capitalized = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 

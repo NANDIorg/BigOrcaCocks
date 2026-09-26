@@ -4,7 +4,7 @@ import { WF_PORTS, type WfNodeType } from '@orca-board/core'
 import { WF_NODE_HELP } from './workflowHelp'
 import { WF_ADDABLE_TYPES, WF_OUTCOME_LABELS } from './workflowEdit'
 import { WF_TYPE_ORDER, WF_TYPE_TITLES } from './workflowForm'
-import { setLocale } from './i18n'
+import { setLocale, t } from './i18n'
 
 const MODEL_TYPES = Object.keys(WF_PORTS) as WfNodeType[]
 
@@ -74,4 +74,16 @@ test('справка описывает воркфлоу глобальной з
   assert.doesNotMatch(git.fields.join(' '), /create_branch|checkout/)
   assert.match(gate.summary, /ветку глобальной задачи/)
   assert.match(human.details, /Решение \/ что делать дальше/)
+})
+
+test('справка «Решения ИИ»: исходов у типа нет (порты — варианты ноды), поля инспектора описаны, фоллбэк — человек', () => {
+  const { fields, outcomes, actor, details } = WF_NODE_HELP.decision
+  assert.deepEqual(outcomes, {})
+  for (const label of ['Вопрос', 'Роль', 'Варианты', 'Как решать']) {
+    assert.ok(fields.some((f) => f.startsWith(`${label} — `)), `нет описания поля «${label}»`)
+  }
+  assert.match(actor, /человек/)
+  assert.match(details, /Инбокс/)
+  assert.ok(WF_ADDABLE_TYPES.includes('decision') && WF_TYPE_ORDER.includes('decision'))
+  assert.equal(t('config.wf.help.decision.outcome').startsWith('config.'), false)
 })
