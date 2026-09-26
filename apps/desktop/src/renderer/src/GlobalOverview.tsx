@@ -8,6 +8,7 @@ import { globalDoneReport } from './globalDoneReport'
 import { launchChecklist, showsLaunchHint, showsSummary } from './globalScreen'
 import { priorityTitle, taskPriorityOf } from './taskPriority'
 import { Markdown } from './Markdown'
+import { RunImageGallery } from './RunImageGallery'
 import { useT } from './i18n'
 
 interface Props {
@@ -44,6 +45,12 @@ export function GlobalOverview(props: Props): React.JSX.Element {
     <section className="gt-box" aria-label={t('global.overview.goal')}>
       <h3>{t('global.overview.goal')}</h3>
       {goal ? <Markdown text={goal} className="gt-goal" /> : <p className="muted">{t('global.overview.goalEmpty')}</p>}
+      {global.images && global.images.length > 0 && (
+        <>
+          <h3 className="gt-images-title">{t('global.overview.images')}</h3>
+          <RunImageGallery key={global.id} globalId={global.id} images={global.images} />
+        </>
+      )}
     </section>
   )
   const detailsBox = (
