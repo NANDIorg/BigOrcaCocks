@@ -25,6 +25,8 @@ export default {
   'stale.returnLive':
     'The previous coordinator is still open, and the app is running an old main version that does not close it on return. ' +
     'Close the coordinator terminal or restart the app, then try again.',
+  'stale.images': 'The app is running an old main/preload version without global task images. Restart the app.',
+  'stale.imagesLost': 'The task was created, but its images were not saved: the app is running an old main version. Restart the app and add them via Edit.',
   'stale.typeChange': 'The app is running an old main/preload version that cannot change the task type. Restart the app.',
 
   'time.justNow': 'just now',
@@ -43,6 +45,7 @@ export default {
   'board.live': '● coordinator',
   'board.waiting': 'waiting for you: {count}',
   'board.review': 'in review: {count}',
+  'board.images': 'Images: {count}',
   'board.openInbox': 'Open in Inbox',
   'board.openInboxMore': 'Open in Inbox · {count} more',
   'board.returns': 'returns: {count}',
@@ -102,6 +105,7 @@ export default {
 
   'overview.goal': 'Goal',
   'overview.goalEmpty': 'No goal yet — add it via Edit.',
+  'overview.images': 'Images',
   'overview.details': 'Details',
   'overview.type': 'Type',
   'overview.priority': 'Priority',
@@ -166,6 +170,10 @@ export default {
   'modal.titlePlaceholder': 'E.g.: export reports to PDF',
   'modal.description': 'Description',
   'modal.descriptionPlaceholder': 'Goal, context and done criteria — the coordinator uses it to split the task into subtasks',
+  'modal.images': 'Images',
+  'modal.imagesAdd': 'Add image',
+  'modal.imagesHint': 'Paste a screenshot into the description with {keys} or pick a file (PNG, JPEG, GIF, WebP). Images are saved with the task and the coordinator gets them as files.',
+  'modal.imagesLocked': 'The task has already started — its images can’t be changed.',
   'modal.priority': 'Priority',
   'modal.priorityStale': 'restart the app to change it',
   'modal.type': 'Task type',
