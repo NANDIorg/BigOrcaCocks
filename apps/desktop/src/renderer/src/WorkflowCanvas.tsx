@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type React from 'react'
-import { WF_PORTS, wfWorkRoleIds, type WfNode, type WfNodeTemplate, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
+import { WF_PORTS, wfWorkRoleIds, type WfNode, type WfNodeTemplate, type WfNodeType, type WfPort, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import {
   NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, panBy,
@@ -40,7 +40,7 @@ interface Props {
 type Gesture =
   | { kind: 'pan'; start: Point; view: View }
   | { kind: 'drag'; nodeId: string; offset: Point; pos: Point; moved: boolean }
-  | { kind: 'connect'; from: string; outcome: WfOutcome; pointer: Point; target?: string }
+  | { kind: 'connect'; from: string; outcome: WfPort; pointer: Point; target?: string }
 
 function clip(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s

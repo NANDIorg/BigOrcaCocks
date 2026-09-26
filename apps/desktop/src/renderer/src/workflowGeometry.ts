@@ -1,4 +1,4 @@
-import { WF_PORTS, wfPorts, type WfEdge, type WfNode, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
+import { wfPorts, type WfEdge, type WfNode, type WfPort, type Workflow } from '@orca-board/core'
 
 // Геометрия нодового редактора воркфлоу. Координаты — мировые (те же, что `WfNode.x/y`), холст переводит
 // в них экранные через `screenToWorld`. Логика вынесена из WorkflowCanvas.tsx, чтобы её можно было тестировать.
@@ -15,29 +15,39 @@ export interface Rect {
   h: number
 }
 
-/** Размер ноды. Один на все типы: порты (до двух) помещаются по высоте, подписи исходов — снаружи справа. */
+/**
+ * Размер ноды. Ширина одна на все типы, `NODE_H` — высота ноды с портами фиксированных типов (до двух): подписи исходов
+ * снаружи справа. Нода `decision` с большим числом вариантов выше — см. `nodeHeight`.
+ */
 export const NODE_W = 150
 export const NODE_H = 60
+/** Шаг портов по высоте: не меньше двух `PORT_HIT_R`, иначе соседние порты не попасть курсором. */
+export const PORT_STEP = 20
 /** Радиус порта при попадании курсором — больше нарисованного кружка, чтобы не целиться в пиксель. */
 export const PORT_HIT_R = 9
 /** Шаг авторасстановки: по X — между слоями, по Y — между нодами слоя. Совпадает с шагом defaultWorkflow. */
 export const LAYOUT_DX = 220
 export const LAYOUT_DY = 110
 
-export function nodeRect(node: Pick<WfNode, 'x' | 'y'>): Rect {
-  return { x: node.x, y: node.y, w: NODE_W, h: NODE_H }
+/** Высота ноды: `NODE_H`, а если портов больше, чем помещается с шагом `PORT_STEP` (варианты `decision`), — выше. */
+export function nodeHeight(node: WfNode): number {
+  return Math.max(NODE_H, PORT_STEP * (wfPorts(node).length + 1))
+}
+
+export function nodeRect(node: WfNode): Rect {
+  return { x: node.x, y: node.y, w: NODE_W, h: nodeHeight(node) }
 }
 
 /** Вход ноды — середина левой стороны: все рёбра входят сюда. */
-export function inputPoint(node: Pick<WfNode, 'x' | 'y'>): Point {
-  return { x: node.x, y: node.y + NODE_H / 2 }
+export function inputPoint(node: WfNode): Point {
+  return { x: node.x, y: node.y + nodeHeight(node) / 2 }
 }
 
 /** Порт исхода — на правой стороне, порты делят высоту поровну в порядке `wfPorts`. */
 export function portPoint(node: WfNode, outcome: WfPort): Point {
   const ports = wfPorts(node)
   const i = Math.max(0, ports.indexOf(outcome))
-  return { x: node.x + NODE_W, y: node.y + (NODE_H * (i + 1)) / (ports.length + 1) }
+  return { x: node.x + NODE_W, y: node.y + (nodeHeight(node) * (i + 1)) / (ports.length + 1) }
 }
 
 /** Кубическая кривая Безье: начало, две контрольные точки, конец. */
@@ -47,15 +57,19 @@ export type Curve = [Point, Point, Point, Point]
  * Кривая ребра от порта к входу. Вперёд — плавная S-кривая. Назад (отказ «обратно в работу») и в себя —
  * петля, уходящая вниз: иначе кривая прошла бы сквозь ноды между источником и целью.
  * Касательная в конце всегда горизонтальна слева направо — стрелку можно рисовать без поворота.
+ * `bottom` — низ самой низкой из двух нод: у высокой ноды (`decision` со многими вариантами) петля опускается так,
+ * чтобы её середина прошла под этим низом. Без него (черновик ребра к курсору) — ниже точек на высоту обычной ноды.
  */
-export function edgeCurve(from: Point, to: Point): Curve {
+export function edgeCurve(from: Point, to: Point, bottom?: number): Curve {
   const dx = to.x - from.x
   if (dx >= 40) {
     const c = Math.max(40, dx / 2)
     return [from, { x: from.x + c, y: from.y }, { x: to.x - c, y: to.y }, to]
   }
   const c = Math.max(80, Math.abs(dx) / 4)
-  const drop = Math.max(from.y, to.y) + NODE_H + 30
+  const base = Math.max(from.y, to.y) + NODE_H + 30
+  // Середина кривой по y — (from.y + to.y) / 8 + 3/4 · drop: отсюда глубина, при которой середина на 20 ниже `bottom`.
+  const drop = bottom === undefined ? base : Math.max(base, (bottom + 20 - (from.y + to.y) / 8) / 0.75)
   return [from, { x: from.x + c, y: drop }, { x: to.x - c, y: drop }, to]
 }
 
@@ -78,7 +92,8 @@ export function edgeCurveOf(wf: Workflow, edge: WfEdge): Curve | undefined {
   const from = wf.nodes.find((n) => n.id === edge.from)
   const to = wf.nodes.find((n) => n.id === edge.to)
   if (!from || !to) return undefined
-  return edgeCurve(portPoint(from, edge.outcome), inputPoint(to))
+  const bottom = Math.max(from.y + nodeHeight(from), to.y + nodeHeight(to))
+  return edgeCurve(portPoint(from, edge.outcome), inputPoint(to), bottom)
 }
 
 function distToSegment(p: Point, a: Point, b: Point): number {
@@ -111,10 +126,10 @@ export function hitNode(wf: Workflow, p: Point): string | undefined {
 }
 
 /** Порт под точкой (ближайший в пределах `PORT_HIT_R`). */
-export function hitPort(wf: Workflow, p: Point): { nodeId: string; outcome: WfOutcome } | undefined {
-  let best: { nodeId: string; outcome: WfOutcome; d: number } | undefined
+export function hitPort(wf: Workflow, p: Point): { nodeId: string; outcome: WfPort } | undefined {
+  let best: { nodeId: string; outcome: WfPort; d: number } | undefined
   for (const n of wf.nodes) {
-    for (const outcome of WF_PORTS[n.type]) {
+    for (const outcome of wfPorts(n)) {
       const pt = portPoint(n, outcome)
       const d = Math.hypot(p.x - pt.x, p.y - pt.y)
       if (d <= PORT_HIT_R && (!best || d < best.d)) best = { nodeId: n.id, outcome, d }
@@ -138,7 +153,8 @@ export function hitEdge(wf: Workflow, p: Point, tolerance = 6): string | undefin
 /**
  * Авторасстановка по слоям: слой ноды — длина кратчайшего пути от старта (BFS), поэтому рёбра-возвраты
  * (reject → работа) слои не сдвигают. Внутри слоя порядок — порядок обхода, то есть порядок портов
- * у родителя. Недостижимые от старта ноды — отдельным слоем справа, чтобы их было видно.
+ * у родителя. Недостижимые от старта ноды — отдельным слоем справа, чтобы их было видно. Ноды слоя идут с шагом
+ * `LAYOUT_DY`, под высокой нодой (много вариантов `decision`) — с тем же зазором от её низа.
  */
 export function autoLayout(wf: Workflow): Workflow {
   const layer = new Map<string, number>()
@@ -168,13 +184,14 @@ export function autoLayout(wf: Workflow): Workflow {
     layer.set(n.id, lastLayer)
     order.push(n.id)
   }
-  const row = new Map<number, number>()
+  const gap = LAYOUT_DY - NODE_H
+  const nextY = new Map<number, number>()
   const pos = new Map<string, Point>()
   for (const id of order) {
     const l = layer.get(id)!
-    const r = row.get(l) ?? 0
-    row.set(l, r + 1)
-    pos.set(id, { x: l * LAYOUT_DX, y: r * LAYOUT_DY })
+    const y = nextY.get(l) ?? 0
+    nextY.set(l, y + Math.max(LAYOUT_DY, nodeHeight(wf.nodes.find((n) => n.id === id)!) + gap))
+    pos.set(id, { x: l * LAYOUT_DX, y })
   }
   return { ...wf, nodes: wf.nodes.map((n) => ({ ...n, ...pos.get(n.id)! })) }
 }
@@ -216,10 +233,10 @@ export function viewBox(view: View, width: number, height: number): string {
 export function graphBounds(wf: Workflow): Rect | undefined {
   if (wf.nodes.length === 0) return undefined
   const xs = wf.nodes.map((n) => n.x)
-  const ys = wf.nodes.map((n) => n.y)
   const x = Math.min(...xs)
-  const y = Math.min(...ys)
-  return { x, y, w: Math.max(...xs) + NODE_W + 60 - x, h: Math.max(...ys) + NODE_H * 2 + 30 - y }
+  const y = Math.min(...wf.nodes.map((n) => n.y))
+  const bottom = Math.max(...wf.nodes.map((n) => n.y + nodeHeight(n)))
+  return { x, y, w: Math.max(...xs) + NODE_W + 60 - x, h: bottom + NODE_H + 30 - y }
 }
 
 /** Вид, в который целиком помещается граф, с полями `pad` экранных пикселей; крупнее 1:1 не увеличивает. */

@@ -1,9 +1,9 @@
 import {
-  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflowReport, wfPorts, wfWorkRoleIds,
-  type Role, type WfCondition, type WfMigrationNote, type WfNode, type WfNodeType, type WfPort, type Workflow
+  WF_DECISION_MAX_OPTIONS, WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflowReport, wfPorts, wfWorkRoleIds,
+  type Role, type WfCondition, type WfDecisionOption, type WfMigrationNote, type WfNode, type WfNodeType, type WfPort, type Workflow
 } from '@orca-board/core'
-import { NODE_H, NODE_W } from './workflowGeometry'
-import { connect, makeNode, uniqueId } from './workflowEdit'
+import { NODE_H, NODE_W, nodeHeight } from './workflowGeometry'
+import { connect, makeNode, uniqueId, yesNoOptions } from './workflowEdit'
 import { t, type TKey } from './i18n'
 import { nodeTitle } from './defaultTitles'
 import { patchGit, type WfGitPatch } from './workflowGit'
@@ -26,7 +26,7 @@ export const WF_TYPE_TITLES: Readonly<Record<WfNodeType, string>> = {
 }
 
 /** Порядок типов в select «Тип» инспектора. */
-export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'human', 'condition', 'merge', 'git', 'end']
+export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'decision', 'human', 'condition', 'merge', 'git', 'end']
 
 /** Роли, которые можно поставить на этап: без служебных (coordinator, assistant) — они задачам не назначаются. */
 export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[] {
@@ -36,10 +36,11 @@ export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[]
 /**
  * Ноды, у которых есть поле «Колонка»: start и condition задача проходит насквозь, стоять в них она не может.
  * У ask колонку не задают: пока агент работает, задача в «В работе», а при вопросе store сам держит её в «Нужен ответ».
- * Git выполняется приложением синхронно и сразу передаёт ход дальше — задача на нём не стоит.
+ * Git выполняется приложением синхронно и сразу передаёт ход дальше — задача на нём не стоит. У decision колонку
+ * тоже не задают: пока агент решает, карточка в «В работе», а при передаче человеку её поднимает запрос в «Нужен ответ».
  */
 export function hasColumn(type: WfNodeType): boolean {
-  return type !== 'start' && type !== 'condition' && type !== 'ask' && type !== 'git'
+  return type !== 'start' && type !== 'condition' && type !== 'ask' && type !== 'git' && type !== 'decision'
 }
 
 /** Поля ноды, которые правит инспектор. Пустая строка у необязательного поля — «не задано» (поле удаляется). */
@@ -47,6 +48,8 @@ export interface WfNodePatch {
   title?: string
   column?: string
   roleId?: string
+  /** Вопрос ноды `decision`; пустой остаётся строкой — его подсветит валидация. */
+  question?: string
   /** Роли этапа «Работа»; пустой список — роли не заданы (координатор выбирает сам). */
   roleIds?: string[]
   instructions?: string
@@ -72,8 +75,8 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     else delete n.column
   }
   if (patch.roleId !== undefined) {
-    // У гейта роль обязательна (пустую подсветит валидация), у вопроса пустая — «роль задачи».
-    if (n.type === 'gate') n.roleId = patch.roleId
+    // У гейта и решения роль обязательна (пустую подсветит валидация), у вопроса пустая — «роль задачи».
+    if (n.type === 'gate' || n.type === 'decision') n.roleId = patch.roleId
     else if (n.type === 'ask') {
       if (patch.roleId) n.roleId = patch.roleId
       else delete n.roleId
@@ -85,7 +88,8 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     if (patch.roleIds.length > 0) n.roleIds = [...patch.roleIds]
     else delete n.roleIds
   }
-  if (patch.instructions !== undefined && (n.type === 'gate' || n.type === 'human' || n.type === 'work')) {
+  if (patch.question !== undefined && n.type === 'decision') n.question = patch.question
+  if (patch.instructions !== undefined && (n.type === 'gate' || n.type === 'human' || n.type === 'work' || n.type === 'decision')) {
     if (patch.instructions.trim()) n.instructions = patch.instructions
     else delete n.instructions
   }
@@ -107,7 +111,8 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
 /**
  * Меняет тип ноды, сохраняя id, позицию, название и колонку; роль и инструкция переносятся, если у нового
  * типа они есть. Рёбра портов, которых у нового типа нет, удаляются; в старт не может вести переход —
- * входящие рёбра тоже удаляются.
+ * входящие рёбра тоже удаляются. Новая `decision` получает варианты «Да / Нет» (`yes`/`no`) — поэтому
+ * `condition ↔ decision` сохраняет оба ребра.
  */
 export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): Workflow {
   const cur = wf.nodes.find((n) => n.id === nodeId)
@@ -117,12 +122,18 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
   const node: WfNode = { ...fresh, id: cur.id }
   if (cur.title) node.title = cur.title
   if (cur.column && hasColumn(type)) node.column = cur.column
-  const role = cur.type === 'work' ? wfWorkRoleIds(cur)[0] : cur.type === 'gate' || cur.type === 'ask' ? cur.roleId : undefined
+  const role =
+    cur.type === 'work' ? wfWorkRoleIds(cur)[0] : cur.type === 'gate' || cur.type === 'ask' || cur.type === 'decision' ? cur.roleId : undefined
   const instructions =
-    cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' || cur.type === 'ask' ? cur.instructions : undefined
+    cur.type === 'gate' || cur.type === 'human' || cur.type === 'work' || cur.type === 'ask' || cur.type === 'decision'
+      ? cur.instructions
+      : undefined
   if (role && node.type === 'work') node.roleIds = [role]
-  else if (role && (node.type === 'gate' || node.type === 'ask')) node.roleId = role
-  if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work' || node.type === 'ask')) {
+  else if (role && (node.type === 'gate' || node.type === 'ask' || node.type === 'decision')) node.roleId = role
+  if (
+    instructions &&
+    (node.type === 'gate' || node.type === 'human' || node.type === 'work' || node.type === 'ask' || node.type === 'decision')
+  ) {
     node.instructions = instructions
   }
   const ports = wfPorts(node)
@@ -131,6 +142,89 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
     nodes: wf.nodes.map((n) => (n.id === nodeId ? node : n)),
     edges: wf.edges.filter((e) => (e.from !== nodeId || ports.includes(e.outcome)) && !(type === 'start' && e.to === nodeId))
   }
+}
+
+// ---------- варианты ноды «Решение ИИ» ----------
+
+type DecisionNode = Extract<WfNode, { type: 'decision' }>
+
+/** Меняет варианты ноды `decision`; рёбра портов, которых больше нет, уходят вместе с вариантом. Не decision — граф как есть. */
+function withOptions(wf: Workflow, nodeId: string, change: (options: WfDecisionOption[], node: DecisionNode) => WfDecisionOption[] | undefined): Workflow {
+  const cur = wf.nodes.find((n) => n.id === nodeId)
+  if (cur?.type !== 'decision') return wf
+  const options = change(Array.isArray(cur.options) ? cur.options : [], cur)
+  if (!options) return wf
+  const node: WfNode = { ...cur, options }
+  const ports = wfPorts(node)
+  return {
+    ...wf,
+    nodes: wf.nodes.map((n) => (n.id === nodeId ? node : n)),
+    edges: wf.edges.filter((e) => e.from !== nodeId || ports.includes(e.outcome))
+  }
+}
+
+/**
+ * id нового варианта из его метки: строчная латиница и цифры, остальное — «_» (маска `WF_DECISION_OPTION_ID`). Метка
+ * без латиницы (кириллица, пустая) — `opt`. Свободный суффикс — `uniqueId`. id выдаётся один раз и потом не меняется:
+ * на нём держатся рёбра.
+ */
+export function decisionOptionId(label: string, taken: Iterable<string>): string {
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24).replace(/_+$/, '')
+  return uniqueId(slug || 'opt', taken)
+}
+
+/** «Добавить вариант»: в конец списка, не больше `WF_DECISION_MAX_OPTIONS` (больше не поместится на порты ноды). */
+export function addDecisionOption(wf: Workflow, nodeId: string, label = ''): { workflow: Workflow; optionId?: string } {
+  let optionId: string | undefined
+  const workflow = withOptions(wf, nodeId, (options) => {
+    if (options.length >= WF_DECISION_MAX_OPTIONS) return undefined
+    optionId = decisionOptionId(label, options.map((o) => o.id))
+    return [...options, { id: optionId, label }]
+  })
+  return optionId ? { workflow, optionId } : { workflow }
+}
+
+/**
+ * Правка метки или пояснения варианта. id не меняется — рёбра и выбор в истории остаются. Пустая метка остаётся строкой
+ * (её подсветит валидация), пустое пояснение удаляется.
+ */
+export function patchDecisionOption(wf: Workflow, nodeId: string, optionId: string, patch: { label?: string; description?: string }): Workflow {
+  return withOptions(wf, nodeId, (options) => {
+    if (!options.some((o) => o.id === optionId)) return undefined
+    return options.map((o) => {
+      if (o.id !== optionId) return o
+      const next: WfDecisionOption = { ...o }
+      if (patch.label !== undefined) next.label = patch.label
+      if (patch.description !== undefined) {
+        if (patch.description.trim()) next.description = patch.description
+        else delete next.description
+      }
+      return next
+    })
+  })
+}
+
+/** Удаляет вариант вместе с ребром его порта. Меньше двух вариантов не запрещено здесь — это подсветит валидация. */
+export function removeDecisionOption(wf: Workflow, nodeId: string, optionId: string): Workflow {
+  return withOptions(wf, nodeId, (options) => (options.some((o) => o.id === optionId) ? options.filter((o) => o.id !== optionId) : undefined))
+}
+
+/** Сдвиг варианта на `delta` позиций (вверх — отрицательный). Порядок вариантов — порядок портов на холсте. */
+export function moveDecisionOption(wf: Workflow, nodeId: string, optionId: string, delta: number): Workflow {
+  return withOptions(wf, nodeId, (options) => {
+    const from = options.findIndex((o) => o.id === optionId)
+    const to = Math.max(0, Math.min(options.length - 1, from + delta))
+    if (from < 0 || to === from) return undefined
+    const next = [...options]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    return next
+  })
+}
+
+/** «Сбросить на Да / Нет»: варианты — `yes`/`no`; рёбра этих портов остаются, остальные уходят вместе с вариантами. */
+export function resetDecisionOptions(wf: Workflow, nodeId: string): Workflow {
+  return withOptions(wf, nodeId, () => yesNoOptions())
 }
 
 /** Куда ведёт порт: id целевой ноды или undefined, если перехода нет. */
@@ -250,7 +344,7 @@ export function parseWorkflowJson(text: string): { workflow: Workflow; migration
 /** Место под новую ноду: не ближе ячейки к существующим; сдвигаемся вниз, пока занято. */
 function freeSpot(wf: Workflow, x: number, y: number): { x: number; y: number } {
   const busy = (px: number, py: number): boolean =>
-    wf.nodes.some((n) => Math.abs(n.x - px) < NODE_W + 20 && Math.abs(n.y - py) < NODE_H + 20)
+    wf.nodes.some((n) => Math.abs(n.x - px) < NODE_W + 20 && py < n.y + nodeHeight(n) + 20 && n.y < py + NODE_H + 20)
   let py = y
   while (busy(x, py)) py += NODE_H + 40
   return { x, y: py }
