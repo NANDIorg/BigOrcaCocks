@@ -78,6 +78,12 @@ export default {
   'coordinator.alreadyRunning': 'the coordinator of this global task is already running (terminal {pty})',
   'coordinator.finishing': 'the coordinator of this global task is still finishing — try again in a few seconds',
 
+  'attachments.noWorktree': 'the task has no worktree on disk — nowhere to save the images for the feedback (the task is already accepted or its worktree was removed)',
+  'attachments.saveFailed': 'could not save the images: {error}',
+  'attachments.invalid': 'the images were not accepted: {error}',
+  'attachments.needText': 'the images need feedback text: describe what to fix',
+  'attachments.notForAction': 'images can only be attached to “Clarify” and “Return”',
+
   'workflow.runFinished': 'the global task workflow has already finished — no coordinator is needed',
   'workflow.coordinatorNotRunning': 'your notes are saved, but the coordinator did not start — start it from the global task card (“Start coordinator”)',
   'global.notFound': 'global task not found: {id}',

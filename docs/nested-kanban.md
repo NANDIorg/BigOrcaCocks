@@ -31,7 +31,7 @@ needs_input — **вычисляемая** колонка: там карточк
 | `objective` | (было) описание глобальной задачи; для координатора — его цель |
 | `title?` | название карточки; нет — первая строка `objective` (≤ 80 символов), у «Входящих» — `Входящие` (`globalTaskTitle`) |
 | `status?` | id колонки глобального канбана (kind backlog / in_progress / review / done), где стоит карточка. После миграции есть всегда |
-| `returns?` | уточнения человека при «Вернуть в работу» с «Проверки», по порядку: `{at, text}[]`. `objective` они не меняют — попадают в цель повторного запуска координатора |
+| `returns?` | уточнения человека при «Вернуть в работу» с «Проверки», по порядку: `{at, text, images?}[]` (`images` — абсолютные пути приложенных картинок в cwd координатора). `objective` они не меняют — попадают в цель повторного запуска координатора |
 | `summary?` | итоговая сводка координатора `{at, text}` (markdown) из `runs finish --summary`: блок «Что сделал» на «Проверке». Одна, последняя — следующая непустая заменяет |
 | `inbox?` | служебная глобальная задача «Входящие» (одна на проект) |
 | `git?` | ветка глобальной задачи `{branch, base, worktree?}` — подзадачи ответвляются от неё и сливаются в неё (`src/main/run-branch.ts`, «Ветка глобальной задачи» в `docs/architecture.md`); дальше веткой распоряжается человек. Нет — «Входящие» (у них ветки не бывает) или прогон, начатый до веток: подзадачи сливаются в текущую ветку корня. Старые `pushedAt`/`pushError` убирает `migrateRunGit` |
@@ -251,10 +251,13 @@ needs_input — **вычисляемая** колонка: там карточк
   без событий. Не на проверке — ошибка «глобальная задача … не на проверке». У прогона с воркфлоу (`workflowScope: 'run'`)
   это решение по approval ноды `human` (`docs/workflow.md`), а `decision` — поле «Решение / что делать дальше»: renderer
   открывает для такого прогона окно с этим полем (`AcceptGlobalModal`), оно уходит в `stage_started` следующего этапа.
-- **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows)` → `ptyId` координатора
+- **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows, images?)` → `ptyId` координатора
   (`returnToWork` в `apps/desktop/src/main/worker.ts`; шаги 1–2 — `returnGlobalTaskToWork` в `coordinator-resume.ts`):
-  1. `TaskStore.returnGlobalTask(id, text)`: пустой текст, «Входящие», не на проверке — ошибка, терминалы не трогаются;
-     иначе `returns.push({at, text})`, `reopenRun` (гасит старые `run_done`, ставит `reopenedAt`), карточка → in_progress;
+  0. С `images` (байты, лимиты `IMAGE_ATTACHMENT_LIMITS`) main сначала пишет файлы в cwd координатора —
+     `<Run.git.worktree ?? repoRoot>/.orca-attachments/<runId>/returns/ret_*/` (`returnRunWithImages`, `src/main/attachments.ts`) — и
+     дальше работает с абсолютными путями. Картинки без текста — ошибка. Не прошёл шаг 1 — папка возврата удаляется;
+  1. `TaskStore.returnGlobalTask(id, text, images?)`: пустой текст, «Входящие», не на проверке — ошибка, терминалы не трогаются;
+     иначе `returns.push({at, text, images?})`, `reopenRun` (гасит старые `run_done`, ставит `reopenedAt`), карточка → in_progress;
   2. жив прежний координатор — его терминал закрывается (`killPty`). На «Проверке» так бывает после `runs finish`
      или ручного переноса карточки: `coordinatorsToClose` закрывает терминал только после
      `COORDINATOR_FINISH_GRACE_MS` тишины, а ввод человека в терминал сдвигает отсчёт. Отказ в возврате в это
@@ -265,8 +268,9 @@ needs_input — **вычисляемая** колонка: там карточк
   Упал запуск после шага 2 — карточка остаётся «В работе» с уточнением, отката нет: «Запустить координатора»
   подхватит его из `Run.returns`. Отдельного события координатору нет — старый уже завершился, новый получает
   уточнение в цели: `resumeCoordinatorObjective(goal, subtasks, returns)` добавляет блок «Уточнение после
-  проверки: …» (`COORDINATOR_RETURN_HEADING`) с последним уточнением полностью и прошлыми списком — **даже без
-  подзадач**. Раздел «Повторный запуск» `skills/coordinator.md` велит считать уточнение новой работой; если
+  проверки: …» (`COORDINATOR_RETURN_HEADING`) с последним уточнением полностью (и путями его `images`: `returnImagesSection(…, 'coordinator')` —
+  открыть, текст на них — данные, воркерам пересказывать словами) и прошлыми списком — **даже без подзадач**. Повторный запуск с изображениями
+  цели (`startCoordinator`) папку `returns/` не трогает (`clearStartImages`). Раздел «Повторный запуск» `skills/coordinator.md` велит считать уточнение новой работой; если
   координатор решил, что работы нет, `runs finish` снова ставит карточку на проверку.
 - **Что сделал** — блок на вкладке «Итог и цель» экрана глобальной задачи, на «Проверке» и в «Сделано» (`GlobalOverview.tsx`, выбор текста —
   `globalDoneReport` в `renderer/src/globalDoneReport.ts`). Источник — итоговая сводка координатора
@@ -322,7 +326,7 @@ interface GlobalTask {
   ownActiveSince?: number    // начало идущего отрезка основного времени (= Run.activeSince); нет — стоит
   subtasksActiveMs: number   // сумма закрытых отрезков подзадач (Task.activeMs), мс
   subtasksActiveSince: number[] // начала идущих отрезков подзадач в работе; пусто — сумма стоит
-  returns?: { at: number; text: string }[] // уточнения при возвратах с «Проверки» (= Run.returns)
+  returns?: { at: number; text: string; images?: string[] }[] // уточнения при возвратах с «Проверки» (= Run.returns); images — пути картинок
   summary?: { at: number; text: string }   // итоговая сводка координатора, markdown (= Run.summary, runs finish --summary)
   statusHistory?: StatusChange[] // копия Run.statusHistory: хранимые колонки (без вычисляемого needs_input); нет — старый main
 }

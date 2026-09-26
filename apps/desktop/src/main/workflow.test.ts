@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, realpathSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION_TASK_SCOPE, defaultWorkflow, legacyDefaultWorkflow, migrateWorkflow, toTaskScopeWorkflow, validateWorkflow,
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION_TASK_SCOPE, workerTaskPrompt, defaultWorkflow, legacyDefaultWorkflow, migrateWorkflow, toTaskScopeWorkflow, validateWorkflow,
   type Role, type RunTypeInput, type Workflow, type Task, type Persistence, type StoreSnapshot
 } from '@orca-board/core'
 import { enterWork, handleWorkflowEvents, reviewAccept, reviewReject, approvalResolved, type WorkflowDeps } from './workflow'
@@ -121,6 +121,23 @@ describe('дефолтный граф с reviewer = прежнее поведе�
     assert.equal(task(gate.id).status, 'done', 'проверка закрыта')
     const doneEvent = events('worker_done', gate.id)[0]
     assert.equal(doneEvent.payload.gateFor, a.id)
+  })
+
+  it('review reject с картинками → feedbackImages и промпт воркера; следующий reject без картинок их сбрасывает', () => {
+    const a = workTask('Логин')
+    commit(a, 'login.ts', 'v1\n')
+    done(a.id)
+    const shot = path.join(task(a.id).worktree!, '.orca-attachments', a.id, 'ret_x1', 'image-1.png')
+    reviewReject(deps, a.id, 'кнопка не там', [shot])
+    assert.deepEqual(task(a.id).feedbackImages, [shot])
+    assert.ok(workerTaskPrompt(task(a.id)).includes(`\`${shot}\``))
+    assert.equal(started.at(-1), a.id, 'воркер перезапущен с картинкой в замечаниях')
+
+    commit(a, 'login.ts', 'v2\n')
+    done(a.id)
+    reviewReject(deps, a.id, 'ещё раз, без скриншота')
+    assert.equal(task(a.id).feedbackImages, undefined)
+    assert.ok(!workerTaskPrompt(task(a.id)).includes(shot))
   })
 
   it('review reject → замечания и сразу новый запуск воркера; повторный done → новая проверка', () => {

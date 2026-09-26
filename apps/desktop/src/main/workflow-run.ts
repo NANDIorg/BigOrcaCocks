@@ -81,7 +81,7 @@ function branchHead(deps: RunWorkflowDeps, run: Run): string | undefined {
 }
 
 /** Опции переходов store: роли и граф типа (запасные), коммит входа в этап и то, что человек или проверка сказали. */
-function stageOpts(deps: RunWorkflowDeps, runId: string, extra: Pick<RunStageOptions, 'feedback' | 'decision' | 'answers'> = {}): RunStageOptions {
+function stageOpts(deps: RunWorkflowDeps, runId: string, extra: Pick<RunStageOptions, 'feedback' | 'images' | 'decision' | 'answers'> = {}): RunStageOptions {
   const type = deps.run(runId)
   const commit = branchHead(deps, mustRun(deps, runId))
   return { roleIds: type.roles.map((r) => r.id), ...(type.workflow ? { workflow: type.workflow } : {}), ...(commit ? { commit } : {}), ...extra }
@@ -127,7 +127,7 @@ function runEffects(deps: RunWorkflowDeps, runId: string, action: WfAction): voi
 }
 
 /** Исход текущей ноды прогона → переход по графу и эффекты новых нод. */
-export function advanceRun(deps: RunWorkflowDeps, runId: string, outcome: WfOutcome, extra: Pick<RunStageOptions, 'feedback' | 'decision' | 'answers'> = {}): void {
+export function advanceRun(deps: RunWorkflowDeps, runId: string, outcome: WfOutcome, extra: Pick<RunStageOptions, 'feedback' | 'images' | 'decision' | 'answers'> = {}): void {
   withStatusSource('workflow', () => {
     const { action } = deps.store.advanceRunStage(runId, outcome, stageOpts(deps, runId, extra))
     runEffects(deps, runId, action)
@@ -444,8 +444,9 @@ function runApprovalResolved(deps: RunWorkflowDeps, request: HumanRequest): void
   if (request.nodeId !== undefined && run.stage.nodeId !== request.nodeId) return
   if (graphOf(deps, run.id).nodes.find((n) => n.id === run.stage!.nodeId)?.type !== 'human') return
   const text = request.resolution?.text?.trim() || undefined
+  const images = request.resolution?.images
   try {
-    advanceRun(deps, run.id, action, action === 'accept' ? (text ? { decision: text } : {}) : text ? { feedback: text } : {})
+    advanceRun(deps, run.id, action, action === 'accept' ? (text ? { decision: text } : {}) : text ? { feedback: text, ...(images?.length ? { images } : {}) } : {})
   } catch (e) {
     deps.store.blockRunStage(run.id, `ошибка исполнителя воркфлоу: ${message(e)}`)
   }
@@ -495,8 +496,8 @@ export function acceptRun(deps: RunWorkflowDeps, runId: string, decision?: strin
  * «Вернуть в работу» с «Проверки»: решение `reject` с замечаниями. Дальше граф идёт по ребру `reject` (обычно в «Работу»):
  * координатор получает `stage_started` с замечаниями, а если он не жив — запускается заново.
  */
-export function returnRun(deps: RunWorkflowDeps, runId: string, text: string): GlobalTask {
-  return decideRun(deps, runId, (id) => deps.store.returnGlobalTask(id, text))
+export function returnRun(deps: RunWorkflowDeps, runId: string, text: string, images?: string[]): GlobalTask {
+  return decideRun(deps, runId, (id) => deps.store.returnGlobalTask(id, text, images))
 }
 
 function decideRun(deps: RunWorkflowDeps, runId: string, decide: (runId: string) => GlobalTask): GlobalTask {
@@ -533,7 +534,7 @@ function gatePending(deps: RunWorkflowDeps, gate: Task): boolean {
  * `stage_started` (`Run.returns`). Проверка уже не актуальна (граф ушёл дальше) — ошибка. Задача-проверка закрывается здесь,
  * если её воркер уже сдал `done` (решение человека в приложении); у живого проверяющего — по его `done` (`settleGate`).
  */
-export function runGateDecision(deps: RunWorkflowDeps, gateTaskId: string, outcome: 'accept' | 'reject', text?: string): void {
+export function runGateDecision(deps: RunWorkflowDeps, gateTaskId: string, outcome: 'accept' | 'reject', text?: string, images?: string[]): void {
   const gate = mustTask(deps, gateTaskId)
   const runId = gate.gateFor?.runId
   if (runId === undefined) throw new Error(`задача ${gateTaskId} — не проверка ветки глобальной задачи`)
@@ -544,7 +545,7 @@ export function runGateDecision(deps: RunWorkflowDeps, gateTaskId: string, outco
     throw new Error(`проверка ${gateTaskId} уже не актуальна: глобальная задача ${runId} сейчас ${where} — решение по ней принято или проверка заменена новой`)
   }
   const comment = text?.trim() || undefined
-  advanceRun(deps, runId, outcome, comment ? (outcome === 'reject' ? { feedback: comment } : { decision: comment }) : {})
+  advanceRun(deps, runId, outcome, comment ? (outcome === 'reject' ? { feedback: comment, ...(images?.length ? { images } : {}) } : { decision: comment }) : {})
   if (deps.store.columnKind(mustTask(deps, gateTaskId).status) === 'review') closeStageTask(deps, gate)
 }
 
