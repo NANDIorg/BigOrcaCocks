@@ -627,8 +627,10 @@ start → git(create_branch, branch="feature/{taskId}-{slug}") → work → … 
 (`WF_OUTCOME_LABELS`, справка типов); подпись порта `decision` — `label` варианта.
 
 **Валидация** (`validateWorkflow`, тексты — `WF_ISSUE_TEXTS`, в renderer — `config.wf.issue.*` ru/en). Порты
-проверяются общим шагом по `wfPorts`: нет ребра варианта — `missingOutcome` (`port` — метка варианта), ребро с чужим
-id — `extraOutcome`, два ребра одного варианта — `duplicateOutcome`. Свои коды:
+проверяются общим шагом по `wfPorts`: нет ребра варианта — `missingOutcome`, ребро с чужим id — `extraOutcome`
+(`ports` — метки вариантов через запятую), два ребра одного варианта — `duplicateOutcome`. В `missingOutcome` и
+`duplicateOutcome` у `decision` параметр `port` — метка варианта (её видит человек), `optionId` — id варианта для
+подсветки в инспекторе; у остальных типов нод `port` — сам исход, `optionId` нет. Свои коды:
 
 | Код | Уровень | Когда | Параметры |
 |---|---|---|---|

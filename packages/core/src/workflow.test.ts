@@ -261,6 +261,30 @@ describe('нода decision: валидация', () => {
     assert.deepEqual(errs(extra), ['extraOutcome'])
   })
 
+  it('проблемы портов называют вариант меткой, а id — в params.optionId', () => {
+    const missing = decisionWorkflow()
+    missing.edges = missing.edges.filter((e) => e.id !== 'e_need_design_yes')
+    const [noYes] = validateWorkflow(missing, ctx).errors.filter((e) => e.code === 'missingOutcome')
+    assert.match(noYes.message, /нет перехода для Да$/)
+    assert.doesNotMatch(noYes.message, /yes/)
+    assert.deepEqual(noYes.params, { node: 'Нужен ли дизайн?', port: 'Да', optionId: 'yes' })
+    const dup = decisionWorkflow()
+    dup.edges.push({ id: 'e_need_design_yes2', from: 'need_design', outcome: 'yes', to: 'impl' })
+    const [twice] = validateWorkflow(dup, ctx).errors.filter((e) => e.code === 'duplicateOutcome')
+    assert.match(twice.message, /больше одного перехода для Да$/)
+    assert.deepEqual([twice.params?.optionId, twice.edgeId], ['yes', 'e_need_design_yes2'])
+    const extra = decisionWorkflow()
+    extra.edges.push({ id: 'e_need_design_maybe', from: 'need_design', outcome: 'maybe', to: 'impl' })
+    assert.match(validateWorkflow(extra, ctx).errors[0].message, /лишний переход «maybe» — у ноды этого типа есть только Да, Нет$/)
+  })
+
+  it('у фиксированных типов порт в тексте — исход, без optionId', () => {
+    const wf = decisionWorkflow()
+    wf.edges = wf.edges.filter((e) => e.id !== 'e_check_reject')
+    const [issue] = validateWorkflow(wf, ctx).errors.filter((e) => e.code === 'missingOutcome')
+    assert.deepEqual(issue.params, { node: issue.params?.node, port: 'reject' })
+  })
+
   it('нет вопроса, нет роли, роль удалена или служебная', () => {
     assert.deepEqual(errs(decisionWorkflow({ question: '  ' })), ['decisionNoQuestion'])
     assert.deepEqual(errs(decisionWorkflow({ roleId: '' })), ['decisionNoRole'])
