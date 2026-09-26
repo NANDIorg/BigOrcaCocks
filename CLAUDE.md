@@ -133,6 +133,15 @@ pnpm verify      # перед PR: check:git-flow + typecheck + test + build (к�
   не переключай ветку, не создавай внешний PR. Локально мержит приложение — в ветку глобальной задачи
   (`feature/<runId>-<slug>`, `src/main/run-branch.ts`), а не в ветку root. Процесс —
   «Работа через Orca» в `docs/git-flow.md`.
+- **Координатор Orca (`ORCA_ROLE=coordinator`):** приложение ветку фичи не пушит — это делаешь ты. Когда все
+  подзадачи слиты в ветку глобальной задачи, перед `orca-board runs finish`: в её worktree
+  `pnpm install --frozen-lockfile` и `pnpm verify`; зелёный — пушь ветку под коротким именем:
+  `git push -u origin HEAD:feature/<name>`, где `<name>` — 2–4 слова латиницей по сути фичи (`feature/project-groups`,
+  `feature/branch-menu`). Имя уже есть на remote — выбери другое. PR открывай из этой ветки:
+  `gh pr create --head feature/<name> --base develop` (заголовок — Conventional Commits, тело — по
+  `.github/pull_request_template.md`, честно отметь, что не проверено: UI глазами, CI). Ссылку на PR — в сводку `runs finish`. Красный verify,
+  отказ push или gh (нет gh, нет логина, нет прав) — не пушь и не обходи, причину — в сводку. Сам не мержи,
+  не делай approve и не пушь служебные `orca/*`. Правило только для этого репозитория: в skills его не переносить.
 - У каждого разработчика свой clone. У каждой рабочей ветки один владелец; разные пишущие агенты
   не делят worktree. Не трогай чужие правки и не переключай root проекта при живых воркерах Orca.
 - Агент самостоятельно делает проверки, коммиты, push своей ветки и готовит PR с явной базой.
