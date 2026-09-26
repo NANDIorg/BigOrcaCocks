@@ -1015,15 +1015,15 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       if (!ports.includes(e.outcome)) {
         errors.push(n.type === 'end'
           ? at(n, 'extraOutcomeEnd', { outcome: e.outcome }, e.id)
-          : at(n, 'extraOutcome', { outcome: e.outcome, ports: ports.join(', ') }, e.id))
+          : at(n, 'extraOutcome', { outcome: e.outcome, ports: ports.map((p) => portLabel(n, p)).join(', ') }, e.id))
       }
     }
     // Повтор id варианта — своя ошибка (`decisionOptionDuplicateId`), порт проверяется один раз.
     for (const port of new Set(ports)) {
       const byPort = out.filter((e) => e.outcome === port)
-      if (byPort.length === 0) errors.push(at(n, 'missingOutcome', { port: portLabel(n, port) }))
+      if (byPort.length === 0) errors.push(at(n, 'missingOutcome', portParams(n, port)))
       for (const dup of byPort.slice(1)) {
-        errors.push(at(n, 'duplicateOutcome', { port }, dup.id))
+        errors.push(at(n, 'duplicateOutcome', portParams(n, port), dup.id))
       }
     }
   }
@@ -1250,6 +1250,11 @@ function portLabel(n: WfNode, port: WfPort): string {
   if (n.type !== 'decision' || !Array.isArray(n.options)) return port
   const label = n.options.find((o) => o?.id === port)?.label
   return typeof label === 'string' && label.trim() ? label.trim() : port
+}
+
+/** Параметры проблемы о порте: метка для текста, у `decision` ещё `optionId` — инспектор подсвечивает по нему вариант. */
+function portParams(n: WfNode, port: WfPort): Record<string, string> {
+  return n.type === 'decision' ? { port: portLabel(n, port), optionId: port } : { port }
 }
 
 /**
