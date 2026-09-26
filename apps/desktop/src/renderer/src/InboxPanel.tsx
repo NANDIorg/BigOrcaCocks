@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { globalTaskTitle, type Dispatch, type HumanRequest, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
+import { globalTaskTitle, type Dispatch, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
 import { RequestCard, requestKindTitle, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
 import { requestShowcase, requestShowcaseTaskId } from './showcase'
@@ -118,7 +118,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
     select(visible[Math.min(visible.length - 1, Math.max(0, i + delta))].id)
   }
 
-  async function resolve(r: HumanRequest, resolution: RequestResolution): Promise<void> {
+  async function resolve(r: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
     // Следующий — тот, что был ниже (или выше, если решали последний).
     const i = visible.findIndex((x) => x.id === r.id)
     const next = visible[i + 1] ?? visible[i - 1]
@@ -126,7 +126,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
     setNotice(null)
     if (current?.id === r.id) select(next?.id)
     try {
-      const res = await window.orca.requests.resolve(r.id, resolution)
+      const res = await window.orca.requests.resolve(r.id, resolution, images)
       if (res.startError) setNotice(t('shell.app.startError', { title: r.title, error: res.startError }))
     } catch (e) {
       setSent((prev) => {
@@ -222,7 +222,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
                 stage={stageOf(r)}
                 active={open && current?.id === r.id}
                 onSelect={() => setActiveId(r.id)}
-                onResolve={(res) => resolve(r, res)}
+                onResolve={(res, images) => resolve(r, res, images)}
                 onOpenFull={setFull}
                 onOpenTerminal={(taskId) => {
                   onClose()
