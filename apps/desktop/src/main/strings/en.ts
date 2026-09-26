@@ -90,6 +90,10 @@ export default {
   'global.coordinatorAlive': 'the coordinator of this global task is still running — close its terminal first',
   'global.typeRequired': 'choose a task type',
   'global.subtaskTitleEmpty': 'the subtask title cannot be empty',
+  'global.imageNotFound': 'the global task has no image {imageId}',
+  'global.imageFileMissing': 'the file of image {imageId} was not found on disk — remove the image and attach it again',
+  'global.imagesEmpty': 'no images to add',
+  'global.imagesSaveFailed': 'could not save the task images: {reason}',
 
   'column.noneLeft': 'at least one column is required',
   'column.emptyId': 'column #{n}: empty id',

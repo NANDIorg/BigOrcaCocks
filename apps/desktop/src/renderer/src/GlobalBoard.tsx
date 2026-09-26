@@ -253,6 +253,11 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         {g.inbox && <span className="g-chip">{t('global.board.inbox')}</span>}
                         {typeTitle?.(g) && <span className="g-chip task-type-chip" title={t('global.board.type')}>{typeTitle(g)}</span>}
                         {stage && <span className={`g-chip stage ${stage.kind}`} title={stage.title}>{stage.text}</span>}
+                        {g.images && g.images.length > 0 && (
+                          <span className="g-chip images" title={t('global.board.images', { count: g.images.length })} aria-label={t('global.board.images', { count: g.images.length })}>
+                            <Icon.image /> {g.images.length}
+                          </span>
+                        )}
                         {live && <span className="chip live">{t('global.board.live')}</span>}
                         {g.waiting > 0 && <span className="g-chip warn">{t('global.board.waiting', { count: g.waiting })}</span>}
                         {att && att.review > 0 && <span className="g-chip review">{t('global.board.review', { count: att.review })}</span>}

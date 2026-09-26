@@ -5,7 +5,7 @@ import type { ReviewInfo } from '../../shared/ipc'
 import { useT } from './i18n'
 import { ipcErrorMessage } from './ipcError'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageAttachments'
+import { useImageAttachments } from './imageDrafts'
 
 interface Props {
   taskId: string

@@ -5,6 +5,7 @@
  */
 import type { BoardColumn, ColumnKind, HumanRequest, Run, StageChange, StatusChange, Task, TaskPriority } from './types'
 import type { RunGit } from './run-branch'
+import type { RunImage } from './attachments'
 import type { WfStage } from './workflow'
 import { DEFAULT_TASK_PRIORITY, isTaskPriority } from './types.ts'
 import { activeDuration, taskActiveTime } from './active-time.ts'
@@ -93,6 +94,11 @@ export interface GlobalTask {
   coordinatorAgent?: Run['coordinatorAgent']
   /** Уточнения человека при возвратах с проверки в работу, по порядку (`Run.returns`); нет — не возвращали. */
   returns?: GlobalTaskReturn[]
+  /**
+   * Картинки задачи (`Run.images`, копия метаданных, порядок сохранён): превью в карточке и просмотре.
+   * Байты — `window.orca.globalTasks.image(id, imageId)`. Нет — картинок нет или карточка от старого main.
+   */
+  images?: RunImage[]
   /** Итоговая сводка координатора (`Run.summary`); нет — не передавал. */
   summary?: GlobalTaskSummary
   /** Ветка глобальной задачи (`Run.git`, копия); нет — подзадачи сливаются в текущую ветку корня. */
@@ -274,13 +280,14 @@ export interface RunTypeLockInput {
  * поэтому он меняется только до начала работы: карточка в бэклоге, ни разу не была «В работе» (`startedAt`),
  * координатор не запускался и подзадач нет — иначе идущие подзадачи остались бы с ролями и этапами старого типа.
  * «Входящие» — служебная задача без типа.
+ * То же правило — для картинок задачи (`addRunImages` / `removeRunImage`): после начала работы они не меняются.
  */
 export function runTypeLockReason(x: RunTypeLockInput): string | undefined {
   if (x.inbox) return '«Входящие» — служебная задача, у неё нет своего типа'
   if (x.startedAt !== undefined) return 'задача уже была «В работе»'
   if (x.coordinatorPtyId !== undefined) return 'по задаче уже запускался координатор'
   if (x.subtasks > 0) return `у задачи уже есть подзадачи (${x.subtasks})`
-  if (x.statusKind !== 'backlog') return 'тип меняется только, пока задача в бэклоге'
+  if (x.statusKind !== 'backlog') return 'правка возможна только, пока задача в бэклоге'
   return undefined
 }
 
@@ -319,6 +326,7 @@ export function toGlobalTask(
     coordinatorPtyId: run.coordinatorPtyId,
     coordinatorAgent: run.coordinatorAgent,
     ...(run.returns && run.returns.length > 0 ? { returns: run.returns.map((r) => ({ ...r })) } : {}),
+    ...(run.images && run.images.length > 0 ? { images: run.images.map((i) => ({ ...i })) } : {}),
     ...(run.summary ? { summary: { ...run.summary } } : {}),
     ...(run.git ? { git: { ...run.git } } : {}),
     ...(run.statusHistory ? { statusHistory: run.statusHistory.map((h) => ({ ...h })) } : {}),

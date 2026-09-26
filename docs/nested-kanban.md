@@ -31,6 +31,7 @@ needs_input — **вычисляемая** колонка: там карточк
 | `objective` | (было) описание глобальной задачи; для координатора — его цель |
 | `title?` | название карточки; нет — первая строка `objective` (≤ 80 символов), у «Входящих» — `Входящие` (`globalTaskTitle`) |
 | `status?` | id колонки глобального канбана (kind backlog / in_progress / review / done), где стоит карточка. После миграции есть всегда |
+| `images?` | картинки, приложенные человеком при создании/правке задачи: `RunImage {id, mime, ext, bytes, addedAt}[]` (`packages/core/src/attachments.ts`) — **только метаданные**, байты в store и снапшот не кладутся, файлы хранит main (рекомендация: рядом с данными проекта в `userData`, не в worktree). Лимиты `IMAGE_ATTACHMENT_LIMITS` на задачу суммарно. Нет — картинок не было; миграция не нужна |
 | `returns?` | уточнения человека при «Вернуть в работу» с «Проверки», по порядку: `{at, text, images?}[]` (`images` — абсолютные пути приложенных картинок в cwd координатора). `objective` они не меняют — попадают в цель повторного запуска координатора |
 | `summary?` | итоговая сводка координатора `{at, text}` (markdown) из `runs finish --summary`: блок «Что сделал» на «Проверке». Одна, последняя — следующая непустая заменяет |
 | `inbox?` | служебная глобальная задача «Входящие» (одна на проект) |
@@ -306,6 +307,7 @@ interface GlobalTask {
   inbox: boolean
   typeId?: string            // = Run.typeId; нет — «Входящие» или прогон до типов (тип проекта по умолчанию)
   typeTitle?: string         // название типа из снимка Run.taskType; живое — из библиотеки по typeId
+  images?: RunImage[]        // = Run.images (метаданные, копия); нет — картинок нет. Байты — globalTasks.image
   startedAt?: number         // = Run.startedAt; нет — ещё не была «В работе» (или карточка от старого main)
   createdAt: number
   updatedAt: number          // правка карточки
@@ -379,6 +381,43 @@ Renderer (`duration.ts`): `globalTaskDuration(g, 'own' | 'subtasks', now)`, `glo
 (`projects.runType`). Запрещённый случай — ошибка `тип глобальной задачи «…» (run_…) нельзя сменить: <причина>`.
 CLI этой команды нет: координатор тип не меняет.
 
+### Картинки задачи (контракт и реализация backend; renderer — отдельно)
+
+Человек при создании глобальной задачи (`GlobalTaskModal`) вставляет картинки из буфера, как в `CoordinatorModal`.
+Они хранятся вместе с задачей, видны в карточке/просмотре и автоматически уходят координатору.
+
+- **Модель**: `Run.images?: RunImage[]` → `GlobalTask.images?` (`toGlobalTask` копирует метаданные). `RunImage { id, mime, ext, bytes, addedAt }`;
+  байтов в store нет, `id` генерирует main, порядок — по `addedAt`. Файлы — на стороне main рядом с данными проекта
+  (`<userData>/run-images/<projectId>/<runId>/<id>.<ext>`), не в worktree.
+- **Создание**: `create(input, images?)` — картинки **вторым аргументом**, а не полем `GlobalTaskInput` (байты не в JSON-описании; как `coordinator:start`).
+- **Правка**: `addImages` / `removeImage` — пока задача не начата, то же правило, что смена типа (`canChangeRunType`, см. «Смена типа»).
+  После начала работы картинки в задаче не меняются; приложить ещё можно только при запуске координатора (в задаче не сохранится).
+- **Лимиты**: `IMAGE_ATTACHMENT_LIMITS` (8 шт., 10 МБ каждая, 30 МБ всего) на задачу **суммарно** — сохранённые плюс новые; проверка
+  `validateImageAttachments`, «всё или ничего». Формат — по сигнатуре (PNG/JPEG/GIF/WebP).
+- **Координатор**: `startCoordinator` (в том числе повторный запуск) и `returnToWork` передают ему сохранённые картинки задачи
+  и, если есть, `images` вызова `startCoordinator` — одним списком (сохранённые первыми), пути — в промпте (`coordinatorPrompt`);
+  сумма в тех же лимитах, превышение — ошибка запуска.
+- **Реализация (main)**: `apps/desktop/src/main/run-images.ts` — файлы, отдельно от store. Имя файла строится только из `RunImage.id`
+  (его генерирует main, `newId('img')`) и `ext` из белого списка; `projectId`/`runId`/`imageId` из IPC проверяются на `[A-Za-z0-9_-]`,
+  читается только картинка, чьи метаданные есть у **этой** задачи, — path traversal и чужой `imageId` невозможны. Store
+  (`createGlobalTask({images})`, `addRunImages`, `removeRunImage`) проверяет правило «до начала работы» и суммарные лимиты
+  (`assertImageBudget`) и при отказе ничего не меняет; сбой записи файлов откатывает метаданные (при создании — удаляет задачу).
+  Удаление задачи (`globalTasks:remove`) и проекта (`projects:remove`) удаляет папку с файлами.
+- **Запуск координатора**: `startCoordinator` (`main/worker.ts`) читает сохранённые картинки задачи при любом запуске на существующей задаче
+  (первый с карточки, повторный, «Вернуть в работу» — он идёт через `startCoordinator`, и воркфлоу-запуск координатора) и кладёт их в
+  `.orca-attachments/<runId>` cwd координатора (`writeAttachments`), пути — в `coordinatorPrompt`. Вставленные при запуске идут следом;
+  сумма — в тех же лимитах, превышение — ошибка запуска **до** старта агента (`assertImageBudget(…, 'launch')`): молча отбрасывать чьи-то
+  картинки нельзя, человек уберёт лишние. Файл, пропавший с диска, пропускается (запись в лог), иначе задача осталась бы без координатора:
+  после начала работы картинки не правятся. Вставленные при запуске в задаче не сохраняются.
+- **Миграция**: не нужна — поле опциональное, старые снапшоты читаются как «картинок нет» (тест «после рестарта картинки на месте»).
+- **Renderer**: байты для превью — `globalTasks.image` (`blob:` URL); старый preload/main без метода — «перезапустите приложение».
+  Вставка и проверка картинок — общий хук `useImageAttachments` + чистая логика `imagePaste.ts` (её же использует `CoordinatorModal`),
+  миниатюры — `ImageAttachments`. `GlobalTaskModal`: вставка из буфера в описание и кнопка «Добавить изображение»; при создании картинки
+  уходят вторым аргументом `create`, при правке (пока `imagesEditable` = `canChangeRunType`) — `removeImage`, затем `addImages` при сохранении
+  (отмена ничего не меняет); после начала работы сохранённые картинки только показываются. Просмотр — `RunImageGallery` во вкладке «Цель и детали»
+  (клик — `ImageLightbox`), на карточке доски — значок-счётчик. Обёртка `runImagesApi` переводит отсутствие методов и «No handler registered»
+  в `global.stale.images`; старый main, молча потерявший картинки при `create`, определяется по ответу (`imagesLost`).
+
 ### IPC — `window.orca.globalTasks` (активный проект; типы — `apps/desktop/src/shared/ipc.ts`)
 
 | Метод | Канал | Результат | Ошибки |
@@ -387,6 +426,10 @@ CLI этой команды нет: координатор тип не меня�
 | `get(id)` | `globalTasks:get` | `GlobalTask` | `run not found` |
 | `create({title?, description?, status?, priority?, typeId?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана; неизвестный приоритет; тип не найден или недоступен проекту (`Project.taskTypeIds`). Без `typeId` — тип проекта по умолчанию |
 | `update(id, {title?, description?, priority?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название; неизвестный приоритет (карточка не меняется) |
+| `create(input, images?)` | `globalTasks:create` | (то же, плюс картинки — см. «Картинки задачи») | невалидная картинка или превышение лимитов — задача не создаётся |
+| `addImages(id, images)` | `globalTasks:addImages` | `GlobalTask` | лимиты суммарно с уже сохранёнными; формат; задачу править нельзя (`runTypeLockReason`); «Входящие» |
+| `removeImage(id, imageId)` | `globalTasks:removeImage` | `GlobalTask` | нет задачи или картинки; задачу править нельзя |
+| `image(id, imageId)` | `globalTasks:image` | `{mime, data: Uint8Array}` | нет задачи, картинки или файла |
 | `changeType(id, typeId)` | `globalTasks:changeType` | `GlobalTask` | тип не найден или недоступен проекту; тип сменить нельзя (`runTypeLockReason`, см. «Смена типа») |
 | `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |

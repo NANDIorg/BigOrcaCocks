@@ -7,7 +7,7 @@ import { bodyWithoutShowcase } from './showcase'
 import { ipcErrorMessage } from './useAutoSave'
 import { t as tr, useT, type TKey } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageAttachments'
+import { useImageAttachments } from './imageDrafts'
 
 /** Подпись вида запроса на текущем языке. */
 export function requestKindTitle(kind: HumanRequestKind): string {

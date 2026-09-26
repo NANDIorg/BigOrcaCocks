@@ -79,9 +79,12 @@ const api: OrcaApi = {
   globalTasks: {
     list: () => ipcRenderer.invoke('globalTasks:list'),
     get: (id) => ipcRenderer.invoke('globalTasks:get', id),
-    create: (input) => ipcRenderer.invoke('globalTasks:create', input),
+    create: (input, images) => ipcRenderer.invoke('globalTasks:create', input, images),
     update: (id, patch) => ipcRenderer.invoke('globalTasks:update', id, patch),
     changeType: (id, typeId) => ipcRenderer.invoke('globalTasks:changeType', id, typeId),
+    addImages: (id, images) => ipcRenderer.invoke('globalTasks:addImages', id, images),
+    removeImage: (id, imageId) => ipcRenderer.invoke('globalTasks:removeImage', id, imageId),
+    image: (id, imageId) => ipcRenderer.invoke('globalTasks:image', id, imageId),
     move: (id, status) => ipcRenderer.invoke('globalTasks:move', id, status),
     remove: (id, opts) => ipcRenderer.invoke('globalTasks:remove', id, opts),
     tasks: (id) => ipcRenderer.invoke('globalTasks:tasks', id),

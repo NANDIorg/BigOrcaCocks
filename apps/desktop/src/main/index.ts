@@ -19,6 +19,7 @@ import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } 
 import { listRules, writeRule } from './rules'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
+import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
@@ -217,6 +218,7 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
     roles: type.roles,
     typeTitle: type.title,
     agentRules: type.agentRules,
+    runImagesRoot: runImagesRoot(app.getPath('userData')),
     ...(runnableWorkflow(type.workflow) ? { workflow: runnableWorkflow(type.workflow) } : {})
   }
 }
@@ -470,7 +472,7 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
  * с живым dispatch и удаление с подзадачами без cascade. Оставшиеся терминалы подзадач (после `done`
  * dispatch закрыт, а PTY жив) закрываются после удаления.
  */
-function removeGlobalTask(p: { store: TaskStore; root: string }, runId: string, cascade: boolean): { deleted: string; tasks: string[] } {
+function removeGlobalTask(p: { id: string; store: TaskStore; root: string }, runId: string, cascade: boolean): { deleted: string; tasks: string[] } {
   const { store } = p
   const run = store.getRun(runId)
   if (run?.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
@@ -478,6 +480,8 @@ function removeGlobalTask(p: { store: TaskStore; root: string }, runId: string, 
   }
   const ptyIds = store.snapshot().dispatches.filter((d) => store.getTask(d.taskId)?.runId === runId && isAlive(d.ptyId)).map((d) => d.ptyId)
   const result = store.deleteGlobalTask(runId, { cascade })
+  // Картинки задачи принадлежат ей: без задачи они никому не нужны (файлы лежат вне worktree и репозитория).
+  removeRunImagesDir(runImagesRoot(app.getPath('userData')), p.id, runId)
   ptyIds.forEach((id) => killPty(id))
   // Worktree ветки фичи больше некому убрать; сама ветка остаётся — в ней может быть работа. Грязный — не трогаем.
   if (run?.git?.worktree) removeRunWorktree(p.root, run.git.worktree)
@@ -716,7 +720,11 @@ function registerIpc(): void {
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  handle('projects:remove', (_e, id: string) => projects.remove(id))
+  handle('projects:remove', (_e, id: string) => {
+    projects.remove(id)
+    // Картинки глобальных задач проекта лежат в userData, а не в репозитории — их удаляем вместе с проектом.
+    removeRunImagesDir(runImagesRoot(app.getPath('userData')), id)
+  })
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
@@ -757,11 +765,14 @@ function registerIpc(): void {
   // Глобальные задачи активного проекта (docs/nested-kanban.md). Изменения — в board:changed.
   handle('globalTasks:list', () => (projects.active() ? projects.activeStore().listGlobalTasks() : []))
   handle('globalTasks:get', (_e, id: string) => projects.activeStore().getGlobalTask(id))
-  handle('globalTasks:create', (_e, input: GlobalTaskInput) => {
+  handle('globalTasks:create', (_e, input: GlobalTaskInput, images?: unknown) => {
     const p = resolveProject()
     const { typeId, ...rest } = input ?? {}
+    // Данные из renderer не доверенные: картинки проверяются по сигнатуре и лимитам до создания — невалидная задачу не создаёт.
+    const valid = validateImageAttachments(images)
     // Тип проверяется до создания: недоступный проекту — ошибка, задача не создаётся.
-    return p.store.createGlobalTask({ ...rest, type: projects.runType(p.id, typeof typeId === 'string' && typeId ? typeId : undefined) })
+    const type = projects.runType(p.id, typeof typeId === 'string' && typeId ? typeId : undefined)
+    return createTaskWithImages(p.store, runImagesRoot(app.getPath('userData')), p.id, { ...rest, type }, valid)
   })
   handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
   handle('globalTasks:changeType', (_e, id: string, typeId: string) => {
@@ -769,6 +780,19 @@ function registerIpc(): void {
     const p = resolveProject()
     // Тип — из библиотеки проекта, как при создании: недоступный проекту — ошибка, тип не меняется.
     return p.store.changeGlobalTaskType(id, projects.runType(p.id, typeId))
+  })
+  // Картинки задачи: до начала работы (правило смены типа), лимиты — суммарно на задачу. Файлы — userData/run-images.
+  handle('globalTasks:addImages', (_e, id: string, images?: unknown) => {
+    const p = resolveProject()
+    return addTaskImages(p.store, runImagesRoot(app.getPath('userData')), p.id, id, validateImageAttachments(images))
+  })
+  handle('globalTasks:removeImage', (_e, id: string, imageId: string) => {
+    const p = resolveProject()
+    return removeTaskImage(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId)
+  })
+  handle('globalTasks:image', (_e, id: string, imageId: string) => {
+    const p = resolveProject()
+    return loadTaskImage(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId)
   })
   handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
   handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>

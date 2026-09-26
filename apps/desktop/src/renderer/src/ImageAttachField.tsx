@@ -8,7 +8,7 @@ import {
   imageFilesFromDrop,
   useAttachmentsSupport,
   type ImageAttachments
-} from './imageAttachments'
+} from './imageDrafts'
 
 interface Props {
   attachments: ImageAttachments

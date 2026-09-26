@@ -40,6 +40,7 @@ export const Icon = {
   branch: (): React.JSX.Element => <svg {...base}><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11.5 8.5" /></svg>,
   close: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 6l12 12M18 6L6 18" /></svg>,
   more: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth={3} /></svg>,
+  image: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-8 8" /></svg>,
   chevron: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M9 6l6 6-6 6" /></svg>,
   up: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 15l6-6 6 6" /></svg>,
   down: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 9l6 6 6-6" /></svg>

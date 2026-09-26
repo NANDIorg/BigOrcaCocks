@@ -28,7 +28,8 @@ import { useT } from './i18n'
 import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
-import { GlobalTaskModal } from './GlobalTaskModal'
+import { GlobalTaskModal, type GlobalTaskModalInput } from './GlobalTaskModal'
+import { idsToRemove, imagesLost, runImagesApi } from './runImages'
 import { changeTypeApi } from './globalTypeChange'
 import { ReturnGlobalModal } from './ReturnGlobalModal'
 import { AcceptGlobalModal } from './AcceptGlobalModal'
@@ -562,7 +563,7 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function saveGlobalTask(input: { title: string; description: string; status?: string; priority?: TaskPriority; typeId?: string }): Promise<void> {
+  async function saveGlobalTask(input: GlobalTaskModalInput): Promise<void> {
     if (globalModal?.mode === 'edit') {
       const cur = globals.find((g) => g.id === globalModal.id)
       if (!cur) throw new Error(t('shell.app.globalNotFound'))
@@ -573,14 +574,26 @@ export function App(): React.JSX.Element {
       if (Object.keys(patch).length > 0) await window.orca.globalTasks.update(cur.id, patch)
       // Тип модалка присылает, только пока его можно сменить; неизменённый не трогаем.
       if (input.typeId !== undefined && input.typeId !== cur.typeId) await changeTypeApi(window.orca)(cur.id, input.typeId)
+      // Картинки: сначала удаления (освобождают лимит), затем добавление. Уже удалённые прошлой попыткой пропускаем.
+      const remove = idsToRemove(input.removeImageIds ?? [], cur.images)
+      if (remove.length > 0 || input.images?.length) {
+        const imagesApi = runImagesApi(window.orca)
+        for (const id of remove) await imagesApi.removeImage(cur.id, id)
+        if (input.images?.length) await imagesApi.addImages(cur.id, input.images)
+      }
     } else {
-      await window.orca.globalTasks.create({
+      const images = input.images ?? []
+      // Старый preload без картинок вторым аргументом их просто не передаст — не создаём задачу впустую.
+      if (images.length > 0) runImagesApi(window.orca)
+      const created = await window.orca.globalTasks.create({
         title: input.title || undefined,
         description: input.description || undefined,
         status: input.status,
         ...(input.priority !== undefined ? { priority: input.priority } : {}),
         ...(input.typeId !== undefined ? { typeId: input.typeId } : {})
-      })
+      }, images.length > 0 ? images : undefined)
+      // Старый main принимает create без картинок и молча их теряет: задача создана — говорим об этом прямо.
+      if (imagesLost(created, images.length)) alert(t('global.stale.imagesLost'))
     }
     setGlobalModal(null)
   }

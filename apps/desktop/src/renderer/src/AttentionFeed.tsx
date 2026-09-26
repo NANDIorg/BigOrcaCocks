@@ -10,7 +10,7 @@ import { useNow } from './useNow'
 import { isTypingTarget } from './hotkeys'
 import { useT } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageAttachments'
+import { useImageAttachments } from './imageDrafts'
 import { onFocusFeed, onRevealInFeed, revealOnBoard, scrollBehavior } from './feedLink'
 import {
   ATTENTION_COLOR, ATTENTION_GLYPH, attentionCountTitle, attentionLabel, attentionSummary, defaultCollapsed, feedItemOfTask, questionAnswerText, questionAsRequest,

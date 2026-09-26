@@ -106,7 +106,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, workflowScope?, stage?, stageHistory?, stageInput?, stageTasksDoneAt?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, workflowScope?, stage?, stageHistory?, stageInput?, stageTasksDoneAt?, statusHistory?, coordinatorSessions?, git?, images?: RunImage[], ... }` — прогон
   (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
   `git: RunGit {branch, base, worktree?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»;
   `workflowScope: 'run'` — воркфлоу идёт по глобальной задаче: позиция `stage`, история входов в этапы `stageHistory` (с коммитом входа и сводкой закрытия),
@@ -730,6 +730,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ### Изображения в цели координатора
 
+У глобальной задачи картинки могут быть сохранены заранее: `Run.images?: RunImage[]` (только метаданные `{id, mime, ext, bytes, addedAt}`, файлы — в `userData` рядом с данными проекта, не в worktree; байты в store/снапшот не попадают), `GlobalTask.images?`, IPC `globalTasks:create(input, images?)` / `addImages` / `removeImage` / `image` — контракт в `docs/nested-kanban.md` → «Картинки задачи». При запуске координатора на такой задаче сохранённые картинки и вставленные в момент запуска идут одним списком (сохранённые первыми) по тому же механизму ниже, в пределах тех же лимитов. Сумма выше лимитов — ошибка запуска до старта агента; `globalTasks:remove` и `projects:remove` удаляют файлы.
+
 Сценарий: в модалке «Запустить координатора» (`renderer/src/CoordinatorModal.tsx`) человек вставляет
 скриншот в поле «Цель» через ⌘V/Ctrl+V — появляется миниатюра с крестиком; вставок может быть несколько,
 текст вставляется как обычно (если в буфере есть и текст, и картинка — вставляются оба). Цель без текста
@@ -1252,7 +1254,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
   `projects:add(typeId?, path?)` (без `path` — диалог выбора папки, отмена → `null`),
   `projects:detectTaskType(path?)` → `TaskTypeDetection {path, typeId, reason} | null` (без `path` — диалог; проект не добавляет);
-  `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `globalTasks:changeType(id, typeId)` → `GlobalTask`
+  `globalTasks:create(input, images?)` принимает `typeId?` (недоступный проекту — ошибка) и картинки вторым аргументом (`ImageAttachmentInput[]`, лимиты — `IMAGE_ATTACHMENT_LIMITS` на задачу суммарно); `globalTasks:addImages(id, images)` / `globalTasks:removeImage(id, imageId)` → `GlobalTask` (только до начала работы, правило `canChangeRunType`) и `globalTasks:image(id, imageId)` → `{mime, data: Uint8Array}` — картинки глобальной задачи, контракт и реализация (`main/run-images.ts`: файлы `<userData>/run-images/<projectId>/<runId>/<imageId>.<ext>`) в `docs/nested-kanban.md` → «Картинки задачи»; `startCoordinator`/`returnToWork` передают координатору сохранённые картинки задачи вместе с вставленными при запуске; `globalTasks:changeType(id, typeId)` → `GlobalTask`
   (смена типа до начала работы: `TaskStore.changeGlobalTaskType`, правило — `canChangeRunType`, см. `docs/nested-kanban.md`); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id, decision?)` → `GlobalTask` (`decision` — решение при «Подтвердить» у прогона с воркфлоу) и `globalTasks:returnToWork(id, text, cols, rows, images?)` → `ptyId` («Проверка», `docs/nested-kanban.md`; `images?: ImageAttachmentInput[]` — картинки к уточнению, см. «Изображения при возврате в работу»); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution, images?)` (`docs/human-requests.md`; `images` — картинки к «Уточнить»/«Вернуть»); `pty:spawn`;
@@ -2107,7 +2109,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 - **Остаётся русским при английском интерфейсе:** данные человека; служебные тексты журнала (эскалации и их
   причины от исполнителя воркфлоу — журнал задачи читает координатор; вопросы и сводки агенты пишут на языке
   директивы `# Language`); ошибки store из core (`task not found` —
-  английские, отказы store вроде «тип меняется только, пока задача в бэклоге» — русские: их же получает CLI);
+  английские, отказы store вроде «правка возможна только, пока задача в бэклоге» — русские: их же получает CLI);
   технические детали ошибок обновления macOS/Windows и сообщения валидации формы данных, которые UI не посылает.
 
 **Добавить строку:** ключ в `i18n/ru/<область>.ts` и тот же ключ в `i18n/en/<область>.ts`, в компоненте —
@@ -2261,6 +2263,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
 ## Грабли разработки
+
+- Два параллельных PR добавили в `renderer/src/` файлы, различающиеся только регистром: компонент `ImageAttachments.tsx`
+  и модуль `imageAttachments.ts`. На macOS и Windows файловая система регистр не различает: `import './ImageAttachments'`
+  нашёл `.ts` вместо `.tsx`, typecheck упал с TS1149/TS1261, а сборка у пользователей подхватила бы не тот файл. Модуль
+  переименован в `imageDrafts.ts`. Не заводи файлы, чьи имена совпадают без учёта регистра, — даже с разным расширением.
 
 - Orca сливал подзадачи в **текущую ветку корня**, а root был открыт на `master`: две фичи ушли прямо в `master` и
   перемешались (правило «открой в Orca worktree фичи» в CLAUDE.md и `git-flow.md` агенты не могли выполнить — ветку корня

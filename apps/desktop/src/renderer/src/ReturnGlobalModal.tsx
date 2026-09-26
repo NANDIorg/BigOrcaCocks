@@ -5,7 +5,7 @@ import { ipcErrorMessage } from './useAutoSave'
 import { isRunWorkflow, returnHint, reviewErrorMessage } from './globalReview'
 import { useT } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageAttachments'
+import { useImageAttachments } from './imageDrafts'
 
 interface Props {
   global: GlobalTask
