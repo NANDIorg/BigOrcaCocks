@@ -1,7 +1,7 @@
 import type React from 'react'
 import {
   WF_PORTS, wfNodeTitle, wfWorkRoleIds,
-  type BoardColumn, type Role, type WfCondition, type WfNode, type WfOutcome, type WfSubflow, type WfValidation, type Workflow
+  type BoardColumn, type Role, type WfCondition, type WfNode, type WfPort, type WfSubflow, type WfValidation, type Workflow
 } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import { WF_SUBTASK_FORBIDDEN_TYPES, issueTargets, removeSelected, wfOutcomeLabel, type WfSelection } from './workflowEdit'
@@ -506,7 +506,7 @@ function PortSelect({ workflow, nodeId, nodeType, outcome, onChange }: {
   workflow: Workflow
   nodeId: string
   nodeType: WfNode['type']
-  outcome: WfOutcome
+  outcome: WfPort
   onChange(wf: Workflow): void
 }): React.JSX.Element {
   const t = useT()

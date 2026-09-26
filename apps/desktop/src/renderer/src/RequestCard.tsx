@@ -20,10 +20,11 @@ export const REQUEST_KIND_TITLE: Record<HumanRequestKind, string> = {
   get question() { return requestKindTitle('question') },
   get answer() { return requestKindTitle('answer') },
   get escalation() { return requestKindTitle('escalation') },
-  get approval() { return requestKindTitle('approval') }
+  get approval() { return requestKindTitle('approval') },
+  get decision() { return requestKindTitle('decision') }
 }
 
-const KIND_ICON: Record<HumanRequestKind, string> = { question: '❓', answer: '📄', escalation: '⚠', approval: '✋' }
+const KIND_ICON: Record<HumanRequestKind, string> = { question: '❓', answer: '📄', escalation: '⚠', approval: '✋', decision: '🔀' }
 
 /** Действия карточки для горячих клавиш Инбокса (InboxPanel): вызываются на выбранной карточке. */
 export interface RequestCardHandle {

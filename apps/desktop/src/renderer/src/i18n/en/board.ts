@@ -120,6 +120,7 @@ export default {
   'stats.kind.answer': 'answers {n}',
   'stats.kind.escalation': 'escalations {n}',
   'stats.kind.approval': 'decisions {n}',
+  'stats.kind.decision': 'branch choices {n}',
   'stats.humanTotal': 'Requests to you {n}: {kinds}',
   'stats.humanPending': 'awaiting reply {n}',
   'stats.humanCancelled': 'cancelled {n}',

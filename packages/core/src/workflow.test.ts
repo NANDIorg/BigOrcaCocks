@@ -7,7 +7,7 @@ import {
   WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, WF_PORTS, defaultWorkflow, defaultWorkRole, legacyDefaultWorkflow, legacyPipelineWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, migrateWorkflowReport, nextStage, nextRunStage, startRunStage, wfNodeTitle, pipelineWorkflow,
   startStage, stageAction, runStageAction, validateWorkflow, stableJson, wfWorkStage, wfWorkRoleIds, describeWorkflow, WF_ISSUE_TEXTS,
   WF_GIT_OPERATIONS, WF_GIT_FIELD_USE, wfGitSlug, wfGitVars, renderGitTemplate, isValidGitBranchName, isValidGitRemoteName,
-  defaultSubflow, WF_SUBFLOW_PREFIX, toTaskScopeWorkflow
+  defaultSubflow, WF_SUBFLOW_PREFIX, toTaskScopeWorkflow, wfPorts, WF_DECISION_OPTION_ID
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfSubflow, WfValidation, Workflow } from './workflow.ts'
 
@@ -104,6 +104,48 @@ describe('defaultWorkflow', () => {
     for (const n of wf.nodes) {
       assert.deepEqual(wf.edges.filter((e) => e.from === n.id).map((e) => e.outcome).sort(), [...WF_PORTS[n.type]].sort(), n.id)
     }
+  })
+})
+
+describe('wfPorts: порты ноды', () => {
+  it('у фиксированных типов — WF_PORTS, у decision — id вариантов в их порядке', () => {
+    for (const type of Object.keys(WF_PORTS) as WfNode['type'][]) {
+      if (type === 'decision') continue
+      assert.deepEqual(wfPorts({ id: 'n', x: 0, y: 0, type } as WfNode), WF_PORTS[type], type)
+    }
+    assert.deepEqual(WF_PORTS.decision, [])
+    const decision: WfNode = {
+      id: 'd', x: 0, y: 0, type: 'decision', question: 'Нужен ли дизайн?', roleId: 'analyst',
+      options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет', description: 'сразу в реализацию' }, { id: 'opt_3', label: 'Не знаю' }]
+    }
+    assert.deepEqual(wfPorts(decision), ['yes', 'no', 'opt_3'])
+    // Граф в обход валидации (варианты не массив) — портов нет, а не исключение.
+    assert.deepEqual(wfPorts({ ...decision, options: undefined } as unknown as WfNode), [])
+  })
+
+  it('маска id варианта: латиница в нижнем регистре, цифры, _ и -, до 32 символов', () => {
+    for (const id of ['yes', 'opt_3', 'a-b', '0', 'x'.repeat(32)]) assert.ok(WF_DECISION_OPTION_ID.test(id), id)
+    for (const id of ['', 'Yes', 'да', '_a', '-a', 'a b', 'x'.repeat(33)]) assert.ok(!WF_DECISION_OPTION_ID.test(id), id)
+  })
+
+  it('decision пока заглушка: движок встаёт на ноде, а не проходит развилку', () => {
+    const wf: Workflow = {
+      version: WORKFLOW_VERSION,
+      nodes: [
+        { id: 'start', x: 0, y: 0, type: 'start' },
+        { id: 'd', x: 0, y: 0, type: 'decision', question: 'Нужен ли дизайн?', roleId: 'developer', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] },
+        { id: 'end', x: 0, y: 0, type: 'end' }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'd' },
+        { id: 'e2', from: 'd', outcome: 'yes', to: 'end' },
+        { id: 'e3', from: 'd', outcome: 'no', to: 'end' }
+      ]
+    }
+    assert.equal(runStageAction(wf, { nodeId: 'd', visits: { d: 1 } }).type, 'blocked')
+    // Порты decision уже читаются через wfPorts: рёбра вариантов не лишние.
+    const codes = validateWorkflow(wf, ctx).errors.map((e) => e.code)
+    assert.ok(!codes.includes('extraOutcome') && !codes.includes('missingOutcome'), codes.join(', '))
   })
 })
 

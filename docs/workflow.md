@@ -560,6 +560,211 @@ start → git(create_branch, branch="feature/{taskId}-{slug}") → work → … 
 … → work → git(commit, message="feat: {title}") → git(push) → end        # без мержа, ветка на remote
 ```
 
+### Нода «Решение ИИ» (`decision`, контракт)
+
+Развилка графа глобальной задачи, где ветку выбирает агент: отвечает на вопрос по смыслу задачи («Нужен ли дизайн?» →
+«Да» — в «Дизайн», «Нет» — в «Реализацию»). Не может — выбирает человек в Инбоксе из тех же вариантов. Решение и
+обоснование остаются в истории этапов (`Run.stageHistory`), их видно в `workflow show --run` и в UI.
+
+> **Статус.** Раздел — контракт: типы, коды проблем и тексты уже в коде (`packages/core/src/workflow.ts`, `types.ts`,
+> `store.ts`), а движок, валидация полей, команды и UI ещё нет. Пока `stageAction` для `decision` отвечает заглушкой
+> `blocked` ««Решение ИИ» пока не поддерживается», а валидация проверяет только порты (через `wfPorts`). Команды ниже
+> в HELP CLI появятся вместе с реализацией. Формат графа тот же, `WORKFLOW_VERSION` не меняется (как у `ask` и `git`):
+> старое приложение отвергнет граф с нодой ошибкой «неизвестный тип», но данных не испортит. Миграции состояния нет:
+> все новые поля необязательные.
+
+**Нода** — `{type: 'decision', question, roleId, options, instructions?}`:
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| `question` | string, обязательно | Вопрос агенту: «Нужен ли дизайн для этой задачи?» |
+| `roleId` | string, обязательно | Роль агента, который решает. Проверяется как у `gate` (`checkRole`: роль есть, не служебная, агент включён) |
+| `options` | `WfDecisionOption[]`, 2–8 | Варианты — по одному порту и ребру на каждый |
+| `instructions` | string, необязательно | Как решать: критерии. В промпт агента — разделом «Как решать» |
+
+`WfDecisionOption {id, label, description?}`: `id` — порт (`WfEdge.outcome`), по маске `WF_DECISION_OPTION_ID`
+(`/^[a-z0-9][a-z0-9_-]{0,31}$/`), уникален в ноде и после создания не меняется: он входит в `edge.id` и CSS-класс
+порта, а переименование `label` рёбра не ломает. Редактор создаёт id один раз (пресет «Да / Нет» — `yes` / `no`,
+новые — `opt_<n>`) и не даёт его править. `label` — что видят агент и человек, `description` — пояснение (промпт
+агента, подсказка кнопки в Инбоксе). Лимиты — `WF_DECISION_MIN_OPTIONS` (2) и `WF_DECISION_MAX_OPTIONS` (8): больше не
+помещается на порты ноды. Колонки (`column`) у ноды нет.
+
+```json
+{ "id": "need_design", "type": "decision", "x": 400, "y": 120, "title": "Нужен ли дизайн?", "roleId": "analyst",
+  "question": "Нужен ли дизайн для этой задачи?",
+  "options": [{ "id": "yes", "label": "Да", "description": "есть новый экран или заметная правка UI" },
+              { "id": "no", "label": "Нет" }] }
+```
+
+Рёбра: `{"id": "e_need_design_yes", "from": "need_design", "outcome": "yes", "to": "design"}` и так же для `no`.
+
+**Порты.** `WfPort = string` — исход любого ребра: фиксированный `WfOutcome` или id варианта. `WfEdge.outcome`,
+параметр `outcome` у `nextStage` / `nextRunStage` и ключи `WfStageInfo.next` — `WfPort`; `StageChange.outcome` —
+`WfPort | 'restart'`. Порты ноды читаются **только** через `wfPorts(node)`: у `decision` — id вариантов в их порядке
+(варианты не массив — пусто), у остальных — `WF_PORTS[type]`. В `WF_PORTS` у `decision` пустой список: ключ нужен,
+по ключам таблицы валидация узнаёт известные типы. `WfOutcome` остаётся там, где набор исходов закрыт
+(`WF_OUTCOME_LABELS`, справка типов); подпись порта `decision` — `label` варианта.
+
+**Валидация** (`validateWorkflow`, тексты — `WF_ISSUE_TEXTS`, в renderer — `config.wf.issue.*` ru/en). Порты
+проверяются общим шагом по `wfPorts`: нет ребра варианта — `missingOutcome` (`port` — метка варианта), ребро с чужим
+id — `extraOutcome`, два ребра одного варианта — `duplicateOutcome`. Свои коды:
+
+| Код | Уровень | Когда | Параметры |
+|---|---|---|---|
+| `decisionNoQuestion` | ошибка | пустой `question` | `node` |
+| `decisionNoRole` | ошибка | нет `roleId`; есть — дальше общий `checkRole` (`roleMissing` / `roleService` / `roleAgentOff`) | `node` |
+| `decisionOptionsNotList` | ошибка | `options` не массив объектов | `node` |
+| `decisionTooFewOptions` | ошибка | вариантов меньше 2 | `node`, `count`, `min` |
+| `decisionTooManyOptions` | ошибка | вариантов больше 8 | `node`, `count`, `max` |
+| `decisionOptionBadId` | ошибка | id не по маске | `node`, `option` (id) |
+| `decisionOptionDuplicateId` | ошибка | id повторяется | `node`, `option` |
+| `decisionOptionNoLabel` | ошибка | пустая метка | `node`, `option` |
+| `subflowDecisionNotAllowed` | ошибка | нода в пути подзадачи (`scope: 'subtask'`) | `node` |
+| `decisionSameTarget` | предупреждение | все варианты ведут в одну ноду | `node` |
+| `decisionDuplicateLabel` | предупреждение | одинаковые метки (без учёта регистра и пробелов по краям) | `node`, `label` |
+
+В `stopsLoop` (предупреждение `endlessLoop`) нода не входит: агент может выбирать возврат бесконечно, ограничивает
+это `condition attempts`. `visits` считает и заходы в `decision`. Шаблоны нод (`WfNodeTemplate`): `decision`
+шаблонизируется, образец для проверки строится с ребром на каждый вариант.
+
+**Движок.** Нода — реальная позиция глобальной задачи (`Run.stage`), `nextStage` её насквозь не проходит.
+`stageAction` (новое действие `WfAction {type: 'create_decision', nodeId, roleId}`):
+
+| Контекст | Действие |
+|---|---|
+| `scope: 'run'`, роль задана и есть в проекте (`ctx.roleIds`) | `create_decision` |
+| `scope: 'run'`, нет роли | `blocked`: `нода «<название>»: не выбрана роль, которая выбирает ветку` |
+| `scope: 'run'`, роли нет в проекте | `blocked`: `нода «<название>»: нет роли «<id>» в проекте` |
+| `scope: 'subtask'` | `blocked`: `нода «<название>»: «Решение ИИ» недоступно в пути подзадачи` |
+| без `scope` (граф по подзадачам: «Входящие» и прогоны без снимка, `toTaskScopeWorkflow`) | `blocked`: `нода «<название>»: «Решение ИИ» работает только в воркфлоу глобальной задачи` — ветку не угадываем |
+
+По `create_decision` main создаёт **одну** задачу-решатель роли ноды и запускает её воркера. Задача помечена
+существующим `Task.gateFor {runId, nodeId}` — всё, что исключает «проверки» из подзадач этапа (`stageTasks`,
+`task_ready`, `taskEngine`, уведомления, статистика, `worker_done` для координатора), действует само; тип ноды
+определяется по графу. Повтор эффекта после рестарта идемпотентен: задача этого захода (`gateFor` + заход) и
+pending-запрос не дублируются. Колонка карточки на ноде — «В работе»; при фоллбэке её поднимает в «Нужен ответ»
+pending-запрос прогона. Роли нет или она служебная — `workflow_blocked` (ошибка настройки).
+
+Агент получает: вопрос, варианты (`id — метка — описание`), цель глобальной задачи, сводки прошлых этапов, пройденный
+путь по графу (из `Run.stageHistory`: этап, заход, исход, прошлые решения), «Как решать», ветку и базу (только чтение).
+Правила: код не менять, выбрать ровно один вариант командой decision choose с обоснованием; не уверен — decision
+escalate; последней командой — `done`.
+
+**Решение — `StageDecision`** (`packages/core/src/types.ts`) — пишется в запись `Run.stageHistory` **ноды `decision`**
+(последнюю запись с её `nodeId`), когда граф уходит из неё:
+
+```ts
+interface StageDecision {
+  optionId: string            // WfDecisionOption.id
+  label: string               // метка на момент решения
+  reason?: string             // обоснование; у агента обязательно; ≤ DECISION_REASON_LIMIT (4000)
+  by: 'agent' | 'human'
+  fallback?: 'unsure' | 'no_answer' | 'start_failed'   // только by: 'human' — почему решал человек
+  agentNote?: string          // комментарий агента, передавшего решение (decision escalate --reason)
+}
+```
+
+`StageChange.decision?: StageDecision`. Двигает граф `TaskStore.advanceRunStage(runId, optionId, opts)`; решение
+передаётся в `RunStageOptions.chosen`, `moveRunStage` кладёт его в запись ноды. Следующая запись (вход в целевую
+ноду) получает `outcome = optionId`, событие `stage_changed` — тот же `outcome`. Текст для следующего этапа — в уже
+существующем `RunStageOptions.decision` (попадает в `Run.stageInput` и `stage_started.decision`, обрезается как
+`eventText`): `«<вопрос>» → <метка>. <обоснование>`; у решения человека — `«<вопрос>» → <метка> (решил человек). <обоснование>`.
+`fallback`: `unsure` — агент сам передал решение (decision escalate); `no_answer` — сдал `done` без выбора;
+`start_failed` — воркер не запустился. Воркер вышел без `done` (упал) — не фоллбэк, а штатная эскалация с
+«Перезапустить». Таймаута нет.
+
+История прогона после решения агента:
+
+```json
+[
+  { "nodeId": "work", "title": "Анализ", "at": 1790000000000, "visit": 1, "summary": "…" },
+  { "nodeId": "need_design", "title": "Нужен ли дизайн?", "at": 1790000100000, "outcome": "next", "from": "work", "visit": 1,
+    "decision": { "optionId": "yes", "label": "Да", "reason": "Новый экран настроек — нужен макет", "by": "agent" } },
+  { "nodeId": "design", "title": "Дизайн", "at": 1790000200000, "outcome": "yes", "from": "need_design", "visit": 1 }
+]
+```
+
+Решение человека после decision escalate: `"decision": {"optionId": "no", "label": "Нет", "reason": "дизайн уже есть в
+Figma", "by": "human", "fallback": "unsure", "agentNote": "Не ясно, есть ли готовый макет"}`.
+
+**Фоллбэк — запрос `decision`** (`HumanRequestKind`, `HUMAN_REQUEST_KINDS`). Запрос уровня прогона, без задачи
+(как approval ноды `human`):
+
+| Поле `HumanRequest` | Значение |
+|---|---|
+| `kind` | `decision` |
+| `runId`, `nodeId` | прогон и нода `decision`; `taskId` нет |
+| `title` | вопрос ноды |
+| `body` | markdown: вопрос, варианты с описаниями, комментарий агента, контекст (сводки этапов, ветка) |
+| `options` | варианты ноды: `RequestOption {id, label, hint: description}` |
+| `fallback` | `unsure` / `no_answer` / `start_failed` — уходит в `StageDecision.fallback` |
+| `agentNote` | комментарий агента (`decision escalate --reason`) — уходит в `StageDecision.agentNote` |
+
+- Создаёт `TaskStore.requestRunDecision(runId, {nodeId, title, body?, options, fallback, agentNote?}): HumanRequest`;
+  повторный вызов при pending-запросе `kind === 'decision'` с тем же `nodeId` возвращает его (один запрос на заход).
+- Решается существующим действием `answer`: `REQUEST_ACTIONS.decision = ['answer']`, `resolution.optionId`
+  обязателен и должен быть среди `options`, `resolution.text` — необязательное обоснование человека. Ошибки
+  `resolveRequest`: `запрос <id>: выбери вариант — optionId обязателен`, `варианта «<x>» у запроса <id> нет`.
+  CLI `request resolve --request <id> --option <id|метка> [--text "обоснование"]`, IPC `requests:resolve` и
+  `RequestResolution` не меняются.
+- После решения — `request_resolved {runId, kind: 'decision', nodeId, action: 'answer', requestId, optionId, decision?}`
+  (`decision` — обоснование, обрезанное как у approval); main двигает граф с `chosen {…, by: 'human', fallback, agentNote}`
+  и закрывает задачу-решатель.
+- Граф ушёл с ноды иначе (глобальную задачу закрыли, вернули руками) — pending-запрос отменяется (`cancelled`).
+
+**Команды агента** (сокет `decision.choose`, `decision.escalate`; оформление в HELP — вместе с реализацией):
+
+decision choose --task <id> --option <id|метка> --reason "..."
+
+- Что делает: выбирает вариант и сразу двигает граф по ребру варианта; решение с `by: 'agent'` — в историю. Если
+  воркер уже сдал `done` — закрывает задачу-решатель. `--task` — из `params.task`, иначе задача запуска (`r.taskId`);
+  при `r.dispatchId` запуск должен принадлежать этой задаче. `--option` — id варианта, иначе метка без учёта регистра;
+  в CLI флаг повторяемый, в сокет приходит массив — берётся одно значение (`singleOption`), несколько — ошибка.
+- Ответ: `{runId, nodeId, optionId, label, to}` — `to` — нода, куда ушёл граф.
+- `ProjectDeps.decide(taskId: string, option: string, reason: string): {runId: string; nodeId: string; optionId: string; label: string; to: string}`.
+- Ошибки (граф не трогается):
+  - `--task, --option и --reason обязательны`;
+  - `--option: нужен один вариант, а не несколько`;
+  - `обоснование длиннее 4000 символов — сократи --reason`;
+  - `задача <id> не выбирает ветку — decision choose только для задачи ноды «Решение ИИ»`;
+  - `запуск <dispatch> не относится к задаче <id>`;
+  - `решение по задаче <id> уже принято или передано человеку` — граф ушёл с ноды, это не последняя задача захода или
+    уже есть pending-запрос `decision`;
+  - `нет варианта «<x>» — допустимы: <id> (<метка>), …`.
+
+decision escalate --task <id> --reason "..."
+
+- Что делает: передаёт решение человеку — запрос `decision` с теми же вариантами, `fallback: 'unsure'`,
+  `agentNote = reason`. Граф стоит на ноде до ответа человека. Повтор возвращает тот же запрос.
+- Ответ: `{requestId}`.
+- `ProjectDeps.escalateDecision(taskId: string, reason: string): {requestId: string}`.
+- Ошибки: `--task и --reason обязательны`; `обоснование длиннее 4000 символов — сократи --reason`; «не выбирает
+  ветку», «не относится к задаче», «уже принято» — как у decision choose (повтор при уже созданном запросе ошибкой не
+  считается).
+
+«Принять» / «Вернуть» (IPC `review:accept|reject`, CLI `review accept|reject`) по задаче-решателю отвергаются:
+`задача <id> выбирает ветку ноды «<название>» — используй decision choose, а не review`. Иначе граф пошёл бы по
+несуществующему исходу `accept`.
+
+**`workflow show`.** Этап `decision` в `stages` (`WfStageInfo`: `roleId`, `instructions`, новые `question`, `options`):
+
+```json
+{ "id": "need_design", "type": "decision", "title": "Нужен ли дизайн?", "roleId": "analyst",
+  "question": "Нужен ли дизайн для этой задачи?",
+  "options": [{ "id": "yes", "label": "Да", "description": "есть новый экран или заметная правка UI" }, { "id": "no", "label": "Нет" }],
+  "next": { "yes": "Дизайн (design)", "no": "Реализация (impl)" } }
+```
+
+С `--run` у глобальной задачи на ноде `decision` текущий `stage` (`RunStageInfo`) содержит `question` и `options`, а
+ответ — новое поле `history`: последние ≤ 50 записей `Run.stageHistory` в виде
+`{nodeId, title?, visit?, at, outcome?, from?, decision?}` (без `commit` и `summary`). `types list` у этапа `decision`
+отдаёт `options: ["yes", "no"]` (id вариантов).
+
+**События не добавляются.** Координатор на ноде ждёт, как на `gate`: `worker_done` задачи с `gateFor` он уже
+пропускает, `request_created` / `request_resolved` с `kind: decision` — тоже «ничего не делай». Решение он видит в
+`stage_started.decision` следующей «Работы» и в `stage_changed.outcome`. `EVENT_TYPES`, списки `--types` в skills и
+HELP `check` не меняются.
+
 ### Показ человеку на «Работе»
 
 У ноды `work` два необязательных поля (формат графа тот же, `WORKFLOW_VERSION` не менялся):

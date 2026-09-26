@@ -26,7 +26,7 @@ const tokens = { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 }
 function wait(p: Partial<TaskWaitStats> = {}): TaskWaitStats {
   const kind = { count: 0, waitingMs: 0 }
   return {
-    waitingMs: 0, byKind: { question: { ...kind }, answer: { ...kind }, escalation: { ...kind }, approval: { ...kind } },
+    waitingMs: 0, byKind: { question: { ...kind }, answer: { ...kind }, escalation: { ...kind }, approval: { ...kind }, decision: { ...kind } },
     resolved: 0, cancelled: 0, pending: 0, ...p
   }
 }
