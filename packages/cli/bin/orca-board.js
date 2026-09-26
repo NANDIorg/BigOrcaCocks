@@ -28,7 +28,8 @@ const HELP = `orca-board — управление доской агентов
 
 Типы задач (тип выбирается у глобальной задачи и задаёт её роли, воркфлоу, правила агентов и разрешения):
   types list                              типы, доступные проекту: id, title, description, default — тип проекта
-                                          по умолчанию, роли (agent, agentEnabled), этапы графа
+                                          по умолчанию, роли (agent, agentEnabled), этапы графа (у «Решения ИИ» —
+                                          options: id вариантов, они же исходы рёбер)
 
 Правила агентов доски — правила типа задачи (попадают только в системный промпт воркеров и координатора,
 не в CLAUDE.md/AGENTS.md). Тип: --type <id>, иначе тип глобальной задачи --run (координатору — $ORCA_RUN_ID),
@@ -69,8 +70,10 @@ const HELP = `orca-board — управление доской агентов
                                           scope: run — граф ведёт глобальную задачу, stage — где она сейчас (нода,
                                           visit — заход, roleIds — роли этапа «Работа», пусто — любые рабочие роли типа,
                                           instructions, feedback/decision/answers — что сказали проверка и человек,
-                                          tasks — подзадачи захода, tasksDoneAt — когда они закрылись); scope: task —
-                                          прежний воркфлоу по подзадачам (после worker_done: проверки, человек, мерж)
+                                          tasks — подзадачи захода, tasksDoneAt — когда они закрылись), history —
+                                          последние 50 переходов (нода, заход, исход; у «Решения ИИ» — decision:
+                                          выбранный вариант, обоснование, кто решил); scope: task — прежний
+                                          воркфлоу по подзадачам (после worker_done: проверки, человек, мерж)
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
                                           (у каждой — priority: urgent|high|normal|low);
                                           у задачи в воркфлоу — stage (этап: nodeId и число заходов visits),
@@ -151,6 +154,13 @@ const HELP = `orca-board — управление доской агентов
                                           допустимы (старое --options a,b тоже работает); id варианта — его номер.
                                           Оборвался по таймауту — повтори ту же команду: переподключится
                                           к тому же вопросу (или сразу вернёт ответ), новый не создастся
+  decision choose [--task <id>] --option <id|метка> --reason "..."
+                                          задача-решатель ноды «Решение ИИ»: выбрать ровно один вариант с
+                                          обоснованием (≤ 4000 символов) — граф сразу идёт по его ребру;
+                                          --task по умолчанию — $ORCA_TASK_ID
+  decision escalate [--task <id>] --reason "что неясно"
+                                          не можешь выбрать — решение уйдёт человеку в Инбокс с теми же
+                                          вариантами и твоим комментарием; повтор вернёт тот же запрос
 
 Прогон: --run <id> у task create, check, request list, runs close, runs finish, stage finish, roles list, rules get/set
 и workflow show по умолчанию берётся из $ORCA_RUN_ID (у roles list, rules и workflow show — если нет --type) —
@@ -259,6 +269,11 @@ if ((method === 'runs.finish' || method === 'stage.finish') && params.summary ==
 }
 if (method === 'rules.set' && typeof params.text !== 'string') {
   console.error('ошибка: rules set требует --text "..." или --file <путь>')
+  process.exit(1)
+}
+// «Решение ИИ»: без обоснования сервер откажет — говорим сразу, до подключения к сокету.
+if ((method === 'decision.choose' || method === 'decision.escalate') && (typeof params.reason !== 'string' || !params.reason.trim())) {
+  console.error(`ошибка: ${method === 'decision.choose' ? 'decision choose' : 'decision escalate'} требует --reason "обоснование"`)
   process.exit(1)
 }
 if (params.option !== undefined && params.option.includes(true)) {

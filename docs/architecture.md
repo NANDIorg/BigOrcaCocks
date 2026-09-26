@@ -655,12 +655,17 @@ orca-board done --summary "..." --show-file showcase.md --show design/a.html --s
 orca-board ask --question "..." [--option "метка|пояснение"]... [--recommend <номер|метка>] [--context-file why.md]
                                                    # блокирует до ответа; оборвался — повтор той же команды переподключается
 orca-board request get --request <id>              # забрать ответ по пинку «[orca] на вопрос … ответили: …»
+orca-board decision choose --option <id|метка> --reason "..."   # задача-решатель ноды «Решение ИИ»: выбрать ветку
+orca-board decision escalate --reason "..."        # не может выбрать — решение уходит человеку (запрос decision)
 ```
 
 `--option` повторяемый (без split по запятой, `|` отделяет пояснение), старое `--options a,b` работает.
 `--context-file` читает CLI и шлёт текст в `params.context`. Подробно — `docs/human-requests.md`.
 `--show` повторяемый, как `--option` (без split по запятой); `--show-file` CLI читает сам. Показ нужен на «Работе» с
 `showcase` — воркер узнаёт об этом из раздела «Этап» задания (`docs/workflow.md` → «Показ человеку»).
+`decision choose|escalate`: `--task` по умолчанию — `$ORCA_TASK_ID` (сокет берёт `r.taskId`), без `--reason` CLI
+отвечает ошибкой до сокета; `--option` уходит массивом (флаг повторяемый) — сервер берёт одно значение
+(`singleOption`). Контракт — `docs/workflow.md` → «Нода «Решение ИИ»».
 
 ## Как воркер получает контекст
 
@@ -1216,7 +1221,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `stage.finish` | `run` (обязателен; CLI подставляет `$ORCA_RUN_ID`), `summary?` (markdown) | `{run, finished, stage: {nodeId, visits}, next: {type, nodeId, reason?}}`: `store.finishStage` закрывает этап «Работа» (все подзадачи захода в done и хотя бы одна) и двигает граф исходом `next`; `next` — действие новой ноды (`WfAction`); эффекты (проверка, запрос человеку, мерж, git, конец) выполняет движок прогона: сокет зовёт `ProjectDeps.finishStage` → `finishRunStage` (`workflow-run.ts`), а не `store.finishStage` напрямую — событие `stage_changed` эффектов не запускает. Вне этапа «Работа», без подзадач, с незакрытыми, прогон старого формата — ошибка с подсказкой (текст из store доходит до CLI как есть) |
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
-| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?}]}]` (`resolveTaskType`, `describeWorkflow`) |
+| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?, options?}]}]` (`resolveTaskType`, `describeWorkflow`; `options` — id вариантов ноды `decision`, прямо из графа) |
 | `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
@@ -1227,9 +1232,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса); у approval прогона поля `taskId` нет |
 | `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `reject`, `restart`, `dismiss` | `{request, worker?, startError?}` |
 | `task.list` / `task.get` | `run?` / `task` | `Task[]` / `Task \| null` — со `stage` и `gateFor` |
-| `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', scope: 'run' \| 'task', run, typeId, typeTitle, stage?, stages}` (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); `scope: 'run'` — граф ведёт глобальную задача, `stage` — `store.runStage` (нода, `type`, `visit`, `roleIds`, `instructions`, `feedback`/`decision`/`answers` целиком, `tasks` захода, `tasksDoneAt`; нет — граф не начат), `scope: 'task'` — старый воркфлоу по подзадачам без позиции у прогона; без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` |
+| `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', scope: 'run' \| 'task', run, typeId, typeTitle, stage?, stages, history?}` (`history` — только у `scope: 'run'`: последние 50 записей `Run.stageHistory` как `{nodeId, title?, visit?, at, outcome?, from?, decision?}`, без `commit` и `summary`) (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); `scope: 'run'` — граф ведёт глобальную задача, `stage` — `store.runStage` (нода, `type`, `visit`, `roleIds`, `instructions`, `feedback`/`decision`/`answers` целиком, `tasks` захода, `tasksDoneAt`; нет — граф не начат), `scope: 'task'` — старый воркфлоу по подзадачам без позиции у прогона; без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` |
 | `review.accept` | `task`, `decision?` | `Task`; на этапе проверки — исход `accept` воркфлоу (`reviewAccept`, `src/main/workflow.ts`); для задачи-проверки ветки глобальной задачи (`gateFor.runId`) — исход `accept` графа прогона (`decideRunGate`) |
 | `review.reject` | `task`, `feedback` | `Task`; на этапе проверки — исход `reject` воркфлоу (`ProjectDeps.reject` → `reviewReject`); у проверки ветки глобальной задачи — исход `reject` графа прогона, `feedback` уходит в `stage_started` |
+| `decision.choose` | `task?` (нет — `r.taskId`), `option` (строка или массив из одного), `reason` | `ProjectDeps.decide(task, option, reason)` → `{runId, nodeId, optionId, label, to}`; сокет проверяет обязательные поля, одно значение `option`, `reason` ≤ `DECISION_REASON_LIMIT` и что `r.dispatchId` (если есть) — запуск этой задачи; вариант, задачу-решатель и актуальность проверяет движок прогона. Нет `decide` у deps — ошибка «не поддерживается» |
+| `decision.escalate` | `task?`, `reason` | `ProjectDeps.escalateDecision(task, reason)` → `{requestId}`; те же проверки задачи, `reason` и dispatch |
 | `worker.stop` | `task` | `{stopped: dispatchId[], task}` |
 | `worker.restart` | `task`, `feedback?` | `{stopped, ptyId, dispatchId, worktree, branch}` |
 | `task.reopen` | `task`, `feedback?`, `start?` | `Task`; со `start` — `{task, worker}` |
