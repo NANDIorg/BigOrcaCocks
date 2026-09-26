@@ -37,6 +37,8 @@ export const GLOBAL_REVIEW_TITLE = 'Проверка'
 export interface GlobalTaskReturn {
   at: number
   text: string
+  /** Абсолютные пути картинок к уточнению (в cwd координатора); пишет main. */
+  images?: string[]
 }
 
 /** Сводка координатора «что сделано» (`Run.summary`, `runs finish --summary`). */
