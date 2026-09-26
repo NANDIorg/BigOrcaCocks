@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION, validateWorkflow,
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION_TASK_SCOPE, validateWorkflow,
   type Task, type Workflow, type WfNode
 } from '@orca-board/core'
 import { enterWork, handleWorkflowEvents, approvalResolved, type WorkflowDeps } from './workflow'
@@ -93,7 +93,7 @@ function graph(gitNode: Record<string, unknown>, opts: { errorTo?: 'human' | 'wo
     { id: 'e6', from: 'human', outcome: 'reject', to: 'work' }
   ]
   if (errorTo !== 'none') edges.push({ id: 'e7', from: 'git', outcome: 'error', to: errorTo })
-  return { version: WORKFLOW_VERSION, nodes, edges }
+  return { version: WORKFLOW_VERSION_TASK_SCOPE, nodes, edges }
 }
 
 /** worker `done` текущего запуска + доставка событий исполнителю (как подписка в index.ts). */
@@ -264,7 +264,7 @@ describe('нода «Git»: checkout', () => {
 describe('нода «Git»: commit и push в середине графа', () => {
   /** start → work → git(commit) → git(push) → end (без мержа). */
   const pushGraph = (remote?: string): Workflow => ({
-    version: WORKFLOW_VERSION,
+    version: WORKFLOW_VERSION_TASK_SCOPE,
     nodes: [
       node({ id: 'start', type: 'start' }),
       node({ id: 'work', type: 'work' }),
@@ -329,7 +329,7 @@ describe('нода «Git»: commit и push в середине графа', () =
 
   it('push до создания ветки (нода первой): error «нет ветки», а не падение', () => {
     const wf: Workflow = {
-      version: WORKFLOW_VERSION,
+      version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [node({ id: 'start', type: 'start' }), node({ id: 'push', type: 'git', operation: 'push' } as never), node({ id: 'work', type: 'work' }), node({ id: 'human', type: 'human' })],
       edges: [
         { id: 'e1', from: 'start', outcome: 'next', to: 'push' },
@@ -347,7 +347,7 @@ describe('нода «Git»: commit и push в середине графа', () =
 describe('нода «Git»: смена ветки посреди работы и защита данных', () => {
   it('create_branch на грязном worktree → error, ветка не переключена, правки на месте', () => {
     const wf: Workflow = {
-      version: WORKFLOW_VERSION,
+      version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
         node({ id: 'start', type: 'start' }), node({ id: 'work', type: 'work' }),
         node({ id: 'git', type: 'git', operation: 'create_branch', branch: 'feature/late' } as never),
@@ -375,7 +375,7 @@ describe('нода «Git»: смена ветки посреди работы и
 
   it('create_branch посреди работы на чистом worktree: Task.branch обновлена, дальше review/merge идут по ней', () => {
     const wf: Workflow = {
-      version: WORKFLOW_VERSION,
+      version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
         node({ id: 'start', type: 'start' }), node({ id: 'work', type: 'work' }),
         node({ id: 'git', type: 'git', operation: 'create_branch', branch: 'release/{taskId}' } as never),
@@ -434,8 +434,8 @@ describe('git.ts: функции ноды', () => {
     assert.throws(() => gitCreateBranch(plain, path.join(tmp, 'wt5'), 'f/x', undefined, false), /git|нет/)
   })
 
-  it('граф с нодой git проходит validateWorkflow (проверка тестового графа)', () => {
+  it('граф с нодой git — граф старого движка по подзадачам: валидация ругается только на формат версии 1 (проверка тестового графа)', () => {
     const { errors } = validateWorkflow(graph({ operation: 'create_branch', branch: 'feature/{taskId}-{slug}' }), { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS })
-    assert.deepEqual(errors, [])
+    assert.deepEqual(errors.map((e) => e.code).sort(), ['gitRunOperation', 'versionOld'])
   })
 })

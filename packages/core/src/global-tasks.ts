@@ -3,8 +3,9 @@
  * Глобальная задача — это прогон (`Run`), её подзадачи — задачи с `Task.runId === run.id`.
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
-import type { BoardColumn, ColumnKind, HumanRequest, Run, StatusChange, Task, TaskPriority } from './types'
+import type { BoardColumn, ColumnKind, HumanRequest, Run, StageChange, StatusChange, Task, TaskPriority } from './types'
 import type { RunGit } from './run-branch'
+import type { WfStage } from './workflow'
 import { DEFAULT_TASK_PRIORITY, isTaskPriority } from './types.ts'
 import { activeDuration, taskActiveTime } from './active-time.ts'
 
@@ -99,6 +100,12 @@ export interface GlobalTask {
    * по запросам, в истории его нет. Нет — прогон от старого main (renderer обновился по HMR раньше).
    */
   statusHistory?: StatusChange[]
+  /** Воркфлоу идёт по глобальной задаче (`Run.workflowScope`); нет — старый движок по подзадачам или «Входящие». */
+  workflowScope?: 'run'
+  /** Позиция на графе (`Run.stage`, копия); нет — граф не начат или прогон старого формата. */
+  stage?: WfStage
+  /** История входов в этапы (`Run.stageHistory`, копия); нет — как у `stage`. */
+  stageHistory?: StageChange[]
   progress: GlobalTaskProgress
   /**
    * Основное время — сколько сама глобальная задача была в работе (`Run.activeMs`): закрытые отрезки, мс.
@@ -313,6 +320,9 @@ export function toGlobalTask(
     ...(run.summary ? { summary: { ...run.summary } } : {}),
     ...(run.git ? { git: { ...run.git } } : {}),
     ...(run.statusHistory ? { statusHistory: run.statusHistory.map((h) => ({ ...h })) } : {}),
+    ...(run.workflowScope ? { workflowScope: run.workflowScope } : {}),
+    ...(run.stage ? { stage: { nodeId: run.stage.nodeId, visits: { ...run.stage.visits } } } : {}),
+    ...(run.stageHistory ? { stageHistory: run.stageHistory.map((h) => ({ ...h })) } : {}),
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),

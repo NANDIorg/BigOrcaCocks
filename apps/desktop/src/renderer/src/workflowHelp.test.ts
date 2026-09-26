@@ -63,3 +63,15 @@ test('справка «Вопроса человеку»: один исход ne
   assert.match(actor, /минуя координатора/)
   assert.ok(WF_ADDABLE_TYPES.includes('ask') && WF_TYPE_ORDER.includes('ask'))
 })
+
+test('справка описывает воркфлоу глобальной задачи: «Работу» ведёт координатор, роли необязательны, условия по роли и create_branch нет', () => {
+  const { work, condition, git, gate, human } = WF_NODE_HELP
+  assert.match(work.summary, /координатор/)
+  assert.match(work.details, /stage_started/)
+  assert.ok(work.fields.some((f) => f.startsWith('Роли — ') && /необязательно/.test(f)), 'роли этапа необязательны')
+  assert.doesNotMatch(condition.details + condition.fields.join(' '), /роль рабочей задачи/i)
+  assert.ok(condition.fields.every((f) => !/^Условие «Роль/.test(f)))
+  assert.doesNotMatch(git.fields.join(' '), /create_branch|checkout/)
+  assert.match(gate.summary, /ветку глобальной задачи/)
+  assert.match(human.details, /Решение \/ что делать дальше/)
+})

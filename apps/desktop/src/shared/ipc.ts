@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -338,6 +338,20 @@ export interface TaskTypeInput {
   title: string
   description?: string
   settings: TaskTypeSettings
+  /**
+   * Предупреждения автомиграции графа (`TaskType.workflowNotes`). Не передан — прежние остаются, пока граф не менялся;
+   * передан (пустой список — «закрыть») — сохраняется как есть.
+   */
+  workflowNotes?: WfMigrationNote[]
+}
+
+/** Создать (без `id`) или целиком заменить шаблон ноды; `updatedAt` ставит main. */
+export interface NodeTemplateInput {
+  id?: string
+  title: string
+  description?: string
+  /** Нода без id и позиции (лишние `id`/`x`/`y` main снимет). */
+  node: WfTemplateNode
 }
 
 /** Вся библиотека типов в порядке хранения и тип библиотеки по умолчанию. */
@@ -602,6 +616,19 @@ export interface OrcaApi {
     duplicate(id: string): Promise<TaskType>
     setDefault(id: string): Promise<TaskTypesState>
   }
+  /**
+   * Библиотека шаблонов нод (docs/architecture.md → «Шаблоны нод»): глобальная, общая для всех типов задач. Вставка
+   * в граф — копия ноды с `templateId`, поэтому у прогонов ничего не меняется при правке или удалении шаблона.
+   * Нет у старого preload — renderer показывает «перезапустите приложение».
+   */
+  nodeTemplates: {
+    /** Все шаблоны в порядке хранения (битые записи файла при загрузке пропущены). */
+    list(): Promise<WfNodeTemplate[]>
+    /** Создать или заменить шаблон; негодный (`validateNodeTemplate`) — ошибка `nodeTemplate.notSaved`. */
+    save(input: NodeTemplateInput): Promise<WfNodeTemplate>
+    /** Удалить шаблон (нет такого — `nodeTemplate.notFound`); возвращает оставшиеся. */
+    delete(id: string): Promise<WfNodeTemplate[]>
+  }
   agents: {
     /** Агенты реестра с признаками «установлен»/«включён» для активного проекта. refresh — пересканировать PATH. */
     list(refresh?: boolean): Promise<AgentInfo[]>
@@ -651,8 +678,12 @@ export interface OrcaApi {
      * Новые подзадачи координатора попадают в неё же. Второй живой координатор — ошибка.
      */
     startCoordinator(id: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
-    /** «Подтвердить» на «Проверке»: из колонки kind=review в done, событий нет. Не на проверке — ошибка. */
-    accept(id: string): Promise<GlobalTask>
+    /**
+     * «Подтвердить» на «Проверке»: из колонки kind=review в done, событий нет. Не на проверке — ошибка.
+     * У прогона с воркфлоу (`workflowScope: 'run'`) это решение по approval ноды `human`, а `decision` — поле
+     * «Решение / что делать дальше» (получит координатор в следующем этапе); у прогона старого формата не используется.
+     */
+    accept(id: string, decision?: string): Promise<GlobalTask>
     /**
      * «Вернуть в работу» с «Проверки» с уточнением (`text` обязателен): задача — в работу, координатор
      * запускается повторно и получает уточнение в цели. Возвращает ptyId координатора.

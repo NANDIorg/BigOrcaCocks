@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { BoardColumn, StatusChange } from '@orca-board/core'
+import { defaultWorkflow, type BoardColumn, type StageChange, type StatusChange } from '@orca-board/core'
 import { dayLabel, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
 import { setLocale } from './i18n'
 
@@ -209,5 +209,50 @@ test('английский интерфейс: подписи дней и соб
       ['Moved to “Проверка”', undefined],
       ['Created', 'in “Бэклог”']
     ])
+  })
+})
+
+const wf = defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
+const stageAt = (nodeId: string, time: number, extra: Partial<StageChange> = {}): StageChange => ({ nodeId, at: time, by: 'app', ...extra })
+
+test('globalTimeline: история этапов — «Этап «…»», заход со второго, исход возврата, коммит входа и выдержка сводки', () => {
+  const events = globalTimeline({
+    stageHistory: [
+      stageAt('work', at(23, 10), { visit: 1, commit: 'abcdef123456' }),
+      stageAt('review', at(23, 12), { visit: 1, outcome: 'next', from: 'work' }),
+      stageAt('work', at(23, 13), { visit: 2, outcome: 'reject', from: 'review', summary: '## Итог\nСделали кнопку' })
+    ],
+    workflow: wf
+  }, columns, NOW)
+  assert.deepEqual(events.map((e) => [e.kind, e.title, e.detail, e.sub, e.text]), [
+    ['stage', 'Этап «Реализация»', '2-й заход', 'возврат на доработку', 'Сделали кнопку'],
+    ['stage', 'Этап «Ревью»', undefined, undefined, undefined],
+    ['stage', 'Этап «Реализация»', undefined, 'ветка на входе: abcdef1', undefined]
+  ])
+})
+
+test('globalTimeline: ноды старта и условия в истории не показываются; без графа — название из записи, иначе id', () => {
+  const start = wf.nodes.find((n) => n.type === 'start')!.id
+  const events = globalTimeline({ stageHistory: [stageAt(start, 1000), stageAt('work', 2000, { title: 'Работа' }), stageAt('n9', 3000)], workflow: wf }, columns, NOW)
+  assert.deepEqual(events.map((e) => e.title), ['Этап «n9»', 'Этап «Реализация»'], 'граф есть: n9 неизвестна — id; старт скрыт')
+  const bare = globalTimeline({ stageHistory: [stageAt('work', 2000, { title: 'Работа' }), stageAt('n9', 3000)] }, columns, NOW)
+  assert.deepEqual(bare.map((e) => e.title), ['Этап «n9»', 'Этап «Работа»'])
+})
+
+test('globalTimeline: вход в этап — причина, поэтому при одной метке времени лента показывает его ниже перехода колонки', () => {
+  const events = globalTimeline({
+    statusHistory: [change('review', at(23, 12))],
+    stageHistory: [stageAt('check', at(23, 12), { visit: 1 })],
+    workflow: wf
+  }, columns, NOW)
+  assert.deepEqual(events.map((e) => e.kind), ['status', 'stage'])
+})
+
+test('globalTimeline: этапы на английском', () => {
+  inEnglish(() => {
+    const [e] = globalTimeline({ stageHistory: [stageAt('work', 1000, { visit: 3, outcome: 'reject', commit: 'abc1234' })], workflow: wf }, columns, NOW)
+    assert.equal(e.title, 'Stage “Implementation”')
+    assert.equal(e.detail, 'pass 3')
+    assert.equal(e.sub, 'sent back for rework · branch at entry: abc1234')
   })
 })

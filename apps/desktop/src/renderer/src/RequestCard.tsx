@@ -64,6 +64,11 @@ interface Props {
    * его раздел убирается из body. Нет — показ остаётся только текстом в body (старый запрос, нет снимка dispatch).
    */
   showcase?: DispatchShowcase
+  /**
+   * Задача, из worktree которой читаются файлы показа (`requestShowcaseTaskId`). Нужна approval уровня прогона, у которого
+   * своей задачи нет; у запроса с задачей берётся `taskId`. Нет ни того, ни другого — блока «Показ» нет, а раздел остаётся в тексте.
+   */
+  showcaseTaskId?: string
 }
 
 /** Enter — отправить, Shift+Enter — перенос строки, Esc — выйти из поля. */
@@ -95,6 +100,7 @@ function Kbd({ show, k }: { show: boolean; k: string }): React.JSX.Element | nul
  */
 export const RequestCard = forwardRef<RequestCardHandle, Props>(function RequestCard(props, ref) {
   const { request: r, onResolve, compact = false, where, stage, active = false, onOpenFull, onOpenTerminal, onEscape, onSelect, showcase } = props
+  const showcaseTask = r.taskId ?? props.showcaseTaskId
   const [text, setText] = useState('')
   const [decision, setDecision] = useState('')
   const [clarifying, setClarifying] = useState(false)
@@ -156,7 +162,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
     }
   }))
 
-  const shownShowcase = r.kind === 'approval' && !compact ? showcase : undefined
+  const shownShowcase = r.kind === 'approval' && !compact && showcaseTask !== undefined ? showcase : undefined
   const body = bodyWithoutShowcase(r.body, shownShowcase)
   const bodyLabel = t(r.kind === 'answer' ? 'shell.request.body.answer' : r.kind === 'question' ? 'shell.request.body.context' : r.kind === 'approval' ? 'shell.request.body.check' : 'shell.request.body.details')
 
@@ -169,7 +175,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
       </div>
       <div className="rq-title">{r.title}</div>
 
-      {shownShowcase && <ShowcaseBlock taskId={r.taskId} showcase={shownShowcase} />}
+      {shownShowcase && showcaseTask !== undefined && <ShowcaseBlock taskId={showcaseTask} showcase={shownShowcase} />}
 
       {body && !compact && (
         <div className="rq-body">
@@ -322,8 +328,8 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
           <button className="btn-sm primary" disabled={busy} onClick={() => void resolve({ action: 'restart' })}>
             <Kbd show={hints} k="R" />{busy ? '…' : t('shell.request.restart')}
           </button>
-          {onOpenTerminal && (
-            <button className="btn-sm" disabled={busy} onClick={() => onOpenTerminal(r.taskId)}>{t('shell.request.terminal')}</button>
+          {onOpenTerminal && r.taskId !== undefined && (
+            <button className="btn-sm" disabled={busy} onClick={() => onOpenTerminal(r.taskId!)}>{t('shell.request.terminal')}</button>
           )}
           <button className="btn-sm" disabled={busy} onClick={() => void resolve({ action: 'dismiss' })} title={t('shell.request.dismissHint')}>
             {t('shell.request.dismiss')}

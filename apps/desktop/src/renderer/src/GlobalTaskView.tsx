@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { AgentSession, BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task } from '@orca-board/core'
+import type { AgentSession, BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, RequestResolution, Task, Workflow } from '@orca-board/core'
 import { AttentionFeed } from './AttentionFeed'
 import type { AttentionItem } from './attention'
 import { focusBoard, focusFeed, onRevealOnBoard } from './feedLink'
@@ -16,6 +16,7 @@ import {
   defaultTab, readTabChoice, resolveTab, stepTab, tabAt, tabTitle, visibleTabs, writeTabChoice, type GlobalTabId
 } from './globalScreen'
 import { useT } from './i18n'
+import { runStageLabel } from './runStage'
 
 interface Props {
   /** Проект: id для `stats:global`. */
@@ -69,6 +70,8 @@ interface Props {
   onStartTask(task: Task): void | Promise<void>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
+  /** Граф воркфлоу этой глобальной задачи (`workflowForRun`): этап в шапке и названия этапов в «Истории». Нет — этапов не видно. */
+  workflow?: Workflow
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
   children: React.ReactNode
 }
@@ -174,6 +177,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         coordinatorSessions={props.coordinatorSessions}
         attentionCount={attention.length}
         typeTitle={typeTitle}
+        stage={runStageLabel(global, props.workflow)}
         onBack={onBack}
         onEdit={props.onEdit}
         onMove={props.onMove}
@@ -256,7 +260,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       )}
       {tab === 'history' && (
         <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
-          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} />
+          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} workflow={props.workflow} />
         </div>
       )}
       {tab === 'stats' && (

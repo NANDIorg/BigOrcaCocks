@@ -72,7 +72,7 @@ export function taskStatsKey(snap: StatsSnapshot, taskId: string): string {
   return [
     mine.map((t) => `${t.id}:${t.status}:${t.updatedAt}`).join(','),
     snap.dispatches.filter((d) => ids.has(d.taskId)).map((d) => `${d.id}:${d.endedAt ?? ''}:${d.outcome ?? ''}`).join(','),
-    snap.requests.filter((r) => ids.has(r.taskId)).map((r) => `${r.id}:${r.status}`).join(',')
+    snap.requests.filter((r) => r.taskId !== undefined && ids.has(r.taskId)).map((r) => `${r.id}:${r.status}`).join(',')
   ].join('|')
 }
 
@@ -307,10 +307,13 @@ export function columnParts(columns: readonly TaskColumnTime[], board: readonly 
 /** Цвета этапов: у воркфлоу цветов нет — палитра серий (`--s1`…`--s5`) по кругу в порядке этапов. */
 const STAGE_COLORS = 5
 
-/** Полоса по этапам воркфлоу, в порядке первого захода. Нет `stages` — этапов нет. */
-export function stageParts(stages: readonly TaskStageTime[] | undefined): TimePart[] {
+/**
+ * Полоса по этапам воркфлоу, в порядке первого захода. Нет `stages` — этапов нет. `titles` — названия нод по id, если они
+ * известны renderer (шаги пути подзадачи, `pathNodeTitles`): перекрывают название из main, оно там могло остаться голым id.
+ */
+export function stageParts(stages: readonly TaskStageTime[] | undefined, titles?: Readonly<Record<string, string>>): TimePart[] {
   return withShares((stages ?? []).map((s, i) => ({
-    key: s.nodeId, title: s.title, color: `var(--s${(i % STAGE_COLORS) + 1})`, ms: s.ms, entries: s.entries, approx: s.approx === true
+    key: s.nodeId, title: titles?.[s.nodeId] ?? s.title, color: `var(--s${(i % STAGE_COLORS) + 1})`, ms: s.ms, entries: s.entries, approx: s.approx === true
   })))
 }
 

@@ -230,6 +230,18 @@ export interface StageChange {
   /** Кто двигал (источник как у `StatusChange.by`). */
   by?: StatusSource
   /**
+   * Заход в ноду (`WfStage.visits[nodeId]` на момент входа): у прогона отличает первый заход в «Работу» от
+   * возврата по reject. Нет у задач (`Task.stageHistory`) и у записей от кода до поля.
+   */
+  visit?: number
+  /**
+   * Коммит ветки глобальной задачи в момент входа в этап (`Run.stageHistory`): от него считается дифф этапа
+   * (`commit..HEAD`). Ставит main; нет — ветки у прогона нет или коммит не определили.
+   */
+  commit?: string
+  /** Сводка, с которой этап закрыт (`stage finish --summary`); только у этапов «Работа» прогона. */
+  summary?: string
+  /**
    * Запись миграции у задачи от кода до истории этапов, которой нет в логе событий: реального перехода не
    * восстановить, это этап на момент обновления (`at` — `updatedAt`).
    */
@@ -362,6 +374,36 @@ export interface Run {
    * сливаются в корень, как раньше (миграция не нужна — у старых прогонов поле просто не появляется).
    */
   git?: RunGit
+  /**
+   * Где идёт воркфлоу. `'run'` — на уровне глобальной задачи: позиция на графе — `Run.stage`, подзадачи по графу
+   * не ходят, этапы ведёт приложение (docs/workflow.md, «Воркфлоу глобальной задачи»). Нет поля — прогон,
+   * начатый до этого формата, и «Входящие»: граф идёт по подзадачам, как раньше; такие прогоны доживают на
+   * старом движке, а `migrateGlobalTasks` их не трогает. Новые прогоны (кроме «Входящих» и созданных по графу
+   * версии 1) получают `'run'` при создании.
+   */
+  workflowScope?: 'run'
+  /**
+   * Позиция глобальной задачи на графе (только `workflowScope: 'run'`): нода и число заходов в каждую ноду
+   * (`condition attempts` считает по ним). Нет — граф ещё не начат (`TaskStore.enterRunStage`) или прогон старого формата.
+   */
+  stage?: WfStage
+  /**
+   * История входов в этапы, от старых к новым (`recordStage`, status-history.ts), не длиннее `STATUS_HISTORY_LIMIT`.
+   * Записи хранят коммит входа (`StageChange.commit`) и сводку закрытия (`StageChange.summary`).
+   */
+  stageHistory?: StageChange[]
+  /**
+   * Что человек или проверка сказали при входе в текущий этап «Работа»: замечания `reject`, решение `human`,
+   * ответы этапа «Вопрос человеку» — то же, что в `stage_started`, но целиком (в событии текст обрезан). Нужно
+   * перезапущенному координатору (`TaskStore.runStage`). Сбрасывается при каждом переходе.
+   */
+  stageInput?: { feedback?: string; decision?: string; answers?: string }
+  /**
+   * Все подзадачи текущего этапа «Работа» дошли до done: координатору отправлен `stage_tasks_done`, но этап не
+   * закрыт — он решает, нужны ли ещё задачи, и вызывает `stage finish`. Как `runDoneAt` у старого движка: новая
+   * подзадача этапа или подзадача, ушедшая из done, снимает метку, следующий `stage_tasks_done` придёт по её завершении.
+   */
+  stageTasksDoneAt?: number
 }
 
 /** Запуск агента вне dispatch (координатор): для статистики времени и токенов. */
@@ -508,8 +550,18 @@ export interface Task {
    * задача-гейт или ещё не вошедшая в граф.
    */
   stage?: WfStage
-  /** Задача-гейт: чью ветку проверяет и на какой ноде `gate` рабочей задачи. */
-  gateFor?: { taskId: string; nodeId: string }
+  /**
+   * Задача-проверка: на какой ноде `gate` она создана и что проверяет — ветку рабочей задачи (`taskId`, движок
+   * подзадач) или ветку глобальной задачи целиком (`runId`, воркфлоу прогона). Ровно одно из двух.
+   */
+  gateFor?: { nodeId: string; taskId?: string; runId?: string }
+  /**
+   * Подзадача воркфлоу глобальной задачи (`Run.workflowScope: 'run'`): этап и заход, в который она создана.
+   * `TaskStore.createTask` привязывает подзадачу к текущему этапу «Работа» сам; приложение так же помечает
+   * задачу-вопрос этапа `ask`. Этап считается законченным (`stage_tasks_done`), когда закрыты все подзадачи
+   * его текущего захода (`visit`) — задачи прошлых заходов не в счёт. Нет — задача старого движка или заведена до входа в граф.
+   */
+  stageOf?: { nodeId: string; visit: number }
   /**
    * История смены колонки, от старых к новым (`recordStatus`, status-history.ts): не длиннее
    * `STATUS_HISTORY_LIMIT`, подряд одинаковых статусов нет. Нет — снапшот от кода до истории, ещё не прошедший
@@ -646,7 +698,11 @@ export interface RequestResolution {
 export interface HumanRequest {
   id: string
   runId: string
-  taskId: string
+  /**
+   * Задача запроса. Нет у approval уровня прогона (нода `human` воркфлоу глобальной задачи,
+   * `TaskStore.requestRunApproval`): его решают по `runId`. У остальных видов запросов есть всегда.
+   */
+  taskId?: string
   /** Dispatch, который спросил / сдал ответ / упал. */
   dispatchId?: string
   kind: HumanRequestKind
@@ -689,8 +745,19 @@ export type EventType =
   | 'answer_clarified'
   /** Задача перешла на другой этап воркфлоу (`advanceStage`); в основном для UI. */
   | 'stage_changed'
-  /** Воркфлоу не может вести задачу дальше (нет перехода, роль гейта удалена) — нужен координатор или человек. */
+  /**
+   * Воркфлоу не может вести дальше (нет перехода, роль гейта удалена, слить ветку в базу нельзя): нужен
+   * координатор или человек. Payload — `taskId` (движок подзадач) или только `runId` (воркфлоу глобальной задачи).
+   */
   | 'workflow_blocked'
+  /**
+   * Воркфлоу глобальной задачи вошёл в этап «Работа»: координатору — набрать агентов роли этапа. Payload:
+   * `{runId, nodeId, title, roleId, visit, instructions?, feedback?, decision?, answers?}`; текстовые поля
+   * обрезаны (`…Truncated`), целиком — `TaskStore.runStage`.
+   */
+  | 'stage_started'
+  /** Все подзадачи текущего этапа «Работа» закрыты: координатор решает, нужен ли ещё кто-то, и зовёт `stage finish`. Payload `{runId, nodeId}`. */
+  | 'stage_tasks_done'
 
 export const EVENT_TYPES: EventType[] = [
   'task_ready',
@@ -704,7 +771,9 @@ export const EVENT_TYPES: EventType[] = [
   'request_resolved',
   'answer_clarified',
   'stage_changed',
-  'workflow_blocked'
+  'workflow_blocked',
+  'stage_started',
+  'stage_tasks_done'
 ]
 
 export interface OrcaEvent {

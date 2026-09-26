@@ -4,21 +4,22 @@ import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
-  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
+  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
-  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
+  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfMigrationNote, type WfValidationContext,
+  type WfNodeTemplate, type WfTemplateNode,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
 import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
-import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
+import { PROJECTS_FILE_VERSION, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
 import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
 import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
   AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
-  TaskTypesState
+  TaskTypesState, NodeTemplateInput
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 
@@ -82,6 +83,11 @@ export interface ProjectsFile {
   taskTypesSeeded?: boolean
   /** Тип библиотеки по умолчанию (новые проекты, ассистент); нет или удалён — `general`, иначе первый тип. */
   defaultTaskTypeId?: string
+  /**
+   * Библиотека шаблонов нод — глобальная, как типы задач, в порядке показа (`node-templates.ts` в core). Нет ключа —
+   * шаблонов нет (отдельной миграции и бампа версии не нужно, старая версия приложения поле игнорирует).
+   */
+  nodeTemplates?: WfNodeTemplate[]
   /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
   settings?: Partial<AppSettings>
   /**
@@ -165,6 +171,8 @@ function normalizeUpdateSettings(raw: unknown): UpdateSettings {
 
 /** Имя бэкапа projects.json старого формата: откат на старую версию приложения прочтёт проекты без ролей. */
 export const PROJECTS_BACKUP_NAME = 'projects.v1.bak.json'
+/** Копия projects.json до миграции графов типов v1 → v2 (`migrateTypeWorkflows`): миграция снимает ноды, а старое приложение v2 не читает. */
+export const PROJECTS_WORKFLOW_BACKUP_NAME = 'projects.workflow-v1.bak.json'
 
 /**
  * Список репозиториев, библиотека типов задач и по TaskStore на каждый проект. Доска хранится в
@@ -181,20 +189,28 @@ export class ProjectManager {
 
   constructor(private userData: string) {
     this.file = join(userData, 'projects.json')
-    const { data, legacyText, dirty } = this.load()
+    const { data, legacyText, workflowText, dirty } = this.load()
     this.data = data
     if (legacyText !== undefined) {
       // Миграция пишет файл сразу: `legacyTypeId` должен дожить до ленивой загрузки досок.
       const backup = join(userData, PROJECTS_BACKUP_NAME)
       if (!existsSync(backup)) writeFileSync(backup, legacyText)
     }
-    // `dirty` — решение по онбордингу для файла без ключа или битого: битый файл уже отложен, и без записи
-    // следующий старт увидел бы «файла нет» и показал мастер человеку, которому он не нужен.
-    if (legacyText !== undefined || dirty) this.save()
+    if (workflowText !== undefined) {
+      const backup = join(userData, PROJECTS_WORKFLOW_BACKUP_NAME)
+      if (!existsSync(backup)) writeFileSync(backup, workflowText)
+    }
+    // `dirty` — файл надо перезаписать без миграции формата: решение по онбордингу для файла без ключа или битого
+    // (битый файл уже отложен, и без записи следующий старт увидел бы «файла нет» и показал мастер человеку, которому
+    // он не нужен) и графы типов, переведённые на v2 (иначе предупреждения `workflowNotes` пересчитывались бы каждый запуск).
+    if (legacyText !== undefined || workflowText !== undefined || dirty) this.save()
   }
 
-  /** Файл целиком; `legacyText` — исходный текст, если файл был старого формата и его перевели на типы задач. */
-  private load(): { data: ProjectsFile; legacyText?: string; dirty?: boolean } {
+  /**
+   * Файл целиком; `legacyText` — исходный текст, если файл был старого формата и его перевели на типы задач,
+   * `workflowText` — он же, если файл нового формата, но графы типов переведены с v1 на v2 (`migrateTypeWorkflows`).
+   */
+  private load(): { data: ProjectsFile; legacyText?: string; workflowText?: string; dirty?: boolean } {
     const read = readJsonFile<RawProjectsFile>(this.file, 'проекты')
     if (read.status === 'missing') return { data: emptyProjectsFile() }
     // Битый projects.json — не «нет проектов»: файл отложен в .corrupt-<ts>, предупреждение ждёт `stateWarnings()`.
@@ -214,15 +230,27 @@ export class ProjectManager {
       // Типы чистятся при каждой загрузке по разделам (`loadedTaskType`): битый раздел не уносит тип целиком,
       // иначе проект молча уехал бы на тип по умолчанию, а его роли и правила пропали бы при первой же записи.
       const rawTypes: unknown[] = Array.isArray(data.taskTypes) ? data.taskTypes : []
-      data.taskTypes = seededTaskTypes(rawTypes.flatMap(loadedTaskType), data.taskTypesSeeded === true ? undefined : rawTypes)
+      const seeded = seededTaskTypes(rawTypes.flatMap(loadedTaskType), data.taskTypesSeeded === true ? undefined : rawTypes)
+      // Последним: и граф проекта старого формата, ставший типом, и правка встроенного типа проходят один путь.
+      const migratedTypes = migrateTypeWorkflows(seeded)
+      data.taskTypes = migratedTypes.types
       data.taskTypesSeeded = true
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
       normalizeGroups(data)
+      const templates = loadedNodeTemplates(data.nodeTemplates, this.file)
+      if (templates.list.length) data.nodeTemplates = templates.list
+      else delete data.nodeTemplates
+      this.warnings.push(...templates.warnings)
       const settingsSet = isObject(raw.settings) && Object.keys(raw.settings).length > 0
       const onboarding = loadedOnboarding(raw.onboarding, data.projects.length > 0 || settingsSet)
       data.onboarding = onboarding.value
-      return { data, ...(changed ? { legacyText: text } : {}), ...(onboarding.changed ? { dirty: true } : {}) }
+      return {
+        data,
+        ...(changed ? { legacyText: text } : {}),
+        ...(migratedTypes.changed && !changed ? { workflowText: text } : {}),
+        ...(onboarding.changed ? { dirty: true } : {})
+      }
     } catch (e) {
       // JSON разобрался, но содержимое не годится для нормализации — то же, что битый файл.
       const movedTo = quarantineCorrupt(this.file)
@@ -429,7 +457,7 @@ export class ProjectManager {
 
   /**
    * Создать (без `id` — новый id) или целиком заменить тип. Граф проверяется по ролям типа, колонки доски — нет:
-   * тип общий для проектов с разными колонками.
+   * тип общий для проектов с разными колонками. Предупреждения миграции графа (`workflowNotes`) — см. `savedWorkflowNotes`.
    */
   saveTaskType(input: TaskTypeInput): TaskType {
     if (!isObject(input)) throw new OrcaError('type.notObject')
@@ -440,9 +468,11 @@ export class ProjectManager {
     const id = input.id ?? this.newTypeId()
     const i = user.findIndex((t) => t.id === id)
     const description = input.description?.trim()
+    const settings = savedTypeSettings(input.settings ?? {}, i === -1 ? undefined : user[i], typeLabel(input.title.trim()))
+    const notes = savedWorkflowNotes(input, settings, i === -1 ? undefined : user[i])
     const type: TaskType = {
-      id, title: input.title.trim(), ...(description ? { description } : {}),
-      settings: savedTypeSettings(input.settings ?? {}, i === -1 ? undefined : user[i], typeLabel(input.title.trim()))
+      id, title: input.title.trim(), ...(description ? { description } : {}), settings,
+      ...(notes.length ? { workflowNotes: notes } : {})
     }
     if (i !== -1) this.settleLegacyRuns(id)
     if (i === -1) user.push(type)
@@ -529,6 +559,61 @@ export class ProjectManager {
     const own = t.settings.workflow
     if (own && own.version > WORKFLOW_VERSION) throw futureWorkflowError(own.version)
     return { typeId: t.id, title: t.title, workflow: own ? clone(own) : resolveTaskType(t).workflow, custom: own !== undefined }
+  }
+
+  // ---------- библиотека шаблонов нод ----------
+
+  /** Шаблоны в порядке хранения; копии — правка результата не меняет библиотеку. */
+  nodeTemplates(): WfNodeTemplate[] {
+    return (this.data.nodeTemplates ?? []).map(clone)
+  }
+
+  /**
+   * Создать (без `id` — новый id) или целиком заменить шаблон. `updatedAt` ставит main: по нему редактор подсказывает
+   * «шаблон изменился». Проверка — `validateNodeTemplate` (в том числе путь подзадачи у `work`); роли и колонки
+   * проверяются при вставке в граф типа, а не здесь: шаблон глобальный. Предупреждения проверки не мешают сохранению.
+   */
+  saveNodeTemplate(input: NodeTemplateInput): WfNodeTemplate {
+    if (!isObject(input)) throw new OrcaError('nodeTemplate.notObject')
+    if (input.id !== undefined && !nonEmpty(input.id)) throw new OrcaError('nodeTemplate.emptyId')
+    if (!nonEmpty(input.title)) throw new OrcaError('nodeTemplate.emptyTitle')
+    const id = input.id ?? this.newNodeTemplateId()
+    // Описание не строки не «пропускаем молча»: оно доезжает до `validateNodeTemplate`, и тот назовёт проблему по коду.
+    const description = typeof input.description === 'string' ? input.description.trim() || undefined : input.description
+    const template = {
+      id, title: input.title.trim(),
+      ...(description !== undefined ? { description } : {}),
+      node: templateNode(input.node),
+      updatedAt: Date.now()
+    } as WfNodeTemplate
+    const { errors } = validateNodeTemplate(template)
+    if (errors.length) throw new OrcaError('nodeTemplate.notSaved', { errors: errors.map((e) => e.message).join('; ') })
+    const list = [...(this.data.nodeTemplates ?? [])]
+    const i = list.findIndex((t) => t.id === id)
+    if (i === -1) list.push(template)
+    else list[i] = template
+    this.data.nodeTemplates = list
+    this.save()
+    return clone(template)
+  }
+
+  /** Удалить шаблон. Вставленные из него ноды остаются в графах как есть: `templateId` — только подсказка редактору. */
+  deleteNodeTemplate(id: string): WfNodeTemplate[] {
+    const list = this.data.nodeTemplates ?? []
+    const t = list.find((x) => x.id === id)
+    if (!t) throw new OrcaError('nodeTemplate.notFound', { id: String(id) })
+    const rest = list.filter((x) => x.id !== id)
+    if (rest.length) this.data.nodeTemplates = rest
+    else delete this.data.nodeTemplates
+    this.save()
+    return this.nodeTemplates()
+  }
+
+  private newNodeTemplateId(): string {
+    let id: string
+    do id = `tpl_${randomBytes(4).toString('hex')}`
+    while ((this.data.nodeTemplates ?? []).some((t) => t.id === id))
+    return id
   }
 
   // ---------- типы проекта и прогонов ----------
@@ -915,11 +1000,14 @@ function cloneWorkflow(wf: Workflow): Workflow {
   return JSON.parse(JSON.stringify(wf)) as Workflow
 }
 
-/** Граф из projects.json: битый → undefined, старая версия → migrateWorkflow, будущая — как есть. */
+/**
+ * Граф из projects.json: битый → undefined, иначе как есть (по форме) — и старой версии, и будущей. Версию графа
+ * типа переводит `migrateTypeWorkflows` целиком после загрузки: ему нужны роли типа и место для предупреждений.
+ */
 function loadedWorkflow(v: unknown): Workflow | undefined {
   if (v === undefined) return undefined
   try {
-    return migrateWorkflow(parseWorkflow(v))
+    return parseWorkflow(v)
   } catch {
     return undefined
   }
@@ -927,7 +1015,7 @@ function loadedWorkflow(v: unknown): Workflow | undefined {
 
 /** Граф на сохранение: форма, миграция, `validateWorkflow`; ошибки — одним сообщением. */
 function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
-  const wf = migrateWorkflow(parseWorkflow(v))
+  const wf = migrateWorkflow(parseWorkflow(v), ctx.roles)
   // Будущую версию validateWorkflow тоже отвергает («обновите приложение»).
   const { errors } = validateWorkflow(wf, ctx)
   // Тексты проблем — из core, по-русски: renderer проверяет граф сам и переводит их по коду до сохранения.
@@ -1008,6 +1096,17 @@ function validTypeSettings(patch: unknown, base: TaskTypeSettings, label: MText)
 }
 
 /**
+ * Предупреждения миграции графа (`TaskType.workflowNotes`) сохраняемого типа. Явно переданные (`input.workflowNotes`,
+ * в том числе пустой список — человек их закрыл) берутся как есть; иначе прежние остаются, пока граф не менялся, а
+ * правка графа их снимает: человек уже смотрел на граф и решил, каким ему быть.
+ */
+function savedWorkflowNotes(input: TaskTypeInput, settings: TaskTypeSettings, existing: TaskType | undefined): WfMigrationNote[] {
+  if (input.workflowNotes !== undefined) return loadedWorkflowNotes(input.workflowNotes)
+  const same = JSON.stringify(existing?.settings.workflow) === JSON.stringify(settings.workflow)
+  return same ? existing?.workflowNotes ?? [] : []
+}
+
+/**
  * Настройки типа на сохранение. Граф, который уже лежит в типе и не менялся, заново не проверяется: иначе правка
  * ролей, чей граф ссылается на удалённую роль, или любая правка типа с графом будущей версии падала бы. Такой
  * граф исполнитель встретит в рантайме — `workflow_blocked` или дефолтный граф (как у проекта до типов).
@@ -1024,8 +1123,8 @@ function savedTypeSettings(settings: unknown, existing: TaskType | undefined, la
 /**
  * Тип из projects.json. Отбрасывается только без id, названия или объекта настроек; разделы настроек чистятся
  * по одному, и битый раздел не уносит с собой остальные (роли, правила и разрешения — то, что человек настраивал
- * руками, и копии в другом месте у них нет). Граф — как в `savedTypeSettings`: только форма и миграция версии, без
- * сверки с ролями. Ссылку на удалённую роль (её пропускал `setRoles` до типов, и её переносит миграция проекта)
+ * руками, и копии в другом месте у них нет). Граф — как в `savedTypeSettings`: только форма, без сверки с ролями;
+ * версию графа переводит `migrateTypeWorkflows` (после загрузки всей библиотеки), предупреждения прежних миграций остаются. Ссылку на удалённую роль (её пропускал `setRoles` до типов, и её переносит миграция проекта)
  * исполнитель встретит в рантайме, а графа будущей версии он не возьмёт. Поля старых версий (`builtin`,
  * `builtinBase`) отбрасываются: особых типов больше нет.
  */
@@ -1039,11 +1138,61 @@ function loadedTaskType(v: unknown): TaskType[] {
   if (typeof raw.agentRules === 'string' && raw.agentRules.trim()) settings.agentRules = raw.agentRules
   const wf = loadedWorkflow(raw.workflow)
   if (wf) settings.workflow = wf
+  const notes = loadedWorkflowNotes(v.workflowNotes)
   return [{
     id: v.id, title: v.title,
     ...(typeof v.description === 'string' && v.description.trim() ? { description: v.description } : {}),
-    settings
+    settings,
+    ...(notes.length ? { workflowNotes: notes } : {})
   }]
+}
+
+/**
+ * Нода шаблона на сохранение: копия без `id` и позиции — их задаёт вставка в граф. Не объект оставляем как есть,
+ * `validateNodeTemplate` назовёт проблему по коду.
+ */
+function templateNode(v: unknown): WfTemplateNode {
+  if (!isObject(v)) return v as WfTemplateNode
+  const { id: _id, x: _x, y: _y, ...rest } = clone(v)
+  return rest as unknown as WfTemplateNode
+}
+
+/**
+ * Шаблоны из projects.json без доверия к данным: не массив — пусто; каждая запись проходит `validateNodeTemplate`
+ * (и служебные поля `id`/`x`/`y` ноды снимаются), негодные и повторные по id пропускаются с предупреждением, остальные
+ * остаются: один битый шаблон не уносит библиотеку. Пропущенное из файла исчезнет при ближайшей записи projects.json.
+ */
+function loadedNodeTemplates(v: unknown, file: string): { list: WfNodeTemplate[]; warnings: StateWarning[] } {
+  const list: WfNodeTemplate[] = []
+  const warnings: StateWarning[] = []
+  if (v === undefined) return { list, warnings }
+  if (!Array.isArray(v)) {
+    warnings.push({ kind: 'skipped', file, message: `шаблоны нод: в файле ${file} ожидается массив — библиотека пропущена` })
+    return { list, warnings }
+  }
+  const seen = new Set<string>()
+  v.forEach((raw: unknown, i) => {
+    const skip = (why: string): void => {
+      warnings.push({ kind: 'skipped', file, message: `шаблон нод №${i + 1} в ${file} пропущен: ${why}` })
+    }
+    if (!isObject(raw)) return skip('ожидается объект')
+    const t = { ...clone(raw), node: templateNode(raw.node) } as unknown as WfNodeTemplate
+    const { errors } = validateNodeTemplate(t)
+    if (errors.length) return skip(errors.map((e) => e.message).join('; '))
+    if (seen.has(t.id)) return skip(`повторный id «${t.id}»`)
+    seen.add(t.id)
+    list.push(t)
+  })
+  return { list, warnings }
+}
+
+/** Предупреждения миграции графа из projects.json: битые записи (не объект, нет кода или текста) выпадают. */
+function loadedWorkflowNotes(v: unknown): WfMigrationNote[] {
+  if (!Array.isArray(v)) return []
+  return v.flatMap((n): WfMigrationNote[] => {
+    if (!isObject(n) || !nonEmpty(n.code) || !nonEmpty(n.message)) return []
+    return [{ code: n.code as WfMigrationNote['code'], ...(nonEmpty(n.nodeId) ? { nodeId: n.nodeId } : {}), message: n.message }]
+  })
 }
 
 /**

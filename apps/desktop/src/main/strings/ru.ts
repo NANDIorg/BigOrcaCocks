@@ -81,6 +81,8 @@ export default {
   'coordinator.alreadyRunning': 'координатор этой глобальной задачи уже работает (терминал {pty})',
   'coordinator.finishing': 'координатор этой глобальной задачи ещё завершается — повторите через несколько секунд',
 
+  'workflow.runFinished': 'воркфлоу глобальной задачи уже дошёл до конца — координатор не нужен',
+  'workflow.coordinatorNotRunning': 'замечания сохранены, но координатор не запустился — запусти его: карточка глобальной задачи → «Запустить координатора»',
   'global.notFound': 'глобальная задача не найдена: {id}',
   'global.coordinatorAlive': 'координатор этой глобальной задачи ещё работает — сначала закрой его терминал',
   'global.typeRequired': 'укажи тип задачи',
@@ -115,6 +117,12 @@ export default {
 
   'workflow.future': 'воркфлоу сохранён в формате версии {version}, приложение знает только {known} — обновите приложение',
   'workflow.notSaved': 'воркфлоу не сохранён: {errors}',
+
+  'nodeTemplate.notObject': 'шаблон нод: ожидается объект',
+  'nodeTemplate.emptyId': 'шаблон нод: пустой id',
+  'nodeTemplate.emptyTitle': 'шаблон нод: пустое название',
+  'nodeTemplate.notFound': 'шаблон нод не найден: {id}',
+  'nodeTemplate.notSaved': 'шаблон нод не сохранён: {errors}',
 
   'rules.onlyKnown': 'можно править только {a} и {b} в корне проекта, а не «{name}»',
   'rules.brokenLink': '{name}: ссылка ведёт на несуществующий файл',

@@ -78,6 +78,8 @@ export default {
   'coordinator.alreadyRunning': 'the coordinator of this global task is already running (terminal {pty})',
   'coordinator.finishing': 'the coordinator of this global task is still finishing — try again in a few seconds',
 
+  'workflow.runFinished': 'the global task workflow has already finished — no coordinator is needed',
+  'workflow.coordinatorNotRunning': 'your notes are saved, but the coordinator did not start — start it from the global task card (“Start coordinator”)',
   'global.notFound': 'global task not found: {id}',
   'global.coordinatorAlive': 'the coordinator of this global task is still running — close its terminal first',
   'global.typeRequired': 'choose a task type',
@@ -112,6 +114,12 @@ export default {
 
   'workflow.future': 'the workflow is saved in format version {version}, the app only knows {known} — update the app',
   'workflow.notSaved': 'workflow not saved: {errors}',
+
+  'nodeTemplate.notObject': 'node template: an object is expected',
+  'nodeTemplate.emptyId': 'node template: empty id',
+  'nodeTemplate.emptyTitle': 'node template: empty title',
+  'nodeTemplate.notFound': 'node template not found: {id}',
+  'nodeTemplate.notSaved': 'node template not saved: {errors}',
 
   'rules.onlyKnown': 'only {a} and {b} in the project root can be edited, not “{name}”',
   'rules.brokenLink': '{name}: the link points to a missing file',

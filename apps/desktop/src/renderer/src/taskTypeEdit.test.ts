@@ -1,13 +1,13 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, type AgentInfo, type Role, type TaskType
+  DEFAULT_COLUMNS, DEFAULT_ROLES, presetTaskType, type AgentInfo, type Role, type TaskType, type WfMigrationNote
 } from '@orca-board/core'
 import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 import {
   taskTypesStaleMessage, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
   hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, patchedTaskType, pickTaskTypeId,
-  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, taskTypeLibraryApi,
+  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, storedWorkflowNotes, taskTypeLibraryApi,
   taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey
 } from './taskTypeEdit'
 import { setLocale } from './i18n'
@@ -48,6 +48,12 @@ test('правка собирает тип целиком: null и пустые 
   const input = patchedTaskType(own, { permissionMode: null, agentRules: '  \n', roles: DEFAULT_ROLES })
   assert.deepEqual(input, { id: 'type_1', title: 'Мой', description: 'для сервисов', settings: { roles: DEFAULT_ROLES } })
   assert.equal(own.settings.agentRules, 'правило')
+})
+
+test('замечания миграции: закрытие — пустой список в самом типе, обычная правка их не передаёт', () => {
+  assert.deepEqual(patchedTaskType(own, { workflowNotes: [] }).workflowNotes, [])
+  assert.equal('workflowNotes' in patchedTaskType(own, { agentRules: 'x' }), false)
+  assert.equal('workflowNotes' in patchedTaskType(own, { workflowNotes: [] }).settings, false)
 })
 
 test('переименование: пустое название — ошибка, пустое описание убирает поле', () => {
@@ -162,4 +168,27 @@ test('тексты удаления и ошибок — на языке инте
   assert.match(c.lines.join('\n'), /default type in projects \(2\)/)
   assert.deepEqual(renamedTaskType(own, ' ', ''), { error: 'Type name can’t be empty' })
   assert.throws(() => taskTypeLibraryApi(undefined), { message: /old main\/preload without task types/ })
+})
+
+const note = (code: WfMigrationNote['code'], message: string, nodeId?: string): WfMigrationNote => ({ code, message, ...(nodeId ? { nodeId } : {}) })
+
+test('замечания автомиграции: нет поля (старый main) или пусто — блока нет; дубли и пустые тексты отбрасываются', () => {
+  assert.equal(storedWorkflowNotes(undefined, false, true), null)
+  assert.equal(storedWorkflowNotes([], false, true), null)
+  assert.equal(storedWorkflowNotes([note('mergeRemoved', '  ')], false, true), null)
+  const notes = [
+    note('mergeRemoved', 'Нода «Слияние» снята', 'merge'),
+    note('mergeRemoved', 'Нода «Слияние» снята'),
+    note('noHumanBeforeEnd', 'Перед концом нет проверки человеком')
+  ]
+  assert.deepEqual(storedWorkflowNotes(notes, false, true), {
+    messages: ['Нода «Слияние» снята', 'Перед концом нет проверки человеком'], dismissable: true
+  })
+})
+
+test('замечания автомиграции: «Понятно» только вне просмотра и если main умеет их закрывать', () => {
+  const notes = [note('mergeRemoved', 'снято')]
+  assert.equal(storedWorkflowNotes(notes, true, true)?.dismissable, false)
+  assert.equal(storedWorkflowNotes(notes, false, false)?.dismissable, false)
+  assert.equal(storedWorkflowNotes(notes, false, true)?.dismissable, true)
 })

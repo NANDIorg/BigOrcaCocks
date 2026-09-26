@@ -4,7 +4,7 @@
 // хранение библиотеки и миграция projects.json — в main.
 // Модуль импортирует renderer, поэтому без node-импортов; значения импортируются с расширением .ts.
 import type { Role, Run } from './types'
-import type { Workflow } from './workflow'
+import type { WfMigrationNote, Workflow } from './workflow'
 import { DEFAULT_ROLES } from './types.ts'
 import { defaultWorkflow, pipelineWorkflow } from './workflow.ts'
 
@@ -41,6 +41,12 @@ export interface TaskType {
   /** Одна строка в списке выбора типа. */
   description?: string
   settings: TaskTypeSettings
+  /**
+   * Что изменила автомиграция графа типа при загрузке (v1 → v2: снят `merge`, `condition: role`…) — предупреждения
+   * человеку, по-русски, для показа как есть. Живут, пока граф не правят (или пока человек их не убрал), и в прогоны
+   * не копируются: это состояние типа, а не его настройка.
+   */
+  workflowNotes?: WfMigrationNote[]
 }
 
 /**
@@ -205,7 +211,7 @@ function frontendType(): TaskType {
       workflow: pipelineWorkflow([
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
         { type: 'human', id: 'eyes', title: 'Посмотреть глазами', instructions: EYES_CHECK }
-      ]),
+      ], { roleIds: ['developer'] }),
       agentRules: FRONTEND_RULES
     }
   }
@@ -227,7 +233,7 @@ function backendType(): TaskType {
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
         { type: 'gate', id: 'tests', roleId: 'qa', title: 'Прогон тестов',
           instructions: 'Прогони тесты проекта (юнит и интеграционные) на ветке задачи. Принимай, только если всё зелёное; иначе верни с выводом упавших тестов.' }
-      ]),
+      ], { roleIds: ['developer'] }),
       agentRules: BACKEND_RULES
     }
   }
@@ -249,10 +255,11 @@ function fullstackType(): TaskType {
         reviewer(),
         role('qa', { systemPrompt: `Пиши и прогоняй тесты: e2e на сценарии интерфейса, интеграционные на ручки.\n\n${DONE_REPORT}` })
       ],
+      // Одна нода «Работа» на обе стороны: координатор сам раздаёт подзадачи ролям frontend и backend (контракт API — отдельной задачей, от которой зависят обе).
       workflow: pipelineWorkflow([
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
-        { type: 'human', id: 'eyes', title: 'Посмотреть глазами', instructions: EYES_CHECK, onlyForRoles: ['frontend'] }
-      ]),
+        { type: 'human', id: 'eyes', title: 'Посмотреть глазами', instructions: EYES_CHECK }
+      ], { roleIds: ['frontend', 'backend'] }),
       agentRules: `${FRONTEND_RULES}\n${BACKEND_RULES}`
     }
   }
@@ -277,7 +284,7 @@ function mobileType(): TaskType {
         { type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' },
         { type: 'human', id: 'approve', title: 'Проверка перед мержем',
           instructions: 'Соберите ветку и проверьте на устройстве или эмуляторе, затем примите или верните в работу.' }
-      ]),
+      ], { roleIds: ['developer'] }),
       agentRules: MOBILE_RULES
     }
   }
@@ -305,7 +312,7 @@ function autotestsType(): TaskType {
         },
         reviewer(`${REVIEW_PROMPT}\nОсобое внимание: флаки (ожидания, гонки), изоляция данных, читаемость шагов теста.`)
       ],
-      workflow: pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }]),
+      workflow: pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer', title: 'Ревью' }], { roleIds: ['autotester'] }),
       agentRules: AUTOTEST_RULES
     }
   }
@@ -331,7 +338,7 @@ function docsType(): TaskType {
       ],
       workflow: pipelineWorkflow([
         { type: 'human', id: 'review', title: 'Ревью человеком' }
-      ])
+      ], { roleIds: ['writer'] })
     }
   }
 }

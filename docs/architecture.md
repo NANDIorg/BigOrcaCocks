@@ -24,14 +24,16 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, gateFor?, statusHistory?, stageHistory? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, stageOf?, gateFor?, statusHistory?, stageHistory? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль типа задачи прогона (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
   - `runId` — прогон (= глобальная задача), к которому относится задача (см. «Прогоны»); задаётся только при создании,
     `updateTask` его не меняет. Без прогона задача попадает во «Входящие» (`docs/nested-kanban.md`).
-  - `stage { nodeId, visits }` — позиция в воркфлоу прогона, `gateFor { taskId, nodeId }` — у задачи-гейта: чью
-    ветку она проверяет (см. «Воркфлоу: состояние в store»).
+  - `stage { nodeId, visits }` — позиция в воркфлоу **подзадач** (старый формат, версия 1); `gateFor { nodeId, taskId?, runId? }` —
+    у задачи-проверки: ветку рабочей задачи (`taskId`) или ветку глобальной задачи целиком (`runId`) она проверяет;
+    `stageOf { nodeId, visit }` — подзадача воркфлоу **глобальной задачи** (версия 2): этап и заход, в который она создана
+    (см. «Воркфлоу: состояние в store» и `docs/workflow.md`, «Воркфлоу глобальной задачи»).
   - `startedAt` — первый `startDispatch`; `doneAt` — момент попадания в колонку `kind=done`
     (при выходе из неё сбрасывается, `store.setStatus`).
   - **Время работы** (`activeMs`, `activeSince`, `packages/core/src/active-time.ts`) копится только пока задача в
@@ -62,7 +64,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     | `human` | `handle()` в `registerIpc` (`src/main/index.ts`) — любой IPC-вызов renderer |
     | `cli` | `handle()` в `src/main/socket.ts` — запрос без `dispatchId` (координатор или человек в терминале) |
     | `worker` | там же — запрос с `dispatchId` (ORCA_DISPATCH_ID воркера) |
-    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts` — колонку двигает граф |
+    | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts`, `advanceRun`, `handleRunWorkflowEvents`, `handleRunApproval` в `src/main/workflow-run.ts` — колонку двигает граф |
     | `app` | всё остальное: `promoteReady` (backlog → ready), автозакрытие в `commit`, смерть PTY, миграции |
 
     Ограничение: источник действует только в синхронной части вызова — смены статуса после `await` пишутся как `app`.
@@ -103,9 +105,12 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   статусами открываются без миграции.
 - `TASK_STATUSES` и `STATUS_TITLES` — только дефолт, помечены `@deprecated`: реальные колонки
   живут в настройках проекта.
-- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
+- `Run { id, objective, title?, status?, inbox?, priority?, createdAt, updatedAt?, reopenedAt?, runDoneAt?, closedAt?, coordinatorPtyId?, activeMs?, activeSince?, startedAt?, typeId?, taskType?, workflow?, workflowScope?, stage?, stageHistory?, stageInput?, stageTasksDoneAt?, statusHistory?, coordinatorSessions?, git?, ... }` — прогон
   (`coordinatorSessions: AgentSession[]` — все запуски координатора с временем и `sessionId`, см. «Статистика»;
-  `git: RunGit {branch, base, worktree?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»):
+  `git: RunGit {branch, base, worktree?}` — ветка глобальной задачи, см. «Ветка глобальной задачи»;
+  `workflowScope: 'run'` — воркфлоу идёт по глобальной задаче: позиция `stage`, история входов в этапы `stageHistory` (с коммитом входа и сводкой закрытия),
+  `stageInput` — замечания/решение/ответы при входе в текущую «Работу», `stageTasksDoneAt` — метка `stage_tasks_done`; нет `workflowScope` —
+  старый формат и «Входящие», `migrateGlobalTasks` их не трогает; контракт — `docs/workflow.md`, «Воркфлоу глобальной задачи (версия 2)»):
   один запуск координатора со своим набором задач; в проекте их может быть несколько. Хранятся в доске (`StoreSnapshot.runs`).
   Прогон — это же **глобальная задача** двухуровневой доски (статус-колонка, название, «Входящие» для задач без прогона);
   контракт и миграция — `docs/nested-kanban.md`.
@@ -155,17 +160,20 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
   адресован человеку и по нему есть `HumanRequest`. Ответить можно один раз, у запуска — не больше одного открытого вопроса.
-- `HumanRequest { id, runId, taskId, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, showcaseDispatchId?, resolution?, createdAt, resolvedAt? }` —
-  `showcaseDispatchId` — у approval: запуск, чей показ выведен в `body` (`docs/workflow.md` → «Показ человеку»);
+- `HumanRequest { id, runId, taskId?, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, showcaseDispatchId?, resolution?, createdAt, resolvedAt? }` —
+  `taskId` нет у approval уровня прогона (нода `human` воркфлоу глобальной задачи): его решают по `runId`; `showcaseDispatchId` — у approval: запуск, чей показ выведен в `body` (`docs/workflow.md` → «Показ человеку»);
   запрос к человеку: `kind` `question` | `answer` | `escalation` | `approval` (этап воркфлоу «человек», `nodeId` — его нода),
   `status` `pending` | `resolved` | `cancelled`.
   Единственный источник «ждёт человека» (колонка «Нужен ответ», Инбокс, уведомления); модель, переходы и события —
   `docs/human-requests.md`. Хранится в `StoreSnapshot.requests`.
 - `Event { id, type, taskId?, dispatchId?, payload, createdAt, consumedBy? }`
   типы (`EVENT_TYPES`): `task_ready`, `worker_done`, `question`, `escalation`, `question_answered`, `answer_accepted`, `run_done`,
-  `request_created`, `request_resolved`, `answer_clarified`, `stage_changed`, `workflow_blocked` (последние два — воркфлоу,
-  см. «Воркфлоу: состояние в store»; координатор подписан только на `workflow_blocked`, `stage_changed` — для UI).
-  `worker_done` задачи-проверки несёт `gateFor` (id проверяемой задачи). Payload короткие: в `worker_done`/`answer_accepted` `answer` —
+  `request_created`, `request_resolved`, `answer_clarified`, `stage_changed`, `workflow_blocked`, `stage_started`, `stage_tasks_done`
+  (последние четыре — воркфлоу, см. «Воркфлоу: состояние в store» и `docs/workflow.md`; `stage_changed` — для UI, остальные читает координатор;
+  события воркфлоу глобальной задачи идут с `payload.runId` и **без** `taskId`: `workflow_blocked {runId, nodeId?, reason}`,
+  `stage_started {runId, nodeId, title, roleIds, visit, instructions?, feedback?, decision?, answers?}`, `stage_tasks_done {runId, nodeId}`;
+  `run_done` у такого прогона — «граф дошёл до `end`»).
+  `worker_done` задачи-проверки несёт `gateFor` (id проверяемой задачи или, у проверки ветки глобальной задачи, id прогона). Payload короткие: в `worker_done`/`answer_accepted` `answer` —
   последнее поле, обрезан до 2000 символов (`answerTruncated: true`), полный ответ и `decision` — `orca-board task answer --task <id>`;
   тексты в `question`/`request_created`/`answer_clarified` — до 300 символов, целиком — `question get` / `request get`.
 - Автопереходы (`store.ts`, по `kind`): `backlog → ready`, когда все `deps` в `done`;
@@ -293,47 +301,60 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Воркфлоу: модель (`packages/core/src/workflow.ts`)
 
-Граф этапов, которые проходит **одна рабочая задача** от первого запуска до мержа. Декомпозиция цели остаётся
-за координатором, задачи-ответы (`answerFor`) идут мимо воркфлоу. В core — модель, чистые функции и состояние
+Граф этапов версии 2 проходит **глобальная задача** (`Run.stage`): `work` ведут агенты роли ноды, которых набирает координатор по `stage_started`;
+`gate`/`ask` — одиночные задачи приложения; `human` — approval прогона; `condition`/`git`/`merge`/`end` — приложение. Подзадачи по графу не
+ходят по графу прогона: у `work` необязательный путь подзадачи `subflow` (по умолчанию `defaultSubflow()`), его проходит каждая подзадача этапа
+(`Task.stage`, `docs/workflow.md`, «Путь подзадачи»). Граф версии 1 (**одна рабочая подзадача** от первого запуска до мержа) — только у старых прогонов и «Входящих». Контракт версии 2 —
+`docs/workflow.md`, «Воркфлоу глобальной задачи (версия 2)»; ниже — модель и функции core. Задачи-ответы (`answerFor`) идут мимо воркфлоу. В core — модель, чистые функции и состояние
 в store (ниже), в `projects.json` — граф типа задачи (`TaskType.settings.workflow`, снимок — `Run.workflow`), исполняет его main (`src/main/workflow.ts`,
 раздел «Ревью и мерж» и `docs/workflow.md`). Модуль без node-импортов: его импортирует renderer ради живой
 валидации в редакторе.
 
-- **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 1`. Ноды (`WfNode`): `start`, `work`
-  (без `roleId` — роль задачи), `ask` («Вопрос человеку»: `roleId?`, `instructions` — обязательны; агент спрашивает
+- **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 2` (`WORKFLOW_VERSION_TASK_SCOPE = 1` — граф по подзадачам). Ноды (`WfNode`): `start`, `work`
+  (в версии 2 `roleIds?` — необязательные роли этапа, читать через `wfWorkRoleIds` (одиночный `roleId` версии 1 — список из одной роли); в версии 1 без роли — роль задачи;
+  `subflow?: WfSubflow {nodes, edges}` — путь каждой подзадачи этапа, только в версии 2, без версии; нет — `defaultSubflow()`: `work → merge → end`, конфликт — `human` «Конфликт мержа»), `ask` («Вопрос человеку»: `roleId?`, `instructions` — обязательны; агент спрашивает
   человека штатным `orca-board ask`, `stageAction` — тот же `start_worker`, что у `work`; `WfWorkStage.type`
   различает этапы; `Question.nodeId` — нода, на которой спросили), `gate` (агент-проверяющий: `roleId`, `instructions`), `human`, `condition`
   (закрытый список предикатов `WfCondition`: `attempts` — сколько раз задача заходила в ноду, `role` — роль
   задачи; `files` зарезервирован под v2 и валидацию не проходит), `merge`, `git` (git-операция без агента:
   `operation` — `create_branch` / `checkout` / `commit` / `push`, поля `branch`, `base`, `message`, `remote`; исходы `ok` / `error`;
   контракт — `docs/workflow.md`, «Нода Git»), `end` (`merged`). У каждой ноды
-  опциональные `title` и `column`. Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
+  опциональные `title`, `column` и `templateId` (из какого шаблона нод вставлена копия; исполнитель не читает). Ребро `WfEdge { from, outcome, to }`; какие исходы (порты) у типа ноды —
   `WF_PORTS` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, git: ok/error, end — без выходов).
-- **`defaultWorkflow(roles)`** повторяет поведение до воркфлоу: `start → work → ревью → merge → end`, reject
-  ревью — обратно в `work`, конфликт мержа — нода `human`, её reject — в работу. Есть роль `reviewer` —
-  ревью это `gate`, нет — `human`. Лимита повторов нет (валидация предупреждает о бесконечном цикле).
-- **`pipelineWorkflow(checks)`** — конструктор типового графа: `start → work → проверки по порядку → merge → end`,
-  проверка — `gate` (роль) или `human`, reject любой — в `work`, конфликт мержа — `human`. `onlyForRoles` ставит
-  перед проверкой `condition` по роли (`<id>_if`), остальные задачи её пропускают. Из него собраны
-  `defaultWorkflow` и графы заготовок типов задач; id нод и рёбер стабильны (`work`, `merge`, `end`,
-  `conflict`, `e_<нода>_<исход>`).
+- **`defaultWorkflow(roles)`**: `start → «Реализация» (work, без роли: координатор сам выбирает роли подзадач) → [ревью gate `reviewer`, если роль есть] →
+  «Проверка человеком» (human `check`) → end`, reject любой проверки — в «Реализацию». Слияния в базовую ветку нет. Лимита повторов
+  нет (валидация предупреждает о бесконечном цикле). Прежний граф по подзадачам — `legacyDefaultWorkflow(roles)` (версия 1:
+  `start → work → ревью → merge → end` с конфликтом мержа у человека; ревью человеком, если нет `reviewer`).
+- **`pipelineWorkflow(checks, {roleIds | work})`** — конструктор типового графа версии 2: `start → «Работа» (одна или несколько по порядку) →
+  проверки по порядку → «Проверка человеком» → end`, проверка — `gate` (роль) или `human`; финальную `human` (`PIPELINE_FINAL_CHECK_ID`)
+  он добавляет, если последняя проверка не `human`; reject любой проверки — в последнюю «Работу». Из него собраны `defaultWorkflow` и графы
+  заготовок типов задач; id стабильны (`work`, `end`, `check`, `e_<нода>_<исход>`). `legacyPipelineWorkflow(checks)` — прежний конструктор версии 1
+  (с `merge`, конфликтом мержа и `onlyForRoles`).
+- **`toTaskScopeWorkflow(wf)`** — граф версии 2 в граф подзадач (версия 1) для старого движка: `TaskStore.runWorkflow` берёт его у прогонов без
+  `workflowScope` и «Входящих», когда графа-снимка нет и приходит граф типа (`docs/workflow.md`, «Миграция»).
 - **Нода `git`, хелперы** (`workflow.ts`): `WF_GIT_OPERATIONS`, `WF_GIT_FIELD_USE` (обязательные/необязательные поля по операции),
   `wfGitVars(task)` + `renderGitTemplate` (подстановки `{taskId}`, `{slug}`, `{title}`), `wfGitSlug`, `isValidGitBranchName`,
   `isValidGitRemoteName`, `gitBranchTemplateValid`. Валидация и `stageAction` (неполная нода → `blocked`) используют их же, чтобы main
   не дублировал правила. Состояние (`Task.stage`, `stageHistory`) не менялось: `outcome: 'error'` — просто ещё одно значение `WfOutcome`.
-- **`migrateWorkflow(wf)`** — старую версию поднимает до текущей (пока без шагов), будущую не трогает.
+- **`migrateWorkflow(wf, roles?)`** / **`migrateWorkflowReport(wf, roles?)` → `{workflow, notes}`** — v1 → v2: снимает `merge` (переход идёт по `ok`),
+  `condition: role` (по `yes`), `git create_branch/checkout` (по `ok`) и ноды, потерявшие вход; роль `work` переносится в `roleIds` (без роли — без роли, без замечания), `ask` без роли получает `defaultWorkRole(roles)`;
+  `notes` (`WfMigrationNote`, по-русски) — предупреждения человеку. Будущую версию не трогает.
+- **Путь подзадачи и шаблоны нод** (контракт — `docs/workflow.md`, «Путь подзадачи» и «Шаблоны нод»): `WfSubflow`, `defaultSubflow()`, `WfContext.scope: 'run' | 'subtask'`
+  (`'subtask'` — прежнее поведение без поля, но `ask` даёт `blocked`), `WfValidationContext.scope`, `WfIssue.subflowOf`, `WF_SUBFLOW_PREFIX`; `node-templates.ts` — `WfNodeTemplate` и
+  `validateNodeTemplate` (без node-импортов, его читает renderer). Store — `taskWorkflow(task)`.
 - **`stableJson(v)`** — JSON с отсортированными ключами: сравнение ролей и графов без учёта порядка полей
   («несохранённые изменения» редактора графа).
-- **`validateWorkflow(wf, {roles, columns?, enabledAgents?})` → `{errors, warnings}`**, у каждой проблемы
-  `message` по-русски и `nodeId`/`edgeId` для подсветки. Ошибки: версия не текущая; пустые/дублирующиеся id,
+- **`validateWorkflow(wf, {roles, columns?, enabledAgents?, scope?})` → `{errors, warnings}`**, у каждой проблемы
+  `message` по-русски и `nodeId`/`edgeId` для подсветки (у проблем пути подзадачи — путь `impl/rev` и `subflowOf`; коды `subflow*`, `templateIdNotString` — `docs/workflow.md`). Ошибки: версия не текущая; пустые/дублирующиеся id,
   ребро в несуществующую ноду; не ровно один `start`, ребро в `start`, нет `end`; порт без ребра, два ребра на
   порт, исход не из `WF_PORTS`, выход из `end`; из достижимой ноды нет пути к `end`; цикл из одних условий;
-  роль гейта (и `work.roleId`) не существует или служебная (`isTaskRole`), `attempts` на несуществующую ноду
-  или `atLeast < 1`, роль из условия `role` не существует, условие `files`, несуществующая колонка (только если
+  роль гейта, `work` и `ask` не существует или служебная (`isTaskRole`), у `work`/`ask` роли нет (`workNoRole`/`askNoRole`), условие `role`
+  (`conditionRoleRun`), `git create_branch/checkout` (`gitRunOperation`), `attempts` на несуществующую ноду
+  или `atLeast < 1`, условие `files`, несуществующая колонка (только если
   `columns` переданы: у графа типа задачи колонок нет — тип общий для проектов с разными колонками); от старта
   недостижима ни одна `work`. Предупреждения: агент роли гейта выключен (только если передан `enabledAgents`),
-  нода недостижима, возврат в `work` в обход `attempts` и `human` (решение человека цикл не делает бесконечным), путь accept ведёт в `end` без `merge`, после `merge ok`
-  путь снова приходит в `merge`.
+  нода недостижима, возврат в `work` в обход `attempts` и `human` (решение человека цикл не делает бесконечным), путь от старта к `end`
+  без ноды `human` (`noHumanBeforeEnd`), после `merge ok` путь снова приходит в `merge`.
 - **`nextStage(wf, stage, outcome, ctx)` → `{stage, action}`** — чистая функция перехода. `stage =
   {nodeId, visits}`, `visits` считает заходы в ноды (включая условия) и нужен `attempts`. Цепочка `condition`
   проходится за один вызов; повторный заход в то же условие за вызов → `blocked` (граф мог сохранить старый
@@ -341,13 +362,15 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `blocked {reason}`; при `blocked` из-за нет ребра/ноды задача остаётся на прежнем этапе. `ctx.roleIds` —
   текущие роли типа прогона: роль гейта удалили → `blocked` на ноде гейта. `startStage(wf, ctx)` — переход из
   старта, `stageAction(wf, stage, ctx)` — действие для текущего этапа (повтор эффекта после рестарта или
-  после исправления причины `blocked`).
+  после исправления причины `blocked`). Для глобальной задачи те же функции в контексте `scope: 'run'` — `startRunStage`, `nextRunStage`,
+  `runStageAction`: `work` даёт `start_stage {nodeId, roleIds}` (пусто = любые рабочие роли типа; заданной, но удалённой роли — `blocked`), `ask` — `create_ask {nodeId, roleId}`, `condition: role` — `blocked`;
+  `ctx.roleId` необязателен.
 - **`gateTaskSpec(task, node)` / `gateTaskTitle`** — общий шаблон задачи-гейта: ветка, `review info`,
   проверка через `git merge --no-commit`/`--abort`, `review accept` / `review reject`, обязательный `done`,
   спека рабочей задачи как критерии. Команды сборки и тестов конкретного репозитория в шаблон не входят —
   они берутся из `node.instructions` (раздел «Как проверять») или системного промпта роли.
 - **`describeWorkflow(wf)` → `WfStageInfo[]`** — граф для `orca-board workflow show`: этапы в порядке обхода от
-  старта (недостижимые — в конце) с `type`, `title`, `roleId?`, `instructions?`, `condition?` (условие словами), `git?` и
+  старта (недостижимые — в конце) с `type`, `title`, `roleId?` (gate/ask), `roleIds?` (work), `instructions?`, `condition?` (условие словами), `git?` и
   `next` — исход → «название (id)» ноды.
 
 ### Воркфлоу: состояние в store (`packages/core/src/store.ts`)
@@ -356,12 +379,21 @@ Store хранит позицию и решает, куда задача пер�
 в main (`src/main/workflow.ts`, `docs/workflow.md`). `finishDispatch`, `rejectReview`, `acceptTask` сами `stage`
 не двигают — исход до `advanceStage` доводит main.
 
+**Воркфлоу глобальной задачи (версия 2)** — методы `enterRunStage`, `advanceRunStage`, `finishStage`, `settleIdleStages`, `blockRunStage`,
+`requestRunApproval`, `runStage`; правила `createTask` в прогоне с `workflowScope: 'run'` (`roleIds` ноды: пусто — любая рабочая роль типа, есть — роль из списка, одна роль берётся по умолчанию (`stageDefaultRole`), чужая роль и этап не `work` —
+ошибки, `stageOf`), `stage_tasks_done` вместо `closeFinishedRuns`, `run_done` при входе в `end`, «Подтвердить»/«Вернуть» как решение approval прогона —
+описаны в `docs/workflow.md` («Store»). Прогон без `workflowScope` идёт по методам ниже (старый движок подзадач): `advanceStage` и `enterWork` для подзадач
+прогона с воркфлоу на этапе «Работа» (`Task.stageOf` на ноде `work`) ходят по пути ноды (`taskWorkflow`; `scope: 'subtask'`), а для проверок, задач-ответов и подзадач вне «Работы» — по-прежнему ошибка
+и пустое действие. `runWorkflow` у старого прогона отдаёт граф версии 1 (граф типа версии 2 переводит `toTaskScopeWorkflow`).
+
 - **Снимок графа** — `Run.workflow`: `createRun(objective, ptyId?, type?)` и `createGlobalTask({…, type})`
   кладут глубокие копии типа (`RunTypeInput`: `Run.typeId`, снимок `Run.taskType` и граф), который передаёт вызывающий
   код (store в библиотеку типов не ходит); старая форма — только граф (`Workflow` / `workflow`). Правка графа посреди
   прогона не ломает переходы идущих задач. `runWorkflow(runId, fallback?)` — снимок, а у прогона без него (от кода
-  до воркфлоу, «Входящие») — `fallback.workflow` (граф типа), иначе `defaultWorkflow` по `fallback.roleIds`;
-  массив вместо объекта — старая форма (только роли).
+  до воркфлоу, «Входящие», прогон с типом без графа) — `fallback.workflow` (граф типа), иначе граф по умолчанию по `fallback.roleIds`
+  (`defaultWorkflow` для прогона с воркфлоу, `legacyDefaultWorkflow` для старого); массив вместо объекта — старая форма (только роли).
+  Какой это прогон, определяет `Run.workflowScope` (`runScopeFields` при создании и в `changeGlobalTaskType`): граф версии 2 или тип без графа — `'run'`,
+  граф версии 1 и прогон без типа и графа — старый движок.
 - **`assignRunTypes({typeId, snapshot})`** — миграция на типы задач: прогоны без `typeId`, кроме «Входящих», получают
   тип и снимок (тип, в который main перенёс настройки проекта); `Run.workflow` не трогается. Идемпотентна, один
   `commit` только при изменениях; возвращает число изменённых прогонов.
@@ -418,18 +450,33 @@ Store хранит позицию и решает, куда задача пер�
   (проблемы по нодам и рёбрам), подписи исходов `WF_OUTCOME_LABELS` и `wfOutcomeLabel(тип, исход)`. Недопустимая операция возвращает граф как есть.
 - **`WorkflowInspector`** — справа от холста, форма выбранной ноды: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
-  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у работы и «Вопроса человеку» пустое значение — «роль задачи»,
-  роль не из типа — пунктом «(нет в типе задачи)»), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
+  (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у «Вопроса человеку» роль обязательна (`askNoRole`), у гейта тоже,
+  роль не из типа — пунктом «(нет в типе задачи)»; у **«Работы»** — мультивыбор `roleIds` (`wfWorkRoleIds`): ничего не отмечено — роли
+  подзадач выберет координатор из рабочих ролей типа), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
   валидация, поэтому `patchNode` не удаляет пустую строку), у работы — «Показать человеку»
-  (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N или роль
-  рабочей задачи), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
+  (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N; «роль рабочей задачи» не предлагается —
+  у глобальной задачи роли нет, `conditionRoleRun`; условие по роли из файла остаётся видно отключённым пунктом), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
   (`setPortTarget`: пусто — снять переход), поэтому граф собирается с клавиатуры без холста. Выбран переход — его цель
   и удаление; ничего не выбрано — список нод кнопками. Проблемы валидации ноды — списком под формой.
 - **`workflowForm.ts`** — логика инспектора и раздела: `patchNode` (пустые необязательные поля удаляются),
   `changeNodeType` (роль и инструкция переносятся между `work`/`gate`/`human`/`ask`, где они есть), `portTarget`/`setPortTarget`/`targetOptions`, `conditionOfKind`, импорт/экспорт
   (`exportWorkflowJson`, `parseWorkflowJson` — проверяет только форму `{version, nodes[], edges[]}`, смысл —
-  `validateWorkflow`; старую версию поднимает `migrateWorkflow`, будущую отвергает), пресет `addRetryLimit(wf, 3)`
+  `validateWorkflow`; старую версию (v1) поднимает `migrateWorkflowReport` до v2 — `parseWorkflowJson` отдаёт ещё и `migration {fromVersion, notes}`:
+  замечания на языке интерфейса по `WfMigrationNote.code` (`migrationNoteTexts`, ключи `config.wf.migration.*`; названия снятых нод — из исходного графа), их
+  показывает `TaskTypeWorkflow` врезкой над проблемами, пока граф не заменён или не сохранён; будущую версию отвергает), пресет `addRetryLimit(wf, 3)`
   и проверка старого main/preload (`workflowApi`, `WORKFLOW_STALE_MESSAGE`, `isStaleWorkflowError`).
+- **Вход в «Работу» и путь подзадачи** (`workflowNav.ts`, `settings/TaskTypeWorkflow.tsx`). Хост держит один черновик — граф типа — и стек
+  `WfPath` из id нод «Работа» (`[]` — граф типа, `['impl']` — путь подзадачи ноды `impl`; глубина 1, `canOpenPath`). Холст и инспектор
+  работают с графом текущего уровня (`graphAt`), правка пишется обратно в `work.subflow` (`writeGraphAt`), так что сохранение, экспорт
+  и валидация видят один граф. У ноды без своего пути показан образец `defaultSubflow()` только для просмотра (`isDefault`), пока
+  не заведут свой (`startCustomSubflow`; возврат — `resetSubflow`, с подтверждением, если путь отличается от умолчания).
+  Вход — двойной клик по «Работе» (`onOpenNode` холста) или блок «Путь подзадачи» инспектора; крошки «Граф типа › Реализация».
+  `scope: 'subtask'` у холста и инспектора: палитра и select «Тип» без `ask` (`wfAddableTypes`, `WF_SUBTASK_FORBIDDEN_TYPES`), нет
+  вложенного пути, условие по роли доступно, у нод — пояснения `config.wf.path.note.*`. Нода со своим путём — значок (`Icon.subflow`)
+  и подпись по обходу пути (`subflowSummary`: «ревью + мерж»; конфликт мержа не считается). Проблемы валидации приходят графом типа с
+  `WfIssue.subflowOf` и `nodeId` вида `impl/rev`: `levelIssues(issues, path)` на графе типа кладёт их на ноду «Работа» (текст с
+  префиксом `config.wf.path.issuePrefix`, его добавляет `wfIssueText`), внутри пути — на ноду пути без префикса; список проблем под
+  холстом общий, клик по `impl/rev` открывает путь `impl` и выделяет `rev` (`locateId`).
 - **Вопрос человеку в редакторе**: `ask` — в палитре (`WF_ADDABLE_TYPES`, сразу после «Работы»), в select «Тип»
   (`WF_TYPE_ORDER`), в легенде («Вопрос человеку», `WF_NODE_HELP.ask`), иконка-«облачко» и цвет «Нужен ответ»
   (`.wf-node--ask`), подпись на холсте — «роль …» / «роль задачи». Роль на `ask` учитывает и удаление роли
@@ -438,9 +485,10 @@ Store хранит позицию и решает, куда задача пер�
   `workflowOf` → `workflowForRun`; нода пропала из графа — метки нет). Пилюля этапа на карточке доски для `ask` та же,
   что у `work` (`stageLabel`).
 - **Нода Git в редакторе** (`workflowGit.ts`): в палитре после «Мержа» (`WF_ADDABLE_TYPES`), в select «Тип» и легенде
-  (`WF_NODE_HELP.git`), иконка `WfNodeIcon.git`. Инспектор (`GitFields`) показывает операцию и **только её поля**
-  (`gitFieldsFor` по `WF_GIT_FIELD_USE` из core): ветка — `create_branch`/`checkout`, база — `create_branch`,
-  сообщение — `commit`, remote — `push`. Под веткой и сообщением — подстановки (`gitPlaceholdersHint`: у ветки без
+  (`WF_NODE_HELP.git`), иконка `WfNodeIcon.git`. Новая нода — `commit` с пустым сообщением. В select операций только `commit` и `push`
+  (`GIT_OPERATIONS`): у глобальной задачи одна ветка, `create_branch`/`checkout` запрещает `gitRunOperation`; такая операция из импортированного
+  графа остаётся отключённым пунктом (`isUnavailableGitOperation`). Инспектор (`GitFields`) показывает операцию и **только её поля**
+  (`gitFieldsFor` по `WF_GIT_FIELD_USE` из core): сообщение — `commit`, remote — `push` (поля ветки и базы у `create_branch`/`checkout` показываются, если такая нода пришла из файла). Под веткой и сообщением — подстановки (`gitPlaceholdersHint`: у ветки без
   `{title}`) и превью на образцовой задаче (`gitPreview`; красное — имя недопустимо для git). `patchGit` при смене
   операции убирает поля, которых у новой операции нет (иначе невидимое значение давало бы предупреждение
   `gitParamIgnored`), пустое необязательное поле удаляет, пустое обязательное оставляет строкой — его подсветит
@@ -452,6 +500,18 @@ Store хранит позицию и решает, куда задача пер�
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
   третий отказ. Повторное применение — ошибка «лимит уже стоит».
+- **Свои ноды** (`nodeTemplates.ts`, `settings/useNodeTemplates.ts`, `settings/NodeTemplatesSection.tsx`, `WorkflowTemplateBlock.tsx`). Библиотека
+  шаблонов (`window.orca.nodeTemplates`, IPC `nodeTemplates:*`) грузится один раз хуком `useNodeTemplates` в `SettingsModal` и раздаётся
+  трём местам: палитре холста, блоку инспектора и разделу «Настройки → Свои ноды». Палитра — кнопка-звезда в тулбаре холста (проп `library`)
+  открывает панель со списком; вставка — `insertTemplate` (копия ноды, свободный id по типу, `templateId` на шаблон). В пути подзадачи шаблон
+  с «Вопросом человеку» или вложенным путём недоступен (`templateMisfit` — та же `validateNodeTemplate({scope})`, причина в подсказке).
+  Инспектор (`WorkflowTemplateBlock`, у любой ноды, кроме `start`): «Сохранить как свою ноду» (`templateInput`, после записи нода получает
+  `templateId` — `linkTemplate`); у ноды с `templateId` — сверка с шаблоном `templateSync`: `same` / `differs` / `missing` (шаблон удалён) /
+  `unknown` (библиотека недоступна). Ноды **сверяются по содержимому** (`templateNodeOf` без `id`/`x`/`y`/`templateId` против `template.node`), а не
+  по `updatedAt`: копия не хранит момент вставки, а поле в контракт узла ради этого не добавляли; `updatedAt` показывается в подсказке. При
+  расхождении — «Обновить из шаблона» (`applyTemplate`: тело заменяется, `id`, позиция и переходы остаются, переходы по портам, которых нет
+  у нового типа, убираются) и «Записать в шаблон» (в обратную сторону, с `confirm`). Список в «Настройках» — переименовать (`renamedTemplateInput`,
+  название и описание) и удалить. Старый main/preload — `nodeTemplatesApi`/`nodeTemplatesError` (`config.nodeTpl.stale`), как `docsApi()`.
 - **Раздел «Воркфлоу» типа** (`settings/TaskTypeWorkflow.tsx`): черновик графа — `TaskType.settings.workflow`, а без
   него `defaultWorkflow(roles)`. В отличие от ролей **без автосохранения**: промежуточный граф почти всегда
   невалиден, и main его не примет. `validateWorkflow` по ролям типа (без колонок и агентов — они у проекта) считается
@@ -548,7 +608,7 @@ orca-board agents list                      # [{id,title,installed,enabled,versi
 orca-board types list                       # типы задач, доступные проекту: [{id,title,description?,default?,permissionMode,roles,stages}]
 orca-board roles list [--run <id>] [--type <id>]   # роли типа прогона: [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
-orca-board workflow show [--run <id>] [--type <id>]   # {source: run|type, run?, typeId, typeTitle, stages: WfStageInfo[]} — этапы задачи после worker_done
+orca-board workflow show [--run <id>] [--type <id>]   # {source: run|type, scope?: run|task, run?, typeId, typeTitle, stage?: RunStageInfo, stages: WfStageInfo[]} — граф и (у прогона scope run) текущий этап
 orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor, statusHistory
 orca-board rules get [--type <id>] [--run <id>] [--role <id>]   # правила агентов типа: общие ({typeId,typeTitle,rules}) или роли (+ role, title)
 orca-board rules set [--type <id>] [--run <id>] [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
@@ -569,17 +629,18 @@ orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run 
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
 orca-board runs list                        # [{...Run, tasks, done}]
 orca-board runs close [--run <id>]          # закрыть прогон вручную
-orca-board runs finish [--run <id>] [--summary "..." | --summary-file summary.md]   # координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал); сводка — Run.summary
+orca-board stage finish [--run <id>] [--summary "..." | --summary-file summary.md]   # воркфлоу глобальной задачи (scope run): закрыть этап «Работа», граф идёт по next; сводка этапа — Run.summary и stageHistory
+orca-board runs finish [--run <id>] [--summary "..." | --summary-file summary.md]   # прогон старого формата: координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал); сводка — Run.summary. У прогона scope run до run_done — ошибка с подсказкой stage finish
 orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md; global create [--type <id>]
 orca-board worker read --dispatch <id>
 ```
 
-`--run` у `task create`, `check`, `request list`, `workflow show`, `roles list`, `rules get|set`, `runs close` и `runs finish`
+`--run` у `task create`, `check`, `request list`, `workflow show`, `roles list`, `rules get|set`, `runs close`, `runs finish` и `stage finish`
 по умолчанию берётся из `$ORCA_RUN_ID` и уходит как `params.run` (`RUN_METHODS` в `packages/cli/bin/orca-board.js`): задачи,
 созданные координатором, наследуют его прогон, `workflow show` показывает снимок графа его прогона, а `roles list` и `rules` —
 роли и правила типа его глобальной задачи. У `workflow show`, `roles list` и `rules` явный `--type` важнее: прогон из окружения
-тогда не подставляется (`TYPE_METHODS`), иначе он перебил бы выбранный тип. `runs close`/`runs finish` без прогона — ошибка до обращения к сокету.
-`runs finish --summary-file` CLI читает сам (он в cwd координатора) и шлёт текст в `params.summary`, как
+тогда не подставляется (`TYPE_METHODS`), иначе он перебил бы выбранный тип. `runs close`/`runs finish`/`stage finish` без прогона — ошибка до обращения к сокету.
+`runs finish --summary-file` и `stage finish --summary-file` CLI читает сам (он в cwd координатора) и шлёт текст в `params.summary`, как
 `done --answer-file`; нет файла или `--summary` без текста — ошибка до сокета.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
 каждую строку ответа; SIGINT/SIGTERM → закрыть сокет, код 0; ошибка сервера или разрыв соединения → код 1.
@@ -833,6 +894,18 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   последний dispatch `unknown`/`failed`, и нет живого терминала), «Переместить в…» и «Удалить» (с `confirm`) — поверх
   правого верхнего угла, видны при наведении/фокусе, на touch — всегда. Клик по карточке → `onSelect` + `onOpenTask` (модалка).
   Полные формы ревью и ответа на вопрос живут в модалке задачи.
+- **Этап воркфлоу глобальной задачи** (`Run.workflowScope: 'run'`, `renderer/src/runStage.ts`, чистые функции): `runStageLabel(global, workflow)` — пилюля
+  «где граф» (название ноды из `workflowForRun` и «N-й заход» со второго; подсказка по типу ноды `global.stage.hint.*`; на старте, конце, без позиции,
+  без графа и у прогона старого формата — `null`). Она — чип `g-chip stage` на карточке глобальной доски (`GlobalBoard.stageLabel`, кроме колонки «Сделано») и
+  в шапке экрана (`GlobalTaskHeader.stage`, «Этап: …»). Подзадача этапа (`Task.stageOf`) получает пилюлю в `stageLabel` (`cardState.ts`), а задача-гейт
+  по ветке прогона (`gateFor.runId`, без `taskId`) — «⛉ Гейт «нода» → ветка задачи». **Путь подзадачи** (`renderer/src/subtaskPath.ts`): подзадача, уже вошедшая в путь (`Task.stage`), подписана
+  шагом пути — `cardStageLabel` берёт названия нод из пути (`work.subflow ?? defaultSubflow()`), а не из графа прогона; `stageHold` помечает подзадачи текущего захода, что ждут проверки или
+  человека на своём пути и потому держат этап; блок «Путь подзадачи» в `TaskModal` (`SubtaskPathBlock`) — шаг, «держит этап» и история шагов (`Task.stageHistory`), подробности — `docs/workflow.md`, «Renderer». **Группировка подзадач по этапам**: `stageGroups` считает по всем
+  подзадачам доски подписи «Реализация · 2/3» (сделано / всего; заход со второго) и порядок (по времени создания первой подзадачи), `splitByStage` режет
+  ими каждую колонку (`Board`, метка `.group-label`); этапов меньше двух или нет названий нод — колонки как раньше. Порядок карточек в колонке при
+  группировке — как на экране, по нему ходят стрелки. **История этапов** — события `stage` в `globalTimeline` (`Run.stageHistory`: «Этап «…»», заход, исход
+  `reject`/`accept`/`conflict`/`error`/`restart`, коммит входа, выдержка сводки закрытия; `GlobalHistory` получает `workflow`). Всё — необязательные поля: со старым main
+  пилюль, групп и записей истории просто нет.
 - **Названия этапов**: `Board` принимает опциональный `stageTitles` (`nodeId → название`, `wfNodeTitles` из `cardState.ts`);
   `App` строит его по `workflowForRun` (`taskTypes.ts`: снимок `Run.workflow`, иначе граф типа прогона). Нет типов (старый
   main) или нода неизвестна — пилюли этапа нет (id ноды человеку ничего не говорит), гейт подписывается и без неё.
@@ -1092,15 +1165,19 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   Реализация — `ProjectManager` (`main/projects.ts`: `groups`, `createGroup`, `renameGroup`, `removeGroup`, `setGroupCollapsed`,
   `setProjectGroup`, `reorderGroups`); `reorderGroups` требует ровно все id по одному разу, иначе `groupNotFound` на лишнем/пропущенном;
   неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
-  `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}`, `taskTypes:save(input)` → `TaskType`,
+  `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}` (у типа может быть `workflowNotes` — предупреждения автомиграции графа), `taskTypes:save(input)` → `TaskType`
+  (`input.workflowNotes` необязателен: не передан — прежние остаются, пока граф не менялся; передан — сохраняется, `[]` закрывает),
   `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
-  (см. «Проекты → Типы задач»); `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
+  (см. «Проекты → Типы задач»); `nodeTemplates:list` → `WfNodeTemplate[]`, `nodeTemplates:save(input: NodeTemplateInput {id?, title, description?, node})` → `WfNodeTemplate`,
+  `nodeTemplates:delete(id)` → оставшиеся `WfNodeTemplate[]` (библиотека шаблонов нод — `projects.json → nodeTemplates`, глобальная; `updatedAt` ставит main; ошибки — `OrcaError`
+  `nodeTemplate.notSaved|notFound|notObject|emptyId|emptyTitle`, битые записи файла при загрузке пропускаются с `StateWarning {kind: 'skipped'}`; см. `docs/workflow.md` → «Шаблоны нод»);
+  `projects:setTaskTypes(id, {typeIds?, defaultTypeId})` → `Project`,
   `projects:add(typeId?, path?)` (без `path` — диалог выбора папки, отмена → `null`),
   `projects:detectTaskType(path?)` → `TaskTypeDetection {path, typeId, reason} | null` (без `path` — диалог; проект не добавляет);
   `globalTasks:create` принимает `typeId?` (недоступный проекту — ошибка); `globalTasks:changeType(id, typeId)` → `GlobalTask`
   (смена типа до начала работы: `TaskStore.changeGlobalTaskType`, правило — `canChangeRunType`, см. `docs/nested-kanban.md`); `agents:list(refresh?)`;
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
-  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id)` → `GlobalTask` и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
+  `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id, decision?)` → `GlobalTask` (`decision` — решение при «Подтвердить» у прогона с воркфлоу) и `globalTasks:returnToWork(id, text, cols, rows)` → `ptyId` («Проверка», `docs/nested-kanban.md`); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)` (`docs/human-requests.md`); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»); `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject`;
   `showcase:read(taskId, path)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ),
   `showcase:open(taskId, path)`, `showcase:reveal(taskId, path)` — файлы показа из worktree задачи активного проекта
@@ -1128,30 +1205,31 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 | Метод | Параметры | Результат |
 |---|---|---|
-| `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`); `role` проверяется по ролям типа прогона (`ProjectDeps.roles(run)`), без `run` («Входящие») — типа проекта по умолчанию |
+| `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`); `role` проверяется по ролям типа прогона (`ProjectDeps.roles(run)`), без `run` («Входящие») — типа проекта по умолчанию. Воркфлоу глобальной задачи (`scope run`, граф идёт): сначала `store.assertStageAcceptsTasks` — вне этапа «Работа» ошибка «дождись stage_started» (раньше выбора роли, иначе координатор увидел бы «`--role` обязателен»); у этапа несколько ролей и нет `role` — ошибка со списком ролей этапа, одна роль — берётся сама (`stageDefaultRole`); роль вне списка этапа — ошибка `store.createTask`; подзадача получает `stageOf` |
 | `global.create` | `title?`, `description?`, `status?`, `priority?`, `type?` | `GlobalTask` с `typeId`/`typeTitle`; тип — `ProjectDeps.runType(type)` (нет — тип проекта по умолчанию; вне `taskTypeIds` или неизвестный — ошибка с подсказкой `types list`); остальные `global.*` — `docs/nested-kanban.md` |
 | `coordinator.start` | `objective` или `global`, `type?` | `{ptyId}`; `type` — тип новой глобальной задачи, вместе с `global` — ошибка (тип не меняется) |
 | `check` | `types?`, `run?`, `consumer?`, `wait?`, `timeout-ms?`, `follow?` | `{events, timedOut}`; с `follow` — поток `{event}` |
 | `runs.list` | — | `[{...Run, tasks, done}]` |
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
-| `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`) |
+| `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`). Прогон с воркфлоу глобальной задачи (`workflowScope: 'run'`) до `run_done` — ошибка: этап закрывает `stage.finish` (`store.finishRun`); после `run_done` — сигнал «закончил» |
+| `stage.finish` | `run` (обязателен; CLI подставляет `$ORCA_RUN_ID`), `summary?` (markdown) | `{run, finished, stage: {nodeId, visits}, next: {type, nodeId, reason?}}`: `store.finishStage` закрывает этап «Работа» (все подзадачи захода в done и хотя бы одна) и двигает граф исходом `next`; `next` — действие новой ноды (`WfAction`); эффекты (проверка, запрос человеку, мерж, git, конец) выполняет движок прогона: сокет зовёт `ProjectDeps.finishStage` → `finishRunStage` (`workflow-run.ts`), а не `store.finishStage` напрямую — событие `stage_changed` эффектов не запускает. Вне этапа «Работа», без подзадач, с незакрытыми, прогон старого формата — ошибка с подсказкой (текст из store доходит до CLI как есть) |
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
-| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?}]}]` (`resolveTaskType`, `describeWorkflow`) |
+| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?}]}]` (`resolveTaskType`, `describeWorkflow`) |
 | `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
 | `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка |
 | `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу. Задача на этапе `ask` — вопрос человеку при любом координаторе (`forceHuman`) |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
-| `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`) |
-| `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса) |
+| `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`); approval глобальной задачи (нода `human`) приходит без `taskId`, с `runId` и `nodeId` — фильтр по `run` его находит |
+| `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса); у approval прогона поля `taskId` нет |
 | `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `reject`, `restart`, `dismiss` | `{request, worker?, startError?}` |
 | `task.list` / `task.get` | `run?` / `task` | `Task[]` / `Task \| null` — со `stage` и `gateFor` |
-| `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', run, typeId, typeTitle, stages}` (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` |
-| `review.accept` | `task`, `decision?` | `Task`; на этапе проверки — исход `accept` воркфлоу (`reviewAccept`, `src/main/workflow.ts`) |
-| `review.reject` | `task`, `feedback` | `Task`; на этапе проверки — исход `reject` воркфлоу (`ProjectDeps.reject` → `reviewReject`) |
+| `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', scope: 'run' \| 'task', run, typeId, typeTitle, stage?, stages}` (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); `scope: 'run'` — граф ведёт глобальную задача, `stage` — `store.runStage` (нода, `type`, `visit`, `roleIds`, `instructions`, `feedback`/`decision`/`answers` целиком, `tasks` захода, `tasksDoneAt`; нет — граф не начат), `scope: 'task'` — старый воркфлоу по подзадачам без позиции у прогона; без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` |
+| `review.accept` | `task`, `decision?` | `Task`; на этапе проверки — исход `accept` воркфлоу (`reviewAccept`, `src/main/workflow.ts`); для задачи-проверки ветки глобальной задачи (`gateFor.runId`) — исход `accept` графа прогона (`decideRunGate`) |
+| `review.reject` | `task`, `feedback` | `Task`; на этапе проверки — исход `reject` воркфлоу (`ProjectDeps.reject` → `reviewReject`); у проверки ветки глобальной задачи — исход `reject` графа прогона, `feedback` уходит в `stage_started` |
 | `worker.stop` | `task` | `{stopped: dispatchId[], task}` |
 | `worker.restart` | `task`, `feedback?` | `{stopped, ptyId, dispatchId, worktree, branch}` |
 | `task.reopen` | `task`, `feedback?`, `start?` | `Task`; со `start` — `{task, worker}` |
@@ -1209,6 +1287,10 @@ GitHub PR по [Git Flow](git-flow.md)).
 
 Жизненный цикл рабочей задачи после `done` ведёт **воркфлоу** проекта (`docs/workflow.md`), а не координатор.
 Исполнитель — `src/main/workflow.ts`: store решает, куда задача переходит (`advanceStage`), main выполняет эффект.
+Это движок по подзадачам (версия 1: старые прогоны и «Входящие»); воркфлоу **глобальной задачи** (`Run.workflowScope: 'run'`) исполняет
+`src/main/workflow-run.ts` — эффекты нод прогона, слияние ветки прогона в базу (`mergeRunBranch` в `run-branch.ts`), подписки на решения (`docs/workflow.md`, «Движок main»). `review accept|reject` по задаче-проверке ветки прогона (`gateFor.runId`) идёт в
+`runGateDecision` через `reviewDecision` в `index.ts`. Подзадачи этапа «Работа» идут по своему пути (`work.subflow` / `defaultSubflow()`) в движке по подзадачам: делит их с движком прогона
+`taskEngine` (`workflow.ts`), событие обрабатывает ровно один исполнитель; `globalTasks:accept` / `globalTasks:returnToWork` прогона нового формата — `acceptRun` / `returnRun`.
 
 - **Вход и работа.** `runWorker` (любой `worker start`, перезапуск, «Перезапустить», исполнитель после отказа) до
   старта зовёт `enterWork`: задача входит в граф / возвращается на `work`; роль ноды `work` (если задана)
@@ -1238,6 +1320,11 @@ GitHub PR по [Git Flow](git-flow.md)).
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
   проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
   `mergeTaskBranch`, конфликт — ошибка). На другом этапе — ошибка «принимать нечего».
+- **Проверка ветки глобальной задачи** (`Task.gateFor.runId`, воркфлоу scope `run`): `review accept|reject --task <id проверки>` — свой id проверяющего,
+  прогон приложение находит по `gateFor`. Единственный путь — `reviewDecision` в `index.ts` → `runGateDecision` (`workflow-run.ts`; `reviewAccept`/`reviewReject` из `workflow.ts`
+  для такой задачи бросают ошибку). Решение принимается, только пока прогон стоит на ноде `gate` этой проверки и она последняя у ноды (`gatePending`); иначе ошибка
+  «уже не актуальна». Переход делает `store.advanceRunStage` (замечания `reject` — в `feedback`, комментарий `accept` — в `decision`) и тут же — эффекты новой ноды.
+  Задачу-проверку закрывает `orca-board done` проверяющего (`settleGate`), а если она уже сдана — само решение. `done` без решения — `workflow_blocked` по прогону (`blockRunStage`, без `taskId`).
 - **`review reject --feedback` / «Вернуть»** — `reviewReject`: на ноде проверки — `feedback` и исход `reject`
   (дефолт — снова в работу, воркер стартует сразу); иначе `store.rejectReview` (ready с замечаниями, у ответа —
   «Уточнить»). `task.feedback` добавляется в промпт при следующем старте.
@@ -1391,6 +1478,21 @@ UI работает с активным проектом; воркеры и ко
 проекта. Незакрытый dispatch и задача на гейте после миграции продолжают: граф — из `Run.workflow`, роли — из типа
 «<имя проекта>» = бывших ролей проекта. Правка или удаление этого типа (`saveTaskType`, `deleteTaskType`) сначала
 загружает доски проектов с таким `legacyTypeId` (`settleLegacyRuns`): старые прогоны получают снимок прежнего типа.
+
+**Миграция графов типов v1 → v2** (`migrateTypeWorkflows` в `task-types-migration.ts`, чистая функция; вызывает `load()` **после** засева заготовок
+и для файла любой версии — не только «до типов»): граф типа с `version` < `WORKFLOW_VERSION` переводится `migrateWorkflowReport(wf, roles типа)`, а
+предупреждения (снят `merge` v1, `condition: role`, `git create_branch/checkout`, осиротевшие ноды, роль вопроса, «нет `human` перед концом») кладутся в
+**`TaskType.workflowNotes`** (`WfMigrationNote[]`, по-русски, готовый текст) — это и есть место, где renderer показывает их человеку: поле приходит в
+`taskTypes:list` вместе с типом, необязательное. Форму графа при чтении файла проверяет `loadedTaskType` (без миграции версии — её делает один вызов
+`migrateTypeWorkflows`, поэтому и граф проекта старого формата, ставший типом, и шаблон, и правка встроенного типа идут одним путём и с ролями типа).
+Записи `workflowNotes` из файла читаются с отбраковкой битых. Файл пишется сразу (иначе предупреждения пересчитывались бы каждый запуск), а исходный текст
+— в `projects.workflow-v1.bak.json` (`PROJECTS_WORKFLOW_BACKUP_NAME`, если бэкапа ещё нет; для файла «до типов» хватает `projects.v1.bak.json`): миграция
+снимает ноды, а приложение до воркфлоу глобальной задачи граф v2 не исполняет (`runnableWorkflow` → дефолтный). Повторная загрузка ничего не меняет;
+граф будущей версии и тип без графа не трогаются. `saveTaskType`: предупреждения остаются, пока граф типа не менялся (правка ролей, названия,
+правил), правка графа их снимает; `TaskTypeInput.workflowNotes` — явный список (пустой закрывает предупреждения без нового IPC-канала). Копия типа
+(`duplicateTaskType`) и прогоны (`runTypeInput`, `snapshotTaskType`) предупреждений не получают. **Копии графа у прогонов (`Run.workflow`) миграция не
+трогает**: прогон без `workflowScope` доживает на движке подзадач со своим снимком v1, а без снимка — по графу типа через `toTaskScopeWorkflow`
+(мерж и конфликт возвращаются, `condition: role` из типа уже снят). Тесты — `projects-workflow-migration.test.ts` (main) и `workflow-restart.test.ts` (core).
 
 
 ### Безопасность состояния
@@ -2243,6 +2345,35 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
   переделать `executeSteps` в async — пока не делали.
 - Ветку задачи не выводи из `orca/${task.id}`: нода `git` меняет `Task.branch`, а `startWorker`, `review`, гейты и `merge`
   читают её из задачи. Удаляя ветку при уборке, смотри на `Task.branchForeign`.
+
+- Воркфлоу глобальной задачи (`Run.workflowScope: 'run'`) и старый движок подзадач живут в одном store, и граф версии 2 по подзадачам не ходит:
+  не давай подзадаче такого прогона `advanceStage`/`enterWork` (ошибка и пустое действие), а старому прогону — `advanceRunStage` (ошибка). Граф типа из
+  библиотеки уже версии 2 (`migrateWorkflow` при загрузке), поэтому «Входящие» и прогон без снимка получают его через `toTaskScopeWorkflow`, а не как есть.
+  Конструкторы графов версии 1 — `legacyPipelineWorkflow` / `legacyDefaultWorkflow`; тесты старого движка строят графы ими и версией `WORKFLOW_VERSION_TASK_SCOPE`,
+  а прогон по типу из библиотеки — через `toTaskScopeWorkflow(type.workflow)`.
+- Миграция графов типов v1 → v2 **необратима для старого приложения**: `merge` снят, роль `work` переехала в `roleIds`, версия 2. Приложение до воркфлоу
+  глобальной задачи такой граф не исполняет (`versionFuture` → дефолтный граф), поэтому перед первой записью `load()` кладёт исходный `projects.json` в
+  `projects.workflow-v1.bak.json`. Не переноси миграцию графа в `loadedTaskType`/`normalizeLegacy`: там ещё нет ролей типа и некуда положить предупреждения, а
+  граф проекта старого формата дошёл бы до типа уже без замечаний. Копию графа в `Run.workflow` не мигрируй: по ней идущий прогон без `workflowScope` ходит
+  по подзадачам, и подмена смысла `merge` (подзадача → ветка задачи против ветка задачи → база) сломала бы его после рестарта.
+- `HumanRequest.taskId` необязателен (approval прогона): не пиши `store.getTask(request.taskId)` и `ids.has(r.taskId)` без проверки, иначе approval прогона уронит
+  код или потеряется. Название финальной human-ноды `pipelineWorkflow` — «Проверка человеком», не «Проверка»: перевод встроенных названий (`builtinText`) узнаёт их
+  по тексту, и «Проверка» показалась бы на английском как «Agent check».
+- Воркфлоу глобальной задачи (`workflow-run.ts`): **`returnGlobalTaskToWork` для прогона нового формата не нужен** — он закрыл бы терминал координатора, который ждёт `stage_started`
+  в Monitor; «Вернуть» — это `returnRun` (approval `reject`, координатор жив — получает событие, мёртв — запускается на входе в «Работу»). **`startCoordinator` из движка не зовёт `startRunWorkflow`**
+  (это делает только `runCoordinator` после запуска человеком): иначе повторный вход в «Работу» зациклил бы `ensureCoordinator`. Решение approval прогона (`requests:resolve`, «Подтвердить»,
+  «Вернуть») ведёт **одна** цепочка вызовов — `handleRunApproval`, а не событие `request_resolved`: подписка на событие дублировала бы переход.
+  Подзадачу закрывает нода `end` пути только после `merge`: закрыть её раньше значило бы дать `stage_tasks_done` по коду, которого ещё нет в ветке прогона.
+- **Событие и задача — ровно одному исполнителю** (`taskEngine` в `main/workflow.ts`): `handleWorkflowEvents` берёт `legacy` и `path`, `handleRunWorkflowEvents` — `run`. Новый вид задачи в прогоне
+  сначала получает ветку в `taskEngine`, иначе её либо не поведёт никто, либо поведут оба (двойной мерж, двойная проверка). Ноду задачи в путях ищи через `taskWorkflow` — `stageNode`/`graphOf`
+  в `workflow.ts`, не через `runWorkflow`.
+- Путь подзадачи (`work.subflow`): **id нод пути живут в своём пространстве** — `work`, `merge`, `end` внутри пути и в графе прогона могут совпасть. `Task.stage.nodeId` подзадачи прогона —
+  нода **пути**, а `Task.stageOf.nodeId` — нода **графа прогона**; искать ноду по `stage` в `runWorkflow(...)` нельзя, только в `taskWorkflow(task)` (или `taskNodeGraph`, если задача ещё не вошла в путь).
+  Новый код в `WF_ISSUE_TEXTS` сразу требует ключ `wf.issue.<код>` в `i18n/ru/config.ts` и `en/config.ts` (`defaultTitles.test.ts` сверяет их с core).
+- Тест воркфлоу прогона (`workflow-run-e2e.test.ts`) с настоящими git и `ProjectManager` держится на фикстуре, которая повторяет контракт main: воркер стартует в worktree **от ветки прогона**
+  (`ensureRunBranch`), иначе автомерж слил бы подзадачу в ветку корня, а не прогона; роль задачи проверяется по типу прогона (`pm.resolveRun`), как в `runWorker`; «перезапуск приложения» —
+  новый `ProjectManager` над тем же каталогом (доска читается из `boards/`), а не второй `store` в памяти. Не проверяй в таких тестах то, чего нет в контракте: `stage_tasks_done` несёт только
+  `{runId, nodeId}` (без `visit`), в `Run.stageHistory` нет `start`.
 
 ## Открытые вопросы
 

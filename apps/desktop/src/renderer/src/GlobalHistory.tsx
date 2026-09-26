@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useMemo, useState } from 'react'
-import { globalBoardColumns, type AgentSession, type BoardColumn, type GlobalTask } from '@orca-board/core'
+import { globalBoardColumns, type AgentSession, type BoardColumn, type GlobalTask, type Workflow } from '@orca-board/core'
 import { useNow } from './useNow'
 import { useT } from './i18n'
 import { fullStamp } from './globalFormat'
@@ -15,6 +15,8 @@ export interface GlobalHistoryProps {
    * Нет (старый main или прогон до статистики) — запусков в ленте нет.
    */
   coordinatorSessions?: AgentSession[]
+  /** Граф прогона (`workflowForRun`): названия этапов в ленте. Нет — берутся из самих записей истории этапов. */
+  workflow?: Workflow
 }
 
 /**
@@ -22,13 +24,13 @@ export interface GlobalHistoryProps {
  * после проверки (выделены), сводка и запуски координатора, закрытие (`globalTimeline`). Всё, что она читает,
  * необязательно: со старым main ленты может не быть — тогда подсказка перезапустить приложение.
  */
-export function GlobalHistory({ global, columns = [], coordinatorSessions }: GlobalHistoryProps): React.JSX.Element {
+export function GlobalHistory({ global, columns = [], coordinatorSessions, workflow }: GlobalHistoryProps): React.JSX.Element {
   const t = useT()
   const now = useNow()
   const [expanded, setExpanded] = useState(false)
   // Названия — как на глобальной доске («Проверка»), остальные колонки проекта — запасом для статусов вне неё.
   const all = useMemo(() => [...globalBoardColumns(columns), ...columns], [columns])
-  const events = globalTimeline({ ...global, coordinatorSessions }, all, now)
+  const events = globalTimeline({ ...global, coordinatorSessions, workflow }, all, now)
   const shown = visibleTimeline(events, expanded)
   const hidden = events.length - shown.length
   const days = groupByDay(shown, now)

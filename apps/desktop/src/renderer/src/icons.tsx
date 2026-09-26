@@ -23,6 +23,7 @@ export const Icon = {
   play: (): React.JSX.Element => <svg {...base} width={14} height={14} fill="currentColor" stroke="none"><path d="M7 5v14l12-7z" /></svg>,
   grip: (): React.JSX.Element => <svg {...base}><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" strokeWidth={3} /></svg>,
   star: (): React.JSX.Element => <svg {...base}><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" /></svg>,
+  subflow: (): React.JSX.Element => <svg {...base}><path d="M5 4v8a3 3 0 0 0 3 3h11M15 11l4 4-4 4" /></svg>,
   check: (): React.JSX.Element => <svg {...base}><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M8 12l3 3 5-6" /></svg>,
   spinner: (): React.JSX.Element => <svg {...base}><path d="M12 3a9 9 0 1 0 9 9" /></svg>,
   question: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.5M12 17h.01" /></svg>,

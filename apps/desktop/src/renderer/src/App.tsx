@@ -10,6 +10,7 @@ import { Board } from './Board'
 import { attentionTaskIds, buildAttention } from './attention'
 import { revealInFeed } from './feedLink'
 import { wfNodeTitles } from './cardState'
+import { runStageLabel } from './runStage'
 import { builtinText, displayColumns, displayRoles } from './defaultTitles'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -30,6 +31,7 @@ import { GlobalTaskView } from './GlobalTaskView'
 import { GlobalTaskModal } from './GlobalTaskModal'
 import { changeTypeApi } from './globalTypeChange'
 import { ReturnGlobalModal } from './ReturnGlobalModal'
+import { AcceptGlobalModal } from './AcceptGlobalModal'
 import { ProjectTypeModal } from './ProjectTypeModal'
 import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
 import { loadOnboarding, shouldShowOnboarding } from './onboarding'
@@ -39,7 +41,7 @@ import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
 import { ProjectList } from './ProjectList'
 import { groupsFromList } from './projectGroups'
-import { globalReviewApi, reviewErrorMessage } from './globalReview'
+import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
@@ -159,6 +161,8 @@ export function App(): React.JSX.Element {
   const [globalModal, setGlobalModal] = useState<{ mode: 'create' } | { mode: 'edit'; id: string } | null>(null)
   /** Глобальная задача, которую возвращают с «Проверки» в работу (модалка уточнения). */
   const [returnGlobalId, setReturnGlobalId] = useState<string | null>(null)
+  /** Глобальная задача с воркфлоу, чью «Проверку» (approval ноды `human`) подтверждают: окно с полем решения. */
+  const [acceptGlobalId, setAcceptGlobalId] = useState<string | null>(null)
   /** Глобальная задача, из которой вернулись на общую доску, — её карточке возвращается фокус. */
   const [lastGlobal, setLastGlobal] = useState<string | undefined>()
   const [showCoord, setShowCoord] = useState(false)
@@ -353,6 +357,7 @@ export function App(): React.JSX.Element {
     setShowNew(false)
     setGlobalModal(null)
     setReturnGlobalId(null)
+    setAcceptGlobalId(null)
     setLastGlobal(undefined)
   }, [active?.id])
 
@@ -456,6 +461,7 @@ export function App(): React.JSX.Element {
     if (res.startError) alert(t('shell.app.startError', { title: r.title, error: res.startError }))
   }
   const returningGlobal = returnGlobalId ? globals.find((g) => g.id === returnGlobalId) : undefined
+  const acceptingGlobal = acceptGlobalId ? globals.find((g) => g.id === acceptGlobalId) : undefined
   const editingGlobal = globalModal?.mode === 'edit' ? globals.find((g) => g.id === globalModal.id) : undefined
 
   function openGlobalTask(g: GlobalTask): void {
@@ -489,13 +495,26 @@ export function App(): React.JSX.Element {
     }
   }
 
-  /** «Подтвердить» на «Проверке»: результат принят, задача — в «Сделано». */
+  /**
+   * «Подтвердить» на «Проверке»: результат принят, задача — в «Сделано». У прогона с воркфлоу это approval ноды `human`:
+   * сначала окно с полем «Решение / что делать дальше», решение уйдёт координатору в следующем этапе.
+   */
   async function acceptGlobalTask(g: GlobalTask): Promise<void> {
+    if (isRunWorkflow(g)) {
+      setAcceptGlobalId(g.id)
+      return
+    }
     try {
       await globalReviewApi(window.orca).accept(g.id)
     } catch (e) {
       alert(t('shell.app.acceptError', { error: reviewErrorMessage(e) }))
     }
+  }
+
+  /** Подтверждение из окна: ошибка остаётся в нём (`AcceptGlobalModal`), а не всплывает alert. */
+  async function submitAcceptGlobal(id: string, decision: string): Promise<void> {
+    await globalReviewApi(window.orca).accept(id, decision || undefined)
+    setAcceptGlobalId(null)
   }
 
   /**
@@ -508,7 +527,9 @@ export function App(): React.JSX.Element {
     try {
       const ptyId = await api.returnToWork(id, text, 120, 30)
       setReturnGlobalId(null)
-      showTerminal(ptyId, projectId)
+      // У прогона с воркфлоу main «вернуть» не гасит живого координатора (он ждёт этап в Monitor) и отдаёт его же терминал;
+      // мёртвого запускает заново. Терминала может не оказаться у старого main — тогда ошибка ниже.
+      if (ptyId) showTerminal(ptyId, projectId)
     } catch (e) {
       const message = reviewErrorMessage(e)
       // Задача могла уже уйти в работу, а упал запуск координатора: уточнение сохранено в ней, повторный
@@ -875,6 +896,7 @@ export function App(): React.JSX.Element {
               onAccept={(g) => void acceptGlobalTask(g)}
               onReturn={(g) => setReturnGlobalId(g.id)}
               typeTitle={(g) => globalTypeTitle(g, taskTypes)}
+              stageLabel={(g) => runStageLabel(g, workflowForRun(g.id, snap.runs, active, taskTypes))}
             />
           )}
           {tab === 'board' && openGlobal && (
@@ -907,11 +929,14 @@ export function App(): React.JSX.Element {
               onRejectTask={(id, fb) => window.orca.review.reject(id, fb)}
               onStartTask={startTask}
               typeTitle={globalTypeTitle(openGlobal, taskTypes)}
+              workflow={workflowForRun(openGlobal.id, snap.runs, active, taskTypes)}
             >
               <Board
                 columns={columns}
                 roles={openGlobalRoles}
                 stageTitles={wfNodeTitles(workflowForRun(openGlobal.id, snap.runs, active, taskTypes))}
+                stageWorkflow={workflowForRun(openGlobal.id, snap.runs, active, taskTypes)}
+                stageRun={openGlobal}
                 tasks={subtasks}
                 emptyText={t('shell.noSubtasks')}
                 questions={snap.questions}
@@ -1062,6 +1087,8 @@ export function App(): React.JSX.Element {
           tasks={tasks}
           columns={columns}
           roles={rolesFor(openTask.runId)}
+          workflow={workflowForRun(openTask.runId, snap.runs, active, taskTypes)}
+          stageRun={globals.find((g) => g.id === openTask.runId)}
           agents={agents}
           dispatches={snap.dispatches}
           questions={snap.questions}
@@ -1138,6 +1165,15 @@ export function App(): React.JSX.Element {
           closesCoordinator={coordinatorPtys.has(returningGlobal.id)}
           onClose={() => setReturnGlobalId(null)}
           onSubmit={(text) => returnGlobalTask(returningGlobal.id, text)}
+        />
+      )}
+      {acceptingGlobal && (
+        <AcceptGlobalModal
+          key={acceptingGlobal.id}
+          global={acceptingGlobal}
+          request={runApprovalRequest(snap.requests, acceptingGlobal.id)}
+          onClose={() => setAcceptGlobalId(null)}
+          onSubmit={(decision) => submitAcceptGlobal(acceptingGlobal.id, decision)}
         />
       )}
       <UpdateToast />

@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, type Task } from '@orca-board/core'
-import { ensureRunBranch, mergeTarget, reviewBase, RunBranchSync, runWorktreePath } from './run-branch'
+import { ensureRunBranch, mergeRunBranch, mergeTarget, reviewBase, RunBranchSync, runWorktreePath } from './run-branch'
 import { acceptReview, mergeTaskBranch } from './review'
 
 const git = (cwd: string, ...args: string[]): string =>
@@ -167,5 +167,82 @@ describe('RunBranchSync', () => {
     store.moveGlobalTask(run.id, 'done')
     new RunBranchSync({ isAlive: (id) => id === 'pty-coord' }).sync(store, repo)
     assert.equal(existsSync(g.worktree!), true)
+  })
+})
+
+/**
+ * Ветка фичи с одним коммитом (`f.md`) от `master`, worktree на ней. `base` — база в `Run.git`: ветка заводится от
+ * ветки корня, поэтому другую базу проставляем после (все базы в тестах указывают на тот же коммит, что и `master`).
+ */
+function featureBranch(store: TaskStore, base = 'master'): { runId: string; branch: string; worktree: string } {
+  const run = store.createGlobalTask({ title: 'Фича' })
+  const g = ensureRunBranch(store, repo, run.id)!
+  if (base !== g.base) store.setRunGit(run.id, { base })
+  writeFileSync(path.join(g.worktree!, 'f.md'), 'f\n')
+  git(g.worktree!, 'add', '-A')
+  git(g.worktree!, 'commit', '-qm', 'f')
+  return { runId: run.id, branch: g.branch, worktree: g.worktree! }
+}
+
+describe('mergeRunBranch: ветка глобальной задачи → её база', () => {
+  it('база выгружена в корне и там чисто — сливаем прямо в корне, ветку корня не переключаем (master тоже: защиты нет)', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, 'Merge orca run: Фича')
+    assert.deepEqual(r, { kind: 'ok', into: 'master' })
+    assert.equal(existsSync(path.join(repo, 'f.md')), true)
+    assert.equal(head(repo), 'master')
+    assert.match(git(repo, 'log', '-1', '--format=%s'), /Merge orca run: Фича/)
+  })
+
+  it('база не выгружена нигде — временный worktree: корень не тронут, worktree и папка убраны', () => {
+    const store = newStore()
+    git(repo, 'branch', 'integration')
+    const f = featureBranch(store, 'integration')
+    const before = git(repo, 'worktree', 'list', '--porcelain')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, 'Merge orca run: Фича')
+    assert.deepEqual(r, { kind: 'ok', into: 'integration' })
+    assert.equal(git(repo, 'ls-tree', '-r', '--name-only', 'integration').includes('f.md'), true)
+    assert.equal(existsSync(path.join(repo, 'f.md')), false, 'корень остался на master')
+    assert.equal(git(repo, 'worktree', 'list', '--porcelain'), before, 'временный worktree убран')
+  })
+
+  it('база на remote (origin/develop) — сливаем в локальную develop', () => {
+    const store = newStore()
+    git(repo, 'branch', 'develop', 'origin/develop')
+    const f = featureBranch(store, 'origin/develop')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, 'm')
+    assert.deepEqual(r, { kind: 'ok', into: 'develop' })
+    assert.equal(git(repo, 'ls-tree', '-r', '--name-only', 'develop').includes('f.md'), true)
+  })
+
+  it('в корне с базой — незакоммиченные правки: blocked, а не мерж в грязное дерево', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    writeFileSync(path.join(repo, 'wip.md'), 'wip\n')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, 'm')
+    assert.equal(r.kind, 'blocked')
+    assert.match((r as { reason: string }).reason, /незакоммиченными изменениями/)
+  })
+
+  it('конфликт — conflict с текстом git, база и корень чистые (merge --abort)', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    writeFileSync(path.join(repo, 'f.md'), 'другое\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-qm', 'конфликтующий')
+    const r = mergeRunBranch(repo, store.getRun(f.runId)!.git!, 'm')
+    assert.equal(r.kind, 'conflict')
+    assert.match((r as { error: string }).error, /мерж не удался/)
+    assert.equal(git(repo, 'status', '--porcelain'), '')
+  })
+
+  it('база — не ветка (коммит) или локальной ветки нет — blocked', () => {
+    const store = newStore()
+    const f = featureBranch(store)
+    const g = store.getRun(f.runId)!.git!
+    const sha = git(repo, 'rev-parse', 'master')
+    assert.match((mergeRunBranch(repo, { ...g, base: sha }, 'm') as { reason: string }).reason, /не ветка/)
+    assert.match((mergeRunBranch(repo, { ...g, base: 'origin/nowhere' }, 'm') as { reason: string }).reason, /локальной ветки «nowhere» нет/)
   })
 })

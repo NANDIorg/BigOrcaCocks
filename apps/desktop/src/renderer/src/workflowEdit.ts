@@ -32,6 +32,17 @@ export function wfOutcomeLabel(type: WfNodeType, outcome: WfOutcome): string {
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
 export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'human', 'condition', 'merge', 'git', 'end', 'start']
 
+/**
+ * Типы нод, недоступные в пути подзадачи: вопросы человеку задаёт этап глобальной задачи, а не каждая подзадача
+ * (валидатор: `subflowAskNotAllowed`).
+ */
+export const WF_SUBTASK_FORBIDDEN_TYPES: readonly WfNodeType[] = ['ask']
+
+/** Палитра холста по области: в пути подзадачи (`'subtask'`) без запрещённых там типов. */
+export function wfAddableTypes(scope: 'run' | 'subtask'): readonly WfNodeType[] {
+  return scope === 'subtask' ? WF_ADDABLE_TYPES.filter((type) => !WF_SUBTASK_FORBIDDEN_TYPES.includes(type)) : WF_ADDABLE_TYPES
+}
+
 /** Свободный id вида `<prefix>`, `<prefix>_2`, `<prefix>_3`… */
 export function uniqueId(prefix: string, taken: Iterable<string>): string {
   const used = new Set(taken)
@@ -56,7 +67,7 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }
     }
     case 'git':
-      return { ...pos, type, operation: 'create_branch', branch: '' }
+      return { ...pos, type, operation: 'commit', message: '' }
     case 'end':
       return { ...pos, type, merged: false }
     default:

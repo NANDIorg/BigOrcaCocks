@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_ROLES, STORE_FORMAT_VERSION, WORKFLOW_VERSION, defaultWorkflow, type TaskType, type Workflow } from '@orca-board/core'
+import { DEFAULT_ROLES, STORE_FORMAT_VERSION, WORKFLOW_VERSION, defaultWorkflow, legacyDefaultWorkflow, type TaskType, type Workflow } from '@orca-board/core'
 import { ProjectManager } from './projects'
 
 const PID = 'p1'
@@ -33,6 +33,17 @@ function savedType(id: string): TaskType | undefined {
 function qaWorkflow(): Workflow {
   const wf = defaultWorkflow(DEFAULT_ROLES)
   return { ...wf, nodes: wf.nodes.map((n) => (n.id === 'review' ? { id: 'review', type: 'gate', roleId: 'qa', x: n.x, y: n.y } : n)) }
+}
+
+/**
+ * Граф с нодами `merge` и «Конфликт мержа»: набор портов для проверки видов битого графа (слияние ветки прогона в базовую —
+ * нода воркфлоу версии 2). Дефолтный граф её не содержит.
+ */
+function graphWithMerge(): Workflow {
+  const wf = JSON.parse(JSON.stringify(legacyDefaultWorkflow(DEFAULT_ROLES))) as Workflow
+  wf.version = WORKFLOW_VERSION
+  for (const n of wf.nodes) if (n.type === 'work') n.roleId = 'developer'
+  return wf
 }
 
 /** Граф типа проекта `PID` по умолчанию (тип «repo», в который миграция перенесла настройки проекта). */
@@ -64,7 +75,8 @@ describe('воркфлоу типа задачи', () => {
     const t = pm.saveTaskType({ title: 'Без ревьюера', settings: { roles: DEFAULT_ROLES.filter((r) => r.id !== 'reviewer') } })
     const wf = pm.taskTypeWorkflow(t.id)
     assert.equal(wf.custom, false)
-    assert.equal(wf.workflow.nodes.find((n) => n.id === 'review')?.type, 'human')
+    assert.equal(wf.workflow.nodes.find((n) => n.id === 'review'), undefined, 'без reviewer гейта ревью нет')
+    assert.equal(wf.workflow.nodes.find((n) => n.id === 'check')?.type, 'human')
     assert.equal(savedType(t.id)?.settings.workflow, undefined, 'дефолт не записывается в тип')
   })
 
@@ -107,7 +119,7 @@ describe('воркфлоу типа задачи', () => {
     saveWorkflow(pm, good)
     const before = readFileSync(path.join(tmp, 'projects.json'), 'utf8')
     const edit = (f: (wf: Workflow) => void): Workflow => {
-      const wf = JSON.parse(JSON.stringify(defaultWorkflow(DEFAULT_ROLES))) as Workflow
+      const wf = graphWithMerge()
       f(wf)
       return wf
     }

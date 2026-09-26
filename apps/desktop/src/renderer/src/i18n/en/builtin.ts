@@ -47,6 +47,8 @@ export default {
   'type.legacy.desc': 'Moved from “Settings → For new projects”.',
 
   'node.work': 'Work',
+  'node.implementation': 'Implementation',
+  'node.humanCheck': 'Human check',
   'node.mergeConflict': 'Merge conflict',
   'node.eyes': 'Check visually',
   'node.tests': 'Test run',

@@ -52,13 +52,12 @@ export const WF_NODE_HELP: Readonly<Record<WfNodeType, WfNodeHelp>> = {
     return help('human', ['accept', 'reject'], ['config.wf.help.human.fieldInstructions', 'config.wf.help.human.fieldColumn'])
   },
   get condition() {
-    return help('condition', ['yes', 'no'], ['config.wf.help.condition.fieldAttempts', 'config.wf.help.condition.fieldRole'])
+    return help('condition', ['yes', 'no'], ['config.wf.help.condition.fieldAttempts'])
   },
   get merge() { return help('merge', ['ok', 'conflict'], [TITLE]) },
   get git() {
     return help('git', ['ok', 'error'], [
-      'config.wf.help.git.fieldOperation', 'config.wf.help.git.fieldBranch', 'config.wf.help.git.fieldBase',
-      'config.wf.help.git.fieldMessage', 'config.wf.help.git.fieldRemote'
+      'config.wf.help.git.fieldOperation', 'config.wf.help.git.fieldMessage', 'config.wf.help.git.fieldRemote'
     ])
   },
   get end() { return help('end', [], ['config.wf.help.end.fieldMerged', 'config.wf.help.end.fieldColumn']) }

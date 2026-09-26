@@ -146,6 +146,23 @@ test('stageLabel: гейт — нода и проверяемая задача; 
   assert.equal(stageLabel(gate, undefined, () => undefined)?.text, '⛉ Гейт')
 })
 
+test('stageLabel: подзадача воркфлоу глобальной задачи — этап и заход по stageOf', () => {
+  const of = (nodeId: string, visit: number) => ({ stageOf: { nodeId, visit } })
+  assert.equal(stageLabel(of('n2', 1), titles, () => undefined)?.text, 'Разработка')
+  assert.equal(stageLabel(of('n2', 2), titles, () => undefined)?.text, 'Разработка · 2-й заход')
+  assert.equal(stageLabel(of('zzz', 1), titles, () => undefined), null)
+  assert.equal(stageLabel(of('n2', 1), undefined, () => undefined), null)
+})
+
+test('stageLabel: гейт по ветке глобальной задачи (gateFor.runId) — без проверяемой подзадачи', () => {
+  const gate = { gateFor: { runId: 'run_1', nodeId: 'n3' } }
+  const l = stageLabel(gate, titles, () => 'не должно вызываться')
+  assert.equal(l?.kind, 'gate')
+  assert.equal(l?.text, '⛉ Гейт «Ревью кода» → ветка задачи')
+  assert.match(l!.title, /ветку глобальной задачи целиком/)
+  assert.equal(stageLabel(gate, undefined, () => undefined)?.text, '⛉ Гейт → ветка задачи')
+})
+
 test('depsLabel: одна — с названием, несколько — счётом, полный список в подсказке', () => {
   const closed = new Set(['done1'])
   const names: Record<string, string> = { a: 'Миграция store', b: 'Иконки', c: 'Тесты', done1: 'Старая' }

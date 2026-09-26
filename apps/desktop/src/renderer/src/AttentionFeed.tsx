@@ -185,7 +185,7 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
             showcase={requestShowcase(detailRequest, dispatches)}
             where={detailTask?.title ?? detail.taskId}
             onResolve={(res) => onResolveRequest(detailRequest, res)}
-            onOpenFull={(req) => onOpenTask(req.taskId)}
+            onOpenFull={(req) => { if (req.taskId !== undefined) onOpenTask(req.taskId) }}
             onOpenTerminal={onOpenTerminal}
           />
         </div>

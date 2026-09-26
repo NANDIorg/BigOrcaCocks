@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultWorkflow, validateWorkflow, DEFAULT_ROLES, DEFAULT_COLUMNS } from '@orca-board/core'
+import { validateWorkflow, DEFAULT_ROLES, DEFAULT_COLUMNS } from '@orca-board/core'
 import { WF_ADDABLE_TYPES, addNode, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId } from './workflowEdit'
+import { graphWithMerge } from './workflowFixture'
 
-const wf = defaultWorkflow([{ id: 'reviewer' }])
+const wf = graphWithMerge([{ id: 'reviewer' }])
 
 test('uniqueId подбирает свободный суффикс', () => {
   assert.equal(uniqueId('work', ['start']), 'work')

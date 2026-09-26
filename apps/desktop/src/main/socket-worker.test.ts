@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, legacyDefaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION_TASK_SCOPE } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { spawnPty, killPty } from './pty'
 
@@ -44,16 +44,17 @@ function fakeDeps(): ProjectDeps {
     review: () => ({}),
     accept: () => undefined,
     reject: (taskId, feedback) => store.rejectReview(taskId, feedback),
+    finishStage: () => { throw new Error('не нужен') },
     resolveRequest: () => ({}),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
-    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? defaultWorkflow(roles), source: 'default' }),
+    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? legacyDefaultWorkflow(roles), source: 'default' }),
     taskTypes: () => ({ taskTypes: presetTaskTypes(), defaultTypeId: 'general' }),
     runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
-    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: defaultWorkflow(roles), custom: false })
+    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: legacyDefaultWorkflow(roles), custom: false })
   }
 }
 
@@ -304,7 +305,7 @@ describe('workflow show', () => {
   })
 
   it('с --run — снимок прогона; прогон без снимка — граф его типа', async () => {
-    const wf = defaultWorkflow([])
+    const wf = legacyDefaultWorkflow([])
     const withSnap = store.createGlobalTask({ title: 'Со снимком', workflow: wf })
     const res = await call('workflow.show', { run: withSnap.id })
     assert.equal(res.ok, true, res.error)
@@ -365,7 +366,7 @@ describe('история статусов через сокет', () => {
 describe('worker done: показ человеку', () => {
   /** «Работа» с обязательным показом → человек: граф типа проекта, задача без прогона берёт его через resolveRun. */
   const design: Workflow = {
-    version: WORKFLOW_VERSION,
+    version: WORKFLOW_VERSION_TASK_SCOPE,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
       { id: 'work', type: 'work', title: 'Дизайн', x: 0, y: 0, showcase: { what: 'варианты макета', required: true } },
@@ -413,7 +414,7 @@ describe('worker done: показ человеку', () => {
 
 describe('worker ask: адресат вопроса', () => {
   const wf: Workflow = {
-    version: WORKFLOW_VERSION,
+    version: WORKFLOW_VERSION_TASK_SCOPE,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
       { id: 'ask', type: 'ask', instructions: 'Спроси про БД', x: 0, y: 0 },

@@ -2,7 +2,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION, COORDINATOR_RETURN_HEADING } from './prompts.ts'
+import {
+  builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION,
+  COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, type CoordinatorStage
+} from './prompts.ts'
 import { getAgent } from './agents.ts'
 import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
 
@@ -196,15 +199,24 @@ describe('повторный запуск координатора', () => {
   // Тот же файл, что main отдаёт как BUILTIN_PROMPTS.coordinator (apps/desktop/src/main/prompts.ts).
   const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
 
-  it('встроенный промпт содержит раздел-исключение: runs finish без ожидания run_done', () => {
+  it('раздел «Повторный запуск»: вход по «# Этап», сверка с global tasks, дублей нет; прогоны старого формата — отдельно', () => {
     const start = skill.indexOf(`${COORDINATOR_RESUME_SECTION}:`)
     assert.ok(start >= 0, 'нет раздела «Повторный запуск»')
-    const section = skill.slice(start)
+    const section = skill.slice(start, skill.indexOf('Прогоны старого формата'))
+    assert.ok(section.includes(`«${COORDINATOR_STAGE_HEADING} …»`), 'вход по блоку цели')
+    assert.match(section, /orca-board workflow show/)
     assert.match(section, /orca-board global tasks/)
-    assert.match(section, /не жди `run_done`/)
-    assert.match(section, /orca-board runs finish/)
-    // Общий запрет «до run_done» оговаривает исключение, а не противоречит разделу.
-    assert.match(skill, /Не вызывай её до `run_done` и до сводки — кроме повторного\s+запуска без новой работы/)
+    assert.match(section, /не создавай\s+повторно/)
+    assert.match(section, /`stage_tasks_done` мог уже прийти прежнему координатору[\s\S]*orca-board stage finish --summary/)
+    assert.doesNotMatch(section, /orca-board runs finish/, 'в новом воркфлоу runs finish не нужен')
+  })
+
+  it('прогон старого формата: не жди run_done в повторном запуске, runs finish — только после run_done', () => {
+    const legacy = skill.slice(skill.indexOf('Прогоны старого формата'))
+    assert.match(legacy, /`scope: task`/)
+    assert.match(legacy, /`stage_started` и `stage_tasks_done` тебе не приходят/)
+    assert.match(legacy, /`run_done` не придёт: сразу `orca-board runs finish --summary "\.\.\."`/)
+    assert.match(legacy, /Не вызывай `runs finish` до `run_done` и до\s+сводки — кроме повторного запуска без новой работы/)
   })
 
   it('подзадач нет — цель без изменений', () => {
@@ -237,30 +249,227 @@ describe('повторный запуск координатора', () => {
     assert.ok(many.includes('Уточнение — новая работа'))
   })
 
-  it('раздел «Повторный запуск» объясняет уточнение после проверки, run_done — сводку для проверки', () => {
-    const section = skill.slice(skill.indexOf(`${COORDINATOR_RESUME_SECTION}:`))
-    assert.ok(section.includes(`«${COORDINATOR_RETURN_HEADING}»`), 'маркер цели из resumeCoordinatorObjective')
-    assert.match(section, /новая\s+работа/)
-    assert.match(skill, /человеку на проверку/)
+  it('уточнение после проверки — новая работа (прогон старого формата), сводка уходит человеку на проверку', () => {
+    const legacy = skill.slice(skill.indexOf('Прогоны старого формата'))
+    assert.ok(legacy.includes(`«${COORDINATOR_RETURN_HEADING}»`), 'маркер цели из resumeCoordinatorObjective')
+    assert.match(legacy, /новая\s+работа/)
+    assert.match(legacy, /отправляет глобальную задачу человеку на проверку/)
+    assert.match(legacy, /заменяет прежнюю/)
+    assert.match(legacy, /--summary-file/)
   })
 
-  it('run_done не закрывает прогон: на проверку глобальную задачу отправляет только runs finish', () => {
-    const item = skill.slice(skill.indexOf('- `run_done` →'), skill.indexOf('Что сейчас ждёт человека'))
-    assert.match(item, /`run_done` прогон не закрывает/)
-    assert.match(item, /остаётся «В работе»/)
-    assert.match(item, /только `runs finish` отправляет её человеку на проверку/)
+  it('run_done нового прогона = граф дошёл до end: выйти без сводки и runs finish', () => {
+    const item = skill.slice(skill.indexOf('- `run_done` (в payload'), skill.indexOf('Что сейчас ждёт человека'))
+    assert.match(item, /граф дошёл до `end`/)
+    assert.match(item, /`runs finish` не вызывай/)
+    assert.match(item, /`"manual": true`/)
   })
 
-  it('итоговая сводка уходит в runs finish --summary: после run_done, в повторном запуске и в цели', () => {
-    const item = skill.slice(skill.indexOf('- `run_done` →'), skill.indexOf('Что сейчас ждёт человека'))
-    assert.match(item, /orca-board runs finish --summary "\.\.\."/)
-    assert.match(item, /что сделано и что проверить человеку/)
-    assert.match(item, /--summary-file/)
-    const section = skill.slice(skill.indexOf(`${COORDINATOR_RESUME_SECTION}:`))
-    assert.match(section, /orca-board runs finish --summary/)
-    assert.match(section, /заменяет прежнюю/)
+  it('итоговая сводка старого прогона уходит в runs finish --summary; в цели — тоже', () => {
     assert.ok(resumeCoordinatorObjective('цель', [{ id: 't1', title: 'A', status: 'Done' }]).includes('orca-board runs finish --summary'))
     assert.ok(resumeCoordinatorObjective('цель', [{ id: 't1', title: 'A', status: 'Done' }], [{ text: 'x' }]).includes('orca-board runs finish --summary'))
+  })
+})
+
+describe('координатор — диспетчер этапов «Работа»', () => {
+  const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+  const step4 = skill.slice(skill.indexOf('4. По событию:'), skill.indexOf('Повторный запуск:'))
+
+  it('вводная: граф ведёт приложение, координатор набирает агентов и ничего не решает о переходах', () => {
+    const intro = skill.slice(0, skill.indexOf('Подготовка:'))
+    assert.match(intro, /Ты\s+\*\*диспетчер\*\*/)
+    assert.match(intro, /не\s+решаешь,\s+куда идти дальше по графу/)
+    assert.match(intro, /`stage_started`/)
+    assert.match(intro, /`stage_tasks_done`[\s\S]*`stage finish`/)
+    assert.match(intro, /На этих этапах \*\*просто жди\*\*/)
+    assert.match(intro, /Подзадача идёт \*\*своим путём\*\*/)
+  })
+
+  it('stage_started и stage_tasks_done — во всех трёх списках типов, после workflow_blocked', () => {
+    const types = [...skill.matchAll(/(?:--types|Типы:) `?([a-z_,]+)/g)].map((m) => m[1])
+    assert.equal(types.length, 3)
+    for (const t of types) assert.ok(t.endsWith('workflow_blocked,stage_started,stage_tasks_done'), t)
+  })
+
+  it('stage_started: роли этапа (пусто — любые рабочие), feedback/decision/answers, полный текст в workflow show', () => {
+    const item = step4.slice(step4.indexOf('- `stage_started` →'), step4.indexOf('- `stage_tasks_done` →'))
+    assert.match(item, /создай подзадачи и запусти воркеров/)
+    const step2 = skill.slice(skill.indexOf('2. По `stage_started`'), skill.indexOf('3. Жди события'))
+    assert.match(step2, /`roleIds` не пуст[\s\S]*только с этими ролями[\s\S]*одна роль — `--role`\s+можно опустить/)
+    assert.match(step2, /`roleIds` пуст[\s\S]*выбери роль сам из включённых\s+рабочих ролей типа/)
+    assert.match(step2, /`feedback`[\s\S]*`decision`[\s\S]*`answers`/)
+    assert.match(step2, /полные — `stage` в `orca-board workflow show`/)
+    assert.match(skill, /`task create` вне этапа «Работа» вернёт ошибку\s+«дождись stage_started»/)
+  })
+
+  it('stage_tasks_done: нужно ещё — создать, иначе stage finish --summary как сигнал, а не отчёт', () => {
+    const item = step4.slice(step4.indexOf('- `stage_tasks_done` →'), step4.indexOf('- `worker_done` по **задаче-ответу**'))
+    assert.match(item, /этап ещё открыт/)
+    assert.match(item, /orca-board stage finish --summary "\.\.\."/)
+    assert.match(item, /сигнал «набор агентов закончен», а не отчёт/)
+    assert.match(item, /--summary-file/)
+  })
+
+  it('workflow_blocked может быть без taskId: блок уровня глобальной задачи чинит человек', () => {
+    const item = step4.slice(step4.indexOf('- `workflow_blocked` →'), step4.indexOf('- `question` →'))
+    assert.match(item, /Поле `taskId` необязательно/)
+    assert.match(item, /`runId`, `nodeId`/)
+    assert.match(item, /решает человек в приложении/)
+  })
+
+  it('worker_done рабочей задачи — автомерж в ветку глобальной задачи, ничего не делать', () => {
+    assert.match(step4, /- `worker_done` по \*\*рабочей\*\* задаче → \*\*ничего не делай\*\*[\s\S]*слияние её ветки в ветку глобальной\s+задачи/)
+  })
+
+  it('подзадача на своём пути: ожидание проверки или человека — не повод для stage finish, жди stage_tasks_done', () => {
+    const intro = skill.slice(0, skill.indexOf('Подготовка:'))
+    assert.match(intro, /может какое-то время ждать проверки или человека \*\*внутри\s+этапа\*\*[\s\S]*не повод для `stage finish`, жди `stage_tasks_done`/)
+    assert.match(intro, /Путь ведёт приложение, а не ты/)
+    const done = step4.slice(step4.indexOf('- `worker_done` по **рабочей** задаче'), step4.indexOf('- `worker_done` с полем `gateFor`'))
+    assert.match(done, /\*\*ничего не делай\*\*[\s\S]*подзадачу ведёт её путь в приложении/)
+    assert.match(done, /`stage finish` не вызывай[\s\S]*`stage_tasks_done`/)
+    const blocked = step4.slice(step4.indexOf('- `workflow_blocked` →'), step4.indexOf('- `question` →'))
+    assert.match(blocked, /С `taskId` — блок на пути подзадачи[\s\S]*путь ведёт приложение, ты его не двигаешь[\s\S]*решает человек/)
+  })
+
+  it('в skills нет команд и флагов, которых нет в HELP, из-за пути подзадачи (subflow — только модель)', () => {
+    assert.doesNotMatch(skill, /subflow/)
+  })
+
+  it('нет ручного `runs finish` в цикле нового прогона', () => {
+    const modern = skill.slice(0, skill.indexOf('Прогоны старого формата'))
+    assert.doesNotMatch(modern, /orca-board runs finish/)
+  })
+})
+
+describe('цель координатора на этапе (блок «# Этап»)', () => {
+  const stage: CoordinatorStage = { title: 'Реализация', visit: 2, tasks: ['t2'] }
+  const subtasks = [
+    { id: 't1', title: 'Анализ', status: 'Done' },
+    { id: 't2', title: 'Сделать A', status: 'In progress' }
+  ]
+
+  it('без stage — как раньше', () => {
+    assert.equal(resumeCoordinatorObjective('цель', [], [], undefined), 'цель')
+  })
+
+  it('заголовок блока — та же строка, что в инструкции, и ссылка на раздел «Повторный запуск»', () => {
+    const text = resumeCoordinatorObjective('цель', subtasks, [], stage)
+    assert.ok(text.startsWith('цель\n'))
+    assert.ok(text.split('\n').some((l) => l === `${COORDINATOR_STAGE_HEADING} Реализация`))
+    assert.ok(text.includes(`по разделу «${COORDINATOR_RESUME_SECTION}» инструкции`))
+    assert.ok(text.includes('заход 2'))
+    const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+    assert.ok(skill.includes(`«${COORDINATOR_STAGE_HEADING}`), 'инструкция называет тот же блок')
+  })
+
+  it('роли этапа: список — «только с ними»; пусто — выбирает сам по roles list', () => {
+    assert.match(resumeCoordinatorObjective('ц', [], [], { ...stage, roleIds: ['developer', 'qa'] }), /Роли этапа: developer, qa — подзадачи создавай только с ними/)
+    const any = resumeCoordinatorObjective('ц', [], [], stage)
+    assert.match(any, /Роли этапа не заданы[\s\S]*`orca-board roles list`/)
+    assert.doesNotMatch(any, /Роли этапа:/)
+    assert.doesNotMatch(resumeCoordinatorObjective('ц', [], [], { ...stage, roleIds: [] }), /Роли этапа:/)
+  })
+
+  it('инструкции, замечания, решение и ответы — целиком; замечание помечено как возврат в этап', () => {
+    const text = resumeCoordinatorObjective('ц', [], [], {
+      ...stage, instructions: 'Реализуй.', feedback: 'нет тестов', decision: 'вариант A', answers: '- Q\n  Ответ: A'
+    })
+    assert.match(text, /## Инструкции этапа\n\nРеализуй\./)
+    assert.match(text, /## Замечания проверки или человека\n\nнет тестов\n\nЭто возврат в этап: создай подзадачи-исправления/)
+    assert.match(text, /## Решение человека\n\nвариант A/)
+    assert.match(text, /## Ответы человека на вопросы\n\n- Q\n {2}Ответ: A/)
+    assert.doesNotMatch(resumeCoordinatorObjective('ц', [], [], stage), /## (Инструкции|Замечания|Решение|Ответы)/)
+  })
+
+  it('подзадачи захода и прошлых заходов — раздельно; уточнение после проверки в этом режиме не дублируется', () => {
+    const text = resumeCoordinatorObjective('ц', subtasks, [{ text: 'вернули' }], stage)
+    assert.ok(text.indexOf('Подзадачи этого захода:') < text.indexOf('- t2 [In progress] Сделать A'))
+    assert.ok(text.indexOf('Подзадачи прошлых заходов и этапов') < text.indexOf('- t1 [Done] Анализ'))
+    assert.ok(text.indexOf('- t1 [Done] Анализ') > text.indexOf('- t2 [In progress]'))
+    assert.doesNotMatch(text, new RegExp(COORDINATOR_RETURN_HEADING))
+    assert.doesNotMatch(text, /runs finish/)
+  })
+
+  it('что делать дальше: нет подзадач захода / есть незакрытые / все закрыты', () => {
+    assert.match(resumeCoordinatorObjective('ц', [], [], stage), /`stage_started` ты не получил/)
+    assert.match(resumeCoordinatorObjective('ц', subtasks, [], stage), /Есть незакрытые подзадачи[\s\S]*дождись `stage_tasks_done`/)
+    assert.match(resumeCoordinatorObjective('ц', subtasks, [], { ...stage, tasksDone: true }), /`stage_tasks_done` уже отправлен[\s\S]*orca-board stage finish --summary/)
+  })
+})
+
+describe('задачи прогона: проверка ветки глобальной задачи и вопрос человеку', () => {
+  const ctx = {
+    title: 'Экспорт в CSV',
+    goal: 'Добавить экспорт отчёта в CSV',
+    branch: 'feature/run_x-eksport',
+    base: 'develop',
+    stages: [{ title: 'Реализация', summary: 'Сделали кнопку и обработчик' }, { title: 'Без сводки', summary: '  ' }]
+  }
+  const help = readFileSync(new URL('../../../packages/cli/bin/orca-board.js', import.meta.url), 'utf8')
+  const helpText = help.slice(help.indexOf('const HELP = `'))
+
+  it('название — «<нода>: <глобальная задача>»', () => {
+    assert.equal(runGateTaskTitle('Ревью', 'Экспорт'), 'Ревью: Экспорт')
+    assert.equal(runAskTaskTitle('Вопрос', 'Экспорт'), 'Вопрос: Экспорт')
+  })
+
+  it('gate: ветка целиком против базы, цель, сводки этапов, свой id из $ORCA_TASK_ID', () => {
+    const spec = runGateTaskSpec({ ...ctx, instructions: 'Прогони тесты.' })
+    assert.match(spec, /^Проверь ветку `feature\/run_x-eksport` глобальной задачи «Экспорт в CSV» целиком: всё, что в ней сделано относительно базы `develop`/)
+    assert.match(spec, /git log develop\.\.feature\/run_x-eksport/)
+    assert.match(spec, /git diff develop\.\.\.feature\/run_x-eksport/)
+    assert.match(spec, /git merge --no-commit feature\/run_x-eksport[\s\S]*git merge --abort/)
+    assert.match(spec, /## Цель глобальной задачи\n\nДобавить экспорт отчёта в CSV/)
+    assert.match(spec, /## Что сделано на прошлых этапах\n\n### «Реализация»\n\nСделали кнопку и обработчик/)
+    assert.doesNotMatch(spec, /Без сводки/, 'этап без сводки не показываем')
+    assert.match(spec, /orca-board review accept --task "\$ORCA_TASK_ID"/)
+    assert.match(spec, /orca-board review reject --task "\$ORCA_TASK_ID" --feedback "что исправить"[\s\S]*вернётся на этап «Работа»/)
+    assert.match(spec, /Последней командой обязательно `orca-board done --summary "принято"`/)
+    assert.match(spec, /## Как проверять\n\nПрогони тесты\./)
+    assert.ok(spec.indexOf('## Цель глобальной задачи') < spec.indexOf('## Что сделано'))
+  })
+
+  it('gate: нет сводок и инструкций — разделов нет; нет ветки — проверка в текущей ветке проекта', () => {
+    const spec = runGateTaskSpec({ title: 'T', goal: '' })
+    assert.doesNotMatch(spec, /## Что сделано|## Как проверять/)
+    assert.match(spec, /## Цель глобальной задачи\n\nT/, 'нет описания — название')
+    assert.match(spec, /^Проверь результат глобальной задачи «T» целиком/)
+    assert.match(spec, /нет отдельной ветки/)
+    assert.doesNotMatch(spec, /git merge --no-commit/)
+    // Ветка есть, базы нет — сравнение с основной веткой, а не «undefined».
+    const noBase = runGateTaskSpec({ title: 'T', goal: 'g', branch: 'b' })
+    assert.doesNotMatch(noBase, /undefined/)
+  })
+
+  it('ask: цель, сводки, ветка только для чтения, что выяснить, правила этапа «Вопрос человеку»', () => {
+    const spec = runAskTaskSpec({ ...ctx, instructions: 'Уточни формат дат.' })
+    assert.match(spec, /^Ты — этап «Вопрос человеку» воркфлоу глобальной задачи «Экспорт в CSV»/)
+    assert.match(spec, /## Цель глобальной задачи\n\nДобавить экспорт отчёта в CSV/)
+    assert.match(spec, /### «Реализация»\n\nСделали кнопку/)
+    assert.match(spec, /Ветка глобальной задачи: `feature\/run_x-eksport` \(от `develop`\) — читать можно, менять нельзя/)
+    assert.match(spec, /## Что нужно выяснить\n\nУточни формат дат\./)
+    assert.match(spec, /## Как спрашивать\n\nТвоя цель на этом этапе — задать вопрос\(ы\) человеку\. Код не меняй и ничего не коммить/)
+    assert.match(spec, /orca-board ask --question "\.\.\."[\s\S]*отвечает человек, а не координатор/)
+    assert.match(spec, /orca-board done --summary "что выяснил"/)
+    assert.doesNotMatch(runAskTaskSpec({ title: 'T', goal: 'g' }), /## Что нужно выяснить|Ветка глобальной задачи/)
+  })
+
+  it('правила «Вопрос человеку» общие: те же, что в разделе «# Этап» воркера', () => {
+    const rules = runAskTaskSpec({ title: 'T', goal: 'g' })
+    const stageText = workerTaskPrompt({ title: 't', spec: 's' }, undefined, [], { nodeId: 'a', type: 'ask', title: 'Вопрос' })
+    for (const line of rules.split('\n\n').filter((l) => l.startsWith('Твоя цель') || l.startsWith('Спрашивай') || l.startsWith('Когда выяснил'))) {
+      assert.ok(stageText.includes(line), line)
+    }
+  })
+
+  it('команды в спеках есть в HELP CLI', () => {
+    const all = [runGateTaskSpec({ ...ctx }), runAskTaskSpec({ ...ctx })].join('\n')
+    for (const [, cmd, sub] of all.matchAll(/orca-board ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?/g)) {
+      const name = cmd === 'done' || cmd === 'ask' ? cmd : `${cmd} ${sub}`
+      const re = cmd === 'done' || cmd === 'ask' ? new RegExp(`^ {2}${cmd}\\b`, 'm') : new RegExp(`^ {2}${cmd} ${sub}\\b`, 'm')
+      assert.match(helpText, re, `нет «orca-board ${name}» в HELP`)
+    }
   })
 })
 

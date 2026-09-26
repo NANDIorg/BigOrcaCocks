@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Task, Question, Dispatch, BoardColumn, ColumnKind, Role, Run } from '@orca-board/core'
+import type { Task, Question, Dispatch, BoardColumn, ColumnKind, GlobalTask, Role, Run, Workflow } from '@orca-board/core'
 import { type RunFilter, runShortLabel } from './runs'
 import { BOARD_SORT_KEY, BOARD_SORT_OPTIONS, compareTasks, isBoardSort, readSort, writeSort, type BoardSort } from './boardSort'
 import { compareInColumn, dropStatus, localBoardColumns, pendingDeps, type DisplayColumn } from './boardColumns'
@@ -10,9 +10,11 @@ import {
 } from './boardView'
 import { isArrowKey, isEditableTarget, moveFocus } from './boardNav'
 import {
-  cardEssenceFor, cardStateLabel, cardState, depsLabel, stageLabel, type CardEssence, type CardState, type CardStateInput
+  cardEssenceFor, cardStateLabel, cardState, depsLabel, type CardEssence, type CardState, type CardStateInput
 } from './cardState'
 import { BoardCard } from './BoardCard'
+import { splitByStage, stageGroups } from './runStage'
+import { cardStageLabel, stageHold } from './subtaskPath'
 import { MoveMenu, type MoveTarget } from './MoveMenu'
 import { onFocusBoard, onRevealOnBoard, scrollBehavior } from './feedLink'
 import { Icon } from './icons'
@@ -40,6 +42,12 @@ interface Props {
    * пилюли этапа нет, гейт подписывается и без неё.
    */
   stageTitles?: Readonly<Record<string, string>>
+  /**
+   * Граф глобальной задачи и её позиция на нём: по ним карточка подзадачи подписывает шаг её пути (`work.subflow`) и
+   * помечает подзадачи, что держат этап прогона. Нет (локальная доска, старый main) — прежняя пилюля этапа.
+   */
+  stageWorkflow?: Workflow
+  stageRun?: Partial<Pick<GlobalTask, 'stage' | 'workflowScope'>>
   onSelect(task: Task): void
   /** status — id колонки. */
   onMove(id: string, status: string): void
@@ -78,7 +86,7 @@ function cardElement(root: HTMLElement | null, id: string): HTMLElement | null {
 }
 
 export function Board(props: Props): React.JSX.Element {
-  const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText, questions, dispatches, selectedId, runningTaskIds, stageTitles, waitingTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask, onRevealInFeed } = props
+  const { columns, roles, runs = [], runFilter = 'all', onRunFilter, emptyText, questions, dispatches, selectedId, runningTaskIds, stageTitles, stageWorkflow, stageRun, waitingTaskIds, onSelect, onMove, onStart, onRemove, onOpenTask, onRevealInFeed } = props
   const t = useT()
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
@@ -173,15 +181,16 @@ export function Board(props: Props): React.JSX.Element {
   const badCount = tasks.filter((t) => info.get(t.id)?.state === 'bad').length
   const progress = boardProgress(tasks.map((t) => kindOf(t.status)))
 
+  // Подзадачи воркфлоу глобальной задачи (`Task.stageOf`) внутри колонки идут группами по этапам; этапов меньше двух — как раньше.
+  const stageInfo = stageGroups(tasks, stageTitles, (status) => kindOf(status) === 'done')
   const views = localBoardColumns(columns)
   const columnItems = new Map<string, Task[]>()
   for (const view of views) {
-    columnItems.set(
-      view.column.id,
-      tasks
-        .filter((t) => view.statuses.includes(t.status) && visible(t))
-        .sort(compareInColumn(kindOf, (a, b) => compareTasks(sort, a, b)))
-    )
+    const inColumn = tasks
+      .filter((t) => view.statuses.includes(t.status) && visible(t))
+      .sort(compareInColumn(kindOf, (a, b) => compareTasks(sort, a, b)))
+    // Порядок карточек — как на экране (по группам этапов): по нему ходят стрелки.
+    columnItems.set(view.column.id, stageInfo ? splitByStage(inColumn, stageInfo).flatMap((g) => g.items) : inColumn)
   }
   const isCollapsed = (view: DisplayColumn): boolean => view.column.kind === 'done' && doneCollapsed
   // Сетка для стрелок: только развёрнутые колонки, слева направо.
@@ -453,7 +462,9 @@ export function Board(props: Props): React.JSX.Element {
           }
           const ready = items.filter((t) => kindOf(t.status) === 'ready')
           const groups: { label?: string; items: Task[] }[] =
-            merged && ready.length > 0 && ready.length < items.length
+            stageInfo
+              ? splitByStage(items, stageInfo)
+              : merged && ready.length > 0 && ready.length < items.length
               ? [
                   { label: t('board.column.ready', { n: ready.length }), items: ready },
                   { label: t('board.column.waitingDeps', { n: items.length - ready.length }), items: items.filter((task) => kindOf(task.status) !== 'ready') }
@@ -494,7 +505,7 @@ export function Board(props: Props): React.JSX.Element {
                 )}
                 {groups.map((g) => (
                   <div key={g.label ?? 'all'} className="card-group">
-                    {g.label && <div className="group-label">{g.label}</div>}
+                    {g.label && <div className="group-label" title={stageInfo ? t('board.stage.groupTitle') : undefined}>{g.label}</div>}
                     {g.items.map((task) => {
                       const ci = info.get(task.id)
                       if (!ci) return null
@@ -507,7 +518,8 @@ export function Board(props: Props): React.JSX.Element {
                           state={ci.state}
                           isDone={kind === 'done'}
                           role={roleOf(task)}
-                          stage={stageLabel(task, stageTitles, (id) => byId.get(id)?.title)}
+                          stage={cardStageLabel(task, stageWorkflow, stageTitles, (id) => byId.get(id))}
+                          hold={stageHold(task, stageRun, stageWorkflow, (status) => kindOf(status) === 'done')}
                           deps={depsLabel(task.deps, (d) => { const s = byId.get(d)?.status; return s !== undefined && kindOf(s) === 'done' }, (d) => byId.get(d)?.title)}
                           essence={ci.essence}
                           ariaLabel={[task.title, stateLabel && t('board.card.stateAria', { state: stateLabel }), ci.essence?.text].filter(Boolean).join('. ')}

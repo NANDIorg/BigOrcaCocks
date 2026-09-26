@@ -2,9 +2,9 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
+  type RequestResolution, type Run, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
@@ -29,6 +29,11 @@ export interface ProjectDeps {
   accept(taskId: string, decision?: string): void
   /** `review reject`: на этапе проверки — исход reject по воркфлоу, иначе ready с замечаниями. */
   reject(taskId: string, feedback: string): unknown
+  /**
+   * `stage finish`: закрыть этап «Работа» прогона и выполнить эффекты следующей ноды (`finishRunStage` в workflow-run.ts).
+   * Только через него: store делает лишь переход, а проверку, запрос человеку, мерж и конец создаёт движок прогона.
+   */
+  finishStage(runId: string, summary?: string): { run: Run; action: WfAction }
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
   resolveRequest(id: string, resolution: RequestResolution): unknown
   /**
@@ -189,8 +194,16 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   const title = str(r.params.title)
   if (!title) throw new Error('--title обязателен')
   if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
+  // Воркфлоу прогона: подзадачи — только на этапе «Работа». Проверка идёт раньше выбора роли, иначе вне этапа
+  // координатор увидел бы «--role обязателен», а не «дождись stage_started».
+  const stage = runId !== undefined ? store.assertStageAcceptsTasks(runId) : undefined
+  const stageRoles = stage ? wfWorkRoleIds(stage) : []
+  if (stage && stageRoles.length > 1 && str(r.params.role) === undefined) {
+    throw new Error(`--role обязателен: этап «${wfNodeTitle(stage)}» ведут роли ${stageRoles.join(', ')}`)
+  }
   // Роли — типа глобальной задачи; у «Входящих» (runId нет) — типа проекта по умолчанию.
-  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role))
+  // Без --role на этапе «Работа» с единственной ролью берётся она (`stageDefaultRole`).
+  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role) ?? (runId !== undefined ? store.stageDefaultRole(runId) : undefined))
   // --answer-for human|coordinator — задача-ответ; значение проверяет store.
   const answerFor = r.params['answer-for'] ?? r.params.answerFor
   if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
@@ -255,7 +268,7 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
       ...(role.model ? { model: role.model } : {}),
       agentEnabled: enabled.has(role.agent)
     })),
-    stages: describeWorkflow(resolved.workflow).map((s) => ({ id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}) }))
+    stages: describeWorkflow(resolved.workflow).map((s) => ({ id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}) }))
   }
 }
 
@@ -523,8 +536,20 @@ const handlers: Record<string, Handler> = {
       const run = store.getRun(runId)
       if (!run) throw new Error(`run not found: ${runId}`)
       const type = deps.resolveRun(runId)
-      const wf = store.runWorkflow(runId, { roleIds: type.roles.map((x) => x.id), workflow: type.workflow })
-      return { source: run.workflow ? 'run' : 'type', run: runId, typeId: type.typeId, typeTitle: type.title, stages: describeWorkflow(wf) }
+      const fallback = { roleIds: type.roles.map((x) => x.id), workflow: type.workflow }
+      const wf = store.runWorkflow(runId, fallback)
+      // Воркфлоу глобальной задачи (`scope: 'run'`): граф ведёт её саму, `stage` — где она сейчас (нода, заход, роли,
+      // инструкции, подзадачи захода). Старый формат (`scope: 'task'`) идёт по подзадачам, позиции у прогона нет.
+      const stage = store.runStage(runId, fallback)
+      return {
+        source: run.workflow ? 'run' : 'type',
+        scope: run.workflowScope === 'run' ? 'run' : 'task',
+        run: runId,
+        typeId: type.typeId,
+        typeTitle: type.title,
+        ...(stage ? { stage } : {}),
+        stages: describeWorkflow(wf)
+      }
     }
     const { typeId: id, title, workflow, custom } = deps.workflow(typeId)
     return { source: 'type', typeId: id, typeTitle: title, custom, stages: describeWorkflow(workflow) }
@@ -578,6 +603,23 @@ const handlers: Record<string, Handler> = {
     const id = str(r.params.run)
     if (!id) throw new Error('--run обязателен')
     return store.closeRun(id)
+  },
+  // Координатор набрал агентов на этапе «Работа» и закрывает его: граф идёт дальше исходом next. Переход делает
+  // store (`finishStage`), эффекты новой ноды — проверка, запрос человеку, мерж — движок прогона: сокет зовёт его
+  // `finishStage` из deps, а не store напрямую (`stage_changed` эффектов не запускает).
+  'stage.finish': (r, deps, store) => {
+    const id = str(r.params.run)
+    if (!id) throw new Error('--run обязателен')
+    if (r.params.summary === true) throw new Error('--summary требует текста сводки')
+    const from = store.getRun(id)?.stage?.nodeId
+    const { run, action } = deps.finishStage(id, str(r.params.summary))
+    return {
+      run: id,
+      finished: from,
+      stage: run.stage ? { nodeId: run.stage.nodeId, visits: run.stage.visits[run.stage.nodeId] ?? 1 } : undefined,
+      // Что приложение делает дальше: координатору важно лишь, ждать ли ему следующий stage_started или run_done.
+      next: { type: action.type, nodeId: action.nodeId, ...(action.type === 'blocked' ? { reason: action.reason } : {}) }
+    }
   },
   'runs.finish': (r, _d, store) => {
     const id = str(r.params.run)

@@ -1,15 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_GIT_OPERATIONS, validateWorkflow, defaultWorkflow, type WfNode } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_GIT_OPERATIONS, validateWorkflow, type WfNode } from '@orca-board/core'
 import {
-  GIT_OPERATIONS, gitFieldsFor, gitNodeSubtitle, gitOperationTitle, gitPlaceholdersHint, gitPreview, patchGit, type WfGitNode
+  GIT_OPERATIONS, gitFieldsFor, gitNodeSubtitle, gitOperationTitle, gitPlaceholdersHint, gitPreview, isUnavailableGitOperation, patchGit, type WfGitNode
 } from './workflowGit'
 import { WF_ADDABLE_TYPES, addNode, wfOutcomeLabel } from './workflowEdit'
 import { WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, hasColumn, patchNode, portTarget, setPortTarget } from './workflowForm'
 import { WF_NODE_HELP } from './workflowHelp'
 import { setLocale } from './i18n'
+import { graphWithMerge } from './workflowFixture'
 
-const base = defaultWorkflow(DEFAULT_ROLES)
+const base = graphWithMerge(DEFAULT_ROLES)
 const gitNode = (over: Partial<WfGitNode> = {}): WfGitNode => ({ id: 'g', type: 'git', x: 0, y: 0, operation: 'create_branch', branch: '', ...over })
 const ctx = { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }
 
@@ -18,7 +19,14 @@ test('поля формы — только у выбранной операци�
   assert.deepEqual(gitFieldsFor('checkout'), [{ field: 'branch', required: true }])
   assert.deepEqual(gitFieldsFor('commit'), [{ field: 'message', required: true }])
   assert.deepEqual(gitFieldsFor('push'), [{ field: 'remote', required: false }])
-  assert.deepEqual([...GIT_OPERATIONS], [...WF_GIT_OPERATIONS])
+})
+
+test('select операций: в воркфлоу глобальной задачи только commit и push, create_branch и checkout — недоступны', () => {
+  assert.deepEqual([...GIT_OPERATIONS], ['commit', 'push'])
+  assert.ok(GIT_OPERATIONS.every((op) => WF_GIT_OPERATIONS.includes(op)))
+  assert.ok(isUnavailableGitOperation('create_branch') && isUnavailableGitOperation('checkout'))
+  assert.ok(!isUnavailableGitOperation('commit') && !isUnavailableGitOperation('push'))
+  assert.ok(!isUnavailableGitOperation('rebase') && !isUnavailableGitOperation(undefined), 'неизвестная — не «недоступная», а сломанная')
 })
 
 test('подсказка по подстановкам: у ветки без {title}, у сообщения с ним, у base и remote — нет', () => {
@@ -106,11 +114,11 @@ test('нода с неизвестной или отсутствующей оп�
 
 test('patchNode: git-поля правятся только у ноды git; исходный граф не меняется', () => {
   const { workflow, nodeId } = addNode(base, 'git', 0, 0)
-  const next = patchNode(workflow, nodeId, { git: { branch: 'feature/{taskId}' } })
+  const next = patchNode(workflow, nodeId, { git: { message: 'feat: {title}' } })
   const n = next.nodes.find((x) => x.id === nodeId)
-  assert.equal(n?.type === 'git' ? n.branch : undefined, 'feature/{taskId}')
+  assert.equal(n?.type === 'git' ? n.message : undefined, 'feat: {title}')
   const before = workflow.nodes.find((x) => x.id === nodeId)
-  assert.equal(before?.type === 'git' ? before.branch : undefined, '')
+  assert.equal(before?.type === 'git' ? before.message : undefined, '')
   const other = patchNode(base, 'work', { git: { branch: 'x' } })
   assert.deepEqual(other.nodes.find((x) => x.id === 'work'), base.nodes.find((x) => x.id === 'work'))
 })
@@ -121,7 +129,7 @@ test('палитра и select «Тип»: git есть, колонки у не�
   assert.equal(hasColumn('git'), false)
   const help = WF_NODE_HELP.git
   assert.deepEqual(Object.keys(help.outcomes).sort(), ['error', 'ok'])
-  for (const label of ['Операция', 'Ветка', 'Базовая ветка', 'Сообщение коммита', 'Remote']) {
+  for (const label of ['Операция', 'Сообщение коммита', 'Remote']) {
     assert.ok(help.fields.some((f) => f.startsWith(`${label} — `)), `нет описания поля «${label}»`)
   }
 })
@@ -129,7 +137,7 @@ test('палитра и select «Тип»: git есть, колонки у не�
 test('нода git: новая — с операцией по умолчанию, выходы ok/error, «выполнено» вместо «слито»', () => {
   const { workflow, nodeId } = addNode(base, 'git', 10, 20)
   const n = workflow.nodes.find((x) => x.id === nodeId) as WfNode
-  assert.deepEqual(n, { id: 'git', type: 'git', x: 10, y: 20, operation: 'create_branch', branch: '' })
+  assert.deepEqual(n, { id: 'git', type: 'git', x: 10, y: 20, operation: 'commit', message: '' })
   assert.equal(wfOutcomeLabel('git', 'ok'), 'выполнено')
   assert.equal(wfOutcomeLabel('merge', 'ok'), 'слито')
   assert.equal(wfOutcomeLabel('git', 'error'), 'ошибка')
@@ -145,18 +153,19 @@ test('смена типа: из git в другой тип поля git проп
   assert.equal(portTarget(asMerge, nodeId, 'error'), undefined, 'error у мержа нет')
   const back = changeNodeType(asMerge, nodeId, 'git')
   const g = back.nodes.find((x) => x.id === nodeId)
-  assert.equal(g?.type === 'git' && g.operation, 'create_branch')
+  assert.equal(g?.type === 'git' && g.operation, 'commit')
 })
 
-test('валидация ловит пустую ветку и недопустимый шаблон, правка через форму их убирает', () => {
+test('валидация ловит пустое сообщение коммита, правка через форму его убирает; создать ветку и переключиться нельзя', () => {
   const { workflow, nodeId } = addNode(base, 'git', 0, 0)
   const wired = setPortTarget(setPortTarget(workflow, nodeId, 'ok', 'end'), nodeId, 'error', 'work')
   const errors = (w: typeof wired): (string | undefined)[] => validateWorkflow(w, ctx).errors.filter((e) => e.nodeId === nodeId).map((e) => e.code)
-  assert.ok(errors(wired).includes('gitNoBranch'))
-  assert.ok(errors(patchNode(wired, nodeId, { git: { branch: 'feat/{title}' } })).includes('gitUnknownPlaceholder'))
-  assert.deepEqual(errors(patchNode(wired, nodeId, { git: { branch: 'feature/{taskId}-{slug}' } })), [])
-  const asCommit = patchNode(wired, nodeId, { git: { operation: 'commit' } })
-  assert.ok(errors(asCommit).includes('gitNoMessage'))
-  assert.deepEqual(errors(patchNode(asCommit, nodeId, { git: { message: 'feat: {title}' } })), [])
-  assert.ok(!validateWorkflow(patchNode(wired, nodeId, { git: { branch: 'x', base: 'y' } }), ctx).warnings.some((w) => w.code === 'gitParamIgnored'), 'лишних полей у операции нет')
+  assert.deepEqual(errors(wired), ['gitNoMessage'], 'новая нода — commit: ошибка только про пустое сообщение')
+  assert.deepEqual(errors(patchNode(wired, nodeId, { git: { message: 'feat: {title}' } })), [])
+  assert.ok(errors(patchNode(wired, nodeId, { git: { message: '{nope}' } })).includes('gitUnknownPlaceholder'))
+  assert.deepEqual(errors(patchNode(wired, nodeId, { git: { operation: 'push' } })), [], 'push: remote по умолчанию')
+  // create_branch и checkout в воркфлоу глобальной задачи запрещены (`gitRunOperation`): граф из файла их сохраняет, форма — нет.
+  for (const operation of ['create_branch', 'checkout'] as const) {
+    assert.ok(errors(patchNode(wired, nodeId, { git: { operation, branch: 'feature/{taskId}' } })).includes('gitRunOperation'), operation)
+  }
 })

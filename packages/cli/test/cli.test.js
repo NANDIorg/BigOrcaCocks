@@ -71,6 +71,46 @@ describe('orca-board CLI', () => {
     assert.equal(empty.code, 1)
   })
 
+  it('stage finish: прогон из ORCA_RUN_ID, --summary и --summary-file уходят текстом; без прогона и без текста — ошибка без запроса', async () => {
+    const inline = await run(['stage', 'finish', '--summary', '## Этап'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(inline.req.method, 'stage.finish')
+    assert.equal(inline.req.params.run, 'run_1')
+    assert.equal(inline.req.params.summary, '## Этап')
+    const bare = await run(['stage', 'finish'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal('summary' in bare.req.params, false)
+    assert.equal((await run(['stage', 'finish', '--run', 'run_2'], { ORCA_RUN_ID: 'run_1' })).req.params.run, 'run_2')
+    const file = join(dir, 'stage.md')
+    writeFileSync(file, '- «пункт» и `код`\n')
+    const fromFile = await run(['stage', 'finish', '--summary-file', file], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(fromFile.req.params.summary, '- «пункт» и `код`\n')
+    assert.equal('summary-file' in fromFile.req.params, false)
+    const noRun = await run(['stage', 'finish'])
+    assert.equal(noRun.req, null)
+    assert.equal(noRun.code, 1)
+    const empty = await run(['stage', 'finish', '--summary'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(empty.req, null)
+    assert.equal(empty.code, 1)
+    const missing = await run(['stage', 'finish', '--summary-file', join(dir, 'nope.md')], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(missing.req, null)
+    assert.equal(missing.code, 1)
+  })
+
+  it('workflow show берёт прогон из ORCA_RUN_ID, а явный --type перебивает его; review по проверке — свой --task', async () => {
+    assert.equal((await run(['workflow', 'show'], { ORCA_RUN_ID: 'run_1' })).req.params.run, 'run_1')
+    assert.equal((await run(['workflow', 'show', '--type', 'docs'], { ORCA_RUN_ID: 'run_1' })).req.params.run, undefined)
+    const accept = await run(['review', 'accept', '--task', 'task_gate'], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal(accept.req.method, 'review.accept')
+    assert.equal(accept.req.params.task, 'task_gate')
+    const reject = await run(['review', 'reject', '--task', 'task_gate', '--feedback', 'нет тестов'], { ORCA_DISPATCH_ID: 'disp_1' })
+    assert.equal(reject.req.params.feedback, 'нет тестов')
+  })
+
+  it('справка описывает stage finish и события этапов', async () => {
+    const help = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, out) => resolve(out)))
+    assert.match(help, /\n  stage finish \[--run <id>\]/)
+    assert.match(help, /stage_started,stage_tasks_done\]/)
+  })
+
   it('done --answer-file: CLI читает файл и шлёт текст в answer; нет файла — ошибка без запроса', async () => {
     const file = join(dir, 'answer.md')
     writeFileSync(file, '# Ответ\n\n- «кавычки» и `код`\n')

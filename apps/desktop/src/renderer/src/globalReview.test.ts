@@ -6,10 +6,13 @@ import {
   staleReviewMessage,
   globalReviewApi,
   globalTaskActions,
+  isRunWorkflow,
   returnHint,
   returnsNewestFirst,
-  reviewErrorMessage
+  reviewErrorMessage,
+  runApprovalRequest
 } from './globalReview'
+import type { HumanRequest } from '@orca-board/core'
 import { setLocale } from './i18n'
 
 /** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
@@ -69,14 +72,47 @@ test('globalReviewApi: новый preload — вызовы уходят в ме�
   const calls: unknown[][] = []
   const api = {
     globalTasks: {
-      accept: async (id: string) => { calls.push(['accept', id]); return {} },
+      accept: async (id: string, decision?: string) => { calls.push(['accept', id, decision]); return {} },
       returnToWork: async (id: string, text: string, cols: number, rows: number) => { calls.push(['return', id, text, cols, rows]); return 'pty1' }
     }
   } as unknown as Partial<OrcaApi>
   const r = globalReviewApi(api)
   await r.accept('g1')
+  await r.accept('g2', 'вариант B')
   assert.equal(await r.returnToWork('g1', 'доделай', 120, 30), 'pty1')
-  assert.deepEqual(calls, [['accept', 'g1'], ['return', 'g1', 'доделай', 120, 30]])
+  assert.deepEqual(calls, [['accept', 'g1', undefined], ['accept', 'g2', 'вариант B'], ['return', 'g1', 'доделай', 120, 30]])
+})
+
+test('isRunWorkflow: только прогон с воркфлоу глобальной задачи; «Входящие», прогон старого формата и старый main — нет', () => {
+  assert.equal(isRunWorkflow({ workflowScope: 'run' }), true)
+  assert.equal(isRunWorkflow({ workflowScope: 'run', inbox: false }), true)
+  assert.equal(isRunWorkflow({ workflowScope: 'run', inbox: true }), false)
+  assert.equal(isRunWorkflow({}), false)
+})
+
+const request = (id: string, extra: Partial<HumanRequest> = {}): HumanRequest =>
+  ({ id, runId: 'run_1', kind: 'approval', status: 'pending', title: 'Проверка человеком', options: [], createdAt: 10, ...extra })
+
+test('runApprovalRequest: ждущий approval прогона без задачи; самый старый; чужие, решённые и задачные не считаются', () => {
+  assert.equal(runApprovalRequest(undefined, 'run_1'), undefined)
+  assert.equal(runApprovalRequest([], 'run_1'), undefined)
+  const list = [
+    request('later', { createdAt: 30 }),
+    request('first', { createdAt: 20 }),
+    request('done', { status: 'resolved', createdAt: 1 }),
+    request('of-task', { taskId: 't1', createdAt: 2 }),
+    request('other-run', { runId: 'run_2', createdAt: 3 }),
+    request('question', { kind: 'question', createdAt: 4 })
+  ]
+  assert.equal(runApprovalRequest(list, 'run_1')?.id, 'first')
+  assert.equal(runApprovalRequest(list, 'run_3'), undefined)
+})
+
+test('returnHint: у прогона с воркфлоу — граф вернётся по переходу, терминал координатора не закрывается', () => {
+  assert.match(returnHint(false, true), /переходу «Вернуть»/)
+  assert.match(returnHint(true, true), /наберёт агентов/)
+  assert.doesNotMatch(returnHint(true, true), /терминал будет закрыт/)
+  assert.equal(returnHint(false, false), returnHint(false))
 })
 
 test('reviewErrorMessage: нет хендлера в старом main — «перезапустите», остальное как есть', () => {
@@ -102,5 +138,6 @@ test('английский интерфейс: подсказка возврат
     assert.throws(() => globalReviewApi(undefined), { message: /old main\/preload version without global task Review/ })
     assert.equal(reviewErrorMessage("No handler registered for 'globalTasks:accept'"), staleReviewMessage())
     assert.match(staleReviewMessage(), /Restart the app/)
+    assert.match(returnHint(false, true), /The graph goes back by the “Send back” edge/)
   })
 })
