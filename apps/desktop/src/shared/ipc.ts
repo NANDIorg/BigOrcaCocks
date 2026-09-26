@@ -687,8 +687,9 @@ export interface OrcaApi {
     /**
      * «Вернуть в работу» с «Проверки» с уточнением (`text` обязателен): задача — в работу, координатор
      * запускается повторно и получает уточнение в цели. Возвращает ptyId координатора.
+     * `images` — картинки к уточнению (байты, как у `startCoordinator`): main проверяет их и сохраняет в cwd координатора.
      */
-    returnToWork(id: string, text: string, cols: number, rows: number): Promise<string>
+    returnToWork(id: string, text: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
   }
   tasks: {
     /** Без roleId — единственная роль типа проекта по умолчанию, иначе ошибка. Задача попадает во «Входящие» (см. globalTasks). */
@@ -711,8 +712,10 @@ export interface OrcaApi {
     /**
      * Решить запрос одним вызовом: вариант/текст вопроса, «Принять» (с git-частью, `text` — решение),
      * «Уточнить» и «Перезапустить» (сразу стартует воркера), «Скрыть». Уже решённый — ошибка.
+     * `images` — картинки к «Уточнить»/«Вернуть» (байты): main проверяет их, сохраняет в cwd читателя и сам ставит
+     * `resolution.images` (пути). `resolution.images` из renderer main отбрасывает.
      */
-    resolve(id: string, resolution: RequestResolution): Promise<RequestResolveResult>
+    resolve(id: string, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<RequestResolveResult>
     /** Клик по системному уведомлению о запросе: открыть Инбокс на этом запросе. */
     onFocus(cb: (p: RequestFocus) => void): () => void
   }
@@ -798,6 +801,15 @@ export interface OrcaApi {
     info(taskId: string): Promise<ReviewInfo>
     /** `decision` — решение человека по задаче-ответу, уходит координатору в answer_accepted. */
     accept(taskId: string, decision?: string): Promise<void>
-    reject(taskId: string, feedback: string): Promise<void>
+    /** `images` — картинки к замечаниям (байты): main проверяет их и сохраняет в worktree задачи (или cwd координатора у проверки ветки). */
+    reject(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
+  }
+  /**
+   * Картинки к замечаниям при возврате в работу. Только рукопожатие: «новый preload + старый main» молча
+   * отбросил бы лишний аргумент `images`, и картинка пропала бы без ошибки — renderer перед показом «Приложить»
+   * зовёт `ping()` и при отсутствии метода/хендлера просит перезапустить приложение.
+   */
+  attachments: {
+    ping(): Promise<true>
   }
 }

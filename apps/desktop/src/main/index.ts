@@ -778,7 +778,8 @@ function registerIpc(): void {
   )
   handle('globalTasks:accept', (_e, id: string, decision?: string) =>
     acceptRun(runWorkflowDeps(resolveProject().id), id, typeof decision === 'string' ? decision : undefined))
-  handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number) => {
+  // `_images` — картинки к уточнению: контракт принят, хранение и передача агенту — следующие задачи.
+  handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number, _images?: unknown) => {
     const p = resolveProject()
     const reason = typeof text === 'string' ? text : ''
     if (isRunScope(p.store, id)) {
@@ -797,7 +798,8 @@ function registerIpc(): void {
     const store = projects.activeStore()
     return store.listRequests().filter((r) => (!opts?.runId || r.runId === opts.runId) && (!opts?.pending || r.status === 'pending'))
   })
-  handle('requests:resolve', (_e, id: string, resolution: RequestResolution) => resolveRequest(undefined, id, resolution))
+  // `_images` — картинки к «Уточнить»/«Вернуть» (см. returnToWork): пока принимаются и не используются.
+  handle('requests:resolve', (_e, id: string, resolution: RequestResolution, _images?: unknown) => resolveRequest(undefined, id, resolution))
 
   handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
     const p = projectId ? projects.get(projectId) : projects.active()
@@ -843,6 +845,8 @@ function registerIpc(): void {
     if (err) throw new Error(err)
   })
   handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
+  handle('attachments:ping', () => true)
   // Показ человеку: файлы из worktree задачи активного проекта, белый список расширений — main/showcase.ts.
   handle('showcase:read', (_e, taskId: unknown, path: unknown) => readShowcaseFile(showcaseRoot(resolveProject().store, taskId), path))
   handle('showcase:open', async (_e, taskId: unknown, path: unknown) => {
@@ -867,7 +871,8 @@ function registerIpc(): void {
     return getReview(p.store, p.root, taskId)
   })
   handle('review:accept', (_e, taskId: string, decision?: string) => void reviewDecision(resolveProject().id, taskId, 'accept', decision))
-  handle('review:reject', (_e, taskId: string, feedback: string) => reviewDecision(resolveProject().id, taskId, 'reject', feedback))
+  // `_images` — картинки к замечаниям (см. returnToWork): пока принимаются и не используются.
+  handle('review:reject', (_e, taskId: string, feedback: string, _images?: unknown) => reviewDecision(resolveProject().id, taskId, 'reject', feedback))
 }
 
 app.whenReady().then(() => {
