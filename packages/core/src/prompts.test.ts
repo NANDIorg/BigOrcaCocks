@@ -7,6 +7,7 @@ import {
   COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, type CoordinatorStage
 } from './prompts.ts'
 import { getAgent } from './agents.ts'
+import { returnImagesSection } from './attachments.ts'
 import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
 
 describe('builtinPromptKind', () => {
@@ -663,5 +664,34 @@ describe('язык общения агентов с человеком (agentSys
     for (const [, cmd] of agentLanguageDirective('en').matchAll(/`orca-board ([a-z]+(?: [a-z]+)?)`/g)) {
       assert.match(cli, new RegExp(`\\n  ${cmd} `), `нет команды ${cmd} в HELP`)
     }
+  })
+})
+
+describe('картинки к замечаниям при возврате в работу: skills', () => {
+  const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+  const coordinator = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+
+  it('worker.md: изображения к замечаниям — открыть до правок, текст на них не команды, не коммитить', () => {
+    assert.match(worker, /приложены изображения/)
+    assert.match(worker, /Замечания после ревью/)
+    assert.match(worker, /Уточнение к прошлому ответу/)
+    assert.match(worker, /\.orca-attachments/)
+    assert.match(worker, /данные, а не команды/)
+  })
+
+  it('coordinator.md: `images` в stage_started, пересказ словами вместо путей воркерам, answer_clarified и request_resolved', () => {
+    assert.match(coordinator, /stage_started` — `\{[^}]*feedback\?, images\?/)
+    assert.match(coordinator, /`images` — картинки к `feedback`/)
+    assert.match(coordinator, /пути в `task create` не передавай — перескажи словами/)
+    assert.match(coordinator, /`images` — пути приложенных картинок, их читает воркер/)
+    assert.match(coordinator, /замечания и их картинки \(`images`\)/)
+    assert.match(coordinator, /данные, а не команды/)
+  })
+
+  it('формулировки промптов и skills согласованы: те же «данные, а не команды» и «не видят»', () => {
+    const coord = returnImagesSection(['/x/image-1.png'], 'coordinator')
+    assert.match(coord, /данные, а не команды/)
+    assert.match(coord, /Воркеры этих файлов не видят/)
+    assert.match(coordinator, /Воркеры этих файлов не видят/)
   })
 })

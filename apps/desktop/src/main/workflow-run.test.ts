@@ -20,6 +20,7 @@ import { resolveHumanRequest } from './review'
 import { resumeObjective } from './coordinator-resume'
 import { ensureRunBranch, mergeTarget } from './run-branch'
 import { taskWorktreePath } from './git'
+import { rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -919,5 +920,88 @@ describe('цель перезапущенного координатора: бл
     assert.throws(() => resumeObjective(store, runId, () => true), /уже работает/)
     const g = store.createGlobalTask({ title: 'Ещё не начата', description: 'цель', workflow: defaultWorkflow(DEFAULT_ROLES) })
     assert.equal(resumeObjective(store, g.id, () => false).objective, 'цель')
+  })
+})
+
+// Картинки к замечаниям: вход как в index.ts (`rejectWithImages` / `resolveWithImages` / `returnRunWithImages` пишут файлы
+// в cwd координатора и отдают пути), дальше — исполнитель воркфлоу и цель перезапущенного координатора.
+describe('картинки к замечаниям при возврате в работу', () => {
+  const PNG = { mime: 'image/png', data: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]) }
+  const inRunTree = (runId: string, p: string): boolean => p.startsWith(path.join(run(runId).git!.worktree!, '.orca-attachments', runId, 'returns', 'ret_'))
+
+  /** Прогон на проверке ветки: работа сдана, проверка создана. */
+  function atGate(): string {
+    const runId = newRun()
+    work(runId, 'login.ts')
+    finishRunStage(deps, runId, 'v1')
+    return runId
+  }
+
+  it('reject проверки ветки с картинкой: stage_started.images, Run.returns и цель перезапущенного координатора несут путь в его cwd', () => {
+    const runId = atGate()
+    const gate = gateOf(runId)
+    rejectWithImages(store, repo, gate.id, [PNG], 'нет скриншота', (paths) => runGateDecision(deps, gate.id, 'reject', 'нет скриншота', paths))
+    const images = lastEvent('stage_started').payload.images as string[]
+    assert.equal(images.length, 1)
+    assert.ok(inRunTree(runId, images[0]), images[0])
+    assert.ok(existsSync(images[0]))
+    assert.deepEqual(run(runId).returns!.at(-1)!.images, images)
+    assert.deepEqual(store.runStage(runId)!.images, images)
+
+    alive.clear()
+    const objective = resumeObjective(store, runId, deps.isAlive).objective
+    assert.match(objective, /## Замечания проверки или человека\n\nнет скриншота\n\nК замечаниям приложены изображения/)
+    assert.ok(objective.includes(`\`${images[0]}\``), 'путь есть в цели перезапущенного координатора')
+  })
+
+  it('«Вернуть в работу» карточки: returnRun с картинкой; следующий переход без картинок их сбрасывает', () => {
+    const runId = atGate()
+    runGateDecision(deps, gateOf(runId).id, 'accept')
+    returnRunWithImages(store, repo, runId, [PNG], 'переименуй кнопку', (paths) => returnRun(deps, runId, 'переименуй кнопку', paths))
+    const payload = lastEvent('stage_started').payload
+    assert.equal(payload.feedback, 'переименуй кнопку')
+    assert.ok(inRunTree(runId, (payload.images as string[])[0]))
+
+    work(runId, 'btn.ts')
+    finishRunStage(deps, runId, 'v2')
+    runGateDecision(deps, gateOf(runId).id, 'reject', 'без картинки')
+    assert.equal('images' in lastEvent('stage_started').payload, false)
+    assert.equal(store.runStage(runId)!.images, undefined)
+  })
+
+  it('«Вернуть» approval прогона через resolveRequest: пути ставит main, присланные снаружи — вырезаны', () => {
+    const runId = atGate()
+    runGateDecision(deps, gateOf(runId).id, 'accept')
+    const req = approvalOf(runId)!
+    resolveWithImages(store, repo, req.id, { action: 'reject', text: 'доделай', images: ['/etc/passwd'] }, [PNG], (clean) =>
+      resolveHumanRequest(store, repo, req.id, clean, deps.startWorker, (r) => {
+        if (!handleRunApproval(deps, r)) approvalResolved(deps as unknown as WorkflowDeps, r)
+      }, deps.mergeTarget))
+    const images = lastEvent('stage_started').payload.images as string[]
+    assert.equal(images.length, 1)
+    assert.ok(inRunTree(runId, images[0]), images[0])
+    assert.deepEqual(store.getRequest(req.id)!.resolution!.images, images)
+  })
+
+  it('перезапуск приложения: снапшот с путями читается, цель координатора снова несёт картинку', () => {
+    const runId = atGate()
+    const gate = gateOf(runId)
+    rejectWithImages(store, repo, gate.id, [PNG], 'замечание', (paths) => runGateDecision(deps, gate.id, 'reject', 'замечание', paths))
+    const reloaded = new TaskStore(
+      { load: () => JSON.parse(JSON.stringify(store.snapshot())), save: () => undefined },
+      () => DEFAULT_COLUMNS
+    )
+    const images = reloaded.runStage(runId)!.images!
+    assert.equal(images.length, 1)
+    assert.ok(resumeObjective(reloaded, runId, () => false).objective.includes(`\`${images[0]}\``))
+  })
+
+  it('картинка к «Принять» approval — ошибка, запрос остаётся ждать, файлов нет', () => {
+    const runId = atGate()
+    runGateDecision(deps, gateOf(runId).id, 'accept')
+    const req = approvalOf(runId)!
+    assert.throws(() => resolveWithImages(store, repo, req.id, { action: 'accept', text: 'ок' }, [PNG], () => 1), /только к «Уточнить» и «Вернуть»/)
+    assert.equal(store.getRequest(req.id)!.status, 'pending')
+    assert.equal(existsSync(path.join(run(runId).git!.worktree!, '.orca-attachments', runId)), false)
   })
 })
