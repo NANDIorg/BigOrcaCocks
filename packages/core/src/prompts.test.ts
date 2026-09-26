@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION,
-  COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, type CoordinatorStage
+  COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec, runDecisionTaskTitle, type CoordinatorStage
 } from './prompts.ts'
 import { getAgent } from './agents.ts'
 import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
@@ -470,6 +470,55 @@ describe('задачи прогона: проверка ветки глобал�
       const re = cmd === 'done' || cmd === 'ask' ? new RegExp(`^ {2}${cmd}\\b`, 'm') : new RegExp(`^ {2}${cmd} ${sub}\\b`, 'm')
       assert.match(helpText, re, `нет «orca-board ${name}» в HELP`)
     }
+  })
+})
+
+describe('задача-решатель ноды «Решение ИИ»', () => {
+  const ctx = {
+    title: 'Экран настроек',
+    goal: 'Сделать экран настроек профиля',
+    branch: 'feature/run_x-settings',
+    base: 'develop',
+    stages: [{ title: 'Анализ', summary: 'Нужен новый экран и API' }],
+    question: 'Нужен ли дизайн для этой задачи?',
+    options: [{ id: 'yes', label: 'Да', description: 'есть новый экран' }, { id: 'no', label: 'Нет' }],
+    path: [
+      { title: 'Анализ', visit: 1 },
+      { title: 'Нужен ли дизайн?', visit: 1, outcome: 'next', decision: { label: 'Нет', reason: 'макет  уже\nесть', by: 'human' as const } },
+      { title: 'Реализация', visit: 1, outcome: 'no' },
+      { title: 'Нужен ли дизайн?', visit: 2, outcome: 'reject' }
+    ],
+    instructions: 'Дизайн нужен, если меняется UI.'
+  }
+
+  it('название — «<нода>: <глобальная задача>»', () => {
+    assert.equal(runDecisionTaskTitle('Нужен ли дизайн?', 'Экран'), 'Нужен ли дизайн?: Экран')
+  })
+
+  it('вопрос, варианты, цель, сводки, путь, «как решать», ветка только для чтения и команды decision choose|escalate', () => {
+    const spec = runDecisionTaskSpec(ctx)
+    assert.match(spec, /^Ты — нода «Решение ИИ» воркфлоу глобальной задачи «Экран настроек»/)
+    assert.match(spec, /## Вопрос\n\nНужен ли дизайн для этой задачи\?/)
+    assert.match(spec, /## Варианты\n\n- `yes` — Да: есть новый экран\n- `no` — Нет/)
+    assert.match(spec, /## Цель глобальной задачи\n\nСделать экран настроек профиля/)
+    assert.match(spec, /## Что сделано на прошлых этапах\n\n### «Анализ»\n\nНужен новый экран и API/)
+    assert.match(spec, /## Путь по графу\n\n1\. «Анализ»\n2\. «Нужен ли дизайн\?» \(пришли по исходу `next`\) — выбрано «Нет» \(решил человек\): макет уже есть\n3\. «Реализация» \(пришли по исходу `no`\)\n4\. «Нужен ли дизайн\?» \(заход 2, пришли по исходу `reject`\)/)
+    assert.match(spec, /Ветка глобальной задачи: `feature\/run_x-settings` \(от `develop`\) — читать можно/)
+    assert.match(spec, /## Как решать\n\nДизайн нужен, если меняется UI\./)
+    assert.match(spec, /## Как сдать решение\n\nТвоя цель — выбрать ровно один вариант[\s\S]*Код не меняй и ничего не коммить/)
+    assert.match(spec, /orca-board decision choose --task "\$ORCA_TASK_ID" --option <id> --reason "почему этот вариант"/)
+    assert.match(spec, /orca-board decision escalate --task "\$ORCA_TASK_ID" --reason "что неясно"/)
+    assert.match(spec, /Последней командой обязательно `orca-board done --summary "выбрано: <название варианта>"`/)
+    const order = ['## Вопрос', '## Варианты', '## Цель', '## Что сделано', '## Путь по графу', 'Ветка глобальной задачи', '## Как решать', '## Как сдать решение']
+    const at = order.map((h) => spec.indexOf(h))
+    assert.deepEqual(at, [...at].sort((a, b) => a - b), 'разделы в порядке')
+  })
+
+  it('нет сводок, пути, ветки и инструкций — разделов нет, спека не ломается', () => {
+    const spec = runDecisionTaskSpec({ title: 'T', goal: '', question: 'Да или нет?', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] })
+    assert.doesNotMatch(spec, /## Что сделано|## Путь по графу|Ветка глобальной задачи|## Как решать|undefined/)
+    assert.match(spec, /## Цель глобальной задачи\n\nT/)
+    assert.match(spec, /## Как сдать решение/)
   })
 })
 

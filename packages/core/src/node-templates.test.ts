@@ -18,6 +18,7 @@ describe('validateNodeTemplate', () => {
       { type: 'gate', roleId: 'reviewer', instructions: 'смотри диф' },
       { type: 'ask', roleId: 'developer', instructions: 'о чём спросить' },
       { type: 'human', instructions: 'проверь' },
+      { type: 'decision', question: 'Нужен ли дизайн?', roleId: 'analyst', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] },
       { type: 'merge' },
       { type: 'git', operation: 'push', remote: 'origin' },
       { type: 'git', operation: 'commit', message: 'feat: {title}' },
@@ -27,6 +28,13 @@ describe('validateNodeTemplate', () => {
     for (const node of nodes) {
       assert.deepEqual(validateNodeTemplate(tpl(node)), { errors: [], warnings: [] }, JSON.stringify(node))
     }
+  })
+
+  it('decision: образец с ребром на каждый вариант — видны ошибки самой ноды, а не «нет перехода»; в пути подзадачи — нельзя', () => {
+    const node = { type: 'decision', question: 'Нужен ли дизайн?', roleId: 'coordinator', options: [{ id: 'yes', label: 'Да' }, { id: 'yes', label: 'Нет' }, { id: 'Bad', label: '' }] }
+    assert.deepEqual(codes(validateNodeTemplate(tpl(node)).errors), ['decisionOptionDuplicateId', 'decisionOptionBadId', 'decisionOptionNoLabel', 'roleService'])
+    const ok = { type: 'decision', question: 'Нужен ли дизайн?', roleId: 'analyst', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] }
+    assert.deepEqual(codes(validateNodeTemplate(tpl(ok), { scope: 'subtask' }).errors), ['subflowDecisionNotAllowed'])
   })
 
   it('роли шаблона против проекта не проверяются (при вставке), но служебная роль — ошибка', () => {

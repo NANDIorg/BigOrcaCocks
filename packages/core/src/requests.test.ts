@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { TaskStore, EVENT_TITLE_LIMIT, type StoreSnapshot } from './store.ts'
-import { WORKFLOW_VERSION_TASK_SCOPE, type Workflow } from './workflow.ts'
+import { WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, type Workflow } from './workflow.ts'
 import { DEFAULT_COLUMNS, REQUEST_ACTIONS, type HumanRequest, type ResolutionAction } from './types.ts'
 
 /** Глобальная задача с двумя подзадачами (вторая не даёт прогону закрыться) и живым воркером первой. */
@@ -499,5 +499,82 @@ describe('доставка событий координатору', () => {
     const { store, dispatch } = setup()
     store.markStuck(dispatch.id, 20 * 60_000)
     assert.equal(store.listEvents().find((e) => e.type === 'escalation')!.payload.stuck, true)
+  })
+})
+
+describe('запрос decision: ветку выбирает человек', () => {
+  /** Прогон на развилке «Нужен ли дизайн?» (сразу после старта). */
+  function atFork() {
+    const wf: Workflow = {
+      version: WORKFLOW_VERSION,
+      nodes: [
+        { id: 'start', x: 0, y: 0, type: 'start' },
+        { id: 'fork', x: 0, y: 0, type: 'decision', title: 'Нужен ли дизайн?', question: 'Нужен ли дизайн?', roleId: 'developer', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] },
+        { id: 'work', x: 0, y: 0, type: 'work' },
+        { id: 'end', x: 0, y: 0, type: 'end' }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'fork' },
+        { id: 'e2', from: 'fork', outcome: 'yes', to: 'work' },
+        { id: 'e3', from: 'fork', outcome: 'no', to: 'work' },
+        { id: 'e4', from: 'work', outcome: 'next', to: 'end' }
+      ]
+    }
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const run = store.createRun('цель', undefined, wf)
+    store.enterRunStage(run.id, { roleIds: ['developer'] })
+    const fields = {
+      nodeId: 'fork', title: 'Нужен ли дизайн?', body: 'Агент не уверен', fallback: 'unsure' as const, agentNote: '  нет макета  ',
+      options: [{ id: 'yes', label: 'Да', hint: 'новый экран' }, { id: 'no', label: 'Нет' }]
+    }
+    return { store, run, fields }
+  }
+
+  it('создание: без задачи, с вариантами, fallback и комментарием агента; повтор не дублирует; карточка «Нужен ответ»', () => {
+    const { store, run, fields } = atFork()
+    const req = store.requestRunDecision(run.id, fields)
+    assert.deepEqual(
+      [req.kind, req.runId, req.taskId, req.nodeId, req.status, req.fallback, req.agentNote, req.body],
+      ['decision', run.id, undefined, 'fork', 'pending', 'unsure', 'нет макета', 'Агент не уверен']
+    )
+    assert.deepEqual(req.options, [{ id: 'yes', label: 'Да', hint: 'новый экран' }, { id: 'no', label: 'Нет' }])
+    assert.equal(store.requestRunDecision(run.id, { ...fields, fallback: 'no_answer' }).id, req.id)
+    assert.equal(pending(store, run.id).length, 1)
+    const created = store.listEvents().filter((e) => e.type === 'request_created').at(-1)!
+    assert.deepEqual([created.payload.kind, created.payload.runId, created.taskId], ['decision', run.id, undefined])
+    assert.equal(store.getGlobalTask(run.id).status, 'needs_input')
+  })
+
+  it('не на этой ноде или без вариантов — ошибка', () => {
+    const { store, run, fields } = atFork()
+    assert.throws(() => store.requestRunDecision(run.id, { ...fields, nodeId: 'work' }), /не стоит на ноде «work»/)
+    assert.throws(() => store.requestRunDecision(run.id, { ...fields, options: [] }), /нет вариантов/)
+    assert.equal(pending(store, run.id).length, 0)
+  })
+
+  it('решение: answer + optionId (+ обоснование) — request_resolved с вариантом; граф store не двигает', () => {
+    const { store, run, fields } = atFork()
+    const req = store.requestRunDecision(run.id, fields)
+    assert.throws(() => store.resolveRequest(req.id, { action: 'answer', text: 'да' }), /выбери вариант — optionId обязателен/)
+    assert.throws(() => store.resolveRequest(req.id, { action: 'answer', optionId: 'maybe' }), /варианта «maybe» у запроса req_\w+ нет/)
+    assert.throws(() => store.resolveRequest(req.id, { action: 'accept' }), /действие accept недопустимо/)
+    assert.equal(store.getRequest(req.id)!.status, 'pending')
+    store.resolveRequest(req.id, { action: 'answer', optionId: 'no', text: '  макет уже есть  ' })
+    assert.deepEqual(store.getRequest(req.id)!.resolution, { action: 'answer', optionId: 'no', text: 'макет уже есть' })
+    const resolved = store.listEvents().filter((e) => e.type === 'request_resolved').at(-1)!
+    assert.equal(resolved.taskId, undefined)
+    assert.deepEqual(resolved.payload, {
+      runId: run.id, kind: 'decision', nodeId: 'fork', action: 'answer', requestId: req.id, optionId: 'no', decision: 'макет уже есть'
+    })
+    assert.equal(store.getRun(run.id)!.stage!.nodeId, 'fork')
+    assert.throws(() => store.resolveRequest(req.id, { action: 'answer', optionId: 'yes' }), /уже решено/)
+  })
+
+  it('граф ушёл с развилки — ждущий запрос отменяется', () => {
+    const { store, run, fields } = atFork()
+    const req = store.requestRunDecision(run.id, fields)
+    store.advanceRunStage(run.id, 'yes', { roleIds: ['developer'], chosen: { optionId: 'yes', label: 'Да', reason: 'сам', by: 'agent' } })
+    assert.equal(store.getRequest(req.id)!.status, 'cancelled')
+    assert.equal(pending(store, run.id).length, 0)
   })
 })

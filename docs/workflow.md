@@ -566,10 +566,11 @@ start → git(create_branch, branch="feature/{taskId}-{slug}") → work → … 
 «Да» — в «Дизайн», «Нет» — в «Реализацию»). Не может — выбирает человек в Инбоксе из тех же вариантов. Решение и
 обоснование остаются в истории этапов (`Run.stageHistory`), их видно в `workflow show --run` и в UI.
 
-> **Статус.** Раздел — контракт: типы, коды проблем и тексты уже в коде (`packages/core/src/workflow.ts`, `types.ts`,
-> `store.ts`), а движок, валидация полей, команды и UI ещё нет. Пока `stageAction` для `decision` отвечает заглушкой
-> `blocked` ««Решение ИИ» пока не поддерживается», а валидация проверяет только порты (через `wfPorts`). Команды ниже
-> в HELP CLI появятся вместе с реализацией. Формат графа тот же, `WORKFLOW_VERSION` не меняется (как у `ask` и `git`):
+> **Статус.** Core готов (`packages/core/src/workflow.ts`, `store.ts`, `prompts.ts`): валидация ноды, `stageAction`
+> (`create_decision` / `blocked` по таблице ниже), переходы по id вариантов, решение в истории (`RunStageOptions.chosen`),
+> запрос `decision` (`requestRunDecision`, `resolveRequest`), `runStage` и `workflow show` с вопросом и вариантами, спека
+> задачи-решателя (`runDecisionTaskTitle` / `runDecisionTaskSpec`). Эффекты в main (задача-решатель, фоллбэк), команды
+> и UI ещё нет — команды ниже в HELP CLI появятся вместе с ними. Формат графа тот же, `WORKFLOW_VERSION` не меняется (как у `ask` и `git`):
 > старое приложение отвергнет граф с нодой ошибкой «неизвестный тип», но данных не испортит. Миграции состояния нет:
 > все новые поля необязательные.
 
@@ -665,7 +666,10 @@ interface StageDecision {
 ```
 
 `StageChange.decision?: StageDecision`. Двигает граф `TaskStore.advanceRunStage(runId, optionId, opts)`; решение
-передаётся в `RunStageOptions.chosen`, `moveRunStage` кладёт его в запись ноды. Следующая запись (вход в целевую
+передаётся в `RunStageOptions.chosen`, `moveRunStage` кладёт его в запись ноды. `advanceRunStage` сверяет `chosen` с
+переходом (граф не трогается): `решение ветки передано не на ноде «Решение ИИ» (нода «<id>»)`,
+`решение «<optionId>» не совпадает с исходом перехода «<outcome>»`, `обоснование длиннее 4000 символов — сократи --reason`.
+Уход с развилки любым путём отменяет её ждущий запрос `decision`. Следующая запись (вход в целевую
 ноду) получает `outcome = optionId`, событие `stage_changed` — тот же `outcome`. Текст для следующего этапа — в уже
 существующем `RunStageOptions.decision` (попадает в `Run.stageInput` и `stage_started.decision`, обрезается как
 `eventText`): `«<вопрос>» → <метка>. <обоснование>`; у решения человека — `«<вопрос>» → <метка> (решил человек). <обоснование>`.
@@ -702,6 +706,8 @@ Figma", "by": "human", "fallback": "unsure", "agentNote": "Не ясно, ест
 
 - Создаёт `TaskStore.requestRunDecision(runId, {nodeId, title, body?, options, fallback, agentNote?}): HumanRequest`;
   повторный вызов при pending-запросе `kind === 'decision'` с тем же `nodeId` возвращает его (один запрос на заход).
+  Ошибки: `глобальная задача <runId> не стоит на ноде «<nodeId>» — выбирать ветку не нужно`,
+  `нода «<nodeId>»: у запроса решения нет вариантов`.
 - Решается существующим действием `answer`: `REQUEST_ACTIONS.decision = ['answer']`, `resolution.optionId`
   обязателен и должен быть среди `options`, `resolution.text` — необязательное обоснование человека. Ошибки
   `resolveRequest`: `запрос <id>: выбери вариант — optionId обязателен`, `варианта «<x>» у запроса <id> нет`.
