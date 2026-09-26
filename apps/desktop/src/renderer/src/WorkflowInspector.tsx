@@ -1,18 +1,19 @@
 import type React from 'react'
 import {
-  WF_PORTS, wfNodeTitle, wfWorkRoleIds,
-  type BoardColumn, type Role, type WfCondition, type WfNode, type WfOutcome, type WfSubflow, type WfValidation, type Workflow
+  WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS, wfNodeTitle, wfPorts, wfWorkRoleIds,
+  type BoardColumn, type Role, type WfCondition, type WfNode, type WfPort, type WfSubflow, type WfValidation, type Workflow
 } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
-import { WF_SUBTASK_FORBIDDEN_TYPES, issueTargets, removeSelected, wfOutcomeLabel, type WfSelection } from './workflowEdit'
+import { WF_SUBTASK_FORBIDDEN_TYPES, issueTargets, removeSelected, wfPortClass, wfPortLabel, type WfSelection } from './workflowEdit'
 import { isDefaultLike, resetSubflow, startCustomSubflow, subflowSummary, type WfScope } from './workflowNav'
 import { WF_NODE_HELP } from './workflowHelp'
 import {
   GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, isGitOperation, isUnavailableGitOperation, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
 } from './workflowGit'
 import {
-  WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, conditionOfKind, hasColumn, nodeOptionLabel, patchNode, portTarget,
-  setPortTarget, stageRoles, targetOptions, type WfNodePatch
+  WF_TYPE_ORDER, WF_TYPE_TITLES, addDecisionOption, changeNodeType, conditionOfKind, hasColumn, moveDecisionOption,
+  nodeOptionLabel, patchDecisionOption, patchNode, portTarget, removeDecisionOption, resetDecisionOptions, setPortTarget,
+  stageRoles, targetOptions, type WfNodePatch
 } from './workflowForm'
 import { useT, type TKey } from './i18n'
 import { WorkflowTemplateBlock } from './WorkflowTemplateBlock'
@@ -55,16 +56,16 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
     return (
       <aside className="wf-insp" aria-label={t('config.wf.insp.nodeAria', { title: wfNodeTitle(node) })}>
         <NodeHead node={node} />
-        <NodeHelp type={node.type} scope={scope} />
+        <NodeHelp node={node} scope={scope} />
         <NodeForm node={node} workflow={workflow} roles={roles} columns={columns} onChange={onChange} scope={scope} onOpenPath={onOpenPath} />
         {library && node.type !== 'start' && (
           <WorkflowTemplateBlock key={node.id} node={node} workflow={workflow} onChange={onChange} library={library} scope={scope} />
         )}
-        {WF_PORTS[node.type].length > 0 && (
+        {wfPorts(node).length > 0 && (
           <fieldset className="wf-ports">
             <legend>{t('config.wf.insp.ports')}</legend>
-            {WF_PORTS[node.type].map((outcome) => (
-              <PortSelect key={outcome} workflow={workflow} nodeId={node.id} nodeType={node.type} outcome={outcome} onChange={onChange} />
+            {wfPorts(node).map((outcome) => (
+              <PortSelect key={outcome} workflow={workflow} node={node} outcome={outcome} onChange={onChange} />
             ))}
           </fieldset>
         )}
@@ -79,10 +80,12 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
   if (edge) {
     const from = workflow.nodes.find((n) => n.id === edge.from)
     const issue = targets.edges.get(edge.id)
+    // Ребро из удалённой ноды (в графе из файла) подписываем как у «Работы»: исход `next` понятен и без ноды.
+    const fromNode: WfNode = from ?? { id: edge.from, type: 'work', x: 0, y: 0 }
     return (
       <aside className="wf-insp" aria-label={t('config.wf.insp.edge')}>
         <div className="wf-insp-head">
-          <b>{t('config.wf.insp.edgeTitle', { outcome: wfOutcomeLabel(from?.type ?? 'work', edge.outcome) })}</b>
+          <b>{t('config.wf.insp.edgeTitle', { outcome: wfPortLabel(fromNode, edge.outcome) })}</b>
           <span className="chip mono">{edge.id}</span>
         </div>
         <div className="wf-field">
@@ -91,7 +94,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
             {from ? nodeOptionLabel(from) : edge.from}
           </button>
         </div>
-        <PortSelect workflow={workflow} nodeId={edge.from} nodeType={from?.type ?? 'work'} outcome={edge.outcome} onChange={onChange} />
+        <PortSelect workflow={workflow} node={fromNode} outcome={edge.outcome} onChange={onChange} />
         {issue && <IssueList level={issue.level} messages={issue.messages} />}
         <div className="wf-insp-foot">
           <button type="button" className="btn-sm danger" onClick={remove}><Icon.trash /> {t('config.wf.insp.removeEdge')}</button>
@@ -149,10 +152,17 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
  * Назначение выбранной ноды: одна фраза видна всегда, остальное — в раскрывашке, чтобы не вытеснять форму.
  * `<details>` раскрывается с клавиатуры и не зависит от наведения мыши.
  */
-function NodeHelp({ type, scope }: { type: WfNode['type']; scope: WfScope }): React.JSX.Element {
+function NodeHelp({ node, scope }: { node: WfNode; scope: WfScope }): React.JSX.Element {
   const t = useT()
+  const type = node.type
   const help = WF_NODE_HELP[type]
-  const ports = WF_PORTS[type]
+  const ports = wfPorts(node)
+  // У фиксированных портов смысл исхода — из справки типа; у вариантов «Решения ИИ» — пояснение самого варианта.
+  const outcomeText = (port: WfPort): string => {
+    if (node.type !== 'decision') return help.outcomes[port as keyof typeof help.outcomes] ?? ''
+    const option = Array.isArray(node.options) ? node.options.find((o) => o.id === port) : undefined
+    return option?.description?.trim() || t('config.wf.help.decision.outcome')
+  }
   // Справка типа написана для графа глобальной задачи; в пути подзадачи у части нод другой смысл — говорим об этом отдельно.
   const noteKey = `config.wf.path.note.${type}` as TKey
   const note = scope === 'subtask' ? t(noteKey) : ''
@@ -171,7 +181,9 @@ function NodeHelp({ type, scope }: { type: WfNode['type']; scope: WfScope }): Re
           <dd>
             {ports.length === 0 ? t('config.wf.insp.noOutcomes') : (
               <ul>
-                {ports.map((o) => <li key={o}><b className={`wf-help-port wf-port--${o}`}>{wfOutcomeLabel(type, o)}</b> — {help.outcomes[o]}</li>)}
+                {ports.map((o) => (
+                  <li key={o}><b className={`wf-help-port wf-port--${wfPortClass(type, o)}`}>{wfPortLabel(node, o)}</b> — {outcomeText(o)}</li>
+                ))}
               </ul>
             )}
           </dd>
@@ -305,6 +317,33 @@ function NodeForm({ node, workflow, roles, columns, onChange, scope, onOpenPath 
             onChange={(e) => patch({ instructions: e.target.value })}
           />
         </label>
+      )}
+      {node.type === 'decision' && (
+        <>
+          <label className="wf-field">
+            <span>{t('config.wf.insp.decisionQuestion')}</span>
+            <textarea
+              rows={2}
+              value={node.question ?? ''}
+              placeholder={t('config.wf.insp.decisionQuestionPlaceholder')}
+              onChange={(e) => patch({ question: e.target.value })}
+            />
+          </label>
+          <label className="wf-field">
+            <span>{t('config.wf.insp.decisionRole')}</span>
+            <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty={t('config.wf.insp.pickRole')} onChange={(roleId) => patch({ roleId })} />
+          </label>
+          <DecisionOptions node={node} workflow={workflow} onChange={onChange} />
+          <label className="wf-field">
+            <span>{t('config.wf.insp.decisionInstructions')}</span>
+            <textarea
+              rows={3}
+              value={node.instructions ?? ''}
+              placeholder={t('config.wf.insp.decisionInstructionsPlaceholder')}
+              onChange={(e) => patch({ instructions: e.target.value })}
+            />
+          </label>
+        </>
       )}
       {node.type === 'condition' && <ConditionFields node={node} workflow={workflow} roles={taskRoles} scope={scope} onChange={(test) => patch({ test })} />}
       {node.type === 'git' && <GitFields node={node} onChange={(git) => patch({ git })} />}
@@ -501,20 +540,116 @@ function ConditionFields({ node, workflow, roles, scope, onChange }: {
   )
 }
 
-/** Select «куда ведёт» одного порта; пустое значение — перехода нет (это ошибка валидации). */
-function PortSelect({ workflow, nodeId, nodeType, outcome, onChange }: {
+/**
+ * Варианты ноды «Решение ИИ»: метка и пояснение правятся, id показан и не меняется (на нём держатся переходы).
+ * Порядок вариантов — порядок портов на холсте. Кнопки — с подписями для скринридера: вся правка идёт с клавиатуры.
+ */
+function DecisionOptions({ node, workflow, onChange }: {
+  node: Extract<WfNode, { type: 'decision' }>
   workflow: Workflow
-  nodeId: string
-  nodeType: WfNode['type']
-  outcome: WfOutcome
   onChange(wf: Workflow): void
 }): React.JSX.Element {
   const t = useT()
-  const to = portTarget(workflow, nodeId, outcome) ?? ''
+  const options = Array.isArray(node.options) ? node.options : []
+  const full = options.length >= WF_DECISION_MAX_OPTIONS
+  const isYesNo = options.length === 2 && options[0]?.id === 'yes' && options[1]?.id === 'no'
+
+  const reset = (): void => {
+    // Сброс удаляет переходы вариантов, кроме yes/no, — спрашиваем, если терять есть что.
+    if (options.some((o) => o.id !== 'yes' && o.id !== 'no') && !confirm(t('config.wf.insp.decisionResetConfirm'))) return
+    onChange(resetDecisionOptions(workflow, node.id))
+  }
+
   return (
-    <label className={`wf-field wf-port-field wf-port--${outcome}`}>
-      <span>{wfOutcomeLabel(nodeType, outcome)}</span>
-      <select value={to} onChange={(e) => onChange(setPortTarget(workflow, nodeId, outcome, e.target.value || null))}>
+    <fieldset className="wf-opts">
+      <legend>{t('config.wf.insp.decisionOptions', { count: options.length, max: WF_DECISION_MAX_OPTIONS })}</legend>
+      <p className="hint">{t('config.wf.insp.decisionOptionsHint')}</p>
+      <ol className="wf-opt-list">
+        {options.map((o, i) => {
+          const name = o.label.trim() || o.id
+          return (
+            <li key={o.id} className="wf-opt">
+              <div className="wf-opt-row">
+                <input
+                  value={o.label}
+                  aria-label={t('config.wf.insp.decisionOptionLabel', { n: i + 1 })}
+                  placeholder={t('config.wf.insp.decisionOptionLabelPlaceholder')}
+                  onChange={(e) => onChange(patchDecisionOption(workflow, node.id, o.id, { label: e.target.value }))}
+                />
+                <span className="chip mono" title={t('config.wf.insp.decisionOptionId')}>{o.id}</span>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  disabled={i === 0}
+                  title={t('config.wf.insp.decisionOptionUp', { label: name })}
+                  aria-label={t('config.wf.insp.decisionOptionUp', { label: name })}
+                  onClick={() => onChange(moveDecisionOption(workflow, node.id, o.id, -1))}
+                >
+                  <Icon.up />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  disabled={i === options.length - 1}
+                  title={t('config.wf.insp.decisionOptionDown', { label: name })}
+                  aria-label={t('config.wf.insp.decisionOptionDown', { label: name })}
+                  onClick={() => onChange(moveDecisionOption(workflow, node.id, o.id, 1))}
+                >
+                  <Icon.down />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  disabled={options.length <= WF_DECISION_MIN_OPTIONS}
+                  title={options.length <= WF_DECISION_MIN_OPTIONS
+                    ? t('config.wf.insp.decisionOptionMin', { min: WF_DECISION_MIN_OPTIONS })
+                    : t('config.wf.insp.decisionOptionRemove', { label: name })}
+                  aria-label={t('config.wf.insp.decisionOptionRemove', { label: name })}
+                  onClick={() => onChange(removeDecisionOption(workflow, node.id, o.id))}
+                >
+                  <Icon.trash />
+                </button>
+              </div>
+              <input
+                className="wf-opt-desc"
+                value={o.description ?? ''}
+                aria-label={t('config.wf.insp.decisionOptionDescription', { n: i + 1 })}
+                placeholder={t('config.wf.insp.decisionOptionDescriptionPlaceholder')}
+                onChange={(e) => onChange(patchDecisionOption(workflow, node.id, o.id, { description: e.target.value }))}
+              />
+            </li>
+          )
+        })}
+      </ol>
+      <div className="wf-opt-actions">
+        <button
+          type="button"
+          className="btn-sm"
+          disabled={full}
+          title={full ? t('config.wf.insp.decisionAddMax', { max: WF_DECISION_MAX_OPTIONS }) : undefined}
+          onClick={() => onChange(addDecisionOption(workflow, node.id).workflow)}
+        >
+          <Icon.plus /> {t('config.wf.insp.decisionAdd')}
+        </button>
+        <button type="button" className="btn-sm" disabled={isYesNo} onClick={reset}>{t('config.wf.insp.decisionReset')}</button>
+      </div>
+    </fieldset>
+  )
+}
+
+/** Select «куда ведёт» одного порта; пустое значение — перехода нет (это ошибка валидации). */
+function PortSelect({ workflow, node, outcome, onChange }: {
+  workflow: Workflow
+  node: WfNode
+  outcome: WfPort
+  onChange(wf: Workflow): void
+}): React.JSX.Element {
+  const t = useT()
+  const to = portTarget(workflow, node.id, outcome) ?? ''
+  return (
+    <label className={`wf-field wf-port-field wf-port--${wfPortClass(node.type, outcome)}`}>
+      <span>{wfPortLabel(node, outcome)}</span>
+      <select value={to} onChange={(e) => onChange(setPortTarget(workflow, node.id, outcome, e.target.value || null))}>
         <option value="">{t('config.wf.insp.noTarget')}</option>
         {targetOptions(workflow).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
       </select>

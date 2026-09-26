@@ -1,13 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type React from 'react'
-import { WF_PORTS, wfWorkRoleIds, type WfNode, type WfNodeTemplate, type WfNodeType, type WfOutcome, type WfValidation, type Workflow } from '@orca-board/core'
+import { wfPorts, wfWorkRoleIds, type WfNode, type WfNodeTemplate, type WfNodeType, type WfPort, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import {
-  NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, panBy,
+  NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, nodeHeight, panBy,
   portPoint, screenToWorld, snap, viewBox, zoomAt, type Point, type View
 } from './workflowGeometry'
 import {
-  addNode, canConnect, connect, issueTargets, moveNode, removeSelected, wfAddableTypes, wfOutcomeLabel,
+  addNode, canConnect, connect, issueTargets, moveNode, removeSelected, wfAddableTypes, wfPortClass, wfPortLabel,
   type WfSelection
 } from './workflowEdit'
 import { canOpenPath, subflowSummary, type WfScope } from './workflowNav'
@@ -40,7 +40,7 @@ interface Props {
 type Gesture =
   | { kind: 'pan'; start: Point; view: View }
   | { kind: 'drag'; nodeId: string; offset: Point; pos: Point; moved: boolean }
-  | { kind: 'connect'; from: string; outcome: WfOutcome; pointer: Point; target?: string }
+  | { kind: 'connect'; from: string; outcome: WfPort; pointer: Point; target?: string }
 
 function clip(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s
@@ -57,6 +57,12 @@ function nodeSubtitle(node: WfNode, t: TFunction): string {
     }
     case 'ask': return node.roleId ? t('config.wf.sub.role', { role: node.roleId }) : t('config.wf.sub.taskRole')
     case 'gate': return node.roleId ? t('config.wf.sub.role', { role: node.roleId }) : t('config.wf.sub.noRole')
+    case 'decision':
+      // Роль видна первой: без неё нода не запустится; число вариантов — сколько веток у развилки.
+      return t('config.wf.sub.decision', {
+        role: node.roleId || t('config.wf.sub.noRole'),
+        n: Array.isArray(node.options) ? node.options.length : 0
+      })
     case 'human': return t('config.wf.sub.inbox')
     case 'condition':
       if (node.test.kind === 'attempts') return t('config.wf.sub.attempts', { node: node.test.node || '?', n: node.test.atLeast })
@@ -278,7 +284,8 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
           const end = curve[3]
           const issue = targets.edges.get(edge.id)
           const selected = selection?.kind === 'edge' && selection.id === edge.id
-          const cls = `wf-edge wf-edge--${edge.outcome}${selected ? ' selected' : ''}${issue ? ` wf-issue--${issue.level}` : ''}`
+          const fromType = shown.nodes.find((n) => n.id === edge.from)?.type ?? 'work'
+          const cls = `wf-edge wf-edge--${wfPortClass(fromType, edge.outcome)}${selected ? ' selected' : ''}${issue ? ` wf-issue--${issue.level}` : ''}`
           return (
             <g key={edge.id} className={cls}>
               {issue && <title>{issue.messages.join('\n')}</title>}
@@ -302,28 +309,32 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
           const NodeIcon = WfNodeIcon[node.type]
           const sub = nodeSubtitle(node, t)
           const ownPath = node.type === 'work' && node.subflow !== undefined
+          // Нода decision с множеством вариантов выше обычной: содержимое держим по центру высоты.
+          const h = nodeHeight(node)
+          const dy = (h - NODE_H) / 2
           return (
             <g key={node.id} className={cls} transform={`translate(${node.x} ${node.y})`}>
               <title>{[`${nodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(ownPath ? [t('config.wf.path.nodeHint', { steps: sub })] : []), ...(issue?.messages ?? [])].join('\n')}</title>
-              <rect width={NODE_W} height={NODE_H} rx={10} className="wf-node-box" />
-              <g className="wf-node-icon" transform={`translate(10 ${(NODE_H - 20) / 2})`}><NodeIcon /></g>
-              <text x={38} y={sub ? 26 : 35} className="wf-node-title">{clip(nodeTitle(node), 13)}</text>
-              {sub && <text x={38} y={43} className="wf-node-sub">{clip(sub, ownPath ? 17 : 19)}</text>}
+              <rect width={NODE_W} height={h} rx={10} className="wf-node-box" />
+              <g className="wf-node-icon" transform={`translate(10 ${(h - 20) / 2})`}><NodeIcon /></g>
+              <text x={38} y={dy + (sub ? 26 : 35)} className="wf-node-title">{clip(nodeTitle(node), 13)}</text>
+              {sub && <text x={38} y={dy + 43} className="wf-node-sub">{clip(sub, ownPath ? 17 : 19)}</text>}
               {ownPath && (
                 <g className="wf-node-path" transform={`translate(${NODE_W - 22} 5)`}>
                   <rect width={17} height={17} rx={5} />
                   <g transform="translate(3.5 3.5) scale(0.5)"><Icon.subflow /></g>
                 </g>
               )}
-              {node.type !== 'start' && <circle cx={0} cy={NODE_H / 2} r={4} className="wf-port-in" />}
-              {WF_PORTS[node.type].map((outcome) => {
+              {node.type !== 'start' && <circle cx={0} cy={h / 2} r={4} className="wf-port-in" />}
+              {wfPorts(node).map((outcome) => {
                 const p = portPoint(node, outcome)
                 const x = p.x - node.x
                 const y = p.y - node.y
                 return (
-                  <g key={outcome} className={`wf-port wf-port--${outcome}`}>
+                  <g key={outcome} className={`wf-port wf-port--${wfPortClass(node.type, outcome)}`}>
                     <circle cx={x} cy={y} r={6} />
-                    <text x={x + 9} y={y - 5} className="wf-port-label">{wfOutcomeLabel(node.type, outcome)}</text>
+                    {/* Метка варианта — текст человека, может быть длинной; полная — в инспекторе. */}
+                    <text x={x + 9} y={y - 5} className="wf-port-label">{clip(wfPortLabel(node, outcome), 16)}</text>
                   </g>
                 )
               })}
@@ -333,7 +344,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
 
         {gesture?.kind === 'connect' && connectSrc && (
           <path
-            className={`wf-edge-draft wf-edge--${gesture.outcome}`}
+            className={`wf-edge-draft wf-edge--${wfPortClass(connectSrc.type, gesture.outcome)}`}
             d={curvePath(edgeCurve(
               portPoint(connectSrc, gesture.outcome),
               gesture.target ? inputPoint(shown.nodes.find((n) => n.id === gesture.target)!) : gesture.pointer

@@ -1,7 +1,7 @@
 # Запросы к человеку (`HumanRequest`)
 
 Всё, что ждёт решения человека, хранится как одна запись `HumanRequest`: вопрос воркера, сданный ответ
-задачи-ответа, упавший воркер и этап воркфлоу «человек» (`approval`, `docs/workflow.md`). Статус хранится явно (`pending → resolved | cancelled`) и не выводится из колонок,
+задачи-ответа, упавший воркер, этап воркфлоу «человек» (`approval`, `docs/workflow.md`) и выбор ветки «Решения ИИ», когда агент не выбрал (`decision`). Статус хранится явно (`pending → resolved | cancelled`) и не выводится из колонок,
 вопросов или живости координатора. Колонка «Нужен ответ» на обеих досках, счётчик `GlobalTask.waiting`,
 уведомления и Инбокс строятся по одному условию: **у прогона или задачи есть `pending`-запрос**
 (`isPendingRequest` / `pendingRequestsOf` / `hasPendingRequest`, `packages/core/src/global-tasks.ts`).
@@ -14,7 +14,7 @@
 ## Модель
 
 ```ts
-type HumanRequestKind = 'question' | 'answer' | 'escalation' | 'approval'
+type HumanRequestKind = 'question' | 'answer' | 'escalation' | 'approval' | 'decision'
 type HumanRequestStatus = 'pending' | 'resolved' | 'cancelled'
 interface RequestOption { id: string; label: string; hint?: string; recommended?: boolean }  // id — номер варианта: "1", "2"…
 interface RequestResolution { action: 'answer' | 'accept' | 'clarify' | 'restart' | 'dismiss' | 'reject'; optionId?: string; text?: string }
@@ -22,16 +22,18 @@ interface RequestResolution { action: 'answer' | 'accept' | 'clarify' | 'restart
 interface HumanRequest {
   id: string                 // req_…
   runId: string              // прогон = глобальная задача
-  taskId?: string            // нет у approval уровня прогона (нода human воркфлоу глобальной задачи, `docs/workflow.md`): его решают по runId
+  taskId?: string            // нет у approval и decision уровня прогона (ноды human / decision воркфлоу глобальной задачи, `docs/workflow.md`): их решают по runId
   dispatchId?: string        // запуск, который спросил / сдал ответ / упал
   kind: HumanRequestKind
   status: HumanRequestStatus
   title: string              // вопрос / summary ответа / причина эскалации / «<этап>: <задача>»
   body?: string              // markdown: контекст вопроса (+ «**Координатор:** …» из forward --note) или сам ответ
-  options: RequestOption[]   // только у question; у answer/escalation/approval действия встроены
+  options: RequestOption[]   // у question и decision (у decision — варианты ноды: id варианта, label, hint = description); у answer/escalation/approval действия встроены
   questionId?: string        // kind=question: исходный Question (ask держит соединение за него)
   nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача; kind=question: нода ask, с которой задан вопрос (Инбокс показывает «Этап «…»»)
   showcaseDispatchId?: string // kind=approval: запуск, чей показ (Dispatch.showcase) в body; файлы — IPC showcase:*
+  fallback?: 'unsure' | 'no_answer' | 'start_failed'  // kind=decision: почему решает человек → StageDecision.fallback
+  agentNote?: string          // kind=decision: комментарий агента (decision escalate --reason, сводка done) → StageDecision.agentNote; он же в body
   resolution?: RequestResolution
   createdAt: number
   resolvedAt?: number        // решён или отменён
@@ -46,6 +48,7 @@ interface HumanRequest {
 | `answer` | задача-ответ `answerFor: 'human'` сдала `done --answer-file` | `accept` (`text` — решение), `clarify` (`text` — уточнение) |
 | `escalation` | PTY текущего запуска закрылся без `orca-board done` | `restart`, `dismiss` |
 | `approval` | рабочая задача (движок подзадач) или **глобальная задача** (воркфлоу прогона: «Проверка человеком», без `taskId`, `requestRunApproval`) пришла на ноду `human` воркфлоу (`docs/workflow.md`): ревью человеком, конфликт мержа | `accept` (`text` — комментарий), `reject` (`text` — замечания воркеру) |
+| `decision` | **глобальная задача** стоит на ноде «Решение ИИ» (`decision`, без `taskId`, `requestRunDecision`), а агент-решатель не выбрал ветку: `decision escalate`, `done` без выбора, воркер не запустился | `answer` (`optionId` — обязательно, из `options`; `text` — обоснование человека) |
 
 `Question` остаётся: это канал «воркер ↔ отвечающий». Запрос создаётся по нему, только когда адресат — человек
 (`Question.forHuman = true`). Адресат определяется **в момент создания** и потом не пересчитывается.
@@ -57,7 +60,8 @@ interface HumanRequest {
 (`settleTask`: живой воркер → in_progress, иначе ready).
 
 У approval прогона (без `taskId`) задачи нет, потока задачи тоже: пока запрос `pending`, карточка глобальной задачи стоит в «Проверке» (`kind=review`) и в «Нужен ответ» не
-поднимается; решение двигает граф прогона (`handleRunApproval` в `workflow-run.ts`), а не задачу.
+поднимается; решение двигает граф прогона (`handleRunRequest` в `workflow-run.ts`), а не задачу. Запрос `decision` тоже без задачи, но
+карточка глобальной задачи идёт в работе — пока он `pending`, она поднимается в «Нужен ответ» (`globalDisplayStatus`: любой pending-запрос прогона).
 
 ### Создание (`createRequest`, событие `request_created`)
 
@@ -70,6 +74,7 @@ interface HumanRequest {
 | Сдан ответ для человека | `finishDispatch` | `task.answerFor === 'human'` | `answer`, `body` — ответ; `request_created` идёт после `worker_done` |
 | Этап воркфлоу «человек» | `requestApproval` (зовёт исполнитель в main) | задача пришла на ноду `human`; ждущий approval задачи не дублируется | `approval`, `body` — инструкция ноды, текст конфликта мержа, итог воркера, показ («## Показ»: текст и файлы, `showcaseDispatchId`), ветка |
 | Этап воркфлоу глобальной задачи «человек» | `requestRunApproval` (зовёт исполнитель в main) | граф прогона пришёл на ноду `human`; ждущий approval прогона не дублируется | `approval` **без задачи** (`taskId` нет, `runId` — прогон); карточка на «Проверке», «Подтвердить» / «Вернуть в работу» решают запрос; `request_created` и `request_resolved` несут `runId` |
+| «Решение ИИ»: агент не выбрал ветку | `requestRunDecision` (зовёт движок прогона в main: `escalateDecision`, `settleDecision`, `createDecision`) | граф прогона стоит на ноде `decision`, и агент вызвал `decision escalate` (`fallback: 'unsure'`), сдал `done` без выбора (`no_answer`) или его воркер не запустился (`start_failed`); ждущий `decision` той же ноды не дублируется. Воркер упал без `done` — не сюда, а `escalation` с «Перезапустить» | `decision` **без задачи**, `nodeId` — развилка, `options` — варианты ноды, `body` — вопрос, варианты, почему решает человек, комментарий агента, сводки этапов, ветка |
 | Воркер вышел без `done` | `ptyExited` | запуск текущий, задача не в done и у неё нет pending-вопроса к человеку (ответ сам вернёт её в ready) | `escalation` (вдобавок к событию `escalation` координатору) |
 | Загрузка снапшота | `migrateRequests` | открытые вопросы текущих запусков (PTY после перезапуска нет); снапшот до `HumanRequest` — ещё сданные ответы и упавшие воркеры в needs_input | как выше, без событий |
 
@@ -86,7 +91,8 @@ interface HumanRequest {
 | `escalation` + `dismiss` | запрос скрыт, задача из needs_input → ready | `request_resolved {action: 'dismiss'}` |
 | `approval` + `accept` | запрос решён, задача из needs_input; **main переводит задачу по исходу accept** (дефолт — мерж и done) | `request_resolved {kind: 'approval', action: 'accept', nodeId, decision?}` (`decision` = `text`, например выбранный вариант) |
 | `approval` + `reject` | `feedback` = замечания, **main переводит по исходу reject** (дефолт — снова в работу, воркер стартует сразу) | `request_resolved {kind: 'approval', action: 'reject', nodeId, decision?}` (`decision` = замечания) |
-| `approval` прогона (без `taskId`) + `accept` / `reject` | запрос решён; движок прогона (`handleRunApproval`) идёт по исходу ноды `human`, если прогон всё ещё стоит на ней: `accept` — `decision` (текст) в `stage_started` следующей «Работы», `reject` — `feedback` (замечания, они же в `Run.returns`); решение по уже неактуальной ноде ничего не двигает | `request_resolved {runId, kind: 'approval', action, nodeId, decision?}` (без `taskId`) |
+| `approval` прогона (без `taskId`) + `accept` / `reject` | запрос решён; движок прогона (`handleRunRequest`) идёт по исходу ноды `human`, если прогон всё ещё стоит на ней: `accept` — `decision` (текст) в `stage_started` следующей «Работы», `reject` — `feedback` (замечания, они же в `Run.returns`); решение по уже неактуальной ноде ничего не двигает | `request_resolved {runId, kind: 'approval', action, nodeId, decision?}` (без `taskId`) |
+| `decision` + `answer` | `optionId` обязателен и должен быть среди `options` (иначе ошибки `запрос <id>: выбери вариант — optionId обязателен` / `варианта «<x>» у запроса <id> нет`), запрос решён; движок прогона (`handleRunRequest` → `runDecisionResolved`) ведёт граф по ребру варианта, если прогон всё ещё на развилке, и пишет `StageDecision {by: 'human', fallback, agentNote, reason: text}` в историю; варианта уже нет в графе — `workflow_blocked` | `request_resolved {runId, kind: 'decision', action: 'answer', nodeId, optionId, decision?}` (`decision` = `text`, без `taskId`) |
 | не `pending` | ошибка «уже решено: запрос … решён/отменён» | — |
 
 Не удалось стартовать воркера после `clarify`/`restart` — запрос всё равно решён (задача в ready с уточнением),
@@ -102,7 +108,8 @@ interface HumanRequest {
 Запрос теряет смысл — он отменяется, и ответить на него больше нельзя:
 - новый запуск задачи (`startDispatch`) — старый ответ, эскалация и вопрос прошлого запуска больше не ждут;
 - воркер сдал работу (`finishDispatch`) — прежние запросы задачи; ответ для человека тут же создаётся заново;
-- задача удалена; глобальная карточка вручную перенесена в done (`moveGlobalTask`); у approval прогона — ещё и граф дошёл до `end` (`cancelRequests` по `runId`, ответить на запрос уже нечего).
+- задача удалена; глобальная карточка вручную перенесена в done (`moveGlobalTask`); у approval прогона — ещё и граф дошёл до `end` (`cancelRequests` по `runId`, ответить на запрос уже нечего);
+- запрос `decision` — граф ушёл с его развилки любым путём (агент успел выбрать, ноду вернули руками): `moveRunStage` отменяет pending `decision` этой ноды.
 
 ## События
 
@@ -111,16 +118,16 @@ Payload короткие: строка события в мониторе коо
 
 | Событие | Payload | Полный текст |
 |---|---|---|
-| `request_created` | `taskId?` (нет у approval прогона), `requestId, kind, title` (≤ 300 символов), `runId, dispatchId?, questionId?` | `orca-board request get --request <id>` |
+| `request_created` | `taskId?` (нет у approval и decision прогона), `requestId, kind, title` (≤ 300 символов), `runId, dispatchId?, questionId?` | `orca-board request get --request <id>` |
 | `question` | `taskId, dispatchId, questionId, question` (≤ 300), `forHuman?: true, options` (метки) | `orca-board question get --question <id>` |
 | `question_answered` | `taskId, dispatchId, questionId, requestId?, question, answer, workerLive, status` | — |
 | `answer_accepted` | `taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 | `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId` | `orca-board request get --request <id>` (`resolution.text`) |
-| `request_resolved` | `taskId` (у approval прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`), `requestId, kind, dispatchId?, nodeId?` (approval), `decision` (≤ 2000, текст решения по approval), `decisionTruncated?` | `orca-board request get --request <id>` (`resolution.text`) |
+| `request_resolved` | `taskId` (у approval и decision прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`/`answer`), `requestId, kind, dispatchId?, nodeId?` (approval, decision), `optionId` (decision — выбранный вариант), `decision` (≤ 2000, текст решения по approval, обоснование по decision), `decisionTruncated?` | `orca-board request get --request <id>` (`resolution.text`) |
 | `worker_done` | `taskId, dispatchId, summary, files, answerFor?, gateFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 
 Уведомление «нужен ваш ответ» (`notifyKind`, `notify.ts`) приходит только на `request_created` (вопрос / ответ
-готов / эскалация / approval — вид «Воркер завершил задачу», текст «Ждёт решения»); кроме него человеку сообщают
+готов / эскалация / approval — вид «Воркер завершил задачу», текст «Ждёт решения»; `decision` — как вопрос); кроме него человеку сообщают
 лишь `escalation` с `stuck: true`, `workflow_blocked` (вид «Эскалация», «Воркфлоу остановлен»), `worker_done`
 рабочей задачи (не проверки) и `run_done`. Клик по нему открывает Инбокс на этом запросе
 (`requests:focus`). Событие `question`, на которое отвечает координатор, человеку не приходит.
@@ -147,6 +154,10 @@ Payload короткие: строка события в мониторе коо
 «Вернуть в работу…» в шапке, на карточке и в «Итоге и цели» (`docs/nested-kanban.md`, «Проверка»), либо в Инбоксе. Поле «Решение» у «Принять» в Инбоксе и в окне
 `AcceptGlobalModal` — один и тот же `resolution.text`.
 
+Запрос `decision` в `RequestCard` — те же кнопки вариантов, что у `question` (горячие клавиши 1–9, пояснение `hint`), над ними — почему решает
+человек (`fallback`: ИИ не уверен / завершил, не выбрав / не запустился), вместо «Свой ответ» — необязательное поле «Обоснование». Клик по варианту —
+`resolve({action: 'answer', optionId, text?})`, IPC тот же. Запрос без `options` (битые данные) карточку не роняет.
+
 ## CLI
 
 ```
@@ -160,7 +171,7 @@ orca-board question forward --question <id> [--note "моё мнение: sqlite
 orca-board request list [--run <id>] [--all]    # pending прогона ($ORCA_RUN_ID); --all — и решённые
 orca-board request get --request <id>
 # человек (или координатор от его имени)
-orca-board request resolve --request <id> --option <id|метка> [--text "..."]
+orca-board request resolve --request <id> --option <id|метка> [--text "..."]   # вопрос; у decision — выбор ветки, --text — обоснование
 orca-board request resolve --request <id> --text "..."
 orca-board request resolve --request <id> --accept [--decision "..."]   # ответ или approval
 orca-board request resolve --request <id> --clarify "..."

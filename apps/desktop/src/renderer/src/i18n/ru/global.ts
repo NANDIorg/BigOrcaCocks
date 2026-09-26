@@ -20,6 +20,7 @@ export default {
   'stage.hint.human': 'Этап «{name}» ждёт решения человека',
   'stage.hint.git': 'Идёт этап «{name}»: приложение выполняет git-операцию',
   'stage.hint.merge': 'Идёт этап «{name}»: приложение сливает ветку в базовую',
+  'stage.hint.decision': 'Идёт этап «{name}»: агент выбирает, по какой ветке идти дальше',
   'stage.hint.other': 'Этап воркфлоу: «{name}»',
 
   'stale.review': 'Приложение запущено со старой версией main/preload, где ещё нет «Проверки» глобальных задач. Перезапустите приложение.',
@@ -162,6 +163,12 @@ export default {
   'timeline.stageOutcome.conflict': 'конфликт мержа',
   'timeline.stageOutcome.error': 'ошибка git',
   'timeline.stageCommit': 'ветка на входе: {commit}',
+  'timeline.stageDecision': 'Решение ИИ: {label}',
+  'timeline.stageDecisionHuman': 'Решил человек: {label}',
+  'timeline.stageDecisionFallback.unsure': 'ИИ передал решение человеку',
+  'timeline.stageDecisionFallback.no_answer': 'ИИ не выбрал ветку',
+  'timeline.stageDecisionFallback.start_failed': 'агент не запустился',
+  'timeline.stageDecisionNote': 'ИИ: {note}',
 
   // Модалка создания и правки.
   'modal.edit': 'Глобальная задача',

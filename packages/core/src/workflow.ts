@@ -19,6 +19,29 @@ export const WORKFLOW_VERSION_TASK_SCOPE = 1
 export type WfOutcome = 'next' | 'accept' | 'reject' | 'yes' | 'no' | 'ok' | 'conflict' | 'error'
 
 /**
+ * Исход любого ребра (`WfEdge.outcome`): фиксированный `WfOutcome` или id варианта ноды `decision`. Порты ноды —
+ * `wfPorts(node)`. `WfOutcome` остаётся там, где набор исходов закрыт (`Record<WfOutcome, …>` в редакторе).
+ */
+export type WfPort = string
+
+/**
+ * Вариант ветки ноды `decision`. `id` — порт (`WfEdge.outcome`) и часть `edge.id` и CSS-класса на холсте, поэтому по
+ * маске `WF_DECISION_OPTION_ID` и после создания не меняется: переименование `label` рёбра не ломает. `label` — что
+ * видят агент и человек, `description` — пояснение к варианту (в промпте агента и подсказке кнопки в Инбоксе).
+ */
+export interface WfDecisionOption {
+  id: string
+  label: string
+  description?: string
+}
+
+/** Маска id варианта ноды `decision`. */
+export const WF_DECISION_OPTION_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/
+/** Сколько вариантов у ноды `decision`: меньше двух — не развилка, больше восьми не помещается на порты ноды. */
+export const WF_DECISION_MIN_OPTIONS = 2
+export const WF_DECISION_MAX_OPTIONS = 8
+
+/**
  * Операции ноды `git` (v1). Только то, что укладывается в модель «один worktree на ветку задачи»
  * (`orca/<taskId>`, слияние — нода `merge`): без merge/rebase/reset, удаления веток и `push --force`.
  * Подробности и обоснование — `docs/workflow.md` («Нода Git»).
@@ -112,6 +135,13 @@ export type WfNode = WfNodeBase &
      * (без задачи, `TaskStore.requestRunApproval`), карточка встаёт на «Проверку».
      */
     | { type: 'human'; instructions?: string }
+    /**
+     * Решение ИИ: развилка, где ветку выбирает агент роли `roleId`, отвечая на `question` по смыслу задачи
+     * (`decision choose`); не может — решает человек в Инбоксе с теми же вариантами (запрос `decision`). Порты — id
+     * `options` (`wfPorts`), по ребру на вариант. `instructions` — критерии «как решать». Только граф глобальной
+     * задачи, в пути подзадачи запрещена. Контракт — docs/workflow.md, «Нода «Решение ИИ»».
+     */
+    | { type: 'decision'; question: string; roleId: string; options: WfDecisionOption[]; instructions?: string }
     | { type: 'condition'; test: WfCondition }
     /**
      * Слияние. В графе глобальной задачи — ветки глобальной задачи в `RunGit.base` локально (в защищённые ветки — нет:
@@ -133,7 +163,7 @@ export type WfNodeType = WfNode['type']
 export interface WfEdge {
   id: string
   from: string
-  outcome: WfOutcome
+  outcome: WfPort
   to: string
 }
 
@@ -154,13 +184,18 @@ export interface WfSubflow {
   edges: WfEdge[]
 }
 
-/** Порты по типу ноды: для каждого исхода из списка должно быть ровно одно исходящее ребро. */
+/**
+ * Порты по типу ноды: для каждого исхода из списка должно быть ровно одно исходящее ребро. У `decision` порты свои у
+ * каждой ноды (id вариантов) — здесь пусто, читать порты ноды нужно через `wfPorts`. Ключ `decision` всё равно нужен:
+ * по ключам этой таблицы валидация узнаёт известные типы.
+ */
 export const WF_PORTS: Record<WfNodeType, WfOutcome[]> = {
   start: ['next'],
   work: ['next'],
   ask: ['next'],
   gate: ['accept', 'reject'],
   human: ['accept', 'reject'],
+  decision: [],
   condition: ['yes', 'no'],
   merge: ['ok', 'conflict'],
   git: ['ok', 'error'],
@@ -173,10 +208,23 @@ const NODE_TYPE_TITLES: Record<WfNodeType, string> = {
   ask: 'Вопрос человеку',
   gate: 'Проверка',
   human: 'Человек',
+  decision: 'Решение ИИ',
   condition: 'Условие',
   merge: 'Мерж',
   git: 'Git',
   end: 'Конец'
+}
+
+/** Порты ноды: id вариантов у `decision`, у остальных типов — `WF_PORTS`. Варианты не массив (граф в обход валидации) — портов нет. */
+export function wfPorts(node: WfNode): WfPort[] {
+  if (node.type === 'decision') {
+    const raw: unknown = node.options
+    // Битые варианты (не объект, id не строка) портов не дают — о них скажет валидация, а не исключение.
+    return Array.isArray(raw)
+      ? raw.flatMap((o: unknown) => (o && typeof o === 'object' && typeof (o as { id?: unknown }).id === 'string' ? [(o as { id: string }).id] : []))
+      : []
+  }
+  return WF_PORTS[node.type] ?? []
 }
 
 /** Название ноды для сообщений и UI: заданное пользователем или по типу. */
@@ -526,7 +574,9 @@ export function legacyDefaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workf
  * - финальная «Проверка» человеком (`PIPELINE_FINAL_CHECK_ID`, accept → конец) снимается: результат принимает
  *   глобальная задача, а не каждая подзадача;
  * - перед концом появляется `merge` (подзадача → ветка глобальной задачи) и «Конфликт мержа» у человека, если
- *   в графе своего `merge` нет (свой `merge` версии 2 — слияние прогона в базу — остаётся как есть).
+ *   в графе своего `merge` нет (свой `merge` версии 2 — слияние прогона в базу — остаётся как есть);
+ * - `decision` остаётся как есть: ветку за агента не угадываем, `stageAction` без `scope` даёт на ней `blocked` с
+ *   причиной («работает только в воркфлоу глобальной задачи»).
  * Граф версии 1 возвращается как есть. Исходный граф не меняется.
  */
 export function toTaskScopeWorkflow(wf: Workflow): Workflow {
@@ -776,6 +826,16 @@ export const WF_ISSUE_TEXTS = {
   showcaseUnseen: 'нода «{node}»: показ человеку задан, но дальше нет ноды «Человек» до следующей работы или мержа — показ никто не увидит',
   noHumanBeforeEnd: 'нода «{node}»: путь к концу идёт без ноды «Человек» — результат уйдёт в «Сделано» без вашей проверки',
   mergeAgain: 'нода «{node}»: после мержа путь снова ведёт в мерж «{merge}»',
+  decisionNoQuestion: 'нода «{node}»: не задан вопрос, на который отвечает агент',
+  decisionNoRole: 'нода «{node}»: не выбрана роль — ветку выбирает агент этой роли',
+  decisionOptionsNotList: 'нода «{node}»: варианты должны быть списком с id и названием',
+  decisionTooFewOptions: 'нода «{node}»: вариантов {count}, нужно не меньше {min}',
+  decisionTooManyOptions: 'нода «{node}»: вариантов {count}, можно не больше {max}',
+  decisionOptionBadId: 'нода «{node}»: id варианта «{option}» недопустим — строчная латиница, цифры, «_» и «-», до 32 символов',
+  decisionOptionDuplicateId: 'нода «{node}»: id варианта «{option}» повторяется',
+  decisionOptionNoLabel: 'нода «{node}»: у варианта «{option}» нет названия',
+  decisionSameTarget: 'нода «{node}»: все варианты ведут в одну ноду — решение ничего не меняет',
+  decisionDuplicateLabel: 'нода «{node}»: у вариантов одинаковое название «{label}» — агент и человек их не различат',
   gitBadOperation: 'нода «{node}»: неизвестная git-операция «{operation}»',
   gitFieldNotString: 'нода «{node}»: поле «{field}» должно быть строкой',
   gitNoBranch: 'нода «{node}»: для операции {operation} не задано имя ветки',
@@ -794,6 +854,7 @@ export const WF_ISSUE_TEXTS = {
   subflowNested: 'нода «{node}»: у ноды внутри пути подзадачи не может быть своего пути — вложенность только одна',
   subflowNoWork: 'от старта не достижима ни одна нода «Работа» — воркер подзадачи никогда не запустится',
   subflowAskNotAllowed: 'нода «{node}»: «Вопрос человеку» недоступен в пути подзадачи — вопросы задаются этапом глобальной задачи',
+  subflowDecisionNotAllowed: 'нода «{node}»: «Решение ИИ» недоступно в пути подзадачи — развилка ставится в графе глобальной задачи',
   subflowNoMerge: 'нода «{node}»: путь от старта приходит в конец, минуя «Мерж» — коммиты подзадачи не попадут в ветку глобальной задачи',
   subflowDoubleReview: 'нода «{node}»: проверка есть и в пути подзадачи, и дальше в графе — ветка будет проверена дважды; если хватает проверки каждой подзадачи, внешнюю можно убрать',
   templateNoId: 'шаблон: пустой id',
@@ -949,19 +1010,20 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
   // 3. Каждый порт — ровно одно ребро, чужих исходов нет.
   for (const n of nodes.values()) {
     const out = edges.filter((e) => e.from === n.id)
-    const ports = WF_PORTS[n.type]
+    const ports = wfPorts(n)
     for (const e of out) {
       if (!ports.includes(e.outcome)) {
         errors.push(n.type === 'end'
           ? at(n, 'extraOutcomeEnd', { outcome: e.outcome }, e.id)
-          : at(n, 'extraOutcome', { outcome: e.outcome, ports: ports.join(', ') }, e.id))
+          : at(n, 'extraOutcome', { outcome: e.outcome, ports: ports.map((p) => portLabel(n, p)).join(', ') }, e.id))
       }
     }
-    for (const port of ports) {
+    // Повтор id варианта — своя ошибка (`decisionOptionDuplicateId`), порт проверяется один раз.
+    for (const port of new Set(ports)) {
       const byPort = out.filter((e) => e.outcome === port)
-      if (byPort.length === 0) errors.push(at(n, 'missingOutcome', { port }))
+      if (byPort.length === 0) errors.push(at(n, 'missingOutcome', portParams(n, port)))
       for (const dup of byPort.slice(1)) {
-        errors.push(at(n, 'duplicateOutcome', { port }, dup.id))
+        errors.push(at(n, 'duplicateOutcome', portParams(n, port), dup.id))
       }
     }
   }
@@ -1054,6 +1116,12 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       // Воркфлоу идёт по глобальной задаче: у неё нет роли, поэтому вопрос задаёт агент роли этапа.
       if (!n.roleId) errors.push(at(n, 'askNoRole'))
       else checkRole(n, n.roleId)
+    }
+    if (n.type === 'decision') {
+      // Развилка по смыслу глобальной задачи: в пути подзадачи агент решал бы её на каждую подзадачу.
+      if (sub) errors.push(at(n, 'subflowDecisionNotAllowed'))
+      validateDecisionNode(n, edges, at, errors, warnings)
+      if (typeof n.roleId === 'string' && n.roleId.trim()) checkRole(n, n.roleId)
     }
     if (n.type === 'work') {
       // Роли этапа необязательны: нет ни одной — подзадачам роль выбирает координатор из рабочих ролей типа.
@@ -1177,6 +1245,74 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
   return { errors, warnings }
 }
 
+/** Как назвать порт в тексте проблемы: у `decision` — метка варианта (id человек не видит), у остальных — сам исход. */
+function portLabel(n: WfNode, port: WfPort): string {
+  if (n.type !== 'decision' || !Array.isArray(n.options)) return port
+  const label = n.options.find((o) => o?.id === port)?.label
+  return typeof label === 'string' && label.trim() ? label.trim() : port
+}
+
+/** Параметры проблемы о порте: метка для текста, у `decision` ещё `optionId` — инспектор подсвечивает по нему вариант. */
+function portParams(n: WfNode, port: WfPort): Record<string, string> {
+  return n.type === 'decision' ? { port: portLabel(n, port), optionId: port } : { port }
+}
+
+/**
+ * Проверка ноды `decision`: вопрос, роль (есть ли она в проекте — общий `checkRole`), варианты — список 2–8 объектов с
+ * уникальным id по маске `WF_DECISION_OPTION_ID` и названием. Рёбра вариантов проверяет общий шаг портов (`wfPorts`),
+ * здесь — только предупреждения: все варианты ведут в одну ноду, одинаковые названия.
+ */
+function validateDecisionNode(
+  n: Extract<WfNode, { type: 'decision' }>,
+  edges: readonly WfEdge[],
+  at: (n: WfNode, code: WfIssueCode, params?: Record<string, string | number>) => WfIssue,
+  errors: WfIssue[],
+  warnings: WfIssue[]
+): void {
+  const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+  if (!text(n.question)) errors.push(at(n, 'decisionNoQuestion'))
+  if (!text(n.roleId)) errors.push(at(n, 'decisionNoRole'))
+  const raw: unknown = n.options
+  if (!Array.isArray(raw) || raw.some((o) => o === null || typeof o !== 'object' || Array.isArray(o))) {
+    errors.push(at(n, 'decisionOptionsNotList'))
+    return
+  }
+  const options = raw as Array<Partial<Record<keyof WfDecisionOption, unknown>>>
+  if (options.length < WF_DECISION_MIN_OPTIONS) {
+    errors.push(at(n, 'decisionTooFewOptions', { count: options.length, min: WF_DECISION_MIN_OPTIONS }))
+  } else if (options.length > WF_DECISION_MAX_OPTIONS) {
+    errors.push(at(n, 'decisionTooManyOptions', { count: options.length, max: WF_DECISION_MAX_OPTIONS }))
+  }
+  const ids = new Set<string>()
+  const duplicates = new Set<string>()
+  const labels = new Map<string, string>()
+  const repeatedLabels = new Set<string>()
+  for (const o of options) {
+    const id = typeof o.id === 'string' ? o.id : String(o.id)
+    if (typeof o.id !== 'string' || !WF_DECISION_OPTION_ID.test(o.id)) errors.push(at(n, 'decisionOptionBadId', { option: id }))
+    else if (ids.has(id)) {
+      if (!duplicates.has(id)) errors.push(at(n, 'decisionOptionDuplicateId', { option: id }))
+      duplicates.add(id)
+    }
+    ids.add(id)
+    const label = text(o.label)
+    if (!label) {
+      errors.push(at(n, 'decisionOptionNoLabel', { option: id }))
+      continue
+    }
+    const key = label.toLowerCase()
+    if (labels.has(key) && !repeatedLabels.has(key)) {
+      repeatedLabels.add(key)
+      warnings.push(at(n, 'decisionDuplicateLabel', { label: labels.get(key)! }))
+    }
+    if (!labels.has(key)) labels.set(key, label)
+  }
+  // Все варианты ведут в одну ноду — развилки нет. Считаем только по вариантам, у которых ребро есть.
+  const targets = new Set(edges.filter((e) => e.from === n.id && ids.has(e.outcome)).map((e) => e.to))
+  const covered = [...ids].every((id) => edges.some((e) => e.from === n.id && e.outcome === id))
+  if (ids.size >= WF_DECISION_MIN_OPTIONS && covered && targets.size === 1) warnings.push(at(n, 'decisionSameTarget'))
+}
+
 /** Проверка ноды `git`: операция, обязательные и лишние поля, подстановки, имена веток и remote. */
 function validateGitNode(
   n: Extract<WfNode, { type: 'git' }>,
@@ -1268,6 +1404,11 @@ export type WfAction =
   /** Только воркфлоу глобальной задачи: этап `ask` — приложение создаёт одну задачу роли `roleId`, её вопросы идут человеку. */
   | { type: 'create_ask'; nodeId: string; roleId: string }
   | { type: 'create_gate'; nodeId: string; roleId: string }
+  /**
+   * Только воркфлоу глобальной задачи: нода `decision` — приложение создаёт одну задачу-решатель роли `roleId`
+   * (помечена `Task.gateFor`), агент выбирает вариант командой `decision choose` или передаёт решение человеку.
+   */
+  | { type: 'create_decision'; nodeId: string; roleId: string }
   | { type: 'request_human'; nodeId: string }
   | { type: 'merge'; nodeId: string }
   /**
@@ -1327,6 +1468,8 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
       return { type: 'create_gate', nodeId: node.id, roleId: node.roleId }
     case 'human':
       return { type: 'request_human', nodeId: node.id }
+    case 'decision':
+      return decisionAction(node, ctx)
     case 'merge':
       return { type: 'merge', nodeId: node.id }
     case 'git':
@@ -1354,6 +1497,20 @@ function runWorkAction(node: Extract<WfNode, { type: 'work' | 'ask' }>, ctx: WfC
   if (!node.roleId) return blocked('не выбрана роль, которая задаёт вопросы')
   if (ctx.roleIds && !ctx.roleIds.includes(node.roleId)) return blocked(`нет роли «${node.roleId}» в проекте`)
   return { type: 'create_ask', nodeId: node.id, roleId: node.roleId }
+}
+
+/**
+ * Действие ноды `decision`. Развилка по смыслу глобальной задачи: вне её графа (путь подзадачи, граф по подзадачам
+ * «Входящих» и прогонов без снимка) ветку не угадываем — `blocked` с причиной, чтобы человек поправил граф.
+ */
+function decisionAction(node: Extract<WfNode, { type: 'decision' }>, ctx: WfContext): WfAction {
+  const blocked = (reason: string): WfAction => ({ type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: ${reason}` })
+  if (ctx.scope === 'subtask') return blocked('«Решение ИИ» недоступно в пути подзадачи')
+  if (ctx.scope !== 'run') return blocked('«Решение ИИ» работает только в воркфлоу глобальной задачи')
+  const roleId = typeof node.roleId === 'string' ? node.roleId.trim() : ''
+  if (!roleId) return blocked('не выбрана роль, которая выбирает ветку')
+  if (ctx.roleIds && !ctx.roleIds.includes(roleId)) return blocked(`нет роли «${roleId}» в проекте`)
+  return { type: 'create_decision', nodeId: node.id, roleId }
 }
 
 /**
@@ -1388,7 +1545,7 @@ function gitAction(node: Extract<WfNode, { type: 'git' }>): WfAction {
  * Каждый заход в ноду, включая условия, увеличивает `visits`. При `blocked` из-за отсутствующего перехода
  * задача остаётся на прежнем этапе.
  */
-export function nextStage(wf: Workflow, stage: WfStage, outcome: WfOutcome, ctx: WfContext): WfStep {
+export function nextStage(wf: Workflow, stage: WfStage, outcome: WfPort, ctx: WfContext): WfStep {
   const blocked = (reason: string): WfStep => ({ stage, action: { type: 'blocked', nodeId: stage.nodeId, reason } })
   const byId = new Map(wf.nodes.map((n) => [n.id, n]))
   const from = byId.get(stage.nodeId)
@@ -1429,7 +1586,7 @@ export function startStage(wf: Workflow, ctx: WfContext): WfStep {
  * `work` даёт `start_stage`, `ask` — `create_ask`, условие по роли не считается. Чистая функция, как и `nextStage`:
  * эффекты выполняет main по `action`, а состояние двигает `TaskStore.advanceRunStage`.
  */
-export function nextRunStage(wf: Workflow, stage: WfStage, outcome: WfOutcome, ctx: Omit<WfContext, 'scope' | 'roleId'> = {}): WfStep {
+export function nextRunStage(wf: Workflow, stage: WfStage, outcome: WfPort, ctx: Omit<WfContext, 'scope' | 'roleId'> = {}): WfStep {
   return nextStage(wf, stage, outcome, { ...ctx, scope: 'run' })
 }
 
@@ -1494,7 +1651,7 @@ export interface WfStageInfo {
   id: string
   type: WfNodeType
   title: string
-  /** Роль гейта или вопроса (без роли — роль задачи). */
+  /** Роль гейта, вопроса или решения (без роли — роль задачи). */
   roleId?: string
   /** Роли этапа «Работа»; нет — любые рабочие роли типа. */
   roleIds?: string[]
@@ -1505,8 +1662,12 @@ export interface WfStageInfo {
   showcase?: WfShowcase
   /** Операция и параметры ноды `git` (только заполненные; у `push` — с remote по умолчанию). */
   git?: Omit<Extract<WfAction, { type: 'git' }>, 'type' | 'nodeId'>
-  /** Исход → «название (id)» ноды, куда он ведёт. */
-  next: Partial<Record<WfOutcome, string>>
+  /** Вопрос ноды `decision`. */
+  question?: string
+  /** Варианты ноды `decision` в порядке редактора; их id — ключи `next`. */
+  options?: WfDecisionOption[]
+  /** Исход (у `decision` — id варианта) → «название (id)» ноды, куда он ведёт. */
+  next: Partial<Record<WfPort, string>>
 }
 
 /**
@@ -1531,10 +1692,15 @@ export function describeWorkflow(wf: Workflow): WfStageInfo[] {
   }
   return order.map((id) => {
     const n = byId.get(id)!
-    const next: Partial<Record<WfOutcome, string>> = {}
+    const next: Partial<Record<WfPort, string>> = {}
     for (const e of wf.edges) if (e.from === id) next[e.outcome] = label(e.to)
     const info: WfStageInfo = { id, type: n.type, title: wfNodeTitle(n), next }
-    if ((n.type === 'gate' || n.type === 'ask') && n.roleId) info.roleId = n.roleId
+    if ((n.type === 'gate' || n.type === 'ask' || n.type === 'decision') && n.roleId) info.roleId = n.roleId
+    if (n.type === 'decision') {
+      if (n.question?.trim()) info.question = n.question.trim()
+      info.options = decisionOptions(n)
+      if (typeof n.instructions === 'string' && n.instructions.trim()) info.instructions = n.instructions.trim()
+    }
     if (n.type === 'work') {
       const roleIds = wfWorkRoleIds(n)
       if (roleIds.length > 0) info.roleIds = roleIds
@@ -1554,6 +1720,23 @@ export function describeWorkflow(wf: Workflow): WfStageInfo[] {
       }
     }
     return info
+  })
+}
+
+/**
+ * Варианты ноды `decision` без лишних полей (пустое описание опущено) и без битых записей — для `workflow show`,
+ * `runStage` и промпта агента. Порядок — как в редакторе.
+ */
+export function decisionOptions(node: Extract<WfNode, { type: 'decision' }>): WfDecisionOption[] {
+  const raw: unknown = node.options
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((o: unknown) => {
+    if (!o || typeof o !== 'object') return []
+    const { id, label, description } = o as Partial<Record<keyof WfDecisionOption, unknown>>
+    if (typeof id !== 'string') return []
+    const text = typeof label === 'string' && label.trim() ? label.trim() : id
+    const hint = typeof description === 'string' ? description.trim() : ''
+    return [{ id, label: text, ...(hint ? { description: hint } : {}) }]
   })
 }
 

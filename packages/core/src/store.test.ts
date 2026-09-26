@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { STATUS_HISTORY_LIMIT } from './status-history.ts'
 import { TaskStore, EVENT_ANSWER_LIMIT, type Persistence, type StoreSnapshot } from './store.ts'
-import { DEFAULT_COLUMNS } from './types.ts'
+import { DEFAULT_COLUMNS, DECISION_REASON_LIMIT, type OrcaEvent, type StageDecision } from './types.ts'
 import {
   WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, describeWorkflow, legacyPipelineWorkflow,
   type WfSubflow, type Workflow
@@ -831,5 +831,101 @@ describe('путь подзадачи: подзадача прогона ход�
     s.updateTask(task.id, { status: 'done' })
     assert.equal(events(s, 'stage_tasks_done').length, 1)
     assert.notEqual(s.getRun(run.id)!.stageTasksDoneAt, undefined)
+  })
+})
+
+/** Граф с развилкой: анализ → «Нужен ли дизайн?» → да: «Дизайн» → «Реализация», нет: «Реализация» → конец. */
+function decisionGraph(): Workflow {
+  return {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', x: 0, y: 0, type: 'start' },
+      { id: 'analysis', x: 0, y: 0, type: 'work', title: 'Анализ' },
+      {
+        id: 'need_design', x: 0, y: 0, type: 'decision', title: 'Нужен ли дизайн?', question: 'Нужен ли дизайн для этой задачи?', roleId: 'developer',
+        instructions: 'Смотри, есть ли новый экран', options: [{ id: 'yes', label: 'Да', description: 'новый экран' }, { id: 'no', label: 'Нет' }]
+      },
+      { id: 'design', x: 0, y: 0, type: 'work', title: 'Дизайн' },
+      { id: 'impl', x: 0, y: 0, type: 'work', title: 'Реализация' },
+      { id: 'end', x: 0, y: 0, type: 'end' }
+    ],
+    edges: [
+      { id: 'e_start', from: 'start', outcome: 'next', to: 'analysis' },
+      { id: 'e_analysis', from: 'analysis', outcome: 'next', to: 'need_design' },
+      { id: 'e_need_design_yes', from: 'need_design', outcome: 'yes', to: 'design' },
+      { id: 'e_need_design_no', from: 'need_design', outcome: 'no', to: 'impl' },
+      { id: 'e_design', from: 'design', outcome: 'next', to: 'impl' },
+      { id: 'e_impl', from: 'impl', outcome: 'next', to: 'end' }
+    ]
+  }
+}
+
+describe('нода decision: позиция, решение в истории', () => {
+  const roles = { roleIds: ['developer'] }
+  const events = (s: TaskStore, type: OrcaEvent['type']): OrcaEvent[] => s.listEvents().filter((e) => e.type === type)
+
+  /** Прогон, дошедший до развилки: анализ закрыт со сводкой. */
+  function atDecision(p?: Persistence) {
+    const s = store(p)
+    const run = s.createRun('Экран настроек', undefined, decisionGraph())
+    s.enterRunStage(run.id, roles)
+    const t = s.createTask({ title: 'анализ', runId: run.id })
+    s.updateTask(t.id, { status: 'done' })
+    const { action } = s.finishStage(run.id, { ...roles, summary: 'нужен экран' })
+    return { s, run, action }
+  }
+
+  it('на развилке: create_decision, карточка «В работе», runStage отдаёт роль, вопрос, варианты и «как решать»', () => {
+    const { s, run, action } = atDecision()
+    assert.deepEqual(action, { type: 'create_decision', nodeId: 'need_design', roleId: 'developer' })
+    assert.equal(s.columnKind(s.getRun(run.id)!.status!), 'in_progress')
+    const info = s.runStage(run.id, roles)!
+    assert.deepEqual(
+      [info.type, info.roleId, info.question, info.options, info.instructions],
+      ['decision', 'developer', 'Нужен ли дизайн для этой задачи?', [{ id: 'yes', label: 'Да', description: 'новый экран' }, { id: 'no', label: 'Нет' }], 'Смотри, есть ли новый экран']
+    )
+  })
+
+  for (const [optionId, label, to] of [['yes', 'Да', 'design'], ['no', 'Нет', 'impl']] as const) {
+    it(`advanceRunStage(${optionId}) → «${to}»: решение — в записи развилки, outcome — в следующей, текст — следующей «Работе»`, () => {
+      const p = memory()
+      const { s, run } = atDecision(p)
+      const chosen: StageDecision = { optionId, label, reason: 'так нужно', by: 'agent' }
+      const { action } = s.advanceRunStage(run.id, optionId, { ...roles, chosen, decision: `«Нужен ли дизайн?» → ${label}. так нужно` })
+      assert.deepEqual([action.type, action.nodeId], ['start_stage', to])
+      const r = s.getRun(run.id)!
+      assert.deepEqual(r.stage, { nodeId: to, visits: { start: 1, analysis: 1, need_design: 1, [to]: 1 } })
+      const history = r.stageHistory!
+      const fork = history.find((h) => h.nodeId === 'need_design')!
+      assert.deepEqual(fork.decision, chosen)
+      const next = history.at(-1)!
+      assert.deepEqual([next.nodeId, next.outcome, next.from, next.decision], [to, optionId, 'need_design', undefined])
+      assert.equal(events(s, 'stage_changed').at(-1)!.payload.outcome, optionId)
+      assert.equal(events(s, 'stage_started').at(-1)!.payload.decision, `«Нужен ли дизайн?» → ${label}. так нужно`)
+      // Копия в GlobalTask не делит объект решения с прогоном; после перезагрузки решение на месте.
+      const g = s.getGlobalTask(run.id)
+      g.stageHistory!.find((h) => h.nodeId === 'need_design')!.decision!.label = 'изменено'
+      assert.equal(fork.decision!.label, label)
+      assert.deepEqual(store(p).getRun(run.id)!.stageHistory!.find((h) => h.nodeId === 'need_design')!.decision, chosen)
+    })
+  }
+
+  it('решение не той ноды, не того исхода или со слишком длинным обоснованием — ошибка, граф не тронут', () => {
+    const { s, run } = atDecision()
+    const chosen: StageDecision = { optionId: 'yes', label: 'Да', reason: 'r', by: 'agent' }
+    assert.throws(() => s.advanceRunStage(run.id, 'no', { ...roles, chosen }), /не совпадает с исходом перехода «no»/)
+    assert.throws(() => s.advanceRunStage(run.id, 'yes', { ...roles, chosen: { ...chosen, reason: 'x'.repeat(DECISION_REASON_LIMIT + 1) } }), /сократи --reason/)
+    assert.equal(s.getRun(run.id)!.stage!.nodeId, 'need_design')
+    s.advanceRunStage(run.id, 'yes', { ...roles, chosen })
+    assert.throws(() => s.advanceRunStage(run.id, 'next', { ...roles, chosen: { ...chosen, optionId: 'next' } }), /не на ноде «Решение ИИ»/)
+    assert.equal(s.getRun(run.id)!.stage!.nodeId, 'design')
+  })
+
+  it('исход не из вариантов — workflow_blocked, позиция на развилке', () => {
+    const { s, run } = atDecision()
+    const { action } = s.advanceRunStage(run.id, 'maybe', roles)
+    assert.equal(action.type, 'blocked')
+    assert.equal(s.getRun(run.id)!.stage!.nodeId, 'need_design')
+    assert.match(String(events(s, 'workflow_blocked').at(-1)!.payload.reason), /нет перехода для maybe/)
   })
 })

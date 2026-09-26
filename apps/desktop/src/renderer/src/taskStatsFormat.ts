@@ -395,8 +395,10 @@ export function taskCounters(s: TaskStats): StatCounter[] {
 
 /** Запросы к человеку: «вопросов 2, решений 1» — по видам, где они были (вид — как заголовок карточки запроса). */
 export function humanKinds(human: TaskWaitStats): string {
-  return HUMAN_REQUEST_KINDS.filter((k) => human.byKind[k].count > 0)
-    .map((k: HumanRequestKind) => t(`board.stats.kind.${k}`, { n: human.byKind[k].count }))
+  // Статистика от старого main может не знать новых видов запросов (`decision`) — такого вида просто нет.
+  const count = (k: HumanRequestKind): number => human.byKind[k]?.count ?? 0
+  return HUMAN_REQUEST_KINDS.filter((k) => count(k) > 0)
+    .map((k: HumanRequestKind) => t(`board.stats.kind.${k}`, { n: count(k) }))
     .join(', ')
 }
 

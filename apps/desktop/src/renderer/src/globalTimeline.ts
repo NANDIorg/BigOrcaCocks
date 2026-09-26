@@ -1,4 +1,4 @@
-import { type AgentSession, type BoardColumn, type ColumnKind, type GlobalTask, type StageChange, type WfNodeType, type Workflow } from '@orca-board/core'
+import { type AgentSession, type BoardColumn, type ColumnKind, type GlobalTask, type StageChange, type StageDecision, type WfNodeType, type Workflow } from '@orca-board/core'
 import { formatDuration } from './duration'
 import { STATUS_SOURCE_TITLES, statusDurationLabel } from './statusHistory'
 import { t, type TKey } from './i18n'
@@ -32,8 +32,10 @@ export interface TimelineEvent {
   detail?: string
   /** Серая строка под названием: источник перехода, длительность. */
   sub?: string
-  /** Цитата под строкой: уточнение человека целиком, выдержка сводки. */
+  /** Цитата под строкой: уточнение человека целиком, выдержка сводки, обоснование решения ноды `decision`. */
   text?: string
+  /** Вторая цитата: комментарий агента, передавшего решение ноды `decision` человеку (`StageDecision.agentNote`). */
+  note?: string
   /** Уточнение после проверки — в ленте выделено. */
   highlight?: boolean
   /** Цвет колонки, в которую перешла задача (`created` и `status`); колонки нет — undefined. */
@@ -104,10 +106,33 @@ const PASS_THROUGH: readonly WfNodeType[] = ['start', 'condition']
 /** Короткий вид коммита для строки ленты. */
 const COMMIT_SHORT = 7
 
+/** Длина обоснования решения в ленте: обоснование до `DECISION_REASON_LIMIT` (4000) символов, целиком — в `workflow show --run`. */
+export const DECISION_EXCERPT_LIMIT = 400
+
+/** Текст решения одной строкой (переносы схлопнуты), обрезанный до `DECISION_EXCERPT_LIMIT`; пустой — undefined. */
+function decisionExcerpt(text: unknown): string | undefined {
+  const line = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : ''
+  if (!line) return undefined
+  return line.length > DECISION_EXCERPT_LIMIT ? `${line.slice(0, DECISION_EXCERPT_LIMIT - 1)}…` : line
+}
+
+/**
+ * Подпись решения ноды `decision` (`StageChange.decision`): кто выбрал ветку и какую, у человека — почему решал он.
+ * Решение пишет новый main; поля читаются осторожно — снапшот может быть неполным.
+ */
+function decisionLine(d: Partial<StageDecision>): string | undefined {
+  const label = typeof d.label === 'string' && d.label ? d.label : d.optionId
+  if (!label) return undefined
+  if (d.by !== 'human') return t('global.timeline.stageDecision', { label })
+  const human = t('global.timeline.stageDecisionHuman', { label })
+  return d.fallback ? `${human} · ${t(`global.timeline.stageDecisionFallback.${d.fallback}` as TKey)}` : human
+}
+
 /**
  * Входы в этапы воркфлоу глобальной задачи (`Run.stageHistory`): «Этап «Реализация»», заход со второго, чем пришли
- * (возврат на доработку, конфликт), коммит ветки на входе и выдержка сводки, с которой этап закрыт. Название — из
- * графа прогона, если он есть (тогда оно и переведено), иначе из записи.
+ * (возврат на доработку, конфликт), коммит ветки на входе и выдержка сводки, с которой этап закрыт. У ноды `decision` —
+ * выбранная ветка, обоснование и комментарий агента, если решал человек. Исход-вариант следующей записи не подписываем:
+ * он уже виден в решении. Название — из графа прогона, если он есть (тогда оно и переведено), иначе из записи.
  */
 function stageEvents(g: TimelineSource): TimelineEvent[] {
   return (g.stageHistory ?? []).flatMap((h, i): TimelineEvent[] => {
@@ -117,15 +142,21 @@ function stageEvents(g: TimelineSource): TimelineEvent[] {
     const name = node ? nodeTitle(node) : h.title ? builtinText(h.title) : h.nodeId
     const outcome = h.outcome && NOTABLE_OUTCOMES.includes(h.outcome) ? t(`global.timeline.stageOutcome.${h.outcome}` as TKey) : undefined
     const commit = h.commit ? t('global.timeline.stageCommit', { commit: h.commit.slice(0, COMMIT_SHORT) }) : undefined
-    const excerpt = summaryExcerpt(h.summary)
+    const decision = h.decision && typeof h.decision === 'object' ? h.decision : undefined
+    const chosen = decision ? decisionLine(decision) : undefined
+    // У ноды `decision` сводки нет: цитата — обоснование того, кто выбрал ветку.
+    const excerpt = decision ? decisionExcerpt(decision.reason) : summaryExcerpt(h.summary)
+    const note = decision?.by === 'human' ? decisionExcerpt(decision.agentNote) : undefined
+    const sub = [chosen, outcome, commit].filter(Boolean)
     return [{
       key: `stage-${i}`,
       kind: 'stage',
       at: h.at,
       title: t('global.timeline.stage', { name }),
       ...(h.visit !== undefined && h.visit > 1 ? { detail: t('global.timeline.stageVisit', { n: h.visit }) } : {}),
-      ...([outcome, commit].some(Boolean) ? { sub: [outcome, commit].filter(Boolean).join(' · ') } : {}),
-      ...(excerpt ? { text: excerpt } : {})
+      ...(sub.length ? { sub: sub.join(' · ') } : {}),
+      ...(excerpt ? { text: excerpt } : {}),
+      ...(note ? { note: t('global.timeline.stageDecisionNote', { note }) } : {})
     }]
   })
 }

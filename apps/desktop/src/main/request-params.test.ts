@@ -1,7 +1,7 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Разбор флагов ask и request resolve.
+// Запуск: pnpm --filter @orca-board/desktop test. Разбор флагов ask, request resolve и decision choose.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { askOptions, resolutionFromParams } from './request-params'
+import { askOptions, findOption, resolutionFromParams, singleOption } from './request-params'
 
 describe('askOptions', () => {
   it('--option "метка|пояснение" повторяется, запятые в метке остаются', () => {
@@ -41,7 +41,7 @@ describe('resolutionFromParams', () => {
   it('--option массивом, как его шлёт CLI (повторяемый флаг)', () => {
     assert.deepEqual(resolutionFromParams(req, { option: ['2'] }), { action: 'answer', optionId: '2' })
     assert.deepEqual(resolutionFromParams(req, { option: ['sqlite'], text: 'x' }), { action: 'answer', optionId: '1', text: 'x' })
-    assert.throws(() => resolutionFromParams(req, { option: ['1', '2'] }), /только один вариант/)
+    assert.throws(() => resolutionFromParams(req, { option: ['1', '2'] }), /нужен один вариант, а не несколько/)
     assert.throws(() => resolutionFromParams(req, { option: [true] }), /требует значения/)
     assert.throws(() => resolutionFromParams(req, { option: true }), /требует значения/)
   })
@@ -62,5 +62,23 @@ describe('resolutionFromParams', () => {
     assert.throws(() => resolutionFromParams(req, { accept: true, clarify: 'x' }), /укажи одно/)
     assert.throws(() => resolutionFromParams(req, { text: 'x', decision: 'y' }), /--decision/)
     assert.throws(() => resolutionFromParams(req, { clarify: true }), /требует значения/)
+  })
+})
+
+describe('singleOption и findOption (decision choose)', () => {
+  it('--option из CLI приходит массивом: одно значение берётся, несколько или пусто — ошибка', () => {
+    assert.equal(singleOption(['yes']), 'yes')
+    assert.equal(singleOption('yes'), 'yes')
+    assert.equal(singleOption(undefined), undefined)
+    assert.throws(() => singleOption(['yes', 'no']), /--option: нужен один вариант, а не несколько/)
+    assert.throws(() => singleOption([true]), /требует значения/)
+    assert.throws(() => singleOption([]), /требует значения/)
+  })
+
+  it('вариант по id, затем по метке без учёта регистра и пробелов по краям', () => {
+    const options = [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }, { id: 'opt_3', label: 'yes' }]
+    assert.equal(findOption(options, 'yes')?.id, 'yes', 'id важнее совпавшей метки')
+    assert.equal(findOption(options, ' нет ')?.id, 'no')
+    assert.equal(findOption(options, 'может быть'), undefined)
   })
 })

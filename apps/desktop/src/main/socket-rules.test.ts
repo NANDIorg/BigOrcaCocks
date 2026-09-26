@@ -7,7 +7,7 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
+import { DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, WORKFLOW_VERSION, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
 import { ProjectManager } from './projects'
 import { startSocketServer } from './socket'
 
@@ -38,7 +38,7 @@ interface TypeRow {
   title: string
   default?: boolean
   roles: Array<{ id: string; agent: string; agentEnabled: boolean }>
-  stages: Array<{ id: string; type: string }>
+  stages: Array<{ id: string; type: string; roleId?: string; options?: string[] }>
 }
 
 /** Результат другого вида, чем у rules.*. */
@@ -217,6 +217,36 @@ describe('сокет: правила, роли и типы задач', () => {
     const narrowed = result<TypeRow[]>(await call('types.list', {}))
     assert.deepEqual(narrowed.map((t) => [t.id, t.default ?? false]), [['general', true], [`type_${PID}`, false]])
     assert.match((await call('global.create', { title: 'Док', type: 'docs' })).error ?? '', /недоступен в проекте «repo».*types list/)
+  })
+
+  it('types list: у этапа «Решение ИИ» — роль и id вариантов (исходы рёбер), у остальных этапов options нет', async () => {
+    projects.patchTaskType('docs', {
+      workflow: {
+        version: WORKFLOW_VERSION,
+        nodes: [
+          { id: 'start', type: 'start', x: 0, y: 0 },
+          { id: 'work', type: 'work', title: 'Текст', x: 220, y: 0 },
+          {
+            id: 'need_review', type: 'decision', title: 'Нужна вычитка?', roleId: 'reviewer', question: 'Нужна ли вычитка текста?',
+            options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }], x: 440, y: 0
+          },
+          { id: 'proof', type: 'work', title: 'Вычитка', x: 660, y: 0 },
+          { id: 'end', type: 'end', x: 880, y: 0 }
+        ],
+        edges: [
+          { id: 'e_start', from: 'start', outcome: 'next', to: 'work' },
+          { id: 'e_work', from: 'work', outcome: 'next', to: 'need_review' },
+          { id: 'e_need_review_yes', from: 'need_review', outcome: 'yes', to: 'proof' },
+          { id: 'e_need_review_no', from: 'need_review', outcome: 'no', to: 'end' },
+          { id: 'e_proof', from: 'proof', outcome: 'next', to: 'end' }
+        ]
+      }
+    })
+    const docs = result<TypeRow[]>(await call('types.list', {})).find((t) => t.id === 'docs')!
+    const decision = docs.stages.find((x) => x.id === 'need_review')!
+    assert.equal(decision.type, 'decision')
+    assert.deepEqual(decision.options, ['yes', 'no'])
+    assert.ok(docs.stages.filter((x) => x.type !== 'decision').every((x) => !('options' in x)))
   })
 
   it('global create --type docs: тип в карточке, roles list / rules / task create — по ролям типа прогона', async () => {

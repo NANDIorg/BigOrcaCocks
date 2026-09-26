@@ -1,7 +1,7 @@
 // Шаблоны нод: глобальная библиотека настроенных нод (`projects.json → nodeTemplates`), которые человек вставляет
 // в графы любых типов задач. Вставка — копия ноды с `templateId`, а не ссылка: снимок графа прогона (`Run.workflow`)
 // остаётся самодостаточным. Модуль импортирует renderer — без node-импортов, значения с расширением .ts.
-import { WF_ISSUE_TEXTS, WF_PORTS, WORKFLOW_VERSION, validateWorkflow, wfWorkRoleIds } from './workflow.ts'
+import { WF_ISSUE_TEXTS, WF_PORTS, WORKFLOW_VERSION, validateWorkflow, wfPorts, wfWorkRoleIds } from './workflow.ts'
 import type { WfEdge, WfIssue, WfIssueCode, WfNode, WfValidation, WfValidationContext, Workflow } from './workflow.ts'
 
 /** `Omit` по каждой ветке объединения: обычный `Omit` схлопнул бы `WfNode` до общих полей. */
@@ -27,13 +27,14 @@ const SAMPLE_ID = 'template'
 
 /**
  * Проблемы, которые у ноды в шаблоне не проблемы: роли и колонки берутся из типа задачи при вставке, ссылки условия
- * `attempts` и «человек после показа» зависят от графа, в который шаблон попадёт.
+ * `attempts` и «человек после показа» зависят от графа, в который шаблон попадёт. Все варианты `decision` в образце
+ * ведут в конец — куда они поведут на самом деле, решает граф.
  */
-const TEMPLATE_IGNORED: readonly WfIssueCode[] = ['attemptsNoNode', 'showcaseUnseen', 'noHumanBeforeEnd', 'unreachable', 'endlessLoop', 'subflowDoubleReview']
+const TEMPLATE_IGNORED: readonly WfIssueCode[] = ['attemptsNoNode', 'showcaseUnseen', 'noHumanBeforeEnd', 'unreachable', 'endlessLoop', 'subflowDoubleReview', 'decisionSameTarget']
 
 /** Роли, которые называет нода (и её путь подзадачи): проверка ролей против типа — при вставке. */
 function referencedRoles(node: WfTemplateNode): string[] {
-  const own: string[] = node.type === 'work' ? wfWorkRoleIds(node) : node.type === 'gate' || node.type === 'ask' ? (node.roleId ? [node.roleId] : []) : []
+  const own: string[] = node.type === 'work' ? wfWorkRoleIds(node) : node.type === 'gate' || node.type === 'ask' || node.type === 'decision' ? (typeof node.roleId === 'string' && node.roleId ? [node.roleId] : []) : []
   const path = node.type === 'work' ? (node.subflow as { nodes?: unknown } | undefined)?.nodes : undefined
   const inner = Array.isArray(path)
     ? path.flatMap((n: unknown) => (n && typeof n === 'object' ? referencedRoles(n as WfTemplateNode) : []))
@@ -81,7 +82,8 @@ export function validateNodeTemplate(
   }
 
   const sample = { ...(node as WfTemplateNode), id: SAMPLE_ID, x: 0, y: 0 } as WfNode
-  const ports = WF_PORTS[sample.type]
+  // У `decision` порты — id вариантов: ребро на каждый, иначе образец дал бы «нет перехода» вместо ошибок самой ноды.
+  const ports = [...new Set(wfPorts(sample))]
   const wf: Workflow = {
     version: WORKFLOW_VERSION,
     nodes: [{ id: 'start', type: 'start', x: 0, y: 0 }, sample, { id: 'end', type: 'end', x: 0, y: 0 }],
