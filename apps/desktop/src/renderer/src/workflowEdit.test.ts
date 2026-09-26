@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS, WF_DECISION_OPTION_ID, validateWorkflow, wfPorts, DEFAULT_ROLES, DEFAULT_COLUMNS } from '@orca-board/core'
 import {
-  WF_ADDABLE_TYPES, addNode, canConnect, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId, wfPortLabel
+  WF_ADDABLE_TYPES, addNode, canConnect, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId, wfPortClass, wfPortLabel
 } from './workflowEdit'
 import { setLocale } from './i18n'
 import { graphWithMerge } from './workflowFixture'
@@ -143,4 +143,11 @@ test('wfPortLabel: у decision — метка варианта (пустая —
   assert.equal(wfPortLabel(d, 'missing'), 'missing')
   assert.equal(wfPortLabel(wf.nodes.find((n) => n.id === 'review')!, 'reject'), 'вернуть')
   assert.equal(wfPortLabel({ id: 'g', type: 'git', x: 0, y: 0, operation: 'commit', message: '' }, 'ok'), 'выполнено')
+})
+
+test('wfPortClass: фиксированный порт — сам исход, вариант «Решения ИИ» — общий opt (id варианта не идёт в класс)', () => {
+  assert.equal(wfPortClass('gate', 'reject'), 'reject')
+  assert.equal(wfPortClass('condition', 'yes'), 'yes')
+  assert.equal(wfPortClass('decision', 'yes'), 'opt')
+  assert.equal(wfPortClass('decision', 'needs_design'), 'opt')
 })
