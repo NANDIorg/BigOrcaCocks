@@ -92,6 +92,8 @@ export interface ResolveOutcome {
  *   всё равно решён (задача в ready с уточнением), координатору — escalation с причиной;
  * - approval + accept / reject — resolveRequest, затем переход воркфлоу по этому исходу (`approved`:
  *   мерж, запуск воркера — исполнитель в `src/main/workflow.ts`);
+ * - decision + answer (`optionId` — ветка развилки) — resolveRequest, затем тот же колбэк `approved`: граф прогона идёт
+ *   по выбранной ветке (`handleRunRequest` в `src/main/workflow-run.ts`);
  * - остальное — resolveRequest.
  */
 export function resolveHumanRequest(
@@ -111,7 +113,7 @@ export function resolveHumanRequest(
     return { request: store.getRequest(id)! }
   }
   const request = store.resolveRequest(id, resolution)
-  if (request.kind === 'approval') {
+  if (request.kind === 'approval' || request.kind === 'decision') {
     approved?.(request)
     return { request: store.getRequest(id)! }
   }

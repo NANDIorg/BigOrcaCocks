@@ -256,6 +256,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `work` (`start_stage`) | `stage_started` координатору уже отправил store; движок проверяет, что координатор жив (`Run.coordinatorPtyId` + `isAlive`), иначе **запускает заново** тем же запуском, что «Запустить координатора» (`startCoordinator` → `resumeObjective`). Цель перезапущенного координатора — исходная цель и блок «# Этап: …» (`resumeCoordinatorObjective` со `stage` в `packages/core/src/prompts.ts`): роли, инструкции ноды, `feedback`/`decision`/`answers`, подзадачи захода, что делать по `stage_tasks_done`. Не запустился — `workflow_blocked` по `runId` с командой `orca-board global start --global <id>` |
 | `ask` (`create_ask`) | одна задача роли ноды (`createTask` со спекой `runAskTaskSpec` и `stageOf {nodeId, visit}`) и сразу её воркер; вопросы идут человеку (`worker.ask` узнаёт ноду по `stageOf`), координатор не участвует. Сдала `done` → задача закрывается, переход по `next` с `answers` (вопросы и ответы человека) в `stage_started` следующей «Работы». Агент упал, человек ответил — воркер стартует сам |
 | `gate` (`create_gate`) | одна задача-проверка роли ноды с `gateFor {runId, nodeId}` и спекой `runGateTaskSpec` (title — `runGateTaskTitle`): ветка прогона целиком против `RunGit.base` (`git log`/`git diff base...ветка`), цель прогона, сводки этапов (`stage finish`), «Как проверять». Решение — `orca-board review accept|reject --task "$ORCA_TASK_ID"` (id проверки воркер берёт из окружения). Нет ветки у прогона или роли в типе — `workflow_blocked` |
+| `decision` (`create_decision`) | одна задача-решатель роли ноды с `gateFor {runId, nodeId}` и спекой `runDecisionTaskSpec` (вопрос, варианты, цель, сводки, путь по графу `runPath` — последние 30 записей истории) и сразу её воркер (`createDecision`). Воркер не запустился — не `workflow_blocked`, а запрос `decision` человеку (`fallback: 'start_failed'`, причина в теле). Повтор: задача захода и ждущий запрос не дублируются, при ждущем запросе агент заново не стартует. Роли нет в типе — `workflow_blocked` |
 | `human` (`request_human`) | `requestRunApproval`: approval уровня прогона. Тело — инструкция ноды, конфликт мержа/отказ git (если пришли оттуда), сводка этапа (нет — итоги подзадач последней «Работы»), показ их последних `done` (`showcaseDispatchId` — последний с показом), ветка и база |
 | `git` | `commit` / `push` в worktree ветки прогона (`ensureRunBranch` восстанавливает убранный); шаблоны `{taskId}` — id прогона, `{title}`/`{slug}` — его название. Исход `ok`/`error`, текст отказа git — в approval, если `error` ведёт к человеку, и в `feedback` следующей «Работы», если в неё. Итог `push` — только исход ноды: в `Run.git` он не пишется (поля push убраны, `migrateRunGit`). `create_branch`/`checkout` — `workflow_blocked` (валидация их запрещает) |
 | `merge` | `mergeRunBranch` (`run-branch.ts`): ветку прогона в базу `RunGit.base` локально, см. ниже. Исход `ok` / `conflict` |
@@ -282,9 +283,15 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | Решение проверки | `review accept|reject --task <id проверки>` (сокет, IPC `review:*`, «Принять»/«Вернуть» на задаче-проверке) → `reviewDecision` в `index.ts` → `runGateDecision` (единственный путь) | `advanceRunStage` по `accept` / `reject` (замечания — в `Run.returns` и `stage_started`, комментарий `accept` — `decision`) и эффект следующей ноды; проверка уже сдала `done` — закрывается сразу; не актуальна (граф ушёл дальше, есть новая) — ошибка |
 | `worker_done` проверки ветки прогона | `handleRunWorkflowEvents` (`taskEngine` = `run`) | проверка закрывается (worktree и ветка удалены, задача в done); решения не было и граф всё ещё на её ноде — `workflow_blocked` «сдана без решения» |
 | `escalation` проверки ветки прогона | то же | решение уже есть — проверка закрывается; иначе остаётся эскалация store |
+| `decision choose` агента | сокет `decision.choose` → `ProjectDeps.decide` → `runDecision` | вариант по id или метке (`findOption`), `advanceRunStage(optionId, {chosen: {…, by: 'agent'}, decision: текст})` и эффект ветки; решатель уже сдал `done` — закрывается. Ошибки (граф не трогается): не решатель, граф ушёл или есть более новый решатель, ждёт запрос человеку, нет варианта |
+| `decision escalate` агента | сокет `decision.escalate` → `ProjectDeps.escalateDecision` → `escalateDecision` | запрос `decision` (`fallback: 'unsure'`, `agentNote`); повтор отдаёт тот же `requestId` |
+| `worker_done` решателя | `handleRunWorkflowEvents` → `settleDecision` | граф ушёл с развилки — задача закрывается; выбора не было и запроса нет — запрос `decision` (`no_answer`, сводка `done` — `agentNote`), задача закрывается |
+| `escalation` решателя (воркер вышел без `done`) | то же | фоллбэка нет — штатная эскалация store с «Перезапустить»; граф уже ушёл — задача закрывается |
+| запрос `decision` решён | IPC `requests:resolve`, сокет `request resolve --option` → `resolveHumanRequest` → `handleRunRequest` → `runDecisionResolved` | граф всё ещё на развилке — переход по `optionId` с `chosen {by: 'human', fallback, agentNote, reason?}`; решатель без живого воркера закрывается; варианта больше нет в графе — `workflow_blocked` |
+| `review accept|reject` по решателю | `reviewDecision` → `runGateDecision` | ошибка «выбирает ветку ноды … — используй decision choose, а не review» |
 | `worker_done` задачи `ask` | то же | закрыть, `advanceRunStage(next, {answers})`, если прогон стоит на этом заходе ноды |
 | `question_answered` (агент `ask` не жив) | то же | воркер стартует сам |
-| approval `human` решён | IPC `requests:resolve`, сокет `request resolve` → `resolveHumanRequest` → `handleRunApproval` | `accept` → исход `accept` (текст «Принять» → `decision` следующей «Работы»), `reject` → исход `reject` (замечания → `feedback`) |
+| approval `human` решён | IPC `requests:resolve`, сокет `request resolve` → `resolveHumanRequest` → `handleRunRequest` | `accept` → исход `accept` (текст «Принять» → `decision` следующей «Работы»), `reject` → исход `reject` (замечания → `feedback`) |
 | «Подтвердить» / «Вернуть в работу» на карточке | IPC `globalTasks:accept` → `acceptRun`, `globalTasks:returnToWork` → `returnRun` | то же решение approval; «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
 | Координатор умер, `stage finish` не пришёл | раз в 5 с `watchFinishedCoordinators` → `settleIdleRunStages` | `settleIdleStages`: этап закрывается по `next` без сводки, эффект следующей ноды |
 
@@ -297,7 +304,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 
 *Маршрутизация — «один исполнитель на событие».* `taskEngine(deps, task)` (`main/workflow.ts`) относит задачу к одному из трёх: `path` — подзадача со `stageOf` на ноде `work` и проверка **ветки подзадачи**
 (`gateFor.taskId`); `run` — проверка ветки прогона (`gateFor.runId`), задача `ask`, подзадача без `stageOf`; `legacy` — прогон старого формата и «Входящие». `handleWorkflowEvents` (`legacy` и `path`)
-и `handleRunWorkflowEvents` (`run`) фильтруют по нему и взаимно исключают друг друга; `index.ts` зовёт оба на каждое событие (`runWorkflowEvents`). Запросы approval делятся по `taskId`: `handleRunApproval`
+и `handleRunWorkflowEvents` (`run`) фильтруют по нему и взаимно исключают друг друга; `index.ts` зовёт оба на каждое событие (`runWorkflowEvents`). Запросы approval делятся по `taskId`: `handleRunRequest`
 берёт запрос прогона (без `taskId`), запрос на задаче — `approvalResolved` движка по подзадачам. Заходы: `runWorker` вводит подзадачу в путь (`enterWork`), `worker_done` ведёт по `next` (`workDone`).
 
 *Совместимость с состоянием старой сборки.* Подзадача, сданная до пути (нет `Task.stage`), при `worker_done` входит в путь и идёт от `work` к `merge` тем же шагом. Approval «Конфликт мержа» с
@@ -569,8 +576,9 @@ start → git(create_branch, branch="feature/{taskId}-{slug}") → work → … 
 > **Статус.** Core готов (`packages/core/src/workflow.ts`, `store.ts`, `prompts.ts`): валидация ноды, `stageAction`
 > (`create_decision` / `blocked` по таблице ниже), переходы по id вариантов, решение в истории (`RunStageOptions.chosen`),
 > запрос `decision` (`requestRunDecision`, `resolveRequest`), `runStage` и `workflow show` с вопросом и вариантами, спека
-> задачи-решателя (`runDecisionTaskTitle` / `runDecisionTaskSpec`). Эффекты в main (задача-решатель, фоллбэк), команды
-> и UI ещё нет — команды ниже в HELP CLI появятся вместе с ними. Формат графа тот же, `WORKFLOW_VERSION` не меняется (как у `ask` и `git`):
+> задачи-решателя (`runDecisionTaskTitle` / `runDecisionTaskSpec`). Эффекты в main готовы
+> (`apps/desktop/src/main/workflow-run.ts`: `createDecision`, `runDecision`, `escalateDecision`, `settleDecision`,
+> `runDecisionResolved`; таблицы «Движок» и «Переходы и подписки» выше). Формат графа тот же, `WORKFLOW_VERSION` не меняется (как у `ask` и `git`):
 > старое приложение отвергнет граф с нодой ошибкой «неизвестный тип», но данных не испортит. Миграции состояния нет:
 > все новые поля необязательные.
 
