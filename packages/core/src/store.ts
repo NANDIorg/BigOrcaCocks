@@ -2,7 +2,7 @@ import type {
   AgentSession,
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
-  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, StageChange
+  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, StageChange, StageDecision
 } from './types.ts'
 import {
   ANSWER_AUDIENCES, DEFAULT_COLUMNS, DEFAULT_ROLE_ID, DEFAULT_TASK_PRIORITY, MAX_ANSWER_LENGTH, REQUEST_ACTIONS,
@@ -123,6 +123,11 @@ export interface RunStageOptions extends RunWorkflowFallback {
   decision?: string
   /** Ответы человека на этапе «Вопрос человеку». */
   answers?: string
+  /**
+   * Решение ноды `decision`, с которым граф уходит из неё: `moveRunStage` кладёт его в последнюю запись
+   * `Run.stageHistory` этой ноды (`StageChange.decision`). Текст для следующего этапа — отдельно, в `decision`.
+   */
+  chosen?: StageDecision
 }
 
 /** Где стоит глобальная задача на графе и что для этого нужно знать координатору (`TaskStore.runStage`). */

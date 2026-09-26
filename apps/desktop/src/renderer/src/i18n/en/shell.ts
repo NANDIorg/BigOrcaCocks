@@ -134,6 +134,7 @@ export default {
   'request.kind.answer': 'Answer',
   'request.kind.escalation': 'Escalation',
   'request.kind.approval': 'Decision',
+  'request.kind.decision': 'Branch choice',
   'request.body.answer': 'answer',
   'request.body.context': 'context',
   'request.body.check': 'what to check',

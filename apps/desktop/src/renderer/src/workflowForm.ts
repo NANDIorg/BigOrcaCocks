@@ -1,6 +1,6 @@
 import {
-  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflowReport, wfWorkRoleIds,
-  type Role, type WfCondition, type WfMigrationNote, type WfNode, type WfNodeType, type WfOutcome, type Workflow
+  WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflowReport, wfPorts, wfWorkRoleIds,
+  type Role, type WfCondition, type WfMigrationNote, type WfNode, type WfNodeType, type WfPort, type Workflow
 } from '@orca-board/core'
 import { NODE_H, NODE_W } from './workflowGeometry'
 import { connect, makeNode, uniqueId } from './workflowEdit'
@@ -18,6 +18,7 @@ export const WF_TYPE_TITLES: Readonly<Record<WfNodeType, string>> = {
   get ask() { return t('config.wf.type.ask') },
   get gate() { return t('config.wf.type.gate') },
   get human() { return t('config.wf.type.human') },
+  get decision() { return t('config.wf.type.decision') },
   get condition() { return t('config.wf.type.condition') },
   get merge() { return t('config.wf.type.merge') },
   get git() { return t('config.wf.type.git') },
@@ -124,7 +125,7 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
   if (instructions && (node.type === 'gate' || node.type === 'human' || node.type === 'work' || node.type === 'ask')) {
     node.instructions = instructions
   }
-  const ports = WF_PORTS[type]
+  const ports = wfPorts(node)
   return {
     ...wf,
     nodes: wf.nodes.map((n) => (n.id === nodeId ? node : n)),
@@ -133,12 +134,12 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
 }
 
 /** Куда ведёт порт: id целевой ноды или undefined, если перехода нет. */
-export function portTarget(wf: Workflow, nodeId: string, outcome: WfOutcome): string | undefined {
+export function portTarget(wf: Workflow, nodeId: string, outcome: WfPort): string | undefined {
   return wf.edges.find((e) => e.from === nodeId && e.outcome === outcome)?.to
 }
 
 /** Select «куда ведёт»: новая цель порта или null — убрать переход. */
-export function setPortTarget(wf: Workflow, nodeId: string, outcome: WfOutcome, to: string | null): Workflow {
+export function setPortTarget(wf: Workflow, nodeId: string, outcome: WfPort, to: string | null): Workflow {
   if (to === null) {
     if (!wf.edges.some((e) => e.from === nodeId && e.outcome === outcome)) return wf
     return { ...wf, edges: wf.edges.filter((e) => !(e.from === nodeId && e.outcome === outcome)) }

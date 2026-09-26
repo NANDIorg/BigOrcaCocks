@@ -1,4 +1,4 @@
-import { WF_PORTS, type WfEdge, type WfNode, type WfOutcome, type Workflow } from '@orca-board/core'
+import { WF_PORTS, wfPorts, type WfEdge, type WfNode, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
 
 // Геометрия нодового редактора воркфлоу. Координаты — мировые (те же, что `WfNode.x/y`), холст переводит
 // в них экранные через `screenToWorld`. Логика вынесена из WorkflowCanvas.tsx, чтобы её можно было тестировать.
@@ -33,9 +33,9 @@ export function inputPoint(node: Pick<WfNode, 'x' | 'y'>): Point {
   return { x: node.x, y: node.y + NODE_H / 2 }
 }
 
-/** Порт исхода — на правой стороне, порты делят высоту поровну в порядке `WF_PORTS`. */
-export function portPoint(node: WfNode, outcome: WfOutcome): Point {
-  const ports = WF_PORTS[node.type]
+/** Порт исхода — на правой стороне, порты делят высоту поровну в порядке `wfPorts`. */
+export function portPoint(node: WfNode, outcome: WfPort): Point {
+  const ports = wfPorts(node)
   const i = Math.max(0, ports.indexOf(outcome))
   return { x: node.x + NODE_W, y: node.y + (NODE_H * (i + 1)) / (ports.length + 1) }
 }
@@ -151,7 +151,7 @@ export function autoLayout(wf: Workflow): Workflow {
       const id = queue.shift()!
       order.push(id)
       const node = wf.nodes.find((n) => n.id === id)!
-      const ports = WF_PORTS[node.type]
+      const ports = wfPorts(node)
       const out = wf.edges
         .filter((e) => e.from === id)
         .sort((a, b) => ports.indexOf(a.outcome) - ports.indexOf(b.outcome))

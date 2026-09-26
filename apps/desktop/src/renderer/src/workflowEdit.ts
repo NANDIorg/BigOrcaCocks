@@ -1,4 +1,4 @@
-import { WF_PORTS, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type Workflow } from '@orca-board/core'
+import { wfPorts, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
 import { wfIssueText } from './defaultTitles'
 
@@ -24,9 +24,10 @@ export const WF_OUTCOME_LABELS: Readonly<Record<WfOutcome, string>> = {
 /**
  * Подпись исхода у ноды типа `type`. Общий `ok` — «слито» (мерж), а у ноды `git` это «выполнено»: слияния там нет.
  */
-export function wfOutcomeLabel(type: WfNodeType, outcome: WfOutcome): string {
+export function wfOutcomeLabel(type: WfNodeType, outcome: WfPort): string {
   if (type === 'git' && outcome === 'ok') return t('config.wf.outcome.gitOk')
-  return WF_OUTCOME_LABELS[outcome]
+  // Порт ноды `decision` — id варианта: фиксированной подписи у него нет, подпись — метка варианта в самой ноде.
+  return outcome in WF_OUTCOME_LABELS ? WF_OUTCOME_LABELS[outcome as WfOutcome] : outcome
 }
 
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
@@ -62,6 +63,9 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
       return { ...pos, type, roleId: '' }
     case 'ask':
       return { ...pos, type, instructions: '' }
+    case 'decision':
+      // Заготовка: вопрос, роль и варианты задаются в инспекторе, пустые поля подсветит валидация.
+      return { ...pos, type, question: '', roleId: '', options: [] }
     case 'condition': {
       const work = wf.nodes.find((n) => n.type === 'work')
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }
@@ -96,11 +100,11 @@ export function moveNode(wf: Workflow, nodeId: string, x: number, y: number): Wo
   return { ...wf, nodes: wf.nodes.map((n) => (n.id === nodeId ? { ...n, x, y } : n)) }
 }
 
-/** Можно ли провести ребро: порт есть у типа источника, обе ноды существуют, цель — не старт. */
-export function canConnect(wf: Workflow, from: string, outcome: WfOutcome, to: string): boolean {
+/** Можно ли провести ребро: порт есть у источника, обе ноды существуют, цель — не старт. */
+export function canConnect(wf: Workflow, from: string, outcome: WfPort, to: string): boolean {
   const src = wf.nodes.find((n) => n.id === from)
   const dst = wf.nodes.find((n) => n.id === to)
-  return !!src && !!dst && WF_PORTS[src.type].includes(outcome) && dst.type !== 'start'
+  return !!src && !!dst && wfPorts(src).includes(outcome) && dst.type !== 'start'
 }
 
 /**
@@ -108,7 +112,7 @@ export function canConnect(wf: Workflow, from: string, outcome: WfOutcome, to: s
  * заменяется (его id сохраняется — выделение на нём не пропадает). Возврат в себя разрешён: это законная
  * петля «вернуть на доработку».
  */
-export function connect(wf: Workflow, from: string, outcome: WfOutcome, to: string): { workflow: Workflow; edgeId?: string } {
+export function connect(wf: Workflow, from: string, outcome: WfPort, to: string): { workflow: Workflow; edgeId?: string } {
   if (!canConnect(wf, from, outcome, to)) return { workflow: wf }
   const old = wf.edges.filter((e) => e.from === from && e.outcome === outcome)
   const id = old[0]?.id ?? uniqueId(`e_${from}_${outcome}`, wf.edges.map((e) => e.id))

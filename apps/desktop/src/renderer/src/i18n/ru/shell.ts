@@ -141,6 +141,7 @@ export default {
   'request.kind.answer': 'Ответ',
   'request.kind.escalation': 'Эскалация',
   'request.kind.approval': 'Решение',
+  'request.kind.decision': 'Выбор ветки',
   'request.body.answer': 'ответ',
   'request.body.context': 'контекст',
   'request.body.check': 'что проверить',

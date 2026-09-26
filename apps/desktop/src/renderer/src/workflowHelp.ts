@@ -51,6 +51,13 @@ export const WF_NODE_HELP: Readonly<Record<WfNodeType, WfNodeHelp>> = {
   get human() {
     return help('human', ['accept', 'reject'], ['config.wf.help.human.fieldInstructions', 'config.wf.help.human.fieldColumn'])
   },
+  get decision() {
+    // Порты — варианты самой ноды (`wfPorts`), у типа их нет: смысл исхода — метка варианта.
+    return help('decision', [], [
+      'config.wf.help.decision.fieldQuestion', 'config.wf.help.decision.fieldRole', 'config.wf.help.decision.fieldOptions',
+      'config.wf.help.decision.fieldInstructions'
+    ])
+  },
   get condition() {
     return help('condition', ['yes', 'no'], ['config.wf.help.condition.fieldAttempts'])
   },
