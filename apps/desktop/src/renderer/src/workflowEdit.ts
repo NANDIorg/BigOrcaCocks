@@ -1,4 +1,4 @@
-import { wfPorts, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
+import { wfPorts, type WfDecisionOption, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
 import { wfIssueText } from './defaultTitles'
 
@@ -30,14 +30,40 @@ export function wfOutcomeLabel(type: WfNodeType, outcome: WfPort): string {
   return outcome in WF_OUTCOME_LABELS ? WF_OUTCOME_LABELS[outcome as WfOutcome] : outcome
 }
 
-/** Типы нод, которые можно добавить из палитры (в порядке показа). */
-export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'human', 'condition', 'merge', 'git', 'end', 'start']
+/**
+ * Подпись порта конкретной ноды: у `decision` — метка варианта (пустая — id, чтобы порт не остался без подписи),
+ * у остальных — `wfOutcomeLabel` по типу.
+ */
+export function wfPortLabel(node: WfNode, port: WfPort): string {
+  if (node.type === 'decision') {
+    const option = Array.isArray(node.options) ? node.options.find((o) => o.id === port) : undefined
+    return option?.label.trim() || port
+  }
+  return wfOutcomeLabel(node.type, port)
+}
+
+/** «да» → «Да»: метка варианта — данные графа, а подписи исходов в словаре — со строчной буквы. */
+const capitalized = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 
 /**
- * Типы нод, недоступные в пути подзадачи: вопросы человеку задаёт этап глобальной задачи, а не каждая подзадача
- * (валидатор: `subflowAskNotAllowed`).
+ * Пресет вариантов «Да / Нет» ноды `decision`. id — `yes`/`no`, как порты `condition`: смена типа
+ * `condition ↔ decision` сохраняет рёбра. Метки — на языке интерфейса в момент создания (дальше это данные графа).
  */
-export const WF_SUBTASK_FORBIDDEN_TYPES: readonly WfNodeType[] = ['ask']
+export function yesNoOptions(): WfDecisionOption[] {
+  return [
+    { id: 'yes', label: capitalized(t('config.wf.outcome.yes')) },
+    { id: 'no', label: capitalized(t('config.wf.outcome.no')) }
+  ]
+}
+
+/** Типы нод, которые можно добавить из палитры (в порядке показа). */
+export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'decision', 'human', 'condition', 'merge', 'git', 'end', 'start']
+
+/**
+ * Типы нод, недоступные в пути подзадачи: вопросы человеку и развилки «Решение ИИ» — этапы глобальной задачи, а не
+ * каждой подзадачи (валидатор: `subflowAskNotAllowed`, `subflowDecisionNotAllowed`).
+ */
+export const WF_SUBTASK_FORBIDDEN_TYPES: readonly WfNodeType[] = ['ask', 'decision']
 
 /** Палитра холста по области: в пути подзадачи (`'subtask'`) без запрещённых там типов. */
 export function wfAddableTypes(scope: 'run' | 'subtask'): readonly WfNodeType[] {
@@ -53,7 +79,7 @@ export function uniqueId(prefix: string, taken: Iterable<string>): string {
 
 /**
  * Новая нода типа `type` с незаполненными полями. Гейт — без роли, условие — лимит повторов первой работы
- * графа: пустое поле сразу подсветит валидация, а инспектор предложит выбрать.
+ * графа, решение ИИ — без вопроса и роли, с вариантами «Да / Нет»: пустое поле сразу подсветит валидация, а инспектор предложит выбрать.
  */
 export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): WfNode {
   const id = uniqueId(type, wf.nodes.map((n) => n.id))
@@ -64,8 +90,8 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
     case 'ask':
       return { ...pos, type, instructions: '' }
     case 'decision':
-      // Заготовка: вопрос, роль и варианты задаются в инспекторе, пустые поля подсветит валидация.
-      return { ...pos, type, question: '', roleId: '', options: [] }
+      // Вопрос и роль задаются в инспекторе (пустые подсветит валидация), варианты — сразу «Да / Нет».
+      return { ...pos, type, question: '', roleId: '', options: yesNoOptions() }
     case 'condition': {
       const work = wf.nodes.find((n) => n.type === 'work')
       return { ...pos, type, test: { kind: 'attempts', node: work?.id ?? '', atLeast: 3 } }
