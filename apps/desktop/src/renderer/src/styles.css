@@ -1308,7 +1308,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .inbox.assistant { width: 480px; }
 .assistant-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .assistant-body { flex: 1; min-height: 0; position: relative; background: var(--term-bg); padding: 8px 6px 8px 10px; }
-.assistant-body .terms { position: absolute; inset: 0; }
+.assistant-body .terms { position: absolute; inset: 8px 6px 8px 10px; }
 .assistant-body .terms.hidden { display: none; }
 .assistant-body .term { height: 100%; }
 .assistant-body .term.hidden { display: none; }

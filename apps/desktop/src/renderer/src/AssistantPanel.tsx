@@ -78,6 +78,7 @@ export function AssistantPanel({ open, terminals, activePty, status, onClose, on
   const [now, setNow] = useState(() => Date.now())
   const feedRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
+  const composeRef = useRef<HTMLTextAreaElement>(null)
 
   function chooseMode(next: AssistantViewMode): void {
     setMode(next)
@@ -154,6 +155,11 @@ export function AssistantPanel({ open, terminals, activePty, status, onClose, on
   const lastAt = chat.messages.length ? chat.messages[chat.messages.length - 1].at : undefined
   const stuck = isStuckThinking(chat.status, lastAt, now)
 
+  // Открытие панели в режиме чата и переключение Терминал→Чат — фокус сразу на поле ввода (⌘K → печатать).
+  useEffect(() => {
+    if (open && showChat) composeRef.current?.focus()
+  }, [open, showChat])
+
   useLayoutEffect(() => {
     if (!showChat) return
     const el = feedRef.current
@@ -179,6 +185,7 @@ export function AssistantPanel({ open, terminals, activePty, status, onClose, on
       setSendError(t('shell.assistant.sendError', { error: ipcErrorMessage(e) }))
     } finally {
       setSending(false)
+      composeRef.current?.focus()
     }
   }
 
@@ -265,10 +272,10 @@ export function AssistantPanel({ open, terminals, activePty, status, onClose, on
               )}
               <div className="chat-compose">
                 <textarea
+                  ref={composeRef}
                   value={draft}
                   placeholder={t('shell.assistant.composePlaceholder')}
                   aria-label={t('shell.assistant.composeLabel')}
-                  disabled={sending}
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={composeKeys(() => void send())}
                 />
