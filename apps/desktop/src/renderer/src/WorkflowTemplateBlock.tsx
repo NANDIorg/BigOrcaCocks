@@ -8,6 +8,8 @@ import {
 } from './nodeTemplates'
 import type { WfScope } from './workflowNav'
 import { ipcErrorMessage } from './ipcError'
+import { WfCard } from './WorkflowCard'
+import type { WfCardIssues } from './workflowEditorView'
 
 interface Props {
   node: WfNode
@@ -15,14 +17,16 @@ interface Props {
   onChange(wf: Workflow): void
   library: NodeTemplatesHook
   scope: WfScope
+  /** Проблемы ноды, относящиеся к шаблону (id шаблона): точка и рамка карточки. */
+  issue?: WfCardIssues
 }
 
 /**
- * «Своя нода» в инспекторе: сохранить выбранную ноду в библиотеку и держать связь с шаблоном. Нода, вставленная из
+ * Карточка «Своя нода» в инспекторе: сохранить выбранную ноду в библиотеку и держать связь с шаблоном. Нода, вставленная из
  * шаблона, сверяется с ним: разошлись — «Обновить из шаблона» (или «Записать в шаблон» в обратную сторону).
  * Компонент монтируется с `key` по id ноды: введённое название и сообщения не переходят на другую ноду.
  */
-export function WorkflowTemplateBlock({ node, workflow, onChange, library, scope }: Props): React.JSX.Element {
+export function WorkflowTemplateBlock({ node, workflow, onChange, library, scope, issue }: Props): React.JSX.Element {
   const t = useT()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -63,8 +67,7 @@ export function WorkflowTemplateBlock({ node, workflow, onChange, library, scope
   const blocked = sync.kind === 'differs' ? templateMisfit(sync.template, scope) : null
 
   return (
-    <fieldset className="wf-tpl">
-      <legend>{t('config.nodeTpl.insp.legend')}</legend>
+    <WfCard id="tpl" title={t('config.nodeTpl.insp.legend')} issue={issue}>
 
       {sync.kind === 'unknown' && <p className="hint">{t('config.nodeTpl.insp.unknown')}</p>}
       {sync.kind === 'missing' && <p className="hint">{t('config.nodeTpl.insp.missing')}</p>}
@@ -117,6 +120,6 @@ export function WorkflowTemplateBlock({ node, workflow, onChange, library, scope
       {library.stale && <p className="hint">{library.error}</p>}
       {error && <div className="editor-error">{error}</div>}
       {notice && !error && <div className="hint">{notice}</div>}
-    </fieldset>
+    </WfCard>
   )
 }

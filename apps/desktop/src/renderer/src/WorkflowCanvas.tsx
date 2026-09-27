@@ -7,16 +7,17 @@ import {
   portPoint, screenToWorld, snap, viewBox, zoomAt, type Point, type View
 } from './workflowGeometry'
 import {
-  addNode, canConnect, connect, issueTargets, moveNode, removeSelected, wfAddableTypes, wfPortClass, wfPortLabel,
+  addNode, canConnect, connect, issueTargets, moveNode, removeSelected, wfPortClass, wfPortLabel,
   type WfSelection
 } from './workflowEdit'
 import { canOpenPath, subflowSummary, type WfScope } from './workflowNav'
 import { WF_TYPE_TITLES } from './workflowForm'
-import { WF_NODE_HELP } from './workflowHelp'
 import { gitNodeSubtitle } from './workflowGit'
+import { shortIssueText } from './workflowEditorView'
 import { useT, type TFunction } from './i18n'
 import { nodeTitle } from './defaultTitles'
-import { insertTemplate, templateHint, templateMisfit, templateSummary, type NodeTemplatesHook } from './nodeTemplates'
+import { insertTemplate, type NodeTemplatesHook } from './nodeTemplates'
+import { WorkflowPalette } from './WorkflowPalette'
 
 interface Props {
   workflow: Workflow
@@ -32,8 +33,16 @@ interface Props {
   scope?: WfScope
   /** Двойной клик по ноде «Работа»: открыть путь её подзадачи. Нет — двойной клик ничего не делает. */
   onOpenNode?: (nodeId: string) => void
-  /** Библиотека своих нод: в панели над холстом появляется «Свои ноды» со вставкой копии. Нет — панели нет. */
+  /** Библиотека своих нод: в палитре появляется группа «Свои ноды» со вставкой копии. Нет — группы нет. */
   library?: NodeTemplatesHook
+  /** Только просмотр: кнопки палитры недоступны (холст правки и так не пропускает). */
+  readOnly?: boolean
+  /** Левая часть шапки холста: крошки уровня графа. */
+  header?: React.ReactNode
+  /** Под холстом, в той же колонке: баннер пути подзадачи и панель «Проблемы». */
+  below?: React.ReactNode
+  /** «Сохранить выбранную ноду» в палитре; нет — кнопка недоступна. */
+  onSaveSelected?(): void
 }
 
 /** Текущий жест мышью. Перетаскивание ноды живёт локально и уходит в onChange одним изменением на отпускании. */
@@ -75,14 +84,25 @@ function nodeSubtitle(node: WfNode, t: TFunction): string {
   }
 }
 
+/** Плашка проблемы под нодой: первая проблема коротко, остальные — числом; полный текст — в `<title>` и инспекторе. */
+function issuePill(messages: readonly string[], t: TFunction): string {
+  const first = clip(shortIssueText(messages[0] ?? ''), 34)
+  return messages.length > 1 ? `${first} ${t('config.wf.canvas.moreIssues', { n: messages.length - 1 })}` : first
+}
+
 /**
  * Нодовый редактор воркфлоу на SVG. Колесо — масштаб под курсором, перетаскивание фона — панорама,
  * перетаскивание ноды — перенос (с привязкой к сетке), от порта-кружка тянется переход к другой ноде,
  * Delete/Backspace удаляет выделенное. Попадание в ноду/порт/ребро считается по геометрии
  * (workflowGeometry.ts), а не по DOM-событиям элементов: при захвате указателя (setPointerCapture)
  * элемент под курсором события не получает.
+ *
+ * Рендерит две колонки сетки `.wf-editor`: палитру (WorkflowPalette.tsx) и центральную колонку — шапку с масштабом,
+ * холст и то, что передали в `below`. Третья колонка — инспектор — у вызывающего кода.
  */
-export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues, scope = 'run', onOpenNode, library }: Props): React.JSX.Element {
+export function WorkflowCanvas({
+  workflow, onChange, selection, onSelect, issues, scope = 'run', onOpenNode, library, readOnly = false, header, below, onSaveSelected
+}: Props): React.JSX.Element {
   const t = useT()
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -90,7 +110,6 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
   const [view, setView] = useState<View>({ x: -32, y: -32, scale: 1 })
   const [gesture, setGesture] = useState<Gesture | null>(null)
   const fitted = useRef(false)
-  const [libOpen, setLibOpen] = useState(false)
   const gridId = `wf-grid-${useId().replace(/:/g, '')}`
 
   useEffect(() => {
@@ -221,25 +240,7 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
     const res = insertTemplate(workflow, template, x, y)
     onChange(res.workflow)
     onSelect({ kind: 'node', id: res.nodeId })
-    setLibOpen(false)
   }
-
-  // Панель «Свои ноды» закрывается кликом мимо и Esc.
-  useEffect(() => {
-    if (!libOpen) return
-    const onDown = (e: MouseEvent): void => {
-      if (!(e.target as Element).closest('.wf-lib, .wf-lib-btn')) setLibOpen(false)
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setLibOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [libOpen])
 
   // Двойной клик по ноде «Работа» — вход в её путь подзадачи. Попадание считаем по геометрии, как и остальные жесты.
   const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>): void => {
@@ -256,185 +257,154 @@ export function WorkflowCanvas({ workflow, onChange, selection, onSelect, issues
   const connectSrc = gesture?.kind === 'connect' ? shown.nodes.find((n) => n.id === gesture.from) : undefined
 
   return (
-    <div className="wf-canvas" ref={wrapRef}>
-      <svg
-        ref={svgRef}
-        className={`wf-svg${gesture?.kind === 'pan' ? ' panning' : ''}${gesture?.kind === 'connect' ? ' connecting' : ''}`}
-        viewBox={size.w ? viewBox(view, size.w, size.h) : undefined}
-        tabIndex={0}
-        role="application"
-        aria-label={t('config.wf.canvas.aria')}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onKeyDown={onKeyDown}
-        onDoubleClick={onDoubleClick}
-      >
-        <defs>
-          <pattern id={gridId} width={20} height={20} patternUnits="userSpaceOnUse">
-            <circle cx={1} cy={1} r={1} className="wf-grid-dot" />
-          </pattern>
-        </defs>
-        <rect x={view.x} y={view.y} width={size.w / view.scale} height={size.h / view.scale} fill={`url(#${gridId})`} />
-
-        {shown.edges.map((edge) => {
-          const curve = edgeCurveOf(shown, edge)
-          if (!curve) return null
-          const end = curve[3]
-          const issue = targets.edges.get(edge.id)
-          const selected = selection?.kind === 'edge' && selection.id === edge.id
-          const fromType = shown.nodes.find((n) => n.id === edge.from)?.type ?? 'work'
-          const cls = `wf-edge wf-edge--${wfPortClass(fromType, edge.outcome)}${selected ? ' selected' : ''}${issue ? ` wf-issue--${issue.level}` : ''}`
-          return (
-            <g key={edge.id} className={cls}>
-              {issue && <title>{issue.messages.join('\n')}</title>}
-              <path d={curvePath(curve)} className="wf-edge-line" />
-              <polygon points={`${end.x - 9},${end.y - 5} ${end.x},${end.y} ${end.x - 9},${end.y + 5}`} className="wf-edge-arrow" />
-            </g>
-          )
-        })}
-
-        {shown.nodes.map((node) => {
-          const issue = targets.nodes.get(node.id)
-          const selected = selection?.kind === 'node' && selection.id === node.id
-          const isTarget = gesture?.kind === 'connect' && gesture.target === node.id
-          const targetOk = isTarget && canConnect(shown, gesture.from, gesture.outcome, node.id)
-          const cls = [
-            'wf-node', `wf-node--${node.type}`,
-            selected && 'selected',
-            issue && `wf-issue--${issue.level}`,
-            isTarget && (targetOk ? 'drop-ok' : 'drop-bad')
-          ].filter(Boolean).join(' ')
-          const NodeIcon = WfNodeIcon[node.type]
-          const sub = nodeSubtitle(node, t)
-          const ownPath = node.type === 'work' && node.subflow !== undefined
-          // Нода decision с множеством вариантов выше обычной: содержимое держим по центру высоты.
-          const h = nodeHeight(node)
-          const dy = (h - NODE_H) / 2
-          return (
-            <g key={node.id} className={cls} transform={`translate(${node.x} ${node.y})`}>
-              <title>{[`${nodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(ownPath ? [t('config.wf.path.nodeHint', { steps: sub })] : []), ...(issue?.messages ?? [])].join('\n')}</title>
-              <rect width={NODE_W} height={h} rx={10} className="wf-node-box" />
-              <g className="wf-node-icon" transform={`translate(10 ${(h - 20) / 2})`}><NodeIcon /></g>
-              <text x={38} y={dy + (sub ? 26 : 35)} className="wf-node-title">{clip(nodeTitle(node), 13)}</text>
-              {sub && <text x={38} y={dy + 43} className="wf-node-sub">{clip(sub, ownPath ? 17 : 19)}</text>}
-              {ownPath && (
-                <g className="wf-node-path" transform={`translate(${NODE_W - 22} 5)`}>
-                  <rect width={17} height={17} rx={5} />
-                  <g transform="translate(3.5 3.5) scale(0.5)"><Icon.subflow /></g>
-                </g>
-              )}
-              {node.type !== 'start' && <circle cx={0} cy={h / 2} r={4} className="wf-port-in" />}
-              {wfPorts(node).map((outcome) => {
-                const p = portPoint(node, outcome)
-                const x = p.x - node.x
-                const y = p.y - node.y
-                return (
-                  <g key={outcome} className={`wf-port wf-port--${wfPortClass(node.type, outcome)}`}>
-                    <circle cx={x} cy={y} r={6} />
-                    {/* Метка варианта — текст человека, может быть длинной; полная — в инспекторе. */}
-                    <text x={x + 9} y={y - 5} className="wf-port-label">{clip(wfPortLabel(node, outcome), 16)}</text>
-                  </g>
-                )
-              })}
-            </g>
-          )
-        })}
-
-        {gesture?.kind === 'connect' && connectSrc && (
-          <path
-            className={`wf-edge-draft wf-edge--${wfPortClass(connectSrc.type, gesture.outcome)}`}
-            d={curvePath(edgeCurve(
-              portPoint(connectSrc, gesture.outcome),
-              gesture.target ? inputPoint(shown.nodes.find((n) => n.id === gesture.target)!) : gesture.pointer
-            ))}
-          />
-        )}
-      </svg>
-
-      <div className="wf-toolbar">
-        {wfAddableTypes(scope).map((type) => {
-          const NodeIcon = WfNodeIcon[type]
-          return (
-            <button
-              key={type}
-              type="button"
-              className="icon-btn"
-              title={`${t('config.wf.canvas.add', { type: WF_TYPE_TITLES[type] })}. ${WF_NODE_HELP[type].summary}`}
-              aria-label={t('config.wf.canvas.add', { type: WF_TYPE_TITLES[type] })}
-              aria-description={WF_NODE_HELP[type].summary}
-              onClick={() => add(type)}
-            >
-              <NodeIcon />
-            </button>
-          )
-        })}
-        {library && (
+    <>
+      <WorkflowPalette
+        scope={scope}
+        readOnly={readOnly}
+        onAdd={add}
+        library={library}
+        onAddTemplate={addTemplate}
+        onSaveSelected={onSaveSelected}
+      />
+      <section className="wf-mid" aria-label={t('config.wf.canvas.region')}>
+        <div className="wf-canvas-head">
+          <div className="wf-canvas-where">{header}</div>
+          <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomOut')} aria-label={t('config.wf.canvas.zoomOut')} onClick={() => zoomCenter(1 / 1.2)}>−</button>
+          <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomIn')} aria-label={t('config.wf.canvas.zoomIn')} onClick={() => zoomCenter(1.2)}><Icon.plus /></button>
+          <button type="button" className="btn-sm" title={t('config.wf.canvas.fit')} onClick={() => setView(fitView(workflow, size.w, size.h))}>
+            {t('config.wf.canvas.fitShort')}
+          </button>
           <button
             type="button"
-            className={`icon-btn wf-lib-btn${libOpen ? ' active' : ''}`}
-            title={t('config.nodeTpl.paletteHint')}
-            aria-label={t('config.nodeTpl.palette')}
-            aria-expanded={libOpen}
-            onClick={() => setLibOpen((v) => !v)}
+            className="btn-sm"
+            title={t('config.wf.canvas.layout')}
+            disabled={readOnly}
+            onClick={() => {
+              const laid = autoLayout(workflow)
+              onChange(laid)
+              setView(fitView(laid, size.w, size.h))
+            }}
           >
-            <Icon.star />
+            <Icon.columns /> {t('config.wf.canvas.layoutShort')}
           </button>
-        )}
-        <span className="wf-toolbar-sep" />
-        <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomOut')} onClick={() => zoomCenter(1 / 1.2)}>−</button>
-        <button type="button" className="icon-btn" title={t('config.wf.canvas.zoomIn')} onClick={() => zoomCenter(1.2)}><Icon.plus /></button>
-        <button type="button" className="icon-btn" title={t('config.wf.canvas.fit')} onClick={() => setView(fitView(workflow, size.w, size.h))}>⤢</button>
-        <button
-          type="button"
-          className="icon-btn"
-          title={t('config.wf.canvas.layout')}
-          onClick={() => {
-            const laid = autoLayout(workflow)
-            onChange(laid)
-            setView(fitView(laid, size.w, size.h))
-          }}
-        >
-          <Icon.columns />
-        </button>
-      </div>
-
-      {library && libOpen && (
-        <div className="wf-lib" role="dialog" aria-label={t('config.nodeTpl.paletteAria')}>
-          <div className="wf-lib-head">{t('config.nodeTpl.palette')}</div>
-          {library.templates === null ? (
-            <p className="hint">{library.error ?? t('config.nodeTpl.paletteLoading')}</p>
-          ) : library.templates.length === 0 ? (
-            <p className="hint">{t('config.nodeTpl.paletteEmpty')}</p>
-          ) : (
-            <ul className="wf-lib-list">
-              {library.templates.map((tpl) => {
-                const NodeIcon = WfNodeIcon[tpl.node.type]
-                const misfit = templateMisfit(tpl, scope)
-                return (
-                  <li key={tpl.id}>
-                    <button
-                      type="button"
-                      className="wf-lib-item"
-                      disabled={misfit !== null}
-                      title={misfit !== null ? t('config.nodeTpl.misfit', { reason: misfit }) : templateHint(tpl)}
-                      aria-label={t('config.nodeTpl.insert', { title: tpl.title })}
-                      onClick={() => addTemplate(tpl)}
-                    >
-                      <span className={`wf-insp-icon wf-node--${tpl.node.type}`}><NodeIcon /></span>
-                      <span className="wf-lib-text">
-                        <b>{tpl.title}</b>
-                        <small>{templateSummary(tpl)}</small>
-                      </span>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
         </div>
-      )}
-    </div>
+        <div className="wf-canvas" ref={wrapRef}>
+          <svg
+            ref={svgRef}
+            className={`wf-svg${gesture?.kind === 'pan' ? ' panning' : ''}${gesture?.kind === 'connect' ? ' connecting' : ''}`}
+            viewBox={size.w ? viewBox(view, size.w, size.h) : undefined}
+            tabIndex={0}
+            role="application"
+            aria-label={t('config.wf.canvas.aria')}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onKeyDown={onKeyDown}
+            onDoubleClick={onDoubleClick}
+          >
+            <defs>
+              <pattern id={gridId} width={20} height={20} patternUnits="userSpaceOnUse">
+                <circle cx={1} cy={1} r={1} className="wf-grid-dot" />
+              </pattern>
+            </defs>
+            <rect x={view.x} y={view.y} width={size.w / view.scale} height={size.h / view.scale} fill={`url(#${gridId})`} />
+
+            {shown.edges.map((edge) => {
+              const curve = edgeCurveOf(shown, edge)
+              if (!curve) return null
+              const end = curve[3]
+              const issue = targets.edges.get(edge.id)
+              const selected = selection?.kind === 'edge' && selection.id === edge.id
+              const fromType = shown.nodes.find((n) => n.id === edge.from)?.type ?? 'work'
+              const cls = `wf-edge wf-edge--${wfPortClass(fromType, edge.outcome)}${selected ? ' selected' : ''}${issue ? ` wf-issue--${issue.level}` : ''}`
+              return (
+                <g key={edge.id} className={cls}>
+                  {issue && <title>{issue.messages.join('\n')}</title>}
+                  <path d={curvePath(curve)} className="wf-edge-line" />
+                  <polygon points={`${end.x - 9},${end.y - 5} ${end.x},${end.y} ${end.x - 9},${end.y + 5}`} className="wf-edge-arrow" />
+                </g>
+              )
+            })}
+
+            {shown.nodes.map((node) => {
+              const issue = targets.nodes.get(node.id)
+              const selected = selection?.kind === 'node' && selection.id === node.id
+              const isTarget = gesture?.kind === 'connect' && gesture.target === node.id
+              const targetOk = isTarget && canConnect(shown, gesture.from, gesture.outcome, node.id)
+              const cls = [
+                'wf-node', `wf-node--${node.type}`,
+                selected && 'selected',
+                issue && `wf-issue--${issue.level}`,
+                isTarget && (targetOk ? 'drop-ok' : 'drop-bad')
+              ].filter(Boolean).join(' ')
+              const NodeIcon = WfNodeIcon[node.type]
+              const sub = nodeSubtitle(node, t)
+              const ownPath = node.type === 'work' && node.subflow !== undefined
+              // Нода decision с множеством вариантов выше обычной: содержимое держим по центру высоты.
+              const h = nodeHeight(node)
+              const dy = (h - NODE_H) / 2
+              return (
+                <g key={node.id} className={cls} transform={`translate(${node.x} ${node.y})`}>
+                  <title>{[`${nodeTitle(node)} — ${WF_TYPE_TITLES[node.type]}`, ...(ownPath ? [t('config.wf.path.nodeHint', { steps: sub })] : []), ...(issue?.messages ?? [])].join('\n')}</title>
+                  <rect width={NODE_W} height={h} rx={10} className="wf-node-box" />
+                  <rect x={0} y={8} width={4} height={h - 16} rx={2} className="wf-node-strip" />
+                  <g className="wf-node-icon" transform={`translate(10 ${(h - 20) / 2})`}><NodeIcon /></g>
+                  <text x={38} y={dy + (sub ? 26 : 35)} className="wf-node-title">{clip(nodeTitle(node), 13)}</text>
+                  {sub && <text x={38} y={dy + 43} className="wf-node-sub">{clip(sub, ownPath ? 17 : 19)}</text>}
+                  {ownPath && (
+                    <g className="wf-node-path" transform={`translate(${NODE_W - 22} 5)`}>
+                      <rect width={17} height={17} rx={5} />
+                      <g transform="translate(3.5 3.5) scale(0.5)"><Icon.subflow /></g>
+                    </g>
+                  )}
+                  {node.type !== 'start' && <circle cx={0} cy={h / 2} r={4} className="wf-port-in" />}
+                  {wfPorts(node).map((outcome) => {
+                    const p = portPoint(node, outcome)
+                    const x = p.x - node.x
+                    const y = p.y - node.y
+                    return (
+                      <g key={outcome} className={`wf-port wf-port--${wfPortClass(node.type, outcome)}`}>
+                        <circle cx={x} cy={y} r={6} />
+                        {/* Метка варианта — текст человека, может быть длинной; полная — в инспекторе. */}
+                        <text x={x + 9} y={y - 5} className="wf-port-label">{clip(wfPortLabel(node, outcome), 16)}</text>
+                      </g>
+                    )
+                  })}
+                  {/* Проблема видна без наведения: значок «!» в углу и плашка с текстом под нодой, не только цвет рамки. */}
+                  {issue && (
+                    <g className={`wf-node-badge wf-node-badge--${issue.level}`} transform="translate(-8 -8)" aria-hidden>
+                      <circle cx={8} cy={8} r={8} />
+                      <text x={8} y={12} textAnchor="middle">!</text>
+                    </g>
+                  )}
+                  {issue && (() => {
+                    const text = issuePill(issue.messages, t)
+                    const w = Math.min(NODE_W + 60, text.length * 6 + 18)
+                    return (
+                      <g className={`wf-node-pill wf-node-pill--${issue.level}`} transform={`translate(${(NODE_W - w) / 2} ${h + 6})`}>
+                        <rect width={w} height={18} rx={9} />
+                        <text x={w / 2} y={12.5} textAnchor="middle">{text}</text>
+                      </g>
+                    )
+                  })()}
+                </g>
+              )
+            })}
+
+            {gesture?.kind === 'connect' && connectSrc && (
+              <path
+                className={`wf-edge-draft wf-edge--${wfPortClass(connectSrc.type, gesture.outcome)}`}
+                d={curvePath(edgeCurve(
+                  portPoint(connectSrc, gesture.outcome),
+                  gesture.target ? inputPoint(shown.nodes.find((n) => n.id === gesture.target)!) : gesture.pointer
+                ))}
+              />
+            )}
+          </svg>
+        </div>
+        {below}
+      </section>
+    </>
   )
 }
