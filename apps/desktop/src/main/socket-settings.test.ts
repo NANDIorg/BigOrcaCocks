@@ -207,6 +207,10 @@ describe('types.*', () => {
     assert.match((await call('types.rename', { type: 'nope', title: 'x' })).error ?? '', /тип задачи не найден: nope/)
   })
 
+  it('create: без --title — ошибка', async () => {
+    assert.match((await call('types.create', {})).error ?? '', /--title обязателен/)
+  })
+
   it('delete: без --yes — подтверждение с числом проектов и признаком умолчания, с --yes — удаляет', async () => {
     const created = await ok<TaskType>('types.create', { title: 'Одноразовый' })
     await ok('project.types.set', { types: `${created.id},general`, default: created.id })
@@ -247,6 +251,12 @@ describe('roles.*', () => {
     assert.match(refused.error ?? '', /нужно подтверждение.*агента роли.*«claude».*«codex».*--yes/)
     const updated = await ok<Role>('roles.update', { type: typeId, role: role.id, agent: 'codex', yes: true })
     assert.equal(updated.agent, 'codex')
+  })
+
+  it('update: без единого флага — ошибка', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    const role = await ok<Role>('roles.add', { type: typeId, title: 'Дизайнер', agent: 'claude' })
+    assert.match((await call('roles.update', { type: typeId, role: role.id })).error ?? '', /хотя бы один флаг/)
   })
 
   it('add: обязательны --title и --agent; неизвестный агент — ошибка', async () => {
@@ -421,5 +431,10 @@ describe('project.rules.get / set', () => {
     assert.match((await call('project.rules.get', { file: 'other.md' })).error ?? '', /можно править только/)
     assert.match((await call('project.rules.set', { file: 'CLAUDE.md' })).error ?? '', /нужен текст правил/)
     assert.match((await call('project.rules.set', { file: 'other.md', text: 'x' })).error ?? '', /можно править только/)
+  })
+
+  it('без --file — ошибка у get и у set', async () => {
+    assert.match((await call('project.rules.get', {})).error ?? '', /--file обязателен/)
+    assert.match((await call('project.rules.set', { text: 'x' })).error ?? '', /--file обязателен/)
   })
 })
