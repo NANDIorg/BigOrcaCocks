@@ -22,6 +22,7 @@ import type {
   TaskTypesState, NodeTemplateInput
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
+import { runImagesRoot, removeRunImagesDir } from './run-images'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -184,6 +185,7 @@ export class ProjectManager {
   private stores = new Map<string, TaskStore>()
   private listeners = new Set<(projectId: string, store: TaskStore) => void>()
   private eventListeners = new Set<(projectId: string, events: OrcaEvent[]) => void>()
+  private dataListeners = new Set<() => void>()
   private seenEvents = new Map<string, number>()
   private warnings: StateWarning[] = []
 
@@ -264,6 +266,7 @@ export class ProjectManager {
 
   private save(): void {
     writeFileAtomic(this.file, JSON.stringify(this.data, null, 2))
+    this.dataListeners.forEach((fn) => fn())
   }
 
   /** Предупреждения о файлах, которые не прочитались при загрузке (проекты и уже открытые доски). Каналов в renderer пока нет. */
@@ -536,6 +539,56 @@ export class ProjectManager {
     do id = `type_${randomBytes(4).toString('hex')}`
     while (this.taskType(id))
     return id
+  }
+
+  /** Название и/или описание типа; настройки (роли, граф, правила, разрешения) не трогает. */
+  renameTaskType(id: string, patch: { title?: string; description?: string }): TaskType {
+    const t = this.requireType(id)
+    if (patch.title === undefined && patch.description === undefined) throw new OrcaError('type.renameEmpty')
+    if (patch.title !== undefined && !nonEmpty(patch.title)) throw new OrcaError('type.emptyTitle')
+    if (patch.description !== undefined && typeof patch.description !== 'string') throw new OrcaError('type.descriptionNotString', { title: t.title })
+    return this.saveTaskType({ id: t.id, title: patch.title ?? t.title, description: patch.description ?? t.description, settings: t.settings })
+  }
+
+  /** Сколько проектов используют тип (он доступен им или у них по умолчанию) и является ли он типом библиотеки по умолчанию — для подтверждения удаления `types delete`. */
+  taskTypeUsage(id: string): { title: string; projects: number; isLibraryDefault: boolean } {
+    const t = this.requireType(id)
+    const projects = this.data.projects.filter((p) => p.defaultTaskTypeId === id || (p.taskTypeIds ? p.taskTypeIds.includes(id) : true)).length
+    return { title: t.title, projects, isLibraryDefault: this.defaultTaskTypeId() === id }
+  }
+
+  /** Режим разрешений типа с раскрытым значением по умолчанию (`auto`). */
+  permissionMode(id: string): PermissionMode {
+    return resolveTaskType(this.requireType(id)).permissionMode
+  }
+
+  /** Добавить роль в тип; агент и остальные поля проверяет `validateRoles` внутри `patchTaskType`. */
+  addRole(typeId: string, input: { title: string; agent: string; model?: string; effort?: string; description?: string }): Role {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    let id: string
+    do id = `role_${randomBytes(4).toString('hex')}`
+    while (roles.some((r) => r.id === id))
+    const saved = this.patchTaskType(typeId, { roles: [...roles, { id, ...input } as Role] })
+    return saved.settings.roles!.find((r) => r.id === id)!
+  }
+
+  /** Правка роли типа: title/agent/model/effort/description — только переданные поля (`undefined` не затирает прежнее). */
+  updateRole(typeId: string, roleId: string, patch: Partial<{ title: string; agent: string; model: string; effort: string; description: string }>): Role {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+    const saved = this.patchTaskType(typeId, { roles: roles.map((r) => (r.id === roleId ? { ...r, ...defined } : r)) })
+    return saved.settings.roles!.find((r) => r.id === roleId)!
+  }
+
+  /** Удалить роль типа; последнюю роль отвергает `validateRoles` внутри `patchTaskType`. */
+  removeRole(typeId: string, roleId: string): TaskType {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
+    return this.patchTaskType(typeId, { roles: roles.filter((r) => r.id !== roleId) })
   }
 
   /**
@@ -818,9 +871,11 @@ export class ProjectManager {
     for (const oldId of orphaned) store.reassignColumn(oldId, backlogId)
   }
 
+  /** Убирает проект из списка и его картинки глобальных задач (`userData/run-images`, не в репозитории — не в git). */
   remove(id: string): void {
     this.data.projects = this.data.projects.filter((p) => p.id !== id)
     if (this.data.activeId === id) this.data.activeId = this.data.projects[0]?.id ?? null
+    removeRunImagesDir(runImagesRoot(this.userData), id)
     this.save()
   }
 
@@ -886,6 +941,17 @@ export class ProjectManager {
   onEvents(fn: (projectId: string, events: OrcaEvent[]) => void): () => void {
     this.eventListeners.add(fn)
     return () => this.eventListeners.delete(fn)
+  }
+
+  /**
+   * Изменилось что-то в данных приложения/проектов (`projects.json`: настройки, список и группы проектов,
+   * библиотека типов задач и её роли, шаблоны нод) — независимо от того, пришла ли правка из IPC (renderer)
+   * или из сокета (CLI/ассистент): `save()` — единственная точка записи, поэтому хук здесь покрывает оба пути
+   * сразу (иначе IPC и сокет пришлось бы синхронизировать вручную в каждом методе).
+   */
+  onDataChange(fn: () => void): () => void {
+    this.dataListeners.add(fn)
+    return () => this.dataListeners.delete(fn)
   }
 }
 

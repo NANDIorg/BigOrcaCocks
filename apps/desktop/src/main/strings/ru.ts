@@ -113,6 +113,7 @@ export default {
   'type.notObject': 'тип задачи: ожидается объект',
   'type.emptyId': 'тип задачи: пустой id',
   'type.emptyTitle': 'тип задачи: пустое название',
+  'type.renameEmpty': 'укажи --title и/или --description',
   'type.descriptionNotString': 'тип «{title}»: описание должно быть строкой',
   'type.lastOne': 'тип «{title}» последний в библиотеке — его нельзя удалить: сначала создайте другой тип',
   'type.copyTitle': '{title} (копия)',
@@ -186,6 +187,9 @@ export default {
   'stats.badRange': 'статистика: неизвестный период «{range}», ожидается {expected}',
   'stats.noTask': 'статистика: задачи {id} нет в проекте',
   'stats.noGlobal': 'статистика: глобальной задачи {id} нет в проекте',
+
+  'assistantChat.unknownPty': 'ассистент с таким PTY не запущен — откройте панель заново',
+  'assistantChat.emptyText': 'пустое сообщение чата',
 
   'onboarding.invalidInput': 'мастер первого запуска: ожидается объект с полем skipped (boolean)'
 } satisfies Record<string, string | { one: string; few: string; many: string }>

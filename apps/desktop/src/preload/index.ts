@@ -12,7 +12,12 @@ const api: OrcaApi = {
     info: () => ipcRenderer.invoke('app:info'),
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
-    testNotification: () => ipcRenderer.invoke('app:testNotification')
+    testNotification: () => ipcRenderer.invoke('app:testNotification'),
+    onChanged: (cb) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('app:changed', handler)
+      return () => ipcRenderer.removeListener('app:changed', handler)
+    }
   },
   onboarding: {
     getState: () => ipcRenderer.invoke('onboarding:getState'),
@@ -128,6 +133,12 @@ const api: OrcaApi = {
   assistant: {
     open: (cols, rows) => ipcRenderer.invoke('assistant:open', cols, rows),
     reset: (cols, rows) => ipcRenderer.invoke('assistant:reset', cols, rows)
+  },
+  assistantChat: {
+    available: (ptyId) => ipcRenderer.invoke('assistantChat:available', ptyId),
+    getMessages: (ptyId) => ipcRenderer.invoke('assistantChat:getMessages', ptyId),
+    send: (ptyId, text) => ipcRenderer.invoke('assistantChat:send', ptyId, text),
+    onMessage: (ptyId, cb) => on(`assistantChat:message:${ptyId}`, cb)
   },
   docs: {
     list: () => ipcRenderer.invoke('docs:list'),

@@ -84,6 +84,14 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
   useEffect(() => {
     window.orca.app.getSettings().then(setAppSettings, (e) => setAppError(ipcErrorMessage(e)))
     window.orca.projects.list().then((r) => setProjectList(r.projects), () => undefined)
+    // Настройки/проекты/типы задач/шаблоны нод правит и CLI/ассистент, пока это окно открыто
+    // (`app:changed`, опционален — старый preload).
+    return window.orca.app.onChanged?.(() => {
+      window.orca.app.getSettings().then(setAppSettings, () => undefined)
+      void reloadProjects()
+      void types.reload()
+      void nodeTemplates.reload()
+    })
   }, [])
 
   // Esc закрывает окно.

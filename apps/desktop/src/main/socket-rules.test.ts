@@ -10,6 +10,7 @@ import path from 'node:path'
 import { DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, WORKFLOW_VERSION, type GlobalTask, type Role, type Task, type WfStageInfo } from '@orca-board/core'
 import { ProjectManager } from './projects'
 import { startSocketServer } from './socket'
+import { NOT_NEEDED_SETTINGS_DEPS, NOT_NEEDED_APP_SETTINGS_DEPS } from './socket-test-deps'
 
 const PID = 'p1'
 let tmp: string
@@ -146,9 +147,11 @@ describe('сокет: правила, роли и типы задач', () => {
         runType: (typeId) => projects.runType(PID, typeId),
         saveTaskTypeRules: (typeId, roleId, text) => projects.saveTaskTypeRules(typeId, roleId, text),
         columns: () => projects.columns(PID),
-        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(PID))
+        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(PID)),
+        ...NOT_NEEDED_SETTINGS_DEPS
       }),
-      projects: () => []
+      projects: () => [],
+      ...NOT_NEEDED_APP_SETTINGS_DEPS
     })
     await new Promise((r) => server!.once('listening', r))
   })

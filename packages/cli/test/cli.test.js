@@ -334,4 +334,143 @@ describe('orca-board CLI', () => {
     const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
     for (const cmd of ['\n  decision choose [--task <id>] --option <id|метка> --reason', '\n  decision escalate [--task <id>] --reason', 'history', 'options: id вариантов']) assert.ok(out.includes(cmd), cmd)
   })
+
+  it('settings get/set: метод settings.*, --project и ORCA_PROJECT не уходят (уровень приложения); есть в help', async () => {
+    const get = await run(['settings', 'get', '--project', 'p_x'], { ORCA_PROJECT: 'p_other' })
+    assert.equal(get.req.method, 'settings.get')
+    assert.equal(get.req.projectId, undefined)
+    assert.deepEqual(get.req.params, {})
+    const set = await run(['settings', 'set', '--language', 'ru', '--no-sound', '--quiet-hours', '23:00-08:00'], { ORCA_PROJECT: 'p_other' })
+    assert.equal(set.req.method, 'settings.set')
+    assert.equal(set.req.projectId, undefined)
+    assert.deepEqual(set.req.params, { language: 'ru', sound: false, 'quiet-hours': '23:00-08:00' })
+    // Флаги без значения (boolean) и повторяемые --notify-role/--notify-event.
+    const flags = await run(['settings', 'set', '--keep-in-background', '--notifications-enabled', '--notify-role', 'developer=on', '--notify-role', 'reviewer=off', '--notify-event', 'runDone=on'])
+    assert.deepEqual(flags.req.params, {
+      'keep-in-background': true,
+      'notifications-enabled': true,
+      'notify-role': ['developer=on', 'reviewer=off'],
+      'notify-event': ['runDone=on']
+    })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['settings get', 'settings set [--language ru|en]']) assert.ok(out.includes(cmd), cmd)
+  })
+
+  it('types create/rename/set-default/duplicate/delete: метод types.*, --project уходит; есть в help', async () => {
+    const create = await run(['types', 'create', '--project', 'p_1', '--title', 'Багфикс', '--description', 'd'])
+    assert.equal(create.req.method, 'types.create')
+    assert.equal(create.req.projectId, 'p_1')
+    assert.deepEqual(create.req.params, { title: 'Багфикс', description: 'd' })
+    assert.deepEqual((await run(['types', 'rename', '--project', 'p_1', '--type', 't_1', '--title', 'X'])).req.params, { type: 't_1', title: 'X' })
+    const setDefault = await run(['types', 'set-default', '--project', 'p_1', '--type', 't_1'])
+    assert.equal(setDefault.req.method, 'types.set-default')
+    assert.deepEqual(setDefault.req.params, { type: 't_1' })
+    assert.equal((await run(['types', 'duplicate', '--project', 'p_1', '--type', 't_1'])).req.method, 'types.duplicate')
+    const del = await run(['types', 'delete', '--project', 'p_1', '--type', 't_1', '--yes'])
+    assert.equal(del.req.method, 'types.delete')
+    assert.deepEqual(del.req.params, { type: 't_1', yes: true })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['types create --project <id>', 'types delete --project <id> --type <id> --yes']) assert.ok(out.includes(cmd), cmd)
+  })
+
+  it('roles add/update/remove: метод roles.*, --project уходит; есть в help', async () => {
+    const add = await run(['roles', 'add', '--project', 'p_1', '--type', 't_1', '--title', 'Тестировщик', '--agent', 'claude', '--model', 'sonnet'])
+    assert.equal(add.req.method, 'roles.add')
+    assert.deepEqual(add.req.params, { type: 't_1', title: 'Тестировщик', agent: 'claude', model: 'sonnet' })
+    const update = await run(['roles', 'update', '--project', 'p_1', '--type', 't_1', '--role', 'r_1', '--effort', 'high'])
+    assert.deepEqual(update.req.params, { type: 't_1', role: 'r_1', effort: 'high' })
+    const updateAgent = await run(['roles', 'update', '--project', 'p_1', '--type', 't_1', '--role', 'r_1', '--agent', 'codex', '--yes'])
+    assert.deepEqual(updateAgent.req.params, { type: 't_1', role: 'r_1', agent: 'codex', yes: true })
+    const remove = await run(['roles', 'remove', '--project', 'p_1', '--type', 't_1', '--role', 'r_1', '--yes'])
+    assert.equal(remove.req.method, 'roles.remove')
+    assert.deepEqual(remove.req.params, { type: 't_1', role: 'r_1', yes: true })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    assert.ok(out.includes('roles add --project <id> --type <id> --title'))
+  })
+
+  it('types perm get/set: метод из трёх слов types.perm.get/set; --mode уходит как есть; есть в help', async () => {
+    const get = await run(['types', 'perm', 'get', '--project', 'p_1', '--type', 't_1'])
+    assert.equal(get.req.method, 'types.perm.get')
+    assert.deepEqual(get.req.params, { type: 't_1' })
+    const set = await run(['types', 'perm', 'set', '--project', 'p_1', '--type', 't_1', '--mode', 'bypassPermissions', '--yes'])
+    assert.equal(set.req.method, 'types.perm.set')
+    assert.deepEqual(set.req.params, { type: 't_1', mode: 'bypassPermissions', yes: true })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    assert.ok(out.includes('types perm set --project <id> --type <id> --mode auto|bypassPermissions|acceptEdits'))
+  })
+
+  it('node-templates list/delete: метод node-templates.*; есть в help', async () => {
+    const list = await run(['node-templates', 'list', '--project', 'p_1'])
+    assert.equal(list.req.method, 'node-templates.list')
+    assert.deepEqual(list.req.params, {})
+    const del = await run(['node-templates', 'delete', '--project', 'p_1', '--template', 'tpl_1', '--yes'])
+    assert.equal(del.req.method, 'node-templates.delete')
+    assert.deepEqual(del.req.params, { template: 'tpl_1', yes: true })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    assert.ok(out.includes('node-templates delete --project <id> --template <id> --yes'))
+  })
+
+  it('projects set-active/remove: метод projects.*, --project уходит; есть в help', async () => {
+    const active = await run(['projects', 'set-active', '--project', 'p_1'])
+    assert.equal(active.req.method, 'projects.set-active')
+    assert.equal(active.req.projectId, 'p_1')
+    assert.deepEqual(active.req.params, {})
+    const remove = await run(['projects', 'remove', '--project', 'p_1', '--yes'])
+    assert.equal(remove.req.method, 'projects.remove')
+    assert.deepEqual(remove.req.params, { yes: true })
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of ['projects set-active --project <id>', 'projects remove --project <id> --yes']) assert.ok(out.includes(cmd), cmd)
+  })
+
+  it('project agents/columns/types/rules: метод project.*, флаги CLI-специфичны; есть в help', async () => {
+    const agents = await run(['project', 'agents', 'set', '--project', 'p_1', '--enable', 'claude', '--enable', 'codex', '--disable', 'gemini'])
+    assert.equal(agents.req.method, 'project.agents.set')
+    assert.deepEqual(agents.req.params, { enable: ['claude', 'codex'], disable: ['gemini'] })
+
+    const columnsFile = join(dir, 'columns.json')
+    writeFileSync(columnsFile, JSON.stringify([{ id: 'backlog', title: 'Бэклог' }]))
+    const columns = await run(['project', 'columns', 'set', '--project', 'p_1', '--file', columnsFile])
+    assert.equal(columns.req.method, 'project.columns.set')
+    assert.deepEqual(columns.req.params, { columns: [{ id: 'backlog', title: 'Бэклог' }] })
+    assert.equal('file' in columns.req.params, false)
+    const missingFile = await run(['project', 'columns', 'set', '--project', 'p_1', '--file', join(dir, 'nope.json')])
+    assert.equal(missingFile.req, null)
+    assert.equal(missingFile.code, 1)
+    const badJsonFile = join(dir, 'bad.json')
+    writeFileSync(badJsonFile, '{не json')
+    const badJson = await run(['project', 'columns', 'set', '--project', 'p_1', '--file', badJsonFile])
+    assert.equal(badJson.req, null)
+    assert.equal(badJson.code, 1)
+    const noFile = await run(['project', 'columns', 'set', '--project', 'p_1'])
+    assert.equal(noFile.req, null)
+    assert.equal(noFile.code, 1)
+
+    const types = await run(['project', 'types', 'set', '--project', 'p_1', '--types', 't_1,t_2', '--default', 't_1'])
+    assert.equal(types.req.method, 'project.types.set')
+    assert.deepEqual(types.req.params, { types: 't_1,t_2', default: 't_1' })
+
+    const rulesGet = await run(['project', 'rules', 'get', '--project', 'p_1', '--file', 'CLAUDE.md'])
+    assert.equal(rulesGet.req.method, 'project.rules.get')
+    assert.deepEqual(rulesGet.req.params, { file: 'CLAUDE.md' })
+    const rulesSetInline = await run(['project', 'rules', 'set', '--project', 'p_1', '--file', 'AGENTS.md', '--text', 'правило'])
+    assert.equal(rulesSetInline.req.method, 'project.rules.set')
+    assert.deepEqual(rulesSetInline.req.params, { file: 'AGENTS.md', text: 'правило' })
+    const rulesFile = join(dir, 'rules.md')
+    writeFileSync(rulesFile, 'из файла')
+    const rulesSetFromFile = await run(['project', 'rules', 'set', '--project', 'p_1', '--file', 'CLAUDE.md', '--rules-file', rulesFile])
+    assert.deepEqual(rulesSetFromFile.req.params, { file: 'CLAUDE.md', text: 'из файла' })
+    assert.equal('rules-file' in rulesSetFromFile.req.params, false)
+    const rulesSetNoText = await run(['project', 'rules', 'set', '--project', 'p_1', '--file', 'CLAUDE.md'])
+    assert.equal(rulesSetNoText.req, null)
+    assert.equal(rulesSetNoText.code, 1)
+
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const cmd of [
+      'project agents set --project <id>',
+      'project columns set --project <id> --file columns.json',
+      'project types set --project <id>',
+      'project rules get --project <id> --file CLAUDE.md|AGENTS.md',
+      'project rules set --project <id> --file CLAUDE.md|AGENTS.md --text "..." | --rules-file rules.md'
+    ]) assert.ok(out.includes(cmd), cmd)
+  })
 })
