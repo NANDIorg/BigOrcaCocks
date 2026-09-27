@@ -18,6 +18,7 @@ export const Icon = {
   search: (): React.JSX.Element => <svg {...base}><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>,
   plus: (): React.JSX.Element => <svg {...base}><path d="M12 5v14M5 12h14" /></svg>,
   terminal: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9l3 3-3 3M12 15h5" /></svg>,
+  chat: (): React.JSX.Element => <svg {...base}><path d="M4 5h16v11H10l-4 4v-4H4z" /><path d="M8 9h8M8 12.5h5" /></svg>,
   trash: (): React.JSX.Element => <svg {...base}><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg>,
   edit: (): React.JSX.Element => <svg {...base}><path d="M4 20h4l10-10-4-4L4 16v4z" /><path d="M13 7l4 4" /></svg>,
   play: (): React.JSX.Element => <svg {...base} width={14} height={14} fill="currentColor" stroke="none"><path d="M7 5v14l12-7z" /></svg>,
