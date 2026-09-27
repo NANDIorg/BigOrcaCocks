@@ -538,6 +538,56 @@ export class ProjectManager {
     return id
   }
 
+  /** Название и/или описание типа; настройки (роли, граф, правила, разрешения) не трогает. */
+  renameTaskType(id: string, patch: { title?: string; description?: string }): TaskType {
+    const t = this.requireType(id)
+    if (patch.title === undefined && patch.description === undefined) throw new OrcaError('type.renameEmpty')
+    if (patch.title !== undefined && !nonEmpty(patch.title)) throw new OrcaError('type.emptyTitle')
+    if (patch.description !== undefined && typeof patch.description !== 'string') throw new OrcaError('type.descriptionNotString', { title: t.title })
+    return this.saveTaskType({ id: t.id, title: patch.title ?? t.title, description: patch.description ?? t.description, settings: t.settings })
+  }
+
+  /** Сколько проектов используют тип (он доступен им или у них по умолчанию) и является ли он типом библиотеки по умолчанию — для подтверждения удаления `types delete`. */
+  taskTypeUsage(id: string): { title: string; projects: number; isLibraryDefault: boolean } {
+    const t = this.requireType(id)
+    const projects = this.data.projects.filter((p) => p.defaultTaskTypeId === id || (p.taskTypeIds ? p.taskTypeIds.includes(id) : true)).length
+    return { title: t.title, projects, isLibraryDefault: this.defaultTaskTypeId() === id }
+  }
+
+  /** Режим разрешений типа с раскрытым значением по умолчанию (`auto`). */
+  permissionMode(id: string): PermissionMode {
+    return resolveTaskType(this.requireType(id)).permissionMode
+  }
+
+  /** Добавить роль в тип; агент и остальные поля проверяет `validateRoles` внутри `patchTaskType`. */
+  addRole(typeId: string, input: { title: string; agent: string; model?: string; effort?: string; description?: string }): Role {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    let id: string
+    do id = `role_${randomBytes(4).toString('hex')}`
+    while (roles.some((r) => r.id === id))
+    const saved = this.patchTaskType(typeId, { roles: [...roles, { id, ...input } as Role] })
+    return saved.settings.roles!.find((r) => r.id === id)!
+  }
+
+  /** Правка роли типа: title/agent/model/effort/description — только переданные поля (`undefined` не затирает прежнее). */
+  updateRole(typeId: string, roleId: string, patch: Partial<{ title: string; agent: string; model: string; effort: string; description: string }>): Role {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+    const saved = this.patchTaskType(typeId, { roles: roles.map((r) => (r.id === roleId ? { ...r, ...defined } : r)) })
+    return saved.settings.roles!.find((r) => r.id === roleId)!
+  }
+
+  /** Удалить роль типа; последнюю роль отвергает `validateRoles` внутри `patchTaskType`. */
+  removeRole(typeId: string, roleId: string): TaskType {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
+    return this.patchTaskType(typeId, { roles: roles.filter((r) => r.id !== roleId) })
+  }
+
   /**
    * Правила агентов типа (`roleId` нет) или системный промпт его роли — `rules set`.
    */

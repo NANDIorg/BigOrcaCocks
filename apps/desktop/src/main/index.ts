@@ -16,7 +16,7 @@ import {
   type RunWorkflowDeps
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
-import { listRules, writeRule } from './rules'
+import { listRules, readRule, writeRule } from './rules'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
@@ -991,7 +991,36 @@ app.whenReady().then(() => {
         runType: (typeId) => projects.runType(p.id, typeId),
         saveTaskTypeRules: (typeId, roleId, text) => projects.saveTaskTypeRules(typeId, roleId, text),
         columns: () => projects.columns(p.id),
-        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(p.id))
+        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(p.id)),
+        // Настройки: библиотека типов задач, роли, шаблоны нод — общая для всех проектов, `p` только определяет,
+        // через какой проект команда пришла (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»).
+        typesCreate: (input) => projects.saveTaskType({ ...input, settings: {} }),
+        typesRename: (id, patch) => projects.renameTaskType(id, patch),
+        typesSetDefault: (id) => projects.setDefaultTaskType(id),
+        typesDuplicate: (id) => projects.duplicateTaskType(id),
+        typesUsage: (id) => projects.taskTypeUsage(id),
+        typesDelete: (id) => projects.deleteTaskType(id),
+        rolesAdd: (typeId, input) => projects.addRole(typeId, input),
+        rolesUpdate: (typeId, roleId, patch) => projects.updateRole(typeId, roleId, patch),
+        rolesRemove: (typeId, roleId) => projects.removeRole(typeId, roleId),
+        permissionMode: (typeId) => projects.permissionMode(typeId),
+        setPermissionMode: (typeId, mode) => {
+          projects.patchTaskType(typeId, { permissionMode: mode })
+          return projects.permissionMode(typeId)
+        },
+        nodeTemplates: () => projects.nodeTemplates(),
+        deleteNodeTemplate: (id) => projects.deleteNodeTemplate(id),
+        setActive: () => projects.setActive(p.id),
+        removeProject: () => {
+          projects.remove(p.id)
+          return { removed: p.id }
+        },
+        // Сокет уже сверил id с реестром агентов (project.agents.set в socket.ts) — здесь как есть.
+        setEnabledAgents: (ids) => projects.setEnabledAgents(p.id, ids as AgentKind[]),
+        setColumns: (columns) => projects.setColumns(p.id, columns),
+        setProjectTaskTypes: (input) => projects.setProjectTaskTypes(p.id, input),
+        projectRulesGet: (file) => readRule(p.root, file),
+        projectRulesSet: (file, text) => writeRule(p.root, file, text)
       }
     },
     projects: () => {
@@ -1009,6 +1038,16 @@ app.whenReady().then(() => {
           defaultTypeTitle: type.title
         }
       })
+    },
+    settings: () => projects.settings(),
+    // Как `app:setSettings` в registerIpc: язык, трей и апдейтер должны узнать о правке независимо от того,
+    // пришла ли она из renderer или от ассистента через `settings set`.
+    setSettings: (patch) => {
+      const settings = projects.setSettings(patch)
+      setMainLocale(settings.language)
+      refreshTray()
+      updater.settingsChanged()
+      return settings
     }
   })
   watchStuck()
