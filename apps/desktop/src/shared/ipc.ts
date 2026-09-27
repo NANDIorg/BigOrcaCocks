@@ -849,3 +849,49 @@ export interface OrcaApi {
     ping(): Promise<true>
   }
 }
+
+// ---------- Чат-режим ассистента (контракт, docs/assistant-chat.md) ----------
+//
+// Типы ниже описывают модель сообщений для будущего канала `assistantChat` (панель ассистента как чат
+// поверх того же PTY, `docs/assistant-chat.md` → «3. Контракт чат-режима»). В `OrcaApi` канал пока не
+// добавлен: у preload/main нет реализации, и добавление методов в `OrcaApi` требует их реализовать там же
+// (иначе `pnpm typecheck` не проходит). Эти типы — только данные, ничего не реализующие, чтобы задача
+// реализации могла сразу на них положить `assistantChat: {...}` в `OrcaApi`.
+
+/** Кто написал сообщение чата ассистента. */
+export type AssistantChatRole = 'human' | 'agent' | 'tool'
+
+/** «Думает» — агент начал отвечать, но последняя запись ещё не финальный текст (см. «докрутить» в UI). */
+export type AssistantChatStatus = 'thinking' | 'done' | 'error'
+
+/** Tool-вызов агента, свёрнутый в одну строку чата (агент вызывает `orca-board` через Bash). */
+export interface AssistantChatToolCall {
+  /** Имя инструмента (`Bash` и т.п.). */
+  name: string
+  /** Краткое представление аргументов для свёрнутой строки — не весь JSON вызова. */
+  input: string
+  status: 'running' | 'ok' | 'error'
+}
+
+/** Одно сообщение чата ассистента — разобранная запись транскрипта агента или вывод PTY (фолбэк). */
+export interface AssistantChatMessage {
+  /** Стабильный id (id записи транскрипта/строки) — не пересчитывается между чтениями. */
+  id: string
+  role: AssistantChatRole
+  /** Текст сообщения; для `role: 'tool'` — краткий текст результата. */
+  text: string
+  /** Tool-вызовы этого сообщения, всегда свёрнутые. */
+  toolCalls?: AssistantChatToolCall[]
+  /** Мс, из транскрипта. */
+  at: number
+}
+
+/** Снимок чата PTY ассистента: `assistantChat.getMessages` (план). */
+export interface AssistantChatSnapshot {
+  ptyId: string
+  messages: AssistantChatMessage[]
+  status: AssistantChatStatus
+}
+
+/** Событие подписки `assistantChat.onMessage` (план): новое/изменённое сообщение или смена статуса. */
+export type AssistantChatUpdate = { ptyId: string; message: AssistantChatMessage } | { ptyId: string; status: AssistantChatStatus }
