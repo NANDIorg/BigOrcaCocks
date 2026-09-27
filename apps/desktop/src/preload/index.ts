@@ -12,7 +12,12 @@ const api: OrcaApi = {
     info: () => ipcRenderer.invoke('app:info'),
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
-    testNotification: () => ipcRenderer.invoke('app:testNotification')
+    testNotification: () => ipcRenderer.invoke('app:testNotification'),
+    onChanged: (cb) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('app:changed', handler)
+      return () => ipcRenderer.removeListener('app:changed', handler)
+    }
   },
   onboarding: {
     getState: () => ipcRenderer.invoke('onboarding:getState'),

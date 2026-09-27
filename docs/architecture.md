@@ -1280,8 +1280,12 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `OrcaError[<ключ>]: <текст>` (renderer: `ipcErrorMessage` / `ipcErrorCode`, см. «Язык интерфейса» → «main»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
-  `updates:changed` (полный `UpdateState`), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
-- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`;
+  `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
+  группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
+  поэтому событие приходит одинаково и от IPC, и от правки через сокет CLI/ассистентом, см. «Ассистент» → «Настройки»),
+  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`.
+  `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
+- В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
@@ -1336,7 +1340,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 какой проект агент обратился к сокету. `settings.*` — уровень приложения (таблица выше). Подтверждение
 опасных операций — отдельный флаг `--yes`/параметр `yes: true`, не заданный по умолчанию: без него сокет
 отвечает ошибкой с описанием последствий (аналог человеческого «да» из `skills/assistant.md`), а не выполняет
-операцию молча. Реализация — `ProjectDeps` в `src/main/socket.ts` (поля `typesCreate`/`typesRename`/…), деп-методы
+операцию молча. Открытое окно узнаёт о правке из CLI/ассистента так же, как о своей: любая из команд ниже
+проходит через `ProjectManager.save()`, который шлёт `app:changed` (см. «IPC»), и renderer перечитывает
+проекты/типы/настройки тем же путём, что после своих IPC-вызовов. Реализация — `ProjectDeps` в `src/main/socket.ts` (поля `typesCreate`/`typesRename`/…), деп-методы
 из `ProjectManager` (`src/main/projects.ts`: `renameTaskType`, `taskTypeUsage`, `addRole`/`updateRole`/`removeRole`,
 `permissionMode`) и `readRule`/`writeRule` (`src/main/rules.ts`) для `project.rules.*`.
 

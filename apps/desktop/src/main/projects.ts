@@ -22,6 +22,7 @@ import type {
   TaskTypesState, NodeTemplateInput
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
+import { runImagesRoot, removeRunImagesDir } from './run-images'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -184,6 +185,7 @@ export class ProjectManager {
   private stores = new Map<string, TaskStore>()
   private listeners = new Set<(projectId: string, store: TaskStore) => void>()
   private eventListeners = new Set<(projectId: string, events: OrcaEvent[]) => void>()
+  private dataListeners = new Set<() => void>()
   private seenEvents = new Map<string, number>()
   private warnings: StateWarning[] = []
 
@@ -264,6 +266,7 @@ export class ProjectManager {
 
   private save(): void {
     writeFileAtomic(this.file, JSON.stringify(this.data, null, 2))
+    this.dataListeners.forEach((fn) => fn())
   }
 
   /** Предупреждения о файлах, которые не прочитались при загрузке (проекты и уже открытые доски). Каналов в renderer пока нет. */
@@ -868,9 +871,11 @@ export class ProjectManager {
     for (const oldId of orphaned) store.reassignColumn(oldId, backlogId)
   }
 
+  /** Убирает проект из списка и его картинки глобальных задач (`userData/run-images`, не в репозитории — не в git). */
   remove(id: string): void {
     this.data.projects = this.data.projects.filter((p) => p.id !== id)
     if (this.data.activeId === id) this.data.activeId = this.data.projects[0]?.id ?? null
+    removeRunImagesDir(runImagesRoot(this.userData), id)
     this.save()
   }
 
@@ -936,6 +941,17 @@ export class ProjectManager {
   onEvents(fn: (projectId: string, events: OrcaEvent[]) => void): () => void {
     this.eventListeners.add(fn)
     return () => this.eventListeners.delete(fn)
+  }
+
+  /**
+   * Изменилось что-то в данных приложения/проектов (`projects.json`: настройки, список и группы проектов,
+   * библиотека типов задач и её роли, шаблоны нод) — независимо от того, пришла ли правка из IPC (renderer)
+   * или из сокета (CLI/ассистент): `save()` — единственная точка записи, поэтому хук здесь покрывает оба пути
+   * сразу (иначе IPC и сокет пришлось бы синхронизировать вручную в каждом методе).
+   */
+  onDataChange(fn: () => void): () => void {
+    this.dataListeners.add(fn)
+    return () => this.dataListeners.delete(fn)
   }
 }
 

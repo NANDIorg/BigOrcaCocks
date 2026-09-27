@@ -482,6 +482,14 @@ export interface OrcaApi {
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
+    /**
+     * Что-то в общих данных приложения изменилось: настройки, список/группы проектов, библиотека типов задач
+     * и её роли, шаблоны нод — независимо от источника (это же окно через IPC, или CLI/ассистент через сокет).
+     * Без payload — по получении перечитать своё (`projects.list`, `taskTypes.list`, `nodeTemplates.list`,
+     * `app.getSettings`), как после собственного действия. Опциональный: нет у старого preload — renderer просто
+     * не подписывается, правки из сокета отразятся после перезапуска (как раньше).
+     */
+    onChanged?(cb: () => void): () => void
   }
   /**
    * Мастер первого запуска (docs/architecture.md → «IPC»). Renderer читает `getState()` при старте и показывает

@@ -24,7 +24,7 @@ import { SettingsModal } from './settings/SettingsModal'
 import { UpdateBanner, UpdateToast } from './UpdateBanner'
 import { needsAttention } from './updateState'
 import { useUpdates } from './useUpdates'
-import { useT } from './i18n'
+import { setLocale, settingsLocale, useT } from './i18n'
 import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
@@ -286,6 +286,13 @@ export function App(): React.JSX.Element {
     })
     window.orca.app.info().then((i) => setSocketPath(i.socketPath))
     void refreshProjects()
+    // Настройки/проекты/типы/роли/шаблоны нод меняются и из CLI/ассистента через сокет (не только из этого
+    // окна) — перечитываем то же, что после своих IPC-правок, плюс язык (у него нет своего IPC-сеттера здесь).
+    // Опционален: старый preload без onChanged — правки из сокета видны после перезапуска, как раньше.
+    const offAppChanged = window.orca.app.onChanged?.(() => {
+      void refreshProjects()
+      window.orca.app.getSettings().then((s) => setLocale(settingsLocale(s)), () => undefined)
+    })
     const offBoard = window.orca.board.onChange(({ projectId, snapshot }) => {
       setActive((cur) => {
         if (cur?.id === projectId) setSnap(snapshot)
@@ -330,6 +337,7 @@ export function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => {
+      offAppChanged?.()
       offBoard()
       offTerminals()
       offFocus()

@@ -720,11 +720,8 @@ function registerIpc(): void {
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  handle('projects:remove', (_e, id: string) => {
-    projects.remove(id)
-    // Картинки глобальных задач проекта лежат в userData, а не в репозитории — их удаляем вместе с проектом.
-    removeRunImagesDir(runImagesRoot(app.getPath('userData')), id)
-  })
+  // Картинки глобальных задач проекта (userData/run-images) удаляет сам ProjectManager.remove — общий путь с сокетом.
+  handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
@@ -935,6 +932,11 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
+  // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
+  // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
+  projects.onDataChange(() => {
+    if (win && !win.isDestroyed()) win.webContents.send('app:changed')
+  })
   const { support, backend } = createPlatformUpdater({
     version: app.getVersion(),
     isPackaged: app.isPackaged,
