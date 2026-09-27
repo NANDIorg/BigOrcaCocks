@@ -1308,6 +1308,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .inbox.assistant { width: 480px; }
 .assistant-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .assistant-body { flex: 1; min-height: 0; position: relative; background: var(--term-bg); padding: 8px 6px 8px 10px; }
+.assistant-body .terms { position: absolute; inset: 0; }
+.assistant-body .terms.hidden { display: none; }
 .assistant-body .term { height: 100%; }
 .assistant-body .term.hidden { display: none; }
 .assistant-body .term > div { height: 100%; }
@@ -1315,6 +1317,46 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 @media (max-width: 600px) {
   .inbox.assistant { width: 100vw; max-width: 100vw; border-left: none; }
 }
+
+/* Переключатель «Чат / Терминал» в шапке панели ассистента. */
+.assistant-modebar { display: flex; align-items: center; gap: 2px; margin-right: 2px; }
+.assistant-modebar .icon-btn[aria-pressed="true"] { color: var(--accent); background: var(--chip); }
+.assistant-modebar .icon-btn:disabled { opacity: .35; cursor: default; }
+
+/* Чат-режим панели ассистента (docs/assistant-chat.md): лента поверх того же PTY, что и терминал. */
+.assistant-chat { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; background: var(--page); }
+.chat-feed { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.chat-empty { margin: auto; text-align: center; max-width: 80%; }
+.chat-group { display: flex; flex-direction: column; gap: 4px; max-width: 88%; }
+.chat-group.chat-human { align-self: flex-end; align-items: flex-end; }
+.chat-group.chat-assistant { align-self: flex-start; align-items: flex-start; }
+.chat-speaker { font-size: 11px; color: var(--muted); padding: 0 3px; }
+.chat-msg { display: flex; flex-direction: column; gap: 6px; max-width: 100%; overflow-wrap: anywhere; }
+.chat-msg-human { padding: 8px 12px; border-radius: 14px 14px 4px 14px; background: color-mix(in srgb, var(--accent) 24%, var(--card)); white-space: pre-wrap; font-size: 13px; }
+.chat-msg-agent, .chat-msg-tool { padding: 8px 12px; border-radius: 14px 14px 14px 4px; background: var(--card); }
+.chat-msg .markdown { font-size: 13px; }
+.chat-msg .markdown > :first-child { margin-top: 0; }
+.chat-msg .markdown > :last-child { margin-bottom: 0; }
+.chat-tool {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; background: var(--frame);
+  font-size: 12px; color: var(--muted);
+}
+.chat-tool + .chat-tool { margin-top: -2px; }
+.chat-tool-status { flex-shrink: 0; display: grid; place-items: center; width: 14px; height: 14px; }
+.chat-tool-status svg { width: 14px; height: 14px; }
+.chat-tool-name { flex-shrink: 0; font-weight: 600; color: var(--text); }
+.chat-tool-input { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; }
+.chat-tool-label { flex-shrink: 0; }
+.chat-tool-error .chat-tool-status { color: var(--danger); }
+.chat-image { font-size: 12px; }
+.chat-thinking { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 0 3px; }
+.chat-hint {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--line);
+  background: rgba(232,176,74,.08); font-size: 12px;
+}
+.chat-error { padding: 6px 14px 0; }
+.chat-compose { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--side); }
+.chat-compose textarea { flex: 1; min-height: 36px; max-height: 160px; padding: 8px 10px; font-size: 13px; resize: vertical; }
 
 .rq-kbd {
   display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px;
