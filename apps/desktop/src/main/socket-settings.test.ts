@@ -207,6 +207,10 @@ describe('types.*', () => {
     assert.match((await call('types.rename', { type: 'nope', title: 'x' })).error ?? '', /тип задачи не найден: nope/)
   })
 
+  it('create: без --title — ошибка', async () => {
+    assert.match((await call('types.create', {})).error ?? '', /--title обязателен/)
+  })
+
   it('delete: без --yes — подтверждение с числом проектов и признаком умолчания, с --yes — удаляет', async () => {
     const created = await ok<TaskType>('types.create', { title: 'Одноразовый' })
     await ok('project.types.set', { types: `${created.id},general`, default: created.id })
@@ -249,6 +253,12 @@ describe('roles.*', () => {
     assert.equal(updated.agent, 'codex')
   })
 
+  it('update: без единого флага — ошибка', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    const role = await ok<Role>('roles.add', { type: typeId, title: 'Дизайнер', agent: 'claude' })
+    assert.match((await call('roles.update', { type: typeId, role: role.id })).error ?? '', /хотя бы один флаг/)
+  })
+
   it('add: обязательны --title и --agent; неизвестный агент — ошибка', async () => {
     const typeId = projects.projectDefaultTypeId(PID)
     assert.match((await call('roles.add', { type: typeId, agent: 'claude' })).error ?? '', /--title обязателен/)
@@ -263,6 +273,15 @@ describe('roles.*', () => {
     const refused = await call('roles.remove', { type: typeId, role: 'developer' })
     assert.equal(refused.ok, false)
     assert.match(refused.error ?? '', /нужно подтверждение.*роли «developer».*на ней 1 задач.*--yes/)
+  })
+
+  it('remove: без --yes отказ называет и этапы воркфлоу, где занята роль (не только задачи)', async () => {
+    // Тип проекта по умолчанию: дефолтный граф (defaultWorkflow) ставит гейт «Ревью» на роль reviewer,
+    // раз она есть в DEFAULT_ROLES — nodesUsingRole должен её найти без единой созданной задачи.
+    const typeId = projects.projectDefaultTypeId(PID)
+    const refused = await call('roles.remove', { type: typeId, role: 'reviewer' })
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /нужно подтверждение.*роли «reviewer».*этапы воркфлоу: Ревью.*--yes/)
   })
 
   it('remove: последнюю роль типа не убрать', async () => {
@@ -327,6 +346,19 @@ describe('projects.set-active / remove', () => {
     const removed = await ok<{ removed: string }>('projects.remove', { yes: true })
     assert.equal(removed.removed, PID)
     assert.equal(projects.get(PID), undefined)
+  })
+
+  it('remove без --yes отказывает и из-за живого координатора (не только воркеров)', async () => {
+    const store = projects.store(PID)
+    const run = store.createRun('Цель')
+    const pty = spawnPty({ meta: { role: 'coordinator', label: 'c', runId: run.id }, command: process.execPath, args: ['-e', 'setTimeout(() => {}, 30000)'], cols: 80, rows: 24 })
+    store.setRunPty(run.id, pty)
+    try {
+      const refused = await call('projects.remove', {})
+      assert.match(refused.error ?? '', /нужно подтверждение.*живых координатор.*--yes/)
+    } finally {
+      killPty(pty)
+    }
   })
 })
 
@@ -398,5 +430,11 @@ describe('project.rules.get / set', () => {
   it('неизвестное имя файла и отсутствие текста — ошибка', async () => {
     assert.match((await call('project.rules.get', { file: 'other.md' })).error ?? '', /можно править только/)
     assert.match((await call('project.rules.set', { file: 'CLAUDE.md' })).error ?? '', /нужен текст правил/)
+    assert.match((await call('project.rules.set', { file: 'other.md', text: 'x' })).error ?? '', /можно править только/)
+  })
+
+  it('без --file — ошибка у get и у set', async () => {
+    assert.match((await call('project.rules.get', {})).error ?? '', /--file обязателен/)
+    assert.match((await call('project.rules.set', { text: 'x' })).error ?? '', /--file обязателен/)
   })
 })
