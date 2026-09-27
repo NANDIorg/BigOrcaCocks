@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Редактор воркфлоу — B: холст во всю ширину</title>
+<!--
+  Вариант B «Холст во всю ширину». Палитра — панель инструментов над холстом: кнопки с подписями по группам
+  (Агенты / Человек / Приложение / Конец) и меню «Свои ноды» в той же панели. Легенда — полоса внизу холста,
+  видна всегда. Проблемы — баннер над холстом с переходом «‹ 1 из 2 ›» и выноски над нодами. У нод «Работа»
+  путь подзадачи виден прямо на холсте полосой под нодой. Инспектор — выезжающая справа колонка
+  с аккордеоном карточек: свёрнутая карточка показывает сводку, карточка с ошибкой раскрыта и в красной рамке.
+  Экран — секции: шапка с сохранением, холст, «Ещё» (файл графа).
+  Статичный макет: кликабельны ноды, карточки инспектора, меню «Свои ноды», баннер проблем и переключатели сверху.
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --chip-text: #c9ccd6;
+  --line: rgba(255,255,255,.06); --text: #ecedf1; --muted: #9ea1ad;
+  --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b;
+  --wf-accept: #8fd16a; --wf-reject: var(--danger);
+  --grid-dot: rgba(255,255,255,.07);
+  --radius: 14px;
+  color-scheme: dark;
+}
+/* Светлой темы в styles.css пока нет — токены те же, что в прошлых макетах (docs/design/local-board). */
+:root[data-theme="light"] {
+  --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+  --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+  --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+  --accent: #5a63c8; --accent-2: #4850b0;
+  --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+  --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c;
+  --wf-accept: #3f8a1f; --grid-dot: rgba(0,0,0,.09);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+    --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+    --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+    --accent: #5a63c8; --accent-2: #4850b0;
+    --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+    --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c;
+    --wf-accept: #3f8a1f; --grid-dot: rgba(0,0,0,.09);
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.muted { color: var(--muted); }
+.grow { flex: 1; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---------- панель макета (не часть дизайна) ---------- */
+.mock-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mock-bar b { font-size: 14px; }
+.mock-bar label { color: var(--muted); }
+.seg-group { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.seg-group button { background: transparent; border: 0; padding: 4px 12px; color: var(--muted); white-space: nowrap; }
+.seg-group button + button { border-left: 1px solid var(--chip); }
+.seg-group button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.mock-note { padding: 10px 16px 0; font-size: 12.5px; color: var(--muted); max-width: 1280px; margin: 0 auto; }
+.mock-note b { color: var(--text); }
+.stage { padding: 16px; overflow-x: auto; }
+.win { margin: 0 auto; width: 1280px; min-height: 780px; display: grid; grid-template-columns: 64px minmax(0,1fr); background: var(--frame); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.25); transition: width .2s; }
+.win.narrow { width: 860px; }
+@media (max-width: 700px) { .win, .win.narrow { width: auto; min-width: 0; } .stage { padding: 8px; } }
+.rail { border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 0; }
+.rail i { width: 36px; height: 36px; border-radius: 10px; background: var(--side-2); display: block; opacity: .6; }
+.rail i.on { background: var(--accent); opacity: 1; }
+.app { display: flex; flex-direction: column; min-width: 0; }
+
+/* ---------- кнопки и чипы (как .btn-sm / .g-chip в styles.css) ---------- */
+.btn-sm { height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--chip); background: transparent; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-sm:hover { border-color: var(--muted); }
+.btn-sm.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-sm.ok { border-color: color-mix(in srgb, var(--wf-accept) 55%, transparent); color: var(--wf-accept); }
+.btn-sm.bad { border-color: color-mix(in srgb, var(--wf-reject) 55%, transparent); color: var(--wf-reject); }
+.btn-sm:disabled { opacity: .5; cursor: default; }
+.btn-text { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12.5px; }
+.g-chip { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; line-height: 20px; background: var(--side-2); color: var(--chip-text); white-space: nowrap; border: 0; }
+.g-chip.type { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.g-chip.stage { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 14%, transparent); }
+.g-chip.stage.gate { color: var(--col-review); background: color-mix(in srgb, var(--col-review) 14%, transparent); }
+.g-chip.stage.human { color: var(--col-input); background: color-mix(in srgb, var(--col-input) 14%, transparent); }
+.g-chip.stage.done { color: var(--col-done); background: color-mix(in srgb, var(--col-done) 14%, transparent); }
+.g-chip.link { cursor: pointer; }
+.g-chip.link:hover { filter: brightness(1.15); text-decoration: underline; }
+.g-chip.branch { font-family: ui-monospace, Menlo, monospace; }
+.g-chip.coord { color: var(--wf-accept); background: color-mix(in srgb, var(--wf-accept) 12%, transparent); }
+.g-chip.coord::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11.5px; background: var(--side-2); color: var(--chip-text); }
+.chip.ok { color: var(--wf-accept); background: color-mix(in srgb, var(--wf-accept) 12%, transparent); }
+.chip.warn { color: var(--col-input); background: color-mix(in srgb, var(--col-input) 14%, transparent); }
+.chip.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.chip.sys { color: var(--muted); }
+
+/* ---------- шапка экрана глобальной задачи (gt-head / gt-tabs) ---------- */
+.gt-head { padding: 14px 32px 0; display: flex; flex-direction: column; gap: 8px; }
+.gt-row1 { display: flex; align-items: center; gap: 10px; }
+.gt-row1 h1 { margin: 0; font-size: 20px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gt-row3 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.gt-tabs { display: flex; gap: 4px; margin-top: 10px; padding: 0 32px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.gt-tab { background: none; border: 0; padding: 8px 10px 9px; color: var(--muted); font-size: 13px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.gt-tab:hover { color: var(--text); }
+.gt-tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.gt-tab-n { font-size: 11.5px; color: var(--muted); background: var(--side-2); border-radius: 999px; padding: 0 6px; }
+.gt-tab .new { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 0 4px; }
+.gt-panel { padding: 18px 32px 28px; min-width: 0; }
+.win.narrow .gt-head, .win.narrow .gt-panel { padding-left: 16px; padding-right: 16px; }
+.win.narrow .gt-tabs { padding: 0 16px; }
+.gt-box { background: var(--side); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.gt-box h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.gt-box h3 .grow + * { font-weight: 400; }
+
+/* ---------- лента «История» (gt-hist-*) ---------- */
+.gt-hist-day-title { margin: 0; padding: 8px 0 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.gt-hist-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.gt-hist-row { display: grid; grid-template-columns: 48px 10px minmax(0, 1fr); gap: 4px 10px; padding: 5px 0; align-items: start; }
+.gt-hist-at { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; padding-top: 1px; white-space: nowrap; }
+.gt-hist-pt { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--c, var(--muted)); }
+.gt-hist-what { min-width: 0; overflow-wrap: anywhere; }
+.gt-hist-what b { font-weight: 600; }
+.gt-hist-sub { font-size: 12px; }
+.gt-hist-quote { margin-top: 4px; padding: 4px 10px; border-left: 2px solid var(--wf-reject); font-size: 12.5px; color: var(--chip-text); }
+.gt-hist-row.is-return .gt-hist-what > div:first-child { color: var(--wf-reject); }
+.gt-hist-row.is-future { opacity: .45; }
+
+/* ---------- граф прогресса: ноды как wf-node-* в редакторе ---------- */
+.pg-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.pg-node .box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
+.pg-node .title { fill: var(--text); font-size: 13px; font-weight: 600; }
+.pg-node .sub { fill: var(--muted); font-size: 11px; }
+.pg-node .ico { fill: none; stroke: var(--muted); stroke-width: 1.8; }
+.pg-node.t-start .ico, .pg-node.t-end .ico { stroke: var(--col-done); }
+.pg-node.t-work .ico { stroke: var(--col-progress); }
+.pg-node.t-gate .ico { stroke: var(--col-review); }
+.pg-node.t-human .ico, .pg-node.t-ask .ico { stroke: var(--col-input); }
+.pg-node.t-merge .ico { stroke: var(--accent); }
+.pg-node.todo .box { fill: transparent; stroke-dasharray: 4 3; }
+.pg-node.todo .title, .pg-node.todo .sub, .pg-node.todo .ico { opacity: .55; }
+.pg-node.done .box { stroke: color-mix(in srgb, var(--col-done) 60%, transparent); }
+.pg-node.cur .box { stroke: var(--accent); stroke-width: 2.4; fill: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.pg-node.cur .halo { fill: none; stroke: var(--accent); stroke-width: 2; opacity: .5; animation: pg-pulse 1.8s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes pg-pulse { from { opacity: .55; transform: scale(1); } to { opacity: 0; transform: scale(1.12, 1.3); } }
+@media (prefers-reduced-motion: reduce) { .pg-node.cur .halo { animation: none; opacity: .35; } }
+.pg-node .selring { fill: none; stroke: var(--text); stroke-width: 1.4; stroke-dasharray: 3 3; opacity: .7; }
+.pg-node.clickable { cursor: pointer; }
+.pg-node.clickable:hover .box { fill: var(--card-hover); }
+.pg-badge rect { fill: var(--accent); }
+.pg-badge text { fill: #fff; font-size: 10.5px; font-weight: 600; }
+.pg-badge.ret rect { fill: var(--wf-reject); }
+.pg-check circle { fill: var(--col-done); }
+.pg-check path { fill: none; stroke: var(--frame); stroke-width: 1.8; }
+.pg-path-ico rect { fill: var(--side-2); stroke: var(--chip); }
+.pg-path-ico path { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.pg-edge { --edge: var(--muted); }
+.pg-edge.o-accept, .pg-edge.o-ok { --edge: var(--wf-accept); }
+.pg-edge.o-reject, .pg-edge.o-conflict { --edge: var(--wf-reject); }
+.pg-edge .line { fill: none; stroke: var(--edge); stroke-width: 1.6; opacity: .3; stroke-dasharray: 5 4; }
+.pg-edge .arrow { fill: var(--edge); opacity: .3; }
+.pg-edge .lbl { fill: var(--edge); font-size: 10.5px; opacity: .55; }
+.pg-edge.walked .line { opacity: 1; stroke-width: 2.6; stroke-dasharray: none; }
+.pg-edge.walked .arrow, .pg-edge.walked .lbl { opacity: 1; }
+.pg-edge .cnt { fill: var(--edge); font-size: 10.5px; font-weight: 700; }
+.pg-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11.5px; color: var(--muted); }
+.pg-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pg-legend i { width: 16px; height: 10px; border-radius: 3px; border: 1.5px solid var(--chip); display: inline-block; }
+.pg-legend i.done { border-color: var(--col-done); }
+.pg-legend i.cur { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.pg-legend i.todo { border-style: dashed; }
+.pg-legend i.ret { border: 0; height: 2.5px; background: var(--wf-reject); border-radius: 2px; }
+.pg-legend i.acc { border: 0; height: 2.5px; background: var(--wf-accept); border-radius: 2px; }
+
+/* ---------- путь подзадачи: пилюля шагов ---------- */
+.sp { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; font-size: 11.5px; }
+.sp span { padding: 1px 7px; border-radius: 999px; border: 1px dashed var(--chip); color: var(--muted); }
+.sp span.done { border-style: solid; border-color: color-mix(in srgb, var(--col-done) 55%, transparent); color: var(--col-done); }
+.sp span.cur { border-style: solid; border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 600; }
+.sp span.cur.bad { border-color: var(--wf-reject); background: color-mix(in srgb, var(--wf-reject) 14%, transparent); }
+.sp em { font-style: normal; color: var(--muted); opacity: .6; }
+.st-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--card); }
+.st-row + .st-row { margin-top: 6px; }
+.st-row b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-row .role { font-size: 11.5px; color: var(--muted); }
+.st-row .sp { grid-column: 1 / -1; }
+
+/* ---------- заходы в ноду ---------- */
+.vis { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.vis li { padding: 8px 10px; border-radius: 10px; background: var(--card); border-left: 3px solid var(--col-done); font-size: 12.5px; }
+.vis li.bad { border-left-color: var(--wf-reject); }
+.vis li.now { border-left-color: var(--accent); }
+.vis-h { display: flex; justify-content: space-between; gap: 8px; }
+.vis-s { font-size: 12px; margin-top: 2px; }
+.vis-s .ret { color: var(--wf-reject); }
+.vis-sum { margin-top: 4px; }
+
+/* ---------- холст (классы wf-* из styles.css) ---------- */
+.ed-svg { display: block; width: 100%; height: auto; }
+.wf-grid-dot { fill: var(--grid-dot); }
+.wf-node { cursor: move; }
+.wf-node-box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
+.wf-node:hover .wf-node-box { fill: var(--card-hover); }
+.wf-node.selected .wf-node-box { stroke: var(--accent); stroke-width: 2; }
+.wf-node.wf-issue--warning .wf-node-box { stroke: var(--col-input); stroke-dasharray: 5 3; }
+.wf-node.wf-issue--error .wf-node-box { stroke: var(--danger); stroke-width: 2; }
+.wf-node.selected.wf-issue--error .wf-node-box { stroke-width: 2.6; }
+.wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
+.wf-node-sub { fill: var(--muted); font-size: 11px; }
+.wf-node-sub.bad { fill: var(--danger); }
+.wf-node text { pointer-events: none; }
+.wf-port circle { fill: var(--side); stroke: var(--muted); stroke-width: 2; }
+.wf-port-label { fill: var(--muted); font-size: 10px; }
+.wf-port--accept circle { stroke: var(--wf-accept); }
+.wf-port--accept .wf-port-label { fill: var(--wf-accept); }
+.wf-port--reject circle { stroke: var(--wf-reject); }
+.wf-port--reject .wf-port-label { fill: var(--wf-reject); }
+.wf-port-in-c { fill: var(--chip); }
+.wf-node-path rect { fill: var(--side-2); stroke: var(--chip); }
+.wf-node-path path { stroke: var(--col-progress); stroke-width: 1.5; }
+.wf-edge { --edge: var(--muted); }
+.wf-edge--accept { --edge: var(--wf-accept); }
+.wf-edge--reject { --edge: var(--wf-reject); }
+.wf-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.8; opacity: .75; }
+.wf-edge-arrow { fill: var(--edge); opacity: .75; }
+.wf-edge.wf-issue--warning .wf-edge-line { stroke-dasharray: 6 4; stroke: var(--col-input); opacity: 1; }
+.wf-edge.wf-issue--warning .wf-edge-arrow { fill: var(--col-input); }
+/* Новое: значок проблемы на ноде и подпись — ошибка видна без наведения, не только цветом рамки. */
+.ed-badge circle { stroke: var(--frame); stroke-width: 2; }
+.ed-badge--error circle { fill: var(--danger); }
+.ed-badge--warning circle { fill: var(--col-input); }
+.ed-badge text { fill: #fff; font-size: 12px; font-weight: 800; }
+.ed-badge--warning text { fill: #1c1d22; }
+.ed-callout rect, .ed-callout path { stroke: none; }
+.ed-callout--error rect, .ed-callout--error path { fill: var(--danger); }
+.ed-callout--warning rect, .ed-callout--warning path { fill: var(--col-input); }
+.ed-callout text { fill: #fff; font-size: 11px; font-weight: 600; }
+.ed-callout--warning text { fill: #1c1d22; }
+.ed-pathstrip rect { fill: color-mix(in srgb, var(--col-progress) 14%, var(--card)); stroke: color-mix(in srgb, var(--col-progress) 45%, transparent); }
+.ed-pathstrip text { fill: var(--col-progress); font-size: 10.5px; }
+.ed-mini { display: block; width: 100%; max-width: 300px; height: auto; margin: 8px 0 4px; }
+.ed-mini-t { fill: var(--text); font-size: 10.5px; }
+.ed-mini-e { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.ed-mini-e.bad { stroke: var(--wf-reject); }
+
+/* ---------- инспектор: карточки-секции ---------- */
+.ed-card { border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.ed-card-h { display: flex; align-items: center; gap: 8px; padding: 9px 12px; font-size: 12.5px; font-weight: 600; }
+.ed-card-h .sum { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.ed-card-b { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.ed-card.err { border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.ed-card.warn { border-color: color-mix(in srgb, var(--col-input) 60%, transparent); }
+.ed-card.accent { border-color: color-mix(in srgb, var(--col-progress) 45%, transparent); }
+.ed-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.ed-dot.err { background: var(--danger); }
+.ed-dot.warn { background: var(--col-input); }
+.ed-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ed-field > span { font-size: 12px; color: var(--muted); }
+.ed-field input, .ed-field select, .ed-field textarea { padding: 7px 10px; font-size: 13px; border-radius: 8px; border: 1px solid var(--chip); background: var(--side); width: 100%; }
+.ed-field textarea { resize: vertical; min-height: 60px; }
+.ed-field select.bad { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+.ed-err { color: var(--danger); font-size: 11.5px; }
+.ed-port > span { font-weight: 600; }
+.ed-port--accept > span { color: var(--wf-accept); }
+.ed-port--reject > span { color: var(--wf-reject); }
+.ed-roles { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.ed-roles legend { font-size: 12px; color: var(--muted); padding: 0; margin-bottom: 6px; }
+.ed-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.ed-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.ed-seg { display: inline-flex; border: 1px solid var(--chip); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.ed-seg button { border: 0; background: transparent; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+.ed-seg button[aria-pressed="true"] { background: var(--side-2); color: var(--text); }
+.ed-wide { justify-content: center; }
+.ed-warnbox { font-size: 12px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--col-input) 12%, transparent); color: var(--text); }
+.ed-insp-head { display: flex; align-items: center; gap: 10px; padding: 2px 2px 4px; }
+.ed-insp-head .ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--side-2); flex: none; }
+.ed-insp-head b { display: block; font-size: 14px; }
+.ed-insp-head small { color: var(--muted); font-size: 12px; }
+.ed-insp-head .grow { flex: 1; min-width: 0; }
+.icon-btn { width: 28px; height: 28px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.icon-btn:hover { background: var(--side-2); color: var(--text); }
+
+/* ---------- настройки: контекст экрана ---------- */
+.set { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 780px; }
+.set-nav { border-right: 1px solid var(--line); padding: 18px 10px; background: var(--side); font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+.set-nav h4 { margin: 12px 10px 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.set-nav span { padding: 6px 10px; border-radius: 8px; color: var(--muted); }
+.set-nav span.on { background: var(--side-2); color: var(--text); }
+.win.narrow .set { grid-template-columns: minmax(0, 1fr); }
+.win.narrow .set-nav { display: none; }
+.set-main { padding: 18px 24px 28px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.win.narrow .set-main { padding: 14px 16px; }
+.set-crumbs { font-size: 12.5px; color: var(--muted); }
+.set-title { display: flex; align-items: center; gap: 10px; }
+.set-title h2 { margin: 0; font-size: 18px; }
+.set-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.set-tabs span { padding: 6px 10px 8px; font-size: 13px; color: var(--muted); }
+.set-tabs span.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+/* Редактору нужно место: макет окна шире (1440), навигация настроек уже. */
+.win { width: 1440px; }
+.set { grid-template-columns: 180px minmax(0, 1fr); }
+
+.eb-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.eb-head .grow { flex: 1; }
+.eb-box { border: 1px solid var(--line); border-radius: 12px; background: var(--side); overflow: visible; position: relative; }
+.eb-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 4px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.eb-grp { display: inline-flex; align-items: center; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--line); }
+.eb-grp > span { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 6px 0 2px; }
+.eb-tool { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border-radius: 8px; border: 0; background: transparent; font-size: 12.5px; white-space: nowrap; }
+.eb-tool:hover, .eb-tool:focus-visible { background: var(--side-2); }
+.eb-tool[aria-expanded="true"] { background: var(--side-2); }
+.eb-tool .n { font-size: 11px; color: var(--muted); background: var(--frame); border-radius: 999px; padding: 0 6px; }
+.eb-menu { position: absolute; z-index: 5; top: 46px; width: 300px; background: var(--card); border: 1px solid var(--chip); border-radius: 12px; padding: 6px; box-shadow: 0 16px 40px rgba(0,0,0,.35); }
+.eb-menu[hidden] { display: none; }
+.eb-menu h5 { margin: 4px 8px 4px; font-size: 11px; color: var(--muted); font-weight: 600; }
+.eb-menu button.it { display: grid; grid-template-columns: 22px minmax(0,1fr); gap: 0 8px; width: 100%; padding: 6px 8px; border: 0; background: none; border-radius: 8px; text-align: left; }
+.eb-menu button.it:hover { background: var(--side-2); }
+.eb-menu button.it svg { grid-row: span 2; margin-top: 2px; }
+.eb-menu b { font-size: 12.5px; }
+.eb-menu small { font-size: 11px; color: var(--muted); }
+.eb-menu .foot { border-top: 1px solid var(--line); margin-top: 4px; padding: 6px 8px 2px; display: flex; gap: 12px; }
+.eb-issues { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; font-size: 12.5px; background: color-mix(in srgb, var(--danger) 10%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); }
+.eb-issues.warn { background: color-mix(in srgb, var(--col-input) 10%, transparent); border-bottom-color: color-mix(in srgb, var(--col-input) 30%, transparent); }
+.eb-issues .k { font-weight: 700; }
+.eb-issues .err { color: var(--danger); }
+.eb-issues .wrn { color: var(--col-input); }
+.eb-nav { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.eb-work { display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 520px; }
+.eb-canvas { position: relative; overflow: auto; padding: 16px 10px 10px; min-width: 0; }
+.eb-canvas svg { min-width: 620px; }
+.eb-legend { position: sticky; left: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 12px; margin: 8px 0 0; border-radius: 10px; background: color-mix(in srgb, var(--frame) 80%, transparent); font-size: 11.5px; color: var(--muted); }
+.eb-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.eb-legend i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+.eb-legend i.e { width: 16px; height: 2.5px; border-radius: 2px; }
+.eb-legend .sep { width: 1px; height: 14px; background: var(--chip); }
+.eb-insp { border-left: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 6px; background: var(--frame); border-radius: 0 12px 12px 0; }
+.eb-insp .ed-card-h { cursor: pointer; width: 100%; border: 0; background: none; text-align: left; }
+.eb-insp .ed-card-h::after { content: "▾"; color: var(--muted); font-size: 11px; transition: transform .15s; }
+.eb-insp .ed-card[data-open="false"] .ed-card-h::after { transform: rotate(-90deg); }
+.eb-insp .ed-card[data-open="false"] .ed-card-b { display: none; }
+.eb-insp .ed-card[data-open="true"] .sum { display: none; }
+.eb-more { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.eb-more summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.eb-more[open] summary { margin-bottom: 8px; }
+.eb-more .row { display: flex; flex-wrap: wrap; gap: 8px; }
+.win.narrow .eb-work { grid-template-columns: minmax(0, 1fr); }
+.win.narrow .eb-insp { border-left: 0; border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; }
+.win.narrow .eb-grp > span { display: none; }
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <b>Редактор воркфлоу — B: холст во всю ширину</b>
+  <span class="muted">Кликните ноду на холсте: «Реализация» — путь подзадачи, «Ревью» — ошибка, «Проверка человеком» — предупреждение.</span>
+  <span class="grow"></span>
+  <label>Окно</label>
+  <div class="seg-group" id="width" role="group" aria-label="Ширина окна">
+    <button data-v="wide" aria-pressed="true">1440</button>
+    <button data-v="narrow" aria-pressed="false">860</button>
+  </div>
+  <label>Тема</label>
+  <div class="seg-group" id="theme" role="group" aria-label="Тема">
+    <button data-v="auto" aria-pressed="true">Системная</button>
+    <button data-v="dark" aria-pressed="false">Тёмная</button>
+    <button data-v="light" aria-pressed="false">Светлая</button>
+  </div>
+</div>
+
+<p class="mock-note"><b>Идея:</b> холст главный и во всю ширину. Палитра — подписанные кнопки над холстом, «Свои ноды» — меню в той же панели. Легенда всегда видна внизу холста. Проблемы — баннер с листанием и выноски над нодами. Путь подзадачи виден прямо на ноде «Работа». Инспектор — аккордеон: свёрнутые карточки показывают сводку.</p>
+<div class="stage">
+  <div class="win" id="win">
+    <nav class="rail" aria-hidden="true"><i></i><i></i><i></i><i class="on"></i></nav>
+    <div class="set">
+      <nav class="set-nav" aria-label="Настройки">
+        <h4>Приложение</h4><span>Общие</span><span>Агенты</span><span>Роли</span><span class="on">Типы задач</span><span>Свои ноды</span>
+        <h4>Типы</h4><span class="on">Фронтенд и бэкенд</span><span>Только бэкенд</span><span>Дизайн</span>
+      </nav>
+      <main class="set-main">
+        <div class="set-crumbs">Настройки › Типы задач</div>
+        <div class="set-title"><h2>Фронтенд и бэкенд</h2><span class="chip ok">свой тип</span></div>
+        <div class="set-tabs"><span>Основное</span><span>Роли</span><span class="on">Воркфлоу</span></div>
+
+        <!-- Секция 1: шапка графа -->
+        <div class="eb-head">
+          <span class="chip ok">Свой граф</span>
+          <span class="chip warn">Не сохранено</span>
+          <span class="grow"></span>
+          <button class="btn-sm">Отменить правки</button>
+          <button class="btn-sm primary" disabled title="Сначала исправьте 1 ошибку">Сохранить · 1 ошибка</button>
+        </div>
+
+        <!-- Секция 2: холст -->
+        <section class="eb-box" aria-label="Редактор графа">
+          <div class="eb-tools" role="toolbar" aria-label="Палитра нод" id="tools"></div>
+          <div class="eb-menu" id="menu" hidden role="menu" aria-label="Свои ноды"></div>
+          <div class="eb-issues" id="issues" role="status"></div>
+          <div class="eb-work">
+            <div class="eb-canvas">
+              <div id="canvas"></div>
+              <div class="eb-legend" aria-label="Легенда">
+                <span><i style="background:var(--col-progress)"></i>работа</span>
+                <span><i style="background:var(--col-review)"></i>проверка агентом</span>
+                <span><i style="background:var(--col-input)"></i>человек, вопрос</span>
+                <span><i style="background:var(--col-ready)"></i>решение ИИ</span>
+                <span><i style="background:var(--accent)"></i>мерж, git</span>
+                <span><i style="background:var(--col-done)"></i>старт, конец</span>
+                <span class="sep"></span>
+                <span><i class="e" style="background:var(--wf-accept)"></i>принять</span>
+                <span><i class="e" style="background:var(--wf-reject)"></i>вернуть</span>
+                <span><i class="e" style="background:var(--muted)"></i>дальше</span>
+              </div>
+            </div>
+            <aside class="eb-insp" id="insp" aria-label="Инспектор ноды"></aside>
+          </div>
+        </section>
+
+        <!-- Секция 3: ещё -->
+        <details class="eb-more">
+          <summary>Файл графа и сброс</summary>
+          <div class="row"><button class="btn-sm">Экспорт JSON</button><button class="btn-sm">Импорт JSON</button><button class="btn-sm">Лимит повторов для возвратов</button><button class="btn-sm bad">Сбросить к графу по умолчанию</button></div>
+        </details>
+      </main>
+    </div>
+  </div>
+</div>
+<script>
+// Общие данные и холст для макетов docs/design/workflow-editor/*: граф типа «Фронтенд и бэкенд» в редакторе.
+// Одна ошибка (у «Ревью» не выбрана роль) и одно предупреждение (возврат без лимита) — чтобы показать валидацию.
+const TYPES = {
+  start: { name: 'Старт', group: 'bound', color: 'var(--col-done)', sum: 'Точка входа в граф.' },
+  work: { name: 'Работа', group: 'agent', color: 'var(--col-progress)', sum: 'Агенты роли делают работу в подзадачах.' },
+  ask: { name: 'Вопрос человеку', group: 'agent', color: 'var(--col-input)', sum: 'Агент уточняет задачу у человека.' },
+  gate: { name: 'Проверка агентом', group: 'agent', color: 'var(--col-review)', sum: 'Агент принимает ветку или возвращает.' },
+  decision: { name: 'Решение ИИ', group: 'agent', color: 'var(--col-ready)', sum: 'Агент выбирает одну из веток.' },
+  human: { name: 'Решение человека', group: 'human', color: 'var(--col-input)', sum: '«Подтвердить» или «Вернуть в работу».' },
+  condition: { name: 'Условие', group: 'app', color: 'var(--muted)', sum: 'Приложение ведёт по «да» или «нет».' },
+  merge: { name: 'Мерж', group: 'app', color: 'var(--accent)', sum: 'Слить ветку задачи в базовую.' },
+  git: { name: 'Git', group: 'app', color: 'var(--accent)', sum: 'Коммит или push ветки задачи.' },
+  end: { name: 'Конец', group: 'bound', color: 'var(--col-done)', sum: 'Задача уходит в «Сделано».' }
+}
+const GROUPS = [
+  { id: 'agent', name: 'Агенты' },
+  { id: 'human', name: 'Человек' },
+  { id: 'app', name: 'Приложение' },
+  { id: 'bound', name: 'Начало и конец' }
+]
+const CUSTOM = [
+  { id: 'tpl_design', type: 'gate', name: 'Дизайн-ревью', sum: 'Проверка агентом · роль designer' },
+  { id: 'tpl_front', type: 'work', name: 'Фронтенд с тестами', sum: 'Работа · свой путь: Работа › Тесты › Мерж' }
+]
+const EN = [
+  { id: 'start', type: 'start', title: 'Старт', x: 16, y: 50 },
+  { id: 'analysis', type: 'work', title: 'Анализ', sub: 'аналитик', x: 186, y: 50, path: 'default' },
+  { id: 'impl', type: 'work', title: 'Реализация', sub: 'фронтенд, бэкенд', x: 356, y: 50, path: 'default' },
+  { id: 'review', type: 'gate', title: 'Ревью', sub: 'роль не выбрана', x: 526, y: 44, ports: ['accept', 'reject'], issue: 'error', msg: 'Не выбрана роль проверяющего' },
+  { id: 'human', type: 'human', title: 'Проверка человеком', sub: 'человек', x: 526, y: 210, ports: ['accept', 'reject'], issue: 'warning', msg: 'Возврат без лимита повторов' },
+  { id: 'end', type: 'end', title: 'Конец', x: 750, y: 216 }
+]
+// Переходы с готовой геометрией: граф разложен в две строки, чтобы помещаться в узкий холст.
+const EE = [
+  { from: 'start', out: 'next', d: 'M162 80 L180 80', arrow: [186, 80, 'r'] },
+  { from: 'analysis', out: 'next', d: 'M332 80 L350 80', arrow: [356, 80, 'r'] },
+  { from: 'impl', out: 'next', d: 'M502 80 C512 80, 510 74, 520 74', arrow: [526, 74, 'r'] },
+  { from: 'review', out: 'accept', d: 'M672 70 C730 70, 730 170, 640 170 L500 170 Q484 170 484 200 Q484 240 518 240', arrow: [526, 240, 'r'] },
+  { from: 'review', out: 'reject', d: 'M672 96 C700 96, 700 140, 660 140 L456 140 Q440 140 440 124 L440 118', arrow: [440, 111, 'u'] },
+  { from: 'human', out: 'accept', d: 'M672 236 C708 236, 712 246, 744 246', arrow: [750, 246, 'r'] },
+  { from: 'human', out: 'reject', d: 'M672 262 C720 262, 720 330, 660 330 L428 330 Q412 330 412 314 L412 118', arrow: [412, 111, 'u'], warn: true }
+]
+const PORT_RU = { next: 'дальше', accept: 'принять', reject: 'вернуть' }
+const ISSUES = EN.filter((n) => n.issue).map((n) => ({ level: n.issue, node: n.id, text: `нода «${n.title}»: ${n.msg.charAt(0).toLowerCase() + n.msg.slice(1)}` }))
+
+function typeIcon(type, x, y, color) {
+  const c = color || TYPES[type].color
+  const p = {
+    start: `<circle cx="8" cy="8" r="7"/><path d="M6 4.5l5 3.5-5 3.5z"/>`,
+    end: `<circle cx="8" cy="8" r="7"/><rect x="5" y="5" width="6" height="6" rx="1"/>`,
+    work: `<rect x="1" y="2" width="14" height="12" rx="2"/><path d="M4 6h8M4 10h5"/>`,
+    gate: `<path d="M8 1l6 3v4c0 4-3 6-6 7-3-1-6-3-6-7V4z"/><path d="M5 8l2 2 4-4"/>`,
+    human: `<circle cx="8" cy="5" r="3.5"/><path d="M2 15c0-4 3-6 6-6s6 2 6 6"/>`,
+    ask: `<circle cx="8" cy="8" r="7"/><path d="M6 6a2 2 0 1 1 3 2c-1 .6-1 1-1 2M8 12.2v.1"/>`,
+    decision: `<path d="M8 1l7 7-7 7-7-7z"/><path d="M8 5v3l2 2"/>`,
+    condition: `<path d="M8 1l7 7-7 7-7-7z"/>`,
+    merge: `<circle cx="4" cy="3" r="2"/><circle cx="4" cy="13" r="2"/><circle cx="12" cy="8" r="2"/><path d="M4 5v6M4 6c0 2 3 2 6 2"/>`,
+    git: `<circle cx="8" cy="8" r="3"/><path d="M1 8h4M11 8h4"/>`
+  }
+  return `<g transform="translate(${x} ${y})" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p[type]}</g>`
+}
+/** Иконка для HTML (палитра, инспектор). */
+function iconHtml(type, size = 16) {
+  return `<svg width="${size}" height="${size}" viewBox="-1 -1 18 18" aria-hidden="true">${typeIcon(type, 0, 0)}</svg>`
+}
+
+/**
+ * Холст редактора. opts: selected, callouts ('pill' — плашка под нодой, 'bubble' — выноска над нодой), pathStrip (путь подзадачи
+ * полоской под нодой «Работа»), showLabels (подписи портов).
+ */
+function canvasSvg(opts = {}) {
+  const W = 146
+  const h = (n) => (n.ports ? 74 : 60)
+  const by = Object.fromEntries(EN.map((n) => [n.id, n]))
+  let s = `<svg class="ed-svg" viewBox="0 0 910 350" role="img" aria-label="Граф воркфлоу: 6 нод, 1 ошибка, 1 предупреждение">`
+  s += '<defs><pattern id="dots" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" class="wf-grid-dot"/></pattern></defs><rect width="910" height="350" fill="url(#dots)"/>'
+  for (const e of EE) {
+    const [x, y, dir] = e.arrow
+    const ar = dir === 'u' ? `M${x - 4} ${y + 7}L${x} ${y}L${x + 4} ${y + 7}z` : `M${x - 7} ${y - 4}L${x} ${y}L${x - 7} ${y + 4}z`
+    s += `<g class="wf-edge wf-edge--${e.out}${e.warn ? ' wf-issue--warning' : ''}"><path class="wf-edge-line" d="${e.d}"/><path class="wf-edge-arrow" d="${ar}"/></g>`
+  }
+  for (const n of EN) {
+    const hh = h(n)
+    const cls = `wf-node wf-node--${n.type}${opts.selected === n.id ? ' selected' : ''}${n.issue ? ' wf-issue--' + n.issue : ''}`
+    s += `<g class="${cls}" data-node="${n.id}" transform="translate(${n.x} ${n.y})" tabindex="0" role="button" aria-label="${TYPES[n.type].name} «${n.title}»${n.issue ? (n.issue === 'error' ? ', ошибка: ' : ', предупреждение: ') + n.msg : ''}">`
+    s += `<rect class="wf-node-box" width="${W}" height="${hh}" rx="10"/>`
+    s += `<rect class="wf-node-strip" width="4" height="${hh - 16}" x="0" y="8" rx="2" fill="${TYPES[n.type].color}"/>`
+    s += typeIcon(n.type, 14, 12)
+    s += `<text class="wf-node-title" x="38" y="25">${n.title.length > 13 ? n.title.slice(0, 12) + '…' : n.title}</text>`
+    s += `<text class="wf-node-sub${n.issue === 'error' ? ' bad' : ''}" x="14" y="${n.ports ? 48 : 46}">${n.sub || TYPES[n.type].name}</text>`
+    if (n.type !== 'start') s += `<circle class="wf-port-in-c" cx="0" cy="30" r="4"/>`
+    const outs = n.type === 'end' ? [] : n.ports || ['next']
+    outs.forEach((o) => {
+      const py = n.ports ? (o === 'accept' ? 26 : 52) : 30
+      s += `<g class="wf-port wf-port--${o}"><circle cx="${W}" cy="${py}" r="5.5"/>${n.ports ? `<text class="wf-port-label" x="${W + 9}" y="${py - 5}">${PORT_RU[o]}</text>` : ''}</g>`
+    })
+    if (n.path) s += `<g class="wf-node-path" transform="translate(${W - 26} 8)"><rect width="18" height="18" rx="5"/><path d="M4 13h3.5V5H11v8h3" fill="none"/></g>`
+    if (n.issue) {
+      s += `<g class="ed-badge ed-badge--${n.issue}" transform="translate(-9 -9)"><circle cx="9" cy="9" r="9"/><text x="9" y="13.5" text-anchor="middle">${n.issue === 'error' ? '!' : '!'}</text></g>`
+      if (opts.callouts === 'pill') {
+        const tw = n.msg.length * 6.1 + 20
+        s += `<g class="ed-callout ed-callout--${n.issue}" transform="translate(${W / 2 - tw / 2} ${hh + 8})"><rect width="${tw}" height="20" rx="10"/><text x="${tw / 2}" y="14" text-anchor="middle">${n.msg}</text></g>`
+      }
+      if (opts.callouts === 'bubble') {
+        const tw = n.msg.length * 6.1 + 22
+        s += `<g class="ed-callout ed-callout--${n.issue}" transform="translate(${W / 2 - tw / 2} -38)"><rect width="${tw}" height="24" rx="7"/><path d="M${tw / 2 - 6} 24l6 7 6-7z"/><text x="${tw / 2}" y="16" text-anchor="middle">${n.msg}</text></g>`
+      }
+    }
+    if (n.path && opts.pathStrip) {
+      s += `<g class="ed-pathstrip" transform="translate(8 ${hh})"><rect width="${W - 16}" height="22" rx="0" ry="0"/><text x="8" y="15">путь: Работа › Мерж › Конец</text></g>`
+    }
+    s += '</g>'
+  }
+  return s + '</svg>'
+}
+
+/** Миниатюра пути подзадачи для карточки инспектора. */
+function pathPreview() {
+  const steps = [['start', 'Старт'], ['work', 'Работа'], ['merge', 'Мерж'], ['end', 'Конец']]
+  let s = '<svg class="ed-mini" viewBox="0 0 280 78" role="img" aria-label="Путь подзадачи по умолчанию: Старт, Работа, Мерж, Конец; конфликт мержа — человеку">'
+  steps.forEach(([t, name], i) => {
+    const x = 4 + i * 70
+    s += `<g transform="translate(${x} 6)"><rect class="wf-node-box" width="58" height="26" rx="7"/>${typeIcon(t, 5, 5)}<text class="ed-mini-t" x="24" y="17">${name}</text></g>`
+    if (i < 3) s += `<path class="ed-mini-e" d="M${x + 59} 19h10"/>`
+  })
+  s += `<path class="ed-mini-e bad" d="M179 33v14"/><g transform="translate(144 48)"><rect class="wf-node-box" width="84" height="24" rx="7"/>${typeIcon('human', 5, 4)}<text class="ed-mini-t" x="24" y="16">Конфликт</text></g>`
+  return s + '</svg>'
+}
+
+function bindSeg(id, apply) {
+  const group = document.getElementById(id)
+  group.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return
+    group.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+    apply(b.dataset.v)
+  })
+}
+function bindMock() {
+  const root = document.documentElement
+  bindSeg('theme', (v) => { if (v === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', v) })
+  bindSeg('width', (v) => document.getElementById('win').classList.toggle('narrow', v === 'narrow'))
+  setTimeout(applyQuery)
+}
+
+/** Карточки инспектора выбранной ноды: { id, title, summary (для свёрнутой), issue, body }. Общие для обоих вариантов. */
+function inspectorCards(id) {
+  const n = EN.find((x) => x.id === id)
+  const role = (label, opts, sel, bad) => `<label class="ed-field"><span>${label}</span><select${bad ? ' aria-invalid="true" class="bad"' : ''}>${opts.map((o) => `<option${o === sel ? ' selected' : ''}>${o}</option>`).join('')}</select>${bad ? `<small class="ed-err">${bad}</small>` : ''}</label>`
+  const txt = (label, val, ph) => `<label class="ed-field"><span>${label}</span><textarea rows="3" placeholder="${ph || ''}">${val || ''}</textarea></label>`
+  const outs = (list) => list.map(([o, to]) => `<label class="ed-field ed-port ed-port--${o}"><span>${PORT_RU[o]}</span><select><option>${to}</option></select></label>`).join('')
+  const cards = []
+  cards.push({ id: 'main', title: 'Основное', summary: n.title, body: `<label class="ed-field"><span>Название</span><input value="${n.title}"></label><label class="ed-field"><span>Колонка на доске</span><select><option>По умолчанию для этапа</option></select></label>` })
+  if (n.type === 'work') {
+    cards.push({ id: 'who', title: 'Кто выполняет', summary: n.id === 'impl' ? 'фронтенд, бэкенд' : 'аналитик', body: `<fieldset class="ed-roles"><legend>Роли этапа (необязательно)</legend>${['аналитик', 'фронтенд', 'бэкенд', 'дизайнер'].map((r) => `<label class="ed-check"><input type="checkbox"${(n.id === 'impl' ? ['фронтенд', 'бэкенд'] : ['аналитик']).includes(r) ? ' checked' : ''}> ${r}</label>`).join('')}</fieldset><small class="muted">Ничего не отмечено — координатор выберет роль каждой подзадачи сам.</small>` })
+    cards.push({ id: 'what', title: 'Что сделать на этапе', summary: 'инструкции заданы', body: txt('Инструкции координатору', 'Нарежь на подзадачи фронтенда и бэкенда, API — первым.') + `<label class="ed-check"><input type="checkbox"> Показать человеку результат этапа</label>` })
+    cards.push({ id: 'path', title: 'Путь подзадачи', summary: 'по умолчанию · Работа › Мерж › Конец', accent: true, body: `<div class="ed-seg" role="group" aria-label="Путь подзадачи"><button aria-pressed="true">По умолчанию</button><button aria-pressed="false">Свой путь</button></div>${pathPreview()}<p class="ed-hint">Каждая подзадача этапа: воркер → мерж в ветку задачи; конфликт мержа уходит вам.</p><button class="btn-sm ed-wide">Открыть путь на холсте ›</button>` })
+    cards.push({ id: 'out', title: 'Куда ведёт', summary: `дальше → ${n.id === 'impl' ? 'Ревью' : 'Реализация'}`, body: outs([['next', n.id === 'impl' ? 'Ревью' : 'Реализация']]) })
+  }
+  if (n.type === 'gate') {
+    cards.push({ id: 'who', title: 'Кто проверяет', summary: 'роль не выбрана', issue: 'error', body: role('Роль проверяющего', ['— выберите роль —', 'reviewer', 'designer'], '— выберите роль —', 'Выберите роль — без неё проверка не запустится') })
+    cards.push({ id: 'what', title: 'Как проверять', summary: 'критерии не заданы', body: txt('Критерии и команды проверки', '', 'Например: pnpm verify, тесты на пустые данные') })
+    cards.push({ id: 'out', title: 'Куда ведёт', summary: 'принять → Проверка · вернуть → Реализация', body: outs([['accept', 'Проверка человеком'], ['reject', 'Реализация']]) })
+  }
+  if (n.type === 'human') {
+    cards.push({ id: 'what', title: 'Что решить человеку', summary: 'посмотреть демо', body: txt('Что посмотреть перед решением', 'Скачать CSV на стенде, открыть в Excel.') })
+    cards.push({ id: 'out', title: 'Куда ведёт', summary: 'принять → Конец · вернуть → Реализация', issue: 'warning', body: outs([['accept', 'Конец'], ['reject', 'Реализация']]) + `<div class="ed-warnbox">Возврат без лимита: отказы могут повторяться бесконечно. <button class="btn-text">Добавить лимит 3 захода</button></div>` })
+  }
+  if (n.type === 'start' || n.type === 'end') cards.push({ id: 'out', title: n.type === 'end' ? 'Конец графа' : 'Куда ведёт', summary: '', body: n.type === 'end' ? '<p class="ed-hint">Задача уходит в «Сделано». Настроек нет.</p>' : outs([['next', 'Анализ']]) })
+  cards.push({ id: 'tpl', title: 'Своя нода', summary: 'не сохранена', body: `<p class="ed-hint">Сохраните ноду с настройками, чтобы брать её из палитры в других типах.</p><button class="btn-sm">Сохранить как свою ноду</button>` })
+  return { node: n, cards }
+}
+
+// ?theme=light|dark, ?w=narrow, ?state=first|ret|human|done — открыть макет сразу в нужном виде.
+function applyQuery() {
+  const q = new URLSearchParams(location.search)
+  for (const [id, v] of [['theme', q.get('theme')], ['width', q.get('w')], ['state', q.get('state')]]) {
+    const b = v && document.querySelector(`#${id} button[data-v="${v}"]`)
+    if (b) b.click()
+  }
+}
+
+let sel = 'review', issueIdx = 0
+const open = {}
+function tools() {
+  let h = ''
+  for (const g of GROUPS) {
+    h += `<span class="eb-grp" role="group" aria-label="${g.name}"><span>${g.name}</span>`
+    for (const [t, d] of Object.entries(TYPES)) {
+      if (d.group !== g.id || t === 'start') continue
+      h += `<button class="eb-tool" title="${d.name}: ${d.sum} Клик — добавить в центр, или перетащите.">${iconHtml(t)}${d.name}</button>`
+    }
+    h += '</span>'
+  }
+  h += `<button class="eb-tool" id="custom" aria-haspopup="menu" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.9 4 4.4.5-3.3 3 .9 4.3L8 11.1l-3.9 2.2.9-4.3-3.3-3 4.4-.5z" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/></svg>Свои ноды <span class="n">${CUSTOM.length}</span> ▾</button>`
+  h += '<span class="grow"></span><button class="icon-btn" aria-label="Уменьшить">−</button><button class="icon-btn" aria-label="Увеличить">+</button><button class="btn-sm">Вписать</button><button class="btn-sm">Расставить</button>'
+  return h
+}
+function menu() {
+  return `<h5>Свои ноды — из «Настройки → Свои ноды»</h5>` + CUSTOM.map((c) => `<button class="it" role="menuitem">${iconHtml(c.type)}<b>${c.name}</b><small>${c.sum}</small></button>`).join('') +
+    `<div class="foot"><button class="btn-text">+ Сохранить выбранную ноду</button><button class="btn-text">Управлять…</button></div>`
+}
+function render() {
+  document.getElementById('tools').innerHTML = tools()
+  const menuEl = document.getElementById('menu')
+  menuEl.innerHTML = menu()
+  const cb = document.getElementById('custom')
+  cb.onclick = () => {
+    const show = menuEl.hidden
+    menuEl.hidden = !show
+    cb.setAttribute('aria-expanded', String(show))
+    if (show) menuEl.style.left = (cb.offsetLeft) + 'px'
+  }
+  const iss = ISSUES[issueIdx]
+  const el = document.getElementById('issues')
+  el.className = 'eb-issues' + (iss.level === 'warning' ? ' warn' : '')
+  el.innerHTML = `<span class="k err">● 1 ошибка</span><span class="k wrn">● 1 предупреждение</span><span class="muted">—</span><span>${iss.text}</span><button class="btn-text" id="fix">Показать</button><span class="eb-nav"><button class="icon-btn" id="prev" aria-label="Предыдущая проблема">‹</button><span class="muted">${issueIdx + 1} из ${ISSUES.length}</span><button class="icon-btn" id="next" aria-label="Следующая проблема">›</button></span>`
+  document.getElementById('prev').onclick = () => { issueIdx = (issueIdx + ISSUES.length - 1) % ISSUES.length; render() }
+  document.getElementById('next').onclick = () => { issueIdx = (issueIdx + 1) % ISSUES.length; render() }
+  document.getElementById('fix').onclick = () => { sel = iss.node; render() }
+  document.getElementById('canvas').innerHTML = canvasSvg({ selected: sel, callouts: 'bubble', pathStrip: true })
+  document.querySelectorAll('#canvas .wf-node').forEach((g) => {
+    const pick = () => { sel = g.dataset.node; render() }
+    g.onclick = pick
+    g.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick() } }
+  })
+  const { node, cards } = inspectorCards(sel)
+  const t = TYPES[node.type]
+  document.getElementById('insp').innerHTML = `<div class="ed-insp-head" style="padding:4px 4px 8px"><span class="ico">${iconHtml(node.type, 18)}</span><span class="grow"><b>${node.title}</b><small>${t.name}</small></span><button class="icon-btn" title="Удалить ноду" aria-label="Удалить ноду">×</button></div>` +
+    cards.map((c, i) => {
+      const k = sel + ':' + c.id
+      const isOpen = open[k] ?? (c.issue === 'error' || c.issue === 'warning' || c.id === 'path' || (i === 1 && !cards.some((x) => x.issue)))
+      return `<section class="ed-card${c.issue === 'error' ? ' err' : c.issue === 'warning' ? ' warn' : c.accent ? ' accent' : ''}" data-open="${isOpen}" data-k="${k}"><button class="ed-card-h" aria-expanded="${isOpen}">${c.issue ? `<span class="ed-dot ${c.issue === 'error' ? 'err' : 'warn'}" aria-label="${c.issue === 'error' ? 'ошибка' : 'предупреждение'}"></span>` : ''}${c.title}<span class="sum">${c.summary}</span></button><div class="ed-card-b">${c.body}</div></section>`
+    }).join('')
+  document.querySelectorAll('#insp .ed-card-h').forEach((b) => {
+    b.onclick = () => { const s = b.parentElement; open[s.dataset.k] = s.dataset.open !== 'true'; render() }
+  })
+}
+bindMock()
+render()
+</script>
+</body>
+</html>
