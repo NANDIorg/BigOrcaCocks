@@ -17,6 +17,8 @@ export interface GlobalHistoryProps {
   coordinatorSessions?: AgentSession[]
   /** Граф прогона (`workflowForRun`): названия этапов в ленте. Нет — берутся из самих записей истории этапов. */
   workflow?: Workflow
+  /** Ссылка «на графе» у входов в этапы: вкладка «Граф» на этой ноде. Нет (у прогона нет вкладки «Граф») — ссылки нет. */
+  onShowStage?(nodeId: string): void
 }
 
 /**
@@ -24,7 +26,7 @@ export interface GlobalHistoryProps {
  * после проверки (выделены), сводка и запуски координатора, закрытие (`globalTimeline`). Всё, что она читает,
  * необязательно: со старым main ленты может не быть — тогда подсказка перезапустить приложение.
  */
-export function GlobalHistory({ global, columns = [], coordinatorSessions, workflow }: GlobalHistoryProps): React.JSX.Element {
+export function GlobalHistory({ global, columns = [], coordinatorSessions, workflow, onShowStage }: GlobalHistoryProps): React.JSX.Element {
   const t = useT()
   const now = useNow()
   const [expanded, setExpanded] = useState(false)
@@ -51,7 +53,9 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions, workf
             <div key={day.key} className="gt-hist-day">
               <h4 className="gt-hist-day-title">{day.label}</h4>
               <ol className="gt-hist-list">
-                {day.events.map((e) => (
+                {day.events.map((e) => {
+                  const stageNode = e.nodeId
+                  return (
                   <li key={e.key} className={`gt-hist-row gt-hist-${e.kind}${e.highlight ? ' is-return' : ''}`}>
                     <span className="gt-hist-at" title={fullStamp(e.at)}>
                       {e.approx ? '≈ ' : ''}{formatClock(e.at)}
@@ -61,13 +65,19 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions, workf
                       <div>
                         <b>{e.title}</b>
                         {e.detail && <span className="gt-hist-detail"> — {e.detail}</span>}
+                        {onShowStage && stageNode !== undefined && (
+                          <button type="button" className="btn-text gt-hist-link" title={t('global.history.onGraphTitle')} onClick={() => onShowStage(stageNode)}>
+                            {t('global.history.onGraph')}
+                          </button>
+                        )}
                       </div>
                       {e.sub && <div className="muted gt-hist-sub">{e.sub}</div>}
                       {e.text && <div className={e.highlight ? 'gt-hist-quote' : 'muted gt-hist-excerpt'}>{e.text}</div>}
                       {e.note && <div className="muted gt-hist-excerpt">{e.note}</div>}
                     </div>
                   </li>
-                ))}
+                  )
+                })}
               </ol>
             </div>
           ))}

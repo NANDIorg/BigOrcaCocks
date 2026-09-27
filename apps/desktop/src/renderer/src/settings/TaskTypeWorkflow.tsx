@@ -1,6 +1,6 @@
 import type React from 'react'
 import { Fragment, useMemo, useRef, useState } from 'react'
-import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type WfMigrationNote, type Workflow } from '@orca-board/core'
+import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type WfIssue, type WfMigrationNote, type Workflow } from '@orca-board/core'
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
@@ -9,6 +9,7 @@ import {
   canOpenPath, crumbs, graphAt, levelIssues, locateId, resolvePath, scopeOf, startCustomSubflow, writeGraphAt, type WfPath
 } from '../workflowNav'
 import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, type WorkflowMigrationInfo } from '../workflowForm'
+import { groupProblems, shortIssueText, type WfProblemGroup } from '../workflowEditorView'
 import { SectionHead } from '../about/parts'
 import { useLocale, useT } from '../i18n'
 import { nodeTitle, wfIssueText } from '../defaultTitles'
@@ -62,6 +63,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
   /** Растёт при замене графа целиком (импорт, сброс): холст заново вписывает граф в окно. */
   const [canvasRev, setCanvasRev] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
 
   // Без колонок и агентов: и то и другое у проекта, а тип общий для всех проектов.
   // Язык — в зависимостях: тексты проблем и названия нод в них переводятся при проверке.
@@ -196,6 +198,41 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
     setSelection({ kind, id: target.id })
   }
 
+  /** Счётчик в полосе статуса: к первой проблеме уровня, у которой есть нода или переход, и к редактору. */
+  const goToFirst = (list: readonly WfIssue[]): void => {
+    const first = list.find((i) => i.nodeId || i.edgeId)
+    if (first) selectIssue(first.nodeId, first.edgeId)
+    editorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }
+
+  const problems = useMemo(() => groupProblems(issues), [issues])
+
+  /** Заголовок группы «Проблем»: нода (в пути — «Реализация › Ревью»), переход или весь граф. */
+  const problemTitle = (g: WfProblemGroup): string => {
+    if (g.edgeId) return t('config.wf.probs.edge', { id: g.edgeId })
+    if (g.nodeId) {
+      const target = locateId(draft, 'node', g.nodeId)
+      const node = graphAt(draft, target.path)?.graph.nodes.find((n) => n.id === target.id)
+      const own = node ? nodeTitle(node) : target.id
+      if (target.path.length === 0) return own
+      const parent = draft.nodes.find((n) => n.id === target.path[0])
+      return `${parent ? nodeTitle(parent) : target.path[0]} › ${own}`
+    }
+    return t('config.wf.probs.graph')
+  }
+
+  /** Сохранить нельзя — почему; можно — ничего. */
+  const saveBlocked = errors.length > 0 ? t('config.wf.tab.fixFirst') : !dirty ? t('config.wf.tab.noChanges') : undefined
+  const selectedNode = selection?.kind === 'node' ? level.graph.nodes.find((n) => n.id === selection.id) : undefined
+  // «Сохранить выбранную ноду» в палитре — к полю названия в карточке «Своя нода» инспектора.
+  const saveSelected = library && !levelReadOnly && selectedNode && selectedNode.type !== 'start'
+    ? (): void => {
+        const card = editorRef.current?.querySelector<HTMLElement>('[data-card="tpl"]')
+        card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        card?.querySelector<HTMLInputElement>('input')?.focus()
+      }
+    : undefined
+
   return (
     <>
       <SectionHead
@@ -206,12 +243,44 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
         {t('config.wf.tab.bannerBefore')} <b>{t('config.wf.tab.bannerStrong')}</b>{t('config.wf.tab.bannerAfter')}
       </div>
       <div className="wf-section">
-        <div className="wf-status">
-          <span className={`chip ${custom ? 'ok' : 'sys'}`}>{custom ? t('config.wf.tab.custom') : t('config.wf.tab.default')}</span>
-          {dirty && <span className="chip warn">{t('config.wf.tab.dirty')}</span>}
-          {errors.length > 0 && <span className="wf-count wf-count--error">{t('config.wf.tab.errors', { count: errors.length })}</span>}
-          {warnings.length > 0 && <span className="wf-count wf-count--warning">{t('config.wf.tab.warnings', { count: warnings.length })}</span>}
-          {errors.length === 0 && warnings.length === 0 && <span className="wf-count">{t('config.wf.tab.clean')}</span>}
+        <div className="wf-statusbar" role="region" aria-label={t('config.wf.tab.statusAria')}>
+          <div className="wf-statusbar-row">
+            <span className={`chip ${custom ? 'ok' : 'sys'}`}>{custom ? t('config.wf.tab.custom') : t('config.wf.tab.default')}</span>
+            {dirty && <span className="chip warn">{t('config.wf.tab.dirty')}</span>}
+            <span className="wf-sep" aria-hidden />
+            {errors.length > 0 && (
+              <button type="button" className="wf-count wf-count--error" title={t('config.wf.tab.goToProblem')} onClick={() => goToFirst(errors)}>
+                <span className="wf-dot wf-dot--error" aria-hidden />{t('config.wf.tab.errors', { count: errors.length })}
+              </button>
+            )}
+            {warnings.length > 0 && (
+              <button type="button" className="wf-count wf-count--warning" title={t('config.wf.tab.goToProblem')} onClick={() => goToFirst(warnings)}>
+                <span className="wf-dot wf-dot--warning" aria-hidden />{t('config.wf.tab.warnings', { count: warnings.length })}
+              </button>
+            )}
+            {errors.length === 0 && warnings.length === 0 && <span className="wf-count">{t('config.wf.tab.clean')}</span>}
+            <span className="wf-grow" />
+            {!readOnly && (
+              <span className="wf-statusbar-actions">
+                {errors.length > 0 && dirty && <span id="wf-save-why" className="wf-statusbar-why">{t('config.wf.tab.fixFirst')}</span>}
+                <button type="button" className="btn-sm" disabled={!dirty || busy} onClick={() => replace(saved, null)}>
+                  {t('config.wf.tab.revert')}
+                </button>
+                <button
+                  type="button"
+                  className="btn-sm primary"
+                  disabled={busy || saveBlocked !== undefined}
+                  title={saveBlocked}
+                  aria-describedby={errors.length > 0 && dirty ? 'wf-save-why' : undefined}
+                  onClick={() => void save()}
+                >
+                  {t('config.wf.tab.save')}
+                </button>
+              </span>
+            )}
+          </div>
+          {error && <div className="editor-error">{error}</div>}
+          {notice && !error && <div className="hint wf-notice">{notice}</div>}
         </div>
 
         {stored && (
@@ -228,31 +297,18 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
           </div>
         )}
 
-        {at.length > 0 && (
-          <>
-            <nav className="wf-crumbs" aria-label={t('config.wf.nav.aria')}>
-              {crumbs(draft, at).map((c, i, all) => (
-                <Fragment key={i}>
-                  {i > 0 && <span className="wf-crumb-sep" aria-hidden>›</span>}
-                  {i === all.length - 1
-                    ? <b className="wf-crumb current" aria-current="page">{c.title}</b>
-                    : <button type="button" className="wf-crumb" onClick={() => goTo(c.path)}>{c.title}</button>}
-                </Fragment>
-              ))}
-              <span className={`chip ${level.isDefault ? 'sys' : 'ok'}`}>{level.isDefault ? t('config.wf.path.modeDefault') : t('config.wf.path.modeCustom')}</span>
-            </nav>
-            <div className="wf-path-banner" role="note">
-              <span>{level.isDefault ? t('config.wf.path.bannerDefault') : t('config.wf.path.banner')}</span>
-              {level.isDefault && !readOnly && (
-                <button type="button" className="btn-sm" onClick={() => editRoot(startCustomSubflow(draft, at[at.length - 1]))}>
-                  {t('config.wf.path.startCustom')}
-                </button>
-              )}
-            </div>
-          </>
+        {migration && (
+          <div className="wf-migration" role="status">
+            <span>{t('config.wf.tab.importMigrated', { version: migration.fromVersion })}</span>
+            {migration.notes.length > 0 && <ul>{migration.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+          </div>
         )}
 
-        <div className="wf-editor">
+        <div className="wf-sec-head">
+          <h3>{t('config.wf.tab.graphTitle')}</h3>
+          <p>{t('config.wf.tab.graphHint')}</p>
+        </div>
+        <div className="wf-editor" ref={editorRef}>
           <WorkflowCanvas
             key={`${canvasRev}:${at.join('/')}`}
             workflow={level.graph}
@@ -263,6 +319,74 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
             scope={scope}
             onOpenNode={open}
             library={readOnly || levelReadOnly ? undefined : library}
+            readOnly={levelReadOnly}
+            onSaveSelected={saveSelected}
+            header={
+              <nav className="wf-crumbs" aria-label={t('config.wf.nav.aria')}>
+                {crumbs(draft, at).map((c, i, all) => (
+                  <Fragment key={i}>
+                    {i > 0 && <span className="wf-crumb-sep" aria-hidden>›</span>}
+                    {i === all.length - 1
+                      ? <b className="wf-crumb current" aria-current="page">{c.title}</b>
+                      : <button type="button" className="wf-crumb" onClick={() => goTo(c.path)}>{c.title}</button>}
+                  </Fragment>
+                ))}
+                {at.length > 0 && (
+                  <span className={`chip ${level.isDefault ? 'sys' : 'ok'}`}>{level.isDefault ? t('config.wf.path.modeDefault') : t('config.wf.path.modeCustom')}</span>
+                )}
+              </nav>
+            }
+            below={
+              <>
+                {at.length > 0 && (
+                  <div className="wf-path-banner" role="note">
+                    <span>{level.isDefault ? t('config.wf.path.bannerDefault') : t('config.wf.path.banner')}</span>
+                    {level.isDefault && !readOnly && (
+                      <button type="button" className="btn-sm" onClick={() => editRoot(startCustomSubflow(draft, at[at.length - 1]))}>
+                        {t('config.wf.path.startCustom')}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {problems.length > 0 && (
+                  <div className="wf-probs" role="region" aria-label={t('config.wf.probs.title')}>
+                    <h4 className="wf-probs-head">
+                      {t('config.wf.probs.title')}
+                      {errors.length > 0 && <span className="wf-probs-n wf-probs-n--error">{errors.length}</span>}
+                      {warnings.length > 0 && <span className="wf-probs-n wf-probs-n--warning">{warnings.length}</span>}
+                      <span className="wf-grow" />
+                      <small>{t('config.wf.probs.hint')}</small>
+                    </h4>
+                    <ul className="wf-probs-list">
+                      {problems.map((g, k) => {
+                        const target = g.nodeId !== undefined || g.edgeId !== undefined
+                        return (
+                          <li key={k}>
+                            <button
+                              type="button"
+                              className={`wf-problem wf-problem--${g.level}`}
+                              disabled={!target}
+                              onClick={() => selectIssue(g.nodeId, g.edgeId)}
+                            >
+                              <span className="wf-problem-kind">{g.level === 'error' ? t('config.wf.tab.problemError') : t('config.wf.tab.problemWarning')}</span>
+                              <span className="wf-problem-text">
+                                <b>{problemTitle(g)}</b>
+                                {g.items.map((i, n) => (
+                                  <span key={n} className={`wf-problem-item wf-problem-item--${i.level}`}>
+                                    {g.nodeId && !g.edgeId ? shortIssueText(wfIssueText(i.issue)) : wfIssueText(i.issue)}
+                                  </span>
+                                ))}
+                              </span>
+                              {target && <span className="wf-problem-go" aria-hidden>{g.edgeId ? t('config.wf.probs.goEdge') : t('config.wf.probs.goNode')}</span>}
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </>
+            }
           />
           {/* Только просмотр: инспектор показывает выбранную ноду, но поля недоступны. */}
           <fieldset className="tpl-fieldset" disabled={levelReadOnly}>
@@ -281,53 +405,12 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
           </fieldset>
         </div>
 
-        {migration && (
-          <div className="wf-migration" role="status">
-            <span>{t('config.wf.tab.importMigrated', { version: migration.fromVersion })}</span>
-            {migration.notes.length > 0 && <ul>{migration.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
-          </div>
-        )}
-
-        {(errors.length > 0 || warnings.length > 0) && (
-          <div className="wf-problems">
-            {[...errors.map((i) => ({ ...i, level: 'error' as const })), ...warnings.map((i) => ({ ...i, level: 'warning' as const }))].map((i, k) => (
-              <button
-                key={k}
-                type="button"
-                className={`wf-problem wf-problem--${i.level}`}
-                disabled={!i.nodeId && !i.edgeId}
-                onClick={() => selectIssue(i.nodeId, i.edgeId)}
-              >
-                <span className="wf-problem-kind">{i.level === 'error' ? t('config.wf.tab.problemError') : t('config.wf.tab.problemWarning')}</span>
-                {wfIssueText(i)}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="wf-actions">
-          {!readOnly && (
-            <>
-              <button
-                type="button"
-                className="btn-sm primary"
-                disabled={busy || !dirty || errors.length > 0}
-                title={errors.length > 0 ? t('config.wf.tab.fixFirst') : !dirty ? t('config.wf.tab.noChanges') : undefined}
-                onClick={() => void save()}
-              >
-                {t('config.wf.tab.save')}
-              </button>
-              <button type="button" className="btn-sm" disabled={!dirty || busy} onClick={() => replace(saved, null)}>
-                {t('config.wf.tab.revert')}
-              </button>
-              <span className="wf-actions-sep" />
-              <button type="button" className="btn-sm" disabled={levelReadOnly} onClick={presetLimit} title={t('config.wf.tab.limitHint')}>
-                {t('config.wf.tab.limit')}
-              </button>
-              <span className="wf-actions-sep" />
-            </>
-          )}
-          <button type="button" className="btn-sm" onClick={exportJson}>{t('config.wf.tab.export')}</button>
+        <div className="wf-sec-head">
+          <h3>{t('config.wf.tab.fileTitle')}</h3>
+          <p>{t('config.wf.tab.fileHint')}</p>
+        </div>
+        <div className="wf-file">
+          <button type="button" className="btn-sm" onClick={exportJson}><Icon.download /> {t('config.wf.tab.export')}</button>
           {!readOnly && (
             <>
               <button type="button" className="btn-sm" onClick={() => fileRef.current?.click()}>{t('config.wf.tab.import')}</button>
@@ -342,16 +425,17 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
                   if (f) void importJson(f)
                 }}
               />
-              <span className="wf-actions-sep" />
-              <button type="button" className="btn-sm" disabled={busy || (!custom && !dirty)} onClick={() => void reset()}>
+              <span className="wf-sep" aria-hidden />
+              <button type="button" className="btn-sm" disabled={levelReadOnly} onClick={presetLimit} title={t('config.wf.tab.limitHint')}>
+                {t('config.wf.tab.limit')}
+              </button>
+              <span className="wf-grow" />
+              <button type="button" className="btn-sm danger" disabled={busy || (!custom && !dirty)} onClick={() => void reset()}>
                 <Icon.refresh /> {t('config.wf.tab.reset')}
               </button>
             </>
           )}
         </div>
-
-        {error && <div className="editor-error">{error}</div>}
-        {notice && !error && <div className="hint wf-notice">{notice}</div>}
       </div>
     </>
   )
