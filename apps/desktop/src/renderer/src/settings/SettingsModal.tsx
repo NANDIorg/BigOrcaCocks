@@ -20,6 +20,7 @@ import { saveAppSettings } from '../appSettingsSave'
 import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
+import { settingsKeyAction } from '../settingsFullscreen'
 
 /** Раздел меню: общий, уведомления, обновления, свои ноды или тип задачи (`type:<id>`). */
 type Section = 'general' | 'notifications' | 'updates' | 'nodes' | `type:${string}`
@@ -80,6 +81,8 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
+  /** «На весь экран»: не запоминается — каждое открытие начинается с обычного размера. */
+  const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => {
     window.orca.app.getSettings().then(setAppSettings, (e) => setAppError(ipcErrorMessage(e)))
@@ -94,14 +97,17 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
     })
   }, [])
 
-  // Esc закрывает окно.
+  // Esc закрывает окно; на весь экран — сначала сворачивает. Слушатель во всплытии, а не в захвате: формы внутри
+  // (переименование типа, холст воркфлоу) гасят свой Escape раньше, и он не должен сворачивать окно.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      const action = settingsKeyAction(e.key, fullscreen)
+      if (action === 'exitFullscreen') setFullscreen(false)
+      else if (action === 'close') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, fullscreen])
 
   function go(s: Section): void {
     setSection(s)
@@ -202,9 +208,18 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('settings.title')}>
+      <div className={`settings-modal${fullscreen ? ' fullscreen' : ''}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('settings.title')}>
         <div className="settings-head">
           <h3>{t('settings.title')}</h3>
+          <button
+            className="icon-btn task-modal-close"
+            title={t(fullscreen ? 'settings.exitFullscreen' : 'settings.fullscreen')}
+            aria-label={t(fullscreen ? 'settings.exitFullscreen' : 'settings.fullscreen')}
+            aria-pressed={fullscreen}
+            onClick={() => setFullscreen((v) => !v)}
+          >
+            {fullscreen ? <Icon.minimize /> : <Icon.maximize />}
+          </button>
           <button className="icon-btn task-modal-close" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}>
             <Icon.close />
           </button>

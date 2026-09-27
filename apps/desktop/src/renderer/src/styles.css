@@ -1053,14 +1053,17 @@ button:disabled { opacity: .45; cursor: default; }
 .perm-card span { font-size: 12px; color: var(--muted); }
 .perm-card input[type='radio'] { width: auto; margin: 0; accent-color: var(--accent); }
 
-/* Окно «Настройки» (settings/SettingsModal.tsx): внутри — та же сетка .about, что во вкладке «О проекте» */
+/* Окно «Настройки» (settings/SettingsModal.tsx): внутри — та же сетка .about, что во вкладке «О проекте».
+   Размер один на все разделы (по редактору воркфлоу — ему нужны три колонки), чтобы окно не прыгало при переключении. */
 .settings-modal {
-  background: var(--page); border-radius: 18px; width: 1100px; max-width: calc(100vw - 48px);
-  height: min(780px, calc(100vh - 48px)); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--page); border-radius: 18px; width: 1480px; max-width: calc(100vw - 48px);
+  height: min(960px, calc(100vh - 48px)); display: flex; flex-direction: column; overflow: hidden;
   box-shadow: 0 30px 80px rgba(0,0,0,.5);
 }
 .settings-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px 14px 24px; border-bottom: 1px solid var(--line); }
 .settings-head h3 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
+/* «На весь экран»: почти всё окно приложения, по 16px поля — видно, что это модалка поверх доски. */
+.settings-modal.fullscreen { width: calc(100vw - 32px); max-width: none; height: calc(100vh - 32px); }
 .settings-modal .about-host { flex: 1; }
 
 /* «Настройки → Типы задач» (settings/TaskTypePane.tsx): типы — пункты меню, внутри — вкладки разделов */
@@ -1666,8 +1669,7 @@ button.wf-count:hover { text-decoration: underline; }
 .wf-file .btn-sm:disabled { opacity: .5; cursor: default; }
 .wf-file .btn-sm.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
 
-/* Редактору нужно место на три колонки: пока открыт «Воркфлоу», окно настроек шире и выше обычного. */
-.settings-modal:has(.wf-editor) { width: 1480px; height: min(960px, calc(100vh - 48px)); }
+/* Редактору нужно место на три колонки — под него подобран размер окна настроек (.settings-modal). */
 .wf-editor { display: grid; grid-template-columns: 210px minmax(0, 1fr) 300px; gap: 12px; height: 640px; }
 
 /* Палитра (WorkflowPalette.tsx): она же легенда — значок цвета типа, цвета переходов в подвале. */

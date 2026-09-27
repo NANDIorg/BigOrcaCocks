@@ -11,6 +11,8 @@ export default {
   'nav.newType': 'Новый тип',
   'nav.defaultType': 'по умолч.',
   'nav.typeUsage': 'Тип по умолчанию в проектах: {count}',
+  fullscreen: 'Развернуть на весь экран',
+  exitFullscreen: 'Свернуть к обычному размеру',
   newTypeTitle: 'Новый тип',
 
   'general.title': 'Общие',
