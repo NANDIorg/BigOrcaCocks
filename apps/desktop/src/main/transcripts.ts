@@ -194,8 +194,12 @@ export class TranscriptCache {
   }
 }
 
-/** Читает полные строки файла с байта `from` до `to` кусками; возвращает смещение после последней полной строки. */
-async function readLines(path: string, from: number, to: number, onLine: (line: string, offset: number) => void): Promise<number> {
+/**
+ * Читает полные строки файла с байта `from` до `to` кусками; возвращает смещение после последней полной строки.
+ * Экспортирован для `assistant-chat.ts` — тот же приём инкрементального чтения нужен чату ассистента, но с другим
+ * состоянием разбора (сообщения, а не расход токенов), поэтому он не переиспользует `TranscriptCache` целиком.
+ */
+export async function readLines(path: string, from: number, to: number, onLine: (line: string, offset: number) => void): Promise<number> {
   const fh = await open(path, 'r')
   try {
     let pos = from

@@ -9,7 +9,7 @@ import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty
 import { setupCommand, taskWorktreePath } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
 import { OrcaError, mainLocale } from './i18n'
-import { assistantEnv } from './assistant'
+import { assistantEnv, assistantCwd } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 import { ensureRunBranch } from './run-branch'
 import { coordinatorImages } from './run-images'
@@ -397,31 +397,40 @@ export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules'
  * Один на всё приложение: работает со всеми проектами через orca-board --project (без флага — активный в UI).
  * cwd — нейтральный userData/assistant, а не репозиторий: файлового доступа к проектам у ассистента нет.
  * Прогон не создаётся и ORCA_RUN_ID нет (skills/assistant.md).
+ *
+ * `sessionId` — как у воркера/координатора (`agentSessionId`): агент, принимающий `--session-id`, пишет
+ * транскрипт в файл с этим именем, поэтому чат-режим панели (`assistant-chat.ts`) находит его без сканирования
+ * папки — по фиксированному пути. У агентов без этой опции `sessionId` нет, и чат недоступен (только терминал).
  */
-export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30): { ptyId: string } {
+export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onExit?: (id: string, code: number) => void): { ptyId: string; sessionId?: string } {
   const role = assistantRole(ctx.roles)
   const spec = getAgent(role?.agent ?? 'claude')
   if (!spec) throw new Error(`неизвестный агент: ${role?.agent}`)
+  const sessionId = agentSessionId(spec)
   const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.assistant, { role, language: mainLocale() }), ASSISTANT_START_PROMPT, {
     permissionMode: ctx.permissionMode,
     shell: defaultShell(),
     model: role?.model,
-    effort: role?.effort
+    effort: role?.effort,
+    sessionId
   })
-  const cwd = join(app.getPath('userData'), 'assistant')
+  const cwd = assistantCwd(app.getPath('userData'))
   mkdirSync(cwd, { recursive: true })
   const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
-  const ptyId = spawnPty({
-    meta: { role: 'assistant', label: 'ассистент' },
-    cwd,
-    command: launch.command,
-    args: launch.args,
-    cols,
-    rows,
-    env: {
-      ...assistantEnv({ socketPath: ctx.socketPath, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
-      ...launch.env
-    }
-  })
-  return { ptyId }
+  const ptyId = spawnPty(
+    {
+      meta: { role: 'assistant', label: 'ассистент' },
+      cwd,
+      command: launch.command,
+      args: launch.args,
+      cols,
+      rows,
+      env: {
+        ...assistantEnv({ socketPath: ctx.socketPath, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
+        ...launch.env
+      }
+    },
+    onExit
+  )
+  return { ptyId, sessionId }
 }
