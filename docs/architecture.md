@@ -1382,7 +1382,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 отвечает ошибкой с описанием последствий (аналог человеческого «да» из `skills/assistant.md`), а не выполняет
 операцию молча. Открытое окно узнаёт о правке из CLI/ассистента так же, как о своей: любая из команд ниже
 проходит через `ProjectManager.save()`, который шлёт `app:changed` (см. «IPC»), и renderer перечитывает
-проекты/типы/настройки тем же путём, что после своих IPC-вызовов. Реализация — `ProjectDeps` в `src/main/socket.ts` (поля `typesCreate`/`typesRename`/…), деп-методы
+проекты/типы/настройки тем же путём, что после своих IPC-вызовов (`SettingsModal` — `app.getSettings`,
+`projects.list`, `taskTypes.list`, `nodeTemplates.list`). Исключение — `project.rules.*`: `readRule`/`writeRule`
+(`src/main/rules.ts`) пишут файл `CLAUDE.md`/`AGENTS.md` в корне репозитория проекта напрямую, в обход
+`ProjectManager.save()`, событие не шлётся — открытая вкладка «О проекте → Правила» правку CLI/ассистента
+не увидит до повторного открытия. Реализация — `ProjectDeps` в `src/main/socket.ts` (поля `typesCreate`/`typesRename`/…), деп-методы
 из `ProjectManager` (`src/main/projects.ts`: `renameTaskType`, `taskTypeUsage`, `addRole`/`updateRole`/`removeRole`,
 `permissionMode`) и `readRule`/`writeRule` (`src/main/rules.ts`) для `project.rules.*`.
 

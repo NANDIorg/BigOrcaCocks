@@ -17,18 +17,25 @@ export function useNodeTemplates(): NodeTemplatesHook {
   const [templates, setTemplates] = useState<WfNodeTemplate[] | null>(null)
   const [error, setError] = useState<string | null>(stale ? nodeTemplatesStaleMessage() : null)
 
+  async function load(): Promise<void> {
+    try {
+      setTemplates(await nodeTemplatesApi(window.orca).list())
+      setError(null)
+    } catch (e) {
+      setError(failure(e).message)
+    }
+  }
+
   useEffect(() => {
     if (stale) return
-    nodeTemplatesApi(window.orca).list().then(
-      (list) => { setTemplates(list); setError(null) },
-      (e: unknown) => setError(failure(e).message)
-    )
+    void load()
   }, [])
 
   return {
     templates,
     error,
     stale,
+    reload: () => (stale ? Promise.resolve() : load()),
     async save(input) {
       let saved: WfNodeTemplate
       try {
