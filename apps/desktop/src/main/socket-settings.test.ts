@@ -239,6 +239,16 @@ describe('roles.*', () => {
     assert.ok(!(after.settings.roles ?? []).some((r) => r.id === role.id))
   })
 
+  it('update: смена --agent требует подтверждение с текущим и новым агентом, остальные поля — нет', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    const role = await ok<Role>('roles.add', { type: typeId, title: 'Дизайнер', agent: 'claude' })
+    const refused = await call('roles.update', { type: typeId, role: role.id, agent: 'codex' })
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /нужно подтверждение.*агента роли.*«claude».*«codex».*--yes/)
+    const updated = await ok<Role>('roles.update', { type: typeId, role: role.id, agent: 'codex', yes: true })
+    assert.equal(updated.agent, 'codex')
+  })
+
   it('add: обязательны --title и --agent; неизвестный агент — ошибка', async () => {
     const typeId = projects.projectDefaultTypeId(PID)
     assert.match((await call('roles.add', { type: typeId, agent: 'claude' })).error ?? '', /--title обязателен/)

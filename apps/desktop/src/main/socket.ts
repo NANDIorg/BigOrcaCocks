@@ -2,7 +2,7 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  DECISION_REASON_LIMIT, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
   type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
 } from '@orca-board/core'
@@ -763,6 +763,13 @@ const handlers: Record<string, Handler> = {
     const roleId = requiredRoleId(r)
     const patch = { title: optStr(r, 'title'), agent: optStr(r, 'agent'), model: optStr(r, 'model'), effort: optStr(r, 'effort'), description: optStr(r, 'description') }
     if (Object.values(patch).every((v) => v === undefined)) throw new Error('укажи хотя бы один флаг: --title/--agent/--model/--effort/--description')
+    // Смена агента роли — как другие опасные операции (types.perm.set → bypassPermissions): другой процесс,
+    // модель и промпт запуска задач этой роли, без --yes агент не должен переключать её молча.
+    if (patch.agent !== undefined && r.params.yes !== true) {
+      const type = deps.taskTypes().taskTypes.find((t) => t.id === typeId)
+      const current = (type?.settings.roles ?? DEFAULT_ROLES).find((x) => x.id === roleId)?.agent
+      requireYes(r, `нужно подтверждение: смена агента роли «${roleId}»${current ? ` с «${current}»` : ''} на «${patch.agent}» — другой процесс запуска задач этой роли`)
+    }
     return deps.rolesUpdate(typeId, roleId, patch)
   },
   'roles.remove': (r, deps) => {

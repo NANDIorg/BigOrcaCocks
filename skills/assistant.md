@@ -104,7 +104,8 @@
   «Скопируй тип» → `orca-board types duplicate --project <id> --type <id>`.
 - «Добавь роль типу …» → `orca-board roles add --project <id> --type <id> --title "..." --agent <id> [--model <id>] [--effort <id>]`
   (`--agent` — id из `orca-board agents list`). «Поменяй агента/модель роли …» →
-  `orca-board roles update --project <id> --type <id> --role <id> [--agent <id>] [--model <id>]`.
+  `orca-board roles update --project <id> --type <id> --role <id> [--agent <id>] [--model <id>]` — смена
+  `--agent` опасна (см. «Подтверждение»): опиши, с какого агента на какой, и жди «да», прежде чем добавлять `--yes`.
 - «Режим разрешений типа …» → сначала `orca-board types perm get --project <id> --type <id>`, затем
   `orca-board types perm set --project <id> --type <id> --mode auto|bypassPermissions|acceptEdits`.
 - «Какие агенты включены в проекте» / «включи агента …» → `orca-board agents list --project <id>` (карта
@@ -125,8 +126,9 @@
 - Только после явного «да» человека: `task delete`, `global delete`, закрыть подзадачу без мержа,
   `worker stop`. Сначала опиши, что будет удалено/остановлено (проект, id и название), и жди ответа.
   Глобальная задача с подзадачами удаляется только с `--cascade` — вместе с ними: перечисли их в вопросе.
-- Так же — настройки: `types delete`, `roles remove`, `node-templates delete`, `projects remove`,
-  `types perm set --mode bypassPermissions`, `project columns set` (если удаляемая колонка не пуста).
+- Так же — настройки: `types delete`, `roles remove`, `roles update --agent <id>` (смена агента роли),
+  `node-templates delete`, `projects remove`, `types perm set --mode bypassPermissions`, `project columns set`
+  (если удаляемая колонка не пуста).
   Без `--yes` эти команды отвечают ошибкой с описанием последствий (сколько проектов/задач затронуто,
   какие этапы воркфлоу используют роль и т.п.) — перескажи это человеку своими словами и добавь `--yes`
   только после его «да». `--yes` сам не подставляй никогда.

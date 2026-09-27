@@ -379,6 +379,8 @@ describe('orca-board CLI', () => {
     assert.deepEqual(add.req.params, { type: 't_1', title: 'Тестировщик', agent: 'claude', model: 'sonnet' })
     const update = await run(['roles', 'update', '--project', 'p_1', '--type', 't_1', '--role', 'r_1', '--effort', 'high'])
     assert.deepEqual(update.req.params, { type: 't_1', role: 'r_1', effort: 'high' })
+    const updateAgent = await run(['roles', 'update', '--project', 'p_1', '--type', 't_1', '--role', 'r_1', '--agent', 'codex', '--yes'])
+    assert.deepEqual(updateAgent.req.params, { type: 't_1', role: 'r_1', agent: 'codex', yes: true })
     const remove = await run(['roles', 'remove', '--project', 'p_1', '--type', 't_1', '--role', 'r_1', '--yes'])
     assert.equal(remove.req.method, 'roles.remove')
     assert.deepEqual(remove.req.params, { type: 't_1', role: 'r_1', yes: true })
