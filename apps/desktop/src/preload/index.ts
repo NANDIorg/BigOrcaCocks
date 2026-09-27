@@ -134,6 +134,12 @@ const api: OrcaApi = {
     open: (cols, rows) => ipcRenderer.invoke('assistant:open', cols, rows),
     reset: (cols, rows) => ipcRenderer.invoke('assistant:reset', cols, rows)
   },
+  assistantChat: {
+    available: (ptyId) => ipcRenderer.invoke('assistantChat:available', ptyId),
+    getMessages: (ptyId) => ipcRenderer.invoke('assistantChat:getMessages', ptyId),
+    send: (ptyId, text) => ipcRenderer.invoke('assistantChat:send', ptyId, text),
+    onMessage: (ptyId, cb) => on(`assistantChat:message:${ptyId}`, cb)
+  },
   docs: {
     list: () => ipcRenderer.invoke('docs:list'),
     read: (source, path) => ipcRenderer.invoke('docs:read', source, path),

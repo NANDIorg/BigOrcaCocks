@@ -188,5 +188,8 @@ export default {
   'stats.noTask': 'статистика: задачи {id} нет в проекте',
   'stats.noGlobal': 'статистика: глобальной задачи {id} нет в проекте',
 
+  'assistantChat.unknownPty': 'ассистент с таким PTY не запущен — откройте панель заново',
+  'assistantChat.emptyText': 'пустое сообщение чата',
+
   'onboarding.invalidInput': 'мастер первого запуска: ожидается объект с полем skipped (boolean)'
 } satisfies Record<string, string | { one: string; few: string; many: string }>
