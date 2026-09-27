@@ -1,4 +1,4 @@
-import { wfPorts, type GlobalTask, type StageChange, type Task, type WfEdge, type WfNode, type WfNodeType, type WfSubflow, type Workflow } from '@orca-board/core'
+import { wfPorts, type GlobalTask, type StageChange, type Task, type WfEdge, type WfNode, type WfNodeType, type WfPort, type WfSubflow, type Workflow } from '@orca-board/core'
 import { autoLayout } from './workflowGeometry'
 import { pathGraph, pathNodeName, pathOwner } from './subtaskPath'
 
@@ -124,7 +124,9 @@ export function runProgress(g: RunSource, workflow: Pick<Workflow, 'nodes' | 'ed
   for (const h of history) counted[h.nodeId] = (counted[h.nodeId] ?? 0) + 1
   const nodes: Record<string, ProgressNode> = {}
   for (const n of workflow.nodes) {
-    const visits = g.stage?.visits?.[n.id] ?? counted[n.id] ?? 0
+    // Условие в истории не пишется: сколько раз через него прошли — по пройденным рёбрам из него.
+    const passed = n.type === 'condition' ? passExits(workflow, walk.edges, n.id).reduce((sum, x) => sum + x.count, 0) : 0
+    const visits = g.stage?.visits?.[n.id] ?? counted[n.id] ?? passed
     const state: ProgressNodeState = n.id === current ? 'current' : walk.entered.has(n.id) ? 'done' : 'todo'
     nodes[n.id] = { state, visits: state === 'todo' ? 0 : Math.max(visits, n.type === 'start' ? 0 : 1) }
   }
@@ -153,8 +155,10 @@ export interface NodeVisit {
   index: number
   visit: number
   at: number
-  /** Когда ушли: вход в следующую ноду; нет — ещё здесь. */
+  /** Когда ушли: вход в следующую ноду, у закрытого прогона — `closedAt`; нет — ещё здесь (или время закрытия неизвестно). */
   till?: number
+  /** Заход оборвало закрытие прогона (`closeRun` посреди графа): «сейчас» тут уже нет. */
+  closed: boolean
   /** Откуда пришли; нет — из старта. */
   from?: string
   /** С каким исходом пришли (порт прошлой ноды). */
@@ -195,6 +199,7 @@ export function returnReason(returns: GlobalTask['returns'], at: number): string
 export function nodeVisits(g: VisitSource, nodeId: string, current?: string): NodeVisit[] {
   const history = g.stageHistory ?? []
   const out: NodeVisit[] = []
+  const closedAt = g.closedAt
   let ordinal = 0
   history.forEach((h, index) => {
     if (h.nodeId !== nodeId) return
@@ -206,11 +211,14 @@ export function nodeVisits(g: VisitSource, nodeId: string, current?: string): No
     const reason = returned ? returnReason(g.returns, h.at) : undefined
     const leftReason = next?.outcome !== undefined && RETURN_OUTCOMES.includes(next.outcome) ? returnReason(g.returns, next.at) : undefined
     const decision = h.decision && typeof h.decision === 'object' ? h.decision.label || h.decision.optionId : undefined
+    // Прогон закрыли посреди графа: `stage` остался, но граф здесь больше не стоит — правая граница захода — закрытие.
+    const closed = !next && closedAt !== undefined
     out.push({
       index,
       visit: h.visit ?? ordinal,
       at: h.at,
-      ...(next ? { till: next.at, to: next.nodeId } : {}),
+      ...(next ? { till: next.at, to: next.nodeId } : closed && closedAt >= h.at ? { till: closedAt } : {}),
+      closed,
       ...(from !== undefined ? { from } : {}),
       ...(h.outcome !== undefined ? { cameWith: h.outcome } : {}),
       returned,
@@ -219,10 +227,33 @@ export function nodeVisits(g: VisitSource, nodeId: string, current?: string): No
       ...(leftReason ? { leftReason } : {}),
       ...(h.summary?.trim() ? { summary: h.summary.trim() } : {}),
       ...(decision ? { decision } : {}),
-      current: !next && current === nodeId
+      current: !next && !closed && current === nodeId
     })
   })
   return out
+}
+
+/** Выход из сквозной ноды: по какому исходу и куда граф прошёл и сколько раз. */
+export interface PassExit {
+  edgeId: string
+  outcome: WfPort
+  to: string
+  count: number
+}
+
+/** Нода, на которой задача не стоит (условие): в истории её нет, заходы — это проходы по её рёбрам. */
+export function isPassThrough(node: Pick<WfNode, 'type'>): boolean {
+  return PASS_THROUGH.includes(node.type)
+}
+
+/**
+ * Куда граф вышел из сквозной ноды: пройденные рёбра из неё (`RunProgress.edges`) — исход условия, который выбрал граф.
+ * Порядок — как рёбра в графе.
+ */
+export function passExits(graph: Graph, edges: Readonly<Record<string, number>>, nodeId: string): PassExit[] {
+  return graph.edges
+    .filter((e) => e.from === nodeId && (edges[e.id] ?? 0) > 0)
+    .map((e) => ({ edgeId: e.id, outcome: e.outcome, to: e.to, count: edges[e.id] }))
 }
 
 type VisitTask = Pick<Task, 'stageOf' | 'gateFor' | 'createdAt'>

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { GlobalTask, StageChange, Task, WfNode, Workflow } from '@orca-board/core'
 import {
-  defaultProgressNode, entryEdges, nodeVisits, pathProgress, progressLayout, returnReason, runProgress, subtaskPathSteps, visitTasks,
+  defaultProgressNode, entryEdges, isPassThrough, nodeVisits, passExits, pathProgress, progressLayout, returnReason, runProgress, subtaskPathSteps, visitTasks,
   walkHistory, workPath
 } from './workflowProgress'
 import { setLocale } from './i18n'
@@ -214,4 +214,71 @@ test('workPath и progressLayout: путь «Работы» по умолчан�
   const laid = progressLayout(flat)
   assert.equal(new Set(laid.nodes.map((n) => n.x)).size > 1, true)
   assert.equal(progressLayout(WF), WF)
+})
+
+test('условие: сквозная нода пройдена — выход с исходом и число проходов по рёбрам, заходов в истории нет', () => {
+  const wf: Workflow = {
+    version: 2,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'a', type: 'work', x: 200, y: 0 },
+      { id: 'c', type: 'condition', test: { kind: 'role', roleId: 'x' }, x: 400, y: 0 },
+      { id: 'b', type: 'work', x: 600, y: 0 },
+      { id: 'end', type: 'end', x: 800, y: 0 }
+    ] as WfNode[],
+    edges: [
+      { id: 's_a', from: 'start', outcome: 'next', to: 'a' },
+      { id: 'a_c', from: 'a', outcome: 'next', to: 'c' },
+      { id: 'c_b', from: 'c', outcome: 'yes', to: 'b' },
+      { id: 'c_a', from: 'c', outcome: 'no', to: 'a' },
+      { id: 'b_end', from: 'b', outcome: 'accept', to: 'end' },
+      { id: 'b_a', from: 'b', outcome: 'reject', to: 'a' }
+    ]
+  }
+  const g: Partial<GlobalTask> = {
+    stage: { nodeId: 'b', visits: { a: 2, b: 2 } },
+    stageHistory: [
+      { nodeId: 'a', at: 100, visit: 1 },
+      { nodeId: 'b', from: 'a', outcome: 'yes', at: 200, visit: 1 },
+      { nodeId: 'a', from: 'b', outcome: 'reject', at: 300, visit: 2 },
+      { nodeId: 'b', from: 'a', outcome: 'yes', at: 400, visit: 2 }
+    ]
+  }
+  const p = runProgress(g, wf)
+  assert.equal(isPassThrough(wf.nodes[2]), true)
+  assert.equal(isPassThrough(wf.nodes[1]), false)
+  assert.equal(p.nodes.c.state, 'done')
+  assert.equal(p.nodes.c.visits, 2)
+  // Исход «нет» не выбирался — его в выходах нет.
+  assert.deepEqual(passExits(wf, p.edges, 'c'), [{ edgeId: 'c_b', outcome: 'yes', to: 'b', count: 2 }])
+  // Панель условия не строит «Заходы» из истории: там его нет.
+  assert.deepEqual(nodeVisits(g, 'c', p.current), [])
+  // Граф до условия не дошёл — выходов нет.
+  assert.deepEqual(passExits(wf, runProgress({ stage: { nodeId: 'a', visits: { a: 1 } }, stageHistory: [{ nodeId: 'a', at: 100 }] }, wf).edges, 'c'), [])
+})
+
+test('закрытый вручную прогон: последний заход без «сейчас» — граница по closedAt, без плашки текущей ноды', () => {
+  const g = { ...at(4), closedAt: 450 }
+  const p = runProgress(g, WF)
+  assert.equal(p.current, undefined)
+  assert.equal(p.currentVisit, 0)
+  assert.equal(p.returned, false)
+  assert.equal(p.nodes.impl.state, 'done')
+  const vs = nodeVisits(g, 'impl', p.current)
+  assert.equal(vs[1].closed, true)
+  assert.equal(vs[1].current, false)
+  assert.equal(vs[1].till, 450)
+  assert.equal(vs[1].to, undefined)
+  // Первый заход закрыт переходом, а не закрытием прогона.
+  assert.equal(vs[0].closed, false)
+  assert.equal(vs[0].till, 300)
+  // Время закрытия раньше входа (часы разъехались) — правой границы нет, но и «сейчас» тоже.
+  const odd = nodeVisits({ ...at(4), closedAt: 10 }, 'impl')
+  assert.equal(odd[1].closed, true)
+  assert.equal(odd[1].till, undefined)
+  // Открытый прогон — заход идёт.
+  const open = nodeVisits(at(4), 'impl', 'impl')
+  assert.equal(open[1].closed, false)
+  assert.equal(open[1].till, undefined)
+  assert.equal(open[1].current, true)
 })
