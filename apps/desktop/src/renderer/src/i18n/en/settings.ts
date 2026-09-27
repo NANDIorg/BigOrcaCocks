@@ -11,6 +11,8 @@ export default {
   'nav.newType': 'New type',
   'nav.defaultType': 'default',
   'nav.typeUsage': 'Default type in projects: {count}',
+  fullscreen: 'Expand to full screen',
+  exitFullscreen: 'Restore normal size',
   newTypeTitle: 'New type',
 
   'general.title': 'General',
