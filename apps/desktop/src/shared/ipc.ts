@@ -899,6 +899,8 @@ export interface AssistantChatMessage {
   text: string
   /** Tool-вызовы этого сообщения, всегда свёрнутые. */
   toolCalls?: AssistantChatToolCall[]
+  /** Картинка, вставленная в терминал вместе с текстом (сама не передаётся) — подпись к ней рисует renderer. */
+  hasImage?: boolean
   /** Мс, из транскрипта. */
   at: number
 }

@@ -125,12 +125,18 @@ function touch(state: ChatBuildState, index: number): void {
   state.touched.add(index)
 }
 
-/** Реплика человека — печатает как сообщение чата: `id`, если есть `uuid`, иначе позиционный. */
-function pushHuman(o: Record<string, unknown>, text: string, state: ChatBuildState): void {
+/**
+ * Реплика человека — печатает как сообщение чата: `id`, если есть `uuid`, иначе позиционный. `hasImage` — картинка,
+ * вставленная в терминал вместе с текстом; подпись к ней рисует renderer (локаль main и renderer может различаться,
+ * а текст сообщения должен оставаться как в транскрипте, без вшитой русской строки).
+ */
+function pushHuman(o: Record<string, unknown>, text: string, state: ChatBuildState, hasImage = false): void {
   const index = state.messages.length
   // Первая реплика сессии — служебный стартовый промпт ассистента (`worker.ts` → `startAssistant`), человек его не писал.
   if (index === 0 && text === ASSISTANT_START_PROMPT) return
-  state.messages.push({ id: typeof o.uuid === 'string' ? o.uuid : `u${index}`, role: 'human', text, at: timeOf(o.timestamp) })
+  const message: AssistantChatMessage = { id: typeof o.uuid === 'string' ? o.uuid : `u${index}`, role: 'human', text, at: timeOf(o.timestamp) }
+  if (hasImage) message.hasImage = true
+  state.messages.push(message)
   touch(state, index)
   state.turn = null
   state.status = 'thinking'
@@ -177,9 +183,9 @@ function applyUserLine(o: Record<string, unknown>, state: ChatBuildState): void 
   const texts = blocks.filter((b) => b.type === 'text' && typeof b.text === 'string' && b.text.trim())
   if (!texts.length) return
   const text = texts.map((b) => (b.text as string).trim()).join('\n')
-  // Картинка, вставленная в терминал вместе с текстом, — помечаем, само изображение чат не показывает (нет поля под него в AssistantChatMessage).
+  // Картинка, вставленная в терминал вместе с текстом, — помечаем флагом, само изображение чат не показывает.
   const hasImage = blocks.some((b) => b.type === 'image')
-  pushHuman(o, hasImage ? `${text}\n[+ изображение]` : text, state)
+  pushHuman(o, text, state, hasImage)
 }
 
 /**
@@ -257,8 +263,20 @@ interface CacheEntry {
  */
 export class AssistantChatCache {
   private files = new Map<string, CacheEntry>()
+  // Параллельные read() одного пути (IPC getMessages совпал по времени с тиком watchAssistantChat) не должны
+  // независимо читать один CacheEntry и применять один хвост строк дважды — applyChatLine не идемпотентен
+  // (pushHuman/push дописывают, а не заменяют). Поэтому второй вызов ждёт тот же промис, а не запускает свой read.
+  private inflight = new Map<string, Promise<ChatBuildState | undefined>>()
 
-  async read(path: string): Promise<ChatBuildState | undefined> {
+  read(path: string): Promise<ChatBuildState | undefined> {
+    const running = this.inflight.get(path)
+    if (running) return running
+    const promise = this.readNow(path).finally(() => this.inflight.delete(path))
+    this.inflight.set(path, promise)
+    return promise
+  }
+
+  private async readNow(path: string): Promise<ChatBuildState | undefined> {
     let st
     try {
       st = await stat(path)

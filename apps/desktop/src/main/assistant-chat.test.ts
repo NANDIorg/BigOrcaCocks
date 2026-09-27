@@ -192,13 +192,13 @@ describe('чат ассистента: разбор транскрипта', () 
     assert.equal(state.messages.length, 2) // маркер не добавлен отдельным сообщением
   })
 
-  it('реплика человека массивом блоков (текст + картинка) — попадает в чат, картинка помечена', () => {
+  it('реплика человека массивом блоков (текст + картинка) — попадает в чат, картинка помечена флагом hasImage (без вшитого текста)', () => {
     const state = emptyChatState()
     apply(state, humanWithImage(T0, 'u1', 'Что на скриншоте?'))
     assert.equal(state.messages.length, 1)
     assert.equal(state.messages[0].role, 'human')
-    assert.match(state.messages[0].text, /^Что на скриншоте\?/)
-    assert.match(state.messages[0].text, /изображение/)
+    assert.equal(state.messages[0].text, 'Что на скриншоте?')
+    assert.equal(state.messages[0].hasImage, true)
     assert.equal(state.status, 'thinking')
   })
 
@@ -277,6 +277,22 @@ describe('AssistantChatCache: инкрементальное чтение', () =
     assert.equal(state, undefined)
     const snap = chatSnapshot('pty_1', state)
     assert.deepEqual(snap, { ptyId: 'pty_1', messages: [], status: 'done' })
+  })
+
+  it('параллельные read() одного пути не дублируют дописанный хвост (гонка getMessages с тиком watchAssistantChat)', async () => {
+    const cwd = path.join(tmp, 'assistant')
+    const file = sessionFile(cwd, 'sid-race')
+    writeFileSync(file, human(T0, 'u1', 'hi'))
+    const cache = new AssistantChatCache()
+    await cache.read(file)
+
+    appendFileSync(file, human(T0 + 1, 'u2', 'second'))
+    const [a, b] = await Promise.all([cache.read(file), cache.read(file)])
+    assert.equal(a, b)
+    assert.deepEqual(
+      a?.messages.map((m) => m.text),
+      ['hi', 'second']
+    )
   })
 
   it('drainChatUpdates: новые/изменённые сообщения и смена статуса — по одному разу, потом пусто', async () => {

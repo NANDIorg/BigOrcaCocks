@@ -872,7 +872,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     без незакрытого tool-вызова, `done` — после него, `error` — сразу после `tool_result` с `is_error: true`.
     Инкрементальное чтение — `readLines` (экспортирован из `transcripts.ts`, тот же приём, что `TranscriptCache`);
     `AssistantChatCache` — свой кэш по (путь, размер, mtime): состояние хранит открытую реплику и ожидающие
-    результата tool-вызовы, а не расход токенов, поэтому это не `TranscriptCache`.
+    результата tool-вызовы, а не расход токенов, поэтому это не `TranscriptCache`. `read(path)` сериализован
+    по пути через in-flight `Promise`: параллельный вызов (IPC `getMessages` совпал с тиком `watchAssistantChat`)
+    ждёт тот же промис, а не читает `CacheEntry` второй раз — `applyChatLine` не идемпотентен и продублировал бы
+    дописанный хвост. Картинка, вставленная в терминал вместе с текстом, — `AssistantChatMessage.hasImage`
+    (подпись к ней рисует renderer, а не текст сообщения: локаль main и renderer может различаться).
   - **IPC**: `assistantChat:available(ptyId)` → `boolean` (нет `sessionId` или файла — `false`);
     `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot` (последние `ASSISTANT_CHAT_MESSAGE_LIMIT`
     сообщений, не всё тело файла); `assistantChat:send(ptyId, text)` — не пишет в транскрипт напрямую, а
