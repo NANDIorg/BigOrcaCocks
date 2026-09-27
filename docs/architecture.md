@@ -1400,7 +1400,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `types.duplicate` | `type` | новый `TaskType` (копия) |  |
 | `types.delete` | `type`, `yes?` | `TaskTypesState`; последний тип библиотеки — ошибка (`deleteTaskType`) | да — без `yes` ошибка с числом проектов, где тип используется (`taskTypeUsage`), и признаком, что это тип библиотеки по умолчанию |
 | `roles.add` | `type`, `title`, `agent`, `model?`, `effort?`, `description?` | новая `Role` (`addRole`, `id` — `role_<hex>`); `agent` проверяет `validateRoles` |  |
-| `roles.update` | `type`, `role`, любое из `title`/`agent`/`model`/`effort`/`description` | `Role` (`updateRole`) |  |
+| `roles.update` | `type`, `role`, любое из `title`/`agent`/`model`/`effort`/`description`, `yes?` | `Role` (`updateRole`) | да для смены `agent` — без `yes` ошибка с текущим и новым агентом (другой процесс запуска задач роли) |
 | `roles.remove` | `type`, `role`, `yes?` | `TaskType` без роли (`removeRole`); последняя роль типа — ошибка | да — без `yes` ошибка с числом задач проекта на роли (`store.listTasks`) и этапами воркфлоу типа, где она занята (`nodesUsingRole` в `socket.ts`) |
 | `types.perm.get` | `type` | `{typeId, permissionMode}` (`ProjectManager.permissionMode`) |  |
 | `types.perm.set` | `type`, `mode` (`auto\|bypassPermissions\|acceptEdits`), `yes?` | `{typeId, permissionMode}` (`patchTaskType`) | да для `bypassPermissions` — агент работает без запросов на разрешение |

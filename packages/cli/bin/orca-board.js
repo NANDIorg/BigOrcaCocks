@@ -175,6 +175,7 @@ const HELP = `orca-board — управление доской агентов
   roles add --project <id> --type <id> --title "..." --agent <id> [--model <id>] [--effort <id>]
             [--description "..."]        agent — id из agents list
   roles update --project <id> --type <id> --role <id> [--title/--agent/--model/--effort/--description "..."]
+                                          смена --agent требует --yes (другой процесс запуска задач роли)
   roles remove --project <id> --type <id> --role <id> --yes   без --yes — отказ с числом задач проекта на
                                           этой роли и этапами воркфлоу, где она занята; последнюю роль типа
                                           не удалить
