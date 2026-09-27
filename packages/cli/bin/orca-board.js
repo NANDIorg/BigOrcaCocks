@@ -162,6 +162,56 @@ const HELP = `orca-board — управление доской агентов
                                           не можешь выбрать — решение уйдёт человеку в Инбокс с теми же
                                           вариантами и твоим комментарием; повтор вернёт тот же запрос
 
+Настройки: то, что человек меняет в «Настройки» и «О проекте». Библиотека типов задач, ролей и шаблонов нод
+общая для всех проектов — --project только выбирает, через какой проект команда обращается к сокету:
+  types create --project <id> --title "..." [--description "..."]
+                                          новый тип: роли и правила — по умолчанию (как «Создать тип» в UI)
+  types rename --project <id> --type <id> [--title "..."] [--description "..."]   хотя бы одно поле
+  types set-default --project <id> --type <id>   тип библиотеки по умолчанию (новые проекты, ассистент)
+  types duplicate --project <id> --type <id>      копия типа под новым id
+  types delete --project <id> --type <id> --yes   удалить тип; без --yes — отказ с числом проектов, где он
+                                          используется, и является ли он библиотечным умолчанием; последний
+                                          тип библиотеки не удаляется
+  roles add --project <id> --type <id> --title "..." --agent <id> [--model <id>] [--effort <id>]
+            [--description "..."]        agent — id из agents list
+  roles update --project <id> --type <id> --role <id> [--title/--agent/--model/--effort/--description "..."]
+  roles remove --project <id> --type <id> --role <id> --yes   без --yes — отказ с числом задач проекта на
+                                          этой роли и этапами воркфлоу, где она занята; последнюю роль типа
+                                          не удалить
+  types perm get --project <id> --type <id>       режим разрешений Claude Code у типа
+  types perm set --project <id> --type <id> --mode auto|bypassPermissions|acceptEdits
+                                          bypassPermissions — агент работает без подтверждений, нужен --yes
+  node-templates list --project <id>      библиотека шаблонов нод воркфлоу
+  node-templates delete --project <id> --template <id> --yes
+
+  settings get                            настройки приложения целиком (язык, уведомления, автообновление);
+                                          уровня приложения — --project не нужен
+  settings set [--language ru|en] [--keep-in-background] [--notifications-enabled]
+               [--notify-role <id роли>=on|off]... [--notify-event <вид>=on|off]... [--quiet-hours ЧЧ:ММ-ЧЧ:ММ]
+               [--sound] [--show-preview] [--auto-check] [--auto-download] [--install-when-idle]
+                                          любой поднабор флагов; включить boolean-флаг — сам флаг, выключить —
+                                          --no-<флаг> (--no-sound и т.п.); --no-quiet-hours выключает тихие
+                                          часы; вид уведомления — question, answerReady, workerDone,
+                                          escalation, runDone
+
+  projects set-active --project <id>      сделать проект активным (его берут команды без --project)
+  projects remove --project <id> --yes    убрать проект из списка; без --yes — отказ с числом живых воркеров
+                                          и координаторов в проекте
+  project agents set --project <id> [--enable <id агента>]... [--disable <id агента>]...
+                                          включённые агенты проекта; id — из agents list
+  project columns set --project <id> --file columns.json
+                                          весь список колонок доски (BoardColumn[]) из JSON-файла; удаление
+                                          занятой колонки переносит её задачи в backlog — если перенос
+                                          затронет хоть одну задачу, без --yes команда отказывает
+  project types set --project <id> [--types <id>,<id>,...] --default <id>
+                                          типы, доступные проекту (без --types — вся библиотека), и тип по
+                                          умолчанию; --default обязателен
+  project rules get --project <id> --file CLAUDE.md|AGENTS.md
+                                          правила проекта — файл в корне репозитория (не то же самое, что
+                                          rules get/set выше — те про системный промпт типа задачи)
+  project rules set --project <id> --file CLAUDE.md|AGENTS.md --text "..." | --rules-file rules.md
+                                          --text "" — очистить файл; не коммитит — решает человек
+
 Прогон: --run <id> у task create, check, request list, runs close, runs finish, stage finish, roles list, rules get/set
 и workflow show по умолчанию берётся из $ORCA_RUN_ID (у roles list, rules и workflow show — если нет --type) —
 задачи, созданные координатором, наследуют его прогон (= его глобальную задачу) и роли его типа. Так же --global
@@ -177,18 +227,22 @@ if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
   process.exit(0)
 }
 
-// method: первые одно или два слова без "--"
+// method: первые одно, два или три слова без "--" (три — только у `types perm get|set`).
 const words = []
-while (argv.length && !argv[0].startsWith('--') && words.length < 2) words.push(argv.shift())
+while (argv.length && !argv[0].startsWith('--') && words.length < 3) words.push(argv.shift())
 let method = words.join('.')
 if (method === 'done') method = 'worker.done'
 if (method === 'ask') method = 'worker.ask'
 
 // Флаги без значения. Остальные берут следующий аргумент как значение, даже если он начинается
 // с `--` (`--answer "--force"`): иначе значение превращалось в true, а следующий флаг терялся.
-const BOOLEAN_FLAGS = new Set(['wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help', 'start'])
+const BOOLEAN_FLAGS = new Set([
+  'wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help', 'start', 'yes',
+  // settings set: флаги без значения (выключить — --no-<флаг>).
+  'keep-in-background', 'notifications-enabled', 'sound', 'show-preview', 'auto-check', 'auto-download', 'install-when-idle'
+])
 // Повторяемые флаги: каждое вхождение — отдельный элемент (без split по запятой).
-const REPEATABLE_FLAGS = new Set(['option', 'show'])
+const REPEATABLE_FLAGS = new Set(['option', 'show', 'notify-role', 'notify-event', 'enable', 'disable'])
 
 const params = {}
 for (let i = 0; i < argv.length; i++) {
@@ -262,6 +316,22 @@ if (method === 'worker.done') {
 }
 if (method === 'worker.ask') readFileParam('context-file', 'context')
 if (method === 'rules.set') readFileParam('file', 'text')
+// project rules set: --file — CLAUDE.md|AGENTS.md (имя, не путь до контента), содержимое — --text или --rules-file.
+if (method === 'project.rules.set') readFileParam('rules-file', 'text')
+// project columns set: --file — путь к JSON с массивом колонок (BoardColumn[]); парсится тут же, серверу уходит массив.
+if (method === 'project.columns.set') {
+  if (params.file === undefined || params.file === true) {
+    console.error('ошибка: --file обязателен: путь к JSON-файлу с массивом колонок')
+    process.exit(1)
+  }
+  try {
+    params.columns = JSON.parse(readFileSync(params.file, 'utf8'))
+  } catch (e) {
+    console.error(`ошибка: не удалось прочитать или разобрать ${params.file}: ${e.message}`)
+    process.exit(1)
+  }
+  delete params.file
+}
 if (method === 'runs.finish' || method === 'stage.finish') readFileParam('summary-file', 'summary')
 if ((method === 'runs.finish' || method === 'stage.finish') && params.summary === true) {
   console.error('ошибка: --summary требует текста сводки')
@@ -269,6 +339,10 @@ if ((method === 'runs.finish' || method === 'stage.finish') && params.summary ==
 }
 if (method === 'rules.set' && typeof params.text !== 'string') {
   console.error('ошибка: rules set требует --text "..." или --file <путь>')
+  process.exit(1)
+}
+if (method === 'project.rules.set' && typeof params.text !== 'string') {
+  console.error('ошибка: project rules set требует --text "..." или --rules-file <путь>')
   process.exit(1)
 }
 // «Решение ИИ»: без обоснования сервер откажет — говорим сразу, до подключения к сокету.
@@ -297,8 +371,8 @@ const request = {
   params,
   dispatchId: process.env.ORCA_DISPATCH_ID,
   taskId: process.env.ORCA_TASK_ID,
-  // Команды уровня приложения проект не выбирают: --project и $ORCA_PROJECT им не передаём.
-  projectId: method === 'projects.list' ? undefined : params.project ?? process.env.ORCA_PROJECT
+  // Команды уровня приложения (settings.*, как projects.list) проект не выбирают: --project и $ORCA_PROJECT им не передаём.
+  projectId: ['projects.list', 'settings.get', 'settings.set'].includes(method) ? undefined : params.project ?? process.env.ORCA_PROJECT
 }
 delete params.project
 

@@ -43,6 +43,8 @@ export interface NodeTemplatesHook {
   error: string | null
   /** Нет `window.orca.nodeTemplates` — preload старый, библиотека работать не может. */
   stale: boolean
+  /** Перечитать список (например, по `app:changed` — шаблон мог поменять CLI/ассистент, пока окно открыто). */
+  reload(): Promise<void>
   /** Создать (без `id`) или заменить шаблон; ошибка — наружу, с текстом «перезапустите» для старого main. */
   save(input: NodeTemplateInput): Promise<WfNodeTemplate>
   remove(id: string): Promise<void>

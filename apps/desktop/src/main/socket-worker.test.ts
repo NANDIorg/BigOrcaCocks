@@ -10,6 +10,7 @@ import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, legacyDefaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION_TASK_SCOPE } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { spawnPty, killPty } from './pty'
+import { NOT_NEEDED_SETTINGS_DEPS, NOT_NEEDED_APP_SETTINGS_DEPS } from './socket-test-deps'
 
 let tmp: string
 let sockPath: string
@@ -68,7 +69,8 @@ function fakeDeps(): ProjectDeps {
     runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
-    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: legacyDefaultWorkflow(roles), custom: false })
+    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: legacyDefaultWorkflow(roles), custom: false }),
+    ...NOT_NEEDED_SETTINGS_DEPS
   }
 }
 
@@ -117,7 +119,7 @@ beforeEach(async () => {
   calls = []
   typeWorkflow = undefined
   noDecisionEngine = false
-  server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [] })
+  server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [], ...NOT_NEEDED_APP_SETTINGS_DEPS })
   await new Promise((r) => server.once('listening', r))
 })
 

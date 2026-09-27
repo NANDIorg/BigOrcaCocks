@@ -113,6 +113,7 @@ export default {
   'type.notObject': 'тип задачи: ожидается объект',
   'type.emptyId': 'тип задачи: пустой id',
   'type.emptyTitle': 'тип задачи: пустое название',
+  'type.renameEmpty': 'укажи --title и/или --description',
   'type.descriptionNotString': 'тип «{title}»: описание должно быть строкой',
   'type.lastOne': 'тип «{title}» последний в библиотеке — его нельзя удалить: сначала создайте другой тип',
   'type.copyTitle': '{title} (копия)',

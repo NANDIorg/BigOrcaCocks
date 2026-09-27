@@ -110,6 +110,7 @@ export default {
   'type.notObject': 'task type: an object is expected',
   'type.emptyId': 'task type: empty id',
   'type.emptyTitle': 'task type: empty name',
+  'type.renameEmpty': 'specify --title and/or --description',
   'type.descriptionNotString': 'type “{title}”: description must be a string',
   'type.lastOne': 'type “{title}” is the last one in the library and cannot be deleted: create another type first',
   'type.copyTitle': '{title} (copy)',

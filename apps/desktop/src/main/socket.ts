@@ -4,12 +4,14 @@ import { dirname } from 'node:path'
 import {
   DECISION_REASON_LIMIT, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
+  type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams, singleOption } from './request-params'
-import { runnableWorkflow } from './projects'
+import { settingsPatchFromParams } from './settings-params'
+import { runnableWorkflow, type Project, type PermissionMode } from './projects'
+import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -65,6 +67,48 @@ export interface ProjectDeps {
   columns(): BoardColumn[]
   /** Граф типа `typeId` (нет — типа проекта по умолчанию); `custom: false` — дефолтный по ролям типа. */
   workflow(typeId?: string): { typeId: string; title: string; workflow: Workflow; custom: boolean }
+
+  // ---------- настройки: библиотека типов, роли, шаблоны нод, проект (docs/assistant-chat.md → «2. Контракт CLI/сокета») ----------
+
+  /** `types create`: роли и правила — дефолтные (как «Создать тип» в UI). */
+  typesCreate(input: { title: string; description?: string }): TaskType
+  /** `types rename`: хотя бы одно поле. */
+  typesRename(id: string, patch: { title?: string; description?: string }): TaskType
+  /** `types set-default`. */
+  typesSetDefault(id: string): TaskTypesState
+  /** `types duplicate`. */
+  typesDuplicate(id: string): TaskType
+  /** `types delete` без `--yes`: сколько проектов используют тип и тип ли это библиотеки по умолчанию. */
+  typesUsage(id: string): { title: string; projects: number; isLibraryDefault: boolean }
+  typesDelete(id: string): TaskTypesState
+  /** `roles add`. */
+  rolesAdd(typeId: string, input: { title: string; agent: string; model?: string; effort?: string; description?: string }): Role
+  /** `roles update`. */
+  rolesUpdate(typeId: string, roleId: string, patch: { title?: string; agent?: string; model?: string; effort?: string; description?: string }): Role
+  /** `roles remove`. */
+  rolesRemove(typeId: string, roleId: string): TaskType
+  /** `types perm get`. */
+  permissionMode(typeId: string): PermissionMode
+  /** `types perm set`. */
+  setPermissionMode(typeId: string, mode: PermissionMode): PermissionMode
+  /** `node-templates list`. */
+  nodeTemplates(): WfNodeTemplate[]
+  /** `node-templates delete`. */
+  deleteNodeTemplate(id: string): WfNodeTemplate[]
+  /** `projects set-active`: активировать проект, к которому уже привело --project. */
+  setActive(): Project
+  /** `projects remove`. */
+  removeProject(): { removed: string }
+  /** `project agents set`: id включённых агентов после мержа (текущие ∪ --enable) \ --disable. */
+  setEnabledAgents(ids: string[]): Project
+  /** `project columns set`: весь список; вызывающий сам решает, нужно ли подтверждение переноса задач в backlog. */
+  setColumns(columns: BoardColumn[]): Project
+  /** `project types set`. */
+  setProjectTaskTypes(input: ProjectTaskTypesInput): Project
+  /** `project rules get`. */
+  projectRulesGet(file: unknown): RuleFile
+  /** `project rules set`. */
+  projectRulesSet(file: unknown, text: unknown): RuleFile
 }
 
 /** Проект в ответе `projects list`: то, что нужно ассистенту, чтобы выбрать `--project`. */
@@ -86,6 +130,10 @@ export interface SocketDeps {
   resolve(projectId?: string): ProjectDeps
   /** Все проекты пользователя; пустой массив, если проектов нет. */
   projects(): ProjectSummary[]
+  /** `settings get`: настройки приложения (уровень приложения, как `projects.list`). */
+  settings(): AppSettings
+  /** `settings set`. */
+  setSettings(patch: AppSettingsPatch): AppSettings
 }
 
 interface Request {
@@ -335,6 +383,46 @@ function decisionParams(r: Request, store: TaskStore, required: string, missing 
   }
   return { taskId, reason }
 }
+
+/** `--<key> "..."`: значение, undefined — флага нет, ошибка — флаг без значения (`--key` в конце команды). */
+function optStr(r: Request, key: string): string | undefined {
+  const v = r.params[key]
+  if (v === true) throw new Error(`--${key} требует значения`)
+  return str(v)
+}
+
+/** `--type <id>`, обязателен (в отличие от `typeParam`): команды настроек библиотеки типов, а не запуска. */
+function requiredTypeId(r: Request): string {
+  const id = optStr(r, 'type')
+  if (!id) throw new Error('--type обязателен (id типа задачи из types list)')
+  return id
+}
+
+/** `--role <id>`, обязателен: `roles update`/`roles remove` (в отличие от `ruleRole`, роль не резолвится в типе прогона). */
+function requiredRoleId(r: Request): string {
+  const id = optStr(r, 'role')
+  if (!id) throw new Error('--role обязателен (id роли типа)')
+  return id
+}
+
+/** `--yes`: явное подтверждение опасной операции (аналог человеческого «да» из skills/assistant.md). */
+function requireYes(r: Request, message: string): void {
+  if (r.params.yes !== true) throw new Error(`${message} — повтори с --yes`)
+}
+
+/** Ноды воркфлоу типа, где занята роль (гейт, работа, вопрос, условие) — что перестанет работать при `roles remove`. */
+function nodesUsingRole(wf: Workflow, roleId: string): string[] {
+  return wf.nodes
+    .filter(
+      (n) =>
+        ((n.type === 'gate' || n.type === 'ask') && n.roleId === roleId) ||
+        (n.type === 'work' && wfWorkRoleIds(n).includes(roleId)) ||
+        (n.type === 'condition' && n.test.kind === 'role' && n.test.roleIds.includes(roleId))
+    )
+    .map((n) => wfNodeTitle(n))
+}
+
+const PERMISSION_MODES: PermissionMode[] = ['auto', 'bypassPermissions', 'acceptEdits']
 
 const handlers: Record<string, Handler> = {
   'task.list': (r, _d, store) => {
@@ -638,6 +726,134 @@ const handlers: Record<string, Handler> = {
     return taskTypes.map((t) => typeSummary(t, defaultTypeId, enabled))
   },
   'columns.list': (_r, deps) => deps.columns(),
+
+  // ---------- настройки: библиотека типов задач, роли, шаблоны нод, проект ----------
+  // (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»; действует на библиотеку целиком, а не только
+  // на типы, доступные проекту — в отличие от rules.*/typeOf, которые про роли и правила прогона.)
+  'types.create': (r, deps) => {
+    const title = str(r.params.title)
+    if (!title) throw new Error('--title обязателен')
+    return deps.typesCreate({ title, description: optStr(r, 'description') })
+  },
+  'types.rename': (r, deps) => deps.typesRename(requiredTypeId(r), { title: optStr(r, 'title'), description: optStr(r, 'description') }),
+  'types.set-default': (r, deps) => deps.typesSetDefault(requiredTypeId(r)),
+  'types.duplicate': (r, deps) => deps.typesDuplicate(requiredTypeId(r)),
+  'types.delete': (r, deps) => {
+    const id = requiredTypeId(r)
+    if (r.params.yes !== true) {
+      const usage = deps.typesUsage(id)
+      const parts = [
+        usage.projects > 0 ? `используется в ${usage.projects} проект(ах)` : 'не используется ни в одном проекте',
+        usage.isLibraryDefault ? 'это тип библиотеки по умолчанию — после удаления выберется другой' : undefined
+      ].filter((s): s is string => Boolean(s))
+      requireYes(r, `нужно подтверждение: тип «${usage.title}» ${parts.join(', ')}`)
+    }
+    return deps.typesDelete(id)
+  },
+  'roles.add': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const title = str(r.params.title)
+    const agent = str(r.params.agent)
+    if (!title) throw new Error('--title обязателен')
+    if (!agent) throw new Error('--agent обязателен (orca-board agents list)')
+    return deps.rolesAdd(typeId, { title, agent, model: optStr(r, 'model'), effort: optStr(r, 'effort'), description: optStr(r, 'description') })
+  },
+  'roles.update': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const roleId = requiredRoleId(r)
+    const patch = { title: optStr(r, 'title'), agent: optStr(r, 'agent'), model: optStr(r, 'model'), effort: optStr(r, 'effort'), description: optStr(r, 'description') }
+    if (Object.values(patch).every((v) => v === undefined)) throw new Error('укажи хотя бы один флаг: --title/--agent/--model/--effort/--description')
+    return deps.rolesUpdate(typeId, roleId, patch)
+  },
+  'roles.remove': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const roleId = requiredRoleId(r)
+    if (r.params.yes !== true) {
+      const { title, workflow } = deps.workflow(typeId)
+      const taskCount = deps.store.listTasks().filter((t) => t.roleId === roleId).length
+      const stages = nodesUsingRole(workflow, roleId)
+      const parts = [
+        taskCount > 0 ? `на ней ${taskCount} задач(и) этого проекта` : undefined,
+        stages.length ? `её ждут этапы воркфлоу: ${stages.join(', ')}` : undefined
+      ].filter((s): s is string => Boolean(s))
+      requireYes(r, `нужно подтверждение: удаление роли «${roleId}» из типа «${title}»${parts.length ? ` — ${parts.join('; ')}` : ''}`)
+    }
+    return deps.rolesRemove(typeId, roleId)
+  },
+  'types.perm.get': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    return { typeId, permissionMode: deps.permissionMode(typeId) }
+  },
+  'types.perm.set': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const mode = str(r.params.mode)
+    if (!mode || !(PERMISSION_MODES as string[]).includes(mode)) throw new Error(`--mode обязателен: ${PERMISSION_MODES.join(' | ')}`)
+    if (mode === 'bypassPermissions') {
+      requireYes(r, 'нужно подтверждение: bypassPermissions — агент этого типа работает полностью автономно, без запросов на разрешение')
+    }
+    return { typeId, permissionMode: deps.setPermissionMode(typeId, mode as PermissionMode) }
+  },
+  'node-templates.list': (_r, deps) => deps.nodeTemplates(),
+  'node-templates.delete': (r, deps) => {
+    const id = optStr(r, 'template')
+    if (!id) throw new Error('--template обязателен (id шаблона из node-templates list)')
+    requireYes(r, `нужно подтверждение: удаление шаблона ноды «${id}»`)
+    return deps.deleteNodeTemplate(id)
+  },
+  'projects.set-active': (_r, deps) => deps.setActive(),
+  'projects.remove': (r, deps) => {
+    if (r.params.yes !== true) {
+      const workers = deps.store.activeDispatches().filter((d) => isAlive(d.ptyId)).length
+      const coordinators = deps.store.listRuns().filter((run) => run.coordinatorPtyId && !run.finishedAt && !run.closedAt && isAlive(run.coordinatorPtyId)).length
+      const parts = [
+        workers > 0 ? `${workers} живых воркер(ов)` : undefined,
+        coordinators > 0 ? `${coordinators} живых координатор(ов)` : undefined
+      ].filter((s): s is string => Boolean(s))
+      requireYes(r, `нужно подтверждение: удаление проекта из списка${parts.length ? ` — в нём ${parts.join(' и ')}, их терминалы останутся без задачи` : ''}`)
+    }
+    return deps.removeProject()
+  },
+  'project.agents.set': (r, deps) => {
+    const enable = list(r.params.enable)
+    const disable = list(r.params.disable)
+    if (!enable.length && !disable.length) throw new Error('укажи хотя бы один --enable/--disable <id агента> (orca-board agents list)')
+    const known = new Set(deps.agents().map((a) => a.id as string))
+    for (const id of [...enable, ...disable]) if (!known.has(id)) throw new Error(`неизвестный агент «${id}» (orca-board agents list)`)
+    const current = new Set(deps.agents().filter((a) => a.enabled).map((a) => a.id as string))
+    for (const id of enable) current.add(id)
+    for (const id of disable) current.delete(id)
+    return deps.setEnabledAgents([...current])
+  },
+  'project.columns.set': (r, deps) => {
+    const raw = r.params.columns
+    if (!Array.isArray(raw)) throw new Error('--file обязателен: путь к JSON-файлу с массивом колонок (BoardColumn[])')
+    const before = new Set(deps.columns().map((c) => c.id))
+    const after = new Set(raw.map((c) => (c as { id?: unknown }).id))
+    const removed = [...before].filter((id) => !after.has(id))
+    const moved = removed.length ? deps.store.listTasks().filter((t) => removed.includes(t.status)).map((t) => t.id) : []
+    if (moved.length) requireYes(r, `нужно подтверждение: удаление ${removed.length === 1 ? 'колонки' : 'колонок'} перенесёт ${moved.length} задач(и) в backlog`)
+    const project = deps.setColumns(raw as BoardColumn[])
+    return { project, movedToBacklog: moved }
+  },
+  'project.types.set': (r, deps) => {
+    const types = list(r.params.types)
+    const defaultTypeId = optStr(r, 'default')
+    if (!defaultTypeId) throw new Error('--default обязателен (id типа из types list)')
+    return deps.setProjectTaskTypes({ typeIds: types.length ? types : null, defaultTypeId })
+  },
+  'project.rules.get': (r, deps) => {
+    const file = optStr(r, 'file')
+    if (!file) throw new Error('--file обязателен: CLAUDE.md или AGENTS.md')
+    return deps.projectRulesGet(file)
+  },
+  'project.rules.set': (r, deps) => {
+    const file = optStr(r, 'file')
+    if (!file) throw new Error('--file обязателен: CLAUDE.md или AGENTS.md')
+    const text = r.params.text
+    if (typeof text !== 'string') throw new Error('нужен текст правил: --text "..." или --rules-file <путь> (пустая строка — очистить файл)')
+    return deps.projectRulesSet(file, text)
+  },
+
   // Правила агентов доски — типа задачи (typeOf): общие — agentRules типа, роли — её systemPrompt (оба уходят в
   // системный промпт, withAgentRules).
   'rules.get': (r, deps, store) => {
@@ -755,7 +971,9 @@ const handlers: Record<string, Handler> = {
  * и не падают на ORCA_PROJECT удалённого или чужого проекта.
  */
 const appHandlers: Record<string, (req: Request, deps: SocketDeps) => unknown> = {
-  'projects.list': (_r, deps) => deps.projects()
+  'projects.list': (_r, deps) => deps.projects(),
+  'settings.get': (_r, deps) => deps.settings(),
+  'settings.set': (r, deps) => deps.setSettings(settingsPatchFromParams(r.params))
 }
 
 export function startSocketServer(path: string, socketDeps: SocketDeps): Server {

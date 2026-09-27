@@ -849,10 +849,17 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `columns list`, роли — из `roles list`; словарь намерений → команды; без подтверждения — создать/перенести/запустить,
   после явного «да» — `task delete`, `global delete`, закрыть без мержа, `worker stop`; после действия — одна строка
   с проектом и id; долгих ожиданий (`check --wait/--follow`) нет.
-- **Настройки (контракт, реализации пока нет)** — `docs/assistant-chat.md` → «1–2»: инвентаризация всех
-  настроек приложения и проекта (что уже читается/пишется через CLI, чего не хватает ассистенту) и контракт
-  недостающих методов сокета/CLI для их правки (опасные — удаление роли/типа, `bypassPermissions` — только
-  с явным подтверждением).
+- **Настройки** — ассистент читает и правит все настройки приложения и проекта (то, что человек меняет в
+  «Настройки» и «О проекте») теми же командами `orca-board`, что и CLI: `settings get/set`, `types
+  create/rename/set-default/duplicate/delete`, `roles add/update/remove`, `types perm get/set`,
+  `node-templates list/delete`, `projects set-active/remove`, `project agents set`, `project columns set`,
+  `project types set`, `project rules get/set` — таблица методов сокета в «Протокол сокета» → «Настройки»,
+  флаги — `orca-board --help`. Опасные операции (удаление роли/типа/шаблона/проекта, `bypassPermissions`)
+  ассистент **не** подтверждает сам — только явным `--yes` после того, как человек в чате сказал «да» и
+  ассистент назвал, что изменится (тот же принцип, что у `task delete`/`global delete`/`worker stop`
+  выше); граф воркфлоу правится только визуально в «Настройках» — ассистент может лишь читать его
+  (`workflow show`). Контракт задачи (инвентаризация настроек, откуда что берётся) — `docs/assistant-chat.md`
+  → «1–2»; чат-режим панели — следующий пункт.
 - **Чат-режим панели** (`src/main/assistant-chat.ts`, IPC `assistantChat`, контракт — `docs/assistant-chat.md`
   → «3»): панель ассистента выглядит как чат, но под капотом остаётся тот же PTY — `assistantChat` только
   читает и пишет в него другим протоколом, `assistant.open/reset` всё равно поднимает PTY.
@@ -1313,8 +1320,12 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `OrcaError[<ключ>]: <текст>` (renderer: `ipcErrorMessage` / `ipcErrorCode`, см. «Язык интерфейса» → «main»).
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
-  `updates:changed` (полный `UpdateState`), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
-- В preload: `window.orca.app.{info, getSettings, setSettings}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, onMessage}`;
+  `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
+  группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
+  поэтому событие приходит одинаково и от IPC, и от правки через сокет CLI/ассистентом, см. «Ассистент» → «Настройки»),
+  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
+  `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
+- В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, onMessage}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
@@ -1323,8 +1334,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 `check` с `follow: true` — исключение: сервер пишет по строке `{id, ok: true, result: {event}}` на каждое
 событие, пока клиент не закроет соединение (см. «Ожидание событий без токенов»).
-Методы уровня приложения (`appHandlers` в `src/main/socket.ts`, сейчас только `projects.list`) выполняются
-до `SocketDeps.resolve(projectId)`: работают без проектов и игнорируют `projectId`, даже чужой или удалённый.
+Методы уровня приложения (`appHandlers` в `src/main/socket.ts`: `projects.list`, `settings.get`, `settings.set`)
+выполняются до `SocketDeps.resolve(projectId)`: работают без проектов и игнорируют `projectId`, даже чужой или удалённый.
 События помечаются `consumedBy` (= `runId` прогона, иначе `coordinator`), повторно `check` их не отдаёт.
 
 | Метод | Параметры | Результат |
@@ -1359,6 +1370,49 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `worker.stop` | `task` | `{stopped: dispatchId[], task}` |
 | `worker.restart` | `task`, `feedback?` | `{stopped, ptyId, dispatchId, worktree, branch}` |
 | `task.reopen` | `task`, `feedback?`, `start?` | `Task`; со `start` — `{task, worker}` |
+
+### Настройки (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»)
+
+То, что человек меняет в «Настройки» и «О проекте» — ассистент читает и правит теми же методами, что и CLI.
+Библиотека типов задач, ролей типов и шаблонов нод общая для всех проектов (как renderer IPC `taskTypes:*`,
+`nodeTemplates:*`): методы идут через `SocketDeps.resolve(projectId)`, как остальные проектные команды, но
+меняют `ProjectManager` напрямую, а не что-то у конкретного проекта — `projectId` только выбирает, через
+какой проект агент обратился к сокету. `settings.*` — уровень приложения (таблица выше). Подтверждение
+опасных операций — отдельный флаг `--yes`/параметр `yes: true`, не заданный по умолчанию: без него сокет
+отвечает ошибкой с описанием последствий (аналог человеческого «да» из `skills/assistant.md`), а не выполняет
+операцию молча. Открытое окно узнаёт о правке из CLI/ассистента так же, как о своей: любая из команд ниже
+проходит через `ProjectManager.save()`, который шлёт `app:changed` (см. «IPC»), и renderer перечитывает
+проекты/типы/настройки тем же путём, что после своих IPC-вызовов (`SettingsModal` — `app.getSettings`,
+`projects.list`, `taskTypes.list`, `nodeTemplates.list`). Исключение — `project.rules.*`: `readRule`/`writeRule`
+(`src/main/rules.ts`) пишут файл `CLAUDE.md`/`AGENTS.md` в корне репозитория проекта напрямую, в обход
+`ProjectManager.save()`, событие не шлётся — открытая вкладка «О проекте → Правила» правку CLI/ассистента
+не увидит до повторного открытия. Реализация — `ProjectDeps` в `src/main/socket.ts` (поля `typesCreate`/`typesRename`/…), деп-методы
+из `ProjectManager` (`src/main/projects.ts`: `renameTaskType`, `taskTypeUsage`, `addRole`/`updateRole`/`removeRole`,
+`permissionMode`) и `readRule`/`writeRule` (`src/main/rules.ts`) для `project.rules.*`.
+
+| Метод | Параметры | Результат | Подтверждение |
+|---|---|---|---|
+| `settings.get` | — (уровень приложения) | `AppSettings` целиком |  |
+| `settings.set` | любой поднабор: `language`, `keep-in-background`, `notifications-enabled`, `notify-role` (`id=on\|off`, повторяемый), `notify-event` (`kind=on\|off`, повторяемый), `quiet-hours` (`ЧЧ:ММ-ЧЧ:ММ` или `false` — выключить), `sound`, `show-preview`, `auto-check`, `auto-download`, `install-when-idle` | `AppSettings` после мержа (`ProjectManager.setSettings`; смена языка сразу зовёт `setMainLocale`, `refreshTray`, `updater.settingsChanged()` — как `app:setSettings` в IPC) |  |
+| `types.create` | `title`, `description?` | новый `TaskType` (`ProjectManager.saveTaskType({..., settings: {}})` — роли и правила по умолчанию, как «Создать тип» в UI) |  |
+| `types.rename` | `type`, `title?`, `description?` (хотя бы одно) | `TaskType` (`renameTaskType`) |  |
+| `types.set-default` | `type` | `TaskTypesState` |  |
+| `types.duplicate` | `type` | новый `TaskType` (копия) |  |
+| `types.delete` | `type`, `yes?` | `TaskTypesState`; последний тип библиотеки — ошибка (`deleteTaskType`) | да — без `yes` ошибка с числом проектов, где тип используется (`taskTypeUsage`), и признаком, что это тип библиотеки по умолчанию |
+| `roles.add` | `type`, `title`, `agent`, `model?`, `effort?`, `description?` | новая `Role` (`addRole`, `id` — `role_<hex>`); `agent` проверяет `validateRoles` |  |
+| `roles.update` | `type`, `role`, любое из `title`/`agent`/`model`/`effort`/`description` | `Role` (`updateRole`) |  |
+| `roles.remove` | `type`, `role`, `yes?` | `TaskType` без роли (`removeRole`); последняя роль типа — ошибка | да — без `yes` ошибка с числом задач проекта на роли (`store.listTasks`) и этапами воркфлоу типа, где она занята (`nodesUsingRole` в `socket.ts`) |
+| `types.perm.get` | `type` | `{typeId, permissionMode}` (`ProjectManager.permissionMode`) |  |
+| `types.perm.set` | `type`, `mode` (`auto\|bypassPermissions\|acceptEdits`), `yes?` | `{typeId, permissionMode}` (`patchTaskType`) | да для `bypassPermissions` — агент работает без запросов на разрешение |
+| `node-templates.list` | — | `WfNodeTemplate[]` |  |
+| `node-templates.delete` | `template`, `yes?` | оставшиеся `WfNodeTemplate[]` | да |
+| `projects.set-active` | — (проект уже выбран `--project`) | `Project` (`ProjectManager.setActive`) |  |
+| `projects.remove` | `yes?` | `{removed: id}` | да — без `yes` ошибка с числом живых воркеров (`store.activeDispatches`) и координаторов проекта |
+| `project.agents.set` | `enable?` (повторяемый), `disable?` (повторяемый) | `Project`; неизвестный агент — ошибка (сверка с `agents.list`) |  |
+| `project.columns.set` | `columns` (весь `BoardColumn[]`, CLI читает из `--file`) | `{project, movedToBacklog: taskId[]}`; удаление занятой колонки переносит её задачи в backlog (`ProjectManager.setColumns`) | да, если перенос не пустой |
+| `project.types.set` | `types?` (список id через запятую; нет — вся библиотека), `default` (обязателен) | `Project` (`setProjectTaskTypes`) |  |
+| `project.rules.get` | `file` (`CLAUDE.md`\|`AGENTS.md`) | `RuleFile` (`readRule`, корень репозитория проекта) |  |
+| `project.rules.set` | `file`, `text` (CLI читает `--rules-file` или берёт `--text`) | `RuleFile` после записи (`writeRule`; не коммитит) |  |
 
 `worker.stop` — `ProjectDeps.stopWorker` (`stopTaskWorker` в `src/main/index.ts`): `closeTaskWorkers` закрывает живые
 dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalation` — `ptyExited` видит `endedAt` и молчит) и убивает PTY

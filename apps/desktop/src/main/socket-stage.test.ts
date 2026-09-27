@@ -14,6 +14,7 @@ import {
 } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { finishRunStage, handleRunWorkflowEvents, runGateDecision, type RunWorkflowDeps } from './workflow-run'
+import { NOT_NEEDED_SETTINGS_DEPS, NOT_NEEDED_APP_SETTINGS_DEPS } from './socket-test-deps'
 
 let tmp: string
 let sockPath: string
@@ -71,7 +72,8 @@ function fakeDeps(): ProjectDeps {
     runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
-    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: typeWorkflow, custom: false })
+    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: typeWorkflow, custom: false }),
+    ...NOT_NEEDED_SETTINGS_DEPS
   }
 }
 
@@ -120,7 +122,7 @@ beforeEach(async () => {
   roles = DEFAULT_ROLES
   agents = [{ id: 'claude', title: 'Claude Code', installed: true, enabled: true, models: [], defaults: {} }]
   typeWorkflow = defaultWorkflow(roles)
-  server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [] })
+  server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [], ...NOT_NEEDED_APP_SETTINGS_DEPS })
   await new Promise((r) => server.once('listening', r))
 })
 

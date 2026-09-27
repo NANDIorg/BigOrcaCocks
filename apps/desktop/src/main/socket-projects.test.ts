@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { startSocketServer, type ProjectSummary } from './socket'
+import { NOT_NEEDED_APP_SETTINGS_DEPS } from './socket-test-deps'
 
 let tmp: string
 let sockPath: string
@@ -48,7 +49,8 @@ beforeEach(async () => {
       resolveCalls++
       throw new Error(projectId ? `project not found: ${projectId}` : 'нет проектов: добавьте репозиторий')
     },
-    projects: () => projects
+    projects: () => projects,
+    ...NOT_NEEDED_APP_SETTINGS_DEPS
   })
   await new Promise((r) => server.once('listening', r))
 })
