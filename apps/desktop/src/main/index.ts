@@ -923,6 +923,9 @@ function registerIpc(): void {
     const value = typeof text === 'string' ? text : ''
     if (!value.trim()) throw new OrcaError('assistantChat.emptyText')
     writePty(ptyId, chatInputBytes(value))
+    setTimeout(() => {
+      if (isAlive(ptyId)) writePty(ptyId, '\r')
+    }, SUBMIT_DELAY_MS)
   })
   handle('docs:list', () => {
     if (!projects.active()) return []

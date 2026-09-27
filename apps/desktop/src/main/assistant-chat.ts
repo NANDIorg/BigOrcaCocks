@@ -348,13 +348,14 @@ export function drainChatUpdates(ptyId: string, state: ChatBuildState, prevStatu
 }
 
 /**
- * Байты для `pty.write` при отправке сообщения из чата: как реальная вставка в терминал. Однострочный текст —
- * просто `text + '\r'` (Enter); многострочный — обёрнут в bracketed paste (`ESC[200~ … ESC[201~`), иначе
+ * Тело для `pty.write` при отправке сообщения из чата — без Enter: как реальная вставка в терминал.
+ * Однострочный текст — как есть; многострочный — обёрнут в bracketed paste (`ESC[200~ … ESC[201~`), иначе
  * интерактивный агент (readline в raw-режиме) принял бы перевод строки внутри текста за отдельные Enter и отправил
- * сообщение по первой строке.
+ * сообщение по первой строке. Enter пишется отдельной записью с паузой (см. `SUBMIT_DELAY_MS` в `index.ts`) —
+ * иначе TUI агента принимает его за часть вставки и не отправляет сообщение (те же грабли, что у `answerNudge`).
  */
 export function chatInputBytes(text: string): string {
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  if (normalized.includes('\n')) return `\x1b[200~${normalized}\x1b[201~\r`
-  return `${normalized}\r`
+  if (normalized.includes('\n')) return `\x1b[200~${normalized}\x1b[201~`
+  return normalized
 }

@@ -882,11 +882,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     сообщений, не всё тело файла); `assistantChat:send(ptyId, text)` — не пишет в транскрипт напрямую, а
     `pty.write(ptyId, chatInputBytes(text))` — тот же путь, что ввод в терминале (агент сам допишет транскрипт,
     чат увидит через `onMessage`); многострочный текст оборачивается в bracketed paste (`ESC[200~ … ESC[201~`),
-    иначе readline агента принял бы `\n` внутри текста за отдельные Enter. Чужой `ptyId` или пустой текст —
-    `OrcaError` `assistantChat.unknownPty`/`assistantChat.emptyText`. Событие `assistantChat:message:<ptyId>` —
-    `AssistantChatUpdate` (новое/изменённое сообщение или смена статуса), раз в секунду по разнице с прошлым
-    тиком (`watchAssistantChat`/`drainChatUpdates` в `index.ts`), не весь снапшот. В preload —
-    `window.orca.assistantChat.{available, getMessages, send, onMessage}`.
+    иначе readline агента принял бы `\n` внутри текста за отдельные Enter. Enter — **отдельная** запись
+    `pty.write(ptyId, '\r')` через `setTimeout(SUBMIT_DELAY_MS)` (константа `index.ts`, общая с `answerNudge`),
+    с проверкой `isAlive(ptyId)` перед отложенной записью: `chatInputBytes` отдаёт только тело без `\r` — если
+    Enter уйти в PTY той же записью, что текст, TUI агента (readline в raw-режиме) примет его за часть вставки
+    и не отправит сообщение (те же грабли, что решает пауза у `answerNudge`, см. «Грабли разработки»). Чужой
+    `ptyId` или пустой текст — `OrcaError` `assistantChat.unknownPty`/`assistantChat.emptyText`. Событие
+    `assistantChat:message:<ptyId>` — `AssistantChatUpdate` (новое/изменённое сообщение или смена статуса), раз
+    в секунду по разнице с прошлым тиком (`watchAssistantChat`/`drainChatUpdates` в `index.ts`), не весь снапшот.
+    В preload — `window.orca.assistantChat.{available, getMessages, send, onMessage}`.
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 

@@ -799,8 +799,10 @@ export interface OrcaApi {
     /** Сообщения с начала сессии (последние `ASSISTANT_CHAT_MESSAGE_LIMIT`, не всё тело файла) и текущий статус. */
     getMessages(ptyId: string): Promise<AssistantChatSnapshot>
     /**
-     * Отправить сообщение из чата: `pty.write(ptyId, text + '\r')` (многострочный текст — через bracketed paste) —
-     * тот же путь, что ввод в терминале; транскрипт допишет сам агент. Пустой текст или чужой `ptyId` — ошибка.
+     * Отправить сообщение из чата: `pty.write(ptyId, chatInputBytes(text))` (многострочный текст — через bracketed
+     * paste), затем отдельной записью `\r` с паузой `SUBMIT_DELAY_MS` — иначе TUI агента принимает Enter за часть
+     * вставки и не отправляет сообщение (те же грабли, что у `answerNudge`). Тот же путь, что ввод в терминале;
+     * транскрипт допишет сам агент. Пустой текст или чужой `ptyId` — ошибка.
      */
     send(ptyId: string, text: string): Promise<void>
     /** Новое/изменённое сообщение или смена статуса этого PTY. */

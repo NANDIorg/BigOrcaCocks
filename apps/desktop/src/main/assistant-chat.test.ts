@@ -318,13 +318,13 @@ describe('AssistantChatCache: инкрементальное чтение', () =
 })
 
 describe('chatInputBytes', () => {
-  it('однострочный текст — просто Enter', () => {
-    assert.equal(chatInputBytes('привет'), 'привет\r')
+  it('однострочный текст — как есть, без Enter (Enter пишется отдельной записью с паузой)', () => {
+    assert.equal(chatInputBytes('привет'), 'привет')
   })
-  it('многострочный текст — bracketed paste, CRLF нормализуется в LF', () => {
-    assert.equal(chatInputBytes('строка1\r\nстрока2'), '\x1b[200~строка1\nстрока2\x1b[201~\r')
+  it('многострочный текст — bracketed paste без Enter, CRLF нормализуется в LF', () => {
+    assert.equal(chatInputBytes('строка1\r\nстрока2'), '\x1b[200~строка1\nстрока2\x1b[201~')
   })
-  it('пустая строка — просто Enter (валидацию пустого текста делает вызывающий код)', () => {
-    assert.equal(chatInputBytes(''), '\r')
+  it('пустая строка — пустой результат (валидацию пустого текста делает вызывающий код)', () => {
+    assert.equal(chatInputBytes(''), '')
   })
 })
