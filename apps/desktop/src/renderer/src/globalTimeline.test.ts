@@ -237,6 +237,9 @@ test('globalTimeline: ноды старта и условия в истории 
   assert.deepEqual(events.map((e) => e.title), ['Этап «n9»', 'Этап «Реализация»'], 'граф есть: n9 неизвестна — id; старт скрыт')
   const bare = globalTimeline({ stageHistory: [stageAt('work', 2000, { title: 'Работа' }), stageAt('n9', 3000)] }, columns, NOW)
   assert.deepEqual(bare.map((e) => e.title), ['Этап «n9»', 'Этап «Работа»'])
+  // Ссылка «на графе» — только у ноды, которая есть в графе прогона.
+  assert.deepEqual(events.map((e) => e.nodeId), [undefined, 'work'])
+  assert.deepEqual(bare.map((e) => e.nodeId), [undefined, undefined])
 })
 
 test('globalTimeline: вход в этап — причина, поэтому при одной метке времени лента показывает его ниже перехода колонки', () => {

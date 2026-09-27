@@ -44,6 +44,8 @@ export interface TimelineEvent {
   columnKind?: ColumnKind
   /** Время приблизительное: стартовая запись миграции, а не настоящий переход. */
   approx?: boolean
+  /** Нода графа прогона у входа в этап (`stage`) — ссылка «на графе»; ноды нет в графе — undefined. */
+  nodeId?: string
 }
 
 export interface TimelineDay {
@@ -152,6 +154,7 @@ function stageEvents(g: TimelineSource): TimelineEvent[] {
       key: `stage-${i}`,
       kind: 'stage',
       at: h.at,
+      ...(node ? { nodeId: node.id } : {}),
       title: t('global.timeline.stage', { name }),
       ...(h.visit !== undefined && h.visit > 1 ? { detail: t('global.timeline.stageVisit', { n: h.visit }) } : {}),
       ...(sub.length ? { sub: sub.join(' · ') } : {}),

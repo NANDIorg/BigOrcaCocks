@@ -1931,6 +1931,117 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 }
 .gt-hist-return .gt-hist-what > div:first-child { color: var(--col-review); }
 .gt-hist-more { margin-top: 8px; padding: 0; font-size: 12.5px; }
+
+/* ---------- вкладка «Граф» (WorkflowProgressView): прогресс воркфлоу только для чтения, макет docs/design/workflow-progress/variant-a.html ---------- */
+/* Пройдено — бирюзовая рамка и галочка, сейчас — акцентная рамка с пульсом, впереди — пунктир; пройденные переходы сплошные. */
+.wf-progress { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+.wf-progress-canvas {
+  background-color: var(--side); background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); background-size: 20px 20px;
+}
+.wf-progress-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.wf-progress-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; font-size: 13px; }
+.wf-progress-crumbs .btn-text { padding: 0; color: var(--accent); font-size: 13px; }
+.wf-progress-crumbs .btn-text:hover { text-decoration: underline; }
+.wf-progress-crumbs b { font-weight: 600; overflow-wrap: anywhere; }
+.wf-progress-ro { color: var(--muted); font-size: 11.5px; }
+.wf-progress-scroll { overflow-x: auto; padding: 4px 0; }
+.wf-progress-svg { display: block; width: 100%; height: auto; margin: 0 auto; overflow: visible; }
+.wf-progress-box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
+.wf-progress-title { fill: var(--text); font-size: 13px; font-weight: 600; pointer-events: none; }
+.wf-progress-sub { fill: var(--muted); font-size: 11px; pointer-events: none; }
+.wf-progress-icon { color: var(--muted); }
+.wf-progress-node--start .wf-progress-icon, .wf-progress-node--end .wf-progress-icon { color: var(--col-done); }
+.wf-progress-node--work .wf-progress-icon { color: var(--col-progress); }
+.wf-progress-node--gate .wf-progress-icon { color: var(--col-review); }
+.wf-progress-node--ask .wf-progress-icon, .wf-progress-node--human .wf-progress-icon { color: var(--col-input); }
+.wf-progress-node--merge .wf-progress-icon, .wf-progress-node--git .wf-progress-icon { color: var(--accent); }
+.wf-progress-node--decision .wf-progress-icon { color: var(--col-ready); }
+.wf-progress-node.is-todo .wf-progress-box { fill: transparent; stroke-dasharray: 4 3; }
+.wf-progress-node.is-todo :is(.wf-progress-title, .wf-progress-sub, .wf-progress-icon) { opacity: .55; }
+.wf-progress-node.is-done .wf-progress-box { stroke: color-mix(in srgb, var(--col-done) 60%, transparent); }
+.wf-progress-node.is-current .wf-progress-box { stroke: var(--accent); stroke-width: 2.4; fill: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.wf-progress-halo {
+  fill: none; stroke: var(--accent); stroke-width: 2; opacity: .5; transform-box: fill-box; transform-origin: center;
+  animation: wf-progress-pulse 1.8s ease-out infinite;
+}
+@keyframes wf-progress-pulse { from { opacity: .55; transform: scale(1); } to { opacity: 0; transform: scale(1.08, 1.25); } }
+@media (prefers-reduced-motion: reduce) { .wf-progress-halo { animation: none; opacity: .35; } }
+.wf-progress-sel { fill: none; stroke: var(--text); stroke-width: 1.4; stroke-dasharray: 3 3; opacity: .7; }
+.wf-progress-node.is-clickable { cursor: pointer; }
+.wf-progress-node.is-clickable:hover .wf-progress-box { fill: var(--card-hover); }
+.wf-progress-node:focus { outline: none; }
+.wf-progress-node:focus-visible .wf-progress-box { stroke: var(--accent); stroke-width: 3; }
+.wf-progress-badge rect { fill: var(--accent); }
+.wf-progress-badge text { fill: #fff; font-size: 10.5px; font-weight: 600; pointer-events: none; }
+.wf-progress-badge.is-bad rect { fill: var(--wf-reject); }
+.wf-progress-badge.is-count rect { fill: var(--col-done); }
+.wf-progress-badge.is-count text { fill: var(--frame); }
+.wf-progress-check circle { fill: var(--col-done); }
+.wf-progress-check path { fill: none; stroke: var(--frame); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.wf-progress-edge { --edge: var(--muted); }
+.wf-progress-edge--accept, .wf-progress-edge--ok { --edge: var(--wf-accept); }
+.wf-progress-edge--reject, .wf-progress-edge--conflict, .wf-progress-edge--error { --edge: var(--wf-reject); }
+.wf-progress-edge--opt { --edge: var(--col-ready); }
+.wf-progress-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.6; opacity: .3; stroke-dasharray: 5 4; }
+.wf-progress-edge-arrow { fill: var(--edge); opacity: .3; }
+.wf-progress-edge-label { fill: var(--edge); font-size: 10.5px; opacity: .6; }
+.wf-progress-edge.is-walked .wf-progress-edge-line { opacity: 1; stroke-width: 2.6; stroke-dasharray: none; }
+.wf-progress-edge.is-walked :is(.wf-progress-edge-arrow, .wf-progress-edge-label) { opacity: 1; }
+.wf-progress-edge-count { font-weight: 700; }
+.wf-progress-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.wf-progress-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.wf-progress-legend i { display: inline-block; width: 16px; height: 10px; border-radius: 3px; border: 1.5px solid var(--chip); }
+.wf-progress-legend i.is-done { border-color: var(--col-done); }
+.wf-progress-legend i.is-current { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.wf-progress-legend i.is-todo { border-style: dashed; }
+.wf-progress-legend i.is-accept, .wf-progress-legend i.is-return { border: 0; height: 3px; border-radius: 2px; background: var(--wf-accept); }
+.wf-progress-legend i.is-return { background: var(--wf-reject); }
+.wf-progress-panel { display: flex; flex-direction: column; min-width: 0; }
+.wf-progress-panel-head { display: flex; align-items: center; gap: 8px; }
+.wf-progress-panel-head h3 { margin: 0; flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.wf-progress-state { flex-shrink: 0; }
+.wf-progress-state.is-current { color: var(--accent); border-color: var(--accent); }
+.wf-progress-state.is-done { color: var(--col-done); border-color: color-mix(in srgb, var(--col-done) 55%, transparent); }
+.wf-progress-kv { margin-top: 10px; font-size: 12.5px; }
+.wf-progress-sec { margin: 14px 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.wf-progress-empty { margin: 0; font-size: 12.5px; }
+.wf-progress-visits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wf-progress-visits li { padding: 8px 10px; border-radius: 10px; background: var(--card); border-left: 3px solid var(--col-done); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere; }
+.wf-progress-visits li.is-bad { border-left-color: var(--wf-reject); }
+.wf-progress-visits li.is-now { border-left-color: var(--accent); }
+.wf-progress-visit-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; }
+.wf-progress-visit-head .muted { font-variant-numeric: tabular-nums; }
+.wf-progress-visit-sub { margin-top: 2px; font-size: 12px; }
+.wf-progress-ret { color: var(--wf-reject); }
+.wf-progress-quote {
+  margin-top: 4px; padding: 4px 10px; font-size: 12.5px; white-space: pre-wrap; border-left: 2px solid var(--wf-reject);
+  border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--wf-reject) 8%, transparent);
+}
+.wf-progress-summary { margin-top: 4px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.wf-progress-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wf-progress-task { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--card); }
+.wf-progress-task-title {
+  min-width: 0; padding: 0; border: 0; background: none; color: var(--text); font-size: 13px; font-weight: 600; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+}
+.wf-progress-task-title:hover { color: var(--accent); }
+.wf-progress-task-role { font-size: 11.5px; }
+.wf-progress-task > .wf-progress-pill, .wf-progress-task > .wf-progress-task-status { grid-column: 1 / -1; justify-self: start; }
+.wf-progress-pill { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 3px; font-size: 11.5px; }
+.wf-progress-pill span { padding: 1px 7px; border-radius: 999px; border: 1px dashed var(--chip); color: var(--muted); }
+.wf-progress-pill span.is-done { border-style: solid; border-color: color-mix(in srgb, var(--col-done) 55%, transparent); color: var(--col-done); }
+.wf-progress-pill span.is-current { border-style: solid; border-color: var(--accent); color: var(--text); font-weight: 600; background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.wf-progress-pill span.is-current.is-bad { border-color: var(--wf-reject); background: color-mix(in srgb, var(--wf-reject) 14%, transparent); }
+.wf-progress-pill em { font-style: normal; color: var(--muted); opacity: .6; }
+.wf-progress-open { margin-top: 12px; justify-content: center; }
+/* Чип этапа в шапке ведёт на «Граф», у переходов этапов в «Истории» — ссылка «на графе». */
+.g-chip.stage.is-link { display: inline-flex; align-items: center; gap: 4px; border: 0; font-family: inherit; cursor: pointer; }
+.g-chip.stage.is-link:hover { text-decoration: underline; filter: brightness(1.15); }
+.gt-hist-link { margin-left: 8px; padding: 0; font-size: 12px; color: var(--accent); }
+.gt-hist-link:hover { color: var(--accent); text-decoration: underline; }
+@media (max-width: 1100px) {
+  .wf-progress { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 900px) {
   .gt-grid { grid-template-columns: minmax(0, 1fr); }
   .gt-tabs, .gt-panel:not(.gt-panel-board) { padding-left: 16px; padding-right: 16px; }
