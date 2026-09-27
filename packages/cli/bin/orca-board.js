@@ -203,7 +203,7 @@ const HELP = `orca-board — управление доской агентов
                                           весь список колонок доски (BoardColumn[]) из JSON-файла; удаление
                                           занятой колонки переносит её задачи в backlog — если перенос
                                           затронет хоть одну задачу, без --yes команда отказывает
-  project types set --project <id> [--types <id>,<id>,...] [--default <id>]
+  project types set --project <id> [--types <id>,<id>,...] --default <id>
                                           типы, доступные проекту (без --types — вся библиотека), и тип по
                                           умолчанию; --default обязателен
   project rules get --project <id> --file CLAUDE.md|AGENTS.md
