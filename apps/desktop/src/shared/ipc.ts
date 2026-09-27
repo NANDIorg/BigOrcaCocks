@@ -788,6 +788,24 @@ export interface OrcaApi {
     /** Закрыть терминал ассистента (если жив) и запустить новый — чистый контекст. */
     reset(cols: number, rows: number): Promise<{ ptyId: string }>
   }
+  /**
+   * Чат-режим панели ассистента поверх PTY (`docs/assistant-chat.md` → «3. Контракт чат-режима»): читает
+   * транскрипт агента ассистента (`main/assistant-chat.ts`) и пишет в тот же PTY, что и `assistant.open/reset`, —
+   * другим протоколом, а не отдельным «безтерминальным» каналом с агентом.
+   */
+  assistantChat: {
+    /** Можно ли показать чат для этого PTY: транскрипт найден и агент поддерживает разбор (сейчас — только claude). */
+    available(ptyId: string): Promise<boolean>
+    /** Сообщения с начала сессии (последние `ASSISTANT_CHAT_MESSAGE_LIMIT`, не всё тело файла) и текущий статус. */
+    getMessages(ptyId: string): Promise<AssistantChatSnapshot>
+    /**
+     * Отправить сообщение из чата: `pty.write(ptyId, text + '\r')` (многострочный текст — через bracketed paste) —
+     * тот же путь, что ввод в терминале; транскрипт допишет сам агент. Пустой текст или чужой `ptyId` — ошибка.
+     */
+    send(ptyId: string, text: string): Promise<void>
+    /** Новое/изменённое сообщение или смена статуса этого PTY. */
+    onMessage(ptyId: string, cb: (u: AssistantChatUpdate) => void): () => void
+  }
   /** .md-файлы активного проекта и worktree его задач в работе. Путь — только относительный, внутри источника. */
   docs: {
     list(): Promise<DocGroup[]>
@@ -850,13 +868,12 @@ export interface OrcaApi {
   }
 }
 
-// ---------- Чат-режим ассистента (контракт, docs/assistant-chat.md) ----------
+// ---------- Чат-режим ассистента (docs/assistant-chat.md) ----------
 //
-// Типы ниже описывают модель сообщений для будущего канала `assistantChat` (панель ассистента как чат
-// поверх того же PTY, `docs/assistant-chat.md` → «3. Контракт чат-режима»). В `OrcaApi` канал пока не
-// добавлен: у preload/main нет реализации, и добавление методов в `OrcaApi` требует их реализовать там же
-// (иначе `pnpm typecheck` не проходит). Эти типы — только данные, ничего не реализующие, чтобы задача
-// реализации могла сразу на них положить `assistantChat: {...}` в `OrcaApi`.
+// Модель сообщений канала `assistantChat` (`OrcaApi` выше) — панель ассистента как чат поверх того же PTY.
+// Разбор транскрипта в эти типы — `main/assistant-chat.ts`, IPC — `registerIpc` в `main/index.ts`,
+// мост — `preload/index.ts`. Настройки приложения/проекта из `docs/assistant-chat.md` → «1–2» в этот канал
+// не входят: их вносит отдельная задача (`settings`/`types`/`roles`/`node-templates`/`project rules`).
 
 /** Кто написал сообщение чата ассистента. */
 export type AssistantChatRole = 'human' | 'agent' | 'tool'

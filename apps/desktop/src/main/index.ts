@@ -6,6 +6,9 @@ import { existsSync } from 'node:fs'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
+import { assistantCwd } from './assistant'
+import { AssistantChatCache, assistantTranscriptPath, assistantChatAvailable, chatSnapshot, drainChatUpdates, chatInputBytes } from './assistant-chat'
+import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
@@ -28,7 +31,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -448,6 +451,12 @@ function runFinished(store: TaskStore, runId: string): boolean {
 
 /** Живой терминал ассистента: один на всё приложение, повторное открытие — тот же PTY при любом активном проекте. */
 let assistantPty: string | null = null
+/** sessionId транскрипта текущего ассистента (чат-режим панели, `docs/assistant-chat.md`); нет — агент без парсера. */
+let assistantSessionId: string | undefined
+/** Кэш разбора транскрипта в сообщения чата — переживает между тиками `watchAssistantChat`. */
+const assistantChatCache = new AssistantChatCache()
+/** Статус чата на прошлом тике — чтобы слать `onMessage` только при смене, не на каждый тик. */
+const assistantChatStatus = new Map<string, AssistantChatStatus>()
 
 /**
  * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
@@ -460,11 +469,43 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
     killPty(assistantPty)
   }
   assistantPty = null
+  assistantSessionId = undefined
   // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
   const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
-  const { ptyId } = startAssistant({ socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title }, cols, rows)
+  const { ptyId, sessionId } = startAssistant(
+    { socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title },
+    cols,
+    rows,
+    (id) => {
+      if (assistantPty === id) {
+        assistantPty = null
+        assistantSessionId = undefined
+      }
+      assistantChatStatus.delete(id)
+    }
+  )
   assistantPty = ptyId
+  assistantSessionId = sessionId
   return { ptyId }
+}
+
+/** Раз в секунду: тянет хвост транскрипта живого ассистента и шлёт панели новые/изменённые сообщения чата. */
+function watchAssistantChat(): void {
+  setInterval(() => {
+    void tickAssistantChat()
+  }, 1000)
+}
+
+async function tickAssistantChat(): Promise<void> {
+  const ptyId = assistantPty
+  const sessionId = assistantSessionId
+  if (!ptyId || !sessionId || !win || win.isDestroyed()) return
+  const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), sessionId)
+  const state = await assistantChatCache.read(filePath)
+  if (!state) return
+  const updates = drainChatUpdates(ptyId, state, assistantChatStatus.get(ptyId))
+  assistantChatStatus.set(ptyId, state.status)
+  for (const u of updates) win.webContents.send(`assistantChat:message:${ptyId}`, u)
 }
 
 /**
@@ -867,6 +908,22 @@ function registerIpc(): void {
   })
   handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
   handle('assistant:reset', (_e, cols: number, rows: number) => openAssistant(cols, rows, true))
+  handle('assistantChat:available', (_e, ptyId: string) => {
+    if (assistantPty !== ptyId) return false
+    return assistantChatAvailable(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
+  })
+  handle('assistantChat:getMessages', async (_e, ptyId: string) => {
+    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
+    if (!assistantSessionId) return chatSnapshot(ptyId, undefined)
+    const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
+    return chatSnapshot(ptyId, await assistantChatCache.read(filePath))
+  })
+  handle('assistantChat:send', (_e, ptyId: string, text: unknown) => {
+    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
+    const value = typeof text === 'string' ? text : ''
+    if (!value.trim()) throw new OrcaError('assistantChat.emptyText')
+    writePty(ptyId, chatInputBytes(value))
+  })
   handle('docs:list', () => {
     if (!projects.active()) return []
     const p = resolveProject()
@@ -1013,6 +1070,7 @@ app.whenReady().then(() => {
   })
   watchStuck()
   watchFinishedCoordinators()
+  watchAssistantChat()
   createTray({
     open: () => showWindow(),
     quit: () => void requestQuit(),

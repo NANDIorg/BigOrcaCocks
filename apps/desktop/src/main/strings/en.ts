@@ -184,5 +184,8 @@ export default {
   'stats.noTask': 'statistics: task {id} is not in the project',
   'stats.noGlobal': 'statistics: global task {id} is not in the project',
 
+  'assistantChat.unknownPty': 'no running assistant with this PTY — reopen the panel',
+  'assistantChat.emptyText': 'chat message is empty',
+
   'onboarding.invalidInput': 'first-run wizard: an object with a boolean skipped field is expected'
 } satisfies { [K in keyof typeof ru]: string | { one: string; other: string } }
