@@ -29,6 +29,8 @@ interface Props {
   typeTitle?: string
   /** Где стоит граф воркфлоу (`runStageLabel`): «Этап: Реализация · 2-й заход»; нет — граф не начат или прогон старого формата. */
   stage?: StageLabel | null
+  /** Клик по чипу этапа: вкладка «Граф» на текущей ноде. Нет (у прогона нет вкладки «Граф») — чип не кликается. */
+  onStageClick?(): void
   onBack(): void
   onEdit(): void
   /** Клик по шагу степпера: перенести задачу в колонку (`globalTasks.move`). */
@@ -109,9 +111,18 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
         {/* Правка — в «Изменить» (GlobalTaskModal); здесь только бейдж, normal без него, как на карточке. */}
         <PriorityBadge item={global} className="g-chip" />
         {typeTitle && <span className="g-chip task-type-chip" title={t('global.header.typeTitle')}>{typeTitle}</span>}
-        {props.stage && global.closedAt === undefined && (
+        {props.stage && global.closedAt === undefined && (props.onStageClick ? (
+          <button
+            type="button"
+            className={`g-chip stage ${props.stage.kind} is-link`}
+            title={`${props.stage.title}\n${t('global.stage.openGraph')}`}
+            onClick={props.onStageClick}
+          >
+            {t('global.stage.pill', { text: props.stage.text })} <span aria-hidden>›</span>
+          </button>
+        ) : (
           <span className={`g-chip stage ${props.stage.kind}`} title={props.stage.title}>{t('global.stage.pill', { text: props.stage.text })}</span>
-        )}
+        ))}
         {global.git && <BranchChip git={global.git} />}
         {!global.inbox && (
           <CoordinatorPill

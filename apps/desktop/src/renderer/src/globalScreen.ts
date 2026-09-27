@@ -4,10 +4,10 @@ import { globalTaskActions } from './globalReview'
 import { t } from './i18n'
 import { agentTitle } from './defaultTitles'
 
-/** Вкладки экрана глобальной задачи (`GlobalTaskView`), в порядке показа: номер вкладки = клавиша 1–5. */
-export type GlobalTabId = 'board' | 'overview' | 'coordinator' | 'history' | 'stats'
+/** Вкладки экрана глобальной задачи (`GlobalTaskView`), в порядке показа: номер среди видимых = клавиша 1–6. */
+export type GlobalTabId = 'board' | 'graph' | 'overview' | 'coordinator' | 'history' | 'stats'
 
-export const GLOBAL_TAB_IDS: readonly GlobalTabId[] = ['board', 'overview', 'coordinator', 'history', 'stats']
+export const GLOBAL_TAB_IDS: readonly GlobalTabId[] = ['board', 'graph', 'overview', 'coordinator', 'history', 'stats']
 
 export function isGlobalTabId(value: unknown): value is GlobalTabId {
   return typeof value === 'string' && (GLOBAL_TAB_IDS as readonly string[]).includes(value)
@@ -32,6 +32,7 @@ export function defaultTab(kind: ColumnKind | undefined): GlobalTabId {
 export function tabTitle(id: GlobalTabId, kind: ColumnKind | undefined): string {
   switch (id) {
     case 'board': return t('global.tab.board')
+    case 'graph': return t('global.tab.graph')
     case 'overview': return t(isFinished(kind) ? 'global.tab.summary' : 'global.tab.goal')
     case 'coordinator': return t('global.tab.coordinator')
     case 'history': return t('global.tab.history')
@@ -41,10 +42,12 @@ export function tabTitle(id: GlobalTabId, kind: ColumnKind | undefined): string 
 
 /**
  * Какие вкладки показывать. «Входящие» — не задача, а корзина подзадач без глобальной: ни цели, ни координатора,
- * ни итога, — у них одна доска и вкладок нет.
+ * ни итога, — у них одна доска и вкладок нет. «Граф» — только у прогона с воркфлоу по глобальной задаче
+ * (`workflowScope: 'run'`): у старых прогонов граф шёл по подзадачам, позиции задачи на нём нет.
  */
-export function visibleTabs(g: { inbox?: boolean }): GlobalTabId[] {
-  return g.inbox ? ['board'] : [...GLOBAL_TAB_IDS]
+export function visibleTabs(g: { inbox?: boolean; workflowScope?: 'run' }): GlobalTabId[] {
+  if (g.inbox) return ['board']
+  return GLOBAL_TAB_IDS.filter((id) => id !== 'graph' || g.workflowScope === 'run')
 }
 
 /** Выбор человека: вкладка и то, какой была вкладка по умолчанию в тот момент. */

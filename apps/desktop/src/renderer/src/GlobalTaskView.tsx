@@ -11,6 +11,7 @@ import { GlobalOverview } from './GlobalOverview'
 import { CoordinatorPanel } from './CoordinatorPanel'
 import { GlobalHistory } from './GlobalHistory'
 import { GlobalStatsPanel } from './GlobalStatsPanel'
+import { WorkflowProgress } from './WorkflowProgressView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import {
   defaultTab, readTabChoice, resolveTab, stepTab, tabAt, tabTitle, visibleTabs, writeTabChoice, type GlobalTabId
@@ -70,7 +71,7 @@ interface Props {
   onStartTask(task: Task): void | Promise<void>
   /** Название типа задачи (`globalTypeTitle`) — чип рядом с приоритетом; нет — чипа нет. */
   typeTitle?: string
-  /** Граф воркфлоу этой глобальной задачи (`workflowForRun`): этап в шапке и названия этапов в «Истории». Нет — этапов не видно. */
+  /** Граф воркфлоу этой глобальной задачи (`workflowForRun`): этап в шапке, вкладка «Граф» и названия этапов в «Истории». Нет — этапов не видно. */
   workflow?: Workflow
   /** Доска подзадач (Board), уже отфильтрованная по этой глобальной задаче. */
   children: React.ReactNode
@@ -85,8 +86,8 @@ function browserStorage(): Storage | undefined {
 }
 
 /**
- * Экран глобальной задачи: шапка, лента «Ждут вас» (видна на любой вкладке) и вкладки «Доска · Итог и цель ·
- * Координатор · История · Статистика». Вкладка по умолчанию зависит от состояния (`defaultTab`), выбор человека запоминается
+ * Экран глобальной задачи: шапка, лента «Ждут вас» (видна на любой вкладке) и вкладки «Доска · Граф · Итог и цель ·
+ * Координатор · История · Статистика» («Граф» — только у прогона с `workflowScope: 'run'`). Вкладка по умолчанию зависит от состояния (`defaultTab`), выбор человека запоминается
  * по id задачи. Доска остаётся смонтированной и на чужих вкладках (только скрыта): фильтры и выделение
  * не пропадают, а события ленты (`feedLink`) находят получателя.
  */
@@ -105,6 +106,10 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
     tab = initial()
     setShown({ id: global.id, tab })
   }
+  // Нода, выбранная на вкладке «Граф»: чип этапа и ссылки «на графе» в «Истории» открывают вкладку на нужной ноде.
+  // Привязана к задаче, как и вкладка; нет — текущая нода графа.
+  const [graphNode, setGraphNode] = useState<{ id: string; node?: string }>({ id: global.id })
+  const selectedNode = graphNode.id === global.id ? graphNode.node : undefined
   const tabRef = useRef(tab)
   tabRef.current = tab
   const tablistRef = useRef<HTMLDivElement>(null)
@@ -116,6 +121,14 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
     if (focusTab) tablistRef.current?.querySelector<HTMLElement>(`[data-tab="${id}"]`)?.focus({ preventScroll: true })
   }
 
+  /** Вкладка «Граф» на ноде `node` (нет — на текущей). Вкладки нет (прогон старого формата) — ничего. */
+  const openGraph = tabs.includes('graph')
+    ? (node?: string): void => {
+        setGraphNode({ id: global.id, ...(node !== undefined ? { node } : {}) })
+        selectTab('graph')
+      }
+    : undefined
+
   /** Показать доску сразу, синхронно: следом ей шлют фокус и выделение карточки, а скрытая доска их не примет. */
   const showBoard = (): void => {
     if (tabRef.current === 'board') return
@@ -123,7 +136,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
   }
 
   // Клавиши экрана (`screenKey`, `tabKey`): Esc — назад к общей доске, G — фокус между лентой «Ждут вас» и доской
-  // (на доске сперва открывается её вкладка), Alt+1…5 и 1…5 вне доски — вкладки. Один обработчик на всё: поля ввода,
+  // (на доске сперва открывается её вкладка), Alt+1…6 и 1…6 вне доски — вкладки. Один обработчик на всё: поля ввода,
   // модалки и уже обработанные клавиши (меню «Переместить в…», Esc в подробностях ленты) `hotkeys` отсекает.
   const keys = useRef({ onBack, attention: attention.length, tabs, selectTab, showBoard })
   keys.current = { onBack, attention: attention.length, tabs, selectTab, showBoard }
@@ -178,6 +191,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         attentionCount={attention.length}
         typeTitle={typeTitle}
         stage={runStageLabel(global, props.workflow)}
+        onStageClick={openGraph && (() => openGraph())}
         onBack={onBack}
         onEdit={props.onEdit}
         onMove={props.onMove}
@@ -227,6 +241,21 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       <div id="gt-panel-board" className="gt-panel gt-panel-board" role="tabpanel" aria-labelledby="gt-tab-board" hidden={tab !== 'board'}>
         {children}
       </div>
+      {tab === 'graph' && (
+        <div id="gt-panel-graph" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-graph">
+          <WorkflowProgress
+            key={global.id}
+            global={global}
+            workflow={props.workflow}
+            typeTitle={typeTitle}
+            tasks={tasks}
+            columns={columns}
+            selected={selectedNode}
+            onSelect={(node) => setGraphNode({ id: global.id, node })}
+            onOpenTask={props.onOpenTask}
+          />
+        </div>
+      )}
       {tab === 'overview' && (
         <div id="gt-panel-overview" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-overview">
           <GlobalOverview
@@ -260,7 +289,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
       )}
       {tab === 'history' && (
         <div id="gt-panel-history" className="gt-panel" role="tabpanel" aria-labelledby="gt-tab-history">
-          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} workflow={props.workflow} />
+          <GlobalHistory global={global} columns={columns} coordinatorSessions={props.coordinatorSessions} workflow={props.workflow} onShowStage={openGraph} />
         </div>
       )}
       {tab === 'stats' && (
