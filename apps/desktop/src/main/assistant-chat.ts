@@ -11,6 +11,7 @@
  */
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { ASSISTANT_START_PROMPT } from '@orca-board/core'
 import type { AssistantChatMessage, AssistantChatSnapshot, AssistantChatStatus, AssistantChatToolCall, AssistantChatUpdate } from '../shared/ipc'
 import { claudeSlug, readLines, type TranscriptEnv } from './transcripts'
 
@@ -59,6 +60,39 @@ function timeOf(v: unknown): number {
   return Number.isNaN(t) ? Date.now() : t
 }
 
+/**
+ * Служебные строки `type: 'user'`, которые агент сам не писал и человек в чате не набирал: `isMeta: true`
+ * (Claude Code помечает так вставки вроде `<local-command-caveat>`) и обёртки локальных команд (`/login`,
+ * `/mcp` и т.п.) — `<command-name>`, `<local-command-stdout>`, `<local-command-stderr>`, `<local-command-caveat>`.
+ * Не всегда помечены `isMeta` (у `<command-name>` его нет), поэтому проверяем и текст.
+ */
+const LOCAL_COMMAND_RE = /^<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat)>/
+
+function isServiceUserLine(o: Record<string, unknown>, text: string): boolean {
+  return o.isMeta === true || LOCAL_COMMAND_RE.test(text) || text.startsWith('Caveat:')
+}
+
+/** Маркер прерывания хода агента клавишей Esc — Claude Code пишет его text-блоком в `type: 'user'`. */
+const INTERRUPT_PREFIX = '[Request interrupted by user'
+
+function isInterruptBlocks(blocks: Record<string, unknown>[]): boolean {
+  return blocks.some((b) => b.type === 'text' && typeof b.text === 'string' && b.text.startsWith(INTERRUPT_PREFIX))
+}
+
+/** Esc прервал ответ (в тексте или на середине tool-вызова) — закрываем незавершённые вызовы и ход, статус не должен зависнуть на 'thinking'. */
+function applyInterrupt(state: ChatBuildState): void {
+  for (const [callId, loc] of state.pending) {
+    const call = state.messages[loc.messageIndex]?.toolCalls?.[loc.callIndex]
+    if (call) {
+      call.status = 'error'
+      touch(state, loc.messageIndex)
+    }
+    state.pending.delete(callId)
+  }
+  state.turn = null
+  state.status = 'done'
+}
+
 /** Где лежит открытый tool-вызов в `messages` — чтобы `tool_result` дописал статус на то же место. */
 interface PendingCall {
   messageIndex: number
@@ -91,39 +125,61 @@ function touch(state: ChatBuildState, index: number): void {
   state.touched.add(index)
 }
 
-/** Реплика человека — печатает `content` строкой; `tool_result` (тоже `type: 'user'`) размечен массивом блоков. */
+/** Реплика человека — печатает как сообщение чата: `id`, если есть `uuid`, иначе позиционный. */
+function pushHuman(o: Record<string, unknown>, text: string, state: ChatBuildState): void {
+  const index = state.messages.length
+  // Первая реплика сессии — служебный стартовый промпт ассистента (`worker.ts` → `startAssistant`), человек его не писал.
+  if (index === 0 && text === ASSISTANT_START_PROMPT) return
+  state.messages.push({ id: typeof o.uuid === 'string' ? o.uuid : `u${index}`, role: 'human', text, at: timeOf(o.timestamp) })
+  touch(state, index)
+  state.turn = null
+  state.status = 'thinking'
+}
+
+/**
+ * Реплика человека — печатает `content` строкой; `tool_result` (тоже `type: 'user'`) размечен массивом блоков,
+ * так же как маркер прерывания (Esc) и реплика с вложением (текст + картинка, вставленная в терминал).
+ */
 function applyUserLine(o: Record<string, unknown>, state: ChatBuildState): void {
   const content = obj(o.message)?.content
   if (typeof content === 'string') {
     const text = content.trim()
-    if (!text) return
-    const index = state.messages.length
-    state.messages.push({ id: typeof o.uuid === 'string' ? o.uuid : `u${index}`, role: 'human', text, at: timeOf(o.timestamp) })
-    touch(state, index)
-    state.turn = null
-    state.status = 'thinking'
+    if (!text || isServiceUserLine(o, text)) return
+    pushHuman(o, text, state)
     return
   }
-  const results = arr(content)
-    .map(obj)
-    .filter((b): b is Record<string, unknown> => b?.type === 'tool_result')
-  if (!results.length) return
-  let sawError = false
-  for (const r of results) {
-    if (r.is_error === true) sawError = true
-    const callId = typeof r.tool_use_id === 'string' ? r.tool_use_id : undefined
-    if (!callId) continue
-    const loc = state.pending.get(callId)
-    if (!loc) continue
-    const message = state.messages[loc.messageIndex]
-    const call = message?.toolCalls?.[loc.callIndex]
-    if (!message || !call) continue
-    call.status = r.is_error === true ? 'error' : 'ok'
-    if (message.role === 'tool') message.text = toolResultText(r.content)
-    touch(state, loc.messageIndex)
-    state.pending.delete(callId)
+  const blocks = arr(content).map(obj).filter((b): b is Record<string, unknown> => b !== undefined)
+  if (isInterruptBlocks(blocks)) {
+    applyInterrupt(state)
+    return
   }
-  state.status = sawError ? 'error' : 'thinking'
+  const results = blocks.filter((b) => b.type === 'tool_result')
+  if (results.length) {
+    let sawError = false
+    for (const r of results) {
+      if (r.is_error === true) sawError = true
+      const callId = typeof r.tool_use_id === 'string' ? r.tool_use_id : undefined
+      if (!callId) continue
+      const loc = state.pending.get(callId)
+      if (!loc) continue
+      const message = state.messages[loc.messageIndex]
+      const call = message?.toolCalls?.[loc.callIndex]
+      if (!message || !call) continue
+      call.status = r.is_error === true ? 'error' : 'ok'
+      if (message.role === 'tool') message.text = toolResultText(r.content)
+      touch(state, loc.messageIndex)
+      state.pending.delete(callId)
+    }
+    state.status = sawError ? 'error' : 'thinking'
+    return
+  }
+  if (o.isMeta === true) return
+  const texts = blocks.filter((b) => b.type === 'text' && typeof b.text === 'string' && b.text.trim())
+  if (!texts.length) return
+  const text = texts.map((b) => (b.text as string).trim()).join('\n')
+  // Картинка, вставленная в терминал вместе с текстом, — помечаем, само изображение чат не показывает (нет поля под него в AssistantChatMessage).
+  const hasImage = blocks.some((b) => b.type === 'image')
+  pushHuman(o, hasImage ? `${text}\n[+ изображение]` : text, state)
 }
 
 /**
