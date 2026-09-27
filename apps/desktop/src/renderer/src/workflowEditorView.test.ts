@@ -115,6 +115,34 @@ test('группы проблем: по нодам, группы с ошибка
   ])
 })
 
+test('группы проблем: проблема с нодой и переходом — своя группа перехода, клик выделяет переход', () => {
+  const issues = {
+    errors: [
+      { message: 'e1', nodeId: 'a' },
+      { message: 'e2', nodeId: 'a', edgeId: 'e_bad' }
+    ],
+    warnings: [{ message: 'w1', nodeId: 'a', edgeId: 'e_bad' }]
+  } satisfies { errors: WfIssue[]; warnings: WfIssue[] }
+  const groups = groupProblems(issues)
+  assert.deepEqual(groups.map((g) => [g.nodeId ?? '-', g.edgeId ?? '-', g.items.map((i) => i.issue.message)]), [
+    ['a', '-', ['e1']],
+    ['a', 'e_bad', ['e2', 'w1']]
+  ])
+})
+
+test('группы проблем настоящего графа: переход в «Старт» — группа перехода, а не ноды', () => {
+  const wf: Workflow = structuredClone(graphWithMerge([{ id: 'reviewer' }]))
+  const start = wf.nodes.find((n) => n.type === 'start')
+  const edge = wf.edges.find((e) => e.to !== start?.id)
+  assert.ok(start && edge)
+  edge.to = start.id
+  const issues = validateWorkflow(wf, { roles: DEFAULT_ROLES })
+  const problem = issues.errors.find((i) => i.edgeId === edge.id)
+  assert.ok(problem?.nodeId, 'валидатор отдаёт и ноду, и переход')
+  const group = groupProblems(issues).find((g) => g.items.some((i) => i.issue === problem))
+  assert.equal(group?.edgeId, edge.id)
+})
+
 test('группы проблем настоящего графа: у каждой проблемы с нодой есть группа', () => {
   const wf: Workflow = structuredClone(graphWithMerge([{ id: 'reviewer' }]))
   const gate = wf.nodes.find((n) => n.type === 'gate')

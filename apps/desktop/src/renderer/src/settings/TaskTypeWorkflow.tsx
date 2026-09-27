@@ -209,6 +209,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
 
   /** Заголовок группы «Проблем»: нода (в пути — «Реализация › Ревью»), переход или весь граф. */
   const problemTitle = (g: WfProblemGroup): string => {
+    if (g.edgeId) return t('config.wf.probs.edge', { id: g.edgeId })
     if (g.nodeId) {
       const target = locateId(draft, 'node', g.nodeId)
       const node = graphAt(draft, target.path)?.graph.nodes.find((n) => n.id === target.id)
@@ -217,7 +218,6 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
       const parent = draft.nodes.find((n) => n.id === target.path[0])
       return `${parent ? nodeTitle(parent) : target.path[0]} › ${own}`
     }
-    if (g.edgeId) return t('config.wf.probs.edge', { id: g.edgeId })
     return t('config.wf.probs.graph')
   }
 
@@ -373,11 +373,11 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
                                 <b>{problemTitle(g)}</b>
                                 {g.items.map((i, n) => (
                                   <span key={n} className={`wf-problem-item wf-problem-item--${i.level}`}>
-                                    {g.nodeId ? shortIssueText(wfIssueText(i.issue)) : wfIssueText(i.issue)}
+                                    {g.nodeId && !g.edgeId ? shortIssueText(wfIssueText(i.issue)) : wfIssueText(i.issue)}
                                   </span>
                                 ))}
                               </span>
-                              {target && <span className="wf-problem-go" aria-hidden>{g.nodeId ? t('config.wf.probs.goNode') : t('config.wf.probs.goEdge')}</span>}
+                              {target && <span className="wf-problem-go" aria-hidden>{g.edgeId ? t('config.wf.probs.goEdge') : t('config.wf.probs.goNode')}</span>}
                             </button>
                           </li>
                         )

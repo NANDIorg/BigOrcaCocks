@@ -176,28 +176,33 @@ export function shortIssueText(text: string): string {
 // ---------- панель «Проблемы» ----------
 
 export interface WfProblemGroup {
-  /** Нода, к которой ведёт клик; `undefined` — проблема всего графа или только перехода. */
+  /** Нода, к которой ведёт клик, если у группы нет перехода; `undefined` — проблема всего графа или только перехода. */
   nodeId?: string
-  /** Переход, если у проблем группы нет ноды. */
+  /**
+   * Переход проблемы. Проблемы с переходом (`edgeNoTarget`, `edgeIntoStart`, `extraOutcome`…) валидатор выдаёт и с
+   * нодой-источником, но клик должен выделять сам переход — его удаляют кнопкой «Удалить переход», как и из полосы
+   * статуса. Поэтому такие проблемы — своя группа на переход, а не строка в группе ноды.
+   */
   edgeId?: string
   level: 'error' | 'warning'
   items: { level: 'error' | 'warning'; issue: WfIssue }[]
 }
 
 /**
- * Проблемы, сгруппированные по нодам: одна строка на ноду, даже если у неё несколько проблем. Группы с ошибками —
- * первыми, дальше в порядке валидатора; в группе ошибки — перед предупреждениями.
+ * Проблемы, сгруппированные по нодам: одна строка на ноду, даже если у неё несколько проблем; проблемы перехода —
+ * по переходам. Группы с ошибками — первыми, дальше в порядке валидатора; в группе ошибки — перед предупреждениями.
  */
 export function groupProblems(issues: WfValidation): WfProblemGroup[] {
   const groups = new Map<string, WfProblemGroup>()
   for (const [level, list] of [['error', issues.errors], ['warning', issues.warnings]] as const) {
     for (const issue of list) {
-      const key = issue.nodeId ? `n:${issue.nodeId}` : issue.edgeId ? `e:${issue.edgeId}` : ''
+      const key = issue.edgeId ? `e:${issue.edgeId}` : issue.nodeId ? `n:${issue.nodeId}` : ''
       const cur = groups.get(key)
       if (cur) cur.items.push({ level, issue })
       else {
         groups.set(key, {
-          ...(issue.nodeId ? { nodeId: issue.nodeId } : issue.edgeId ? { edgeId: issue.edgeId } : {}),
+          ...(issue.nodeId ? { nodeId: issue.nodeId } : {}),
+          ...(issue.edgeId ? { edgeId: issue.edgeId } : {}),
           level,
           items: [{ level, issue }]
         })

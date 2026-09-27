@@ -21,6 +21,9 @@
   /* Исходы переходов воркфлоу: принять — зелёный, вернуть — красный. */
   --wf-accept: #8fd16a;
   --wf-reject: var(--danger);
+  /* Текст на заливке статусными цветами (--danger, --col-input): тёмный держит контраст ≥ 5:1 на обоих, белый на
+     --danger — только ~3:1. */
+  --on-status: var(--term-bg);
   --radius: 14px;
   /* Фон терминала — совпадает с theme.background xterm в Terminal.tsx. */
   --term-bg: #1b1c21;
@@ -1553,9 +1556,8 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node-badge circle { stroke: var(--side); stroke-width: 2; }
 .wf-node-badge--error circle, .wf-node-pill--error rect { fill: var(--danger); }
 .wf-node-badge--warning circle, .wf-node-pill--warning rect { fill: var(--col-input); }
-.wf-node-badge text { fill: #fff; font-size: 11px; font-weight: 800; }
-.wf-node-pill text { fill: #fff; font-size: 10.5px; font-weight: 600; }
-.wf-node-badge--warning text, .wf-node-pill--warning text { fill: #1c1d22; }
+.wf-node-badge text { fill: var(--on-status); font-size: 11px; font-weight: 800; }
+.wf-node-pill text { fill: var(--on-status); font-size: 10.5px; font-weight: 600; }
 .wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
 .wf-node-sub { fill: var(--muted); font-size: 11px; }
 .wf-node text { pointer-events: none; }
@@ -1696,8 +1698,8 @@ button.wf-count:hover { text-decoration: underline; }
 .wf-problem:not(:disabled):hover { background: var(--side-2); }
 .wf-problem:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
 .wf-problem-kind { flex-shrink: 0; margin-top: 1px; padding: 1px 6px; border-radius: 6px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; }
-.wf-problem--error .wf-problem-kind { background: var(--danger); color: #fff; }
-.wf-problem--warning .wf-problem-kind { background: var(--col-input); color: #1c1d22; }
+.wf-problem--error .wf-problem-kind { background: var(--danger); color: var(--on-status); }
+.wf-problem--warning .wf-problem-kind { background: var(--col-input); color: var(--on-status); }
 .wf-problem-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; overflow-wrap: anywhere; }
 .wf-problem-item--warning { color: var(--muted); }
 .wf-problem-go { flex-shrink: 0; margin-left: auto; font-size: 12px; color: var(--accent); white-space: nowrap; }
