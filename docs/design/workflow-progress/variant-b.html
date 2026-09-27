@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Прогресс графа — B: граф над историей</title>
+<!--
+  Вариант B «Ход работы». Новой вкладки нет: вкладка «История» становится «Ходом работы» — сверху компактный
+  граф (закреплён при прокрутке), под ним лента, сгруппированная по заходам в этапы: «Реализация · 2-й заход»
+  с причиной возврата, подзадачами захода и их путём. Клик по ноде фильтрует ленту по этапу.
+  Чип этапа в шапке остаётся (он нужен на «Доске») и ведёт на «Ход работы» к текущему заходу.
+  Статичный макет: данные — граф типа «Фронтенд и бэкенд».
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --chip-text: #c9ccd6;
+  --line: rgba(255,255,255,.06); --text: #ecedf1; --muted: #9ea1ad;
+  --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c; --col-ready: #7b86f5; --col-progress: #f08a3a; --col-input: #e8b04a;
+  --col-review: #b57bee; --col-done: #5ad1cc; --danger: #ef6b6b;
+  --wf-accept: #8fd16a; --wf-reject: var(--danger);
+  --grid-dot: rgba(255,255,255,.07);
+  --radius: 14px;
+  color-scheme: dark;
+}
+/* Светлой темы в styles.css пока нет — токены те же, что в прошлых макетах (docs/design/local-board). */
+:root[data-theme="light"] {
+  --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+  --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+  --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+  --accent: #5a63c8; --accent-2: #4850b0;
+  --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+  --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c;
+  --wf-accept: #3f8a1f; --grid-dot: rgba(0,0,0,.09);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --page: #e6e8ee; --frame: #f4f5f8; --side: #eceef3; --side-2: #e2e5ec;
+    --card: #ffffff; --card-hover: #f8f9fc; --chip: #cfd2db; --chip-text: #474b57;
+    --line: rgba(0,0,0,.08); --text: #1d1f24; --muted: #5f6472;
+    --accent: #5a63c8; --accent-2: #4850b0;
+    --col-backlog: #6b6f7c; --col-ready: #5a63c8; --col-progress: #c2601a; --col-input: #9a6b0c;
+    --col-review: #8a4fc8; --col-done: #1d8c87; --danger: #c93c3c;
+    --wf-accept: #3f8a1f; --grid-dot: rgba(0,0,0,.09);
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.muted { color: var(--muted); }
+.grow { flex: 1; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---------- панель макета (не часть дизайна) ---------- */
+.mock-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mock-bar b { font-size: 14px; }
+.mock-bar label { color: var(--muted); }
+.seg-group { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.seg-group button { background: transparent; border: 0; padding: 4px 12px; color: var(--muted); white-space: nowrap; }
+.seg-group button + button { border-left: 1px solid var(--chip); }
+.seg-group button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.mock-note { padding: 10px 16px 0; font-size: 12.5px; color: var(--muted); max-width: 1280px; margin: 0 auto; }
+.mock-note b { color: var(--text); }
+.stage { padding: 16px; overflow-x: auto; }
+.win { margin: 0 auto; width: 1280px; min-height: 780px; display: grid; grid-template-columns: 64px minmax(0,1fr); background: var(--frame); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.25); transition: width .2s; }
+.win.narrow { width: 860px; }
+@media (max-width: 700px) { .win, .win.narrow { width: auto; min-width: 0; } .stage { padding: 8px; } }
+.rail { border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 0; }
+.rail i { width: 36px; height: 36px; border-radius: 10px; background: var(--side-2); display: block; opacity: .6; }
+.rail i.on { background: var(--accent); opacity: 1; }
+.app { display: flex; flex-direction: column; min-width: 0; }
+
+/* ---------- кнопки и чипы (как .btn-sm / .g-chip в styles.css) ---------- */
+.btn-sm { height: 28px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--chip); background: transparent; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-sm:hover { border-color: var(--muted); }
+.btn-sm.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-sm.ok { border-color: color-mix(in srgb, var(--wf-accept) 55%, transparent); color: var(--wf-accept); }
+.btn-sm.bad { border-color: color-mix(in srgb, var(--wf-reject) 55%, transparent); color: var(--wf-reject); }
+.btn-sm:disabled { opacity: .5; cursor: default; }
+.btn-text { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12.5px; }
+.g-chip { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; line-height: 20px; background: var(--side-2); color: var(--chip-text); white-space: nowrap; border: 0; }
+.g-chip.type { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.g-chip.stage { color: var(--col-progress); background: color-mix(in srgb, var(--col-progress) 14%, transparent); }
+.g-chip.stage.gate { color: var(--col-review); background: color-mix(in srgb, var(--col-review) 14%, transparent); }
+.g-chip.stage.human { color: var(--col-input); background: color-mix(in srgb, var(--col-input) 14%, transparent); }
+.g-chip.stage.done { color: var(--col-done); background: color-mix(in srgb, var(--col-done) 14%, transparent); }
+.g-chip.link { cursor: pointer; }
+.g-chip.link:hover { filter: brightness(1.15); text-decoration: underline; }
+.g-chip.branch { font-family: ui-monospace, Menlo, monospace; }
+.g-chip.coord { color: var(--wf-accept); background: color-mix(in srgb, var(--wf-accept) 12%, transparent); }
+.g-chip.coord::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11.5px; background: var(--side-2); color: var(--chip-text); }
+.chip.ok { color: var(--wf-accept); background: color-mix(in srgb, var(--wf-accept) 12%, transparent); }
+.chip.warn { color: var(--col-input); background: color-mix(in srgb, var(--col-input) 14%, transparent); }
+.chip.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.chip.sys { color: var(--muted); }
+
+/* ---------- шапка экрана глобальной задачи (gt-head / gt-tabs) ---------- */
+.gt-head { padding: 14px 32px 0; display: flex; flex-direction: column; gap: 8px; }
+.gt-row1 { display: flex; align-items: center; gap: 10px; }
+.gt-row1 h1 { margin: 0; font-size: 20px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gt-row3 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.gt-tabs { display: flex; gap: 4px; margin-top: 10px; padding: 0 32px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.gt-tab { background: none; border: 0; padding: 8px 10px 9px; color: var(--muted); font-size: 13px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.gt-tab:hover { color: var(--text); }
+.gt-tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.gt-tab-n { font-size: 11.5px; color: var(--muted); background: var(--side-2); border-radius: 999px; padding: 0 6px; }
+.gt-tab .new { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 0 4px; }
+.gt-panel { padding: 18px 32px 28px; min-width: 0; }
+.win.narrow .gt-head, .win.narrow .gt-panel { padding-left: 16px; padding-right: 16px; }
+.win.narrow .gt-tabs { padding: 0 16px; }
+.gt-box { background: var(--side); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.gt-box h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.gt-box h3 .grow + * { font-weight: 400; }
+
+/* ---------- лента «История» (gt-hist-*) ---------- */
+.gt-hist-day-title { margin: 0; padding: 8px 0 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.gt-hist-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.gt-hist-row { display: grid; grid-template-columns: 48px 10px minmax(0, 1fr); gap: 4px 10px; padding: 5px 0; align-items: start; }
+.gt-hist-at { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; padding-top: 1px; white-space: nowrap; }
+.gt-hist-pt { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--c, var(--muted)); }
+.gt-hist-what { min-width: 0; overflow-wrap: anywhere; }
+.gt-hist-what b { font-weight: 600; }
+.gt-hist-sub { font-size: 12px; }
+.gt-hist-quote { margin-top: 4px; padding: 4px 10px; border-left: 2px solid var(--wf-reject); font-size: 12.5px; color: var(--chip-text); }
+.gt-hist-row.is-return .gt-hist-what > div:first-child { color: var(--wf-reject); }
+.gt-hist-row.is-future { opacity: .45; }
+
+/* ---------- граф прогресса: ноды как wf-node-* в редакторе ---------- */
+.pg-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.pg-node .box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
+.pg-node .title { fill: var(--text); font-size: 13px; font-weight: 600; }
+.pg-node .sub { fill: var(--muted); font-size: 11px; }
+.pg-node .ico { fill: none; stroke: var(--muted); stroke-width: 1.8; }
+.pg-node.t-start .ico, .pg-node.t-end .ico { stroke: var(--col-done); }
+.pg-node.t-work .ico { stroke: var(--col-progress); }
+.pg-node.t-gate .ico { stroke: var(--col-review); }
+.pg-node.t-human .ico, .pg-node.t-ask .ico { stroke: var(--col-input); }
+.pg-node.t-merge .ico { stroke: var(--accent); }
+.pg-node.todo .box { fill: transparent; stroke-dasharray: 4 3; }
+.pg-node.todo .title, .pg-node.todo .sub, .pg-node.todo .ico { opacity: .55; }
+.pg-node.done .box { stroke: color-mix(in srgb, var(--col-done) 60%, transparent); }
+.pg-node.cur .box { stroke: var(--accent); stroke-width: 2.4; fill: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.pg-node.cur .halo { fill: none; stroke: var(--accent); stroke-width: 2; opacity: .5; animation: pg-pulse 1.8s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes pg-pulse { from { opacity: .55; transform: scale(1); } to { opacity: 0; transform: scale(1.12, 1.3); } }
+@media (prefers-reduced-motion: reduce) { .pg-node.cur .halo { animation: none; opacity: .35; } }
+.pg-node .selring { fill: none; stroke: var(--text); stroke-width: 1.4; stroke-dasharray: 3 3; opacity: .7; }
+.pg-node.clickable { cursor: pointer; }
+.pg-node.clickable:hover .box { fill: var(--card-hover); }
+.pg-badge rect { fill: var(--accent); }
+.pg-badge text { fill: #fff; font-size: 10.5px; font-weight: 600; }
+.pg-badge.ret rect { fill: var(--wf-reject); }
+.pg-check circle { fill: var(--col-done); }
+.pg-check path { fill: none; stroke: var(--frame); stroke-width: 1.8; }
+.pg-path-ico rect { fill: var(--side-2); stroke: var(--chip); }
+.pg-path-ico path { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.pg-edge { --edge: var(--muted); }
+.pg-edge.o-accept, .pg-edge.o-ok { --edge: var(--wf-accept); }
+.pg-edge.o-reject, .pg-edge.o-conflict { --edge: var(--wf-reject); }
+.pg-edge .line { fill: none; stroke: var(--edge); stroke-width: 1.6; opacity: .3; stroke-dasharray: 5 4; }
+.pg-edge .arrow { fill: var(--edge); opacity: .3; }
+.pg-edge .lbl { fill: var(--edge); font-size: 10.5px; opacity: .55; }
+.pg-edge.walked .line { opacity: 1; stroke-width: 2.6; stroke-dasharray: none; }
+.pg-edge.walked .arrow, .pg-edge.walked .lbl { opacity: 1; }
+.pg-edge .cnt { fill: var(--edge); font-size: 10.5px; font-weight: 700; }
+.pg-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11.5px; color: var(--muted); }
+.pg-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pg-legend i { width: 16px; height: 10px; border-radius: 3px; border: 1.5px solid var(--chip); display: inline-block; }
+.pg-legend i.done { border-color: var(--col-done); }
+.pg-legend i.cur { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.pg-legend i.todo { border-style: dashed; }
+.pg-legend i.ret { border: 0; height: 2.5px; background: var(--wf-reject); border-radius: 2px; }
+.pg-legend i.acc { border: 0; height: 2.5px; background: var(--wf-accept); border-radius: 2px; }
+
+/* ---------- путь подзадачи: пилюля шагов ---------- */
+.sp { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; font-size: 11.5px; }
+.sp span { padding: 1px 7px; border-radius: 999px; border: 1px dashed var(--chip); color: var(--muted); }
+.sp span.done { border-style: solid; border-color: color-mix(in srgb, var(--col-done) 55%, transparent); color: var(--col-done); }
+.sp span.cur { border-style: solid; border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 600; }
+.sp span.cur.bad { border-color: var(--wf-reject); background: color-mix(in srgb, var(--wf-reject) 14%, transparent); }
+.sp em { font-style: normal; color: var(--muted); opacity: .6; }
+.st-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--card); }
+.st-row + .st-row { margin-top: 6px; }
+.st-row b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-row .role { font-size: 11.5px; color: var(--muted); }
+.st-row .sp { grid-column: 1 / -1; }
+
+/* ---------- заходы в ноду ---------- */
+.vis { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.vis li { padding: 8px 10px; border-radius: 10px; background: var(--card); border-left: 3px solid var(--col-done); font-size: 12.5px; }
+.vis li.bad { border-left-color: var(--wf-reject); }
+.vis li.now { border-left-color: var(--accent); }
+.vis-h { display: flex; justify-content: space-between; gap: 8px; }
+.vis-s { font-size: 12px; margin-top: 2px; }
+.vis-s .ret { color: var(--wf-reject); }
+.vis-sum { margin-top: 4px; }
+
+.pb-wrap { max-width: 980px; }
+.pb-graph { position: sticky; top: 0; z-index: 2; background: var(--side); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 8px; box-shadow: 0 6px 18px -12px rgba(0,0,0,.5); }
+.pb-graph-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12.5px; margin-bottom: 2px; }
+.pb-graph-head b { font-size: 13px; }
+.pb-svg { overflow-x: auto; }
+.pb-svg svg { min-width: 640px; }
+.pb-filter { display: inline-flex; align-items: center; gap: 6px; }
+.pb-filter .chip { gap: 6px; }
+.pb-filter button { background: none; border: 0; color: inherit; padding: 0; font-size: 13px; line-height: 1; }
+.pb-list { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.pb-visit { border: 1px solid var(--line); border-radius: 12px; background: var(--side); overflow: hidden; }
+.pb-visit > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 14px; }
+.pb-visit > summary::-webkit-details-marker { display: none; }
+.pb-visit > summary:hover { background: var(--card-hover); }
+.pb-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--col-done); }
+.pb-visit.now .pb-dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
+.pb-visit.bad .pb-dot { background: var(--wf-reject); }
+.pb-visit.todo { opacity: .55; border-style: dashed; }
+.pb-visit.todo .pb-dot { background: transparent; border: 1.5px dashed var(--chip); }
+.pb-visit.now { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pb-title { font-weight: 600; font-size: 13.5px; min-width: 0; }
+.pb-title small { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; }
+.pb-title .ret { color: var(--wf-reject); font-weight: 400; font-size: 12px; margin-left: 6px; }
+.pb-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pb-body { padding: 0 14px 12px 36px; display: flex; flex-direction: column; gap: 8px; }
+.pb-body .gt-hist-quote { margin: 0; }
+.pb-sec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 4px; }
+.pb-sum { font-size: 12.5px; padding: 6px 10px; border-radius: 8px; background: var(--card); }
+.pb-sum b { color: var(--wf-accept); font-weight: 600; }
+.pb-toggle { margin-left: auto; }
+.win.narrow .pb-body { padding-left: 14px; }
+.board-mini { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.board-mini > div { background: var(--side); border-radius: 12px; padding: 10px; min-height: 180px; font-size: 12.5px; }
+.board-mini h4 { margin: 0 0 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <b>Прогресс графа — B: граф над историей</b>
+  <span class="grow"></span>
+  <label>Состояние</label>
+  <div class="seg-group" id="state" role="group" aria-label="Состояние задачи">
+    <button data-v="first" aria-pressed="false">Реализация, 1-й заход</button>
+    <button data-v="ret" aria-pressed="true">Возврат после reject</button>
+    <button data-v="human" aria-pressed="false">Проверка человеком</button>
+    <button data-v="done" aria-pressed="false">Сделано</button>
+  </div>
+  <label>Окно</label>
+  <div class="seg-group" id="width" role="group" aria-label="Ширина окна">
+    <button data-v="wide" aria-pressed="true">1280</button>
+    <button data-v="narrow" aria-pressed="false">860</button>
+  </div>
+  <label>Тема</label>
+  <div class="seg-group" id="theme" role="group" aria-label="Тема">
+    <button data-v="auto" aria-pressed="true">Системная</button>
+    <button data-v="dark" aria-pressed="false">Тёмная</button>
+    <button data-v="light" aria-pressed="false">Светлая</button>
+  </div>
+</div>
+
+<p class="mock-note"><b>Идея:</b> граф — оглавление истории. «История» превращается в «Ход работы»: компактный граф сверху, ниже — заходы в этапы карточками (последний раскрыт). Клик по ноде оставляет в ленте только её заходы. Отдельной вкладки нет, чип в шапке ведёт сюда.</p>
+<div class="stage">
+  <div class="win" id="win">
+    <nav class="rail" aria-hidden="true"><i></i><i class="on"></i><i></i><i></i></nav>
+    <main class="app">
+      <header class="gt-head">
+        <div class="gt-row1"><h1>Экспорт отчёта в CSV</h1><button class="btn-sm">Изменить</button></div>
+        <div class="gt-row3">
+          <span class="g-chip type">Фронтенд и бэкенд</span>
+          <span id="chip"></span>
+          <span class="g-chip branch">feature/r42-csv-export</span>
+          <span class="g-chip coord">Координатор работает</span>
+          <span class="muted">5 ч 8 мин</span>
+        </div>
+      </header>
+      <div class="gt-tabs" role="tablist" aria-label="Разделы задачи">
+        <button class="gt-tab" role="tab" data-tab="board" aria-selected="false">Доска <span class="gt-tab-n">4</span></button>
+        <button class="gt-tab" role="tab" data-tab="goal" aria-selected="false">Итог и цель</button>
+        <button class="gt-tab" role="tab" data-tab="coord" aria-selected="false">Координатор</button>
+        <button class="gt-tab" role="tab" data-tab="hist" aria-selected="true">Ход работы <span class="new">было «История»</span></button>
+        <button class="gt-tab" role="tab" data-tab="stats" aria-selected="false">Статистика</button>
+      </div>
+      <section class="gt-panel" data-panel="hist">
+        <div class="pb-wrap">
+          <div class="pb-graph">
+            <div class="pb-graph-head">
+              <b>Граф задачи</b>
+              <span class="muted">клик по ноде — только её заходы</span>
+              <span class="grow"></span>
+              <span id="filter"></span>
+              <div class="pg-legend" aria-label="Обозначения"><span><i class="done"></i>пройдено</span><span><i class="cur"></i>сейчас</span><span><i class="ret"></i>возврат</span></div>
+            </div>
+            <div class="pb-svg" id="graph"></div>
+          </div>
+          <div class="pb-list" id="list"></div>
+        </div>
+      </section>
+      <section class="gt-panel" data-panel="board" hidden>
+        <div class="board-mini">
+          <div><h4>Готово к работе</h4></div>
+          <div><h4>В работе</h4><div id="board-work"></div></div>
+          <div><h4>Проверка</h4></div>
+          <div><h4>Готово</h4><p class="muted">Подзадачи 1-го захода</p></div>
+        </div>
+      </section>
+      <section class="gt-panel" data-panel="other" hidden><p class="muted">Раздел не меняется.</p></section>
+    </main>
+  </div>
+</div>
+<script>
+// Общие данные и отрисовка графа прогресса для макетов docs/design/workflow-progress/*.
+// Граф типа «Фронтенд и бэкенд»; позиция и пройденный путь — как в снимке GlobalTask: stage.nodeId, stage.visits, stageHistory.
+const WF = {
+  nodes: [
+    { id: 'start', type: 'start', title: 'Старт', col: 0 },
+    { id: 'analysis', type: 'work', title: 'Анализ', sub: 'аналитик', col: 1 },
+    { id: 'impl', type: 'work', title: 'Реализация', sub: 'фронт + бэк', col: 2 },
+    { id: 'review', type: 'gate', title: 'Ревью', sub: 'агент reviewer', col: 3 },
+    { id: 'human', type: 'human', title: 'Проверка человеком', sub: 'решаете вы', col: 4 },
+    { id: 'end', type: 'end', title: 'Конец', col: 5 }
+  ],
+  edges: [
+    { id: 'e_start', from: 'start', to: 'analysis', out: 'next' },
+    { id: 'e_an', from: 'analysis', to: 'impl', out: 'next' },
+    { id: 'e_impl', from: 'impl', to: 'review', out: 'next' },
+    { id: 'e_rev_ok', from: 'review', to: 'human', out: 'accept' },
+    { id: 'e_rev_back', from: 'review', to: 'impl', out: 'reject', depth: 34 },
+    { id: 'e_hum_ok', from: 'human', to: 'end', out: 'accept' },
+    { id: 'e_hum_back', from: 'human', to: 'impl', out: 'reject', depth: 62 }
+  ]
+}
+const OUT_LABEL = { accept: 'принять', reject: 'вернуть', ok: 'ок', conflict: 'конфликт' }
+
+// stageHistory: nodeId, from, outcome, at, visit — как StageChange у прогона.
+const H = [
+  { nodeId: 'analysis', at: '10:02', visit: 1 },
+  { nodeId: 'impl', from: 'analysis', outcome: 'next', at: '10:41', visit: 1, summary: 'Требования: CSV с фильтрами отчёта, кнопка на странице отчёта, лимит 50 000 строк.' },
+  { nodeId: 'review', from: 'impl', outcome: 'next', at: '12:15', visit: 1, summary: 'API /reports/export и кнопка «Экспорт в CSV» слиты в ветку задачи.' },
+  { nodeId: 'impl', from: 'review', outcome: 'reject', at: '12:48', visit: 2, note: 'Нет теста на пустой отчёт; кнопка не блокируется во время выгрузки.' },
+  { nodeId: 'review', from: 'impl', outcome: 'next', at: '14:05', visit: 2, summary: 'Добавлены тест пустого отчёта и блокировка кнопки.' },
+  { nodeId: 'human', from: 'review', outcome: 'accept', at: '14:30', visit: 1 },
+  { nodeId: 'end', from: 'human', outcome: 'accept', at: '15:10', visit: 1 }
+]
+const STATES = {
+  first: { upto: 2, label: 'Реализация, 1-й заход' },
+  ret: { upto: 4, label: 'Возврат после reject (2-й заход)' },
+  human: { upto: 6, label: 'Проверка человеком' },
+  done: { upto: 7, label: 'Сделано' }
+}
+// Подзадачи текущего захода «Реализации»: шаг пути подзадачи (defaultSubflow: Работа → Мерж → Конец, конфликт → человеку).
+const SUBTASKS = {
+  first: [
+    { title: 'API: эндпоинт /reports/export', role: 'бэкенд', step: 'merge' },
+    { title: 'UI: кнопка «Экспорт в CSV»', role: 'фронтенд', step: 'work' }
+  ],
+  ret: [
+    { title: 'Тест: экспорт пустого отчёта', role: 'бэкенд', step: 'end' },
+    { title: 'UI: блокировать кнопку во время выгрузки', role: 'фронтенд', step: 'conflict' }
+  ]
+}
+const SUB_NODES = [
+  { id: 'start', type: 'start', title: 'Старт', col: 0 },
+  { id: 'work', type: 'work', title: 'Работа', sub: 'воркер подзадачи', col: 1 },
+  { id: 'merge', type: 'merge', title: 'Мерж', sub: 'в ветку задачи', col: 2 },
+  { id: 'end', type: 'end', title: 'Конец', col: 3 },
+  { id: 'conflict', type: 'human', title: 'Конфликт мержа', sub: 'решаете вы', col: 2, row: 1 }
+]
+const SUB_EDGES = [
+  { id: 's1', from: 'start', to: 'work', out: 'next' },
+  { id: 's2', from: 'work', to: 'merge', out: 'next' },
+  { id: 's3', from: 'merge', to: 'end', out: 'ok' },
+  { id: 's4', from: 'merge', to: 'conflict', out: 'conflict', down: true },
+  { id: 's5', from: 'conflict', to: 'work', out: 'reject', back: true }
+]
+const STEP_ORDER = ['work', 'merge', 'end']
+const STEP_TITLE = { work: 'Работа', merge: 'Мерж', end: 'Конец', conflict: 'Конфликт мержа' }
+
+/** Позиция графа для состояния макета: как runStageLabel + stageHistory. */
+function progress(key) {
+  const hist = H.slice(0, STATES[key].upto)
+  const last = hist[hist.length - 1]
+  const visits = {}
+  const walked = {}
+  const entered = new Set(['start'])
+  walked.e_start = 1
+  for (const h of hist) {
+    visits[h.nodeId] = h.visit
+    entered.add(h.nodeId)
+    if (h.from) {
+      const e = WF.edges.find((x) => x.from === h.from && x.to === h.nodeId && (x.out === h.outcome || (h.outcome === 'next' && x.out === 'next')))
+      if (e) walked[e.id] = (walked[e.id] || 0) + 1
+    }
+  }
+  const closed = last.nodeId === 'end'
+  const current = closed ? null : last.nodeId
+  const done = new Set([...entered].filter((id) => id !== current))
+  return { hist, visits, walked, current, done, closed, visit: current ? visits[current] : 0 }
+}
+
+function icon(type, x, y) {
+  const p = {
+    start: `<circle cx="${x + 8}" cy="${y + 8}" r="7"/><path d="M${x + 6} ${y + 4.5}l5 3.5-5 3.5z"/>`,
+    end: `<circle cx="${x + 8}" cy="${y + 8}" r="7"/><rect x="${x + 5}" y="${y + 5}" width="6" height="6" rx="1"/>`,
+    work: `<rect x="${x + 1}" y="${y + 2}" width="14" height="12" rx="2"/><path d="M${x + 4} ${y + 6}h8M${x + 4} ${y + 10}h5"/>`,
+    gate: `<path d="M${x + 8} ${y + 1}l6 3v4c0 4-3 6-6 7-3-1-6-3-6-7V${y + 4}z"/><path d="M${x + 5} ${y + 8}l2 2 4-4"/>`,
+    human: `<circle cx="${x + 8}" cy="${y + 5}" r="3.5"/><path d="M${x + 2} ${y + 15}c0-4 3-6 6-6s6 2 6 6"/>`,
+    ask: `<circle cx="${x + 8}" cy="${y + 8}" r="7"/><path d="M${x + 6} ${y + 6}a2 2 0 1 1 3 2c-1 .6-1 1-1 2"/>`,
+    merge: `<circle cx="${x + 4}" cy="${y + 3}" r="2"/><circle cx="${x + 4}" cy="${y + 13}" r="2"/><circle cx="${x + 12}" cy="${y + 8}" r="2"/><path d="M${x + 4} ${y + 5}v6M${x + 4} ${y + 6}c0 2 3 2 6 2"/>`
+  }
+  return `<g class="ico">${p[type] || p.work}</g>`
+}
+
+function arrow(x, y, dir) {
+  const d = dir === 'up' ? `M${x - 4} ${y + 7}L${x} ${y}L${x + 4} ${y + 7}z` : dir === 'down' ? `M${x - 4} ${y - 7}L${x} ${y}L${x + 4} ${y - 7}z` : `M${x - 7} ${y - 4}L${x} ${y}L${x - 7} ${y + 4}z`
+  return `<path class="arrow" d="${d}"/>`
+}
+
+/**
+ * SVG графа прогресса. opts: compact (низкие ноды без подписи), selected (id), clickable, gap.
+ * Ноды: done — пройдена, cur — сейчас, todo — впереди. Переходы: walked — по ним шли (счётчик у возвратов).
+ */
+function graphSvg(key, opts = {}) {
+  const pr = progress(key)
+  const W = opts.compact ? 112 : 124, Hh = opts.compact ? 40 : 56, G = opts.gap || (opts.compact ? 30 : 34)
+  const top = opts.compact ? 26 : 30, pad = 6
+  const pos = {}
+  for (const n of WF.nodes) pos[n.id] = { x: pad + n.col * (W + G), y: top }
+  const maxDepth = opts.compact ? 48 : 64
+  const width = pad * 2 + 6 * W + 5 * G, height = top + Hh + maxDepth + 22
+  let s = `<svg class="pg-svg${opts.compact ? ' pg-compact' : ''}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Граф задачи: ${pr.closed ? 'пройден' : 'сейчас ' + WF.nodes.find((n) => n.id === pr.current).title + (pr.visit > 1 ? ', ' + pr.visit + '-й заход' : '')}">`
+  for (const e of WF.edges) {
+    const a = pos[e.from], b = pos[e.to], cnt = pr.walked[e.id] || 0
+    let path, lbl = '', ar
+    if (e.out === 'reject') {
+      const depth = opts.compact ? e.depth * 0.75 : e.depth
+      const x1 = a.x + W / 2 - 10, x2 = b.x + W / 2 + (e.from === 'human' ? 12 : 0), y = a.y + Hh
+      path = `M${x1} ${y} C${x1} ${y + depth}, ${x2} ${y + depth}, ${x2} ${y + 6}`
+      ar = arrow(x2, y + 1, 'up')
+      const mx = (x1 + x2) / 2, my = y + depth * 0.75 + 14
+      lbl = `<text class="lbl" x="${mx}" y="${my}" text-anchor="middle">${OUT_LABEL.reject}${cnt ? '' : ''}</text>`
+      if (cnt) lbl += `<text class="cnt" x="${mx + 26}" y="${my}" text-anchor="start">×${cnt}</text>`
+    } else {
+      const x1 = a.x + W, x2 = b.x - 2, y = a.y + Hh / 2
+      path = `M${x1} ${y} L${x2 - 5} ${y}`
+      ar = arrow(x2, y, 'right')
+      }
+    s += `<g class="pg-edge o-${e.out}${cnt ? ' walked' : ''}"><path class="line" d="${path}"/>${ar}${lbl}</g>`
+  }
+  for (const n of WF.nodes) {
+    const p = pos[n.id]
+    const st = n.id === pr.current ? 'cur' : pr.done.has(n.id) ? 'done' : 'todo'
+    const cls = `pg-node t-${n.type} ${st}${opts.clickable ? ' clickable' : ''}`
+    const nm = st === 'cur' ? 'сейчас' : st === 'done' ? 'пройдена' : 'впереди'
+    s += `<g class="${cls}" data-node="${n.id}" transform="translate(${p.x} ${p.y})"${opts.clickable ? ` tabindex="0" role="button" aria-label="${n.title}: ${nm}"` : ''}>`
+    if (opts.selected === n.id) s += `<rect class="selring" x="-5" y="-5" width="${W + 10}" height="${Hh + 10}" rx="14"/>`
+    if (st === 'cur') s += `<rect class="halo" x="-1" y="-1" width="${W + 2}" height="${Hh + 2}" rx="11"/>`
+    s += `<rect class="box" width="${W}" height="${Hh}" rx="10"/>`
+    s += icon(n.type, 10, Hh / 2 - 8)
+    if (opts.compact) {
+      s += `<text class="title" x="32" y="${Hh / 2 + 4}" style="font-size:12px">${n.title.length > 11 ? n.title.replace('Проверка человеком', 'Проверка') : n.title}</text>`
+    } else {
+      s += `<text class="title" x="32" y="${Hh / 2 - 3}">${n.title.replace('Проверка человеком', 'Проверка')}</text>`
+      s += `<text class="sub" x="32" y="${Hh / 2 + 13}">${n.id === 'human' ? 'человеком' : n.sub || (n.type === 'start' ? 'вход в граф' : 'в «Сделано»')}</text>`
+    }
+    if (n.type === 'work' && !opts.compact) s += `<g class="pg-path-ico" transform="translate(${W - 22} ${Hh - 21})"><rect width="16" height="16" rx="4"/><path d="M4 8h3m2 0h3M8 4v8" transform="rotate(45 8 8)" opacity="0"/><path d="M3.5 11.5h3v-7h3v7h3"/></g>`
+    const v = pr.visits[n.id] || 0
+    if (st === 'cur') {
+      const txt = v > 1 ? `сейчас · ${v}-й заход` : 'сейчас'
+      const bw = txt.length * 6.1 + 14
+      s += `<g class="pg-badge${v > 1 ? ' ret' : ''}" transform="translate(${W / 2 - bw / 2} -${opts.compact ? 22 : 24})"><rect width="${bw}" height="18" rx="9"/><text x="${bw / 2}" y="12.5" text-anchor="middle">${txt}</text></g>`
+    } else if (st === 'done' && n.type !== 'start') {
+      s += `<g class="pg-check" transform="translate(${W - 9} -7)"><circle cx="8" cy="8" r="8"/><path d="M4.5 8.2l2.3 2.3 4.5-4.6"/></g>`
+      if (v > 1) s += `<g class="pg-badge" transform="translate(${W - 42} -7)"><rect width="28" height="16" rx="8"/><text x="14" y="11.5" text-anchor="middle">×${v}</text></g>`
+    }
+    s += '</g>'
+  }
+  return s + '</svg>'
+}
+
+/** Путь подзадачи «Реализации» (defaultSubflow) с метками подзадач на нодах. */
+function subflowSvg(key) {
+  const W = 136, Hh = 50, G = 56, pad = 8, top = 34, rowH = 104
+  const pos = {}
+  for (const n of SUB_NODES) pos[n.id] = { x: pad + n.col * (W + G), y: top + (n.row || 0) * rowH }
+  const subs = SUBTASKS[key] || []
+  const width = pad * 2 + 4 * W + 3 * G, height = top + rowH + Hh + 30
+  let s = `<svg class="pg-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Путь подзадачи этапа «Реализация»">`
+  for (const e of SUB_EDGES) {
+    const a = pos[e.from], b = pos[e.to]
+    const walked = subs.some((t) => (e.id === 's1') || (e.id === 's2' && t.step !== 'work') || (e.id === 's3' && t.step === 'end') || (e.id === 's4' && t.step === 'conflict'))
+    let path, ar, lbl = ''
+    if (e.down) { const x = a.x + W / 2; path = `M${x} ${a.y + Hh} L${x} ${b.y - 6}`; ar = arrow(x, b.y - 1, 'down'); lbl = `<text class="lbl" x="${x + 8}" y="${(a.y + Hh + b.y) / 2 + 4}">${OUT_LABEL.conflict}</text>` }
+    else if (e.back) { const x1 = a.x, y1 = a.y + Hh / 2, x2 = b.x + W / 2, y2 = b.y + Hh; path = `M${x1} ${y1} L${x2} ${y1} L${x2} ${y2 + 6}`; ar = arrow(x2, y2 + 1, 'up'); lbl = `<text class="lbl" x="${(x1 + x2) / 2}" y="${y1 - 6}" text-anchor="middle">${OUT_LABEL.reject}</text>` }
+    else { const x1 = a.x + W, x2 = b.x - 2, y = a.y + Hh / 2; path = `M${x1} ${y} L${x2 - 5} ${y}`; ar = arrow(x2, y, 'right'); if (e.out !== 'next') lbl = `<text class="lbl" x="${(x1 + x2) / 2}" y="${y - 7}" text-anchor="middle">${OUT_LABEL[e.out]}</text>` }
+    s += `<g class="pg-edge o-${e.out}${walked ? ' walked' : ''}"><path class="line" d="${path}"/>${ar}${lbl}</g>`
+  }
+  for (const n of SUB_NODES) {
+    const p = pos[n.id]
+    const here = subs.filter((t) => t.step === n.id)
+    const st = here.length ? 'cur' : subs.some((t) => STEP_ORDER.indexOf(t.step) > STEP_ORDER.indexOf(n.id) || (t.step === 'conflict' && n.id !== 'end')) || n.id === 'start' ? 'done' : 'todo'
+    s += `<g class="pg-node t-${n.type} ${st}" transform="translate(${p.x} ${p.y})"><rect class="box" width="${W}" height="${Hh}" rx="10"/>${icon(n.type, 10, Hh / 2 - 8)}`
+    s += `<text class="title" x="32" y="${Hh / 2 - 2}">${n.title}</text><text class="sub" x="32" y="${Hh / 2 + 13}">${n.sub || (n.type === 'start' ? 'подзадача создана' : 'слита')}</text>`
+    here.forEach((t, i) => {
+      const txt = t.role
+      const bw = txt.length * 6.3 + 14
+      s += `<g class="pg-badge${n.id === 'conflict' ? ' ret' : ''}" transform="translate(${W / 2 - bw / 2 + i * 8} -${22 + i * 20})"><rect width="${bw}" height="18" rx="9"/><text x="${bw / 2}" y="12.5" text-anchor="middle">${txt}</text></g>`
+    })
+    s += '</g>'
+  }
+  return s + '</svg>'
+}
+
+/** Пилюля пути подзадачи: Работа → Мерж → Конец, текущий шаг выделен. */
+function spPill(step) {
+  const idx = step === 'conflict' ? 1 : STEP_ORDER.indexOf(step)
+  return '<span class="sp" aria-label="Путь подзадачи: сейчас ' + STEP_TITLE[step] + '">' + STEP_ORDER.map((s, i) => {
+    if (step === 'conflict' && s === 'merge') return '<span class="cur bad">Конфликт мержа</span>'
+    const c = i < idx ? 'done' : i === idx ? (step === 'end' ? 'done' : 'cur') : ''
+    return `<span class="${c}">${STEP_TITLE[s]}${step === 'end' && s === 'end' ? ' ✓' : ''}</span>`
+  }).join('<em>›</em>') + '</span>'
+}
+
+function subtaskRows(key) {
+  const subs = SUBTASKS[key]
+  if (!subs) return '<p class="muted" style="margin:0;font-size:12.5px">На этом этапе подзадач нет: «Реализация» пройдена.</p>'
+  return subs.map((t) => `<div class="st-row"><b title="${t.title}">${t.title}</b><span class="role">${t.role}</span>${spPill(t.step)}</div>`).join('')
+}
+
+/** Лента истории: события графа + подзадачи (как globalTimeline). stageOnly — только переходы этапов. */
+function historyEvents(key) {
+  const pr = progress(key)
+  const ev = [{ at: '10:01', c: 'var(--col-backlog)', what: '<b>Задача создана</b>', stage: 'start' }, { at: '10:02', c: 'var(--col-progress)', what: '<b>Координатор запущен</b>', stage: 'start' }]
+  for (const h of pr.hist) {
+    const n = WF.nodes.find((x) => x.id === h.nodeId)
+    const ret = h.outcome === 'reject'
+    const from = h.from ? WF.nodes.find((x) => x.id === h.from).title : 'Старт'
+    const visit = h.visit > 1 ? ` · ${h.visit}-й заход` : ''
+    ev.push({
+      at: h.at, stage: h.nodeId, visit: h.visit, ret,
+      c: ret ? 'var(--wf-reject)' : n.type === 'end' ? 'var(--col-done)' : 'var(--accent)',
+      what: ret ? `<div><b>${from} вернул в «${n.title}»</b>${visit}</div>` : `<div><b>Этап «${n.title}»</b>${visit} <span class="muted">← ${from}${h.outcome === 'accept' ? ', принято' : ''}</span></div>`,
+      quote: h.note, sub: pr.hist[pr.hist.indexOf(h) + 1]?.summary ? null : null
+    })
+    if (h.nodeId === 'impl' && h.visit === 1) ev.push({ at: '10:44', stage: 'impl', visit: 1, c: 'var(--col-ready)', what: '<b>Подзадачи:</b> API: эндпоинт /reports/export, UI: кнопка «Экспорт в CSV»' })
+    if (h.nodeId === 'impl' && h.visit === 2) ev.push({ at: '12:51', stage: 'impl', visit: 2, c: 'var(--col-ready)', what: '<b>Подзадачи:</b> Тест: экспорт пустого отчёта, UI: блокировать кнопку во время выгрузки' })
+  }
+  return ev
+}
+
+function historyHtml(key, filter) {
+  const rows = historyEvents(key).filter((e) => !filter || e.stage === filter)
+  return '<ol class="gt-hist-list">' + rows.map((e) => `<li class="gt-hist-row${e.ret ? ' is-return' : ''}"><span class="gt-hist-at">${e.at}</span><span class="gt-hist-pt" style="--c:${e.c}"></span><div class="gt-hist-what">${e.what}${e.quote ? `<div class="gt-hist-quote">${e.quote}</div>` : ''}</div></li>`).join('') + '</ol>'
+}
+
+function stageChip(key) {
+  const pr = progress(key)
+  if (pr.closed) return '<span class="g-chip stage done">Сделано</span>'
+  const n = WF.nodes.find((x) => x.id === pr.current)
+  return `<span class="g-chip stage ${n.type === 'gate' ? 'gate' : n.type === 'human' ? 'human' : ''}">Этап: ${n.title}${pr.visit > 1 ? ` · ${pr.visit}-й заход` : ''}</span>`
+}
+
+// ---------- переключатели макета ----------
+function bindSeg(id, apply) {
+  const group = document.getElementById(id)
+  group.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return
+    group.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+    apply(b.dataset.v)
+  })
+}
+function bindMock(render) {
+  const root = document.documentElement
+  bindSeg('theme', (v) => { if (v === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', v) })
+  bindSeg('width', (v) => document.getElementById('win').classList.toggle('narrow', v === 'narrow'))
+  bindSeg('state', (v) => { window.mockState = v; render() })
+  window.mockState = 'ret'
+  render()
+  applyQuery()
+}
+
+/** Заходы в ноду: вход, выход, с каким исходом пришли и ушли — из stageHistory. */
+function visitsOf(key, nodeId) {
+  const pr = progress(key)
+  const out = []
+  pr.hist.forEach((h, i) => {
+    if (h.nodeId !== nodeId) return
+    const next = pr.hist[i + 1]
+    out.push({
+      visit: h.visit, at: h.at, till: next ? next.at : null,
+      cameFrom: h.from ? WF.nodes.find((n) => n.id === h.from).title : 'Старт', cameWith: h.outcome,
+      leftTo: next ? WF.nodes.find((n) => n.id === next.nodeId).title : null, leftWith: next ? next.outcome : null,
+      reason: next && next.outcome === 'reject' ? next.note : null, summary: next ? next.summary : null
+    })
+  })
+  return out
+}
+const OUTCOME_RU = { next: 'готово', accept: 'принято', reject: 'возврат' }
+function visitsHtml(key, nodeId) {
+  const vs = visitsOf(key, nodeId)
+  if (!vs.length) return '<p class="muted" style="margin:0;font-size:12.5px">Сюда граф ещё не заходил.</p>'
+  return '<ol class="vis">' + vs.map((v) => `<li class="${v.leftWith === 'reject' ? 'bad' : v.till ? 'ok' : 'now'}">
+    <div class="vis-h"><b>${nodeId === 'end' ? 'Граф пройден' : v.visit + '-й заход'}</b><span class="muted">${v.at}${nodeId === 'end' ? '' : '–' + (v.till || 'сейчас')}</span></div>
+    <div class="muted vis-s">${v.cameWith === 'reject' ? `<span class="ret">вернул ${v.cameFrom}</span>` : `из «${v.cameFrom}»`}${v.leftTo ? ` → «${v.leftTo}», ${OUTCOME_RU[v.leftWith]}` : ''}</div>
+    ${v.reason ? `<div class="gt-hist-quote">${v.reason}</div>` : ''}${v.summary ? `<div class="vis-sum">${v.summary}</div>` : ''}</li>`).join('') + '</ol>'
+}
+
+// ?theme=light|dark, ?w=narrow, ?state=first|ret|human|done — открыть макет сразу в нужном виде.
+function applyQuery() {
+  const q = new URLSearchParams(location.search)
+  for (const [id, v] of [['theme', q.get('theme')], ['width', q.get('w')], ['state', q.get('state')]]) {
+    const b = v && document.querySelector(`#${id} button[data-v="${v}"]`)
+    if (b) b.click()
+  }
+}
+
+let filter = null
+const EXTRA = {
+  'analysis#1': ['10:05 · Подзадача «Разобрать требования к экспорту» (аналитик) — сделано'],
+  'review#1': ['12:20 · Проверяющий reviewer запущен'],
+  'review#2': ['14:08 · Проверяющий reviewer запущен'],
+  'human#1': ['14:30 · Запрос «Проверка человеком» в Инбоксе']
+}
+function visitCard(key, h, i, hist, pr) {
+  const n = WF.nodes.find((x) => x.id === h.nodeId)
+  const next = hist[i + 1]
+  const now = !next && !pr.closed
+  const bad = next && next.outcome === 'reject'
+  const cls = now ? 'now' : bad ? 'bad' : ''
+  const from = h.from ? WF.nodes.find((x) => x.id === h.from).title : 'Старт'
+  const head = `<span class="pb-dot"></span><span class="pb-title">${n.title}${h.visit > 1 ? ` · ${h.visit}-й заход` : ''}${h.outcome === 'reject' ? `<span class="ret">↩ вернул ${from}</span>` : ''}${now ? '<small>сейчас</small>' : ''}</span><span class="pb-time">${h.at}–${next ? next.at : 'сейчас'}</span>`
+  let body = ''
+  if (h.outcome === 'reject' && h.note) body += `<div class="pb-sec">Причина возврата</div><div class="gt-hist-quote">${h.note}</div>`
+  const ex = EXTRA[`${h.nodeId}#${h.visit}`]
+  if (ex) body += ex.map((t) => `<div class="muted" style="font-size:12.5px">${t}</div>`).join('')
+  if (n.id === 'impl') {
+    const subs = now ? subtaskRows(key) : `<div class="muted" style="font-size:12.5px">${h.visit === 1 ? 'API: эндпоинт /reports/export, UI: кнопка «Экспорт в CSV»' : 'Тест: экспорт пустого отчёта, UI: блокировать кнопку во время выгрузки'} — слиты</div>`
+    body += `<div class="pb-sec">Подзадачи захода и их путь</div>${subs}`
+  }
+  if (next && next.summary) body += `<div class="pb-sum"><b>Сдан этап:</b> ${next.summary}</div>`
+  if (next) body += `<div class="muted" style="font-size:12px">→ «${WF.nodes.find((x) => x.id === next.nodeId).title}», ${OUTCOME_RU[next.outcome]}</div>`
+  return `<details class="pb-visit ${cls}"${now || (pr.closed && i === hist.length - 2) ? ' open' : ''}><summary>${head}</summary><div class="pb-body">${body || '<span class="muted" style="font-size:12.5px">Событий нет</span>'}</div></details>`
+}
+function render() {
+  const key = window.mockState, pr = progress(key)
+  const chip = document.getElementById('chip')
+  chip.innerHTML = stageChip(key).replace('class="g-chip', 'role="link" tabindex="0" title="Открыть «Ход работы»" class="g-chip link')
+  chip.firstChild.textContent += ' ›'
+  chip.firstChild.onclick = () => { filter = null; setTab('hist'); render() }
+  document.getElementById('graph').innerHTML = graphSvg(key, { compact: true, clickable: true, selected: filter })
+  document.querySelectorAll('#graph .pg-node.clickable').forEach((g) => {
+    const pick = () => { filter = filter === g.dataset.node ? null : g.dataset.node; render() }
+    g.onclick = pick
+    g.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick() } }
+  })
+  document.getElementById('filter').innerHTML = filter ? `<span class="pb-filter"><span class="chip">Только «${WF.nodes.find((x) => x.id === filter).title}» <button aria-label="Сбросить фильтр" id="clr">×</button></span></span>` : ''
+  const clr = document.getElementById('clr'); if (clr) clr.onclick = () => { filter = null; render() }
+  const hist = pr.hist
+  let cards = hist.map((h, i) => ({ h, i })).filter(({ h }) => h.nodeId !== 'end' && (!filter || h.nodeId === filter)).map(({ h, i }) => visitCard(key, h, i, hist, pr))
+  cards.reverse()
+  if (pr.closed && !filter) cards.unshift(`<details class="pb-visit" open><summary><span class="pb-dot"></span><span class="pb-title">Сделано<small>граф пройден</small></span><span class="pb-time">15:10</span></summary><div class="pb-body"><div class="pb-sum"><b>Итог:</b> экспорт отчёта в CSV с фильтрами, тесты пустого и большого отчёта.</div></div></details>`)
+  if (!pr.closed && !filter) {
+    const ahead = WF.nodes.filter((n) => n.type !== 'start' && n.type !== 'end' && !pr.done.has(n.id) && n.id !== pr.current)
+    if (ahead.length) cards.unshift(`<details class="pb-visit todo"><summary><span class="pb-dot"></span><span class="pb-title">Впереди: ${ahead.map((n) => n.title).join(' → ')}</span><span class="pb-time"></span></summary></details>`)
+  }
+  if (!cards.length) cards = ['<p class="muted">Сюда граф ещё не заходил.</p>']
+  document.getElementById('list').innerHTML = cards.join('')
+  document.getElementById('board-work').innerHTML = subtaskRows(key)
+}
+function setTab(t) {
+  document.querySelectorAll('.gt-tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t)))
+  document.querySelectorAll('.gt-panel').forEach((p) => { p.hidden = !(p.dataset.panel === t || (p.dataset.panel === 'other' && !['hist', 'board'].includes(t))) })
+}
+document.querySelectorAll('.gt-tab').forEach((b) => { b.onclick = () => setTab(b.dataset.tab) })
+document.getElementById('state').addEventListener('click', () => { filter = null }, true)
+bindMock(render)
+</script>
+</body>
+</html>
