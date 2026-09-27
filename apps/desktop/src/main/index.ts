@@ -6,6 +6,9 @@ import { existsSync } from 'node:fs'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
+import { assistantCwd } from './assistant'
+import { AssistantChatCache, assistantTranscriptPath, assistantChatAvailable, chatSnapshot, drainChatUpdates, chatInputBytes } from './assistant-chat'
+import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
@@ -16,7 +19,7 @@ import {
   type RunWorkflowDeps
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
-import { listRules, writeRule } from './rules'
+import { listRules, readRule, writeRule } from './rules'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
@@ -28,7 +31,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -448,6 +451,12 @@ function runFinished(store: TaskStore, runId: string): boolean {
 
 /** Живой терминал ассистента: один на всё приложение, повторное открытие — тот же PTY при любом активном проекте. */
 let assistantPty: string | null = null
+/** sessionId транскрипта текущего ассистента (чат-режим панели, `docs/assistant-chat.md`); нет — агент без парсера. */
+let assistantSessionId: string | undefined
+/** Кэш разбора транскрипта в сообщения чата — переживает между тиками `watchAssistantChat`. */
+const assistantChatCache = new AssistantChatCache()
+/** Статус чата на прошлом тике — чтобы слать `onMessage` только при смене, не на каждый тик. */
+const assistantChatStatus = new Map<string, AssistantChatStatus>()
 
 /**
  * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
@@ -460,11 +469,43 @@ function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: str
     killPty(assistantPty)
   }
   assistantPty = null
+  assistantSessionId = undefined
   // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
   const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
-  const { ptyId } = startAssistant({ socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title }, cols, rows)
+  const { ptyId, sessionId } = startAssistant(
+    { socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title },
+    cols,
+    rows,
+    (id) => {
+      if (assistantPty === id) {
+        assistantPty = null
+        assistantSessionId = undefined
+      }
+      assistantChatStatus.delete(id)
+    }
+  )
   assistantPty = ptyId
+  assistantSessionId = sessionId
   return { ptyId }
+}
+
+/** Раз в секунду: тянет хвост транскрипта живого ассистента и шлёт панели новые/изменённые сообщения чата. */
+function watchAssistantChat(): void {
+  setInterval(() => {
+    void tickAssistantChat()
+  }, 1000)
+}
+
+async function tickAssistantChat(): Promise<void> {
+  const ptyId = assistantPty
+  const sessionId = assistantSessionId
+  if (!ptyId || !sessionId || !win || win.isDestroyed()) return
+  const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), sessionId)
+  const state = await assistantChatCache.read(filePath)
+  if (!state) return
+  const updates = drainChatUpdates(ptyId, state, assistantChatStatus.get(ptyId))
+  assistantChatStatus.set(ptyId, state.status)
+  for (const u of updates) win.webContents.send(`assistantChat:message:${ptyId}`, u)
 }
 
 /**
@@ -720,11 +761,8 @@ function registerIpc(): void {
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  handle('projects:remove', (_e, id: string) => {
-    projects.remove(id)
-    // Картинки глобальных задач проекта лежат в userData, а не в репозитории — их удаляем вместе с проектом.
-    removeRunImagesDir(runImagesRoot(app.getPath('userData')), id)
-  })
+  // Картинки глобальных задач проекта (userData/run-images) удаляет сам ProjectManager.remove — общий путь с сокетом.
+  handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
@@ -867,6 +905,25 @@ function registerIpc(): void {
   })
   handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
   handle('assistant:reset', (_e, cols: number, rows: number) => openAssistant(cols, rows, true))
+  handle('assistantChat:available', (_e, ptyId: string) => {
+    if (assistantPty !== ptyId) return false
+    return assistantChatAvailable(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
+  })
+  handle('assistantChat:getMessages', async (_e, ptyId: string) => {
+    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
+    if (!assistantSessionId) return chatSnapshot(ptyId, undefined)
+    const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
+    return chatSnapshot(ptyId, await assistantChatCache.read(filePath))
+  })
+  handle('assistantChat:send', (_e, ptyId: string, text: unknown) => {
+    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
+    const value = typeof text === 'string' ? text : ''
+    if (!value.trim()) throw new OrcaError('assistantChat.emptyText')
+    writePty(ptyId, chatInputBytes(value))
+    setTimeout(() => {
+      if (isAlive(ptyId)) writePty(ptyId, '\r')
+    }, SUBMIT_DELAY_MS)
+  })
   handle('docs:list', () => {
     if (!projects.active()) return []
     const p = resolveProject()
@@ -935,6 +992,11 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
+  // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
+  // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
+  projects.onDataChange(() => {
+    if (win && !win.isDestroyed()) win.webContents.send('app:changed')
+  })
   const { support, backend } = createPlatformUpdater({
     version: app.getVersion(),
     isPackaged: app.isPackaged,
@@ -991,7 +1053,36 @@ app.whenReady().then(() => {
         runType: (typeId) => projects.runType(p.id, typeId),
         saveTaskTypeRules: (typeId, roleId, text) => projects.saveTaskTypeRules(typeId, roleId, text),
         columns: () => projects.columns(p.id),
-        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(p.id))
+        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(p.id)),
+        // Настройки: библиотека типов задач, роли, шаблоны нод — общая для всех проектов, `p` только определяет,
+        // через какой проект команда пришла (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»).
+        typesCreate: (input) => projects.saveTaskType({ ...input, settings: {} }),
+        typesRename: (id, patch) => projects.renameTaskType(id, patch),
+        typesSetDefault: (id) => projects.setDefaultTaskType(id),
+        typesDuplicate: (id) => projects.duplicateTaskType(id),
+        typesUsage: (id) => projects.taskTypeUsage(id),
+        typesDelete: (id) => projects.deleteTaskType(id),
+        rolesAdd: (typeId, input) => projects.addRole(typeId, input),
+        rolesUpdate: (typeId, roleId, patch) => projects.updateRole(typeId, roleId, patch),
+        rolesRemove: (typeId, roleId) => projects.removeRole(typeId, roleId),
+        permissionMode: (typeId) => projects.permissionMode(typeId),
+        setPermissionMode: (typeId, mode) => {
+          projects.patchTaskType(typeId, { permissionMode: mode })
+          return projects.permissionMode(typeId)
+        },
+        nodeTemplates: () => projects.nodeTemplates(),
+        deleteNodeTemplate: (id) => projects.deleteNodeTemplate(id),
+        setActive: () => projects.setActive(p.id),
+        removeProject: () => {
+          projects.remove(p.id)
+          return { removed: p.id }
+        },
+        // Сокет уже сверил id с реестром агентов (project.agents.set в socket.ts) — здесь как есть.
+        setEnabledAgents: (ids) => projects.setEnabledAgents(p.id, ids as AgentKind[]),
+        setColumns: (columns) => projects.setColumns(p.id, columns),
+        setProjectTaskTypes: (input) => projects.setProjectTaskTypes(p.id, input),
+        projectRulesGet: (file) => readRule(p.root, file),
+        projectRulesSet: (file, text) => writeRule(p.root, file, text)
       }
     },
     projects: () => {
@@ -1009,10 +1100,21 @@ app.whenReady().then(() => {
           defaultTypeTitle: type.title
         }
       })
+    },
+    settings: () => projects.settings(),
+    // Как `app:setSettings` в registerIpc: язык, трей и апдейтер должны узнать о правке независимо от того,
+    // пришла ли она из renderer или от ассистента через `settings set`.
+    setSettings: (patch) => {
+      const settings = projects.setSettings(patch)
+      setMainLocale(settings.language)
+      refreshTray()
+      updater.settingsChanged()
+      return settings
     }
   })
   watchStuck()
   watchFinishedCoordinators()
+  watchAssistantChat()
   createTray({
     open: () => showWindow(),
     quit: () => void requestQuit(),

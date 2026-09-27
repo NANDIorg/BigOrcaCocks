@@ -110,6 +110,7 @@ export default {
   'type.notObject': 'task type: an object is expected',
   'type.emptyId': 'task type: empty id',
   'type.emptyTitle': 'task type: empty name',
+  'type.renameEmpty': 'specify --title and/or --description',
   'type.descriptionNotString': 'type “{title}”: description must be a string',
   'type.lastOne': 'type “{title}” is the last one in the library and cannot be deleted: create another type first',
   'type.copyTitle': '{title} (copy)',
@@ -183,6 +184,9 @@ export default {
   'stats.badRange': 'statistics: unknown period “{range}”, expected {expected}',
   'stats.noTask': 'statistics: task {id} is not in the project',
   'stats.noGlobal': 'statistics: global task {id} is not in the project',
+
+  'assistantChat.unknownPty': 'no running assistant with this PTY — reopen the panel',
+  'assistantChat.emptyText': 'chat message is empty',
 
   'onboarding.invalidInput': 'first-run wizard: an object with a boolean skipped field is expected'
 } satisfies { [K in keyof typeof ru]: string | { one: string; other: string } }
