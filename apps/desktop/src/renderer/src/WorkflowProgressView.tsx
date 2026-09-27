@@ -11,8 +11,8 @@ import { wfPortClass, wfPortLabel } from './workflowEdit'
 import { NODE_H, NODE_W, curvePath, curvePoint, edgeCurveOf, graphBounds, nodeHeight } from './workflowGeometry'
 import { pathNodeName } from './subtaskPath'
 import {
-  defaultProgressNode, nodeVisits, pathProgress, progressLayout, runProgress, subtaskPathSteps, visitTasks, workPath,
-  type NodeVisit, type PathStep, type ProgressNodeState
+  defaultProgressNode, isPassThrough, nodeVisits, passExits, pathProgress, progressLayout, runProgress, subtaskPathSteps, visitTasks,
+  workPath, type NodeVisit, type PassExit, type PathStep, type ProgressNodeState
 } from './workflowProgress'
 
 interface Props {
@@ -187,6 +187,7 @@ export function WorkflowProgress(props: Props): React.JSX.Element {
           view={progress.nodes[selNode.id] ?? { state: 'todo', visits: 0 }}
           currentVisit={selNode.id === progress.current ? progress.currentVisit : 0}
           visits={visits}
+          exits={passExits(graph, progress.edges, selNode.id)}
           shownTasks={shownTasks}
           shownVisit={shown?.visit}
           workflow={workflow}
@@ -338,6 +339,8 @@ interface PanelProps {
   /** Заход, если граф стоит на этой ноде; иначе 0. */
   currentVisit: number
   visits: NodeVisit[]
+  /** Сквозная нода (условие): куда граф из неё вышел. */
+  exits: PassExit[]
   /** Подзадачи последнего (или текущего) захода. */
   shownTasks: Task[]
   shownVisit?: number
@@ -351,7 +354,7 @@ interface PanelProps {
 
 /** Панель выбранной ноды: состояние, заходы с причинами возвратов и сводками, подзадачи захода. */
 function NodePanel(props: PanelProps): React.JSX.Element {
-  const { node, graph, view, visits, shownTasks, workflow, columns } = props
+  const { node, graph, view, visits, exits, shownTasks, workflow, columns } = props
   const t = useT()
   const nameOf = (id: string | undefined): string => {
     const n = id !== undefined ? graph.nodes.find((x) => x.id === id) : undefined
@@ -373,7 +376,28 @@ function NodePanel(props: PanelProps): React.JSX.Element {
         <dd>{WF_TYPE_TITLES[node.type]}</dd>
       </dl>
 
-      {node.type !== 'start' && (
+      {node.type !== 'start' && isPassThrough(node) && (
+        <>
+          <h4 className="wf-progress-sec">{t('global.graph.pass')}</h4>
+          {view.state === 'todo' ? (
+            <p className="muted wf-progress-empty">{t('global.graph.noVisits')}</p>
+          ) : (
+            <>
+              <p className="muted wf-progress-empty">{t('global.graph.passedThrough')}</p>
+              {exits.length > 0 && (
+                <ul className="wf-progress-visits">
+                  {exits.map((x) => {
+                    const args = { outcome: wfPortLabel(node, x.outcome), name: nameOf(x.to), n: x.count }
+                    return <li key={x.edgeId}>{t(x.count > 1 ? 'global.graph.passExitCount' : 'global.graph.passExit', args)}</li>
+                  })}
+                </ul>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {node.type !== 'start' && !isPassThrough(node) && (
         <>
           <h4 className="wf-progress-sec">{t('global.graph.visits')}</h4>
           {visits.length === 0 ? (
@@ -386,7 +410,7 @@ function NodePanel(props: PanelProps): React.JSX.Element {
                     <b>{node.type === 'end' ? t('global.graph.visitEnd') : t('global.graph.visit', { n: v.visit })}</b>
                     <span className="muted" title={fullStamp(v.at)}>
                       {formatClock(v.at)}
-                      {node.type !== 'end' && <>–{v.till !== undefined ? formatClock(v.till) : t('global.graph.now')}</>}
+                      {node.type !== 'end' && (v.till !== undefined ? <>–{formatClock(v.till)}</> : !v.closed && <>–{t('global.graph.now')}</>)}
                     </span>
                   </div>
                   <div className="muted wf-progress-visit-sub">
@@ -398,6 +422,7 @@ function NodePanel(props: PanelProps): React.JSX.Element {
                         ? t('global.graph.left', { name: nameOf(v.to), outcome: wfPortLabel(node, v.leftWith) })
                         : t('global.graph.leftPlain', { name: nameOf(v.to) })}</>
                     )}
+                    {v.closed && node.type !== 'end' && <> {t('global.graph.runClosed')}</>}
                   </div>
                   {v.reason && <div className="wf-progress-quote">{v.reason}</div>}
                   {v.decision && <div className="wf-progress-visit-sub">{t('global.timeline.stageDecision', { label: v.decision })}</div>}
