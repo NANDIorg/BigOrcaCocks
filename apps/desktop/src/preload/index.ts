@@ -12,7 +12,12 @@ const api: OrcaApi = {
     info: () => ipcRenderer.invoke('app:info'),
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
-    testNotification: () => ipcRenderer.invoke('app:testNotification')
+    testNotification: () => ipcRenderer.invoke('app:testNotification'),
+    onChanged: (cb) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('app:changed', handler)
+      return () => ipcRenderer.removeListener('app:changed', handler)
+    }
   },
   onboarding: {
     getState: () => ipcRenderer.invoke('onboarding:getState'),
@@ -30,6 +35,11 @@ const api: OrcaApi = {
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     inProgressCounts: () => ipcRenderer.invoke('projects:inProgressCounts'),
+    branch: (id) => ipcRenderer.invoke('projects:branch', id),
+    branches: (id) => ipcRenderer.invoke('projects:branches', id),
+    gitFetch: (id) => ipcRenderer.invoke('projects:gitFetch', id),
+    gitPull: (id) => ipcRenderer.invoke('projects:gitPull', id),
+    checkoutBranch: (id, branch) => ipcRenderer.invoke('projects:checkoutBranch', id, branch),
     add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
     detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
     setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
@@ -37,6 +47,12 @@ const api: OrcaApi = {
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setEnabledAgents: (id, agents) => ipcRenderer.invoke('projects:setEnabledAgents', id, agents),
     setColumns: (id, columns) => ipcRenderer.invoke('projects:setColumns', id, columns),
+    createGroup: (name) => ipcRenderer.invoke('projects:createGroup', name),
+    renameGroup: (id, name) => ipcRenderer.invoke('projects:renameGroup', id, name),
+    removeGroup: (id) => ipcRenderer.invoke('projects:removeGroup', id),
+    setGroupCollapsed: (id, collapsed) => ipcRenderer.invoke('projects:setGroupCollapsed', id, collapsed),
+    setProjectGroup: (projectId, groupId) => ipcRenderer.invoke('projects:setProjectGroup', projectId, groupId),
+    reorderGroups: (ids) => ipcRenderer.invoke('projects:reorderGroups', ids),
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {
@@ -45,6 +61,11 @@ const api: OrcaApi = {
     delete: (id) => ipcRenderer.invoke('taskTypes:delete', id),
     duplicate: (id) => ipcRenderer.invoke('taskTypes:duplicate', id),
     setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id)
+  },
+  nodeTemplates: {
+    list: () => ipcRenderer.invoke('nodeTemplates:list'),
+    save: (input) => ipcRenderer.invoke('nodeTemplates:save', input),
+    delete: (id) => ipcRenderer.invoke('nodeTemplates:delete', id)
   },
   agents: {
     list: (refresh) => ipcRenderer.invoke('agents:list', refresh)
@@ -63,16 +84,19 @@ const api: OrcaApi = {
   globalTasks: {
     list: () => ipcRenderer.invoke('globalTasks:list'),
     get: (id) => ipcRenderer.invoke('globalTasks:get', id),
-    create: (input) => ipcRenderer.invoke('globalTasks:create', input),
+    create: (input, images) => ipcRenderer.invoke('globalTasks:create', input, images),
     update: (id, patch) => ipcRenderer.invoke('globalTasks:update', id, patch),
     changeType: (id, typeId) => ipcRenderer.invoke('globalTasks:changeType', id, typeId),
+    addImages: (id, images) => ipcRenderer.invoke('globalTasks:addImages', id, images),
+    removeImage: (id, imageId) => ipcRenderer.invoke('globalTasks:removeImage', id, imageId),
+    image: (id, imageId) => ipcRenderer.invoke('globalTasks:image', id, imageId),
     move: (id, status) => ipcRenderer.invoke('globalTasks:move', id, status),
     remove: (id, opts) => ipcRenderer.invoke('globalTasks:remove', id, opts),
     tasks: (id) => ipcRenderer.invoke('globalTasks:tasks', id),
     createTask: (id, input) => ipcRenderer.invoke('globalTasks:createTask', id, input),
     startCoordinator: (id, cols, rows, images) => ipcRenderer.invoke('globalTasks:startCoordinator', id, cols, rows, images),
-    accept: (id) => ipcRenderer.invoke('globalTasks:accept', id),
-    returnToWork: (id, text, cols, rows) => ipcRenderer.invoke('globalTasks:returnToWork', id, text, cols, rows)
+    accept: (id, decision) => ipcRenderer.invoke('globalTasks:accept', id, decision),
+    returnToWork: (id, text, cols, rows, images) => ipcRenderer.invoke('globalTasks:returnToWork', id, text, cols, rows, images)
   },
   tasks: {
     create: (input) => ipcRenderer.invoke('tasks:create', input),
@@ -85,7 +109,7 @@ const api: OrcaApi = {
   },
   requests: {
     list: (opts) => ipcRenderer.invoke('requests:list', opts),
-    resolve: (id, resolution) => ipcRenderer.invoke('requests:resolve', id, resolution),
+    resolve: (id, resolution, images) => ipcRenderer.invoke('requests:resolve', id, resolution, images),
     onFocus: (cb) => on('requests:focus', cb)
   },
   pty: {
@@ -110,6 +134,12 @@ const api: OrcaApi = {
     open: (cols, rows) => ipcRenderer.invoke('assistant:open', cols, rows),
     reset: (cols, rows) => ipcRenderer.invoke('assistant:reset', cols, rows)
   },
+  assistantChat: {
+    available: (ptyId) => ipcRenderer.invoke('assistantChat:available', ptyId),
+    getMessages: (ptyId) => ipcRenderer.invoke('assistantChat:getMessages', ptyId),
+    send: (ptyId, text) => ipcRenderer.invoke('assistantChat:send', ptyId, text),
+    onMessage: (ptyId, cb) => on(`assistantChat:message:${ptyId}`, cb)
+  },
   docs: {
     list: () => ipcRenderer.invoke('docs:list'),
     read: (source, path) => ipcRenderer.invoke('docs:read', source, path),
@@ -133,7 +163,10 @@ const api: OrcaApi = {
   review: {
     info: (taskId) => ipcRenderer.invoke('review:info', taskId),
     accept: (taskId, decision) => ipcRenderer.invoke('review:accept', taskId, decision),
-    reject: (taskId, feedback) => ipcRenderer.invoke('review:reject', taskId, feedback)
+    reject: (taskId, feedback, images) => ipcRenderer.invoke('review:reject', taskId, feedback, images)
+  },
+  attachments: {
+    ping: () => ipcRenderer.invoke('attachments:ping')
   }
 }
 

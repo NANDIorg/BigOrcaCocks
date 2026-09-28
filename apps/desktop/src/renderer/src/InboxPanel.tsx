@@ -1,9 +1,9 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { globalTaskTitle, type Dispatch, type HumanRequest, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
+import { globalTaskTitle, type Dispatch, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
 import { RequestCard, requestKindTitle, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
-import { requestShowcase } from './showcase'
+import { requestShowcase, requestShowcaseTaskId } from './showcase'
 import { requestStageLabel, wfNodeTitles } from './cardState'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
@@ -59,8 +59,10 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
   const runById = new Map(runs.map((r) => [r.id, r]))
   const where = (r: HumanRequest): string => {
     const run = runById.get(r.runId)
-    const task = taskById.get(r.taskId)
-    return [run ? builtinText(globalTaskTitle(run)) : undefined, task?.title ?? r.taskId].filter(Boolean).join(' › ')
+    const task = r.taskId !== undefined ? taskById.get(r.taskId) : undefined
+    // Approval уровня прогона задачи не имеет: после названия глобальной задачи — нода воркфлоу, на которой он ждёт.
+    const node = r.taskId === undefined && r.nodeId ? wfNodeTitles(workflowOf?.(r.runId))[r.nodeId] : undefined
+    return [run ? builtinText(globalTaskTitle(run)) : undefined, task?.title ?? r.taskId ?? node].filter(Boolean).join(' › ')
   }
 
   const stageOf = (r: HumanRequest): string | undefined =>
@@ -116,7 +118,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
     select(visible[Math.min(visible.length - 1, Math.max(0, i + delta))].id)
   }
 
-  async function resolve(r: HumanRequest, resolution: RequestResolution): Promise<void> {
+  async function resolve(r: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
     // Следующий — тот, что был ниже (или выше, если решали последний).
     const i = visible.findIndex((x) => x.id === r.id)
     const next = visible[i + 1] ?? visible[i - 1]
@@ -124,7 +126,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
     setNotice(null)
     if (current?.id === r.id) select(next?.id)
     try {
-      const res = await window.orca.requests.resolve(r.id, resolution)
+      const res = await window.orca.requests.resolve(r.id, resolution, images)
       if (res.startError) setNotice(t('shell.app.startError', { title: r.title, error: res.startError }))
     } catch (e) {
       setSent((prev) => {
@@ -215,11 +217,12 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
                 }}
                 request={r}
                 showcase={requestShowcase(r, dispatches)}
+                showcaseTaskId={requestShowcaseTaskId(r, dispatches)}
                 where={where(r)}
                 stage={stageOf(r)}
                 active={open && current?.id === r.id}
                 onSelect={() => setActiveId(r.id)}
-                onResolve={(res) => resolve(r, res)}
+                onResolve={(res, images) => resolve(r, res, images)}
                 onOpenFull={setFull}
                 onOpenTerminal={(taskId) => {
                   onClose()

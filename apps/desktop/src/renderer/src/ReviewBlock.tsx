@@ -1,14 +1,18 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
+import type { ImageAttachmentInput } from '@orca-board/core'
 import type { ReviewInfo } from '../../shared/ipc'
 import { useT } from './i18n'
 import { ipcErrorMessage } from './ipcError'
+import { ImageAttachField } from './ImageAttachField'
+import { useImageAttachments } from './imageDrafts'
 
 interface Props {
   taskId: string
   summary?: string
   onAccept(): Promise<void>
-  onReject(feedback: string): Promise<void>
+  /** `images` — картинки к замечаниям (байты); у задач без картинок аргумента нет. */
+  onReject(feedback: string, images?: ImageAttachmentInput[]): Promise<void>
 }
 
 export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): React.JSX.Element {
@@ -18,6 +22,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): Rea
   const [feedback, setFeedback] = useState('')
   const [mode, setMode] = useState<'view' | 'reject'>('view')
   const [busy, setBusy] = useState(false)
+  const attachments = useImageAttachments()
 
   useEffect(() => {
     window.orca.review.info(taskId).then(setInfo).catch((e: unknown) => setError(ipcErrorMessage(e)))
@@ -63,17 +68,22 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): Rea
         </div>
       ) : (
         <div className="reject">
-          <textarea
-            autoFocus
-            placeholder={t('board.review.feedbackPlaceholder')}
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-          />
+          <ImageAttachField attachments={attachments} disabled={busy}>
+            <textarea
+              autoFocus
+              placeholder={t('board.review.feedbackPlaceholder')}
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+            />
+          </ImageAttachField>
           <div className="actions">
-            <button className="btn-sm primary" disabled={busy || !feedback.trim()} onClick={() => run(() => onReject(feedback.trim()))}>
+            <button className="btn-sm primary" disabled={busy || attachments.reading || !feedback.trim()} onClick={() => run(async () => {
+              await onReject(feedback.trim(), attachments.payload())
+              attachments.clear()
+            })}>
               {t('board.review.sendBack')}
             </button>
-            <button className="btn-text" onClick={() => setMode('view')}>{t('board.cancel')}</button>
+            <button className="btn-text" disabled={busy} onClick={() => { attachments.clear(); setMode('view') }}>{t('board.cancel')}</button>
           </div>
         </div>
       )}

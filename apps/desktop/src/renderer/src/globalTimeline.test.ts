@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { BoardColumn, StatusChange } from '@orca-board/core'
-import { dayLabel, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
+import { defaultWorkflow, type BoardColumn, type StageChange, type StatusChange } from '@orca-board/core'
+import { dayLabel, DECISION_EXCERPT_LIMIT, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
 import { setLocale } from './i18n'
 
 /** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
@@ -209,5 +209,106 @@ test('английский интерфейс: подписи дней и соб
       ['Moved to “Проверка”', undefined],
       ['Created', 'in “Бэклог”']
     ])
+  })
+})
+
+const wf = defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
+const stageAt = (nodeId: string, time: number, extra: Partial<StageChange> = {}): StageChange => ({ nodeId, at: time, by: 'app', ...extra })
+
+test('globalTimeline: история этапов — «Этап «…»», заход со второго, исход возврата, коммит входа и выдержка сводки', () => {
+  const events = globalTimeline({
+    stageHistory: [
+      stageAt('work', at(23, 10), { visit: 1, commit: 'abcdef123456' }),
+      stageAt('review', at(23, 12), { visit: 1, outcome: 'next', from: 'work' }),
+      stageAt('work', at(23, 13), { visit: 2, outcome: 'reject', from: 'review', summary: '## Итог\nСделали кнопку' })
+    ],
+    workflow: wf
+  }, columns, NOW)
+  assert.deepEqual(events.map((e) => [e.kind, e.title, e.detail, e.sub, e.text]), [
+    ['stage', 'Этап «Реализация»', '2-й заход', 'возврат на доработку', 'Сделали кнопку'],
+    ['stage', 'Этап «Ревью»', undefined, undefined, undefined],
+    ['stage', 'Этап «Реализация»', undefined, 'ветка на входе: abcdef1', undefined]
+  ])
+})
+
+test('globalTimeline: ноды старта и условия в истории не показываются; без графа — название из записи, иначе id', () => {
+  const start = wf.nodes.find((n) => n.type === 'start')!.id
+  const events = globalTimeline({ stageHistory: [stageAt(start, 1000), stageAt('work', 2000, { title: 'Работа' }), stageAt('n9', 3000)], workflow: wf }, columns, NOW)
+  assert.deepEqual(events.map((e) => e.title), ['Этап «n9»', 'Этап «Реализация»'], 'граф есть: n9 неизвестна — id; старт скрыт')
+  const bare = globalTimeline({ stageHistory: [stageAt('work', 2000, { title: 'Работа' }), stageAt('n9', 3000)] }, columns, NOW)
+  assert.deepEqual(bare.map((e) => e.title), ['Этап «n9»', 'Этап «Работа»'])
+  // Ссылка «на графе» — только у ноды, которая есть в графе прогона.
+  assert.deepEqual(events.map((e) => e.nodeId), [undefined, 'work'])
+  assert.deepEqual(bare.map((e) => e.nodeId), [undefined, undefined])
+})
+
+test('globalTimeline: вход в этап — причина, поэтому при одной метке времени лента показывает его ниже перехода колонки', () => {
+  const events = globalTimeline({
+    statusHistory: [change('review', at(23, 12))],
+    stageHistory: [stageAt('check', at(23, 12), { visit: 1 })],
+    workflow: wf
+  }, columns, NOW)
+  assert.deepEqual(events.map((e) => e.kind), ['status', 'stage'])
+})
+
+const decisionWf = {
+  ...wf,
+  nodes: [...wf.nodes, { id: 'd1', x: 0, y: 0, type: 'decision' as const, title: 'Нужен ли дизайн?', question: 'Нужен ли дизайн?', roleId: 'reviewer', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] }]
+}
+
+test('globalTimeline: решение ИИ — выбранная ветка и обоснование; исход-вариант следующей записи не подписан', () => {
+  const events = globalTimeline({
+    stageHistory: [
+      stageAt('d1', at(23, 10), { decision: { optionId: 'no', label: 'Нет', by: 'agent', reason: 'Только бэкенд,\n\nUI не трогаем' } }),
+      stageAt('work', at(23, 11), { outcome: 'no', from: 'd1' })
+    ],
+    workflow: decisionWf
+  }, columns, NOW)
+  assert.deepEqual(events.map((e) => [e.title, e.sub, e.text, e.note]), [
+    ['Этап «Реализация»', undefined, undefined, undefined],
+    ['Этап «Нужен ли дизайн?»', 'Решение ИИ: Нет', 'Только бэкенд, UI не трогаем', undefined]
+  ])
+})
+
+test('globalTimeline: решил человек после ИИ — причина фоллбэка и комментарий агента', () => {
+  const [e] = globalTimeline({
+    stageHistory: [stageAt('d1', at(23, 10), {
+      visit: 2,
+      decision: { optionId: 'yes', label: 'Да', by: 'human', fallback: 'unsure', agentNote: 'Не понял, есть ли экраны', reason: 'Нужны макеты' }
+    })],
+    workflow: decisionWf
+  }, columns, NOW)
+  assert.equal(e.detail, '2-й заход')
+  assert.equal(e.sub, 'Решил человек: Да · ИИ передал решение человеку')
+  assert.equal(e.text, 'Нужны макеты')
+  assert.equal(e.note, 'ИИ: Не понял, есть ли экраны')
+  const [bare] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: { optionId: 'yes', label: 'Да', by: 'human', fallback: 'start_failed' } })] }, columns, NOW)
+  assert.equal(bare.sub, 'Решил человек: Да · агент не запустился', 'без графа и без обоснования — только подпись')
+  assert.equal(bare.text, undefined)
+})
+
+test('globalTimeline: длинное обоснование обрезается; неполное решение от старого main не роняет ленту', () => {
+  const [long] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: { optionId: 'no', label: 'Нет', by: 'agent', reason: 'x'.repeat(DECISION_EXCERPT_LIMIT + 50) } })] }, columns, NOW)
+  assert.equal(long.text?.length, DECISION_EXCERPT_LIMIT)
+  assert.ok(long.text?.endsWith('…'))
+  const partial = { optionId: 'no' } as StageChange['decision']
+  const [e] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: partial })] }, columns, NOW)
+  assert.equal(e.sub, 'Решение ИИ: no', 'нет метки — id варианта')
+})
+
+test('globalTimeline: решение на английском', () => {
+  inEnglish(() => {
+    const [e] = globalTimeline({ stageHistory: [stageAt('d1', 1000, { decision: { optionId: 'yes', label: 'Yes', by: 'human', fallback: 'no_answer', agentNote: 'unsure' } })] }, columns, NOW)
+    assert.equal(e.sub, 'Decided by a human: Yes · the AI did not choose a branch')
+    assert.equal(e.note, 'AI: unsure')
+  })
+})
+
+test('globalTimeline: этапы на английском', () => {
+  inEnglish(() => {
+    const [e] = globalTimeline({ stageHistory: [stageAt('work', 1000, { visit: 3, outcome: 'reject', commit: 'abc1234' })], workflow: wf }, columns, NOW)
+    assert.equal(e.title, 'Stage “Implementation”')
+    assert.equal(e.detail, 'pass 3')
+    assert.equal(e.sub, 'sent back for rework · branch at entry: abc1234')
   })
 })

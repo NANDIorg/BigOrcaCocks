@@ -2,9 +2,9 @@ appId: dev.orca-board
 productName: orca-board
 directories:
   output: release
-# Релизы — GitHub Releases публичного репозитория. releaseType: draft — публикация создаёт черновик,
-# человек проверяет файлы и жмёт Publish сам. Токен (GH_TOKEN) в конфиг не кладём: он нужен
-# только скрипту `dist:publish`, обычный `dist` собирает с `--publish never`.
+# Метаданные обновлений; файлы публикует только job draft после финальных проверок.
+beforePack: ./build/macos-release-hooks.mjs
+artifactBuildCompleted: ./build/macos-release-hooks.mjs
 publish:
   provider: github
   owner: NANDIorg
@@ -23,16 +23,20 @@ mac:
     - target: dmg
       arch: [arm64, x64]
     # zip нужен автообновлению: dmg подменить на месте нельзя, приложение качает zip
-    # по latest-mac.yml. Squirrel.Mac при ad-hoc подписи не работает, но сам zip нужен и своему установщику.
+    # по latest-mac.yml своим установщиком.
     - target: zip
       arch: [arm64, x64]
-  # Ad-hoc подпись: без неё скачанный браузером .app (карантин) на Apple Silicon macOS
-  # называет «повреждённым» и не даёт открыть. Нотаризации нет — Developer ID не нужен.
-  # hardenedRuntime выключен: с ним library validation отвергает Electron Framework,
-  # подписанный ad-hoc (другой Team ID), и приложение падает при запуске.
-  identity: '-'
-  hardenedRuntime: false
+  type: distribution
+  forceCodeSigning: true
+  hardenedRuntime: true
+  notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   artifactName: ${productName}-${version}-${arch}.${ext}
+dmg:
+  sign: true
+  # v26.15.3: DMG будет изменён stapling; updater использует только ZIP.
+  writeUpdateInfo: false
 win:
   target:
     - target: nsis

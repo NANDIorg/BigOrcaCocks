@@ -1,16 +1,18 @@
 import type React from 'react'
-import {
-  WF_PORTS, wfNodeTitle,
-  type BoardColumn, type Role, type WfCondition, type WfNode, type WfOutcome, type WfValidation, type Workflow
-} from '@orca-board/core'
+import { wfNodeTitle, wfPorts, type BoardColumn, type Role, type WfIssue, type WfNode, type WfPort, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
-import { WF_OUTCOME_LABELS, issueTargets, removeSelected, type WfSelection } from './workflowEdit'
+import { issueTargets, removeSelected, wfPortClass, wfPortLabel, type WfSelection } from './workflowEdit'
+import type { WfScope } from './workflowNav'
 import { WF_NODE_HELP } from './workflowHelp'
-import {
-  WF_TYPE_ORDER, WF_TYPE_TITLES, changeNodeType, conditionOfKind, hasColumn, nodeOptionLabel, patchNode, portTarget,
-  setPortTarget, stageRoles, targetOptions, type WfNodePatch
-} from './workflowForm'
-import { useT } from './i18n'
+import { WF_TYPE_TITLES, nodeOptionLabel, stageRoles } from './workflowForm'
+import { nodeCardIssues, shortIssueText, type WfCardId, type WfCardIssues } from './workflowEditorView'
+import { wfIssueText } from './defaultTitles'
+import { useT, type TKey } from './i18n'
+import { IssueDot, WfCard } from './WorkflowCard'
+import { MainFields, PortSelect, WhatFields, WhoFields, hasWhatCard, hasWhoCard, whatTitle, whoTitle } from './WorkflowNodeFields'
+import { SubflowCard } from './WorkflowSubflowCard'
+import { WorkflowTemplateBlock } from './WorkflowTemplateBlock'
+import type { NodeTemplatesHook } from './nodeTemplates'
 
 interface Props {
   workflow: Workflow
@@ -21,13 +23,28 @@ interface Props {
   roles: readonly Role[]
   columns: readonly BoardColumn[]
   issues?: WfValidation
+  /** Граф типа (`'run'`, по умолчанию) или путь подзадачи (`'subtask'`): в пути нет `ask` и вложенного пути. */
+  scope?: WfScope
+  /** Открыть путь подзадачи ноды «Работа» (только из графа типа). Нет — кнопки «Открыть» нет. */
+  onOpenPath?(nodeId: string): void
+  /** Библиотека своих нод: карточка «Своя нода» (сохранить, обновить из шаблона). Нет — карточки нет. */
+  library?: NodeTemplatesHook
 }
 
 /**
- * Инспектор воркфлоу — форма выбранной ноды или перехода. Каждый порт ноды — select «куда ведёт», поэтому
- * весь граф можно собрать с клавиатуры, не трогая холст; без выделения — список нод для выбора.
+ * Текст проблемы в карточке: без «нода «X»:» — нода и так выбрана. У проблемы пути подзадачи оставляем название ноды
+ * пути: в карточке «Путь подзадачи» без него непонятно, о какой ноде речь.
  */
-export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues }: Props): React.JSX.Element {
+function cardIssueText(issue: WfIssue): string {
+  return issue.subflowOf ? wfIssueText({ ...issue, subflowOf: undefined }) : shortIssueText(wfIssueText(issue))
+}
+
+/**
+ * Инспектор воркфлоу (правая колонка редактора) — карточки выбранной ноды или перехода, все раскрыты. Каждый порт ноды —
+ * select «куда ведёт», поэтому весь граф можно собрать с клавиатуры, не трогая холст; без выделения — список нод.
+ * Поля карточек — WorkflowNodeFields.tsx, путь подзадачи — WorkflowSubflowCard.tsx.
+ */
+export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues, scope = 'run', onOpenPath, library }: Props): React.JSX.Element {
   const t = useT()
   const targets = issueTargets(issues)
   const node = selection?.kind === 'node' ? workflow.nodes.find((n) => n.id === selection.id) : undefined
@@ -39,24 +56,48 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
   }
 
   if (node) {
-    const issue = targets.nodes.get(node.id)
+    const taskRoles = stageRoles(roles)
+    const ports = wfPorts(node)
+    const cards: WfCardId[] = [
+      'main',
+      ...(hasWhoCard(node.type) ? ['who' as const] : []),
+      ...(hasWhatCard(node.type) ? ['what' as const] : []),
+      ...(node.type === 'work' && scope === 'run' ? ['path' as const] : []),
+      ...(ports.length > 0 ? ['out' as const] : []),
+      ...(library && node.type !== 'start' ? ['tpl' as const] : [])
+    ]
+    const byCard = nodeCardIssues(issues, node.id, cards, cardIssueText)
     return (
       <aside className="wf-insp" aria-label={t('config.wf.insp.nodeAria', { title: wfNodeTitle(node) })}>
-        <NodeHead node={node} />
-        <NodeHelp type={node.type} />
-        <NodeForm node={node} workflow={workflow} roles={roles} columns={columns} onChange={onChange} />
-        {WF_PORTS[node.type].length > 0 && (
-          <fieldset className="wf-ports">
-            <legend>{t('config.wf.insp.ports')}</legend>
-            {WF_PORTS[node.type].map((outcome) => (
-              <PortSelect key={outcome} workflow={workflow} nodeId={node.id} outcome={outcome} onChange={onChange} />
-            ))}
-          </fieldset>
+        <WfCard id="head">
+          <NodeHead node={node} scope={scope} onRemove={remove} />
+        </WfCard>
+        <WfCard id="main" title={t('config.wf.card.main')} issue={byCard.get('main')}>
+          <MainFields node={node} workflow={workflow} onChange={onChange} scope={scope} columns={columns} />
+        </WfCard>
+        {cards.includes('who') && (
+          <WfCard id="who" title={t(whoTitle(node.type))} issue={byCard.get('who')}>
+            <WhoFields node={node} workflow={workflow} onChange={onChange} scope={scope} roles={taskRoles} invalid={byCard.get('who')?.level === 'error'} />
+          </WfCard>
         )}
-        {issue && <IssueList level={issue.level} messages={issue.messages} />}
-        <div className="wf-insp-foot">
-          <button type="button" className="btn-sm danger" onClick={remove}><Icon.trash /> {t('config.wf.insp.removeNode')}</button>
-        </div>
+        {cards.includes('what') && (
+          <WfCard id="what" title={t(whatTitle(node.type))} issue={byCard.get('what')}>
+            <WhatFields node={node} workflow={workflow} onChange={onChange} scope={scope} roles={taskRoles} />
+          </WfCard>
+        )}
+        {node.type === 'work' && cards.includes('path') && (
+          <SubflowCard node={node} workflow={workflow} onChange={onChange} onOpenPath={onOpenPath} issue={byCard.get('path')} />
+        )}
+        {cards.includes('out') && (
+          <WfCard id="out" title={t('config.wf.insp.ports')} issue={byCard.get('out')}>
+            {ports.map((outcome) => (
+              <PortSelect key={outcome} workflow={workflow} node={node} outcome={outcome} onChange={onChange} />
+            ))}
+          </WfCard>
+        )}
+        {library && cards.includes('tpl') && (
+          <WorkflowTemplateBlock key={node.id} node={node} workflow={workflow} onChange={onChange} library={library} scope={scope} issue={byCard.get('tpl')} />
+        )}
       </aside>
     )
   }
@@ -64,84 +105,100 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
   if (edge) {
     const from = workflow.nodes.find((n) => n.id === edge.from)
     const issue = targets.edges.get(edge.id)
+    // Ребро из удалённой ноды (в графе из файла) подписываем как у «Работы»: исход `next` понятен и без ноды.
+    const fromNode: WfNode = from ?? { id: edge.from, type: 'work', x: 0, y: 0 }
+    const edgeIssue: WfCardIssues | undefined = issue && { level: issue.level, messages: issue.messages.map(shortIssueText) }
     return (
       <aside className="wf-insp" aria-label={t('config.wf.insp.edge')}>
-        <div className="wf-insp-head">
-          <b>{t('config.wf.insp.edgeTitle', { outcome: WF_OUTCOME_LABELS[edge.outcome] })}</b>
-          <span className="chip mono">{edge.id}</span>
-        </div>
-        <div className="wf-field">
-          <span>{t('config.wf.insp.from')}</span>
-          <button type="button" className="wf-node-link" onClick={() => onSelect({ kind: 'node', id: edge.from })}>
-            {from ? nodeOptionLabel(from) : edge.from}
-          </button>
-        </div>
-        <PortSelect workflow={workflow} nodeId={edge.from} outcome={edge.outcome} onChange={onChange} />
-        {issue && <IssueList level={issue.level} messages={issue.messages} />}
-        <div className="wf-insp-foot">
-          <button type="button" className="btn-sm danger" onClick={remove}><Icon.trash /> {t('config.wf.insp.removeEdge')}</button>
-        </div>
+        <WfCard id="head">
+          <div className="wf-insp-head">
+            <span className={`wf-insp-icon wf-help-port wf-port--${wfPortClass(fromNode.type, edge.outcome)}`}><Icon.subflow /></span>
+            <span className="wf-insp-name">
+              <b>{t('config.wf.insp.edgeTitle', { outcome: wfPortLabel(fromNode, edge.outcome) })}</b>
+              <small className="chip mono">{edge.id}</small>
+            </span>
+            <button type="button" className="icon-btn" title={t('config.wf.insp.removeEdge')} aria-label={t('config.wf.insp.removeEdge')} onClick={remove}>
+              <Icon.trash />
+            </button>
+          </div>
+        </WfCard>
+        <WfCard id="edge" title={t('config.wf.insp.ports')} issue={edgeIssue}>
+          <div className="wf-field">
+            <span>{t('config.wf.insp.from')}</span>
+            <button type="button" className="wf-node-link" onClick={() => onSelect({ kind: 'node', id: edge.from })}>
+              {from ? nodeOptionLabel(from) : edge.from}
+            </button>
+          </div>
+          <PortSelect workflow={workflow} node={fromNode} outcome={edge.outcome} onChange={onChange} />
+        </WfCard>
       </aside>
     )
   }
 
   return (
     <aside className="wf-insp" aria-label={t('config.wf.insp.nodesAria')}>
-      <div className="wf-insp-head"><b>{t('config.wf.insp.nodes')}</b></div>
-      <p className="hint wf-insp-hint">
-        {t('config.wf.insp.nodesHint')}
-      </p>
-      <ul className="wf-node-list">
-        {workflow.nodes.map((n) => {
-          const NodeIcon = WfNodeIcon[n.type]
-          const issue = targets.nodes.get(n.id)
-          return (
-            <li key={n.id}>
-              <button
-                type="button"
-                className={`wf-node-link${issue ? ` wf-issue--${issue.level}` : ''}`}
-                title={issue?.messages.join('\n')}
-                onClick={() => onSelect({ kind: 'node', id: n.id })}
-              >
-                <NodeIcon />
-                <span>{nodeOptionLabel(n)}</span>
-                {issue && <span className="wf-dot" aria-label={issue.level === 'error' ? t('config.wf.insp.error') : t('config.wf.insp.warning')} />}
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-      <details className="wf-help">
-        <summary>{t('config.wf.insp.legend')}</summary>
-        <dl className="wf-legend">
-          {WF_TYPE_ORDER.map((type) => {
-            const NodeIcon = WfNodeIcon[type]
-            const help = WF_NODE_HELP[type]
+      <WfCard id="nodes" title={t('config.wf.insp.nodes')}>
+        <p className="hint wf-insp-hint">{t('config.wf.insp.nodesHint')}</p>
+        <ul className="wf-node-list">
+          {workflow.nodes.map((n) => {
+            const NodeIcon = WfNodeIcon[n.type]
+            const issue = targets.nodes.get(n.id)
             return (
-              <div key={type}>
-                <dt><span className={`wf-insp-icon wf-node--${type}`}><NodeIcon /></span>{WF_TYPE_TITLES[type]}</dt>
-                <dd>{help.summary}<br /><i>{t('config.wf.insp.who', { actor: help.actor })}</i></dd>
-              </div>
+              <li key={n.id}>
+                <button
+                  type="button"
+                  className={`wf-node-link${issue ? ` wf-issue--${issue.level}` : ''}`}
+                  title={issue?.messages.join('\n')}
+                  onClick={() => onSelect({ kind: 'node', id: n.id })}
+                >
+                  <span className={`wf-insp-icon wf-node--${n.type}`}><NodeIcon /></span>
+                  <span className="wf-node-link-text">{nodeOptionLabel(n)}</span>
+                  {issue && <IssueDot level={issue.level} />}
+                </button>
+              </li>
             )
           })}
-        </dl>
-      </details>
+        </ul>
+      </WfCard>
     </aside>
   )
 }
 
 /**
- * Назначение выбранной ноды: одна фраза видна всегда, остальное — в раскрывашке, чтобы не вытеснять форму.
+ * Шапка выбранной ноды: значок и цвет типа, название, тип и одна фраза о нём, удаление. Подробности — в раскрывашке:
  * `<details>` раскрывается с клавиатуры и не зависит от наведения мыши.
  */
-function NodeHelp({ type }: { type: WfNode['type'] }): React.JSX.Element {
+function NodeHead({ node, scope, onRemove }: { node: WfNode; scope: WfScope; onRemove(): void }): React.JSX.Element {
   const t = useT()
+  const NodeIcon = WfNodeIcon[node.type]
+  const type = node.type
   const help = WF_NODE_HELP[type]
-  const ports = WF_PORTS[type]
+  const ports = wfPorts(node)
+  // У фиксированных портов смысл исхода — из справки типа; у вариантов «Решения ИИ» — пояснение самого варианта.
+  const outcomeText = (port: WfPort): string => {
+    if (node.type !== 'decision') return help.outcomes[port as keyof typeof help.outcomes] ?? ''
+    const option = Array.isArray(node.options) ? node.options.find((o) => o.id === port) : undefined
+    return option?.description?.trim() || t('config.wf.help.decision.outcome')
+  }
+  // Справка типа написана для графа глобальной задачи; в пути подзадачи у части нод другой смысл — говорим об этом отдельно.
+  const noteKey = `config.wf.path.note.${type}` as TKey
+  const note = scope === 'subtask' ? t(noteKey) : ''
   return (
-    <div className="wf-help">
+    <>
+      <div className="wf-insp-head">
+        <span className={`wf-insp-icon wf-insp-icon--box wf-node--${type}`}><NodeIcon /></span>
+        <span className="wf-insp-name">
+          <b>{wfNodeTitle(node)}</b>
+          <small>{WF_TYPE_TITLES[type]}</small>
+        </span>
+        <span className="chip mono" title={t('config.wf.insp.nodeId')}>{node.id}</span>
+        <button type="button" className="icon-btn" title={t('config.wf.insp.removeNode')} aria-label={t('config.wf.insp.removeNode')} onClick={onRemove}>
+          <Icon.trash />
+        </button>
+      </div>
       <p className="wf-help-summary">{help.summary}</p>
-      <details>
+      {note && note !== noteKey && <p className="hint wf-path-note">{note}</p>}
+      <details className="wf-help">
         <summary>{t('config.wf.insp.howItWorks')}</summary>
         <dl className="wf-help-body">
           <dt>{t('config.wf.insp.actor')}</dt>
@@ -152,7 +209,9 @@ function NodeHelp({ type }: { type: WfNode['type'] }): React.JSX.Element {
           <dd>
             {ports.length === 0 ? t('config.wf.insp.noOutcomes') : (
               <ul>
-                {ports.map((o) => <li key={o}><b className={`wf-help-port wf-port--${o}`}>{WF_OUTCOME_LABELS[o]}</b> — {help.outcomes[o]}</li>)}
+                {ports.map((o) => (
+                  <li key={o}><b className={`wf-help-port wf-port--${wfPortClass(type, o)}`}>{wfPortLabel(node, o)}</b> — {outcomeText(o)}</li>
+                ))}
               </ul>
             )}
           </dd>
@@ -160,238 +219,6 @@ function NodeHelp({ type }: { type: WfNode['type'] }): React.JSX.Element {
           <dd><ul>{help.fields.map((f) => <li key={f}>{f}</li>)}</ul></dd>
         </dl>
       </details>
-    </div>
-  )
-}
-
-function NodeHead({ node }: { node: WfNode }): React.JSX.Element {
-  const t = useT()
-  const NodeIcon = WfNodeIcon[node.type]
-  return (
-    <div className="wf-insp-head">
-      <span className={`wf-insp-icon wf-node--${node.type}`}><NodeIcon /></span>
-      <b>{wfNodeTitle(node)}</b>
-      <span className="chip mono" title={t('config.wf.insp.nodeId')}>{node.id}</span>
-    </div>
-  )
-}
-
-/** Поля ноды по её типу. */
-function NodeForm({ node, workflow, roles, columns, onChange }: {
-  node: WfNode
-  workflow: Workflow
-  roles: readonly Role[]
-  columns: readonly BoardColumn[]
-  onChange(wf: Workflow): void
-}): React.JSX.Element {
-  const t = useT()
-  const patch = (p: WfNodePatch): void => onChange(patchNode(workflow, node.id, p))
-  const taskRoles = stageRoles(roles)
-
-  return (
-    <>
-      <label className="wf-field">
-        <span>{t('config.wf.insp.type')}</span>
-        <select value={node.type} onChange={(e) => onChange(changeNodeType(workflow, node.id, e.target.value as WfNode['type']))}>
-          {WF_TYPE_ORDER.map((type) => <option key={type} value={type}>{WF_TYPE_TITLES[type]}</option>)}
-        </select>
-      </label>
-      <label className="wf-field">
-        <span>{t('config.wf.insp.title')}</span>
-        <input value={node.title ?? ''} placeholder={WF_TYPE_TITLES[node.type]} onChange={(e) => patch({ title: e.target.value })} />
-      </label>
-
-      {node.type === 'work' && (
-        <>
-          <label className="wf-field">
-            <span>{t('config.wf.insp.role')}</span>
-            <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty={t('config.wf.insp.roleOfTask')} onChange={(roleId) => patch({ roleId })} />
-          </label>
-          <label className="wf-field">
-            <span>{t('config.wf.insp.instructions')}</span>
-            <textarea
-              rows={3}
-              value={node.instructions ?? ''}
-              placeholder={t('config.wf.insp.instructionsPlaceholder')}
-              onChange={(e) => patch({ instructions: e.target.value })}
-            />
-          </label>
-          <label className="wf-field">
-            <span>{t('config.wf.insp.showcase')}</span>
-            <textarea
-              rows={3}
-              value={node.showcase?.what ?? ''}
-              placeholder={t('config.wf.insp.showcasePlaceholder')}
-              onChange={(e) => patch({ showcase: { what: e.target.value } })}
-            />
-          </label>
-          <label className="wf-check" title={t('config.wf.insp.showcaseRequiredHint')}>
-            <input
-              type="checkbox"
-              checked={node.showcase?.required ?? false}
-              onChange={(e) => patch({ showcase: { required: e.target.checked } })}
-            />
-            <span>{t('config.wf.insp.showcaseRequired')}</span>
-          </label>
-        </>
-      )}
-      {node.type === 'ask' && (
-        <>
-          <label className="wf-field">
-            <span>{t('config.wf.insp.role')}</span>
-            <RoleSelect value={node.roleId ?? ''} roles={taskRoles} empty={t('config.wf.insp.askRoleEmpty')} onChange={(roleId) => patch({ roleId })} />
-          </label>
-          <label className="wf-field">
-            <span>{t('config.wf.insp.askInstructions')}</span>
-            <textarea
-              rows={4}
-              value={node.instructions}
-              placeholder={t('config.wf.insp.askPlaceholder')}
-              onChange={(e) => patch({ instructions: e.target.value })}
-            />
-          </label>
-        </>
-      )}
-      {node.type === 'gate' && (
-        <label className="wf-field">
-          <span>{t('config.wf.insp.reviewerRole')}</span>
-          <RoleSelect value={node.roleId} roles={taskRoles} empty={t('config.wf.insp.pickRole')} onChange={(roleId) => patch({ roleId })} />
-        </label>
-      )}
-      {(node.type === 'gate' || node.type === 'human') && (
-        <label className="wf-field">
-          <span>{node.type === 'gate' ? t('config.wf.insp.gateInstructions') : t('config.wf.insp.humanInstructions')}</span>
-          <textarea
-            rows={4}
-            value={node.instructions ?? ''}
-            placeholder={node.type === 'gate' ? t('config.wf.insp.gatePlaceholder') : t('config.wf.insp.humanPlaceholder')}
-            onChange={(e) => patch({ instructions: e.target.value })}
-          />
-        </label>
-      )}
-      {node.type === 'condition' && <ConditionFields node={node} workflow={workflow} roles={taskRoles} onChange={(test) => patch({ test })} />}
-      {node.type === 'end' && (
-        <label className="wf-check">
-          <input type="checkbox" checked={node.merged ?? false} onChange={(e) => patch({ merged: e.target.checked })} />
-          <span>{t('config.wf.insp.merged')}</span>
-        </label>
-      )}
-      {hasColumn(node.type) && (
-        <label className="wf-field">
-          <span>{t('config.wf.insp.column')}</span>
-          <select value={node.column ?? ''} onChange={(e) => patch({ column: e.target.value })}>
-            <option value="">{t('config.wf.insp.columnDefault')}</option>
-            {columns.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
-            {node.column && !columns.some((c) => c.id === node.column) && (
-              <option value={node.column}>{t('config.wf.insp.columnMissing', { column: node.column })}</option>
-            )}
-          </select>
-        </label>
-      )}
     </>
-  )
-}
-
-function RoleSelect({ value, roles, empty, onChange }: {
-  value: string
-  roles: readonly Role[]
-  empty: string
-  onChange(roleId: string): void
-}): React.JSX.Element {
-  const t = useT()
-  const unknown = value && !roles.some((r) => r.id === value)
-  return (
-    <select value={value} className={unknown ? 'off' : undefined} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{empty}</option>
-      {roles.map((r) => <option key={r.id} value={r.id}>{r.title} ({r.id})</option>)}
-      {unknown && <option value={value}>{t('config.wf.insp.roleMissing', { role: value })}</option>}
-    </select>
-  )
-}
-
-function ConditionFields({ node, workflow, roles, onChange }: {
-  node: Extract<WfNode, { type: 'condition' }>
-  workflow: Workflow
-  roles: readonly Role[]
-  onChange(test: WfCondition): void
-}): React.JSX.Element {
-  const t = useT()
-  const c = node.test
-  return (
-    <>
-      <label className="wf-field">
-        <span>{t('config.wf.insp.condition')}</span>
-        <select value={c.kind} onChange={(e) => onChange(conditionOfKind(workflow, e.target.value as 'attempts' | 'role'))}>
-          <option value="attempts">{t('config.wf.insp.condAttempts')}</option>
-          <option value="role">{t('config.wf.insp.condRole')}</option>
-          {c.kind === 'files' && <option value="files" disabled>{t('config.wf.insp.condFiles')}</option>}
-        </select>
-      </label>
-      {c.kind === 'attempts' && (
-        <div className="wf-row">
-          <label className="wf-field">
-            <span>{t('config.wf.insp.attemptsIn')}</span>
-            <select value={c.node} onChange={(e) => onChange({ ...c, node: e.target.value })}>
-              <option value="">{t('config.wf.insp.pickNode')}</option>
-              {workflow.nodes.filter((n) => n.type !== 'start' && n.type !== 'condition').map((n) => (
-                <option key={n.id} value={n.id}>{nodeOptionLabel(n)}</option>
-              ))}
-            </select>
-          </label>
-          <label className="wf-field wf-num">
-            <span>{t('config.wf.insp.atLeast')}</span>
-            <input
-              type="number"
-              min={1}
-              value={Number.isFinite(c.atLeast) ? c.atLeast : ''}
-              onChange={(e) => onChange({ ...c, atLeast: e.target.value === '' ? 0 : Math.trunc(Number(e.target.value)) })}
-            />
-          </label>
-        </div>
-      )}
-      {c.kind === 'role' && (
-        <fieldset className="wf-roles">
-          <legend>{t('config.wf.insp.rolesLegend')}</legend>
-          {roles.map((r) => (
-            <label key={r.id} className="wf-check">
-              <input
-                type="checkbox"
-                checked={c.roleIds.includes(r.id)}
-                onChange={(e) => onChange({ ...c, roleIds: e.target.checked ? [...c.roleIds, r.id] : c.roleIds.filter((x) => x !== r.id) })}
-              />
-              <span>{r.title}</span>
-            </label>
-          ))}
-        </fieldset>
-      )}
-    </>
-  )
-}
-
-/** Select «куда ведёт» одного порта; пустое значение — перехода нет (это ошибка валидации). */
-function PortSelect({ workflow, nodeId, outcome, onChange }: {
-  workflow: Workflow
-  nodeId: string
-  outcome: WfOutcome
-  onChange(wf: Workflow): void
-}): React.JSX.Element {
-  const t = useT()
-  const to = portTarget(workflow, nodeId, outcome) ?? ''
-  return (
-    <label className={`wf-field wf-port-field wf-port--${outcome}`}>
-      <span>{WF_OUTCOME_LABELS[outcome]}</span>
-      <select value={to} onChange={(e) => onChange(setPortTarget(workflow, nodeId, outcome, e.target.value || null))}>
-        <option value="">{t('config.wf.insp.noTarget')}</option>
-        {targetOptions(workflow).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-      </select>
-    </label>
-  )
-}
-
-function IssueList({ level, messages }: { level: 'error' | 'warning'; messages: string[] }): React.JSX.Element {
-  return (
-    <ul className={`wf-issues wf-issues--${level}`}>
-      {messages.map((m, i) => <li key={i}>{m}</li>)}
-    </ul>
   )
 }

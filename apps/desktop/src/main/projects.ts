@@ -4,23 +4,25 @@ import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
-  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow,
+  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
-  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfValidationContext,
+  type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfMigrationNote, type WfValidationContext,
+  type WfNodeTemplate, type WfTemplateNode,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
 } from '@orca-board/core'
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
 import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
-import { PROJECTS_FILE_VERSION, migrateProjectsFile, type LegacyProjectsFile } from './task-types-migration'
+import { PROJECTS_FILE_VERSION, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
 import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
-import type { OnboardingCompleteInput, OnboardingState } from '../shared/ipc'
+import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
   AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
-  TaskTypesState
+  TaskTypesState, NodeTemplateInput
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
+import { runImagesRoot, removeRunImagesDir } from './run-images'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -38,6 +40,8 @@ export interface Project {
   id: string
   root: string
   name: string
+  /** Группа в левом меню (`ProjectsFile.groups[].id`). Нет — проект без группы; висячая ссылка чистится при загрузке. */
+  groupId?: string
   /** Включённые агенты. undefined — все установленные. */
   enabledAgents?: AgentKind[]
   /** Колонки доски в порядке показа. undefined — DEFAULT_COLUMNS. */
@@ -61,6 +65,11 @@ export interface Project {
 export interface ProjectsFile {
   projects: Project[]
   activeId: string | null
+  /**
+   * Группы проектов для левого меню, порядок массива = порядок в меню. Нет ключа — файл до групп: групп нет, все
+   * проекты без группы (отдельной миграции и бампа версии не нужно, старая версия приложения поле игнорирует).
+   */
+  groups?: ProjectGroup[]
   /** Версия формата (`PROJECTS_FILE_VERSION`); нет — файл до типов задач, его переводит миграция в `load()`. */
   version?: number
   /**
@@ -75,6 +84,11 @@ export interface ProjectsFile {
   taskTypesSeeded?: boolean
   /** Тип библиотеки по умолчанию (новые проекты, ассистент); нет или удалён — `general`, иначе первый тип. */
   defaultTaskTypeId?: string
+  /**
+   * Библиотека шаблонов нод — глобальная, как типы задач, в порядке показа (`node-templates.ts` в core). Нет ключа —
+   * шаблонов нет (отдельной миграции и бампа версии не нужно, старая версия приложения поле игнорирует).
+   */
+  nodeTemplates?: WfNodeTemplate[]
   /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
   settings?: Partial<AppSettings>
   /**
@@ -158,6 +172,8 @@ function normalizeUpdateSettings(raw: unknown): UpdateSettings {
 
 /** Имя бэкапа projects.json старого формата: откат на старую версию приложения прочтёт проекты без ролей. */
 export const PROJECTS_BACKUP_NAME = 'projects.v1.bak.json'
+/** Копия projects.json до миграции графов типов v1 → v2 (`migrateTypeWorkflows`): миграция снимает ноды, а старое приложение v2 не читает. */
+export const PROJECTS_WORKFLOW_BACKUP_NAME = 'projects.workflow-v1.bak.json'
 
 /**
  * Список репозиториев, библиотека типов задач и по TaskStore на каждый проект. Доска хранится в
@@ -169,25 +185,34 @@ export class ProjectManager {
   private stores = new Map<string, TaskStore>()
   private listeners = new Set<(projectId: string, store: TaskStore) => void>()
   private eventListeners = new Set<(projectId: string, events: OrcaEvent[]) => void>()
+  private dataListeners = new Set<() => void>()
   private seenEvents = new Map<string, number>()
   private warnings: StateWarning[] = []
 
   constructor(private userData: string) {
     this.file = join(userData, 'projects.json')
-    const { data, legacyText, dirty } = this.load()
+    const { data, legacyText, workflowText, dirty } = this.load()
     this.data = data
     if (legacyText !== undefined) {
       // Миграция пишет файл сразу: `legacyTypeId` должен дожить до ленивой загрузки досок.
       const backup = join(userData, PROJECTS_BACKUP_NAME)
       if (!existsSync(backup)) writeFileSync(backup, legacyText)
     }
-    // `dirty` — решение по онбордингу для файла без ключа или битого: битый файл уже отложен, и без записи
-    // следующий старт увидел бы «файла нет» и показал мастер человеку, которому он не нужен.
-    if (legacyText !== undefined || dirty) this.save()
+    if (workflowText !== undefined) {
+      const backup = join(userData, PROJECTS_WORKFLOW_BACKUP_NAME)
+      if (!existsSync(backup)) writeFileSync(backup, workflowText)
+    }
+    // `dirty` — файл надо перезаписать без миграции формата: решение по онбордингу для файла без ключа или битого
+    // (битый файл уже отложен, и без записи следующий старт увидел бы «файла нет» и показал мастер человеку, которому
+    // он не нужен) и графы типов, переведённые на v2 (иначе предупреждения `workflowNotes` пересчитывались бы каждый запуск).
+    if (legacyText !== undefined || workflowText !== undefined || dirty) this.save()
   }
 
-  /** Файл целиком; `legacyText` — исходный текст, если файл был старого формата и его перевели на типы задач. */
-  private load(): { data: ProjectsFile; legacyText?: string; dirty?: boolean } {
+  /**
+   * Файл целиком; `legacyText` — исходный текст, если файл был старого формата и его перевели на типы задач,
+   * `workflowText` — он же, если файл нового формата, но графы типов переведены с v1 на v2 (`migrateTypeWorkflows`).
+   */
+  private load(): { data: ProjectsFile; legacyText?: string; workflowText?: string; dirty?: boolean } {
     const read = readJsonFile<RawProjectsFile>(this.file, 'проекты')
     if (read.status === 'missing') return { data: emptyProjectsFile() }
     // Битый projects.json — не «нет проектов»: файл отложен в .corrupt-<ts>, предупреждение ждёт `stateWarnings()`.
@@ -207,14 +232,27 @@ export class ProjectManager {
       // Типы чистятся при каждой загрузке по разделам (`loadedTaskType`): битый раздел не уносит тип целиком,
       // иначе проект молча уехал бы на тип по умолчанию, а его роли и правила пропали бы при первой же записи.
       const rawTypes: unknown[] = Array.isArray(data.taskTypes) ? data.taskTypes : []
-      data.taskTypes = seededTaskTypes(rawTypes.flatMap(loadedTaskType), data.taskTypesSeeded === true ? undefined : rawTypes)
+      const seeded = seededTaskTypes(rawTypes.flatMap(loadedTaskType), data.taskTypesSeeded === true ? undefined : rawTypes)
+      // Последним: и граф проекта старого формата, ставший типом, и правка встроенного типа проходят один путь.
+      const migratedTypes = migrateTypeWorkflows(seeded)
+      data.taskTypes = migratedTypes.types
       data.taskTypesSeeded = true
       if (data.defaultTaskTypeId !== undefined && !nonEmpty(data.defaultTaskTypeId)) delete data.defaultTaskTypeId
       for (const p of data.projects) normalizeProject(p)
+      normalizeGroups(data)
+      const templates = loadedNodeTemplates(data.nodeTemplates, this.file)
+      if (templates.list.length) data.nodeTemplates = templates.list
+      else delete data.nodeTemplates
+      this.warnings.push(...templates.warnings)
       const settingsSet = isObject(raw.settings) && Object.keys(raw.settings).length > 0
       const onboarding = loadedOnboarding(raw.onboarding, data.projects.length > 0 || settingsSet)
       data.onboarding = onboarding.value
-      return { data, ...(changed ? { legacyText: text } : {}), ...(onboarding.changed ? { dirty: true } : {}) }
+      return {
+        data,
+        ...(changed ? { legacyText: text } : {}),
+        ...(migratedTypes.changed && !changed ? { workflowText: text } : {}),
+        ...(onboarding.changed ? { dirty: true } : {})
+      }
     } catch (e) {
       // JSON разобрался, но содержимое не годится для нормализации — то же, что битый файл.
       const movedTo = quarantineCorrupt(this.file)
@@ -228,6 +266,7 @@ export class ProjectManager {
 
   private save(): void {
     writeFileAtomic(this.file, JSON.stringify(this.data, null, 2))
+    this.dataListeners.forEach((fn) => fn())
   }
 
   /** Предупреждения о файлах, которые не прочитались при загрузке (проекты и уже открытые доски). Каналов в renderer пока нет. */
@@ -248,6 +287,81 @@ export class ProjectManager {
 
   get(id: string): Project | undefined {
     return this.data.projects.find((p) => p.id === id)
+  }
+
+  // ---------- группы проектов ----------
+
+  /** Группы в порядке показа; групп нет — пустой массив. */
+  groups(): ProjectGroup[] {
+    return (this.data.groups ?? []).map((g) => ({ ...g }))
+  }
+
+  private mustGetGroup(id: string): ProjectGroup {
+    const g = (this.data.groups ?? []).find((x) => x.id === id)
+    if (!g) throw new OrcaError('projects.groupNotFound', { id })
+    return g
+  }
+
+  /** Новая группа в конце списка. Имя обрезается; пустое — `projects.groupNameEmpty`. */
+  createGroup(name: string): ProjectGroup {
+    const trimmed = groupName(name)
+    const groups = this.data.groups ?? []
+    let id: string
+    do id = `group_${randomBytes(4).toString('hex')}`
+    while (groups.some((g) => g.id === id))
+    const group: ProjectGroup = { id, name: trimmed }
+    this.data.groups = [...groups, group]
+    this.save()
+    return { ...group }
+  }
+
+  renameGroup(id: string, name: string): ProjectGroup {
+    const g = this.mustGetGroup(id)
+    g.name = groupName(name)
+    this.save()
+    return { ...g }
+  }
+
+  /** Удалить группу: её проекты остаются, но становятся проектами без группы. */
+  removeGroup(id: string): void {
+    this.mustGetGroup(id)
+    this.data.groups = (this.data.groups ?? []).filter((g) => g.id !== id)
+    for (const p of this.data.projects) if (p.groupId === id) delete p.groupId
+    this.save()
+  }
+
+  /** Свернуть/развернуть группу; развёрнутая хранится без поля (`collapsed` не пишется вовсе). */
+  setGroupCollapsed(id: string, collapsed: boolean): ProjectGroup {
+    const g = this.mustGetGroup(id)
+    if (collapsed) g.collapsed = true
+    else delete g.collapsed
+    this.save()
+    return { ...g }
+  }
+
+  /** Положить проект в группу; `null` — вынуть. Неизвестный проект — `project not found`, неизвестная группа — `projects.groupNotFound`. */
+  setProjectGroup(projectId: string, groupId: string | null): Project {
+    const p = this.mustGet(projectId)
+    if (groupId === null) delete p.groupId
+    else p.groupId = this.mustGetGroup(groupId).id
+    this.save()
+    return p
+  }
+
+  /** Новый порядок групп: `ids` — ровно все существующие id, каждый один раз; иначе `projects.groupNotFound` на первом лишнем или пропущенном. */
+  reorderGroups(ids: string[]): ProjectGroup[] {
+    const groups = this.data.groups ?? []
+    const seen = new Set<string>()
+    for (const id of ids) {
+      if (seen.has(id)) throw new OrcaError('projects.groupNotFound', { id })
+      this.mustGetGroup(id)
+      seen.add(id)
+    }
+    const missing = groups.find((g) => !seen.has(g.id))
+    if (missing) throw new OrcaError('projects.groupNotFound', { id: missing.id })
+    this.data.groups = ids.map((id) => groups.find((g) => g.id === id)!)
+    this.save()
+    return this.groups()
   }
 
   private mustGet(id: string): Project {
@@ -346,7 +460,7 @@ export class ProjectManager {
 
   /**
    * Создать (без `id` — новый id) или целиком заменить тип. Граф проверяется по ролям типа, колонки доски — нет:
-   * тип общий для проектов с разными колонками.
+   * тип общий для проектов с разными колонками. Предупреждения миграции графа (`workflowNotes`) — см. `savedWorkflowNotes`.
    */
   saveTaskType(input: TaskTypeInput): TaskType {
     if (!isObject(input)) throw new OrcaError('type.notObject')
@@ -357,9 +471,11 @@ export class ProjectManager {
     const id = input.id ?? this.newTypeId()
     const i = user.findIndex((t) => t.id === id)
     const description = input.description?.trim()
+    const settings = savedTypeSettings(input.settings ?? {}, i === -1 ? undefined : user[i], typeLabel(input.title.trim()))
+    const notes = savedWorkflowNotes(input, settings, i === -1 ? undefined : user[i])
     const type: TaskType = {
-      id, title: input.title.trim(), ...(description ? { description } : {}),
-      settings: savedTypeSettings(input.settings ?? {}, i === -1 ? undefined : user[i], typeLabel(input.title.trim()))
+      id, title: input.title.trim(), ...(description ? { description } : {}), settings,
+      ...(notes.length ? { workflowNotes: notes } : {})
     }
     if (i !== -1) this.settleLegacyRuns(id)
     if (i === -1) user.push(type)
@@ -425,6 +541,56 @@ export class ProjectManager {
     return id
   }
 
+  /** Название и/или описание типа; настройки (роли, граф, правила, разрешения) не трогает. */
+  renameTaskType(id: string, patch: { title?: string; description?: string }): TaskType {
+    const t = this.requireType(id)
+    if (patch.title === undefined && patch.description === undefined) throw new OrcaError('type.renameEmpty')
+    if (patch.title !== undefined && !nonEmpty(patch.title)) throw new OrcaError('type.emptyTitle')
+    if (patch.description !== undefined && typeof patch.description !== 'string') throw new OrcaError('type.descriptionNotString', { title: t.title })
+    return this.saveTaskType({ id: t.id, title: patch.title ?? t.title, description: patch.description ?? t.description, settings: t.settings })
+  }
+
+  /** Сколько проектов используют тип (он доступен им или у них по умолчанию) и является ли он типом библиотеки по умолчанию — для подтверждения удаления `types delete`. */
+  taskTypeUsage(id: string): { title: string; projects: number; isLibraryDefault: boolean } {
+    const t = this.requireType(id)
+    const projects = this.data.projects.filter((p) => p.defaultTaskTypeId === id || (p.taskTypeIds ? p.taskTypeIds.includes(id) : true)).length
+    return { title: t.title, projects, isLibraryDefault: this.defaultTaskTypeId() === id }
+  }
+
+  /** Режим разрешений типа с раскрытым значением по умолчанию (`auto`). */
+  permissionMode(id: string): PermissionMode {
+    return resolveTaskType(this.requireType(id)).permissionMode
+  }
+
+  /** Добавить роль в тип; агент и остальные поля проверяет `validateRoles` внутри `patchTaskType`. */
+  addRole(typeId: string, input: { title: string; agent: string; model?: string; effort?: string; description?: string }): Role {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    let id: string
+    do id = `role_${randomBytes(4).toString('hex')}`
+    while (roles.some((r) => r.id === id))
+    const saved = this.patchTaskType(typeId, { roles: [...roles, { id, ...input } as Role] })
+    return saved.settings.roles!.find((r) => r.id === id)!
+  }
+
+  /** Правка роли типа: title/agent/model/effort/description — только переданные поля (`undefined` не затирает прежнее). */
+  updateRole(typeId: string, roleId: string, patch: Partial<{ title: string; agent: string; model: string; effort: string; description: string }>): Role {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+    const saved = this.patchTaskType(typeId, { roles: roles.map((r) => (r.id === roleId ? { ...r, ...defined } : r)) })
+    return saved.settings.roles!.find((r) => r.id === roleId)!
+  }
+
+  /** Удалить роль типа; последнюю роль отвергает `validateRoles` внутри `patchTaskType`. */
+  removeRole(typeId: string, roleId: string): TaskType {
+    const t = this.requireType(typeId)
+    const roles = t.settings.roles ?? DEFAULT_ROLES
+    if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
+    return this.patchTaskType(typeId, { roles: roles.filter((r) => r.id !== roleId) })
+  }
+
   /**
    * Правила агентов типа (`roleId` нет) или системный промпт его роли — `rules set`.
    */
@@ -446,6 +612,61 @@ export class ProjectManager {
     const own = t.settings.workflow
     if (own && own.version > WORKFLOW_VERSION) throw futureWorkflowError(own.version)
     return { typeId: t.id, title: t.title, workflow: own ? clone(own) : resolveTaskType(t).workflow, custom: own !== undefined }
+  }
+
+  // ---------- библиотека шаблонов нод ----------
+
+  /** Шаблоны в порядке хранения; копии — правка результата не меняет библиотеку. */
+  nodeTemplates(): WfNodeTemplate[] {
+    return (this.data.nodeTemplates ?? []).map(clone)
+  }
+
+  /**
+   * Создать (без `id` — новый id) или целиком заменить шаблон. `updatedAt` ставит main: по нему редактор подсказывает
+   * «шаблон изменился». Проверка — `validateNodeTemplate` (в том числе путь подзадачи у `work`); роли и колонки
+   * проверяются при вставке в граф типа, а не здесь: шаблон глобальный. Предупреждения проверки не мешают сохранению.
+   */
+  saveNodeTemplate(input: NodeTemplateInput): WfNodeTemplate {
+    if (!isObject(input)) throw new OrcaError('nodeTemplate.notObject')
+    if (input.id !== undefined && !nonEmpty(input.id)) throw new OrcaError('nodeTemplate.emptyId')
+    if (!nonEmpty(input.title)) throw new OrcaError('nodeTemplate.emptyTitle')
+    const id = input.id ?? this.newNodeTemplateId()
+    // Описание не строки не «пропускаем молча»: оно доезжает до `validateNodeTemplate`, и тот назовёт проблему по коду.
+    const description = typeof input.description === 'string' ? input.description.trim() || undefined : input.description
+    const template = {
+      id, title: input.title.trim(),
+      ...(description !== undefined ? { description } : {}),
+      node: templateNode(input.node),
+      updatedAt: Date.now()
+    } as WfNodeTemplate
+    const { errors } = validateNodeTemplate(template)
+    if (errors.length) throw new OrcaError('nodeTemplate.notSaved', { errors: errors.map((e) => e.message).join('; ') })
+    const list = [...(this.data.nodeTemplates ?? [])]
+    const i = list.findIndex((t) => t.id === id)
+    if (i === -1) list.push(template)
+    else list[i] = template
+    this.data.nodeTemplates = list
+    this.save()
+    return clone(template)
+  }
+
+  /** Удалить шаблон. Вставленные из него ноды остаются в графах как есть: `templateId` — только подсказка редактору. */
+  deleteNodeTemplate(id: string): WfNodeTemplate[] {
+    const list = this.data.nodeTemplates ?? []
+    const t = list.find((x) => x.id === id)
+    if (!t) throw new OrcaError('nodeTemplate.notFound', { id: String(id) })
+    const rest = list.filter((x) => x.id !== id)
+    if (rest.length) this.data.nodeTemplates = rest
+    else delete this.data.nodeTemplates
+    this.save()
+    return this.nodeTemplates()
+  }
+
+  private newNodeTemplateId(): string {
+    let id: string
+    do id = `tpl_${randomBytes(4).toString('hex')}`
+    while ((this.data.nodeTemplates ?? []).some((t) => t.id === id))
+    return id
   }
 
   // ---------- типы проекта и прогонов ----------
@@ -650,9 +871,11 @@ export class ProjectManager {
     for (const oldId of orphaned) store.reassignColumn(oldId, backlogId)
   }
 
+  /** Убирает проект из списка и его картинки глобальных задач (`userData/run-images`, не в репозитории — не в git). */
   remove(id: string): void {
     this.data.projects = this.data.projects.filter((p) => p.id !== id)
     if (this.data.activeId === id) this.data.activeId = this.data.projects[0]?.id ?? null
+    removeRunImagesDir(runImagesRoot(this.userData), id)
     this.save()
   }
 
@@ -718,6 +941,17 @@ export class ProjectManager {
   onEvents(fn: (projectId: string, events: OrcaEvent[]) => void): () => void {
     this.eventListeners.add(fn)
     return () => this.eventListeners.delete(fn)
+  }
+
+  /**
+   * Изменилось что-то в данных приложения/проектов (`projects.json`: настройки, список и группы проектов,
+   * библиотека типов задач и её роли, шаблоны нод) — независимо от того, пришла ли правка из IPC (renderer)
+   * или из сокета (CLI/ассистент): `save()` — единственная точка записи, поэтому хук здесь покрывает оба пути
+   * сразу (иначе IPC и сокет пришлось бы синхронизировать вручную в каждом методе).
+   */
+  onDataChange(fn: () => void): () => void {
+    this.dataListeners.add(fn)
+    return () => this.dataListeners.delete(fn)
   }
 }
 
@@ -832,11 +1066,14 @@ function cloneWorkflow(wf: Workflow): Workflow {
   return JSON.parse(JSON.stringify(wf)) as Workflow
 }
 
-/** Граф из projects.json: битый → undefined, старая версия → migrateWorkflow, будущая — как есть. */
+/**
+ * Граф из projects.json: битый → undefined, иначе как есть (по форме) — и старой версии, и будущей. Версию графа
+ * типа переводит `migrateTypeWorkflows` целиком после загрузки: ему нужны роли типа и место для предупреждений.
+ */
 function loadedWorkflow(v: unknown): Workflow | undefined {
   if (v === undefined) return undefined
   try {
-    return migrateWorkflow(parseWorkflow(v))
+    return parseWorkflow(v)
   } catch {
     return undefined
   }
@@ -844,7 +1081,7 @@ function loadedWorkflow(v: unknown): Workflow | undefined {
 
 /** Граф на сохранение: форма, миграция, `validateWorkflow`; ошибки — одним сообщением. */
 function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
-  const wf = migrateWorkflow(parseWorkflow(v))
+  const wf = migrateWorkflow(parseWorkflow(v), ctx.roles)
   // Будущую версию validateWorkflow тоже отвергает («обновите приложение»).
   const { errors } = validateWorkflow(wf, ctx)
   // Тексты проблем — из core, по-русски: renderer проверяет граф сам и переводит их по коду до сохранения.
@@ -925,6 +1162,17 @@ function validTypeSettings(patch: unknown, base: TaskTypeSettings, label: MText)
 }
 
 /**
+ * Предупреждения миграции графа (`TaskType.workflowNotes`) сохраняемого типа. Явно переданные (`input.workflowNotes`,
+ * в том числе пустой список — человек их закрыл) берутся как есть; иначе прежние остаются, пока граф не менялся, а
+ * правка графа их снимает: человек уже смотрел на граф и решил, каким ему быть.
+ */
+function savedWorkflowNotes(input: TaskTypeInput, settings: TaskTypeSettings, existing: TaskType | undefined): WfMigrationNote[] {
+  if (input.workflowNotes !== undefined) return loadedWorkflowNotes(input.workflowNotes)
+  const same = JSON.stringify(existing?.settings.workflow) === JSON.stringify(settings.workflow)
+  return same ? existing?.workflowNotes ?? [] : []
+}
+
+/**
  * Настройки типа на сохранение. Граф, который уже лежит в типе и не менялся, заново не проверяется: иначе правка
  * ролей, чей граф ссылается на удалённую роль, или любая правка типа с графом будущей версии падала бы. Такой
  * граф исполнитель встретит в рантайме — `workflow_blocked` или дефолтный граф (как у проекта до типов).
@@ -941,8 +1189,8 @@ function savedTypeSettings(settings: unknown, existing: TaskType | undefined, la
 /**
  * Тип из projects.json. Отбрасывается только без id, названия или объекта настроек; разделы настроек чистятся
  * по одному, и битый раздел не уносит с собой остальные (роли, правила и разрешения — то, что человек настраивал
- * руками, и копии в другом месте у них нет). Граф — как в `savedTypeSettings`: только форма и миграция версии, без
- * сверки с ролями. Ссылку на удалённую роль (её пропускал `setRoles` до типов, и её переносит миграция проекта)
+ * руками, и копии в другом месте у них нет). Граф — как в `savedTypeSettings`: только форма, без сверки с ролями;
+ * версию графа переводит `migrateTypeWorkflows` (после загрузки всей библиотеки), предупреждения прежних миграций остаются. Ссылку на удалённую роль (её пропускал `setRoles` до типов, и её переносит миграция проекта)
  * исполнитель встретит в рантайме, а графа будущей версии он не возьмёт. Поля старых версий (`builtin`,
  * `builtinBase`) отбрасываются: особых типов больше нет.
  */
@@ -956,11 +1204,61 @@ function loadedTaskType(v: unknown): TaskType[] {
   if (typeof raw.agentRules === 'string' && raw.agentRules.trim()) settings.agentRules = raw.agentRules
   const wf = loadedWorkflow(raw.workflow)
   if (wf) settings.workflow = wf
+  const notes = loadedWorkflowNotes(v.workflowNotes)
   return [{
     id: v.id, title: v.title,
     ...(typeof v.description === 'string' && v.description.trim() ? { description: v.description } : {}),
-    settings
+    settings,
+    ...(notes.length ? { workflowNotes: notes } : {})
   }]
+}
+
+/**
+ * Нода шаблона на сохранение: копия без `id` и позиции — их задаёт вставка в граф. Не объект оставляем как есть,
+ * `validateNodeTemplate` назовёт проблему по коду.
+ */
+function templateNode(v: unknown): WfTemplateNode {
+  if (!isObject(v)) return v as WfTemplateNode
+  const { id: _id, x: _x, y: _y, ...rest } = clone(v)
+  return rest as unknown as WfTemplateNode
+}
+
+/**
+ * Шаблоны из projects.json без доверия к данным: не массив — пусто; каждая запись проходит `validateNodeTemplate`
+ * (и служебные поля `id`/`x`/`y` ноды снимаются), негодные и повторные по id пропускаются с предупреждением, остальные
+ * остаются: один битый шаблон не уносит библиотеку. Пропущенное из файла исчезнет при ближайшей записи projects.json.
+ */
+function loadedNodeTemplates(v: unknown, file: string): { list: WfNodeTemplate[]; warnings: StateWarning[] } {
+  const list: WfNodeTemplate[] = []
+  const warnings: StateWarning[] = []
+  if (v === undefined) return { list, warnings }
+  if (!Array.isArray(v)) {
+    warnings.push({ kind: 'skipped', file, message: `шаблоны нод: в файле ${file} ожидается массив — библиотека пропущена` })
+    return { list, warnings }
+  }
+  const seen = new Set<string>()
+  v.forEach((raw: unknown, i) => {
+    const skip = (why: string): void => {
+      warnings.push({ kind: 'skipped', file, message: `шаблон нод №${i + 1} в ${file} пропущен: ${why}` })
+    }
+    if (!isObject(raw)) return skip('ожидается объект')
+    const t = { ...clone(raw), node: templateNode(raw.node) } as unknown as WfNodeTemplate
+    const { errors } = validateNodeTemplate(t)
+    if (errors.length) return skip(errors.map((e) => e.message).join('; '))
+    if (seen.has(t.id)) return skip(`повторный id «${t.id}»`)
+    seen.add(t.id)
+    list.push(t)
+  })
+  return { list, warnings }
+}
+
+/** Предупреждения миграции графа из projects.json: битые записи (не объект, нет кода или текста) выпадают. */
+function loadedWorkflowNotes(v: unknown): WfMigrationNote[] {
+  if (!Array.isArray(v)) return []
+  return v.flatMap((n): WfMigrationNote[] => {
+    if (!isObject(n) || !nonEmpty(n.code) || !nonEmpty(n.message)) return []
+    return [{ code: n.code as WfMigrationNote['code'], ...(nonEmpty(n.nodeId) ? { nodeId: n.nodeId } : {}), message: n.message }]
+  })
 }
 
 /**
@@ -987,11 +1285,37 @@ function loadedRoles(v: unknown): Role[] | undefined {
   }
 }
 
+/** Название группы: обрезанное по краям, непустое. */
+function groupName(name: unknown): string {
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  if (!trimmed) throw new OrcaError('projects.groupNameEmpty')
+  return trimmed
+}
+
+/**
+ * Группы из файла: мусор (не объект, нет id или названия, повтор id) отбрасывается, название обрезается, `collapsed`
+ * остаётся только как `true`. Ссылки проектов на пропавшие группы снимаются — иначе группа, потерянная из-за битой
+ * записи, «воскресла» бы вместе со старой привязкой при появлении такого же id. Файл без групп остаётся без ключа.
+ */
+function normalizeGroups(data: ProjectsFile): void {
+  const raw: unknown[] = Array.isArray(data.groups) ? data.groups : []
+  const groups: ProjectGroup[] = []
+  for (const g of raw) {
+    if (!isObject(g) || !nonEmpty(g.id) || typeof g.name !== 'string' || !g.name.trim() || groups.some((x) => x.id === g.id)) continue
+    groups.push({ id: g.id, name: g.name.trim(), ...(g.collapsed === true ? { collapsed: true } : {}) })
+  }
+  if (groups.length) data.groups = groups
+  else delete data.groups
+  for (const p of data.projects) if (p.groupId !== undefined && !groups.some((g) => g.id === p.groupId)) delete p.groupId
+}
+
 /** Поля проекта нового формата: мусор отбрасывается (тип по умолчанию и доступные типы — строки id). */
 function normalizeProject(p: Project): void {
   if (p.taskTypeIds !== undefined && !(Array.isArray(p.taskTypeIds) && p.taskTypeIds.length && p.taskTypeIds.every(nonEmpty))) delete p.taskTypeIds
   if (p.defaultTaskTypeId !== undefined && !nonEmpty(p.defaultTaskTypeId)) delete p.defaultTaskTypeId
   if (p.legacyTypeId !== undefined && !nonEmpty(p.legacyTypeId)) delete p.legacyTypeId
+  // Настройки веток глобальных задач (`git`) убраны: ветка на глобальную задачу теперь всегда, без настроек.
+  delete (p as Project & { git?: unknown }).git
 }
 
 /**

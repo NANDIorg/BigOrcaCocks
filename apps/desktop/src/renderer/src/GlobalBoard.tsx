@@ -1,11 +1,12 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type RequestResolution, type Task } from '@orca-board/core'
+import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, type GlobalTimePart } from './duration'
 import { useNow } from './useNow'
 import { globalTaskActions } from './globalReview'
+import type { StageLabel } from './cardState'
 import { PriorityBadge } from './Priority'
 import { useT } from './i18n'
 import { fullStamp, relativeTime, subtasksLabel } from './globalFormat'
@@ -34,7 +35,7 @@ interface Props {
   requests: HumanRequest[]
   /** Подзадачи — подпись, чей запрос. */
   tasks: Task[]
-  onResolveRequest(request: HumanRequest, resolution: RequestResolution): Promise<void>
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
   onOpenInbox(requestId: string): void
   /** Карточка, из которой вернулись, — ей возвращается фокус. */
   focusId?: string
@@ -49,6 +50,8 @@ interface Props {
   onReturn(global: GlobalTask): void
   /** Название типа задачи для чипа на карточке (`globalTypeTitle`); нет — чипа нет (старый main, «Входящие»). */
   typeTitle?(global: GlobalTask): string | undefined
+  /** Где стоит граф воркфлоу глобальной задачи (`runStageLabel`); нет — прогон старого формата или граф не начат: чипа нет. */
+  stageLabel?(global: GlobalTask): StageLabel | null
 }
 
 // Живут в globalFormat.ts (тестируются без React); отсюда их берут лента «Ждут вас» и «Итог и цель».
@@ -108,7 +111,7 @@ export function GlobalProgress({ global }: { global: GlobalTask }): React.JSX.El
 /** Верхний уровень доски: глобальные задачи по колонкам Бэклог / В работе / Нужен ответ / Проверка / Сделано проекта. */
 export function GlobalBoard(props: Props): React.JSX.Element {
   const { columns, globals, liveCoordinators, attention, requests, tasks, focusId, onOpen, onMove, onEdit, onRemove, onStartCoordinator } = props
-  const { onResolveRequest, onOpenInbox, onAccept, onReturn, typeTitle } = props
+  const { onResolveRequest, onOpenInbox, onAccept, onReturn, typeTitle, stageLabel } = props
   const t = useT()
   const taskTitle = new Map(tasks.map((task) => [task.id, task.title]))
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -196,6 +199,7 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                   const live = liveCoordinators.has(g.id)
                   const att = attention.get(g.id)
                   const actions = globalTaskActions(g, column.kind, live)
+                  const stage = column.kind === 'done' ? null : stageLabel?.(g) ?? null
                   // Первый (самый старый) запрос — прямо на карточке; остальные — во Входящих.
                   const request = column.kind === 'needs_input' ? pendingRequestsOf(requests, { runId: g.id }).sort((a, b) => a.createdAt - b.createdAt)[0] : undefined
                   return (
@@ -248,6 +252,12 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         <PriorityBadge item={g} className="g-chip" />
                         {g.inbox && <span className="g-chip">{t('global.board.inbox')}</span>}
                         {typeTitle?.(g) && <span className="g-chip task-type-chip" title={t('global.board.type')}>{typeTitle(g)}</span>}
+                        {stage && <span className={`g-chip stage ${stage.kind}`} title={stage.title}>{stage.text}</span>}
+                        {g.images && g.images.length > 0 && (
+                          <span className="g-chip images" title={t('global.board.images', { count: g.images.length })} aria-label={t('global.board.images', { count: g.images.length })}>
+                            <Icon.image /> {g.images.length}
+                          </span>
+                        )}
                         {live && <span className="chip live">{t('global.board.live')}</span>}
                         {g.waiting > 0 && <span className="g-chip warn">{t('global.board.waiting', { count: g.waiting })}</span>}
                         {att && att.review > 0 && <span className="g-chip review">{t('global.board.review', { count: att.review })}</span>}
@@ -259,8 +269,8 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                             key={request.id}
                             request={request}
                             compact
-                            where={taskTitle.get(request.taskId)}
-                            onResolve={(res) => onResolveRequest(request, res)}
+                            where={request.taskId !== undefined ? taskTitle.get(request.taskId) : undefined}
+                            onResolve={(res, images) => onResolveRequest(request, res, images)}
                           />
                           <button type="button" className="btn-text g-card-inbox" onClick={() => onOpenInbox(request.id)}>
                             {g.waiting > 1 ? t('global.board.openInboxMore', { count: g.waiting - 1 }) : t('global.board.openInbox')}

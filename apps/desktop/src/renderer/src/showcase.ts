@@ -59,6 +59,16 @@ export function requestShowcase(request: HumanRequest, dispatches: readonly Disp
   return dispatches.find((d) => d.id === request.showcaseDispatchId)?.showcase
 }
 
+/**
+ * Задача, из worktree которой main читает файлы показа approval. У approval задачи — она сама; у approval уровня
+ * прогона (нода `human` воркфлоу глобальной задачи, без `taskId`) — подзадача, чей dispatch сдал показ.
+ */
+export function requestShowcaseTaskId(request: HumanRequest, dispatches: readonly Dispatch[] | undefined): string | undefined {
+  if (request.taskId !== undefined) return request.taskId
+  if (!request.showcaseDispatchId || !dispatches) return undefined
+  return dispatches.find((d) => d.id === request.showcaseDispatchId)?.taskId
+}
+
 /** Последний сданный показ задачи (модалка задачи): тот же, что увидит человек на ноде «Человек». */
 export function latestShowcase(dispatches: readonly Dispatch[], taskId: string): Dispatch | undefined {
   return dispatches

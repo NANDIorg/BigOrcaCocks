@@ -43,9 +43,19 @@ test('вкладка «Статистика» — последняя, у «Вх�
   assert.equal(resolveTab({ tab: 'stats', base: 'board' }, 'in_progress', ['board']), 'board')
 })
 
+test('вкладка «Граф» — вторая и только у прогона с воркфлоу по глобальной задаче', () => {
+  assert.deepEqual(visibleTabs({ workflowScope: 'run' }), ['board', 'graph', 'overview', 'coordinator', 'history', 'stats'])
+  assert.equal(ALL.includes('graph'), false)
+  assert.equal(tabTitle('graph', 'in_progress'), 'Граф')
+  // Выбор «Графа» у старого прогона без вкладки — вкладка по умолчанию.
+  assert.equal(resolveTab({ tab: 'graph', base: 'board' }, 'in_progress', ALL), 'board')
+  assert.equal(resolveTab({ tab: 'graph', base: 'board' }, 'in_progress', visibleTabs({ workflowScope: 'run' })), 'graph')
+})
+
 test('«Входящие» — одна доска без вкладок', () => {
   assert.deepEqual(visibleTabs({ inbox: true }), ['board'])
   assert.deepEqual(visibleTabs({ inbox: false }), ['board', 'overview', 'coordinator', 'history', 'stats'])
+  assert.deepEqual(visibleTabs({ inbox: true, workflowScope: 'run' }), ['board'])
   assert.equal(resolveTab({ tab: 'history', base: 'board' }, undefined, ['board']), 'board')
 })
 

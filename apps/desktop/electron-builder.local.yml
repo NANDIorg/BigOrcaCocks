@@ -1,0 +1,13 @@
+# Только локальный pack без сертификатов; публичные сборки используют основной профиль.
+extends: ./electron-builder.yml
+beforePack: ./build/macos-local-hooks.mjs
+artifactBuildCompleted: null
+directories:
+  output: release/local
+mac:
+  identity: '-'
+  forceCodeSigning: false
+  hardenedRuntime: false
+  notarize: false
+dmg:
+  sign: false

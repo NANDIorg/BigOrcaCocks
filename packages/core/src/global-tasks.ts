@@ -3,7 +3,10 @@
  * Глобальная задача — это прогон (`Run`), её подзадачи — задачи с `Task.runId === run.id`.
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
-import type { BoardColumn, ColumnKind, HumanRequest, Run, StatusChange, Task, TaskPriority } from './types'
+import type { BoardColumn, ColumnKind, HumanRequest, Run, StageChange, StatusChange, Task, TaskPriority } from './types'
+import type { RunGit } from './run-branch'
+import type { RunImage } from './attachments'
+import type { WfStage } from './workflow'
 import { DEFAULT_TASK_PRIORITY, isTaskPriority } from './types.ts'
 import { activeDuration, taskActiveTime } from './active-time.ts'
 
@@ -35,6 +38,8 @@ export const GLOBAL_REVIEW_TITLE = 'Проверка'
 export interface GlobalTaskReturn {
   at: number
   text: string
+  /** Абсолютные пути картинок к уточнению (в cwd координатора); пишет main. */
+  images?: string[]
 }
 
 /** Сводка координатора «что сделано» (`Run.summary`, `runs finish --summary`). */
@@ -89,13 +94,26 @@ export interface GlobalTask {
   coordinatorAgent?: Run['coordinatorAgent']
   /** Уточнения человека при возвратах с проверки в работу, по порядку (`Run.returns`); нет — не возвращали. */
   returns?: GlobalTaskReturn[]
+  /**
+   * Картинки задачи (`Run.images`, копия метаданных, порядок сохранён): превью в карточке и просмотре.
+   * Байты — `window.orca.globalTasks.image(id, imageId)`. Нет — картинок нет или карточка от старого main.
+   */
+  images?: RunImage[]
   /** Итоговая сводка координатора (`Run.summary`); нет — не передавал. */
   summary?: GlobalTaskSummary
+  /** Ветка глобальной задачи (`Run.git`, копия); нет — подзадачи сливаются в текущую ветку корня. */
+  git?: RunGit
   /**
    * История смены колонки (`Run.statusHistory`, копия): хранимые статусы — «Нужен ответ» карточка получает на лету
    * по запросам, в истории его нет. Нет — прогон от старого main (renderer обновился по HMR раньше).
    */
   statusHistory?: StatusChange[]
+  /** Воркфлоу идёт по глобальной задаче (`Run.workflowScope`); нет — старый движок по подзадачам или «Входящие». */
+  workflowScope?: 'run'
+  /** Позиция на графе (`Run.stage`, копия); нет — граф не начат или прогон старого формата. */
+  stage?: WfStage
+  /** История входов в этапы (`Run.stageHistory`, копия); нет — как у `stage`. */
+  stageHistory?: StageChange[]
   progress: GlobalTaskProgress
   /**
    * Основное время — сколько сама глобальная задача была в работе (`Run.activeMs`): закрытые отрезки, мс.
@@ -262,13 +280,14 @@ export interface RunTypeLockInput {
  * поэтому он меняется только до начала работы: карточка в бэклоге, ни разу не была «В работе» (`startedAt`),
  * координатор не запускался и подзадач нет — иначе идущие подзадачи остались бы с ролями и этапами старого типа.
  * «Входящие» — служебная задача без типа.
+ * То же правило — для картинок задачи (`addRunImages` / `removeRunImage`): после начала работы они не меняются.
  */
 export function runTypeLockReason(x: RunTypeLockInput): string | undefined {
   if (x.inbox) return '«Входящие» — служебная задача, у неё нет своего типа'
   if (x.startedAt !== undefined) return 'задача уже была «В работе»'
   if (x.coordinatorPtyId !== undefined) return 'по задаче уже запускался координатор'
   if (x.subtasks > 0) return `у задачи уже есть подзадачи (${x.subtasks})`
-  if (x.statusKind !== 'backlog') return 'тип меняется только, пока задача в бэклоге'
+  if (x.statusKind !== 'backlog') return 'правка возможна только, пока задача в бэклоге'
   return undefined
 }
 
@@ -307,8 +326,13 @@ export function toGlobalTask(
     coordinatorPtyId: run.coordinatorPtyId,
     coordinatorAgent: run.coordinatorAgent,
     ...(run.returns && run.returns.length > 0 ? { returns: run.returns.map((r) => ({ ...r })) } : {}),
+    ...(run.images && run.images.length > 0 ? { images: run.images.map((i) => ({ ...i })) } : {}),
     ...(run.summary ? { summary: { ...run.summary } } : {}),
+    ...(run.git ? { git: { ...run.git } } : {}),
     ...(run.statusHistory ? { statusHistory: run.statusHistory.map((h) => ({ ...h })) } : {}),
+    ...(run.workflowScope ? { workflowScope: run.workflowScope } : {}),
+    ...(run.stage ? { stage: { nodeId: run.stage.nodeId, visits: { ...run.stage.visits } } } : {}),
+    ...(run.stageHistory ? { stageHistory: run.stageHistory.map((h) => ({ ...h, ...(h.decision ? { decision: { ...h.decision } } : {}) })) } : {}),
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),

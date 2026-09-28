@@ -88,13 +88,18 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
 
   const pending = requests.filter((r) => isPendingRequest(r) && r.runId === runId)
   const pendingByTask = new Map<string, HumanRequest[]>()
-  pending.forEach((r) => pendingByTask.set(r.taskId, [...(pendingByTask.get(r.taskId) ?? []), r]))
+  pending.forEach((r) => {
+    if (r.taskId !== undefined) pendingByTask.set(r.taskId, [...(pendingByTask.get(r.taskId) ?? []), r])
+  })
   const hasPending = (taskId: string, kind?: HumanRequest['kind']): boolean =>
     (pendingByTask.get(taskId) ?? []).some((r) => kind === undefined || r.kind === kind)
 
   const items: AttentionItem[] = []
 
   for (const r of pending) {
+    // Запрос уровня прогона (approval ноды `human`, выбор ветки `decision`) без задачи: лента строится по задачам и
+    // пока его не показывает.
+    if (r.taskId === undefined || r.kind === 'decision') continue
     const d = r.dispatchId ? dispatchById.get(r.dispatchId) : undefined
     const showcase = requestShowcase(r, dispatches)
     const kind: AttentionKind = r.kind === 'escalation' ? 'failure' : r.kind === 'approval' ? (showcase ? 'showcase' : 'approval') : r.kind

@@ -21,6 +21,8 @@ export function notifyKind(e: OrcaEvent): NotifyKind | null {
         case 'escalation': return 'escalation'
         // Этап воркфлоу «человек» — то же «готово к ревью», только решает человек.
         case 'approval': return 'workerDone'
+        // Агент не выбрал ветку «Решения ИИ» — выбирает человек, как отвечает на вопрос.
+        case 'decision': return 'question'
         default: return null
       }
     case 'escalation': return e.payload.stuck === true ? 'escalation' : null

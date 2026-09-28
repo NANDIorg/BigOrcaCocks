@@ -47,3 +47,52 @@ describe('formatVersion снапшота', () => {
     assert.doesNotThrow(() => assertStoreFormat(STORE_FORMAT_VERSION))
   })
 })
+
+describe('картинки к замечаниям (пути) в снапшоте', () => {
+  /** Снапшот в формате до картинок: замечания и возвраты есть, полей `images`/`feedbackImages` нет. */
+  function legacy(): Partial<StoreSnapshot> {
+    const s = store()
+    const task = s.createTask({ title: 'Сделай' })
+    const d = s.startDispatch(task.id, 'pty_w')
+    s.finishDispatch(d.id, 'сделал', [])
+    s.rejectReview(task.id, 'поправь тесты')
+    const run = s.createRun('Цель')
+    const snap = JSON.parse(JSON.stringify(s.snapshot())) as StoreSnapshot
+    const r = snap.runs.find((x) => x.id === run.id)!
+    r.returns = [{ at: 1, text: 'уточнение' }]
+    r.stageInput = { feedback: 'замечания' }
+    runId = run.id
+    return snap
+  }
+  let runId = ''
+
+  it('старый снапшот читается как «без картинок» и не переписывается', () => {
+    const p = memory(legacy())
+    const s = store(p)
+    assert.equal(p.saves, 0)
+    const task = s.snapshot().tasks[0]
+    assert.equal(task.feedback, 'поправь тесты')
+    assert.equal(task.feedbackImages, undefined)
+    const run = s.snapshot().runs.find((r) => r.id === runId)!
+    assert.deepEqual(run.returns, [{ at: 1, text: 'уточнение' }])
+    assert.deepEqual(run.stageInput, { feedback: 'замечания' })
+    assert.equal(run.returns?.[0].images, undefined)
+    assert.equal(run.stageInput?.images, undefined)
+  })
+
+  it('поля с путями проходят через загрузку и сохранение как есть', () => {
+    const snap = legacy() as StoreSnapshot
+    const paths = ['/w/.orca-attachments/t/ret_1/image-1.png']
+    snap.tasks[0].feedbackImages = paths
+    const run = snap.runs.find((r) => r.id === runId)!
+    run.returns = [{ at: 1, text: 'уточнение', images: paths }]
+    run.stageInput = { feedback: 'замечания', images: paths }
+    const p = memory(snap)
+    const s = store(p)
+    const back = s.snapshot()
+    assert.deepEqual(back.tasks[0].feedbackImages, paths)
+    const backRun = back.runs.find((r) => r.id === runId)!
+    assert.deepEqual(backRun.returns?.[0].images, paths)
+    assert.deepEqual(backRun.stageInput?.images, paths)
+  })
+})

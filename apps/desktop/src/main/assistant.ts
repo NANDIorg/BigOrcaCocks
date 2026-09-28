@@ -1,4 +1,5 @@
 // Чистые функции ассистента доски — без electron, чтобы их можно было проверить node:test.
+import { join } from 'node:path'
 
 export interface AssistantEnvInput {
   socketPath: string
@@ -19,4 +20,13 @@ export function assistantEnv(input: AssistantEnvInput): Record<string, string> {
     PATH: input.path,
     ORCA_ROLE: 'assistant'
   }
+}
+
+/**
+ * cwd ассистента: нейтральная папка `userData`, не репозиторий (у ассистента нет файлового доступа к проектам).
+ * Вынесена сюда (не только `worker.ts`), потому что чат-режим (`assistant-chat.ts`) ищет транскрипт агента по
+ * тому же cwd — `claudeDirsFor(cwd)` в `transcripts.ts`.
+ */
+export function assistantCwd(userDataDir: string): string {
+  return join(userDataDir, 'assistant')
 }

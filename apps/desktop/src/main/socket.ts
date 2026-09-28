@@ -2,14 +2,16 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority,
-  type RequestResolution, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType
+  type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
-import { askOptions, resolutionFromParams } from './request-params'
-import { runnableWorkflow } from './projects'
+import { askOptions, resolutionFromParams, singleOption } from './request-params'
+import { settingsPatchFromParams } from './settings-params'
+import { runnableWorkflow, type Project, type PermissionMode } from './projects'
+import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -29,6 +31,19 @@ export interface ProjectDeps {
   accept(taskId: string, decision?: string): void
   /** `review reject`: на этапе проверки — исход reject по воркфлоу, иначе ready с замечаниями. */
   reject(taskId: string, feedback: string): unknown
+  /**
+   * `stage finish`: закрыть этап «Работа» прогона и выполнить эффекты следующей ноды (`finishRunStage` в workflow-run.ts).
+   * Только через него: store делает лишь переход, а проверку, запрос человеку, мерж и конец создаёт движок прогона.
+   */
+  finishStage(runId: string, summary?: string): { run: Run; action: WfAction }
+  /**
+   * `decision choose`: агент выбрал вариант ноды «Решение ИИ» — граф идёт по ребру варианта, решение с `by: 'agent'`
+   * пишется в историю (`runDecision` в workflow-run.ts). `option` — как ввёл агент (id или метка): сопоставляет с
+   * вариантами и проверяет задачу-решатель движок. Нет метода — движка решений в main нет, команда отвечает ошибкой.
+   */
+  decide?(taskId: string, option: string, reason: string): { runId: string; nodeId: string; optionId: string; label: string; to: string }
+  /** `decision escalate`: передать решение человеку — запрос `decision` с теми же вариантами; повтор возвращает тот же. */
+  escalateDecision?(taskId: string, reason: string): { requestId: string }
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
   resolveRequest(id: string, resolution: RequestResolution): unknown
   /**
@@ -52,6 +67,48 @@ export interface ProjectDeps {
   columns(): BoardColumn[]
   /** Граф типа `typeId` (нет — типа проекта по умолчанию); `custom: false` — дефолтный по ролям типа. */
   workflow(typeId?: string): { typeId: string; title: string; workflow: Workflow; custom: boolean }
+
+  // ---------- настройки: библиотека типов, роли, шаблоны нод, проект (docs/assistant-chat.md → «2. Контракт CLI/сокета») ----------
+
+  /** `types create`: роли и правила — дефолтные (как «Создать тип» в UI). */
+  typesCreate(input: { title: string; description?: string }): TaskType
+  /** `types rename`: хотя бы одно поле. */
+  typesRename(id: string, patch: { title?: string; description?: string }): TaskType
+  /** `types set-default`. */
+  typesSetDefault(id: string): TaskTypesState
+  /** `types duplicate`. */
+  typesDuplicate(id: string): TaskType
+  /** `types delete` без `--yes`: сколько проектов используют тип и тип ли это библиотеки по умолчанию. */
+  typesUsage(id: string): { title: string; projects: number; isLibraryDefault: boolean }
+  typesDelete(id: string): TaskTypesState
+  /** `roles add`. */
+  rolesAdd(typeId: string, input: { title: string; agent: string; model?: string; effort?: string; description?: string }): Role
+  /** `roles update`. */
+  rolesUpdate(typeId: string, roleId: string, patch: { title?: string; agent?: string; model?: string; effort?: string; description?: string }): Role
+  /** `roles remove`. */
+  rolesRemove(typeId: string, roleId: string): TaskType
+  /** `types perm get`. */
+  permissionMode(typeId: string): PermissionMode
+  /** `types perm set`. */
+  setPermissionMode(typeId: string, mode: PermissionMode): PermissionMode
+  /** `node-templates list`. */
+  nodeTemplates(): WfNodeTemplate[]
+  /** `node-templates delete`. */
+  deleteNodeTemplate(id: string): WfNodeTemplate[]
+  /** `projects set-active`: активировать проект, к которому уже привело --project. */
+  setActive(): Project
+  /** `projects remove`. */
+  removeProject(): { removed: string }
+  /** `project agents set`: id включённых агентов после мержа (текущие ∪ --enable) \ --disable. */
+  setEnabledAgents(ids: string[]): Project
+  /** `project columns set`: весь список; вызывающий сам решает, нужно ли подтверждение переноса задач в backlog. */
+  setColumns(columns: BoardColumn[]): Project
+  /** `project types set`. */
+  setProjectTaskTypes(input: ProjectTaskTypesInput): Project
+  /** `project rules get`. */
+  projectRulesGet(file: unknown): RuleFile
+  /** `project rules set`. */
+  projectRulesSet(file: unknown, text: unknown): RuleFile
 }
 
 /** Проект в ответе `projects list`: то, что нужно ассистенту, чтобы выбрать `--project`. */
@@ -73,6 +130,10 @@ export interface SocketDeps {
   resolve(projectId?: string): ProjectDeps
   /** Все проекты пользователя; пустой массив, если проектов нет. */
   projects(): ProjectSummary[]
+  /** `settings get`: настройки приложения (уровень приложения, как `projects.list`). */
+  settings(): AppSettings
+  /** `settings set`. */
+  setSettings(patch: AppSettingsPatch): AppSettings
 }
 
 interface Request {
@@ -189,8 +250,16 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   const title = str(r.params.title)
   if (!title) throw new Error('--title обязателен')
   if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
+  // Воркфлоу прогона: подзадачи — только на этапе «Работа». Проверка идёт раньше выбора роли, иначе вне этапа
+  // координатор увидел бы «--role обязателен», а не «дождись stage_started».
+  const stage = runId !== undefined ? store.assertStageAcceptsTasks(runId) : undefined
+  const stageRoles = stage ? wfWorkRoleIds(stage) : []
+  if (stage && stageRoles.length > 1 && str(r.params.role) === undefined) {
+    throw new Error(`--role обязателен: этап «${wfNodeTitle(stage)}» ведут роли ${stageRoles.join(', ')}`)
+  }
   // Роли — типа глобальной задачи; у «Входящих» (runId нет) — типа проекта по умолчанию.
-  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role))
+  // Без --role на этапе «Работа» с единственной ролью берётся она (`stageDefaultRole`).
+  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role) ?? (runId !== undefined ? store.stageDefaultRole(runId) : undefined))
   // --answer-for human|coordinator — задача-ответ; значение проверяет store.
   const answerFor = r.params['answer-for'] ?? r.params.answerFor
   if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
@@ -242,6 +311,12 @@ function ruleRole(r: Request, type: ResolvedRunType): Role | undefined {
 /** Тип в ответе `types list`: роли с признаком «агент включён» и этапы графа кратко. */
 function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): unknown {
   const resolved = resolveTaskType(t)
+  // Варианты «Решения ИИ» — прямо из ноды: координатору видно, что в типе есть развилка и какие у неё исходы.
+  const nodes = new Map(resolved.workflow.nodes.map((n) => [n.id, n]))
+  const options = (id: string): { options?: string[] } => {
+    const n = nodes.get(id)
+    return n?.type === 'decision' && Array.isArray(n.options) ? { options: n.options.map((o) => o.id) } : {}
+  }
   return {
     id: t.id,
     title: t.title,
@@ -255,7 +330,9 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
       ...(role.model ? { model: role.model } : {}),
       agentEnabled: enabled.has(role.agent)
     })),
-    stages: describeWorkflow(resolved.workflow).map((s) => ({ id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}) }))
+    stages: describeWorkflow(resolved.workflow).map((s) => ({
+      id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}), ...options(s.id)
+    }))
   }
 }
 
@@ -271,6 +348,81 @@ function globalId(r: Request): string {
   if (!id) throw new Error('--global обязателен (id глобальной задачи из global list)')
   return id
 }
+
+/** Сколько последних записей `Run.stageHistory` отдаёт `workflow show --run`: у долгого прогона история длинная. */
+const WORKFLOW_HISTORY_LIMIT = 50
+
+/**
+ * Запись истории этапов в `workflow show --run`: путь по графу и решения «Решения ИИ». Без `commit` и `summary` —
+ * сводки координатор получает в `stage_started`, а полная история — в `global get`.
+ */
+function historyEntry(h: StageChange): Pick<StageChange, 'nodeId' | 'title' | 'visit' | 'at' | 'outcome' | 'from' | 'decision'> {
+  return {
+    nodeId: h.nodeId,
+    ...(h.title !== undefined ? { title: h.title } : {}),
+    ...(h.visit !== undefined ? { visit: h.visit } : {}),
+    at: h.at,
+    ...(h.outcome !== undefined ? { outcome: h.outcome } : {}),
+    ...(h.from !== undefined ? { from: h.from } : {}),
+    ...(h.decision ? { decision: h.decision } : {})
+  }
+}
+
+/**
+ * Общая часть `decision choose|escalate`: задача (`--task`, иначе задача запуска), обоснование и проверка, что
+ * агент решает свою задачу, а не чужую (`ORCA_DISPATCH_ID` должен принадлежать ей). `required` — текст ошибки
+ * при пустых обязательных флагах, `missing` — не хватает ещё одного (у choose — `--option`).
+ */
+function decisionParams(r: Request, store: TaskStore, required: string, missing = false): { taskId: string; reason: string } {
+  const taskId = str(r.params.task) ?? r.taskId
+  const reason = str(r.params.reason)?.trim()
+  if (!taskId || !reason || missing) throw new Error(required)
+  if (reason.length > DECISION_REASON_LIMIT) throw new Error(`обоснование длиннее ${DECISION_REASON_LIMIT} символов — сократи --reason`)
+  if (r.dispatchId !== undefined && store.getDispatch(r.dispatchId)?.taskId !== taskId) {
+    throw new Error(`запуск ${r.dispatchId} не относится к задаче ${taskId}`)
+  }
+  return { taskId, reason }
+}
+
+/** `--<key> "..."`: значение, undefined — флага нет, ошибка — флаг без значения (`--key` в конце команды). */
+function optStr(r: Request, key: string): string | undefined {
+  const v = r.params[key]
+  if (v === true) throw new Error(`--${key} требует значения`)
+  return str(v)
+}
+
+/** `--type <id>`, обязателен (в отличие от `typeParam`): команды настроек библиотеки типов, а не запуска. */
+function requiredTypeId(r: Request): string {
+  const id = optStr(r, 'type')
+  if (!id) throw new Error('--type обязателен (id типа задачи из types list)')
+  return id
+}
+
+/** `--role <id>`, обязателен: `roles update`/`roles remove` (в отличие от `ruleRole`, роль не резолвится в типе прогона). */
+function requiredRoleId(r: Request): string {
+  const id = optStr(r, 'role')
+  if (!id) throw new Error('--role обязателен (id роли типа)')
+  return id
+}
+
+/** `--yes`: явное подтверждение опасной операции (аналог человеческого «да» из skills/assistant.md). */
+function requireYes(r: Request, message: string): void {
+  if (r.params.yes !== true) throw new Error(`${message} — повтори с --yes`)
+}
+
+/** Ноды воркфлоу типа, где занята роль (гейт, работа, вопрос, условие) — что перестанет работать при `roles remove`. */
+function nodesUsingRole(wf: Workflow, roleId: string): string[] {
+  return wf.nodes
+    .filter(
+      (n) =>
+        ((n.type === 'gate' || n.type === 'ask') && n.roleId === roleId) ||
+        (n.type === 'work' && wfWorkRoleIds(n).includes(roleId)) ||
+        (n.type === 'condition' && n.test.kind === 'role' && n.test.roleIds.includes(roleId))
+    )
+    .map((n) => wfNodeTitle(n))
+}
+
+const PERMISSION_MODES: PermissionMode[] = ['auto', 'bypassPermissions', 'acceptEdits']
 
 const handlers: Record<string, Handler> = {
   'task.list': (r, _d, store) => {
@@ -513,6 +665,22 @@ const handlers: Record<string, Handler> = {
     if (!id || !feedback) throw new Error('--task и --feedback обязательны')
     return deps.reject(id, feedback)
   },
+  // «Решение ИИ»: задача-решатель выбирает ветку. --option в CLI повторяемый (он нужен ask) — приходит массивом,
+  // берём ровно одно значение. Задачу, вариант и «решение уже принято» проверяет движок прогона (deps.decide).
+  'decision.choose': (r, deps, store) => {
+    const raw = r.params.option
+    const hasOption = typeof raw === 'string' || (Array.isArray(raw) && raw.length > 0)
+    const { taskId, reason } = decisionParams(r, store, '--task, --option и --reason обязательны', !hasOption)
+    const option = singleOption(r.params.option)?.trim()
+    if (!option) throw new Error('--task, --option и --reason обязательны')
+    if (!deps.decide) throw new Error('decision choose не поддерживается этой сборкой приложения')
+    return deps.decide(taskId, option, reason)
+  },
+  'decision.escalate': (r, deps, store) => {
+    const { taskId, reason } = decisionParams(r, store, '--task и --reason обязательны')
+    if (!deps.escalateDecision) throw new Error('decision escalate не поддерживается этой сборкой приложения')
+    return deps.escalateDecision(taskId, reason)
+  },
   // Граф этапов задачи: с --run (координатору CLI подставляет ORCA_RUN_ID) — снимок прогона, по нему идут его
   // задачи (прогон без снимка — граф его типа, `source: type`); без --run — граф типа --type или типа проекта
   // по умолчанию, с которым начнутся новые глобальные задачи.
@@ -523,8 +691,22 @@ const handlers: Record<string, Handler> = {
       const run = store.getRun(runId)
       if (!run) throw new Error(`run not found: ${runId}`)
       const type = deps.resolveRun(runId)
-      const wf = store.runWorkflow(runId, { roleIds: type.roles.map((x) => x.id), workflow: type.workflow })
-      return { source: run.workflow ? 'run' : 'type', run: runId, typeId: type.typeId, typeTitle: type.title, stages: describeWorkflow(wf) }
+      const fallback = { roleIds: type.roles.map((x) => x.id), workflow: type.workflow }
+      const wf = store.runWorkflow(runId, fallback)
+      // Воркфлоу глобальной задачи (`scope: 'run'`): граф ведёт её саму, `stage` — где она сейчас (нода, заход, роли,
+      // инструкции, подзадачи захода). Старый формат (`scope: 'task'`) идёт по подзадачам, позиции у прогона нет.
+      const stage = store.runStage(runId, fallback)
+      return {
+        source: run.workflow ? 'run' : 'type',
+        scope: run.workflowScope === 'run' ? 'run' : 'task',
+        run: runId,
+        typeId: type.typeId,
+        typeTitle: type.title,
+        ...(stage ? { stage } : {}),
+        stages: describeWorkflow(wf),
+        // Путь глобальной задачи по графу с решениями «Решения ИИ»; у старого формата позиции и истории нет.
+        ...(run.workflowScope === 'run' ? { history: (run.stageHistory ?? []).slice(-WORKFLOW_HISTORY_LIMIT).map(historyEntry) } : {})
+      }
     }
     const { typeId: id, title, workflow, custom } = deps.workflow(typeId)
     return { source: 'type', typeId: id, typeTitle: title, custom, stages: describeWorkflow(workflow) }
@@ -544,6 +726,141 @@ const handlers: Record<string, Handler> = {
     return taskTypes.map((t) => typeSummary(t, defaultTypeId, enabled))
   },
   'columns.list': (_r, deps) => deps.columns(),
+
+  // ---------- настройки: библиотека типов задач, роли, шаблоны нод, проект ----------
+  // (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»; действует на библиотеку целиком, а не только
+  // на типы, доступные проекту — в отличие от rules.*/typeOf, которые про роли и правила прогона.)
+  'types.create': (r, deps) => {
+    const title = str(r.params.title)
+    if (!title) throw new Error('--title обязателен')
+    return deps.typesCreate({ title, description: optStr(r, 'description') })
+  },
+  'types.rename': (r, deps) => deps.typesRename(requiredTypeId(r), { title: optStr(r, 'title'), description: optStr(r, 'description') }),
+  'types.set-default': (r, deps) => deps.typesSetDefault(requiredTypeId(r)),
+  'types.duplicate': (r, deps) => deps.typesDuplicate(requiredTypeId(r)),
+  'types.delete': (r, deps) => {
+    const id = requiredTypeId(r)
+    if (r.params.yes !== true) {
+      const usage = deps.typesUsage(id)
+      const parts = [
+        usage.projects > 0 ? `используется в ${usage.projects} проект(ах)` : 'не используется ни в одном проекте',
+        usage.isLibraryDefault ? 'это тип библиотеки по умолчанию — после удаления выберется другой' : undefined
+      ].filter((s): s is string => Boolean(s))
+      requireYes(r, `нужно подтверждение: тип «${usage.title}» ${parts.join(', ')}`)
+    }
+    return deps.typesDelete(id)
+  },
+  'roles.add': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const title = str(r.params.title)
+    const agent = str(r.params.agent)
+    if (!title) throw new Error('--title обязателен')
+    if (!agent) throw new Error('--agent обязателен (orca-board agents list)')
+    return deps.rolesAdd(typeId, { title, agent, model: optStr(r, 'model'), effort: optStr(r, 'effort'), description: optStr(r, 'description') })
+  },
+  'roles.update': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const roleId = requiredRoleId(r)
+    const patch = { title: optStr(r, 'title'), agent: optStr(r, 'agent'), model: optStr(r, 'model'), effort: optStr(r, 'effort'), description: optStr(r, 'description') }
+    if (Object.values(patch).every((v) => v === undefined)) throw new Error('укажи хотя бы один флаг: --title/--agent/--model/--effort/--description')
+    // Смена агента роли — как другие опасные операции (types.perm.set → bypassPermissions): другой процесс,
+    // модель и промпт запуска задач этой роли, без --yes агент не должен переключать её молча.
+    if (patch.agent !== undefined && r.params.yes !== true) {
+      const type = deps.taskTypes().taskTypes.find((t) => t.id === typeId)
+      const current = (type?.settings.roles ?? DEFAULT_ROLES).find((x) => x.id === roleId)?.agent
+      requireYes(r, `нужно подтверждение: смена агента роли «${roleId}»${current ? ` с «${current}»` : ''} на «${patch.agent}» — другой процесс запуска задач этой роли`)
+    }
+    return deps.rolesUpdate(typeId, roleId, patch)
+  },
+  'roles.remove': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const roleId = requiredRoleId(r)
+    if (r.params.yes !== true) {
+      const { title, workflow } = deps.workflow(typeId)
+      const taskCount = deps.store.listTasks().filter((t) => t.roleId === roleId).length
+      const stages = nodesUsingRole(workflow, roleId)
+      const parts = [
+        taskCount > 0 ? `на ней ${taskCount} задач(и) этого проекта` : undefined,
+        stages.length ? `её ждут этапы воркфлоу: ${stages.join(', ')}` : undefined
+      ].filter((s): s is string => Boolean(s))
+      requireYes(r, `нужно подтверждение: удаление роли «${roleId}» из типа «${title}»${parts.length ? ` — ${parts.join('; ')}` : ''}`)
+    }
+    return deps.rolesRemove(typeId, roleId)
+  },
+  'types.perm.get': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    return { typeId, permissionMode: deps.permissionMode(typeId) }
+  },
+  'types.perm.set': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const mode = str(r.params.mode)
+    if (!mode || !(PERMISSION_MODES as string[]).includes(mode)) throw new Error(`--mode обязателен: ${PERMISSION_MODES.join(' | ')}`)
+    if (mode === 'bypassPermissions') {
+      requireYes(r, 'нужно подтверждение: bypassPermissions — агент этого типа работает полностью автономно, без запросов на разрешение')
+    }
+    return { typeId, permissionMode: deps.setPermissionMode(typeId, mode as PermissionMode) }
+  },
+  'node-templates.list': (_r, deps) => deps.nodeTemplates(),
+  'node-templates.delete': (r, deps) => {
+    const id = optStr(r, 'template')
+    if (!id) throw new Error('--template обязателен (id шаблона из node-templates list)')
+    requireYes(r, `нужно подтверждение: удаление шаблона ноды «${id}»`)
+    return deps.deleteNodeTemplate(id)
+  },
+  'projects.set-active': (_r, deps) => deps.setActive(),
+  'projects.remove': (r, deps) => {
+    if (r.params.yes !== true) {
+      const workers = deps.store.activeDispatches().filter((d) => isAlive(d.ptyId)).length
+      const coordinators = deps.store.listRuns().filter((run) => run.coordinatorPtyId && !run.finishedAt && !run.closedAt && isAlive(run.coordinatorPtyId)).length
+      const parts = [
+        workers > 0 ? `${workers} живых воркер(ов)` : undefined,
+        coordinators > 0 ? `${coordinators} живых координатор(ов)` : undefined
+      ].filter((s): s is string => Boolean(s))
+      requireYes(r, `нужно подтверждение: удаление проекта из списка${parts.length ? ` — в нём ${parts.join(' и ')}, их терминалы останутся без задачи` : ''}`)
+    }
+    return deps.removeProject()
+  },
+  'project.agents.set': (r, deps) => {
+    const enable = list(r.params.enable)
+    const disable = list(r.params.disable)
+    if (!enable.length && !disable.length) throw new Error('укажи хотя бы один --enable/--disable <id агента> (orca-board agents list)')
+    const known = new Set(deps.agents().map((a) => a.id as string))
+    for (const id of [...enable, ...disable]) if (!known.has(id)) throw new Error(`неизвестный агент «${id}» (orca-board agents list)`)
+    const current = new Set(deps.agents().filter((a) => a.enabled).map((a) => a.id as string))
+    for (const id of enable) current.add(id)
+    for (const id of disable) current.delete(id)
+    return deps.setEnabledAgents([...current])
+  },
+  'project.columns.set': (r, deps) => {
+    const raw = r.params.columns
+    if (!Array.isArray(raw)) throw new Error('--file обязателен: путь к JSON-файлу с массивом колонок (BoardColumn[])')
+    const before = new Set(deps.columns().map((c) => c.id))
+    const after = new Set(raw.map((c) => (c as { id?: unknown }).id))
+    const removed = [...before].filter((id) => !after.has(id))
+    const moved = removed.length ? deps.store.listTasks().filter((t) => removed.includes(t.status)).map((t) => t.id) : []
+    if (moved.length) requireYes(r, `нужно подтверждение: удаление ${removed.length === 1 ? 'колонки' : 'колонок'} перенесёт ${moved.length} задач(и) в backlog`)
+    const project = deps.setColumns(raw as BoardColumn[])
+    return { project, movedToBacklog: moved }
+  },
+  'project.types.set': (r, deps) => {
+    const types = list(r.params.types)
+    const defaultTypeId = optStr(r, 'default')
+    if (!defaultTypeId) throw new Error('--default обязателен (id типа из types list)')
+    return deps.setProjectTaskTypes({ typeIds: types.length ? types : null, defaultTypeId })
+  },
+  'project.rules.get': (r, deps) => {
+    const file = optStr(r, 'file')
+    if (!file) throw new Error('--file обязателен: CLAUDE.md или AGENTS.md')
+    return deps.projectRulesGet(file)
+  },
+  'project.rules.set': (r, deps) => {
+    const file = optStr(r, 'file')
+    if (!file) throw new Error('--file обязателен: CLAUDE.md или AGENTS.md')
+    const text = r.params.text
+    if (typeof text !== 'string') throw new Error('нужен текст правил: --text "..." или --rules-file <путь> (пустая строка — очистить файл)')
+    return deps.projectRulesSet(file, text)
+  },
+
   // Правила агентов доски — типа задачи (typeOf): общие — agentRules типа, роли — её systemPrompt (оба уходят в
   // системный промпт, withAgentRules).
   'rules.get': (r, deps, store) => {
@@ -578,6 +895,23 @@ const handlers: Record<string, Handler> = {
     const id = str(r.params.run)
     if (!id) throw new Error('--run обязателен')
     return store.closeRun(id)
+  },
+  // Координатор набрал агентов на этапе «Работа» и закрывает его: граф идёт дальше исходом next. Переход делает
+  // store (`finishStage`), эффекты новой ноды — проверка, запрос человеку, мерж — движок прогона: сокет зовёт его
+  // `finishStage` из deps, а не store напрямую (`stage_changed` эффектов не запускает).
+  'stage.finish': (r, deps, store) => {
+    const id = str(r.params.run)
+    if (!id) throw new Error('--run обязателен')
+    if (r.params.summary === true) throw new Error('--summary требует текста сводки')
+    const from = store.getRun(id)?.stage?.nodeId
+    const { run, action } = deps.finishStage(id, str(r.params.summary))
+    return {
+      run: id,
+      finished: from,
+      stage: run.stage ? { nodeId: run.stage.nodeId, visits: run.stage.visits[run.stage.nodeId] ?? 1 } : undefined,
+      // Что приложение делает дальше: координатору важно лишь, ждать ли ему следующий stage_started или run_done.
+      next: { type: action.type, nodeId: action.nodeId, ...(action.type === 'blocked' ? { reason: action.reason } : {}) }
+    }
   },
   'runs.finish': (r, _d, store) => {
     const id = str(r.params.run)
@@ -644,7 +978,9 @@ const handlers: Record<string, Handler> = {
  * и не падают на ORCA_PROJECT удалённого или чужого проекта.
  */
 const appHandlers: Record<string, (req: Request, deps: SocketDeps) => unknown> = {
-  'projects.list': (_r, deps) => deps.projects()
+  'projects.list': (_r, deps) => deps.projects(),
+  'settings.get': (_r, deps) => deps.settings(),
+  'settings.set': (r, deps) => deps.setSettings(settingsPatchFromParams(r.params))
 }
 
 export function startSocketServer(path: string, socketDeps: SocketDeps): Server {

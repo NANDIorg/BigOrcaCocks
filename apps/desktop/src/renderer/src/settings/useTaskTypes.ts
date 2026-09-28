@@ -18,6 +18,8 @@ export interface TaskTypesHook {
   error: string | null
   /** Нет `window.orca.taskTypes` — preload старый, раздел работать не может. */
   stale: boolean
+  /** Перечитать список (например, по `app:changed` — тип мог поменять CLI/ассистент, пока окно открыто). */
+  reload(): Promise<void>
   /** Создать тип; ошибка — наружу. */
   create(input: TaskTypeInput): Promise<TaskType>
   /** Правка настроек типа поверх последней сохранённой версии; ошибка — наружу (автосохранению редактора). */
@@ -31,7 +33,9 @@ export interface TaskTypesHook {
 /**
  * Библиотека типов задач (taskTypes:*) для «Настроек». После каждой записи список перечитывается целиком (порядок
  * и копии встроенных решает main), а ещё — проекты приложения (`onChanged`): удаление типа меняет их тип по
- * умолчанию, а доске нужны свежие роли типов.
+ * умолчанию, а доске нужны свежие роли типов. `reload()` — тот же перечит по внешней правке (CLI/ассистент,
+ * `app:changed`), пока окно открыто; он же обновляет `latest.current`, так что следующая правка человека в
+ * открытом редакторе соберётся уже поверх внешних изменений, а не затрёт их.
  */
 export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
   const stale = !window.orca.taskTypes
@@ -89,6 +93,7 @@ export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
     state,
     error,
     stale,
+    reload: () => (stale ? Promise.resolve() : reload().then(() => undefined, (e: unknown) => setError(message(e)))),
     create: (input) => write(() => taskTypeLibraryApi(window.orca).save(input)),
     patch: (id, p) => update(id, (type) => patchedTaskType(type, p)),
     rename: (id, title, description) =>

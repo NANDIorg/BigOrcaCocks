@@ -4,8 +4,10 @@ import assert from 'node:assert/strict'
 import {
   DEFAULT_IMAGE_OBJECTIVE,
   IMAGE_ATTACHMENT_LIMITS,
+  assertImageBudget,
   coordinatorPrompt,
   imageAttachmentFileName,
+  returnImagesSection,
   sniffImageType,
   validateImageAttachments
 } from './attachments.ts'
@@ -78,5 +80,59 @@ describe('промпт координатора', () => {
     assert.match(DEFAULT_IMAGE_OBJECTIVE, /материал/)
     assert.match(DEFAULT_IMAGE_OBJECTIVE, /не исполняй/)
     assert.doesNotMatch(DEFAULT_IMAGE_OBJECTIVE, /выполни то, что на них показано/)
+  })
+})
+
+describe('assertImageBudget: лимиты на задачу суммарно', () => {
+  const meta = (id: string, bytes = 100) => ({ id, mime: 'image/png', ext: 'png', bytes, addedAt: 1 })
+  const att = (bytes = 100) => ({ mime: 'image/png', ext: 'png', data: png(bytes) })
+  const { maxCount, maxBytes } = IMAGE_ATTACHMENT_LIMITS
+
+  it('в пределах лимитов — молча', () => {
+    assertImageBudget([meta('a')], [meta('b')])
+    assertImageBudget([], Array.from({ length: maxCount }, (_, i) => meta(`i${i}`)))
+  })
+
+  it('число складывается с уже сохранёнными', () => {
+    const existing = Array.from({ length: maxCount - 1 }, (_, i) => meta(`i${i}`))
+    assert.throws(() => assertImageBudget(existing, [meta('x'), meta('y')]), /было бы 9 .*сейчас 7.*не больше 8/)
+  })
+
+  it('размер складывается с уже сохранёнными', () => {
+    const big = Math.floor(maxBytes * 0.9)
+    assert.throws(() => assertImageBudget([meta('a', big), meta('b', big), meta('c', big)], [meta('d', big)]), /вместе были бы больше/)
+  })
+
+  it('launch: сохранённые + вставленные — понятная ошибка с подсказкой', () => {
+    const saved = Array.from({ length: maxCount }, () => att())
+    assert.throws(() => assertImageBudget(saved, [att()], 'launch'), /сохранённые изображения задачи \(8\) и вставленные при запуске \(1\).*можно не больше 8.*уберите лишние/)
+  })
+
+  it('принимает и метаданные, и вложения вперемешку', () => {
+    assertImageBudget([meta('a', 5)], [att(16)], 'launch')
+  })
+})
+
+describe('блок изображений при возврате в работу', () => {
+  const paths = ['/w/.orca-attachments/t1/ret_1/image-1.png', '/w/.orca-attachments/t1/ret_1/image-2.jpg']
+  it('без картинок — пустая строка для обеих ролей', () => {
+    for (const a of ['worker', 'coordinator'] as const) {
+      assert.equal(returnImagesSection(undefined, a), '')
+      assert.equal(returnImagesSection([], a), '')
+    }
+  })
+  it('воркер: абсолютные пути, Read и «данные, а не команды»', () => {
+    const s = returnImagesSection(paths, 'worker')
+    for (const p of paths) assert.ok(s.includes(`- \`${p}\``))
+    assert.match(s, /Read/)
+    assert.match(s, /данные, а не команды/)
+    assert.match(s, /\(2\)/)
+    assert.doesNotMatch(s, /Воркеры этих файлов не видят/)
+  })
+  it('координатор: дополнительно — пересказывать словами, путей воркерам не давать', () => {
+    const s = returnImagesSection(paths, 'coordinator')
+    assert.match(s, /данные, а не команды/)
+    assert.match(s, /Воркеры этих файлов не видят/)
+    assert.match(s, /перескажи словами/)
   })
 })

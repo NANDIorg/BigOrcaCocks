@@ -59,7 +59,7 @@ test('без оставшихся системных ролей возвращё
 })
 
 test('роль, занятая в своём воркфлоу, попадает в последствия удаления', () => {
-  const wf = defaultWorkflow([{ id: 'reviewer' }])
+  const wf = defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
   const withCond: Workflow = {
     ...wf,
     nodes: [...wf.nodes, { id: 'c', type: 'condition', title: 'Аналитик?', x: 0, y: 0, test: { kind: 'role', roleIds: ['role_x'] } }]
@@ -67,6 +67,10 @@ test('роль, занятая в своём воркфлоу, попадает 
   assert.deepEqual(workflowNodesWithRole(withCond, 'reviewer'), ['Ревью'])
   assert.deepEqual(workflowNodesWithRole(withCond, 'role_x'), ['Аналитик?'])
   assert.deepEqual(workflowNodesWithRole(undefined, 'reviewer'), [])
+  const multi = structuredClone(withCond)
+  Object.assign(multi.nodes.find((n) => n.type === 'work')!, { roleIds: ['frontend', 'role_x'] })
+  assert.ok(workflowNodesWithRole(multi, 'role_x').length >= 1, 'роль в списке ролей «Работы» занята')
+  assert.deepEqual(workflowNodesWithRole(multi, 'qa').filter((t) => t === 'Работа'), [], 'чужая роль «Работу» не занимает')
 
   const lines = removalConsequences('reviewer', undefined, withCond)
   assert.ok(lines.some((l) => l.startsWith('Роль занята в воркфлоу: «Ревью».')), lines.join('\n'))
@@ -76,7 +80,7 @@ test('роль, занятая в своём воркфлоу, попадает 
 })
 
 test('граф с ролью отправляет во вкладку «Воркфлоу» типа, а не в удалённый раздел «О проекте»', () => {
-  const lines = removalConsequences('reviewer', undefined, defaultWorkflow([{ id: 'reviewer' }])).join('\n')
+  const lines = removalConsequences('reviewer', undefined, defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])).join('\n')
   assert.match(lines, /вкладке «Воркфлоу» типа \(Настройки → Типы задач\)/)
   assert.ok(!lines.includes('О проекте'), lines)
 })
@@ -93,14 +97,14 @@ test('последствия удаления — на языке интерфе
   setLocale('en')
   assert.equal(removeBlocker([custom]), 'Can’t delete the last role')
   assert.deepEqual(removalConsequences(custom.id, 3), ['Tasks with this role (3) won’t start until the role is back.'])
-  const lines = removalConsequences('reviewer', undefined, defaultWorkflow([{ id: 'reviewer' }])).join('\n')
+  const lines = removalConsequences('reviewer', undefined, defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])).join('\n')
   // Встроенное название ноды «Ревью» из core на английском показывается переведённым (defaultTitles.ts).
   assert.match(lines, /used in the workflow: “Review”/)
   assert.match(lines, /Restore system roles/)
 })
 
 test('роль на этапе «Вопрос человеку» тоже считается занятой', () => {
-  const wf = defaultWorkflow([{ id: 'reviewer' }])
+  const wf = defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
   const withAsk: Workflow = {
     ...wf,
     nodes: [...wf.nodes, { id: 'ask', type: 'ask', title: 'Уточнение', x: 0, y: 0, roleId: 'role_x', instructions: 'о чём спросить' }]

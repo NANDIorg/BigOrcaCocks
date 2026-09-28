@@ -1,6 +1,8 @@
 import type { AgentKind } from './agents'
-import type { WfOutcome, WfStage, Workflow } from './workflow'
+import type { WfPort, WfStage, Workflow } from './workflow'
 import type { TaskTypeSnapshot } from './task-types'
+import type { RunGit } from './run-branch'
+import type { RunImage } from './attachments'
 export type { AgentKind }
 
 // ---------- роли ----------
@@ -211,6 +213,33 @@ export interface StatusChange {
   migrated?: true
 }
 
+/** Обоснование решения ноды `decision` (`StageDecision.reason`) длиннее — ошибка команды, а не обрезка. */
+export const DECISION_REASON_LIMIT = 4000
+
+/**
+ * Почему ветку ноды `decision` выбрал человек: агент передал сам (`unsure`, `decision escalate`), сдал `done` без
+ * выбора (`no_answer`), воркер не запустился (`start_failed`).
+ */
+export type StageDecisionFallback = 'unsure' | 'no_answer' | 'start_failed'
+
+/**
+ * Решение ноды `decision` — ставится в запись `Run.stageHistory` этой ноды, когда граф уходит из неё
+ * (`RunStageOptions.chosen`). Следующая запись получает `outcome = optionId`. Метка — на момент решения: граф прогона
+ * могут поменять позже (как `StageChange.title`).
+ */
+export interface StageDecision {
+  /** Выбранный вариант (`WfDecisionOption.id`). */
+  optionId: string
+  label: string
+  /** Обоснование того, кто решил; у агента обязательно, у человека — если написал. Не длиннее `DECISION_REASON_LIMIT`. */
+  reason?: string
+  by: 'agent' | 'human'
+  /** Только решение человека: почему решал он. Нет — решил агент. */
+  fallback?: StageDecisionFallback
+  /** Комментарий агента, передавшего решение человеку (`decision escalate --reason`). */
+  agentNote?: string
+}
+
 /**
  * Запись истории этапов воркфлоу задачи (`Task.stageHistory`). `StatusChange.stage` фиксирует этап только при
  * смене колонки, а переходы внутри колонки (ревью → работа при reject) оставались лишь в событиях `stage_changed`.
@@ -222,12 +251,29 @@ export interface StageChange {
   title?: string
   /** Момент перехода, epoch ms. */
   at: number
-  /** Исход, с которым задача пришла в ноду: порт предыдущей ноды или `restart` (`enterWork` — возврат на первый этап). */
-  outcome?: WfOutcome | 'restart'
+  /**
+   * Исход, с которым задача пришла в ноду: порт предыдущей ноды (после `decision` — id варианта) или `restart`
+   * (`enterWork` — возврат на первый этап).
+   */
+  outcome?: WfPort | 'restart'
   /** Откуда пришла (нет — вход в граф из старта). */
   from?: string
   /** Кто двигал (источник как у `StatusChange.by`). */
   by?: StatusSource
+  /**
+   * Заход в ноду (`WfStage.visits[nodeId]` на момент входа): у прогона отличает первый заход в «Работу» от
+   * возврата по reject. Нет у задач (`Task.stageHistory`) и у записей от кода до поля.
+   */
+  visit?: number
+  /**
+   * Коммит ветки глобальной задачи в момент входа в этап (`Run.stageHistory`): от него считается дифф этапа
+   * (`commit..HEAD`). Ставит main; нет — ветки у прогона нет или коммит не определили.
+   */
+  commit?: string
+  /** Сводка, с которой этап закрыт (`stage finish --summary`); только у этапов «Работа» прогона. */
+  summary?: string
+  /** Решение, с которым граф ушёл из ноды `decision`; только у записей этой ноды в `Run.stageHistory`. */
+  decision?: StageDecision
   /**
    * Запись миграции у задачи от кода до истории этапов, которой нет в логе событий: реального перехода не
    * восстановить, это этап на момент обновления (`at` — `updatedAt`).
@@ -331,11 +377,17 @@ export interface Run {
    */
   workflow?: Workflow
   /**
+   * Картинки, приложенные к глобальной задаче человеком (вставка из буфера в `GlobalTaskModal`), от старых к
+   * новым — только метаданные, файлы хранит main (`RunImage`). Не больше `IMAGE_ATTACHMENT_LIMITS` на задачу
+   * суммарно. Нет — картинок не было (все прогоны до поля): миграция store не нужна, читать как пустой список.
+   */
+  images?: RunImage[]
+  /**
    * Уточнения человека при возвратах с «Проверки» в работу (`TaskStore.returnGlobalTask`), по порядку.
    * Описание (`objective`) не трогают: уточнения попадают в цель повторного запуска координатора
    * (`resumeCoordinatorObjective`), в том числе при ручном «Запустить координатора», если старт упал.
    */
-  returns?: Array<{ at: number; text: string }>
+  returns?: Array<{ at: number; text: string; images?: string[] }>
   /**
    * Итоговая сводка координатора «что сделано и что проверить» (`runs finish --summary`, markdown) — её
    * человек видит в блоке «Что сделал» на «Проверке». Хранится одна, последняя: новый `runs finish` со
@@ -355,6 +407,42 @@ export interface Run {
    * Нет — прогон от кода до статистики: время и токены координатора неизвестны.
    */
   coordinatorSessions?: AgentSession[]
+  /**
+   * Ветка глобальной задачи (`src/main/run-branch.ts`): подзадачи ответвляются от неё и сливаются в неё, а не в
+   * текущую ветку корня. Нет — «Входящие», выключенная настройка проекта или прогон, начатый до веток: подзадачи
+   * сливаются в корень, как раньше (миграция не нужна — у старых прогонов поле просто не появляется).
+   */
+  git?: RunGit
+  /**
+   * Где идёт воркфлоу. `'run'` — на уровне глобальной задачи: позиция на графе — `Run.stage`, подзадачи по графу
+   * не ходят, этапы ведёт приложение (docs/workflow.md, «Воркфлоу глобальной задачи»). Нет поля — прогон,
+   * начатый до этого формата, и «Входящие»: граф идёт по подзадачам, как раньше; такие прогоны доживают на
+   * старом движке, а `migrateGlobalTasks` их не трогает. Новые прогоны (кроме «Входящих» и созданных по графу
+   * версии 1) получают `'run'` при создании.
+   */
+  workflowScope?: 'run'
+  /**
+   * Позиция глобальной задачи на графе (только `workflowScope: 'run'`): нода и число заходов в каждую ноду
+   * (`condition attempts` считает по ним). Нет — граф ещё не начат (`TaskStore.enterRunStage`) или прогон старого формата.
+   */
+  stage?: WfStage
+  /**
+   * История входов в этапы, от старых к новым (`recordStage`, status-history.ts), не длиннее `STATUS_HISTORY_LIMIT`.
+   * Записи хранят коммит входа (`StageChange.commit`) и сводку закрытия (`StageChange.summary`).
+   */
+  stageHistory?: StageChange[]
+  /**
+   * Что человек или проверка сказали при входе в текущий этап «Работа»: замечания `reject`, решение `human`,
+   * ответы этапа «Вопрос человеку» — то же, что в `stage_started`, но целиком (в событии текст обрезан). Нужно
+   * перезапущенному координатору (`TaskStore.runStage`). Сбрасывается при каждом переходе.
+   */
+  stageInput?: { feedback?: string; decision?: string; answers?: string; images?: string[] }
+  /**
+   * Все подзадачи текущего этапа «Работа» дошли до done: координатору отправлен `stage_tasks_done`, но этап не
+   * закрыт — он решает, нужны ли ещё задачи, и вызывает `stage finish`. Как `runDoneAt` у старого движка: новая
+   * подзадача этапа или подзадача, ушедшая из done, снимает метку, следующий `stage_tasks_done` придёт по её завершении.
+   */
+  stageTasksDoneAt?: number
 }
 
 /** Запуск агента вне dispatch (координатор): для статистики времени и токенов. */
@@ -469,9 +557,20 @@ export interface Task {
   agent: AgentKind
   worktree?: string
   branch?: string
+  /**
+   * `branch` создало не приложение, а человек: нода воркфлоу `git` переключила worktree на существующую ветку
+   * (`checkout`, например `develop`). Уборка после мержа снимает только worktree и такую ветку не удаляет.
+   * Нет поля — ветка своя (`orca/<id>` или созданная нодой `create_branch`); у старых задач его не было.
+   */
+  branchForeign?: boolean
   dispatchId?: string
   /** Замечания после ревью (у задачи-ответа — уточнение), попадут в промпт при перезапуске. */
   feedback?: string
+  /**
+   * Изображения к `feedback`: абсолютные пути файлов в worktree задачи (`.orca-attachments/`), не байты.
+   * Пишет только main после сохранения файлов. Любая запись `feedback` без картинок сбрасывает поле.
+   */
+  feedbackImages?: string[]
   /**
    * Задача-ответ («посмотри», «разберись», «предложи»): результат — текст в markdown (`Dispatch.answer`),
    * а не изменения в коде; ревью кода не нужно. Значение — кто читает ответ. Нет поля — обычная задача.
@@ -495,8 +594,18 @@ export interface Task {
    * задача-гейт или ещё не вошедшая в граф.
    */
   stage?: WfStage
-  /** Задача-гейт: чью ветку проверяет и на какой ноде `gate` рабочей задачи. */
-  gateFor?: { taskId: string; nodeId: string }
+  /**
+   * Задача-проверка: на какой ноде `gate` она создана и что проверяет — ветку рабочей задачи (`taskId`, движок
+   * подзадач) или ветку глобальной задачи целиком (`runId`, воркфлоу прогона). Ровно одно из двух.
+   */
+  gateFor?: { nodeId: string; taskId?: string; runId?: string }
+  /**
+   * Подзадача воркфлоу глобальной задачи (`Run.workflowScope: 'run'`): этап и заход, в который она создана.
+   * `TaskStore.createTask` привязывает подзадачу к текущему этапу «Работа» сам; приложение так же помечает
+   * задачу-вопрос этапа `ask`. Этап считается законченным (`stage_tasks_done`), когда закрыты все подзадачи
+   * его текущего захода (`visit`) — задачи прошлых заходов не в счёт. Нет — задача старого движка или заведена до входа в граф.
+   */
+  stageOf?: { nodeId: string; visit: number }
   /**
    * История смены колонки, от старых к новым (`recordStatus`, status-history.ts): не длиннее
    * `STATUS_HISTORY_LIMIT`, подряд одинаковых статусов нет. Нет — снапшот от кода до истории, ещё не прошедший
@@ -598,11 +707,12 @@ export interface Question {
  * Что ждёт человека: `question` — вопрос воркера (адресован человеку сразу или передан координатором),
  * `answer` — сданный ответ задачи `answerFor: 'human'` («Принять» / «Уточнить»), `escalation` — воркер
  * вышел без `orca-board done` («Перезапустить» / «Скрыть»), `approval` — рабочая задача на ноде `human`
- * воркфлоу ждёт решения человека («Принять» / «Вернуть», docs/workflow.md).
+ * воркфлоу ждёт решения человека («Принять» / «Вернуть», docs/workflow.md), `decision` — нода `decision` воркфлоу
+ * глобальной задачи: агент не выбрал ветку, выбирает человек из вариантов ноды (`answer` + `optionId`).
  */
-export type HumanRequestKind = 'question' | 'answer' | 'escalation' | 'approval'
+export type HumanRequestKind = 'question' | 'answer' | 'escalation' | 'approval' | 'decision'
 
-export const HUMAN_REQUEST_KINDS: HumanRequestKind[] = ['question', 'answer', 'escalation', 'approval']
+export const HUMAN_REQUEST_KINDS: HumanRequestKind[] = ['question', 'answer', 'escalation', 'approval', 'decision']
 
 /** `pending` — единственный признак «ждёт человека» (колонка «Нужен ответ»). */
 export type HumanRequestStatus = 'pending' | 'resolved' | 'cancelled'
@@ -614,15 +724,21 @@ export const REQUEST_ACTIONS: Record<HumanRequestKind, ResolutionAction[]> = {
   question: ['answer'],
   answer: ['accept', 'clarify'],
   escalation: ['restart', 'dismiss'],
-  approval: ['accept', 'reject']
+  approval: ['accept', 'reject'],
+  decision: ['answer']
 }
 
 export interface RequestResolution {
   action: ResolutionAction
-  /** Выбранный вариант вопроса (RequestOption.id). */
+  /** Выбранный вариант вопроса или ветка запроса `decision` (RequestOption.id, у `decision` обязателен). */
   optionId?: string
   /** Свободный текст: ответ на вопрос, решение при «Принять», уточнение при «Уточнить», замечания при «Вернуть». */
   text?: string
+  /**
+   * Изображения к `text` при «Уточнить»/«Вернуть»: абсолютные пути в cwd читателя (воркера или координатора).
+   * Ставит только main после записи файлов; пришедшее из renderer или сокета main отбрасывает.
+   */
+  images?: string[]
 }
 
 /**
@@ -633,7 +749,11 @@ export interface RequestResolution {
 export interface HumanRequest {
   id: string
   runId: string
-  taskId: string
+  /**
+   * Задача запроса. Нет у approval уровня прогона (нода `human` воркфлоу глобальной задачи,
+   * `TaskStore.requestRunApproval`) и у `decision`: их решают по `runId`. У остальных видов запросов есть всегда.
+   */
+  taskId?: string
   /** Dispatch, который спросил / сдал ответ / упал. */
   dispatchId?: string
   kind: HumanRequestKind
@@ -642,17 +762,27 @@ export interface HumanRequest {
   title: string
   /** Markdown: контекст вопроса (+ заметка координатора) или сам ответ задачи-ответа. */
   body?: string
-  /** Варианты вопроса; у answer/escalation/approval пусто — их действия встроены (REQUEST_ACTIONS). */
+  /**
+   * Варианты вопроса или ветки ноды `decision` (`id` варианта, `label`, `hint` — описание); у answer/escalation/approval
+   * пусто — их действия встроены (REQUEST_ACTIONS).
+   */
   options: RequestOption[]
   /** Вопрос, из которого создан запрос (kind=question): сокет `ask` держится за него. */
   questionId?: string
-  /** Нода воркфлоу, на которой создан запрос: `human` (kind=approval) или `ask` (kind=question с этапа «Вопрос человеку»). */
+  /**
+   * Нода воркфлоу, на которой создан запрос: `human` (kind=approval), `ask` (kind=question с этапа «Вопрос человеку»)
+   * или `decision` (kind=decision).
+   */
   nodeId?: string
   /**
    * Dispatch, чей показ (`Dispatch.showcase`) выведен в approval: renderer берёт из него файлы и читает их
    * из worktree задачи (IPC `showcase:*`). Отдельно от `dispatchId`: тот — «кто спросил / упал».
    */
   showcaseDispatchId?: string
+  /** Только kind=decision: почему решает человек — уходит в `StageDecision.fallback` решения. */
+  fallback?: StageDecisionFallback
+  /** Только kind=decision: комментарий агента, передавшего решение (`StageDecision.agentNote`); он же в `body`. */
+  agentNote?: string
   resolution?: RequestResolution
   createdAt: number
   /** Решён или отменён. */
@@ -670,14 +800,25 @@ export type EventType =
   | 'run_done'
   /** Появился запрос к человеку (HumanRequest pending) — по нему уведомление. */
   | 'request_created'
-  /** Эскалацию решил человек: `restart` (main стартует воркера) или `dismiss`. */
+  /** Запрос решил человек (эскалация `restart`/`dismiss`, approval, ответ). Payload может нести `images` — пути картинок к замечаниям. */
   | 'request_resolved'
-  /** Человек уточнил ответ задачи-ответа: задача в ready с feedback, main стартует воркера. */
+  /** Человек уточнил ответ задачи-ответа: задача в ready с feedback, main стартует воркера. Payload может нести `images` (пути). */
   | 'answer_clarified'
   /** Задача перешла на другой этап воркфлоу (`advanceStage`); в основном для UI. */
   | 'stage_changed'
-  /** Воркфлоу не может вести задачу дальше (нет перехода, роль гейта удалена) — нужен координатор или человек. */
+  /**
+   * Воркфлоу не может вести дальше (нет перехода, роль гейта удалена, слить ветку в базу нельзя): нужен
+   * координатор или человек. Payload — `taskId` (движок подзадач) или только `runId` (воркфлоу глобальной задачи).
+   */
   | 'workflow_blocked'
+  /**
+   * Воркфлоу глобальной задачи вошёл в этап «Работа»: координатору — набрать агентов роли этапа. Payload:
+   * `{runId, nodeId, title, roleId, visit, instructions?, feedback?, decision?, answers?, images?}`; текстовые
+   * поля обрезаны (`…Truncated`), целиком — `TaskStore.runStage`; `images` — абсолютные пути картинок к замечаниям.
+   */
+  | 'stage_started'
+  /** Все подзадачи текущего этапа «Работа» закрыты: координатор решает, нужен ли ещё кто-то, и зовёт `stage finish`. Payload `{runId, nodeId}`. */
+  | 'stage_tasks_done'
 
 export const EVENT_TYPES: EventType[] = [
   'task_ready',
@@ -691,7 +832,9 @@ export const EVENT_TYPES: EventType[] = [
   'request_resolved',
   'answer_clarified',
   'stage_changed',
-  'workflow_blocked'
+  'workflow_blocked',
+  'stage_started',
+  'stage_tasks_done'
 ]
 
 export interface OrcaEvent {

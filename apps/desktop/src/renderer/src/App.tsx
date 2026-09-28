@@ -3,13 +3,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_COLUMNS, STORE_FORMAT_VERSION, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
-  type TaskPriority
+  type TaskPriority, type ImageAttachmentInput
 } from '@orca-board/core'
-import type { GlobalTaskPatch, Project, TaskTypesState, TerminalInfo } from '../../shared/ipc'
+import type { GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { attentionTaskIds, buildAttention } from './attention'
 import { revealInFeed } from './feedLink'
 import { wfNodeTitles } from './cardState'
+import { runStageLabel } from './runStage'
 import { builtinText, displayColumns, displayRoles } from './defaultTitles'
 import { Terminal } from './Terminal'
 import { NewTaskModal } from './NewTaskModal'
@@ -23,18 +24,25 @@ import { SettingsModal } from './settings/SettingsModal'
 import { UpdateBanner, UpdateToast } from './UpdateBanner'
 import { needsAttention } from './updateState'
 import { useUpdates } from './useUpdates'
-import { useT } from './i18n'
+import { setLocale, settingsLocale, useT } from './i18n'
 import { DocsModal } from './DocsModal'
 import { GlobalBoard, type GlobalTaskAttention } from './GlobalBoard'
 import { GlobalTaskView } from './GlobalTaskView'
-import { GlobalTaskModal } from './GlobalTaskModal'
+import { GlobalTaskModal, type GlobalTaskModalInput } from './GlobalTaskModal'
+import { idsToRemove, imagesLost, runImagesApi } from './runImages'
 import { changeTypeApi } from './globalTypeChange'
 import { ReturnGlobalModal } from './ReturnGlobalModal'
+import { AcceptGlobalModal } from './AcceptGlobalModal'
 import { ProjectTypeModal } from './ProjectTypeModal'
 import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
 import { loadOnboarding, shouldShowOnboarding } from './onboarding'
+import { BranchMenu } from './BranchMenu'
+import { branchBadge } from './projectBranch'
+import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
-import { globalReviewApi, reviewErrorMessage } from './globalReview'
+import { ProjectList } from './ProjectList'
+import { groupsFromList } from './projectGroups'
+import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
@@ -137,7 +145,11 @@ export function App(): React.JSX.Element {
   const t = useT()
   const [snap, setSnap] = useState<StoreSnapshot>(EMPTY)
   const [projects, setProjects] = useState<Project[]>([])
+  /** Группы проектов в меню; со старым main (`list()` без `groups`) — пусто. */
+  const [projectGroups, setProjectGroups] = useState<ProjectGroup[]>([])
   const [active, setActive] = useState<Project | null>(null)
+  const projectBranch = useProjectBranch(active?.id)
+  const badge = branchBadge(projectBranch.info)
   /** Задач в работе по id проекта — бейдж в сайдбаре «Проекты». */
   const [inProgress, setInProgress] = useState<Record<string, number>>({})
   const [socketPath, setSocketPath] = useState('')
@@ -150,6 +162,8 @@ export function App(): React.JSX.Element {
   const [globalModal, setGlobalModal] = useState<{ mode: 'create' } | { mode: 'edit'; id: string } | null>(null)
   /** Глобальная задача, которую возвращают с «Проверки» в работу (модалка уточнения). */
   const [returnGlobalId, setReturnGlobalId] = useState<string | null>(null)
+  /** Глобальная задача с воркфлоу, чью «Проверку» (approval ноды `human`) подтверждают: окно с полем решения. */
+  const [acceptGlobalId, setAcceptGlobalId] = useState<string | null>(null)
   /** Глобальная задача, из которой вернулись на общую доску, — её карточке возвращается фокус. */
   const [lastGlobal, setLastGlobal] = useState<string | undefined>()
   const [showCoord, setShowCoord] = useState(false)
@@ -242,10 +256,18 @@ export function App(): React.JSX.Element {
     refreshTaskTypes()
     const res = await window.orca.projects.list()
     setProjects(res.projects)
+    setProjectGroups(groupsFromList(res))
     setActive(res.active)
     void refreshInProgress()
     setSnap(res.active ? await window.orca.board.get() : EMPTY)
     await refreshAgents()
+  }
+
+  /** Только список проектов и групп: после действий с группами доска и агенты не перечитываются. */
+  async function reloadProjectList(): Promise<void> {
+    const res = await window.orca.projects.list()
+    setProjects(res.projects)
+    setProjectGroups(groupsFromList(res))
   }
 
   async function refreshInProgress(): Promise<void> {
@@ -264,6 +286,13 @@ export function App(): React.JSX.Element {
     })
     window.orca.app.info().then((i) => setSocketPath(i.socketPath))
     void refreshProjects()
+    // Настройки/проекты/типы/роли/шаблоны нод меняются и из CLI/ассистента через сокет (не только из этого
+    // окна) — перечитываем то же, что после своих IPC-правок, плюс язык (у него нет своего IPC-сеттера здесь).
+    // Опционален: старый preload без onChanged — правки из сокета видны после перезапуска, как раньше.
+    const offAppChanged = window.orca.app.onChanged?.(() => {
+      void refreshProjects()
+      window.orca.app.getSettings().then((s) => setLocale(settingsLocale(s)), () => undefined)
+    })
     const offBoard = window.orca.board.onChange(({ projectId, snapshot }) => {
       setActive((cur) => {
         if (cur?.id === projectId) setSnap(snapshot)
@@ -308,6 +337,7 @@ export function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey, true)
     return () => {
+      offAppChanged?.()
       offBoard()
       offTerminals()
       offFocus()
@@ -336,6 +366,7 @@ export function App(): React.JSX.Element {
     setShowNew(false)
     setGlobalModal(null)
     setReturnGlobalId(null)
+    setAcceptGlobalId(null)
     setLastGlobal(undefined)
   }, [active?.id])
 
@@ -434,11 +465,12 @@ export function App(): React.JSX.Element {
   }
 
   /** Решить запрос вне Инбокса (карточка, экран глобальной задачи, модалка задачи). Ошибка — на карточке. */
-  async function resolveRequest(r: HumanRequest, resolution: RequestResolution): Promise<void> {
-    const res = await window.orca.requests.resolve(r.id, resolution)
+  async function resolveRequest(r: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
+    const res = await window.orca.requests.resolve(r.id, resolution, images)
     if (res.startError) alert(t('shell.app.startError', { title: r.title, error: res.startError }))
   }
   const returningGlobal = returnGlobalId ? globals.find((g) => g.id === returnGlobalId) : undefined
+  const acceptingGlobal = acceptGlobalId ? globals.find((g) => g.id === acceptGlobalId) : undefined
   const editingGlobal = globalModal?.mode === 'edit' ? globals.find((g) => g.id === globalModal.id) : undefined
 
   function openGlobalTask(g: GlobalTask): void {
@@ -472,8 +504,15 @@ export function App(): React.JSX.Element {
     }
   }
 
-  /** «Подтвердить» на «Проверке»: результат принят, задача — в «Сделано». */
+  /**
+   * «Подтвердить» на «Проверке»: результат принят, задача — в «Сделано». У прогона с воркфлоу это approval ноды `human`:
+   * сначала окно с полем «Решение / что делать дальше», решение уйдёт координатору в следующем этапе.
+   */
   async function acceptGlobalTask(g: GlobalTask): Promise<void> {
+    if (isRunWorkflow(g)) {
+      setAcceptGlobalId(g.id)
+      return
+    }
     try {
       await globalReviewApi(window.orca).accept(g.id)
     } catch (e) {
@@ -481,17 +520,25 @@ export function App(): React.JSX.Element {
     }
   }
 
+  /** Подтверждение из окна: ошибка остаётся в нём (`AcceptGlobalModal`), а не всплывает alert. */
+  async function submitAcceptGlobal(id: string, decision: string): Promise<void> {
+    await globalReviewApi(window.orca).accept(id, decision || undefined)
+    setAcceptGlobalId(null)
+  }
+
   /**
    * «Вернуть в работу» с уточнением: main переводит задачу в работу и запускает координатора — открываем
    * его терминал, как startGlobalCoordinator. Старый preload — ошибка остаётся в модалке.
    */
-  async function returnGlobalTask(id: string, text: string): Promise<void> {
+  async function returnGlobalTask(id: string, text: string, images?: ImageAttachmentInput[]): Promise<void> {
     const projectId = active?.id
     const api = globalReviewApi(window.orca)
     try {
-      const ptyId = await api.returnToWork(id, text, 120, 30)
+      const ptyId = await api.returnToWork(id, text, 120, 30, images)
       setReturnGlobalId(null)
-      showTerminal(ptyId, projectId)
+      // У прогона с воркфлоу main «вернуть» не гасит живого координатора (он ждёт этап в Monitor) и отдаёт его же терминал;
+      // мёртвого запускает заново. Терминала может не оказаться у старого main — тогда ошибка ниже.
+      if (ptyId) showTerminal(ptyId, projectId)
     } catch (e) {
       const message = reviewErrorMessage(e)
       // Задача могла уже уйти в работу, а упал запуск координатора: уточнение сохранено в ней, повторный
@@ -524,7 +571,7 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function saveGlobalTask(input: { title: string; description: string; status?: string; priority?: TaskPriority; typeId?: string }): Promise<void> {
+  async function saveGlobalTask(input: GlobalTaskModalInput): Promise<void> {
     if (globalModal?.mode === 'edit') {
       const cur = globals.find((g) => g.id === globalModal.id)
       if (!cur) throw new Error(t('shell.app.globalNotFound'))
@@ -535,14 +582,26 @@ export function App(): React.JSX.Element {
       if (Object.keys(patch).length > 0) await window.orca.globalTasks.update(cur.id, patch)
       // Тип модалка присылает, только пока его можно сменить; неизменённый не трогаем.
       if (input.typeId !== undefined && input.typeId !== cur.typeId) await changeTypeApi(window.orca)(cur.id, input.typeId)
+      // Картинки: сначала удаления (освобождают лимит), затем добавление. Уже удалённые прошлой попыткой пропускаем.
+      const remove = idsToRemove(input.removeImageIds ?? [], cur.images)
+      if (remove.length > 0 || input.images?.length) {
+        const imagesApi = runImagesApi(window.orca)
+        for (const id of remove) await imagesApi.removeImage(cur.id, id)
+        if (input.images?.length) await imagesApi.addImages(cur.id, input.images)
+      }
     } else {
-      await window.orca.globalTasks.create({
+      const images = input.images ?? []
+      // Старый preload без картинок вторым аргументом их просто не передаст — не создаём задачу впустую.
+      if (images.length > 0) runImagesApi(window.orca)
+      const created = await window.orca.globalTasks.create({
         title: input.title || undefined,
         description: input.description || undefined,
         status: input.status,
         ...(input.priority !== undefined ? { priority: input.priority } : {}),
         ...(input.typeId !== undefined ? { typeId: input.typeId } : {})
-      })
+      }, images.length > 0 ? images : undefined)
+      // Старый main принимает create без картинок и молча их теряет: задача создана — говорим об этом прямо.
+      if (imagesLost(created, images.length)) alert(t('global.stale.imagesLost'))
     }
     setGlobalModal(null)
   }
@@ -769,24 +828,16 @@ export function App(): React.JSX.Element {
 
       {showProjects && (
         <aside className="sidebar">
-          <div className="head">
-            <h2>{t('shell.projects.title')}</h2>
-            <button className="icon-btn fill" title={t('shell.projects.add')} onClick={addProject}><Icon.plus /></button>
-          </div>
-          <div className="list">
-            {projects.length === 0 && <div className="empty">{t('shell.projects.empty')}</div>}
-            {projects.map((p) => (
-              <div key={p.id} className={`item ${p.id === active?.id ? 'active' : ''}`} onClick={() => switchProject(p)}>
-                <div className="name-row">
-                  <div className="name">{p.name}</div>
-                  {(inProgress[p.id] ?? 0) > 0 && (
-                    <span className="tab-badge" title={t('shell.projects.inProgress', { count: inProgress[p.id] })}>{inProgress[p.id]}</span>
-                  )}
-                </div>
-                <div className="sub" title={p.root}>{p.root.replace(/^\/Users\/[^/]+/, '~')}</div>
-              </div>
-            ))}
-          </div>
+          <ProjectList
+            projects={projects}
+            groups={projectGroups}
+            inProgress={inProgress}
+            activeId={active?.id}
+            onSwitch={(p) => void switchProject(p)}
+            onAdd={() => void addProject()}
+            onReload={reloadProjectList}
+            onGroupsChange={setProjectGroups}
+          />
           <UpdateBanner updates={updates} />
         </aside>
       )}
@@ -794,7 +845,12 @@ export function App(): React.JSX.Element {
       <main className="main">
         <div className="main-head">
           <div className="row">
-            <h1>{active?.name ?? 'orca-board'}</h1>
+            <div className="head-title">
+              <h1>{active?.name ?? 'orca-board'}</h1>
+              {badge && active && (
+                <BranchMenu projectId={active.id} badge={badge} onBranchChanged={projectBranch.update} />
+              )}
+            </div>
             <button
               className={`inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
               onClick={() => {
@@ -861,6 +917,7 @@ export function App(): React.JSX.Element {
               onAccept={(g) => void acceptGlobalTask(g)}
               onReturn={(g) => setReturnGlobalId(g.id)}
               typeTitle={(g) => globalTypeTitle(g, taskTypes)}
+              stageLabel={(g) => runStageLabel(g, workflowForRun(g.id, snap.runs, active, taskTypes))}
             />
           )}
           {tab === 'board' && openGlobal && (
@@ -890,14 +947,17 @@ export function App(): React.JSX.Element {
               onOpenTerminal={openTerminalForTask}
               onAnswerQuestion={(qid, a) => window.orca.questions.answer(qid, a)}
               onAcceptTask={(id) => window.orca.review.accept(id)}
-              onRejectTask={(id, fb) => window.orca.review.reject(id, fb)}
+              onRejectTask={(id, fb, images) => window.orca.review.reject(id, fb, images)}
               onStartTask={startTask}
               typeTitle={globalTypeTitle(openGlobal, taskTypes)}
+              workflow={workflowForRun(openGlobal.id, snap.runs, active, taskTypes)}
             >
               <Board
                 columns={columns}
                 roles={openGlobalRoles}
                 stageTitles={wfNodeTitles(workflowForRun(openGlobal.id, snap.runs, active, taskTypes))}
+                stageWorkflow={workflowForRun(openGlobal.id, snap.runs, active, taskTypes)}
+                stageRun={openGlobal}
                 tasks={subtasks}
                 emptyText={t('shell.noSubtasks')}
                 questions={snap.questions}
@@ -913,7 +973,7 @@ export function App(): React.JSX.Element {
                 onRemove={(id) => window.orca.tasks.remove(id)}
                 onAnswer={(qid, a) => window.orca.questions.answer(qid, a)}
                 onAccept={(id) => window.orca.review.accept(id)}
-                onReject={(id, fb) => window.orca.review.reject(id, fb)}
+                onReject={(id, fb, images) => window.orca.review.reject(id, fb, images)}
               />
             </GlobalTaskView>
           )}
@@ -1048,6 +1108,8 @@ export function App(): React.JSX.Element {
           tasks={tasks}
           columns={columns}
           roles={rolesFor(openTask.runId)}
+          workflow={workflowForRun(openTask.runId, snap.runs, active, taskTypes)}
+          stageRun={globals.find((g) => g.id === openTask.runId)}
           agents={agents}
           dispatches={snap.dispatches}
           questions={snap.questions}
@@ -1060,7 +1122,7 @@ export function App(): React.JSX.Element {
           onRemove={(id) => window.orca.tasks.remove(id)}
           onResolveRequest={resolveRequest}
           onAccept={(id) => window.orca.review.accept(id)}
-          onReject={(id, fb) => window.orca.review.reject(id, fb)}
+          onReject={(id, fb, images) => window.orca.review.reject(id, fb, images)}
         />
       )}
       {showNew && active && openGlobal && (
@@ -1123,7 +1185,16 @@ export function App(): React.JSX.Element {
           global={returningGlobal}
           closesCoordinator={coordinatorPtys.has(returningGlobal.id)}
           onClose={() => setReturnGlobalId(null)}
-          onSubmit={(text) => returnGlobalTask(returningGlobal.id, text)}
+          onSubmit={(text, images) => returnGlobalTask(returningGlobal.id, text, images)}
+        />
+      )}
+      {acceptingGlobal && (
+        <AcceptGlobalModal
+          key={acceptingGlobal.id}
+          global={acceptingGlobal}
+          request={runApprovalRequest(snap.requests, acceptingGlobal.id)}
+          onClose={() => setAcceptGlobalId(null)}
+          onSubmit={(decision) => submitAcceptGlobal(acceptingGlobal.id, decision)}
         />
       )}
       <UpdateToast />

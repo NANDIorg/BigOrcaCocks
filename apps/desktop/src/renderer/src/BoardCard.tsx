@@ -6,6 +6,7 @@ import { RunBadge } from './runs'
 import { priorityMark } from './taskPriority'
 import { formatStamp } from './boardSort'
 import { formatDuration, taskDuration, taskTicking } from './duration'
+import type { StageHold } from './subtaskPath'
 import { cardStateLabel, type CardEssence, type CardState, type DepsLabel, type StageLabel } from './cardState'
 import { useNow } from './useNow'
 import { useT } from './i18n'
@@ -47,6 +48,8 @@ export interface BoardCardProps {
   isDone: boolean
   role: Role | undefined
   stage: StageLabel | null
+  /** Подзадача держит этап прогона (ждёт проверки или человека на своём пути). */
+  hold?: StageHold | null
   deps: DepsLabel | null
   /** Пунктирная строка сути; действие на карточке не дублирует ленту «Ждут вас». */
   essence: CardEssence | null
@@ -80,7 +83,7 @@ export interface BoardCardProps {
  * агент, роль и время, ниже — пилюля этапа воркфлоу, ветка и свёрнутые зависимости.
  */
 export function BoardCard(props: BoardCardProps): React.JSX.Element {
-  const { task, state, isDone, role, stage, deps, essence, run, runs } = props
+  const { task, state, isDone, role, stage, hold, deps, essence, run, runs } = props
   const t = useT()
   const prio = priorityMark(task)
   const w = who(task, role)
@@ -128,6 +131,7 @@ export function BoardCard(props: BoardCardProps): React.JSX.Element {
       </div>
       <div className="tags">
         {stage && <span className={`stage-pill ${stage.kind}`} title={stage.title}>{stage.text}</span>}
+        {hold && <span className={`tag hold ${hold.reason}`} title={hold.title}>{hold.text}</span>}
         {task.answerFor && (
           <span className="tag answer" title={task.answerFor === 'human' ? t('board.card.answerHumanTitle') : t('board.card.answerCoordTitle')}>
             {task.answerFor === 'human' ? t('board.card.answerHuman') : t('board.card.answerCoord')}

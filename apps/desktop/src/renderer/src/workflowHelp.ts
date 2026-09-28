@@ -1,7 +1,7 @@
 import type { WfNodeType, WfOutcome } from '@orca-board/core'
 import { t, type TKey } from './i18n'
 
-// Справка по типам нод воркфлоу для редактора: палитра холста, инспектор выбранной ноды и легенда «Типы нод».
+// Справка по типам нод воркфлоу для редактора: палитра (она же легенда) и шапка инспектора выбранной ноды.
 // Тексты — пересказ поведения движка (`packages/core/src/workflow.ts`, эффекты — `apps/desktop/src/main/workflow.ts`)
 // и таблицы «Этапы и что делает приложение» в docs/workflow.md: меняется поведение этапа — правь и здесь
 // (тексты — в словаре `config.wf.help.*`, i18n/ru и i18n/en).
@@ -51,9 +51,21 @@ export const WF_NODE_HELP: Readonly<Record<WfNodeType, WfNodeHelp>> = {
   get human() {
     return help('human', ['accept', 'reject'], ['config.wf.help.human.fieldInstructions', 'config.wf.help.human.fieldColumn'])
   },
+  get decision() {
+    // Порты — варианты самой ноды (`wfPorts`), у типа их нет: смысл исхода — метка варианта.
+    return help('decision', [], [
+      'config.wf.help.decision.fieldQuestion', 'config.wf.help.decision.fieldRole', 'config.wf.help.decision.fieldOptions',
+      'config.wf.help.decision.fieldInstructions'
+    ])
+  },
   get condition() {
-    return help('condition', ['yes', 'no'], ['config.wf.help.condition.fieldAttempts', 'config.wf.help.condition.fieldRole'])
+    return help('condition', ['yes', 'no'], ['config.wf.help.condition.fieldAttempts'])
   },
   get merge() { return help('merge', ['ok', 'conflict'], [TITLE]) },
+  get git() {
+    return help('git', ['ok', 'error'], [
+      'config.wf.help.git.fieldOperation', 'config.wf.help.git.fieldMessage', 'config.wf.help.git.fieldRemote'
+    ])
+  },
   get end() { return help('end', [], ['config.wf.help.end.fieldMerged', 'config.wf.help.end.fieldColumn']) }
 }

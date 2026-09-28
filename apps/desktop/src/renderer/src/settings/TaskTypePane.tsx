@@ -10,10 +10,11 @@ import { SectionHead } from '../about/parts'
 import { useT, type TFunction, type TKey } from '../i18n'
 import { PermissionsSection, permissionParts } from '../about/PermissionsSection'
 import {
-  TASK_TYPE_TABS, libraryAgents, resolveTypeSettings, typeColumnChoices,
+  TASK_TYPE_TABS, libraryAgents, resolveTypeSettings, storedWorkflowNotes, typeColumnChoices,
   typeEditorKey, typeRemovalConfirm, type TaskTypeTab, type TypeUsage
 } from '../taskTypeEdit'
 import { TaskTypeWorkflow } from './TaskTypeWorkflow'
+import type { NodeTemplatesHook } from '../nodeTemplates'
 import type { TaskTypesHook } from './useTaskTypes'
 import { builtinText } from '../defaultTitles'
 
@@ -31,6 +32,8 @@ interface Props {
   onSelect(id: string | null): void
   /** Все проекты — колонки для нод графа. */
   projects: Project[]
+  /** Библиотека своих нод: палитра и инспектор редактора воркфлоу. */
+  nodeTemplates: NodeTemplatesHook
 }
 
 const TAB_LABELS: Record<TaskTypeTab, TKey> = {
@@ -45,7 +48,7 @@ const TAB_LABELS: Record<TaskTypeTab, TKey> = {
  * глобальные задачи берут роли и правила типа при каждом запуске агента. Все типы равны — и созданные человеком,
  * и заготовки, с которыми приходит приложение: любой правится, переименовывается и удаляется (кроме последнего).
  */
-export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSelect, projects }: Props): React.JSX.Element {
+export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSelect, projects, nodeTemplates }: Props): React.JSX.Element {
   const t = useT()
   const editorKey = typeEditorKey(type)
   const isLast = state.taskTypes.length <= 1
@@ -100,7 +103,7 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
 
   const counts: Record<TaskTypeTab, string> = {
     roles: rolesOff ? `${s.roles.length} · ${rolesOff} !` : String(s.roles.length),
-    workflow: s.workflow ? t('config.taskType.count.own') : t('config.taskType.count.default'),
+    workflow: `${s.workflow ? t('config.taskType.count.own') : t('config.taskType.count.default')}${storedWorkflowNotes(type.workflowNotes, false, false) ? ' !' : ''}`,
     perm: permissionParts(s.permissionMode).title,
     rules: s.agentRules.trim() ? t('config.taskType.count.yes') : t('config.taskType.count.no')
   }
@@ -133,6 +136,9 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
             roles={s.roles}
             columns={typeColumnChoices(projects)}
             readOnly={false}
+            library={nodeTemplates}
+            notes={type.workflowNotes}
+            onDismissNotes={() => api.patch(type.id, { workflowNotes: [] })}
             onSave={(wf) => api.patch(type.id, { workflow: wf })}
           />
         )

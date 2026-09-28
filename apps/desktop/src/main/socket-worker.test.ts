@@ -7,9 +7,10 @@ import { connect, type Server } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, legacyDefaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION_TASK_SCOPE } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { spawnPty, killPty } from './pty'
+import { NOT_NEEDED_SETTINGS_DEPS, NOT_NEEDED_APP_SETTINGS_DEPS } from './socket-test-deps'
 
 let tmp: string
 let sockPath: string
@@ -21,6 +22,8 @@ let agents: AgentInfo[]
 let calls: string[]
 /** Граф типа проекта в `resolveRun`; нет — дефолтный по ролям. */
 let typeWorkflow: Workflow | undefined
+/** Сборка main без движка «Решения ИИ»: у deps нет `decide` и `escalateDecision`. */
+let noDecisionEngine: boolean
 
 function fakeDeps(): ProjectDeps {
   let pty = 0
@@ -44,16 +47,30 @@ function fakeDeps(): ProjectDeps {
     review: () => ({}),
     accept: () => undefined,
     reject: (taskId, feedback) => store.rejectReview(taskId, feedback),
+    finishStage: () => { throw new Error('не нужен') },
+    // «Решение ИИ»: сопоставление варианта и проверки задачи — в движке прогона (workflow-run.ts), сокет лишь
+    // разбирает флаги и передаёт одно значение --option.
+    ...(noDecisionEngine ? {} : {
+      decide: (taskId: string, option: string, reason: string) => {
+        calls.push(`decide:${taskId}:${option}:${reason}`)
+        return { runId: 'run_1', nodeId: 'need_design', optionId: option, label: option, to: 'design' }
+      },
+      escalateDecision: (taskId: string, reason: string) => {
+        calls.push(`escalate:${taskId}:${reason}`)
+        return { requestId: 'req_1' }
+      }
+    }),
     resolveRequest: () => ({}),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
-    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? defaultWorkflow(roles), source: 'default' }),
+    resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? legacyDefaultWorkflow(roles), source: 'default' }),
     taskTypes: () => ({ taskTypes: presetTaskTypes(), defaultTypeId: 'general' }),
     runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
-    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: defaultWorkflow(roles), custom: false })
+    workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: legacyDefaultWorkflow(roles), custom: false }),
+    ...NOT_NEEDED_SETTINGS_DEPS
   }
 }
 
@@ -69,11 +86,14 @@ interface Reply {
     task?: { status: string; feedback?: string }
     showcase?: { text?: string; files: string[] }
     worker?: { dispatchId: string }
+    optionId?: string
+    to?: string
+    requestId?: string
   }
 }
 
-/** `extra` — поля запроса вне params, как их шлёт CLI (dispatchId из ORCA_DISPATCH_ID). */
-function call(method: string, params: Record<string, unknown>, extra: { dispatchId?: string } = {}): Promise<Reply> {
+/** `extra` — поля запроса вне params, как их шлёт CLI (dispatchId из ORCA_DISPATCH_ID, taskId из ORCA_TASK_ID). */
+function call(method: string, params: Record<string, unknown>, extra: { dispatchId?: string; taskId?: string } = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const sock = connect(sockPath)
     let buf = ''
@@ -98,7 +118,8 @@ beforeEach(async () => {
   agents = [{ id: 'claude', title: 'Claude Code', installed: true, enabled: true, models: [], defaults: {} }]
   calls = []
   typeWorkflow = undefined
-  server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [] })
+  noDecisionEngine = false
+  server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [], ...NOT_NEEDED_APP_SETTINGS_DEPS })
   await new Promise((r) => server.once('listening', r))
 })
 
@@ -304,7 +325,7 @@ describe('workflow show', () => {
   })
 
   it('с --run — снимок прогона; прогон без снимка — граф его типа', async () => {
-    const wf = defaultWorkflow([])
+    const wf = legacyDefaultWorkflow([])
     const withSnap = store.createGlobalTask({ title: 'Со снимком', workflow: wf })
     const res = await call('workflow.show', { run: withSnap.id })
     assert.equal(res.ok, true, res.error)
@@ -365,7 +386,7 @@ describe('история статусов через сокет', () => {
 describe('worker done: показ человеку', () => {
   /** «Работа» с обязательным показом → человек: граф типа проекта, задача без прогона берёт его через resolveRun. */
   const design: Workflow = {
-    version: WORKFLOW_VERSION,
+    version: WORKFLOW_VERSION_TASK_SCOPE,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
       { id: 'work', type: 'work', title: 'Дизайн', x: 0, y: 0, showcase: { what: 'варианты макета', required: true } },
@@ -413,7 +434,7 @@ describe('worker done: показ человеку', () => {
 
 describe('worker ask: адресат вопроса', () => {
   const wf: Workflow = {
-    version: WORKFLOW_VERSION,
+    version: WORKFLOW_VERSION_TASK_SCOPE,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
       { id: 'ask', type: 'ask', instructions: 'Спроси про БД', x: 0, y: 0 },
@@ -481,5 +502,72 @@ describe('worker ask: адресат вопроса', () => {
     const res = await call('worker.ask', { question: '?', wait: false }, { dispatchId: d.id })
     assert.equal(res.ok, true, res.error)
     assert.equal(store.pendingRequests()[0].nodeId, undefined)
+  })
+})
+
+describe('decision choose / escalate', () => {
+  /** Задача-решатель с запущенным воркером: запрос приходит, как его шлёт CLI из терминала воркера. */
+  function solver(): { taskId: string; dispatchId: string } {
+    const task = store.createTask({ title: 'Нужен ли дизайн?', roleId: 'reviewer' })
+    return { taskId: task.id, dispatchId: store.startDispatch(task.id, 'pty_d').id }
+  }
+
+  it('choose: задача из ORCA_TASK_ID, --option массивом из CLI — в движок одно значение; ответ движка — как есть', async () => {
+    const env = solver()
+    const res = await call('decision.choose', { option: ['yes'], reason: '  Новый экран — нужен макет ' }, env)
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.result.optionId, 'yes')
+    assert.equal(res.result.to, 'design')
+    assert.deepEqual(calls, [`decide:${env.taskId}:yes:Новый экран — нужен макет`])
+    // Явный --task своей задачи и вариант строкой (не из CLI) — тоже годятся.
+    assert.equal((await call('decision.choose', { task: env.taskId, option: 'Да', reason: 'r' }, env)).ok, true)
+    assert.equal(calls[1], `decide:${env.taskId}:Да:r`)
+  })
+
+  it('choose: нет --task/--option/--reason, несколько вариантов, длинное обоснование — ошибка, движок не вызван', async () => {
+    const env = solver()
+    const required = /--task, --option и --reason обязательны/
+    assert.match((await call('decision.choose', { option: ['yes'] }, env)).error ?? '', required)
+    assert.match((await call('decision.choose', { option: ['yes'], reason: '   ' }, env)).error ?? '', required)
+    assert.match((await call('decision.choose', { reason: 'r' }, env)).error ?? '', required)
+    assert.match((await call('decision.choose', { option: [], reason: 'r' }, env)).error ?? '', required)
+    assert.match((await call('decision.choose', { option: ['yes'], reason: 'r' })).error ?? '', required, 'без --task и ORCA_TASK_ID')
+    assert.match((await call('decision.choose', { option: ['yes', 'no'], reason: 'r' }, env)).error ?? '', /--option: нужен один вариант, а не несколько/)
+    assert.match((await call('decision.choose', { option: ['yes'], reason: 'x'.repeat(4001) }, env)).error ?? '', /обоснование длиннее 4000 символов — сократи --reason/)
+    assert.equal((await call('decision.choose', { option: ['yes'], reason: 'x'.repeat(4000) }, env)).ok, true, 'ровно 4000 — можно')
+    assert.equal(calls.length, 1)
+  })
+
+  it('чужой dispatch отвергается: агент решает только свою задачу', async () => {
+    const own = solver()
+    const other = store.createTask({ title: 'Чужая', roleId: 'developer' })
+    const choose = await call('decision.choose', { task: other.id, option: ['yes'], reason: 'r' }, { dispatchId: own.dispatchId })
+    assert.match(choose.error ?? '', new RegExp(`запуск ${own.dispatchId} не относится к задаче ${other.id}`))
+    const escalate = await call('decision.escalate', { task: other.id, reason: 'r' }, { dispatchId: own.dispatchId })
+    assert.match(escalate.error ?? '', /не относится к задаче/)
+    const unknown = await call('decision.choose', { option: ['yes'], reason: 'r' }, { taskId: own.taskId, dispatchId: 'disp_nope' })
+    assert.match(unknown.error ?? '', /запуск disp_nope не относится к задаче/)
+    assert.deepEqual(calls, [])
+    // Без dispatch (человек или координатор из своего терминала) — задача из --task.
+    assert.equal((await call('decision.escalate', { task: other.id, reason: 'сомневаюсь' })).ok, true)
+    assert.deepEqual(calls, [`escalate:${other.id}:сомневаюсь`])
+  })
+
+  it('escalate: задача из ORCA_TASK_ID, --reason обязателен и не длиннее 4000; ответ — id запроса', async () => {
+    const env = solver()
+    const res = await call('decision.escalate', { reason: 'Не ясно, есть ли готовый макет' }, env)
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.result.requestId, 'req_1')
+    assert.deepEqual(calls, [`escalate:${env.taskId}:Не ясно, есть ли готовый макет`])
+    assert.match((await call('decision.escalate', {}, env)).error ?? '', /--task и --reason обязательны/)
+    assert.match((await call('decision.escalate', { reason: 'x'.repeat(4001) }, env)).error ?? '', /длиннее 4000/)
+    assert.equal(calls.length, 1)
+  })
+
+  it('без движка решений в main — понятная ошибка, а не падение', async () => {
+    noDecisionEngine = true
+    const env = solver()
+    assert.match((await call('decision.choose', { option: ['yes'], reason: 'r' }, env)).error ?? '', /decision choose не поддерживается/)
+    assert.match((await call('decision.escalate', { reason: 'r' }, env)).error ?? '', /decision escalate не поддерживается/)
   })
 })

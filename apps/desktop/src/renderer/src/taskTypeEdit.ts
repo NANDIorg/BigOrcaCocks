@@ -1,6 +1,6 @@
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID,
-  type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type Workflow
+  type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type WfMigrationNote, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState } from '../../shared/ipc'
 import { t } from './i18n'
@@ -64,23 +64,47 @@ export function resolveTypeSettings(s: TaskTypeSettings): ResolvedTypeSettings {
 }
 
 /** Правка настроек типа: null удаляет поле (= встроенное значение), undefined — не трогать. */
-export type TaskTypePatch = { [K in keyof TaskTypeSettings]?: TaskTypeSettings[K] | null }
+export type TaskTypePatch = { [K in keyof TaskTypeSettings]?: TaskTypeSettings[K] | null } & {
+  /** Предупреждения автомиграции графа (`TaskType.workflowNotes`); пустой список — человек их закрыл. */
+  workflowNotes?: WfMigrationNote[]
+}
 
 /**
  * `taskTypes:save` заменяет тип целиком — собираем полный TaskTypeInput из текущего типа и правки.
- * Правила из одних пробелов удаляют поле.
+ * Правила из одних пробелов удаляют поле. `workflowNotes` — поле самого типа, а не настроек: без него в правке main
+ * оставляет замечания миграции, пока граф не менялся.
  */
 export function patchedTaskType(t: TaskType, patch: TaskTypePatch): TaskTypeInput {
   const settings: Record<string, unknown> = { ...t.settings }
-  for (const [k, v] of Object.entries(patch)) {
+  const { workflowNotes, ...rest } = patch
+  for (const [k, v] of Object.entries(rest)) {
     if (v === undefined) continue
     if (v === null || (k === 'agentRules' && typeof v === 'string' && !v.trim())) delete settings[k]
     else settings[k] = v
   }
   return {
     id: t.id, title: t.title, ...(t.description ? { description: t.description } : {}),
-    settings: settings as TaskTypeSettings
+    settings: settings as TaskTypeSettings,
+    ...(workflowNotes ? { workflowNotes } : {})
   }
+}
+
+/** Замечания автомиграции графа, как их показывает редактор типа. */
+export interface StoredWorkflowNotes {
+  messages: string[]
+  /** «Понятно» доступно: не просмотр и main умеет закрывать замечания (в старом кнопки нет — уйдут с правкой графа). */
+  dismissable: boolean
+}
+
+/**
+ * Что показать из `TaskType.workflowNotes`. Поле необязательное (старый main его не присылает), а записи приходят
+ * из файла — пустые и повторяющиеся тексты отбрасываем. Нечего показывать — null.
+ */
+export function storedWorkflowNotes(
+  notes: readonly WfMigrationNote[] | undefined, readOnly: boolean, canDismiss: boolean
+): StoredWorkflowNotes | null {
+  const messages = [...new Set((notes ?? []).map((n) => (typeof n?.message === 'string' ? n.message.trim() : '')).filter(Boolean))]
+  return messages.length ? { messages, dismissable: !readOnly && canDismiss } : null
 }
 
 /** Переименование: пустое название — ошибка (текст для формы), пустое описание убирает поле. */

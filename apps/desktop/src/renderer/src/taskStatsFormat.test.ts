@@ -26,7 +26,7 @@ const tokens = { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0 }
 function wait(p: Partial<TaskWaitStats> = {}): TaskWaitStats {
   const kind = { count: 0, waitingMs: 0 }
   return {
-    waitingMs: 0, byKind: { question: { ...kind }, answer: { ...kind }, escalation: { ...kind }, approval: { ...kind } },
+    waitingMs: 0, byKind: { question: { ...kind }, answer: { ...kind }, escalation: { ...kind }, approval: { ...kind }, decision: { ...kind } },
     resolved: 0, cancelled: 0, pending: 0, ...p
   }
 }
@@ -206,6 +206,12 @@ test('columnParts: цвета и названия колонок доски, д�
   assert.deepEqual([parts[2].title, parts[2].color, parts[2].share], ['gone', 'var(--s-other)', 0])
   assert.deepEqual(columnParts([], DEFAULT_COLUMNS), [])
   assert.equal(columnParts([{ status: 'ready', ms: 0, entries: 1 }], DEFAULT_COLUMNS)[0].share, 0, 'нулевое время — без деления на ноль')
+})
+
+test('stageParts: названия из titles перекрывают отданные main; без titles — как отдал main', () => {
+  const stages = [{ nodeId: 'w', title: 'w', ms: H, entries: 1 }, { nodeId: 'x', title: 'Икс', ms: H, entries: 1 }]
+  assert.deepEqual(stageParts(stages, { w: 'Реализация' }).map((p) => p.title), ['Реализация', 'Икс'])
+  assert.deepEqual(stageParts(stages).map((p) => p.title), ['w', 'Икс'])
 })
 
 test('stageParts: цвета по кругу палитры серий; нет этапов — пусто', () => {

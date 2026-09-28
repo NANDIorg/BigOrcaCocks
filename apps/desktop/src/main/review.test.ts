@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, WORKFLOW_VERSION, type HumanRequest, type Workflow } from '@orca-board/core'
 import { acceptReview, resolveHumanRequest } from './review'
 
 const git = (cwd: string, ...args: string[]): string =>
@@ -133,5 +133,30 @@ describe('resolveHumanRequest', () => {
     assert.equal(esc.taskId, task.id)
     assert.match(String(esc.payload.reason), /не запустился: агент выключен/)
     assert.equal(esc.payload.requestId, req.id)
+  })
+
+  it('decision — выбор ветки: запрос решён, колбэк approved двигает граф (движок прогона), воркер не стартует', () => {
+    const wf: Workflow = {
+      version: WORKFLOW_VERSION,
+      nodes: [
+        { id: 'start', x: 0, y: 0, type: 'start' },
+        { id: 'fork', x: 0, y: 0, type: 'decision', question: 'Нужен ли дизайн?', roleId: 'developer', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] },
+        { id: 'end', x: 0, y: 0, type: 'end' }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'fork' },
+        { id: 'e2', from: 'fork', outcome: 'yes', to: 'end' },
+        { id: 'e3', from: 'fork', outcome: 'no', to: 'end' }
+      ]
+    }
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const run = store.createRun('цель', undefined, wf)
+    store.enterRunStage(run.id, { roleIds: ['developer'] })
+    const req = store.requestRunDecision(run.id, { nodeId: 'fork', title: 'Нужен ли дизайн?', fallback: 'unsure', options: [{ id: 'yes', label: 'Да' }, { id: 'no', label: 'Нет' }] })
+    const seen: HumanRequest[] = []
+    const out = resolveHumanRequest(store, repo, req.id, { action: 'answer', optionId: 'no', text: 'макет есть' }, noStart, (r) => seen.push(r))
+    assert.equal(out.request.status, 'resolved')
+    assert.deepEqual(seen.map((r) => [r.id, r.resolution?.optionId]), [[req.id, 'no']])
+    assert.equal(out.worker, undefined)
   })
 })

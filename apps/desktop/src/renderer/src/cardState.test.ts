@@ -146,6 +146,23 @@ test('stageLabel: гейт — нода и проверяемая задача; 
   assert.equal(stageLabel(gate, undefined, () => undefined)?.text, '⛉ Гейт')
 })
 
+test('stageLabel: подзадача воркфлоу глобальной задачи — этап и заход по stageOf', () => {
+  const of = (nodeId: string, visit: number) => ({ stageOf: { nodeId, visit } })
+  assert.equal(stageLabel(of('n2', 1), titles, () => undefined)?.text, 'Разработка')
+  assert.equal(stageLabel(of('n2', 2), titles, () => undefined)?.text, 'Разработка · 2-й заход')
+  assert.equal(stageLabel(of('zzz', 1), titles, () => undefined), null)
+  assert.equal(stageLabel(of('n2', 1), undefined, () => undefined), null)
+})
+
+test('stageLabel: гейт по ветке глобальной задачи (gateFor.runId) — без проверяемой подзадачи', () => {
+  const gate = { gateFor: { runId: 'run_1', nodeId: 'n3' } }
+  const l = stageLabel(gate, titles, () => 'не должно вызываться')
+  assert.equal(l?.kind, 'gate')
+  assert.equal(l?.text, '⛉ Гейт «Ревью кода» → ветка задачи')
+  assert.match(l!.title, /ветку глобальной задачи целиком/)
+  assert.equal(stageLabel(gate, undefined, () => undefined)?.text, '⛉ Гейт → ветка задачи')
+})
+
 test('depsLabel: одна — с названием, несколько — счётом, полный список в подсказке', () => {
   const closed = new Set(['done1'])
   const names: Record<string, string> = { a: 'Миграция store', b: 'Иконки', c: 'Тесты', done1: 'Старая' }
@@ -184,4 +201,19 @@ test('requestStageLabel: метка этапа только у вопроса с
 test('пилюля этапа для ask — как у любой ноды: название из графа', () => {
   const ask = wfNodeTitles({ version: 1, nodes: [{ id: 'q', type: 'ask', x: 0, y: 0, instructions: 'x' }], edges: [] })
   assert.equal(stageLabel({ stage: { nodeId: 'q', visits: { q: 1 } } }, ask, () => undefined)?.text, 'Вопрос человеку')
+})
+
+test('stageLabel: этап git подписан названием ноды — заданным или «Git»', () => {
+  const graph: Workflow = {
+    version: 1,
+    nodes: [
+      { id: 'g1', type: 'git', x: 0, y: 0, operation: 'create_branch', branch: 'feature/{taskId}' },
+      { id: 'g2', type: 'git', x: 0, y: 0, operation: 'push', title: 'Пуш в origin' }
+    ],
+    edges: []
+  }
+  const names = wfNodeTitles(graph)
+  assert.deepEqual(names, { g1: 'Git', g2: 'Пуш в origin' })
+  assert.deepEqual(stageLabel({ stage: { nodeId: 'g1', visits: { g1: 1 } } }, names, () => undefined), { kind: 'stage', text: 'Git', title: 'Этап воркфлоу: Git' })
+  assert.equal(stageLabel({ stage: { nodeId: 'g2', visits: { g2: 2 } } }, names, () => undefined)?.text, 'Пуш в origin · 2-й заход')
 })

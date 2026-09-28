@@ -51,6 +51,8 @@ export default {
 
   'projects.none': 'no projects: add a repository',
   'projects.notGit': '{path} is not a git repository',
+  'projects.groupNotFound': 'project group not found: {id}',
+  'projects.groupNameEmpty': 'the project group name cannot be empty',
 
   'agent.unknown': 'unknown agent: {id}. Known: {known}',
   'agent.notInstalled': 'agent {id} is not installed (no {bin} binary in PATH)',
@@ -76,10 +78,22 @@ export default {
   'coordinator.alreadyRunning': 'the coordinator of this global task is already running (terminal {pty})',
   'coordinator.finishing': 'the coordinator of this global task is still finishing — try again in a few seconds',
 
+  'attachments.noWorktree': 'the task has no worktree on disk — nowhere to save the images for the feedback (the task is already accepted or its worktree was removed)',
+  'attachments.saveFailed': 'could not save the images: {error}',
+  'attachments.invalid': 'the images were not accepted: {error}',
+  'attachments.needText': 'the images need feedback text: describe what to fix',
+  'attachments.notForAction': 'images can only be attached to “Clarify” and “Return”',
+
+  'workflow.runFinished': 'the global task workflow has already finished — no coordinator is needed',
+  'workflow.coordinatorNotRunning': 'your notes are saved, but the coordinator did not start — start it from the global task card (“Start coordinator”)',
   'global.notFound': 'global task not found: {id}',
   'global.coordinatorAlive': 'the coordinator of this global task is still running — close its terminal first',
   'global.typeRequired': 'choose a task type',
   'global.subtaskTitleEmpty': 'the subtask title cannot be empty',
+  'global.imageNotFound': 'the global task has no image {imageId}',
+  'global.imageFileMissing': 'the file of image {imageId} was not found on disk — remove the image and attach it again',
+  'global.imagesEmpty': 'no images to add',
+  'global.imagesSaveFailed': 'could not save the task images: {reason}',
 
   'column.noneLeft': 'at least one column is required',
   'column.emptyId': 'column #{n}: empty id',
@@ -96,6 +110,7 @@ export default {
   'type.notObject': 'task type: an object is expected',
   'type.emptyId': 'task type: empty id',
   'type.emptyTitle': 'task type: empty name',
+  'type.renameEmpty': 'specify --title and/or --description',
   'type.descriptionNotString': 'type “{title}”: description must be a string',
   'type.lastOne': 'type “{title}” is the last one in the library and cannot be deleted: create another type first',
   'type.copyTitle': '{title} (copy)',
@@ -110,6 +125,12 @@ export default {
 
   'workflow.future': 'the workflow is saved in format version {version}, the app only knows {known} — update the app',
   'workflow.notSaved': 'workflow not saved: {errors}',
+
+  'nodeTemplate.notObject': 'node template: an object is expected',
+  'nodeTemplate.emptyId': 'node template: empty id',
+  'nodeTemplate.emptyTitle': 'node template: empty title',
+  'nodeTemplate.notFound': 'node template not found: {id}',
+  'nodeTemplate.notSaved': 'node template not saved: {errors}',
 
   'rules.onlyKnown': 'only {a} and {b} in the project root can be edited, not “{name}”',
   'rules.brokenLink': '{name}: the link points to a missing file',
@@ -146,12 +167,26 @@ export default {
 
   'review.noBranch': 'the task has no branch',
   'review.untracked': 'new files:',
+  'git.runBranchFailed': 'could not create branch “{branch}” for the global task from “{base}”: {error}',
+  'git.runBranchMissing': 'branch “{branch}” of the global task no longer exists in the repository — restore it or detach the branch from the task',
+  'git.notRepo': '{path} is not a git repository',
+  'git.dirtyTree': 'the project has uncommitted changes — the branch is not switched: commit or stash them first',
+  'git.notFastForward': 'branch “{branch}” has diverged from {upstream}: fast-forward is not possible, combine the changes manually (merge or rebase)',
+  'git.noUpstream': 'branch “{branch}” has no upstream — nothing to update it from',
+  'git.branchBusy': 'branch “{branch}” is already checked out in another worktree: {path}',
+  'git.workersActive': 'Orca agents are working in the project ({count}) — the root branch cannot be switched, wait for them to finish',
+  'git.branchNotFound': 'branch “{branch}” exists neither locally nor on the remote',
+  'git.opFailed': 'git {command}: {error}',
+  'git.timeout': 'no response in {seconds} s',
   'request.alreadyCancelled': 'already decided: request {id} was cancelled',
   'request.alreadyResolved': 'already decided: request {id} was resolved',
 
   'stats.badRange': 'statistics: unknown period “{range}”, expected {expected}',
   'stats.noTask': 'statistics: task {id} is not in the project',
   'stats.noGlobal': 'statistics: global task {id} is not in the project',
+
+  'assistantChat.unknownPty': 'no running assistant with this PTY — reopen the panel',
+  'assistantChat.emptyText': 'chat message is empty',
 
   'onboarding.invalidInput': 'first-run wizard: an object with a boolean skipped field is expected'
 } satisfies { [K in keyof typeof ru]: string | { one: string; other: string } }

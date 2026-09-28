@@ -90,9 +90,11 @@ export function agentTitle(id: string): string {
  * Текст проблемы воркфлоу (`validateWorkflow`) на языке интерфейса: по коду и параметрам. Проблема без кода
  * (от старой версии core) — её русский `message`.
  */
-export function wfIssueText(i: Pick<WfIssue, 'code' | 'params' | 'message'>): string {
+export function wfIssueText(i: Pick<WfIssue, 'code' | 'params' | 'message' | 'subflowOf'>): string {
   if (!i.code) return i.message
   const key = `config.wf.issue.${i.code}` as TKey
   const text = t(key, i.params)
-  return text === key ? i.message : text
+  if (text === key) return i.message
+  // Проблема внутри пути подзадачи: core отдаёт префикс по-русски, renderer добавляет свой на языке интерфейса.
+  return i.subflowOf ? `${t('config.wf.path.issuePrefix', { node: i.subflowOf.title })}${text}` : text
 }

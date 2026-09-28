@@ -54,6 +54,8 @@ export default {
 
   'projects.none': 'нет проектов: добавьте репозиторий',
   'projects.notGit': '{path} — не git-репозиторий',
+  'projects.groupNotFound': 'группа проектов не найдена: {id}',
+  'projects.groupNameEmpty': 'название группы проектов не может быть пустым',
 
   'agent.unknown': 'неизвестный агент: {id}. Известные: {known}',
   'agent.notInstalled': 'агент {id} не установлен (нет бинарника {bin} в PATH)',
@@ -79,10 +81,22 @@ export default {
   'coordinator.alreadyRunning': 'координатор этой глобальной задачи уже работает (терминал {pty})',
   'coordinator.finishing': 'координатор этой глобальной задачи ещё завершается — повторите через несколько секунд',
 
+  'attachments.noWorktree': 'у задачи нет worktree на диске — изображения к замечаниям сохранять некуда (задача уже принята или её worktree удалён)',
+  'attachments.saveFailed': 'не удалось сохранить изображения: {error}',
+  'attachments.invalid': 'изображения не приняты: {error}',
+  'attachments.needText': 'к изображениям нужен текст замечаний: опиши, что исправить',
+  'attachments.notForAction': 'изображения можно приложить только к «Уточнить» и «Вернуть»',
+
+  'workflow.runFinished': 'воркфлоу глобальной задачи уже дошёл до конца — координатор не нужен',
+  'workflow.coordinatorNotRunning': 'замечания сохранены, но координатор не запустился — запусти его: карточка глобальной задачи → «Запустить координатора»',
   'global.notFound': 'глобальная задача не найдена: {id}',
   'global.coordinatorAlive': 'координатор этой глобальной задачи ещё работает — сначала закрой его терминал',
   'global.typeRequired': 'укажи тип задачи',
   'global.subtaskTitleEmpty': 'название подзадачи не может быть пустым',
+  'global.imageNotFound': 'у глобальной задачи нет изображения {imageId}',
+  'global.imageFileMissing': 'файл изображения {imageId} не найден на диске — удалите картинку и приложите её заново',
+  'global.imagesEmpty': 'нет изображений для добавления',
+  'global.imagesSaveFailed': 'не удалось сохранить изображения задачи: {reason}',
 
   'column.noneLeft': 'нужна хотя бы одна колонка',
   'column.emptyId': 'колонка №{n}: пустой id',
@@ -99,6 +113,7 @@ export default {
   'type.notObject': 'тип задачи: ожидается объект',
   'type.emptyId': 'тип задачи: пустой id',
   'type.emptyTitle': 'тип задачи: пустое название',
+  'type.renameEmpty': 'укажи --title и/или --description',
   'type.descriptionNotString': 'тип «{title}»: описание должно быть строкой',
   'type.lastOne': 'тип «{title}» последний в библиотеке — его нельзя удалить: сначала создайте другой тип',
   'type.copyTitle': '{title} (копия)',
@@ -113,6 +128,12 @@ export default {
 
   'workflow.future': 'воркфлоу сохранён в формате версии {version}, приложение знает только {known} — обновите приложение',
   'workflow.notSaved': 'воркфлоу не сохранён: {errors}',
+
+  'nodeTemplate.notObject': 'шаблон нод: ожидается объект',
+  'nodeTemplate.emptyId': 'шаблон нод: пустой id',
+  'nodeTemplate.emptyTitle': 'шаблон нод: пустое название',
+  'nodeTemplate.notFound': 'шаблон нод не найден: {id}',
+  'nodeTemplate.notSaved': 'шаблон нод не сохранён: {errors}',
 
   'rules.onlyKnown': 'можно править только {a} и {b} в корне проекта, а не «{name}»',
   'rules.brokenLink': '{name}: ссылка ведёт на несуществующий файл',
@@ -149,12 +170,26 @@ export default {
 
   'review.noBranch': 'у задачи нет ветки',
   'review.untracked': 'новые файлы:',
+  'git.runBranchFailed': 'не удалось завести ветку «{branch}» глобальной задачи от «{base}»: {error}',
+  'git.runBranchMissing': 'ветки «{branch}» глобальной задачи больше нет в репозитории — восстановите её или снимите ветку с задачи',
+  'git.notRepo': '{path} — не git-репозиторий',
+  'git.dirtyTree': 'в проекте есть незакоммиченные изменения — переключение ветки не выполняется: закоммитьте или отложите их',
+  'git.notFastForward': 'ветка «{branch}» разошлась с {upstream}: fast-forward невозможен, объедините изменения вручную (merge или rebase)',
+  'git.noUpstream': 'у ветки «{branch}» нет upstream — обновлять её не из чего',
+  'git.branchBusy': 'ветка «{branch}» уже открыта в другом worktree: {path}',
+  'git.workersActive': 'в проекте работают агенты Orca ({count}) — переключать ветку корня нельзя, дождитесь их завершения',
+  'git.branchNotFound': 'ветки «{branch}» нет ни локально, ни на remote',
+  'git.opFailed': 'git {command}: {error}',
+  'git.timeout': 'не ответил за {seconds} с',
   'request.alreadyCancelled': 'уже решено: запрос {id} отменён',
   'request.alreadyResolved': 'уже решено: запрос {id} решён',
 
   'stats.badRange': 'статистика: неизвестный период «{range}», ожидается {expected}',
   'stats.noTask': 'статистика: задачи {id} нет в проекте',
   'stats.noGlobal': 'статистика: глобальной задачи {id} нет в проекте',
+
+  'assistantChat.unknownPty': 'ассистент с таким PTY не запущен — откройте панель заново',
+  'assistantChat.emptyText': 'пустое сообщение чата',
 
   'onboarding.invalidInput': 'мастер первого запуска: ожидается объект с полем skipped (boolean)'
 } satisfies Record<string, string | { one: string; few: string; many: string }>

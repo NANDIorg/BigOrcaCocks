@@ -1,4 +1,4 @@
-import { DEFAULT_ROLES, type Role, type Workflow } from '@orca-board/core'
+import { DEFAULT_ROLES, wfWorkRoleIds, type Role, type Workflow } from '@orca-board/core'
 import { t, type TKey } from './i18n'
 import { nodeTitle } from './defaultTitles'
 
@@ -37,7 +37,8 @@ export function workflowNodesWithRole(wf: Workflow | undefined, roleId: string):
   if (!wf) return []
   return wf.nodes
     .filter((n) =>
-      ((n.type === 'gate' || n.type === 'work' || n.type === 'ask') && n.roleId === roleId) ||
+      ((n.type === 'gate' || n.type === 'ask') && n.roleId === roleId) ||
+      (n.type === 'work' && wfWorkRoleIds(n).includes(roleId)) ||
       (n.type === 'condition' && n.test.kind === 'role' && n.test.roleIds.includes(roleId)))
     .map((n) => nodeTitle(n))
 }

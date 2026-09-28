@@ -299,7 +299,7 @@ export function buildTaskStats(input: TaskStatsInput): TaskStats {
     usage, byRole.get(s.roleId, () => input.roleTitle?.(s.roleId) ?? s.roleId)
   ])
 
-  const requests = input.requests.filter((r) => ids.has(r.taskId))
+  const requests = input.requests.filter((r) => r.taskId !== undefined && ids.has(r.taskId))
   const approvalRejects = requests.filter((r) => r.kind === 'approval' && r.resolution?.action === 'reject').length
   const clarifies = requests.filter((r) => r.kind === 'answer' && r.resolution?.action === 'clarify').length
   const stageHistory = task.stageHistory

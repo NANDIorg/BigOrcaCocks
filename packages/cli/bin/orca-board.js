@@ -28,7 +28,8 @@ const HELP = `orca-board — управление доской агентов
 
 Типы задач (тип выбирается у глобальной задачи и задаёт её роли, воркфлоу, правила агентов и разрешения):
   types list                              типы, доступные проекту: id, title, description, default — тип проекта
-                                          по умолчанию, роли (agent, agentEnabled), этапы графа
+                                          по умолчанию, роли (agent, agentEnabled), этапы графа (у «Решения ИИ» —
+                                          options: id вариантов, они же исходы рёбер)
 
 Правила агентов доски — правила типа задачи (попадают только в системный промпт воркеров и координатора,
 не в CLAUDE.md/AGENTS.md). Тип: --type <id>, иначе тип глобальной задачи --run (координатору — $ORCA_RUN_ID),
@@ -42,7 +43,9 @@ const HELP = `orca-board — управление доской агентов
 Глобальные задачи (верхний уровень доски; id = id прогона, см. docs/nested-kanban.md):
   global list                             карточки: название, описание, статус-колонка, priority, прогресс подзадач,
                                           typeId и typeTitle — тип задачи, coordinatorAlive — жив ли терминал координатора
-  global get [--global <id>]              одна карточка (с coordinatorAlive)
+  global get [--global <id>]              одна карточка (с coordinatorAlive); git.branch — ветка глобальной задачи, куда сливаются подзадачи;
+                                          stage — где она на графе воркфлоу (nodeId, visits — заходы в ноды), stageHistory — путь по этапам;
+                                          у прогонов старого формата (воркфлоу по подзадачам) stage нет
   global create [--title "..."] [--description "..."] [--status <id колонки>]
                 [--priority urgent|high|normal|low]   приоритет глобальной задачи, по умолчанию normal
                 [--type <id из types list>]   тип задачи (роли, воркфлоу, правила); без него — тип проекта
@@ -62,15 +65,24 @@ const HELP = `orca-board — управление доской агентов
                                           назначение, агент, модель, включён ли агент; без прогона — типа
                                           --type или типа проекта по умолчанию
   columns list     колонки доски: id, название, kind
-  workflow show [--run <id>] [--type <id>]   воркфлоу: этапы рабочей задачи после worker_done (проверки, человек,
-                                          мерж) и переходы; с --run — снимок прогона, без — граф типа --type
-                                          или типа проекта по умолчанию
+  workflow show [--run <id>] [--type <id>]   воркфлоу: этапы графа и переходы; с --run — снимок графа прогона
+                                          и его текущий этап, без — граф типа --type или типа проекта по умолчанию.
+                                          scope: run — граф ведёт глобальную задачу, stage — где она сейчас (нода,
+                                          visit — заход, roleIds — роли этапа «Работа», пусто — любые рабочие роли типа,
+                                          instructions, feedback/decision/answers — что сказали проверка и человек,
+                                          tasks — подзадачи захода, tasksDoneAt — когда они закрылись), history —
+                                          последние 50 переходов (нода, заход, исход; у «Решения ИИ» — decision:
+                                          выбранный вариант, обоснование, кто решил); scope: task — прежний
+                                          воркфлоу по подзадачам (после worker_done: проверки, человек, мерж)
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
                                           (у каждой — priority: urgent|high|normal|low);
                                           у задачи в воркфлоу — stage (этап: nodeId и число заходов visits),
                                           у задачи-проверки — gateFor (чью ветку проверяет)
   task get --task <id>                    одна задача (со stage и gateFor)
   task create --title "..." [--spec "..."] --role <id из roles list> [--dep <id>]... [--run <id>]
+              воркфлоу глобальной задачи: подзадачи создаются только на этапе «Работа» (после stage_started; на другом
+              этапе — ошибка «дождись stage_started»); роль — из ролей этапа (у этапа роли не заданы — любая рабочая
+              роль типа), чужая — ошибка; у этапа одна роль — --role можно не указывать
               [--answer-for human|coordinator]   задача-ответ: результат — ответ в markdown, не код;
                                           human — ответ читает человек, coordinator — ты сам
               [--priority urgent|high|normal|low]   приоритет, по умолчанию normal
@@ -83,15 +95,21 @@ const HELP = `orca-board — управление доской агентов
   worker restart --task <id> [--feedback "..."]   stop + запуск заново; работает и на задаче в работе
                                           задачу в review/done не перезапускает: для неё task reopen --task <id> --start
   worker read --dispatch <id> [--limit 80]
-  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked] [--timeout-ms 900000] [--run <id>]
+  check [--wait] [--types worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked,stage_started,stage_tasks_done] [--timeout-ms 900000] [--run <id>]
   check --follow [--types ...] [--run <id>]   поток: по строке JSON на каждое событие, не завершается
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
+  stage finish [--run <id>] [--summary "..." | --summary-file summary.md]
+                                          воркфлоу глобальной задачи: закрыть этап «Работа» — граф идёт дальше (проверка,
+                                          человек, мерж…). Все подзадачи этапа должны быть в done (stage_tasks_done),
+                                          иначе ошибка. --summary — сводка этапа для следующих этапов и человека
   runs finish [--run <id>] [--summary "..." | --summary-file summary.md]
-                                          координатор закончил работу (после run_done; если все подзадачи в done —
-                                          закрывает прогон сам); --summary — итог в markdown «что сделано и что
-                                          проверить», человек видит его на «Проверке»; заменяет прежнюю сводку
+                                          прогоны старого формата (воркфлоу по подзадачам): координатор закончил работу
+                                          (после run_done; если все подзадачи в done — закрывает прогон сам); --summary —
+                                          итог в markdown «что сделано и что проверить», человек видит его на «Проверке»;
+                                          заменяет прежнюю сводку. У прогона с воркфлоу глобальной задачи до run_done —
+                                          ошибка: этап закрывает stage finish, а run_done приходит, когда граф дошёл до конца
   question list
   question get --question <id>            вопрос целиком и ответ на него
   question answer --question <id> --answer "..."
@@ -100,9 +118,13 @@ const HELP = `orca-board — управление доской агентов
 
   review info --task <id>                 diff-stat и коммиты ветки задачи
   review accept --task <id> [--decision "..."]  задача на этапе проверки — исход accept, дальше по воркфлоу
-                                          (обычно мерж и done); вне воркфлоу — слить ветку, задача → done
+                                          (обычно мерж и done); вне воркфлоу — слить ветку, задача → done;
+                                          задача-проверка ветки глобальной задачи (ты — проверяющий) — свой --task:
+                                          приложение само находит прогон и двигает его граф
   review reject --task <id> --feedback "..."   задача на этапе проверки — исход reject (обычно снова в работу,
-                                          воркер стартует сам); вне воркфлоу — ready с замечаниями
+                                          воркер стартует сам); вне воркфлоу — ready с замечаниями; у задачи-проверки
+                                          ветки глобальной задачи — граф идёт назад, замечания получит координатор
+                                          в stage_started (feedback)
   task reopen --task <id> [--feedback "..."] [--start]   задача (done/review/backlog/…) → ready, feedback — по
                                           желанию; ждёт решения по ответу — это «Уточнить» (feedback обязателен);
                                           --start — сразу запустить воркера
@@ -110,7 +132,8 @@ const HELP = `orca-board — управление доской агентов
   events list
 
 Запросы к человеку (Инбокс: вопросы, ответы задач-ответов, упавшие воркеры, этапы воркфлоу «человек»):
-  request list [--run <id>] [--all]       ждущие ответа (pending); --all — и решённые
+  request list [--run <id>] [--all]       ждущие ответа (pending); --all — и решённые; у запроса этапа «человек»
+                                          глобальной задачи taskId нет — он относится к прогону (runId, nodeId)
   request get --request <id>              запрос целиком: текст, контекст/ответ, варианты, решение
   request resolve --request <id> --option <id|метка> [--text "..."]   ответ на вопрос вариантом
   request resolve --request <id> --text "..."                        ответ на вопрос своим текстом
@@ -131,8 +154,66 @@ const HELP = `orca-board — управление доской агентов
                                           допустимы (старое --options a,b тоже работает); id варианта — его номер.
                                           Оборвался по таймауту — повтори ту же команду: переподключится
                                           к тому же вопросу (или сразу вернёт ответ), новый не создастся
+  decision choose [--task <id>] --option <id|метка> --reason "..."
+                                          задача-решатель ноды «Решение ИИ»: выбрать ровно один вариант с
+                                          обоснованием (≤ 4000 символов) — граф сразу идёт по его ребру;
+                                          --task по умолчанию — $ORCA_TASK_ID
+  decision escalate [--task <id>] --reason "что неясно"
+                                          не можешь выбрать — решение уйдёт человеку в Инбокс с теми же
+                                          вариантами и твоим комментарием; повтор вернёт тот же запрос
 
-Прогон: --run <id> у task create, check, request list, runs close, runs finish, roles list, rules get/set
+Настройки: то, что человек меняет в «Настройки» и «О проекте». Библиотека типов задач, ролей и шаблонов нод
+общая для всех проектов — --project только выбирает, через какой проект команда обращается к сокету:
+  types create --project <id> --title "..." [--description "..."]
+                                          новый тип: роли и правила — по умолчанию (как «Создать тип» в UI)
+  types rename --project <id> --type <id> [--title "..."] [--description "..."]   хотя бы одно поле
+  types set-default --project <id> --type <id>   тип библиотеки по умолчанию (новые проекты, ассистент)
+  types duplicate --project <id> --type <id>      копия типа под новым id
+  types delete --project <id> --type <id> --yes   удалить тип; без --yes — отказ с числом проектов, где он
+                                          используется, и является ли он библиотечным умолчанием; последний
+                                          тип библиотеки не удаляется
+  roles add --project <id> --type <id> --title "..." --agent <id> [--model <id>] [--effort <id>]
+            [--description "..."]        agent — id из agents list
+  roles update --project <id> --type <id> --role <id> [--title/--agent/--model/--effort/--description "..."]
+                                          смена --agent требует --yes (другой процесс запуска задач роли)
+  roles remove --project <id> --type <id> --role <id> --yes   без --yes — отказ с числом задач проекта на
+                                          этой роли и этапами воркфлоу, где она занята; последнюю роль типа
+                                          не удалить
+  types perm get --project <id> --type <id>       режим разрешений Claude Code у типа
+  types perm set --project <id> --type <id> --mode auto|bypassPermissions|acceptEdits
+                                          bypassPermissions — агент работает без подтверждений, нужен --yes
+  node-templates list --project <id>      библиотека шаблонов нод воркфлоу
+  node-templates delete --project <id> --template <id> --yes
+
+  settings get                            настройки приложения целиком (язык, уведомления, автообновление);
+                                          уровня приложения — --project не нужен
+  settings set [--language ru|en] [--keep-in-background] [--notifications-enabled]
+               [--notify-role <id роли>=on|off]... [--notify-event <вид>=on|off]... [--quiet-hours ЧЧ:ММ-ЧЧ:ММ]
+               [--sound] [--show-preview] [--auto-check] [--auto-download] [--install-when-idle]
+                                          любой поднабор флагов; включить boolean-флаг — сам флаг, выключить —
+                                          --no-<флаг> (--no-sound и т.п.); --no-quiet-hours выключает тихие
+                                          часы; вид уведомления — question, answerReady, workerDone,
+                                          escalation, runDone
+
+  projects set-active --project <id>      сделать проект активным (его берут команды без --project)
+  projects remove --project <id> --yes    убрать проект из списка; без --yes — отказ с числом живых воркеров
+                                          и координаторов в проекте
+  project agents set --project <id> [--enable <id агента>]... [--disable <id агента>]...
+                                          включённые агенты проекта; id — из agents list
+  project columns set --project <id> --file columns.json
+                                          весь список колонок доски (BoardColumn[]) из JSON-файла; удаление
+                                          занятой колонки переносит её задачи в backlog — если перенос
+                                          затронет хоть одну задачу, без --yes команда отказывает
+  project types set --project <id> [--types <id>,<id>,...] --default <id>
+                                          типы, доступные проекту (без --types — вся библиотека), и тип по
+                                          умолчанию; --default обязателен
+  project rules get --project <id> --file CLAUDE.md|AGENTS.md
+                                          правила проекта — файл в корне репозитория (не то же самое, что
+                                          rules get/set выше — те про системный промпт типа задачи)
+  project rules set --project <id> --file CLAUDE.md|AGENTS.md --text "..." | --rules-file rules.md
+                                          --text "" — очистить файл; не коммитит — решает человек
+
+Прогон: --run <id> у task create, check, request list, runs close, runs finish, stage finish, roles list, rules get/set
 и workflow show по умолчанию берётся из $ORCA_RUN_ID (у roles list, rules и workflow show — если нет --type) —
 задачи, созданные координатором, наследуют его прогон (= его глобальную задачу) и роли его типа. Так же --global
 у global get, global tasks и global add-task. Задача без прогона попадает во «Входящие» (роли — типа проекта
@@ -147,18 +228,22 @@ if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
   process.exit(0)
 }
 
-// method: первые одно или два слова без "--"
+// method: первые одно, два или три слова без "--" (три — только у `types perm get|set`).
 const words = []
-while (argv.length && !argv[0].startsWith('--') && words.length < 2) words.push(argv.shift())
+while (argv.length && !argv[0].startsWith('--') && words.length < 3) words.push(argv.shift())
 let method = words.join('.')
 if (method === 'done') method = 'worker.done'
 if (method === 'ask') method = 'worker.ask'
 
 // Флаги без значения. Остальные берут следующий аргумент как значение, даже если он начинается
 // с `--` (`--answer "--force"`): иначе значение превращалось в true, а следующий флаг терялся.
-const BOOLEAN_FLAGS = new Set(['wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help', 'start'])
+const BOOLEAN_FLAGS = new Set([
+  'wait', 'follow', 'cascade', 'accept', 'restart', 'dismiss', 'all', 'json', 'help', 'start', 'yes',
+  // settings set: флаги без значения (выключить — --no-<флаг>).
+  'keep-in-background', 'notifications-enabled', 'sound', 'show-preview', 'auto-check', 'auto-download', 'install-when-idle'
+])
 // Повторяемые флаги: каждое вхождение — отдельный элемент (без split по запятой).
-const REPEATABLE_FLAGS = new Set(['option', 'show'])
+const REPEATABLE_FLAGS = new Set(['option', 'show', 'notify-role', 'notify-event', 'enable', 'disable'])
 
 const params = {}
 for (let i = 0; i < argv.length; i++) {
@@ -181,7 +266,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 // Прогон координатора: явный --run важнее $ORCA_RUN_ID.
-const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'request.list', 'workflow.show', 'roles.list', 'rules.get', 'rules.set']
+const RUN_METHODS = ['task.create', 'check', 'runs.close', 'runs.finish', 'stage.finish', 'request.list', 'workflow.show', 'roles.list', 'rules.get', 'rules.set']
 // Здесь --type выбирает тип явно: прогон из окружения не подставляем, иначе он перебил бы выбор.
 const TYPE_METHODS = ['workflow.show', 'roles.list', 'rules.get', 'rules.set']
 const explicitType = TYPE_METHODS.includes(method) && params.type !== undefined
@@ -232,8 +317,24 @@ if (method === 'worker.done') {
 }
 if (method === 'worker.ask') readFileParam('context-file', 'context')
 if (method === 'rules.set') readFileParam('file', 'text')
-if (method === 'runs.finish') readFileParam('summary-file', 'summary')
-if (method === 'runs.finish' && params.summary === true) {
+// project rules set: --file — CLAUDE.md|AGENTS.md (имя, не путь до контента), содержимое — --text или --rules-file.
+if (method === 'project.rules.set') readFileParam('rules-file', 'text')
+// project columns set: --file — путь к JSON с массивом колонок (BoardColumn[]); парсится тут же, серверу уходит массив.
+if (method === 'project.columns.set') {
+  if (params.file === undefined || params.file === true) {
+    console.error('ошибка: --file обязателен: путь к JSON-файлу с массивом колонок')
+    process.exit(1)
+  }
+  try {
+    params.columns = JSON.parse(readFileSync(params.file, 'utf8'))
+  } catch (e) {
+    console.error(`ошибка: не удалось прочитать или разобрать ${params.file}: ${e.message}`)
+    process.exit(1)
+  }
+  delete params.file
+}
+if (method === 'runs.finish' || method === 'stage.finish') readFileParam('summary-file', 'summary')
+if ((method === 'runs.finish' || method === 'stage.finish') && params.summary === true) {
   console.error('ошибка: --summary требует текста сводки')
   process.exit(1)
 }
@@ -241,11 +342,20 @@ if (method === 'rules.set' && typeof params.text !== 'string') {
   console.error('ошибка: rules set требует --text "..." или --file <путь>')
   process.exit(1)
 }
+if (method === 'project.rules.set' && typeof params.text !== 'string') {
+  console.error('ошибка: project rules set требует --text "..." или --rules-file <путь>')
+  process.exit(1)
+}
+// «Решение ИИ»: без обоснования сервер откажет — говорим сразу, до подключения к сокету.
+if ((method === 'decision.choose' || method === 'decision.escalate') && (typeof params.reason !== 'string' || !params.reason.trim())) {
+  console.error(`ошибка: ${method === 'decision.choose' ? 'decision choose' : 'decision escalate'} требует --reason "обоснование"`)
+  process.exit(1)
+}
 if (params.option !== undefined && params.option.includes(true)) {
   console.error('ошибка: --option требует текста варианта ("метка|пояснение")')
   process.exit(1)
 }
-if ((method === 'runs.close' || method === 'runs.finish') && !params.run) {
+if ((method === 'runs.close' || method === 'runs.finish' || method === 'stage.finish') && !params.run) {
   console.error('ошибка: не указан прогон — передайте --run <id> или задайте ORCA_RUN_ID')
   process.exit(1)
 }
@@ -262,8 +372,8 @@ const request = {
   params,
   dispatchId: process.env.ORCA_DISPATCH_ID,
   taskId: process.env.ORCA_TASK_ID,
-  // Команды уровня приложения проект не выбирают: --project и $ORCA_PROJECT им не передаём.
-  projectId: method === 'projects.list' ? undefined : params.project ?? process.env.ORCA_PROJECT
+  // Команды уровня приложения (settings.*, как projects.list) проект не выбирают: --project и $ORCA_PROJECT им не передаём.
+  projectId: ['projects.list', 'settings.get', 'settings.set'].includes(method) ? undefined : params.project ?? process.env.ORCA_PROJECT
 }
 delete params.project
 

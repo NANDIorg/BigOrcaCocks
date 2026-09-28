@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useMemo, useState } from 'react'
-import { globalBoardColumns, type AgentSession, type BoardColumn, type GlobalTask } from '@orca-board/core'
+import { globalBoardColumns, type AgentSession, type BoardColumn, type GlobalTask, type Workflow } from '@orca-board/core'
 import { useNow } from './useNow'
 import { useT } from './i18n'
 import { fullStamp } from './globalFormat'
@@ -15,6 +15,10 @@ export interface GlobalHistoryProps {
    * Нет (старый main или прогон до статистики) — запусков в ленте нет.
    */
   coordinatorSessions?: AgentSession[]
+  /** Граф прогона (`workflowForRun`): названия этапов в ленте. Нет — берутся из самих записей истории этапов. */
+  workflow?: Workflow
+  /** Ссылка «на графе» у входов в этапы: вкладка «Граф» на этой ноде. Нет (у прогона нет вкладки «Граф») — ссылки нет. */
+  onShowStage?(nodeId: string): void
 }
 
 /**
@@ -22,13 +26,13 @@ export interface GlobalHistoryProps {
  * после проверки (выделены), сводка и запуски координатора, закрытие (`globalTimeline`). Всё, что она читает,
  * необязательно: со старым main ленты может не быть — тогда подсказка перезапустить приложение.
  */
-export function GlobalHistory({ global, columns = [], coordinatorSessions }: GlobalHistoryProps): React.JSX.Element {
+export function GlobalHistory({ global, columns = [], coordinatorSessions, workflow, onShowStage }: GlobalHistoryProps): React.JSX.Element {
   const t = useT()
   const now = useNow()
   const [expanded, setExpanded] = useState(false)
   // Названия — как на глобальной доске («Проверка»), остальные колонки проекта — запасом для статусов вне неё.
   const all = useMemo(() => [...globalBoardColumns(columns), ...columns], [columns])
-  const events = globalTimeline({ ...global, coordinatorSessions }, all, now)
+  const events = globalTimeline({ ...global, coordinatorSessions, workflow }, all, now)
   const shown = visibleTimeline(events, expanded)
   const hidden = events.length - shown.length
   const days = groupByDay(shown, now)
@@ -49,7 +53,9 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions }: Glo
             <div key={day.key} className="gt-hist-day">
               <h4 className="gt-hist-day-title">{day.label}</h4>
               <ol className="gt-hist-list">
-                {day.events.map((e) => (
+                {day.events.map((e) => {
+                  const stageNode = e.nodeId
+                  return (
                   <li key={e.key} className={`gt-hist-row gt-hist-${e.kind}${e.highlight ? ' is-return' : ''}`}>
                     <span className="gt-hist-at" title={fullStamp(e.at)}>
                       {e.approx ? '≈ ' : ''}{formatClock(e.at)}
@@ -59,12 +65,19 @@ export function GlobalHistory({ global, columns = [], coordinatorSessions }: Glo
                       <div>
                         <b>{e.title}</b>
                         {e.detail && <span className="gt-hist-detail"> — {e.detail}</span>}
+                        {onShowStage && stageNode !== undefined && (
+                          <button type="button" className="btn-text gt-hist-link" title={t('global.history.onGraphTitle')} onClick={() => onShowStage(stageNode)}>
+                            {t('global.history.onGraph')}
+                          </button>
+                        )}
                       </div>
                       {e.sub && <div className="muted gt-hist-sub">{e.sub}</div>}
                       {e.text && <div className={e.highlight ? 'gt-hist-quote' : 'muted gt-hist-excerpt'}>{e.text}</div>}
+                      {e.note && <div className="muted gt-hist-excerpt">{e.note}</div>}
                     </div>
                   </li>
-                ))}
+                  )
+                })}
               </ol>
             </div>
           ))}
