@@ -37,6 +37,7 @@ import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
 import { OrcaError, ipcError, mt, setMainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
+import { rendererSource } from './renderer-source'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -105,11 +106,13 @@ function createWindow(): BrowserWindow {
     shell.openExternal(url)
     return { action: 'deny' }
   })
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  const source = rendererSource({
+    isPackaged: app.isPackaged,
+    devUrl: process.env['ELECTRON_RENDERER_URL'],
+    indexHtml: join(__dirname, '../renderer/index.html')
+  })
+  if (source.kind === 'url') win.loadURL(source.url)
+  else win.loadFile(source.path)
   return win
 }
 
