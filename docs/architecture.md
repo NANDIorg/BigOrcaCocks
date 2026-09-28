@@ -2039,7 +2039,8 @@ releaseNotes, releaseUrl}`), `download(onProgress): Promise<void>` (скачат
 
 **Windows NSIS** (`winUpdater.ts`): `electron-updater` (`autoUpdater`) читает `latest.yml` и `app-update.yml` (electron-builder кладёт его
 в `resources` при сборке nsis/portable по блоку `publish`). `autoDownload` и `autoInstallOnAppQuit` выключены — всем управляет
-`Updater`; sha512 установщика electron-updater сверяет сам (проверка издателя не настроена: подписи кода нет);
+`Updater`; sha512 установщика electron-updater сверяет сам (проверка издателя не настроена: у Windows-сборки подписи кода нет; macOS подписывается
+Developer ID и нотаризуется — «Подпись macOS» ниже);
 `install()` — `quitAndInstall(true, true)` (тихая установка в прежнюю папку и перезапуск).
 
 **Windows portable** (`PORTABLE_EXECUTABLE_FILE`): заменить exe на ходу нельзя, поэтому `support = { mode: 'manual-download',
@@ -2312,6 +2313,7 @@ arm64 и x64 с финальной проверкой контейнеров, т
 26.15.3 notarize/staple `.app` до ZIP/DMG. Hook `artifactBuildCompleted` завершает timestamp-подпись,
 notarization и stapling DMG, пока доступен временный keychain builder. `verify-macos-release.mjs`
 проверяет `.app` из обоих ZIP и DMG, все Mach-O, Gatekeeper/tickets и update metadata до upload.
+`--dir <каталог>` проверяет скачанный Actions artifact вместо `apps/desktop/release`.
 Точная цепочка и secrets — [releasing.md](releasing.md#подпись-macos-и-ci-secrets).
 Ad-hoc/runtime=false остались только в локальном профиле, запрещённом для CI.
 Исторический v1.0.0 не исправляется изменением конфигурации; нужна новая версия и реальный QA.
@@ -2326,8 +2328,8 @@ owner, repo, releaseType: draft}` в `electron-builder.yml` — публикац
 Обычные `dist`/`dist:mac`/`dist:win` вызывают electron-builder с `--publish never`: локальная сборка ничего не
 выкладывает даже при заданном `GH_TOKEN`.
 
-Комплект сборки (новая подписанная macOS-цепочка требует реального запуска с credentials;
-всё в `apps/desktop/release/`):
+Комплект сборки (подписанная macOS-цепочка впервые прошла в CI run 36432769360, см.
+[releasing.md](releasing.md#первый-подписанный-прогон); всё в `apps/desktop/release/`):
 
 | Файл | Откуда | Зачем |
 |---|---|---|
@@ -2386,6 +2388,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
 ## Грабли разработки
+
+- Упакованное приложение, запущенное из окружения `pnpm dev` (терминал агента наследует `ELECTRON_RENDERER_URL`),
+  грузило чужой dev-сервер `http://localhost:5173` вместо своего `out/renderer`: main слепо доверял переменной. Это ещё
+  и дыра — переменная окружения подменяла весь UI с доступом к preload API. Теперь dev-URL берётся только при
+  `!app.isPackaged` (`rendererSource()` в `src/main/renderer-source.ts`).
 
 - Два параллельных PR добавили в `renderer/src/` файлы, различающиеся только регистром: компонент `ImageAttachments.tsx`
   и модуль `imageAttachments.ts`. На macOS и Windows файловая система регистр не различает: `import './ImageAttachments'`

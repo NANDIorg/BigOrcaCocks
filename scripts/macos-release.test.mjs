@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { builderRequire, readYaml, run, validateCredentials, validateReleaseConfig, selectIdentity, validateSignature, notarizeDmg, verifyUpdateMetadata } from './macos-release.mjs'
 import { beforePack, artifactBuildCompleted } from '../apps/desktop/build/macos-release-hooks.mjs'
 import { beforePack as localBeforePack } from '../apps/desktop/build/macos-local-hooks.mjs'
-import { validateEntitlements, verifyApp, verifyDmg } from './verify-macos-release.mjs'
+import { releaseDirectory, validateEntitlements, verifyApp, verifyDmg } from './verify-macos-release.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const desktop = join(root, 'apps/desktop')
@@ -490,4 +490,24 @@ test('validation хеширует только полный финальный �
   assert.deepEqual(paths.sort(), [...expected, 'SHA256SUMS'].map(file => `apps/desktop/release/${file}`).sort())
   rmSync(join(directory, 'orca-board-1.0.0-x64.zip.blockmap'))
   assert.notEqual(execute().status, 0, 'неполный комплект не должен получить успешный checksum-шаг')
+})
+
+test('verifier: --dir выбирает скачанный каталог, без аргументов — apps/desktop/release', t => {
+  const fallback = join(desktop, 'release')
+  const exists = new Set([fallback])
+  const isDirectory = path => exists.has(path)
+  assert.equal(releaseDirectory([], fallback, isDirectory), fallback)
+  const downloaded = temporary(t)
+  assert.equal(releaseDirectory(['--dir', downloaded], fallback), downloaded)
+  assert.equal(releaseDirectory([`--dir=${downloaded}`], fallback), downloaded)
+  // Относительный путь — от текущего каталога запуска, как у обычных CLI.
+  exists.add(resolve('artifact'))
+  assert.equal(releaseDirectory(['--dir', 'artifact'], fallback, isDirectory), resolve('artifact'))
+  const missing = join(downloaded, 'нет-такого')
+  assert.throws(() => releaseDirectory(['--dir', missing], fallback), error => error.message.includes(`каталог артефактов не найден: ${missing}`))
+  assert.throws(() => releaseDirectory([], fallback, () => false), /каталог артефактов не найден/)
+  for (const argv of [['--dir'], ['--dir', ''], ['--dir='], ['--dir', '--other']]) {
+    assert.throws(() => releaseDirectory(argv, fallback, isDirectory), /--dir: укажите путь/)
+  }
+  assert.throws(() => releaseDirectory(['release'], fallback, isDirectory), /неизвестный аргумент release/)
 })

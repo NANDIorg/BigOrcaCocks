@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, readFileSync, openSync, readSync, closeSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, readFileSync, openSync, readSync, closeSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -104,12 +104,32 @@ export function verifyRelease(directory, version, teamId, execute = run) {
   verifyUpdateMetadata(directory, version)
 }
 
+// Каталог по умолчанию — выход electron-builder в CI; `--dir` нужен, чтобы проверить
+// скачанный Actions artifact на месте, не копируя его в apps/desktop/release.
+export function releaseDirectory(argv, defaultDirectory, isDirectory = path => {
+  try { return statSync(path).isDirectory() } catch { return false }
+}) {
+  let directory = defaultDirectory
+  for (let index = 0; index < argv.length; index++) {
+    const argument = argv[index]
+    let value
+    if (argument === '--dir') value = argv[++index]
+    else if (argument.startsWith('--dir=')) value = argument.slice('--dir='.length)
+    else requireRelease(false, `неизвестный аргумент ${argument}; допустим только --dir <каталог артефактов>`)
+    requireRelease(value && !value.startsWith('--'), '--dir: укажите путь к каталогу артефактов')
+    directory = resolve(value)
+  }
+  requireRelease(isDirectory(directory), `каталог артефактов не найден: ${directory}`)
+  return directory
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     requireRelease(process.platform === 'darwin', 'проверка артефактов выполняется на macOS')
     const desktop = fileURLToPath(new URL('../apps/desktop/', import.meta.url))
+    const directory = releaseDirectory(process.argv.slice(2), join(desktop, 'release'))
     const { version } = JSON.parse(readFileSync(join(desktop, 'package.json'), 'utf8'))
-    verifyRelease(join(desktop, 'release'), version, process.env.APPLE_TEAM_ID)
+    verifyRelease(directory, version, process.env.APPLE_TEAM_ID)
     process.stdout.write('Финальные macOS ZIP/DMG, подписи, tickets и metadata проверены.\n')
   } catch (error) {
     process.stderr.write(`${error.message}\n`)
