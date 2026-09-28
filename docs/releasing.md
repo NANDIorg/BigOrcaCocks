@@ -203,9 +203,9 @@ workflow из указанного ref; она должна содержать `
 принимает имя ветки/тега и inputs, требует Actions write у вызывающего пользователя/токена
 (это право отправить событие, не права `GITHUB_TOKEN` самой job).
 
-Эти первоисточники и регистрация workflow обосновывают следующий способ запуска,
-**но успешный dispatch нового workflow на feature ещё не выполнен**, как и положительный
-прогон подписанной сборки. Не объявляй доступность dispatch доказанной одним наличием ID.
+Эти первоисточники и регистрация workflow обосновывают следующий способ запуска.
+Первый успешный dispatch выполнен на develop — см. «Первый подписанный прогон» ниже;
+на feature dispatch по-прежнему не проверялся, не объявляй его доступность доказанной одним наличием ID.
 Если GitHub отвергнет событие, сохрани статус/сообщение API без токенов и проверь опубликованный
 ref, trigger, регистрацию и полномочия вызывающего. Не обходи отказ тегом, запуском старого
 релиза или изменением default branch; требуемую интеграцию workflow выполняй отдельно по Git Flow.
@@ -242,12 +242,38 @@ ls -1 "$validation_dir"
 `status=completed`, `conclusion=success` и успешную `macos-validation` в run. В каталоге
 проверь описанный комплект восьми файлов; все семь строк SHA256SUMS должны дать OK.
 На Linux вместо `shasum` можно использовать `sha256sum --check SHA256SUMS`.
+
+Затем на macOS проверь скачанные файлы тем же verifier, что и CI, не копируя их в
+`apps/desktop/release`. Версия берётся из `apps/desktop/package.json`, поэтому запускай из
+worktree на `$validation_sha`; ожидаемый издатель — `APPLE_TEAM_ID` (публичный Team ID, не secret):
+
+```sh
+test "$(git rev-parse HEAD)" = "$validation_sha"
+APPLE_TEAM_ID=<Team-ID> node scripts/verify-macos-release.mjs --dir "$validation_dir"
+```
+
+Без `--dir` проверяется `apps/desktop/release` (так делает CI). Нет каталога — verifier
+завершается ошибкой «каталог артефактов не найден: <путь>».
 При отказе изучай конкретный шаг и отдельный diagnostic artifact текущей попытки,
 не запрашивай значения secrets и не принимай частичные файлы за готовую сборку.
 
-Зелёный реальный validation подтвердит credentials и автоматическую цепочку на этом SHA.
+Зелёный реальный validation подтверждает credentials и автоматическую цепочку на этом SHA.
 Первая установка Intel/Apple Silicon с quarantine, онлайн/офлайн, GUI/JIT/PTY/CLI и обновление
 с 1.0.0 остаются отдельной приёмкой ниже. Новый patch-релиз требует отдельного релизного поручения.
+
+### Первый подписанный прогон
+
+Run **36432769360** (28.09.2026, `workflow_dispatch` → `macos-validation`, develop `04acebd`) — success.
+QA проверил скачанный artifact по этому документу:
+
+- arm64 и x64, ZIP и DMG: Developer ID Application (Team `NWH8D69Z95`), hardened runtime,
+  secure timestamp; `spctl` — `source=Notarized Developer ID`; `stapler validate` — OK;
+- подписанный arm64 с выставленным вручную quarantine запускается: renderer, PTY, CLI.
+
+Этим подтверждены credentials/secrets, импорт `.p12`, notarization и stapling на реальном runner.
+**Ещё не проверено:** запуск x64 на Intel; чистая машина с настоящим браузерным quarantine и
+GUI-диалогом Gatekeeper; офлайн-запуск (stapled ticket без сети); обновление с ad-hoc 1.0.0 на
+подписанную сборку. Это по-прежнему «Приёмка первой установки» ниже.
 
 ## Подпись macOS и CI secrets
 
@@ -282,7 +308,8 @@ notary/timestamp/ticket-сервисам и Xcode с `notarytool`/`stapler`.
 По диагностике v1.0.0 локального Developer ID Application не было и repository secrets отсутствовали.
 QA 25.09.2026 подтвердил имена/метаданные всех пяти repository secrets; значения не читались.
 Это не подтверждает корректность p12/паролей, действительность сертификата или выдачу secrets
-runner. Реальный успешный подписанный прогон и первый запуск **пока не проверены**.
+runner. Первый успешный подписанный прогон — run 36432769360 (28.09.2026), подробности и что ещё
+не проверено — в [«Первый подписанный прогон»](#первый-подписанный-прогон).
 
 Порядок в коде (закреплённый **electron-builder 26.15.3**):
 
