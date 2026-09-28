@@ -2387,6 +2387,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 
 ## Грабли разработки
 
+- Упакованное приложение, запущенное из окружения `pnpm dev` (терминал агента наследует `ELECTRON_RENDERER_URL`),
+  грузило чужой dev-сервер `http://localhost:5173` вместо своего `out/renderer`: main слепо доверял переменной. Это ещё
+  и дыра — переменная окружения подменяла весь UI с доступом к preload API. Теперь dev-URL берётся только при
+  `!app.isPackaged` (`rendererSource()` в `src/main/renderer-source.ts`).
+
 - Два параллельных PR добавили в `renderer/src/` файлы, различающиеся только регистром: компонент `ImageAttachments.tsx`
   и модуль `imageAttachments.ts`. На macOS и Windows файловая система регистр не различает: `import './ImageAttachments'`
   нашёл `.ts` вместо `.tsx`, typecheck упал с TS1149/TS1261, а сборка у пользователей подхватила бы не тот файл. Модуль
