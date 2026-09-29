@@ -191,6 +191,13 @@ export default {
   'docs.notFound': 'файл не найден: {path}',
   'docs.notFile': 'не файл: {path}',
   'docs.tooBig': 'файл больше {mb} МБ: {path}',
+  'files.badPath': 'недопустимый путь: {path}',
+  'files.outside': 'путь вне проекта: {path}',
+  'files.hidden': 'служебная папка git не показывается: {path}',
+  'files.notFound': 'не найдено: {path}',
+  'files.notDir': 'не папка: {path}',
+  'files.rootMissing': 'папки проекта нет на диске: {path}',
+  'files.readFailed': 'не удалось прочитать {path}: {error}',
 
   'showcase.taskNotFound': 'показ: задача не найдена: {id}',
   'showcase.dispatchNotFound': 'показ: запуск {id} не найден у этой задачи',

@@ -461,3 +461,45 @@ export function checkoutProjectBranch(root: string, branch: string, liveAgents: 
     return projectBranchInfo(root)
   })
 }
+
+// ---------- игнорируемое git'ом для вкладки «Файлы» (`files:list`, main/project-files.ts) ----------
+
+/** Проверка игнора локальная; таймаут — только против зависшего git (сетевой диск, огромный индекс). */
+const CHECK_IGNORE_TIMEOUT_MS = 10_000
+
+/**
+ * Какие из `paths` (относительно `cwd`, папки — с `/` на конце: шаблон `node_modules/` действует только на папки)
+ * git игнорирует. Git сам применяет вложенные `.gitignore`, `.git/info/exclude`, глобальные excludes и отрицания `!`;
+ * отслеживаемые файлы игнорируемыми не считаются — как в `git status`. Пути идут через stdin, а не argv: в папке
+ * тысячи записей, а командная строка Windows ограничена 32 767 знаками. `runGit` stdin не умеет — отсюда свой `execFile`.
+ * Код выхода 1 — «ничего не игнорируется», для `execFile` это ошибка, но ответ пустой. Прочее (128 — не репозиторий,
+ * «dubious ownership», git не найден, таймаут) — `git.opFailed`: вызывающий решает, как жить без фильтра.
+ */
+export function gitCheckIgnore(cwd: string, paths: string[]): Promise<Set<string>> {
+  if (paths.length === 0) return Promise.resolve(new Set())
+  const args = ['check-ignore', '-z', '--stdin']
+  return new Promise((resolvePromise, reject) => {
+    const child = execFile(
+      'git',
+      args,
+      {
+        cwd,
+        encoding: 'utf8',
+        timeout: CHECK_IGNORE_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', NO_COLOR: '1', GIT_PAGER: 'cat' }
+      },
+      (err, stdout, stderr) => {
+        if (err && !(err.code === 1 && !err.killed)) {
+          reject(opFailed(args, Object.assign(err, { stderr }), CHECK_IGNORE_TIMEOUT_MS))
+          return
+        }
+        resolvePromise(new Set(stdout.split('\0').filter(Boolean)))
+      }
+    )
+    // git может выйти, не дочитав stdin (не репозиторий), — EPIPE не должен ронять main; итог сообщит колбэк.
+    child.stdin?.on('error', () => undefined)
+    child.stdin?.end(paths.join('\0') + '\0')
+  })
+}

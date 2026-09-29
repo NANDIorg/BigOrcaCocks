@@ -307,6 +307,39 @@ export const PROJECT_GIT_ERROR_CODES = [
 ] as const
 export type ProjectGitErrorCode = (typeof PROJECT_GIT_ERROR_CODES)[number]
 
+/** Вид записи во вкладке «Файлы»: симлинк показывается как есть, без перехода по нему. */
+export type ProjectFileKind = 'dir' | 'file' | 'symlink'
+
+/** Запись папки проекта во вкладке «Файлы». Пути renderer собирает сам: `dir + '/' + name`. */
+export interface ProjectFileEntry {
+  name: string
+  kind: ProjectFileKind
+}
+
+export interface ProjectFilesListing {
+  /** Папка от корня проекта через `/`; '' — корень (эхо запроса: renderer отбрасывает устаревшие ответы). */
+  dir: string
+  /** Отсортировано main: папки, затем файлы и симлинки, по имени. */
+  entries: ProjectFileEntry[]
+  /** Записей в папке больше `PROJECT_FILES_DIR_LIMIT` — показаны первые. */
+  truncated: boolean
+}
+
+/** Сколько записей одной папки отдаёт `files:list`: огромная папка не должна подвешивать IPC и дерево. */
+export const PROJECT_FILES_DIR_LIMIT = 5000
+
+/** Ожидаемые отказы `files:*` — у каждого свой текст в renderer (образец — `PROJECT_GIT_ERROR_CODES`). */
+export const PROJECT_FILES_ERROR_CODES = [
+  'files.badPath', // не строка, NUL, абсолютный, `..`/`.`/пустой сегмент, `\`, `:` на win32
+  'files.outside', // путь (по realpath) вне корня проекта
+  'files.hidden', // `.git`
+  'files.notFound', // папки/файла уже нет (удалили после последнего чтения)
+  'files.notDir', // list на файле
+  'files.rootMissing', // корня проекта нет на диске
+  'files.readFailed' // прочее: доступ, ввод-вывод, слишком длинный путь; параметры path, error
+] as const
+export type ProjectFilesErrorCode = (typeof PROJECT_FILES_ERROR_CODES)[number]
+
 /**
  * Проект в renderer. Свои у проекта только колонки, агенты и типы задач; роли, воркфлоу, правила агентов
  * и разрешения — у типа задачи (`TaskType`, «Настройки → Типы задач»).
@@ -878,6 +911,18 @@ export interface OrcaApi {
      * keydown. В старом preload метода нет — проверяй перед подпиской.
      */
     onFrameEscape(cb: () => void): () => void
+  }
+  /**
+   * Вкладка «Файлы»: дерево корня проекта `projectId`, только чтение. `projectId` явный, а не «активный проект»:
+   * пока запрос идёт в main, человек может переключить проект, и ответ был бы про чужой репозиторий. Коды отказов —
+   * `PROJECT_FILES_ERROR_CODES`. `files:open` нет намеренно: запуск произвольного файла системой опасен (политика
+   * `shared/showcase.ts`); `.md` открываются в «Документах». Появился позже остальных: в старом preload нет — проверяй перед вызовом.
+   */
+  files: {
+    /** Содержимое одной папки корня проекта `projectId`; `dir` опущен или '' — корень. Игнорируемое git'ом и `.git` не отдаётся. */
+    list(projectId: string, dir?: string): Promise<ProjectFilesListing>
+    /** Показать запись (файл, папку, симлинк — сам симлинк) в Finder/Проводнике. Ничего не открывает и не запускает. */
+    reveal(projectId: string, path: string): Promise<void>
   }
   /** Правила активного проекта: CLAUDE.md и AGENTS.md в его корне (не в worktree задач). */
   rules: {
