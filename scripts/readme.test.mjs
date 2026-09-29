@@ -52,6 +52,14 @@ test('documentAnchors: заголовки без разметки, повтор�
   assert.deepEqual([...anchors].sort(), ['заголовок-code-и-ссылка', 'повтор', 'повтор-1', 'ручной'].sort())
 })
 
+test('documentAnchors и collectReferences: CRLF (выгрузка git на Windows) — те же якоря и ссылки, что и с LF', () => {
+  const lf = '# Заголовок\n\n## Установка\n\n```sh\n# не заголовок\n```\n\n[док](docs/a.md#раздел)\n'
+  const crlf = lf.replace(/\n/g, '\r\n')
+  assert.deepEqual([...documentAnchors(crlf)], [...documentAnchors(lf)])
+  assert.deepEqual([...documentAnchors(crlf)], ['заголовок', 'установка'])
+  assert.deepEqual(collectReferences(crlf), collectReferences(lf))
+})
+
 test('collectReferences: ссылки, картинки, [x]: url, href/src/srcset; код и внешние адреса не мешают', () => {
   const found = collectReferences(
     [

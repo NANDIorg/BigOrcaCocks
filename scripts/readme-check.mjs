@@ -4,9 +4,17 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
 
+/**
+ * CRLF → LF. На Windows git выгружает файлы с CRLF: после `split('\n')` в конце строки остаётся `\r`, регулярка
+ * заголовка его не пропускает — ни один заголовок не находился, и все якоря считались битыми (CI на windows-latest).
+ */
+function toLf(text) {
+  return text.replace(/\r\n?/g, '\n')
+}
+
 /** Убирает то, что не является разметкой ссылок: HTML-комментарии, fenced-блоки и инлайн-код. */
 export function stripCode(markdown) {
-  return stripFences(markdown.replace(/<!--[\s\S]*?-->/g, '')).replace(/`[^`\n]*`/g, '')
+  return stripFences(toLf(markdown).replace(/<!--[\s\S]*?-->/g, '')).replace(/`[^`\n]*`/g, '')
 }
 
 /** Строки вне fenced-блоков (``` и ~~~): `# комментарий` в bash-примере — не заголовок, `[x](y)` в примере — не ссылка. */
@@ -73,7 +81,7 @@ function headingText(source) {
 export function documentAnchors(markdown) {
   const anchors = new Set()
   const counts = new Map()
-  const visible = stripFences(markdown.replace(/<!--[\s\S]*?-->/g, ''))
+  const visible = stripFences(toLf(markdown).replace(/<!--[\s\S]*?-->/g, ''))
   for (const line of visible.split('\n')) {
     const heading = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line)
     if (!heading) continue
