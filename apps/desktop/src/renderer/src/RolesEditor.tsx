@@ -29,6 +29,7 @@ import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
 import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
 import { ipcErrorMessage } from './ipcError'
+import { AGENT_STATE_TEXT, roleAgentState } from './stageRoles'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -51,20 +52,6 @@ interface Props {
 /** Уровни effort роли: по модели агента, если агент известен, иначе общий список из реестра. */
 function effortsOf(info: AgentInfo | undefined, agent: string, model: string | undefined): readonly string[] {
   return info ? effortOptionsFor(info, model) : effortOptions(agent)
-}
-
-/** Состояние агента роли для точки статуса и предупреждений. */
-type AgentState = 'on' | 'off' | 'unknown'
-
-function agentState(info: AgentInfo | undefined): AgentState {
-  if (!info) return 'unknown'
-  return info.enabled ? 'on' : 'off'
-}
-
-const AGENT_STATE_TEXT: Record<AgentState, TKey> = {
-  on: 'config.roles.agentState.on',
-  off: 'config.roles.agentState.off',
-  unknown: 'config.roles.agentState.unknown'
 }
 
 function newRoleId(): string {
@@ -159,7 +146,7 @@ export function RolesEditor({
 
   function item(r: Role): React.JSX.Element {
     const info = agents.find((a) => a.id === r.agent)
-    const state = agentState(info)
+    const state = roleAgentState(info)
     const isService = !isTaskRole(r.id)
     const summary = [
       agentTitle(r.agent),
@@ -309,7 +296,7 @@ function RolePanel({
   /** Открыто подтверждение удаления: что сломается без роли. */
   const [confirming, setConfirming] = useState(false)
   const current = agents.find((a) => a.id === r.agent)
-  const state = agentState(current)
+  const state = roleAgentState(current)
   const defaults = current?.defaults
   const models = current ? modelOptions(current) : []
   const customModel = r.model && !models.some((m) => m.id === r.model) ? r.model : undefined

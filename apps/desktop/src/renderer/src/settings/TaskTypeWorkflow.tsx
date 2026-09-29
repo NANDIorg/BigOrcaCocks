@@ -1,6 +1,6 @@
 import type React from 'react'
 import { Fragment, useMemo, useRef, useState } from 'react'
-import { defaultWorkflow, stableJson, validateWorkflow, type BoardColumn, type Role, type WfIssue, type WfMigrationNote, type Workflow } from '@orca-board/core'
+import { defaultWorkflow, stableJson, validateWorkflow, type AgentInfo, type BoardColumn, type Role, type WfIssue, type WfMigrationNote, type Workflow } from '@orca-board/core'
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
@@ -29,6 +29,8 @@ interface Props {
    */
   columns: BoardColumn[]
   readOnly: boolean
+  /** Агенты для состояния ролей в инспекторе (для типа — `libraryAgents`); нет — состояние неизвестно. */
+  agents?: readonly AgentInfo[]
   /** Библиотека своих нод: палитра «Свои ноды» над холстом и блок «Своя нода» в инспекторе. Нет — их нет. */
   library?: NodeTemplatesHook
   /** Предупреждения автомиграции сохранённого графа (`TaskType.workflowNotes`); показываются, пока их не закрыли. */
@@ -48,7 +50,7 @@ interface Props {
  * один — граф типа: правки пути пишутся в `work.subflow` (`writeGraphAt`), поэтому сохранение, экспорт и валидация не
  * знают про уровни. У ноды без своего пути показан образец по умолчанию — только просмотр, пока не заведут свой.
  */
-export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, library, notes, onDismissNotes, onSave }: Props): React.JSX.Element {
+export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, agents, library, notes, onDismissNotes, onSave }: Props): React.JSX.Element {
   const t = useT()
   const locale = useLocale()
   const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
@@ -400,6 +402,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, li
               issues={levelIssuesShown}
               scope={scope}
               onOpenPath={scope === 'run' ? open : undefined}
+              agents={agents}
               library={library}
             />
           </fieldset>

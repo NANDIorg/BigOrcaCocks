@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Кто выполняет — выбор исполнителя этапа</title>
+<!--
+  Макеты карточки «Кто выполняет» инспектора воркфлоу («Настройки → Типы задач → Воркфлоу»).
+  Три варианта на одних данных: A — переключатель + список-строки (рекомендуемый), B — переключатель + плитки,
+  C — сводка + выбор по кнопке. Состояние (режим, отметки ролей) общее: отметили роль в A — она отмечена в B и C.
+  Автономная страница: стили, данные, логотипы агентов (те же SVG, что в приложении) и скрипт — внутри, без сети.
+  Параметры в адресе: ?s=1..5 (состояние), ?w=300|280 (ширина колонки), ?v=a|b|c (один вариант),
+  ?o=1 (раскрыть списки и группы), ?f=1 (состояние 4: граф из файла с двумя ролями).
+  Токены и классы — из styles.css: .wf-card, .wf-seg, .wf-dot, .roles-dot, .chip, .btn-sm, .wf-field-errs.
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43;
+  --card: #3b3e47; --card-hover: #41444e; --chip: #5b5e68; --chip-text: #c9ccd6;
+  --line: rgba(255,255,255,.06); --text: #ecedf1; --muted: #9ea1ad;
+  --accent: #7b86f5; --accent-2: #5a63c8;
+  --col-progress: #f08a3a; --col-input: #e8b04a; --col-review: #b57bee; --col-done: #5ad1cc;
+  --danger: #ef6b6b; --radius: 14px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+[hidden] { display: none !important; }
+code, .mono { font-family: ui-monospace, Menlo, monospace; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.muted { color: var(--muted); }
+
+/* ---------- панель макета (не часть дизайна) ---------- */
+.mock-bar { position: sticky; top: 0; z-index: 5; background: var(--page); display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mock-bar h1 { margin: 0; font-size: 15px; font-weight: 600; }
+.mock-bar .grp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mock-bar .lbl { color: var(--muted); font-size: 12px; }
+.seg-group { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.seg-group button { background: transparent; border: 0; padding: 4px 12px; color: var(--muted); white-space: nowrap; font-size: 12.5px; }
+.seg-group button + button { border-left: 1px solid var(--chip); }
+.seg-group button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.seg-group button:focus-visible, .mock-bar input:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mock-bar label.chk { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.mock-bar input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+.mock-note { padding: 12px 20px 0; max-width: 1240px; margin: 0 auto; font-size: 12.5px; color: var(--muted); }
+.mock-note b { color: var(--text); font-weight: 600; }
+
+/* ---------- сетка вариантов ---------- */
+.variants { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; padding: 16px 20px 40px; max-width: 1240px; margin: 0 auto; align-items: start; }
+.variants.one { grid-template-columns: minmax(0, 560px); }
+@media (max-width: 1080px) { .variants { grid-template-columns: minmax(0, 1fr); } }
+.variant { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.v-head h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.v-head h2 .tag { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 13px; }
+.v-head h2 .rec { font-size: 11px; font-weight: 500; color: var(--col-done); border: 1px solid color-mix(in srgb, var(--col-done) 55%, transparent); border-radius: 999px; padding: 0 8px; line-height: 18px; }
+.v-head p { margin: 0; font-size: 12.5px; color: var(--chip-text); }
+.pc { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--chip-text); }
+.pc li { padding-left: 16px; position: relative; }
+.pc li::before { position: absolute; left: 0; top: 0; font-weight: 700; }
+.pc .pro::before { content: "+"; color: var(--col-done); }
+.pc .con::before { content: "−"; color: var(--col-input); }
+.ruler { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed var(--chip); padding: 0 0 3px; }
+.col { width: var(--w); max-width: 100%; }
+.col-wrap { display: flex; flex-direction: column; gap: 8px; }
+.readout { font-size: 11px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+
+/* ---------- инспектор: карточка как .wf-card в styles.css ---------- */
+.insp { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 13px; }
+.wf-card { flex-shrink: 0; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--side); }
+.wf-card--error { border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.wf-card--warning { border-color: color-mix(in srgb, var(--col-input) 60%, transparent); }
+.wf-card-head { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 12px 0; font-size: 12.5px; font-weight: 600; }
+.wf-card-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 10px 12px 12px; }
+.wf-card .hint { margin: 0; font-size: 12px; color: var(--muted); }
+.wf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--col-input); }
+.wf-dot--error { background: var(--danger); }
+.wf-dot--warning { background: var(--col-input); }
+.wf-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.wf-field > span { font-size: 12px; color: var(--muted); }
+.wf-roles { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.insp select { background: var(--frame); color: var(--text); border: 1px solid transparent; border-radius: 8px; padding: 7px 10px; font-size: 13px; width: 100%; outline: none; }
+.insp select:focus { border-color: var(--accent); }
+.insp select.off { color: var(--muted); }
+.insp select.bad { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+input[type="checkbox"], input[type="radio"] { width: auto; margin: 0; accent-color: var(--accent); flex-shrink: 0; }
+.wf-field-errs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; overflow-wrap: anywhere; }
+.wf-field-errs li { display: flex; gap: 6px; align-items: flex-start; }
+.wf-field-errs .ic { margin-top: 1px; }
+.wf-field-errs--error { color: var(--danger); }
+.wf-field-errs--warning { color: var(--col-input); }
+.ic { width: 13px; height: 13px; flex-shrink: 0; }
+.roles-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.roles-dot.on { background: var(--col-done); }
+.roles-dot.off, .roles-dot.unknown { background: var(--col-input); }
+.chip { border: 1px solid var(--chip); color: var(--chip-text); border-radius: 999px; padding: 0 8px; font-size: 11px; line-height: 18px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
+.chip.sys { border-color: rgba(123,134,245,.5); color: #b9bff9; }
+.btn-sm { height: 26px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--chip); background: transparent; color: var(--text); font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; }
+.btn-sm:hover { border-color: var(--text); }
+.btn-sm:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-sm .ic { width: 12px; height: 12px; transition: transform .15s; }
+.btn-sm[aria-expanded="true"] .ic { transform: rotate(180deg); }
+.logo { display: block; flex-shrink: 0; }
+
+/* .wf-seg — как в styles.css; --full — новый модификатор: кнопки делят ширину поровну и переносят текст,
+   иначе две подписи не помещаются в 274 px. */
+.wf-seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--chip); border-radius: 8px; overflow: hidden; }
+.wf-seg button { padding: 4px 10px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.wf-seg button + button { border-left: 1px solid var(--chip); }
+.wf-seg button[aria-pressed="true"] { background: var(--side-2); color: var(--text); }
+.wf-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.wf-seg--full { display: flex; align-self: stretch; }
+.wf-seg--full button { flex: 1 1 0; min-width: 0; white-space: normal; text-align: center; line-height: 1.25; padding: 6px 8px; }
+
+/* ---------- A: строка роли ---------- */
+.rr-list { display: flex; flex-direction: column; gap: 6px; }
+.rr { display: grid; grid-template-columns: 16px 20px minmax(0, 1fr); gap: 4px 10px; align-items: start; padding: 8px 10px; background: var(--frame); border: 1px solid transparent; border-radius: 10px; cursor: pointer; min-width: 0; }
+.rr > input { margin-top: 2px; }
+.rr:hover { background: var(--card); }
+.rr.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--frame)); }
+.rr:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rr.is-off .logo { opacity: .55; }
+.rr--static { grid-template-columns: 20px minmax(0, 1fr); cursor: default; }
+.rr--static:hover { background: var(--frame); }
+.rr-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rr-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.rr-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rr-note { margin-left: auto; }
+.rr-tags { display: flex; }
+.rr-note { font-size: 11px; color: var(--col-input); white-space: nowrap; }
+.rr-sub { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.rr-sub span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-desc { font-size: 12px; color: var(--chip-text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rr-desc.none, .brief-d.none { color: var(--muted); font-style: italic; }
+
+/* сворачиваемая группа «Роли проверок» */
+.rgrp { border-top: 1px solid var(--line); padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rgrp > summary { cursor: pointer; padding: 8px 2px 2px; font-size: 12px; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; border-radius: 6px; }
+.rgrp > summary::-webkit-details-marker { display: none; }
+.rgrp > summary::before { content: ""; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform .15s; }
+.rgrp[open] > summary::before { transform: rotate(90deg); }
+.rgrp > summary:hover { color: var(--text); }
+.rgrp > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rgrp > summary em { font-style: normal; color: var(--accent); }
+.rgrp > .hint { margin: 0; }
+
+/* «сироты» и служебные роли */
+.orph-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.orph { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; font-size: 12px; color: var(--col-input); background: color-mix(in srgb, var(--col-input) 9%, var(--frame)); border: 1px solid color-mix(in srgb, var(--col-input) 40%, transparent); min-width: 0; }
+.orph .t { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text); display: flex; flex-direction: column; gap: 1px; }
+.orph .t b { font-weight: 600; }
+.orph .t .why { color: var(--col-input); font-size: 11.5px; }
+
+/* «координатор выбирает сам»: перечень ролей */
+.pool { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pl { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border-radius: 8px; background: var(--frame); font-size: 12.5px; }
+.pl .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl.dim .logo { opacity: .55; }
+.pl.dim .name { color: var(--muted); }
+.pl .ic { color: var(--col-input); }
+.note { padding: 8px 10px; border-radius: 10px; background: var(--frame); font-size: 12.5px; color: var(--chip-text); }
+.note small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted); }
+
+/* ---------- B: плитки ---------- */
+.chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cr { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; height: 36px; padding: 0 7px; background: var(--frame); border: 1px solid transparent; border-radius: 10px; color: var(--text); font-size: 12.5px; text-align: left; }
+.cr:hover { background: var(--card); }
+.cr:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cr .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Галка — значком в углу плитки: в строке она отнимала у названия ~20 px, и «Программист» усекался. */
+.cr .tick { position: absolute; top: -6px; right: -5px; width: 15px; height: 15px; padding: 2px; border-radius: 50%; background: var(--accent); color: #fff; box-shadow: 0 0 0 2px var(--side); }
+.cr[aria-pressed="true"], .cr[aria-checked="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--frame)); }
+.cr.is-off .logo { opacity: .55; }
+.brief { background: var(--frame); border-radius: 10px; border-left: 3px solid var(--accent); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.brief-h { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brief-t { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.brief-t b { font-size: 13px; font-weight: 600; }
+.brief-t .rr-top { align-items: center; }
+.brief-d { margin: 0; font-size: 12px; color: var(--chip-text); }
+.brief .off { color: var(--col-input); }
+
+/* ---------- C: сводка и плотный список ---------- */
+.sum { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--frame); min-width: 0; }
+.stack { display: flex; flex-shrink: 0; }
+.stack .logo { margin-left: -7px; padding: 2px; border-radius: 50%; background: var(--card); box-shadow: 0 0 0 2px var(--frame); box-sizing: content-box; }
+.stack .logo:first-child { margin-left: 0; }
+.sum-t { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
+.sum-t b { font-weight: 600; }
+.sum-t span { color: var(--chip-text); overflow-wrap: anywhere; }
+.dr-list { display: flex; flex-direction: column; gap: 2px; }
+.dr { display: grid; grid-template-columns: 16px 18px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; height: 34px; padding: 0 8px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.dr:hover { background: var(--frame); }
+.dr.is-on { background: color-mix(in srgb, var(--accent) 13%, var(--frame)); box-shadow: inset 0 0 0 1px var(--accent); }
+.dr:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dr.is-off .logo { opacity: .55; }
+.dr .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dr .meta { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.dr .ic { color: var(--col-input); }
+.brief-c { display: flex; flex-direction: column; gap: 2px; font-size: 12px; padding: 0 2px; min-width: 0; }
+.brief-c .rr-sub { color: var(--chip-text); }
+.brief-c .d { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="logo-claude" viewBox="0 0 24 24" fill="currentColor"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></symbol>
+<symbol id="logo-codex" viewBox="0 0 24 24" fill="currentColor"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></symbol>
+<symbol id="logo-gemini" viewBox="0 0 24 24" fill="currentColor"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></symbol>
+</svg>
+
+<header class="mock-bar">
+  <h1>Кто выполняет — выбор исполнителя этапа</h1>
+  <div class="grp"><span class="lbl">Состояние</span><div class="seg-group" id="bar-scen" role="group" aria-label="Состояние"></div></div>
+  <div class="grp"><span class="lbl">Ширина колонки</span><div class="seg-group" id="bar-w" role="group" aria-label="Ширина колонки"></div></div>
+  <div class="grp"><span class="lbl">Показать</span><div class="seg-group" id="bar-v" role="group" aria-label="Показать варианты"></div></div>
+  <label class="chk" id="bar-file" hidden><input type="checkbox" id="file2"> граф из файла: 2 роли</label>
+</header>
+<p class="mock-note" id="note"></p>
+<main class="variants" id="app"></main>
+
+<script>
+'use strict';
+/* ---------- данные: то, что приложение берёт из типа задачи и настроек агентов ---------- */
+var ROLES = [
+  { id: 'developer', title: 'Программист', agent: 'claude', model: 'Sonnet 4.5', on: true, kind: 'work',
+    desc: 'Пишет и меняет код: фичи, исправления, рефакторинг.' },
+  { id: 'analyst', title: 'Аналитик', agent: 'gemini', model: 'по умолчанию', on: false, kind: 'work',
+    desc: 'Разбирает задачу до кода: уточняет требования, находит риски, пишет короткое ТЗ.' },
+  { id: 'artist', title: 'Художник', agent: 'codex', model: 'GPT-5', on: true, kind: 'work', desc: '' },
+  { id: 'prompter', title: 'Промптер', agent: 'claude', model: 'Opus 4.5', on: true, kind: 'work',
+    desc: 'Пишет и правит промпты и инструкции агентов, проверяет их на примерах.' },
+  // Роль проверки — та, что стоит в gate-ноде верхнего уровня графа типа («проверяет: <нода>»).
+  { id: 'reviewer', title: 'Ревьюер', agent: 'claude', model: 'Opus 4.5', on: true, kind: 'check', checks: 'Ревью',
+    desc: 'Проверяет ветку рабочей задачи после worker_done и принимает или отклоняет её.' },
+  { id: 'qa', title: 'QA', agent: 'claude', model: 'Sonnet 4.5', on: true, kind: 'check', checks: 'Прогон тестов',
+    desc: 'Пишет и прогоняет тесты, проверяет поведение.' }
+];
+var SERVICE = { coordinator: 'Координатор', assistant: 'Ассистент' };
+var AG = { claude: { name: 'Claude', color: '#d97757' }, codex: { name: 'Codex', color: '#10a37f' }, gemini: { name: 'Gemini', color: '#4e8df5' } };
+var SCENARIOS = [
+  { n: 1, label: '1 · Координатор выбирает', note: '<b>roleIds пуст.</b> Вместо мелкой подписи — перечень рабочих ролей, из которых координатор реально выберет, и предупреждения о ролях без описания и с выключенным агентом. Роли проверок и служебные сюда не попадают.' },
+  { n: 2, label: '2 · Только выбранные', note: '<b>roleIds = [developer, prompter].</b> «Аналитик» — агент выключен (роль остаётся выбираемой), «Художник» — без описания, роли проверок — в свёрнутой группе. Отмечайте роли и переключайте режим: состояние общее для A, B и C.' },
+  { n: 3, label: '3 · Особые роли', note: '<b>roleIds = [developer, qa, old_role, coordinator].</b> «qa» — роль проверки, поэтому группа раскрыта; «old_role» нет в типе; «coordinator» — служебная. «Убрать» удаляет id из roleIds.' },
+  { n: 4, label: '4 · Путь подзадачи', note: '<b>Путь подзадачи (одиночный выбор).</b> «Не меняется» — roleIds пуст; «Сменить роль на…» — roleIds = [id], radio. Галка «граф из файла: 2 роли» показывает предупреждение — данные при показе не нормализуются.' },
+  { n: 5, label: '5 · Проверка / решение / вопрос', note: '<b>Ноды gate, decision, ask.</b> Одиночный выбор роли: под выбором — краткая карточка роли (агент, модель, описание, состояние). Сверху вниз: проверка (роль выбрана), проверка (не выбрана — ошибка), решение (агент выключен), вопрос (роли нет в типе).' }
+];
+var VARIANTS = [
+  { id: 'a', name: 'Переключатель + список-строки', rec: true,
+    desc: 'Режим — первое и явное решение (существующий .wf-seg). Роль — строка-карточка: логотип агента, «агент · модель», описание в две строки, точка состояния агента.',
+    pros: ['Видно всё, чего не хватало: чей агент, какая модель, чем занимается роль, включён ли агент', 'Ровная колонка без переносов; настоящие чекбоксы — клавиатура и «только просмотр» работают сами', 'Та же строка (RoleBrief) под select в gate / decision / ask'],
+    cons: ['Самая высокая: ≈ 90 px на роль — карточка с 4 рабочими ролями ≈ 570 px, с 6 ≈ 720 px (окно инспектора — 640 px); при 10+ ролях нужен compact-режим', 'Больше новой вёрстки, чем у B'] },
+  { id: 'b', name: 'Переключатель + плитки', rec: false,
+    desc: 'Роли — плитки по две в ряд с логотипом и названием (aria-pressed). Под плитками одна карточка роли, на которую наведён курсор или фокус.',
+    pros: ['В 1,5–2 раза ниже A: ≈ 375 px против 570 (4 рабочие роли + карточка роли), не растёт с длиной описаний', 'Хорошо при 10+ ролях; сетка 2 колонки, а не «рваный» flex-wrap'],
+    cons: ['Агент, модель и описание — только у одной роли за раз', 'Длинные названия усечены («Мобильный разработ…»)', 'Выключенный агент читается хуже: только мелкая точка на плитке'] },
+  { id: 'c', name: 'Сводка + выбор по кнопке', rec: false,
+    desc: 'В режиме «Только выбранные» карточка короткая: стопка логотипов, кто выбран, предупреждения. Полный список — под «Изменить выбор», плотными строками в одну линию.',
+    pros: ['Самая короткая карточка: ≈ 195 px в свёрнутом виде; предупреждения видны без раскрытия', 'Масштабируется на любое число ролей'],
+    cons: ['Лишний клик, чтобы поменять выбор', 'Описание — только в подсказке (title): по названию и модели выбирать труднее', 'Новый паттерн раскрытия'] }
+];
+var WIDTHS = [300, 280];
+
+/* ---------- состояние ---------- */
+var qs = {};
+try { qs = Object.fromEntries(new URLSearchParams(location.search)); } catch (e) { qs = {}; }
+var state = { scenario: 1, width: qs.w === '280' ? 280 : 300, variant: /^[abc]$/.test(qs.v || '') ? qs.v : 'all',
+  mode: 'coord', chosen: [], stash: [], focus: 'developer', open: { a: false, b: false, c: false, cl: false }, singles: {}, file2: false };
+
+function preset(n) {
+  state.scenario = n; state.stash = []; state.file2 = false; state.open = { a: false, b: false, c: false, cl: false };
+  if (n === 1) { state.mode = 'coord'; state.chosen = []; }
+  if (n === 2) { state.mode = 'chosen'; state.chosen = ['developer', 'prompter']; state.focus = 'prompter'; }
+  if (n === 3) { state.mode = 'chosen'; state.chosen = ['developer', 'qa', 'old_role', 'coordinator']; state.focus = 'qa'; }
+  if (n === 4) { state.mode = 'chosen'; state.chosen = ['prompter']; state.focus = 'prompter'; }
+  if (n === 5) { state.singles = { gate: 'reviewer', gateBad: '', decision: 'analyst', ask: 'old_role' }; }
+}
+var sc = parseInt(qs.s, 10); preset(sc >= 1 && sc <= 5 ? sc : 1);
+if (qs.o === '1') state.open = { a: true, b: true, c: true, cl: true };
+if (qs.f === '1' && state.scenario === 4) { state.file2 = true; state.chosen = ['developer', 'prompter']; }
+
+/* ---------- мелочи ---------- */
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function byId(id) { return ROLES.filter(function (r) { return r.id === id; })[0]; }
+function nameOf(id) { var r = byId(id); return r ? r.title : (SERVICE[id] || id); }
+function isSub() { return state.scenario === 4; }
+function effMode() { return state.chosen.length > 0 ? 'chosen' : state.mode; }
+function agentLine(r) { return AG[r.agent].name + ' · ' + r.model; }
+function stateText(r) { return r.on ? 'Агент включён' : 'Агент выключен — роль не запустится'; }
+var IC = {
+  warn: '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6 15 14H1L8 1.6Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.3v3.3M8 11.7v.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  tick: '<svg class="tick" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  chev: '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 6 4.5 4.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+};
+function logo(agent, size) {
+  return '<svg class="logo" width="' + size + '" height="' + size + '" style="color:' + AG[agent].color + '" role="img" aria-label="' + AG[agent].name + '"><use href="#logo-' + agent + '"/></svg>';
+}
+function dot(r) { return '<span class="roles-dot ' + (r.on ? 'on' : 'off') + '" role="img" aria-label="' + esc(stateText(r)) + '" title="' + esc(stateText(r)) + '"></span>'; }
+function warnList(items) {
+  if (!items.length) return '';
+  return '<ul class="wf-field-errs wf-field-errs--warning">' + items.map(function (t) { return '<li>' + IC.warn + '<span>' + t + '</span></li>'; }).join('') + '</ul>';
+}
+function wfCard(title, issue, body) {
+  var head = (issue ? '<span class="wf-dot wf-dot--' + issue + '" role="img" aria-label="' + (issue === 'error' ? 'Ошибка' : 'Предупреждение') + '"></span>' : '') + esc(title);
+  return '<section class="wf-card' + (issue ? ' wf-card--' + issue : '') + '" aria-label="' + esc(title) + '"><h4 class="wf-card-head">' + head + '</h4><div class="wf-card-body">' + body + '</div></section>';
+}
+
+/* ---------- общие куски ---------- */
+function seg(v) {
+  var m = effMode(), L = isSub() ? ['Роль подзадачи не меняется', 'Сменить роль на…'] : ['Координатор выбирает сам', 'Только выбранные'];
+  return '<div class="wf-seg wf-seg--full" role="group" aria-label="' + (isSub() ? 'Роль воркера подзадачи' : 'Кто выбирает роль') + '">' +
+    '<button type="button" data-act="mode" data-mode="coord" data-fk="' + v + '-m0" aria-pressed="' + (m === 'coord') + '">' + L[0] + '</button>' +
+    '<button type="button" data-act="mode" data-mode="chosen" data-fk="' + v + '-m1" aria-pressed="' + (m === 'chosen') + '">' + L[1] + '</button></div>';
+}
+function extras() { return state.chosen.filter(function (id) { return !byId(id); }); }
+function orphans() {
+  var ex = extras();
+  if (!ex.length) return '';
+  return '<ul class="orph-list">' + ex.map(function (id) {
+    var svc = !!SERVICE[id];
+    return '<li class="orph">' + IC.warn + '<span class="t"><b' + (svc ? '' : ' class="mono"') + '>' + esc(svc ? SERVICE[id] : id) + '</b><span class="why">' + (svc ? 'служебная роль' : 'нет в типе задачи') + '</span></span>' +
+      '<button type="button" class="btn-sm" data-act="remove" data-role="' + esc(id) + '" data-fk="rm-' + esc(id) + '">Убрать</button></li>';
+  }).join('') + '</ul>';
+}
+function pickHint(v) {
+  if (state.chosen.length) return '';
+  return '<p class="hint">' + (isSub() ? 'Ничего не выбрано — сохранится как «Роль подзадачи не меняется».' : 'Ничего не отмечено — сохранится как «Координатор выбирает сам».') + '</p>';
+}
+function multiWarn() {
+  if (!(isSub() && state.chosen.length > 1)) return '';
+  return warnList(['Отмечено несколько ролей — движок смену роли не выполнит; оставьте одну.']);
+}
+function poolWarns() {
+  var w = [];
+  ROLES.filter(function (r) { return r.kind === 'work'; }).forEach(function (r) {
+    if (!r.desc) w.push('«' + r.title + '» — нет описания: координатору придётся выбирать по названию.');
+  });
+  ROLES.filter(function (r) { return r.kind === 'work' && !r.on; }).forEach(function (r) {
+    w.push('«' + r.title + '» — агент выключен: подзадача с этой ролью не запустится.');
+  });
+  return warnList(w);
+}
+function chosenWarns() {
+  return warnList(state.chosen.map(byId).filter(function (r) { return r && !r.on; }).map(function (r) {
+    return '«' + r.title + '» — агент выключен: подзадача с этой ролью не запустится.';
+  }));
+}
+function keepNote() {
+  return '<div class="note">Воркер работает под ролью, которую подзадаче выбрал координатор.<small>Чтобы задать роль явно — «Сменить роль на…».</small></div>';
+}
+function poolIntro() { return '<p class="hint">Координатор сам подберёт роль каждой подзадачи по описанию — из рабочих ролей типа:</p>'; }
+function work() { return ROLES.filter(function (r) { return r.kind === 'work'; }); }
+function checks() { return ROLES.filter(function (r) { return r.kind === 'check'; }); }
+/* Роли в списке: у пути подзадачи группы проверок нет — правило движка касается только графа прогона. */
+function mainRoles() { return isSub() ? ROLES : work(); }
+function groupBlock(v, inner) {
+  if (isSub()) return '';
+  var cs = checks(), n = cs.filter(function (r) { return state.chosen.indexOf(r.id) >= 0; }).length;
+  var open = state.open[v] || n > 0;
+  return '<details class="rgrp" data-grp="' + v + '"' + (open ? ' open' : '') + '><summary data-fk="' + v + '-grp"><span>Роли проверок в этом воркфлоу (' + cs.length + (n ? ', <em>выбрано ' + n + '</em>' : '') + ')</span></summary>' +
+    '<p class="hint">Проверяют этапы этого воркфлоу. В режиме «Координатор выбирает сам» не участвуют.</p>' + inner(cs) + '</details>';
+}
+function totalSel() { return ROLES.length; }
+function countChosen() { return state.chosen.filter(byId).length; }
+function countHint() {
+  if (isSub()) return '<p class="hint">Воркер подзадачи на этой ноде сменит роль на выбранную:</p>';
+  return '<p class="hint">Выбрано ' + countChosen() + ' из ' + totalSel() + ' · подзадачи получат только отмеченные роли</p>';
+}
+function inputAttrs(r, v) {
+  var on = state.chosen.indexOf(r.id) >= 0, sub = isSub();
+  return 'type="' + (sub ? 'radio' : 'checkbox') + '"' + (sub ? ' name="' + (state.chosen.length > 1 ? 'r-' + r.id : 'r') + '"' : '') +
+    (on ? ' checked' : '') + ' data-act="' + (sub ? 'pick' : 'toggle') + '" data-role="' + r.id + '" data-fk="' + v + '-' + r.id + '"';
+}
+
+/* ---------- A ---------- */
+function rowA(r) {
+  var on = state.chosen.indexOf(r.id) >= 0;
+  var right = r.on ? '' : '<span class="rr-note">агент выкл.</span>';
+  var tag = r.checks && !isSub() ? '<span class="rr-tags"><span class="chip sys" title="Проверяет: ' + esc(r.checks) + '">проверяет: ' + esc(r.checks) + '</span></span>' : '';
+  return '<label class="rr' + (on ? ' is-on' : '') + (r.on ? '' : ' is-off') + '">' +
+    '<input ' + inputAttrs(r, 'a') + '>' + logo(r.agent, 20) +
+    '<span class="rr-main"><span class="rr-top"><b class="rr-title">' + esc(r.title) + '</b>' + right + '</span>' +
+    '<span class="rr-sub">' + dot(r) + '<span>' + esc(agentLine(r)) + '</span></span>' + tag +
+    '<span class="rr-desc' + (r.desc ? '' : ' none') + '" title="' + esc(r.desc) + '">' + (r.desc ? esc(r.desc) : 'Нет описания') + '</span></span></label>';
+}
+function listA(rs) { return '<div class="rr-list">' + rs.map(rowA).join('') + '</div>'; }
+function poolGrid() {
+  return '<ul class="pool">' + work().map(function (r) {
+    var tip = agentLine(r) + (r.on ? '' : ' — ' + stateText(r)) + (r.desc ? '' : ' — нет описания');
+    return '<li class="pl' + (r.on ? '' : ' dim') + '" title="' + esc(tip) + '">' + logo(r.agent, 16) + '<span class="name">' + esc(r.title) + '</span>' +
+      (r.on ? '' : dot(r)) + (r.desc ? '' : IC.warn) + '</li>';
+  }).join('') + '</ul>';
+}
+function bodyA() {
+  if (effMode() === 'coord') return seg('a') + (isSub() ? keepNote() : poolIntro() + poolGrid() + poolWarns());
+  return seg('a') + countHint() + listA(mainRoles()) + groupBlock('a', listA) + orphans() + multiWarn() + pickHint('a');
+}
+
+/* ---------- B ---------- */
+function chipB(r) {
+  var on = state.chosen.indexOf(r.id) >= 0, sub = isSub();
+  return '<button type="button" class="cr' + (r.on ? '' : ' is-off') + '" ' + (sub ? 'role="radio" aria-checked="' + on + '"' : 'aria-pressed="' + on + '"') +
+    ' data-act="' + (sub ? 'pick' : 'toggle') + '" data-role="' + r.id + '" data-fk="b-' + r.id + '" title="' + esc(r.title + ' — ' + agentLine(r) + (r.on ? '' : ' (агент выключен)')) + '">' +
+    logo(r.agent, 14) + '<span class="name">' + esc(r.title) + '</span>' + (r.on ? '' : dot(r)) + (on ? IC.tick : '') + '</button>';
+}
+function chipsB(rs) { return '<div class="chips"' + (isSub() ? ' role="radiogroup" aria-label="Роль подзадачи"' : ' role="group" aria-label="Роли"') + '>' + rs.map(chipB).join('') + '</div>'; }
+/* inline — при наведении на плитку состояния «агент выключен» нигде больше нет; у одиночного выбора его говорит строка-предупреждение под карточкой. */
+function briefB(id, inline) {
+  var r = byId(id); if (!r) return '';
+  return '<div class="brief-h">' + logo(r.agent, 24) + '<div class="brief-t"><span class="rr-top"><b>' + esc(r.title) + '</b>' + (r.checks && !isSub() ? '<span class="chip sys" style="margin-left:auto">проверяет: ' + esc(r.checks) + '</span>' : '') + '</span>' +
+    '<span class="rr-sub">' + dot(r) + '<span>' + esc(agentLine(r)) + '</span></span>' + (inline && !r.on ? '<span class="rr-sub off">Агент выключен — роль не запустится</span>' : '') + '</div></div>' +
+    '<p class="brief-d' + (r.desc ? '' : ' none') + '">' + (r.desc ? esc(r.desc) : 'Нет описания') + '</p>';
+}
+function bodyB() {
+  if (effMode() === 'coord') return seg('b') + (isSub() ? keepNote() : poolIntro() + poolGrid() + poolWarns());
+  var f = byId(state.focus) ? state.focus : mainRoles()[0].id;
+  return seg('b') + countHint() + chipsB(mainRoles()) + groupBlock('b', chipsB) +
+    '<div class="brief" data-brief aria-live="polite">' + briefB(f, true) + '</div>' + orphans() + multiWarn() + pickHint('b');
+}
+
+/* ---------- C ---------- */
+function rowC(r) {
+  var on = state.chosen.indexOf(r.id) >= 0;
+  return '<label class="dr' + (on ? ' is-on' : '') + (r.on ? '' : ' is-off') + '" title="' + esc(r.title + ' — ' + agentLine(r) + (r.on ? '' : ' (агент выключен)') + '\n' + (r.desc || 'Нет описания')) + '">' +
+    '<input ' + inputAttrs(r, 'c') + '>' + logo(r.agent, 18) + '<span class="name">' + esc(r.title) + '</span>' +
+    '<span class="meta">' + esc(r.model) + '</span>' + (r.on ? (r.desc ? '<span></span>' : IC.warn) : dot(r)) + '</label>';
+}
+function listC(rs) { return '<div class="dr-list">' + rs.map(rowC).join('') + '</div>'; }
+function stackC(ids) { return '<span class="stack">' + ids.map(function (id) { return logo(byId(id).agent, 18); }).join('') + '</span>'; }
+function bodyC() {
+  if (effMode() === 'coord') {
+    if (isSub()) return seg('c') + keepNote();
+    return seg('c') + '<div class="sum">' + stackC(work().map(function (r) { return r.id; })) + '<div class="sum-t"><b>Выбирает из ' + work().length + ' ролей</b><span>' + work().map(function (r) { return esc(r.title); }).join(', ') + '</span></div></div>' + poolWarns();
+  }
+  var ids = state.chosen.filter(byId);
+  var open = state.open.cl || state.chosen.length === 0;
+  var summary = '';
+  if (ids.length) {
+    var head = isSub() ? (ids.length > 1 ? 'Отмечено ролей: ' + ids.length : 'Роль: ' + esc(nameOf(ids[0]))) : 'Выбрано ' + ids.length + ' из ' + totalSel();
+    summary = '<div class="sum">' + stackC(ids) + '<div class="sum-t"><b>' + head + '</b>' + (isSub() && ids.length === 1 ? '<span>' + esc(agentLine(byId(ids[0]))) + '</span>' : '<span>' + ids.map(function (id) { return esc(nameOf(id)); }).join(', ') + '</span>') + '</div></div>';
+  }
+  var toggle = ids.length ? '<button type="button" class="btn-sm" data-act="openC" data-fk="c-open" aria-expanded="' + open + '">Изменить выбор ' + IC.chev + '</button>' : '';
+  var list = open ? listC(mainRoles()) + groupBlock('c', listC) : '';
+  return seg('c') + summary + chosenWarns() + orphans() + multiWarn() + toggle + list + pickHint('c');
+}
+
+/* ---------- одиночный выбор (gate / decision / ask) ---------- */
+var SINGLES = [
+  { key: 'gate', title: 'Кто проверяет', label: 'Роль проверяющего', empty: '— выберите роль —', required: true },
+  { key: 'gateBad', title: 'Кто проверяет', label: 'Роль проверяющего', empty: '— выберите роль —', required: true },
+  { key: 'decision', title: 'Кто решает', label: 'Роль решающего агента', empty: '— выберите роль —', required: false },
+  { key: 'ask', title: 'Кто выполняет', label: 'Роль', empty: 'Роль задачи', required: false }
+];
+function optText(r) { return r.title + ' · ' + AG[r.agent].name + (r.on ? '' : ' — агент выключен'); }
+function selectS(v, c) {
+  var val = state.singles[c.key], orphan = val && !byId(val);
+  var bad = (c.required && !val) || orphan;
+  return '<label class="wf-field"><span>' + esc(c.label) + '</span><select data-act="single" data-key="' + c.key + '" data-fk="' + v + '-sel-' + c.key + '"' + (bad ? ' class="bad" aria-invalid="true"' : '') + '>' +
+    '<option value="">' + esc(c.empty) + '</option>' + ROLES.map(function (r) { return '<option value="' + r.id + '"' + (val === r.id ? ' selected' : '') + '>' + esc(optText(r)) + '</option>'; }).join('') +
+    (orphan ? '<option value="' + esc(val) + '" selected>' + esc(val) + ' (нет в типе задачи)</option>' : '') + '</select></label>';
+}
+function briefS(v, c) {
+  var val = state.singles[c.key], r = byId(val);
+  if (val && !r) return '';
+  if (!r) return c.required ? '' : '<p class="hint">' + (c.key === 'ask' ? 'Вопрос задаёт агент с ролью самой задачи.' : 'Роль не выбрана.') + '</p>';
+  if (v === 'c') {
+    return '<div class="brief-c"><span class="rr-sub">' + logo(r.agent, 16) + dot(r) + '<span>' + esc(agentLine(r)) + '</span></span>' +
+      '<span class="d' + (r.desc ? '' : ' none') + '" title="' + esc(r.desc) + '"' + (r.desc ? '' : ' style="font-style:italic"') + '>' + (r.desc ? esc(r.desc) : 'Нет описания') + '</span></div>';
+  }
+  if (v === 'b') return '<div class="brief">' + briefB(r.id) + '</div>';
+  return '<div class="rr rr--static' + (r.on ? '' : ' is-off') + '">' + logo(r.agent, 20) + '<span class="rr-main"><span class="rr-top"><b class="rr-title">' + esc(r.title) + '</b></span>' +
+    '<span class="rr-sub">' + dot(r) + '<span>' + esc(agentLine(r)) + '</span></span><span class="rr-desc' + (r.desc ? '' : ' none') + '">' + (r.desc ? esc(r.desc) : 'Нет описания') + '</span></span></div>';
+}
+function notesS(c) {
+  var val = state.singles[c.key], r = byId(val), out = [];
+  if (val && !r) out.push('«' + esc(val) + '» — нет в типе задачи: выберите роль из списка.');
+  if (c.required && !val) out.push('Не выбрана роль проверяющего.');
+  if (r && !r.on) { out.push('Агент выключен — роль не запустится.'); }
+  if (!out.length) return { html: '', issue: null };
+  var hasErr = (val && !r) || (c.required && !val);
+  return { html: '<ul class="wf-field-errs wf-field-errs--' + (hasErr ? 'error' : 'warning') + '">' + out.map(function (t) { return '<li>' + IC.warn + '<span>' + t + '</span></li>'; }).join('') + '</ul>', issue: hasErr ? 'error' : 'warning' };
+}
+function singleCard(v, c) {
+  var n = notesS(c);
+  return wfCard(c.title, n.issue, selectS(v, c) + briefS(v, c) + n.html);
+}
+
+/* ---------- сборка ---------- */
+function columnFor(v) {
+  if (state.scenario === 5) return SINGLES.map(function (c) { return singleCard(v, c); }).join('');
+  var body = v === 'a' ? bodyA() : v === 'b' ? bodyB() : bodyC();
+  var issue = extras().length ? 'warning' : null;
+  return wfCard('Кто выполняет', issue, '<fieldset class="wf-roles"><legend class="sr">' + (isSub() ? 'Роль воркера подзадачи' : 'Роли этапа') + '</legend>' + body + '</fieldset>');
+}
+function readout() {
+  if (state.scenario === 5) return '';
+  return '<p class="readout"><code>roleIds: ' + esc(JSON.stringify(state.chosen)) + '</code>' + (effMode() === 'chosen' && !state.chosen.length ? ' · режим «выбранные» только в интерфейсе' : '') + '</p>';
+}
+function render() {
+  var act = document.activeElement, fk = act && act.dataset ? act.dataset.fk : null;
+  var w = state.width;
+  document.getElementById('bar-scen').innerHTML = SCENARIOS.map(function (s) { return '<button type="button" data-bar="scen" data-n="' + s.n + '" aria-pressed="' + (state.scenario === s.n) + '">' + s.label + '</button>'; }).join('');
+  document.getElementById('bar-w').innerHTML = WIDTHS.map(function (x) { return '<button type="button" data-bar="w" data-n="' + x + '" aria-pressed="' + (w === x) + '">' + x + ' px</button>'; }).join('');
+  document.getElementById('bar-v').innerHTML = [['all', 'Все'], ['a', 'A'], ['b', 'B'], ['c', 'C']].map(function (x) { return '<button type="button" data-bar="v" data-n="' + x[0] + '" aria-pressed="' + (state.variant === x[0]) + '">' + x[1] + '</button>'; }).join('');
+  var fileBox = document.getElementById('bar-file'); fileBox.hidden = state.scenario !== 4; document.getElementById('file2').checked = state.file2;
+  document.getElementById('note').innerHTML = SCENARIOS[state.scenario - 1].note;
+  var app = document.getElementById('app');
+  app.className = 'variants' + (state.variant === 'all' ? '' : ' one');
+  app.innerHTML = VARIANTS.filter(function (v) { return state.variant === 'all' || state.variant === v.id; }).map(function (v) {
+    return '<section class="variant" aria-labelledby="h-' + v.id + '"><div class="v-head"><h2 id="h-' + v.id + '"><span class="tag">' + v.id.toUpperCase() + '</span>' + v.name + (v.rec ? '<span class="rec">рекомендую</span>' : '') + '</h2><p>' + v.desc + '</p></div>' +
+      '<div class="col-wrap"><div class="ruler"><span>колонка ' + w + ' px</span><span>полезная ≈ ' + (w - 26) + ' px</span></div><div class="col" style="--w:' + w + 'px"><div class="insp">' + columnFor(v.id) + '</div></div>' + readout() + '</div>' +
+      '<ul class="pc">' + v.pros.map(function (t) { return '<li class="pro">' + t + '</li>'; }).join('') + v.cons.map(function (t) { return '<li class="con">' + t + '</li>'; }).join('') + '</ul></section>';
+  }).join('');
+  if (fk) { var el = app.querySelector('[data-fk="' + fk + '"]'); if (el) el.focus({ preventScroll: true }); }
+}
+
+/* ---------- действия ---------- */
+function setMode(m) {
+  if (m === 'coord') { if (state.chosen.length) state.stash = state.chosen.slice(); state.chosen = []; state.mode = 'coord'; }
+  else { state.mode = 'chosen'; if (!state.chosen.length && state.stash.length) state.chosen = state.stash.slice(); }
+}
+function doAct(el) {
+  var act = el.dataset.act, id = el.dataset.role;
+  if (act === 'mode') setMode(el.dataset.mode);
+  else if (act === 'toggle') { var i = state.chosen.indexOf(id); state.chosen = i < 0 ? state.chosen.concat(id) : state.chosen.filter(function (x) { return x !== id; }); state.focus = id; state.mode = 'chosen'; }
+  else if (act === 'pick') { state.chosen = [id]; state.focus = id; state.mode = 'chosen'; state.file2 = false; }
+  else if (act === 'remove') { state.chosen = state.chosen.filter(function (x) { return x !== id; }); }
+  else if (act === 'openC') { state.open.cl = !state.open.cl; }
+  else if (act === 'single') { state.singles[el.dataset.key] = el.tagName === 'SELECT' ? el.value : id; }
+  else return;
+  render();
+}
+document.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('button') : null;
+  if (!b) return;
+  if (b.dataset.bar) {
+    var n = b.dataset.n;
+    if (b.dataset.bar === 'scen') preset(+n); else if (b.dataset.bar === 'w') state.width = +n; else state.variant = n;
+    render(); return;
+  }
+  if (b.dataset.act) doAct(b);
+});
+document.addEventListener('change', function (e) {
+  var el = e.target;
+  if (el.id === 'file2') { state.file2 = el.checked; state.chosen = el.checked ? ['developer', 'prompter'] : ['developer']; state.mode = 'chosen'; render(); return; }
+  if ((el.tagName === 'INPUT' || el.tagName === 'SELECT') && el.dataset.act) doAct(el);
+});
+// Карточка роли у плиток B следует за курсором и фокусом; DOM плиток не пересобираем — иначе потеряется click.
+function focusRole(e) {
+  var c = e.target.closest ? e.target.closest('.cr[data-role]') : null;
+  if (!c || !c.dataset.role || c.dataset.act === 'single') return;
+  state.focus = c.dataset.role;
+  var b = document.querySelector('[data-brief]'); if (b) b.innerHTML = briefB(state.focus, true);
+}
+document.addEventListener('mouseover', focusRole);
+document.addEventListener('focusin', focusRole);
+// Раскрытие групп запоминаем без перерисовки.
+document.addEventListener('toggle', function (e) { var d = e.target; if (d.dataset && d.dataset.grp) state.open[d.dataset.grp] = d.open; }, true);
+render();
+</script>
+</body>
+</html>
