@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseRoot, showcaseSource } from './showcase'
+import { showcaseSnapshotDir } from './showcase-snapshot'
 import { SHOWCASE_READ_MAX_BYTES, isAssetType, isEntryType, showcaseFileType, showcaseServedMime } from '../shared/showcase'
 
 let tmp: string
@@ -107,7 +108,45 @@ describe('showcaseRoot', () => {
     store.updateTask(t.id, { worktree: wt, branch: `orca/${t.id}` })
     assert.equal(showcaseRoot(store, t.id), wt)
     store.updateTask(t.id, { worktree: path.join(tmp, 'gone') })
-    assert.throws(() => showcaseRoot(store, t.id), new RegExp(`ветке orca/${t.id}`))
+    // Своя ветка orca/<id> после мержа удалена — её имя не подсказываем.
+    assert.throws(() => showcaseRoot(store, t.id), (e: Error) => /нет worktree/.test(e.message) && !e.message.includes(`orca/${t.id}`))
+  })
+
+  it('после мержа — worktree ветки глобальной задачи; он убран — ошибка с именем её ветки', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const run = store.createRun('цель')
+    const t = store.createTask({ title: 'Макет', roleId: 'developer', runId: run.id })
+    store.updateTask(t.id, { worktree: path.join(tmp, 'gone') })
+    store.setRunGit(run.id, { branch: 'feature/run-x', base: 'develop', worktree: wt })
+    assert.equal(showcaseRoot(store, t.id), wt)
+    store.setRunGit(run.id, { worktree: undefined })
+    assert.throws(() => showcaseRoot(store, t.id), /ветке feature\/run-x/)
+  })
+})
+
+describe('showcaseSource: снимок запуска', () => {
+  it('со snapshot — папка снимка (и после мержа); без снимка или снимок удалён — worktree; без dispatchId — последний запуск', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const run = store.createRun('цель')
+    const t = store.createTask({ title: 'Макет', roleId: 'developer', runId: run.id })
+    store.updateTask(t.id, { worktree: wt, branch: `orca/${t.id}` })
+    const old = store.startDispatch(t.id, 'pty_a')
+    store.finishDispatch(old.id, 'старый показ', [], undefined, { showcase: { files: ['design/a.png'] } })
+    const d = store.startDispatch(t.id, 'pty_b')
+    store.finishDispatch(d.id, 'готово', [], undefined, { showcase: { files: ['design/a.png'] }, snapshot: { at: 1, files: 1, bytes: 4 } })
+    const snapshots = { root: path.join(tmp, 'showcase'), projectId: 'proj_1' }
+    const dir = showcaseSnapshotDir(snapshots.root, 'proj_1', run.id, d.id)
+    // Снимка на диске нет (удалили руками) — как раньше, worktree.
+    assert.equal(showcaseSource(store, t.id, d.id, snapshots), wt)
+    mkdirSync(path.join(dir, 'design'), { recursive: true })
+    writeFileSync(path.join(dir, 'design/a.png'), new Uint8Array([1, 2]))
+    // Мерж: worktree задачи убран, а снимок остался.
+    store.updateTask(t.id, { worktree: undefined })
+    assert.equal(showcaseSource(store, t.id, d.id, snapshots), dir)
+    assert.deepEqual([...readShowcaseFile(showcaseSource(store, t.id, d.id, snapshots), 'design/a.png').bytes], [1, 2])
+    assert.equal(showcaseSource(store, t.id, undefined, snapshots), dir, 'старый renderer без dispatchId — снимок последнего запуска')
+    // Старый запуск без snapshot читается по-старому: worktree убран — ошибка.
+    assert.throws(() => showcaseSource(store, t.id, old.id, snapshots), /нет worktree/)
   })
 })
 

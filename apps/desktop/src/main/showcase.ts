@@ -1,39 +1,57 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
-import type { TaskStore } from '@orca-board/core'
+import type { Dispatch, TaskStore } from '@orca-board/core'
 import type { ShowcaseFileData, ShowcasePreviewUrl } from '../shared/ipc'
 import { SHOWCASE_READ_MAX_BYTES, showcaseFileType } from '../shared/showcase'
 import { isInside } from './docs'
 import { OrcaError } from './i18n'
+import { showcaseSnapshotDir, type ShowcaseSnapshots } from './showcase-snapshot'
 
 // Файлы показа человеку (Dispatch.showcase) для renderer: IPC showcase:read / open / reveal. Путь приходит из
-// renderer (не доверенного) и от агента (тем более) — проверки как у resolveDocPath, но корень — worktree задачи,
-// а вместо «только .md» — белый список SHOWCASE_FILE_TYPES.
+// renderer (не доверенного) и от агента (тем более) — проверки как у resolveDocPath, но корень — снимок запуска
+// или worktree задачи (showcaseSource), а вместо «только .md» — белый список SHOWCASE_FILE_TYPES.
 
-/** Worktree задачи, из которого читаются файлы показа. Нет задачи или worktree уже убран (мерж) — ошибка с подсказкой. */
+/**
+ * Worktree с файлами показа задачи: её собственный, а после мержа (свой убран) — worktree ветки глобальной задачи,
+ * куда её слили, пока тот жив. Ничего нет — ошибка с подсказкой, где файлы: в ветке прогона или в ветке, куда
+ * слита задача (своя ветка `orca/<id>` после мержа удалена — её имя не подсказываем).
+ */
 export function showcaseRoot(store: TaskStore, taskId: unknown): string {
   const task = typeof taskId === 'string' ? store.getTask(taskId) : undefined
   if (!task) throw new OrcaError('showcase.taskNotFound', { id: String(taskId) })
-  if (!task.worktree || !existsSync(task.worktree)) {
-    throw task.branch
-      ? new OrcaError('showcase.noWorktreeBranch', { id: task.id, branch: task.branch })
-      : new OrcaError('showcase.noWorktree', { id: task.id })
-  }
-  return task.worktree
+  if (task.worktree && existsSync(task.worktree)) return task.worktree
+  const git = task.runId ? store.getRun(task.runId)?.git : undefined
+  if (git?.worktree && existsSync(git.worktree)) return git.worktree
+  throw git
+    ? new OrcaError('showcase.noWorktreeBranch', { id: task.id, branch: git.branch })
+    : new OrcaError('showcase.noWorktree', { id: task.id })
 }
 
 /**
- * Корень, из которого читаются файлы показа запуска `dispatchId` задачи `taskId` (IPC showcase:read/open/reveal).
- * Шов для снимка: TODO(T1) — со `showcase.snapshot` корнем станет снимок в userData, без него — worktree задачи
- * с фоллбэком на worktree ветки прогона. Пока — как раньше: worktree задачи; `dispatchId` только сверяется, чтобы
- * renderer не прочитал показ чужой задачи под видом своей.
+ * Корень, из которого читаются файлы показа запуска `dispatchId` задачи `taskId` (IPC showcase:read/open/reveal):
+ * снимок запуска в userData, если он снят при `done` и лежит на диске, иначе `showcaseRoot` (worktree задачи →
+ * worktree прогона → ошибка) — так читаются показы, сданные до снимков. Без `dispatchId` (старый renderer) — снимок
+ * последнего запуска задачи. `dispatchId` чужой задачи — ошибка: renderer не прочитает чужой показ под видом своего.
  */
-export function showcaseSource(store: TaskStore, taskId: unknown, dispatchId?: unknown): string {
+export function showcaseSource(store: TaskStore, taskId: unknown, dispatchId?: unknown, snapshots?: ShowcaseSnapshots): string {
+  let dispatch: Dispatch | undefined
   if (dispatchId !== undefined && dispatchId !== null) {
-    const dispatch = typeof dispatchId === 'string' ? store.getDispatch(dispatchId) : undefined
+    dispatch = typeof dispatchId === 'string' ? store.getDispatch(dispatchId) : undefined
     if (!dispatch || dispatch.taskId !== taskId) throw new OrcaError('showcase.dispatchNotFound', { id: String(dispatchId) })
+  } else {
+    const task = typeof taskId === 'string' ? store.getTask(taskId) : undefined
+    dispatch = task?.dispatchId ? store.getDispatch(task.dispatchId) : undefined
   }
-  return showcaseRoot(store, taskId)
+  const snapshot = snapshots && dispatch ? snapshotRoot(store, snapshots, dispatch) : undefined
+  return snapshot ?? showcaseRoot(store, taskId)
+}
+
+/** Папка снимка запуска, если он снят и не удалён с диска; иначе undefined. */
+export function snapshotRoot(store: TaskStore, snapshots: ShowcaseSnapshots, dispatch: Dispatch): string | undefined {
+  if (!dispatch.showcase?.snapshot) return undefined
+  const runId = store.getTask(dispatch.taskId)?.runId
+  const dir = showcaseSnapshotDir(snapshots.root, snapshots.projectId, runId, dispatch.id)
+  return existsSync(dir) ? dir : undefined
 }
 
 /**
