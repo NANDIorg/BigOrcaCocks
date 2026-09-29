@@ -166,6 +166,7 @@ export default {
   'showcase.outside': 'показ: путь вне worktree задачи: {path}',
   'showcase.notFound': 'показ: файл не найден: {path} (агент не закоммитил его или удалил)',
   'showcase.notFile': 'показ: не файл: {path}',
+  'showcase.hidden': 'показ: скрытые файлы и папки не показываются: {path}',
   'showcase.noPreview': 'показ: {path} не превьюится — откройте его кнопкой «Открыть»',
   'showcase.tooBig': 'показ: файл больше {mb} МБ: {path}',
 

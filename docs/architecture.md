@@ -1340,8 +1340,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   корень выбирает `showcaseSource` (`main/showcase.ts`: снимок запуска `<userData>/showcase/…`, если снят и на диске → worktree задачи → worktree
   ветки прогона → ошибка; без `dispatchId` — снимок последнего запуска задачи; `dispatchId` чужой задачи — ошибка),
   белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»; `showcase:previewUrl(dispatchId, path, {network?})` →
-  `ShowcasePreviewUrl {url, mime, base}` — адрес `orca-preview://<токен>/<путь>` страницы показа для изолированного фрейма (пока заглушка:
-  отказ `showcase.noPreview`; в старом preload метода нет — renderer проверяет его перед вызовом);
+  `ShowcasePreviewUrl {url, mime, base}` — адрес `orca-preview://<токен>/<путь>` страницы показа для изолированного фрейма
+  (HTML, картинки, SVG, markdown — ради `base`; PDF — отказ `showcase.noPreview`, скрытые сегменты — `showcase.hidden`; токен на корень
+  `showcaseSource`, `network: true` — отдельный токен с сетью в CSP; см. «Протокол показа `orca-preview://`»; в старом preload метода нет —
+  renderer проверяет его перед вызовом);
   `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»),
   `stats:task(projectId, taskId)` → `TaskStats`, `stats:global(projectId, runId)` → `GlobalTaskStats` (за всё время жизни; неизвестная задача или прогон —
   ошибка по-русски; см. «Статистика задачи»).
@@ -1352,7 +1354,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
   группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
   поэтому событие приходит одинаково и от IPC, и от правки через сокет CLI/ассистентом, см. «Ассистент» → «Настройки»),
-  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
+  `showcase:escape` (без payload — Esc в окне из `before-input-event`: фокус во фрейме показа, keydown до DOM родителя не доходит; `window.orca.showcase.onFrameEscape`, в старом preload нет), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
   `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
 - В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, onMessage}`;
   у `window.orca.worker` остался только `start`.
@@ -1704,6 +1706,39 @@ UI работает с активным проектом; воркеры и ко
 трогает**: прогон без `workflowScope` доживает на движке подзадач со своим снимком v1, а без снимка — по графу типа через `toTaskScopeWorkflow`
 (мерж и конфликт возвращаются, `condition: role` из типа уже снят). Тесты — `projects-workflow-migration.test.ts` (main) и `workflow-restart.test.ts` (core).
 
+
+### Протокол показа `orca-preview://` (`src/main/preview-protocol.ts`)
+
+Страницы показа человеку (HTML-макеты агентов с ассетами, SVG, картинки для markdown) renderer открывает во фрейме
+`<iframe sandbox="allow-scripts">` по адресу `orca-preview://<токен>/<путь>`. HTML агента — недоверенный код, поэтому:
+
+- **Схема** регистрируется `protocol.registerSchemesAsPrivileged` на верхнем уровне `index.ts` (до `ready`) с `standard`, `secure`,
+  `supportFetchAPI`, `stream`; `bypassCSP` и `corsEnabled` не включены. Обработчик — `protocol.handle` в `whenReady` (сессия по умолчанию).
+- **Токены** (`PreviewTokens`): 128 бит hex → `{root, network}`, LRU на 100, живут до выхода. Выдаёт только IPC `showcase:previewUrl`
+  (корень — `showcaseSource`: снимок запуска, без него — worktree задачи); один корень с одним режимом сети — один токен.
+  Вытесненный токен — 404 во фрейме, «Обновить» выдаст новый.
+- **Разбор запроса** (`resolvePreviewRequest`, чистая функция): только `GET`/`HEAD` (иначе 405); чужой токен — 404; сегменты пути
+  проверяются после декодирования — пустые, начинающиеся с точки (`..`, `.env`, `.git`), с `/`, `\`, `:`, NUL — 403; расширение из
+  белого списка протокола (`showcaseServedMime`: точки входа + ассеты `SHOWCASE_ASSET_TYPES`) и по пути, и по realpath (симлинк
+  `a.png → run.sh` — 403); realpath внутри корня токена (симлинк наружу — 403); обычный файл; ≤ `MAX_SHOWCASE_SNAPSHOT_FILE_BYTES` (иначе 413).
+  Отказ — пустое тело: путь и причину странице не раскрываем.
+- **Ответ** (`handlePreviewRequest`): файл читается потоком с поддержкой одного `Range` (206/416 — перемотка видео), заголовки — только
+  свои (`previewHeaders`): `Content-Type` из таблицы (текст — `charset=utf-8`), `nosniff`, `no-store`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy` (камера, микрофон, геолокация… — `()`), `Access-Control-Allow-Origin: *` и `Cross-Origin-Resource-Policy: cross-origin`
+  (фрейм без `allow-same-origin` — opaque-origin: его шрифты, `fetch()` и модули идут как cross-origin), `Content-Security-Policy`
+  (`buildPreviewCsp`): `default-src 'none'`, скрипты/стили/картинки/шрифты/медиа/`connect` — только `orca-preview:` (+ `data:`/`blob:`
+  где нужно, inline и eval разрешены), `frame-src`/`object-src`/`form-action`/`base-uri` — `'none'`, `sandbox allow-scripts` (страница,
+  открытая по URL в обход iframe, тоже получает opaque-origin). Токен с `network: true` добавляет `https:` в script/style/img/font/media/connect.
+- **Навигация** (`will-frame-navigate` → `allowFrameNavigation`): подфреймы — только `orca-preview:` и `about:blank` (`sandbox` не
+  запрещает фрейму уйти самому через `location` или `<meta refresh>`, а `navigate-to` в CSP Chromium не поддерживает); главный фрейм — только
+  страница приложения (origin dev-сервера или тот же `index.html`), http(s) вместо этого открывается в браузере. `setWindowOpenHandler`
+  открывает внешне только http(s) (`isExternalWebUrl`).
+- **Esc** из фрейма до DOM родителя не доходит: `before-input-event` окна шлёт `showcase:escape` на каждый Esc, renderer закрывает
+  просмотрщик, если `document.activeElement` — фрейм (закрытие идемпотентно: при фокусе в родителе придёт и обычный keydown).
+- Preload в подфреймы не попадает (нет `nodeIntegrationInSubFrames`) — `window.orca` во фрейме нет. **Остаточный риск:** окно
+  `sandbox: false`, фрейм исполняется без ОС-песочницы; апгрейд-путь — `<webview>`/`WebContentsView` с тем же протоколом и токенами.
+
+Тесты — `preview-protocol.test.ts` (отказы, заголовки, CSP, токены, Range, навигация). Интеграцию с Electron `node:test` не покрывает.
 
 ### Безопасность состояния
 
@@ -2610,6 +2645,14 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 - **`startCoordinator` при повторном запуске сносил папку прогона целиком** (`rmSync(join(root, run.id))`) — вместе с `returns/`, где лежат картинки возвратов, а пути к ним
   живут в `Run.stageInput.images`: рестартовавший координатор получал битые пути. Теперь чистятся только `image-N.*` в корне (`clearStartImages`); картинки возвратов —
   отдельной подпапкой. Новое место с файлами в папке прогона — не клади в корень, где действует `clearStartImages`/`pruneAttachments`.
+
+- **Своя схема для фрейма (`orca-preview://`, `preview-protocol.ts`).** `registerSchemesAsPrivileged` работает только до `app.ready` —
+  позже вызов молча игнорируется, и схема остаётся не-standard: `./style.css` в макете не разрешается относительно страницы, `fetch` к
+  схеме запрещён. Регистрация — на верхнем уровне `index.ts`, `protocol.handle` — в `whenReady`. Фрейм `sandbox` без `allow-same-origin` —
+  opaque-origin: без `Access-Control-Allow-Origin: *` на ответах его шрифты, `fetch('./data.json')` и `<script type=module>` из того же
+  снимка не грузятся. `net.fetch('file://…')` в Electron 38 игнорирует `Range` (видео не перематывается) — файл читается потоком сам.
+  Chromium нормализует `..` и `%2e%2e` до обработчика, поэтому проверка сегментов в `resolvePreviewRequest` — вторая линия, а главная —
+  realpath внутри корня токена.
 
 ## Открытые вопросы
 

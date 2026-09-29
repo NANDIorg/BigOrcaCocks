@@ -855,10 +855,17 @@ export interface OrcaApi {
     /** Показать файл в Finder/Проводнике. */
     reveal(taskId: string, path: string, dispatchId?: string): Promise<void>
     /**
-     * Адрес страницы показа для `<iframe sandbox="allow-scripts">`: HTML, SVG (PDF — позже) из снимка запуска
-     * `dispatchId`. Появился позже остальных: в старом preload метода нет — проверяй перед вызовом.
+     * Адрес страницы показа для `<iframe sandbox="allow-scripts">`: HTML, картинки и SVG из снимка запуска `dispatchId`;
+     * у markdown — ради `base` (относительные картинки). PDF — отказ (пока только «Открыть»). Появился позже остальных: в старом preload метода нет — проверяй перед вызовом.
      */
     previewUrl(dispatchId: string, path: string, opts?: ShowcasePreviewOptions): Promise<ShowcasePreviewUrl>
+    /**
+     * Esc нажат, пока фокус может быть во фрейме показа (событие `showcase:escape` из `before-input-event` окна): DOM
+     * родителя keydown из фрейма другого origin не получает. Приходит на каждый Esc — закрывай просмотрщик, только
+     * если `document.activeElement` — фрейм, и делай закрытие идемпотентным: при фокусе в самом окне придёт ещё и обычный
+     * keydown. В старом preload метода нет — проверяй перед подпиской.
+     */
+    onFrameEscape(cb: () => void): () => void
   }
   /** Правила активного проекта: CLAUDE.md и AGENTS.md в его корне (не в worktree задач). */
   rules: {

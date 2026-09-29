@@ -163,6 +163,7 @@ export default {
   'showcase.outside': 'showcase: the path is outside the task worktree: {path}',
   'showcase.notFound': 'showcase: file not found: {path} (the agent did not commit it or deleted it)',
   'showcase.notFile': 'showcase: not a file: {path}',
+  'showcase.hidden': 'showcase: hidden files and folders are not shown: {path}',
   'showcase.noPreview': 'showcase: {path} has no preview — open it with the “Open” button',
   'showcase.tooBig': 'showcase: the file is larger than {mb} MB: {path}',
 

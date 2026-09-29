@@ -1,10 +1,11 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Dispatch, TaskStore } from '@orca-board/core'
 import type { ShowcaseFileData, ShowcasePreviewUrl } from '../shared/ipc'
 import { SHOWCASE_READ_MAX_BYTES, showcaseFileType } from '../shared/showcase'
 import { isInside } from './docs'
 import { OrcaError } from './i18n'
+import { previewBase, previewSegments, previewUrlFor, type PreviewTokens } from './preview-protocol'
 import { showcaseSnapshotDir, type ShowcaseSnapshots } from './showcase-snapshot'
 
 // Файлы показа человеку (Dispatch.showcase) для renderer: IPC showcase:read / open / reveal. Путь приходит из
@@ -55,14 +56,26 @@ export function snapshotRoot(store: TaskStore, snapshots: ShowcaseSnapshots, dis
 }
 
 /**
- * Адрес страницы показа для изолированного фрейма (IPC showcase:previewUrl). TODO(T2): выдать токен протокола
- * `orca-preview://` на корень снимка запуска (T1) и вернуть `{url, mime, base}`; `opts.network` — отдельный токен
- * с открытой сетью. Пока протокола нет — честный отказ: renderer показывает «Открыть» как раньше.
+ * Адрес файла показа для изолированного фрейма (IPC showcase:previewUrl): токен протокола `orca-preview://` на корень
+ * показа запуска `dispatchId` (`showcaseSource`: снимок, а без него — worktree задачи) и путь внутри него. Отдаются
+ * точки входа, которые превьюятся (HTML, картинки, SVG, markdown — ради `base` для его относительных картинок); PDF —
+ * пока только «Открыть». `opts.network` — отдельный токен с открытой сетью в CSP; по умолчанию сеть закрыта.
  */
-export function showcasePreviewUrl(store: TaskStore, dispatchId: unknown, path: unknown, _opts?: unknown): ShowcasePreviewUrl {
+export function showcasePreviewUrl(
+  store: TaskStore, tokens: PreviewTokens, dispatchId: unknown, path: unknown, opts?: unknown, snapshots?: ShowcaseSnapshots
+): ShowcasePreviewUrl {
   const dispatch = typeof dispatchId === 'string' ? store.getDispatch(dispatchId) : undefined
   if (!dispatch) throw new OrcaError('showcase.dispatchNotFound', { id: String(dispatchId) })
-  throw new OrcaError('showcase.noPreview', { path: String(path) })
+  const root = showcaseSource(store, dispatch.taskId, dispatch.id, snapshots)
+  const real = resolveShowcasePath(root, path)
+  const type = showcaseFileType(real)!
+  if (type.preview === 'open') throw new OrcaError('showcase.noPreview', { path: String(path) })
+  // Сегменты — от корня по исходному пути (не realpath): так же страница просит соседние ассеты.
+  const segments = previewSegments(relative(resolve(root), resolve(root, String(path))).split(sep).join('/'))
+  if (!segments) throw new OrcaError('showcase.hidden', { path: String(path) })
+  const network = typeof opts === 'object' && opts !== null && (opts as { network?: unknown }).network === true
+  const token = tokens.issue(root, network)
+  return { url: previewUrlFor(token, segments), mime: type.mime, base: previewBase(token) }
 }
 
 /**
