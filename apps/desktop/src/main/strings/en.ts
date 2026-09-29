@@ -155,8 +155,8 @@ export default {
 
   'showcase.taskNotFound': 'showcase: task not found: {id}',
   'showcase.dispatchNotFound': 'showcase: worker launch {id} not found for this task',
-  'showcase.noWorktree': 'showcase: task {id} has no worktree',
-  'showcase.noWorktreeBranch': 'showcase: task {id} has no worktree — the files are left in branch {branch}',
+  'showcase.noWorktree': 'showcase: task {id} has no worktree on disk — after a merge the files remain in the branch it was merged into',
+  'showcase.noWorktreeBranch': 'showcase: task {id} has no worktree on disk — the files remain in branch {branch}',
   'showcase.noPath': 'showcase: no file path given',
   'showcase.notRelative': 'showcase: the path must be relative to the task repository root: {path}',
   'showcase.badType': 'showcase: this file type cannot be opened: {path}',
