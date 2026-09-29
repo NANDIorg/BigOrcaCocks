@@ -36,7 +36,8 @@ function throwsWith(fn: () => unknown, code: string): void {
 }
 
 beforeEach(() => {
-  tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'orca-files-')))
+  // `.native`: на Windows обычный realpathSync оставляет короткое 8.3-имя (`RUNNER~1`), а код отдаёт полный путь.
+  tmp = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'orca-files-')))
   repo = path.join(tmp, 'repo')
   execFileSync('git', ['init', '-q', '-b', 'master', repo])
   write(repo, '.gitignore', 'node_modules/\nout/\n*.log\n!keep.log\n')
@@ -409,7 +410,9 @@ describe('QA: симлинки', () => {
 describe('QA: странные имена', () => {
   it('кавычки, перевод строки, скобки, `*`, `#`, `!`: игнор по -z-выводу git совпадает точно, видимые имена целы', async () => {
     write(repo, '.gitignore', '*.log\n')
-    const odd = ['a"b', "it's", 'нов\nстрока', '[br]acket', '*star', '#hash', '!bang', '-dash', ' lead', 'x  y', '日本語', '🙂']
+    const all = ['a"b', "it's", 'нов\nстрока', '[br]acket', '*star', '#hash', '!bang', '-dash', ' lead', 'x  y', '日本語', '🙂']
+    // В Windows `"`, `*` и перевод строки в имени файла запрещены: такие файлы там не создать.
+    const odd = process.platform === 'win32' ? all.filter((n) => !/["*:<>?|\n]/.test(n)) : all
     for (const n of odd) {
       write(repo, `${n}.txt`)
       write(repo, `${n}.log`)
@@ -421,7 +424,8 @@ describe('QA: странные имена', () => {
     }
   })
 
-  it('имя, начинающееся с pathspec-магии (`:!x`, `:^x`, `:(icase)x`), не отключает фильтр игнора всей папки', async () => {
+  // В Windows `:` в имени файла запрещён: таких имён там не бывает, а создать их для теста нельзя.
+  it('имя, начинающееся с pathspec-магии (`:!x`, `:^x`, `:(icase)x`), не отключает фильтр игнора всей папки', { skip: process.platform === 'win32' }, async () => {
     // Дефект QA: без префикса `./` git check-ignore читал такие имена как pathspec, выходил с 128 и папка уходила в фолбэк.
     write(repo, '.gitignore', '*.log\nout/\n')
     write(repo, ':!excl.txt')
