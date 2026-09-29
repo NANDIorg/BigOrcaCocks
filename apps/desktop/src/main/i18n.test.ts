@@ -28,6 +28,14 @@ describe('словари main', () => {
     }
   })
 
+  it('ошибки «Принять»/«Вернуть» на остановленном этапе — в обоих словарях, renderer узнаёт их по коду', () => {
+    for (const key of ['review.notReviewable', 'review.stageBlocked'] as const) {
+      assert.ok(ru[key] && en[key], key)
+      const err = ipcError(new OrcaError(key, { id: 'task_1', node: 'Мерж', reason: 'lock' })) as Error
+      assert.equal(err.name, `OrcaError[${key}]`)
+    }
+  })
+
   it('в en нет кириллицы', () => {
     for (const [key, m] of Object.entries(en)) {
       assert.doesNotMatch(typeof m === 'string' ? m : Object.values(m).join(' '), /[А-Яа-яЁё]/, key)

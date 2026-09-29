@@ -5,6 +5,7 @@ import {
   type WfOutcome, type Workflow
 } from '@orca-board/core'
 import { acceptReview, mergeTaskBranch, type MergeTargetOf } from './review'
+import { OrcaError } from './i18n'
 import { showcaseMarkdown } from '../shared/showcase'
 import {
   commitWorktree, gitCheckout, gitCommit, gitCreateBranch, gitPush, isBranchNameAcceptedByGit, removeWorktree,
@@ -474,23 +475,128 @@ function restartAsk(deps: WorkflowDeps, task: Task, workerLive: boolean): void {
   }
 }
 
+/** Ноды-эффекты: на них не ждут ни воркера, ни проверки, ни человека — задача стоит тут, только если эффект не дошёл до конца. */
+function isEffectNode(node: WfNode | undefined): boolean {
+  return node?.type === 'merge' || node?.type === 'git' || node?.type === 'end'
+}
+
+/** Название этапа задачи для текста ошибки: нода графа или её id. */
+function stageTitle(node: WfNode | undefined, task: Task): string {
+  return node ? wfNodeTitle(node) : task.stage?.nodeId ?? '—'
+}
+
 /**
- * Решение по задаче на этапе проверки (gate или human) — `review accept/reject`, кнопки ревью в UI.
- * На ноде human это решение её запроса approval. Замечания при reject — в feedback для следующего запуска,
- * `images` — пути картинок к ним (в worktree задачи, их сохранил main).
+ * `worker_done` потерян: последний запуск сдан (`done`), живого воркера нет, задача в «Ревью», а этап всё ещё «Работа»
+ * или «Вопрос человеку» — приложение вышло между сохранённым `done` и его обработкой (`runWorkflowEvents` — в `setImmediate`).
+ */
+function lostWorkerDone(deps: WorkflowDeps, task: Task): boolean {
+  const { store } = deps
+  const last = task.dispatchId !== undefined ? store.getDispatch(task.dispatchId) : undefined
+  return last?.outcome === 'done' && store.columnKind(task.status) === 'review' && !store.activeDispatches().some((d) => d.taskId === task.id)
+}
+
+/** Снять прошлую остановку перед повтором: новая остановка (если будет) — уже про этот повтор. */
+function clearStageBlock(deps: WorkflowDeps, taskId: string): void {
+  if (mustTask(deps, taskId).stageBlock) deps.store.updateTask(taskId, { stageBlock: undefined })
+}
+
+/**
+ * Повторить эффект ноды, на которой стоит задача (`stageActionOf`): мерж, git-операцию, конец. Возвращает false, если у
+ * задачи нет своего этапа. Ошибка эффекта — снова `workflow_blocked` и `stageBlock` (их ставит `executeSteps`).
+ */
+function repeatStage(deps: WorkflowDeps, taskId: string): boolean {
+  const action = deps.store.stageActionOf(taskId, fallback(deps, mustTask(deps, taskId)))
+  if (!action) return false
+  clearStageBlock(deps, taskId)
+  execute(deps, taskId, action)
+  return true
+}
+
+/**
+ * «Вернуть» со стоящего этапа (эффект не прошёл, потерян `worker_done`): замечания — в feedback, задача — на первую «Работу»
+ * (`store.enterWork`, заходы копятся — лимит повторов их считает) и сразу воркер.
+ */
+function returnToWork(deps: WorkflowDeps, task: Task, text?: string, images?: string[]): void {
+  const comment = text?.trim() || undefined
+  if (comment) deps.store.updateTask(task.id, { feedback: comment, feedbackImages: images?.length ? images : undefined })
+  clearStageBlock(deps, task.id)
+  const fb = fallback(deps, task)
+  // Уже на «Работе» (потерян `worker_done`) enterWork этап не меняет — запускаем действие текущей ноды.
+  const action = deps.store.enterWork(task.id, fb) ?? deps.store.stageActionOf(task.id, fb)
+  if (action) execute(deps, task.id, action)
+}
+
+/**
+ * Решение по этапу задачи — `review accept/reject`, кнопки ревью в UI (docs/workflow.md → «Принять и Вернуть по этапам»):
+ * - `gate`, `human` — исход проверки; на ноде human это решение её запроса approval. Замечания при reject — в feedback
+ *   для следующего запуска, `images` — пути картинок к ним (в worktree задачи, их сохранил main);
+ * - `merge`, `git`, `end` (эффект упал или прерван рестартом) — «Принять» повторяет эффект, «Вернуть» — в работу с замечаниями;
+ * - «Работа»/«Вопрос человеку» с потерянным `worker_done` — «Принять» делает переход, как сделал бы `done`, «Вернуть» — перезапуск;
+ * - иначе (воркер ещё работает) — `review.notReviewable`.
+ * Без этой таблицы задача на «Мерже» была тупиком: кнопки показаны (колонка «Ревью»), а решение отвергалось.
  */
 function decide(deps: WorkflowDeps, task: Task, outcome: 'accept' | 'reject', text?: string, images?: string[]): void {
   const node = stageNode(deps, task)
-  if (node?.type !== 'gate' && node?.type !== 'human') {
-    const where = node ? `«${wfNodeTitle(node)}»` : `«${task.stage?.nodeId ?? '—'}»`
-    throw new Error(`задача ${task.id} на этапе ${where} — принимать или возвращать нечего: решение принимается на этапе проверки`)
-  }
-  const request = deps.store.pendingRequests().find((r) => r.taskId === task.id && r.kind === 'approval')
   const comment = text?.trim() || undefined
   const attached = outcome === 'reject' && comment && images?.length ? images : undefined
-  if (request) deps.store.resolveRequest(request.id, { action: outcome, ...(comment ? { text: comment } : {}), ...(attached ? { images: attached } : {}) })
-  else if (outcome === 'reject' && comment) deps.store.updateTask(task.id, { feedback: comment, feedbackImages: attached })
-  advance(deps, task.id, outcome)
+  if (node?.type === 'gate' || node?.type === 'human') {
+    const request = deps.store.pendingRequests().find((r) => r.taskId === task.id && r.kind === 'approval')
+    if (request) deps.store.resolveRequest(request.id, { action: outcome, ...(comment ? { text: comment } : {}), ...(attached ? { images: attached } : {}) })
+    else if (outcome === 'reject' && comment) deps.store.updateTask(task.id, { feedback: comment, feedbackImages: attached })
+    advance(deps, task.id, outcome)
+    return
+  }
+  const stalled = isEffectNode(node) || ((node?.type === 'work' || node?.type === 'ask') && lostWorkerDone(deps, task))
+  if (!stalled) throw new OrcaError('review.notReviewable', { id: task.id, node: stageTitle(node, task) })
+  if (outcome === 'reject') {
+    returnToWork(deps, task, comment, attached)
+    return
+  }
+  if (isEffectNode(node)) {
+    repeatStage(deps, task.id)
+    // Повтор снова встал — человеку причина сразу, а не молча та же карточка.
+    const after = mustTask(deps, task.id)
+    if (after.stageBlock) {
+      throw new OrcaError('review.stageBlocked', { id: task.id, node: stageTitle(stageNode(deps, after), after), reason: after.stageBlock.reason })
+    }
+    return
+  }
+  withStatusSource('workflow', () => workDone(deps, task, undefined))
+}
+
+/**
+ * Добор после запуска приложения (вызов — при открытии проекта, `index.ts`): подзадачи, чей эффект прервал выход или краш,
+ * доводятся до ожидания. Трогаются только задачи этого движка (`legacy`/`path`), не в done, без живого воркера и **без
+ * `stageBlock`** — остановленные ждут человека («Принять»/«Вернуть»), иначе каждый запуск заново слал бы `workflow_blocked`.
+ * - `merge`/`git`/`end` — эффект повторяется;
+ * - «Работа»/«Вопрос человеку» с потерянным `worker_done` — переход дальше;
+ * - `gate` без незакрытой задачи-проверки — проверка создаётся; `human` без ждущего approval — запрос создаётся.
+ * Идемпотентен: повторный вызов ничего не меняет. Ошибка одной задачи — её `workflow_blocked`, остальные идут дальше.
+ */
+export function resumeStuckStages(deps: WorkflowDeps): void {
+  const { store } = deps
+  for (const task of store.listTasks()) {
+    if (!task.stage || task.stageBlock || task.answerFor || task.gateFor || store.columnKind(task.status) === 'done') continue
+    if (taskEngine(deps, task) === 'run') continue
+    if (store.activeDispatches().some((d) => d.taskId === task.id)) continue
+    const node = stageNode(deps, task)
+    withStatusSource('workflow', () => {
+      try {
+        if (isEffectNode(node)) repeatStage(deps, task.id)
+        else if ((node?.type === 'work' || node?.type === 'ask') && lostWorkerDone(deps, task)) workDone(deps, task, undefined)
+        else if (node?.type === 'gate' && !openGate(deps, task, node.id)) createGate(deps, task, node)
+        else if (node?.type === 'human' && !store.pendingRequests().some((r) => r.taskId === task.id && r.kind === 'approval')) requestHuman(deps, task, node)
+      } catch (e) {
+        if (store.getTask(task.id)) store.blockStage(task.id, `ошибка исполнителя воркфлоу при доборе после запуска: ${message(e)}`)
+      }
+    })
+  }
+}
+
+/** Незакрытая задача-проверка ноды `nodeId` у задачи: она и вынесет решение, вторую не создаём. */
+function openGate(deps: WorkflowDeps, task: Task, nodeId: string): boolean {
+  const { store } = deps
+  return store.listTasks().some((t) => t.gateFor?.taskId === task.id && t.gateFor.nodeId === nodeId && store.columnKind(t.status) !== 'done')
 }
 
 /**
@@ -503,8 +609,8 @@ function assertNotRunGate(task: Task): void {
 }
 
 /**
- * `review accept` / «Принять»: задача на этапе проверки — исход accept (дальше по графу, обычно мерж);
- * задача-проверка — её закрытие; задача-ответ и задача вне воркфлоу — прежняя приёмка (`acceptReview`).
+ * `review accept` / «Принять»: задача на этапе проверки — исход accept (дальше по графу, обычно мерж); на остановленном
+ * этапе — повтор эффекта (`decide`); задача-проверка — её закрытие; задача-ответ и задача вне воркфлоу — прежняя приёмка (`acceptReview`).
  */
 export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: string): void {
   const task = mustTask(deps, taskId)
@@ -519,7 +625,7 @@ export function reviewAccept(deps: WorkflowDeps, taskId: string, decision?: stri
 
 /**
  * `review reject` / «Вернуть»: задача на этапе проверки — исход reject с замечаниями (обычно обратно в работу,
- * воркер стартует сразу); остальные — прежний `rejectReview` (ready с замечаниями, у ответа — «Уточнить»).
+ * воркер стартует сразу); на остановленном этапе — в работу с замечаниями (`decide`); остальные — прежний `rejectReview` (ready с замечаниями, у ответа — «Уточнить»).
  */
 export function reviewReject(deps: WorkflowDeps, taskId: string, feedback: string, images?: string[]): Task {
   const task = mustTask(deps, taskId)

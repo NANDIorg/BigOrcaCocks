@@ -181,6 +181,8 @@ export default {
 
   'review.noBranch': 'the task has no branch',
   'review.untracked': 'new files:',
+  'review.notReviewable': 'task {id} is at stage “{node}” — there is nothing to accept or send back: the worker has not handed in the work yet or the stage awaits another decision',
+  'review.stageBlocked': 'stage “{node}” of task {id} stopped again: {reason}',
   'git.runBranchFailed': 'could not create branch “{branch}” for the global task from “{base}”: {error}',
   'git.runBranchMissing': 'branch “{branch}” of the global task no longer exists in the repository — restore it or detach the branch from the task',
   'git.notRepo': '{path} is not a git repository',

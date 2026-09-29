@@ -184,6 +184,8 @@ export default {
 
   'review.noBranch': 'у задачи нет ветки',
   'review.untracked': 'новые файлы:',
+  'review.notReviewable': 'задача {id} на этапе «{node}» — принимать или возвращать нечего: воркер ещё не сдал работу или этап ждёт другого решения',
+  'review.stageBlocked': 'этап «{node}» задачи {id} снова остановлен: {reason}',
   'git.runBranchFailed': 'не удалось завести ветку «{branch}» глобальной задачи от «{base}»: {error}',
   'git.runBranchMissing': 'ветки «{branch}» глобальной задачи больше нет в репозитории — восстановите её или снимите ветку с задачи',
   'git.notRepo': '{path} — не git-репозиторий',
