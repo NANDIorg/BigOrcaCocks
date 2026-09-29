@@ -55,3 +55,28 @@ export function showcaseImageSrc(src: string, assets: MarkdownAssets): string | 
   const path = resolveShowcaseRef(assets.path, src)
   return path ? assets.base + path.split('/').map(encodeURIComponent).join('/') : undefined
 }
+
+/**
+ * Описание показа (`DispatchShowcase.text`, `--show-file`) — как markdown-файл в корне показа: пути картинок в нём —
+ * от корня репозитория. Имя в корне, а не `''`: `resolveShowcaseRef` берёт папку файла.
+ */
+export const SHOWCASE_TEXT_PATH = 'showcase.md'
+
+/**
+ * Контекст картинок описания показа по ответу `showcase:previewBase`: есть `orca-preview://` — картинки из снимка
+ * запуска; `null` (ни снимка, ни worktree), старый main/preload, ошибка или кривой адрес — без `base`, относительные
+ * картинки заменяются подписью, как внешние.
+ */
+export function showcaseTextAssets(base: unknown): MarkdownAssets {
+  return typeof base === 'string' && base.startsWith('orca-preview://') && base.endsWith('/')
+    ? { path: SHOWCASE_TEXT_PATH, base }
+    : { path: SHOWCASE_TEXT_PATH }
+}
+
+/**
+ * В тексте есть картинка (`![…](…)`, `![…][id]` или `<img`): только тогда описанию нужна база снимка — без картинок
+ * IPC не зовём и текст показываем сразу.
+ */
+export function hasMarkdownImages(text: string): boolean {
+  return /!\[[^\]]*\]|<img\b/i.test(text)
+}
