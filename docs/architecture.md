@@ -24,7 +24,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, feedbackImages?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, stageOf?, gateFor?, statusHistory?, stageHistory? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, feedbackImages?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, stageBlock?, stageOf?, gateFor?, statusHistory?, stageHistory? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль типа задачи прогона (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -85,6 +85,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     задача с `stage`, но без `stageHistory`, восстанавливается из событий `stage_changed` по `taskId` (лог не
     обрезается; `by: 'app'`), а если лога нет или он не доходит до текущего этапа — добавляется запись
     `migrated: true` на текущую ноду с `at = updatedAt`.
+  - **Остановка этапа** (`stageBlock?: TaskStageBlock` = `{ nodeId, reason, at }`) — последний `workflow_blocked` задачи:
+    эффект ноды не выполнен (мерж упал не конфликтом, воркер или проверка не запустились, переход дал `blocked`).
+    Ставят `blockStage` и `blocked` из `advanceStage`/`enterWork` (`markStageBlocked` в `store.ts`), `reason` —
+    целиком (в событии он урезан `short()`). Снимают любой переход `advanceStage`, `enterWork`, `reopenTask` и
+    `startDispatch`. Зачем хранить: причина видна человеку не только в одноразовом уведомлении, а main отличает
+    остановленный этап (о нём уже сообщили) от эффекта, прерванного рестартом. Поле необязательное — снапшот старой
+    версии читается как «не остановлена», миграции формата нет; задачи, застрявшие на `merge` до появления поля,
+    метки не имеют.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
   - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
@@ -416,8 +424,10 @@ Store хранит позицию и решает, куда задача пер�
   `stage` входит в граф из старта (`startStage`, только исход `next`). Задачи-ответы и задачи-гейты (`gateFor`) —
   ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}` и запись в
   `Task.stageHistory` (то же самое в `enterWork`);
-  `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
-  гейта удалена). Эффекты `action` выполнит main.
+  `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` и `Task.stageBlock` (этап при этом может и
+  смениться: роль гейта удалена). Любой вызов снимает прежний `stageBlock`; при смене ноды ждущий `approval` задачи с
+  другим `nodeId` отменяется (устаревший запрос повёл бы граф не с того этапа), задача выходит из `needs_input`
+  (то же в `enterWork`). Эффекты `action` выполнит main.
 - **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
   задача не на ноде `work` или `ask` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
   складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` и `ask` —
@@ -429,7 +439,11 @@ Store хранит позицию и решает, куда задача пер�
 - **`ask(input, {coordinatorAlive?, forceHuman?})`** — `forceHuman` (задача на ноде `ask`): вопрос сразу человеку, в
   `Question.nodeId` и `HumanRequest.nodeId` — нода этапа `task.stage.nodeId`.
 - **`blockStage(taskId, reason)`** — эффект этапа не выполнился (воркер не стартовал, мерж упал не конфликтом):
-  `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
+  `workflow_blocked {taskId, runId, nodeId?, reason}` и `Task.stageBlock` с причиной целиком, этап не меняется.
+- **`stageActionOf(taskId, {roleIds?, workflow?})` → `WfAction | undefined`** — действие ноды, на которой стоит подзадача
+  (`stageAction` по `taskWorkflow`, контекст как у `advanceStage`: на пути «Работы» `scope: 'subtask'`, у старого движка
+  без `scope`). Позицию не меняет, событий не шлёт: main повторяет по нему эффект остановленного или прерванного этапа.
+  undefined — у задачи нет своего этапа (ответ, проверка, не вошла в граф, подзадача прогона вне пути).
 - **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
   задача в `needs_input`; ждущий approval той же задачи не дублируется. Решение — `resolveRequest` с `accept` /
   `reject` (`text` при reject → `task.feedback`, `resolution.images` → `task.feedbackImages`), `request_resolved {kind: 'approval', action, nodeId, decision?, images?}`
