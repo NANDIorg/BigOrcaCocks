@@ -7,6 +7,7 @@ import {
   initialCommitApi,
   initialCommitErrorMessage,
   loadInitialCommitInfo,
+  retryHint,
   staleInitialCommitMessage,
   warnNoGitignore,
   type InitialCommitInfo
@@ -15,6 +16,8 @@ import {
 interface Props {
   projectId: string
   projectName: string
+  /** Упавший запуск будет повторён после коммита (`onCommitted`); нет — окно открыто из меню веток. */
+  willRetry: boolean
   onClose(): void
   /** Коммит создан: диалог закрывает вызывающий, он же повторяет упавший запуск. */
   onCommitted(branch: ProjectBranchInfo): void
@@ -25,7 +28,7 @@ interface Props {
  * кнопке человека — сами ничего не коммитим. Основная кнопка — по файлам корня (`defaultInitialCommitMode`).
  * Ошибка остаётся в окне, пока идёт операция — кнопки и Esc заблокированы.
  */
-export function InitialCommitDialog({ projectId, projectName, onClose, onCommitted }: Props): React.JSX.Element {
+export function InitialCommitDialog({ projectId, projectName, willRetry, onClose, onCommitted }: Props): React.JSX.Element {
   const t = useT()
   const ids = useId()
   const [api] = useState(() => initialCommitApi(window.orca))
@@ -88,6 +91,7 @@ export function InitialCommitDialog({ projectId, projectName, onClose, onCommitt
   const text = info?.branch
     ? t('shell.initialCommit.text', { project: projectName, branch: info.branch })
     : t('shell.initialCommit.textNoBranch', { project: projectName })
+  const retry = retryHint(willRetry)
 
   const option = (mode: InitialCommitMode, label: string, hint: React.ReactNode): React.JSX.Element => (
     <div className="initial-commit-option">
@@ -126,7 +130,7 @@ export function InitialCommitDialog({ projectId, projectName, onClose, onCommitt
       >
         <h3 id={`${ids}-title`}>{t('shell.initialCommit.title')}</h3>
         <p id={`${ids}-text`} className="initial-commit-text">
-          {text} <span className="muted">{t('shell.initialCommit.retry')}</span>
+          {text}{retry && <> <span className="muted">{retry}</span></>}
         </p>
         <div className="initial-commit-options">
           {primary === 'snapshot' ? <>{snapshot}{empty}</> : <>{empty}{snapshot}</>}

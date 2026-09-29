@@ -9,6 +9,7 @@ import {
   initialCommitErrorMessage,
   isNoCommitsError,
   loadInitialCommitInfo,
+  retryHint,
   staleInitialCommitMessage,
   warnNoGitignore,
   type InitialCommitApi
@@ -109,6 +110,14 @@ test('defaultInitialCommitMode — есть файлы или неизвестн
   assert.equal(defaultInitialCommitMode({ dirty: true }), 'snapshot')
   assert.equal(defaultInitialCommitMode({ dirty: null }), 'snapshot')
   assert.equal(defaultInitialCommitMode({ dirty: false }), 'empty')
+})
+
+test('retryHint — обещаем повтор запуска только когда есть что повторять (из меню веток — нет)', () => {
+  assert.equal(retryHint(true), 'После коммита запуск повторится автоматически.')
+  assert.equal(retryHint(false), null)
+  setLocale('en')
+  assert.equal(retryHint(true), 'The launch will be retried automatically after the commit.')
+  assert.equal(retryHint(false), null)
 })
 
 test('warnNoGitignore — только когда .gitignore точно нет, а файлы есть или неизвестно', () => {

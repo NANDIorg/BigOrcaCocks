@@ -86,6 +86,14 @@ export function defaultInitialCommitMode(info: Pick<InitialCommitInfo, 'dirty'>)
   return info.dirty === false ? 'empty' : 'snapshot'
 }
 
+/**
+ * Подпись «запуск повторится автоматически» — только когда есть что повторять. Из меню веток окно открывается без
+ * упавшего запуска (`willRetry` = false): обещать повтор там нельзя, после коммита ничего не стартует.
+ */
+export function retryHint(willRetry: boolean): string | null {
+  return willRetry ? t('shell.initialCommit.retry') : null
+}
+
 /** Предупредить, что без `.gitignore` в коммит попадёт всё: только когда точно знаем, что его нет, а файлы есть. */
 export function warnNoGitignore(info: Pick<InitialCommitInfo, 'dirty' | 'gitignore'>): boolean {
   return info.gitignore === false && info.dirty !== false
