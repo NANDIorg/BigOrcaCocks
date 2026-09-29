@@ -361,8 +361,13 @@ describe('orca-board CLI', () => {
       'notify-role': ['developer=on', 'reviewer=off'],
       'notify-event': ['runDone=on']
     })
+    // Настройки ассистента: флаги со значением (не boolean) — пустая строка доходит как "" (очистить).
+    const assistant = await run(['settings', 'set', '--assistant-agent', 'codex', '--assistant-model', 'gpt-5', '--assistant-effort', 'high', '--assistant-prompt', '', '--yes'])
+    assert.deepEqual(assistant.req.params, {
+      'assistant-agent': 'codex', 'assistant-model': 'gpt-5', 'assistant-effort': 'high', 'assistant-prompt': '', yes: true
+    })
     const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
-    for (const cmd of ['settings get', 'settings set [--language ru|en]']) assert.ok(out.includes(cmd), cmd)
+    for (const cmd of ['settings get', 'settings set [--language ru|en]', '[--assistant-agent <id>]', '[--assistant-prompt "..."]']) assert.ok(out.includes(cmd), cmd)
   })
 
   it('types create/rename/set-default/duplicate/delete: метод types.*, --project уходит; есть в help', async () => {

@@ -187,6 +187,51 @@ describe('settings get/set', () => {
   })
 })
 
+describe('settings: ассистент', () => {
+  interface Assistant { agent: string; model?: string; effort?: string; systemPrompt?: string }
+
+  it('get отдаёт assistant; set --assistant-model/-effort/-prompt мержит по полям, "" очищает', async () => {
+    const got = await ok<{ assistant: Assistant }>('settings.get')
+    assert.deepEqual(got.assistant, { agent: 'claude' })
+    const set = await ok<{ assistant: Assistant; keepInBackground: boolean }>('settings.set', {
+      'assistant-model': 'opus', 'assistant-effort': 'high', 'assistant-prompt': 'Отвечай коротко.'
+    })
+    assert.deepEqual(set.assistant, { agent: 'claude', model: 'opus', effort: 'high', systemPrompt: 'Отвечай коротко.' })
+    const cleared = await ok<{ assistant: Assistant }>('settings.set', { 'assistant-prompt': '', 'assistant-effort': '' })
+    assert.deepEqual(cleared.assistant, { agent: 'claude', model: 'opus' })
+    assert.deepEqual(projects.settings().assistant, cleared.assistant, 'сохранено в ProjectManager')
+  })
+
+  it('смена --assistant-agent требует --yes; с --yes модель и effort сбрасываются, если не заданы тем же вызовом', async () => {
+    await ok('settings.set', { 'assistant-model': 'opus', 'assistant-effort': 'high' })
+    const refused = await call('settings.set', { 'assistant-agent': 'codex' })
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /нужно подтверждение.*агента ассистента с «claude» на «codex».*--yes/)
+    assert.equal(projects.settings().assistant.agent, 'claude', 'без --yes ничего не записано')
+    const changed = await ok<{ assistant: Assistant }>('settings.set', { 'assistant-agent': 'codex', yes: true })
+    assert.deepEqual(changed.assistant, { agent: 'codex' })
+    const withModel = await ok<{ assistant: Assistant }>('settings.set', { 'assistant-agent': 'claude', 'assistant-model': 'sonnet', yes: true })
+    assert.deepEqual(withModel.assistant, { agent: 'claude', model: 'sonnet' })
+    // Тот же агент — не смена, подтверждение не нужно.
+    assert.equal((await ok<{ assistant: Assistant }>('settings.set', { 'assistant-agent': 'claude' })).assistant.model, 'sonnet')
+  })
+
+  it('ошибки: неизвестный агент, флаг без значения', async () => {
+    assert.match((await call('settings.set', { 'assistant-agent': 'nope', yes: true })).error ?? '', /--assistant-agent: неизвестный агент «nope»/)
+    assert.match((await call('settings.set', { 'assistant-model': true })).error ?? '', /--assistant-model требует значения/)
+  })
+
+  it('ассистент — не роль типа: нет в roles list, roles update/rules set --role assistant — ошибка «нет роли»', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    const roles = await ok<Role[]>('roles.list', { type: typeId })
+    assert.ok(roles.length > 0)
+    assert.ok(!roles.some((r) => r.id === 'assistant'), roles.map((r) => r.id).join(','))
+    const upd = await call('roles.update', { type: typeId, role: 'assistant', model: 'opus' })
+    assert.equal(upd.ok, false)
+    assert.equal((await call('rules.set', { type: typeId, role: 'assistant', text: 'x' })).ok, false)
+  })
+})
+
 describe('types.*', () => {
   it('create/rename/set-default/duplicate', async () => {
     const created = await ok<TaskType>('types.create', { title: 'Дизайн', description: 'UI/UX' })

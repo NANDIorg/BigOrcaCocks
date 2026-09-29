@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AssistantSettings, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 
 export interface PtySpawnOptions {
@@ -46,6 +46,11 @@ export interface AppSettings {
   notifications: NotificationSettings
   /** Автообновление приложения (docs/architecture.md → «Обновление»). */
   updates: UpdateSettings
+  /**
+   * Ассистент доски: агент, модель, effort, инструкции. Не роль типа задачи — ассистент один на приложение.
+   * Применяется к следующему запуску («Новый диалог»), живой ассистент не перезапускается.
+   */
+  assistant: AssistantSettings
 }
 
 /** Настройки автообновления. Дефолты — `DEFAULT_UPDATE_SETTINGS`. */
@@ -63,12 +68,14 @@ export interface UpdateSettings {
 
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = { autoCheck: true, autoDownload: true, installWhenIdle: false }
 
-/** Патч настроек приложения: notifications и updates мержатся по полям. */
+/** Патч настроек приложения: notifications, updates и assistant мержатся по полям. */
 export interface AppSettingsPatch {
   keepInBackground?: boolean
   language?: AppLanguage
   notifications?: NotificationSettingsPatch
   updates?: Partial<UpdateSettings>
+  /** Пустая строка в model/effort/systemPrompt очищает поле; смена агента без model/effort сбрасывает их. */
+  assistant?: Partial<AssistantSettings>
 }
 
 /** Способ обновления на этой платформе. */

@@ -74,6 +74,10 @@ export default {
   'role.effortNotString': 'роль «{id}»: effort должен быть строкой',
   'role.promptNotString': 'роль «{id}»: системный промпт должен быть строкой',
 
+  'assistant.notObject': 'настройки ассистента: ожидается объект',
+  'assistant.unknownAgent': 'ассистент: неизвестный агент {agent}',
+  'assistant.notString': 'ассистент: поле {field} должно быть строкой',
+
   'worker.cannotStart': 'воркер не запустится: {reason}',
   'coordinator.cannotStart': 'координатор не запустится: {reason}',
   'coordinator.noObjective': 'цель не задана',

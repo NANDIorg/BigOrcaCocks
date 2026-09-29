@@ -34,10 +34,6 @@ export const DEFAULT_ROLES: Role[] = [
     description: 'Декомпозирует цель прогона на задачи и управляет воркерами. Задачам не назначается.'
   },
   {
-    id: 'assistant', title: 'Ассистент', agent: 'claude',
-    description: 'Ассистент доски: выполняет просьбы человека (создать, перенести, закрыть, перезапустить) через orca-board. Задачам не назначается.'
-  },
-  {
     id: 'developer', title: 'Программист', agent: 'claude',
     description: 'Пишет и меняет код: фичи, исправления, рефакторинг.'
   },
@@ -52,6 +48,28 @@ export const DEFAULT_ROLES: Role[] = [
 ]
 
 export const DEFAULT_ROLE_ID = 'developer'
+
+// ---------- ассистент ----------
+
+/**
+ * Настройки ассистента доски (`AppSettings.assistant`). Ассистент один на приложение и к типу задачи не относится,
+ * поэтому живёт в настройках приложения, а не ролью типа. Режима разрешений здесь нет: ассистент всегда `auto`
+ * (ему нужен только `orca-board`, он разрешён и так).
+ */
+export interface AssistantSettings {
+  agent: AgentKind
+  /** Модель агента; пусто — по умолчанию агента. */
+  model?: string
+  /** Уровень рассуждений (см. effortOptions); пусто — по умолчанию агента. */
+  effort?: string
+  /** Инструкции человека: дописываются к skills/assistant.md блоком «# Инструкции роли «Ассистент»». */
+  systemPrompt?: string
+}
+
+export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { agent: 'claude' }
+
+/** Заголовок блока инструкций ассистента в системном промпте; не редактируется. */
+export const ASSISTANT_TITLE = 'Ассистент'
 
 /** Назначение системной роли (id из DEFAULT_ROLES) по умолчанию; у пользовательских ролей его нет. */
 export function defaultRoleDescription(id: string): string | undefined {
