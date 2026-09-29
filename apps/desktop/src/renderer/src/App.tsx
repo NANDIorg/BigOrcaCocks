@@ -8,6 +8,7 @@ import {
 import type { AppSettings, GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { attentionTaskIds, buildAttention } from './attention'
+import { stageNodeOf, taskReviewState } from './taskReview'
 import { revealInFeed } from './feedLink'
 import { wfNodeTitles } from './cardState'
 import { runStageLabel } from './runStage'
@@ -400,7 +401,8 @@ export function App(): React.JSX.Element {
   const feedItems = openGlobal
     ? buildAttention({
         tasks: subtasks, requests: snap.requests ?? [], questions: snap.questions, dispatches: snap.dispatches,
-        runId: openGlobal.id, running: runningTaskIds, kindOf: (status) => kindById.get(status)
+        runId: openGlobal.id, running: runningTaskIds, kindOf: (status) => kindById.get(status),
+        stageNode: (task) => stageNodeOf(task, openGlobal, workflowForRun(openGlobal.id, snap.runs, active, taskTypes))
       })
     : []
   /** Роли задач прогона — по типу его глобальной задачи; нет прогона — тип проекта по умолчанию. */
@@ -411,10 +413,13 @@ export function App(): React.JSX.Element {
   for (const t of projectTerminals) {
     if (t.role === 'coordinator' && t.runId && !exited.has(t.ptyId)) coordinatorPtys.set(t.runId, t.ptyId)
   }
-  // Что ждёт человека, считается в GlobalTask.waiting (pending-запросы); здесь — только ревью кода.
+  // Что ждёт человека, считается в GlobalTask.waiting (pending-запросы); здесь — только ревью кода. Задача в «Ревью» на
+  // остановленном этапе (мерж упал) ревью не ждёт — её не считаем (`taskReviewState`, как лента «Ждут вас»).
   const attention = new Map<string, GlobalTaskAttention>()
   for (const t of tasks) {
-    if (!t.runId || kindById.get(t.status) !== 'review' || t.answerFor) continue
+    if (!t.runId || kindById.get(t.status) !== 'review') continue
+    const run = globals.find((g) => g.id === t.runId)
+    if (taskReviewState(t, 'review', snap.requests ?? [], run, workflowForRun(t.runId, snap.runs, active, taskTypes)) !== 'review') continue
     attention.set(t.runId, { review: (attention.get(t.runId)?.review ?? 0) + 1 })
   }
   const requests = snap.requests ?? []

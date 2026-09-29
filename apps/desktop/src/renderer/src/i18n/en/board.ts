@@ -266,6 +266,7 @@ export default {
   'task.clarification': 'Clarification',
   'task.reviewNotes': 'Review notes',
   'task.review': 'Review',
+  'task.stalled': 'Stage stalled',
   'task.yourAnswers': 'Your answers',
   'task.coordQuestions': 'Questions to coordinator',
   'task.coordAnswer': 'Answer ({at}):',

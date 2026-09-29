@@ -281,6 +281,7 @@ export default {
   'task.clarification': 'Уточнение',
   'task.reviewNotes': 'Замечания после ревью',
   'task.review': 'Ревью',
+  'task.stalled': 'Этап остановлен',
   'task.yourAnswers': 'Ваши ответы',
   'task.coordQuestions': 'Вопросы координатору',
   'task.coordAnswer': 'Ответ ({at}):',
