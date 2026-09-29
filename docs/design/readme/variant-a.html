@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>README — вариант A «Скриншот»</title>
+<!--
+  Макет шапки README orca-board. Статичный самодостаточный файл: без сети, стили inline, логотипы — соседние logo-*.svg.
+  Имитирует рендер GitHub (светлая/тёмная тема, ширина «Десктоп/Телефон»). Данные выдуманы; статусы бейджей условные.
+  Собран скриптом из общих частей — правьте вместе с остальными вариантами. Параметры адреса: ?theme=light|dark|both, ?width=phone.
+-->
+<style>
+:root {
+  --page: #26282e; --frame: #2e3037; --side: #33353d; --side-2: #383b43; --card: #3b3e47; --line: rgba(255,255,255,.06);
+  --text: #ecedf1; --muted: #9ea1ad; --accent: #7b86f5; --accent-2: #5a63c8; --amber: #e8b04a; --term-bg: #1b1c21;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--page); color: var(--text);
+  font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
+}
+button, input { font: inherit; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- оболочка макета (в README не переносится) ---------- */
+.mk-bar {
+  position: sticky; top: 0; z-index: 10; background: var(--frame); border-bottom: 1px solid var(--line);
+  padding: 10px 20px; display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center;
+}
+.mk-title { min-width: 0; flex: 1 1 260px; }
+.mk-title h1 { font-size: 15px; margin: 0; }
+.mk-title p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+.mk-group { display: flex; align-items: center; gap: 8px; }
+.mk-group > span { color: var(--muted); font-size: 12px; }
+.seg { display: inline-flex; background: var(--side); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: transparent; color: var(--text); padding: 5px 12px; border-radius: 6px; cursor: pointer; }
+.seg button:hover { background: var(--side-2); }
+.seg button[aria-pressed="true"] { background: var(--accent-2); color: #fff; }
+.mk-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); }
+.mk-legend { margin: 14px 20px 0; max-width: 1240px; background: var(--frame); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 13px; }
+.mk-legend summary { cursor: pointer; color: var(--muted); }
+.mk-legend ol { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 6px 24px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.mk-legend li { display: flex; gap: 8px; align-items: flex-start; }
+.mk-legend li span:last-child { color: var(--text); }
+.mk-legend li b { font-weight: 600; }
+.mk-stage { padding: 16px 20px 8px; }
+.mk-frames { display: flex; gap: 16px; justify-content: center; align-items: flex-start; margin: 0 auto; max-width: 2000px; }
+.mk-frames > .gh { flex: 1 1 0; min-width: 0; max-width: 960px; }
+.mk-frames[data-width="phone"] > .gh { flex: 0 0 375px; max-width: 375px; }
+.mk-src { margin: 12px auto 28px; max-width: 960px; font-size: 13px; }
+.mk-src summary { cursor: pointer; color: var(--muted); }
+.mk-src pre { margin: 8px 0 0; padding: 14px; background: var(--term-bg); border-radius: 8px; overflow: auto; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #cfd1da; }
+.mk-src p { color: var(--muted); margin: 8px 0 0; }
+.q { position: relative; display: inline-block; width: 0; height: 18px; margin: 0; vertical-align: middle; }
+.q i {
+  position: absolute; left: 6px; top: 0; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--amber);
+  color: var(--term-bg); font: 700 11px/1 -apple-system, "Segoe UI", sans-serif; font-style: normal; box-shadow: 0 0 0 3px rgba(232,176,74,.28); letter-spacing: 0;
+}
+.qa { position: relative; display: inline-block; vertical-align: middle; }
+.qa > .q { position: absolute; top: -9px; right: -9px; width: 18px; margin: 0; z-index: 1; }
+.qa > .q i { left: 0; }
+.mk-legend .q { width: 18px; margin-top: 1px; flex: none; }
+.mk-legend .q i { left: 0; }
+body[data-marks="off"] .q { display: none; }
+body[data-marks="off"] .mk-legend .q { display: inline-block; }
+
+/* ---------- имитация рендера GitHub ---------- */
+.gh {
+  --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0; --subtle: #f6f8fa; --link: #0969da; --code: rgba(129,139,152,.12);
+  --note: #0969da; --warn: #9a6700; --kbd: #f6f8fa;
+  --d-node: #f6f8fa; --d-border: #d1d9e0; --d-text: #1f2328; --d-muted: #59636e; --d-arrow: #59636e; --d-accent: #5a63c8;
+  background: var(--bg); color: var(--fg); color-scheme: light; border-radius: 12px; padding: 16px;
+  container-type: inline-size; container-name: gh;
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+}
+.gh[data-theme="dark"] {
+  --bg: #0d1117; --fg: #f0f6fc; --muted: #9198a1; --border: #3d444d; --subtle: #151b23; --link: #4493f8; --code: rgba(101,108,118,.2);
+  --note: #4493f8; --warn: #d29922; --kbd: #151b23;
+  --d-node: #151b23; --d-border: #3d444d; --d-text: #f0f6fc; --d-muted: #9198a1; --d-arrow: #9198a1; --d-accent: #7b86f5;
+  color-scheme: dark;
+}
+.gh[data-theme="light"] .on-dark, .gh[data-theme="dark"] .on-light { display: none; }
+.gh a { color: var(--link); text-decoration: none; }
+.gh a:hover { text-decoration: underline; }
+.gh-repo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; font-size: 20px; color: var(--muted); }
+.gh-repo svg { flex: none; }
+.gh-repo b { font-weight: 600; }
+.gh-repo a b { color: var(--link); }
+.gh-pill { border: 1px solid var(--border); border-radius: 2em; padding: 0 7px; font-size: 12px; font-weight: 500; line-height: 18px; color: var(--muted); }
+.gh-box { border: 1px solid var(--border); border-radius: 6px; }
+.gh-file { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--subtle); border-radius: 6px 6px 0 0; font-size: 14px; font-weight: 600; }
+.gh-file .sp { flex: 1; }
+.gh-file svg { color: var(--muted); }
+.gh-file a { color: var(--fg); }
+
+.markdown-body { padding: 32px; overflow-wrap: break-word; }
+.markdown-body > :first-child { margin-top: 0 !important; }
+.markdown-body > :last-child { margin-bottom: 0 !important; }
+.markdown-body [align="center"] { text-align: center; }
+.markdown-body [data-anchor] { scroll-margin-top: 112px; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: 600; line-height: 1.25; margin: 24px 0 16px; }
+.markdown-body h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid var(--border); margin-top: 0; }
+.markdown-body h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+.markdown-body h3 { font-size: 1.25em; }
+.markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body pre, .markdown-body table, .markdown-body details, .markdown-body .alert { margin: 0 0 16px; }
+.markdown-body ul, .markdown-body ol { padding-left: 2em; }
+.markdown-body li + li { margin-top: .25em; }
+.markdown-body li > p { margin-top: 16px; }
+.markdown-body code { padding: .2em .4em; font-size: 85%; background: var(--code); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; white-space: break-spaces; }
+.markdown-body pre { padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; background: var(--subtle); border-radius: 6px; }
+.markdown-body pre code { padding: 0; background: transparent; font-size: 100%; white-space: pre; }
+.markdown-body img { max-width: 100%; }
+.markdown-body hr { height: 4px; margin: 24px 0; background: var(--border); border: 0; }
+.markdown-body table { border-spacing: 0; border-collapse: collapse; display: block; width: max-content; max-width: 100%; overflow: auto; }
+.markdown-body th, .markdown-body td { padding: 6px 13px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.markdown-body th { font-weight: 600; }
+.markdown-body tr { background: var(--bg); }
+.markdown-body tr:nth-child(2n) { background: var(--subtle); }
+.markdown-body summary { cursor: pointer; font-weight: 600; }
+.markdown-body details > summary + * { margin-top: 12px; }
+.markdown-body details[open] > summary { margin-bottom: 0; }
+.markdown-body .alert { padding: 4px 16px; border-left: .25em solid var(--note); color: var(--fg); }
+.markdown-body .alert > :last-child { margin-bottom: 12px; }
+.markdown-body .alert-title { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; font-weight: 500; color: var(--note); }
+.markdown-body .alert-warning { border-left-color: var(--warn); }
+.markdown-body .alert-warning .alert-title { color: var(--warn); }
+.markdown-body .muted { color: var(--muted); }
+.markdown-body .todo { border: 1px dashed var(--border); border-radius: 6px; padding: 2px 8px; color: var(--muted); font-size: 14px; }
+
+/* бейджи: рисуем сами, в README это shields.io */
+.bd { display: inline-flex; vertical-align: middle; height: 20px; border-radius: 3px; overflow: hidden; margin: 2px 1px; color: #fff !important; text-decoration: none !important; font: 11px/20px Verdana, "DejaVu Sans", Geneva, sans-serif; text-shadow: 0 1px 0 rgba(1,1,1,.3); }
+.bd span { padding: 0 6px; white-space: nowrap; }
+.bd .l { background: #555; }
+.bd-ftb { height: 28px; border-radius: 3px; font: 700 11px/28px Verdana, "DejaVu Sans", Geneva, sans-serif; letter-spacing: 1.2px; text-transform: uppercase; text-shadow: none; margin: 3px 2px; }
+.bd-ftb span { padding: 0 12px; }
+
+/* заглушка скриншота (A) */
+.shot { position: relative; margin: 0 auto 16px; max-width: 100%; aspect-ratio: 16 / 10; border: 2px dashed rgba(123,134,245,.75); border-radius: 14px; overflow: hidden; background: #26282e; }
+.shot-win { position: absolute; inset: 0; display: flex; flex-direction: column;
+  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.028) 0 10px, transparent 10px 20px); }
+.shot-bar { height: 8%; min-height: 18px; background: #1b1c21; display: flex; align-items: center; gap: 6px; padding: 0 12px; flex: none; }
+.shot-bar i { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.16); }
+.shot-app { flex: 1; display: flex; min-height: 0; }
+.shot-side { width: 17%; background: #33353d; padding: 14px 12px; display: flex; flex-direction: column; gap: 10px; flex: none; }
+.shot-side b { height: 12px; width: 60%; background: rgba(255,255,255,.2); border-radius: 4px; }
+.shot-side s { height: 9px; background: rgba(255,255,255,.1); border-radius: 4px; }
+.shot-side s:nth-child(3n+2) { width: 75%; }
+.shot-side em { margin-top: auto; height: 22px; background: rgba(123,134,245,.28); border-radius: 8px; }
+.shot-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+.shot-head { display: flex; gap: 10px; align-items: center; }
+.shot-head s { height: 12px; width: 22%; background: rgba(255,255,255,.2); border-radius: 4px; }
+.shot-head span { margin-left: auto; height: 22px; width: 15%; background: rgba(123,134,245,.28); border-radius: 8px; }
+.shot-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.shot-col { background: #2e3037; border-radius: 10px; padding: 10px 8px; display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow: hidden; }
+.shot-col u { height: 8px; width: 55%; background: rgba(255,255,255,.2); border-radius: 4px; margin-bottom: 2px; }
+.shot-col s { height: var(--h); background: #3b3e47; border-radius: 8px; flex: none; }
+.shot-label { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none; }
+.shot-label > div { display: grid; gap: 6px; justify-items: center; background: rgba(27,28,33,.93); border: 1px solid rgba(255,255,255,.2); border-radius: 14px; padding: 16px 22px; max-width: 90%; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.shot-label strong { font-size: 18px; font-weight: 600; color: #ecedf1; line-height: 1.25; }
+.shot-label small { font-size: 12px; color: #c1c4cf; }
+.shot-label svg { color: #a9b0ff; }
+
+/* схема (B): широкая и вертикальная версии; в README — две пары SVG в <picture> */
+.flow { margin: 0 0 16px; }
+.flow svg { display: block; width: 100%; height: auto; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.flow .tall { display: none; }
+.dn { fill: var(--d-node); stroke: var(--d-border); stroke-width: 1.5; }
+.dt { fill: var(--d-text); font-weight: 600; }
+.dm { fill: var(--d-muted); }
+.da { stroke: var(--d-arrow); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.dah { fill: var(--d-arrow); }
+.di { fill: none; stroke: var(--d-accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.dback { stroke-dasharray: 5 5; }
+
+@container gh (max-width: 690px) {
+  .flow .wide { display: none; }
+  .flow .tall { display: block; }
+}
+@container gh (max-width: 600px) {
+  .markdown-body { padding: 16px; }
+  .markdown-body h1 { font-size: 1.6em; }
+  .shot-side { display: none; }
+  .shot-cols { grid-template-columns: repeat(4, 1fr); }
+  .shot-col:nth-child(n+5) { display: none; }
+  .shot-label > div { padding: 8px 12px; gap: 3px; }
+  .shot-label strong { font-size: 14px; }
+  .shot-label small { font-size: 11px; }
+  .shot-label svg { display: none; }
+  .gh-repo { font-size: 16px; }
+}
+@media (max-width: 640px) {
+  .mk-bar { padding: 10px 14px; }
+  .mk-stage { padding: 12px 8px 8px; }
+  .mk-legend { margin: 12px 8px 0; }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body data-marks="on">
+<header class="mk-bar">
+  <div class="mk-title"><h1>README — вариант A «Скриншот»</h1><p>Знак, однострочник, 4 плоских бейджа, навигация и большой скриншот доски (пока заглушка).</p></div>
+  <div class="mk-group" role="group" aria-label="Тема GitHub"><span>Тема</span>
+    <div class="seg"><button type="button" data-set="theme:light" aria-pressed="true">Светлая</button><button type="button" data-set="theme:dark" aria-pressed="false">Тёмная</button><button type="button" data-set="theme:both" aria-pressed="false">Рядом</button></div>
+  </div>
+  <div class="mk-group" role="group" aria-label="Ширина"><span>Ширина</span>
+    <div class="seg"><button type="button" data-set="width:desktop" aria-pressed="true">Десктоп</button><button type="button" data-set="width:phone" aria-pressed="false">Телефон 375</button></div>
+  </div>
+  <label class="mk-check"><input type="checkbox" id="marks" checked> пометки вопросов</label>
+</header>
+<details class="mk-legend" open>
+  <summary>Открытые вопросы к человеку — жёлтые метки на макете</summary>
+  <ol>
+    <li><span class="q" role="img" aria-label="Открытый вопрос 1: лицензия" title="Вопрос 1: лицензия"><i>1</i></span><span><b>Лицензия.</b> LICENSE в репозитории нет — раздел и бейдж лицензии пока заглушки.</span></li>
+    <li><span class="q" role="img" aria-label="Открытый вопрос 2: имя репозитория" title="Вопрос 2: имя репозитория"><i>2</i></span><span><b>Имя.</b> Репозиторий NANDIorg/BigOrcaCocks, продукт — orca-board; видно в шапке рамки.</span></li>
+    <li><span class="q" role="img" aria-label="Открытый вопрос 3: статус Windows" title="Вопрос 3: статус Windows"><i>3</i></span><span><b>Windows.</b> Сборка не проверялась на живой Windows — как это назвать в README.</span></li>
+    <li><span class="q" role="img" aria-label="Открытый вопрос 4: знак как иконка приложения" title="Вопрос 4: знак как иконка приложения"><i>4</i></span><span><b>Иконка.</b> Делать ли выбранный знак иконкой приложения (отдельная задача).</span></li>
+    <li><span class="q" role="img" aria-label="Открытый вопрос 5: README.en.md" title="Вопрос 5: README.en.md"><i>5</i></span><span><b>English.</b> Нужен ли короткий README.en.md; ссылка на него — в шапке.</span></li>
+  </ol>
+</details>
+<main class="mk-stage">
+  <div class="mk-frames" data-width="desktop">
+<div class="gh" data-theme="light" role="region" aria-label="Предпросмотр README, светлая тема GitHub">
+  <div class="gh-repo"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5A1.5 1.5 0 0 1 4.5 1H13v11H4.5a1.5 1.5 0 0 0 0 3H13M3 2.5v11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><a href="#">NANDIorg</a><span>/</span><a href="#"><b>BigOrcaCocks</b></a><span class="gh-pill">Public</span><span class="q" role="img" aria-label="Открытый вопрос 2: имя репозитория" title="Вопрос 2: имя репозитория"><i>2</i></span></div>
+  <div class="gh-box">
+    <div class="gh-file"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><circle cx="2.5" cy="3.5" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="2.5" cy="12.5" r="1"/></g><path d="M5.5 3.5h9M5.5 8h9M5.5 12.5h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><a href="#">README</a></div>
+    <article class="markdown-body">
+
+<p align="center"><span class="qa"><img class="on-light" src="./logo-a.svg" alt="" width="96" height="96"><img class="on-dark" src="./logo-a-dark.svg" alt="" width="96" height="96"><span class="q" role="img" aria-label="Открытый вопрос 4: знак как иконка приложения" title="Вопрос 4: знак как иконка приложения"><i>4</i></span></span></p>
+<h1 align="center">orca-board</h1>
+<p align="center">Канбан-доска для CLI-агентов: задача на доске — агент в своём git worktree.</p>
+<p align="center"><a class="bd" href="#" aria-label="release: v1.0.1"><span class="l" aria-hidden="true">release</span><span style="background:#5a63c8" aria-hidden="true">v1.0.1</span></a><a class="bd" href="#" aria-label="CI: passing"><span class="l" aria-hidden="true">CI</span><span style="background:#44cc11" aria-hidden="true">passing</span></a><span class="qa"><a class="bd" href="#" aria-label="platform: macOS | Windows"><span class="l" aria-hidden="true">platform</span><span style="background:#5a63c8" aria-hidden="true">macOS | Windows</span></a><span class="q" role="img" aria-label="Открытый вопрос 3: статус Windows" title="Вопрос 3: статус Windows"><i>3</i></span></span><a class="bd" href="#" aria-label="node: 24"><span class="l" aria-hidden="true">node</span><span style="background:#5a63c8" aria-hidden="true">24</span></a></p>
+<p align="center"><a href="#" data-go="install">Установка</a> · <a href="#" data-go="how">Как это работает</a> · <a href="#" data-go="features">Возможности</a> · <a href="#" data-go="docs">Документация</a> · <a href="#">English</a><span class="q" role="img" aria-label="Открытый вопрос 5: README.en.md" title="Вопрос 5: README.en.md"><i>5</i></span></p>
+<div align="center"><div class="shot" role="img" aria-label="Заглушка макета: здесь будет скриншот доски">
+        <div class="shot-win" aria-hidden="true">
+          <div class="shot-bar"><i></i><i></i><i></i></div>
+          <div class="shot-app">
+            <div class="shot-side"><b></b><s></s><s></s><s></s><s></s><s></s><em></em></div>
+            <div class="shot-main"><div class="shot-head"><s></s><span></span></div><div class="shot-cols"><div class="shot-col"><u></u><s style="--h:56px"></s><s style="--h:40px"></s><s style="--h:48px"></s></div><div class="shot-col"><u></u><s style="--h:44px"></s><s style="--h:64px"></s></div><div class="shot-col"><u></u><s style="--h:72px"></s><s style="--h:44px"></s><s style="--h:40px"></s><s style="--h:36px"></s></div><div class="shot-col"><u></u><s style="--h:40px"></s><s style="--h:56px"></s></div><div class="shot-col"><u></u><s style="--h:60px"></s><s style="--h:44px"></s><s style="--h:52px"></s></div><div class="shot-col"><u></u><s style="--h:48px"></s><s style="--h:40px"></s><s style="--h:36px"></s><s style="--h:44px"></s></div></div></div>
+          </div>
+        </div>
+        <div class="shot-label" aria-hidden="true"><div><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="10" r="1.8" fill="currentColor"/><path d="M4 18l5-5 4 4 3-3 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><strong>здесь будет скриншот доски</strong><small>заглушка макета, не скриншот · 1600 × 1000</small></div></div>
+      </div></div>
+<h2 data-anchor="how">Как это работает</h2>
+<ol>
+  <li>Добавьте git-репозиторий кнопкой «+» в сайдбаре и нажмите «Координатор» — откроется Claude Code с инструкцией и целью.</li>
+  <li>Координатор раскладывает цель на задачи. Старт задачи создаёт отдельный <code>git worktree</code> и запускает в нём агента — каждый работает на своей ветке <code>orca/‹id›</code>.</li>
+  <li>Воркер сдаёт результат явно — <code>orca-board done</code>. Вы смотрите diff на карточке и нажимаете «Слить и закрыть» или «Доработать» с замечаниями.</li>
+</ol>
+<h2 data-anchor="features">Возможности</h2>
+<table>
+  <tr><td><b>Канбан-доска</b><br>Колонки от «Бэклога» до «Сделано», настраиваются в «О проекте».</td><td><b>Worktree на задачу</b><br>Агенты изолированы друг от друга и от вашего дерева.</td><td><b>Роли</b><br>Агент и модель под тип задачи: <code>claude</code>, <code>codex</code> и др.</td></tr>
+  <tr><td><b>Терминалы</b><br>PTY с агентом на каждую задачу, клик по карточке.</td><td><b>Вопросы и ревью</b><br>Ответ воркеру и приём результата — на карточке.</td><td><b>Работа в фоне</b><br>Иконка в строке меню или трее; агенты не останавливаются.</td></tr>
+</table>
+<h2 data-anchor="install">Установка</h2>
+<h3>macOS</h3>
+<ol>
+  <li>Скачайте <code>orca-board-‹версия›-arm64.dmg</code> (Apple Silicon) или <code>-x64.dmg</code> (Intel) из <a href="#">Releases</a>.</li>
+  <li>Перетащите <code>orca-board.app</code> в «Программы» и откройте.</li>
+  <li>Нужны <b>git</b> и хотя бы один CLI-агент — <code>claude</code> (Claude Code с подпиской), <code>codex</code> и др.</li>
+</ol>
+<h3>Windows<span class="q" role="img" aria-label="Открытый вопрос 3: статус Windows" title="Вопрос 3: статус Windows"><i>3</i></span></h3>
+<p>Установщик <code>orca-board-‹версия›-x64.exe</code> или portable-вариант из <a href="#">Releases</a>.</p>
+<div class="alert alert-warning"><p class="alert-title"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 15 14H1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.5v3.3M8 11.6v.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Windows</p><p>Сборка не подписана и на живой Windows пока не проверялась — при первом запуске SmartScreen попросит подтверждение. О проблемах пишите в issues.</p></div>
+<h3>Из исходников</h3>
+<pre><code>pnpm install --frozen-lockfile
+pnpm dev</code></pre>
+<p>Нужны Node.js 24, pnpm и git. Процесс разработки — <a href="#">CONTRIBUTING.md</a>.</p>
+<h2 data-anchor="docs">Документация</h2>
+<ul>
+  <li><a href="#">docs/architecture.md</a> — устройство приложения, IPC, протокол сокета и CLI</li>
+  <li><a href="#">docs/workflow.md</a> — воркфлоу задачи: этапы, проверки, мерж</li>
+  <li><a href="#">docs/git-flow.md</a> — ветки, PR и релизы</li>
+  <li><a href="#">docs/releasing.md</a> — как собрать и опубликовать релиз</li>
+</ul>
+<h2>Лицензия</h2>
+<p><span class="todo">лицензия не выбрана — файла LICENSE в репозитории пока нет</span><span class="q" role="img" aria-label="Открытый вопрос 1: лицензия" title="Вопрос 1: лицензия"><i>1</i></span></p>
+    </article>
+  </div>
+</div>
+  </div>
+  <details class="mk-src">
+    <summary>Как шапка запишется в README.md (GitHub вырезает CSS и style — только атрибуты и разметка)</summary>
+    <pre>&lt;p align="center"&gt;
+  &lt;picture&gt;
+    &lt;source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-a-dark.svg"&gt;
+    &lt;img src="docs/assets/logo-a.svg" alt="" width="96" height="96"&gt;
+  &lt;/picture&gt;
+&lt;/p&gt;
+
+&lt;h1 align="center"&gt;orca-board&lt;/h1&gt;
+
+&lt;p align="center"&gt;Канбан-доска для CLI-агентов: задача на доске — агент в своём git worktree.&lt;/p&gt;
+
+&lt;p align="center"&gt;
+  &lt;a href="https://github.com/NANDIorg/BigOrcaCocks/releases"&gt;&lt;img alt="Релиз" src="https://img.shields.io/github/v/release/NANDIorg/BigOrcaCocks?style=flat&amp;color=5a63c8"&gt;&lt;/a&gt;
+  &lt;a href="https://github.com/NANDIorg/BigOrcaCocks/actions/workflows/ci.yml"&gt;&lt;img alt="CI" src="https://img.shields.io/github/actions/workflow/status/NANDIorg/BigOrcaCocks/ci.yml?style=flat&amp;label=CI"&gt;&lt;/a&gt;
+  &lt;img alt="Платформы: macOS, Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-5a63c8?style=flat"&gt;
+  &lt;img alt="Node.js 24" src="https://img.shields.io/badge/node-24-5a63c8?style=flat"&gt;
+&lt;/p&gt;
+
+&lt;p align="center"&gt;
+  &lt;a href="#установка"&gt;Установка&lt;/a&gt; · &lt;a href="#как-это-работает"&gt;Как это работает&lt;/a&gt; ·
+  &lt;a href="#возможности"&gt;Возможности&lt;/a&gt; · &lt;a href="#документация"&gt;Документация&lt;/a&gt; · &lt;a href="README.en.md"&gt;English&lt;/a&gt;
+&lt;/p&gt;
+
+&lt;p align="center"&gt;
+  &lt;img src="docs/assets/board.png" alt="Доска orca-board: колонки от «Бэклога» до «Сделано»" width="900"&gt;
+&lt;/p&gt;</pre>
+    
+  </details>
+</main>
+<script>
+(function () {
+  var root = document.querySelector('.mk-frames');
+  var first = root.querySelector('.gh');
+  var state = { theme: 'light', width: 'desktop' };
+  try {
+    var q = new URLSearchParams(location.search);
+    var t = q.get('theme');
+    if (t === 'light' || t === 'dark' || t === 'both') state.theme = t;
+    else if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) state.theme = 'dark';
+    if (q.get('width') === 'phone') state.width = 'phone';
+  } catch (e) {}
+  var names = { light: 'светлая тема GitHub', dark: 'тёмная тема GitHub' };
+  function label(el, theme) { el.setAttribute('aria-label', 'Предпросмотр README, ' + names[theme]); }
+  function render() {
+    var all = root.querySelectorAll('.gh');
+    for (var i = 1; i < all.length; i++) all[i].remove();
+    var themes = state.theme === 'both' ? ['light', 'dark'] : [state.theme];
+    first.dataset.theme = themes[0];
+    label(first, themes[0]);
+    if (themes.length > 1) {
+      var c = first.cloneNode(true);
+      c.dataset.theme = themes[1];
+      label(c, themes[1]);
+      root.appendChild(c);
+    }
+    root.dataset.width = state.width;
+    document.querySelectorAll('[data-set]').forEach(function (b) {
+      var k = b.dataset.set.split(':');
+      b.setAttribute('aria-pressed', String(state[k[0]] === k[1]));
+    });
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-set]');
+    if (b) { var k = b.dataset.set.split(':'); state[k[0]] = k[1]; render(); return; }
+    var a = e.target.closest('.gh a[href="#"]');
+    if (!a) return;
+    e.preventDefault();
+    var go = a.dataset.go;
+    if (!go) return;
+    var target = a.closest('.gh').querySelector('[data-anchor="' + go + '"]');
+    if (target) target.scrollIntoView({ block: 'start' });
+  });
+  var marks = document.getElementById('marks');
+  marks.addEventListener('change', function () { document.body.dataset.marks = marks.checked ? 'on' : 'off'; });
+  render();
+})();
+</script>
+</body>
+</html>

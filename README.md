@@ -1,168 +1,237 @@
-# orca-board
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo.svg" alt="orca-board" height="56">
+  </picture>
+</h1>
 
-Лёгкий оркестратор CLI-агентов (Claude Code, Codex, OpenCode и любые другие)
-с канбан-доской. Идея та же, что у Orca от Stably, но ядро — доска задач:
-задача на доске = агент в своём git worktree.
+<p align="center">Оркестратор CLI-агентов с канбан-доской — по вашей подписке, без API-ключей.</p>
 
-Работает по подписке пользователя: приложение не знает про API-ключи,
-оно только запускает CLI-агента в PTY, как обычный терминал.
+<p align="center">
+  <a href="https://github.com/NANDIorg/BigOrcaCocks/releases"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/NANDIorg/BigOrcaCocks?style=for-the-badge&color=5a63c8"></a>
+  <a href="https://github.com/NANDIorg/BigOrcaCocks/actions/workflows/ci.yml"><img alt="Статус CI" src="https://img.shields.io/github/actions/workflow/status/NANDIorg/BigOrcaCocks/ci.yml?style=for-the-badge&label=CI"></a>
+  <img alt="Платформы: macOS, Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-5a63c8?style=for-the-badge">
+</p>
 
-## Что это
+<p align="center">
+  <a href="#установка">Установка</a> · <a href="#как-это-работает">Как это работает</a> · <a href="#документация">Документация</a>
+</p>
 
-- **Канбан-доска** — колонки по умолчанию `Бэклог → Готовы → В работе → Нужен ответ → Ревью → Сделано`,
-  набор, порядок, названия и цвета настраиваются в «О проекте» (системные колонки нельзя удалить,
-  свои — можно добавить). Карточка = задача. У задачи есть спека, зависимости, ветка/worktree, роль, статус.
-  Карточки в колонке сортируются по созданию, завершению или обновлению.
-- **Роли** — кто выполняет задачу: агент + модель (например, `developer` на `claude`/`opus`,
-  `qa` на `codex`). Роли задаются типом задачи в «Настройки → Типы задач»:
-  координатор, программист, ревьюер, QA. Ассистент доски — не роль типа: его агент, модель
-  и инструкции — в настройках приложения.
-- **Терминалы** — на каждую задачу «In progress» открыт PTY с агентом внутри.
-  Клик по карточке показывает его терминал.
-- **Worktree на задачу** — старт задачи создаёт `git worktree add` на отдельной ветке,
-  завершение — предлагает мерж и удаляет worktree.
-- **Координатор** — обычный CLI-агент в отдельном терминале с CLI `orca-board`,
-  через который он создаёт задачи, запускает воркеров, ждёт событий и ставит
-  «ворота» с вопросом человеку. Скилл с инструкцией лежит в `skills/`.
-- **Завершение — явное.** Воркер обязан вызвать `orca-board done --summary ...`.
-  Выход процесса без этого = состояние `unknown`, не `done`.
-- **Работа в фоне** — у приложения есть иконка в строке меню (macOS) / трее (Windows, Linux): закрытие окна
-  не останавливает агентов, приложение живёт в иконке, выход — пунктом «Выйти» в её меню
-  (отключается в «Основных настройках»).
+orca-board — десктоп-приложение, в котором задача на доске — это CLI-агент (Claude Code, Codex, OpenCode и другие)
+в своём git worktree. Вы ставите цель, агент-координатор раскладывает её на подзадачи, воркеры делают их параллельно,
+а ревью и решения остаются за вами.
+
+- **Задача = агент в своём worktree.** Каждая подзадача — отдельная ветка и терминал, агенты не мешают друг другу.
+- **По вашей подписке.** Приложение не знает про API-ключи: оно запускает CLI-агента в PTY, как обычный терминал.
+- **Этапы — графом.** Ревью агентом, вопросы и приёмка человеком, мерж — узлы воркфлоу, который настраивается под тип задачи.
+
+## Как это работает
+
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-narrow-dark.svg">
+  <source media="(max-width: 600px)" srcset="docs/assets/how-it-works-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <img src="docs/assets/how-it-works.svg" alt="Схема: вы → координатор → доска → воркеры в git worktree → ветка задачи; вопросы и ревью возвращаются к вам" width="100%">
+</picture>
+
+1. **Цель.** Вы создаёте глобальную задачу и нажимаете «Координатор» — открывается CLI-агент с инструкцией и целью.
+2. **Декомпозиция.** Координатор через CLI `orca-board` заводит подзадачи на роли типа задачи (программист, QA, ревьюер…).
+3. **Работа.** Каждый воркер стартует в своём worktree на ветке `orca/<taskId>`. Закончил — обязан вызвать
+   `orca-board done --summary "..."`; выход процесса без этого — состояние `unknown`, а не «сделано».
+4. **Этапы.** Ветку подзадачи приложение сливает в ветку глобальной задачи `feature/<runId>-<slug>`, дальше граф ведёт
+   её по этапам: ревью агентом, решение ИИ, вопрос или приёмка человеком. Вопросы и запросы приходят в Инбокс.
+5. **Готово.** Вы принимаете результат на «Проверке». Ветка остаётся локальной: push, PR и мерж в основную ветку — ваше
+   решение (или ноды `git` / `merge` в графе типа).
+
+Подробнее — [docs/nested-kanban.md](docs/nested-kanban.md) и [docs/workflow.md](docs/workflow.md).
 
 ## Установка
 
-### Готовая сборка (macOS)
+| ОС | Файл в [Releases](https://github.com/NANDIorg/BigOrcaCocks/releases) | Примечание |
+|---|---|---|
+| macOS, Apple Silicon | `orca-board-<версия>-arm64.dmg` | подписан Developer ID и нотаризован (с 1.0.1) |
+| macOS, Intel | `orca-board-<версия>-x64.dmg` | то же |
+| Windows x64 | `orca-board-<версия>-x64.exe` | установщик NSIS, можно выбрать папку; без подписи кода |
+| Windows x64 | `orca-board-<версия>-portable-x64.exe` | запускается без установки; без подписи кода |
 
-1. Скачайте dmg из [Releases](https://github.com/NANDIorg/BigOrcaCocks/releases):
-   `orca-board-<версия>-arm64.dmg` для Apple Silicon, `-x64.dmg` для Intel.
-2. Перетащите `orca-board.app` в «Программы».
-3. Откройте приложение. У подписанного и notarized выпуска допустимо обычное подтверждение
-   «приложение загружено из Интернета» с кнопкой «Открыть». Блокировка «разработчик не может
-   быть проверен» / «Apple не может проверить на вредоносное ПО» означает, что проверка доверия
-   не пройдена. Сообщение «повреждено» также требует диагностики файла, а не обхода защиты.
-   Сообщите версию, архитектуру и текст ошибки в issues; не отключайте Gatekeeper и не удаляйте quarantine.
-   **Исторический v1.0.0 подписан ad-hoc без notarization и блокируется Gatekeeper.** Новая цепочка
-   выпуска требует Developer ID и notarization, но изменение исходников не исправляет уже
-   опубликованный v1.0.0. Статус конкретной сборки и ручных проверок смотрите в release notes.
-4. Нужны на машине: **git** и хотя бы один CLI-агент (**`claude`** — Claude Code с подпиской,
-   `codex`, `cursor-agent` и др.). Node устанавливать не нужно: CLI `orca-board` внутри
-   приложения работает на Node из Electron.
-5. Добавьте git-репозиторий кнопкой «+» в сайдбаре и нажмите «Координатор».
+Linux-сборки нет. Быстрый старт:
 
-### Готовая сборка (Windows)
+1. Поставьте **git** и хотя бы один CLI-агент — нужен **`claude`** (Claude Code с подпиской): на нём по умолчанию
+   работает координатор. Node не нужен: CLI `orca-board` внутри приложения работает на Node из Electron.
+2. Добавьте git-репозиторий кнопкой «+» в сайдбаре.
+3. Создайте глобальную задачу и нажмите «Координатор».
 
-1. Скачайте из [Releases](https://github.com/NANDIorg/BigOrcaCocks/releases) установщик
-   `orca-board-<версия>-x64.exe` (NSIS, можно выбрать папку установки) или portable-вариант
-   `orca-board-<версия>-portable-x64.exe` (запускается без установки).
-2. Сборка не подписана, поэтому при первом запуске SmartScreen покажет «Windows защитила ваш компьютер»:
-   нажмите «Подробнее» → «Выполнить в любом случае».
-3. Нужны на машине: **git** и хотя бы один CLI-агент (**`claude`** и/или `codex` и др.) в PATH.
-   Агенты, поставленные через `npm i -g`, находятся и в `%APPDATA%\npm`, даже если его нет в PATH.
-   Node устанавливать не нужно: CLI `orca-board` внутри приложения — это `orca-board.cmd`,
-   который запускает Node из Electron (`ORCA_NODE`).
-4. Добавьте git-репозиторий кнопкой «+» в сайдбаре и нажмите «Координатор».
+<details>
+<summary>macOS: Gatekeeper и «приложение загружено из Интернета»</summary>
 
-Сборка Windows собирается кросс-компиляцией на macOS и на живой Windows не проверялась —
-о проблемах пишите в issues.
+У подписанного и нотаризованного выпуска допустимо только обычное подтверждение «приложение загружено из Интернета»
+с кнопкой «Открыть». Блокировка «разработчик не может быть проверен», «Apple не может проверить на вредоносное ПО» или
+«повреждено» означает, что проверка доверия не пройдена: сообщите версию, архитектуру и текст ошибки в
+[issues](https://github.com/NANDIorg/BigOrcaCocks/issues). Не отключайте Gatekeeper и не снимайте quarantine.
 
-### Из исходников
+Исторический v1.0.0 подписан ad-hoc без нотаризации и блокируется Gatekeeper — ставьте 1.0.1 или новее. Статус
+конкретной сборки — в release notes ([docs/releases/](docs/releases/)).
+</details>
 
-Разработка вдвоём и с агентами — [CONTRIBUTING.md](CONTRIBUTING.md).
-Обязательный процесс веток, PR, релизов и hotfix — [docs/git-flow.md](docs/git-flow.md).
-Инструкции агента начинаются с [AGENTS.md](AGENTS.md).
+<details>
+<summary>Windows: SmartScreen и что проверено</summary>
 
-### Требования
+Сборка не подписана, поэтому при первом запуске SmartScreen покажет «Windows защитила ваш компьютер»: «Подробнее» →
+«Выполнить в любом случае». Агенты, поставленные через `npm i -g`, находятся и в `%APPDATA%\npm`, даже если его нет
+в PATH; CLI `orca-board` — это `orca-board.cmd`, который запускает Node из Electron.
 
-- **Node.js 24**
-- **pnpm 10.33.0** (закреплён в `packageManager`)
-- **git**
-- **CLI `claude`** (Claude Code) — обязателен: координатор по умолчанию запускается на нём
-  (роль `coordinator`, агента и модель можно поменять в «Настройки → Типы задач»).
-  Приложение запускает его как обычный терминал и работает по подписке пользователя,
-  API-ключи ему не нужны (см. шапку).
-- Остальные агенты для воркеров (`codex`, `opencode`, `gemini`, `cursor-agent`, `amp`,
-  `copilot`, `goose`) — опциональны: приложение само находит их в PATH и стандартных папках.
+Сборки Windows собирает CI на `windows-latest`, там же проходит `pnpm verify`, но на живой Windows приложение вручную
+проверялось мало — о проблемах пишите в [issues](https://github.com/NANDIorg/BigOrcaCocks/issues).
+Известные разборы — [docs/investigations/](docs/investigations/).
+</details>
 
-### Запуск в dev
+## Возможности
+
+| | Возможность | Суть |
+|---|---|---|
+| 🗂 | **Двухуровневая доска** | Глобальные задачи, внутри — доска подзадач воркеров. Колонки проекта настраиваются в «О проекте»; колонка «Нужен ответ» у глобальных задач вычисляется по открытым запросам. [→](docs/nested-kanban.md) |
+| 🔀 | **Граф воркфлоу** | Этапы `work`, `ask`, `gate`, `human`, `decision`, `condition`, `git`, `merge`, `end`, возвраты по `reject`, редактор графа. [→](docs/workflow.md) |
+| 🌿 | **Worktree и ветка** | Подзадача — в `orca/<taskId>`, слияние — в ветку глобальной задачи в отдельном worktree; ветка, открытая в проекте, не меняется. [→](docs/architecture.md#ветка-глобальной-задачи-srcmainrun-branchts-чистая-часть--packagescoresrcrun-branchts) |
+| 🎭 | **Типы задач и роли** | Роль = агент + модель + системный промпт. Заготовки: «Программирование», «Фронтенд», «Бэкенд», «Фронтенд и бэкенд», «Мобильная разработка», «QA: автотесты», «Документация». |
+| 📥 | **Инбокс** | Вопросы воркеров, «Принять / Вернуть» на этапах человека, решения ИИ, которые агент передал вам. [→](docs/human-requests.md) |
+| 🖼 | **Показ человеку** | Макеты, картинки, markdown и PDF, которые сдал воркер, открываются прямо в приложении. [→](docs/workflow.md#показ-человеку-на-работе) |
+| 💻 | **Терминалы** | PTY на каждого агента (xterm.js + node-pty); молчащий дольше 10 минут воркер — эскалация. |
+| 💬 | **Ассистент доски** | Чат поверх терминала; меняет настройки приложения и проекта через CLI, опасное — с подтверждением. Агент и инструкции — в «Настройки → Ассистент», не в типе задачи. [→](docs/assistant-chat.md) |
+| 📊 | **Статистика** | Токены, стоимость и время работы агентов — по моделям, задачам и глобальным задачам. |
+| 🌙 | **Фон, трей, обновления, ru/en** | Закрытие окна не останавливает агентов; автообновление; язык интерфейса — в «Настройках». |
+
+## Воркфлоу
+
+Граф этапов по умолчанию:
+
+```mermaid
+flowchart LR
+    S([Старт]) --> W["Реализация<br/>work"]
+    W -- "stage finish" --> R{"Ревью агентом<br/>gate"}
+    R -- accept --> H{"Проверка человеком<br/>human"}
+    R -- reject --> W
+    H -- accept --> E([Конец])
+    H -- reject --> W
+```
+
+Ревью агентом есть, только если в типе задачи есть роль `reviewer`. Слияния в основную ветку по умолчанию нет: мерж в
+orca-board локальный и PR не создаёт, ветку отправляет только нода `git` (push) или вы сами.
+
+<details>
+<summary>Типы нод</summary>
+
+| Нода | Зачем | Кто исполняет |
+|---|---|---|
+| `work` «Работа» | подзадачи этапа, каждая в своей ветке | воркеры ролей, подзадачи заводит координатор |
+| `ask` «Вопрос человеку» | агент задаёт вопросы, ответы идут в следующие этапы | агент роли ноды, отвечает человек |
+| `gate` «Проверка» | проверка ветки, `accept` / `reject` с замечаниями | агент роли (например, ревьюер) |
+| `human` «Решение человека» | «Принять» / «Вернуть» в Инбоксе | человек |
+| `decision` «Решение ИИ» | развилка по смыслу задачи, 2–8 вариантов | агент роли; не смог — человек |
+| `condition` «Условие» | развилка без ожидания (лимит повторов) | приложение |
+| `merge` «Мерж» | `git merge --no-ff` в ветку глобальной задачи | приложение |
+| `git` «Git» | коммит, push и другие git-операции | приложение |
+| `end` «Конец» | задача готова, ветка остаётся | приложение |
+
+Полное описание — [docs/workflow.md](docs/workflow.md).
+</details>
+
+## Агенты
+
+| Агент | CLI | |
+|---|---|---|
+| Claude Code | `claude` | **обязателен**: координатор по умолчанию; модель роли — `--model` |
+| Codex | `codex` | необязателен |
+| OpenCode, Gemini CLI, Cursor Agent | `opencode`, `gemini`, `cursor-agent` | необязательны |
+| Amp, GitHub Copilot CLI, Goose | `amp`, `copilot`, `goose` | необязательны |
+
+Установленных агентов приложение находит само (PATH и стандартные папки), версии видны в «О проекте», там же их можно
+выключить для проекта. Агента и модель роли меняют в «Настройки → Типы задач». Реестр — `packages/core/src/agents.ts`.
+
+<details>
+<summary>Что координатор запускает в терминале</summary>
+
+```
+orca-board roles list                          # роли типа задачи
+orca-board check --wait --types stage_started,stage_tasks_done,question
+orca-board task create --title "..." --spec "..." --role <id>
+orca-board worker read --dispatch <id>         # что пишет воркер
+orca-board question answer --question <id> --answer "..."
+orca-board question forward --question <id>    # передать вопрос человеку
+orca-board stage finish --summary "..."        # этап «Работа» закрыт — граф идёт дальше
+orca-board request list                        # что ждёт человека
+```
+
+Воркер сдаёт работу `orca-board done --summary "..."` и спрашивает `orca-board ask --question "..."`. Полный список —
+`orca-board --help` во вкладке «Терминал» приложения.
+</details>
+
+## Для разработчиков
+
+Нужны **Node.js 24**, **pnpm 10.33.0** (закреплён в `packageManager`) и **git**.
 
 ```
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm dev       # electron-vite dev
+pnpm verify    # перед PR: git-flow, typecheck, тесты, сборка — как в CI
 ```
 
-`pnpm dev` — это `pnpm --filter @orca-board/desktop dev`, то есть `electron-vite dev`.
+| Команда | Результат |
+|---|---|
+| `pnpm --filter @orca-board/desktop run pack` | локальная ad-hoc `.app` в `apps/desktop/release/local/`, не для распространения |
+| `pnpm --filter @orca-board/desktop run dist:mac` | dmg и zip arm64/x64 с подписью и нотаризацией; без credentials падает |
+| `pnpm --filter @orca-board/desktop run dist:win` | NSIS и portable x64 в `apps/desktop/release/`; собирается и с macOS |
 
-### Сборка .app
+Сборки ничего не публикуют: черновик релиза создаёт CI — [docs/releasing.md](docs/releasing.md). Процесс веток и PR —
+[docs/git-flow.md](docs/git-flow.md), вход для разработчика — [CONTRIBUTING.md](CONTRIBUTING.md), для агентов —
+[AGENTS.md](AGENTS.md). Разработка на Windows из исходников пока не отлажена —
+[docs/investigations/windows-local-dev.md](docs/investigations/windows-local-dev.md).
 
-- **`pnpm --filter @orca-board/desktop run pack`** → `apps/desktop/release/local/`
-  (локальная ad-hoc `.app` по `electron-builder.local.yml`, без Apple credentials; не для распространения).
-- **`pnpm --filter @orca-board/desktop run dist:mac`** (или `dist`) → dmg и zip arm64 и x64
-  плюс `latest-mac.yml` и ZIP blockmap. Требует credentials и выполняет подпись, notarization,
-  stapling и проверку финальных контейнеров; без них завершается ошибкой. Ничего не публикует.
-  Точные требования и безопасный путь CI — [docs/releasing.md](docs/releasing.md#подпись-macos-и-ci-secrets).
-- **`pnpm --filter @orca-board/desktop run dist:win`** → установщик NSIS и portable exe (x64)
-  плюс `latest.yml` и blockmap, в `apps/desktop/release/`. Собирается и с macOS. Ничего не публикует.
-- **Релиз через CI:** поручение агенту «собери релиз X.Y.Z» запускает процесс из
-  [docs/releasing.md](docs/releasing.md): PR, тег на master, описание, macOS/Windows-сборки,
-  файлы автообновления и контрольные суммы в черновике GitHub Release. «Собери и опубликуй»
-  разрешает также публикацию после проверок. Ревью второго разработчика обязательно.
-- Прямая публикация electron-builder запрещена: черновик создаёт CI после всех проверок.
-- **CLI `orca-board`** кладётся в ресурсы приложения (`Resources/cli`, см. `docs/architecture.md`),
-  отдельно ставить его не нужно.
+<details>
+<summary>Стек</summary>
 
-## Стек
+| Слой | Технология |
+|---|---|
+| Оболочка | Electron + electron-vite |
+| UI | React + TypeScript |
+| Терминал | xterm.js + node-pty |
+| Состояние | JSON-файлы в userData Electron: задачи, события и настройки переживают рестарт |
+| CLI | `orca-board` — голый Node из Electron, кладётся в ресурсы приложения |
+| Связь CLI ↔ приложение | unix socket (Windows — named pipe) + JSON-RPC |
+</details>
 
-| Слой | Технология | Зачем |
-|---|---|---|
-| Оболочка | Electron + electron-vite | как у Orca, зрелый PTY-стек |
-| UI | React + TypeScript | доска, терминалы |
-| Терминал | xterm.js + node-pty | рендер и PTY |
-| Состояние | JSON-файлы в userData Electron | задачи, события и настройки переживают рестарт; доска локальна |
-| CLI | `orca-board` (Node, тот же пакет) | команды для координатора и воркеров |
-| Связь CLI ↔ app | unix socket (Windows — named pipe) + JSON-RPC | CLI внутри PTY говорит с приложением |
-
-## Структура
+<details>
+<summary>Структура репозитория</summary>
 
 ```
-orca-board/
-  apps/desktop/      Electron-приложение (main, preload, renderer)
-  packages/core/     модель задач, store, миграции, события и графы воркфлоу
-  packages/cli/      команда `orca-board`
-  skills/            встроенные инструкции координатора, воркера и ассистента
-  docs/              архитектура, решения
-  scripts/           проверки процесса Git Flow
-  .github/           CI, сборка черновиков релизов, шаблоны и настройки защиты
+apps/desktop/      Electron-приложение (main, preload, renderer)
+packages/core/     модель задач, store, миграции, события и графы воркфлоу
+packages/cli/      команда orca-board
+skills/            встроенные инструкции координатора, воркера и ассистента
+docs/              архитектура и решения
+scripts/           проверки Git Flow и macOS-релиза
+.github/           CI, черновики релизов, шаблоны
 ```
+</details>
 
-## Статус
+## Документация
 
-Все этапы плана закрыты, дальше — полировка по итогам живого использования.
+| Файл | О чём |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | процессы, модель, IPC, сокет, CLI, сборка, грабли |
+| [docs/nested-kanban.md](docs/nested-kanban.md) | глобальные задачи и подзадачи |
+| [docs/workflow.md](docs/workflow.md) | граф воркфлоу: этапы, проверки, мерж |
+| [docs/human-requests.md](docs/human-requests.md) | запросы к человеку и Инбокс |
+| [docs/assistant-chat.md](docs/assistant-chat.md) | ассистент доски |
+| [docs/git-flow.md](docs/git-flow.md) · [docs/releasing.md](docs/releasing.md) | ветки, PR, выпуск релиза |
+| [docs/releases/](docs/releases/) | release notes |
 
-Работает: `pnpm install && pnpm dev`. Доска, задачи, drag-and-drop, терминалы с вкладками,
-старт воркера в git worktree с заданием, CLI `orca-board` через unix-сокет
-(`~/.orca-board/orca.sock`; на Windows — именованный канал `\\.\pipe\orca-board`;
-путь переопределяется `ORCA_SOCKET`), вопросы воркера с ответом из приложения, явный `done`,
-`check --wait` для координатора. Ревью на карточке: diff-stat и коммиты ветки, «Слить и закрыть»
-(коммит хвостов, `merge --no-ff`, удаление worktree) или «Доработать» с замечаниями, которые
-попадут в промпт при перезапуске. Детектор тишины: воркер без вывода 10 минут → эскалация
-(`ORCA_STUCK_MINUTES`). Кнопка «Координатор» открывает Claude Code с инструкцией и целью.
-Новый worktree сам ставит зависимости по lock-файлу (pnpm/npm/yarn/poetry).
+## Статус и ограничения
 
-Несколько проектов: «+» в сайдбаре открывает выбор папки, доска и сокет работают
-на проект (`ORCA_PROJECT` у агентов, `--project` в CLI). Уведомления macOS на вопрос,
-эскалацию и завершение. Сборка `.app`/dmg — см. «Установка».
+- Текущая версия — на бейдже релиза; первая подписанная сборка macOS — 1.0.1.
+- Windows собирается и проходит CI, но на живой машине проверена мало.
+- Мерж локальный: приложение ничего не пушит и не открывает PR, пока этого не делает нода `git` вашего графа.
+- Ошибки и предложения — в [issues](https://github.com/NANDIorg/BigOrcaCocks/issues).
 
-Агенты: реестр в `packages/core/src/agents.ts` (claude, codex, opencode, gemini, cursor, amp,
-copilot, goose, shell), установленные определяются автоматически. Во вкладке «О проекте» видно,
-кто установлен и с какой версией, и можно выключить агентов для проекта; `orca-board agents list`
-показывает то же координатору.
+## Вклад и лицензия
 
-Роли принадлежат типу задачи (агент + модель + назначение для координатора, `orca-board roles list`),
-колонки — проекту (`orca-board columns list`); задача создаётся с `--role`, статус — id колонки.
-Модель роли уходит агенту флагом (`claude --model`, `codex -m` и т.д.). У роли можно задать
-«Системный промпт» — он дописывается к служебным инструкциям Orca при запуске агента этой роли
-(у claude — через `--append-system-prompt`, у остальных — блоком в стартовом промпте). Карточки сортируются
-по созданию/завершению/обновлению, у закрытых задач видно время завершения.
-
-Проверить CLI руками: открыть «Терминал» в приложении и набрать `orca-board --help`.
+Как вносить изменения — [CONTRIBUTING.md](CONTRIBUTING.md). Лицензия пока не указана.

@@ -5,7 +5,8 @@ import { SectionHead } from '../about/parts'
 import { useT } from '../i18n'
 import { useAutoSave } from '../useAutoSave'
 import { agentTitle } from '../defaultTitles'
-import { ExecutorFields, InstructionTabs, agentState, commandPreview, effortsOf, useBuiltinPrompts } from '../RoleParts'
+import { ExecutorFields, InstructionTabs, commandPreview, effortsOf, useBuiltinPrompts } from '../RoleParts'
+import { roleAgentState } from '../stageRoles'
 import {
   assistantAgentPatch, assistantAgents, assistantModelPatch, assistantView, withAssistantPatch
 } from '../assistantSettings'
@@ -55,7 +56,7 @@ function AssistantEditor({ initial, agents: all, onSave }: {
   const agents = assistantAgents(all)
   const enabled = agents.filter((a) => a.enabled)
   const current = agents.find((a) => a.id === s.agent)
-  const state = agentState(current)
+  const state = roleAgentState(current)
 
   function patch(p: Partial<AssistantSettings>, debounce = false): void {
     update(withAssistantPatch(s, p), debounce)

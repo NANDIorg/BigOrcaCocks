@@ -14,6 +14,7 @@ import {
 } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
 import { useT, type TFunction, type TKey } from './i18n'
+import { AGENT_STATE_TEXT, roleAgentState } from './stageRoles'
 import { withCode } from './about/parts'
 import { agentTitle, modelTitle } from './defaultTitles'
 import { ipcErrorMessage } from './ipcError'
@@ -32,20 +33,6 @@ export function effortsOf(info: AgentInfo | undefined, agent: string, model: str
   return info ? effortOptionsFor(info, model) : effortOptions(agent)
 }
 
-/** Состояние агента для точки статуса и предупреждений. */
-export type AgentState = 'on' | 'off' | 'unknown'
-
-export function agentState(info: AgentInfo | undefined): AgentState {
-  if (!info) return 'unknown'
-  return info.enabled ? 'on' : 'off'
-}
-
-export const AGENT_STATE_TEXT: Record<AgentState, TKey> = {
-  on: 'config.roles.agentState.on',
-  off: 'config.roles.agentState.off',
-  unknown: 'config.roles.agentState.unknown'
-}
-
 /** Агент, модель и effort плюс превью команды запуска. */
 export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onModel, onEffort }: {
   exec: Executor
@@ -61,7 +48,7 @@ export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onMode
 }): React.JSX.Element {
   const t = useT()
   const current = agents.find((a) => a.id === exec.agent)
-  const state = agentState(current)
+  const state = roleAgentState(current)
   const defaults = current?.defaults
   const models = current ? modelOptions(current) : []
   const customModel = exec.model && !models.some((m) => m.id === exec.model) ? exec.model : undefined

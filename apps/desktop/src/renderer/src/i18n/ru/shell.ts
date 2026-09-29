@@ -90,6 +90,7 @@ export default {
   'tab.boardBack': 'К общей доске',
   'tab.terminals': 'Терминалы',
   'tab.stats': 'Статистика',
+  'tab.files': 'Файлы',
   'tab.info': 'О проекте',
   noSubtasks: 'Нет подзадач',
 

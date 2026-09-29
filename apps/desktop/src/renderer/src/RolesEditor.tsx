@@ -21,8 +21,9 @@ import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
 import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
 import {
-  AGENT_STATE_TEXT, ExecutorFields, InstructionTabs, agentState, commandPreview, effortsOf, useBuiltinPrompts, type BuiltinState
+  ExecutorFields, InstructionTabs, commandPreview, effortsOf, useBuiltinPrompts, type BuiltinState
 } from './RoleParts'
+import { AGENT_STATE_TEXT, roleAgentState } from './stageRoles'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -142,7 +143,7 @@ export function RolesEditor({
 
   function item(r: Role): React.JSX.Element {
     const info = agents.find((a) => a.id === r.agent)
-    const state = agentState(info)
+    const state = roleAgentState(info)
     const isService = !isTaskRole(r.id)
     const summary = [
       agentTitle(r.agent),
@@ -289,7 +290,7 @@ function RolePanel({
   /** Открыто подтверждение удаления: что сломается без роли. */
   const [confirming, setConfirming] = useState(false)
   const current = agents.find((a) => a.id === r.agent)
-  const state = agentState(current)
+  const state = roleAgentState(current)
   const isSystem = isSystemRole(r.id)
   const isService = !isTaskRole(r.id)
   const defaultDescription = defaultRoleDescription(r.id)
