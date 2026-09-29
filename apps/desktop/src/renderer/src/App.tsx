@@ -47,11 +47,12 @@ import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
+import { FilesView } from './FilesView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
 import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
-type Tab = 'board' | 'terminals' | 'stats' | 'info'
+type Tab = 'board' | 'terminals' | 'files' | 'stats' | 'info'
 
 interface OpenTerminal {
   ptyId: string
@@ -82,7 +83,7 @@ interface ProjectView {
   globalId: string | null
 }
 
-const TABS: Tab[] = ['board', 'terminals', 'stats', 'info']
+const TABS: Tab[] = ['board', 'terminals', 'files', 'stats', 'info']
 const tabKey = (projectId: string): string => `orca.tab.${projectId}`
 const globalKey = (projectId: string): string => `orca.global.${projectId}`
 
@@ -174,6 +175,8 @@ export function App(): React.JSX.Element {
   const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
   const [showDocs, setShowDocs] = useState(false)
+  /** .md, открытый из вкладки «Файлы»; кнопка rail открывает «Документы» без него. */
+  const [docsInitialPath, setDocsInitialPath] = useState<string | null>(null)
   /** Обновление приложения: плашка в сайдбаре, «Настройки → Обновления», тост после старта. */
   const updates = useUpdates()
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
@@ -808,7 +811,15 @@ export function App(): React.JSX.Element {
           {/* Сайдбар скрыт — плашки обновления не видно, поэтому точка на шестерёнке. */}
           {!showProjects && needsAttention(updates.state) && <span className="rail-dot" />}
         </button>
-        <button className={`icon ${showDocs ? 'active' : ''}`} title={t('shell.rail.docs')} onClick={() => setShowDocs(true)} disabled={!active}>
+        <button
+          className={`icon ${showDocs ? 'active' : ''}`}
+          title={t('shell.rail.docs')}
+          onClick={() => {
+            setDocsInitialPath(null)
+            setShowDocs(true)
+          }}
+          disabled={!active}
+        >
           <Icon.doc />
         </button>
         <button
@@ -892,6 +903,7 @@ export function App(): React.JSX.Element {
               {t('shell.tab.terminals')}
               {projectTerminals.length > 0 && <span className="tab-badge">{projectTerminals.length}</span>}
             </button>
+            <button className={`tab ${tab === 'files' ? 'active' : ''}`} onClick={() => setTab('files')}>{t('shell.tab.files')}</button>
             <button className={`tab ${tab === 'stats' ? 'active' : ''}`} onClick={() => setTab('stats')}>{t('shell.tab.stats')}</button>
             <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>{t('shell.tab.info')}</button>
           </div>
@@ -977,6 +989,19 @@ export function App(): React.JSX.Element {
                 onReject={(id, fb, images) => window.orca.review.reject(id, fb, images)}
               />
             </GlobalTaskView>
+          )}
+          {tab === 'files' && !active && <div className="empty">{t('shell.projects.none')}</div>}
+          {tab === 'files' && active && (
+            <FilesView
+              key={active.id}
+              projectId={active.id}
+              name={active.name}
+              root={active.root}
+              onOpenDoc={(path) => {
+                setDocsInitialPath(path)
+                setShowDocs(true)
+              }}
+            />
           )}
           {tab === 'stats' && !active && <div className="empty">{t('shell.projects.none')}</div>}
           {tab === 'stats' && active && <StatsView key={active.id} projectId={active.id} columns={columns} />}
@@ -1090,7 +1115,16 @@ export function App(): React.JSX.Element {
           }}
         />
       )}
-      {showDocs && active && <DocsModal key={active.id} projectName={active.name} tasks={tasks} columns={columns} onClose={() => setShowDocs(false)} />}
+      {showDocs && active && (
+        <DocsModal
+          key={active.id}
+          projectName={active.name}
+          tasks={tasks}
+          columns={columns}
+          initialDoc={docsInitialPath ? { source: 'project', path: docsInitialPath } : undefined}
+          onClose={() => setShowDocs(false)}
+        />
+      )}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}

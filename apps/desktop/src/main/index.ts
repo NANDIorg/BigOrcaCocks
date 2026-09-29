@@ -22,6 +22,7 @@ import {
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, readRule, writeRule } from './rules'
+import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
@@ -994,6 +995,12 @@ function registerIpc(): void {
   handle('showcase:previewBase', (_e, dispatchId: unknown) => {
     const p = resolveProject()
     return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
+  })
+  // Вкладка «Файлы» (main/project-files.ts): корень — явного projectId, неизвестный id — обычная ошибка «project not found».
+  handle('files:list', (_e, projectId: unknown, dir: unknown) => listProjectDir(projectRoot(String(projectId)), dir ?? ''))
+  // Только показать в Finder/Проводнике, не openPath: запуск произвольного файла опасен. Симлинк — сам симлинк.
+  handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {
+    shell.showItemInFolder(await resolveProjectPath(projectRoot(String(projectId)), path, false))
   })
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))

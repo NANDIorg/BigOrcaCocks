@@ -152,6 +152,13 @@ export default {
   'docs.notFound': 'file not found: {path}',
   'docs.notFile': 'not a file: {path}',
   'docs.tooBig': 'the file is larger than {mb} MB: {path}',
+  'files.badPath': 'invalid path: {path}',
+  'files.outside': 'the path is outside the project: {path}',
+  'files.hidden': 'the git service folder is not shown: {path}',
+  'files.notFound': 'not found: {path}',
+  'files.notDir': 'not a folder: {path}',
+  'files.rootMissing': 'the project folder is missing on disk: {path}',
+  'files.readFailed': 'could not read {path}: {error}',
 
   'showcase.taskNotFound': 'showcase: task not found: {id}',
   'showcase.dispatchNotFound': 'showcase: worker launch {id} not found for this task',
