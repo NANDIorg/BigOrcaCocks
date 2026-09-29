@@ -41,7 +41,8 @@ import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './bac
 import { OrcaError, ipcError, mt, setMainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
 import { rendererSource } from './renderer-source'
-import { applicationMenuTemplate, MenuActionQueue, PROJECT_URL } from './app-menu'
+import { applicationMenuTemplate, MenuActionQueue } from './app-menu'
+import { refreshAboutWindow, showAboutWindow } from './about-window'
 import type { AppMenuAction } from '../shared/ipc'
 import appIconPath from '../../build/icon.png?asset'
 
@@ -171,20 +172,12 @@ function navigateFromMenu(action: AppMenuAction): void {
   if (ready) window.webContents.send('app:menuAction', ready)
 }
 
-/** Меню и нативное «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
+/** Меню и «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
 function refreshApplicationMenu(): void {
-  app.setAboutPanelOptions({
-    applicationName: 'orca-board',
-    applicationVersion: app.getVersion(),
-    version: '',
-    credits: `${mt('menu.aboutCredits')}\n\nnandi\n${PROJECT_URL}`,
-    authors: ['nandi'],
-    website: PROJECT_URL,
-    iconPath: appIconPath
-  })
+  refreshAboutWindow()
   Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, {
     navigate: navigateFromMenu,
-    about: () => app.showAboutPanel(),
+    about: () => { showAboutWindow({ parent: showWindow(), iconPath: appIconPath, version: app.getVersion() }) },
     open: () => { showWindow() },
     quit: () => { void requestQuit() },
     openExternal: (url) => { void shell.openExternal(url) }

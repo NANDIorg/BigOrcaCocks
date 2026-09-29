@@ -6,6 +6,11 @@ export default {
 
   'menu.about': 'About orca-board',
   'menu.aboutCredits': 'A CLI agent orchestrator with a kanban board.\nTasks, separate Git branches and terminals in one app.',
+  'about.version': 'Version {version}',
+  'about.links': 'Project links',
+  'about.project': 'Project on GitHub',
+  'about.reportIssue': 'Report an issue',
+  'about.author': 'Created by {author}',
   'menu.settings': 'Settings…',
   'menu.checkUpdates': 'Check for Updates…',
   'menu.quit': 'Quit orca-board',

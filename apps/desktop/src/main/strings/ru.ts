@@ -6,6 +6,11 @@ export default {
 
   'menu.about': 'О приложении orca-board',
   'menu.aboutCredits': 'Оркестратор CLI-агентов с канбан-доской.\nЗадачи, отдельные Git-ветки и терминалы — в одном приложении.',
+  'about.version': 'Версия {version}',
+  'about.links': 'Ссылки проекта',
+  'about.project': 'Проект на GitHub',
+  'about.reportIssue': 'Сообщить об ошибке',
+  'about.author': 'Создано {author}',
   'menu.settings': 'Настройки…',
   'menu.checkUpdates': 'Проверить обновления…',
   'menu.quit': 'Выйти из orca-board',
