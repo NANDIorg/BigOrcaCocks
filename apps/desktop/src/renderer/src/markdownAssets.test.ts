@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveShowcaseRef, showcaseImageSrc } from './markdownAssets'
+import { hasMarkdownImages, resolveShowcaseRef, showcaseImageSrc, showcaseTextAssets, SHOWCASE_TEXT_PATH } from './markdownAssets'
 
 const BASE = 'orca-preview://0123456789abcdef0123456789abcdef/'
 
@@ -42,4 +42,29 @@ test('картинка markdown показа: относительная — и�
   assert.equal(showcaseImageSrc('orca-preview://чужой-токен/a.png', assets), undefined)
   assert.equal(showcaseImageSrc('../../a.png', assets), undefined)
   assert.equal(showcaseImageSrc('shots/a.png', { path: 'docs/README.md' }), undefined, 'старый main без base')
+})
+
+test('описание показа: картинки — от корня репозитория из снимка, внешние и `..` за корень — подписью', () => {
+  const a = showcaseTextAssets(BASE)
+  assert.deepEqual(a, { path: SHOWCASE_TEXT_PATH, base: BASE })
+  assert.equal(showcaseImageSrc('design/a.png', a), `${BASE}design/a.png`)
+  assert.equal(showcaseImageSrc('./design/скрин 1.png', a), `${BASE}design/${encodeURIComponent('скрин 1.png')}`)
+  assert.equal(showcaseImageSrc('../design/a.png', a), undefined, '`..` за корень показа')
+  assert.equal(showcaseImageSrc('https://example.com/a.png', a), undefined)
+  assert.equal(showcaseImageSrc('data:image/png;base64,AAAA', a), undefined)
+})
+
+test('описание показа без базы (нет снимка и worktree, старый API, кривой ответ) — картинки подписью', () => {
+  for (const base of [null, undefined, '', 'https://evil.example/', 'orca-preview://t', 42]) {
+    const a = showcaseTextAssets(base)
+    assert.deepEqual(a, { path: SHOWCASE_TEXT_PATH }, String(base))
+    assert.equal(showcaseImageSrc('design/a.png', a), undefined)
+  }
+})
+
+test('картинки в тексте описания: только тогда нужна база снимка', () => {
+  assert.equal(hasMarkdownImages('Вариант A\n\n![A](design/a.png)'), true)
+  assert.equal(hasMarkdownImages('![A][shot]\n\n[shot]: design/a.png'), true)
+  assert.equal(hasMarkdownImages('<IMG src="a.png">'), true)
+  assert.equal(hasMarkdownImages('Вариант A — [ссылка](design/a.html), восклицание! [нет]'), false)
 })

@@ -865,7 +865,8 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   - Markdown-файлы показа и описание (`text`, `--show-file`) тянут свои картинки так же best-effort, но только по ссылкам
     (`![alt](path)`, `![alt](<путь>)`, `[id]: path`, `src=`/`href=`), без каталога: у md-файла пути — от него, у описания —
     от корня репозитория. Найденное — ассеты снимка, в `files` не попадает; нет файла — молча пропускается. Картинки описания
-    renderer грузит по базе `showcase:previewBase`.
+    renderer грузит по базе `showcase:previewBase` (`ShowcaseText` в `ShowcaseBlock.tsx`, только если в тексте есть картинка);
+    базы нет (`null`, старый preload, ошибка) — картинки описания заменяются подписью, как внешние.
   - Отказ `done` с текстом для агента (запуск не закрыт, снимка нет): файла нет, тип не из белого списка, скрытый путь,
     путь или симлинк за пределы worktree, симлинк на чужой тип, в папке нечего показать, файл больше
     `MAX_SHOWCASE_SNAPSHOT_FILE_BYTES` (25 МБ), заявленного больше `MAX_SHOWCASE_SNAPSHOT_FILES` (300) или
@@ -887,7 +888,8 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/avif/svg` и `md` превьюятся, `html/htm` — вид
   `html` — страницей в изолированном фрейме по адресу из `showcase:previewUrl` (протокол `orca-preview://`, корень — тот же
   `showcaseSource`, сеть закрыта, см. `docs/architecture.md` → «Протокол показа»), `pdf` — «Открыть»). «Интернет-ресурсы»
-  (`network`) — только у показа со снимком: без него токен был бы на весь worktree, и main отказывает `showcase.networkNoSnapshot`.
+  (`network`) — только у показа со снимком: без него токен был бы на весь worktree, и main отказывает `showcase.networkNoSnapshot`;
+  просмотрщик показывает это отдельным состоянием `noNetwork` с кнопкой «Выключить интернет-ресурсы».
 - **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval и answer (Инбокс,
   лента глобальной задачи, модалка задачи; какие показы — `requestShowcases`), у approval прогона — блоком на подзадачу
   (`ShowcaseGroupsBlock`), он же в окне «Подтвердить» и во вкладке «Итог и цель» глобальной задачи (`docs/nested-kanban.md`

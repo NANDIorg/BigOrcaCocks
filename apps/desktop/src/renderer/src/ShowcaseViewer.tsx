@@ -344,6 +344,7 @@ export function ShowcaseViewer({ groups, start, decision, onClose }: Props): Rea
             onOpen={open}
             onReveal={reveal}
             onCopy={copyPath}
+            onNetworkOff={() => setNetwork(false)}
             onLink={(path) => {
               const fi = group.files.findIndex((f) => f.path === path)
               if (fi >= 0) setPos({ group: at.group, file: fi })
@@ -401,6 +402,8 @@ interface CanvasProps {
   onOpen(): void
   onReveal(): void
   onCopy(): void
+  /** Выключить «Интернет-ресурсы»: показ без снимка сеть не получает (`noNetwork`). */
+  onNetworkOff(): void
   /** Ссылка markdown на другой файл показа (путь от корня показа). */
   onLink(path: string): void
 }
@@ -537,12 +540,13 @@ interface StateProps {
   onOpen(): void
   onReveal(): void
   onCopy(): void
+  onNetworkOff?(): void
 }
 
 /** Состояния из таблицы README макетов: что видит человек и какие действия ему остаются. */
-export function ViewerState({ kind, failure, file, onRetry, onOpen, onReveal, onCopy }: StateProps): React.JSX.Element {
+export function ViewerState({ kind, failure, file, onRetry, onOpen, onReveal, onCopy, onNetworkOff }: StateProps): React.JSX.Element {
   const t = useT()
-  const tone = kind === 'missing' || kind === 'error' ? 'err' : kind === 'big' || kind === 'stale' ? 'warn' : ''
+  const tone = kind === 'missing' || kind === 'error' ? 'err' : kind === 'big' || kind === 'stale' || kind === 'noNetwork' ? 'warn' : ''
   const retry = <button type="button" className="btn-sm" onClick={onRetry}><Icon.refresh />{t('board.showcase.viewer.retry')}</button>
   const copy = <button type="button" className="btn-sm" onClick={onCopy}>{t('board.showcase.viewer.copyPath')}</button>
   const openBtn = <button type="button" className="btn-sm primary" onClick={onOpen}><Icon.external />{t('board.showcase.open')}</button>
@@ -552,6 +556,11 @@ export function ViewerState({ kind, failure, file, onRetry, onOpen, onReveal, on
     missing: { title: t('board.showcase.viewer.missing'), text: <p>{failure?.message}</p>, acts: <>{retry}{copy}</> },
     big: { title: t('board.showcase.viewer.big'), text: <p>{failure?.message}</p>, acts: <>{openBtn}{revealBtn}</> },
     stale: { title: t('board.showcase.viewer.staleTitle'), text: <p>{failure?.message ?? t('board.showcase.viewer.stale')}</p> },
+    noNetwork: {
+      title: t('board.showcase.viewer.noNetwork'),
+      text: <p>{failure?.message ?? t('board.showcase.viewer.noNetworkText')}</p>,
+      acts: onNetworkOff && <button type="button" className="btn-sm primary" onClick={onNetworkOff}>{t('board.showcase.viewer.networkOff')}</button>
+    },
     error: { title: t('board.showcase.viewer.error'), text: <p className="error-text">{failure?.message}</p>, acts: retry },
     external: { title: t('board.showcase.viewer.pdf'), text: <p>{t('board.showcase.viewer.pdfText')}</p>, acts: <>{openBtn}{revealBtn}</> },
     unsupported: { title: t('board.showcase.viewer.unsupported'), text: <p>{t('board.showcase.cantOpen')}</p>, acts: copy }

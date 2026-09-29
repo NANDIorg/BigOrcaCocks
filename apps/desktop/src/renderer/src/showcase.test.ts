@@ -6,7 +6,7 @@ import type { OrcaApi } from '../../shared/ipc'
 import {
   showcaseStaleMessage, bodyWithoutShowcase, bodyWithoutShowcases, latestShowcase, requestShowcase, requestShowcases, requestShowcaseGroups,
   requestShowcaseTaskId, showcaseTaskState, showcaseApi,
-  showcaseErrorText, showcaseFiles, isPreviewUrl, showcasePreviewApi, ShowcaseStaleError, showcaseFailure, onShowcaseFrameEscape,
+  showcaseErrorText, showcaseFiles, isPreviewUrl, showcasePreviewApi, showcasePreviewBaseApi, ShowcaseStaleError, showcaseFailure, onShowcaseFrameEscape,
   showcaseGroup, showcaseOrder, stepShowcase, showcaseIndex, clampShowcasePos, showcaseEntries, thumbsShown, hiddenFiles,
   fitFrame, scalePercent, SHOWCASE_VIEWPORTS, INLINE_VIEWPORTS, type ShowcaseGroup
 } from './showcase'
@@ -184,6 +184,9 @@ test('ошибка IPC → состояние просмотрщика по ко
   assert.equal(showcaseFailure(ipc('showcase.noWorktree', 'x')).kind, 'missing')
   assert.equal(showcaseFailure(ipc('showcase.tooBig', 'x')).kind, 'big')
   assert.equal(showcaseFailure(ipc('showcase.outside', 'x')).kind, 'error')
+  const net = showcaseFailure(ipc('showcase.networkNoSnapshot', 'показ: интернет недоступен'))
+  assert.equal(net.kind, 'noNetwork', 'отказ в сети показу без снимка — своё состояние, а не общая ошибка')
+  assert.notEqual(net.message, 'показ: интернет недоступен', 'текст — из словаря renderer')
   assert.equal(showcaseFailure(new Error("Error invoking remote method 'showcase:previewUrl': Error: No handler registered for 'showcase:previewUrl'")).kind, 'stale')
   assert.deepEqual(showcaseFailure(new Error('EACCES')), { kind: 'error', message: 'EACCES' })
 })
@@ -204,4 +207,13 @@ test('виртуальная ширина: страница видит прес�
   assert.equal(inline.outerHeight, 360)
   assert.equal(scalePercent(fitFrame(INLINE_VIEWPORTS.mobile, 400, 360).scale), 100)
   assert.equal(fitFrame(SHOWCASE_VIEWPORTS.desktop, 10, 10).scale, 0.1, 'масштаб не уходит в ноль')
+})
+
+test('previewBase: старый preload — undefined (картинки описания подписью), новый — вызов с dispatchId', async () => {
+  assert.equal(showcasePreviewBaseApi(undefined), undefined)
+  assert.equal(showcasePreviewBaseApi({ showcase: { previewUrl: async () => ({}) } } as unknown as Partial<OrcaApi>), undefined)
+  const calls: unknown[] = []
+  const api = { showcase: { previewBase: async (id: string) => { calls.push(id); return 'orca-preview://t/' } } } as unknown as Partial<OrcaApi>
+  assert.equal(await showcasePreviewBaseApi(api)?.('d1'), 'orca-preview://t/')
+  assert.deepEqual(calls, ['d1'])
 })

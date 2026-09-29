@@ -208,6 +208,16 @@ export function showcasePreviewApi(api: Partial<OrcaApi> | undefined): OrcaApi['
   return (dispatchId, path, opts) => showcase.previewUrl(dispatchId, path, opts)
 }
 
+/**
+ * `showcase.previewBase` (база картинок описания показа) или undefined: метод появился позже `previewUrl`, в старом
+ * preload его нет — тогда картинки описания заменяются подписью, а не ломают блок.
+ */
+export function showcasePreviewBaseApi(api: Partial<OrcaApi> | undefined): OrcaApi['showcase']['previewBase'] | undefined {
+  const showcase = api?.showcase
+  if (!showcase || typeof showcase.previewBase !== 'function') return undefined
+  return (dispatchId) => showcase.previewBase(dispatchId)
+}
+
 /** Подписка на Esc из фрейма показа (`showcase:escape`); в старом preload подписки нет — Esc работает только вне фрейма. */
 export function onShowcaseFrameEscape(api: Partial<OrcaApi> | undefined, cb: () => void): () => void {
   const on = api?.showcase?.onFrameEscape
@@ -217,9 +227,10 @@ export function onShowcaseFrameEscape(api: Partial<OrcaApi> | undefined, cb: () 
 /**
  * Почему файл не показан — состояние просмотрщика (docs/design/showcase-viewer/README.md → «Состояния»): `missing` —
  * файла нет ни в снимке, ни в worktree; `big` — больше `SHOWCASE_READ_MAX_BYTES`; `stale` — старый main/preload; `error` —
- * остальное, текст из main как есть.
+ * остальное, текст из main как есть; `noNetwork` — «Интернет-ресурсы» у показа без снимка: main не пускает сеть, страница
+ * видела бы весь worktree (`showcase.networkNoSnapshot`).
  */
-export type ShowcaseFailureKind = 'missing' | 'big' | 'stale' | 'error'
+export type ShowcaseFailureKind = 'missing' | 'big' | 'stale' | 'noNetwork' | 'error'
 
 export interface ShowcaseFailure {
   kind: ShowcaseFailureKind
@@ -236,6 +247,7 @@ export function showcaseFailure(e: unknown): ShowcaseFailure {
   const code = ipcErrorCode(e)
   if (code && MISSING_CODES.has(code)) return { kind: 'missing', message }
   if (code === 'showcase.tooBig') return { kind: 'big', message }
+  if (code === 'showcase.networkNoSnapshot') return { kind: 'noNetwork', message: t('board.showcase.viewer.noNetworkText') }
   return { kind: 'error', message }
 }
 

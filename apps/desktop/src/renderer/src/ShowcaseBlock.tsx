@@ -1,7 +1,8 @@
 import type React from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DispatchShowcase } from '@orca-board/core'
 import { Markdown } from './Markdown'
+import { hasMarkdownImages, showcaseTextAssets, type MarkdownAssets } from './markdownAssets'
 import { PopupMenu, POPUP_MENU_WIDTH } from './PopupMenu'
 import { PreviewFrame, usePreviewUrl } from './PreviewFrame'
 import {
@@ -9,6 +10,7 @@ import {
 } from './ShowcaseViewer'
 import {
   hiddenFiles, INLINE_FRAME_HEIGHT, INLINE_VIEWPORTS, requestShowcaseGroups, scalePercent, showcaseApi, showcaseEntries, showcaseFailure,
+  showcasePreviewBaseApi,
   showcaseGroup, SHOWCASE_CARD_ENTRIES, SHOWCASE_GROUP_ENTRIES, thumbsShown, type FrameFit, type RequestShowcase, type ShowcaseFileItem,
   type ShowcaseGroup, type ShowcasePos, type ShowcaseTaskState
 } from './showcase'
@@ -56,7 +58,7 @@ export function ShowcaseBlock({ taskId, dispatchId, showcase, bare = false, deci
           )}
         </div>
       )}
-      {showcase.text && <Markdown text={showcase.text} className="showcase-md" />}
+      {showcase.text && <ShowcaseText dispatchId={dispatchId} text={showcase.text} />}
       <ShowcaseFileList group={group} limit={SHOWCASE_CARD_ENTRIES} onView={view} />
       {viewer && <ShowcaseViewer groups={groups} start={viewer} decision={decision} onClose={() => setViewer(null)} />}
     </section>
@@ -150,7 +152,7 @@ export function ShowcaseGroupsBlock({ items, decision }: { items: readonly Reque
             </div>
             {open && (
               <>
-                {x.showcase.text && <Markdown text={x.showcase.text} className="showcase-md" />}
+                {x.showcase.text && <ShowcaseText dispatchId={x.dispatchId} text={x.showcase.text} />}
                 <ShowcaseFileList group={g} limit={SHOWCASE_GROUP_ENTRIES} onView={(file) => setViewer({ group: gi, file })} />
               </>
             )}
@@ -160,6 +162,34 @@ export function ShowcaseGroupsBlock({ items, decision }: { items: readonly Reque
       {viewer && <ShowcaseViewer groups={groups} start={viewer} decision={decision} onClose={() => setViewer(null)} />}
     </section>
   )
+}
+
+/**
+ * Контекст картинок описания показа запуска `dispatchId` (`showcase:previewBase`): относительные `![](design/a.png)` —
+ * от корня репозитория, из снимка. Пока база не пришла — undefined (не мигать подписью); нет базы, старый
+ * main/preload или ошибка — без `base`: картинки заменяются подписью. Без картинок в тексте IPC не зовётся.
+ */
+function useShowcaseTextAssets(dispatchId: string, text: string): MarkdownAssets | undefined {
+  const images = useMemo(() => hasMarkdownImages(text), [text])
+  const [state, setState] = useState<{ dispatchId: string; assets: MarkdownAssets } | null>(null)
+  useEffect(() => {
+    if (!images) return
+    let alive = true
+    const done = (base: unknown): void => { if (alive) setState({ dispatchId, assets: showcaseTextAssets(base) }) }
+    const api = showcasePreviewBaseApi(window.orca)
+    if (!api) done(null)
+    else api(dispatchId).then(done, () => done(null))
+    return () => { alive = false }
+  }, [dispatchId, images])
+  if (!images) return showcaseTextAssets(null)
+  return state?.dispatchId === dispatchId ? state.assets : undefined
+}
+
+/** Описание показа (`--show-file`): markdown с картинками из снимка запуска. */
+function ShowcaseText({ dispatchId, text }: { dispatchId: string; text: string }): React.JSX.Element | null {
+  const assets = useShowcaseTextAssets(dispatchId, text)
+  if (!assets) return null
+  return <Markdown text={text} className="showcase-md" assets={assets} />
 }
 
 /**
