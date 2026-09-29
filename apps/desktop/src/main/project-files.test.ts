@@ -196,8 +196,8 @@ describe('listProjectDir: симлинки', () => {
 })
 
 describe('listProjectDir: ошибки', () => {
-  it('files.badPath: абсолютный, `\\`, `..`, пустой сегмент, NUL, не строка', async () => {
-    for (const bad of ['/abs', 'a\\b', 'a/../..', '..', './src', 'a//b', 'src/', 'a\0b', 42, {}]) {
+  it('files.badPath: абсолютный, `..`, пустой сегмент, NUL, не строка', async () => {
+    for (const bad of ['/abs', 'a/../..', '..', './src', 'a//b', 'src/', 'a\0b', 42, {}]) {
       await rejectsWith(listProjectDir(repo, bad), 'files.badPath')
     }
   })
@@ -258,13 +258,15 @@ describe('splitSafeSegments', () => {
     assert.deepEqual(splitSafeSegments('a/b c/д'), ['a', 'b c', 'д'])
     // `:` на unix — обычный символ имени.
     assert.deepEqual(splitSafeSegments('a:b', path.posix), ['a:b'])
-    for (const bad of ['/abs', 'a\\b', 'a/../..', 'a//b', 'a\0b', 1, null, undefined]) throwsWith(() => splitSafeSegments(bad, path.posix), 'files.badPath')
+    // `\\` на unix тоже обычный символ: такое имя отдаёт list, его должно быть можно раскрыть.
+    assert.deepEqual(splitSafeSegments('d/a\\b', path.posix), ['d', 'a\\b'])
+    for (const bad of ['/abs', 'a/../..', 'a//b', 'a\0b', 1, null, undefined]) throwsWith(() => splitSafeSegments(bad, path.posix), 'files.badPath')
     throwsWith(() => splitSafeSegments('x/.Git/y', path.posix), 'files.hidden')
   })
 
   it('win32: диски, `\\`, `:` и хвостовые точки у .git', () => {
     assert.deepEqual(splitSafeSegments('src/Мой файл.ts', path.win32), ['src', 'Мой файл.ts'])
-    for (const bad of ['C:\\x', 'C:/x', 'C:x', '\\\\server\\share', '/x', 'a\\..\\..\\x', 'file.txt:stream', 'a/../b']) {
+    for (const bad of ['C:\\x', 'C:/x', 'C:x', '\\\\server\\share', '/x', 'a\\b', 'a\\..\\..\\x', 'file.txt:stream', 'a/../b']) {
       throwsWith(() => splitSafeSegments(bad, path.win32), 'files.badPath')
     }
     throwsWith(() => splitSafeSegments('.git.', path.win32), 'files.hidden')
@@ -419,25 +421,28 @@ describe('QA: странные имена', () => {
     }
   })
 
-  it('имя, начинающееся с pathspec-магии (`:!x`, `:^x`, `:(icase)x`), не отключает фильтр игнора всей папки', {
-    todo: 'дефект QA: git check-ignore принимает такие имена за pathspec и выходит с 128, листинг молча падает в фолбэк без фильтра; лечится префиксом `./` у путей'
-  }, async () => {
+  it('имя, начинающееся с pathspec-магии (`:!x`, `:^x`, `:(icase)x`), не отключает фильтр игнора всей папки', async () => {
+    // Дефект QA: без префикса `./` git check-ignore читал такие имена как pathspec, выходил с 128 и папка уходила в фолбэк.
     write(repo, '.gitignore', '*.log\nout/\n')
     write(repo, ':!excl.txt')
     write(repo, ':^caret.txt')
+    write(repo, ':(icase)x.txt')
+    write(repo, ':!dir/keep.txt')
     write(repo, 'debug.log')
     write(repo, 'out/main.js')
     const got = names(await listProjectDir(repo, ''))
     assert.ok(got.includes(':!excl.txt'))
     assert.ok(got.includes(':^caret.txt'))
+    assert.ok(got.includes(':(icase)x.txt'))
+    assert.ok(got.includes(':!dir'))
     assert.ok(!got.includes('debug.log'), 'debug.log игнорируется git')
     assert.ok(!got.includes('out'), 'out/ игнорируется git')
   })
 
   it('всё, что отдал list, можно раскрыть и показать в папке (имя с `\\` на unix — обычный символ)', {
-    skip: process.platform === 'win32',
-    todo: 'дефект QA: splitSafeSegments отклоняет `\\` и на unix, а list такие имена отдаёт — строка есть, раскрыть её и показать в папке нельзя (files.badPath)'
+    skip: process.platform === 'win32'
   }, async () => {
+    // Дефект QA: splitSafeSegments отклонял `\\` и на unix — строка в дереве есть, а раскрыть и показать нельзя.
     write(repo, 'back\\slash dir/inner.txt')
     write(repo, 'we\\ird.txt')
     for (const e of (await listProjectDir(repo, '')).entries) {
