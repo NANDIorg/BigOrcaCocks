@@ -22,7 +22,7 @@ export default {
   'general.background': 'Keep running when the window is closed',
   'general.backgroundHint': 'Agents keep working; the app stays in the menu bar / tray icon.',
   'general.onboarding': 'First-run wizard',
-  'general.onboardingHint': 'Language, agent check and your first project — the same steps as on first launch.',
+  'general.onboardingHint': 'Meet Orca, choose preferences, check agents, and add your first repository.',
   'general.onboardingRerun': 'Run again',
 
   'notify.title': 'Notifications',

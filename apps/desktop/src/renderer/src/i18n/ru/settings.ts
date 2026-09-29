@@ -22,7 +22,7 @@ export default {
   'general.background': 'Работать в фоне при закрытии окна',
   'general.backgroundHint': 'Агенты продолжат работу; приложение живёт в иконке строки меню / трея.',
   'general.onboarding': 'Мастер первого запуска',
-  'general.onboardingHint': 'Язык, проверка агентов и первый проект — те же шаги, что при первом запуске.',
+  'general.onboardingHint': 'Знакомство с Orca, настройки, проверка агентов и первый репозиторий.',
   'general.onboardingRerun': 'Пройти заново',
 
   'notify.title': 'Уведомления',
