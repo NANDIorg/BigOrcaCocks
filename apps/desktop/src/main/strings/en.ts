@@ -71,6 +71,10 @@ export default {
   'role.effortNotString': 'role “{id}”: effort must be a string',
   'role.promptNotString': 'role “{id}”: system prompt must be a string',
 
+  'assistant.notObject': 'assistant settings: an object is expected',
+  'assistant.unknownAgent': 'assistant: unknown agent {agent}',
+  'assistant.notString': 'assistant: field {field} must be a string',
+
   'worker.cannotStart': 'the worker will not start: {reason}',
   'coordinator.cannotStart': 'the coordinator will not start: {reason}',
   'coordinator.noObjective': 'no goal given',

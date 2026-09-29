@@ -579,7 +579,7 @@ describe('тексты ошибок после переноса ролей в т
     const text = missingRoleMessage('reviewer', type)
     assert.doesNotMatch(text, /нет в проекте/)
     assert.doesNotMatch(text, /О проекте/)
-    assert.match(text, /^роли «reviewer» нет в типе задачи «Программирование»\. Роли типа: coordinator, assistant, developer, qa \(orca-board roles list\)\./)
+    assert.match(text, /^роли «reviewer» нет в типе задачи «Программирование»\. Роли типа: coordinator, developer, qa \(orca-board roles list\)\./)
     assert.match(text, /«Настройки» → «Типы задач» → «Программирование» → «Вернуть системные роли»/)
     assert.match(missingRoleMessage('role_nope', type), /Роли типа меняются в «Настройки» → «Типы задач»\.$/)
   })

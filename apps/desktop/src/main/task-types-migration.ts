@@ -2,7 +2,8 @@
 // и разрешения уходят из проекта в пользовательский тип «<имя проекта>», шаблоны проектов становятся типами.
 // Чистая функция без ФС — её вызывает `ProjectManager.load()` после нормализации старого формата, а тесты — напрямую.
 import {
-  DEFAULT_ROLES, WORKFLOW_VERSION, migrateWorkflowReport, presetTaskTypes, taskTypeFromLegacyProject,
+  ASSISTANT_ROLE_ID, DEFAULT_ASSISTANT_SETTINGS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, WORKFLOW_VERSION, assistantFromRoles,
+  migrateWorkflowReport, presetTaskTypes, taskTypeFromLegacyProject,
   type Role, type TaskType, type TaskTypePermissionMode, type WfMigrationNote, type Workflow
 } from '@orca-board/core'
 import type { Project, ProjectsFile } from './projects'
@@ -114,6 +115,46 @@ export function migrateTypeWorkflows(types: readonly TaskType[]): { types: TaskT
     return { ...rest, settings: { ...t.settings, workflow }, ...(workflowNotes.length ? { workflowNotes } : {}) }
   })
   return { types: out, changed }
+}
+
+/**
+ * Тип библиотеки по умолчанию: заданный и существующий, иначе «Программирование», а если и его удалили — первый тип.
+ * Чистая функция, а не только метод `ProjectManager`: миграция при `load()` зовёт её до того, как файл присвоен менеджеру.
+ */
+export function libraryDefaultTypeId(types: readonly TaskType[], storedId: string | undefined): string {
+  if (storedId && types.some((t) => t.id === storedId)) return storedId
+  return (types.find((t) => t.id === GENERAL_TASK_TYPE_ID) ?? types[0])?.id ?? GENERAL_TASK_TYPE_ID
+}
+
+/**
+ * Перенести ассистента из ролей типов в настройки приложения (`settings.assistant`). Раньше ассистент был ролью
+ * `assistant` типа, но запускался только по типу библиотеки по умолчанию — его настройки и переносятся (тем же правилом,
+ * что при запуске: своя роль, иначе агент, модель и effort координатора, иначе дефолт). Роли `assistant` других типов
+ * на запуск не влияли и просто удаляются (остаются в бэкапе версии, `backupOnVersionChange`). Уже заданный
+ * `settings.assistant` побеждает: роль, вернувшаяся после отката версии, только вычищается. Тип, у которого не осталось
+ * ролей, теряет поле `roles` и берёт `DEFAULT_ROLES`. Ни одной роли `assistant` — ничего не меняется (`changed: false`),
+ * поэтому миграция идемпотентна и формат файла не версионируется.
+ */
+export function migrateAssistant(data: Pick<ProjectsFile, 'taskTypes' | 'defaultTaskTypeId' | 'settings'>): Pick<ProjectsFile, 'taskTypes' | 'settings'> & { changed: boolean } {
+  const types = data.taskTypes ?? []
+  if (!types.some((t) => t.settings.roles?.some((r) => r.id === ASSISTANT_ROLE_ID))) {
+    return { taskTypes: data.taskTypes, settings: data.settings, changed: false }
+  }
+  let settings = data.settings
+  const stored = settings?.assistant
+  if (!(typeof stored === 'object' && stored !== null && !Array.isArray(stored))) {
+    const def = types.find((t) => t.id === libraryDefaultTypeId(types, data.defaultTaskTypeId))
+    const assistant = assistantFromRoles(def?.settings.roles ?? DEFAULT_ROLES) ?? { ...DEFAULT_ASSISTANT_SETTINGS }
+    settings = { ...(settings ?? {}), assistant }
+  }
+  const taskTypes = types.map((t) => {
+    const roles = t.settings.roles
+    if (!roles?.some((r) => r.id === ASSISTANT_ROLE_ID)) return t
+    const left = roles.filter((r) => r.id !== ASSISTANT_ROLE_ID)
+    const { roles: _old, ...rest } = t.settings
+    return { ...t, settings: left.length ? { ...rest, roles: left } : rest }
+  })
+  return { taskTypes, settings, changed: true }
 }
 
 /**
