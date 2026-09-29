@@ -144,6 +144,15 @@ describe('orca-board CLI', () => {
     assert.equal(empty.code, 1)
   })
 
+  it('done --show <папка>: путь папки уходит как есть — раскрывает её main при снимке', async () => {
+    const { req } = await run(
+      ['done', '--summary', 's', '--show', 'docs/design/', '--show', 'mockups', '--show', 'shot.png'],
+      { ORCA_DISPATCH_ID: 'disp_1' }
+    )
+    assert.equal(req.method, 'worker.done')
+    assert.deepEqual(req.params.showcase, { files: ['docs/design/', 'mockups', 'shot.png'] })
+  })
+
   it('task create --answer-for и question forward уходят как есть', async () => {
     const created = await run(['task', 'create', '--title', 't', '--role', 'qa', '--answer-for', 'human'])
     assert.equal(created.req.params['answer-for'], 'human')

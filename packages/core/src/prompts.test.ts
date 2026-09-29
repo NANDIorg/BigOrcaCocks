@@ -64,6 +64,19 @@ describe('workerTaskPrompt', () => {
     assert.ok(text.indexOf('# Этап:') < text.indexOf('# Замечания после ревью'))
   })
 
+  it('раздел показа: автономный HTML, --show папкой, скриншоты вместо того, что не открыть в браузере, ошибка done', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'w', title: 'Дизайн', showcase: { what: 'макеты' } })
+    const section = text.slice(text.indexOf('## Результат для показа человеку'))
+    assert.match(section, /прямо в приложении: HTML, markdown, картинки[^\n]*и PDF/)
+    assert.match(section, /изолированном фрейме без сети[^\n]*\*\*автономной\*\*[^\n]*относительными путями[^\n]*без CDN, внешних шрифтов/)
+    assert.match(section, /Один вариант — одна страница/)
+    assert.match(section, /`--show` принимает файл или \*\*папку\*\*[^\n]*войдут в показ сами/)
+    assert.match(section, /нельзя открыть в браузере[^\n]*сдай скриншоты/)
+    assert.match(section, /done ответит ошибкой с причиной; исправь и повтори/)
+    // Правила — только у этапа с показом; без показа промпт не меняется.
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'w', title: 'Работа', instructions: 'I' }), /автономной/)
+  })
+
   it('необязательный показ — без «(обязательно)»; у задачи-ответа этапа нет', () => {
     const stage = { nodeId: 'w', title: 'Работа', showcase: { what: 'скриншот' } }
     const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], stage)
@@ -604,6 +617,11 @@ describe('события после ответа человека в инстр�
     assert.match(worker, /«Результат для показа человеку»/)
     assert.match(worker, /orca-board done --summary "\.\.\." --show-file <описание\.md> --show <путь> --show <путь>/)
     assert.match(worker, /без него `done` не пройдёт/)
+    // Те же правила подготовки, что в промпте этапа (SHOWCASE_RULES): автономный HTML, папка, скриншоты, ошибка done.
+    assert.match(worker, /изолированном\s+фрейме без сети — страница должна быть \*\*автономной\*\*[\s\S]*без CDN и внешних шрифтов/)
+    assert.match(worker, /`--show` принимает и \*\*папку\*\*/)
+    assert.match(worker, /нельзя открыть в браузере[\s\S]*скриншоты и описание/)
+    assert.match(worker, /`done` ответит ошибкой, исправь и повтори/)
     // Заголовок в skill совпадает с разделом промпта этапа (workerTaskPrompt).
     assert.match(workerTaskPrompt({ title: 't', spec: 's' }, undefined, [], { nodeId: 'w', title: 'Дизайн', showcase: { what: 'макеты' } }), /## Результат для показа человеку/)
   })
