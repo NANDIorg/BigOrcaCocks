@@ -854,7 +854,7 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
 - **Файлы.** Renderer читает их из worktree задачи через IPC `showcase:read` / `showcase:open` / `showcase:reveal`
   (`main/showcase.ts`, корень — `showcaseSource`): путь только внутри worktree (симлинки наружу — отказ), расширения — белый список
   `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/avif/svg` и `md` превьюятся, `html/htm` — вид
-  `html`, пока тоже только «Открыть» (превью — `showcase:previewUrl`, протокол ещё не подключён), `pdf` — «Открыть»). После мержа worktree убран — файлы остаются в ветке, IPC отвечает ошибкой с её именем.
+  `html` — страницей в изолированном фрейме по адресу из `showcase:previewUrl` (протокол `orca-preview://`, сеть закрыта, см. `docs/architecture.md` → «Протокол показа»), `pdf` — «Открыть»). После мержа worktree убран — файлы остаются в ветке, IPC отвечает ошибкой с её именем.
 - **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval (Инбокс,
   лента глобальной задачи, модалка задачи) и отдельным разделом в модалке задачи (последний `done` с показом, если его
   не выводит ждущий approval). Markdown — через `Markdown.tsx`; первые 6 картинок превьюятся сразу (blob-URL, CSP

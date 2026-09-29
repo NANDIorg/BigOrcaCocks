@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync, symlinkSyn
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
+import { PreviewTokens } from './preview-protocol'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseRoot, showcaseSource } from './showcase'
 import { SHOWCASE_READ_MAX_BYTES, isAssetType, isEntryType, showcaseFileType, showcaseServedMime } from '../shared/showcase'
 
@@ -111,7 +112,7 @@ describe('showcaseRoot', () => {
   })
 })
 
-describe('showcaseSource и previewUrl (контракт до снимка и протокола)', () => {
+describe('showcaseSource и previewUrl', () => {
   it('без dispatchId — worktree задачи, как раньше; запуск этой задачи — тоже; чужой или несуществующий — отказ', () => {
     const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
     const t = store.createTask({ title: 'Макет', roleId: 'developer' })
@@ -126,11 +127,30 @@ describe('showcaseSource и previewUrl (контракт до снимка и п
     assert.throws(() => showcaseSource(store, t.id, 42), /не найден/)
   })
 
-  it('previewUrl — пока честный отказ: протокола ещё нет', () => {
+  it('previewUrl — токен протокола на корень показа запуска; PDF, скрытые и чужие пути — отказ', () => {
+    write('design/мой макет.html', '<p>Б</p>')
+    write('design/doc.pdf', '%PDF')
+    write('.hidden/a.html', '<p>h</p>')
     const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
     const t = store.createTask({ title: 'Макет', roleId: 'developer' })
+    store.updateTask(t.id, { worktree: wt, branch: `orca/${t.id}` })
     const d = store.startDispatch(t.id, 'pty_a')
-    assert.throws(() => showcasePreviewUrl(store, d.id, 'design/a.html'), /не превьюится/)
-    assert.throws(() => showcasePreviewUrl(store, 'd_nope', 'design/a.html'), /не найден/)
+    const tokens = new PreviewTokens()
+    const a = showcasePreviewUrl(store, tokens, d.id, 'design/a.html')
+    assert.match(a.url, /^orca-preview:\/\/[0-9a-f]{32}\/design\/a\.html$/)
+    assert.equal(a.mime, 'text/html')
+    assert.ok(a.url.startsWith(a.base))
+    assert.deepEqual(tokens.get(new URL(a.base).host), { root: wt, network: false })
+    // Тот же корень — тот же токен; сеть — отдельный.
+    assert.equal(showcasePreviewUrl(store, tokens, d.id, 'design/notes.md').base, a.base)
+    const net = showcasePreviewUrl(store, tokens, d.id, 'design/a.html', { network: true })
+    assert.notEqual(net.base, a.base)
+    assert.deepEqual(tokens.get(new URL(net.base).host), { root: wt, network: true })
+    assert.equal(showcasePreviewUrl(store, tokens, d.id, 'design/мой макет.html').url, `${a.base}design/${encodeURIComponent('мой макет.html')}`)
+    assert.throws(() => showcasePreviewUrl(store, tokens, d.id, 'design/doc.pdf'), /не превьюится/)
+    assert.throws(() => showcasePreviewUrl(store, tokens, d.id, '.hidden/a.html'), /скрытые/)
+    assert.throws(() => showcasePreviewUrl(store, tokens, d.id, '../x.html'), /вне worktree/)
+    assert.throws(() => showcasePreviewUrl(store, tokens, d.id, 'run.sh'), /не открывается/)
+    assert.throws(() => showcasePreviewUrl(store, tokens, 'd_nope', 'design/a.html'), /не найден/)
   })
 })

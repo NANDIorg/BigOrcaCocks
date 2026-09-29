@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -12,6 +12,7 @@ import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseSource } from './showcase'
+import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
@@ -81,6 +82,15 @@ let quitting = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
 let confirmingQuit = false
 
+// Схема страниц показа (`preview-protocol.ts`) — только ДО ready, иначе Chromium считает её не-standard: относительные
+// `./style.css` не разрешаются, а `fetch` к ней запрещён. `bypassCSP` и `corsEnabled` не включаем: CSP ответа и
+// ACAO задаёт сам обработчик.
+protocol.registerSchemesAsPrivileged([
+  { scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+])
+/** Токены `orca-preview://` → корень показа; выдаёт `showcase:previewUrl`, живут до выхода из приложения. */
+const previewTokens = new PreviewTokens()
+
 const SOCKET_PATH = defaultSocketPath({ env: process.env, platform: process.platform, homedir: homedir() })
 const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
@@ -103,8 +113,20 @@ function createWindow(): BrowserWindow {
     setPtyWindow(win)
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isExternalWebUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
+  })
+  // Фрейм показа не уходит со своего снимка (sandbox навигацию самого фрейма не запрещает), а окно — со страницы приложения.
+  win.webContents.on('will-frame-navigate', (e) => {
+    const nav = { url: e.url, isMainFrame: e.isMainFrame, appUrl: created.webContents.getURL() }
+    if (allowFrameNavigation(nav)) return
+    e.preventDefault()
+    if (nav.isMainFrame && isExternalWebUrl(nav.url)) shell.openExternal(nav.url)
+  })
+  // Esc при фокусе внутри фрейма показа DOM родителя не видит (фрейм другого origin) — сообщаем renderer'у, а он
+  // закрывает просмотрщик, только если фокус действительно во фрейме (иначе Esc уже пришёл обычным keydown).
+  win.webContents.on('before-input-event', (_e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') created.webContents.send('showcase:escape')
   })
   const source = rendererSource({
     isPackaged: app.isPackaged,
@@ -951,9 +973,9 @@ function registerIpc(): void {
   handle('showcase:reveal', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
     shell.showItemInFolder(resolveShowcasePath(showcaseSource(resolveProject().store, taskId, dispatchId), path))
   )
-  // Страница показа для изолированного фрейма: TODO(T2) — протокол orca-preview:// и токены; пока честный отказ.
+  // Страница показа для изолированного фрейма: токен протокола orca-preview:// на корень показа (preview-protocol.ts).
   handle('showcase:previewUrl', (_e, dispatchId: unknown, path: unknown, opts: unknown) =>
-    showcasePreviewUrl(resolveProject().store, dispatchId, path, opts))
+    showcasePreviewUrl(resolveProject().store, previewTokens, dispatchId, path, opts))
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
@@ -976,6 +998,7 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   app.setAppUserModelId('orca-board')
+  protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
