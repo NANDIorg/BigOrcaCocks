@@ -2337,6 +2337,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Пути картинок к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; до 8 путей в стартовом промпте (`CMD_LINE_LIMIT`) | `saveReturnImages` — `src/main/attachments.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
+| Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `renderer/src/styles.css` |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
 `node`/Node из Electron прямо из `Resources/cli` без сборки и без `node_modules`, поэтому импортировать
@@ -2687,6 +2688,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
   снимка не грузятся. `net.fetch('file://…')` в Electron 38 игнорирует `Range` (видео не перематывается) — файл читается потоком сам.
   Chromium нормализует `..` и `%2e%2e` до обработчика, поэтому проверка сегментов в `resolvePreviewRequest` — вторая линия, а главная —
   realpath внутри корня токена.
+
+- **`<select>` с `background: transparent` на Windows даёт белый нечитаемый список, на macOS этого не видно.** На macOS попап select —
+  меню ОС, на Windows/Linux его рисует Chromium: фон берёт из computed background select, а без `color-scheme` — в светлой схеме.
+  Список «Agent» в ролях (`.roles-agent select`) был белым со светлым текстом опций. Теперь `color-scheme: dark` на `:root`, фон и цвет
+  опций выпадающих select заданы явно (у списков `multiple` фон опции перекрыл бы подсветку выбранных — поэтому `:not([multiple]):not([size])`), а у select нет прозрачного фона (`inherit` от обёртки) — это проверяет `nativeControls.test.ts`.
 
 ## Открытые вопросы
 
