@@ -31,15 +31,16 @@ function isGitName(name: string, win32: boolean): boolean {
 }
 
 /**
- * Сегменты относительного пути из renderer (не доверенного). Принимаем только `/`: `\` в сегменте (на Windows
- * `a\..\..\x`) и `:` на win32 (`C:x` — путь от текущей папки диска, `file:stream` — альтернативный поток NTFS) обошли бы
- * проверку `..`. `''` — корень. `p` — `path` платформы: тесты подставляют `path.win32`.
+ * Сегменты относительного пути из renderer (не доверенного). Разделитель — только `/`. На win32 `\` (`a\..\..\x`) и `:`
+ * (`C:x` — путь от текущей папки диска, `file:stream` — альтернативный поток NTFS) обошли бы проверку `..`, поэтому
+ * отклоняются. На unix оба — обычные символы имени: `list` отдаёт такие записи, и их должно быть можно раскрыть.
+ * `''` — корень. `p` — `path` платформы: тесты подставляют `path.win32`.
  */
 export function splitSafeSegments(rel: unknown, p: path.PlatformPath = path): string[] {
   if (typeof rel !== 'string' || rel.includes('\0')) throw new OrcaError('files.badPath', { path: String(rel) })
   if (rel === '') return []
   const win32 = p.sep === '\\'
-  if (p.isAbsolute(rel) || rel.includes('\\') || (win32 && rel.includes(':'))) throw new OrcaError('files.badPath', { path: rel })
+  if (p.isAbsolute(rel) || (win32 && (rel.includes('\\') || rel.includes(':')))) throw new OrcaError('files.badPath', { path: rel })
   const segments = rel.split('/')
   if (segments.some((s) => s === '' || s === '.' || s === '..')) throw new OrcaError('files.badPath', { path: rel })
   if (segments.some((s) => isGitName(s, win32))) throw new OrcaError('files.hidden', { path: rel })
@@ -142,7 +143,9 @@ export async function listProjectDir(root: string, dir: unknown = ''): Promise<P
   let truncated = entries.length > PROJECT_FILES_IGNORE_INPUT_LIMIT
   const candidates = entries.slice(0, PROJECT_FILES_IGNORE_INPUT_LIMIT)
   // cwd — сама папка, а не корень: git находит свой репозиторий, в том числе подмодуль, и пути не идут «сквозь» симлинк.
-  const keyOf = (e: ProjectFileEntry): string => (e.kind === 'dir' ? `${e.name}/` : e.name)
+  // Префикс `./`: иначе имя вроде `:!x` git читает как pathspec-магию, выходит с 128, и вся папка теряет фильтр.
+  // В выводе git возвращает путь в том же виде, поэтому ключ сравнения тоже с `./`.
+  const keyOf = (e: ProjectFileEntry): string => (e.kind === 'dir' ? `./${e.name}/` : `./${e.name}`)
   let visible: ProjectFileEntry[]
   try {
     const ignored = await gitCheckIgnore(abs, candidates.map(keyOf))
