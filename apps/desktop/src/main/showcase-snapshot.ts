@@ -28,6 +28,13 @@ const NO_RUN = '_tasks'
 const SKIP_DIRS = new Set(['node_modules'])
 /** Ссылки страницы на ассеты: атрибуты src/href, `url(...)` и `@import "..."` в css — разбор best-effort. */
 const REF_PATTERNS = [/\b(?:src|href)\s*=\s*["']([^"']+)["']/gi, /url\(\s*["']?([^"')]+?)["']?\s*\)/gi, /@import\s+["']([^"']+)["']/gi]
+/**
+ * Картинки markdown: `![alt](path)`, `![alt](<path с пробелами>)`, с заголовком `"..."`, и ссылки-определения
+ * `[id]: path` для `![alt][id]`. Плюс `src=`/`href=` из HTML внутри markdown (REF_PATTERNS). Разбор best-effort.
+ */
+const MD_REF_PATTERNS = [/!\[[^\]]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))/g, /^[ \t]{0,3}\[[^\]]+\]:[ \t]*(?:<([^>\n]+)>|(\S+))/gm]
+/** Путь «файла» описания показа (`--show-file`) для разрешения его ссылок: описание лежит как бы в корне репозитория. */
+const TEXT_REL = 'showcase.md'
 
 const mb = (bytes: number): number => bytes / 1024 / 1024
 
@@ -90,11 +97,14 @@ const ALLOWED_HINT = `разрешены ${Object.keys(SHOWCASE_FILE_TYPES).join
  * - Для каждой страницы HTML в снимок best-effort добавляются её ссылки (`src`/`href`/`url()`/`@import`, в том числе
  *   `../`) внутри worktree, затем её каталог со всеми подкаталогами — пока хватает лимитов: страница не должна
  *   остаться без стилей, даже если агент их не перечислил. Ассеты сверх лимитов молча пропускаются.
+ * - У markdown-файлов и описания показа `text` (`--show-file`, его пути — от корня репозитория) — так же best-effort
+ *   только их ссылки (`![alt](path)`, `src=`/`href=`): без картинок md в просмотрщике показывается с битыми рамками.
+ *   Каталог md целиком не тянется. Найденное — ассеты снимка, не точки входа.
  *
  * Ошибка (текст для агента) — файла нет, путь или симлинк выходит из worktree, тип не из белого списка, файл или
  * заявленное целиком больше лимитов, в папке нечего показать.
  */
-export function planShowcaseSnapshot(worktree: string, declared: readonly string[]): SnapshotPlan {
+export function planShowcaseSnapshot(worktree: string, declared: readonly string[], text?: string): SnapshotPlan {
   const root = realpathSync(worktree)
   const entries: string[] = []
   const files = new Map<string, SnapshotFile>()
@@ -158,6 +168,7 @@ export function planShowcaseSnapshot(worktree: string, declared: readonly string
   }
 
   collectPageAssets(root, [...files.values()], add)
+  if (text) for (const ref of markdownRefs(text)) addRef(root, TEXT_REL, ref, add)
   return { entries, files: [...files.values()], bytes }
 }
 
@@ -178,22 +189,34 @@ function walk(dir: string, relDir: string): SnapshotFile[] {
   return out
 }
 
+type AddFile = (rel: string, src: string, size: number, strict: boolean) => boolean
+
+/** Ссылка `ref` из `fromRel` → ассет снимка best-effort; добавленный файл возвращается (css разбирается дальше). */
+function addRef(root: string, fromRel: string, ref: string, add: AddFile): SnapshotFile | undefined {
+  const target = resolveRef(root, fromRel, ref)
+  return target && add(target.rel, target.src, target.size, false) ? target : undefined
+}
+
+const isMarkdown = (rel: string): boolean => showcaseFileType(rel)?.preview === 'markdown'
+
 /**
- * Ассеты страниц HTML: сначала то, на что страницы и их css ссылаются явно (ссылки css тоже разбираются), потом
- * соседи по каталогу страницы. Страница в корне репозитория весь репозиторий не тянет — только свои ссылки.
+ * Ассеты страниц HTML и markdown: сначала то, на что страницы, их css и md ссылаются явно (ссылки css тоже
+ * разбираются), потом соседи по каталогу страницы HTML. Страница в корне репозитория весь репозиторий не тянет —
+ * только свои ссылки; markdown соседей не тянет вовсе. Ссылки md на другие md не разбираются: показ — то, что сдано.
  */
-function collectPageAssets(root: string, initial: SnapshotFile[], add: (rel: string, src: string, size: number, strict: boolean) => boolean): void {
+function collectPageAssets(root: string, initial: SnapshotFile[], add: AddFile): void {
   const pages = initial.filter((f) => showcaseFileType(f.rel)?.preview === 'html')
-  const queue = initial.filter((f) => showcaseFileType(f.rel)?.preview === 'html' || /\.css$/i.test(f.rel))
+  const queue = initial.filter((f) => showcaseFileType(f.rel)?.preview === 'html' || isMarkdown(f.rel) || /\.css$/i.test(f.rel))
   const parsed = new Set<string>()
   while (queue.length > 0) {
     const f = queue.shift()!
     if (parsed.has(f.rel)) continue
     parsed.add(f.rel)
-    for (const ref of pageRefs(f.src)) {
-      const target = resolveRef(root, f.rel, ref)
-      if (!target || !add(target.rel, target.src, target.size, false)) continue
-      if (/\.css$/i.test(target.rel)) queue.push(target)
+    const text = fileText(f.src)
+    if (text === undefined) continue
+    for (const ref of isMarkdown(f.rel) ? markdownRefs(text) : pageRefs(text)) {
+      const target = addRef(root, f.rel, ref, add)
+      if (target && /\.css$/i.test(target.rel)) queue.push(target)
     }
   }
   for (const page of pages) {
@@ -205,17 +228,27 @@ function collectPageAssets(root: string, initial: SnapshotFile[], add: (rel: str
   }
 }
 
-/** Относительные ссылки из html/css; не читается или слишком большой — ссылок нет (разбор best-effort). */
-function pageRefs(src: string): string[] {
-  let text: string
+/** Текст файла для разбора ссылок; не читается или слишком большой — undefined (разбор best-effort). */
+function fileText(src: string): string | undefined {
   try {
-    if (statSync(src).size > MAX_SHOWCASE_SNAPSHOT_FILE_BYTES) return []
-    text = readFileSync(src, 'utf8')
+    if (statSync(src).size > MAX_SHOWCASE_SNAPSHOT_FILE_BYTES) return undefined
+    return readFileSync(src, 'utf8')
   } catch {
-    return []
+    return undefined
   }
+}
+
+/** Ссылки из html/css. */
+function pageRefs(text: string): string[] {
   const refs: string[] = []
   for (const re of REF_PATTERNS) for (const m of text.matchAll(re)) refs.push(m[1].trim())
+  return refs
+}
+
+/** Ссылки из markdown: картинки и определения ссылок плюс `src=`/`href=` встроенного HTML. */
+export function markdownRefs(text: string): string[] {
+  const refs = pageRefs(text)
+  for (const re of MD_REF_PATTERNS) for (const m of text.matchAll(re)) refs.push((m[1] ?? m[2]).trim())
   return refs
 }
 
@@ -300,17 +333,22 @@ export function writeShowcaseSnapshot(plan: SnapshotPlan, dest: string, now = Da
 
 /**
  * Снимок показа запуска `dispatchId` для `worker.done` (`ProjectDeps.snapshotShowcase`): файлы из worktree его задачи
- * во временную папку рядом с `showcaseSnapshotDir`. Нет worktree на диске — ошибка агенту: файлы взять неоткуда.
+ * во временную папку рядом с `showcaseSnapshotDir`. `text` — описание показа: его картинки тоже попадают в снимок.
+ * Нет worktree на диске — ошибка агенту, если заявлены файлы (взять неоткуда); у одного описания картинки best-effort,
+ * поэтому без worktree или без найденных картинок снимка нет — undefined.
  */
 export function snapshotDispatchShowcase(
-  store: TaskStore, snapshots: ShowcaseSnapshots, dispatchId: string, declared: readonly string[], now = Date.now()
-): PreparedSnapshot {
+  store: TaskStore, snapshots: ShowcaseSnapshots, dispatchId: string, declared: readonly string[], text?: string, now = Date.now()
+): PreparedSnapshot | undefined {
   const dispatch = store.getDispatch(dispatchId)
   const task = dispatch ? store.getTask(dispatch.taskId) : undefined
   if (!dispatch || !task) throw new Error(`dispatch not found: ${dispatchId}`)
   if (!task.worktree || !existsSync(task.worktree)) {
+    if (declared.length === 0) return undefined
     throw new Error('у задачи нет worktree на диске — файлы показа взять неоткуда: сдай done без --show или опиши результат в --show-file')
   }
+  const plan = planShowcaseSnapshot(task.worktree, declared, text)
+  if (plan.files.length === 0) return undefined
   const dest = showcaseSnapshotDir(snapshots.root, snapshots.projectId, task.runId, dispatch.id)
-  return writeShowcaseSnapshot(planShowcaseSnapshot(task.worktree, declared), dest, now)
+  return writeShowcaseSnapshot(plan, dest, now)
 }

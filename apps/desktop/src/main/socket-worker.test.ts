@@ -66,7 +66,7 @@ function fakeDeps(): ProjectDeps {
     resolveRequest: () => ({}),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
-    ...(snapshots ? { snapshotShowcase: (dispatchId: string, files: readonly string[]) => snapshotDispatchShowcase(store, snapshots!, dispatchId, files) } : {}),
+    ...(snapshots ? { snapshotShowcase: (dispatchId: string, files: readonly string[], text?: string) => snapshotDispatchShowcase(store, snapshots!, dispatchId, files, text) } : {}),
     agents: () => agents,
     resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? legacyDefaultWorkflow(roles), source: 'default' }),
     taskTypes: () => ({ taskTypes: presetTaskTypes(), defaultTypeId: 'general' }),
@@ -496,6 +496,22 @@ describe('worker done: показ человеку', () => {
       const res = await call('worker.done', { summary: 's', showcase: { text: 'описание' } }, { dispatchId })
       assert.equal(res.ok, true, res.error)
       assert.deepEqual(store.getDispatch(dispatchId)!.showcase, { text: 'описание', files: [] })
+    })
+
+    it('картинки описания (--show-file) попадают в снимок как ассеты, не в список файлов', async () => {
+      const run = store.createRun('цель')
+      const { dispatchId } = designTask(run.id)
+      const res = await call('worker.done', { summary: 's', showcase: { text: '![B](design/b.png)', files: ['design/a.html'] } }, { dispatchId })
+      assert.equal(res.ok, true, res.error)
+      const showcase = store.getDispatch(dispatchId)!.showcase!
+      assert.deepEqual(showcase.files, ['design/a.html'])
+      const dir = showcaseSnapshotDir(snapshots!.root, 'proj_1', run.id, dispatchId)
+      assert.equal(readFileSync(path.join(dir, 'design/b.png'), 'utf8'), 'png')
+      // Только описание с картинкой — тоже снимок.
+      const second = store.startDispatch(store.getDispatch(dispatchId)!.taskId, 'pty_w2')
+      assert.equal((await call('worker.done', { summary: 's', showcase: { text: '![B](design/b.png)' } }, { dispatchId: second.id })).ok, true)
+      assert.deepEqual(store.getDispatch(second.id)!.showcase, { text: '![B](design/b.png)', files: [], snapshot: store.getDispatch(second.id)!.showcase!.snapshot })
+      assert.equal(store.getDispatch(second.id)!.showcase!.snapshot!.files, 1)
     })
   })
 

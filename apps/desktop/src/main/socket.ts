@@ -59,7 +59,7 @@ export interface ProjectDeps {
    * `commit` ставит снимок на место после `finishDispatch`, `discard` убирает, если тот отказал. Нет метода — показ
    * сохраняется без снимка (читается из worktree), как до снимков.
    */
-  snapshotShowcase?(dispatchId: string, files: readonly string[]): { files: string[]; snapshot: ShowcaseSnapshot; commit(): void; discard(): void }
+  snapshotShowcase?(dispatchId: string, files: readonly string[], text?: string): { files: string[]; snapshot: ShowcaseSnapshot; commit(): void; discard(): void } | undefined
   /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
   agents(): AgentInfo[]
   /** Тип прогона целиком (`resolveRunType`): роли, правила, разрешения, граф и откуда он взят. */
@@ -566,9 +566,13 @@ const handlers: Record<string, Handler> = {
     const task = dispatch ? store.getTask(dispatch.taskId) : undefined
     const { showcase } = showcaseParam(r.params.showcase)
     // Снимок файлов показа — до закрытия запуска: нет файла, чужой тип, больше лимита — ошибка агенту, dispatch
-    // остаётся открытым. Пути сначала проверяет core (абсолютные, `..`), потом main смотрит на диск.
-    const declared = normalizeShowcase(showcase)?.files ?? []
-    const prepared = declared.length > 0 && deps.snapshotShowcase ? deps.snapshotShowcase(id, declared) : undefined
+    // остаётся открытым. Пути сначала проверяет core (абсолютные, `..`), потом main смотрит на диск. Картинки
+    // описания (`text`) тоже снимаются — best-effort: одно описание без картинок снимка не даёт.
+    const normalized = normalizeShowcase(showcase)
+    const declared = normalized?.files ?? []
+    const prepared = (declared.length > 0 || normalized?.text) && deps.snapshotShowcase
+      ? deps.snapshotShowcase(id, declared, normalized?.text)
+      : undefined
     let finished: Dispatch
     try {
       finished = store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer), {

@@ -860,6 +860,13 @@ export interface OrcaApi {
      */
     previewUrl(dispatchId: string, path: string, opts?: ShowcasePreviewOptions): Promise<ShowcasePreviewUrl>
     /**
+     * База `orca-preview://<токен>/` для относительных картинок описания показа (`showcase.text`) запуска `dispatchId`:
+     * пути в описании — от корня репозитория, картинки снимаются при `done`. Всегда без сети. `null` — ни снимка, ни
+     * worktree. Для `Markdown` — `assets: { path: 'showcase.md', base }` (описание — как файл в корне). Появился позже
+     * `previewUrl`: в старом preload метода нет — проверяй перед вызовом.
+     */
+    previewBase(dispatchId: string): Promise<string | null>
+    /**
      * Esc нажат, пока фокус может быть во фрейме показа (событие `showcase:escape` из `before-input-event` окна): DOM
      * родителя keydown из фрейма другого origin не получает. Приходит на каждый Esc — закрывай просмотрщик, только
      * если `document.activeElement` — фрейм, и делай закрытие идемпотентным: при фокусе в самом окне придёт ещё и обычный

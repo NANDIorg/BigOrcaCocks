@@ -151,6 +151,7 @@ const api: OrcaApi = {
     open: (taskId, path, dispatchId) => ipcRenderer.invoke('showcase:open', taskId, path, dispatchId),
     reveal: (taskId, path, dispatchId) => ipcRenderer.invoke('showcase:reveal', taskId, path, dispatchId),
     previewUrl: (dispatchId, path, opts) => ipcRenderer.invoke('showcase:previewUrl', dispatchId, path, opts),
+    previewBase: (dispatchId) => ipcRenderer.invoke('showcase:previewBase', dispatchId),
     onFrameEscape: (cb) => on('showcase:escape', cb)
   },
   rules: {
