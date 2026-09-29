@@ -29,6 +29,11 @@ export interface CardStateInput {
   running: boolean
   /** Сколько зависимостей не закрыто, — только у задач в бэклоге (`pendingDeps`); иначе 0. */
   waitingDeps: number
+  /**
+   * Причина остановки этапа (`stalledCardReason`, taskReview.ts): задача лежит в «Ревью», а её этап — мерж, git, конец —
+   * не дошёл до конца, ревьюить нечего. Без поля (старый main, обычное ревью) карточка ждёт ревью, как раньше.
+   */
+  stalled?: string
 }
 
 /** Воркер упал, вышел без `done` или молчит: нужен перезапуск или разбор. В done сбой не показываем. */
@@ -96,6 +101,8 @@ export function cardEssence(i: CardStateInput, state: CardState = cardState(i)):
     return { text: t('board.essence.needsAnswer') }
   }
   if (state === 'review') {
+    // Колонка «Ревью», но решать нечего: «Ждёт ревью» здесь было бы ложью (лента говорит «Этап остановлен»).
+    if (i.stalled !== undefined) return { text: t('board.essence.stalled'), title: i.stalled }
     if (i.task.answerFor && d?.answer) return { text: t('board.essence.answerReady'), title: d.summary }
     if (d?.showcase) {
       const n = d.showcase.files.length

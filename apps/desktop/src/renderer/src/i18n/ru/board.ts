@@ -21,6 +21,7 @@ export default {
   'essence.showcaseFiles': '◉ Показ: {files}',
   'essence.review': 'Ждёт ревью',
   'essence.reviewFiles': 'Ждёт ревью: {files}',
+  'essence.stalled': '⏸ Этап остановлен',
   'essence.waiting': '✋ Ждёт вас',
   'essence.waitingTitle': 'Есть пункт в ленте «Ждут вас»',
   'stage.gate': '⛉ Гейт',
