@@ -1637,18 +1637,27 @@ GitHub PR по [Git Flow](git-flow.md)).
   `orca-board`, `git merge --no-ff` в `target` (`mergeTarget`; без него — текущая ветка корня) (если в ветке есть коммиты), `git worktree remove
   --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
   удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
-  месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
+  месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Конфликт — только при незаслитых путях в индексе
+  (`MergeError.conflict` из `mergeBranch`); прочие отказы git (lock, грязная цель, таймаут) — исключение → `workflow_blocked`.
+  Повтор идемпотентен: нет папки worktree — без коммита хвостов, нет ветки или она слита — только уборка. У `merge`,
+  `commit`, `worktree remove` таймаут 120 с (`MUTATE_TIMEOUT_MS`), у всех вызовов `git()` — `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`. Store не трогает.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
   проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
-  `mergeTaskBranch`, конфликт — ошибка). На другом этапе — ошибка «принимать нечего».
+  `mergeTaskBranch`, конфликт — ошибка). На остановленном этапе (`merge`/`git`/`end`, в том числе прерванном рестартом) —
+  повтор эффекта (`store.stageActionOf` → `execute`; снова встал — `OrcaError('review.stageBlocked')`); на «Работе» с потерянным
+  `worker_done` — переход `next`; при живом воркере — `OrcaError('review.notReviewable')`. Таблица — `docs/workflow.md` →
+  «Принять и Вернуть по этапам».
+- **Добор после запуска** — `resumeStuckStages` (`workflow.ts`) при первом открытии доски (`ProjectManager.onStoreOpened` →
+  `resumeProjectStages` в `index.ts`): прерванные эффекты подзадач без `Task.stageBlock` повторяются, потерянный `worker_done`
+  доделывается, `gate`/`human` без проверки/запроса получают их. Идемпотентен, остановленные задачи не трогает.
 - **Проверка ветки глобальной задачи** (`Task.gateFor.runId`, воркфлоу scope `run`): `review accept|reject --task <id проверки>` — свой id проверяющего,
   прогон приложение находит по `gateFor`. Единственный путь — `reviewDecision` в `index.ts` → `runGateDecision` (`workflow-run.ts`; `reviewAccept`/`reviewReject` из `workflow.ts`
   для такой задачи бросают ошибку). Решение принимается, только пока прогон стоит на ноде `gate` этой проверки и она последняя у ноды (`gatePending`); иначе ошибка
   «уже не актуальна». Переход делает `store.advanceRunStage` (замечания `reject` — в `feedback`, комментарий `accept` — в `decision`) и тут же — эффекты новой ноды.
   Задачу-проверку закрывает `orca-board done` проверяющего (`settleGate`), а если она уже сдана — само решение. `done` без решения — `workflow_blocked` по прогону (`blockRunStage`, без `taskId`).
 - **`review reject --feedback` / «Вернуть»** — `reviewReject`: на ноде проверки — `feedback` и исход `reject`
-  (дефолт — снова в работу, воркер стартует сразу); иначе `store.rejectReview` (ready с замечаниями, у ответа —
+  (дефолт — снова в работу, воркер стартует сразу); на остановленном этапе — `feedback` и `store.enterWork` → воркер; иначе `store.rejectReview` (ready с замечаниями, у ответа —
   «Уточнить»). `task.feedback` добавляется в промпт при следующем старте. В UI к замечаниям можно приложить картинки (IPC `review:reject`,
   4-й аргумент): их пути — `task.feedbackImages` (у проверки ветки — `stage_started.images`), см. «Изображения при возврате в работу».
 - **approval** из Инбокса / `request resolve --accept|--reject` — `resolveHumanRequest` → `store.resolveRequest` →
@@ -2557,6 +2566,14 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 снимка. Тесты — `assistant-settings.test.ts`.
 
 ## Грабли разработки
+
+- **Колонка «Ревью» ≠ этап проверки.** После `done` задача встаёт в «Ревью» синхронно, а `stage` двигает исполнитель; на
+  `merge`/`git`/`end` задача тоже в «Ревью». Мерж упал (`blockStage`) или приложение вышло посреди эффекта — задача висела в
+  «Ревью» на «Мерже»: кнопки «Принять»/«Вернуть» видны, а `decide()` отвечал «принимать или возвращать нечего», причина жила только
+  в одноразовом событии, повтора не было. Теперь причина хранится (`Task.stageBlock`), «Принять» повторяет эффект, «Вернуть» —
+  в работу, прерванное добирает `resumeStuckStages`. Ключевая проверка — карточка «ждёт ревью» у задачи на ноде `merge`
+  (`workflow.test.ts`, «остановленный этап подзадачи»). Отдельно: `mergeBranch` считал конфликтом **любую** ошибку `git merge`
+  (lock, грязная цель) — различайте по незаслитым путям, а не по тексту git.
 
 - Ассистент — не роль типа задачи: он запускается по `AppSettings.assistant` (`openAssistant` → `assistantLaunch`), роль
   `assistant` в типах вычищает миграция `migrateAssistant`. Не возвращай его в `DEFAULT_ROLES` и заготовки типов и не бери
