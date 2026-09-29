@@ -39,8 +39,8 @@ export function Switch({ on, disabled, title, onChange }: {
   )
 }
 
-/** Кнопка «Скопировать» с подтверждением «Скопировано». */
-export function CopyButton({ text }: { text: string }): React.JSX.Element {
+/** Кнопка «Скопировать» с подтверждением «Скопировано»; `label` — своя подпись вместо «Скопировать». */
+export function CopyButton({ text, label, title }: { text: string; label?: string; title?: string }): React.JSX.Element {
   const t = useT()
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
   useEffect(() => {
@@ -53,9 +53,10 @@ export function CopyButton({ text }: { text: string }): React.JSX.Element {
       type="button"
       className="copy-btn"
       disabled={!text}
+      title={title}
       onClick={() => navigator.clipboard.writeText(text).then(() => setState('ok'), () => setState('fail'))}
     >
-      {state === 'ok' ? t('config.about.copied') : state === 'fail' ? t('config.about.copyFailed') : t('config.about.copy')}
+      {state === 'ok' ? t('config.about.copied') : state === 'fail' ? t('config.about.copyFailed') : (label ?? t('config.about.copy'))}
     </button>
   )
 }
