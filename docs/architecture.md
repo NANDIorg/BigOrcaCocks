@@ -156,13 +156,13 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
-- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files}` — показ человеку с «Работы» (`docs/workflow.md`);
+- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files, snapshot?, auto?}` — показ человеку с «Работы» (`docs/workflow.md`; `snapshot {at, files, bytes}` и `auto` выставляет только main, не сокет);
   `roleId`/`agent`/`model` — снимок роли на момент запуска, `sessionId` — сессия агента для поиска транскрипта (см. «Статистика»).
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
   адресован человеку и по нему есть `HumanRequest`. Ответить можно один раз, у запуска — не больше одного открытого вопроса.
-- `HumanRequest { id, runId, taskId?, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, showcaseDispatchId?, resolution?, createdAt, resolvedAt? }` —
-  `taskId` нет у approval уровня прогона (нода `human` воркфлоу глобальной задачи): его решают по `runId`; `showcaseDispatchId` — у approval: запуск, чей показ выведен в `body` (`docs/workflow.md` → «Показ человеку»);
+- `HumanRequest { id, runId, taskId?, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, showcaseDispatchId?, showcaseDispatchIds?, resolution?, createdAt, resolvedAt? }` —
+  `taskId` нет у approval уровня прогона (нода `human` воркфлоу глобальной задачи): его решают по `runId`; `showcaseDispatchId` — у approval: запуск, чей показ выведен в `body` (`docs/workflow.md` → «Показ человеку»); `showcaseDispatchIds` — у approval прогона: запуски всех подзадач с показом (`showcaseDispatchId` — последний из них);
   запрос к человеку: `kind` `question` | `answer` | `escalation` | `approval` (этап воркфлоу «человек», `nodeId` — его нода),
   `status` `pending` | `resolved` | `cancelled`.
   Единственный источник «ждёт человека» (колонка «Нужен ответ», Инбокс, уведомления); модель, переходы и события —
@@ -1335,9 +1335,12 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»);
   `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)` (см. «Ассистент → Чат-режим панели»);
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
-  `showcase:read(taskId, path)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ),
-  `showcase:open(taskId, path)`, `showcase:reveal(taskId, path)` — файлы показа из worktree задачи активного проекта
-  (`main/showcase.ts`, белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»);
+  `showcase:read(taskId, path, dispatchId?)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ; HTML — только
+  `previewUrl`), `showcase:open(taskId, path, dispatchId?)`, `showcase:reveal(taskId, path, dispatchId?)` — файлы показа задачи активного проекта:
+  корень выбирает `showcaseSource` (`main/showcase.ts`; пока worktree задачи, `dispatchId` чужой задачи — ошибка; со снимком — снимок запуска),
+  белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»; `showcase:previewUrl(dispatchId, path, {network?})` →
+  `ShowcasePreviewUrl {url, mime, base}` — адрес `orca-preview://<токен>/<путь>` страницы показа для изолированного фрейма (пока заглушка:
+  отказ `showcase.noPreview`; в старом preload метода нет — renderer проверяет его перед вызовом);
   `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»),
   `stats:task(projectId, taskId)` → `TaskStats`, `stats:global(projectId, runId)` → `GlobalTaskStats` (за всё время жизни; неизвестная задача или прогон —
   ошибка по-русски; см. «Статистика задачи»).

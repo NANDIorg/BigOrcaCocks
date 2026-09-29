@@ -157,6 +157,7 @@ export default {
   'docs.tooBig': 'файл больше {mb} МБ: {path}',
 
   'showcase.taskNotFound': 'показ: задача не найдена: {id}',
+  'showcase.dispatchNotFound': 'показ: запуск {id} не найден у этой задачи',
   'showcase.noWorktree': 'показ: у задачи {id} нет worktree',
   'showcase.noWorktreeBranch': 'показ: у задачи {id} нет worktree — файлы остались в ветке {branch}',
   'showcase.noPath': 'показ: путь к файлу не задан',

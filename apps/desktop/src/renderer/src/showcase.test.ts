@@ -14,10 +14,10 @@ const approval = (extra: Partial<HumanRequest> = {}): HumanRequest => ({
   id: 'r1', runId: 'run', taskId: 't1', kind: 'approval', status: 'pending', title: 'Выбрать вариант', options: [], createdAt: 1, ...extra
 })
 
-test('вид файла по расширению: картинки — превью, md — текст, html/pdf — открыть, прочее — только путь', () => {
+test('вид файла по расширению: картинки — превью, md — текст, html — страница, pdf — открыть, прочее — только путь', () => {
   const items = showcaseFiles(['design/a.PNG', 'design/b.svg', 'notes.md', 'design/a.html', 'spec.pdf', 'run.sh', 'Makefile'])
   assert.deepEqual(items.map((f) => [f.name, f.view]), [
-    ['a.PNG', 'image'], ['b.svg', 'image'], ['notes.md', 'markdown'], ['a.html', 'open'], ['spec.pdf', 'open'], ['run.sh', 'none'], ['Makefile', 'none']
+    ['a.PNG', 'image'], ['b.svg', 'image'], ['notes.md', 'markdown'], ['a.html', 'html'], ['spec.pdf', 'open'], ['run.sh', 'none'], ['Makefile', 'none']
   ])
 })
 

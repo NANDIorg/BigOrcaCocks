@@ -2,7 +2,7 @@ import type {
   AgentSession,
   Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
-  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, StageChange, StageDecision,
+  HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, ShowcaseSnapshot, StageChange, StageDecision,
   StageDecisionFallback
 } from './types.ts'
 import {
@@ -184,6 +184,12 @@ export interface RunStageInfo {
 export interface FinishDispatchOptions {
   /** Показ из `orca-board done`: `text` — markdown, `files` — пути в ветке задачи. Проверяет `normalizeShowcase`. */
   showcase?: { text?: string; files?: readonly string[] }
+  /**
+   * Доверенные поля показа от main (не из параметров сокета): снимок файлов, снятый при `done`, и «файлы найдены
+   * приложением». Без `showcase` не записываются.
+   */
+  snapshot?: ShowcaseSnapshot
+  auto?: boolean
   fallback?: RunWorkflowFallback
 }
 
@@ -1440,13 +1446,17 @@ export class TaskStore {
    * в «Нужен ответ», пока запрос ждёт (`waiting`). Ждущий approval прогона не дублируется — возвращается он.
    * Решение — `resolveRequest`; дальше граф двигает main (`advanceRunStage` с `feedback`/`decision` из решения).
    */
-  requestRunApproval(runId: string, fields: { nodeId: string; title: string; body?: string; showcaseDispatchId?: string }): HumanRequest {
+  requestRunApproval(
+    runId: string,
+    fields: { nodeId: string; title: string; body?: string; showcaseDispatchId?: string; showcaseDispatchIds?: readonly string[] }
+  ): HumanRequest {
     const run = this.mustRunScope(runId)
     const existing = this.pendingRequest((r) => r.runId === run.id && r.taskId === undefined && r.kind === 'approval')
     if (existing) return existing
     const request = this.createRequest(run, {
       kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}),
-      ...(fields.showcaseDispatchId ? { showcaseDispatchId: fields.showcaseDispatchId } : {})
+      ...(fields.showcaseDispatchId ? { showcaseDispatchId: fields.showcaseDispatchId } : {}),
+      ...(fields.showcaseDispatchIds?.length ? { showcaseDispatchIds: [...fields.showcaseDispatchIds] } : {})
     })
     this.commit()
     return request
@@ -2034,7 +2044,13 @@ export class TaskStore {
     dispatch.summary = summary
     dispatch.files = files
     if (text) dispatch.answer = text
-    if (showcase) dispatch.showcase = showcase
+    if (showcase) {
+      dispatch.showcase = {
+        ...showcase,
+        ...(opts.snapshot ? { snapshot: { at: opts.snapshot.at, files: opts.snapshot.files, bytes: opts.snapshot.bytes } } : {}),
+        ...(opts.auto ? { auto: true } : {})
+      }
+    }
     // Запуск сдал работу: его вопрос и прошлый ответ человека больше не ждут (сам вопрос остаётся открытым).
     this.cancelRequests((r) => r.taskId === task.id)
     let request: HumanRequest | undefined
@@ -2531,7 +2547,7 @@ export class TaskStore {
    */
   private createRequest(
     subject: Task | Run,
-    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId' | 'showcaseDispatchId' | 'fallback' | 'agentNote'>>,
+    fields: Pick<HumanRequest, 'kind' | 'title'> & Partial<Pick<HumanRequest, 'body' | 'options' | 'questionId' | 'dispatchId' | 'nodeId' | 'showcaseDispatchId' | 'showcaseDispatchIds' | 'fallback' | 'agentNote'>>,
     emit = true
   ): HumanRequest {
     // Запрос уровня прогона (approval ноды `human`, decision) — без задачи: карточка «Нужен ответ» вычисляется по pending-запросам прогона.
@@ -2549,6 +2565,7 @@ export class TaskStore {
       ...(fields.questionId !== undefined ? { questionId: fields.questionId } : {}),
       ...(fields.nodeId !== undefined ? { nodeId: fields.nodeId } : {}),
       ...(fields.showcaseDispatchId !== undefined ? { showcaseDispatchId: fields.showcaseDispatchId } : {}),
+      ...(fields.showcaseDispatchIds !== undefined ? { showcaseDispatchIds: fields.showcaseDispatchIds } : {}),
       ...(fields.fallback !== undefined ? { fallback: fields.fallback } : {}),
       ...(fields.agentNote !== undefined ? { agentNote: fields.agentNote } : {}),
       createdAt: Date.now()

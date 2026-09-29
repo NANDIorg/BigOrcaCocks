@@ -32,6 +32,7 @@ interface HumanRequest {
   questionId?: string        // kind=question: исходный Question (ask держит соединение за него)
   nodeId?: string            // kind=approval: нода human воркфлоу, на которой ждёт задача; kind=question: нода ask, с которой задан вопрос (Инбокс показывает «Этап «…»»)
   showcaseDispatchId?: string // kind=approval: запуск, чей показ (Dispatch.showcase) в body; файлы — IPC showcase:*
+  showcaseDispatchIds?: string[] // approval прогона: запуски всех подзадач с показом по порядку; showcaseDispatchId — последний из них
   fallback?: 'unsure' | 'no_answer' | 'start_failed'  // kind=decision: почему решает человек → StageDecision.fallback
   agentNote?: string          // kind=decision: комментарий агента (decision escalate --reason, сводка done) → StageDecision.agentNote; он же в body
   resolution?: RequestResolution

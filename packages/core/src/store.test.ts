@@ -562,6 +562,42 @@ describe('показ человеку: finishDispatch и решение approval
     assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['a/../../x.png'] } }), /выходить из репозитория/)
   })
 
+  it('снимок показа и auto от main сохраняются в Dispatch.showcase; без показа — не записываются', () => {
+    const { s, d } = showcaseRun(false)
+    const snapshot = { at: 5, files: 3, bytes: 1024 }
+    s.finishDispatch(d.id, 'готово', [], undefined, { showcase: { files: ['design/a.html'] }, snapshot, auto: true })
+    assert.deepEqual(s.getDispatch(d.id)!.showcase, { files: ['design/a.html'], snapshot, auto: true })
+    const plain = store()
+    const t = plain.createTask({ title: 'B' })
+    const d2 = plain.startDispatch(t.id, 'pty')
+    assert.equal(plain.finishDispatch(d2.id, 'ok', [], undefined, { snapshot, auto: true }).showcase, undefined)
+  })
+
+  it('снапшот без snapshot/auto/showcaseDispatchIds (старая версия) грузится как есть', () => {
+    const p = memory()
+    const s = store(p)
+    const t = s.createTask({ title: 'A' })
+    const d = s.startDispatch(t.id, 'pty')
+    s.finishDispatch(d.id, 'готово', [], undefined, { showcase: { text: '# A', files: ['a.png'] } })
+    const r = s.requestApproval(t.id, { nodeId: 'pick', title: 'A', showcaseDispatchId: d.id })
+    const reloaded = store(memory(p.data!))
+    assert.deepEqual(reloaded.getDispatch(d.id)!.showcase, { text: '# A', files: ['a.png'] })
+    const req = reloaded.getRequest(r.id)!
+    assert.equal(req.showcaseDispatchId, d.id)
+    assert.equal('showcaseDispatchIds' in req, false)
+  })
+
+  it('approval прогона: showcaseDispatchIds сохраняются рядом с showcaseDispatchId, пустой список — поля нет', () => {
+    const p = memory()
+    const s = store(p)
+    const run = s.createGlobalTask({ title: 'Фича', workflow: defaultWorkflow([{ id: 'developer' }]) })
+    const r = s.requestRunApproval(run.id, { nodeId: 'check', title: 'Проверка', showcaseDispatchId: 'd2', showcaseDispatchIds: ['d1', 'd2'] })
+    assert.deepEqual([r.showcaseDispatchId, r.showcaseDispatchIds], ['d2', ['d1', 'd2']])
+    assert.deepEqual(store(memory(p.data!)).getRequest(r.id)!.showcaseDispatchIds, ['d1', 'd2'])
+    const run2 = s.createGlobalTask({ title: 'Фича 2', workflow: defaultWorkflow([{ id: 'developer' }]) })
+    assert.equal('showcaseDispatchIds' in s.requestRunApproval(run2.id, { nodeId: 'check', title: 'П', showcaseDispatchIds: [] }), false)
+  })
+
   it('approval: текст решения — decision в request_resolved, длинный обрезан; без текста поля нет', () => {
     const s = store()
     const t = s.createTask({ title: 'A' })

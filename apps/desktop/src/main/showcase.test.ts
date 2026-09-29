@@ -5,8 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync, symlinkSyn
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
-import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
-import { SHOWCASE_READ_MAX_BYTES, showcaseFileType } from '../shared/showcase'
+import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseRoot, showcaseSource } from './showcase'
+import { SHOWCASE_READ_MAX_BYTES, isAssetType, isEntryType, showcaseFileType, showcaseServedMime } from '../shared/showcase'
 
 let tmp: string
 let wt: string
@@ -32,11 +32,29 @@ afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 describe('showcaseFileType', () => {
   it('белый список по расширению без учёта регистра', () => {
     assert.equal(showcaseFileType('a/B.PNG')?.preview, 'image')
-    assert.equal(showcaseFileType('x.html')?.preview, 'open')
+    assert.equal(showcaseFileType('x.html')?.preview, 'html')
     assert.equal(showcaseFileType('x.md')?.preview, 'markdown')
     assert.equal(showcaseFileType('x.sh'), undefined)
     assert.equal(showcaseFileType('Makefile'), undefined)
     assert.equal(showcaseFileType('dir.png/file'), undefined)
+  })
+})
+
+describe('точки входа и ассеты показа', () => {
+  it('html — страница, md/картинки — точки входа, css/js/шрифты — ассеты, исполняемое и архивы — ничто', () => {
+    assert.equal(showcaseFileType('design/A.HTM')?.preview, 'html')
+    assert.equal(showcaseFileType('notes.markdown')?.preview, 'markdown')
+    assert.equal(showcaseFileType('shot.avif')?.preview, 'image')
+    assert.equal(showcaseFileType('spec.pdf')?.preview, 'open')
+    assert.deepEqual(['a.html', 'a.png', 'a.md', 'a.pdf', 'a.css'].map(isEntryType), [true, true, true, true, false])
+    assert.deepEqual(['a.css', 'a.JS', 'a.mjs', 'f.woff2', 'v.mp4', 'a.html'].map(isAssetType), [true, true, true, true, true, false])
+    for (const bad of ['run.sh', 'a.exe', 'a.zip', 'a.docx', 'Makefile', '.env', 'dir.css/x', 'toString', 'a.constructor']) {
+      assert.equal(isEntryType(bad), false, bad)
+      assert.equal(isAssetType(bad), false, bad)
+      assert.equal(showcaseServedMime(bad), undefined, bad)
+    }
+    assert.equal(showcaseServedMime('style.css'), 'text/css')
+    assert.equal(showcaseServedMime('a.html'), 'text/html')
   })
 })
 
@@ -69,7 +87,7 @@ describe('resolveShowcasePath', () => {
 })
 
 describe('readShowcaseFile', () => {
-  it('картинка и markdown — байты с mime; HTML — только «Открыть»; больше предела — отказ', () => {
+  it('картинка и markdown — байты с mime; HTML — не байтами (только протокол показа); больше предела — отказ', () => {
     const png = readShowcaseFile(wt, 'design/a.png')
     assert.equal(png.mime, 'image/png')
     assert.deepEqual([...png.bytes], [0x89, 0x50, 0x4e, 0x47])
@@ -90,5 +108,29 @@ describe('showcaseRoot', () => {
     assert.equal(showcaseRoot(store, t.id), wt)
     store.updateTask(t.id, { worktree: path.join(tmp, 'gone') })
     assert.throws(() => showcaseRoot(store, t.id), new RegExp(`ветке orca/${t.id}`))
+  })
+})
+
+describe('showcaseSource и previewUrl (контракт до снимка и протокола)', () => {
+  it('без dispatchId — worktree задачи, как раньше; запуск этой задачи — тоже; чужой или несуществующий — отказ', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const t = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const other = store.createTask({ title: 'Чужая', roleId: 'developer' })
+    store.updateTask(t.id, { worktree: wt, branch: `orca/${t.id}` })
+    const d = store.startDispatch(t.id, 'pty_a')
+    const foreign = store.startDispatch(other.id, 'pty_b')
+    assert.equal(showcaseSource(store, t.id), wt)
+    assert.equal(showcaseSource(store, t.id, d.id), wt)
+    assert.throws(() => showcaseSource(store, t.id, foreign.id), /запуск .* не найден/)
+    assert.throws(() => showcaseSource(store, t.id, 'd_nope'), /не найден/)
+    assert.throws(() => showcaseSource(store, t.id, 42), /не найден/)
+  })
+
+  it('previewUrl — пока честный отказ: протокола ещё нет', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const t = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(t.id, 'pty_a')
+    assert.throws(() => showcasePreviewUrl(store, d.id, 'design/a.html'), /не превьюится/)
+    assert.throws(() => showcasePreviewUrl(store, 'd_nope', 'design/a.html'), /не найден/)
   })
 })

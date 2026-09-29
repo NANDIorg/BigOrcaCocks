@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import type { TaskStore } from '@orca-board/core'
-import type { ShowcaseFileData } from '../shared/ipc'
+import type { ShowcaseFileData, ShowcasePreviewUrl } from '../shared/ipc'
 import { SHOWCASE_READ_MAX_BYTES, showcaseFileType } from '../shared/showcase'
 import { isInside } from './docs'
 import { OrcaError } from './i18n'
@@ -20,6 +20,31 @@ export function showcaseRoot(store: TaskStore, taskId: unknown): string {
       : new OrcaError('showcase.noWorktree', { id: task.id })
   }
   return task.worktree
+}
+
+/**
+ * Корень, из которого читаются файлы показа запуска `dispatchId` задачи `taskId` (IPC showcase:read/open/reveal).
+ * Шов для снимка: TODO(T1) — со `showcase.snapshot` корнем станет снимок в userData, без него — worktree задачи
+ * с фоллбэком на worktree ветки прогона. Пока — как раньше: worktree задачи; `dispatchId` только сверяется, чтобы
+ * renderer не прочитал показ чужой задачи под видом своей.
+ */
+export function showcaseSource(store: TaskStore, taskId: unknown, dispatchId?: unknown): string {
+  if (dispatchId !== undefined && dispatchId !== null) {
+    const dispatch = typeof dispatchId === 'string' ? store.getDispatch(dispatchId) : undefined
+    if (!dispatch || dispatch.taskId !== taskId) throw new OrcaError('showcase.dispatchNotFound', { id: String(dispatchId) })
+  }
+  return showcaseRoot(store, taskId)
+}
+
+/**
+ * Адрес страницы показа для изолированного фрейма (IPC showcase:previewUrl). TODO(T2): выдать токен протокола
+ * `orca-preview://` на корень снимка запуска (T1) и вернуть `{url, mime, base}`; `opts.network` — отдельный токен
+ * с открытой сетью. Пока протокола нет — честный отказ: renderer показывает «Открыть» как раньше.
+ */
+export function showcasePreviewUrl(store: TaskStore, dispatchId: unknown, path: unknown, _opts?: unknown): ShowcasePreviewUrl {
+  const dispatch = typeof dispatchId === 'string' ? store.getDispatch(dispatchId) : undefined
+  if (!dispatch) throw new OrcaError('showcase.dispatchNotFound', { id: String(dispatchId) })
+  throw new OrcaError('showcase.noPreview', { path: String(path) })
 }
 
 /**
@@ -45,13 +70,14 @@ export function resolveShowcasePath(root: string, relPath: unknown): string {
 }
 
 /**
- * Байты файла для превью в renderer: только картинки и markdown (HTML и PDF — только «Открыть»), не больше
+ * Байты файла для превью в renderer: только картинки и markdown (HTML — по протоколу показа, PDF — «Открыть»), не больше
  * SHOWCASE_READ_MAX_BYTES. `Uint8Array`, а не base64: IPC передаёт его структурным клонированием.
  */
 export function readShowcaseFile(root: string, relPath: unknown): ShowcaseFileData {
   const real = resolveShowcasePath(root, relPath)
   const type = showcaseFileType(real)!
-  if (type.preview === 'open') throw new OrcaError('showcase.noPreview', { path: String(relPath) })
+  // HTML — только через протокол показа (previewUrl): байты страницы renderer не получает.
+  if (type.preview !== 'image' && type.preview !== 'markdown') throw new OrcaError('showcase.noPreview', { path: String(relPath) })
   const size = statSync(real).size
   if (size > SHOWCASE_READ_MAX_BYTES) throw new OrcaError('showcase.tooBig', { mb: SHOWCASE_READ_MAX_BYTES / 1024 / 1024, path: String(relPath) })
   return { mime: type.mime, bytes: new Uint8Array(readFileSync(real)) }
