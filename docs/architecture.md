@@ -95,9 +95,11 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
-  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `assistant`, `developer`, `reviewer`, `qa`
+  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
   (с заполненным `description`; пустое назначение системной роли — в т.ч. у ролей, созданных до появления поля, —
-  подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`);
+  подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`). Ассистент ролью не является:
+  его настройки — `AssistantSettings { agent, model?, effort?, systemPrompt? }` (`packages/core/src/types.ts`, дефолт
+  `DEFAULT_ASSISTANT_SETTINGS = { agent: 'claude' }`) в `AppSettings.assistant`, см. «Ассистент»;
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
 - `BoardColumn { id, title, color, kind }`. `kind` — системный (`backlog`, `ready`, `in_progress`,
   `needs_input`, `review`, `done`) либо `custom`. По `kind` store делает автоматические переходы,
@@ -141,7 +143,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     человек «посмотреть глазами»), «Бэкенд» (ревьюер на `opus`, ревью → прогон тестов ролью `qa`), «Фронтенд и бэкенд»
     (`fullstack`: роли `frontend` / `backend`, человек только для задач `frontend`), «Мобильная разработка» (`mobile`:
     ревью → человек), «QA: автотесты» (`autotests`: `autotester`), «Документация» (`docs`: `writer`, ревью человеком).
-    У всех `coordinator` и `assistant` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы
+    У всех `coordinator` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы
     собраны `pipelineWorkflow`. main кладёт заготовки в библиотеку **один раз** (`seededTaskTypes`, флаг
     `taskTypesSeeded` в projects.json), дальше это обычные типы: правятся целиком, переименовываются и удаляются, как
     созданные человеком; удалённая не возвращается после рестарта, новая версия приложения их не перетирает.
@@ -196,9 +198,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   правила агентов, режим разрешений) и `WorkflowDeps.run(runId)` (роли и граф типа для исполнителя воркфлоу) собираются
   из `projects.resolveRun`. Две глобальные задачи одного проекта разных типов стартуют воркеров с разными агентами,
   моделями и промптами и идут разными графами.
-- **Дефолтные роли**: `coordinator`, `assistant`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
-  `coordinator` и `assistant` — служебные (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
-  их нет, в редакторе ролей они в группе «Системная».
+- **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
+  `coordinator` — служебная (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
+  её нет, в редакторе ролей она в группе «Системная». Id `assistant` тоже остаётся в `SERVICE_ROLE_IDS`, хотя ролью типа
+  ассистент больше не бывает: id зарезервирован, задача с ролью `assistant` отвергается, роль из старых данных не станет рабочей.
 - **Удаление системных ролей**: любую роль, в том числе из `DEFAULT_ROLES`, можно удалить, кроме последней
   (`validateRoles`). Удалённая роль не возвращается сама: `?? DEFAULT_ROLES` срабатывает только у проекта без поля
   `roles`, а сохранённый массив всегда непустой. Редактор ролей (`RolesEditor.tsx`, логика — `renderer/src/roleRemoval.ts`)
@@ -229,10 +232,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   если такой роли нет в типе задачи (удалили в «Настройки → Типы задач») — ошибка «координатор не запустится: …» до создания прогона.
   Текст «роли нет» один для всех мест (`missingRoleMessage` в `agents.ts`): тип задачи по названию, роли типа,
   `orca-board roles list` для агента и «Настройки → Типы задач» (для системной роли — «Вернуть системные роли») для человека.
-- **Ассистент** (`startAssistant`): роли и режим разрешений — из типа библиотеки по умолчанию
-  (`resolveTaskType(taskType(defaultTaskTypeId()))`), не из проекта;
-  роль `assistant`, без неё — агент, модель и effort роли `coordinator` (без её инструкций, `assistantRole`),
-  нет и её — `claude` без модели. См. «Ассистент».
+- **Ассистент** (`startAssistant`): не роль типа — агент, модель, effort и инструкции из `AppSettings.assistant`,
+  режим разрешений всегда `auto`; от проекта и типа задачи не зависит. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
   при старте воркера и координатора к служебной инструкции Orca (`skills/worker.md` / `coordinator.md`)
   дописывается блок `# Инструкции роли «<title>»` с текстом роли (trim по краям, внутри — как есть).
@@ -255,8 +256,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Хранится как введено (без trim, как `systemPrompt`); из одних пробелов → поле удаляется; не строка → ошибка
   `правила агентов должны быть строкой`. Правила типа прогона передаются в `WorkerEnvContext.agentRules`
   (`ctx(projectId, runId?)` в `src/main/index.ts`) и применяются при следующем запуске агента. Ассистент их не получает
-  (`AssistantContext` без `agentRules`: он один на приложение и не работает в репозитории проекта); свой `systemPrompt`
-  роли `assistant` — получает, как раньше. Меняются: сокет `rules.get` / `rules.set` (тип — `--type`, иначе тип
+  (`AssistantContext` без `agentRules`: он один на приложение и не работает в репозитории проекта); свои инструкции
+  (`AppSettings.assistant.systemPrompt`) — получает. Меняются: сокет `rules.get` / `rules.set` (тип — `--type`, иначе тип
   прогона, иначе тип проекта по умолчанию), CLI `orca-board rules get|set`, в UI — «Настройки → Типы задач → Правила
   доски».
 - **Воркфлоу типа задачи** (`TaskType.settings.workflow?: Workflow`, модель и валидация — `packages/core/src/workflow.ts`):
@@ -842,9 +843,20 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Один на всё приложение**: ассистент не принадлежит проекту и работает со всеми проектами через
   `orca-board --project <id>`; без флага CLI берёт активный в UI проект. Файлового доступа к репозиториям
   нет (`--add-dir` не передаётся) — только CLI.
-- **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext` без `projectId`): роли и режим
-  разрешений — из настроек по умолчанию (`projects.defaults()`), агент роли `assistant` (fallback см. «Роли и колонки»),
-  system prompt — `skills/assistant.md` + инструкции роли (`withRoleInstructions`; правил проекта `agentRules` нет), стартовое сообщение —
+- **Свои настройки** — `AppSettings.assistant: AssistantSettings { agent, model?, effort?, systemPrompt? }` (`shared/ipc.ts`,
+  тип — `packages/core/src/types.ts`), хранятся в `settings.assistant` файла `projects.json`, каналы — те же `app:getSettings` /
+  `app:setSettings`. Ассистент не роль типа задачи: он один на приложение и к типу не относится. `settings()` нормализует
+  (`loadedAssistantSettings` в `src/main/assistant.ts`: неизвестный агент → `claude`, не-строки и пустые строки выпадают),
+  `setSettings({ assistant })` мержит по полям (`mergedAssistantSettings`): пустая строка очищает поле, промпт хранится как
+  введён, смена агента без `model`/`effort` в патче сбрасывает их (модель одного агента другому не подходит), неизвестный
+  агент или не-строка — `OrcaError` `assistant.*`. Режима разрешений в настройках нет — всегда `auto`
+  (`ASSISTANT_PERMISSION_MODE`): ассистенту нужен только `orca-board`, он и так разрешён. Настройки применяются к
+  **следующему** запуску («Новый диалог» / `assistant:reset`), живой ассистент не перезапускается. Тесты — `assistant-settings.test.ts`.
+- **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext { socketPath, settings }`): `openAssistant` берёт
+  `projects.settings().assistant` и **до** закрытия старого терминала проверяет агента (`assertAgentUsable(agentInfos(undefined), …)`:
+  неизвестный или неустановленный — `OrcaError`, панель показывает его, старый ассистент при «Новом диалоге» не теряется).
+  Что запускать, собирает чистая `assistantLaunch(settings, builtin, language)` (`src/main/assistant.ts`): агент, модель, effort,
+  system prompt — `skills/assistant.md` + блок `# Инструкции роли «Ассистент»` (`ASSISTANT_TITLE`, `agentSystemPrompt`; правил проекта `agentRules` нет), стартовое сообщение —
   `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — нейтральный
   `userData/assistant` (создаётся при запуске), не репозиторий; `orca-board` без вопросов
   (`--allowedTools Bash(orca-board:*)` у claude), на Windows — `win32Launch`, как у координатора.
@@ -1632,7 +1644,7 @@ UI работает с активным проектом; воркеры и ко
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
 `{ version, projects: Project[], activeId, groups?: ProjectGroup[], taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
-(`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
+(`settings` — глобальные настройки приложения, см. «Фоновый режим», `settings.assistant` — см. «Ассистент»; `lastRunVersion` — версия приложения последнего
 запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
 - `groups?: ProjectGroup[]` — группы проектов для левого меню (`shared/ipc.ts`), порядок массива = порядок в меню; у проекта
   `groupId` ссылается на `groups[].id`, нет или указывает на несуществующую группу — проект без группы. Поле опциональное,
@@ -1680,7 +1692,8 @@ UI работает с активным проектом; воркеры и ко
   `deleteTaskType(id)` — любой тип, в том числе заготовку; ссылки проектов остаются висячими и при чтении пропускаются,
   удалённый тип библиотеки по умолчанию сбрасывается. Последний тип — ошибка «…последний в библиотеке…».
 - `defaultTaskTypeId()` — тип библиотеки по умолчанию: заданный и существующий, иначе `general`, а если удалён и он —
-  первый тип библиотеки. Предвыбран при добавлении проекта, даёт роли и режим разрешений ассистенту.
+  первый тип библиотеки (правило — чистая `libraryDefaultTypeId` в `task-types-migration.ts`, её же зовёт миграция ассистента).
+  Предвыбран при добавлении проекта. Ассистенту больше ничего не даёт — его настройки в `AppSettings.assistant`.
 - `taskTypeWorkflow(typeId)` → `{typeId, title, workflow, custom}`: свой граф или дефолтный по ролям; граф будущей
   версии — ошибка «обновите приложение».
 
@@ -2460,7 +2473,25 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 Зелёный CI не подтверждает ручную проверку приложения: скачивание сборок, smoke-тесты
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
+**Миграция ассистента из ролей типов** (`migrateAssistant` в `task-types-migration.ts`, чистая функция; `load()` вызывает её
+последней, после онбординга — записанный ею `settings.assistant` не считается признаком «человек что-то настраивал»). Раньше
+ассистент был ролью `assistant` типа, но запускался только по типу библиотеки по умолчанию. Ни одной роли `assistant` в типах —
+ничего не делается (новые пользователи: заготовки без неё). Иначе: `settings.assistant` ещё не задан — берётся тем же правилом,
+что при старом запуске (`assistantFromRoles` в core: роль `assistant` типа по умолчанию → её agent/model/effort/systemPrompt, нет —
+agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_SETTINGS`); уже задан (откат версии и «Вернуть системные
+роли» старым renderer) — побеждает. Затем роль `assistant` удаляется из **всех** типов; тип без ролей теряет поле `roles`
+(возьмёт `DEFAULT_ROLES`). Роли `assistant` не-дефолтных типов не переносятся — на запуск они не влияли, остаются в бэкапе версии
+(`backupOnVersionChange`). Файл перезаписывается (`dirty`), `PROJECTS_FILE_VERSION` не меняется: повторная загрузка ничего не
+меняет, старое приложение читает `settings.assistant` как неизвестный ключ (сохраняет его) и запускает ассистента агентом
+координатора. Файл до типов (v1) проходит тот же путь: `migrateProjectsFile` переносит роли проекта в тип, `migrateAssistant`
+вычищает. Снимки типов в прогонах (`Run.taskType.roles`) не мигрируются — `resolveRunType` отфильтровывает `assistant` в ветке
+снимка. Тесты — `assistant-settings.test.ts`.
+
 ## Грабли разработки
+
+- Ассистент — не роль типа задачи: он запускается по `AppSettings.assistant` (`openAssistant` → `assistantLaunch`), роль
+  `assistant` в типах вычищает миграция `migrateAssistant`. Не возвращай его в `DEFAULT_ROLES` и заготовки типов и не бери
+  его настройки из типа по умолчанию: раньше так и было, и правка роли ассистента в не-дефолтном типе молча ни на что не влияла.
 
 - Упакованное приложение, запущенное из окружения `pnpm dev` (терминал агента наследует `ELECTRON_RENDERER_URL`),
   грузило чужой dev-сервер `http://localhost:5173` вместо своего `out/renderer`: main слепо доверял переменной. Это ещё

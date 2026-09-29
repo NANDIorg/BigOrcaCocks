@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, STORE_FORMAT_VERSION, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
+  DEFAULT_COLUMNS, STORE_FORMAT_VERSION, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
   type TaskPriority, type ImageAttachmentInput
 } from '@orca-board/core'
@@ -49,7 +49,7 @@ import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
-import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
+import { availableTypes, globalTypeTitle, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
 type Tab = 'board' | 'terminals' | 'stats' | 'info'
 
@@ -785,9 +785,8 @@ export function App(): React.JSX.Element {
       return { name: global?.title ?? t('shell.term.coordinatorName'), role: role?.title ?? t('shell.term.coordinatorRole'), agent: role?.agent ?? 'claude' }
     }
     if (term.role === 'assistant') {
-      // Ассистент приложения запущен с ролями типа библиотеки по умолчанию; у старого main — проекта.
-      const role = assistantRole(taskTypes && !term.projectId ? libraryDefaultRoles(taskTypes) : rolesOf(undefined))
-      return { name: t('shell.term.assistantName'), role: role?.title ?? t('shell.term.assistantRole'), agent: role?.agent ?? 'claude' }
+      // Ассистент — настройки приложения (AppSettings.assistant), не роль типа; агента из настроек подставит раздел «Ассистент».
+      return { name: t('shell.term.assistantName'), role: t('shell.term.assistantRole'), agent: 'claude' }
     }
     if (term.role === 'shell') return { name: term.label, role: t('shell.term.shellRole'), agent: 'shell' }
     const task = term.projectId === active?.id ? tasks.find((x) => x.id === term.taskId) : undefined

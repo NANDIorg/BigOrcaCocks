@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION,
+  builtinPromptKind, assistantFromRoles, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION,
   COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec, runDecisionTaskTitle, type CoordinatorStage
 } from './prompts.ts'
 import { getAgent } from './agents.ts'
@@ -28,17 +28,20 @@ describe('служебные роли', () => {
   })
 })
 
-describe('assistantRole', () => {
+describe('assistantFromRoles', () => {
   const coordinator = { id: 'coordinator', title: 'К', agent: 'codex' as const, model: 'm', effort: 'high', systemPrompt: 'только координатору' }
-  it('своя роль assistant — как есть', () => {
-    const own = { id: 'assistant', title: 'А', agent: 'gemini' as const, systemPrompt: 'p' }
-    assert.equal(assistantRole([coordinator, own]), own)
+  it('роль assistant — её агент, модель, effort и инструкции; название и назначение не переносятся', () => {
+    const own = { id: 'assistant', title: 'А', description: 'd', agent: 'gemini' as const, model: 'g', effort: 'low', systemPrompt: 'p' }
+    assert.deepEqual(assistantFromRoles([coordinator, own]), { agent: 'gemini', model: 'g', effort: 'low', systemPrompt: 'p' })
   })
-  it('старый проект без assistant — агент, модель и effort координатора, без его инструкций', () => {
-    assert.deepEqual(assistantRole([coordinator]), { id: 'assistant', title: 'Ассистент', agent: 'codex', model: 'm', effort: 'high' })
+  it('роль assistant без модели — только агент', () => {
+    assert.deepEqual(assistantFromRoles([coordinator, { id: 'assistant', title: 'А', agent: 'claude' }]), { agent: 'claude' })
   })
-  it('нет ни assistant, ни coordinator — undefined (claude по умолчанию)', () => {
-    assert.equal(assistantRole([{ id: 'developer', title: 'D', agent: 'claude' }]), undefined)
+  it('нет assistant — агент, модель и effort координатора, без его инструкций', () => {
+    assert.deepEqual(assistantFromRoles([coordinator]), { agent: 'codex', model: 'm', effort: 'high' })
+  })
+  it('нет ни assistant, ни coordinator — undefined', () => {
+    assert.equal(assistantFromRoles([{ id: 'developer', title: 'D', agent: 'claude' }]), undefined)
   })
 })
 

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { assistantCwd } from './assistant'
@@ -491,20 +491,22 @@ const assistantChatStatus = new Map<string, AssistantChatStatus>()
 
 /**
  * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
- * старый закрывается) запускается новый. Роли, агент и режим разрешений — из настроек по умолчанию:
- * ассистент не принадлежит ни одному проекту.
+ * старый закрывается) запускается новый. Агент, модель и инструкции — из `AppSettings.assistant`:
+ * ассистент не принадлежит ни одному проекту и типу задачи. Агент проверяется до запуска: неустановленный дал бы
+ * молча мёртвый терминал, а ошибка `OrcaError` видна в панели ассистента.
  */
 function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: string } {
-  if (assistantPty && isAlive(assistantPty)) {
-    if (!reset) return { ptyId: assistantPty }
-    killPty(assistantPty)
-  }
+  const alive = assistantPty && isAlive(assistantPty) ? assistantPty : null
+  if (alive && !reset) return { ptyId: alive }
+  const settings = projects.settings().assistant
+  // До закрытия старого: «Новый диалог» с неустановленным агентом не должен оставить человека без ассистента.
+  // Проекта нет — «включён ли агент в проекте» не проверяется, только установлен ли он.
+  assertAgentUsable(agentInfos(undefined), settings.agent)
+  if (alive) killPty(alive)
   assistantPty = null
   assistantSessionId = undefined
-  // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
-  const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
   const { ptyId, sessionId } = startAssistant(
-    { socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title },
+    { socketPath: SOCKET_PATH, settings },
     cols,
     rows,
     (id) => {

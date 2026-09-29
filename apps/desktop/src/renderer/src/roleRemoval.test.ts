@@ -48,8 +48,8 @@ test('возврат ставит роли на место из дефолта �
   const edited: Role = { ...DEFAULT_ROLES.find((r) => r.id === 'developer')!, model: 'opus' }
   const roles = [edited, custom, DEFAULT_ROLES.find((r) => r.id === 'qa')!]
   const next = restoreSystemRoles(roles)
-  assert.deepEqual(ids(next), ['coordinator', 'assistant', 'developer', 'role_x', 'reviewer', 'qa'])
-  assert.equal(next[2], edited)
+  assert.deepEqual(ids(next), ['coordinator', 'developer', 'role_x', 'reviewer', 'qa'])
+  assert.equal(next[1], edited)
   assert.deepEqual(ids(roles), ['developer', 'role_x', 'qa'])
 })
 
