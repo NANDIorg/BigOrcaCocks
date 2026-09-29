@@ -23,7 +23,7 @@ import {
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
-import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
@@ -34,7 +34,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -794,6 +794,11 @@ function registerIpc(): void {
     const root = projectRoot(id)
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
+  // Начальный коммит — только по кнопке человека после `git.noCommits`; неизвестный режим от renderer — пустой коммит,
+  // он не забирает файлы человека в историю.
+  handle('projects:createInitialCommit', (_e, id: string, mode: InitialCommitMode) =>
+    createInitialCommit(projectRoot(id), mode === 'snapshot' ? 'snapshot' : 'empty')
+  )
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
   // ProjectManager.remove — общий путь с сокетом.
