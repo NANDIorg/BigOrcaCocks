@@ -782,7 +782,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Время жизни**: файлы живут, пока прогон открыт или его координатор жив; папки закрытых прогонов с
   мёртвым координатором удаляются при следующем запуске координатора с изображениями (`pruneAttachments`).
 - **Покрытие**: только UI-форма. `orca-board coordinator start --objective` (сокет `coordinator.start`)
-  изображений не принимает. Миниатюры — `blob:` URL (CSP в `renderer/index.html`: `img-src 'self' blob:`).
+  изображений не принимает. Миниатюры — `blob:` URL (CSP в `renderer/index.html`: `img-src 'self' blob: orca-preview:`).
 
 ### Изображения при возврате в работу
 
@@ -1209,6 +1209,24 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   - Логика без React — `renderer/src/taskTypeEdit.ts` (тест рядом). Старый main/preload: нет `window.orca.taskTypes`
     или хендлера `taskTypes:*` → `taskTypesStaleMessage()` («перезапустите приложение») вместо списка.
 - **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» у колонок `storageKey = active.id`, в «Настройках» у типа — `typeEditorKey(t, rev)`: `type:<id>:b|u:<rev>` — у встроенного и его изменённой копии признак один (`b`), поэтому первая правка исполнителя не сбрасывает черновик посреди быстрых кликов, а после «Вернуть встроенный» `rev` растёт и редакторы берут встроенные значения. `executorOnly` — меняются только исполнитель и инструкции роли.
+- **Показ человеку** (`ShowcaseBlock.tsx`, просмотрщик — `ShowcaseViewer.tsx`, фрейм — `PreviewFrame.tsx`, логика без React —
+  `showcase.ts`; макет — `docs/design/showcase-viewer/variant-2.html`). Блок в карточке approval (Инбокс, лента) и в модалке задачи:
+  описание воркера и файлы; подряд идущие картинки — сетка миниатюр 3 в ряд (больше шести — пять и «+N»), у HTML — «Превью»
+  (мини-просмотрщик 360 px: «Десктоп» 1024 px с масштабом / «Телефон» 375 px, «Обновить»; открыт один за раз), у HTML и md —
+  «На весь экран» и меню «⋯» («Открыть» / «Показать в папке» / «Копировать путь»), у PDF — «Открыть» / «В папке», до пяти записей и
+  «Ещё N файлов», «Смотреть всё · N» в шапке. Просмотрщик — модалка поверх всего (портал в `body`, `.modal-backdrop.sv-host`,
+  контейнерные запросы `svhost`): слева дерево групп «подзадача → файлы» (`ShowcaseGroup {dispatchId, taskId, title?, files}` — группы
+  по `showcaseDispatchIds` строит вызывающий), уже 980 px — выпадающий список в шапке; справа файл: страница с виртуальной шириной
+  Десктоп 1280 / Планшет 768 / Телефон 375 (`fitFrame` вписывает масштабом), картинка («Вписать / 100 %»), markdown (`variant="doc"`)
+  или состояние (не найден, > 10 МБ, PDF, тип не открывается, старое приложение, ошибка); «Интернет-ресурсы» — выкл при каждом
+  открытии (`previewUrl(..., {network})`); внизу у approval — решение: поле общее с карточкой (`ShowcaseDecision` из `RequestCard`),
+  «Выбрать этот вариант» подставляет имя файла, «Принять» и «Вернуть…» закрывают просмотрщик и вызывают действия карточки
+  («Вернуть…» открывает поле замечаний в ней). Клавиши — захватом на `window`: Esc, ←/→, A/C по `code` (русская раскладка тоже);
+  Esc при фокусе во фрейме — `showcase.onFrameEscape`. HTML — только `<iframe sandbox="allow-scripts">` c адресом, прошедшим
+  `isPreviewUrl` (иначе `src` не ставится), и только после нажатия: адрес запрашивает смонтированный фрейм. Картинки и md — байтами
+  `showcase:read` (`blob:`). Во все вызовы `showcase:*` уходит `dispatchId` — main берёт снимок запуска. Старый preload без `previewUrl` —
+  `showcasePreviewApi` бросает `ShowcaseStaleError`, старый main — «No handler registered»; оба → состояние «перезапустите приложение»,
+  картинки и md работают. CSP окна: `img-src 'self' blob: orca-preview:`, `frame-src orca-preview:`.
 
 ## Реестр терминалов (`src/main/pty.ts`)
 

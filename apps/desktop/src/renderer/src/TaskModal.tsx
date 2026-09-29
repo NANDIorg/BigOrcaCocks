@@ -414,7 +414,7 @@ export function TaskModal(props: Props): React.JSX.Element {
           {showcased?.showcase && !showcaseInRequest && (
             <section className="task-modal-section">
               <h4>{t('board.showcase.title')} <span className="muted">· {t('board.task.showcaseRun', { at: formatDate(showcased.startedAt) })}</span></h4>
-              <ShowcaseBlock taskId={task.id} showcase={showcased.showcase} bare />
+              <ShowcaseBlock taskId={task.id} dispatchId={showcased.id} showcase={showcased.showcase} bare />
             </section>
           )}
 

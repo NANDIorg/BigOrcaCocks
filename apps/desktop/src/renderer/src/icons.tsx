@@ -46,7 +46,15 @@ export const Icon = {
   image: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-8 8" /></svg>,
   chevron: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M9 6l6 6-6 6" /></svg>,
   up: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 15l6-6 6 6" /></svg>,
-  down: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 9l6 6 6-6" /></svg>
+  down: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 9l6 6 6-6" /></svg>,
+  chevronLeft: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M15 6l-6 6 6 6" /></svg>,
+  code: (): React.JSX.Element => <svg {...base} width={16} height={16}><path d="M8 7l-5 5 5 5M16 7l5 5-5 5" /></svg>,
+  lock: (): React.JSX.Element => <svg {...base} width={13} height={13}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>,
+  desktop: (): React.JSX.Element => <svg {...base} width={16} height={16}><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>,
+  tablet: (): React.JSX.Element => <svg {...base} width={16} height={16}><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M11 18h2" /></svg>,
+  phone: (): React.JSX.Element => <svg {...base} width={16} height={16}><rect x="7" y="3" width="10" height="18" rx="2" /><path d="M11 18h2" /></svg>,
+  sidebar: (): React.JSX.Element => <svg {...base} width={18} height={18}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>,
+  expand: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" /></svg>
 }
 
 /** Иконки нод воркфлоу (WorkflowCanvas, инспектор) — по типу ноды. */

@@ -885,11 +885,14 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   `showcaseSource`, сеть закрыта, см. `docs/architecture.md` → «Протокол показа»), `pdf` — «Открыть»).
 - **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval (Инбокс,
   лента глобальной задачи, модалка задачи) и отдельным разделом в модалке задачи (последний `done` с показом, если его
-  не выводит ждущий approval). Markdown — через `Markdown.tsx`; первые 6 картинок превьюятся сразу (blob-URL, CSP
-  `img-src blob:`), остальные и `.md` — по кнопке; у каждого файла «Открыть» / «В папке». Раздел «## Показ» из
-  `body` вычитается (`bodyWithoutShowcase`), чтобы не дублировать. Логика — `renderer/src/showcase.ts`: старые
-  main/preload — «Перезапустите приложение» (`showcaseApi`, `SHOWCASE_STALE_MESSAGE`). У «Принять» approval — поле
-  «Решение / вариант» (`resolution.text` → `request_resolved.decision`).
+  не выводит ждущий approval). Markdown — через `Markdown.tsx`; картинки — сеткой миниатюр (blob-URL, CSP
+  `img-src blob:`), `.md` — по кнопке «Текст», HTML — «Превью» (мини-просмотрщик в изолированном фрейме, только по нажатию);
+  HTML, md и картинки открываются «На весь экран» в просмотрщике `ShowcaseViewer.tsx` (список файлов, ширина страницы,
+  «Интернет-ресурсы», решение approval внизу — см. `docs/architecture.md` → «UI» → «Показ человеку»); «Открыть» / «В папке» —
+  в меню «⋯», у PDF — кнопками. Раздел «## Показ» из `body` вычитается (`bodyWithoutShowcase`), чтобы не дублировать.
+  Логика — `renderer/src/showcase.ts`: старые main/preload — «Перезапустите приложение» (`showcaseApi`,
+  `showcasePreviewApi`). У «Принять» approval — поле «Решение / вариант» (`resolution.text` → `request_resolved.decision`),
+  общее с просмотрщиком.
 
 Колонка этапа: `node.column` учитывается у `gate` и `human`; `work` — всегда «В работе» (пока работает воркер),
 `end` — колонка `kind=done` (иначе прогон не закроется).
