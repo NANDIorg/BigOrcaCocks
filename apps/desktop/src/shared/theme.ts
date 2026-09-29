@@ -1,0 +1,38 @@
+/** Одна палитра для renderer, окон main и терминалов: поверхности не расходятся при следующей правке. */
+export const appColors = {
+  page: '#252422',
+  frame: '#2b2a28',
+  side: '#302f2c',
+  'side-2': '#363530',
+  card: '#3a3935',
+  'card-hover': '#42413c',
+  chip: '#5a5850',
+  line: '#eeebe31c',
+  text: '#eeebe3',
+  muted: '#b2afa5',
+  subtle: '#d2cfc5',
+  accent: '#b4c9bd',
+  'accent-2': '#98b3a4',
+  'accent-hover': '#cad9cf',
+  'on-accent': '#252422',
+  'col-backlog': '#848279',
+  'col-ready': '#a5b5c4',
+  'col-progress': '#d8a36a',
+  'col-input': '#dfc58f',
+  'col-review': '#bea8c1',
+  'col-done': '#99bfa6',
+  danger: '#e9998e',
+  'scrollbar-thumb': '#5a5850',
+  'scrollbar-track': '#00000000',
+  'wf-accept': '#99bfa6',
+  'term-bg': '#1f1e1c',
+  s1: '#a5b5c4',
+  s2: '#9eb6a2',
+  s3: '#ccaa87',
+  s4: '#b6a3ba',
+  s5: '#d6c291',
+  's-other': '#98968d',
+  's-unknown': '#77746b'
+} as const
+
+export const appFontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'

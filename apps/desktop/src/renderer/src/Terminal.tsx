@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { t } from './i18n'
+import { appColors } from '../../shared/theme'
 
 interface Props {
   ptyId: string
@@ -23,7 +24,7 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
       fontFamily: 'ui-monospace, Menlo, monospace',
       fontSize: 12,
       cursorBlink: true,
-      theme: { background: '#1b1c21' },
+      theme: { background: appColors['term-bg'], foreground: appColors.text, cursor: appColors.accent, selectionBackground: `${appColors.accent}40` },
       scrollback: 5000
     })
     const fit = new FitAddon()

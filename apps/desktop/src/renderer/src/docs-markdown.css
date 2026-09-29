@@ -30,7 +30,7 @@
 .doc-md ul:has(> li > input[type="checkbox"]) { padding-left: 4px; }
 .doc-md li > input[type="checkbox"] { appearance: none; width: 14px; height: 14px; margin: 0 10px 0 0; border-radius: 4px; border: 1.5px solid var(--chip); vertical-align: -2px; display: inline-grid; place-items: center; }
 .doc-md li > input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
-.doc-md li > input[type="checkbox"]:checked::after { content: "✓"; color: #fff; font-size: 10px; line-height: 1; }
+.doc-md li > input[type="checkbox"]:checked::after { content: "✓"; color: var(--on-accent); font-size: 10px; line-height: 1; }
 
 /* Инлайн-код */
 .doc-md code { font: 13px var(--doc-mono); padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.07); color: var(--text); }

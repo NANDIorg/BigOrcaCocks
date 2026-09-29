@@ -2,8 +2,13 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
 import { initLocale, useLocale } from './i18n'
+import { appColors, appFontFamily } from '../../shared/theme'
 import './styles.css'
 import '@xterm/xterm/css/xterm.css'
+
+// Общие токены ставим до первого рендера, чтобы стартовое окно не мигало прежней палитрой.
+for (const [name, value] of Object.entries(appColors)) document.documentElement.style.setProperty(`--${name}`, value)
+document.documentElement.style.setProperty('--font-sans', appFontFamily)
 
 // Язык — до первого рендера (кэш или русский), затем из настроек main. Старый preload без app — не падаем.
 initLocale(window.orca?.app)

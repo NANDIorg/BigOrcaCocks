@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { appColors } from '../shared/theme'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
@@ -108,7 +109,7 @@ function createWindow(): BrowserWindow {
     height: 940,
     title: 'orca-board',
     icon: appIconPath,
-    backgroundColor: '#26282e',
+    backgroundColor: appColors.page,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

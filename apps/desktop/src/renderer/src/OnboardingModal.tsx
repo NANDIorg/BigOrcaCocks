@@ -160,7 +160,7 @@ export function OnboardingModal({ mode, projects, onAddProject, suspended, onClo
 
   return <div className={`modal-backdrop onboarding-backdrop${suspended ? ' suspended' : ''}`}>
     <div ref={surface} className="onboarding" role="dialog" aria-modal={!suspended} aria-labelledby="onboarding-title" aria-describedby="onboarding-description" tabIndex={-1} inert={suspended}>
-      <OnboardingScene step={step} />
+      <OnboardingScene step={step} settings={settings} />
       <div className="onboarding-main">
         <header className="onboarding-head">
           <img className="onboarding-mobile-logo" src={appLogo} alt="Orca Board" width={32} height={32} />
@@ -175,7 +175,6 @@ export function OnboardingModal({ mode, projects, onAddProject, suspended, onClo
           <button type="button" className="onboarding-close" aria-label={t('onboarding.close')} title={t('onboarding.close')} disabled={busy} onClick={() => void finish(true)}><Icon.close /></button>
         </header>
         <div ref={content} className="onboarding-content">
-          <div className="onboarding-eyebrow">{t(`onboarding.eyebrow.${STEPS[step]}`)}</div>
           <h1 id="onboarding-title" tabIndex={-1}>{t(`onboarding.${STEPS[step]}.title`)}</h1>
           <p id="onboarding-description" className="onboarding-intro">{t(`onboarding.${STEPS[step]}.hint`)}</p>
           {step === 0 && <WelcomeStep />}

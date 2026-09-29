@@ -2,6 +2,7 @@ import { BrowserWindow, shell } from 'electron'
 import { readFileSync } from 'node:fs'
 import { aboutExternalUrl, buildAboutHtml } from './about-content'
 import { mainLocale, mt, type MainLocale } from './i18n'
+import { appColors } from '../shared/theme'
 
 interface AboutWindowOptions {
   parent: BrowserWindow
@@ -41,7 +42,7 @@ export function showAboutWindow(options: AboutWindowOptions): BrowserWindow {
     show: false,
     title: mt('menu.about'),
     icon: options.iconPath,
-    backgroundColor: '#111b29',
+    backgroundColor: appColors.page,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     resizable: false,
     maximizable: false,

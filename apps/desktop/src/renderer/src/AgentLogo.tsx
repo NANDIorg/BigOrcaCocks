@@ -42,7 +42,7 @@ const COLORS: Record<AgentKind, string> = {
   amp: '#ff5543',
   opencode: '#fff',
   goose: '#f6b93b',
-  shell: '#9ea1ad'
+  shell: 'var(--muted)'
 }
 
 interface Props {

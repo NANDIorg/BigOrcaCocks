@@ -1,5 +1,6 @@
 import { mtIn, type MainLocale } from './i18n'
 import { PROJECT_URL } from './app-menu'
+import { appColors, appFontFamily } from '../shared/theme'
 
 interface AboutContent {
   locale: MainLocale
@@ -32,20 +33,18 @@ export function buildAboutHtml({ locale, version, iconPng }: AboutContent): stri
   <title>${t('menu.about')}</title>
   <style>
     :root {
+      ${Object.entries(appColors).map(([name, value]) => `--${name}: ${value};`).join('\n      ')}
+      --font-sans: ${appFontFamily};
       color-scheme: dark;
-      --page: #111b29;
-      --text: #f1f6fb;
-      --muted: #b6c6d6;
-      --accent: #6ee7ea;
-      --border: #344556;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --border: var(--chip);
+      font-family: var(--font-sans);
       color: var(--text);
       background: var(--page);
       scrollbar-color: var(--border) var(--page);
       scrollbar-width: thin;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; }
+    body { margin: 0; user-select: none; }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: var(--page); }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
@@ -74,7 +73,7 @@ export function buildAboutHtml({ locale, version, iconPng }: AboutContent): stri
       min-height: 42px;
       padding: 10px 12px;
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 8px;
       color: var(--text);
       text-decoration: none;
       font-size: 12px;
@@ -83,11 +82,11 @@ export function buildAboutHtml({ locale, version, iconPng }: AboutContent): stri
       cursor: pointer;
       transition: background 120ms ease, border-color 120ms ease;
     }
-    .action:hover { background: #1d2d3d; border-color: #5b7388; }
-    .action:active { background: #253a4d; }
-    .action-primary { color: var(--page); background: var(--accent); border-color: var(--accent); }
-    .action-primary:hover { background: #93eef0; border-color: #93eef0; }
-    .action-primary:active { background: #55cdd0; border-color: #55cdd0; }
+    .action:hover { background: var(--side-2); border-color: var(--muted); }
+    .action:active { background: var(--card); }
+    .action-primary { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+    .action-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .action-primary:active { background: var(--accent-2); border-color: var(--accent-2); }
     .action:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
     .author { margin: 23px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
     @media (max-width: 390px) {
