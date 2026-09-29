@@ -1,9 +1,8 @@
 import type React from 'react'
-import type { AppSettings } from '../../shared/ipc'
 import { AgentLogo } from './AgentLogo'
 import { agentTitle } from './defaultTitles'
 import { Icon } from './icons'
-import { useLocale, useT } from './i18n'
+import { useT } from './i18n'
 import appLogo from '../../../build/icon.svg'
 
 const workspaces = [
@@ -13,7 +12,7 @@ const workspaces = [
 ] as const
 
 /** Схема иллюстрирует оркестрацию, а реальный результат проверки CLI находится на шаге «Агенты». */
-export function OnboardingScene({ step, settings }: { step: 0 | 1 | 2 | 3; settings: AppSettings | null }): React.JSX.Element {
+export function OnboardingScene({ step }: { step: 0 | 1 | 2 | 3 }): React.JSX.Element {
   const t = useT()
   return <aside className="onboarding-story">
     <div className="onboarding-brand">
@@ -26,7 +25,7 @@ export function OnboardingScene({ step, settings }: { step: 0 | 1 | 2 | 3; setti
     </div>
     <div className="onboarding-illustration" aria-hidden="true">
       <div className={`onboarding-illustration-scene${step === 0 ? ' current' : ''}`}><WorkPicture /></div>
-      <div className={`onboarding-illustration-scene${step === 1 ? ' current' : ''}`}><PreferencesPicture settings={settings} /></div>
+      <div className={`onboarding-illustration-scene${step === 1 ? ' current' : ''}`}><PreferencesPicture /></div>
       <div className={`onboarding-illustration-scene${step === 2 ? ' current' : ''}`}><AgentsPicture /></div>
       <div className={`onboarding-illustration-scene${step === 3 ? ' current' : ''}`}><RepositoryPicture /></div>
     </div>
@@ -64,19 +63,18 @@ function WorkPicture(): React.JSX.Element {
   </div>
 }
 
-/** Декоративные переключатели отражают подтверждённые настройки; ввод остаётся справа. */
-function PreferencesPicture({ settings }: { settings: AppSettings | null }): React.JSX.Element {
-  const locale = useLocale()
+/** Иллюстрация не повторяет изменения настроек: ввод и обратная связь остаются справа. */
+function PreferencesPicture(): React.JSX.Element {
   return <div className="onboarding-preferences-picture">
     <div className="onboarding-control-back"><Icon.gear /><span /><span /><span /></div>
-    <div className={`onboarding-language-plate${locale === 'en' ? ' en' : ''}`}>
+    <div className="onboarding-language-plate">
       <div className="onboarding-language-indicator" /><span>RU</span><span>EN</span>
     </div>
     <div className="onboarding-control-plate">
-      <div><Icon.terminal /><span /><div className={`onboarding-picture-switch${settings?.keepInBackground !== false ? ' on' : ''}`}><i /></div></div>
-      <div><Icon.bell /><span /><div className={`onboarding-picture-switch${settings?.notifications.enabled !== false ? ' on' : ''}`}><i /></div></div>
+      <div><Icon.terminal /><span /><div className="onboarding-picture-switch"><i /></div></div>
+      <div><Icon.bell /><span /><div className="onboarding-picture-switch"><i /></div></div>
     </div>
-    <div className={`onboarding-notification-paper${settings?.notifications.enabled === false ? ' muted' : ''}`}>
+    <div className="onboarding-notification-paper">
       <Icon.bell /><div><i /><i /></div><span />
     </div>
   </div>
@@ -97,7 +95,6 @@ function AgentsPicture(): React.JSX.Element {
 }
 
 function RepositoryPicture(): React.JSX.Element {
-  const t = useT()
   return <div className="onboarding-repository-picture">
     <svg className="onboarding-folder-back" viewBox="0 0 310 306">
       <path d="M42 228V101q0-12 12-12h55l19 19h125q15 0 15 15v105z" />
@@ -113,7 +110,7 @@ function RepositoryPicture(): React.JSX.Element {
     <svg className="onboarding-folder-front" viewBox="0 0 310 306">
       <path d="M26 161q-3-12 10-12h238q13 0 10 12l-18 103q-2 11-15 11H59q-13 0-15-11z" />
     </svg>
-    <div className="onboarding-folder-label"><Icon.folder /><b>{t('onboarding.scene.repository')}</b></div>
+    <div className="onboarding-folder-label"><Icon.folder /></div>
     <div className="onboarding-repository-stamp"><Icon.branch /></div>
   </div>
 }

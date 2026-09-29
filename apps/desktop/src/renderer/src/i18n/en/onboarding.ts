@@ -22,7 +22,6 @@ export default {
   'scene.title.3': 'A Git workspace',
   'scene.task': 'Task',
   'scene.branch': 'branch {index}',
-  'scene.repository': 'Repository',
   'story.0': 'Orca brings tasks, Git branches, and agent terminals together. Follow the work and review the result.',
   'story.1': 'Choose your language, notifications, and what happens when you close the window.',
   'story.2': 'Detected CLIs can work on Orca tasks. Set up their accounts in the tools themselves.',

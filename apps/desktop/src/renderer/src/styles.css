@@ -2603,7 +2603,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .onboarding-review-back { position: absolute; inset: 4px 6px -5px; border: 1px solid var(--onboard-line); background: var(--onboard-surface); border-radius: 8px; z-index: -1; }
 .onboarding-review-tray .onboarding-review-check { width: 16px; height: 16px; margin-left: auto; stroke: var(--accent); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .onboarding-review-check path { stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0; animation: onboarding-reviewed var(--cycle) ease-out var(--phase) infinite; }
-/* Настройки: бумажные слои и отражение настоящего языка/переключателей, без второго ввода. */
+/* Настройки: декоративные бумажные слои без связи с переключателями справа. */
 .onboarding-preferences-picture, .onboarding-agents-picture, .onboarding-repository-picture { position: absolute; inset: 0; }
 .onboarding-control-back { position: absolute; left: 43px; top: 23px; width: 227px; height: 237px; border: 1px solid var(--onboard-line); border-radius: 14px; background: var(--onboard-surface); transform: rotate(-4deg); }
 .onboarding-control-back > svg { position: absolute; right: 20px; top: 20px; width: 21px; height: 21px; color: var(--muted); animation: onboarding-gear 12s ease-in-out infinite; }
@@ -2611,25 +2611,21 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .onboarding-control-back > span:nth-of-type(2) { top: 144px; }
 .onboarding-control-back > span:nth-of-type(3) { top: 192px; }
 .onboarding-language-plate { position: absolute; left: 18px; top: 42px; width: 180px; height: 62px; padding: 10px; display: flex; align-items: center; border: 1px solid var(--chip); border-radius: 10px; background: var(--side); box-shadow: 0 8px 18px rgba(0,0,0,.15); }
-.onboarding-language-plate > span { width: 80px; text-align: center; z-index: 1; color: var(--muted); font: 12px ui-monospace, Menlo, monospace; transition: color 200ms ease-out; }
-.onboarding-language-indicator { position: absolute; left: 10px; top: 10px; width: 78px; height: 40px; background: var(--accent); border-radius: 6px; transition: transform 200ms ease-out; }
-.onboarding-language-plate.en .onboarding-language-indicator { transform: translateX(80px); }
-.onboarding-language-plate:not(.en) > span:nth-child(2), .onboarding-language-plate.en > span:nth-child(3) { color: var(--on-accent); }
+.onboarding-language-plate > span { width: 80px; text-align: center; z-index: 1; color: var(--muted); font: 12px ui-monospace, Menlo, monospace; }
+.onboarding-language-indicator { position: absolute; left: 10px; top: 10px; width: 78px; height: 40px; background: var(--accent); border-radius: 6px; }
+.onboarding-language-plate > span:nth-child(2) { color: var(--on-accent); }
 .onboarding-control-plate { position: absolute; left: 65px; top: 123px; width: 224px; padding: 13px 16px; border: 1px solid var(--chip); border-radius: 10px; background: var(--side); box-shadow: 0 8px 18px rgba(0,0,0,.15); }
 .onboarding-control-plate > div { height: 36px; display: flex; align-items: center; gap: 12px; }
 .onboarding-control-plate svg { width: 17px; height: 17px; color: var(--muted); }
 .onboarding-control-plate > div > span { width: 58px; height: 3px; border-radius: 2px; background: var(--chip); }
-.onboarding-picture-switch { width: 33px; height: 19px; border-radius: 12px; background: var(--chip); margin-left: auto; padding: 3px; transition: background 200ms ease-out; }
-.onboarding-picture-switch i { display: block; width: 13px; height: 13px; border-radius: 50%; background: var(--text); transition: transform 200ms ease-out, background 200ms ease-out; }
-.onboarding-picture-switch.on { background: var(--accent); }
-.onboarding-picture-switch.on i { transform: translateX(14px); background: var(--on-accent); }
-.onboarding-notification-paper { position: absolute; left: 27px; top: 244px; width: 216px; height: 48px; border: 1px solid var(--onboard-line); border-radius: 9px; background: var(--frame); display: flex; align-items: center; gap: 12px; padding: 12px; animation: onboarding-note 6.4s ease-in-out infinite; transition: opacity 200ms ease-out; }
+.onboarding-picture-switch { width: 33px; height: 19px; border-radius: 12px; background: var(--accent); margin-left: auto; padding: 3px; }
+.onboarding-picture-switch i { display: block; width: 13px; height: 13px; border-radius: 50%; background: var(--on-accent); transform: translateX(14px); }
+.onboarding-notification-paper { position: absolute; left: 27px; top: 244px; width: 216px; height: 48px; border: 1px solid var(--onboard-line); border-radius: 9px; background: var(--frame); display: flex; align-items: center; gap: 12px; padding: 12px; animation: onboarding-note 6.4s ease-in-out infinite; }
 .onboarding-notification-paper > svg { width: 18px; height: 18px; color: var(--accent); }
 .onboarding-notification-paper > div { flex: 1; }
 .onboarding-notification-paper i { display: block; width: 85%; height: 3px; background: var(--muted); border-radius: 2px; }
 .onboarding-notification-paper i + i { width: 55%; margin-top: 6px; background: var(--chip); }
 .onboarding-notification-paper > span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-.onboarding-notification-paper.muted { opacity: .4; animation: none; }
 /* Обнаружение: три карточки инструментов в рамке сканера, без выдуманных статусов входа. */
 .onboarding-scanner-frame { position: absolute; inset: 0; stroke: var(--chip); stroke-width: 1.5; }
 .onboarding-scanner-guide { stroke: var(--onboard-line); stroke-dasharray: 3 6; }
@@ -2660,7 +2656,6 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .onboarding-repository-sheet .onboarding-repository-trace { stroke: var(--accent); stroke-dasharray: .14 .86; animation: onboarding-git 8.4s ease-in-out infinite; }
 .onboarding-folder-label { position: absolute; left: 62px; top: 204px; display: flex; align-items: center; gap: 10px; color: var(--subtle); }
 .onboarding-folder-label svg { width: 18px; height: 18px; color: var(--accent); }
-.onboarding-folder-label b { font-size: 12px; font-weight: 500; }
 .onboarding-repository-stamp { position: absolute; left: 237px; top: 62px; width: 39px; height: 39px; background: var(--side); border: 1px solid var(--chip); border-radius: 10px; display: grid; place-items: center; transform: rotate(8deg); }
 .onboarding-repository-stamp svg { color: var(--accent); width: 21px; height: 21px; }
 .onboarding-story-foot { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--onboard-line); font-size: 10px; color: var(--onboard-muted); display: flex; align-items: center; gap: 7px; }

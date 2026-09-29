@@ -160,7 +160,7 @@ export function OnboardingModal({ mode, projects, onAddProject, suspended, onClo
 
   return <div className={`modal-backdrop onboarding-backdrop${suspended ? ' suspended' : ''}`}>
     <div ref={surface} className="onboarding" role="dialog" aria-modal={!suspended} aria-labelledby="onboarding-title" aria-describedby="onboarding-description" tabIndex={-1} inert={suspended}>
-      <OnboardingScene step={step} settings={settings} />
+      <OnboardingScene step={step} />
       <div className="onboarding-main">
         <header className="onboarding-head">
           <img className="onboarding-mobile-logo" src={appLogo} alt="Orca Board" width={32} height={32} />
