@@ -29,7 +29,7 @@ import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
 import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
 import { ipcErrorMessage } from './ipcError'
-import { roleAgentState, type AgentState } from './stageRoles'
+import { AGENT_STATE_TEXT, roleAgentState } from './stageRoles'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -52,12 +52,6 @@ interface Props {
 /** Уровни effort роли: по модели агента, если агент известен, иначе общий список из реестра. */
 function effortsOf(info: AgentInfo | undefined, agent: string, model: string | undefined): readonly string[] {
   return info ? effortOptionsFor(info, model) : effortOptions(agent)
-}
-
-const AGENT_STATE_TEXT: Record<AgentState, TKey> = {
-  on: 'config.roles.agentState.on',
-  off: 'config.roles.agentState.off',
-  unknown: 'config.roles.agentState.unknown'
 }
 
 function newRoleId(): string {

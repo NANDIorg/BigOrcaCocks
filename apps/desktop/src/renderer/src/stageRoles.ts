@@ -1,6 +1,7 @@
 import { isTaskRole, type AgentInfo, type AgentKind, type Role, type Workflow } from '@orca-board/core'
 import { nodeTitle } from './defaultTitles'
 import type { WfScope } from './workflowNav'
+import type { TKey } from './i18n'
 
 // Выбор исполнителя этапа в инспекторе воркфлоу (карточка «Кто выполняет») и состояние агента роли на вкладке «Роли».
 // Чистые функции без React: вся ветвистая логика карточки здесь, чтобы её можно было проверить тестами без DOM.
@@ -15,6 +16,13 @@ export type AgentState = 'on' | 'off' | 'unknown'
 export function roleAgentState(info: AgentInfo | undefined): AgentState {
   if (!info) return 'unknown'
   return info.enabled ? 'on' : 'off'
+}
+
+/** Подпись точки состояния агента — одна на вкладку «Роли» и карточку «Кто выполняет». */
+export const AGENT_STATE_TEXT: Record<AgentState, TKey> = {
+  on: 'config.roles.agentState.on',
+  off: 'config.roles.agentState.off',
+  unknown: 'config.roles.agentState.unknown'
 }
 
 /**
@@ -121,6 +129,12 @@ export function stageRolesView(i: StageRolesInput): StageRolesView {
     mode: i.chosen.length > 0 || i.localChosen ? 'chosen' : 'coordinator',
     pathConflict: i.scope === 'subtask' && i.chosen.length >= 2
   }
+}
+
+/** «Выбрано N из M»: считаются роли, показанные строками (рабочие и проверки); «сироты» — отдельным блоком. */
+export function chosenCount(v: Pick<StageRolesView, 'work' | 'checks'>): { n: number; total: number } {
+  const shown = [...v.work, ...v.checks]
+  return { n: shown.filter((r) => r.checked).length, total: shown.length }
 }
 
 /**
