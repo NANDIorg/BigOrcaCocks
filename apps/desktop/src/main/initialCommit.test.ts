@@ -15,7 +15,28 @@ const git = (cwd: string, ...args: string[]): string =>
 
 let tmp: string
 let repo: string
-const savedEnv = { global: process.env.GIT_CONFIG_GLOBAL, nosystem: process.env.GIT_CONFIG_NOSYSTEM }
+/** Окружение git до теста: восстанавливается целиком в afterEach. */
+const savedGitEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('GIT_CONFIG')))
+
+/**
+ * CI задаёт identity через `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n` (`.github/workflows/ci.yml`), а они сильнее
+ * глобального конфига. Убираем из них только `user.*`: остальные ключи (autocrlf, safe.directory) фикстурам нужны.
+ */
+function dropEnvIdentity(): void {
+  const count = Number(savedGitEnv.GIT_CONFIG_COUNT ?? 0)
+  const kept: Array<[string, string]> = []
+  for (let i = 0; i < count; i++) {
+    const key = savedGitEnv[`GIT_CONFIG_KEY_${i}`] ?? ''
+    if (!key.toLowerCase().startsWith('user.')) kept.push([key, savedGitEnv[`GIT_CONFIG_VALUE_${i}`] ?? ''])
+    delete process.env[`GIT_CONFIG_KEY_${i}`]
+    delete process.env[`GIT_CONFIG_VALUE_${i}`]
+  }
+  kept.forEach(([key, value], i) => {
+    process.env[`GIT_CONFIG_KEY_${i}`] = key
+    process.env[`GIT_CONFIG_VALUE_${i}`] = value
+  })
+  if (count > 0) process.env.GIT_CONFIG_COUNT = String(kept.length)
+}
 
 /** Идентичность — через временный глобальный конфиг: тест не зависит от настроек машины и не трогает их. */
 function useGlobalConfig(content: string): void {
@@ -28,15 +49,14 @@ function useGlobalConfig(content: string): void {
 beforeEach(() => {
   tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'orca-initial-commit-')))
   repo = path.join(tmp, 'repo')
+  dropEnvIdentity()
   useGlobalConfig('[user]\n\tname = Human\n\temail = human@example.com\n')
   execFileSync('git', ['init', '-q', '-b', 'main', repo])
 })
 
 afterEach(() => {
-  for (const [key, value] of [['GIT_CONFIG_GLOBAL', savedEnv.global], ['GIT_CONFIG_NOSYSTEM', savedEnv.nosystem]] as const) {
-    if (value === undefined) delete process.env[key]
-    else process.env[key] = value
-  }
+  for (const key of Object.keys(process.env)) if (key.startsWith('GIT_CONFIG')) delete process.env[key]
+  Object.assign(process.env, savedGitEnv)
   rmSync(tmp, { recursive: true, force: true })
 })
 
