@@ -13,6 +13,7 @@ import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
+import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
@@ -293,6 +294,11 @@ function collectGlobalTaskStats(projectId: string, runId: string): Promise<Globa
   return globalTaskStats({ ...statsDeps(projectId), runId })
 }
 
+/** Снимки показа проекта (`<userData>/showcase`, `showcase-snapshot.ts`): пишет `worker.done`, читают IPC `showcase:*`. */
+function showcaseSnapshots(projectId: string): ShowcaseSnapshots {
+  return { root: showcaseSnapshotsRoot(app.getPath('userData')), projectId }
+}
+
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
   const p = projectId ? projects.get(projectId) : projects.active()
   if (!p) throw projectId ? new Error(`project not found: ${projectId}`) : new OrcaError('projects.none')
@@ -548,6 +554,8 @@ function removeGlobalTask(p: { id: string; store: TaskStore; root: string }, run
   const result = store.deleteGlobalTask(runId, { cascade })
   // Картинки задачи принадлежат ей: без задачи они никому не нужны (файлы лежат вне worktree и репозитория).
   removeRunImagesDir(runImagesRoot(app.getPath('userData')), p.id, runId)
+  // Снимки показа подзадач — тоже: смотреть их больше негде (карточки и запросы удалены вместе с задачей).
+  removeShowcaseDir(showcaseSnapshotsRoot(app.getPath('userData')), p.id, runId)
   ptyIds.forEach((id) => killPty(id))
   // Worktree ветки фичи больше некому убрать; сама ветка остаётся — в ней может быть работа. Грязный — не трогаем.
   if (run?.git?.worktree) removeRunWorktree(p.root, run.git.worktree)
@@ -786,7 +794,8 @@ function registerIpc(): void {
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  // Картинки глобальных задач проекта (userData/run-images) удаляет сам ProjectManager.remove — общий путь с сокетом.
+  // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
+  // ProjectManager.remove — общий путь с сокетом.
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
@@ -964,18 +973,23 @@ function registerIpc(): void {
   handle('attachments:ping', () => true)
   // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
   // расширений — main/showcase.ts.
-  handle('showcase:read', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
-    readShowcaseFile(showcaseSource(resolveProject().store, taskId, dispatchId), path))
+  const source = (taskId: unknown, dispatchId: unknown): string => {
+    const p = resolveProject()
+    return showcaseSource(p.store, taskId, dispatchId, showcaseSnapshots(p.id))
+  }
+  handle('showcase:read', (_e, taskId: unknown, path: unknown, dispatchId: unknown) => readShowcaseFile(source(taskId, dispatchId), path))
   handle('showcase:open', async (_e, taskId: unknown, path: unknown, dispatchId: unknown) => {
-    const err = await shell.openPath(resolveShowcasePath(showcaseSource(resolveProject().store, taskId, dispatchId), path))
+    const err = await shell.openPath(resolveShowcasePath(source(taskId, dispatchId), path))
     if (err) throw new Error(err)
   })
   handle('showcase:reveal', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
-    shell.showItemInFolder(resolveShowcasePath(showcaseSource(resolveProject().store, taskId, dispatchId), path))
+    shell.showItemInFolder(resolveShowcasePath(source(taskId, dispatchId), path))
   )
   // Страница показа для изолированного фрейма: токен протокола orca-preview:// на корень показа (preview-protocol.ts).
-  handle('showcase:previewUrl', (_e, dispatchId: unknown, path: unknown, opts: unknown) =>
-    showcasePreviewUrl(resolveProject().store, previewTokens, dispatchId, path, opts))
+  handle('showcase:previewUrl', (_e, dispatchId: unknown, path: unknown, opts: unknown) => {
+    const p = resolveProject()
+    return showcasePreviewUrl(p.store, previewTokens, dispatchId, path, opts, showcaseSnapshots(p.id))
+  })
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
@@ -1078,6 +1092,7 @@ app.whenReady().then(() => {
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),
+        snapshotShowcase: (dispatchId, files) => snapshotDispatchShowcase(p.store, showcaseSnapshots(p.id), dispatchId, files),
         agents: () => projectAgents(p.id),
         resolveRun: (runId) => projects.resolveRun(p.id, runId),
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),

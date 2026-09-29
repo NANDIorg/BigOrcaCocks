@@ -1337,7 +1337,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
   `showcase:read(taskId, path, dispatchId?)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ; HTML — только
   `previewUrl`), `showcase:open(taskId, path, dispatchId?)`, `showcase:reveal(taskId, path, dispatchId?)` — файлы показа задачи активного проекта:
-  корень выбирает `showcaseSource` (`main/showcase.ts`; пока worktree задачи, `dispatchId` чужой задачи — ошибка; со снимком — снимок запуска),
+  корень выбирает `showcaseSource` (`main/showcase.ts`: снимок запуска `<userData>/showcase/…`, если снят и на диске → worktree задачи → worktree
+  ветки прогона → ошибка; без `dispatchId` — снимок последнего запуска задачи; `dispatchId` чужой задачи — ошибка),
   белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»; `showcase:previewUrl(dispatchId, path, {network?})` →
   `ShowcasePreviewUrl {url, mime, base}` — адрес `orca-preview://<токен>/<путь>` страницы показа для изолированного фрейма
   (HTML, картинки, SVG, markdown — ради `base`; PDF — отказ `showcase.noPreview`, скрытые сегменты — `showcase.hidden`; токен на корень
@@ -1385,7 +1386,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
-| `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка |
+| `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка. Есть `showcase.files` — до `finishDispatch` main снимает их (`ProjectDeps.snapshotShowcase` → `main/showcase-snapshot.ts`): папки раскрываются, HTML — с ассетами; файла нет, тип не из белого списка, симлинк наружу, больше лимита — ошибка, запуск не закрыт |
 | `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу. Задача на этапе `ask` — вопрос человеку при любом координаторе (`forceHuman`) |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`); approval глобальной задачи (нода `human`) приходит без `taskId`, с `runId` и `nodeId` — фильтр по `run` его находит |

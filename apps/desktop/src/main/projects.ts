@@ -23,6 +23,7 @@ import type {
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 import { runImagesRoot, removeRunImagesDir } from './run-images'
+import { removeShowcaseDir, showcaseSnapshotsRoot } from './showcase-snapshot'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
@@ -871,11 +872,15 @@ export class ProjectManager {
     for (const oldId of orphaned) store.reassignColumn(oldId, backlogId)
   }
 
-  /** Убирает проект из списка и его картинки глобальных задач (`userData/run-images`, не в репозитории — не в git). */
+  /**
+   * Убирает проект из списка, его картинки глобальных задач (`userData/run-images`) и снимки показа
+   * (`userData/showcase`) — оба вне репозитория, не в git.
+   */
   remove(id: string): void {
     this.data.projects = this.data.projects.filter((p) => p.id !== id)
     if (this.data.activeId === id) this.data.activeId = this.data.projects[0]?.id ?? null
     removeRunImagesDir(runImagesRoot(this.userData), id)
+    removeShowcaseDir(showcaseSnapshotsRoot(this.userData), id)
     this.save()
   }
 

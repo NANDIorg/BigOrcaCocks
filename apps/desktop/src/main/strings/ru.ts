@@ -158,8 +158,8 @@ export default {
 
   'showcase.taskNotFound': 'показ: задача не найдена: {id}',
   'showcase.dispatchNotFound': 'показ: запуск {id} не найден у этой задачи',
-  'showcase.noWorktree': 'показ: у задачи {id} нет worktree',
-  'showcase.noWorktreeBranch': 'показ: у задачи {id} нет worktree — файлы остались в ветке {branch}',
+  'showcase.noWorktree': 'показ: у задачи {id} нет worktree на диске — после мержа файлы остаются в ветке, куда её слили',
+  'showcase.noWorktreeBranch': 'показ: у задачи {id} нет worktree на диске — файлы остались в ветке {branch}',
   'showcase.noPath': 'показ: путь к файлу не задан',
   'showcase.notRelative': 'показ: путь должен быть от корня репозитория задачи: {path}',
   'showcase.badType': 'показ: такой тип файла не открывается: {path}',
