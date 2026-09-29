@@ -13,6 +13,14 @@ const api: OrcaApi = {
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
     testNotification: () => ipcRenderer.invoke('app:testNotification'),
+    onMenuAction: (cb) => {
+      const off = on('app:menuAction', cb)
+      ipcRenderer.send('app:menuReady', true)
+      return () => {
+        off()
+        ipcRenderer.send('app:menuReady', false)
+      }
+    },
     onChanged: (cb) => {
       const handler = (): void => cb()
       ipcRenderer.on('app:changed', handler)

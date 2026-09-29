@@ -53,6 +53,8 @@ function initialTab(): TaskTypeTab {
 }
 
 interface Props {
+  /** Системное меню ведёт прямо в обновления, даже если настройки уже открыты на другом разделе. */
+  sectionRequest?: { section: 'updates'; nonce: number }
   /** Агенты реестра; у типа своих агентов нет — в выборе все установленные. */
   agents: AgentInfo[]
   /** Заново просканировать PATH. */
@@ -70,7 +72,7 @@ interface Props {
  * «Настройки» (шестерёнка в rail): общие настройки приложения и библиотека типов задач (taskTypes:*).
  * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
  */
-export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboarding, onClose }: Props): React.JSX.Element {
+export function SettingsModal({ sectionRequest, agents, updates, onProjectsChanged, onRunOnboarding, onClose }: Props): React.JSX.Element {
   const t = useT()
   const [section, setSection] = useState<Section>(initialSection)
   const [tab, setTab] = useState<TaskTypeTab>(initialTab)
@@ -83,6 +85,10 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onRunOnboard
   const [createError, setCreateError] = useState<string | null>(null)
   /** «На весь экран»: не запоминается — каждое открытие начинается с обычного размера. */
   const [fullscreen, setFullscreen] = useState(false)
+
+  useEffect(() => {
+    if (sectionRequest) go(sectionRequest.section)
+  }, [sectionRequest])
 
   useEffect(() => {
     window.orca.app.getSettings().then(setAppSettings, (e) => setAppError(ipcErrorMessage(e)))

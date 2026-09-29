@@ -10,6 +10,7 @@ import { saveAppSettings } from './appSettingsSave'
 import { completeOnboarding } from './onboarding'
 import { ipcErrorMessage } from './ipcError'
 import { Switch } from './about/parts'
+import appLogo from '../../../build/icon.svg'
 
 /** `first` — первый запуск: «Готово»/«Пропустить» записывают статус; `rerun` — из «Настроек», статус уже записан. */
 export type OnboardingMode = 'first' | 'rerun'
@@ -59,6 +60,7 @@ export function OnboardingModal({ mode, projects, onAddProject, suspended, onClo
     <div className="modal-backdrop onboarding-backdrop">
       <div className="modal onboarding" role="dialog" aria-modal="true" aria-label={t('onboarding.title')}>
         <div className="onboarding-head">
+          <img className="onboarding-logo" src={appLogo} alt="orca-board" width={44} height={44} />
           <div className="onboarding-head-text">
             <h3>{t('onboarding.title')}</h3>
             <span className="muted onboarding-step">{t('onboarding.step', { n: step + 1, total: STEPS })}</span>
