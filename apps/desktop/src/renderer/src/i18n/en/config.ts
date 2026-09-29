@@ -812,6 +812,8 @@ export default {
   'files.copyPath': 'Copy path',
   'files.absPath': 'Full path: {path}',
   'files.reveal': 'Show in folder',
+  'files.openDoc': 'Open in “Documents”',
+  'files.openDocHint': 'Open this .md in “Documents” (double-click or Enter)',
   'files.symlink': 'Symbolic link — not expanded',
   'files.selectHint': 'Select a file or folder to copy its path or show it in Finder/Explorer.',
   'files.staleApp': 'The app is running an old main/preload without the “Files” tab. Restart the app.',

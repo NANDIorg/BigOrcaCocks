@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ProjectFileKind } from '../../shared/ipc'
 import { CopyButton } from './about/parts'
 import { DocIcon } from './docsIcons'
 import {
@@ -10,6 +11,7 @@ import {
   findEntry,
   focusRefreshDue,
   initialTree,
+  isOpenableDoc,
   isTreeKey,
   markLoading,
   navigate,
@@ -52,8 +54,19 @@ const NOTE = 20
  * Вкладка проекта «Файлы»: ленивое дерево корня проекта, только чтение (docs/architecture.md → «Вкладка “Файлы”»).
  * Монтируется с `key={projectId}` — дерево не переезжает в чужой проект. Состояние и решения, что читать, — в
  * `fileTree.ts`; здесь — запросы `files:list`, фокус и localStorage.
+ * `onOpenDoc` — открыть .md (путь от корня) в «Документах»; без него кнопки открытия нет.
  */
-export function FilesView({ projectId, name, root }: { projectId: string; name: string; root: string }): React.JSX.Element {
+export function FilesView({
+  projectId,
+  name,
+  root,
+  onOpenDoc
+}: {
+  projectId: string
+  name: string
+  root: string
+  onOpenDoc?: (path: string) => void
+}): React.JSX.Element {
   const t = useT()
   const [state, setState] = useState<FileTreeState>(() => initialTree(projectId, readOpen(safeStorage(), projectId)))
   const [revealError, setRevealError] = useState<string | null>(null)
@@ -120,6 +133,12 @@ export function FilesView({ projectId, name, root }: { projectId: string; name: 
       setState((s) => navigate(s, key))
     } else if (key === 'Enter' || key === ' ') {
       e.preventDefault()
+      // Enter на .md открывает его в «Документах», как двойной клик; пробел только выделяет.
+      const entry = key === 'Enter' && state.selected ? findEntry(state, state.selected) : undefined
+      if (entry && state.selected && canOpen(entry.name, entry.kind)) {
+        onOpenDoc?.(state.selected)
+        return
+      }
       // Выделение берём из актуального состояния: клавиши могут прийти раньше перерисовки.
       setState((s) => (s.selected && findEntry(s, s.selected)?.kind === 'dir' ? toggleDir(s, s.selected) : s))
     }
@@ -141,6 +160,8 @@ export function FilesView({ projectId, name, root }: { projectId: string; name: 
       setRevealError(filesError(e, { path, root }).message)
     }
   }
+
+  const canOpen = (entryName: string, kind: ProjectFileKind): boolean => !!onOpenDoc && isOpenableDoc(entryName, kind)
 
   const retry = (dir: string): void => setState((s) => retryDir(s, dir))
 
@@ -166,6 +187,7 @@ export function FilesView({ projectId, name, root }: { projectId: string; name: 
           style={indent(r.depth)}
           title={r.kind === 'symlink' ? `${r.path} — ${t('config.files.symlink')}` : r.path}
           onClick={() => clickRow(r.path, isDir)}
+          onDoubleClick={canOpen(r.name, r.kind) ? () => onOpenDoc?.(r.path) : undefined}
         >
           {isDir ? <DocIcon.chev /> : <span className="docs-spacer" />}
           <Ico />
@@ -215,6 +237,11 @@ export function FilesView({ projectId, name, root }: { projectId: string; name: 
             <code className="files-path" title={absolutePath(root, selected)}>{selected}</code>
             <CopyButton text={selected} label={t('config.files.copyPath')} title={t('config.files.absPath', { path: absolutePath(root, selected) })} />
             <button className="copy-btn" onClick={() => void reveal(selected)}>{t('config.files.reveal')}</button>
+            {canOpen(selectedEntry.name, selectedEntry.kind) && (
+              <button className="copy-btn" title={t('config.files.openDocHint')} onClick={() => onOpenDoc?.(selected)}>
+                {t('config.files.openDoc')}
+              </button>
+            )}
             {revealError && <span className="editor-error files-foot-err">{revealError}</span>}
           </>
         ) : (

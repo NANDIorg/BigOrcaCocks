@@ -13,6 +13,7 @@ import {
   focusRefreshDue,
   initialTree,
   isBusy,
+  isOpenableDoc,
   joinPath,
   markLoading,
   navigate,
@@ -274,4 +275,15 @@ test('fileIconKind', () => {
   assert.equal(fileIconKind('logo.png', 'symlink'), 'link', 'симлинк важнее расширения')
   assert.equal(fileIconKind('index.ts', 'file'), 'file')
   assert.equal(fileIconKind('Makefile', 'file'), 'file')
+})
+
+test('isOpenableDoc: только .md-файлы, как принимает docs:read', () => {
+  assert.equal(isOpenableDoc('README.md', 'file'), true)
+  assert.equal(isOpenableDoc('NOTES.MD', 'file'), true, 'регистр расширения не важен')
+  assert.equal(isOpenableDoc('.md', 'file'), true)
+  assert.equal(isOpenableDoc('guide.markdown', 'file'), false, 'resolveDocPath отклоняет .markdown')
+  assert.equal(isOpenableDoc('notes.txt', 'file'), false)
+  assert.equal(isOpenableDoc('README.md.bak', 'file'), false)
+  assert.equal(isOpenableDoc('docs.md', 'dir'), false, 'папка с именем .md')
+  assert.equal(isOpenableDoc('link.md', 'symlink'), false)
 })
