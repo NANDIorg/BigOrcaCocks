@@ -1280,6 +1280,7 @@ export function App(): React.JSX.Element {
           key={initialCommit.projectId}
           projectId={initialCommit.projectId}
           projectName={projects.find((p) => p.id === initialCommit.projectId)?.name ?? ''}
+          willRetry={initialCommit.retry !== undefined}
           onClose={() => setInitialCommit(null)}
           onCommitted={(branch) => {
             setInitialCommit(null)
