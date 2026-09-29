@@ -680,6 +680,15 @@ describe('skill ассистента: все проекты пользовате
     assert.match(text, /defaultTypeId/)
     assert.doesNotMatch(text, /templateId/)
   })
+  it('свои настройки — settings get/set --assistant-*, не роль типа; смена агента — после «да»', () => {
+    assert.match(text, /orca-board settings set --assistant-model <id>/)
+    assert.match(text, /--assistant-agent <id>/)
+    assert.match(text, /в\s+`roles list` тебя нет/)
+    assert.match(text, /с нового диалога/)
+    const confirm = text.slice(text.indexOf('## Подтверждение'))
+    assert.match(confirm, /settings set --assistant-agent <id>/)
+    assert.doesNotMatch(text, /`coordinator` и `assistant` задачам не назначай/)
+  })
   it('нет запрета --project и привязки к ORCA_PROJECT', () => {
     assert.doesNotMatch(text, /--project` не указывай/)
     assert.doesNotMatch(text, /ORCA_PROJECT/)
