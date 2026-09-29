@@ -110,7 +110,6 @@ function RepositoryPicture(): React.JSX.Element {
     <svg className="onboarding-folder-front" viewBox="0 0 310 306">
       <path d="M26 161q-3-12 10-12h238q13 0 10 12l-18 103q-2 11-15 11H59q-13 0-15-11z" />
     </svg>
-    <div className="onboarding-folder-label"><Icon.folder /></div>
     <div className="onboarding-repository-stamp"><Icon.branch /></div>
   </div>
 }

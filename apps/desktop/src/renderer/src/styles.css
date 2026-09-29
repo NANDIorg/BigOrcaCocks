@@ -2654,8 +2654,6 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .onboarding-repository-sheet svg { width: 110px; height: 128px; margin: 16px; stroke: var(--accent-2); stroke-width: 1.5; stroke-linecap: round; }
 .onboarding-repository-sheet circle { fill: var(--frame); }
 .onboarding-repository-sheet .onboarding-repository-trace { stroke: var(--accent); stroke-dasharray: .14 .86; animation: onboarding-git 8.4s ease-in-out infinite; }
-.onboarding-folder-label { position: absolute; left: 62px; top: 204px; display: flex; align-items: center; gap: 10px; color: var(--subtle); }
-.onboarding-folder-label svg { width: 18px; height: 18px; color: var(--accent); }
 .onboarding-repository-stamp { position: absolute; left: 237px; top: 62px; width: 39px; height: 39px; background: var(--side); border: 1px solid var(--chip); border-radius: 10px; display: grid; place-items: center; transform: rotate(8deg); }
 .onboarding-repository-stamp svg { color: var(--accent); width: 21px; height: 21px; }
 .onboarding-story-foot { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--onboard-line); font-size: 10px; color: var(--onboard-muted); display: flex; align-items: center; gap: 7px; }
