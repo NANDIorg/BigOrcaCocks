@@ -1,4 +1,7 @@
 :root {
+  /* Тема только тёмная. Без color-scheme Chromium рисует нативные контролы (попап select на Windows/Linux,
+     скроллбары, input type=time) в светлой схеме — белый список с нашим светлым текстом не читается. */
+  color-scheme: dark;
   --page: #26282e;
   --frame: #2e3037;
   --side: #33353d;
@@ -422,6 +425,11 @@ input, textarea, select {
   padding: 10px 12px; font: inherit; width: 100%; outline: none;
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+/* Попап select на Windows/Linux рисует Chromium по CSS опций (на macOS — меню ОС): задаём фон и цвет явно, иначе
+   опции наследуют серый текст от select.off или белый системный фон от прозрачного select. Только выпадающие select:
+   в списке (multiple, size) фон опции перекрыл бы подсветку выбранных пунктов. */
+select:not([multiple]):not([size]) option, select:not([multiple]):not([size]) optgroup { background-color: var(--side-2); color: var(--text); }
+select:not([multiple]):not([size]) option:disabled { color: var(--muted); }
 textarea { min-height: 96px; resize: vertical; }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
 .modal .btn-primary { height: 40px; padding: 0 20px; border-radius: 20px; font-size: 14px; }
@@ -562,7 +570,7 @@ button:disabled { opacity: .45; cursor: default; }
 .roles-label { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
 .roles-agent { display: flex; align-items: center; gap: 8px; background: var(--frame); border-radius: 10px; padding: 0 0 0 10px; }
 .roles-agent svg { flex-shrink: 0; }
-.roles-agent select { background: transparent; padding-left: 0; min-width: 0; }
+.roles-agent select { background: inherit; padding-left: 0; min-width: 0; }
 .roles-panel select.off { color: var(--muted); }
 .roles-effort { display: flex; flex-wrap: wrap; gap: 4px; }
 .roles-effort button {
