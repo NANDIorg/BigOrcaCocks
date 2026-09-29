@@ -19,6 +19,7 @@ export default {
   'essence.showcaseFiles': '◉ Showcase: {files}',
   'essence.review': 'Awaiting review',
   'essence.reviewFiles': 'Awaiting review: {files}',
+  'essence.stalled': '⏸ Stage stalled',
   'essence.waiting': '✋ Waiting for you',
   'essence.waitingTitle': 'There is an item in the “Waiting for you” feed',
   'stage.gate': '⛉ Gate',

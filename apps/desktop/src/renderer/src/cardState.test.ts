@@ -86,6 +86,23 @@ test('cardEssence: ответ, показ, ревью, просто «нужен
   assert.equal(cardEssence(base({ kind: 'needs_input' }))?.text, '? Нужен ответ')
 })
 
+test('cardEssence: остановленный этап в «Ревью» — «Этап остановлен» с причиной, а не «Ждёт ревью»', () => {
+  const stalled = base({ kind: 'review', dispatch: { files: ['a'] }, stalled: 'мерж не выполнен: занят index.lock' })
+  assert.equal(cardState(stalled), 'review')
+  assert.deepEqual(cardEssence(stalled), { text: '⏸ Этап остановлен', title: 'мерж не выполнен: занят index.lock' })
+  // Без причины (обычное ревью, старый main) — прежняя строка.
+  assert.equal(cardEssence(base({ kind: 'review', dispatch: { files: ['a'] } }))?.text, 'Ждёт ревью: 1 файл')
+  // Вне «Ревью» поле не влияет: сбой и вопрос перекрывают, у работы сути нет.
+  assert.equal(cardEssence(base({ kind: 'in_progress', stalled: 'x' })), null)
+  assert.equal(cardEssence(base({ kind: 'review', dispatch: { outcome: 'failed' }, stalled: 'x' }))?.text, '✕ Упал')
+  setLocale('en')
+  try {
+    assert.equal(cardEssence(stalled)?.text, '⏸ Stage stalled')
+  } finally {
+    setLocale('ru')
+  }
+})
+
 test('cardEssence: у работы, ожидания и покоя сути нет', () => {
   assert.equal(cardEssence(base({ kind: 'in_progress' })), null)
   assert.equal(cardEssence(base({ waitingDeps: 1 })), null)

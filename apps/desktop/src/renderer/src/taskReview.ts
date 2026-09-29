@@ -80,6 +80,22 @@ export function taskReviewState(
 }
 
 /**
+ * Причина остановки для карточки на доске (`CardStateInput.stalled`, cardState.ts): задача в «Ревью» на остановленном этапе —
+ * тем же правилом (`reviewStateOf`), что у ленты и блока в карточке задачи; иначе undefined. Pending-запросов доска не
+ * знает: на остановленной ноде их не бывает (при смене ноды approval прошлой отменяется), поэтому `hasPending` — false.
+ */
+export function stalledCardReason(
+  task: Task,
+  column: ColumnKind | undefined,
+  run: Partial<Pick<GlobalTask, 'workflowScope'>> | undefined,
+  workflow: Workflow | undefined
+): string | undefined {
+  if (column !== 'review' || !task.stage) return undefined
+  const node = stageNodeOf(task, run, workflow)
+  return reviewStateOf(task, column, false, node) === 'stalled' ? stalledReason(task, node) : undefined
+}
+
+/**
  * Почему этап стоит — для заголовка пункта и блока в карточке: причина остановки (`Task.stageBlock`) этой ноды, а без неё
  * (старый main, прерванный рестартом эффект) — «Этап «Мерж» не завершён».
  */

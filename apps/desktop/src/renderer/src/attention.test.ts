@@ -6,7 +6,7 @@ import {
   questionAsRequest, readCollapsed, writeCollapsed, type AttentionInput
 } from './attention'
 import { setLocale } from './i18n'
-import { stageNodeOf, stalledRetryLabel, taskReviewState } from './taskReview'
+import { stageNodeOf, stalledCardReason, stalledRetryLabel, taskReviewState } from './taskReview'
 
 const task = (id: string, status: string, extra: Partial<Task> = {}): Task => ({
   id, title: `Задача ${id}`, spec: '', status, roleId: 'dev', agent: 'claude', deps: [], createdAt: 1, updatedAt: 100, ...extra
@@ -382,6 +382,23 @@ test('порядок: остановка — после ответов и пер
   setLocale('en')
   assert.equal(attentionSummary(items), '1 failure · 1 stalled · 1 review')
   assert.equal(attentionLabel({ kind: 'stalled' }), 'Stage stalled')
+})
+
+test('карточка на доске: причина остановки — по тому же правилу, что лента (stalledCardReason)', () => {
+  const reason = 'мерж не выполнен: Unable to write index'
+  // Нода merge — остановка; причина — Task.stageBlock этой ноды, без неё — «Этап «…» не завершён».
+  assert.equal(stalledCardReason(pathTask('a', 'merge', { stageBlock: { nodeId: 'merge', reason, at: 7 } }), 'review', runScope, runGraph), reason)
+  assert.match(stalledCardReason(pathTask('a', 'merge'), 'review', runScope, runGraph) ?? '', /^Этап «.+» не завершён$/)
+  // Ревью настоящее (human пути — конфликт), не «Ревью», задача-ответ / проверка и задача без этапа — не остановка.
+  assert.equal(stalledCardReason(pathTask('a', 'conflict'), 'review', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(pathTask('a', 'merge'), 'in_progress', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(pathTask('a', 'merge', { answerFor: 'human' }), 'review', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(pathTask('a', 'merge', { gateFor: { nodeId: 'g', taskId: 'x' } }), 'review', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(task('a', 'review'), 'review', runScope, runGraph), undefined)
+  // Нет графа (старый main, типы не пришли): видно только по stageBlock той же ноды.
+  const onMerge = { stage: { nodeId: 'merge', visits: {} } }
+  assert.equal(stalledCardReason(task('a', 'review', onMerge), 'review', undefined, undefined), undefined)
+  assert.equal(stalledCardReason(task('a', 'review', { ...onMerge, stageBlock: { nodeId: 'merge', reason, at: 7 } }), 'review', undefined, undefined), reason)
 })
 
 test('счётчик ревью и карточка задачи: то же правило, что лента', () => {
