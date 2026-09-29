@@ -697,6 +697,8 @@ orca-board done --summary "..." --files a.ts,b.ts
 orca-board done --summary "..." --answer-file answer.md   # задача-ответ: CLI читает файл, шлёт текст в params.answer
 orca-board done --summary "..." --show-file showcase.md --show design/a.html --show design/a.png
                                                    # показ человеку: params.showcase {text?, files}
+orca-board done --summary "..." --show-file showcase.md --show design/
+                                                   # --show папкой: путь уходит как есть, раскрывает main при снимке
 orca-board ask --question "..." [--option "метка|пояснение"]... [--recommend <номер|метка>] [--context-file why.md]
                                                    # блокирует до ответа; оборвался — повтор той же команды переподключается
 orca-board request get --request <id>              # забрать ответ по пинку «[orca] на вопрос … ответили: …»
@@ -706,8 +708,11 @@ orca-board decision escalate --reason "..."        # не может выбра�
 
 `--option` повторяемый (без split по запятой, `|` отделяет пояснение), старое `--options a,b` работает.
 `--context-file` читает CLI и шлёт текст в `params.context`. Подробно — `docs/human-requests.md`.
-`--show` повторяемый, как `--option` (без split по запятой); `--show-file` CLI читает сам. Показ нужен на «Работе» с
-`showcase` — воркер узнаёт об этом из раздела «Этап» задания (`docs/workflow.md` → «Показ человеку»).
+`--show` повторяемый, как `--option` (без split по запятой); `--show-file` CLI читает сам. `--show` — файл или папка: CLI
+пути не проверяет и не раскрывает (нет доступа к worktree и белому списку), это делает main при `done` — снимок и его
+ошибки (`worker.done` в «Протокол сокета»). Показ нужен на «Работе» с `showcase` — воркер узнаёт об этом и о правилах
+подготовки файлов (автономный HTML, папка, скриншоты вместо того, что не открыть в браузере) из раздела «Этап» задания
+(`docs/workflow.md` → «Показ человеку»).
 `decision choose|escalate`: `--task` по умолчанию — `$ORCA_TASK_ID` (сокет берёт `r.taskId`), без `--reason` CLI
 отвечает ошибкой до сокета; `--option` уходит массивом (флаг повторяемый) — сервер берёт одно значение
 (`singleOption`). Контракт — `docs/workflow.md` → «Нода «Решение ИИ»».

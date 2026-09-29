@@ -844,9 +844,14 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
 
 - **Промпт.** `startWorker` (`worker.ts`) берёт этап `store.taskWorkStage(task.id, {roleIds, workflow})` (граф типа —
   запасной для прогона без снимка, `WorkerEnvContext.workflow`) и передаёт его в `workerTaskPrompt`. У задачи-ответа
-  этапа нет.
-- **Сдача.** `orca-board done --show-file <описание.md> --show <путь>...`: CLI читает файл и шлёт
-  `params.showcase {text?, files}`; сокет `worker.done` передаёт его в `finishDispatch` вместе с запасным графом
+  этапа нет. У этапа с показом в раздел добавляются правила подготовки файлов (`SHOWCASE_RULES` в `prompts.ts`, те же
+  пункты — в `skills/worker.md`): что открывается в приложении (HTML, markdown, картинки, PDF); HTML — **автономный**
+  (ассеты рядом, относительными путями, без CDN и внешних шрифтов, если не оговорено: фрейм без сети), один вариант —
+  одна страница; `--show` принимает папку; то, что не открыть в браузере (приложение, сборка, архив), — скриншотами
+  и описанием; ошибку снимка `done` возвращает агенту. Без правил агент ссылается на CDN, и страница у человека
+  приходит без стилей.
+- **Сдача.** `orca-board done --show-file <описание.md> --show <путь>...` (`--show` — файл или папка; CLI путь не
+  проверяет, шлёт как есть): CLI читает файл и шлёт `params.showcase {text?, files}`; сокет `worker.done` передаёт его в `finishDispatch` вместе с запасным графом
   типа прогона — чтобы проверка `required` видела тот же этап, что и промпт.
 - **Снимок** (`main/showcase-snapshot.ts`, `ProjectDeps.snapshotShowcase`). Есть `showcase.files` — `worker.done` **до**
   `finishDispatch` копирует их из worktree задачи в `<userData>/showcase/<projectId>/<runId>/<dispatchId>/` (задача без
