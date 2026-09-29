@@ -236,7 +236,15 @@ export interface ProjectBranchInfo {
   detached: boolean
   /** Короткий sha HEAD; только при `detached`. */
   sha?: string
+  /** HEAD без коммитов. */
+  unborn?: true
 }
+
+/**
+ * Режим `projects:createInitialCommit`: `empty` — пустой коммит через plumbing, индекс и рабочее дерево не трогаются;
+ * `snapshot` — `git add -A` и коммит текущего состояния рабочего дерева.
+ */
+export type InitialCommitMode = 'empty' | 'snapshot'
 
 /** Локальная ветка в `ProjectBranchList.local`. */
 export interface ProjectLocalBranch {
@@ -616,6 +624,13 @@ export interface OrcaApi {
      * Нет у старого main/preload — «перезапустите приложение».
      */
     checkoutBranch?(id: string, branch: string): Promise<ProjectBranchInfo>
+    /**
+     * Создать начальный коммит в репозитории корня без коммитов (unborn HEAD): канал `projects:createInitialCommit`.
+     * Вызывается только по согласию человека после ошибки запуска `git.noCommits`. Идемпотентен: коммиты уже есть —
+     * возвращает актуальное состояние HEAD без изменений. Ошибки — `git.notRepo`, `git.opFailed`.
+     * Нет у старого main/preload — «перезапустите приложение».
+     */
+    createInitialCommit?(id: string, mode: InitialCommitMode): Promise<ProjectBranchInfo>
     /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из

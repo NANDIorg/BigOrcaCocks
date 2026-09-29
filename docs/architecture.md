@@ -1373,9 +1373,21 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
   (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?, unborn?}` (текущая ветка корня проекта: `git symbolic-ref`, без коммитов — `unborn: true`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
   `projects:gitFetch(id)` (`git fetch --all --prune`) и `projects:gitPull(id)` (`git pull --ff-only` текущей ветки) → `ProjectGitResult {output, branch: ProjectBranchInfo}`,
-  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking); все четыре — опциональные методы `OrcaApi.projects`
+  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking),
+  `projects:createInitialCommit(id, mode: InitialCommitMode)` → `ProjectBranchInfo` (начальный коммит в репозитории без коммитов, только по согласию человека:
+  `empty` — пустой коммит через plumbing (`hash-object -t tree --stdin` → `commit-tree` → `update-ref HEAD <c> ""`: пустое старое значение — гонка с
+  коммитом человека не перетирает его), индекс и рабочее дерево не трогаются; `snapshot` — `git add -A` + commit с таймаутом 120 с;
+  автор — `user.name`/`user.email` человека, если заданы оба, иначе `orca-board <orca@local>`; сообщение «chore: начальный коммит (orca-board)»;
+  идёт в очереди git корня (`serial` в `main/git.ts`); неизвестный `mode` main читает как `empty`;
+  идемпотентен: коммиты уже есть — возвращает актуальный `ProjectBranchInfo` без изменений; ошибки — `git.notRepo`, `git.opFailed` (хук, подпись — со stderr git));
+  у `ProjectBranchInfo` необязательное поле `unborn: true` — HEAD без коммитов (свежий `git init`). Запуск координатора или воркера в таком репозитории
+  отказывает `OrcaError` с кодом `git.noCommits` (не сырым текстом `git rev-parse`); renderer узнаёт его по `ipcErrorCode(e) === 'git.noCommits'` и предлагает
+  создать начальный коммит: окно `InitialCommitDialog.tsx` (логика — `initialCommit.ts`; режим по умолчанию — `snapshot`, если `projects:branches` вернул `dirty`,
+  иначе `empty`; наличие `.gitignore` — из `files:list` корня), после успеха упавший запуск повторяется. Точки входа — `launchGlobalCoordinator`, `launchTask`
+  (`App.tsx`; повтор задачи идёт через `startTask`), `CoordinatorModal`, а также меню веток при `unborn`. Из меню веток повторять нечего:
+  `willRetry` = `retry !== undefined`, и окно не обещает «запуск повторится автоматически» (`retryHint` в `initialCommit.ts`). `git.noCommits` не входит в `PROJECT_GIT_ERROR_CODES` (тот список — для меню веток). Все пять — опциональные методы `OrcaApi.projects`
   (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
   `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
   воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
@@ -1577,6 +1589,12 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
   иначе upstream новой ветки стал бы базой, и голый `git push` отказал бы или ушёл в неё. Ветку **не** заводит:
   «Входящим» и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина фичи уже в корне) —
   такие работают по-старому.
+- **Нужен коммит.** Новую ветку `ensureRunBranch` заводит только в репозитории с коммитом (`assertHasCommits` в `git.ts`):
+  на свежем `git init` (unborn HEAD) — `OrcaError('git.noCommits', {branch})`, без `setRunGit`, worktree и ветки.
+  `startCoordinator` делает ту же проверку **до** `store.createRun` (если это не повторный запуск), чтобы не создать и
+  не закрыть пустую карточку; renderer узнаёт ошибку по `ipcErrorCode(e) === 'git.noCommits'`. База — `headBase`
+  (`git.ts`): текущая ветка корня, detached HEAD — хеш; её же берёт `gitCreateBranch` ноды «Git». Worktree подзадачи
+  создаёт `addTaskWorktree` (`git.ts`) — тоже с проверкой коммита.
 - **Координатор** запускается в worktree ветки (`cwd`), туда же — `.orca-attachments`. **Воркер**: `orca/<taskId>`
   ответвляется от `Run.git.branch` (без неё — от HEAD корня).
 - **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки («Входящие», старые прогоны),
@@ -1624,6 +1642,9 @@ GitHub PR по [Git Flow](git-flow.md)).
   --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
   удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
   месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
+  **Цель должна существовать** (`assertMergeTarget`): до коммита хвостов и удаления worktree проверяется, что `target.branch` —
+  локальная ветка (`HEAD` — корень в detached HEAD с коммитом). Нет — отказ без удаления: `git.noCommits` (в корне нет
+  коммитов) или `git.mergeTargetMissing`; ветка задачи и её коммиты на месте. Так же в `acceptReview` задачи-ответа.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
   проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
@@ -2790,6 +2811,15 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 - **Путь из renderer и имена записей (`splitSafeSegments`, `main/project-files.ts`).** Всё, что отдаёт `files:list`, должно проходить обратно
   через `files:list`/`files:reveal`. Отказ по символу, который ОС разрешает в имени, делает строку дерева видимой, но нераскрываемой:
   так было с `\` на unix. Запрещённые символы — только там, где они разделители или спецсинтаксис (`\` и `:` на win32).
+- **Unborn HEAD (репозиторий без коммитов).** Запуск координатора на свежем `git init` падал сырым
+  `ambiguous argument 'HEAD'`: `currentBranch` звал `rev-parse --abbrev-ref HEAD`. На unborn HEAD падают (128)
+  `rev-parse HEAD`, `--abbrev-ref HEAD`, `log`, `diff HEAD`, `diff a...b`, `rev-list`, `merge-base`, `merge --no-ff`;
+  работают `symbolic-ref --short -q HEAD` (имя ветки), `status`, `ls-files`, `for-each-ref`, `worktree list`. Имя ветки
+  читай через `symbolic-ref` (`currentBranch`, `projectBranchInfo`), наличие коммита — `rev-parse --verify --quiet
+  HEAD^{commit}` (`hasCommits`, код 1 — нет). Ловушки: `worktree add -b X <путь>` **без базы** успешно создаёт пустую
+  ветку-сироту без файлов проекта — ветки заводи только после `assertHasCommits`; `commit --allow-empty` при staged-файлах
+  коммитит их; ошибки `reviewInfo` при отсутствующей базе глотать нельзя — `commits=[]` пропускает мерж, и
+  `removeWorktree` удаляет ветку с работой воркера (поэтому `assertMergeTarget` в `review.ts`).
 - **`<select>` с `background: transparent` на Windows даёт белый нечитаемый список, на macOS этого не видно.** На macOS попап select —
   меню ОС, на Windows/Linux его рисует Chromium: фон берёт из computed background select, а без `color-scheme` — в светлой схеме.
   Список «Agent» в ролях (`.roles-agent select`) был белым со светлым текстом опций. Теперь `color-scheme: dark` на `:root`, фон и цвет

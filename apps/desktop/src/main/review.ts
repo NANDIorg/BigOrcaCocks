@@ -1,5 +1,5 @@
 import type { TaskStore, HumanRequest, RequestResolution, Task } from '@orca-board/core'
-import { reviewInfo, commitWorktree, currentBranch, mergeBranch, removeWorktree, type ReviewInfo } from './git'
+import { reviewInfo, commitWorktree, currentBranch, hasCommits, localBranchExists, mergeBranch, removeWorktree, type ReviewInfo } from './git'
 import { OrcaError, mt } from './i18n'
 import { reviewBase, type MergeTarget } from './run-branch'
 
@@ -20,6 +20,17 @@ function rootTarget(repoRoot: string): MergeTarget {
   return { cwd: repoRoot, branch: currentBranch(repoRoot) }
 }
 
+/**
+ * Ветка, в которую сливаем, должна существовать до коммита хвостов и удаления worktree. Иначе (корень без коммитов,
+ * база пропала) `reviewInfo` молча отдаёт `commits=[]`, мерж пропускается, и `removeWorktree` удалил бы ветку задачи
+ * с коммитами воркера — тихая потеря работы. `HEAD` — корень в detached HEAD: сливаем в него, если есть коммит.
+ */
+function assertMergeTarget(repoRoot: string, target: MergeTarget): void {
+  if (target.branch === 'HEAD' ? hasCommits(repoRoot) : localBranchExists(repoRoot, target.branch)) return
+  if (!hasCommits(repoRoot)) throw new OrcaError('git.noCommits', { branch: target.branch })
+  throw new OrcaError('git.mergeTargetMissing', { branch: target.branch })
+}
+
 /** Итог мержа ветки задачи: `conflict` — git не слил ветку (текст ошибки в `error`), ветка и worktree на месте. */
 export type MergeResult = { ok: true } | { ok: false; conflict: true; error: string }
 
@@ -36,6 +47,7 @@ export function mergeTaskBranch(
   target: MergeTarget = rootTarget(repoRoot)
 ): MergeResult {
   if (!task.worktree || !task.branch) return { ok: true }
+  assertMergeTarget(repoRoot, target)
   commitWorktree(task.worktree, `orca: ${task.title}`)
   const info = reviewInfo(repoRoot, task.worktree, task.branch, target.branch)
   if (info.commits.length > 0) {
@@ -66,6 +78,7 @@ export function acceptReview(store: TaskStore, repoRoot: string, taskId: string,
   // Цель — до git-части: пропавшая ветка фичи (`git.runBranchMissing`) останавливает приёмку, ничего не тронув.
   const target = task.worktree && task.branch ? (targetOf?.(task) ?? rootTarget(repoRoot)) : undefined
   if (task.answerFor && task.worktree && task.branch && target) {
+    assertMergeTarget(repoRoot, target)
     const info = reviewInfo(repoRoot, task.worktree, task.branch, target.branch)
     if (info.commits.length > 0) mergeBranch(target.cwd, task.branch, `Merge orca answer: ${task.title}`)
     removeWorktree(repoRoot, task.worktree, task.branch)

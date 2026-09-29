@@ -94,7 +94,12 @@ export function listWorktreeDocs(worktree: string, base: string): DocFile[] {
   } catch {
     // базовой ветки нет (переименовали) — показываем только незакоммиченное
   }
-  const dirty = gitPaths(worktree, ['diff', '--name-only', '--relative', '--diff-filter=d', 'HEAD', '--', MD_SPEC])
+  let dirty: string[] = []
+  try {
+    dirty = gitPaths(worktree, ['diff', '--name-only', '--relative', '--diff-filter=d', 'HEAD', '--', MD_SPEC])
+  } catch {
+    // unborn HEAD (в репозитории нет коммитов) — сравнивать не с чем, новые файлы видны как неотслеживаемые
+  }
   const all = new Set([...committed, ...dirty, ...untracked])
   return [...all].flatMap((p) => fileInfo(worktree, p, untracked.has(p)) ?? []).sort(byMtime)
 }
