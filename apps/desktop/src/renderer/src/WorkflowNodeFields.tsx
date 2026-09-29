@@ -1,7 +1,7 @@
 import type React from 'react'
 import {
-  WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS, wfWorkRoleIds,
-  type BoardColumn, type Role, type WfCondition, type WfNode, type WfPort, type Workflow
+  WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS,
+  type AgentInfo, type BoardColumn, type Role, type WfCondition, type WfNode, type WfPort, type Workflow
 } from '@orca-board/core'
 import { Icon } from './icons'
 import { WF_SUBTASK_FORBIDDEN_TYPES, wfPortClass, wfPortLabel } from './workflowEdit'
@@ -15,6 +15,9 @@ import {
   targetOptions, type WfNodePatch
 } from './workflowForm'
 import { useT, type TKey } from './i18n'
+import { RoleBrief, WorkRolesField } from './WorkflowRoleFields'
+import { roleAgentState } from './stageRoles'
+import { agentTitle, roleTitle } from './defaultTitles'
 
 // Поля ноды воркфлоу по карточкам инспектора (WorkflowInspector.tsx): «Основное», «Кто выполняет», «Что сделать» —
 // отдельный компонент на тип ноды. Правки — только через функции workflowForm.ts / workflowGit.ts.
@@ -104,56 +107,50 @@ export function whatTitle(type: WfNode['type']): TKey {
   }
 }
 
-/** «Кто выполняет»: роли этапа у «Работы», роль агента у вопроса, проверки и решения. `invalid` — у карточки ошибка. */
-export function WhoFields({ node, workflow, onChange, scope, roles, invalid }: NodeProps & {
+/**
+ * «Кто выполняет»: роли этапа у «Работы» (WorkflowRoleFields.tsx), роль агента у вопроса, проверки и решения —
+ * select и краткая карточка роли под ним. `invalid` — у карточки ошибка.
+ */
+export function WhoFields({ node, workflow, onChange, scope, roles, allRoles, agents, invalid }: NodeProps & {
   scope: WfScope
-  /** Роли для задач (`stageRoles`). */
+  /** Роли для задач (`stageRoles`): из них выбирают. */
   roles: readonly Role[]
+  /** Все роли типа, со служебными: по ним «Работа» отличает служебную роль в выборе от удалённой. */
+  allRoles: readonly Role[]
+  /** Агенты для состояния ролей; нет (старый main) — состояние неизвестно, без предупреждений. */
+  agents?: readonly AgentInfo[]
   invalid: boolean
 }): React.JSX.Element | null {
   const t = useT()
   const patch = usePatch(workflow, node.id, onChange)
+  const single = (label: TKey, value: string, empty: string, briefEmpty?: string): React.JSX.Element => (
+    <>
+      <label className="wf-field">
+        <span>{t(label)}</span>
+        <RoleSelect value={value} roles={roles} agents={agents} empty={empty} invalid={invalid} onChange={(roleId) => patch({ roleId })} />
+      </label>
+      <RoleBrief roles={allRoles} roleId={value || undefined} agents={agents} empty={briefEmpty} />
+    </>
+  )
   switch (node.type) {
-    case 'work': {
-      const chosen = wfWorkRoleIds(node)
+    case 'work':
       return (
-        <fieldset className="wf-roles">
-          <legend>{scope === 'subtask' ? t('config.wf.insp.pathRolesLegend') : t('config.wf.insp.workRolesLegend')}</legend>
-          {roles.map((r) => (
-            <label key={r.id} className="wf-check">
-              <input
-                type="checkbox"
-                checked={chosen.includes(r.id)}
-                onChange={(e) => patch({ roleIds: e.target.checked ? [...chosen, r.id] : chosen.filter((x) => x !== r.id) })}
-              />
-              <span>{r.title}</span>
-            </label>
-          ))}
-          <small className="wf-roles-hint">{scope === 'subtask' ? t('config.wf.insp.pathRolesHint') : t('config.wf.insp.workRolesHint')}</small>
-        </fieldset>
+        <WorkRolesField
+          key={`${node.id}/${scope}`}
+          node={node}
+          workflow={workflow}
+          scope={scope}
+          roles={allRoles}
+          agents={agents}
+          onChange={(roleIds) => patch({ roleIds })}
+        />
       )
-    }
     case 'ask':
-      return (
-        <label className="wf-field">
-          <span>{t('config.wf.insp.role')}</span>
-          <RoleSelect value={node.roleId ?? ''} roles={roles} empty={t('config.wf.insp.askRoleEmpty')} invalid={invalid} onChange={(roleId) => patch({ roleId })} />
-        </label>
-      )
+      return single('config.wf.insp.role', node.roleId ?? '', t('config.wf.insp.askRoleEmpty'))
     case 'gate':
-      return (
-        <label className="wf-field">
-          <span>{t('config.wf.insp.reviewerRole')}</span>
-          <RoleSelect value={node.roleId} roles={roles} empty={t('config.wf.insp.pickRole')} invalid={invalid} onChange={(roleId) => patch({ roleId })} />
-        </label>
-      )
+      return single('config.wf.insp.reviewerRole', node.roleId, t('config.wf.insp.pickRole'))
     case 'decision':
-      return (
-        <label className="wf-field">
-          <span>{t('config.wf.insp.decisionRole')}</span>
-          <RoleSelect value={node.roleId ?? ''} roles={roles} empty={t('config.wf.insp.pickRole')} invalid={invalid} onChange={(roleId) => patch({ roleId })} />
-        </label>
-      )
+      return single('config.wf.insp.decisionRole', node.roleId ?? '', t('config.wf.insp.pickRole'), t('config.wf.roles.brief.empty'))
     default:
       return null
   }
@@ -317,9 +314,11 @@ function GitFields({ node, onChange }: { node: WfGitNode; onChange(patch: WfGitP
   )
 }
 
-function RoleSelect({ value, roles, empty, invalid, onChange }: {
+/** Роль gate/decision/ask: «Название · Агент», у выключенного агента — пометка; неизвестная текущая — с пометкой. */
+function RoleSelect({ value, roles, agents, empty, invalid, onChange }: {
   value: string
   roles: readonly Role[]
+  agents?: readonly AgentInfo[]
   empty: string
   /** У карточки ошибка: рамка поля цвета ошибки, текст — под полем. */
   invalid: boolean
@@ -328,10 +327,14 @@ function RoleSelect({ value, roles, empty, invalid, onChange }: {
   const t = useT()
   const unknown = value && !roles.some((r) => r.id === value)
   const cls = [unknown && 'off', invalid && 'bad'].filter(Boolean).join(' ')
+  const label = (r: Role): string => {
+    const off = roleAgentState(agents?.find((a) => a.id === r.agent)) === 'off'
+    return `${roleTitle(r)} · ${agentTitle(r.agent)}${off ? ` — ${t('config.roles.summaryOff')}` : ''}`
+  }
   return (
     <select value={value} className={cls || undefined} aria-invalid={invalid || undefined} onChange={(e) => onChange(e.target.value)}>
       <option value="">{empty}</option>
-      {roles.map((r) => <option key={r.id} value={r.id}>{r.title} ({r.id})</option>)}
+      {roles.map((r) => <option key={r.id} value={r.id}>{label(r)}</option>)}
       {unknown && <option value={value}>{t('config.wf.insp.roleMissing', { role: value })}</option>}
     </select>
   )

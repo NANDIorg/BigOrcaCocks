@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_ROLES, presetTaskTypes, wfWorkRoleIds, type AgentInfo, type Role, type TaskType, type Workflow } from '@orca-board/core'
-import { checkRoleNodes, pickPathRole, roleAgentState, stageRoleBrief, stageRolesView, toggleStageRole } from './stageRoles'
+import { checkRoleNodes, chosenCount, pickPathRole, roleAgentState, stageRoleBrief, stageRolesView, toggleStageRole } from './stageRoles'
 import { libraryAgents } from './taskTypeEdit'
 import { patchNode } from './workflowForm'
 import { graphWithMerge } from './workflowFixture'
@@ -147,4 +147,10 @@ test('stageRoleBrief: карточка роли под select и её пробл
   assert.deepEqual(stageRoleBrief(DEFAULT_ROLES, ''), { problem: 'empty' })
   assert.deepEqual(stageRoleBrief(DEFAULT_ROLES, 'old_role'), { problem: 'missing' })
   assert.deepEqual(stageRoleBrief(DEFAULT_ROLES, 'coordinator'), { problem: 'service' })
+})
+
+test('chosenCount: «Выбрано N из M» — по строкам (рабочие и проверки), без «сирот»', () => {
+  const v = view(DEFAULT_ROLES, graphWithMerge(DEFAULT_ROLES), ['developer', 'reviewer', 'old_role'])
+  assert.deepEqual(chosenCount(v), { n: 2, total: v.work.length + v.checks.length })
+  assert.deepEqual(chosenCount(view(DEFAULT_ROLES, graphWithMerge(DEFAULT_ROLES))).n, 0)
 })
