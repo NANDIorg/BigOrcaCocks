@@ -20,7 +20,7 @@ test('projectBranchInfo: не репозиторий', () => {
 test('projectBranchInfo: ветка, репозиторий без коммитов и detached HEAD', () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-git-'))
   git(dir, 'init', '-b', 'main')
-  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: true, branch: 'main', detached: false })
+  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: true, branch: 'main', detached: false, unborn: true })
   writeFileSync(join(dir, 'a.txt'), 'a')
   git(dir, 'add', '-A')
   git(dir, 'commit', '-m', 'init')
