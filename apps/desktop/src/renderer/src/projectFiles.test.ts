@@ -54,7 +54,7 @@ test('у каждого кода из PROJECT_FILES_ERROR_CODES свой тек�
 })
 
 test('filesErrorMessage — текст по коду, а не по тексту main', () => {
-  assert.equal(filesErrorMessage(orcaError('files.notFound', 'folder not found'), CTX), 'Папки уже нет на диске: apps/desktop')
+  assert.equal(filesErrorMessage(orcaError('files.notFound', 'folder not found'), CTX), 'Уже нет на диске: apps/desktop')
   assert.equal(filesErrorMessage(orcaError('files.rootMissing', 'x'), CTX), 'Папка проекта не найдена: /repo')
   setLocale('en')
   assert.equal(filesErrorMessage(orcaError('files.notDir', 'не папка'), CTX), 'Not a folder: apps/desktop')
@@ -62,7 +62,7 @@ test('filesErrorMessage — текст по коду, а не по тексту 
 
 test('filesErrorMessage — readFailed и неизвестный код: текст main (в нём причина)', () => {
   assert.equal(filesErrorMessage(orcaError('files.readFailed', 'не удалось прочитать apps: EACCES'), CTX), 'не удалось прочитать apps: EACCES')
-  assert.equal(filesErrorMessage(orcaError('files.readFailed', ''), CTX), 'Не удалось прочитать папку: apps/desktop')
+  assert.equal(filesErrorMessage(orcaError('files.readFailed', ''), CTX), 'Не удалось прочитать: apps/desktop')
   assert.equal(filesErrorMessage(orcaError('files.somethingNew', 'новое'), CTX), 'новое')
   assert.equal(filesErrorMessage(new Error("Error invoking remote method 'files:list': Error: project not found"), CTX), 'project not found')
 })

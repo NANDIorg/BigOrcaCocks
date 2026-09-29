@@ -819,9 +819,9 @@ export default {
   'files.staleApp': 'The app is running an old main/preload without the “Files” tab. Restart the app.',
   'files.err.badPath': 'Invalid path: {path}',
   'files.err.outside': 'The path leads outside the project: {path}',
-  'files.err.hidden': 'This folder is not shown: {path}',
-  'files.err.notFound': 'The folder no longer exists: {path}',
+  'files.err.hidden': 'Not shown in this tab: {path}',
+  'files.err.notFound': 'No longer exists on disk: {path}',
   'files.err.notDir': 'Not a folder: {path}',
   'files.err.rootMissing': 'Project folder not found: {path}',
-  'files.err.readFailed': 'Could not read the folder: {path}'
+  'files.err.readFailed': 'Could not read: {path}'
 } satisfies AreaTranslation<typeof ru>

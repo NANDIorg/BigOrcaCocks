@@ -2633,7 +2633,8 @@ button.wf-count:hover { text-decoration: underline; }
 .files-row { cursor: pointer; }
 .files-row:focus { outline: none; }
 .files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.files-row.dir .docs-nm { color: #d4d6de; }
+/* Имена с диска как есть: двойные и ведущие пробелы не схлопываются, усечение «…» — от .docs-row .docs-nm. */
+.files-row .docs-nm { white-space: pre; }
 .files-note { display: flex; align-items: center; gap: 8px; min-height: 28px; padding-right: 8px; font-size: 12px; }
 .files-note-err .editor-error { margin: 0; overflow-wrap: anywhere; }
 .files-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
