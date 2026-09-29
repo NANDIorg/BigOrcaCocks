@@ -196,7 +196,6 @@ export default {
     'The coordinator runs with these. If you assign the {code} role to a task, the worker gets the worker instructions (skills/worker.md).',
   'roles.startLead': '{agent} {channel}.',
   'roles.start.coordinator': 'Run data goes into ‹…›; if images are attached to the goal, a block with their paths is added.',
-  'roles.start.assistant': 'No data in ‹…›: the message is fixed, the human types requests in the assistant terminal.',
   'roles.start.worker': 'Task data goes into ‹…›; after a return from review, a “Review feedback” block is added.',
   'roles.channel.system':
     'gets the built-in and extra instructions as a system prompt (--append-system-prompt), and the start message separately',
@@ -211,7 +210,6 @@ export default {
   'roles.cancel': 'Cancel',
   'roles.remove': 'Delete',
   'roles.service.coordinator': 'Starts a run',
-  'roles.service.assistant': 'Board assistant',
   'roles.service.worker': 'Does a task',
   'roles.agentUnknownCmd': '{agent}: unknown agent',
   'roles.ph.system': '‹skills/{kind}.md›',
@@ -223,9 +221,6 @@ export default {
   'roles.ph.taskSpec': '‹task description›',
 
   'roles.loss.coordinatorRun': 'You won’t be able to start a run or continue a global task: the coordinator only runs with the coordinator role.',
-  'roles.loss.coordinatorAssistant': 'If there’s no assistant role either, the board assistant will run claude with default settings.',
-  'roles.loss.assistant':
-    'The board assistant will run with the agent, model and effort of the coordinator role (without it — default claude), without the assistant role instructions.',
   'roles.loss.developerTasks': 'The coordinator won’t be able to assign coding tasks to developer (task create --role developer will fail).',
   'roles.loss.developerOld': 'Tasks from an old board without a role get developer — they won’t start.',
   'roles.loss.reviewer':
@@ -376,7 +371,7 @@ export default {
   'wf.help.gate.details': 'The app creates a check task for the reviewer role and starts its worker right away: it compares the global task branch with its base branch. The verdict is review accept or review reject with feedback; a human can decide instead with the task’s “Accept” / “Reject” buttons.',
   'wf.help.gate.accept': 'check passed: next, usually “Human check”.',
   'wf.help.gate.reject': 'sent back with feedback: usually to “Work” — the coordinator gets it in stage_started and recruits agents for the fixes.',
-  'wf.help.gate.fieldRole': 'Reviewer role — required; service roles (coordinator, assistant) can’t be used here.',
+  'wf.help.gate.fieldRole': 'Reviewer role — required; the service role (coordinator) can’t be used here.',
   'wf.help.gate.fieldInstructions': 'How to check — criteria and commands, added to the reviewer’s assignment.',
   'wf.help.gate.fieldColumn': 'Column — where the global task sits during the check (“In progress” by default).',
   'wf.help.human.summary': 'The human decides: “Confirm” / “Send back” on the global task and a request in the Inbox.',

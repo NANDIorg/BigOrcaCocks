@@ -10,10 +10,14 @@ export interface AppSettingsSave {
 
 /**
  * Патч не дошёл до main: старый main не знает поля `language` и молча его отбросит (выбор не переживёт
- * перезапуск); так же с `updates` — без поля в ответе main патч не сохранил.
+ * перезапуск); так же с `updates` и `assistant` — без поля в ответе main патч не сохранил.
  */
-export function droppedPatch(patch: AppSettingsPatch, next: Pick<AppSettings, 'language' | 'updates'>): boolean {
-  return Boolean((patch.language && next.language !== patch.language) || (patch.updates && !next.updates))
+export function droppedPatch(patch: AppSettingsPatch, next: Pick<AppSettings, 'language' | 'updates' | 'assistant'>): boolean {
+  return Boolean(
+    (patch.language && next.language !== patch.language) ||
+    (patch.updates && !next.updates) ||
+    (patch.assistant && !next.assistant)
+  )
 }
 
 /**

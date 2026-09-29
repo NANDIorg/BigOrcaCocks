@@ -105,11 +105,6 @@ export function workflowForRun(
   return resolveRunType(run, state.taskTypes, defaultId).workflow
 }
 
-/** Роли типа библиотеки по умолчанию — с ними main запускает ассистента приложения. */
-export function libraryDefaultRoles(state: TaskTypesState): Role[] {
-  return resolveRunType(undefined, state.taskTypes, state.defaultTaskTypeId).roles
-}
-
 /**
  * Название типа для бейджа глобальной задачи: из библиотеки (тип могли переименовать), тип удалён — из снимка
  * (`GlobalTask.typeTitle`). Нет типа («Входящие», старый main) — undefined, бейдж не показывается.
