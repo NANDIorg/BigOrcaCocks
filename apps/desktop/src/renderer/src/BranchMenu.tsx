@@ -20,10 +20,12 @@ interface Notice {
  * выбор ветки — checkout корня. Состояние операции живёт в самом компоненте, а не в поповере: закрытое меню не
  * теряет идущий fetch/pull. После checkout и pull бейдж обновляется через `onBranchChanged`.
  */
-export function BranchMenu({ projectId, badge, onBranchChanged }: {
+export function BranchMenu({ projectId, badge, onBranchChanged, onInitialCommit }: {
   projectId: string
   badge: BranchBadge
   onBranchChanged(next?: ProjectBranchInfo): void
+  /** Репозиторий без коммитов (`current.unborn`): открыть окно начального коммита. */
+  onInitialCommit?(): void
 }): React.JSX.Element {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -197,7 +199,25 @@ export function BranchMenu({ projectId, badge, onBranchChanged }: {
               if (target) checkout(target)
             }}
           />
-          {list?.dirty && <div className="branch-note">{t('shell.branch.dirty')}</div>}
+          {list?.current.unborn && (
+            <div className="branch-note branch-unborn">
+              <span>{t('shell.branch.unborn')}</span>
+              {onInitialCommit && (
+                <button
+                  type="button"
+                  className="btn-sm"
+                  disabled={busy}
+                  onClick={() => {
+                    setOpen(false)
+                    onInitialCommit()
+                  }}
+                >
+                  {t('shell.branch.initialCommit')}
+                </button>
+              )}
+            </div>
+          )}
+          {list?.dirty && !list.current.unborn && <div className="branch-note">{t('shell.branch.dirty')}</div>}
           <div className="branch-list" role="listbox" aria-label={t('shell.branch.menuLabel')}>
             {!view && <div className="branch-empty">{op === 'load' ? t('shell.branch.loading') : ''}</div>}
             {view && view.local.length + view.remote.length === 0 && list?.isGitRepo && <div className="branch-empty">{t('shell.branch.empty')}</div>}

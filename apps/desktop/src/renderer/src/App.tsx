@@ -37,6 +37,8 @@ import { ProjectTypeModal } from './ProjectTypeModal'
 import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
 import { loadOnboarding, shouldShowOnboarding } from './onboarding'
 import { BranchMenu } from './BranchMenu'
+import { InitialCommitDialog } from './InitialCommitDialog'
+import { isNoCommitsError } from './initialCommit'
 import { branchBadge } from './projectBranch'
 import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
@@ -168,6 +170,11 @@ export function App(): React.JSX.Element {
   /** Глобальная задача, из которой вернулись на общую доску, — её карточке возвращается фокус. */
   const [lastGlobal, setLastGlobal] = useState<string | undefined>()
   const [showCoord, setShowCoord] = useState(false)
+  /**
+   * Запуск упал с `git.noCommits` (репозиторий без коммитов): окно «Создать начальный коммит». `retry` — тот же запуск,
+   * его повторяем после коммита. Без `retry` — окно открыто из меню веток, повторять нечего.
+   */
+  const [initialCommit, setInitialCommit] = useState<{ projectId: string; retry?: () => void } | null>(null)
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
@@ -499,10 +506,19 @@ export function App(): React.JSX.Element {
       ? t('shell.app.coordinatorContinue', { count: g.progress.total })
       : t('shell.app.coordinatorSplit')
     if (!confirm(t('shell.app.confirmCoordinator', { title: g.title, note }))) return
+    await launchGlobalCoordinator(g, projectId)
+  }
+
+  /** Запуск без подтверждения: его же повторяет окно начального коммита. */
+  async function launchGlobalCoordinator(g: GlobalTask, projectId: string | undefined): Promise<void> {
     try {
       const ptyId = await window.orca.globalTasks.startCoordinator(g.id, 120, 30)
       showTerminal(ptyId, projectId)
     } catch (e) {
+      if (projectId && isNoCommitsError(e)) {
+        setInitialCommit({ projectId, retry: () => void launchGlobalCoordinator(g, projectId) })
+        return
+      }
       alert(t('shell.app.coordinatorError', { error: ipcErrorMessage(e) }))
     }
   }
@@ -683,12 +699,29 @@ export function App(): React.JSX.Element {
     showTerminal(ptyId, projectId)
   }
 
-  /** Запуск из UI (кнопка «Запустить»): в отличие от CLI-запуска, сразу показываем терминал. */
-  async function startTask(task: Task): Promise<void> {
+  /**
+   * Запуск из UI (кнопка «Запустить»): в отличие от CLI-запуска, сразу показываем терминал. Репозиторий без коммитов —
+   * окно начального коммита, после него запуск повторится; прочие ошибки — вызывающему (TaskModal показывает их у себя).
+   */
+  async function launchTask(task: Task): Promise<void> {
     const projectId = active?.id
-    const res = await window.orca.worker.start(task.id, 120, 30)
-    if (projectId === activeIdRef.current) setSelected(task)
-    showTerminal(res.ptyId, projectId)
+    try {
+      const res = await window.orca.worker.start(task.id, 120, 30)
+      if (projectId === activeIdRef.current) setSelected(task)
+      showTerminal(res.ptyId, projectId)
+    } catch (e) {
+      if (!projectId || !isNoCommitsError(e)) throw e
+      setInitialCommit({ projectId, retry: () => void startTask(task) })
+    }
+  }
+
+  /** Запуск с доски и из ленты: там ошибку показать негде — сообщение, как у координатора. */
+  async function startTask(task: Task): Promise<void> {
+    try {
+      await launchTask(task)
+    } catch (e) {
+      alert(t('shell.app.workerError', { error: ipcErrorMessage(e) }))
+    }
   }
 
   /**
@@ -859,7 +892,12 @@ export function App(): React.JSX.Element {
             <div className="head-title">
               <h1>{active?.name ?? 'orca-board'}</h1>
               {badge && active && (
-                <BranchMenu projectId={active.id} badge={badge} onBranchChanged={projectBranch.update} />
+                <BranchMenu
+                  projectId={active.id}
+                  badge={badge}
+                  onBranchChanged={projectBranch.update}
+                  onInitialCommit={() => setInitialCommit({ projectId: active.id })}
+                />
               )}
             </div>
             <button
@@ -1134,6 +1172,7 @@ export function App(): React.JSX.Element {
             setShowCoord(false)
             showTerminal(ptyId, projectId)
           }}
+          onNoCommits={(retry) => setInitialCommit({ projectId: active.id, retry })}
         />
       )}
       {openTask && active && (
@@ -1153,7 +1192,7 @@ export function App(): React.JSX.Element {
           running={runningTaskIds.has(openTask.id)}
           onClose={() => setOpenTaskId(null)}
           onUpdate={(id, patch) => window.orca.tasks.update(id, patch)}
-          onStart={startTask}
+          onStart={launchTask}
           onOpenTerminal={openTerminalForTask}
           onRemove={(id) => window.orca.tasks.remove(id)}
           onResolveRequest={resolveRequest}
@@ -1234,6 +1273,19 @@ export function App(): React.JSX.Element {
           dispatches={snap.dispatches}
           onClose={() => setAcceptGlobalId(null)}
           onSubmit={(decision) => submitAcceptGlobal(acceptingGlobal.id, decision)}
+        />
+      )}
+      {initialCommit && (
+        <InitialCommitDialog
+          key={initialCommit.projectId}
+          projectId={initialCommit.projectId}
+          projectName={projects.find((p) => p.id === initialCommit.projectId)?.name ?? ''}
+          onClose={() => setInitialCommit(null)}
+          onCommitted={(branch) => {
+            setInitialCommit(null)
+            if (initialCommit.projectId === activeIdRef.current) projectBranch.update(branch)
+            initialCommit.retry?.()
+          }}
         />
       )}
       <UpdateToast />
