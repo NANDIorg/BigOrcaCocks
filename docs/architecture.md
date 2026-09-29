@@ -1353,7 +1353,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   идемпотентен: коммиты уже есть — возвращает актуальный `ProjectBranchInfo` без изменений; ошибки — `git.notRepo`, `git.opFailed` (хук, подпись — со stderr git));
   у `ProjectBranchInfo` необязательное поле `unborn: true` — HEAD без коммитов (свежий `git init`). Запуск координатора или воркера в таком репозитории
   отказывает `OrcaError` с кодом `git.noCommits` (не сырым текстом `git rev-parse`); renderer узнаёт его по `ipcErrorCode(e) === 'git.noCommits'` и предлагает
-  создать начальный коммит. `git.noCommits` не входит в `PROJECT_GIT_ERROR_CODES` (тот список — для меню веток). Все пять — опциональные методы `OrcaApi.projects`
+  создать начальный коммит: окно `InitialCommitDialog.tsx` (логика — `initialCommit.ts`; режим по умолчанию — `snapshot`, если `projects:branches` вернул `dirty`,
+  иначе `empty`; наличие `.gitignore` — из `files:list` корня), после успеха упавший запуск повторяется. Точки входа — `startGlobalCoordinator`, `startTask`
+  (`App.tsx`), `CoordinatorModal`, а также меню веток при `unborn`. `git.noCommits` не входит в `PROJECT_GIT_ERROR_CODES` (тот список — для меню веток). Все пять — опциональные методы `OrcaApi.projects`
   (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
   `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
   воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
