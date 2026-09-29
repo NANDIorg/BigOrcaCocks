@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ImageAttachmentInput } from '@orca-board/core'
 import type { ReviewInfo } from '../../shared/ipc'
 import { useT } from './i18n'
-import { ipcErrorMessage } from './ipcError'
+import { ipcErrorCode, ipcErrorMessage } from './ipcError'
 import { ImageAttachField } from './ImageAttachField'
 import { useImageAttachments } from './imageDrafts'
 
@@ -13,12 +13,19 @@ interface Props {
   onAccept(): Promise<void>
   /** `images` — картинки к замечаниям (байты); у задач без картинок аргумента нет. */
   onReject(feedback: string, images?: ImageAttachmentInput[]): Promise<void>
+  /**
+   * Этап задачи остановлен (мерж упал или прервался): вместо ревью — причина и те же два действия с другим смыслом —
+   * `onAccept` повторяет этап, `onReject` возвращает задачу в работу (taskReview.ts).
+   */
+  stalled?: { reason: string; retryLabel: string }
 }
 
-export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): React.JSX.Element {
+export function ReviewBlock({ taskId, summary, onAccept, onReject, stalled }: Props): React.JSX.Element {
   const t = useT()
   const [info, setInfo] = useState<ReviewInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** Подсказка к ошибке без кода на остановленном этапе: старый main повтора этапа не умеет. */
+  const [hint, setHint] = useState<string | null>(null)
   const [feedback, setFeedback] = useState('')
   const [mode, setMode] = useState<'view' | 'reject'>('view')
   const [busy, setBusy] = useState(false)
@@ -31,10 +38,12 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): Rea
   async function run(fn: () => Promise<void>): Promise<void> {
     setBusy(true)
     setError(null)
+    setHint(null)
     try {
       await fn()
     } catch (e) {
       setError(ipcErrorMessage(e))
+      if (stalled && ipcErrorCode(e) === undefined) setHint(t('shell.feed.stalledHint'))
     } finally {
       setBusy(false)
     }
@@ -42,6 +51,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): Rea
 
   return (
     <div className="review" onClick={(e) => e.stopPropagation()}>
+      {stalled && <pre className="stat error" role="status">{stalled.reason}</pre>}
       {summary && <div className="summary">{summary}</div>}
       {info && (
         <div className="review-info">
@@ -58,20 +68,22 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject }: Props): Rea
           {info.stat ? <pre className="stat">{info.stat}</pre> : <div className="muted">{t('board.review.noChanges')}</div>}
         </div>
       )}
-      {error && <pre className="stat error">{error}</pre>}
+      {error && <pre className="stat error" role="alert">{error}</pre>}
+      {hint && <div className="muted">{hint}</div>}
       {mode === 'view' ? (
         <div className="actions">
           <button className="btn-sm primary" disabled={busy} onClick={() => run(onAccept)}>
-            {busy ? '…' : t('board.review.merge')}
+            {busy ? '…' : stalled ? stalled.retryLabel : t('board.review.merge')}
           </button>
-          <button className="btn-sm" disabled={busy} onClick={() => setMode('reject')}>{t('board.review.rework')}</button>
+          <button className="btn-sm" disabled={busy} onClick={() => setMode('reject')}>{t(stalled ? 'shell.feed.returnToWork' : 'board.review.rework')}</button>
         </div>
       ) : (
         <div className="reject">
           <ImageAttachField attachments={attachments} disabled={busy}>
             <textarea
               autoFocus
-              placeholder={t('board.review.feedbackPlaceholder')}
+              aria-label={t(stalled ? 'shell.feed.returnLabel' : 'shell.request.rejectLabel')}
+              placeholder={t(stalled ? 'shell.feed.returnPlaceholder' : 'board.review.feedbackPlaceholder')}
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
             />
