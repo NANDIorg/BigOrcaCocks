@@ -179,6 +179,8 @@ export default {
   'review.untracked': 'new files:',
   'git.runBranchFailed': 'could not create branch “{branch}” for the global task from “{base}”: {error}',
   'git.runBranchMissing': 'branch “{branch}” of the global task no longer exists in the repository — restore it or detach the branch from the task',
+  'git.noCommits': 'The repository has no commits yet (branch “{branch}” is empty), and Orca branches work off a commit. Create an initial commit: with the “Create initial commit” button in the app or manually with `git add -A && git commit -m "init"`',
+  'git.mergeTargetMissing': 'branch “{branch}” the task merges into does not exist — nothing was merged, the task branch and its commits are untouched: restore the branch and try again',
   'git.notRepo': '{path} is not a git repository',
   'git.dirtyTree': 'the project has uncommitted changes — the branch is not switched: commit or stash them first',
   'git.notFastForward': 'branch “{branch}” has diverged from {upstream}: fast-forward is not possible, combine the changes manually (merge or rebase)',

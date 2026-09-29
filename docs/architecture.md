@@ -1546,6 +1546,12 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
   иначе upstream новой ветки стал бы базой, и голый `git push` отказал бы или ушёл в неё. Ветку **не** заводит:
   «Входящим» и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина фичи уже в корне) —
   такие работают по-старому.
+- **Нужен коммит.** Новую ветку `ensureRunBranch` заводит только в репозитории с коммитом (`assertHasCommits` в `git.ts`):
+  на свежем `git init` (unborn HEAD) — `OrcaError('git.noCommits', {branch})`, без `setRunGit`, worktree и ветки.
+  `startCoordinator` делает ту же проверку **до** `store.createRun` (если это не повторный запуск), чтобы не создать и
+  не закрыть пустую карточку; renderer узнаёт ошибку по `ipcErrorCode(e) === 'git.noCommits'`. База — `headBase`
+  (`git.ts`): текущая ветка корня, detached HEAD — хеш; её же берёт `gitCreateBranch` ноды «Git». Worktree подзадачи
+  создаёт `addTaskWorktree` (`git.ts`) — тоже с проверкой коммита.
 - **Координатор** запускается в worktree ветки (`cwd`), туда же — `.orca-attachments`. **Воркер**: `orca/<taskId>`
   ответвляется от `Run.git.branch` (без неё — от HEAD корня).
 - **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки («Входящие», старые прогоны),
@@ -1593,6 +1599,9 @@ GitHub PR по [Git Flow](git-flow.md)).
   --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
   удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
   месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
+  **Цель должна существовать** (`assertMergeTarget`): до коммита хвостов и удаления worktree проверяется, что `target.branch` —
+  локальная ветка (`HEAD` — корень в detached HEAD с коммитом). Нет — отказ без удаления: `git.noCommits` (в корне нет
+  коммитов) или `git.mergeTargetMissing`; ветка задачи и её коммиты на месте. Так же в `acceptReview` задачи-ответа.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
   проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
@@ -2733,6 +2742,15 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 - **Путь из renderer и имена записей (`splitSafeSegments`, `main/project-files.ts`).** Всё, что отдаёт `files:list`, должно проходить обратно
   через `files:list`/`files:reveal`. Отказ по символу, который ОС разрешает в имени, делает строку дерева видимой, но нераскрываемой:
   так было с `\` на unix. Запрещённые символы — только там, где они разделители или спецсинтаксис (`\` и `:` на win32).
+- **Unborn HEAD (репозиторий без коммитов).** Запуск координатора на свежем `git init` падал сырым
+  `ambiguous argument 'HEAD'`: `currentBranch` звал `rev-parse --abbrev-ref HEAD`. На unborn HEAD падают (128)
+  `rev-parse HEAD`, `--abbrev-ref HEAD`, `log`, `diff HEAD`, `diff a...b`, `rev-list`, `merge-base`, `merge --no-ff`;
+  работают `symbolic-ref --short -q HEAD` (имя ветки), `status`, `ls-files`, `for-each-ref`, `worktree list`. Имя ветки
+  читай через `symbolic-ref` (`currentBranch`, `projectBranchInfo`), наличие коммита — `rev-parse --verify --quiet
+  HEAD^{commit}` (`hasCommits`, код 1 — нет). Ловушки: `worktree add -b X <путь>` **без базы** успешно создаёт пустую
+  ветку-сироту без файлов проекта — ветки заводи только после `assertHasCommits`; `commit --allow-empty` при staged-файлах
+  коммитит их; ошибки `reviewInfo` при отсутствующей базе глотать нельзя — `commits=[]` пропускает мерж, и
+  `removeWorktree` удаляет ветку с работой воркера (поэтому `assertMergeTarget` в `review.ts`).
 
 ## Открытые вопросы
 
