@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Просмотрщик показа — Вариант 2 — боковой список файлов</title>
+<!--
+  Макет «Просмотрщик сгенерированных артефактов» (HTML / картинки / md) прямо в приложении. Вариант 2 — боковой список файлов.
+  Статичный самодостаточный файл: открывается в браузере без сборки. Данные выдуманы. Интерактивны: переключатели,
+  вкладки/список файлов, превью в карточке, Esc / ←/→. Стили компонентов взяты из apps/desktop/src/renderer/src/styles.css,
+  новое — классы sv-* (просмотрщик) и mk-* (оболочка макета, в приложение не переносится).
+  Параметры адреса: ?d=multi (три подзадачи), ?win=860, ?f=0:1 (файл), ?width=mobile, ?net=1, ?force=missing, ?open=float.
+-->
+<style>
+:root {
+  --page: #26282e;
+  --frame: #2e3037;
+  --side: #33353d;
+  --side-2: #383b43;
+  --card: #3b3e47;
+  --card-hover: #41444e;
+  --chip: #5b5e68;
+  --line: rgba(255,255,255,.06);
+  --text: #ecedf1;
+  --muted: #9ea1ad;
+  --accent: #7b86f5;
+  --accent-2: #5a63c8;
+  --col-backlog: #6b6f7c;
+  --col-ready: #7b86f5;
+  --col-progress: #f08a3a;
+  --col-input: #e8b04a;
+  --col-review: #b57bee;
+  --col-done: #5ad1cc;
+  --danger: #ef6b6b;
+  
+  --wf-accept: #8fd16a;
+  --wf-reject: var(--danger);
+  
+  --on-status: var(--term-bg);
+  --radius: 14px;
+  
+  --term-bg: #1b1c21;
+  
+  --s1: #7b86f5;
+  --s2: #5ad1cc;
+  --s3: #f08a3a;
+  --s4: #b57bee;
+  --s5: #e8b04a;
+  --s-other: #8a8d98;
+  --s-unknown: #5b5e68;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--page);
+  color: var(--text);
+  font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; cursor: pointer; }
+.popup-menu {
+  position: fixed; z-index: 30; background: var(--side-2); border: 1px solid var(--line); border-radius: 10px; max-height: 60vh; overflow-y: auto;
+  box-shadow: 0 12px 30px rgba(0,0,0,.35); padding: 4px; font-size: 13px; outline: none;
+}
+.popup-menu:focus-visible { border-color: var(--accent); }
+.popup-menu-heading { padding: 4px 8px; font-size: 11px; color: var(--muted); }
+.popup-menu-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.popup-menu-item {
+  width: 100%; display: flex; gap: 8px; align-items: center; padding: 6px 8px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text); text-align: left;
+}
+.popup-menu-item.on { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.popup-menu-item.danger { color: var(--danger); }
+.popup-menu-item[aria-disabled='true'] { color: var(--muted); cursor: default; }
+.popup-menu-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.popup-menu-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
+.chip {
+  border: 1px solid var(--chip); color: #c9ccd6; border-radius: 999px; padding: 2px 10px; font-size: 12px;
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.chip.mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.btn-sm { height: 26px; padding: 0 10px; font-size: 12px; flex-shrink: 0; }
+.btn-sm {
+  height: 32px; padding: 0 14px; border-radius: 16px; border: 1px solid var(--chip);
+  background: transparent; color: var(--text); font-size: 13px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-sm:hover { border-color: var(--text); }
+.btn-sm.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-sm.primary:hover { background: #8791f7; }
+.btn-sm.danger:hover { border-color: #ef6b6b; color: #ef6b6b; }
+.empty { color: var(--muted); text-align: center; padding: 30px 10px; font-size: 13px; }
+.modal {
+  background: var(--side); border-radius: 18px; padding: 24px; width: 520px; display: flex; flex-direction: column; gap: 14px;
+  box-shadow: 0 30px 80px rgba(0,0,0,.5);
+}
+.modal h3 { margin: 0; font-size: 20px; font-weight: 600; }
+.modal label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 13px; }
+input[type='checkbox'] { width: auto; margin: 0; accent-color: var(--accent); }
+input, textarea, select {
+  background: var(--frame); color: var(--text); border: 1px solid transparent; border-radius: 10px;
+  padding: 10px 12px; font: inherit; width: 100%; outline: none;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+textarea { min-height: 96px; resize: vertical; }
+.btn-text { background: transparent; border: 0; color: var(--muted); padding: 0 14px; }
+.btn-text:hover { color: var(--text); }
+.chip.live { border-color: var(--col-progress); color: var(--col-progress); }
+.chip.warn { border-color: #ef6b6b; color: #ef6b6b; }
+.chip.wait { border-style: dashed; color: var(--muted); }
+.chip.priority.urgent { border-color: var(--danger); color: var(--danger); font-weight: 600; }
+.chip.priority.high { border-color: var(--col-progress); color: var(--col-progress); }
+.chip.priority.low { border-style: dashed; color: var(--muted); }
+.muted { color: var(--muted); font-size: 13px; }
+button:disabled { opacity: .45; cursor: default; }
+.icon-btn {
+  flex: 0 0 auto; width: 32px; height: 32px; padding: 0; border-radius: 8px; border: 0; background: transparent;
+  color: var(--muted); display: grid; place-items: center;
+}
+.icon-btn:hover:not(:disabled) { background: var(--side-2); color: var(--text); }
+.modal .roles-list, .modal .roles-panel { background: var(--frame); }
+.chip.sys { border-color: rgba(123,134,245,.5); color: #b9bff9; }
+.modal .roles-panel textarea, .modal .roles-panel input, .modal .roles-panel select, .modal .roles-agent,
+.modal .roles-effort button { background: var(--side); }
+.modal .roles-panel .roles-title-input { background: transparent; }
+.segmented { display: inline-flex; border: 1px solid var(--chip); border-radius: 16px; overflow: hidden; }
+.segmented .seg {
+  height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font-size: 13px;
+}
+.segmented .seg + .seg { border-left: 1px solid var(--chip); }
+.segmented .seg:hover { color: var(--text); }
+.segmented .seg.active { background: var(--accent); color: #fff; }
+.chip.run-badge { --run: #7b86f5; border-color: var(--run); color: var(--run); background: color-mix(in srgb, var(--run) 14%, transparent); max-width: 180px; }
+.chip.run-badge.closed { opacity: .5; background: transparent; border-style: dashed; }
+.modal.task-modal { width: 720px; max-width: calc(100vw - 48px); max-height: 90vh; padding: 0; gap: 0; overflow: hidden; }
+.task-modal-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px 14px; border-bottom: 1px solid var(--line); }
+.task-modal-head h3.task-modal-title { flex: 1; min-width: 0; margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-modal-head input.task-modal-title { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; padding: 8px 12px; }
+.task-modal-close {
+  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent;
+  color: var(--muted); display: grid; place-items: center;
+}
+.task-modal-close:hover { background: var(--side-2); color: var(--text); }
+.task-modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 18px; }
+.error-text { color: #ef6b6b; font-size: 13px; overflow-wrap: anywhere; }
+.chip.ok { border-color: var(--col-done); color: var(--col-done); }
+.segmented .seg { white-space: nowrap; }
+.modal { max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow-y: auto; }
+.chip.answer { border-color: var(--col-input); color: var(--col-input); }
+.markdown { font-size: 13px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 14px 0 6px; line-height: 1.3; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text); }
+.markdown h1 { font-size: 17px; }
+.markdown h2 { font-size: 15px; }
+.markdown h3, .markdown h4 { font-size: 13px; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre, .markdown table, .markdown blockquote { margin: 0 0 8px; }
+.markdown ul, .markdown ol { padding-left: 20px; }
+.markdown li + li { margin-top: 2px; }
+.markdown code { font: 12px ui-monospace, Menlo, monospace; padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.06); }
+.markdown pre { padding: 10px 12px; border-radius: 8px; background: var(--page); overflow: auto; }
+.markdown pre code { padding: 0; background: none; }
+.markdown blockquote { padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+.markdown table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
+.markdown th, .markdown td { padding: 4px 8px; border: 1px solid rgba(255,255,255,.1); text-align: left; vertical-align: top; }
+.markdown th { background: rgba(255,255,255,.04); font-weight: 600; }
+.markdown a { color: var(--accent); }
+.markdown a:not([href]) { color: inherit; text-decoration: underline dotted; }
+.markdown hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+.switch { width: 34px; height: 20px; border-radius: 10px; background: var(--chip); position: relative; flex-shrink: 0; border: 0; padding: 0; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 17px; }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inbox-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 20; }
+.inbox-head { display: flex; align-items: center; gap: 10px; padding: 18px 16px 14px 20px; border-bottom: 1px solid var(--line); }
+.inbox-head h3 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.inbox-count {
+  min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; font-size: 12px; font-weight: 600;
+  display: inline-grid; place-items: center; color: var(--col-input); background: rgba(232,176,74,.16);
+}
+.inbox-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.inbox-item { flex-shrink: 0; border-radius: 12px; outline: none; }
+.inbox-item.sent { display: none; }
+.inbox-foot { padding: 10px 20px 14px; border-top: 1px solid var(--line); font-size: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.rq-kbd {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px;
+  font: 600 11px ui-monospace, Menlo, monospace; color: var(--muted); background: var(--frame); border: 1px solid var(--chip);
+}
+.btn-sm .rq-kbd { margin-left: -6px; }
+.btn-sm.primary .rq-kbd { color: #fff; background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.3); }
+.rq {
+  --rq: var(--col-input);
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 14px; cursor: default;
+  background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--rq); border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.rq-answer { --rq: var(--col-review); }
+.rq-escalation { --rq: var(--danger); }
+.rq-approval { --rq: var(--col-review); }
+.rq.active { border-color: color-mix(in srgb, var(--accent) 70%, transparent); border-left-color: var(--rq); box-shadow: 0 0 0 1px var(--accent) inset; }
+.inbox-item:focus-visible .rq { box-shadow: 0 0 0 2px var(--accent) inset; }
+.rq-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 11px; }
+.rq-kind { flex-shrink: 0; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--rq, var(--muted)); font-size: 11px; }
+.rq-where { min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rq-stage { flex-shrink: 0; max-width: 45%; padding: 0 6px; border: 1px solid var(--chip); border-radius: 999px; color: var(--col-input); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rq-title { font-size: 14px; font-weight: 600; line-height: 1.35; white-space: pre-wrap; }
+.rq-toggle { align-self: flex-start; background: transparent; border: 0; padding: 0; color: var(--muted); font-size: 12px; }
+.rq-toggle:hover { color: var(--text); }
+.rq-body { display: flex; flex-direction: column; gap: 6px; }
+.rq-md { padding: 10px 12px; background: var(--frame); border-radius: 10px; max-height: 280px; overflow: auto; }
+.rq-free { display: flex; gap: 8px; align-items: flex-end; }
+.rq-free.rq-stack { flex-direction: column; align-items: stretch; }
+.rq-free textarea { flex: 1; min-height: 36px; max-height: 200px; padding: 8px 10px; font-size: 13px; resize: vertical; }
+.rq-free.rq-stack textarea { min-height: 56px; }
+.rq-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rq-open { padding: 0; font-size: 13px; color: var(--accent); }
+.rq-open:hover { color: #8791f7; }
+.rq-free.rq-stack textarea.rq-decision { min-height: 36px; }
+.showcase { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--frame); border-radius: 10px; min-width: 0; }
+.showcase.bare { padding: 0; background: transparent; }
+.showcase-head { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.showcase-md { max-height: 360px; overflow: auto; }
+.showcase-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.showcase-file { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); min-width: 0; }
+.showcase-file:first-child { padding-top: 0; border-top: 0; }
+.showcase-file-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.showcase-file-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.showcase-file-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.showcase-file-path { color: var(--muted); font-size: 11px; font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.showcase-file-head .btn-text { font-size: 12px; color: var(--accent); padding: 0 4px; }
+.showcase-file-head .btn-sm, .showcase-file-head .btn-text { flex-shrink: 0; white-space: nowrap; }
+.showcase-file-head .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.showcase-note { font-size: 12px; }
+.showcase-img { display: block; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--page); overflow: hidden; cursor: zoom-in; max-width: 100%; align-self: flex-start; }
+.showcase-img img { display: block; max-width: 100%; max-height: 240px; object-fit: contain; }
+.showcase-file-md { padding: 8px 10px; background: var(--page); border-radius: 8px; max-height: 320px; }
+.inbox-full-backdrop { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }
+.modal.inbox-full { width: 880px; max-width: calc(100vw - 48px); height: 88vh; padding: 0; gap: 0; overflow: hidden; }
+.inbox-full .task-modal-body { display: block; }
+.inbox-full-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.inbox-full-title .rq-kind { color: var(--muted); }
+.inbox-full-title h3 { margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn-sm.ok { border-color: color-mix(in srgb, var(--wf-accept) 55%, transparent); color: var(--wf-accept); }
+.btn-sm.ok:hover:not(:disabled) { border-color: var(--wf-accept); }
+.btn-text.wf-pal-save:hover:not(:disabled) { color: var(--accent); text-decoration: underline; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center;
+  padding: 32px; cursor: zoom-out;
+}
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; cursor: default; background: var(--frame); }
+.lightbox-btn {
+  position: absolute; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: rgba(255,255,255,.14);
+  color: #fff; font-size: 26px; line-height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.lightbox-btn:hover { background: rgba(255,255,255,.26); }
+.lightbox-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lightbox-close { top: 16px; right: 16px; }
+.lightbox-prev { left: 16px; top: 50%; transform: translateY(-50%); }
+.lightbox-next { right: 16px; top: 50%; transform: translateY(-50%); }
+
+.doc-md { --doc-mono: ui-monospace, Menlo, monospace; font-size: 15px; line-height: 1.7; color: color-mix(in srgb, var(--text) 92%, var(--muted)); max-width: 76ch; overflow-wrap: anywhere; }
+.doc-md > :first-child { margin-top: 0; }
+.doc-md > :last-child { margin-bottom: 0; }
+
+.doc-md h1, .doc-md h2, .doc-md h3, .doc-md h4, .doc-md h5, .doc-md h6 { color: var(--text); font-weight: 600; text-transform: none; letter-spacing: 0; scroll-margin-top: 16px; }
+.doc-md h1 { font-size: 28px; line-height: 1.25; font-weight: 650; letter-spacing: -.015em; margin: 0 0 16px; }
+.doc-md h2 { font-size: 20px; line-height: 1.3; margin: 40px 0 12px; padding-top: 18px; border-top: 1px solid var(--line); position: relative; }
+.doc-md h3 { font-size: 16px; line-height: 1.4; margin: 28px 0 8px; position: relative; }
+.doc-md h4, .doc-md h5, .doc-md h6 { font-size: 15px; margin: 22px 0 6px; }
+.doc-md h1 + h2 { margin-top: 24px; }
+.doc-md .doc-anchor { position: absolute; left: -22px; width: 18px; text-align: center; color: var(--chip); font-weight: 400; text-decoration: none; border: 0; opacity: 0; cursor: pointer; }
+.doc-md h2:hover .doc-anchor, .doc-md h3:hover .doc-anchor { opacity: 1; }
+.doc-md .doc-anchor:hover { color: var(--accent); }
+.doc-md h2 .doc-anchor { top: 18px; }
+
+.doc-md p, .doc-md ul, .doc-md ol, .doc-md blockquote, .doc-md .doc-code, .doc-md .doc-table, .doc-md dl { margin: 0 0 14px; }
+.doc-md ul, .doc-md ol { padding-left: 22px; }
+.doc-md li { margin: 4px 0; }
+.doc-md li > p { margin: 0 0 6px; }
+.doc-md li > ul, .doc-md li > ol { margin: 4px 0 0; }
+.doc-md li::marker { color: var(--muted); }
+.doc-md strong { color: var(--text); font-weight: 600; }
+.doc-md img { max-width: 100%; border-radius: 8px; }
+.doc-md hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
+
+
+.doc-md li:has(> input[type="checkbox"]) { list-style: none; }
+.doc-md ul:has(> li > input[type="checkbox"]) { padding-left: 4px; }
+.doc-md li > input[type="checkbox"] { appearance: none; width: 14px; height: 14px; margin: 0 10px 0 0; border-radius: 4px; border: 1.5px solid var(--chip); vertical-align: -2px; display: inline-grid; place-items: center; }
+.doc-md li > input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.doc-md li > input[type="checkbox"]:checked::after { content: "✓"; color: #fff; font-size: 10px; line-height: 1; }
+
+
+.doc-md code { font: 13px var(--doc-mono); padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.07); color: var(--text); }
+
+
+.doc-md a { color: color-mix(in srgb, var(--accent) 70%, #fff); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); cursor: pointer; }
+.doc-md a:hover { border-bottom-color: var(--accent); }
+.doc-md a[data-doc-href]::before { content: "▤ "; font-size: 11px; color: var(--muted); }
+.doc-md a[target="_blank"]::after { content: " ↗"; font-size: 11px; color: var(--muted); }
+.doc-md a:not([href]):not([data-doc-href]):not([data-doc-anchor]) { color: inherit; border-bottom: 1px dotted var(--muted); cursor: default; }
+
+
+.doc-md .doc-code { border-radius: 10px; background: color-mix(in srgb, var(--page) 80%, #000); border: 1px solid rgba(255,255,255,.05); overflow: hidden; }
+.doc-md .doc-code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid rgba(255,255,255,.05); font: 11px var(--doc-mono); color: var(--muted); }
+.doc-md .doc-copy { border: 0; background: transparent; color: var(--muted); font: 11px var(--doc-mono); padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.doc-md .doc-copy:hover { background: var(--side-2); color: var(--text); }
+.doc-md pre { margin: 0; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 var(--doc-mono); color: color-mix(in srgb, var(--text) 90%, var(--muted)); }
+.doc-md pre code { padding: 0; background: none; font-size: inherit; color: inherit; overflow-wrap: normal; }
+
+
+.doc-md blockquote { margin-left: 0; margin-right: 0; padding: 10px 16px; border-left: 3px solid var(--col-input); background: color-mix(in srgb, var(--col-input) 6%, transparent); border-radius: 0 10px 10px 0; color: color-mix(in srgb, var(--text) 85%, var(--col-input)); }
+.doc-md blockquote > :last-child { margin-bottom: 0; }
+.doc-md blockquote strong:first-child { color: var(--col-input); }
+
+
+.doc-md .doc-table { overflow-x: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; margin-bottom: 16px; }
+.doc-md table { border-collapse: collapse; width: 100%; font-size: 13.5px; line-height: 1.55; }
+.doc-md th, .doc-md td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.doc-md th { background: rgba(255,255,255,.04); font-weight: 600; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.doc-md tr:last-child td { border-bottom: 0; }
+.doc-md tbody tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+.doc-md td code, .doc-md th code { font-size: 12px; }
+.doc-md th[align="center"], .doc-md td[align="center"] { text-align: center; }
+.doc-md th[align="right"], .doc-md td[align="right"] { text-align: right; }
+
+/* ===================== оболочка макета (не часть приложения) ===================== */
+html, body { height: auto; min-height: 100%; }
+:root { color-scheme: dark; --chip-text: #c9ccd6; --win: 1240px; }
+body { overflow-x: hidden; padding-bottom: 96px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; }
+.ic.lg { width: 20px; height: 20px; }
+.ic.xl { width: 40px; height: 40px; stroke-width: 1.4; }
+.mk-top { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 10px 24px; background: rgba(38,40,46,.94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.mk-top h1 { margin: 0; font-size: 15px; font-weight: 600; }
+.mk-top h1 span { color: var(--muted); font-weight: 400; }
+.mk-top nav { display: flex; flex-wrap: wrap; gap: 2px; }
+.mk-top nav a { color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 999px; font-size: 13px; }
+.mk-top nav a:hover { color: var(--text); background: var(--side-2); }
+.mk-top .grow { flex: 1; }
+.mk-wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+.mk-sec { padding: 40px 0 4px; scroll-margin-top: 56px; }
+.mk-sec > h2 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+.mk-sec > h3 { margin: 22px 0 8px; font-size: 15px; font-weight: 600; }
+.mk-sec .lead { color: var(--muted); max-width: 88ch; margin: 0 0 14px; }
+.mk-sec .lead b { color: var(--text); font-weight: 600; }
+.mk-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.mk-ctl label { display: inline-flex; align-items: center; gap: 8px; }
+.mk-ctl select { width: auto; padding: 5px 8px; font-size: 13px; background: var(--side); border: 1px solid var(--chip); border-radius: 8px; }
+.mk-ctl .segmented .seg { height: 26px; font-size: 12px; }
+
+/* сцена: имитация окна приложения под затемнением */
+.stage { position: relative; width: min(100%, var(--win)); height: 800px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: var(--frame); border: 1px solid var(--line); }
+.fake-app { position: absolute; inset: 0; display: grid; grid-template-columns: 72px 220px 1fr; }
+.fake-app .r { border-right: 1px solid var(--line); padding: 22px 14px; display: flex; flex-direction: column; gap: 12px; }
+.fake-app .r i { display: block; height: 44px; border-radius: 12px; background: var(--side-2); }
+.fake-app .s { background: var(--side); border-right: 1px solid var(--line); padding: 22px 16px; display: flex; flex-direction: column; gap: 12px; }
+.fake-app .s i { display: block; height: 34px; border-radius: 8px; background: var(--side-2); }
+.fake-app .b { padding: 26px 28px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-content: start; }
+.fake-app .b i { display: block; height: 120px; border-radius: 14px; background: var(--card); }
+.fake-app .b i:nth-child(3n+2) { height: 180px; }
+@container (max-width: 900px) { .fake-app { grid-template-columns: 72px 1fr; } .fake-app .s { display: none; } }
+.sv-host { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); container: svhost / inline-size; }
+.sv-host[hidden] { display: none; }
+.sv-host.floating { position: fixed; z-index: 100; }
+.sv-reopen { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: rgba(0,0,0,.35); }
+.sv-reopen .btn-sm { height: 40px; padding: 0 22px; border-radius: 20px; font-size: 14px; }
+.mk-toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20; max-width: 90%; padding: 8px 14px; border-radius: 10px; background: #14151a; color: var(--text); border: 1px solid var(--chip); font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.5); pointer-events: none; }
+.mk-toast[hidden] { display: none; }
+.mk-toast.fixed { position: fixed; z-index: 200; bottom: 24px; }
+
+/* пометки-цифры на макете и легенда */
+.mk-n { position: absolute; z-index: 3; top: -9px; right: -7px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--col-input); color: #1c1d22; font: 700 11px/1 ui-monospace, Menlo, monospace; pointer-events: none; }
+.mk-n.l { right: auto; left: -7px; }
+body.no-marks .mk-n { display: none; }
+.mk-legend { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; font-size: 13px; color: var(--muted); }
+.mk-legend li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; }
+.mk-legend .mk-n { position: static; }
+.mk-legend b { color: var(--text); font-weight: 600; }
+.mk-two { display: grid; grid-template-columns: 460px minmax(260px, 1fr); gap: 28px; align-items: start; }
+@media (max-width: 900px) { .mk-two { grid-template-columns: minmax(0, 460px); } }
+.mk-panel { width: 460px; max-width: 100%; background: var(--side); border: 1px solid var(--line); border-radius: 14px; box-shadow: -24px 0 60px rgba(0,0,0,.25); overflow: hidden; }
+.mk-panel .inbox-head { display: flex; align-items: center; gap: 10px; padding: 18px 16px 14px 20px; border-bottom: 1px solid var(--line); }
+.mk-panel .inbox-head h3 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.mk-panel .inbox-list { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.mk-panel .inbox-foot { padding: 10px 20px 14px; border-top: 1px solid var(--line); font-size: 12px; }
+.mk-panel.narrow { width: 380px; }
+
+/* ===================== файлы показа в карточке (вариации поверх ShowcaseBlock) ===================== */
+.showcase { position: relative; }
+.showcase-head { display: flex; align-items: center; gap: 8px; }
+.showcase-head .grow { flex: 1; }
+.showcase-head .btn-sm { position: relative; height: 24px; padding: 0 10px; font-size: 12px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.showcase-file-head { position: relative; }
+.showcase-file-head > .sf-ic { flex: none; color: var(--muted); display: grid; place-items: center; width: 20px; }
+.showcase-file-head .btn-sm, .showcase-file-head .btn-text { position: relative; }
+.showcase-file-head .btn-sm.icon { width: 26px; padding: 0; justify-content: center; }
+.showcase-file-head .btn-sm.icon.on, .showcase-file-head .btn-text.on { color: var(--text); }
+.showcase-file.dim .showcase-file-name { color: var(--muted); font-weight: 500; }
+.sf-tag { flex: none; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--chip); color: var(--muted); }
+.sf-tag.warn { color: var(--col-input); border-color: color-mix(in srgb, var(--col-input) 55%, transparent); }
+.showcase-more { align-self: flex-start; position: relative; padding: 0 2px; font-size: 12px; color: var(--accent); background: transparent; border: 0; height: 24px; }
+.showcase-more:hover { text-decoration: underline; }
+.sv-menu { position: absolute; z-index: 10; top: 30px; right: 0; min-width: 210px; }
+.sv-menu.popup-menu { position: absolute; }
+.sv-menu[hidden] { display: none; }
+.popup-menu-item .ic { color: var(--muted); }
+.popup-menu-item:hover { background: rgba(255,255,255,.06); }
+
+.sv-inl { position: relative; height: 360px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+.sv-inl iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; background: #fff; }
+.sv-inl.mobile { background: var(--term-bg); }
+.sv-inl.mobile iframe { border-radius: 0; }
+.sv-inl-expand { position: absolute; top: 8px; right: 8px; z-index: 2; height: 26px; padding: 0 10px 0 8px; border-radius: 13px; border: 1px solid rgba(255,255,255,.25); background: rgba(20,21,26,.82); color: #fff; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+.sv-inl-expand:hover { background: rgba(20,21,26,.95); border-color: #fff; }
+.sv-inl-cap { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; }
+.sv-inl-cap .lock { display: inline-flex; align-items: center; gap: 4px; }
+.sv-inl-bar { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.sv-inl-bar .segmented .seg { height: 24px; font-size: 12px; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; }
+.sv-inl-bar .grow { flex: 1; }
+.sv-inl-bar .icon-btn { width: 26px; height: 26px; }
+.sv-inl.loading::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); animation: sv-shimmer 1s infinite; }
+
+.sv-thumbs { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.sv-thumb { position: relative; aspect-ratio: 4 / 3; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--page); cursor: zoom-in; }
+.sv-thumb:hover { border-color: var(--text); }
+.sv-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.sv-thumb .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 4px; font-size: 10.5px; text-align: left; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.75)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-thumb.more { display: grid; place-items: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+
+.sv-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sv-group + .sv-group { padding-top: 10px; border-top: 1px solid var(--line); }
+.sv-group-head { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sv-group-head .ttl { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-group-head .cnt { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.sv-group-head .tgl { background: transparent; border: 0; color: var(--muted); padding: 0; display: grid; place-items: center; width: 20px; height: 20px; }
+.sv-group-head .btn-text { font-size: 12px; color: var(--accent); padding: 0 4px; white-space: nowrap; position: relative; }
+.chip.st { font-size: 11px; padding: 0 8px; }
+.chip.st.ok { border-color: var(--col-done); color: var(--col-done); }
+.chip.st.wait { border-color: var(--col-review); color: #d4b2f5; }
+
+/* ===================== просмотрщик: общие детали ===================== */
+.sv-canvas { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; background: var(--term-bg); }
+.sv-canvas.center { justify-content: center; }
+.sv-dev { position: relative; flex: none; margin: 0 auto; background: #fff; overflow: hidden; border: 1px solid rgba(255,255,255,.14); border-radius: 10px; box-shadow: 0 14px 44px rgba(0,0,0,.5); }
+.sv-dev.tablet { border: 10px solid #0a0b0e; border-radius: 26px; }
+.sv-dev.mobile { border: 8px solid #0a0b0e; border-radius: 34px; }
+.sv-dev iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; background: #fff; }
+.sv-dev.loading::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent); animation: sv-shimmer 1s infinite; }
+.sv-devlabel { flex: none; font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.sv-devlabel b { color: var(--text); font-weight: 600; }
+.sv-canvas.pad0 { padding: 0; gap: 0; }
+.sv-imgc { flex: 1; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background-color: #23252b; background-image: conic-gradient(#2a2c33 25%, transparent 0 50%, #2a2c33 0 75%, transparent 0); background-size: 20px 20px; overflow: auto; }
+.sv-imgc img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 10px 34px rgba(0,0,0,.5); }
+.sv-imgc.z100 { align-items: flex-start; justify-content: flex-start; }
+.sv-imgc.z100 img { max-width: none; max-height: none; }
+.sv-mdc { flex: 1; min-height: 0; width: 100%; padding: 28px 24px 40px; background: var(--frame); overflow: auto; }
+.sv-mdc .doc-md { margin: 0 auto; }
+.sv-state { margin: auto; max-width: 480px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 24px 16px; }
+.sv-state .ic.xl { color: var(--muted); }
+.sv-state.warn .ic.xl { color: var(--col-input); }
+.sv-state.err .ic.xl { color: var(--danger); }
+.sv-state-title { font-size: 16px; font-weight: 600; }
+.sv-state p { margin: 0; color: var(--muted); font-size: 13.5px; }
+.sv-state .acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 6px; }
+.sv-path { max-width: 100%; font: 12px ui-monospace, Menlo, monospace; padding: 4px 9px; border-radius: 8px; background: var(--frame); border: 1px solid var(--line); overflow-wrap: anywhere; color: var(--text); }
+.sv-skel { width: min(520px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.sv-skel i { display: block; height: 14px; border-radius: 7px; background: linear-gradient(90deg, var(--side) 25%, var(--side-2) 50%, var(--side) 75%); background-size: 200% 100%; animation: sv-shimmer 1.2s linear infinite; }
+.sv-skel i.h { height: 96px; border-radius: 12px; }
+.spin { animation: sv-spin .9s linear infinite; }
+@keyframes sv-spin { to { transform: rotate(360deg); } }
+@keyframes sv-shimmer { from { background-position: 200% 0; transform: translateX(-100%); } to { background-position: -200% 0; transform: translateX(100%); } }
+.sv-skel i { animation-name: sv-skel; }
+@keyframes sv-skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .spin, .sv-skel i, .sv-dev.loading::after, .sv-inl.loading::after { animation: none; } }
+
+.sv-banner { display: flex; align-items: flex-start; gap: 12px; padding: 10px 20px; border-bottom: 1px solid color-mix(in srgb, var(--col-input) 40%, transparent); background: color-mix(in srgb, var(--col-input) 12%, var(--side)); font-size: 13px; }
+.sv-banner > .ic { color: var(--col-input); margin-top: 2px; }
+.sv-banner .tx { flex: 1; min-width: 0; }
+.sv-banner .tx b { display: block; font-weight: 600; }
+.sv-banner .tx span { color: color-mix(in srgb, var(--text) 82%, var(--muted)); }
+.sv-banner code { font: 12px ui-monospace, Menlo, monospace; padding: 0 5px; border-radius: 5px; background: rgba(255,255,255,.08); }
+.sv-banner .acts { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; justify-content: flex-end; }
+@container svhost (max-width: 720px) { .sv-banner { flex-wrap: wrap; } .sv-banner .acts { width: 100%; justify-content: flex-start; padding-left: 28px; } }
+
+.sv-net { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 10px; border-radius: 16px; border: 1px solid var(--chip); background: transparent; color: var(--text); font-size: 13px; white-space: nowrap; }
+.sv-net:hover { border-color: var(--text); }
+.sv-net .switch { width: 30px; height: 18px; border-radius: 9px; }
+.sv-net .switch::after { width: 12px; height: 12px; top: 3px; left: 3px; }
+.sv-net .switch.on::after { left: 15px; }
+.sv-net b { font-weight: 600; }
+.sv-net[aria-checked='false'] b { color: var(--muted); }
+.sv-net[aria-checked='true'] { border-color: color-mix(in srgb, var(--col-input) 60%, transparent); background: rgba(232,176,74,.08); }
+.sv-net[aria-checked='true'] b { color: var(--col-input); }
+.sv-net .cnt { font-size: 11px; line-height: 16px; padding: 0 7px; border-radius: 999px; color: var(--col-input); border: 1px solid color-mix(in srgb, var(--col-input) 55%, transparent); }
+.sv-seg .seg { display: inline-flex; align-items: center; gap: 6px; height: 30px; }
+.sv-seg .seg .w { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
+.sv-seg .seg.active .w { opacity: .9; }
+.sv-kbdhint { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sv-kbdhint kbd { font: 600 11px ui-monospace, Menlo, monospace; min-width: 18px; height: 18px; padding: 0 4px; display: inline-grid; place-items: center; border-radius: 5px; color: var(--muted); background: var(--frame); border: 1px solid var(--chip); }
+
+/* иконки файлов по типу */
+.k-html { color: #8fb0ff; } .k-image { color: #7ed8a4; } .k-doc { color: #d4b2f5; } .k-pdf { color: #f0907a; } .k-zip { color: var(--muted); }
+.sf-ic .ic, .sv-tab .ic, .sv-li .ic.k { width: 16px; height: 16px; }
+
+/* состояния: плитки */
+.mk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.mk-tile { border: 1px solid var(--line); border-radius: 14px; background: var(--side); overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+.mk-tile > h4 { margin: 0; padding: 10px 14px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+.mk-tile > h4 small { color: var(--muted); font-weight: 400; }
+.mk-tile .body { position: relative; min-height: 250px; display: flex; flex-direction: column; background: var(--term-bg); container: tile / inline-size; }
+.mk-tile .body .sv-canvas { min-height: 250px; }
+.mk-tile .body .sv-state { padding: 18px 14px; }
+.mk-tile .body .sv-banner { padding: 8px 14px; }
+.mk-tile .note { padding: 10px 14px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
+.mk-tile .note b { color: var(--text); font-weight: 600; }
+.mk-tile .mini-dev { margin: 12px auto; width: 78%; height: 120px; background: #fff; border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.mk-tile .mini-dev i { display: block; height: 8px; border-radius: 4px; background: #d5d8e3; }
+.mk-tile .mini-dev i:first-child { height: 12px; width: 40%; background: #b8bdd0; }
+.mk-tile .mini-dev.plain { font: 11px/1.4 Times, serif; color: #000; gap: 2px; }
+.mk-tile .mini-dev.plain b { font-size: 14px; }
+.mk-tile .mini-dev.plain u { color: #0000ee; }
+
+.sv-card-stale { display: flex; flex-direction: column; gap: 8px; }
+.sv-thumbpage { position: absolute; inset: 0; background: #fff; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.sv-thumbpage i { display: block; height: 5px; border-radius: 3px; background: #d5d8e3; }
+.sv-thumbpage i:first-child { width: 45%; height: 7px; background: #a9afc8; }
+.sv-thumbpage.dark { background: #1a1d26; } .sv-thumbpage.dark i { background: #363b4b; } .sv-thumbpage.dark i:first-child { background: #7b86f5; }
+.sv-thumbpage.md i { background: #cfd3e1; }
+
+@media print { .mk-top { position: static; } }
+
+.sf-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--col-input); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.showcase-more .ic { width: 12px; height: 12px; vertical-align: -1px; }
+
+/* ===== вариант 2: боковой список файлов ===== */
+.lbl-s { display: none; }
+.v2 .sv-modal { width: min(1120px, calc(100% - 48px)); height: 88%; max-width: none; max-height: none; padding: 0; gap: 0; overflow: hidden; flex-direction: row; }
+.sv-side { flex: none; width: 248px; display: flex; flex-direction: column; min-height: 0; background: var(--side); border-right: 1px solid var(--line); }
+.side-off .sv-side { display: none; }
+.sv-side-head { display: flex; align-items: baseline; gap: 8px; padding: 18px 16px 10px 20px; }
+.sv-side-head .ttl { font-size: 16px; font-weight: 600; }
+.sv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px; }
+.sv-lg { display: flex; align-items: center; gap: 8px; padding: 14px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.sv-lg .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-lg .chip { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.sv-li { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 7px 10px; border: 0; border-left: 3px solid transparent; border-radius: 8px; background: transparent; color: var(--text); }
+.sv-li:hover { background: rgba(255,255,255,.04); }
+.sv-li[aria-selected='true'] { background: var(--side-2); border-left-color: var(--accent); }
+.sv-li .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sv-li .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-li .mt { font-size: 11px; color: var(--muted); }
+.sv-li[aria-selected='true'] .mt { color: color-mix(in srgb, var(--text) 72%, var(--muted)); }
+.sv-li .flag { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.sv-li .flag.warn { background: var(--col-input); }
+.sv-li .flag.err { background: var(--danger); }
+.sv-li .flag.lock { width: auto; height: auto; color: var(--muted); display: grid; }
+.sv-li .flag.lock .ic { width: 13px; height: 13px; }
+.sv-side-foot { padding: 10px 16px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.sv-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.sv-mhead { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 14px; border-bottom: 1px solid var(--line); }
+.sv-mhead .ttl { flex: 1; min-width: 0; }
+.sv-mhead h3 { margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-mhead .pth { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-sidebtn[aria-pressed='true'] { color: var(--accent); }
+.sv-modal .sv-fsel { display: none; flex: 0 1 220px; min-width: 0; }
+.sv-seg .w { display: none; }
+.sv-fsel select { padding: 6px 10px; font-size: 13px; background: var(--frame); border: 1px solid var(--chip); border-radius: 8px; }
+.sv-nav { display: flex; align-items: center; gap: 2px; }
+.sv-nav .chip { border-color: var(--chip); }
+.sv-nav .icon-btn:disabled { opacity: .35; }
+.sv-toolbar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 16px; background: var(--side); border-bottom: 1px solid var(--line); }
+.sv-toolbar .grow { flex: 1; }
+.sv-toolbar .btn-sm { height: 30px; }
+.sv-toolbar .btn-text { padding: 0 8px; display: inline-flex; align-items: center; gap: 6px; }
+.sv-decide { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--side); }
+.sv-decide .dec { flex: 1 1 200px; min-width: 150px; max-width: 360px; }
+.sv-decide input { padding: 6px 10px; font-size: 13px; border-radius: 8px; height: 30px; border: 1px solid var(--chip); }
+.sv-decide .grow { flex: 1; }
+.sv-decide .btn-sm { height: 32px; }
+
+/* инлайн: карточка подзадачи и мини-просмотрщик */
+.sv2-sub { --tone: var(--col-done); display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 8px 10px 10px; border: 1px solid var(--line); border-left: 3px solid var(--tone); border-radius: 10px; background: var(--page); }
+.sv2-sub .sv-group-head { position: relative; }
+.sv2-sub .btn-sm.icon { position: relative; height: 26px; width: 26px; padding: 0; justify-content: center; }
+.sv2-sub .showcase-file { border-top-color: var(--line); }
+.sv2-sub .showcase-note { color: var(--muted); }
+
+@container svhost (max-width: 980px) {
+  .sv-side, .sv-sidebtn { display: none; }
+  .sv-modal .sv-fsel { display: block; }
+  .sv-mhead .ttl { display: none; }
+  .sv-modal .sv-fsel { flex: 1 1 auto; }
+}
+@container svhost (max-width: 900px) { .sv-seg .w { display: none; } .sv-net .cnt { display: none; } .sv-toolbar .btn-text .sv-btn-lbl { display: none; } }
+@container svhost (max-width: 760px) { .sv-seg .lbl, .sv-btn-lbl { display: none; } .sv-net .lbl { display: none; } .sv-net .lbl-s { display: inline; } .sv-decide .dec { max-width: none; } }
+
+</style>
+</head>
+<body data-win="wide">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+<symbol id="i-desktop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+<symbol id="i-tablet" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M11 18h2"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="18" rx="2"/><path d="M11 18h2"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+<symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+<symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
+<symbol id="i-chevr" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+<symbol id="i-chevl" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+<symbol id="i-chevu" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+<symbol id="i-chevd" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></symbol>
+<symbol id="i-spinner" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+<symbol id="i-html" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 4 4 3-3 4 4"/></symbol>
+<symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+<symbol id="i-pdf" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8.5 17v-4h1.6a1.2 1.2 0 0 1 0 2.4H8.5M13.5 13v4h.9a2 2 0 0 0 0-4z"/></symbol>
+<symbol id="i-zip" viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"/><path d="M4 7l8 4 8-4M12 11v10"/></symbol>
+<symbol id="i-filex" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M10 12.5l4 4M14 12.5l-4 4"/></symbol>
+<symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M8 12l3 3 5-6"/><circle cx="12" cy="12" r="9"/></symbol>
+</defs></svg>
+<header class="mk-top">
+  <h1>Просмотрщик показа <span>· Вариант 2 — боковой список файлов</span></h1>
+  <nav aria-label="Разделы макета"><a href="#viewer">1 · Просмотрщик</a><a href="#inbox">2 · Карточка в Инбоксе</a><a href="#multi">3 · Несколько подзадач</a><a href="#states">4 · Состояния</a></nav>
+  <span class="grow"></span>
+  <label class="muted" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="marks" checked> пометки на макете</label>
+</header>
+<div class="mk-wrap">
+  <section class="mk-sec" id="viewer">
+    <h2>1. Просмотрщик показа</h2>
+    <p class="lead"><b>Просмотрщик как рабочее место.</b> Слева — список файлов, сгруппированный по подзадачам (в узком окне сжимается в рейку значков); справа — управление и страница; внизу — <b>решение прямо в просмотрщике</b>: поле «вариант», «Выбрать этот вариант», «Вернуть…», «Принять». Проверьте: переключатель «Окно приложения: 860», список файлов, «Выбрать этот вариант».</p>
+    <div class="mk-ctl">
+      <span>Данные:</span><div class="segmented" role="group" aria-label="Данные показа"><button class="seg active" data-act="dataset" data-arg="single" data-set="data:single" aria-pressed="true">Один показ</button><button class="seg" data-act="dataset" data-arg="multi" data-set="data:multi" aria-pressed="false">Три подзадачи</button></div>
+      <span>Окно приложения:</span><div class="segmented" role="group" aria-label="Ширина окна приложения"><button class="seg active" data-act="win" data-arg="1240" data-set="win:1240" aria-pressed="true">1240</button><button class="seg" data-act="win" data-arg="860" data-set="win:860" aria-pressed="false">860 (минимум)</button></div>
+      <label>Показать состояние: <select id="force" aria-label="Показать состояние"><option value="">— обычный вид —</option><option value="loading">Загрузка</option><option value="missing">Файл не найден</option><option value="unsupported">Тип не открывается</option><option value="big">Больше 10 МБ</option><option value="external">PDF (системное приложение)</option><option value="stale">Старое приложение</option><option value="net">Без оформления: интернет</option><option value="outside">Без оформления: файлы вне показа</option><option value="error">Другая ошибка</option></select></label>
+    </div>
+    <div class="stage" id="stage">
+      <div class="fake-app" aria-hidden="true"><div class="r"><i></i><i></i><i></i><i></i></div><div class="s"><i></i><i></i><i></i><i></i><i></i></div><div class="b"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+      <div class="sv-reopen" hidden><button class="btn-sm primary" data-act="reopen">Открыть просмотрщик снова</button></div>
+      <div class="sv-host" id="host-emb"></div>
+    </div>
+  </section>
+
+  <section class="mk-sec" id="inbox">
+    <h2>2. Inline-превью в карточке approval</h2>
+    <p class="lead">Approval в панели Инбокса. У HTML-файла — «Превью» и значок «На весь экран»; встроенный фрейм — мини-просмотрщик: «Десктоп / Телефон» и «Обновить» прямо в карточке (телефонная ширина 375 px помещается без масштаба).</p>
+    <div class="mk-two"><div id="card-single"></div><ol class="mk-legend" id="legend-single"></ol></div>
+  </section>
+
+  <section class="mk-sec" id="multi">
+    <h2>3. Несколько подзадач в одном approval</h2>
+    <p class="lead">Approval уровня прогона: показ нескольких подзадач. Каждая подзадача — своя карточка с цветной полосой и статусом; в просмотрщике та же группировка — в боковом списке.</p>
+    <div class="mk-two"><div id="card-multi"></div><ol class="mk-legend" id="legend-multi"></ol></div>
+  </section>
+
+  <section class="mk-sec" id="states">
+    <h2>4. Состояния</h2>
+    <p class="lead">Одни и те же состояния во всех вариантах — меняется только оболочка вокруг. Слева — тело просмотрщика, под плиткой — что доступно. Любое можно включить в живом просмотрщике (раздел 1, «Показать состояние»).</p>
+    <div class="mk-grid" id="states-grid"></div>
+    <h3>Те же состояния в карточке Инбокса</h3>
+    <p class="lead">Сверху вниз: загрузка превью, старое приложение, файл не найден, тип не открывается. Тексты — прежние (<code>showcase.stale</code>, <code>showcase.cantOpen</code>), новые — по-русски и в en через i18n.</p>
+    <div id="states-card"></div>
+  </section>
+</div>
+<div class="sv-host floating" id="host-float" hidden></div>
+<div class="mk-toast fixed" id="toast" hidden role="status"></div>
+<script>const PAGES = {"a":{"styled":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Настройки — вариант A\u003c/title>\u003cstyle>\n:root{--bg:#f4f5f8;--card:#fff;--text:#1c1e26;--muted:#5f6475;--accent:#4f58c4;--line:#e2e4ed}\n*{box-sizing:border-box}body{margin:0;font:14px/1.45 -apple-system,\"Inter\",\"Segoe UI\",sans-serif;background:var(--bg);color:var(--text)}\n.top{display:flex;align-items:center;gap:10px;padding:14px 24px;background:#fff;border-bottom:1px solid var(--line)}\n.logo{width:26px;height:26px;border-radius:8px;background:var(--accent)}.who{margin-left:auto;color:var(--muted)}\n.wrap{display:grid;grid-template-columns:210px 1fr;gap:28px;max-width:1040px;margin:0 auto;padding:28px 24px}\nnav a{display:block;padding:9px 12px;border-radius:9px;color:var(--text);text-decoration:none;margin-bottom:2px}nav a.on{background:#e8e9fa;color:var(--accent);font-weight:600}\nh1{font-size:24px;margin:0 0 18px}h2{font-size:15px;margin:0 0 2px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:16px}.card>p{margin:0 0 6px;color:var(--muted)}\n.row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-top:1px solid var(--line)}.row span{display:flex;flex-direction:column}.row small{color:var(--muted)}\ninput[type=checkbox]{appearance:none;width:40px;height:23px;border-radius:12px;background:#c5c8d6;position:relative;flex:none;margin:0}\ninput[type=checkbox]::after{content:\"\";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;transition:left .15s}\ninput[type=checkbox]:checked{background:var(--accent)}input[type=checkbox]:checked::after{left:20px}\n.actions{display:flex;justify-content:flex-end;gap:10px}button{font:inherit;border-radius:10px;padding:9px 18px;border:1px solid var(--line);background:#fff}.pri{background:var(--accent);border-color:var(--accent);color:#fff}\n@media(max-width:700px){.wrap{grid-template-columns:1fr;gap:14px;padding:16px}nav{display:flex;gap:6px;overflow:auto}nav a{white-space:nowrap}h1{font-size:20px}}\n\u003c/style>\u003c/head>\u003cbody>\n\u003cheader class=\"top\">\u003cspan class=\"logo\">\u003c/span>\u003cb>Orca\u003c/b>\u003cspan class=\"who\">Мария К.\u003c/span>\u003c/header>\n\u003cdiv class=\"wrap\">\n  \u003cnav aria-label=\"Разделы\">\u003ca class=\"on\" href=\"#\">Уведомления\u003c/a>\u003ca href=\"#\">Профиль\u003c/a>\u003ca href=\"#\">Безопасность\u003c/a>\u003ca href=\"#\">Интеграции\u003c/a>\u003ca href=\"#\">Тариф\u003c/a>\u003c/nav>\n  \u003cmain>\n    \u003ch1>Уведомления\u003c/h1>\n    \u003csection class=\"card\">\u003ch2>Почта\u003c/h2>\u003cp>Письма о том, что требует вашего решения.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ждут вашего решения\u003c/b>\u003csmall>Сразу, когда воркер сдал результат\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ежедневная сводка\u003c/b>\u003csmall>Каждый будний день в 9:00\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Упавшие запуски\u003c/b>\u003csmall>Эскалации и ошибки воркеров\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n    \u003c/section>\n    \u003csection class=\"card\">\u003ch2>В приложении\u003c/h2>\u003cp>Как приложение привлекает внимание.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Значок в Dock\u003c/b>\u003csmall>Число ждущих запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Звук\u003c/b>\u003csmall>Короткий сигнал при новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n    \u003c/section>\n    \u003cdiv class=\"actions\">\u003cbutton class=\"ghost\">Отмена\u003c/button>\u003cbutton class=\"pri\">Сохранить\u003c/button>\u003c/div>\n  \u003c/main>\n\u003c/div>\u003c/body>\u003c/html>","plain":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Настройки — вариант A\u003c/title>\u003c/head>\u003cbody>\n\u003cheader class=\"top\">\u003cspan class=\"logo\">\u003c/span>\u003cb>Orca\u003c/b>\u003cspan class=\"who\">Мария К.\u003c/span>\u003c/header>\n\u003cdiv class=\"wrap\">\n  \u003cnav aria-label=\"Разделы\">\u003ca class=\"on\" href=\"#\">Уведомления\u003c/a>\u003ca href=\"#\">Профиль\u003c/a>\u003ca href=\"#\">Безопасность\u003c/a>\u003ca href=\"#\">Интеграции\u003c/a>\u003ca href=\"#\">Тариф\u003c/a>\u003c/nav>\n  \u003cmain>\n    \u003ch1>Уведомления\u003c/h1>\n    \u003csection class=\"card\">\u003ch2>Почта\u003c/h2>\u003cp>Письма о том, что требует вашего решения.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ждут вашего решения\u003c/b>\u003csmall>Сразу, когда воркер сдал результат\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ежедневная сводка\u003c/b>\u003csmall>Каждый будний день в 9:00\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Упавшие запуски\u003c/b>\u003csmall>Эскалации и ошибки воркеров\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n    \u003c/section>\n    \u003csection class=\"card\">\u003ch2>В приложении\u003c/h2>\u003cp>Как приложение привлекает внимание.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Значок в Dock\u003c/b>\u003csmall>Число ждущих запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Звук\u003c/b>\u003csmall>Короткий сигнал при новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n    \u003c/section>\n    \u003cdiv class=\"actions\">\u003cbutton class=\"ghost\">Отмена\u003c/button>\u003cbutton class=\"pri\">Сохранить\u003c/button>\u003c/div>\n  \u003c/main>\n\u003c/div>\u003c/body>\u003c/html>"},"b":{"styled":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Настройки — вариант B\u003c/title>\u003c!-- в оригинале: \u003cscript src=\"https://cdn.tailwindcss.com\"> и шрифт Inter с fonts.googleapis.com -->\u003cstyle>\nbody{margin:0;font:14px/1.45 Inter,system-ui,sans-serif;background:#12141a;color:#e9eaf0}\n.top{display:flex;align-items:center;gap:10px;padding:14px 28px;border-bottom:1px solid #262a35}.logo{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#7b86f5,#5ad1cc)}.who{margin-left:auto;color:#9096a8}\n.wrap{max-width:900px;margin:0 auto;padding:28px 24px}nav{display:flex;gap:6px;margin-bottom:22px;flex-wrap:wrap}nav a{padding:7px 14px;border-radius:999px;color:#9096a8;text-decoration:none;border:1px solid #262a35}nav a.on{background:#7b86f5;border-color:#7b86f5;color:#fff}\nmain{display:grid;grid-template-columns:1fr 1fr;gap:16px}h1{grid-column:1/-1;font-size:26px;margin:0}.card{background:#1a1d26;border:1px solid #262a35;border-radius:16px;padding:18px}\nh2{margin:0 0 2px;font-size:16px}.card>p{margin:0 0 8px;color:#9096a8}.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;border-top:1px solid #262a35}.row span{display:flex;flex-direction:column}.row small{color:#9096a8}\ninput[type=checkbox]{accent-color:#7b86f5;width:18px;height:18px}.actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:10px}\nbutton{font:inherit;padding:9px 18px;border-radius:12px;border:1px solid #2f3442;background:transparent;color:#e9eaf0}.pri{background:#7b86f5;border-color:#7b86f5;color:#fff}\n@media(max-width:700px){main{grid-template-columns:1fr}.wrap{padding:16px}}\n\u003c/style>\u003c/head>\u003cbody>\n\u003cheader class=\"top\">\u003cspan class=\"logo\">\u003c/span>\u003cb>Orca\u003c/b>\u003cspan class=\"who\">Мария К.\u003c/span>\u003c/header>\n\u003cdiv class=\"wrap\">\n  \u003cnav aria-label=\"Разделы\">\u003ca class=\"on\" href=\"#\">Уведомления\u003c/a>\u003ca href=\"#\">Профиль\u003c/a>\u003ca href=\"#\">Безопасность\u003c/a>\u003ca href=\"#\">Интеграции\u003c/a>\u003ca href=\"#\">Тариф\u003c/a>\u003c/nav>\n  \u003cmain>\n    \u003ch1>Уведомления\u003c/h1>\n    \u003csection class=\"card\">\u003ch2>Почта\u003c/h2>\u003cp>Письма о том, что требует вашего решения.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ждут вашего решения\u003c/b>\u003csmall>Сразу, когда воркер сдал результат\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ежедневная сводка\u003c/b>\u003csmall>Каждый будний день в 9:00\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Упавшие запуски\u003c/b>\u003csmall>Эскалации и ошибки воркеров\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n    \u003c/section>\n    \u003csection class=\"card\">\u003ch2>В приложении\u003c/h2>\u003cp>Как приложение привлекает внимание.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Значок в Dock\u003c/b>\u003csmall>Число ждущих запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Звук\u003c/b>\u003csmall>Короткий сигнал при новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n    \u003c/section>\n    \u003cdiv class=\"actions\">\u003cbutton class=\"ghost\">Отмена\u003c/button>\u003cbutton class=\"pri\">Сохранить\u003c/button>\u003c/div>\n  \u003c/main>\n\u003c/div>\u003c/body>\u003c/html>","plain":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Настройки — вариант B\u003c/title>\u003c!-- в оригинале: \u003cscript src=\"https://cdn.tailwindcss.com\"> и шрифт Inter с fonts.googleapis.com -->\u003c/head>\u003cbody>\n\u003cheader class=\"top\">\u003cspan class=\"logo\">\u003c/span>\u003cb>Orca\u003c/b>\u003cspan class=\"who\">Мария К.\u003c/span>\u003c/header>\n\u003cdiv class=\"wrap\">\n  \u003cnav aria-label=\"Разделы\">\u003ca class=\"on\" href=\"#\">Уведомления\u003c/a>\u003ca href=\"#\">Профиль\u003c/a>\u003ca href=\"#\">Безопасность\u003c/a>\u003ca href=\"#\">Интеграции\u003c/a>\u003ca href=\"#\">Тариф\u003c/a>\u003c/nav>\n  \u003cmain>\n    \u003ch1>Уведомления\u003c/h1>\n    \u003csection class=\"card\">\u003ch2>Почта\u003c/h2>\u003cp>Письма о том, что требует вашего решения.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ждут вашего решения\u003c/b>\u003csmall>Сразу, когда воркер сдал результат\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ежедневная сводка\u003c/b>\u003csmall>Каждый будний день в 9:00\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Упавшие запуски\u003c/b>\u003csmall>Эскалации и ошибки воркеров\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n    \u003c/section>\n    \u003csection class=\"card\">\u003ch2>В приложении\u003c/h2>\u003cp>Как приложение привлекает внимание.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Значок в Dock\u003c/b>\u003csmall>Число ждущих запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Звук\u003c/b>\u003csmall>Короткий сигнал при новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n    \u003c/section>\n    \u003cdiv class=\"actions\">\u003cbutton class=\"ghost\">Отмена\u003c/button>\u003cbutton class=\"pri\">Сохранить\u003c/button>\u003c/div>\n  \u003c/main>\n\u003c/div>\u003c/body>\u003c/html>"},"c":{"styled":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Настройки — вариант C\u003c/title>\u003c!-- в оригинале: \u003clink rel=\"stylesheet\" href=\"./assets/theme.css\"> — файла нет в показе -->\u003cstyle>\nbody{margin:0;font:15px/1.5 Georgia,\"Times New Roman\",serif;background:#fbf6ee;color:#2c2419}\n.top{display:flex;align-items:center;gap:10px;padding:16px 24px;border-bottom:2px solid #2c2419}.logo{width:24px;height:24px;background:#d9622b;border-radius:4px}.who{margin-left:auto;font-style:italic}\n.wrap{max-width:640px;margin:0 auto;padding:28px 20px}nav{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;border-bottom:1px solid #d8ccb8;padding-bottom:10px}nav a{color:#2c2419;text-decoration:none}nav a.on{color:#d9622b;text-decoration:underline}\nh1{font-size:30px;margin:0 0 16px}.card{border:1px solid #d8ccb8;background:#fffdf8;padding:16px 18px;margin-bottom:14px;border-radius:4px}h2{margin:0}.card>p{margin:2px 0 6px;color:#6f6250}\n.row{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-top:1px dashed #d8ccb8}.row span{display:flex;flex-direction:column}.row small{color:#6f6250}\ninput[type=checkbox]{accent-color:#d9622b;width:18px;height:18px}.actions{display:flex;gap:10px;justify-content:flex-end}button{font:inherit;padding:8px 16px;border:1px solid #2c2419;background:transparent}.pri{background:#2c2419;color:#fbf6ee}\n\u003c/style>\u003c/head>\u003cbody>\n\u003cheader class=\"top\">\u003cspan class=\"logo\">\u003c/span>\u003cb>Orca\u003c/b>\u003cspan class=\"who\">Мария К.\u003c/span>\u003c/header>\n\u003cdiv class=\"wrap\">\n  \u003cnav aria-label=\"Разделы\">\u003ca class=\"on\" href=\"#\">Уведомления\u003c/a>\u003ca href=\"#\">Профиль\u003c/a>\u003ca href=\"#\">Безопасность\u003c/a>\u003ca href=\"#\">Интеграции\u003c/a>\u003ca href=\"#\">Тариф\u003c/a>\u003c/nav>\n  \u003cmain>\n    \u003ch1>Уведомления\u003c/h1>\n    \u003csection class=\"card\">\u003ch2>Почта\u003c/h2>\u003cp>Письма о том, что требует вашего решения.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ждут вашего решения\u003c/b>\u003csmall>Сразу, когда воркер сдал результат\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ежедневная сводка\u003c/b>\u003csmall>Каждый будний день в 9:00\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Упавшие запуски\u003c/b>\u003csmall>Эскалации и ошибки воркеров\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n    \u003c/section>\n    \u003csection class=\"card\">\u003ch2>В приложении\u003c/h2>\u003cp>Как приложение привлекает внимание.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Значок в Dock\u003c/b>\u003csmall>Число ждущих запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Звук\u003c/b>\u003csmall>Короткий сигнал при новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n    \u003c/section>\n    \u003cdiv class=\"actions\">\u003cbutton class=\"ghost\">Отмена\u003c/button>\u003cbutton class=\"pri\">Сохранить\u003c/button>\u003c/div>\n  \u003c/main>\n\u003c/div>\u003c/body>\u003c/html>","plain":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Настройки — вариант C\u003c/title>\u003c!-- в оригинале:  — файла нет в показе -->\u003c/head>\u003cbody>\n\u003cheader class=\"top\">\u003cspan class=\"logo\">\u003c/span>\u003cb>Orca\u003c/b>\u003cspan class=\"who\">Мария К.\u003c/span>\u003c/header>\n\u003cdiv class=\"wrap\">\n  \u003cnav aria-label=\"Разделы\">\u003ca class=\"on\" href=\"#\">Уведомления\u003c/a>\u003ca href=\"#\">Профиль\u003c/a>\u003ca href=\"#\">Безопасность\u003c/a>\u003ca href=\"#\">Интеграции\u003c/a>\u003ca href=\"#\">Тариф\u003c/a>\u003c/nav>\n  \u003cmain>\n    \u003ch1>Уведомления\u003c/h1>\n    \u003csection class=\"card\">\u003ch2>Почта\u003c/h2>\u003cp>Письма о том, что требует вашего решения.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ждут вашего решения\u003c/b>\u003csmall>Сразу, когда воркер сдал результат\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Ежедневная сводка\u003c/b>\u003csmall>Каждый будний день в 9:00\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Упавшие запуски\u003c/b>\u003csmall>Эскалации и ошибки воркеров\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n    \u003c/section>\n    \u003csection class=\"card\">\u003ch2>В приложении\u003c/h2>\u003cp>Как приложение привлекает внимание.\u003c/p>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Значок в Dock\u003c/b>\u003csmall>Число ждущих запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n      \u003clabel class=\"row\">\u003cspan>\u003cb>Звук\u003c/b>\u003csmall>Короткий сигнал при новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n    \u003c/section>\n    \u003cdiv class=\"actions\">\u003cbutton class=\"ghost\">Отмена\u003c/button>\u003cbutton class=\"pri\">Сохранить\u003c/button>\u003c/div>\n  \u003c/main>\n\u003c/div>\u003c/body>\u003c/html>"},"m":{"styled":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Мобильная версия\u003c/title>\u003cstyle>*{box-sizing:border-box}body{margin:0;font:15px/1.45 -apple-system,\"Inter\",sans-serif;background:#eef0f6;color:#1c1e26}\n.bar{display:flex;align-items:center;gap:10px;padding:14px 16px;background:#4f58c4;color:#fff}.bar b{flex:1}\n.list{padding:12px}.item{display:flex;justify-content:space-between;align-items:center;background:#fff;border-radius:14px;padding:14px 16px;margin-bottom:10px}.item small{display:block;color:#5f6475}\ninput{width:22px;height:22px;accent-color:#4f58c4}.tabbar{position:sticky;bottom:0;display:flex;justify-content:space-around;background:#fff;border-top:1px solid #e2e4ed;padding:10px 0;color:#5f6475}\u003c/style>\u003c/head>\u003cbody>\u003cdiv class=\"bar\">\u003cb>Уведомления\u003c/b>\u003cspan>Готово\u003c/span>\u003c/div>\u003cdiv class=\"list\">\n\u003clabel class=\"item\">\u003cspan>Ждут решения\u003csmall>Сразу\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Ежедневная сводка\u003csmall>9:00, будни\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Упавшие запуски\u003csmall>Эскалации\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Звук\u003csmall>При новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Значок в Dock\u003csmall>Число запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\u003c/div>\n\u003cdiv class=\"tabbar\">\u003cspan>Доска\u003c/span>\u003cspan>Входящие\u003c/span>\u003cspan>\u003cb>Ещё\u003c/b>\u003c/span>\u003c/div>\u003c/body>\u003c/html>","plain":"\u003c!doctype html>\u003chtml lang=\"ru\">\u003chead>\u003cmeta charset=\"utf-8\">\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\u003ctitle>Мобильная версия\u003c/title>\u003c/head>\u003cbody>\u003cdiv class=\"bar\">\u003cb>Уведомления\u003c/b>\u003cspan>Готово\u003c/span>\u003c/div>\u003cdiv class=\"list\">\n\u003clabel class=\"item\">\u003cspan>Ждут решения\u003csmall>Сразу\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Ежедневная сводка\u003csmall>9:00, будни\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Упавшие запуски\u003csmall>Эскалации\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Звук\u003csmall>При новом запросе\u003c/small>\u003c/span>\u003cinput type=\"checkbox\">\u003c/label>\n\u003clabel class=\"item\">\u003cspan>Значок в Dock\u003csmall>Число запросов\u003c/small>\u003c/span>\u003cinput type=\"checkbox\" checked>\u003c/label>\u003c/div>\n\u003cdiv class=\"tabbar\">\u003cspan>Доска\u003c/span>\u003cspan>Входящие\u003c/span>\u003cspan>\u003cb>Ещё\u003c/b>\u003c/span>\u003c/div>\u003c/body>\u003c/html>"}};</script>
+<script>
+'use strict';
+/* Общая часть макета: данные показа, состояние, отрисовка. Вариант (v1/v2/v3) задаёт только «оболочку»
+   просмотрщика и вид карточки; всё остальное одинаково, чтобы сравнивать именно раскладку. */
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ic = (n, cls) => '<svg class="ic ' + (cls || '') + '" aria-hidden="true"><use href="#i-' + n + '"/></svg>';
+const mark = (n, cls) => '<span class="mk-n ' + (cls || '') + '" aria-hidden="true">' + n + '</span>';
+const plural = (n, one, few, many) => { const m = n % 100, d = n % 10; return n + ' ' + (m > 10 && m < 20 ? many : d === 1 ? one : d > 1 && d < 5 ? few : many); };
+
+/* ---------- данные ---------- */
+const KIND = {
+  html: { icon: 'html', cls: 'k-html', tag: 'HTML' },
+  image: { icon: 'image', cls: 'k-image', tag: 'Картинка' },
+  md: { icon: 'doc', cls: 'k-doc', tag: 'Markdown' },
+  pdf: { icon: 'pdf', cls: 'k-pdf', tag: 'PDF' },
+  none: { icon: 'zip', cls: 'k-zip', tag: 'Файл' }
+};
+const WIDTHS = {
+  desktop: { w: 1280, label: 'Десктоп', icon: 'desktop', bz: 1, h: 0 },
+  tablet: { w: 768, label: 'Планшет', icon: 'tablet', bz: 10, h: 1024 },
+  mobile: { w: 375, label: 'Телефон', icon: 'phone', bz: 8, h: 812 }
+};
+const file = (dir, name, kind, x) => Object.assign({ name, path: 'docs/design/' + dir + '/' + name, kind, size: '', issue: null }, x || {});
+
+const DATASETS = {
+  single: [{
+    title: 'Экран настроек', who: 'Дизайнер', st: ['ok', 'Готово к показу'], files: [
+      file('settings', 'variant-a.html', 'html', { size: '18 КБ', page: 'a' }),
+      file('settings', 'variant-b.html', 'html', { size: '22 КБ', page: 'b', issue: 'net', blocked: 4 }),
+      file('settings', 'variant-c.html', 'html', { size: '16 КБ', page: 'c', issue: 'outside' }),
+      file('settings', 'screenshot-dark.png', 'image', { size: '312 КБ', shot: 'dark' }),
+      file('settings', 'screenshot-light.png', 'image', { size: '298 КБ', shot: 'light' }),
+      file('settings', 'screenshot-mobile.png', 'image', { size: '141 КБ', shot: 'mobile' }),
+      file('settings', 'README.md', 'md', { size: '2 КБ' }),
+      file('settings', 'spec.pdf', 'pdf', { size: '1,4 МБ' }),
+      file('settings', 'assets.zip', 'none', { size: '12,4 МБ' })
+    ]
+  }],
+  multi: [
+    { title: 'Экран настроек', who: 'Дизайнер', st: ['ok', 'Готово'], files: [
+      file('settings', 'variant-a.html', 'html', { size: '18 КБ', page: 'a' }),
+      file('settings', 'variant-b.html', 'html', { size: '22 КБ', page: 'b', issue: 'net', blocked: 4 }),
+      file('settings', 'variant-c.html', 'html', { size: '16 КБ', page: 'c', issue: 'outside' }),
+      file('settings', 'README.md', 'md', { size: '2 КБ' })
+    ] },
+    { title: 'Иконки и ассеты', who: 'Дизайнер', st: ['wait', 'На проверке'], files: [
+      file('icons', 'icons-sheet.png', 'image', { size: '204 КБ', shot: 'icons' }),
+      file('icons', 'icons.svg', 'image', { size: '9 КБ', shot: 'icons', issue: 'missing' }),
+      file('icons', 'demo-screencast.gif', 'image', { size: '14,2 МБ', shot: 'icons', issue: 'big' })
+    ] },
+    { title: 'Мобильная версия', who: 'Фронтенд', st: ['ok', 'Готово'], files: [
+      file('mobile', 'mobile.html', 'html', { size: '6 КБ', page: 'm' }),
+      file('mobile', 'mobile-390.png', 'image', { size: '141 КБ', shot: 'mobile' }),
+      file('mobile', 'build.zip', 'none', { size: '3,1 МБ' })
+    ] }
+  ]
+};
+
+const MD_HTML = '<div class="doc-md"><h1>Экран «Настройки уведомлений»</h1>' +
+  '<p>Три варианта одного экрана и скриншоты для сравнения. <code>variant-a.html</code> самодостаточен; B и C подтягивают оформление снаружи — это видно по баннеру над страницей.</p>' +
+  '<h2>Варианты</h2><ul>' +
+  '<li><strong>A — боковое меню.</strong> Разделы слева, переключатели справа. Привычно; на телефоне меню уходит в ленту.</li>' +
+  '<li><strong>B — карточки.</strong> Две колонки карточек, тёмная тема. Лучше всего масштабируется.</li>' +
+  '<li><strong>C — одна колонка.</strong> Текстовый стиль, минимум декора.</li></ul>' +
+  '<h2>Что нужно решить</h2><ol><li>Нужна ли ежедневная сводка по умолчанию?</li><li>Звук — в «Уведомлениях» или в «Приложении»?</li></ol>' +
+  '<blockquote><strong>Важно.</strong> Скриншоты сняты в ширину 1440 px; мобильный — 390 px.</blockquote>' +
+  '<pre><code>docs/design/settings/\n  variant-a.html\n  variant-b.html\n  variant-c.html</code></pre></div>';
+
+const MD_SMALL = '<h2>Варианты</h2><ul><li><strong>A — боковое меню.</strong> Разделы слева, переключатели справа.</li><li><strong>B — карточки.</strong> Две колонки, тёмная тема.</li><li><strong>C — одна колонка.</strong> Минимум декора.</li></ul><h2>Что решить</h2><ol><li>Нужна ли ежедневная сводка по умолчанию?</li><li>Звук — в «Уведомлениях» или в «Приложении»?</li></ol>';
+
+/* ---------- иллюстрации: «скриншоты» рисуются SVG ---------- */
+function shotSVG(k) {
+  const T = {
+    dark: { bg: '#12141a', bar: '#1a1d26', card: '#1a1d26', line: '#262a35', tx: '#e9eaf0', mu: '#9096a8', ac: '#7b86f5', sw: '#3a3f50' },
+    light: { bg: '#f4f5f8', bar: '#ffffff', card: '#ffffff', line: '#e2e4ed', tx: '#1c1e26', mu: '#5f6475', ac: '#4f58c4', sw: '#c5c8d6' }
+  };
+  const head = (W, H) => '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" font-family="Inter,Arial,sans-serif">';
+  const tog = (x, y, on, t) => '<rect x="' + x + '" y="' + y + '" width="46" height="26" rx="13" fill="' + (on ? t.ac : t.sw) + '"/><circle cx="' + (on ? x + 33 : x + 13) + '" cy="' + (y + 13) + '" r="10" fill="#fff"/>';
+  if (k === 'icons') {
+    let s = head(1024, 512) + '<rect width="1024" height="512" fill="#1b1c21"/>';
+    const cols = ['#7b86f5', '#5ad1cc', '#f08a3a', '#b57bee', '#e8b04a', '#8fd16a', '#ef6b6b', '#8a8d98'];
+    cols.forEach((c, i) => {
+      const x = 64 + (i % 4) * 240, y = 64 + Math.floor(i / 4) * 200;
+      s += '<rect x="' + x + '" y="' + y + '" width="176" height="152" rx="28" fill="#2e3037"/>';
+      const cx = x + 88, cy = y + 76;
+      s += i % 4 === 0 ? '<circle cx="' + cx + '" cy="' + cy + '" r="34" fill="' + c + '"/>' : i % 4 === 1 ? '<rect x="' + (cx - 32) + '" y="' + (cy - 32) + '" width="64" height="64" rx="14" fill="' + c + '"/>' : i % 4 === 2 ? '<path d="M' + cx + ' ' + (cy - 36) + 'L' + (cx + 36) + ' ' + (cy + 30) + 'L' + (cx - 36) + ' ' + (cy + 30) + 'Z" fill="' + c + '"/>' : '<path d="M' + (cx - 34) + ' ' + cy + 'H' + (cx + 34) + 'M' + cx + ' ' + (cy - 34) + 'V' + (cy + 34) + '" stroke="' + c + '" stroke-width="14" stroke-linecap="round"/>';
+    });
+    return s + '</svg>';
+  }
+  if (k === 'mobile') {
+    const t = T.light;
+    let s = head(390, 844) + '<rect width="390" height="844" fill="#eef0f6"/><rect width="390" height="96" fill="' + t.ac + '"/><text x="20" y="66" font-size="20" font-weight="700" fill="#fff">Уведомления</text><text x="330" y="66" font-size="15" fill="#fff">Готово</text>';
+    ['Ждут решения', 'Ежедневная сводка', 'Упавшие запуски', 'Звук', 'Значок в Dock'].forEach((n, i) => {
+      const y = 116 + i * 84;
+      s += '<rect x="14" y="' + y + '" width="362" height="70" rx="16" fill="#fff"/><text x="32" y="' + (y + 32) + '" font-size="16" font-weight="600" fill="' + t.tx + '">' + n + '</text><text x="32" y="' + (y + 54) + '" font-size="13" fill="' + t.mu + '">Настройка</text>' + tog(312, y + 22, i % 2 === 0, t);
+    });
+    return s + '<rect y="780" width="390" height="64" fill="#fff"/><text x="40" y="818" font-size="14" fill="' + t.mu + '">Доска</text><text x="150" y="818" font-size="14" fill="' + t.mu + '">Входящие</text><text x="300" y="818" font-size="14" font-weight="700" fill="' + t.tx + '">Ещё</text></svg>';
+  }
+  const t = T[k] || T.dark;
+  let s = head(1440, 900) + '<rect width="1440" height="900" fill="' + t.bg + '"/><rect width="1440" height="60" fill="' + t.bar + '"/><rect x="28" y="16" width="28" height="28" rx="8" fill="' + t.ac + '"/>' +
+    '<text x="68" y="37" font-size="18" font-weight="700" fill="' + t.tx + '">Orca</text><text x="1290" y="37" font-size="15" fill="' + t.mu + '">Мария К.</text>';
+  ['Уведомления', 'Профиль', 'Безопасность', 'Интеграции', 'Тариф'].forEach((n, i) => {
+    const y = 100 + i * 48;
+    if (i === 0) s += '<rect x="28" y="' + y + '" width="220" height="40" rx="10" fill="' + t.ac + '" opacity=".18"/>';
+    s += '<text x="46" y="' + (y + 26) + '" font-size="16" fill="' + (i ? t.mu : t.ac) + '" font-weight="' + (i ? 400 : 700) + '">' + n + '</text>';
+  });
+  s += '<text x="300" y="132" font-size="34" font-weight="700" fill="' + t.tx + '">Уведомления</text>';
+  let y = 164;
+  [['Почта', ['Ждут вашего решения', 'Ежедневная сводка', 'Упавшие запуски']], ['В приложении', ['Значок в Dock', 'Звук']]].forEach(([title, rows]) => {
+    const h = 74 + rows.length * 64;
+    s += '<rect x="300" y="' + y + '" width="1112" height="' + h + '" rx="18" fill="' + t.card + '" stroke="' + t.line + '"/><text x="328" y="' + (y + 40) + '" font-size="19" font-weight="700" fill="' + t.tx + '">' + title + '</text>';
+    rows.forEach((r, i) => {
+      const ry = y + 62 + i * 64;
+      s += '<line x1="328" x2="1384" y1="' + ry + '" y2="' + ry + '" stroke="' + t.line + '"/><text x="328" y="' + (ry + 38) + '" font-size="16" fill="' + t.tx + '">' + r + '</text>' + tog(1338, ry + 19, i !== 1, t);
+    });
+    y += h + 22;
+  });
+  return s + '<rect x="1230" y="' + (y + 8) + '" width="182" height="46" rx="12" fill="' + t.ac + '"/><text x="1288" y="' + (y + 38) + '" font-size="16" font-weight="600" fill="#fff">Сохранить</text></svg>';
+}
+const shotURI = (k) => 'data:image/svg+xml;utf8,' + encodeURIComponent(shotSVG(k));
+
+/* ---------- состояние мока ---------- */
+const P = new URLSearchParams(location.search);
+const S = {
+  data: P.get('d') === 'multi' ? 'multi' : 'single',
+  gi: 0, fi: 0,
+  width: WIDTHS[P.get('width')] ? P.get('width') : 'desktop',
+  net: P.get('net') === '1', zoom: 'fit', force: P.get('force') || '', loading: false,
+  hidden: false, floating: false, hideBanner: {},
+  inl: 'single:0:0', more: null, expanded: {}, collapsed: { 'multi:2': true }, imode: 'desktop', carousel: 0, tab: 0, decision: ''
+};
+if (P.get('f')) { const [g, f] = P.get('f').split(':').map(Number); S.gi = g || 0; S.fi = f || 0; }
+if (P.get('win') === '860') document.body.dataset.win = 'narrow';
+const groups = () => DATASETS[S.data];
+const cur = () => { const g = groups()[S.gi]; return { g, f: g.files[S.fi], gi: S.gi, fi: S.fi }; };
+const flat = () => { const out = []; groups().forEach((g, gi) => g.files.forEach((f, fi) => out.push({ g, f, gi, fi }))); return out; };
+const total = () => flat().length;
+const position = () => flat().findIndex((x) => x.gi === S.gi && x.fi === S.fi) + 1;
+
+/** Что реально показывать: состояние файла с учётом типа и включённых интернет-ресурсов. */
+function stateOf(f) {
+  if (S.loading) return 'loading';
+  if (S.force) return S.force;
+  if (f.issue === 'missing' || f.issue === 'big') return f.issue;
+  if (f.kind === 'none') return 'unsupported';
+  if (f.kind === 'pdf') return 'external';
+  if (f.kind === 'html' && f.issue === 'net') return 'net';
+  if (f.kind === 'html' && f.issue === 'outside') return 'outside';
+  return 'ok';
+}
+const pageFor = (f, st) => (f.kind === 'html' ? f.page : st === 'outside' ? 'c' : st === 'net' ? 'b' : 'a');
+const styledFor = (st) => (st === 'net' ? S.net : st !== 'outside');
+
+function srcdoc(pageKey, styled) { return esc(PAGES[pageKey][styled ? 'styled' : 'plain']); }
+
+/* ---------- блоки состояний (одинаковы во всех вариантах) ---------- */
+function stateHTML(st, f) {
+  const path = '<span class="sv-path">' + esc(f.path) + '</span>';
+  const btn = (act, txt, cls, icon) => '<button class="btn-sm ' + (cls || '') + '" data-act="' + act + '">' + (icon ? ic(icon) : '') + txt + '</button>';
+  const wrap = (kind, icon, title, body, acts, spin) => '<div class="sv-state ' + kind + '" role="' + (kind === 'err' || kind === 'warn' ? 'alert' : 'status') + '">' + ic(icon, 'xl' + (spin ? ' spin' : '')) + '<div class="sv-state-title">' + title + '</div>' + body + (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div>';
+  switch (st) {
+    case 'loading':
+      return '<div class="sv-state" role="status" aria-live="polite"><div class="sv-skel" aria-hidden="true"><i class="h"></i><i style="width:70%"></i><i style="width:88%"></i><i style="width:52%"></i></div><div class="sv-state-title">' + ic('spinner', 'spin') + ' Читаю «' + esc(f.name) + '»…</div><p>Файл читается из ветки задачи</p></div>';
+    case 'missing':
+      return wrap('err', 'filex', 'Файл не найден', path + '<p>Его нет ни в worktree задачи, ни в её ветке — возможно, воркер удалил или переименовал файл после сдачи показа. После мержа worktree убирают, но файлы остаются в ветке <code>orca/task_mumr4l6n64</code>.</p>', btn('refresh', 'Повторить', '', 'refresh') + btn('copy', 'Копировать путь', '', 'copy'));
+    case 'unsupported':
+      return wrap('', 'zip', 'Этот тип файла приложение не открывает', path + '<p>Посмотрите его в ветке задачи. Исполняемые файлы и архивы из ветки агента приложение не запускает и не распаковывает — так безопаснее.</p><p>' + esc(f.size || '') + ' · ' + esc((f.name.match(/\.[^.]+$/) || [''])[0]) + '</p>', btn('copy', 'Копировать путь', '', 'copy'));
+    case 'big':
+      return wrap('warn', 'alert', 'Файл слишком большой для просмотра в приложении', path + '<p>' + esc(f.size || '14,2 МБ') + ' — больше лимита в 10 МБ. Откройте его системным приложением.</p>', btn('open', 'Открыть', 'primary', 'external') + btn('reveal', 'В папке', '', 'folder'));
+    case 'external':
+      return wrap('', 'pdf', 'PDF открывается в приложении системы', path + '<p>Просмотр PDF внутри приложения не поддерживается.</p>', btn('open', 'Открыть', 'primary', 'external') + btn('reveal', 'В папке', '', 'folder'));
+    case 'stale':
+      return wrap('warn', 'alert', 'Нужен перезапуск приложения', '<p>Приложение запущено со старой версией main/preload, где ещё нет просмотра показа. Перезапустите приложение.</p><p>Файлы показа по-прежнему можно открыть кнопкой «Открыть» в карточке или из ветки задачи.</p>', '');
+    case 'error':
+      return wrap('err', 'alert', 'Не удалось прочитать файл', path + '<p class="error-text">EACCES: нет доступа к файлу (ошибка main)</p>', btn('refresh', 'Повторить', '', 'refresh'));
+  }
+  return '';
+}
+
+function bannerHTML(st, f, opts) {
+  opts = opts || {};
+  if (st === 'net' && !S.net) {
+    return '<div class="sv-banner" role="status">' + ic('alert', 'lg') + '<div class="tx"><b>Страница, похоже, без оформления</b><span>Она подключает стили и шрифты из интернета — <code>cdn.tailwindcss.com</code>, <code>fonts.googleapis.com</code>, а интернет-ресурсы выключены.</span></div>' +
+      '<div class="acts"><button class="btn-sm primary" data-act="net-on">Включить интернет-ресурсы</button>' + (opts.noHide ? '' : '<button class="btn-text" data-act="hide-banner">Скрыть</button>') + '</div></div>';
+  }
+  if (st === 'outside') {
+    return '<div class="sv-banner" role="status">' + ic('alert', 'lg') + '<div class="tx"><b>Страница, похоже, без оформления</b><span>Она ссылается на файлы, которых нет в показе: <code>assets/theme.css</code>, <code>img/logo.svg</code>. Даже с интернетом они не подгрузятся. В браузере страница откроется с диска — там файлы найдутся; или верните с замечанием, чтобы воркер добавил их в показ.</span></div>' +
+      '<div class="acts"><button class="btn-sm" data-act="open">' + ic('external') + 'Открыть в браузере</button>' + (opts.noHide ? '' : '<button class="btn-text" data-act="hide-banner">Скрыть</button>') + '</div></div>';
+  }
+  return '';
+}
+const bannerFor = (f, st) => (S.hideBanner[f.path] ? '' : bannerHTML(st, f));
+
+/* ---------- холст просмотрщика ---------- */
+function canvasHTML(f, st) {
+  const live = st === 'ok' || st === 'net' || st === 'outside';
+  if (!live) return { cls: 'center', html: stateHTML(st, f) };
+  if (f.kind === 'image') {
+    return { cls: 'pad0', html: '<div class="sv-imgc' + (S.zoom === '100' ? ' z100' : '') + '"><img src="' + shotURI(f.shot) + '" alt="' + esc(f.name) + '"></div>' };
+  }
+  if (f.kind === 'md') return { cls: 'pad0', html: '<div class="sv-mdc">' + MD_HTML + '</div>' };
+  const w = WIDTHS[S.width];
+  return {
+    cls: '',
+    html: '<div class="sv-devlabel"><b>' + w.label + '</b> <span data-scale-label></span></div>' +
+      '<div class="sv-dev ' + S.width + '" data-w="' + w.w + '"><iframe sandbox="allow-scripts" title="Страница ' + esc(f.name) + '" srcdoc="' + srcdoc(pageFor(f, st), styledFor(st)) + '"></iframe></div>'
+  };
+}
+
+/** Панель управления по типу файла: слева — что меняет вид, справа — «наружу». */
+function tools(f, st, o) {
+  o = o || {};
+  const live = st === 'ok' || st === 'net' || st === 'outside';
+  const seg = () => '<div class="segmented sv-seg" role="group" aria-label="Ширина страницы">' + Object.keys(WIDTHS).map((k) => {
+    const w = WIDTHS[k];
+    return '<button class="seg' + (S.width === k ? ' active' : '') + '" aria-pressed="' + (S.width === k) + '" data-act="width" data-arg="' + k + '" data-key="width:' + k + '" title="' + w.label + ' — ' + w.w + ' px" aria-label="' + w.label + ', ' + w.w + ' пикселей">' + ic(w.icon) + '<span class="lbl">' + w.label + '</span><span class="w">' + w.w + '</span></button>';
+  }).join('') + '</div>';
+  const zoom = () => '<div class="segmented sv-seg" role="group" aria-label="Масштаб картинки">' + [['fit', 'Вписать'], ['100', '100 %']].map(([k, l]) => '<button class="seg' + (S.zoom === k ? ' active' : '') + '" aria-pressed="' + (S.zoom === k) + '" data-act="zoom" data-arg="' + k + '" data-key="zoom:' + k + '">' + l + '</button>').join('') + '</div>';
+  const refresh = (dis) => '<button class="icon-btn" data-act="refresh" data-key="refresh" title="Обновить — перечитать файл из ветки" aria-label="Обновить"' + (dis ? ' disabled' : '') + '>' + ic('refresh', dis ? 'spin' : '') + '</button>';
+  const net = () => {
+    const blocked = !S.net && f.blocked ? '<span class="cnt" title="Запросов заблокировано: ' + f.blocked + '">' + f.blocked + ' заблок.</span>' : '';
+    return '<button class="sv-net" role="switch" aria-checked="' + S.net + '" data-act="net" data-key="net" aria-label="Интернет-ресурсы" title="Страница сможет подгружать стили, шрифты и скрипты из интернета. Включайте, только если доверяете макету."><span class="switch' + (S.net ? ' on' : '') + '" aria-hidden="true"></span><span class="lbl">Интернет-ресурсы</span><span class="lbl-s">Интернет</span><b>' + (S.net ? 'вкл' : 'выкл') + '</b>' + blocked + '</button>';
+  };
+  const open = (label) => '<button class="btn-sm" data-act="open" data-key="open" aria-label="' + label + '" title="' + (label === 'Открыть в браузере' ? 'Открыть в браузере по умолчанию' : 'Открыть системным приложением по умолчанию') + '">' + ic('external') + '<span class="sv-btn-lbl">' + label + '</span></button>';
+  const reveal = () => '<button class="btn-text" data-act="reveal" data-key="reveal" aria-label="В папке" title="Показать файл в папке ветки задачи">' + ic('folder') + '<span class="sv-btn-lbl">В папке</span></button>';
+  const parts = {
+    seg: live && f.kind === 'html' ? seg() : '',
+    zoom: live && f.kind === 'image' ? zoom() : '',
+    refresh: live || st === 'missing' || st === 'error' || st === 'loading' ? refresh(st === 'loading') : '',
+    net: live && f.kind === 'html' ? net() : '',
+    open: live ? open(f.kind === 'html' ? 'Открыть в браузере' : 'Открыть') : st === 'big' || st === 'external' ? open('Открыть') : '',
+    reveal: live || st === 'big' || st === 'external' ? reveal() : ''
+  };
+  return {
+    parts: parts,
+    left: parts.seg + parts.zoom + parts.refresh + parts.net,
+    right: parts.open + parts.reveal,
+    seg: parts.seg, net: parts.net
+  };
+}
+
+/** Строка состояния внизу просмотрщика: изоляция и масштаб — для страниц, размер и тип — для остальных. */
+function statusInfo(f, st) {
+  const live = st === 'ok' || st === 'net' || st === 'outside';
+  if (live && f.kind === 'html') return '<span class="lock" title="Страница выполняется в изолированном фрейме: без доступа к приложению и файлам">' + ic('lock') + ' Изолированная страница</span><span data-scale-label></span>' + (S.net ? '<span><b style="color:var(--col-input)">Интернет-ресурсы включены</b></span>' : '');
+  return '<span>' + KIND[f.kind].tag + (f.size ? ' · ' + esc(f.size) : '') + '</span>';
+}
+
+/* ---------- масштабирование фреймов ---------- */
+function fit() {
+  $$('.sv-canvas').forEach((c) => {
+    const dev = $('.sv-dev', c);
+    if (!dev) return;
+    const w = WIDTHS[S.width], W = w.w, bz = w.bz;
+    const cs = getComputedStyle(c);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight), padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const label = $('.sv-devlabel', c);
+    const labelH = label ? label.offsetHeight + (parseFloat(cs.rowGap) || 0) : 0;
+    const availW = c.clientWidth - padX, availH = c.clientHeight - padY - labelH;
+    const s = Math.max(0.1, Math.min(1, (availW - 2 * bz) / W));
+    let innerH = availH - 2 * bz;
+    if (w.h) innerH = Math.min(innerH, w.h * s);
+    innerH = Math.max(120, innerH);
+    dev.style.width = W * s + 2 * bz + 'px';
+    dev.style.height = innerH + 2 * bz + 'px';
+    const fr = $('iframe', dev);
+    fr.style.width = W + 'px';
+    fr.style.height = innerH / s + 'px';
+    fr.style.transform = 'scale(' + s + ')';
+    $$('[data-scale-label]', c.closest('.sv-host, .mk-tile') || document).forEach((el) => {
+      el.textContent = W + ' px · ' + (s < 0.995 ? 'масштаб ' + Math.round(s * 100) + ' %' : '100 %');
+    });
+  });
+  $$('.sv-inl').forEach((el) => {
+    const fr = $('iframe', el);
+    if (!fr) return;
+    const W = +el.dataset.w, cw = el.clientWidth, ch = el.clientHeight;
+    const s = Math.min(1, cw / W);
+    fr.style.width = W + 'px';
+    fr.style.height = ch / s + 'px';
+    fr.style.transform = 'scale(' + s + ')';
+    fr.style.left = s === 1 ? Math.max(0, (cw - W) / 2) + 'px' : '0px';
+    const cap = $('[data-inl-cap]', el.parentElement.parentElement);
+    if (cap) cap.textContent = s < 0.995 ? 'Вписано: ' + W + ' px → ' + Math.round(s * 100) + ' %' : 'Ширина ' + W + ' px, 100 %';
+  });
+  $$('.sv-tabs, .sv-strip').forEach((t) => t.classList.toggle('of', t.scrollWidth > t.clientWidth + 2 && t.scrollLeft + t.clientWidth < t.scrollWidth - 2));
+}
+
+/* ---------- миниатюры ---------- */
+function thumbHTML(f) {
+  if (f.kind === 'image') return '<img src="' + shotURI(f.shot) + '" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top">';
+  if (f.kind === 'html') return '<div class="sv-thumbpage' + (f.page === 'b' ? ' dark' : '') + '"><i></i><i style="width:80%"></i><i style="width:64%"></i><i style="width:90%"></i></div>';
+  if (f.kind === 'md') return '<div class="sv-thumbpage md"><i></i><i style="width:90%"></i><i style="width:70%"></i><i style="width:84%"></i></div>';
+  return '<div style="display:grid;place-items:center;height:100%;color:var(--muted)">' + ic(KIND[f.kind].icon, 'lg') + '</div>';
+}
+
+/* ---------- карточка approval в Инбоксе (общий каркас) ---------- */
+function rqShell(showcase, title, where) {
+  return '<div class="rq rq-approval active" data-card><div class="rq-head"><span class="rq-kind">✋ Решение</span><span class="rq-where" title="' + esc(where) + '">· ' + esc(where) + '</span></div>' +
+    '<div class="rq-title">' + esc(title) + '</div>' + showcase +
+    '<div class="rq-body"><button class="rq-toggle" aria-expanded="false">▸ что проверить</button></div>' +
+    '<div class="rq-free rq-stack"><textarea rows="1" class="rq-decision" aria-label="Решение / вариант" placeholder="Решение / вариант (необязательно)" data-decision>' + esc(S.decision) + '</textarea>' +
+    '<div class="rq-actions"><button class="btn-sm primary" data-act="accept" title="Дальше по воркфлоу проекта (обычно мерж)"><kbd class="rq-kbd">A</kbd>Принять</button><button class="btn-sm" data-act="reject"><kbd class="rq-kbd">C</kbd>Вернуть…</button></div></div></div>';
+}
+function panel(inner, n, cls) {
+  return '<div class="mk-panel ' + (cls || '') + '"><div class="inbox-head"><h3>Входящие<span class="inbox-count">' + n + '</span></h3><kbd class="rq-kbd">⌘J</kbd><button class="icon-btn task-modal-close" aria-label="Закрыть">' + ic('close', 'lg') + '</button></div>' +
+    '<div class="inbox-list">' + inner + '<div class="rq rq-question"><div class="rq-head"><span class="rq-kind">❓ Вопрос</span><span class="rq-where">· Отчёты › Экспорт</span></div><div class="rq-title">Какой формат экспорта по умолчанию: CSV или XLSX?</div></div></div>' +
+    '<div class="inbox-foot muted"><kbd class="rq-kbd">j</kbd>/<kbd class="rq-kbd">k</kbd> выбор · <kbd class="rq-kbd">1–9</kbd> вариант · <kbd class="rq-kbd">↵</kbd> в поле · <kbd class="rq-kbd">Esc</kbd> закрыть</div></div>';
+}
+const workerNote = (t) => '<div class="markdown showcase-md">' + t + '</div>';
+
+/** Ряд-«запись» списка файлов: подряд идущие картинки склеиваются в одну запись-сетку. */
+function entriesOf(files, gi) {
+  const out = []; let imgs = null;
+  files.forEach((f, fi) => {
+    if (f.kind === 'image') { if (!imgs) { imgs = { type: 'images', items: [] }; out.push(imgs); } imgs.items.push({ f, fi, gi }); }
+    else out.push({ type: 'file', f, fi, gi });
+  });
+  return out;
+}
+
+/** Меню «⋯» файла: вторичные действия, которые раньше были кнопками ряда. */
+function moreMenu(key, f) {
+  const it = (act, icon, txt) => '<button class="popup-menu-item" role="menuitem" data-act="' + act + '">' + ic(icon) + '<span class="popup-menu-name">' + txt + '</span></button>';
+  return '<div class="popup-menu sv-menu" role="menu" aria-label="Действия с файлом"' + (S.more === key ? '' : ' hidden') + '>' + it('open', 'external', f.kind === 'html' ? 'Открыть в браузере' : 'Открыть в приложении системы') + it('reveal', 'folder', 'Показать в папке') + it('copy', 'copy', 'Копировать путь') + '</div>';
+}
+
+/** Встроенный фрейм страницы в карточке: страница видит виртуальную ширину, а не ширину панели. */
+function inlineFrame(f, key, opts) {
+  opts = opts || {};
+  const st = stateOf(Object.assign({}, f, { kind: f.kind }));
+  const styled = f.issue === 'net' ? S.net : f.issue !== 'outside';
+  const w = opts.w || 1024;
+  return '<div style="position:relative"><div class="sv-inl' + (w < 500 ? ' mobile' : '') + '" data-w="' + w + '"><iframe sandbox="allow-scripts" title="Превью ' + esc(f.name) + '" srcdoc="' + srcdoc(f.page, styled) + '"></iframe>' +
+    '<button class="sv-inl-expand" data-act="fs" data-arg="' + key + '" title="Открыть на весь экран">' + ic('expand') + 'На весь экран</button></div>' + (opts.n ? mark(opts.n, 'l') : '') + '</div>';
+}
+function inlineNote(f) {
+  if (f.kind !== 'html') return '';
+  if (f.issue === 'net' && !S.net) return '<div class="muted showcase-note">Без оформления: страница ждёт интернет-ресурсы. На весь экран их можно включить.</div>';
+  if (f.issue === 'outside') return '<div class="muted showcase-note">Без оформления: страница ссылается на файлы вне показа.</div>';
+  return '';
+}
+
+/* ---------- цикл отрисовки ---------- */
+let V = null, lastFocus = null;
+function keepScroll(fn) {
+  const saved = $$('.sv-keep').map((e) => [e.scrollLeft, e.scrollTop]);
+  fn();
+  $$('.sv-keep').forEach((e, i) => { if (saved[i]) { e.scrollLeft = saved[i][0]; e.scrollTop = saved[i][1]; } });
+}
+function ctx() {
+  const c = cur();
+  return Object.assign(c, { st: stateOf(c.f), multi: S.data === 'multi', groups: groups() });
+}
+function render(focusKey) {
+  keepScroll(() => {
+    const emb = $('#host-emb');
+    emb.hidden = S.hidden;
+    $('.sv-reopen').hidden = !S.hidden;
+    emb.innerHTML = V.viewer(ctx());
+    const fl = $('#host-float');
+    fl.hidden = !S.floating;
+    if (S.floating) fl.innerHTML = V.viewer(ctx());
+    $('#card-single').innerHTML = V.cardSingle();
+    $('#card-multi').innerHTML = V.cardMulti();
+    $$('[data-set]').forEach((el) => { const [k, v] = el.dataset.set.split(':'); const on = k === 'data' ? S.data === v : k === 'win' ? (document.body.dataset.win === 'narrow') === (v === '860') : false; el.classList.toggle('active', on); el.setAttribute('aria-pressed', on); });
+    const fs = $('#force'); if (fs) fs.value = S.force;
+    document.body.style.overflow = S.floating ? 'hidden' : '';
+  });
+  fit();
+  if (focusKey) {
+    const root = S.floating ? $('#host-float') : document;
+    const el = $('[data-key="' + focusKey + '"]', root) || $('[data-key="' + focusKey + '"]');
+    if (el) el.focus({ preventScroll: true });
+  }
+}
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toast.h);
+  toast.h = setTimeout(() => (t.hidden = true), 2600);
+}
+function select(gi, fi) { S.gi = gi; S.fi = fi; S.force = ''; S.loading = false; }
+function go(d) {
+  const a = flat(); let i = a.findIndex((x) => x.gi === S.gi && x.fi === S.fi);
+  i = Math.min(a.length - 1, Math.max(0, i + d)); select(a[i].gi, a[i].fi); render();
+}
+function openViewer(gi, fi) {
+  lastFocus = document.activeElement;
+  select(gi, fi); S.floating = true; render();
+  const c = $('#host-float [data-act="close"]'); if (c) c.focus({ preventScroll: true });
+}
+function closeViewer() {
+  if (S.floating) { S.floating = false; render(); if (lastFocus && lastFocus.isConnected) lastFocus.focus({ preventScroll: true }); }
+  else { S.hidden = true; render(); }
+}
+
+const MSG = {
+  open: 'В приложении: файл откроется системным приложением по умолчанию (для .html — браузером)',
+  reveal: 'В приложении: папка ветки задачи откроется в Finder / Проводнике',
+  copy: 'Путь скопирован в буфер обмена',
+  accept: 'Принять: запрос решён, дальше по воркфлоу (в макете кнопка не работает)',
+  reject: 'Вернуть…: просмотр закроется, фокус перейдёт в поле замечаний карточки'
+};
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) {
+    if (S.more) { S.more = null; render(); }
+    return;
+  }
+  const act = el.dataset.act, arg = el.dataset.arg, key = el.dataset.key;
+  e.stopPropagation();
+  if (V.act && V.act(act, arg, el)) { render(key); return; }
+  switch (act) {
+    case 'width': S.width = arg; break;
+    case 'zoom': S.zoom = arg; break;
+    case 'net': S.net = !S.net; break;
+    case 'net-on': S.net = true; break;
+    case 'hide-banner': S.hideBanner[cur().f.path] = true; break;
+    case 'refresh': S.loading = true; S.force = S.force === 'loading' ? '' : S.force; render(key); setTimeout(() => { S.loading = false; render(key); }, 800); return;
+    case 'file': { const [g, f] = arg.split(':').map(Number); select(g, f); break; }
+    case 'grp': select(+arg, 0); break;
+    case 'prev': go(-1); return;
+    case 'next': go(1); return;
+    case 'close': closeViewer(); return;
+    case 'reopen': S.hidden = false; break;
+    case 'fs': { const [d, g, f] = arg.split(':'); S.data = d; openViewer(+g, +f); return; }
+    case 'more': S.more = S.more === arg ? null : arg; break;
+    case 'more-files': S.expanded[arg] = !S.expanded[arg]; break;
+    case 'gtoggle': S.collapsed[arg] = !S.collapsed[arg]; break;
+    case 'pv': S.inl = S.inl === arg ? null : arg; break;
+    case 'dataset': S.data = arg; S.gi = 0; S.fi = 0; S.force = ''; break;
+    case 'win': document.body.dataset.win = arg === '860' ? 'narrow' : 'wide'; document.documentElement.style.setProperty('--win', arg === '860' ? '860px' : '1240px'); break;
+    case 'accept': case 'reject': case 'open': case 'reveal': case 'copy': toast(MSG[act]); if (act === 'reject' && S.floating) closeViewer(); return;
+    case 'pick': S.decision = cur().f.name; toast('В поле решения подставлено «' + cur().f.name + '»'); break;
+    default: return;
+  }
+  S.more = null;
+  render(key);
+});
+document.addEventListener('input', (e) => { if (e.target.matches('[data-decision], [data-decision-v]')) S.decision = e.target.value; });
+document.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+  if (e.key === 'Escape') {
+    if (S.more) { S.more = null; render(); return; }
+    if (S.floating || !S.hidden) { if (S.floating || $('#host-emb').contains(document.activeElement) || !typing) { closeViewer(); e.preventDefault(); } }
+  } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !typing && (S.floating || !S.hidden)) { go(e.key === 'ArrowLeft' ? -1 : 1); e.preventDefault(); }
+});
+window.addEventListener('resize', fit);
+
+function boot(variant) {
+  V = variant;
+  document.body.classList.add(variant.cls);
+  $('#force').addEventListener('change', (e) => { S.force = e.target.value; if ((S.force === 'net' || S.force === 'outside') && cur().f.kind !== 'html') { S.gi = 0; S.fi = S.force === 'net' ? 1 : 2; } render(); });
+  $('#marks').addEventListener('change', (e) => document.body.classList.toggle('no-marks', !e.target.checked));
+  $('#states-grid').innerHTML = V.states ? V.states() : stateTiles();
+  $('#states-card').innerHTML = cardStates();
+  $('#legend-single').innerHTML = V.legendSingle;
+  $('#legend-multi').innerHTML = V.legendMulti;
+  render();
+  new ResizeObserver(fit).observe($('#stage'));
+  if (P.get('open') === 'float') { S.floating = true; render(); }
+}
+
+/* ---------- §4: состояния плитками (тело просмотрщика без оболочки) ---------- */
+function stateTiles() {
+  const f = (name, kind, x) => Object.assign({ name, path: 'docs/design/settings/' + name, kind, size: '' }, x || {});
+  const plain = (b) => '<div class="mini-dev plain"><b>Уведомления</b><u>Профиль</u> · <u>Безопасность</u><span>☐ Ждут вашего решения</span><span>☐ Ежедневная сводка</span><span>[Сохранить]</span></div>';
+  const T = (title, sub, inner, note, extra) => '<article class="mk-tile"><h4>' + title + (sub ? ' <small>' + sub + '</small>' : '') + '</h4><div class="body">' + (extra || '') + '<div class="sv-canvas center">' + inner + '</div></div><div class="note">' + note + '</div></article>';
+  const saveNet = S.net; S.net = false;
+  const out = [
+    T('Загрузка', 'вся оболочка на месте', stateHTML('loading', f('variant-b.html', 'html')), '<b>Доступно:</b> закрыть, ←/→. Кнопки, зависящие от файла, неактивны; «Обновить» крутится. Инлайн-фрейм в карточке — светлая «волна» поверх пустого места.'),
+    T('Файл не найден', 'воркер удалил / worktree убран', stateHTML('missing', f('variant-b.html', 'html')), '<b>Доступно:</b> «Повторить», копировать путь. «Открыть» и «В папке» скрыты — открывать нечего. Сообщение main называет ветку.'),
+    T('Тип не открывается', 'исполняемое, архив', stateHTML('unsupported', f('assets.zip', 'none', { size: '12,4 МБ' })), '<b>Доступно:</b> только копировать путь — как сейчас в карточке (кнопок «Открыть» у таких файлов нет). Файл виден в списке, приглушён.'),
+    T('Больше 10 МБ', 'лимит чтения в renderer', stateHTML('big', f('demo-screencast.gif', 'image', { size: '14,2 МБ' })), '<b>Доступно:</b> «Открыть» системным приложением и «В папке». Порог — <code>SHOWCASE_READ_MAX_BYTES</code>.'),
+    T('PDF', 'системное приложение', stateHTML('external', f('spec.pdf', 'pdf', { size: '1,4 МБ' })), '<b>Доступно:</b> «Открыть», «В папке». Вопрос к реализации — нужен ли просмотр PDF внутри (см. README).'),
+    T('Старое приложение', 'main/preload не перезапущены', stateHTML('stale', f('variant-a.html', 'html')), '<b>Доступно:</b> закрыть. Текст — прежний <code>showcase.stale</code>. Просмотрщик открывается, но сразу показывает это состояние: лучше, чем молча не открыться.'),
+    T('Без оформления: интернет', 'страница ждёт CDN', bannerHTML('net', f('variant-b.html', 'html'), { noHide: true }) + '<div style="flex:1;display:grid;place-items:center;padding:8px">' + plain() + '</div>', '<b>Баннер над страницей</b> + счётчик «4 заблок.» на переключателе. «Включить» = переключатель «Интернет-ресурсы». Скрывается на время файла.'),
+    T('Без оформления: файлы вне показа', 'относительные ссылки', bannerHTML('outside', f('variant-c.html', 'html'), { noHide: true }) + '<div style="flex:1;display:grid;place-items:center;padding:8px">' + plain() + '</div>', '<b>Переключатель не поможет</b> — баннер говорит это прямо и предлагает «Открыть в браузере» (там файлы подтянутся с диска) или вернуть с замечанием.'),
+    T('Другая ошибка', 'текст из main', stateHTML('error', f('variant-a.html', 'html')), '<b>Доступно:</b> «Повторить». Текст ошибки — как есть из <code>ipcErrorMessage</code>.')
+  ];
+  S.net = saveNet;
+  return out.join('');
+}
+
+/** Те же состояния там, где человек встречает их первым, — в карточке Инбокса. */
+function cardStates() {
+  const row = (name, kind, body) => '<li class="showcase-file"><div class="showcase-file-head"><span class="sf-ic ' + KIND[kind].cls + '">' + ic(KIND[kind].icon) + '</span><div class="showcase-file-title"><span class="showcase-file-name">' + name + '</span><span class="showcase-file-path">docs/design/settings/' + name + '</span></div>' + body.head + '</div>' + (body.rest || '') + '</li>';
+  const btns = '<button class="btn-text">Превью</button><button class="btn-sm">На весь экран</button>';
+  const inner = '<section class="showcase"><div class="showcase-head">Показ</div><ul class="showcase-files">' +
+    row('variant-b.html', 'html', { head: btns, rest: '<div class="sv-inl loading" data-w="1280" style="height:120px;background:var(--frame)"></div><div class="muted showcase-note">Читаю файл…</div>' }) +
+    row('variant-a.html', 'html', { head: btns, rest: '<span class="error-text">Приложение запущено со старой версией main/preload, где ещё нет просмотра показа. Перезапустите приложение.</span>' }) +
+    row('variant-c.html', 'html', { head: btns, rest: '<span class="error-text">Файл не найден в ветке orca/task_mumr4l6n64</span>' }) +
+    row('assets.zip', 'none', { head: '', rest: '<div class="muted showcase-note">Этот тип файла приложение не открывает — посмотрите его в ветке задачи.</div>' }) +
+    '</ul></section>';
+  return '<div class="mk-panel">' + '<div class="inbox-list">' + '<div class="rq rq-approval"><div class="rq-head"><span class="rq-kind">✋ Решение</span></div><div class="rq-title">Проверить макеты экрана «Настройки»</div>' + inner + '</div></div></div>';
+}
+
+/* Вариант 2 — «Боковой список файлов»: слева дерево показа (подзадачи → файлы), справа управление и страница,
+   внизу — решение без выхода из просмотра. В узком окне список заменяется выпадающим списком в шапке.
+   Инлайн-превью в карточке — мини-просмотрщик: «Десктоп / Телефон» и «Обновить» прямо там. */
+(function () {
+  const LIMIT = 5, GLIMIT = 3;
+  S.side = true;
+
+  function flag(f) {
+    if (f.issue === 'missing') return '<span class="flag err" title="Файл не найден" role="img" aria-label="Файл не найден"></span>';
+    if (f.issue === 'net' || f.issue === 'outside') return '<span class="flag warn" title="Страница, похоже, без оформления" role="img" aria-label="Страница, похоже, без оформления"></span>';
+    if (f.kind === 'none') return '<span class="flag lock" title="Не открывается в приложении">' + ic('lock') + '</span>';
+    return '';
+  }
+  const meta = (f) => KIND[f.kind].tag + (f.size ? ' · ' + f.size : '');
+
+  function viewer(c) {
+    const { g, f, st, multi, gi } = c;
+    const t = tools(f, st);
+    const cv = canvasHTML(f, st);
+    const pos = position(), all = total();
+    const list = c.groups.map((gg, i) =>
+      (multi ? '<div class="sv-lg" role="presentation"><span class="t" title="' + esc(gg.title) + '">' + esc(gg.title) + '</span><span class="chip st ' + gg.st[0] + '">' + gg.st[1] + '</span></div>' : '') +
+      gg.files.map((ff, j) =>
+        '<button class="sv-li" role="option" aria-selected="' + (i === gi && j === c.fi) + '" data-act="file" data-arg="' + i + ':' + j + '" data-key="li:' + i + ':' + j + '" title="' + esc(ff.path) + '">' +
+        ic(KIND[ff.kind].icon, 'k ' + KIND[ff.kind].cls) + '<span class="txt"><span class="nm">' + esc(ff.name) + '</span><span class="mt">' + esc(meta(ff)) + '</span></span>' + flag(ff) + '</button>').join('')).join('');
+    const select = '<label class="sv-fsel"><span class="sr-only">Файл показа</span><select data-fsel aria-label="Файл показа">' + c.groups.map((gg, i) =>
+      '<optgroup label="' + esc(gg.title) + '">' + gg.files.map((ff, j) => '<option value="' + i + ':' + j + '"' + (i === gi && j === c.fi ? ' selected' : '') + '>' + esc(ff.name) + '</option>').join('') + '</optgroup>').join('') + '</select></label>';
+    const canPick = st === 'ok' || st === 'net' || st === 'outside';
+    return '<div class="modal sv-modal' + (S.side ? '' : ' side-off') + '" role="dialog" aria-modal="true" aria-label="Просмотр показа: ' + esc(f.name) + '">' +
+      '<aside class="sv-side" aria-label="Файлы показа"><div class="sv-side-head"><span class="ttl">Показ</span><span class="muted">' + plural(all, 'файл', 'файла', 'файлов') + '</span></div>' +
+      '<div class="sv-list sv-keep" role="listbox" aria-label="Файлы показа">' + list + '</div>' +
+      '<div class="sv-side-foot"><span class="sv-kbdhint"><kbd>←</kbd><kbd>→</kbd> файл <kbd>Esc</kbd> закрыть</span></div></aside>' +
+      '<section class="sv-main"><div class="sv-mhead">' +
+      '<button class="icon-btn sv-sidebtn" data-act="side" data-key="side" aria-pressed="' + S.side + '" title="Список файлов" aria-label="Список файлов">' + ic('sidebar') + '</button>' + select +
+      '<div class="ttl"><h3 title="' + esc(f.path) + '">' + esc(f.name) + '</h3><div class="pth" title="Путь от корня ветки задачи">' + esc(f.path) + '</div></div>' +
+      '<div class="sv-nav"><button class="icon-btn" data-act="prev" data-key="prev" title="Предыдущий файл (←)" aria-label="Предыдущий файл"' + (pos === 1 ? ' disabled' : '') + '>' + ic('chevl') + '</button><span class="chip mono" title="Файл ' + pos + ' из ' + all + '">' + pos + ' / ' + all + '</span>' +
+      '<button class="icon-btn" data-act="next" data-key="next" title="Следующий файл (→)" aria-label="Следующий файл"' + (pos === all ? ' disabled' : '') + '>' + ic('chevr') + '</button></div>' +
+      '<button class="icon-btn task-modal-close" data-act="close" data-key="close" title="Закрыть (Esc)" aria-label="Закрыть">' + ic('close', 'lg') + '</button></div>' +
+      (t.left || t.right ? '<div class="sv-toolbar">' + t.left + '<span class="grow"></span>' + t.right + '</div>' : '') +
+      bannerFor(f, st) +
+      '<div class="sv-canvas ' + cv.cls + '">' + cv.html + '</div>' +
+      '<div class="sv-decide" role="group" aria-label="Решение по показу"><label class="dec"><span class="sr-only">Решение / вариант</span><input data-decision-v value="' + esc(S.decision) + '" placeholder="Решение / вариант (необязательно)"></label>' +
+      (canPick ? '<button class="btn-sm" data-act="pick" data-key="pick" title="Подставить имя этого файла в поле решения">' + ic('check') + 'Выбрать этот вариант</button>' : '') +
+      '<span class="grow"></span><button class="btn-sm" data-act="reject" title="Закрыть просмотр и перейти к замечаниям в карточке"><kbd class="rq-kbd">C</kbd>Вернуть…</button>' +
+      '<button class="btn-sm primary" data-act="accept" title="Дальше по воркфлоу проекта (обычно мерж)"><kbd class="rq-kbd">A</kbd>Принять</button></div></section></div>';
+  }
+
+  /* ---- карточка ---- */
+  function row(f, gi, fi, d, first) {
+    const key = d + ':' + gi + ':' + fi, k = KIND[f.kind];
+    const pvOn = S.inl === key;
+    let acts = '', rest = '';
+    if (f.kind === 'html' || f.kind === 'md') {
+      acts = '<button class="btn-text' + (pvOn ? ' on' : '') + '" data-act="pv" data-arg="' + key + '" data-key="pv:' + key + '" aria-expanded="' + pvOn + '">' + (pvOn ? 'Скрыть' : f.kind === 'html' ? 'Превью' : 'Текст') + (first ? mark(1) : '') + '</button>' +
+        '<button class="btn-sm icon" data-act="fs" data-arg="' + key + '" data-key="fs:' + key + '" title="На весь экран" aria-label="На весь экран">' + ic('expand') + (first ? mark(2) : '') + '</button>' +
+        '<button class="btn-sm icon" data-act="more" data-arg="' + key + '" data-key="more:' + key + '" aria-haspopup="menu" aria-expanded="' + (S.more === key) + '" aria-label="Ещё действия" title="Ещё: открыть в браузере, в папке, копировать путь">' + ic('more') + '</button>' + moreMenu(key, f);
+      if (pvOn && f.kind === 'html') {
+        const mob = S.imode === 'mobile';
+        rest = '<div><div class="sv-inl-bar"><div class="segmented" role="group" aria-label="Ширина превью">' +
+          '<button class="seg' + (!mob ? ' active' : '') + '" aria-pressed="' + !mob + '" data-act="imode" data-arg="desktop" data-key="im:d">' + ic('desktop') + 'Десктоп</button>' +
+          '<button class="seg' + (mob ? ' active' : '') + '" aria-pressed="' + mob + '" data-act="imode" data-arg="mobile" data-key="im:m">' + ic('phone') + 'Телефон</button></div>' + (first ? mark(3, 'l') : '') +
+          '<span class="grow"></span><button class="icon-btn" data-act="refresh" data-key="ir" aria-label="Обновить" title="Обновить">' + ic('refresh') + '</button></div>' +
+          inlineFrame(f, key, { w: mob ? 375 : 1024, n: first ? 4 : 0 }) +
+          '<div class="sv-inl-cap"><span data-inl-cap></span><span class="lock" title="Страница выполняется в изолированном фрейме">' + ic('lock') + ' изолирована · интернет выкл</span></div>' + inlineNote(f) + '</div>';
+      }
+      if (pvOn && f.kind === 'md') rest = '<div class="markdown showcase-md showcase-file-md">' + MD_SMALL + '</div>';
+    } else if (f.kind === 'pdf') {
+      acts = '<button class="btn-sm" data-act="open" title="Приложением системы по умолчанию">Открыть</button><button class="btn-sm" data-act="reveal">В папке</button>';
+    } else if (f.kind === 'none') {
+      rest = '<div class="muted showcase-note">Этот тип файла приложение не открывает — посмотрите его в ветке задачи.</div>';
+    }
+    return '<li class="showcase-file' + (f.kind === 'none' ? ' dim' : '') + '"><div class="showcase-file-head"><span class="sf-ic ' + k.cls + '">' + ic(k.icon) + '</span><div class="showcase-file-title" title="' + esc(f.path) + '"><span class="showcase-file-name">' + esc(f.name) + '</span><span class="showcase-file-path">' + esc(f.path) + '</span></div>' +
+      (f.issue === 'net' || f.issue === 'outside' ? '<span class="sf-dot" role="img" aria-label="Страница, похоже, без оформления" title="Страница, похоже, без оформления"></span>' : '') + acts + '</div>' + rest + '</li>';
+  }
+
+  function thumbsRow(entry, d) {
+    const items = entry.items, n = items.length, shown = n > 6 ? items.slice(0, 5) : items;
+    return '<li class="showcase-file"><div class="showcase-file-head"><span class="sf-ic k-image">' + ic('image') + '</span><div class="showcase-file-title"><span class="showcase-file-name">' + plural(n, 'картинка', 'картинки', 'картинок') + '</span><span class="showcase-file-path">' + esc(items.map((x) => x.f.name).join(', ')) + '</span></div></div>' +
+      '<div class="sv-thumbs">' + shown.map((x) => '<button class="sv-thumb" data-act="fs" data-arg="' + d + ':' + x.gi + ':' + x.fi + '" title="' + esc(x.f.name) + ' — открыть на весь экран"><img src="' + shotURI(x.f.shot) + '" alt="' + esc(x.f.name) + '"><span class="cap">' + esc(x.f.name) + '</span></button>').join('') +
+      (n > 6 ? '<button class="sv-thumb more" data-act="fs" data-arg="' + d + ':' + items[5].gi + ':' + items[5].fi + '">+' + (n - 5) + '</button>' : '') + (d === 'single' ? mark(6) : '') + '</div></li>';
+  }
+
+  function list(gi, d, limit) {
+    const g = DATASETS[d][gi];
+    const entries = entriesOf(g.files, gi), ek = d + (d === 'multi' ? ':' + gi : '');
+    const open = S.expanded[ek];
+    const shown = open ? entries : entries.slice(0, limit);
+    const hidden = entries.slice(shown.length).reduce((a, e) => a + (e.type === 'images' ? e.items.length : 1), 0);
+    let firstHtml = true;
+    const rows = shown.map((e) => {
+      if (e.type === 'images') return thumbsRow(e, d);
+      const first = d === 'single' && e.f.kind === 'html' && firstHtml; if (e.f.kind === 'html') firstHtml = false;
+      return row(e.f, e.gi, e.fi, d, first);
+    }).join('');
+    const more = entries.length > limit ? '<button class="showcase-more" data-act="more-files" data-arg="' + ek + '" data-key="mf:' + ek + '" aria-expanded="' + !!open + '">' + (open ? 'Свернуть ' + ic('chevu') : 'Ещё ' + plural(hidden, 'файл', 'файла', 'файлов') + ' ' + ic('chevd')) + (d === 'single' && !open ? mark(5) : '') + '</button>' : '';
+    return '<ul class="showcase-files">' + rows + '</ul>' + more;
+  }
+
+  function cardSingle() {
+    const g = DATASETS.single[0];
+    const body = '<section class="showcase" aria-label="Показ"><div class="showcase-head"><span>Показ</span><span class="grow"></span><button class="btn-sm" data-act="fs" data-arg="single:0:0" data-key="all" title="Открыть просмотрщик с первого файла">Смотреть всё · ' + g.files.length + ' ' + ic('expand') + mark(7) + '</button></div>' +
+      workerNote('<p>Сделал три варианта экрана и скриншоты. Рекомендую <strong>вариант B</strong> — карточки лучше масштабируются. Открытый вопрос: нужна ли сводка по умолчанию.</p>') +
+      list(0, 'single', LIMIT) + '</section>';
+    return panel(rqShell(body, 'Проверить макеты экрана «Настройки»', 'Настройки уведомлений › Макеты экрана'), 2);
+  }
+
+  function cardMulti() {
+    const total_ = DATASETS.multi.reduce((a, g) => a + g.files.length, 0);
+    const groupsHtml = DATASETS.multi.map((g, gi) => {
+      const ck = 'multi:' + gi, col = !!S.collapsed[ck];
+      const tone = g.st[0] === 'ok' ? 'var(--col-done)' : 'var(--col-review)';
+      return '<div class="sv2-sub" style="--tone:' + tone + '"><div class="sv-group-head"><button class="tgl" data-act="gtoggle" data-arg="' + ck + '" data-key="gt:' + ck + '" aria-expanded="' + !col + '" aria-label="' + (col ? 'Развернуть' : 'Свернуть') + ' подзадачу «' + esc(g.title) + '»">' + ic(col ? 'chevr' : 'chevd') + '</button>' +
+        '<span class="ttl" title="' + esc(g.title) + '">' + esc(g.title) + '<span class="cnt">' + esc(g.who) + ' · ' + plural(g.files.length, 'файл', 'файла', 'файлов') + '</span></span><span class="chip st ' + g.st[0] + '">' + g.st[1] + '</span>' +
+        '<button class="btn-sm icon" data-act="fs" data-arg="multi:' + gi + ':0" data-key="gs:' + gi + '" title="Смотреть файлы этой подзадачи" aria-label="Смотреть файлы подзадачи «' + esc(g.title) + '»">' + ic('expand') + (gi === 0 ? mark(2) : '') + '</button>' + (gi === 0 ? mark(1, 'l') : '') + '</div>' + (col ? '' : list(gi, 'multi', GLIMIT)) + '</div>';
+    }).join('');
+    const body = '<section class="showcase" aria-label="Показ"><div class="showcase-head"><span>Показ · ' + plural(DATASETS.multi.length, 'подзадача', 'подзадачи', 'подзадач') + '</span><span class="grow"></span><button class="btn-sm" data-act="fs" data-arg="multi:0:0" data-key="all2">Смотреть всё · ' + total_ + ' ' + ic('expand') + '</button></div>' + groupsHtml + '</section>';
+    return panel(rqShell(body, 'Проверить результат трёх подзадач', 'Настройки уведомлений › Проверка человеком'), 1);
+  }
+
+  document.addEventListener('change', (e) => {
+    if (e.target.matches('[data-fsel]')) { const [g, f] = e.target.value.split(':').map(Number); select(g, f); render(); }
+  });
+
+  boot({
+    cls: 'v2', viewer, cardSingle, cardMulti,
+    act(act, arg) {
+      if (act === 'side') { S.side = !S.side; return true; }
+      if (act === 'imode') { S.imode = arg; return true; }
+      return false;
+    },
+    legendSingle:
+      '<li>' + mark(1) + '<span><b>Превью</b> — раскрывает мини-просмотрщик прямо в карточке. «Открыть» и «В папке» ушли в «⋯».</span></li>' +
+      '<li>' + mark(2) + '<span><b>На весь экран</b> — значок без подписи (есть подсказка и имя для скринридера): экономит ширину, чтобы имя файла не обрезалось.</span></li>' +
+      '<li>' + mark(3, 'l') + '<span><b>Десктоп / Телефон</b> — переключатель ширины в самой карточке: телефон (375 px) помещается без масштаба, десктоп вписан.</span></li>' +
+      '<li>' + mark(4, 'l') + '<span><b>Фрейм</b> — 360 px по высоте; в подписи — масштаб и «изолирована».</span></li>' +
+      '<li>' + mark(5) + '<span><b>Ещё N файлов</b> — раскрывается на месте; лимит — 5 записей.</span></li>' +
+      '<li>' + mark(6) + '<span><b>Картинки</b> — сетка миниатюр; клик — картинка в просмотрщике.</span></li>' +
+      '<li>' + mark(7) + '<span><b>Смотреть всё · 9</b> — просмотрщик с первого файла: слева список, внизу решение.</span></li>',
+    legendMulti:
+      '<li>' + mark(1) + '<span><b>Карточка подзадачи</b> — цветная полоса статуса (зелёная — готово, фиолетовая — на проверке), исполнитель и число файлов, сворачивается.</span></li>' +
+      '<li>' + mark(2) + '<span><b>Смотреть</b> — просмотрщик на первом файле подзадачи; в боковом списке те же группы с заголовками.</span></li>' +
+      '<li><span></span><span>Лимит «Ещё N файлов» — на подзадачу (3 записи).</span></li>'
+  });
+})();
+
+</script>
+</body>
+</html>
