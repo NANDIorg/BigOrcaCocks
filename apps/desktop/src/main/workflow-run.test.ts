@@ -149,6 +149,44 @@ const approvalOf = (runId: string) => store.pendingRequests(runId).find((r) => r
 const node = (n: Partial<WfNode> & { id: string; type: WfNode['type'] }): WfNode => ({ x: 0, y: 0, ...n }) as WfNode
 const edge = (from: string, outcome: WfEdge['outcome'], to: string): WfEdge => ({ id: `e_${from}_${outcome}`, from, outcome, to })
 
+describe('показ человеку в approval прогона', () => {
+  const graph = (): Workflow => ({
+    version: 2,
+    nodes: [
+      node({ id: 'start', type: 'start' }), node({ id: 'work', type: 'work', title: 'Дизайн', showcase: { what: 'варианты' } }),
+      node({ id: 'check', type: 'human', title: 'Выбор варианта' }), node({ id: 'end', type: 'end' })
+    ],
+    edges: [edge('start', 'next', 'work'), edge('work', 'next', 'check'), edge('check', 'accept', 'end'), edge('check', 'reject', 'work')]
+  })
+
+  it('showcaseDispatchIds — все подзадачи с показом по порядку, showcaseDispatchId — последняя', () => {
+    const runId = newRun(graph())
+    const ids: string[] = []
+    for (const [title, show] of [['A', true], ['B', false], ['C', true]] as const) {
+      const t = spawn(runId, title)
+      commit(t, `${title}.html`)
+      const before = store.listEvents().length
+      const dispatchId = task(t.id).dispatchId!
+      store.finishDispatch(dispatchId, 'сделал', [], undefined, show ? { showcase: { files: [`${title}.html`] } } : {})
+      deliver(before)
+      if (show) ids.push(dispatchId)
+    }
+    finishRunStage(deps, runId, 'варианты готовы')
+    const request = approvalOf(runId)!
+    assert.deepEqual(request.showcaseDispatchIds, ids)
+    assert.equal(request.showcaseDispatchId, ids.at(-1))
+  })
+
+  it('без показа у подзадач — ни showcaseDispatchId, ни showcaseDispatchIds', () => {
+    const runId = newRun(graph())
+    work(runId, 'a.ts')
+    finishRunStage(deps, runId, 'готово')
+    const request = approvalOf(runId)!
+    assert.equal(request.showcaseDispatchId, undefined)
+    assert.equal(request.showcaseDispatchIds, undefined)
+  })
+})
+
 describe('дефолтный граф: работа → ревью → проверка человеком → конец', () => {
   it('вход в граф шлёт stage_started, подзадачи привязаны к этапу, автомерж в ветку прогона, stage_tasks_done', () => {
     const runId = newRun()

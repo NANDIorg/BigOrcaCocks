@@ -93,7 +93,7 @@ id варианта «Решения ИИ», …) приходит от пров
 | `finishStage(runId, {summary, …})` | закрыть этап `work` (`stage finish`): все подзадачи текущего захода в done и их хотя бы одна, иначе ошибка с подсказкой; сводка — в `stageHistory` и `Run.summary` |
 | `settleIdleStages(isAlive, fallback)` | страховка: координатор мёртв, а закрытые подзадачи ждут `stage finish` — этап закрывается без сводки (аналог `settleIdleRuns`) |
 | `blockRunStage(runId, reason)` | `workflow_blocked` по `runId`: эффект не выполнился (слить в базу нельзя, проверка не создалась) |
-| `requestRunApproval(runId, {nodeId, title, body?, showcaseDispatchId?})` | approval без задачи; ждущий не дублируется |
+| `requestRunApproval(runId, {nodeId, title, body?, showcaseDispatchId?, showcaseDispatchIds?})` | approval без задачи; ждущий не дублируется |
 | `runStage(runId, fallback)` | где стоит прогон и что знает координатор: роль, инструкции, показ, `feedback`/`images`/`decision`/`answers` целиком, подзадачи захода |
 
 Каждый метод возвращает `{run, action}` — `WfAction` ноды, куда пришли: **эффекты выполняет main**, store их не запускает.
@@ -258,7 +258,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `ask` (`create_ask`) | одна задача роли ноды (`createTask` со спекой `runAskTaskSpec` и `stageOf {nodeId, visit}`) и сразу её воркер; вопросы идут человеку (`worker.ask` узнаёт ноду по `stageOf`), координатор не участвует. Сдала `done` → задача закрывается, переход по `next` с `answers` (вопросы и ответы человека) в `stage_started` следующей «Работы». Агент упал, человек ответил — воркер стартует сам |
 | `gate` (`create_gate`) | одна задача-проверка роли ноды с `gateFor {runId, nodeId}` и спекой `runGateTaskSpec` (title — `runGateTaskTitle`): ветка прогона целиком против `RunGit.base` (`git log`/`git diff base...ветка`), цель прогона, сводки этапов (`stage finish`), «Как проверять». Решение — `orca-board review accept|reject --task "$ORCA_TASK_ID"` (id проверки воркер берёт из окружения). Нет ветки у прогона или роли в типе — `workflow_blocked` |
 | `decision` (`create_decision`) | одна задача-решатель роли ноды с `gateFor {runId, nodeId}` и спекой `runDecisionTaskSpec` (вопрос, варианты, цель, сводки, путь по графу `runPath` — последние 30 записей истории) и сразу её воркер (`createDecision`). Воркер не запустился — не `workflow_blocked`, а запрос `decision` человеку (`fallback: 'start_failed'`, причина в теле). Повтор: задача захода и ждущий запрос не дублируются, при ждущем запросе агент заново не стартует. Роли нет в типе — `workflow_blocked` |
-| `human` (`request_human`) | `requestRunApproval`: approval уровня прогона. Тело — инструкция ноды, конфликт мержа/отказ git (если пришли оттуда), сводка этапа (нет — итоги подзадач последней «Работы»), показ их последних `done` (`showcaseDispatchId` — последний с показом), ветка и база |
+| `human` (`request_human`) | `requestRunApproval`: approval уровня прогона. Тело — инструкция ноды, конфликт мержа/отказ git (если пришли оттуда), сводка этапа (нет — итоги подзадач последней «Работы»), показ их последних `done` (`showcaseDispatchIds` — все с показом по порядку подзадач, `showcaseDispatchId` — последний из них), ветка и база |
 | `git` | `commit` / `push` в worktree ветки прогона (`ensureRunBranch` восстанавливает убранный); шаблоны `{taskId}` — id прогона, `{title}`/`{slug}` — его название. Исход `ok`/`error`, текст отказа git — в approval, если `error` ведёт к человеку, и в `feedback` следующей «Работы», если в неё. Итог `push` — только исход ноды: в `Run.git` он не пишется (поля push убраны, `migrateRunGit`). `create_branch`/`checkout` — `workflow_blocked` (валидация их запрещает) |
 | `merge` | `mergeRunBranch` (`run-branch.ts`): ветку прогона в базу `RunGit.base` локально, см. ниже. Исход `ok` / `conflict` |
 | `end` | ничего: прогон закрыл store (`closedAt`, «Сделано», `run_done`). Worktree ветки убирает `RunBranchSync`, когда в прогоне никто не работает |
@@ -828,8 +828,12 @@ HELP `check` не меняются.
 
 Оба попадают в промпт воркера разделом «Этап» (`workerTaskPrompt` в `packages/core/src/prompts.ts`; этап берёт
 `TaskStore.taskWorkStage`, нормализует `wfWorkStage` в `packages/core/src/workflow.ts`). Сданный показ хранится
-в `Dispatch.showcase {text?, files}`: `text` — markdown (≤ 200 000 символов), `files` — до 50 путей от корня
-worktree задачи, без абсолютных путей и `..` (`normalizeShowcase`, `packages/core/src/types.ts`). При
+в `Dispatch.showcase {text?, files, snapshot?, auto?}`: `text` — markdown (≤ 200 000 символов), `files` — до 50 путей от корня
+worktree задачи, без абсолютных путей и `..` (`normalizeShowcase`, `packages/core/src/types.ts`). `snapshot {at, files, bytes}` —
+снимок файлов показа, снятый main при `done` (лимиты `MAX_SHOWCASE_SNAPSHOT_FILES`/`_BYTES`/`_FILE_BYTES`), `auto` — файлы
+найдены приложением; оба передаёт только main (`FinishDispatchOptions.snapshot/auto`), параметр сокета `showcase` их
+не принимает. Точки входа (`SHOWCASE_FILE_TYPES`: картинки, `md`, `html` — вид `html`, `pdf`) и ассеты страниц
+(`SHOWCASE_ASSET_TYPES`: css, js, шрифты, медиа — `isAssetType`) — `shared/showcase.ts`. При
 `required: true` `done` без показа отвергается (`finishDispatch`). Смотрит показ человек на следующей ноде `human`;
 выбор («вариант 2») из поля решения при «Принять» приходит координатору в `request_resolved.decision`
 (`docs/human-requests.md`). Валидация: пустой `what` — ошибка; показ, после которого до следующей «Работы» или
@@ -848,9 +852,9 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   воркера, а `HumanRequest.showcaseDispatchId` — id этого запуска. Гейт между «Работой» и «человеком» — отдельная
   задача и показ не подменяет. После «Вернуть» новый `done` даёт новый approval с новым показом.
 - **Файлы.** Renderer читает их из worktree задачи через IPC `showcase:read` / `showcase:open` / `showcase:reveal`
-  (`main/showcase.ts`): путь только внутри worktree (симлинки наружу — отказ), расширения — белый список
-  `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/svg` и `md` превьюятся, `html/htm/pdf` —
-  только «Открыть»). После мержа worktree убран — файлы остаются в ветке, IPC отвечает ошибкой с её именем.
+  (`main/showcase.ts`, корень — `showcaseSource`): путь только внутри worktree (симлинки наружу — отказ), расширения — белый список
+  `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/avif/svg` и `md` превьюятся, `html/htm` — вид
+  `html`, пока тоже только «Открыть» (превью — `showcase:previewUrl`, протокол ещё не подключён), `pdf` — «Открыть»). После мержа worktree убран — файлы остаются в ветке, IPC отвечает ошибкой с её именем.
 - **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval (Инбокс,
   лента глобальной задачи, модалка задачи) и отдельным разделом в модалке задачи (последний `done` с показом, если его
   не выводит ждущий approval). Markdown — через `Markdown.tsx`; первые 6 картинок превьюятся сразу (blob-URL, CSP

@@ -409,6 +409,15 @@ describe('worker done: показ человеку', () => {
     assert.deepEqual(store.getDispatch(d.id)!.showcase, { text: '## A и B', files: ['design/a.png', 'b.html'] })
   })
 
+  it('snapshot и auto из параметров сокета не принимаются: их выставляет только main', async () => {
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const showcase = { files: ['a.png'], snapshot: { at: 1, files: 1, bytes: 1 }, auto: true }
+    const res = await call('worker.done', { summary: 's', showcase }, { dispatchId: d.id })
+    assert.equal(res.ok, true, res.error)
+    assert.deepEqual(store.getDispatch(d.id)!.showcase, { files: ['a.png'] })
+  })
+
   it('обязательный показ по графу типа (прогона без снимка): без него — ошибка с подсказкой, с ним — done', async () => {
     typeWorkflow = design
     const task = store.createTask({ title: 'Макет', roleId: 'developer' })

@@ -423,6 +423,21 @@ export interface ShowcaseFileData {
   bytes: Uint8Array
 }
 
+/** Адрес страницы показа для изолированного фрейма (`showcase:previewUrl`). */
+export interface ShowcasePreviewUrl {
+  /** `orca-preview://<токен>/<путь>` — renderer ставит его в `src`, только проверив схему. */
+  url: string
+  mime: string
+  /** `orca-preview://<токен>/` — корень снимка: к нему разрешаются относительные картинки markdown. */
+  base: string
+}
+
+/** Параметры `showcase:previewUrl`. */
+export interface ShowcasePreviewOptions {
+  /** Разрешить странице интернет-ресурсы (CDN, шрифты). По умолчанию сеть закрыта; выбор не запоминается. */
+  network?: boolean
+}
+
 /** Группа документов: проект (`source: 'project'`) или worktree задачи в работе (`source` — id задачи). */
 export interface DocGroup {
   source: string
@@ -827,17 +842,23 @@ export interface OrcaApi {
     reveal(source: string, path: string): Promise<void>
   }
   /**
-   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId`) из worktree задачи `taskId`
-   * активного проекта. `path` — как в `showcase.files` (от корня репозитория). Путь вне worktree, симлинк наружу,
-   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), нет worktree — ошибка.
+   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId(s)`) задачи `taskId` активного
+   * проекта. `path` — как в `showcase.files` (от корня репозитория). `dispatchId` — чей показ: со снимком
+   * (`showcase.snapshot`) файлы читаются из него, без — из worktree задачи. Путь вне корня, симлинк наружу,
+   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), запуск чужой задачи, нет ни снимка, ни worktree — ошибка.
    */
   showcase: {
-    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. */
-    read(taskId: string, path: string): Promise<ShowcaseFileData>
+    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. HTML — только `previewUrl`. */
+    read(taskId: string, path: string, dispatchId?: string): Promise<ShowcaseFileData>
     /** Открыть файл приложением системы по умолчанию (HTML — в браузере). */
-    open(taskId: string, path: string): Promise<void>
+    open(taskId: string, path: string, dispatchId?: string): Promise<void>
     /** Показать файл в Finder/Проводнике. */
-    reveal(taskId: string, path: string): Promise<void>
+    reveal(taskId: string, path: string, dispatchId?: string): Promise<void>
+    /**
+     * Адрес страницы показа для `<iframe sandbox="allow-scripts">`: HTML, SVG (PDF — позже) из снимка запуска
+     * `dispatchId`. Появился позже остальных: в старом preload метода нет — проверяй перед вызовом.
+     */
+    previewUrl(dispatchId: string, path: string, opts?: ShowcasePreviewOptions): Promise<ShowcasePreviewUrl>
   }
   /** Правила активного проекта: CLAUDE.md и AGENTS.md в его корне (не в worktree задач). */
   rules: {

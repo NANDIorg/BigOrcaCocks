@@ -11,7 +11,7 @@ import { AssistantChatCache, assistantTranscriptPath, assistantChatAvailable, ch
 import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
-import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
+import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseSource } from './showcase'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
@@ -940,15 +940,20 @@ function registerIpc(): void {
   handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
   // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
-  // Показ человеку: файлы из worktree задачи активного проекта, белый список расширений — main/showcase.ts.
-  handle('showcase:read', (_e, taskId: unknown, path: unknown) => readShowcaseFile(showcaseRoot(resolveProject().store, taskId), path))
-  handle('showcase:open', async (_e, taskId: unknown, path: unknown) => {
-    const err = await shell.openPath(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+  // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
+  // расширений — main/showcase.ts.
+  handle('showcase:read', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
+    readShowcaseFile(showcaseSource(resolveProject().store, taskId, dispatchId), path))
+  handle('showcase:open', async (_e, taskId: unknown, path: unknown, dispatchId: unknown) => {
+    const err = await shell.openPath(resolveShowcasePath(showcaseSource(resolveProject().store, taskId, dispatchId), path))
     if (err) throw new Error(err)
   })
-  handle('showcase:reveal', (_e, taskId: unknown, path: unknown) =>
-    shell.showItemInFolder(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+  handle('showcase:reveal', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
+    shell.showItemInFolder(resolveShowcasePath(showcaseSource(resolveProject().store, taskId, dispatchId), path))
   )
+  // Страница показа для изолированного фрейма: TODO(T2) — протокол orca-preview:// и токены; пока честный отказ.
+  handle('showcase:previewUrl', (_e, dispatchId: unknown, path: unknown, opts: unknown) =>
+    showcasePreviewUrl(resolveProject().store, dispatchId, path, opts))
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
