@@ -1,3 +1,4 @@
+import { isAgentKind } from '@orca-board/core'
 import type { AppSettingsPatch } from '../shared/ipc'
 import { NOTIFY_KINDS, isTime, type NotificationSettingsPatch, type NotifyKind } from '../shared/notifications'
 
@@ -21,6 +22,14 @@ function pairs(v: unknown, flag: string): Array<[string, boolean]> {
     return [key, val === 'on']
   })
 }
+
+/** Флаги ассистента → поля `AssistantSettings`. Пустая строка — очистить поле (мерж — `mergedAssistantSettings`). */
+const ASSISTANT_FLAGS = [
+  ['assistant-agent', 'agent'],
+  ['assistant-model', 'model'],
+  ['assistant-effort', 'effort'],
+  ['assistant-prompt', 'systemPrompt']
+] as const
 
 /**
  * Патч `AppSettings` из флагов `settings set` (docs/assistant-chat.md → «2. Контракт CLI/сокета»). Любой поднабор
@@ -68,6 +77,20 @@ export function settingsPatchFromParams(p: Record<string, unknown>): AppSettings
   if (p['auto-download'] !== undefined) updates.autoDownload = boolFlag(p['auto-download'], '--auto-download')
   if (p['install-when-idle'] !== undefined) updates.installWhenIdle = boolFlag(p['install-when-idle'], '--install-when-idle')
   if (Object.keys(updates).length) patch.updates = updates
+
+  const assistant: NonNullable<AppSettingsPatch['assistant']> = {}
+  for (const [flag, field] of ASSISTANT_FLAGS) {
+    const v = p[flag]
+    if (v === undefined) continue
+    if (typeof v !== 'string') throw new Error(`--${flag} требует значения (пустая строка "" — очистить)`)
+    if (field === 'agent') {
+      if (!isAgentKind(v)) throw new Error(`--assistant-agent: неизвестный агент «${v}» (id из orca-board agents list)`)
+      assistant.agent = v
+    } else {
+      assistant[field] = v
+    }
+  }
+  if (Object.keys(assistant).length) patch.assistant = assistant
 
   return patch
 }

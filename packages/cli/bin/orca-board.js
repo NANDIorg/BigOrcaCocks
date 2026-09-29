@@ -171,7 +171,7 @@ const HELP = `orca-board — управление доской агентов
   types create --project <id> --title "..." [--description "..."]
                                           новый тип: роли и правила — по умолчанию (как «Создать тип» в UI)
   types rename --project <id> --type <id> [--title "..."] [--description "..."]   хотя бы одно поле
-  types set-default --project <id> --type <id>   тип библиотеки по умолчанию (новые проекты, ассистент)
+  types set-default --project <id> --type <id>   тип библиотеки по умолчанию (новые проекты)
   types duplicate --project <id> --type <id>      копия типа под новым id
   types delete --project <id> --type <id> --yes   удалить тип; без --yes — отказ с числом проектов, где он
                                           используется, и является ли он библиотечным умолчанием; последний
@@ -189,15 +189,24 @@ const HELP = `orca-board — управление доской агентов
   node-templates list --project <id>      библиотека шаблонов нод воркфлоу
   node-templates delete --project <id> --template <id> --yes
 
-  settings get                            настройки приложения целиком (язык, уведомления, автообновление);
+  settings get                            настройки приложения целиком (язык, уведомления, автообновление,
+                                          assistant — агент, модель, effort, инструкции ассистента);
                                           уровня приложения — --project не нужен
   settings set [--language ru|en] [--keep-in-background] [--notifications-enabled]
                [--notify-role <id роли>=on|off]... [--notify-event <вид>=on|off]... [--quiet-hours ЧЧ:ММ-ЧЧ:ММ]
                [--sound] [--show-preview] [--auto-check] [--auto-download] [--install-when-idle]
+               [--assistant-agent <id>] [--assistant-model <id>] [--assistant-effort <уровень>]
+               [--assistant-prompt "..."] [--yes]
                                           любой поднабор флагов; включить boolean-флаг — сам флаг, выключить —
                                           --no-<флаг> (--no-sound и т.п.); --no-quiet-hours выключает тихие
                                           часы; вид уведомления — question, answerReady, workerDone,
-                                          escalation, runDone
+                                          escalation, runDone.
+                                          --assistant-*: настройки ассистента (он не роль типа задачи — в roles
+                                          list его нет, roles update/rules set --role assistant отвечают «нет
+                                          роли»); --assistant-agent — id из agents list, смена агента требует
+                                          --yes и сбрасывает модель и effort, если они не заданы тем же вызовом;
+                                          --assistant-prompt — инструкции ассистента; пустая строка "" очищает
+                                          model/effort/prompt; действует с нового диалога ассистента
 
   projects set-active --project <id>      сделать проект активным (его берут команды без --project)
   projects remove --project <id> --yes    убрать проект из списка; без --yes — отказ с числом живых воркеров

@@ -42,7 +42,7 @@
 - Роли подзадачи — роли типа её глобальной задачи: `orca-board roles list --project <id> --run <id глобальной>`
   (без `--run` — роли типа проекта по умолчанию, для «Входящих»). Берёшь роль с включённым агентом
   (`agentEnabled`) по `description`; без уточнения — `developer`, если он есть в списке.
-  `coordinator` и `assistant` задачам не назначай.
+  `coordinator` задачам не назначай.
 
 ## Что значат просьбы
 
@@ -98,6 +98,12 @@
   Не создавай флагов, которых нет в `orca-board --help` — там весь список (`--language`, `--keep-in-background`,
   `--notifications-enabled`, `--notify-role <id>=on|off`, `--notify-event <вид>=on|off`, `--quiet-hours ЧЧ:ММ-ЧЧ:ММ`,
   `--sound`, `--show-preview`, `--auto-check`, `--auto-download`, `--install-when-idle`).
+- «Твои настройки» (агент, модель, effort, твои инструкции) — это настройки приложения, а не роль типа задачи: в
+  `roles list` тебя нет, `roles update`/`rules set` с `--role assistant` не сработают. Прочитать — поле `assistant` в
+  `orca-board settings get`; поменять — `orca-board settings set --assistant-model <id>`, `--assistant-effort <уровень>`,
+  `--assistant-prompt "..."` (пустая строка `""` очищает поле), агент — `--assistant-agent <id>` (id из
+  `orca-board agents list`; смена агента опасна, см. «Подтверждение»). Действует не сейчас, а с нового диалога
+  (кнопка «Новый диалог» в панели ассистента) — скажи это человеку.
 - «Новый тип задачи» → `orca-board types create --project <id> --title "..." [--description "..."]`.
   «Переименуй тип» → `orca-board types rename --project <id> --type <id> --title "..."`.
   «Сделай тип по умолчанию» → `orca-board types set-default --project <id> --type <id>`.
@@ -127,6 +133,7 @@
   `worker stop`. Сначала опиши, что будет удалено/остановлено (проект, id и название), и жди ответа.
   Глобальная задача с подзадачами удаляется только с `--cascade` — вместе с ними: перечисли их в вопросе.
 - Так же — настройки: `types delete`, `roles remove`, `roles update --agent <id>` (смена агента роли),
+  `settings set --assistant-agent <id>` (смена твоего агента: модель и effort сбросятся, если не заданы тем же вызовом),
   `node-templates delete`, `projects remove`, `types perm set --mode bypassPermissions`, `project columns set`
   (если удаляемая колонка не пуста).
   Без `--yes` эти команды отвечают ошибкой с описанием последствий (сколько проектов/задач затронуто,

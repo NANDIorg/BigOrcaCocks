@@ -295,14 +295,14 @@ describe('удалённая системная роль', () => {
     roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
     const res = await call('task.create', { title: 'Ревью', role: 'reviewer' })
     assert.equal(res.ok, false)
-    assert.match(res.error!, /роли «reviewer» нет в типе задачи «Программирование»\. Роли типа: coordinator, assistant, developer, qa \(orca-board roles list\)\./)
+    assert.match(res.error!, /роли «reviewer» нет в типе задачи «Программирование»\. Роли типа: coordinator, developer, qa \(orca-board roles list\)\./)
     assert.match(res.error!, /Вернуть системные роли/)
     assert.equal(store.listTasks().length, 0)
   })
 
   it('пользовательская роль — без подсказки про системные', async () => {
     const res = await call('task.create', { title: 'X', role: 'role_nope' })
-    assert.equal(res.error, 'роли «role_nope» нет в типе задачи «Программирование». Роли типа: coordinator, assistant, developer, reviewer, qa (orca-board roles list). Роли типа меняются в «Настройки» → «Типы задач».')
+    assert.equal(res.error, 'роли «role_nope» нет в типе задачи «Программирование». Роли типа: coordinator, developer, reviewer, qa (orca-board roles list). Роли типа меняются в «Настройки» → «Типы задач».')
   })
 
   it('worker start задачи на удалённой роли — понятная ошибка, воркер не запускается', async () => {

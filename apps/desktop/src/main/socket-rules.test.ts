@@ -211,7 +211,7 @@ describe('сокет: правила, роли и типы задач', () => {
     const docs = rows.find((t) => t.id === 'docs')!
     assert.equal('builtin' in docs, false, 'особого признака у заготовок нет')
     assert.equal(docs.default, undefined)
-    assert.deepEqual(docs.roles.map((r) => r.id), ['coordinator', 'assistant', 'writer', 'reviewer'])
+    assert.deepEqual(docs.roles.map((r) => r.id), ['coordinator', 'writer', 'reviewer'])
     assert.ok(docs.roles.every((r) => r.agentEnabled))
     assert.equal(docs.stages[0].type, 'start')
     assert.ok(docs.stages.some((s) => s.type === 'work'))
@@ -257,14 +257,14 @@ describe('сокет: правила, роли и типы задач', () => {
     assert.equal(result<GlobalTask>(await call('global.get', { global: g.id })).typeId, 'docs')
     assert.equal(result<GlobalTask>(await call('global.get', { global: g.id })).typeTitle, 'Документация')
     const roles = result<Array<Role & { agentEnabled: boolean }>>(await call('roles.list', { run: g.id }))
-    assert.deepEqual(roles.map((r) => r.id), ['coordinator', 'assistant', 'writer', 'reviewer'])
+    assert.deepEqual(roles.map((r) => r.id), ['coordinator', 'writer', 'reviewer'])
     assert.ok(roles.every((r) => r.agentEnabled))
     // Без прогона — роли типа проекта по умолчанию, --type — роли выбранного типа.
     assert.ok(result<Role[]>(await call('roles.list', {})).some((r) => r.id === 'developer'))
     assert.ok(result<Role[]>(await call('roles.list', { type: 'autotests' })).some((r) => r.id === 'autotester'))
 
     const wrong = await call('task.create', { title: 'Код', role: 'developer', run: g.id })
-    assert.match(wrong.error ?? '', /роли «developer» нет в типе задачи «Документация»\. Роли типа: coordinator, assistant, writer, reviewer \(orca-board roles list\)\./)
+    assert.match(wrong.error ?? '', /роли «developer» нет в типе задачи «Документация»\. Роли типа: coordinator, writer, reviewer \(orca-board roles list\)\./)
     const ok = result<Task>(await call('task.create', { title: 'Текст', role: 'writer', run: g.id }))
     assert.equal(ok.roleId, 'writer')
     // «Входящие» (без прогона) — по типу проекта по умолчанию: writer там нет.
