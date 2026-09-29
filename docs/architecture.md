@@ -1364,6 +1364,14 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»);
   `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)` (см. «Ассистент → Чат-режим панели»);
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
+  `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта для вкладки «Файлы»:
+  `dir` — от корня через `/`, '' — корень, эхо запроса; папки, затем файлы и симлинки по имени; не больше `PROJECT_FILES_DIR_LIMIT` = 5000 записей, остальное — `truncated: true`;
+  `.git`, `.DS_Store`, `Thumbs.db` и игнорируемое git'ом не отдаются), `files:reveal(projectId, path)` — показать запись (симлинк — сам симлинк) в Finder/Проводнике.
+  `projectId` явный, а не «активный проект» (как у `projects:branches`, `stats:project`): между вызовом и обработкой человек может переключить проект.
+  Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.rootMissing`,
+  `files.readFailed`; неизвестный `projectId` — обычная ошибка «project not found». `files:open` и `files:read` нет намеренно: запуск произвольного файла
+  системой опасен (политика `shared/showcase.ts`), `.md` открываются в «Документах», предпросмотра нет. В контрактной версии оба канала — заглушки
+  (пустой список и no-op), реализация — `main/project-files.ts`;
   `showcase:read(taskId, path, dispatchId?)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ; HTML — только
   `previewUrl`), `showcase:open(taskId, path, dispatchId?)`, `showcase:reveal(taskId, path, dispatchId?)` — файлы показа задачи активного проекта:
   корень выбирает `showcaseSource` (`main/showcase.ts`: снимок запуска `<userData>/showcase/…`, если снят и на диске → worktree задачи → worktree
