@@ -5,10 +5,10 @@ import { useT } from './i18n'
 import appLogo from '../../../build/icon.svg'
 
 const networkRoutes = [
-  'M155 77V97',
-  'M155 97C155 135 65 119 65 175',
-  'M155 97V175',
-  'M155 97C155 135 245 119 245 175'
+  { path: 'M155 77V97', origin: 0 },
+  { path: 'M155 97C155 135 65 119 65 175', origin: 20 },
+  { path: 'M155 97V175', origin: 20 },
+  { path: 'M155 97C155 135 245 119 245 175', origin: 20 }
 ]
 
 /** Схема иллюстрирует оркестрацию, а реальный результат проверки CLI находится на шаге «Агенты». */
@@ -26,9 +26,9 @@ export function OnboardingScene({ step }: { step: 0 | 1 | 2 | 3 }): React.JSX.El
     <div className="onboarding-network" aria-hidden="true">
       <div className="onboarding-network-orbit" />
       <svg className="onboarding-network-lines" viewBox="0 0 310 240" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {networkRoutes.map(route => <g key={route}>
-          <path d={route} />
-          <path className="onboarding-signal" d={route} />
+        {networkRoutes.map(route => <g key={route.path} style={{ '--route-origin': `${route.origin}px` } as React.CSSProperties}>
+          <path d={route.path} />
+          <path className="onboarding-signal" d={route.path} />
         </g>)}
       </svg>
       <div className="onboarding-network-hub"><img src={appLogo} alt="" width={84} height={84} /></div>
