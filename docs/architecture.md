@@ -851,7 +851,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   введён, смена агента без `model`/`effort` в патче сбрасывает их (модель одного агента другому не подходит), неизвестный
   агент или не-строка — `OrcaError` `assistant.*`. Режима разрешений в настройках нет — всегда `auto`
   (`ASSISTANT_PERMISSION_MODE`): ассистенту нужен только `orca-board`, он и так разрешён. Настройки применяются к
-  **следующему** запуску («Новый диалог» / `assistant:reset`), живой ассистент не перезапускается. Тесты — `assistant-settings.test.ts`.
+  **следующему** запуску («Новый диалог» / `assistant:reset`), живой ассистент не перезапускается. Тесты — `assistant-settings.test.ts`. В UI — раздел «Настройки → Ассистент» (см. «Настройки»).
 - **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext { socketPath, settings }`): `openAssistant` берёт
   `projects.settings().assistant` и **до** закрытия старого терминала проверяет агента (`assertAgentUsable(agentInfos(undefined), …)`:
   неизвестный или неустановленный — `OrcaError`, панель показывает его, старый ассистент при «Новом диалоге» не теряется).
@@ -1198,6 +1198,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     его же зовёт шаг «Язык» мастера.
   - «Уведомления» (`settings/NotificationsSection.tsx`) — фильтр ролей строится по ролям всех типов библиотеки
     (`libraryRoles`, без повторов по id).
+  - «Ассистент» (`settings/AssistantSection.tsx`, после «Обновлений», перед «Типами задач») — `AppSettings.assistant`: агент
+    (все установленные — `libraryAgents`), модель, effort, превью команды (режим разрешений — `auto`) и вкладки «Инструкции
+    ассистента» / «Встроенная инструкция» (`skills/assistant.md`) / «Стартовое сообщение». Поля — те же части, что у панели роли
+    типа (`RoleParts.tsx`: `ExecutorFields`, `InstructionTabs`, `commandPreview`; вид инструкции передаётся явно, а не из id роли).
+    Автосохранение (`useAutoSave`) шлёт черновик целиком (`assistantSavePatch`: пустое поле — пустой строкой, main его очищает);
+    логика без React — `assistantSettings.ts` (тест рядом). Подсказка под заголовком: действует с нового диалога (↻ в панели).
+    Старый main без `settings.assistant` — `common.staleApp` вместо редактора (`assistantView`), запись без поля в ответе —
+    `droppedPatch`. `App` держит `AppSettings` в состоянии (загрузка при старте, `app:changed`, `onAppSettings` из «Настроек»):
+    подпись терминала ассистента берёт агента оттуда (`assistantAgentOf`). В редакторе ролей типа ассистента нет.
   - Группа «Типы задач» — каждый тип отдельным пунктом меню (`type:<id>` в `orca.settingsSection`; старые
     `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
     библиотеки, без деления на встроенные и свои, внизу «Новый тип» (`taskTypes:save` без id, пустые настройки =

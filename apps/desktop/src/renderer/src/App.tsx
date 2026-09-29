@@ -5,7 +5,7 @@ import {
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
   type TaskPriority, type ImageAttachmentInput
 } from '@orca-board/core'
-import type { GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
+import type { AppSettings, GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { attentionTaskIds, buildAttention } from './attention'
 import { revealInFeed } from './feedLink'
@@ -49,6 +49,7 @@ import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
+import { assistantAgentOf } from './assistantSettings'
 import { availableTypes, globalTypeTitle, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
 type Tab = 'board' | 'terminals' | 'stats' | 'info'
@@ -192,6 +193,8 @@ export function App(): React.JSX.Element {
   /** Хвост вывода из terminals:list по ptyId — начальное содержимое xterm после перезагрузки окна. */
   const [tails, setTails] = useState<Record<string, string>>({})
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  /** Настройки приложения: агент ассистента для подписи его терминала. null — ещё не загружены или сбой чтения. */
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   /** Инбокс — панель запросов к человеку (⌘J, бейдж «Входящие» в шапке, клик по уведомлению). */
   const [showInbox, setShowInbox] = useState(false)
   /** Запрос, на котором открыть Инбокс (уведомление); nonce — повторный клик по тому же уведомлению. */
@@ -285,13 +288,17 @@ export function App(): React.JSX.Element {
       if (shouldShowOnboarding(state)) setOnboarding((cur) => cur ?? 'first')
     })
     window.orca.app.info().then((i) => setSocketPath(i.socketPath))
+    window.orca.app.getSettings().then(setAppSettings, () => undefined)
     void refreshProjects()
     // Настройки/проекты/типы/роли/шаблоны нод меняются и из CLI/ассистента через сокет (не только из этого
     // окна) — перечитываем то же, что после своих IPC-правок, плюс язык (у него нет своего IPC-сеттера здесь).
     // Опционален: старый preload без onChanged — правки из сокета видны после перезапуска, как раньше.
     const offAppChanged = window.orca.app.onChanged?.(() => {
       void refreshProjects()
-      window.orca.app.getSettings().then((s) => setLocale(settingsLocale(s)), () => undefined)
+      window.orca.app.getSettings().then((s) => {
+        setLocale(settingsLocale(s))
+        setAppSettings(s)
+      }, () => undefined)
     })
     const offBoard = window.orca.board.onChange(({ projectId, snapshot }) => {
       setActive((cur) => {
@@ -785,8 +792,9 @@ export function App(): React.JSX.Element {
       return { name: global?.title ?? t('shell.term.coordinatorName'), role: role?.title ?? t('shell.term.coordinatorRole'), agent: role?.agent ?? 'claude' }
     }
     if (term.role === 'assistant') {
-      // Ассистент — настройки приложения (AppSettings.assistant), не роль типа; агента из настроек подставит раздел «Ассистент».
-      return { name: t('shell.term.assistantName'), role: t('shell.term.assistantRole'), agent: 'claude' }
+      // Ассистент — настройки приложения (AppSettings.assistant), не роль типа. Подпись — по текущим настройкам:
+      // после смены агента до «Нового диалога» она опережает живой терминал, это и подсказка, что он устарел.
+      return { name: t('shell.term.assistantName'), role: t('shell.term.assistantRole'), agent: assistantAgentOf(appSettings) }
     }
     if (term.role === 'shell') return { name: term.label, role: t('shell.term.shellRole'), agent: 'shell' }
     const task = term.projectId === active?.id ? tasks.find((x) => x.id === term.taskId) : undefined
@@ -1078,6 +1086,7 @@ export function App(): React.JSX.Element {
           updates={updates}
           onRefreshAgents={() => refreshAgents(true)}
           onProjectsChanged={refreshProjects}
+          onAppSettings={setAppSettings}
           onRunOnboarding={() => {
             setShowSettings(false)
             refreshTaskTypes()

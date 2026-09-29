@@ -18,3 +18,8 @@ export function withPatch(r: Role, p: Partial<Role>): Role {
 export function agentChangePatch(agent: AgentKind): Partial<Role> {
   return { agent, model: undefined, effort: undefined }
 }
+
+/** Смена модели: effort, которого нет у новой модели (`efforts` — её уровни), сбрасывается в «по умолчанию». */
+export function modelChangePatch(effort: string | undefined, model: string, efforts: readonly string[]): { model: string; effort: string | undefined } {
+  return { model, effort: effort && efforts.includes(effort) ? effort : undefined }
+}
