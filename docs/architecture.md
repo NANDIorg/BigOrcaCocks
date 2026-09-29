@@ -889,7 +889,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   после явного «да» — `task delete`, `global delete`, закрыть без мержа, `worker stop`; после действия — одна строка
   с проектом и id; долгих ожиданий (`check --wait/--follow`) нет.
 - **Настройки** — ассистент читает и правит все настройки приложения и проекта (то, что человек меняет в
-  «Настройки» и «О проекте») теми же командами `orca-board`, что и CLI: `settings get/set`, `types
+  «Настройки» и «О проекте») теми же командами `orca-board`, что и CLI. Свои настройки — тоже: поле `assistant` в
+  `settings get`, правка — `settings set --assistant-agent/--assistant-model/--assistant-effort/--assistant-prompt`
+  (смена агента — с `--yes`, действует с нового диалога); в `roles list` ассистента нет, `roles update`/`rules set`
+  с `--role assistant` отвечают «нет роли». Остальное: `settings get/set`, `types
   create/rename/set-default/duplicate/delete`, `roles add/update/remove`, `types perm get/set`,
   `node-templates list/delete`, `projects set-active/remove`, `project agents set`, `project columns set`,
   `project types set`, `project rules get/set` — таблица методов сокета в «Протокол сокета» → «Настройки»,
@@ -1468,7 +1471,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | Метод | Параметры | Результат | Подтверждение |
 |---|---|---|---|
 | `settings.get` | — (уровень приложения) | `AppSettings` целиком |  |
-| `settings.set` | любой поднабор: `language`, `keep-in-background`, `notifications-enabled`, `notify-role` (`id=on\|off`, повторяемый), `notify-event` (`kind=on\|off`, повторяемый), `quiet-hours` (`ЧЧ:ММ-ЧЧ:ММ` или `false` — выключить), `sound`, `show-preview`, `auto-check`, `auto-download`, `install-when-idle` | `AppSettings` после мержа (`ProjectManager.setSettings`; смена языка сразу зовёт `setMainLocale`, `refreshTray`, `updater.settingsChanged()` — как `app:setSettings` в IPC) |  |
+| `settings.set` | любой поднабор: `language`, `keep-in-background`, `notifications-enabled`, `notify-role` (`id=on\|off`, повторяемый), `notify-event` (`kind=on\|off`, повторяемый), `quiet-hours` (`ЧЧ:ММ-ЧЧ:ММ` или `false` — выключить), `sound`, `show-preview`, `auto-check`, `auto-download`, `install-when-idle`; ассистент — `assistant-agent` (`isAgentKind`), `assistant-model`, `assistant-effort`, `assistant-prompt` (строки, `""` — очистить; → `AppSettingsPatch.assistant`, мерж — `mergedAssistantSettings`), `yes?` | `AppSettings` после мержа (`ProjectManager.setSettings`; смена языка сразу зовёт `setMainLocale`, `refreshTray`, `updater.settingsChanged()` — как `app:setSettings` в IPC). Разбор флагов — `settingsPatchFromParams` (`src/main/settings-params.ts`) | да для смены `assistant-agent` на другой — без `yes` ошибка с текущим и новым агентом (как `roles.update --agent`); модель и effort при смене сбрасываются, если не заданы тем же вызовом |
 | `types.create` | `title`, `description?` | новый `TaskType` (`ProjectManager.saveTaskType({..., settings: {}})` — роли и правила по умолчанию, как «Создать тип» в UI) |  |
 | `types.rename` | `type`, `title?`, `description?` (хотя бы одно) | `TaskType` (`renameTaskType`) |  |
 | `types.set-default` | `type` | `TaskTypesState` |  |
