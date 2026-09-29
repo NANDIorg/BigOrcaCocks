@@ -318,6 +318,12 @@ export function fileIconKind(name: string, kind: ProjectFileKind): FileIconKind 
   return 'file'
 }
 
+/**
+ * Файл открывается в «Документах». Только `.md`: `docs:read` (`resolveDocPath` в `main/docs.ts`) другие расширения
+ * отклоняет, в том числе `.markdown`, — кнопка для них вела бы в ошибку. Симлинк не открываем: дерево его не раскрывает.
+ */
+export const isOpenableDoc = (name: string, kind: ProjectFileKind): boolean => kind === 'file' && /\.md$/i.test(name)
+
 /** Полный путь для подсказки: разделитель — как у корня (на Windows корень приходит с `\`). */
 export function absolutePath(root: string, path: string): string {
   const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/'

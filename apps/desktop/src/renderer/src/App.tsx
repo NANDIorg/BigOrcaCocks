@@ -175,6 +175,8 @@ export function App(): React.JSX.Element {
   const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
   const [showDocs, setShowDocs] = useState(false)
+  /** .md, открытый из вкладки «Файлы»; кнопка rail открывает «Документы» без него. */
+  const [docsInitialPath, setDocsInitialPath] = useState<string | null>(null)
   /** Обновление приложения: плашка в сайдбаре, «Настройки → Обновления», тост после старта. */
   const updates = useUpdates()
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
@@ -809,7 +811,15 @@ export function App(): React.JSX.Element {
           {/* Сайдбар скрыт — плашки обновления не видно, поэтому точка на шестерёнке. */}
           {!showProjects && needsAttention(updates.state) && <span className="rail-dot" />}
         </button>
-        <button className={`icon ${showDocs ? 'active' : ''}`} title={t('shell.rail.docs')} onClick={() => setShowDocs(true)} disabled={!active}>
+        <button
+          className={`icon ${showDocs ? 'active' : ''}`}
+          title={t('shell.rail.docs')}
+          onClick={() => {
+            setDocsInitialPath(null)
+            setShowDocs(true)
+          }}
+          disabled={!active}
+        >
           <Icon.doc />
         </button>
         <button
@@ -981,7 +991,18 @@ export function App(): React.JSX.Element {
             </GlobalTaskView>
           )}
           {tab === 'files' && !active && <div className="empty">{t('shell.projects.none')}</div>}
-          {tab === 'files' && active && <FilesView key={active.id} projectId={active.id} name={active.name} root={active.root} />}
+          {tab === 'files' && active && (
+            <FilesView
+              key={active.id}
+              projectId={active.id}
+              name={active.name}
+              root={active.root}
+              onOpenDoc={(path) => {
+                setDocsInitialPath(path)
+                setShowDocs(true)
+              }}
+            />
+          )}
           {tab === 'stats' && !active && <div className="empty">{t('shell.projects.none')}</div>}
           {tab === 'stats' && active && <StatsView key={active.id} projectId={active.id} columns={columns} />}
           {tab === 'info' && !active && <div className="empty">{t('shell.projects.none')}</div>}
@@ -1094,7 +1115,16 @@ export function App(): React.JSX.Element {
           }}
         />
       )}
-      {showDocs && active && <DocsModal key={active.id} projectName={active.name} tasks={tasks} columns={columns} onClose={() => setShowDocs(false)} />}
+      {showDocs && active && (
+        <DocsModal
+          key={active.id}
+          projectName={active.name}
+          tasks={tasks}
+          columns={columns}
+          initialDoc={docsInitialPath ? { source: 'project', path: docsInitialPath } : undefined}
+          onClose={() => setShowDocs(false)}
+        />
+      )}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}
