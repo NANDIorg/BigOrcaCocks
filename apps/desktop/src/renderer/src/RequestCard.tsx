@@ -219,7 +219,14 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
       </div>
       <div className="rq-title">{r.title}</div>
 
-      {shownShowcase && showcaseTask !== undefined && <ShowcaseBlock taskId={showcaseTask} showcase={shownShowcase} />}
+      {shownShowcase && showcaseTask !== undefined && r.showcaseDispatchId !== undefined && (
+        <ShowcaseBlock
+          taskId={showcaseTask}
+          dispatchId={r.showcaseDispatchId}
+          showcase={shownShowcase}
+          decision={{ value: decision, onChange: setDecision, onAccept: accept, onReject: openClarify, busy }}
+        />
+      )}
 
       {body && !compact && (
         <div className="rq-body">
