@@ -165,6 +165,7 @@ export default {
   'showcase.notFile': 'showcase: not a file: {path}',
   'showcase.hidden': 'showcase: hidden files and folders are not shown: {path}',
   'showcase.noPreview': 'showcase: {path} has no preview — open it with the “Open” button',
+  'showcase.networkNoSnapshot': 'showcase: internet is not available for this showcase — it has no snapshot, so the page would see the whole repository',
   'showcase.tooBig': 'showcase: the file is larger than {mb} MB: {path}',
 
   'review.noBranch': 'the task has no branch',

@@ -168,6 +168,7 @@ export default {
   'showcase.notFile': 'показ: не файл: {path}',
   'showcase.hidden': 'показ: скрытые файлы и папки не показываются: {path}',
   'showcase.noPreview': 'показ: {path} не превьюится — откройте его кнопкой «Открыть»',
+  'showcase.networkNoSnapshot': 'показ: интернет недоступен для этого показа — он сдан без снимка, страница видела бы весь репозиторий',
   'showcase.tooBig': 'показ: файл больше {mb} МБ: {path}',
 
   'review.noBranch': 'у задачи нет ветки',

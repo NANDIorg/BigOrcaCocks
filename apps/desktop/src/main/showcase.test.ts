@@ -5,8 +5,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync, symlinkSyn
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
+import { OrcaError } from './i18n'
 import { PreviewTokens } from './preview-protocol'
-import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseRoot, showcaseSource } from './showcase'
+import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseRoot, showcaseSource } from './showcase'
 import { showcaseSnapshotDir } from './showcase-snapshot'
 import { SHOWCASE_READ_MAX_BYTES, isAssetType, isEntryType, showcaseFileType, showcaseServedMime } from '../shared/showcase'
 
@@ -180,11 +181,12 @@ describe('showcaseSource и previewUrl', () => {
     assert.equal(a.mime, 'text/html')
     assert.ok(a.url.startsWith(a.base))
     assert.deepEqual(tokens.get(new URL(a.base).host), { root: wt, network: false })
-    // Тот же корень — тот же токен; сеть — отдельный.
+    // Тот же корень — тот же токен.
     assert.equal(showcasePreviewUrl(store, tokens, d.id, 'design/notes.md').base, a.base)
-    const net = showcasePreviewUrl(store, tokens, d.id, 'design/a.html', { network: true })
-    assert.notEqual(net.base, a.base)
-    assert.deepEqual(tokens.get(new URL(net.base).host), { root: wt, network: true })
+    // Без снимка токен — на весь worktree: сеть не выдаётся (страница прочитала бы репозиторий и отправила наружу).
+    assert.throws(() => showcasePreviewUrl(store, tokens, d.id, 'design/a.html', { network: true }), (e: unknown) =>
+      e instanceof OrcaError && e.key === 'showcase.networkNoSnapshot' && /интернет недоступен/.test(e.message))
+    assert.equal(tokens.size, 1, 'токен с сетью не выдан')
     assert.equal(showcasePreviewUrl(store, tokens, d.id, 'design/мой макет.html').url, `${a.base}design/${encodeURIComponent('мой макет.html')}`)
     assert.throws(() => showcasePreviewUrl(store, tokens, d.id, 'design/doc.pdf'), /не превьюится/)
     assert.throws(() => showcasePreviewUrl(store, tokens, d.id, '.hidden/a.html'), /скрытые/)
@@ -208,6 +210,36 @@ describe('showcaseSource и previewUrl', () => {
     const tokens = new PreviewTokens()
     const a = showcasePreviewUrl(store, tokens, d.id, 'design/a.html', undefined, snapshots)
     assert.deepEqual(tokens.get(new URL(a.base).host), { root: dir, network: false })
+    // Со снимком сеть — отдельный токен на тот же снимок.
+    const net = showcasePreviewUrl(store, tokens, d.id, 'design/a.html', { network: true }, snapshots)
+    assert.notEqual(net.base, a.base)
+    assert.deepEqual(tokens.get(new URL(net.base).host), { root: dir, network: true })
     assert.throws(() => showcasePreviewUrl(store, tokens, d.id, 'design/a.html'), /нет worktree/, 'без снимков — старый путь через worktree')
+  })
+
+  it('previewBase — база без сети для картинок описания: снимок, без него worktree, ни того ни другого — null', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const run = store.createRun('цель')
+    const t = store.createTask({ title: 'Макет', roleId: 'developer', runId: run.id })
+    store.updateTask(t.id, { worktree: wt, branch: `orca/${t.id}` })
+    const old = store.startDispatch(t.id, 'pty_a')
+    store.finishDispatch(old.id, 'без снимка', [], undefined, { showcase: { text: '![A](design/a.png)', files: [] } })
+    const d = store.startDispatch(t.id, 'pty_b')
+    store.finishDispatch(d.id, 'готово', [], undefined, { showcase: { text: '![A](design/a.png)', files: [] }, snapshot: { at: 1, files: 1, bytes: 4 } })
+    const snapshots = { root: path.join(tmp, 'showcase'), projectId: 'proj_1' }
+    const dir = showcaseSnapshotDir(snapshots.root, 'proj_1', run.id, d.id)
+    mkdirSync(path.join(dir, 'design'), { recursive: true })
+    writeFileSync(path.join(dir, 'design/a.png'), new Uint8Array([1]))
+    const tokens = new PreviewTokens()
+    const base = showcasePreviewBase(store, tokens, d.id, snapshots)!
+    assert.match(base, /^orca-preview:\/\/[0-9a-f]{32}\/$/)
+    assert.deepEqual(tokens.get(new URL(base).host), { root: dir, network: false })
+    // Картинка описания — тем же токеном, что и файлы показа снимка.
+    assert.equal(showcasePreviewUrl(store, tokens, d.id, 'design/a.png', undefined, snapshots).base, base)
+    const oldBase = showcasePreviewBase(store, tokens, old.id, snapshots)!
+    assert.deepEqual(tokens.get(new URL(oldBase).host), { root: wt, network: false }, 'без снимка — worktree, без сети')
+    store.updateTask(t.id, { worktree: undefined })
+    assert.equal(showcasePreviewBase(store, tokens, old.id, snapshots), null)
+    assert.throws(() => showcasePreviewBase(store, tokens, 'd_nope', snapshots), /не найден/)
   })
 })

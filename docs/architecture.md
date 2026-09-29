@@ -1371,8 +1371,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»; `showcase:previewUrl(dispatchId, path, {network?})` →
   `ShowcasePreviewUrl {url, mime, base}` — адрес `orca-preview://<токен>/<путь>` страницы показа для изолированного фрейма
   (HTML, картинки, SVG, markdown — ради `base`; PDF — отказ `showcase.noPreview`, скрытые сегменты — `showcase.hidden`; токен на корень
-  `showcaseSource`, `network: true` — отдельный токен с сетью в CSP; см. «Протокол показа `orca-preview://`»; в старом preload метода нет —
-  renderer проверяет его перед вызовом);
+  `showcaseSource`, `network: true` — отдельный токен с сетью в CSP, только если у запуска есть снимок: без снимка токен был бы на весь
+  worktree — отказ `showcase.networkNoSnapshot`; см. «Протокол показа `orca-preview://`»; в старом preload метода нет —
+  renderer проверяет его перед вызовом); `showcase:previewBase(dispatchId)` → `string | null` — база `orca-preview://<токен>/`
+  (без сети, корень `showcaseSource`) для относительных картинок описания показа `showcase.text` (пути от корня репозитория;
+  в `Markdown` — `assets {path: 'showcase.md', base}`); `null` — ни снимка, ни worktree; в старом preload метода нет;
   `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»),
   `stats:task(projectId, taskId)` → `TaskStats`, `stats:global(projectId, runId)` → `GlobalTaskStats` (за всё время жизни; неизвестная задача или прогон —
   ошибка по-русски; см. «Статистика задачи»).
@@ -1743,8 +1746,10 @@ UI работает с активным проектом; воркеры и ко
 
 - **Схема** регистрируется `protocol.registerSchemesAsPrivileged` на верхнем уровне `index.ts` (до `ready`) с `standard`, `secure`,
   `supportFetchAPI`, `stream`; `bypassCSP` и `corsEnabled` не включены. Обработчик — `protocol.handle` в `whenReady` (сессия по умолчанию).
-- **Токены** (`PreviewTokens`): 128 бит hex → `{root, network}`, LRU на 100, живут до выхода. Выдаёт только IPC `showcase:previewUrl`
-  (корень — `showcaseSource`: снимок запуска, без него — worktree задачи); один корень с одним режимом сети — один токен.
+- **Токены** (`PreviewTokens`): 128 бит hex → `{root, network}`, LRU на 100, живут до выхода. Выдают только IPC `showcase:previewUrl`
+  и `showcase:previewBase` (корень — `showcaseSource`: снимок запуска, без него — worktree задачи); один корень с одним режимом сети —
+  один токен. Токен с сетью — только на снимок: страница с сетью на токене worktree прочитала бы `fetch`'ем файлы репозитория
+  и отправила их наружу (`showcase.networkNoSnapshot`).
   Вытесненный токен — 404 во фрейме, «Обновить» выдаст новый.
 - **Разбор запроса** (`resolvePreviewRequest`, чистая функция): только `GET`/`HEAD` (иначе 405); чужой токен — 404; сегменты пути
   проверяются после декодирования — пустые, начинающиеся с точки (`..`, `.env`, `.git`), с `/`, `\`, `:`, NUL — 403; расширение из

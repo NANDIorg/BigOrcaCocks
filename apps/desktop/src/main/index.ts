@@ -11,7 +11,7 @@ import { AssistantChatCache, assistantTranscriptPath, assistantChatAvailable, ch
 import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
-import { readShowcaseFile, resolveShowcasePath, showcasePreviewUrl, showcaseSource } from './showcase'
+import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
@@ -990,6 +990,11 @@ function registerIpc(): void {
     const p = resolveProject()
     return showcasePreviewUrl(p.store, previewTokens, dispatchId, path, opts, showcaseSnapshots(p.id))
   })
+  // База для картинок описания показа (`showcase.text`): токен без сети на тот же корень.
+  handle('showcase:previewBase', (_e, dispatchId: unknown) => {
+    const p = resolveProject()
+    return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
+  })
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
@@ -1092,7 +1097,7 @@ app.whenReady().then(() => {
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),
-        snapshotShowcase: (dispatchId, files) => snapshotDispatchShowcase(p.store, showcaseSnapshots(p.id), dispatchId, files),
+        snapshotShowcase: (dispatchId, files, text) => snapshotDispatchShowcase(p.store, showcaseSnapshots(p.id), dispatchId, files, text),
         agents: () => projectAgents(p.id),
         resolveRun: (runId) => projects.resolveRun(p.id, runId),
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),

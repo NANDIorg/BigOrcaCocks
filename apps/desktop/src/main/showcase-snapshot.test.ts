@@ -146,6 +146,47 @@ describe('planShowcaseSnapshot: ассеты HTML', () => {
   })
 })
 
+describe('planShowcaseSnapshot: картинки markdown и описания', () => {
+  it('md-файл показа тянет свои картинки: ![](path), <путь с пробелами>, заголовок, [id]: path, <img src>', () => {
+    write('docs/shots/a.png')
+    write('docs/shots/b c.png')
+    write('docs/shots/d.png')
+    write('docs/shots/e.svg')
+    write('img/up.png')
+    write('docs/shots/unused.png')
+    write('docs/other.md', '![x](shots/unused.png)')
+    write('docs/README.md', [
+      '# Варианты',
+      '![A](shots/a.png)',
+      '![B](<shots/b c.png> "Вариант B")',
+      '![D][d]',
+      '[d]: shots/d.png',
+      '<img src="shots/e.svg" width="200">',
+      '![вверх](../img/up.png)',
+      '![внешняя](https://example.com/x.png) ![data](data:image/png;base64,AA==) ![abs](/etc/x.png)',
+      '![вне](../../x.png) ![скрытая](.git/x.png) ![скрипт](../run.sh)',
+      '[другой md](other.md)'
+    ].join('\n'))
+    write('run.sh')
+    const plan = planShowcaseSnapshot(wt, ['docs/README.md'])
+    assert.deepEqual(plan.entries, ['docs/README.md'], 'картинки — ассеты снимка, не точки входа')
+    assert.deepEqual(rels(plan), ['docs/README.md', 'docs/shots/a.png', 'docs/shots/b c.png', 'docs/shots/d.png', 'docs/shots/e.svg', 'img/up.png'])
+  })
+
+  it('описание показа (text): картинки от корня репозитория — в снимке; нет файла — молча пропускается', () => {
+    write('design/a.png')
+    write('design/b.png')
+    write('notes.md')
+    const plan = planShowcaseSnapshot(wt, ['notes.md'], '## Варианты\n![A](design/a.png)\n![B](./design/b.png)\n![нет](design/nope.png)')
+    assert.deepEqual(plan.entries, ['notes.md'])
+    assert.deepEqual(rels(plan), ['design/a.png', 'design/b.png', 'notes.md'])
+    // Только описание, без --show: картинки всё равно снимаются, точек входа нет.
+    const textOnly = planShowcaseSnapshot(wt, [], '![A](design/a.png)')
+    assert.deepEqual(textOnly.entries, [])
+    assert.deepEqual(rels(textOnly), ['design/a.png'])
+  })
+})
+
 describe('writeShowcaseSnapshot', () => {
   it('копирует во временную папку; commit ставит на место, заменяя прежний снимок', () => {
     write('design/a.html', '<p>A</p>')
@@ -188,9 +229,24 @@ describe('snapshotDispatchShowcase и чистка', () => {
     const snapshots = { root: path.join(tmp, 'showcase'), projectId: 'proj_1' }
     assert.throws(() => snapshotDispatchShowcase(store, snapshots, d.id, ['a.png']), /нет worktree/)
     store.updateTask(t.id, { worktree: wt })
-    snapshotDispatchShowcase(store, snapshots, d.id, ['a.png']).commit()
+    snapshotDispatchShowcase(store, snapshots, d.id, ['a.png'])!.commit()
     assert.ok(existsSync(path.join(showcaseSnapshotDir(snapshots.root, 'proj_1', run.id, d.id), 'a.png')))
+    // Одно описание: картинки есть — снимок; картинок нет — снимка нет.
+    write('shots/b.png')
+    const prepared = snapshotDispatchShowcase(store, snapshots, d.id, [], '![B](shots/b.png)')
+    assert.deepEqual(prepared?.files, [])
+    assert.deepEqual(prepared?.snapshot.files, 1)
+    prepared!.discard()
+    assert.equal(snapshotDispatchShowcase(store, snapshots, d.id, [], 'без картинок'), undefined)
     assert.throws(() => showcaseSnapshotDir(snapshots.root, '../x', run.id, d.id), /недопустимый/)
+  })
+
+  it('нет worktree и только описание — не ошибка: картинки описания best-effort, снимка нет', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const t = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(t.id, 'pty_a')
+    const snapshots = { root: path.join(tmp, 'showcase'), projectId: 'proj_1' }
+    assert.equal(snapshotDispatchShowcase(store, snapshots, d.id, [], '![A](a.png)'), undefined)
   })
 
   it('удаление глобальной задачи убирает её снимки, удаление проекта — все; нет папки — не ошибка', () => {
