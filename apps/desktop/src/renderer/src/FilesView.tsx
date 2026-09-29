@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectFileKind } from '../../shared/ipc'
 import { CopyButton } from './about/parts'
 import { DocIcon } from './docsIcons'
@@ -49,6 +49,51 @@ const ICONS: Record<FileIconKind, () => React.JSX.Element> = {
 /** Отступ строки, как в DocsTree; служебные строки («Загрузка…», пусто) — вровень с именами, после шеврона. */
 const indent = (depth: number, extra = 0): React.CSSProperties => ({ paddingLeft: 8 + depth * 16 + extra })
 const NOTE = 20
+
+interface FileRowProps {
+  path: string
+  name: string
+  kind: ProjectFileKind
+  depth: number
+  open: boolean
+  active: boolean
+  /** Строка — точка входа в дерево с клавиатуры (roving tabindex). */
+  focusable: boolean
+  /** Открывается в «Документах» двойным кликом. */
+  openable: boolean
+  /** Подсказка при наведении: путь, у симлинка — с пометкой. */
+  title: string
+  onSelect: (path: string, isDir: boolean) => void
+  onOpen: (path: string) => void
+}
+
+/**
+ * Строка записи. Только примитивы и стабильные колбэки в пропсах: на папке в тысячи записей клик или стрелка
+ * перерисовывают две строки (старое и новое выделение), а не всё дерево.
+ */
+const FileRow = memo(function FileRow(p: FileRowProps): React.JSX.Element {
+  const isDir = p.kind === 'dir'
+  const Ico = isDir && p.open ? DocIcon.folderOpen : ICONS[fileIconKind(p.name, p.kind)]
+  return (
+    <div
+      role="treeitem"
+      aria-level={p.depth + 1}
+      aria-selected={p.active}
+      aria-expanded={isDir ? p.open : undefined}
+      tabIndex={p.focusable ? 0 : -1}
+      data-path={p.path}
+      className={`docs-row files-row ${isDir ? 'dir' : 'file'} ${p.open ? 'open' : ''} ${p.active ? 'active' : ''}`}
+      style={indent(p.depth)}
+      title={p.title}
+      onClick={() => p.onSelect(p.path, isDir)}
+      onDoubleClick={p.openable ? () => p.onOpen(p.path) : undefined}
+    >
+      {isDir ? <DocIcon.chev /> : <span className="docs-spacer" />}
+      <Ico />
+      <span className="docs-nm">{p.name}</span>
+    </div>
+  )
+})
 
 /**
  * Вкладка проекта «Файлы»: ленивое дерево корня проекта, только чтение (docs/architecture.md → «Вкладка “Файлы”»).
@@ -144,13 +189,18 @@ export function FilesView({
     }
   }
 
-  function clickRow(path: string, isDir: boolean): void {
+  const clickRow = useCallback((path: string, isDir: boolean): void => {
     setRevealError(null)
     setState((s) => {
       const next = s.selected === path ? s : { ...s, selected: path }
       return isDir ? toggleDir(next, path) : next
     })
-  }
+  }, [])
+
+  // Родитель может передавать новый `onOpenDoc` на каждой отрисовке — строкам нужен стабильный колбэк.
+  const onOpenDocRef = useRef(onOpenDoc)
+  onOpenDocRef.current = onOpenDoc
+  const openDoc = useCallback((path: string): void => onOpenDocRef.current?.(path), [])
 
   async function reveal(path: string): Promise<void> {
     setRevealError(null)
@@ -172,27 +222,21 @@ export function FilesView({
 
   const row = (r: TreeRow): React.JSX.Element => {
     if (r.type === 'entry') {
-      const isDir = r.kind === 'dir'
-      const Ico = r.kind === 'dir' && r.open ? DocIcon.folderOpen : ICONS[fileIconKind(r.name, r.kind)]
       return (
-        <div
+        <FileRow
           key={r.path}
-          role="treeitem"
-          aria-level={r.depth + 1}
-          aria-selected={selected === r.path}
-          aria-expanded={isDir ? r.open : undefined}
-          tabIndex={focusable === r.path ? 0 : -1}
-          data-path={r.path}
-          className={`docs-row files-row ${isDir ? 'dir' : 'file'} ${r.open ? 'open' : ''} ${selected === r.path ? 'active' : ''}`}
-          style={indent(r.depth)}
+          path={r.path}
+          name={r.name}
+          kind={r.kind}
+          depth={r.depth}
+          open={r.open}
+          active={selected === r.path}
+          focusable={focusable === r.path}
+          openable={canOpen(r.name, r.kind)}
           title={r.kind === 'symlink' ? `${r.path} — ${t('config.files.symlink')}` : r.path}
-          onClick={() => clickRow(r.path, isDir)}
-          onDoubleClick={canOpen(r.name, r.kind) ? () => onOpenDoc?.(r.path) : undefined}
-        >
-          {isDir ? <DocIcon.chev /> : <span className="docs-spacer" />}
-          <Ico />
-          <span className="docs-nm">{r.name}</span>
-        </div>
+          onSelect={clickRow}
+          onOpen={openDoc}
+        />
       )
     }
     const key = `${r.type}:${r.dir}`
@@ -231,23 +275,26 @@ export function FilesView({
           </div>
         )}
       </div>
-      <footer className="files-foot">
-        {selected && selectedEntry ? (
-          <>
-            <code className="files-path" title={absolutePath(root, selected)}>{selected}</code>
-            <CopyButton text={selected} label={t('config.files.copyPath')} title={t('config.files.absPath', { path: absolutePath(root, selected) })} />
-            <button className="copy-btn" onClick={() => void reveal(selected)}>{t('config.files.reveal')}</button>
-            {canOpen(selectedEntry.name, selectedEntry.kind) && (
-              <button className="copy-btn" title={t('config.files.openDocHint')} onClick={() => onOpenDoc?.(selected)}>
-                {t('config.files.openDoc')}
-              </button>
-            )}
-            {revealError && <span className="editor-error files-foot-err">{revealError}</span>}
-          </>
-        ) : (
-          <span className="muted">{t('config.files.selectHint')}</span>
-        )}
-      </footer>
+      {/* Старый main/preload: выбирать нечего, над деревом уже просьба перезапустить приложение — панель не нужна. */}
+      {!rootError?.stale && (
+        <footer className="files-foot">
+          {selected && selectedEntry ? (
+            <>
+              <code className="files-path" title={absolutePath(root, selected)}>{selected}</code>
+              <CopyButton text={selected} label={t('config.files.copyPath')} title={t('config.files.absPath', { path: absolutePath(root, selected) })} />
+              <button className="copy-btn" onClick={() => void reveal(selected)}>{t('config.files.reveal')}</button>
+              {canOpen(selectedEntry.name, selectedEntry.kind) && (
+                <button className="copy-btn" title={t('config.files.openDocHint')} onClick={() => onOpenDoc?.(selected)}>
+                  {t('config.files.openDoc')}
+                </button>
+              )}
+              {revealError && <span className="editor-error files-foot-err">{revealError}</span>}
+            </>
+          ) : (
+            <span className="muted">{t('config.files.selectHint')}</span>
+          )}
+        </footer>
+      )}
     </section>
   )
 }

@@ -836,9 +836,9 @@ export default {
   'files.staleApp': 'Приложение запущено со старой версией main/preload, где ещё нет вкладки «Файлы». Перезапустите приложение.',
   'files.err.badPath': 'Недопустимый путь: {path}',
   'files.err.outside': 'Путь ведёт за пределы проекта: {path}',
-  'files.err.hidden': 'Эта папка не показывается: {path}',
-  'files.err.notFound': 'Папки уже нет на диске: {path}',
+  'files.err.hidden': 'Не показывается во вкладке: {path}',
+  'files.err.notFound': 'Уже нет на диске: {path}',
   'files.err.notDir': 'Это не папка: {path}',
   'files.err.rootMissing': 'Папка проекта не найдена: {path}',
-  'files.err.readFailed': 'Не удалось прочитать папку: {path}'
+  'files.err.readFailed': 'Не удалось прочитать: {path}'
 } satisfies AreaDict
