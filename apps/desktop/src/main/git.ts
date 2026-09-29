@@ -11,8 +11,59 @@ function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim()
 }
 
+/**
+ * Текущая ветка корня; detached HEAD — `'HEAD'` (так его узнают `headBase` и вызывающие). `symbolic-ref`, а не
+ * `rev-parse --abbrev-ref HEAD`: последний в репозитории без коммитов (unborn HEAD) падает с кодом 128, а
+ * `symbolic-ref` отдаёт имя ветки. Код 1 — HEAD не на ветке; другой (128 — не репозиторий) пробрасывается.
+ */
 export function currentBranch(repoRoot: string): string {
-  return git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  try {
+    return git(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD'])
+  } catch (e) {
+    if ((e as { status?: number }).status === 1) return 'HEAD'
+    throw e
+  }
+}
+
+/** В репозитории есть хотя бы один коммит (HEAD не unborn). Не репозиторий — исключение git. */
+export function hasCommits(repoRoot: string): boolean {
+  try {
+    git(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+    return true
+  } catch (e) {
+    if ((e as { status?: number }).status === 1) return false
+    throw e
+  }
+}
+
+/**
+ * Orca ветвит работу от коммита: в репозитории без коммитов (свежий `git init`) `worktree add -b` без базы создаёт
+ * пустую ветку-сироту без файлов проекта, а с базой падает сырым «invalid reference». Отказываем понятной ошибкой.
+ */
+export function assertHasCommits(repoRoot: string): void {
+  if (!hasCommits(repoRoot)) throw new OrcaError('git.noCommits', { branch: currentBranch(repoRoot) })
+}
+
+/**
+ * Точка отсчёта новой ветки от HEAD корня — его текущая ветка (туда сольёт `merge`). Detached HEAD — хеш коммита:
+ * слово `HEAD` в worktree означало бы уже его собственный HEAD. Коммитов нет — сначала `assertHasCommits`.
+ */
+export function headBase(repoRoot: string): string {
+  const branch = currentBranch(repoRoot)
+  return branch === 'HEAD' ? git(repoRoot, ['rev-parse', 'HEAD']) : branch
+}
+
+/**
+ * Worktree задачи на ветке `branch`: ветка есть — worktree на неё; нет — новая ветка от `base` (ветка глобальной
+ * задачи), без `base` — от HEAD корня. Новая ветка требует коммит в репозитории: иначе получилась бы сирота.
+ */
+export function addTaskWorktree(repoRoot: string, worktree: string, branch: string, base?: string): void {
+  if (localBranchExists(repoRoot, branch)) {
+    git(repoRoot, ['worktree', 'add', worktree, branch])
+    return
+  }
+  assertHasCommits(repoRoot)
+  git(repoRoot, ['worktree', 'add', '-b', branch, worktree, ...(base ? [base] : [])])
 }
 
 /** Состояние HEAD корня проекта для UI; см. `ProjectBranchInfo` в `shared/ipc.ts`. */
@@ -157,7 +208,7 @@ function opGit(cwd: string, args: string[], timeoutMs?: number): string {
 }
 
 /** Ветка существует локально. */
-function localBranchExists(repoRoot: string, branch: string): boolean {
+export function localBranchExists(repoRoot: string, branch: string): boolean {
   try {
     execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: repoRoot, stdio: 'pipe' })
     return true
@@ -183,15 +234,6 @@ function worktreeBranch(worktree: string): string | undefined {
   } catch {
     return undefined
   }
-}
-
-/**
- * Точка отсчёта новой ветки по умолчанию — текущая ветка корня репозитория (та, куда сольёт `merge`). Detached HEAD
- * корня — хеш коммита: слово `HEAD` в worktree означало бы уже его собственный HEAD.
- */
-function defaultBase(repoRoot: string): string {
-  const branch = currentBranch(repoRoot)
-  return branch === 'HEAD' ? opGit(repoRoot, ['rev-parse', 'HEAD']) : branch
 }
 
 /** `git switch`/`checkout` с грязным деревом может унести правки на другую ветку — поэтому требуем чистоту. */
@@ -229,7 +271,10 @@ export function gitCreateBranch(repoRoot: string, worktree: string, branch: stri
     opGit(worktree, ['checkout', '-q', '--no-track', '-b', branch, ...(base ? [base] : [])])
     return
   }
-  const start = base ?? defaultBase(repoRoot)
+  if (!base && !hasCommits(repoRoot)) {
+    throw new GitOpError(`в репозитории нет ни одного коммита — не от чего создавать «${branch}»: создайте начальный коммит`)
+  }
+  const start = base ?? headBase(repoRoot)
   verify(start)
   opGit(repoRoot, ['worktree', 'add', '-q', '--no-track', '-b', branch, worktree, start])
 }

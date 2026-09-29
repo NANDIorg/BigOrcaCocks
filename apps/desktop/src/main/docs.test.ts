@@ -120,3 +120,18 @@ describe('listWorktreeDocs', () => {
     assert.ok(groups[0].files.some((f) => f.path === 'master-only.md'))
   })
 })
+
+describe('репозиторий без коммитов', () => {
+  it('listDocGroups с unborn-корнем и unborn-worktree не падает, новые .md видны', () => {
+    const empty = path.join(tmp, 'empty')
+    execFileSync('git', ['init', '-q', '-b', 'main', empty])
+    write(empty, 'notes.md')
+    write(empty, 'staged.md')
+    git(empty, 'add', 'staged.md')
+
+    assert.deepEqual(listWorktreeDocs(empty, 'main').map((d) => d.path), ['notes.md'])
+    const groups = listDocGroups(empty, 'main', [{ id: 't1', title: 'Задача', worktree: empty, branch: 'main' }])
+    assert.deepEqual(groups.map((g) => g.source), ['project', 't1'])
+    assert.ok(groups[0].files.some((f) => f.path === 'notes.md'))
+  })
+})

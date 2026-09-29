@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -6,7 +5,7 @@ import { app } from 'electron'
 import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
-import { setupCommand, taskWorktreePath } from './git'
+import { addTaskWorktree, assertHasCommits, projectBranchInfo, setupCommand, taskWorktreePath } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
 import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv, assistantCwd } from './assistant'
@@ -213,11 +212,7 @@ export function startWorker(
   const runGit = ensureRunBranch(store, repoRoot, task.runId)
   let fresh = false
   if (!existsSync(worktree)) {
-    const branchExists = execFileSync('git', ['branch', '--list', branch], { cwd: repoRoot }).toString().trim() !== ''
-    const args = branchExists
-      ? ['worktree', 'add', worktree, branch]
-      : ['worktree', 'add', '-b', branch, worktree, ...(runGit ? [runGit.branch] : [])]
-    execFileSync('git', args, { cwd: repoRoot, stdio: 'pipe' })
+    addTaskWorktree(repoRoot, worktree, branch, runGit?.branch)
     fresh = true
   }
   // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи. Роль этапа «Вопрос
@@ -311,6 +306,8 @@ export function startCoordinator(
     if (merged.missing.length > 0) console.error(`[orca] у задачи ${runId} нет на диске сохранённых изображений: ${merged.missing.map((m) => m.id).join(', ')}`)
     images = merged.images
   }
+  // Репозиторий без коммитов — отказ до `createRun`: иначе карточка создалась бы и тут же закрылась пустой.
+  if (!resume && projectBranchInfo(repoRoot).isGitRepo) assertHasCommits(repoRoot)
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
   let root: string | undefined
