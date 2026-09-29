@@ -883,13 +883,15 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/avif/svg` и `md` превьюятся, `html/htm` — вид
   `html` — страницей в изолированном фрейме по адресу из `showcase:previewUrl` (протокол `orca-preview://`, корень — тот же
   `showcaseSource`, сеть закрыта, см. `docs/architecture.md` → «Протокол показа»), `pdf` — «Открыть»).
-- **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval (Инбокс,
-  лента глобальной задачи, модалка задачи) и отдельным разделом в модалке задачи (последний `done` с показом, если его
-  не выводит ждущий approval). Markdown — через `Markdown.tsx`; картинки — сеткой миниатюр (blob-URL, CSP
+- **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval и answer (Инбокс,
+  лента глобальной задачи, модалка задачи; какие показы — `requestShowcases`), у approval прогона — блоком на подзадачу
+  (`ShowcaseGroupsBlock`), он же в окне «Подтвердить» и во вкладке «Итог и цель» глобальной задачи (`docs/nested-kanban.md`
+  → «Проверка»), и отдельным разделом в модалке задачи (последний `done` с показом, если его не выводит ждущий запрос).
+  Относительные картинки markdown показа — из того же снимка (`markdownAssets.ts`, `docs/human-requests.md` → «В интерфейсе»). Markdown — через `Markdown.tsx`; картинки — сеткой миниатюр (blob-URL, CSP
   `img-src blob:`), `.md` — по кнопке «Текст», HTML — «Превью» (мини-просмотрщик в изолированном фрейме, только по нажатию);
   HTML, md и картинки открываются «На весь экран» в просмотрщике `ShowcaseViewer.tsx` (список файлов, ширина страницы,
   «Интернет-ресурсы», решение approval внизу — см. `docs/architecture.md` → «UI» → «Показ человеку»); «Открыть» / «В папке» —
-  в меню «⋯», у PDF — кнопками. Раздел «## Показ» из `body` вычитается (`bodyWithoutShowcase`), чтобы не дублировать.
+  в меню «⋯», у PDF — кнопками. Разделы «## Показ» из `body` вычитаются (`bodyWithoutShowcases`), чтобы не дублировать.
   Логика — `renderer/src/showcase.ts`: старые main/preload — «Перезапустите приложение» (`showcaseApi`,
   `showcasePreviewApi`). У «Принять» approval — поле «Решение / вариант» (`resolution.text` → `request_resolved.decision`),
   общее с просмотрщиком.

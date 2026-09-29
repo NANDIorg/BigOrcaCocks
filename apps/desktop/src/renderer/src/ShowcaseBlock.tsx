@@ -4,12 +4,15 @@ import type { DispatchShowcase } from '@orca-board/core'
 import { Markdown } from './Markdown'
 import { PopupMenu, POPUP_MENU_WIDTH } from './PopupMenu'
 import { PreviewFrame, usePreviewUrl } from './PreviewFrame'
-import { FILE_KIND_ICON, fileKindLabel, ShowcaseViewer, useBlobUrl, useShowcaseBytes, type ShowcaseDecision } from './ShowcaseViewer'
 import {
-  hiddenFiles, INLINE_FRAME_HEIGHT, INLINE_VIEWPORTS, scalePercent, showcaseApi, showcaseEntries, showcaseFailure, showcaseGroup,
-  SHOWCASE_CARD_ENTRIES, thumbsShown, type FrameFit, type ShowcaseFileItem, type ShowcasePos
+  FILE_KIND_ICON, fileKindLabel, ShowcaseViewer, useBlobUrl, useShowcaseBytes, useShowcaseMarkdownAssets, type ShowcaseDecision
+} from './ShowcaseViewer'
+import {
+  hiddenFiles, INLINE_FRAME_HEIGHT, INLINE_VIEWPORTS, requestShowcaseGroups, scalePercent, showcaseApi, showcaseEntries, showcaseFailure,
+  showcaseGroup, SHOWCASE_CARD_ENTRIES, SHOWCASE_GROUP_ENTRIES, thumbsShown, type FrameFit, type RequestShowcase, type ShowcaseFileItem,
+  type ShowcaseGroup, type ShowcasePos, type ShowcaseTaskState
 } from './showcase'
-import { useT } from './i18n'
+import { useT, type TKey } from './i18n'
 import { Icon } from './icons'
 
 interface Props {
@@ -36,12 +39,7 @@ export function ShowcaseBlock({ taskId, dispatchId, showcase, bare = false, deci
   const t = useT()
   const group = useMemo(() => showcaseGroup(taskId, dispatchId, showcase), [taskId, dispatchId, showcase])
   const groups = useMemo(() => [group], [group])
-  const entries = useMemo(() => showcaseEntries(group.files), [group])
-  const [expanded, setExpanded] = useState(false)
-  const [inline, setInline] = useState<string | null>(null)
   const [viewer, setViewer] = useState<ShowcasePos | null>(null)
-  const shown = expanded ? entries : entries.slice(0, SHOWCASE_CARD_ENTRIES)
-  const hidden = hiddenFiles(entries)
   const view = (file: number): void => setViewer({ group: 0, file })
   const viewable = group.files.some((f) => f.view !== 'none')
 
@@ -59,33 +57,154 @@ export function ShowcaseBlock({ taskId, dispatchId, showcase, bare = false, deci
         </div>
       )}
       {showcase.text && <Markdown text={showcase.text} className="showcase-md" />}
-      {shown.length > 0 && (
-        <ul className="showcase-files">
-          {shown.map((e) =>
-            e.kind === 'images'
-              ? <ThumbGrid key={`img:${e.files[0].index}`} taskId={taskId} dispatchId={dispatchId} files={e.files} onView={view} />
-              : (
-                <ShowcaseFile
-                  key={e.file.path}
-                  taskId={taskId}
-                  dispatchId={dispatchId}
-                  file={e.file}
-                  inline={inline === e.file.path}
-                  onInline={(on) => setInline(on ? e.file.path : null)}
-                  onView={() => view(e.index)}
-                />
-              )
-          )}
-        </ul>
-      )}
+      <ShowcaseFileList group={group} limit={SHOWCASE_CARD_ENTRIES} onView={view} />
+      {viewer && <ShowcaseViewer groups={groups} start={viewer} decision={decision} onClose={() => setViewer(null)} />}
+    </section>
+  )
+}
+
+/**
+ * Показ из запроса (`requestShowcases`): у approval задачи и у answer — один `ShowcaseBlock`; у approval прогона —
+ * `ShowcaseGroupsBlock` по подзадачам, даже если подзадача одна (её название и состояние тоже нужны).
+ */
+export function RequestShowcaseBlock({ items, decision }: { items: readonly RequestShowcase[]; decision?: ShowcaseDecision }): React.JSX.Element | null {
+  if (items.length === 0) return null
+  const [first] = items
+  if (items.length === 1 && first.title === undefined) {
+    return <ShowcaseBlock taskId={first.taskId} dispatchId={first.dispatchId} showcase={first.showcase} decision={decision} />
+  }
+  return <ShowcaseGroupsBlock items={items} decision={decision} />
+}
+
+/** Цвет полосы подзадачи: как у колонок доски (готово — «Сделано», на проверке — «Ревью», иначе — «В работе»). */
+const STATE_TONE: Record<ShowcaseTaskState, string> = { done: 'var(--col-done)', review: 'var(--col-review)', work: 'var(--col-progress)' }
+
+/**
+ * Approval прогона: показ нескольких подзадач (`showcaseDispatchIds`, вариант 2 макета → «Несколько подзадач»). Каждая
+ * подзадача — свой блок с цветной полосой и чипом состояния, числом файлов, сворачиванием и «Смотреть» с её первого
+ * файла; «Смотреть всё» — просмотрщик с теми же группами в боковом списке. «Ещё N файлов» — по три записи на подзадачу.
+ */
+export function ShowcaseGroupsBlock({ items, decision }: { items: readonly RequestShowcase[]; decision?: ShowcaseDecision }): React.JSX.Element {
+  const t = useT()
+  const groups = useMemo(() => requestShowcaseGroups(items), [items])
+  const total = groups.reduce((n, g) => n + g.files.length, 0)
+  const [viewer, setViewer] = useState<ShowcasePos | null>(null)
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  const toggle = (id: string): void =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  const viewable = groups.some((g) => g.files.some((f) => f.view !== 'none'))
+
+  return (
+    <section className="showcase" aria-label={t('board.showcase.title')}>
+      <div className="showcase-head">
+        <span>{t('board.showcase.groupsTitle', { subtasks: t('board.showcase.subtasks', { count: groups.length }) })}</span>
+        <span className="grow" />
+        {viewable && (
+          <button type="button" className="btn-sm" onClick={() => setViewer({ group: 0, file: 0 })} title={t('board.showcase.viewAllTitle')}>
+            {t('board.showcase.viewAll', { n: total })} <Icon.expand />
+          </button>
+        )}
+      </div>
+      {items.map((x, gi) => {
+        const g = groups[gi]
+        const open = !collapsed.has(x.dispatchId)
+        const title = x.title ?? x.taskId
+        return (
+          <div
+            key={x.dispatchId}
+            className="sv-sub"
+            role="group"
+            aria-label={title}
+            style={{ '--tone': x.state ? STATE_TONE[x.state] : 'var(--line)' } as React.CSSProperties}
+          >
+            <div className="sv-group-head">
+              <button
+                type="button"
+                className="tgl"
+                aria-expanded={open}
+                aria-label={t(open ? 'board.showcase.collapseSub' : 'board.showcase.expandSub', { title })}
+                onClick={() => toggle(x.dispatchId)}
+              >
+                {open ? <Icon.down /> : <Icon.chevron />}
+              </button>
+              <span className="ttl" title={title}>
+                {title}
+                <span className="cnt">{t('board.card.files', { count: g.files.length })}</span>
+              </span>
+              {x.state && <span className={`chip sv-st ${x.state}`}>{t(`board.showcase.state.${x.state}` as TKey)}</span>}
+              {g.files.some((f) => f.view !== 'none') && (
+                <button
+                  type="button"
+                  className="btn-sm icon"
+                  onClick={() => setViewer({ group: gi, file: 0 })}
+                  title={t('board.showcase.viewSubTitle', { title })}
+                  aria-label={t('board.showcase.viewSubTitle', { title })}
+                >
+                  <Icon.expand />
+                </button>
+              )}
+            </div>
+            {open && (
+              <>
+                {x.showcase.text && <Markdown text={x.showcase.text} className="showcase-md" />}
+                <ShowcaseFileList group={g} limit={SHOWCASE_GROUP_ENTRIES} onView={(file) => setViewer({ group: gi, file })} />
+              </>
+            )}
+          </div>
+        )
+      })}
+      {viewer && <ShowcaseViewer groups={groups} start={viewer} decision={decision} onClose={() => setViewer(null)} />}
+    </section>
+  )
+}
+
+/**
+ * Файлы одной группы показа в карточке: картинки подряд — сеткой миниатюр, остальные — строками; первые `limit`
+ * записей, остальное — за «Ещё N файлов». `onView` — открыть просмотрщик на файле группы.
+ */
+function ShowcaseFileList({ group, limit, onView }: { group: ShowcaseGroup; limit: number; onView(file: number): void }): React.JSX.Element | null {
+  const t = useT()
+  const { taskId, dispatchId } = group
+  const entries = useMemo(() => showcaseEntries(group.files), [group])
+  const [expanded, setExpanded] = useState(false)
+  const [inline, setInline] = useState<string | null>(null)
+  const shown = expanded ? entries : entries.slice(0, limit)
+  const hidden = hiddenFiles(entries, limit)
+  if (entries.length === 0) return null
+  return (
+    <>
+      <ul className="showcase-files">
+        {shown.map((e) =>
+          e.kind === 'images'
+            ? <ThumbGrid key={`img:${e.files[0].index}`} taskId={taskId} dispatchId={dispatchId} files={e.files} onView={onView} />
+            : (
+              <ShowcaseFile
+                key={e.file.path}
+                taskId={taskId}
+                dispatchId={dispatchId}
+                file={e.file}
+                inline={inline === e.file.path}
+                onInline={(on) => setInline(on ? e.file.path : null)}
+                onView={() => onView(e.index)}
+                onLink={(path) => {
+                  const fi = group.files.findIndex((f) => f.path === path)
+                  if (fi >= 0) onView(fi)
+                }}
+              />
+            )
+        )}
+      </ul>
       {hidden > 0 && (
         <button type="button" className="showcase-more" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
           {expanded ? t('board.showcase.less') : t('board.showcase.more', { files: t('board.card.files', { count: hidden }) })}
           {expanded ? <Icon.up /> : <Icon.down />}
         </button>
       )}
-      {viewer && <ShowcaseViewer groups={groups} start={viewer} decision={decision} onClose={() => setViewer(null)} />}
-    </section>
+    </>
   )
 }
 
@@ -110,9 +229,11 @@ interface FileProps {
   inline: boolean
   onInline(on: boolean): void
   onView(): void
+  /** Ссылка из markdown на другой файл показа (путь от корня показа). */
+  onLink(path: string): void
 }
 
-function ShowcaseFile({ taskId, dispatchId, file, inline, onInline, onView }: FileProps): React.JSX.Element {
+function ShowcaseFile({ taskId, dispatchId, file, inline, onInline, onView, onLink }: FileProps): React.JSX.Element {
   const t = useT()
   const { error, act } = useAct()
   const [text, setText] = useState(false)
@@ -164,7 +285,7 @@ function ShowcaseFile({ taskId, dispatchId, file, inline, onInline, onView }: Fi
       </div>
       {file.view === 'none' && <div className="muted showcase-note">{t('board.showcase.cantOpen')}</div>}
       {inline && file.view === 'html' && <InlinePreview dispatchId={dispatchId} file={file} onView={onView} />}
-      {text && file.view === 'markdown' && <MarkdownPreview taskId={taskId} dispatchId={dispatchId} file={file} />}
+      {text && file.view === 'markdown' && <MarkdownPreview taskId={taskId} dispatchId={dispatchId} file={file} onLink={onLink} />}
       {error && <span className="error-text">{error}</span>}
       {menu && (
         <PopupMenu
@@ -283,11 +404,20 @@ function Thumb({ taskId, dispatchId, file, onView }: { taskId: string; dispatchI
   )
 }
 
-function MarkdownPreview({ taskId, dispatchId, file }: { taskId: string; dispatchId: string; file: ShowcaseFileItem }): React.JSX.Element {
+interface MarkdownPreviewProps {
+  taskId: string
+  dispatchId: string
+  file: ShowcaseFileItem
+  onLink(path: string): void
+}
+
+/** «Текст» markdown в карточке: картинки из снимка показа (`useShowcaseMarkdownAssets`), ссылки на файлы — в просмотрщик. */
+function MarkdownPreview({ taskId, dispatchId, file, onLink }: MarkdownPreviewProps): React.JSX.Element {
   const t = useT()
   const { data, failure } = useShowcaseBytes(taskId, dispatchId, file.path)
   const text = useMemo(() => (data ? new TextDecoder().decode(data.bytes) : null), [data])
+  const assets = useShowcaseMarkdownAssets(dispatchId, file.path)
   if (failure) return <span className="error-text">{failure.message}</span>
-  if (text === null) return <div className="muted showcase-note">{t('common.loading')}</div>
-  return <Markdown text={text} className="showcase-md showcase-file-md" />
+  if (text === null || !assets) return <div className="muted showcase-note">{t('common.loading')}</div>
+  return <Markdown text={text} className="showcase-md showcase-file-md" assets={assets} onShowcaseLink={onLink} />
 }

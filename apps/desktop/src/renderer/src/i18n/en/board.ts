@@ -354,6 +354,14 @@ export default {
   'showcase.kind.markdown': 'Markdown',
   'showcase.kind.pdf': 'PDF',
   'showcase.kind.none': 'File',
+  'showcase.groupsTitle': 'Showcase · {subtasks}',
+  'showcase.subtasks': { one: '{count} subtask', other: '{count} subtasks' },
+  'showcase.collapseSub': 'Collapse subtask “{title}”',
+  'showcase.expandSub': 'Expand subtask “{title}”',
+  'showcase.viewSubTitle': 'View files of subtask “{title}”',
+  'showcase.state.done': 'Done',
+  'showcase.state.review': 'In review',
+  'showcase.state.work': 'In progress',
 
   'showcase.viewer.stale': 'The app is running an old main/preload without the showcase viewer. Restart the app.',
   'showcase.viewer.staleTitle': 'Restart required',
@@ -404,7 +412,10 @@ export default {
   'showcase.viewer.pdf': 'PDF opens in the system app',
   'showcase.viewer.pdfText': 'Viewing PDF inside the app isn’t supported yet.',
   'showcase.viewer.unsupported': 'The app can’t open this file type',
+  'showcase.viewer.linkOutside': '“{path}” is not among this subtask’s showcase files',
 
   'markdown.copy': 'Copy',
-  'markdown.copied': 'Copied'
+  'markdown.copied': 'Copied',
+  'markdown.imageOff': 'image not shown',
+  'markdown.imageOffAlt': 'image “{alt}” not shown'
 } satisfies AreaTranslation<typeof ru>

@@ -2,7 +2,7 @@ import type React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { Dispatch, HumanRequest, ImageAttachmentInput, Question, RequestResolution, Task } from '@orca-board/core'
 import { RequestCard } from './RequestCard'
-import { requestShowcase } from './showcase'
+import { requestShowcases } from './showcase'
 import { relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
 import { ipcErrorMessage } from './useAutoSave'
@@ -184,7 +184,7 @@ export function AttentionFeed(props: Props): React.JSX.Element | null {
           </div>
           <RequestCard
             request={detailRequest}
-            showcase={requestShowcase(detailRequest, dispatches)}
+            showcases={requestShowcases(detailRequest, dispatches)}
             where={detailTask?.title ?? detail.taskId}
             onResolve={(res, images) => onResolveRequest(detailRequest, res, images)}
             onOpenFull={(req) => { if (req.taskId !== undefined) onOpenTask(req.taskId) }}
@@ -306,7 +306,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
 
       {!(item.kind === 'question' || (item.kind === 'failure' && request)) && <div className="act-q" title={item.title}>{item.title}</div>}
 
-      {item.kind === 'showcase' && shownFiles.length > 0 && (
+      {(item.kind === 'showcase' || item.kind === 'answer') && shownFiles.length > 0 && (
         <ul className="act-thumbs" aria-label={t('shell.feed.files')}>
           {shownFiles.slice(0, THUMBS).map((f) => <li key={f} className="act-thumb" title={f}>{f.split('/').pop()}</li>)}
           {shownFiles.length > THUMBS && <li className="act-thumb more">+{shownFiles.length - THUMBS}</li>}

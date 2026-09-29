@@ -1,4 +1,4 @@
-import type { Dispatch, DispatchShowcase, HumanRequest } from '@orca-board/core'
+import type { ColumnKind, Dispatch, DispatchShowcase, HumanRequest, Task } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { showcaseFileType, showcaseMarkdown, type ShowcasePreview } from '../../shared/showcase'
 import { ipcErrorCode, ipcErrorMessage } from './ipcError'
@@ -47,20 +47,90 @@ export function showcaseFiles(files: readonly string[]): ShowcaseFileItem[] {
   }))
 }
 
-/** Показ, выведенный в approval: dispatch из `showcaseDispatchId`. У старых запросов и других видов — нет. */
+/** Состояние подзадачи показа — цвет полосы и чип блока (вариант 2 макета): готово, на проверке или ещё в работе. */
+export type ShowcaseTaskState = 'done' | 'review' | 'work'
+
+/** Показ одного запуска, выведенный в запросе: чей он, откуда читать файлы и как подписать блок. */
+export interface RequestShowcase {
+  /** Запуск, сдавший показ: по нему main находит снимок (`showcase:*`, `previewUrl`). */
+  dispatchId: string
+  /** Задача показа: из её worktree читается старый показ без снимка. */
+  taskId: string
+  showcase: DispatchShowcase
+  /** Approval прогона: название подзадачи — заголовок блока и группы просмотрщика. У запроса задачи — нет. */
+  title?: string
+  /** Approval прогона: состояние подзадачи по колонке (`kindOf`); вид колонки неизвестен — нет. */
+  state?: ShowcaseTaskState
+}
+
+/** Вид колонки → состояние подзадачи блока показа; колонка неизвестна — undefined. */
+export function showcaseTaskState(kind: ColumnKind | undefined): ShowcaseTaskState | undefined {
+  if (kind === undefined) return undefined
+  return kind === 'done' ? 'done' : kind === 'review' ? 'review' : 'work'
+}
+
+/**
+ * Чьи запуски показать в запросе. approval — `showcaseDispatchIds` (approval прогона: по одному на подзадачу), а у
+ * старых запросов и approval задачи — одиночный `showcaseDispatchId`; answer — показ запуска, сдавшего ответ
+ * (`dispatchId`: `done --answer-file … --show …`). Остальные виды показа не несут.
+ */
+function showcaseDispatchIdsOf(request: HumanRequest): string[] {
+  if (request.kind === 'approval') {
+    if (request.showcaseDispatchIds?.length) return request.showcaseDispatchIds
+    return request.showcaseDispatchId ? [request.showcaseDispatchId] : []
+  }
+  if (request.kind === 'answer' && request.dispatchId) return [request.dispatchId]
+  return []
+}
+
+/**
+ * Показы, выведенные в запросе, в порядке подзадач (`showcaseDispatchIdsOf`). Запуск не найден или без показа —
+ * пропускается (снимок проекта ещё не пришёл, запуск удалён). У approval прогона (запрос без `taskId`) — заголовок
+ * подзадачи из `tasks` и её состояние по `kindOf`; у запроса задачи блок один и без заголовка.
+ */
+export function requestShowcases(
+  request: HumanRequest,
+  dispatches: readonly Dispatch[] | undefined,
+  tasks?: readonly Pick<Task, 'id' | 'title' | 'status'>[],
+  kindOf?: (status: string) => ColumnKind | undefined
+): RequestShowcase[] {
+  if (!dispatches) return []
+  const byId = new Map(dispatches.map((d) => [d.id, d]))
+  const runLevel = request.taskId === undefined
+  const out: RequestShowcase[] = []
+  for (const id of showcaseDispatchIdsOf(request)) {
+    const d = byId.get(id)
+    if (!d?.showcase || out.some((x) => x.dispatchId === id)) continue
+    const item: RequestShowcase = { dispatchId: d.id, taskId: request.taskId ?? d.taskId, showcase: d.showcase }
+    if (runLevel) {
+      const task = tasks?.find((t) => t.id === d.taskId)
+      item.title = task?.title ?? d.taskId
+      const state = task && kindOf ? showcaseTaskState(kindOf(task.status)) : undefined
+      if (state) item.state = state
+    }
+    out.push(item)
+  }
+  return out
+}
+
+/** Показ approval (первый из `requestShowcases`): для пунктов ленты и мест, где нужен ответ «есть ли показ». */
 export function requestShowcase(request: HumanRequest, dispatches: readonly Dispatch[] | undefined): DispatchShowcase | undefined {
-  if (request.kind !== 'approval' || !request.showcaseDispatchId || !dispatches) return undefined
-  return dispatches.find((d) => d.id === request.showcaseDispatchId)?.showcase
+  return request.kind === 'approval' ? requestShowcases(request, dispatches)[0]?.showcase : undefined
 }
 
 /**
  * Задача, из worktree которой main читает файлы показа approval. У approval задачи — она сама; у approval уровня
- * прогона (нода `human` воркфлоу глобальной задачи, без `taskId`) — подзадача, чей dispatch сдал показ.
+ * прогона (нода `human` воркфлоу глобальной задачи, без `taskId`) — подзадача первого запуска из `showcaseDispatchIds`.
  */
 export function requestShowcaseTaskId(request: HumanRequest, dispatches: readonly Dispatch[] | undefined): string | undefined {
   if (request.taskId !== undefined) return request.taskId
-  if (!request.showcaseDispatchId || !dispatches) return undefined
-  return dispatches.find((d) => d.id === request.showcaseDispatchId)?.taskId
+  const [id] = showcaseDispatchIdsOf(request)
+  return id && dispatches ? dispatches.find((d) => d.id === id)?.taskId : undefined
+}
+
+/** Группы просмотрщика из показов запроса: заголовок группы — подзадача (у approval прогона). */
+export function requestShowcaseGroups(items: readonly RequestShowcase[]): ShowcaseGroup[] {
+  return items.map((x) => showcaseGroup(x.taskId, x.dispatchId, x.showcase, x.title))
 }
 
 /** Последний сданный показ задачи (модалка задачи): тот же, что увидит человек на ноде «Человек». */
@@ -71,21 +141,35 @@ export function latestShowcase(dispatches: readonly Dispatch[], taskId: string):
 }
 
 /**
- * Body approval без раздела «## Показ»: его выводит блок «Показ» развёрнутым, а body свёрнут — второй раз тот же
- * текст не нужен. main собирает body частями через пустую строку (`requestHuman`), раздел — `showcaseMarkdown`.
- * Не нашли точного совпадения (запрос от другой версии) — body как есть: лучше дубль, чем потерять текст.
+ * Body approval без разделов «## Показ»: их выводят блоки «Показ» развёрнутыми, а body свёрнут — второй раз тот же
+ * текст не нужен. main собирает body частями через пустую строку (`requestHuman`), раздел — `showcaseMarkdown`, у
+ * approval прогона перед ним — заголовок подзадачи `### <название>` (main/workflow-run.ts). Не нашли точного совпадения
+ * (запрос от другой версии) — эта часть остаётся: лучше дубль, чем потерять текст.
  */
-export function bodyWithoutShowcase(body: string | undefined, showcase: DispatchShowcase | undefined): string | undefined {
-  if (!body || !showcase) return body
-  const section = showcaseMarkdown(showcase)
-  let start = body.indexOf(section)
-  if (start < 0) return body
-  let end = start + section.length
-  // Вместе с разделителем частей: перед разделом, а если он первый — после.
+export function bodyWithoutShowcases(body: string | undefined, items: readonly Pick<RequestShowcase, 'showcase' | 'title'>[]): string | undefined {
+  let rest = body
+  for (const x of items) {
+    const section = showcaseMarkdown(x.showcase)
+    const titled = x.title !== undefined ? `### ${x.title}\n\n${section}` : undefined
+    rest = (titled !== undefined ? cutPart(rest, titled) : undefined) ?? cutPart(rest, section) ?? rest
+  }
+  return rest?.trim() ? rest : undefined
+}
+
+/** `body` без части `part` вместе с разделителем частей: перед ней, а если она первая — после; нет части — undefined. */
+function cutPart(body: string | undefined, part: string): string | undefined {
+  if (!body) return undefined
+  let start = body.indexOf(part)
+  if (start < 0) return undefined
+  let end = start + part.length
   if (start >= 2 && body.startsWith('\n\n', start - 2)) start -= 2
   else if (body.startsWith('\n\n', end)) end += 2
-  const rest = body.slice(0, start) + body.slice(end)
-  return rest.trim() ? rest : undefined
+  return body.slice(0, start) + body.slice(end)
+}
+
+/** Body approval без раздела «## Показ» одного показа (approval задачи). */
+export function bodyWithoutShowcase(body: string | undefined, showcase: DispatchShowcase | undefined): string | undefined {
+  return showcase ? bodyWithoutShowcases(body, [{ showcase }]) : body
 }
 
 // ---------- просмотрщик показа (ShowcaseViewer.tsx, PreviewFrame.tsx) ----------
@@ -224,6 +308,9 @@ export function showcaseEntries(items: readonly ShowcaseFileItem[]): ShowcaseEnt
 
 /** Записей в карточке до «Ещё N файлов»: сетка картинок — одна запись. */
 export const SHOWCASE_CARD_ENTRIES = 5
+
+/** То же на подзадачу в approval прогона: блоков несколько, каждый короче. */
+export const SHOWCASE_GROUP_ENTRIES = 3
 
 /** Миниатюр в сетке: больше — пять и плитка «+N», чтобы 50 скриншотов не читались при открытии Инбокса. */
 export const SHOWCASE_THUMBS = 6

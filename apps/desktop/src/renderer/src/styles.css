@@ -1475,6 +1475,24 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); animation: sv-shimmer 1s infinite;
 }
 
+/* Approval прогона: показ по подзадачам (ShowcaseGroupsBlock) — блок с цветной полосой состояния подзадачи. */
+.sv-sub { --tone: var(--line); display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 8px 10px 10px; border: 1px solid var(--line); border-left: 3px solid var(--tone); border-radius: 10px; background: var(--page); }
+.sv-group-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sv-group-head .ttl { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-group-head .cnt { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.sv-group-head .tgl { flex: none; background: transparent; border: 0; color: var(--muted); padding: 0; display: grid; place-items: center; width: 20px; height: 20px; }
+.sv-group-head .btn-sm.icon { flex: none; width: 26px; height: 26px; padding: 0; justify-content: center; }
+.chip.sv-st { flex: none; font-size: 11px; padding: 0 8px; }
+.chip.sv-st.done { border-color: var(--col-done); color: var(--col-done); }
+.chip.sv-st.review { border-color: var(--col-review); color: var(--col-review); }
+.chip.sv-st.work { border-color: var(--col-progress); color: var(--col-progress); }
+/* Картинки markdown показа: из снимка — не шире колонки; внешние и data: — подписью вместо картинки. */
+.showcase-md img, .sv-mdc img { max-width: 100%; height: auto; }
+.md-img-off { display: inline-block; padding: 1px 6px; border: 1px dashed var(--chip); border-radius: 6px; color: var(--muted); font-size: 12px; }
+/* Диалог «Подтвердить» с показом подзадач: шире, чтобы поместились миниатюры и превью. */
+.modal.g-accept-modal { width: 680px; }
+.modal.g-accept-modal > * { flex-shrink: 0; }
+
 /* Просмотрщик показа (ShowcaseViewer): модалка с деревом файлов слева; ширина окна — контейнерные запросы `svhost`. */
 .modal-backdrop.sv-host { z-index: 60; container: svhost / inline-size; }
 .modal.sv-modal { width: min(1120px, calc(100% - 48px)); height: 88vh; max-width: none; max-height: none; padding: 0; gap: 0; overflow: hidden; flex-direction: row; }

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ShowcaseFileData } from '../../shared/ipc'
 import { Markdown } from './Markdown'
+import type { MarkdownAssets } from './markdownAssets'
 import { PreviewFrame, usePreviewUrl } from './PreviewFrame'
 import {
   clampShowcasePos, onShowcaseFrameEscape, scalePercent, showcaseApi, showcaseFailure, showcaseIndex, showcaseOrder, stepShowcase,
@@ -20,8 +21,16 @@ export interface ShowcaseDecision {
   value: string
   onChange(value: string): void
   onAccept(): void
-  /** «Вернуть…»: замечания пишутся в карточке — просмотрщик закрывается, карточка открывает поле. */
-  onReject(): void
+  /**
+   * «Вернуть…» (у answer — «Уточнить…»): замечания пишутся в карточке — просмотрщик закрывается, карточка открывает
+   * поле. Нет — кнопки нет (диалог «Подтвердить» глобальной задачи: вернуть там нельзя).
+   */
+  onReject?(): void
+  /** Подпись «Вернуть…» и поле решения у запроса другого вида (answer — «Уточнить…», «Решение…»). */
+  rejectLabel?: string
+  placeholder?: string
+  /** Подпись «Принять» (диалог «Подтвердить» — «Подтвердить»). */
+  acceptLabel?: string
   busy: boolean
 }
 
@@ -106,7 +115,7 @@ export function ShowcaseViewer({ groups, start, decision, onClose }: Props): Rea
       else if (d && !d.busy && e.code === 'KeyA') {
         latest.current.onClose()
         d.onAccept()
-      } else if (d && !d.busy && e.code === 'KeyC') {
+      } else if (d?.onReject && !d.busy && e.code === 'KeyC') {
         latest.current.onClose()
         d.onReject()
       } else return
@@ -335,6 +344,11 @@ export function ShowcaseViewer({ groups, start, decision, onClose }: Props): Rea
             onOpen={open}
             onReveal={reveal}
             onCopy={copyPath}
+            onLink={(path) => {
+              const fi = group.files.findIndex((f) => f.path === path)
+              if (fi >= 0) setPos({ group: at.group, file: fi })
+              else setActionError(t('board.showcase.viewer.linkOutside', { path }))
+            }}
           />
           {decision && (
             <div className="sv-decide" role="group" aria-label={t('board.showcase.viewer.decision')}>
@@ -342,7 +356,7 @@ export function ShowcaseViewer({ groups, start, decision, onClose }: Props): Rea
                 <span className="sr-only">{t('shell.request.decisionLabel')}</span>
                 <input
                   value={decision.value}
-                  placeholder={t('shell.request.approvalPlaceholder')}
+                  placeholder={decision.placeholder ?? t('shell.request.approvalPlaceholder')}
                   disabled={decision.busy}
                   onChange={(e) => decision.onChange(e.target.value)}
                   onKeyDown={(e) => {
@@ -359,11 +373,13 @@ export function ShowcaseViewer({ groups, start, decision, onClose }: Props): Rea
                 </button>
               )}
               <span className="grow" />
-              <button type="button" className="btn-sm" disabled={decision.busy} onClick={() => { onClose(); decision.onReject() }} title={t('board.showcase.viewer.rejectTitle')}>
-                <kbd className="rq-kbd">C</kbd>{t('shell.request.rejectMore')}
-              </button>
+              {decision.onReject && (
+                <button type="button" className="btn-sm" disabled={decision.busy} onClick={() => { onClose(); decision.onReject?.() }} title={t('board.showcase.viewer.rejectTitle')}>
+                  <kbd className="rq-kbd">C</kbd>{decision.rejectLabel ?? t('shell.request.rejectMore')}
+                </button>
+              )}
               <button type="button" className="btn-sm primary" disabled={decision.busy} onClick={() => { onClose(); decision.onAccept() }} title={t('shell.request.acceptHint')}>
-                <kbd className="rq-kbd">A</kbd>{t('shell.request.accept')}
+                <kbd className="rq-kbd">A</kbd>{decision.acceptLabel ?? t('shell.request.accept')}
               </button>
             </div>
           )}
@@ -385,6 +401,8 @@ interface CanvasProps {
   onOpen(): void
   onReveal(): void
   onCopy(): void
+  /** Ссылка markdown на другой файл показа (путь от корня показа). */
+  onLink(path: string): void
 }
 
 /** Тело просмотрщика по виду файла: страница, картинка, markdown или состояние («PDF — в приложении системы», «не открывается»). */
@@ -473,18 +491,29 @@ function ImageCanvas({ group, file, zoom, reload, ...rest }: CanvasProps): React
   )
 }
 
-function MarkdownCanvas({ group, file, reload, ...rest }: CanvasProps): React.JSX.Element {
+function MarkdownCanvas({ group, file, reload, onLink, ...rest }: CanvasProps): React.JSX.Element {
   const { data, failure } = useShowcaseBytes(group.taskId, group.dispatchId, file.path, reload)
   const text = useMemo(() => (data ? new TextDecoder().decode(data.bytes) : null), [data])
+  const assets = useShowcaseMarkdownAssets(group.dispatchId, file.path, reload)
   if (failure) return <div className="sv-canvas center"><ViewerState kind={failure.kind} failure={failure} group={group} file={file} {...rest} /></div>
-  if (text === null) return <div className="sv-canvas center"><ViewerLoading file={file} /></div>
+  if (text === null || !assets) return <div className="sv-canvas center"><ViewerLoading file={file} /></div>
   return (
     <div className="sv-canvas pad0">
       <div className="sv-mdc">
-        <Markdown text={text} variant="doc" />
+        <Markdown text={text} variant="doc" assets={assets} onShowcaseLink={onLink} />
       </div>
     </div>
   )
+}
+
+/**
+ * Контекст картинок markdown показа: путь файла и `base` снимка из `showcase:previewUrl`. Пока адрес не пришёл —
+ * undefined (подождать, чтобы картинки не мигали подписью); не вышло (старый main, ошибка) — без `base`: текст
+ * показывается, а относительные картинки заменяются подписью.
+ */
+export function useShowcaseMarkdownAssets(dispatchId: string, path: string, reload = 0): MarkdownAssets | undefined {
+  const { base, url, failure } = usePreviewUrl(dispatchId, path, false, reload)
+  return useMemo(() => (url || failure ? { path, ...(base ? { base } : {}) } : undefined), [path, base, url, failure])
 }
 
 function ViewerLoading({ file }: { file: ShowcaseFileItem }): React.JSX.Element {

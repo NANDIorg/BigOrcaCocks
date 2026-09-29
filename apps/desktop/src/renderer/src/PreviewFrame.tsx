@@ -6,6 +6,8 @@ import { t } from './i18n'
 /** Адрес страницы показа: пока нет — загрузка, ошибка — состояние просмотрщика. */
 export interface PreviewUrlState {
   url?: string
+  /** `orca-preview://<токен>/` — корень показа: к нему markdown разрешает относительные картинки. */
+  base?: string
   failure?: ShowcaseFailure
 }
 
@@ -23,7 +25,7 @@ export function usePreviewUrl(dispatchId: string, path: string, network: boolean
       showcasePreviewApi(window.orca)(dispatchId, path, { network }).then(
         (res) => {
           if (!alive) return
-          if (isPreviewUrl(res?.url)) setState({ url: res.url })
+          if (isPreviewUrl(res?.url)) setState({ url: res.url, ...(isPreviewUrl(res.base) ? { base: res.base } : {}) })
           else setState({ failure: { kind: 'error', message: t('board.showcase.viewer.badUrl') } })
         },
         (e: unknown) => alive && setState({ failure: showcaseFailure(e) })
