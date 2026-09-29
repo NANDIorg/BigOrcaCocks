@@ -2613,7 +2613,6 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .onboarding-network-agent.node-0 { left: 39px; }
 .onboarding-network-agent.node-1 { left: 129px; }
 .onboarding-network-agent.node-2 { left: 219px; }
-.onboarding-network-caption { position: absolute; bottom: 1px; left: 0; right: 0; text-align: center; color: var(--onboard-muted); font-size: 10px; letter-spacing: .08em; }
 .onboarding-workflow { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 20px 0; }
 .onboarding-workflow span { display: flex; align-items: center; gap: 6px; color: #c6d4e3; font-size: 11px; }
 .onboarding-workflow span svg { width: 14px; height: 14px; color: var(--onboard-accent); }

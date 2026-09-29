@@ -26,7 +26,6 @@ export default {
   'story.1': 'Your language. Your working rhythm. A few preferences, and Orca is ready to work with you.',
   'story.2': 'Orca finds your installed tools and helps organize their work. You choose who gets the task.',
   'story.3': 'Give your team a place to work. Each agent gets a separate Git branch, and you stay in control of the result.',
-  'story.example': 'Example team',
   'story.goal': 'Goal',
   'story.work': 'Work',
   'story.review': 'Review',
