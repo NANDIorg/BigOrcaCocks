@@ -4,17 +4,26 @@ import { marked, Marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { assignHeadingIds, DOC_ID_PREFIX, findDocHeading, type DocHeading } from './docToc'
 import { t, useLocale } from './i18n'
+import { resolveShowcaseRef, showcaseImageSrc, type MarkdownAssets } from './markdownAssets'
 import './docs-markdown.css'
 
 /** Сейчас санитизируется документ, а не чат: только в документе `#якорь` становится переходом. */
 let sanitizingDoc = false
+/** Сейчас санитизируется файл показа: его картинки — из снимка, относительные ссылки — на соседние файлы показа. */
+let sanitizingAssets: MarkdownAssets | undefined
 
 // Ссылки из ответа агента: http(s) открываются во внешнем браузере (target=_blank → setWindowOpenHandler
 // в main → shell.openExternal). Остальные схемы и относительные пути не кликабельны: openExternal
 // с file:// или кастомным протоколом запустил бы что угодно, а переход внутри окна увёл бы приложение.
 // Относительная ссылка на .md остаётся в data-doc-href: просмотрщик «Документы» открывает её у себя.
 // В документе `#якорь` остаётся в data-doc-anchor: Markdown по клику прокручивает к заголовку.
+// В файле показа относительная ссылка на другой файл остаётся в data-showcase-href (путь от корня показа):
+// просмотрщик по клику открывает этот файл у себя.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'IMG' && sanitizingAssets) {
+    showcaseImage(node, sanitizingAssets)
+    return
+  }
   if (node.tagName !== 'A') return
   const href = node.getAttribute('href') ?? ''
   if (/^https?:\/\//i.test(href)) {
@@ -22,15 +31,47 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     node.setAttribute('rel', 'noreferrer')
   } else {
     node.removeAttribute('href')
-    if (sanitizingDoc && /^#./.test(href)) node.setAttribute('data-doc-anchor', href)
+    const target = sanitizingAssets && !/^#/.test(href) ? resolveShowcaseRef(sanitizingAssets.path, href) : undefined
+    if (target) node.setAttribute('data-showcase-href', target)
+    else if (sanitizingDoc && /^#./.test(href)) node.setAttribute('data-doc-anchor', href)
     else if (!/^[a-z][a-z0-9+.-]*:/i.test(href) && /\.md(?:[?#]|$)/i.test(href)) node.setAttribute('data-doc-href', href)
   }
 })
 
-/** Markdown → безопасный HTML (GFM: таблицы, списки задач, переносы строк как в чате). */
-export function renderMarkdown(text: string): string {
+/**
+ * Картинка файла показа: относительная — из его снимка (`showcaseImageSrc`), остальные (внешние `https://`, `data:`) —
+ * вместо картинки подпись с её `alt`: грузить их нельзя, а пустая рамка «битой» картинки непонятна.
+ */
+function showcaseImage(node: Element, assets: MarkdownAssets): void {
+  const src = showcaseImageSrc(node.getAttribute('src') ?? '', assets)
+  if (src) {
+    node.setAttribute('src', src)
+    node.removeAttribute('srcset')
+    return
+  }
+  const alt = node.getAttribute('alt')?.trim()
+  const note = node.ownerDocument.createElement('span')
+  note.className = 'md-img-off'
+  note.textContent = alt ? t('board.markdown.imageOffAlt', { alt }) : t('board.markdown.imageOff')
+  node.replaceWith(note)
+}
+
+/** Санитизация с флагами хука: документ и/или файл показа. */
+function sanitize(html: string, doc: boolean, assets: MarkdownAssets | undefined): string {
+  sanitizingDoc = doc
+  sanitizingAssets = assets
+  try {
+    return DOMPurify.sanitize(html)
+  } finally {
+    sanitizingDoc = false
+    sanitizingAssets = undefined
+  }
+}
+
+/** Markdown → безопасный HTML (GFM: таблицы, списки задач, переносы строк как в чате). `assets` — файл показа. */
+export function renderMarkdown(text: string, assets?: MarkdownAssets): string {
   const html = marked.parse(text, { gfm: true, breaks: true, async: false })
-  return DOMPurify.sanitize(html)
+  return sanitize(html, false, assets)
 }
 
 function escapeHtml(s: string): string {
@@ -62,17 +103,21 @@ const docMarked = new Marked({
   }
 })
 
-/** Markdown-документ → безопасный HTML для окна «Документы». Id заголовков совпадают с buildDocToc. */
-export function renderDocMarkdown(text: string): string {
+/** Markdown-документ → безопасный HTML для окна «Документы» и просмотрщика показа. Id заголовков совпадают с buildDocToc. */
+export function renderDocMarkdown(text: string, assets?: MarkdownAssets): string {
   const tokens = docMarked.lexer(text)
   assignHeadingIds(tokens)
   const html = docMarked.parser(tokens).replace(/<table>/g, '<div class="doc-table"><table>').replace(/<\/table>/g, '</table></div>')
-  sanitizingDoc = true
-  try {
-    return DOMPurify.sanitize(html)
-  } finally {
-    sanitizingDoc = false
-  }
+  return sanitize(html, true, assets)
+}
+
+/** Клик по ссылке на файл показа (`data-showcase-href`): true — обработан. */
+function onShowcaseLinkClick(e: React.MouseEvent<HTMLDivElement>, onShowcaseLink: ((path: string) => void) | undefined): boolean {
+  const link = (e.target as Element).closest('[data-showcase-href]')
+  if (!link || !onShowcaseLink) return false
+  e.preventDefault()
+  onShowcaseLink(link.getAttribute('data-showcase-href') ?? '')
+  return true
 }
 
 /** Клики внутри документа: переход по `#якорю` и копирование блока кода. */
@@ -95,16 +140,45 @@ function onDocClick(e: React.MouseEvent<HTMLDivElement>): void {
   }
 }
 
+interface MarkdownProps {
+  text: string
+  className?: string
+  variant?: 'chat' | 'doc'
+  /**
+   * Файл показа (ShowcaseBlock, ShowcaseViewer): относительные картинки — из его снимка, внешние и `data:` убираются
+   * (`markdownAssets.ts`), относительные ссылки на другие файлы — `onShowcaseLink` с путём от корня показа.
+   */
+  assets?: MarkdownAssets
+  onShowcaseLink?(path: string): void
+}
+
 /**
  * Отрендеренный markdown. По умолчанию — ответ агента в чате; `variant="doc"` — документ
  * в окне «Документы» (типографика из docs-markdown.css, оглавление — buildDocToc из docToc.ts).
  */
-export function Markdown({ text, className, variant = 'chat' }: { text: string; className?: string; variant?: 'chat' | 'doc' }): React.JSX.Element {
+export function Markdown({ text, className, variant = 'chat', assets, onShowcaseLink }: MarkdownProps): React.JSX.Element {
   // Язык — в зависимостях: подпись «Копировать» зашита в HTML документа.
   const locale = useLocale()
-  const html = useMemo(() => (variant === 'doc' ? renderDocMarkdown(text) : renderMarkdown(text)), [text, variant, locale])
+  const assetPath = assets?.path
+  const assetBase = assets?.base
+  const html = useMemo(() => {
+    const a = assetPath !== undefined ? { path: assetPath, ...(assetBase ? { base: assetBase } : {}) } : undefined
+    return variant === 'doc' ? renderDocMarkdown(text, a) : renderMarkdown(text, a)
+  }, [text, variant, locale, assetPath, assetBase])
   if (variant === 'doc') {
-    return <div className={`doc-md${className ? ` ${className}` : ''}`} onClick={onDocClick} dangerouslySetInnerHTML={{ __html: html }} />
+    return (
+      <div
+        className={`doc-md${className ? ` ${className}` : ''}`}
+        onClick={(e) => { if (!onShowcaseLinkClick(e, onShowcaseLink)) onDocClick(e) }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    )
   }
-  return <div className={`markdown${className ? ` ${className}` : ''}`} dangerouslySetInnerHTML={{ __html: html }} />
+  return (
+    <div
+      className={`markdown${className ? ` ${className}` : ''}`}
+      onClick={onShowcaseLink ? (e) => void onShowcaseLinkClick(e, onShowcaseLink) : undefined}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
 }

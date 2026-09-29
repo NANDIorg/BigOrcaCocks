@@ -472,13 +472,33 @@ export const ANSWER_AUDIENCES: AnswerAudience[] = ['human', 'coordinator']
 export const MAX_ANSWER_LENGTH = 200_000
 
 /**
+ * Снимок файлов показа, который main снял при `done` в `<userData>/showcase/…` (docs/workflow.md → «Показ
+ * человеку»): просмотр не зависит от того, жив ли worktree задачи после мержа.
+ */
+export interface ShowcaseSnapshot {
+  /** Когда снят (мс). */
+  at: number
+  /** Всего файлов в снимке — точки входа вместе с ассетами страниц (css, js, шрифты). */
+  files: number
+  bytes: number
+}
+
+/**
  * Показ человеку, который воркер сдал с `done` (нода «Работа» с `showcase`, workflow.ts): `text` — markdown
- * с описанием, `files` — пути файлов в ветке задачи от корня worktree (макеты, скриншоты). Сами файлы не
- * копируются: их читает main из worktree задачи.
+ * с описанием, `files` — пути файлов в ветке задачи от корня worktree (макеты, скриншоты).
  */
 export interface DispatchShowcase {
   text?: string
+  /** Точки входа для человека — то, что показывается списком. */
   files: string[]
+  /**
+   * Есть — файлы читаются из снимка (main снял его при `done`); нет — показ старой версии, читается из worktree
+   * задачи. Выставляет только main (`FinishDispatchOptions.snapshot`): агент через сокет его не передаёт, иначе
+   * мог бы выдать «снимок есть» без снимка.
+   */
+  snapshot?: ShowcaseSnapshot
+  /** Файлы найдены приложением, а не перечислены воркером. Как и `snapshot`, выставляет только main. */
+  auto?: boolean
 }
 
 /** Предел длины текста показа (символов): он хранится в снапшоте доски, как ответ. */
@@ -486,6 +506,15 @@ export const MAX_SHOWCASE_LENGTH = MAX_ANSWER_LENGTH
 
 /** Сколько файлов можно сдать на показ. */
 export const MAX_SHOWCASE_FILES = 50
+
+/** Сколько файлов может быть в снимке показа — с ассетами страниц (`ShowcaseSnapshot.files`). */
+export const MAX_SHOWCASE_SNAPSHOT_FILES = 300
+
+/** Предел размера снимка показа целиком (байт). */
+export const MAX_SHOWCASE_SNAPSHOT_BYTES = 50 * 1024 * 1024
+
+/** Предел одного файла снимка (байт): больше — `done` отказывает с подсказкой. */
+export const MAX_SHOWCASE_SNAPSHOT_FILE_BYTES = 25 * 1024 * 1024
 
 /**
  * Показ из `done` в сохраняемый вид: текст без пустоты, пути без пробелов по краям, без повторов, `\` → `/`.
@@ -776,9 +805,14 @@ export interface HumanRequest {
   nodeId?: string
   /**
    * Dispatch, чей показ (`Dispatch.showcase`) выведен в approval: renderer берёт из него файлы и читает их
-   * из worktree задачи (IPC `showcase:*`). Отдельно от `dispatchId`: тот — «кто спросил / упал».
+   * через IPC `showcase:*` (из снимка или worktree задачи). Отдельно от `dispatchId`: тот — «кто спросил / упал».
    */
   showcaseDispatchId?: string
+  /**
+   * Approval прогона: запуски подзадач с показом, по одному на подзадачу, в порядке подзадач. `showcaseDispatchId`
+   * при этом — последний из них: его читают старый renderer и старые запросы.
+   */
+  showcaseDispatchIds?: string[]
   /** Только kind=decision: почему решает человек — уходит в `StageDecision.fallback` решения. */
   fallback?: StageDecisionFallback
   /** Только kind=decision: комментарий агента, передавшего решение (`StageDecision.agentNote`); он же в `body`. */

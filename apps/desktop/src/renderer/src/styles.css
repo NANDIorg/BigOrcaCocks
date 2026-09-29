@@ -1422,7 +1422,9 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 /* Показ человеку (ShowcaseBlock): описание воркера и файлы из ветки — в approval и модалке задачи. */
 .showcase { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--frame); border-radius: 10px; min-width: 0; }
 .showcase.bare { padding: 0; background: transparent; }
-.showcase-head { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.showcase-head { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.showcase-head .grow { flex: 1; }
+.showcase-head .btn-sm { height: 24px; padding: 0 10px; font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; }
 .showcase-md { max-height: 360px; overflow: auto; }
 .showcase-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .showcase-file { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); min-width: 0; }
@@ -1435,9 +1437,158 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .showcase-file-head .btn-sm, .showcase-file-head .btn-text { flex-shrink: 0; white-space: nowrap; }
 .showcase-file-head .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; }
 .showcase-note { font-size: 12px; }
-.showcase-img { display: block; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--page); overflow: hidden; cursor: zoom-in; max-width: 100%; align-self: flex-start; }
-.showcase-img img { display: block; max-width: 100%; max-height: 240px; object-fit: contain; }
 .showcase-file-md { padding: 8px 10px; background: var(--page); border-radius: 8px; max-height: 320px; }
+
+/* Вариант 2 макета (docs/design/showcase-viewer/variant-2.html): значок вида, «⋯», сетка картинок, мини-просмотрщик. */
+.showcase-file-head > .sf-ic { flex: none; width: 20px; display: grid; place-items: center; color: var(--muted); }
+.showcase-file-head .btn-sm.icon { width: 26px; padding: 0; justify-content: center; }
+.showcase-file-head .btn-text.on { color: var(--text); }
+.showcase-file.dim .showcase-file-name { color: var(--muted); font-weight: 500; }
+.showcase-more { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 2px; border: 0; background: transparent; color: var(--accent); font-size: 12px; }
+.showcase-more:hover { text-decoration: underline; }
+.sv-thumbs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.sv-thumb { position: relative; aspect-ratio: 4 / 3; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--page); cursor: zoom-in; }
+.sv-thumb:hover { border-color: var(--text); }
+.sv-thumb.failed { border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.sv-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.sv-thumb-ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--danger); font-weight: 700; }
+.sv-thumb .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 4px; font-size: 10.5px; text-align: left; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.75)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-thumb.more { display: grid; place-items: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+.sv-inl-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sv-inl-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sv-inl-bar .grow { flex: 1; }
+.sv-inl-bar .segmented .seg { height: 24px; padding: 0 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+.sv-inl-bar .icon-btn { width: 26px; height: 26px; }
+.sv-inl { position: relative; display: flex; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.sv-inl.mobile { background: var(--term-bg); }
+.sv-inl .pf-host { padding: 0; }
+.sv-inl .sv-dev.inline { border: 0; border-radius: 0; box-shadow: none; }
+.sv-inl-expand {
+  position: absolute; top: 8px; right: 8px; z-index: 2; height: 26px; padding: 0 10px 0 8px; border-radius: 13px;
+  border: 1px solid rgba(255,255,255,.25); background: rgba(20,21,26,.82); color: #fff; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;
+}
+.sv-inl-expand:hover { background: rgba(20,21,26,.95); border-color: #fff; }
+.sv-inl-cap { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+.sv-inl-cap .lock, .sv-devlabel .lock { display: inline-flex; align-items: center; gap: 4px; }
+.sv-inl.loading::after, .sv-dev.loading::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); animation: sv-shimmer 1s infinite;
+}
+
+/* Approval прогона: показ по подзадачам (ShowcaseGroupsBlock) — блок с цветной полосой состояния подзадачи. */
+.sv-sub { --tone: var(--line); display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 8px 10px 10px; border: 1px solid var(--line); border-left: 3px solid var(--tone); border-radius: 10px; background: var(--page); }
+.sv-group-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sv-group-head .ttl { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-group-head .cnt { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.sv-group-head .tgl { flex: none; background: transparent; border: 0; color: var(--muted); padding: 0; display: grid; place-items: center; width: 20px; height: 20px; }
+.sv-group-head .btn-sm.icon { flex: none; width: 26px; height: 26px; padding: 0; justify-content: center; }
+.chip.sv-st { flex: none; font-size: 11px; padding: 0 8px; }
+.chip.sv-st.done { border-color: var(--col-done); color: var(--col-done); }
+.chip.sv-st.review { border-color: var(--col-review); color: var(--col-review); }
+.chip.sv-st.work { border-color: var(--col-progress); color: var(--col-progress); }
+/* Картинки markdown показа: из снимка — не шире колонки; внешние и data: — подписью вместо картинки. */
+.showcase-md img, .sv-mdc img { max-width: 100%; height: auto; }
+.md-img-off { display: inline-block; padding: 1px 6px; border: 1px dashed var(--chip); border-radius: 6px; color: var(--muted); font-size: 12px; }
+/* Диалог «Подтвердить» с показом подзадач: шире, чтобы поместились миниатюры и превью. */
+.modal.g-accept-modal { width: 680px; }
+.modal.g-accept-modal > * { flex-shrink: 0; }
+
+/* Просмотрщик показа (ShowcaseViewer): модалка с деревом файлов слева; ширина окна — контейнерные запросы `svhost`. */
+.modal-backdrop.sv-host { z-index: 60; container: svhost / inline-size; }
+.modal.sv-modal { width: min(1120px, calc(100% - 48px)); height: 88vh; max-width: none; max-height: none; padding: 0; gap: 0; overflow: hidden; flex-direction: row; }
+.sv-side { flex: none; width: 248px; display: flex; flex-direction: column; min-height: 0; background: var(--side); border-right: 1px solid var(--line); }
+.sv-side-head { display: flex; align-items: baseline; gap: 8px; padding: 18px 16px 10px 20px; }
+.sv-side-head .ttl { font-size: 16px; font-weight: 600; }
+.sv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px; }
+.sv-lg { padding: 14px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.sv-lg .t { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-li { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 7px 10px; border: 0; border-left: 3px solid transparent; border-radius: 8px; background: transparent; color: var(--text); }
+.sv-li:hover { background: rgba(255,255,255,.04); }
+.sv-li[aria-selected='true'] { background: var(--side-2); border-left-color: var(--accent); }
+.sv-li .k { flex: none; display: grid; place-items: center; color: var(--muted); }
+.sv-li .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sv-li .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-li .mt { font-size: 11px; color: var(--muted); }
+.sv-li[aria-selected='true'] .mt { color: color-mix(in srgb, var(--text) 72%, var(--muted)); }
+.sv-li.dim .nm { color: var(--muted); }
+.sv-li .flag.lock { flex: none; display: grid; color: var(--muted); }
+.sv-side-foot { padding: 10px 16px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.sv-kbdhint { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sv-kbdhint kbd { font: 600 11px ui-monospace, Menlo, monospace; min-width: 18px; height: 18px; padding: 0 4px; display: inline-grid; place-items: center; border-radius: 5px; color: var(--muted); background: var(--frame); border: 1px solid var(--chip); }
+.sv-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.sv-mhead { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.sv-mhead .ttl { flex: 1; min-width: 0; }
+.sv-mhead h3 { margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-mhead .pth { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-sidebtn[aria-pressed='true'] { color: var(--accent); }
+.modal .sv-fsel { display: none; flex: 1 1 auto; min-width: 0; flex-direction: row; }
+.sv-fsel select { padding: 6px 10px; font-size: 13px; background: var(--frame); border: 1px solid var(--chip); border-radius: 8px; }
+.sv-nav { display: flex; align-items: center; gap: 2px; }
+.sv-nav .icon-btn:disabled { opacity: .35; }
+.sv-toolbar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 16px; background: var(--side); border-bottom: 1px solid var(--line); }
+.sv-toolbar .grow { flex: 1; }
+.sv-toolbar .btn-sm { height: 30px; }
+.sv-toolbar .btn-text { padding: 0 8px; display: inline-flex; align-items: center; gap: 6px; }
+.sv-seg .seg { display: inline-flex; align-items: center; gap: 6px; height: 30px; }
+.sv-seg .seg .w { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
+.sv-net { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 10px; border-radius: 16px; border: 1px solid var(--chip); background: transparent; color: var(--text); font-size: 13px; white-space: nowrap; }
+.sv-net:hover { border-color: var(--text); }
+.sv-net .switch { width: 30px; height: 18px; border-radius: 9px; }
+.sv-net .switch::after { width: 12px; height: 12px; top: 3px; left: 3px; }
+.sv-net .switch.on::after { left: 15px; }
+.sv-net b { font-weight: 600; }
+.sv-net[aria-checked='false'] b { color: var(--muted); }
+.sv-net[aria-checked='true'] { border-color: color-mix(in srgb, var(--col-input) 60%, transparent); background: rgba(232,176,74,.08); }
+.sv-net[aria-checked='true'] b, .sv-net-on { color: var(--col-input); }
+.sv-net .lbl-s { display: none; }
+.sv-action-error { flex: none; padding: 6px 16px; border-bottom: 1px solid var(--line); }
+.sv-canvas { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; background: var(--term-bg); }
+.sv-canvas.center { justify-content: center; }
+.sv-canvas.pad0 { padding: 0; gap: 0; }
+.sv-devlabel { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+.sv-devlabel b { color: var(--text); font-weight: 600; }
+.sv-devlabel b.sv-net-on { color: var(--col-input); }
+.pf-host { flex: 1; min-height: 0; width: 100%; display: flex; justify-content: center; align-items: flex-start; }
+.sv-dev { position: relative; flex: none; background: #fff; overflow: hidden; border: 1px solid rgba(255,255,255,.14); border-radius: 10px; box-shadow: 0 14px 44px rgba(0,0,0,.5); }
+.sv-dev.tablet { border: 10px solid #0a0b0e; border-radius: 26px; }
+.sv-dev.mobile { border: 8px solid #0a0b0e; border-radius: 34px; }
+.sv-dev iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; background: #fff; }
+.sv-imgc { flex: 1; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
+.sv-imgc img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 10px 34px rgba(0,0,0,.5); }
+.sv-imgc.z100 { align-items: flex-start; justify-content: flex-start; }
+.sv-imgc.z100 img { max-width: none; max-height: none; }
+.sv-mdc { flex: 1; min-height: 0; width: 100%; padding: 28px 24px 40px; background: var(--frame); overflow: auto; }
+.sv-mdc .doc-md { margin: 0 auto; }
+.sv-state { margin: auto; max-width: 480px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 24px 16px; }
+.sv-state-title { font-size: 16px; font-weight: 600; }
+.sv-state.warn .sv-state-title { color: var(--col-input); }
+.sv-state.err .sv-state-title { color: var(--danger); }
+.sv-state p { margin: 0; color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
+.sv-state .acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 6px; }
+.sv-path { max-width: 100%; font: 12px ui-monospace, Menlo, monospace; padding: 4px 9px; border-radius: 8px; background: var(--frame); border: 1px solid var(--line); overflow-wrap: anywhere; color: var(--text); }
+.sv-skel { width: min(520px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.sv-skel i { display: block; height: 14px; border-radius: 7px; background: linear-gradient(90deg, var(--side) 25%, var(--side-2) 50%, var(--side) 75%); background-size: 200% 100%; animation: sv-skel 1.2s linear infinite; }
+.sv-skel i.h { height: 96px; border-radius: 12px; }
+.sv-decide { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--side); }
+.modal .sv-decide .dec { flex: 1 1 200px; min-width: 150px; max-width: 360px; flex-direction: row; }
+.sv-decide input { height: 32px; padding: 6px 10px; font-size: 13px; border-radius: 8px; border: 1px solid var(--chip); }
+.sv-decide .grow { flex: 1; }
+@keyframes sv-shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@keyframes sv-skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .sv-skel i, .sv-dev.loading::after, .sv-inl.loading::after { animation: none; } }
+/* Уже 980 px: дерево файлов → выпадающий список в шапке; дальше подписи уступают место иконкам. */
+@container svhost (max-width: 980px) {
+  .sv-side, .sv-sidebtn { display: none; }
+  .modal .sv-fsel { display: flex; }
+  .sv-mhead .ttl { display: none; }
+}
+@container svhost (max-width: 900px) { .sv-seg .w { display: none; } .sv-toolbar .btn-text .sv-btn-lbl { display: none; } }
+@container svhost (max-width: 760px) {
+  .sv-seg .lbl, .sv-btn-lbl { display: none; }
+  .sv-net .lbl { display: none; }
+  .sv-net .lbl-s { display: inline; }
+  .modal .sv-decide .dec { max-width: none; }
+}
 
 /* «Открыть полностью»: ответ во всю ширину поверх Инбокса. */
 .inbox-full-backdrop { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }

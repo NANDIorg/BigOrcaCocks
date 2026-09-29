@@ -156,13 +156,13 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
-- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files}` — показ человеку с «Работы» (`docs/workflow.md`);
+- `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files, snapshot?, auto?}` — показ человеку с «Работы» (`docs/workflow.md`; `snapshot {at, files, bytes}` и `auto` выставляет только main, не сокет);
   `roleId`/`agent`/`model` — снимок роли на момент запуска, `sessionId` — сессия агента для поиска транскрипта (см. «Статистика»).
 - `Question { id, taskId, dispatchId?, question, options: RequestOption[], context?, answer?, forHuman?, createdAt, answeredAt? }` —
   вопрос воркера (`ask`); `RequestOption { id, label, hint?, recommended? }` (`id` — номер варианта). `forHuman` — вопрос
   адресован человеку и по нему есть `HumanRequest`. Ответить можно один раз, у запуска — не больше одного открытого вопроса.
-- `HumanRequest { id, runId, taskId?, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, showcaseDispatchId?, resolution?, createdAt, resolvedAt? }` —
-  `taskId` нет у approval уровня прогона (нода `human` воркфлоу глобальной задачи): его решают по `runId`; `showcaseDispatchId` — у approval: запуск, чей показ выведен в `body` (`docs/workflow.md` → «Показ человеку»);
+- `HumanRequest { id, runId, taskId?, dispatchId?, kind, status, title, body?, options[], questionId?, nodeId?, showcaseDispatchId?, showcaseDispatchIds?, resolution?, createdAt, resolvedAt? }` —
+  `taskId` нет у approval уровня прогона (нода `human` воркфлоу глобальной задачи): его решают по `runId`; `showcaseDispatchId` — у approval: запуск, чей показ выведен в `body` (`docs/workflow.md` → «Показ человеку»); `showcaseDispatchIds` — у approval прогона: запуски всех подзадач с показом (`showcaseDispatchId` — последний из них);
   запрос к человеку: `kind` `question` | `answer` | `escalation` | `approval` (этап воркфлоу «человек», `nodeId` — его нода),
   `status` `pending` | `resolved` | `cancelled`.
   Единственный источник «ждёт человека» (колонка «Нужен ответ», Инбокс, уведомления); модель, переходы и события —
@@ -697,6 +697,8 @@ orca-board done --summary "..." --files a.ts,b.ts
 orca-board done --summary "..." --answer-file answer.md   # задача-ответ: CLI читает файл, шлёт текст в params.answer
 orca-board done --summary "..." --show-file showcase.md --show design/a.html --show design/a.png
                                                    # показ человеку: params.showcase {text?, files}
+orca-board done --summary "..." --show-file showcase.md --show design/
+                                                   # --show папкой: путь уходит как есть, раскрывает main при снимке
 orca-board ask --question "..." [--option "метка|пояснение"]... [--recommend <номер|метка>] [--context-file why.md]
                                                    # блокирует до ответа; оборвался — повтор той же команды переподключается
 orca-board request get --request <id>              # забрать ответ по пинку «[orca] на вопрос … ответили: …»
@@ -706,8 +708,11 @@ orca-board decision escalate --reason "..."        # не может выбра�
 
 `--option` повторяемый (без split по запятой, `|` отделяет пояснение), старое `--options a,b` работает.
 `--context-file` читает CLI и шлёт текст в `params.context`. Подробно — `docs/human-requests.md`.
-`--show` повторяемый, как `--option` (без split по запятой); `--show-file` CLI читает сам. Показ нужен на «Работе» с
-`showcase` — воркер узнаёт об этом из раздела «Этап» задания (`docs/workflow.md` → «Показ человеку»).
+`--show` повторяемый, как `--option` (без split по запятой); `--show-file` CLI читает сам. `--show` — файл или папка: CLI
+пути не проверяет и не раскрывает (нет доступа к worktree и белому списку), это делает main при `done` — снимок и его
+ошибки (`worker.done` в «Протокол сокета»). Показ нужен на «Работе» с `showcase` — воркер узнаёт об этом и о правилах
+подготовки файлов (автономный HTML, папка, скриншоты вместо того, что не открыть в браузере) из раздела «Этап» задания
+(`docs/workflow.md` → «Показ человеку»).
 `decision choose|escalate`: `--task` по умолчанию — `$ORCA_TASK_ID` (сокет берёт `r.taskId`), без `--reason` CLI
 отвечает ошибкой до сокета; `--option` уходит массивом (флаг повторяемый) — сервер берёт одно значение
 (`singleOption`). Контракт — `docs/workflow.md` → «Нода «Решение ИИ»».
@@ -777,7 +782,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Время жизни**: файлы живут, пока прогон открыт или его координатор жив; папки закрытых прогонов с
   мёртвым координатором удаляются при следующем запуске координатора с изображениями (`pruneAttachments`).
 - **Покрытие**: только UI-форма. `orca-board coordinator start --objective` (сокет `coordinator.start`)
-  изображений не принимает. Миниатюры — `blob:` URL (CSP в `renderer/index.html`: `img-src 'self' blob:`).
+  изображений не принимает. Миниатюры — `blob:` URL (CSP в `renderer/index.html`: `img-src 'self' blob: orca-preview:`).
 
 ### Изображения при возврате в работу
 
@@ -1204,6 +1209,30 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   - Логика без React — `renderer/src/taskTypeEdit.ts` (тест рядом). Старый main/preload: нет `window.orca.taskTypes`
     или хендлера `taskTypes:*` → `taskTypesStaleMessage()` («перезапустите приложение») вместо списка.
 - **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» у колонок `storageKey = active.id`, в «Настройках» у типа — `typeEditorKey(t, rev)`: `type:<id>:b|u:<rev>` — у встроенного и его изменённой копии признак один (`b`), поэтому первая правка исполнителя не сбрасывает черновик посреди быстрых кликов, а после «Вернуть встроенный» `rev` растёт и редакторы берут встроенные значения. `executorOnly` — меняются только исполнитель и инструкции роли.
+- **Показ человеку** (`ShowcaseBlock.tsx`, просмотрщик — `ShowcaseViewer.tsx`, фрейм — `PreviewFrame.tsx`, логика без React —
+  `showcase.ts`; макет — `docs/design/showcase-viewer/variant-2.html`). Блок в карточке approval (Инбокс, лента) и в модалке задачи:
+  описание воркера и файлы; подряд идущие картинки — сетка миниатюр 3 в ряд (больше шести — пять и «+N»), у HTML — «Превью»
+  (мини-просмотрщик 360 px: «Десктоп» 1024 px с масштабом / «Телефон» 375 px, «Обновить»; открыт один за раз), у HTML и md —
+  «На весь экран» и меню «⋯» («Открыть» / «Показать в папке» / «Копировать путь»), у PDF — «Открыть» / «В папке», до пяти записей и
+  «Ещё N файлов», «Смотреть всё · N» в шапке. Просмотрщик — модалка поверх всего (портал в `body`, `.modal-backdrop.sv-host`,
+  контейнерные запросы `svhost`): слева дерево групп «подзадача → файлы» (`ShowcaseGroup {dispatchId, taskId, title?, files}` — группы
+  по `showcaseDispatchIds` строит вызывающий), уже 980 px — выпадающий список в шапке; справа файл: страница с виртуальной шириной
+  Десктоп 1280 / Планшет 768 / Телефон 375 (`fitFrame` вписывает масштабом), картинка («Вписать / 100 %»), markdown (`variant="doc"`)
+  или состояние (не найден, > 10 МБ, PDF, тип не открывается, старое приложение, ошибка); «Интернет-ресурсы» — выкл при каждом
+  открытии (`previewUrl(..., {network})`); внизу у approval — решение: поле общее с карточкой (`ShowcaseDecision` из `RequestCard`),
+  «Выбрать этот вариант» подставляет имя файла, «Принять» и «Вернуть…» закрывают просмотрщик и вызывают действия карточки
+  («Вернуть…» открывает поле замечаний в ней). Клавиши — захватом на `window`: Esc, ←/→, A/C по `code` (русская раскладка тоже);
+  Esc при фокусе во фрейме — `showcase.onFrameEscape`. HTML — только `<iframe sandbox="allow-scripts">` c адресом, прошедшим
+  `isPreviewUrl` (иначе `src` не ставится), и только после нажатия: адрес запрашивает смонтированный фрейм. Картинки и md — байтами
+  `showcase:read` (`blob:`). Во все вызовы `showcase:*` уходит `dispatchId` — main берёт снимок запуска. Старый preload без `previewUrl` —
+  `showcasePreviewApi` бросает `ShowcaseStaleError`, старый main — «No handler registered»; оба → состояние «перезапустите приложение»,
+  картинки и md работают. CSP окна: `img-src 'self' blob: orca-preview:`, `frame-src orca-preview:`.
+  Места показа: какие запуски у запроса — `requestShowcases` (approval: `showcaseDispatchIds`, фоллбэк — `showcaseDispatchId`; answer —
+  `dispatchId`), вывод — `RequestShowcaseBlock`: один показ — `ShowcaseBlock`, approval прогона — `ShowcaseGroupsBlock` (блок на подзадачу
+  с полосой состояния по колонке, по три записи до «Ещё N»). Кроме Инбокса и ленты — окно «Подтвердить» (`AcceptGlobalModal`, решение
+  в просмотрщике без «Вернуть…») и вкладка «Итог и цель» на «Проверке» (`GlobalOverview`, без решения). Markdown показа —
+  `Markdown` с `assets {path, base?}`: хук DOMPurify переписывает относительные `img[src]` на `base` из `previewUrl` (`markdownAssets.ts`,
+  `..` за корень — отказ), внешние и `data:` заменяет подписью, относительные ссылки — `data-showcase-href` → файл в просмотрщике.
 
 ## Реестр терминалов (`src/main/pty.ts`)
 
@@ -1335,9 +1364,18 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»);
   `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)` (см. «Ассистент → Чат-режим панели»);
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
-  `showcase:read(taskId, path)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ),
-  `showcase:open(taskId, path)`, `showcase:reveal(taskId, path)` — файлы показа из worktree задачи активного проекта
-  (`main/showcase.ts`, белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»);
+  `showcase:read(taskId, path, dispatchId?)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ; HTML — только
+  `previewUrl`), `showcase:open(taskId, path, dispatchId?)`, `showcase:reveal(taskId, path, dispatchId?)` — файлы показа задачи активного проекта:
+  корень выбирает `showcaseSource` (`main/showcase.ts`: снимок запуска `<userData>/showcase/…`, если снят и на диске → worktree задачи → worktree
+  ветки прогона → ошибка; без `dispatchId` — снимок последнего запуска задачи; `dispatchId` чужой задачи — ошибка),
+  белый список `shared/showcase.ts`, см. `docs/workflow.md` → «Показ человеку»; `showcase:previewUrl(dispatchId, path, {network?})` →
+  `ShowcasePreviewUrl {url, mime, base}` — адрес `orca-preview://<токен>/<путь>` страницы показа для изолированного фрейма
+  (HTML, картинки, SVG, markdown — ради `base`; PDF — отказ `showcase.noPreview`, скрытые сегменты — `showcase.hidden`; токен на корень
+  `showcaseSource`, `network: true` — отдельный токен с сетью в CSP, только если у запуска есть снимок: без снимка токен был бы на весь
+  worktree — отказ `showcase.networkNoSnapshot`; см. «Протокол показа `orca-preview://`»; в старом preload метода нет —
+  renderer проверяет его перед вызовом); `showcase:previewBase(dispatchId)` → `string | null` — база `orca-preview://<токен>/`
+  (без сети, корень `showcaseSource`) для относительных картинок описания показа `showcase.text` (пути от корня репозитория;
+  в `Markdown` — `assets {path: 'showcase.md', base}`); `null` — ни снимка, ни worktree; в старом preload метода нет;
   `stats:project(projectId, range)` → `ProjectStats` (`range`: `all` | `7d` | `30d`, другой — ошибка; проект — любой, не только активный; см. «Статистика»),
   `stats:task(projectId, taskId)` → `TaskStats`, `stats:global(projectId, runId)` → `GlobalTaskStats` (за всё время жизни; неизвестная задача или прогон —
   ошибка по-русски; см. «Статистика задачи»).
@@ -1348,7 +1386,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
   группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
   поэтому событие приходит одинаково и от IPC, и от правки через сокет CLI/ассистентом, см. «Ассистент» → «Настройки»),
-  `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
+  `showcase:escape` (без payload — Esc в окне из `before-input-event`: фокус во фрейме показа, keydown до DOM родителя не доходит; `window.orca.showcase.onFrameEscape`, в старом preload нет), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
   `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
 - В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, onMessage}`;
   у `window.orca.worker` остался только `start`.
@@ -1380,7 +1418,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
-| `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка |
+| `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка. Есть `showcase.files` — до `finishDispatch` main снимает их (`ProjectDeps.snapshotShowcase` → `main/showcase-snapshot.ts`): папки раскрываются, HTML — с ассетами; файла нет, тип не из белого списка, симлинк наружу, больше лимита — ошибка, запуск не закрыт |
 | `worker.ask` | `question`, `option?: string[]` (`"метка\|пояснение"`) или `options?` (`a,b`), `recommend?`, `context?`, `wait?` | `Question` после ответа (держит соединение); повтор — переподключение к открытому вопросу. Задача на этапе `ask` — вопрос человеку при любом координаторе (`forceHuman`) |
 | `question.forward` | `question`, `note?` | `Question` (создан `HumanRequest`) |
 | `request.list` | `run?`, `all?` | `HumanRequest[]` (без `all` — только `pending`); approval глобальной задачи (нода `human`) приходит без `taskId`, с `runId` и `nodeId` — фильтр по `run` его находит |
@@ -1700,6 +1738,41 @@ UI работает с активным проектом; воркеры и ко
 трогает**: прогон без `workflowScope` доживает на движке подзадач со своим снимком v1, а без снимка — по графу типа через `toTaskScopeWorkflow`
 (мерж и конфликт возвращаются, `condition: role` из типа уже снят). Тесты — `projects-workflow-migration.test.ts` (main) и `workflow-restart.test.ts` (core).
 
+
+### Протокол показа `orca-preview://` (`src/main/preview-protocol.ts`)
+
+Страницы показа человеку (HTML-макеты агентов с ассетами, SVG, картинки для markdown) renderer открывает во фрейме
+`<iframe sandbox="allow-scripts">` по адресу `orca-preview://<токен>/<путь>`. HTML агента — недоверенный код, поэтому:
+
+- **Схема** регистрируется `protocol.registerSchemesAsPrivileged` на верхнем уровне `index.ts` (до `ready`) с `standard`, `secure`,
+  `supportFetchAPI`, `stream`; `bypassCSP` и `corsEnabled` не включены. Обработчик — `protocol.handle` в `whenReady` (сессия по умолчанию).
+- **Токены** (`PreviewTokens`): 128 бит hex → `{root, network}`, LRU на 100, живут до выхода. Выдают только IPC `showcase:previewUrl`
+  и `showcase:previewBase` (корень — `showcaseSource`: снимок запуска, без него — worktree задачи); один корень с одним режимом сети —
+  один токен. Токен с сетью — только на снимок: страница с сетью на токене worktree прочитала бы `fetch`'ем файлы репозитория
+  и отправила их наружу (`showcase.networkNoSnapshot`).
+  Вытесненный токен — 404 во фрейме, «Обновить» выдаст новый.
+- **Разбор запроса** (`resolvePreviewRequest`, чистая функция): только `GET`/`HEAD` (иначе 405); чужой токен — 404; сегменты пути
+  проверяются после декодирования — пустые, начинающиеся с точки (`..`, `.env`, `.git`), с `/`, `\`, `:`, NUL — 403; расширение из
+  белого списка протокола (`showcaseServedMime`: точки входа + ассеты `SHOWCASE_ASSET_TYPES`) и по пути, и по realpath (симлинк
+  `a.png → run.sh` — 403); realpath внутри корня токена (симлинк наружу — 403); обычный файл; ≤ `MAX_SHOWCASE_SNAPSHOT_FILE_BYTES` (иначе 413).
+  Отказ — пустое тело: путь и причину странице не раскрываем.
+- **Ответ** (`handlePreviewRequest`): файл читается потоком с поддержкой одного `Range` (206/416 — перемотка видео), заголовки — только
+  свои (`previewHeaders`): `Content-Type` из таблицы (текст — `charset=utf-8`), `nosniff`, `no-store`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy` (камера, микрофон, геолокация… — `()`), `Access-Control-Allow-Origin: *` и `Cross-Origin-Resource-Policy: cross-origin`
+  (фрейм без `allow-same-origin` — opaque-origin: его шрифты, `fetch()` и модули идут как cross-origin), `Content-Security-Policy`
+  (`buildPreviewCsp`): `default-src 'none'`, скрипты/стили/картинки/шрифты/медиа/`connect` — только `orca-preview:` (+ `data:`/`blob:`
+  где нужно, inline и eval разрешены), `frame-src`/`object-src`/`form-action`/`base-uri` — `'none'`, `sandbox allow-scripts` (страница,
+  открытая по URL в обход iframe, тоже получает opaque-origin). Токен с `network: true` добавляет `https:` в script/style/img/font/media/connect.
+- **Навигация** (`will-frame-navigate` → `allowFrameNavigation`): подфреймы — только `orca-preview:` и `about:blank` (`sandbox` не
+  запрещает фрейму уйти самому через `location` или `<meta refresh>`, а `navigate-to` в CSP Chromium не поддерживает); главный фрейм — только
+  страница приложения (origin dev-сервера или тот же `index.html`), http(s) вместо этого открывается в браузере. `setWindowOpenHandler`
+  открывает внешне только http(s) (`isExternalWebUrl`).
+- **Esc** из фрейма до DOM родителя не доходит: `before-input-event` окна шлёт `showcase:escape` на каждый Esc, renderer закрывает
+  просмотрщик, если `document.activeElement` — фрейм (закрытие идемпотентно: при фокусе в родителе придёт и обычный keydown).
+- Preload в подфреймы не попадает (нет `nodeIntegrationInSubFrames`) — `window.orca` во фрейме нет. **Остаточный риск:** окно
+  `sandbox: false`, фрейм исполняется без ОС-песочницы; апгрейд-путь — `<webview>`/`WebContentsView` с тем же протоколом и токенами.
+
+Тесты — `preview-protocol.test.ts` (отказы, заголовки, CSP, токены, Range, навигация). Интеграцию с Electron `node:test` не покрывает.
 
 ### Безопасность состояния
 
@@ -2606,6 +2679,14 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 - **`startCoordinator` при повторном запуске сносил папку прогона целиком** (`rmSync(join(root, run.id))`) — вместе с `returns/`, где лежат картинки возвратов, а пути к ним
   живут в `Run.stageInput.images`: рестартовавший координатор получал битые пути. Теперь чистятся только `image-N.*` в корне (`clearStartImages`); картинки возвратов —
   отдельной подпапкой. Новое место с файлами в папке прогона — не клади в корень, где действует `clearStartImages`/`pruneAttachments`.
+
+- **Своя схема для фрейма (`orca-preview://`, `preview-protocol.ts`).** `registerSchemesAsPrivileged` работает только до `app.ready` —
+  позже вызов молча игнорируется, и схема остаётся не-standard: `./style.css` в макете не разрешается относительно страницы, `fetch` к
+  схеме запрещён. Регистрация — на верхнем уровне `index.ts`, `protocol.handle` — в `whenReady`. Фрейм `sandbox` без `allow-same-origin` —
+  opaque-origin: без `Access-Control-Allow-Origin: *` на ответах его шрифты, `fetch('./data.json')` и `<script type=module>` из того же
+  снимка не грузятся. `net.fetch('file://…')` в Electron 38 игнорирует `Range` (видео не перематывается) — файл читается потоком сам.
+  Chromium нормализует `..` и `%2e%2e` до обработчика, поэтому проверка сегментов в `resolvePreviewRequest` — вторая линия, а главная —
+  realpath внутри корня токена.
 
 ## Открытые вопросы
 

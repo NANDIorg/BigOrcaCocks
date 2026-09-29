@@ -4,13 +4,14 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { connect, type Server } from 'node:net'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, legacyDefaultWorkflow, presetTaskType, presetTaskTypes, resolveTaskType, runTypeInput, type AgentInfo, type GlobalTask, type Role, type Task, type WfStageInfo, type Workflow, WORKFLOW_VERSION_TASK_SCOPE } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { spawnPty, killPty } from './pty'
 import { NOT_NEEDED_SETTINGS_DEPS, NOT_NEEDED_APP_SETTINGS_DEPS } from './socket-test-deps'
+import { showcaseSnapshotDir, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 
 let tmp: string
 let sockPath: string
@@ -24,6 +25,8 @@ let calls: string[]
 let typeWorkflow: Workflow | undefined
 /** Сборка main без движка «Решения ИИ»: у deps нет `decide` и `escalateDecision`. */
 let noDecisionEngine: boolean
+/** Снимки показа как в main (`snapshotDispatchShowcase`); нет — у deps нет `snapshotShowcase`, как до снимков. */
+let snapshots: ShowcaseSnapshots | undefined
 
 function fakeDeps(): ProjectDeps {
   let pty = 0
@@ -63,6 +66,7 @@ function fakeDeps(): ProjectDeps {
     resolveRequest: () => ({}),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
+    ...(snapshots ? { snapshotShowcase: (dispatchId: string, files: readonly string[], text?: string) => snapshotDispatchShowcase(store, snapshots!, dispatchId, files, text) } : {}),
     agents: () => agents,
     resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow ?? legacyDefaultWorkflow(roles), source: 'default' }),
     taskTypes: () => ({ taskTypes: presetTaskTypes(), defaultTypeId: 'general' }),
@@ -119,6 +123,7 @@ beforeEach(async () => {
   calls = []
   typeWorkflow = undefined
   noDecisionEngine = false
+  snapshots = undefined
   server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [], ...NOT_NEEDED_APP_SETTINGS_DEPS })
   await new Promise((r) => server.once('listening', r))
 })
@@ -409,6 +414,15 @@ describe('worker done: показ человеку', () => {
     assert.deepEqual(store.getDispatch(d.id)!.showcase, { text: '## A и B', files: ['design/a.png', 'b.html'] })
   })
 
+  it('snapshot и auto из параметров сокета не принимаются: их выставляет только main', async () => {
+    const task = store.createTask({ title: 'Макет', roleId: 'developer' })
+    const d = store.startDispatch(task.id, 'pty_w')
+    const showcase = { files: ['a.png'], snapshot: { at: 1, files: 1, bytes: 1 }, auto: true }
+    const res = await call('worker.done', { summary: 's', showcase }, { dispatchId: d.id })
+    assert.equal(res.ok, true, res.error)
+    assert.deepEqual(store.getDispatch(d.id)!.showcase, { files: ['a.png'] })
+  })
+
   it('обязательный показ по графу типа (прогона без снимка): без него — ошибка с подсказкой, с ним — done', async () => {
     typeWorkflow = design
     const task = store.createTask({ title: 'Макет', roleId: 'developer' })
@@ -422,6 +436,83 @@ describe('worker done: показ человеку', () => {
     const ok = await call('worker.done', { summary: 's', showcase: { files: ['a.png'] } }, { dispatchId: d.id })
     assert.equal(ok.ok, true, ok.error)
     assert.equal(store.getDispatch(d.id)!.outcome, 'done')
+  })
+
+  describe('снимок файлов показа', () => {
+    let wt: string
+    /** Задача в worktree `wt` с файлами дизайна и открытым запуском. */
+    function designTask(runId?: string): { taskId: string; dispatchId: string } {
+      wt = path.join(tmp, 'wt')
+      for (const [rel, data] of [['design/a.html', '<link href="css/s.css" rel="stylesheet">'], ['design/css/s.css', 'p{}'], ['design/b.png', 'png'], ['run.sh', 'x']]) {
+        mkdirSync(path.dirname(path.join(wt, rel)), { recursive: true })
+        writeFileSync(path.join(wt, rel), data)
+      }
+      snapshots = { root: path.join(tmp, 'showcase'), projectId: 'proj_1' }
+      const task = store.createTask({ title: 'Макет', roleId: 'developer', ...(runId ? { runId } : {}) })
+      store.updateTask(task.id, { worktree: wt })
+      return { taskId: task.id, dispatchId: store.startDispatch(task.id, 'pty_w').id }
+    }
+
+    it('done: папка раскрыта, HTML — с ассетами, showcase.snapshot записан, файлы в userData', async () => {
+      const run = store.createRun('цель')
+      const { dispatchId } = designTask(run.id)
+      const res = await call('worker.done', { summary: 's', showcase: { text: 'A и B', files: ['design'] } }, { dispatchId })
+      assert.equal(res.ok, true, res.error)
+      const showcase = store.getDispatch(dispatchId)!.showcase!
+      assert.deepEqual(showcase.files, ['design/a.html', 'design/b.png'])
+      assert.equal(showcase.text, 'A и B')
+      assert.deepEqual({ files: showcase.snapshot!.files, bytes: showcase.snapshot!.bytes }, { files: 3, bytes: 3 + 3 + 40 })
+      const dir = showcaseSnapshotDir(snapshots!.root, 'proj_1', run.id, dispatchId)
+      assert.equal(readFileSync(path.join(dir, 'design/css/s.css'), 'utf8'), 'p{}')
+      // После мержа worktree подзадачи убран — снимок остаётся.
+      rmSync(wt, { recursive: true, force: true })
+      assert.ok(existsSync(path.join(dir, 'design/a.html')))
+    })
+
+    it('нет файла, чужой тип, файл за пределами — ошибка агенту, запуск не закрыт и снимка нет', async () => {
+      const { dispatchId } = designTask()
+      for (const [files, re] of [[['design/nope.png'], /не найден в worktree задачи/], [['run.sh'], /такой тип приложение не показывает/], [['../x.png'], /не должен выходить/]] as const) {
+        const res = await call('worker.done', { summary: 's', showcase: { files } }, { dispatchId })
+        assert.equal(res.ok, false)
+        assert.match(res.error!, re)
+      }
+      assert.equal(store.getDispatch(dispatchId)!.outcome, undefined, 'dispatch не закрыт')
+      assert.equal(existsSync(snapshots!.root), false)
+    })
+
+    it('отказ finishDispatch после снимка (задача-ответ без ответа) — временный снимок убран', async () => {
+      const { taskId, dispatchId } = designTask()
+      store.updateTask(taskId, { answerFor: 'human' })
+      const res = await call('worker.done', { summary: 's', showcase: { files: ['design/b.png'] } }, { dispatchId })
+      assert.equal(res.ok, false)
+      assert.match(res.error!, /--answer-file/)
+      const projectDir = path.join(snapshots!.root, 'proj_1')
+      const left = existsSync(projectDir) ? readdirSync(projectDir, { recursive: true }) : []
+      assert.deepEqual(left.filter((f) => String(f).includes(dispatchId)), [])
+    })
+
+    it('только текст без файлов — показ без снимка', async () => {
+      const { dispatchId } = designTask()
+      const res = await call('worker.done', { summary: 's', showcase: { text: 'описание' } }, { dispatchId })
+      assert.equal(res.ok, true, res.error)
+      assert.deepEqual(store.getDispatch(dispatchId)!.showcase, { text: 'описание', files: [] })
+    })
+
+    it('картинки описания (--show-file) попадают в снимок как ассеты, не в список файлов', async () => {
+      const run = store.createRun('цель')
+      const { dispatchId } = designTask(run.id)
+      const res = await call('worker.done', { summary: 's', showcase: { text: '![B](design/b.png)', files: ['design/a.html'] } }, { dispatchId })
+      assert.equal(res.ok, true, res.error)
+      const showcase = store.getDispatch(dispatchId)!.showcase!
+      assert.deepEqual(showcase.files, ['design/a.html'])
+      const dir = showcaseSnapshotDir(snapshots!.root, 'proj_1', run.id, dispatchId)
+      assert.equal(readFileSync(path.join(dir, 'design/b.png'), 'utf8'), 'png')
+      // Только описание с картинкой — тоже снимок.
+      const second = store.startDispatch(store.getDispatch(dispatchId)!.taskId, 'pty_w2')
+      assert.equal((await call('worker.done', { summary: 's', showcase: { text: '![B](design/b.png)' } }, { dispatchId: second.id })).ok, true)
+      assert.deepEqual(store.getDispatch(second.id)!.showcase, { text: '![B](design/b.png)', files: [], snapshot: store.getDispatch(second.id)!.showcase!.snapshot })
+      assert.equal(store.getDispatch(second.id)!.showcase!.snapshot!.files, 1)
+    })
   })
 
   it('чужая форма showcase — ошибка, а не молча пропавший показ', async () => {

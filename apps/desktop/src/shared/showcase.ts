@@ -4,8 +4,12 @@
 
 import type { DispatchShowcase } from '@orca-board/core'
 
-/** Как renderer показывает файл: `image` — превью по байтам (blob), `markdown` — текстом, `open` — только кнопкой. */
-export type ShowcasePreview = 'image' | 'markdown' | 'open'
+/**
+ * Как renderer показывает файл: `image` — превью по байтам (blob), `markdown` — текстом, `html` — страницей в
+ * изолированном фрейме по протоколу `orca-preview://` (IPC `showcase:previewUrl`, байты через `showcase:read` не
+ * отдаются), `open` — только кнопкой.
+ */
+export type ShowcasePreview = 'image' | 'markdown' | 'html' | 'open'
 
 export interface ShowcaseFileType {
   mime: string
@@ -23,20 +27,71 @@ export const SHOWCASE_FILE_TYPES: Readonly<Record<string, ShowcaseFileType>> = {
   '.jpeg': { mime: 'image/jpeg', preview: 'image' },
   '.webp': { mime: 'image/webp', preview: 'image' },
   '.gif': { mime: 'image/gif', preview: 'image' },
+  '.avif': { mime: 'image/avif', preview: 'image' },
   '.svg': { mime: 'image/svg+xml', preview: 'image' },
   '.md': { mime: 'text/markdown', preview: 'markdown' },
-  '.html': { mime: 'text/html', preview: 'open' },
-  '.htm': { mime: 'text/html', preview: 'open' },
+  '.markdown': { mime: 'text/markdown', preview: 'markdown' },
+  '.html': { mime: 'text/html', preview: 'html' },
+  '.htm': { mime: 'text/html', preview: 'html' },
+  // PDF в sandbox-фрейме Chromium не показывает — пока только «Открыть» приложением системы.
   '.pdf': { mime: 'application/pdf', preview: 'open' }
+}
+
+/**
+ * Ассеты страниц показа: не точки входа (списком не показываются, не открываются кнопкой), а то, что HTML из
+ * снимка грузит сам — стили, скрипты, шрифты, медиа. Отдаются только протоколом `orca-preview://` внутри снимка
+ * и исполняются только в изолированном фрейме. Всё, чего нет ни здесь, ни в `SHOWCASE_FILE_TYPES`
+ * (исполняемое, архивы, офисные файлы), в снимок не копируется и не отдаётся.
+ */
+export const SHOWCASE_ASSET_TYPES: Readonly<Record<string, string>> = {
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.json': 'application/json',
+  '.txt': 'text/plain',
+  '.map': 'application/json',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.ico': 'image/x-icon',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav'
 }
 
 /** Больше не читаем в renderer (превью): макеты и скриншоты, не видео. Открыть кнопкой можно и больше. */
 export const SHOWCASE_READ_MAX_BYTES = 10 * 1024 * 1024
 
+/** Расширение пути в нижнем регистре с точкой; нет расширения — undefined. */
+function extOf(path: string): string | undefined {
+  return /\.[^./\\]+$/.exec(path)?.[0].toLowerCase()
+}
+
 /** Тип файла показа по расширению пути; не из белого списка — undefined. */
 export function showcaseFileType(path: string): ShowcaseFileType | undefined {
-  const m = /\.[^./\\]+$/.exec(path)
-  return m ? SHOWCASE_FILE_TYPES[m[0].toLowerCase()] : undefined
+  const ext = extOf(path)
+  return ext ? SHOWCASE_FILE_TYPES[ext] : undefined
+}
+
+/** Точка входа показа (`SHOWCASE_FILE_TYPES`): её человек видит списком. */
+export function isEntryType(path: string): boolean {
+  return showcaseFileType(path) !== undefined
+}
+
+/** Ассет страницы (`SHOWCASE_ASSET_TYPES`): попадает в снимок и отдаётся протоколом, но списком не показывается. */
+export function isAssetType(path: string): boolean {
+  const ext = extOf(path)
+  return ext !== undefined && Object.hasOwn(SHOWCASE_ASSET_TYPES, ext)
+}
+
+/** MIME файла, который протокол показа может отдать (точка входа или ассет); остальное — undefined. */
+export function showcaseServedMime(path: string): string | undefined {
+  const ext = extOf(path)
+  if (!ext) return undefined
+  return SHOWCASE_FILE_TYPES[ext]?.mime ?? (Object.hasOwn(SHOWCASE_ASSET_TYPES, ext) ? SHOWCASE_ASSET_TYPES[ext] : undefined)
 }
 
 /**

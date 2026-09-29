@@ -1,9 +1,9 @@
 import type React from 'react'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
-import type { DispatchShowcase, HumanRequest, HumanRequestKind, ImageAttachmentInput, RequestOption, RequestResolution } from '@orca-board/core'
+import type { HumanRequest, HumanRequestKind, ImageAttachmentInput, RequestOption, RequestResolution } from '@orca-board/core'
 import { Markdown } from './Markdown'
-import { ShowcaseBlock } from './ShowcaseBlock'
-import { bodyWithoutShowcase } from './showcase'
+import { RequestShowcaseBlock } from './ShowcaseBlock'
+import { bodyWithoutShowcases, type RequestShowcase } from './showcase'
 import { ipcErrorMessage } from './useAutoSave'
 import { t as tr, useT, type TKey } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
@@ -66,15 +66,11 @@ interface Props {
   /** Клик по карточке (Инбокс: выбрать её). */
   onSelect?(): void
   /**
-   * Показ человеку у approval (`requestShowcase` из showcase.ts по `showcaseDispatchId`): блок «Показ» развёрнут,
-   * его раздел убирается из body. Нет — показ остаётся только текстом в body (старый запрос, нет снимка dispatch).
+   * Показ человеку (`requestShowcases` из showcase.ts): у approval — по `showcaseDispatchIds` (approval прогона — блок на
+   * подзадачу), у answer — запуск, сдавший ответ. Блок «Показ» развёрнут, его разделы убираются из body approval, а
+   * решение можно принять прямо в просмотрщике. Пусто — показ остаётся только текстом в body (старый запрос, нет dispatch).
    */
-  showcase?: DispatchShowcase
-  /**
-   * Задача, из worktree которой читаются файлы показа (`requestShowcaseTaskId`). Нужна approval уровня прогона, у которого
-   * своей задачи нет; у запроса с задачей берётся `taskId`. Нет ни того, ни другого — блока «Показ» нет, а раздел остаётся в тексте.
-   */
-  showcaseTaskId?: string
+  showcases?: readonly RequestShowcase[]
 }
 
 /** Enter — отправить, Shift+Enter — перенос строки, Esc — выйти из поля. */
@@ -106,8 +102,7 @@ function Kbd({ show, k }: { show: boolean; k: string }): React.JSX.Element | nul
  * Поля ввода — свои у каждой карточки. Один компонент для Инбокса, карточки на доске и модалки задачи.
  */
 export const RequestCard = forwardRef<RequestCardHandle, Props>(function RequestCard(props, ref) {
-  const { request: r, onResolve, compact = false, where, stage, active = false, onOpenFull, onOpenTerminal, onEscape, onSelect, showcase } = props
-  const showcaseTask = r.taskId ?? props.showcaseTaskId
+  const { request: r, onResolve, compact = false, where, stage, active = false, onOpenFull, onOpenTerminal, onEscape, onSelect, showcases } = props
   const [text, setText] = useState('')
   const [decision, setDecision] = useState('')
   const [clarifying, setClarifying] = useState(false)
@@ -183,8 +178,9 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
     }
   }))
 
-  const shownShowcase = r.kind === 'approval' && !compact && showcaseTask !== undefined ? showcase : undefined
-  const body = bodyWithoutShowcase(r.body, shownShowcase)
+  const shownShowcases = (r.kind === 'approval' || r.kind === 'answer') && !compact ? (showcases ?? []) : []
+  // У answer body — сам ответ, раздела «## Показ» в нём нет.
+  const body = r.kind === 'approval' ? bodyWithoutShowcases(r.body, shownShowcases) : r.body
   const bodyLabel = t(r.kind === 'answer' ? 'shell.request.body.answer' : r.kind === 'question' || r.kind === 'decision' ? 'shell.request.body.context' : r.kind === 'approval' ? 'shell.request.body.check' : 'shell.request.body.details')
 
   // Старый main может прислать запрос без `options` — тогда кнопок нет, остаётся поле.
@@ -219,7 +215,19 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
       </div>
       <div className="rq-title">{r.title}</div>
 
-      {shownShowcase && showcaseTask !== undefined && <ShowcaseBlock taskId={showcaseTask} showcase={shownShowcase} />}
+      {shownShowcases.length > 0 && (
+        <RequestShowcaseBlock
+          items={shownShowcases}
+          decision={{
+            value: decision,
+            onChange: setDecision,
+            onAccept: accept,
+            onReject: openClarify,
+            busy,
+            ...(r.kind === 'answer' ? { rejectLabel: t('shell.request.clarify'), placeholder: t('shell.request.decisionPlaceholder') } : {})
+          }}
+        />
+      )}
 
       {body && !compact && (
         <div className="rq-body">

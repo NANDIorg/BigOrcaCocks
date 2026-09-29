@@ -423,6 +423,21 @@ export interface ShowcaseFileData {
   bytes: Uint8Array
 }
 
+/** Адрес страницы показа для изолированного фрейма (`showcase:previewUrl`). */
+export interface ShowcasePreviewUrl {
+  /** `orca-preview://<токен>/<путь>` — renderer ставит его в `src`, только проверив схему. */
+  url: string
+  mime: string
+  /** `orca-preview://<токен>/` — корень снимка: к нему разрешаются относительные картинки markdown. */
+  base: string
+}
+
+/** Параметры `showcase:previewUrl`. */
+export interface ShowcasePreviewOptions {
+  /** Разрешить странице интернет-ресурсы (CDN, шрифты). По умолчанию сеть закрыта; выбор не запоминается. */
+  network?: boolean
+}
+
 /** Группа документов: проект (`source: 'project'`) или worktree задачи в работе (`source` — id задачи). */
 export interface DocGroup {
   source: string
@@ -827,17 +842,37 @@ export interface OrcaApi {
     reveal(source: string, path: string): Promise<void>
   }
   /**
-   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId`) из worktree задачи `taskId`
-   * активного проекта. `path` — как в `showcase.files` (от корня репозитория). Путь вне worktree, симлинк наружу,
-   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), нет worktree — ошибка.
+   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId(s)`) задачи `taskId` активного
+   * проекта. `path` — как в `showcase.files` (от корня репозитория). `dispatchId` — чей показ: со снимком
+   * (`showcase.snapshot`) файлы читаются из него, без — из worktree задачи. Путь вне корня, симлинк наружу,
+   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), запуск чужой задачи, нет ни снимка, ни worktree — ошибка.
    */
   showcase: {
-    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. */
-    read(taskId: string, path: string): Promise<ShowcaseFileData>
+    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. HTML — только `previewUrl`. */
+    read(taskId: string, path: string, dispatchId?: string): Promise<ShowcaseFileData>
     /** Открыть файл приложением системы по умолчанию (HTML — в браузере). */
-    open(taskId: string, path: string): Promise<void>
+    open(taskId: string, path: string, dispatchId?: string): Promise<void>
     /** Показать файл в Finder/Проводнике. */
-    reveal(taskId: string, path: string): Promise<void>
+    reveal(taskId: string, path: string, dispatchId?: string): Promise<void>
+    /**
+     * Адрес страницы показа для `<iframe sandbox="allow-scripts">`: HTML, картинки и SVG из снимка запуска `dispatchId`;
+     * у markdown — ради `base` (относительные картинки). PDF — отказ (пока только «Открыть»). Появился позже остальных: в старом preload метода нет — проверяй перед вызовом.
+     */
+    previewUrl(dispatchId: string, path: string, opts?: ShowcasePreviewOptions): Promise<ShowcasePreviewUrl>
+    /**
+     * База `orca-preview://<токен>/` для относительных картинок описания показа (`showcase.text`) запуска `dispatchId`:
+     * пути в описании — от корня репозитория, картинки снимаются при `done`. Всегда без сети. `null` — ни снимка, ни
+     * worktree. Для `Markdown` — `assets: { path: 'showcase.md', base }` (описание — как файл в корне). Появился позже
+     * `previewUrl`: в старом preload метода нет — проверяй перед вызовом.
+     */
+    previewBase(dispatchId: string): Promise<string | null>
+    /**
+     * Esc нажат, пока фокус может быть во фрейме показа (событие `showcase:escape` из `before-input-event` окна): DOM
+     * родителя keydown из фрейма другого origin не получает. Приходит на каждый Esc — закрывай просмотрщик, только
+     * если `document.activeElement` — фрейм, и делай закрытие идемпотентным: при фокусе в самом окне придёт ещё и обычный
+     * keydown. В старом preload метода нет — проверяй перед подпиской.
+     */
+    onFrameEscape(cb: () => void): () => void
   }
   /** Правила активного проекта: CLAUDE.md и AGENTS.md в его корне (не в worktree задач). */
   rules: {

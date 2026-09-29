@@ -474,8 +474,8 @@ function lastWorkTasks(deps: RunWorkflowDeps, run: Run): Task[] {
 
 /**
  * Нода `human`: approval уровня прогона (карточка встаёт на «Проверку»). В тексте — что решить, сводка этапа, итоги и
- * показ подзадач последней «Работы», ветка. `showcaseDispatchId` — последний запуск с файлами показа: renderer читает
- * их из worktree задачи, а после автомержа worktree убран — файлы остаются в ветке прогона.
+ * показ подзадач последней «Работы», ветка. `showcaseDispatchIds` — запуски с показом, по одному на подзадачу;
+ * `showcaseDispatchId` — последний из них, для старого renderer.
  */
 function requestHuman(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { type: 'human' }>, note?: Note): void {
   const { store } = deps
@@ -501,7 +501,7 @@ function requestHuman(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { t
   const last = withShowcase.at(-1)
   store.requestRunApproval(run.id, {
     nodeId: node.id, title: `${wfNodeTitle(node)}: ${globalTaskTitle(run)}`, body,
-    ...(last ? { showcaseDispatchId: last.dispatch.id } : {})
+    ...(last ? { showcaseDispatchId: last.dispatch.id, showcaseDispatchIds: withShowcase.map((x) => x.dispatch.id) } : {})
   })
 }
 

@@ -93,7 +93,7 @@ id варианта «Решения ИИ», …) приходит от пров
 | `finishStage(runId, {summary, …})` | закрыть этап `work` (`stage finish`): все подзадачи текущего захода в done и их хотя бы одна, иначе ошибка с подсказкой; сводка — в `stageHistory` и `Run.summary` |
 | `settleIdleStages(isAlive, fallback)` | страховка: координатор мёртв, а закрытые подзадачи ждут `stage finish` — этап закрывается без сводки (аналог `settleIdleRuns`) |
 | `blockRunStage(runId, reason)` | `workflow_blocked` по `runId`: эффект не выполнился (слить в базу нельзя, проверка не создалась) |
-| `requestRunApproval(runId, {nodeId, title, body?, showcaseDispatchId?})` | approval без задачи; ждущий не дублируется |
+| `requestRunApproval(runId, {nodeId, title, body?, showcaseDispatchId?, showcaseDispatchIds?})` | approval без задачи; ждущий не дублируется |
 | `runStage(runId, fallback)` | где стоит прогон и что знает координатор: роль, инструкции, показ, `feedback`/`images`/`decision`/`answers` целиком, подзадачи захода |
 
 Каждый метод возвращает `{run, action}` — `WfAction` ноды, куда пришли: **эффекты выполняет main**, store их не запускает.
@@ -258,7 +258,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `ask` (`create_ask`) | одна задача роли ноды (`createTask` со спекой `runAskTaskSpec` и `stageOf {nodeId, visit}`) и сразу её воркер; вопросы идут человеку (`worker.ask` узнаёт ноду по `stageOf`), координатор не участвует. Сдала `done` → задача закрывается, переход по `next` с `answers` (вопросы и ответы человека) в `stage_started` следующей «Работы». Агент упал, человек ответил — воркер стартует сам |
 | `gate` (`create_gate`) | одна задача-проверка роли ноды с `gateFor {runId, nodeId}` и спекой `runGateTaskSpec` (title — `runGateTaskTitle`): ветка прогона целиком против `RunGit.base` (`git log`/`git diff base...ветка`), цель прогона, сводки этапов (`stage finish`), «Как проверять». Решение — `orca-board review accept|reject --task "$ORCA_TASK_ID"` (id проверки воркер берёт из окружения). Нет ветки у прогона или роли в типе — `workflow_blocked` |
 | `decision` (`create_decision`) | одна задача-решатель роли ноды с `gateFor {runId, nodeId}` и спекой `runDecisionTaskSpec` (вопрос, варианты, цель, сводки, путь по графу `runPath` — последние 30 записей истории) и сразу её воркер (`createDecision`). Воркер не запустился — не `workflow_blocked`, а запрос `decision` человеку (`fallback: 'start_failed'`, причина в теле). Повтор: задача захода и ждущий запрос не дублируются, при ждущем запросе агент заново не стартует. Роли нет в типе — `workflow_blocked` |
-| `human` (`request_human`) | `requestRunApproval`: approval уровня прогона. Тело — инструкция ноды, конфликт мержа/отказ git (если пришли оттуда), сводка этапа (нет — итоги подзадач последней «Работы»), показ их последних `done` (`showcaseDispatchId` — последний с показом), ветка и база |
+| `human` (`request_human`) | `requestRunApproval`: approval уровня прогона. Тело — инструкция ноды, конфликт мержа/отказ git (если пришли оттуда), сводка этапа (нет — итоги подзадач последней «Работы»), показ их последних `done` (`showcaseDispatchIds` — все с показом по порядку подзадач, `showcaseDispatchId` — последний из них), ветка и база |
 | `git` | `commit` / `push` в worktree ветки прогона (`ensureRunBranch` восстанавливает убранный); шаблоны `{taskId}` — id прогона, `{title}`/`{slug}` — его название. Исход `ok`/`error`, текст отказа git — в approval, если `error` ведёт к человеку, и в `feedback` следующей «Работы», если в неё. Итог `push` — только исход ноды: в `Run.git` он не пишется (поля push убраны, `migrateRunGit`). `create_branch`/`checkout` — `workflow_blocked` (валидация их запрещает) |
 | `merge` | `mergeRunBranch` (`run-branch.ts`): ветку прогона в базу `RunGit.base` локально, см. ниже. Исход `ok` / `conflict` |
 | `end` | ничего: прогон закрыл store (`closedAt`, «Сделано», `run_done`). Worktree ветки убирает `RunBranchSync`, когда в прогоне никто не работает |
@@ -315,7 +315,8 @@ Store двигает граф и возвращает `WfAction`, **эффект
 Задачи-ответы (`answerFor`) идут своим циклом «Принять» / «Уточнить».
 
 **Ограничения.** Эффект, не доведённый до конца из-за выхода приложения, повторяется при следующем запуске координатора (`startRunWorkflow`) или, для закрытия этапа, фолбэком. Файлы показа
-читаются из worktree задачи, а после автомержа он убран — файлы остаются в ветке прогона (IPC отвечает ошибкой с её именем). `RunBranchSync` только убирает worktree после «Сделано»:
+снимаются при `done` в userData и после автомержа читаются из снимка; показ, сданный до снимков, — из worktree задачи, затем из worktree
+ветки прогона, а когда нет и его — IPC отвечает ошибкой с именем ветки прогона («Показ человеку» → «Снимок»). `RunBranchSync` только убирает worktree после «Сделано»:
 push ветки прогона — нода `git push` или человек.
 
 ### Renderer
@@ -828,8 +829,12 @@ HELP `check` не меняются.
 
 Оба попадают в промпт воркера разделом «Этап» (`workerTaskPrompt` в `packages/core/src/prompts.ts`; этап берёт
 `TaskStore.taskWorkStage`, нормализует `wfWorkStage` в `packages/core/src/workflow.ts`). Сданный показ хранится
-в `Dispatch.showcase {text?, files}`: `text` — markdown (≤ 200 000 символов), `files` — до 50 путей от корня
-worktree задачи, без абсолютных путей и `..` (`normalizeShowcase`, `packages/core/src/types.ts`). При
+в `Dispatch.showcase {text?, files, snapshot?, auto?}`: `text` — markdown (≤ 200 000 символов), `files` — до 50 путей от корня
+worktree задачи, без абсолютных путей и `..` (`normalizeShowcase`, `packages/core/src/types.ts`). `snapshot {at, files, bytes}` —
+снимок файлов показа, снятый main при `done` (лимиты `MAX_SHOWCASE_SNAPSHOT_FILES`/`_BYTES`/`_FILE_BYTES`), `auto` — файлы
+найдены приложением; оба передаёт только main (`FinishDispatchOptions.snapshot/auto`), параметр сокета `showcase` их
+не принимает. Точки входа (`SHOWCASE_FILE_TYPES`: картинки, `md`, `html` — вид `html`, `pdf`) и ассеты страниц
+(`SHOWCASE_ASSET_TYPES`: css, js, шрифты, медиа — `isAssetType`) — `shared/showcase.ts`. При
 `required: true` `done` без показа отвергается (`finishDispatch`). Смотрит показ человек на следующей ноде `human`;
 выбор («вариант 2») из поля решения при «Принять» приходит координатору в `request_resolved.decision`
 (`docs/human-requests.md`). Валидация: пустой `what` — ошибка; показ, после которого до следующей «Работы» или
@@ -839,25 +844,64 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
 
 - **Промпт.** `startWorker` (`worker.ts`) берёт этап `store.taskWorkStage(task.id, {roleIds, workflow})` (граф типа —
   запасной для прогона без снимка, `WorkerEnvContext.workflow`) и передаёт его в `workerTaskPrompt`. У задачи-ответа
-  этапа нет.
-- **Сдача.** `orca-board done --show-file <описание.md> --show <путь>...`: CLI читает файл и шлёт
-  `params.showcase {text?, files}`; сокет `worker.done` передаёт его в `finishDispatch` вместе с запасным графом
+  этапа нет. У этапа с показом в раздел добавляются правила подготовки файлов (`SHOWCASE_RULES` в `prompts.ts`, те же
+  пункты — в `skills/worker.md`): что открывается в приложении (HTML, markdown, картинки, PDF); HTML — **автономный**
+  (ассеты рядом, относительными путями, без CDN и внешних шрифтов, если не оговорено: фрейм без сети), один вариант —
+  одна страница; `--show` принимает папку; то, что не открыть в браузере (приложение, сборка, архив), — скриншотами
+  и описанием; ошибку снимка `done` возвращает агенту. Без правил агент ссылается на CDN, и страница у человека
+  приходит без стилей.
+- **Сдача.** `orca-board done --show-file <описание.md> --show <путь>...` (`--show` — файл или папка; CLI путь не
+  проверяет, шлёт как есть): CLI читает файл и шлёт `params.showcase {text?, files}`; сокет `worker.done` передаёт его в `finishDispatch` вместе с запасным графом
   типа прогона — чтобы проверка `required` видела тот же этап, что и промпт.
+- **Снимок** (`main/showcase-snapshot.ts`, `ProjectDeps.snapshotShowcase`). Есть `showcase.files` — `worker.done` **до**
+  `finishDispatch` копирует их из worktree задачи в `<userData>/showcase/<projectId>/<runId>/<dispatchId>/` (задача без
+  прогона — `…/_tasks/<dispatchId>`): человек смотрит показ после мержа подзадачи, когда её worktree уже убран.
+  - Заявленный файл — точка входа (`SHOWCASE_FILE_TYPES`) или ассет (`SHOWCASE_ASSET_TYPES`: в снимке, но не в списке);
+    папка (`--show design/`) раскрывается по порядку имён без скрытых, `node_modules` и симлинков — в `files` уходят
+    только точки входа.
+  - Страницы HTML получают ассеты сами, best-effort: сначала их ссылки (`src`/`href`/`url()`/`@import`, в том числе `../`
+    внутри репозитория; ссылки css тоже), затем каталог страницы с подкаталогами (у страницы в корне репозитория — только
+    ссылки). Ассеты сверх лимитов пропускаются молча.
+  - Markdown-файлы показа и описание (`text`, `--show-file`) тянут свои картинки так же best-effort, но только по ссылкам
+    (`![alt](path)`, `![alt](<путь>)`, `[id]: path`, `src=`/`href=`), без каталога: у md-файла пути — от него, у описания —
+    от корня репозитория. Найденное — ассеты снимка, в `files` не попадает; нет файла — молча пропускается. Картинки описания
+    renderer грузит по базе `showcase:previewBase` (`ShowcaseText` в `ShowcaseBlock.tsx`, только если в тексте есть картинка);
+    базы нет (`null`, старый preload, ошибка) — картинки описания заменяются подписью, как внешние.
+  - Отказ `done` с текстом для агента (запуск не закрыт, снимка нет): файла нет, тип не из белого списка, скрытый путь,
+    путь или симлинк за пределы worktree, симлинк на чужой тип, в папке нечего показать, файл больше
+    `MAX_SHOWCASE_SNAPSHOT_FILE_BYTES` (25 МБ), заявленного больше `MAX_SHOWCASE_SNAPSHOT_FILES` (300) или
+    `MAX_SHOWCASE_SNAPSHOT_BYTES` (50 МБ), нет worktree на диске.
+  - Атомарность: копия идёт во временную папку рядом; `finishDispatch` отказал — она удаляется, иначе встаёт на место одним
+    `rename` (прежний снимок того же запуска заменяется). В `Dispatch.showcase` — раскрытые `files` и `snapshot {at, files, bytes}`.
+  - Только текст без файлов — снимок только ради его картинок; нет картинок (или worktree) — показ без снимка. Снимки удаляются вместе с глобальной задачей (`removeGlobalTask`) и
+    проектом (`ProjectManager.remove`), как картинки задачи.
 - **Запрос человеку.** `requestHuman` (`workflow.ts`) берёт показ из последнего запуска задачи (`task.dispatchId`,
   `outcome: 'done'`): в `body` approval — раздел «## Показ» (текст и список файлов, `showcaseMarkdown` из `shared/showcase.ts`) после итога
-  воркера, а `HumanRequest.showcaseDispatchId` — id этого запуска. Гейт между «Работой» и «человеком» — отдельная
+  воркера, а `HumanRequest.showcaseDispatchId` — id этого запуска. Approval прогона (`requestHuman` в `workflow-run.ts`)
+  собирает показ всех подзадач последней «Работы»: `showcaseDispatchIds` — по запуску на подзадачу с показом,
+  `showcaseDispatchId` — последний из них (для старого renderer). Гейт между «Работой» и «человеком» — отдельная
   задача и показ не подменяет. После «Вернуть» новый `done` даёт новый approval с новым показом.
-- **Файлы.** Renderer читает их из worktree задачи через IPC `showcase:read` / `showcase:open` / `showcase:reveal`
-  (`main/showcase.ts`): путь только внутри worktree (симлинки наружу — отказ), расширения — белый список
-  `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/svg` и `md` превьюятся, `html/htm/pdf` —
-  только «Открыть»). После мержа worktree убран — файлы остаются в ветке, IPC отвечает ошибкой с её именем.
-- **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval (Инбокс,
-  лента глобальной задачи, модалка задачи) и отдельным разделом в модалке задачи (последний `done` с показом, если его
-  не выводит ждущий approval). Markdown — через `Markdown.tsx`; первые 6 картинок превьюятся сразу (blob-URL, CSP
-  `img-src blob:`), остальные и `.md` — по кнопке; у каждого файла «Открыть» / «В папке». Раздел «## Показ» из
-  `body` вычитается (`bodyWithoutShowcase`), чтобы не дублировать. Логика — `renderer/src/showcase.ts`: старые
-  main/preload — «Перезапустите приложение» (`showcaseApi`, `SHOWCASE_STALE_MESSAGE`). У «Принять» approval — поле
-  «Решение / вариант» (`resolution.text` → `request_resolved.decision`).
+- **Файлы.** Renderer читает их через IPC `showcase:read` / `showcase:open` / `showcase:reveal` (`main/showcase.ts`). Корень —
+  `showcaseSource`: снимок запуска, если он снят и лежит на диске; иначе (показ до снимков) worktree задачи, затем worktree
+  ветки прогона; иначе ошибка с именем ветки прогона. Без `dispatchId` (старый renderer) — снимок последнего запуска задачи.
+  Путь только внутри корня (симлинки наружу — отказ), расширения — белый список
+  `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`: картинки `png/jpg/jpeg/webp/gif/avif/svg` и `md` превьюятся, `html/htm` — вид
+  `html` — страницей в изолированном фрейме по адресу из `showcase:previewUrl` (протокол `orca-preview://`, корень — тот же
+  `showcaseSource`, сеть закрыта, см. `docs/architecture.md` → «Протокол показа»), `pdf` — «Открыть»). «Интернет-ресурсы»
+  (`network`) — только у показа со снимком: без него токен был бы на весь worktree, и main отказывает `showcase.networkNoSnapshot`;
+  просмотрщик показывает это отдельным состоянием `noNetwork` с кнопкой «Выключить интернет-ресурсы».
+- **Вид для человека** (renderer). `ShowcaseBlock.tsx` — развёрнутый блок «Показ» в карточке approval и answer (Инбокс,
+  лента глобальной задачи, модалка задачи; какие показы — `requestShowcases`), у approval прогона — блоком на подзадачу
+  (`ShowcaseGroupsBlock`), он же в окне «Подтвердить» и во вкладке «Итог и цель» глобальной задачи (`docs/nested-kanban.md`
+  → «Проверка»), и отдельным разделом в модалке задачи (последний `done` с показом, если его не выводит ждущий запрос).
+  Относительные картинки markdown показа — из того же снимка (`markdownAssets.ts`, `docs/human-requests.md` → «В интерфейсе»). Markdown — через `Markdown.tsx`; картинки — сеткой миниатюр (blob-URL, CSP
+  `img-src blob:`), `.md` — по кнопке «Текст», HTML — «Превью» (мини-просмотрщик в изолированном фрейме, только по нажатию);
+  HTML, md и картинки открываются «На весь экран» в просмотрщике `ShowcaseViewer.tsx` (список файлов, ширина страницы,
+  «Интернет-ресурсы», решение approval внизу — см. `docs/architecture.md` → «UI» → «Показ человеку»); «Открыть» / «В папке» —
+  в меню «⋯», у PDF — кнопками. Разделы «## Показ» из `body` вычитаются (`bodyWithoutShowcases`), чтобы не дублировать.
+  Логика — `renderer/src/showcase.ts`: старые main/preload — «Перезапустите приложение» (`showcaseApi`,
+  `showcasePreviewApi`). У «Принять» approval — поле «Решение / вариант» (`resolution.text` → `request_resolved.decision`),
+  общее с просмотрщиком.
 
 Колонка этапа: `node.column` учитывается у `gate` и `human`; `work` — всегда «В работе» (пока работает воркер),
 `end` — колонка `kind=done` (иначе прогон не закроется).

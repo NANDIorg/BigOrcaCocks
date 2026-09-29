@@ -3,7 +3,7 @@ import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
-  type TaskPriority,
+  type TaskPriority, type Dispatch, type ShowcaseSnapshot, normalizeShowcase,
   type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
@@ -53,6 +53,13 @@ export interface ProjectDeps {
   startCoordinator(objective: string, runId?: string, typeId?: string): string
   /** Удалить глобальную задачу: живой координатор — ошибка, терминалы подзадач закрываются. */
   deleteGlobalTask(runId: string, cascade: boolean): { deleted: string; tasks: string[] }
+  /**
+   * Снимок показа для `worker.done` (`showcase-snapshot.ts`): файлы `--show` из worktree задачи запуска — во временную
+   * папку в userData. Ошибка — текст агенту, запуск не закрывается. `files` — точки входа после раскрытия папок;
+   * `commit` ставит снимок на место после `finishDispatch`, `discard` убирает, если тот отказал. Нет метода — показ
+   * сохраняется без снимка (читается из worktree), как до снимков.
+   */
+  snapshotShowcase?(dispatchId: string, files: readonly string[], text?: string): { files: string[]; snapshot: ShowcaseSnapshot; commit(): void; discard(): void } | undefined
   /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
   agents(): AgentInfo[]
   /** Тип прогона целиком (`resolveRunType`): роли, правила, разрешения, граф и откуда он взят. */
@@ -557,11 +564,34 @@ const handlers: Record<string, Handler> = {
     // CLI читает --answer-file и --show-file сам и присылает текст в answer и showcase.text.
     const dispatch = store.getDispatch(id)
     const task = dispatch ? store.getTask(dispatch.taskId) : undefined
-    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer), {
-      ...showcaseParam(r.params.showcase),
-      // Граф прогона без снимка — по типу прогона, как у исполнителя воркфлоу (workflowDeps в index.ts).
-      ...(task ? { fallback: runFallback(deps.resolveRun(task.runId)) } : {})
-    })
+    const { showcase } = showcaseParam(r.params.showcase)
+    // Снимок файлов показа — до закрытия запуска: нет файла, чужой тип, больше лимита — ошибка агенту, dispatch
+    // остаётся открытым. Пути сначала проверяет core (абсолютные, `..`), потом main смотрит на диск. Картинки
+    // описания (`text`) тоже снимаются — best-effort: одно описание без картинок снимка не даёт.
+    const normalized = normalizeShowcase(showcase)
+    const declared = normalized?.files ?? []
+    const prepared = (declared.length > 0 || normalized?.text) && deps.snapshotShowcase
+      ? deps.snapshotShowcase(id, declared, normalized?.text)
+      : undefined
+    let finished: Dispatch
+    try {
+      finished = store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer), {
+        ...(showcase ? { showcase: prepared ? { ...showcase, files: prepared.files } : showcase } : {}),
+        ...(prepared ? { snapshot: prepared.snapshot } : {}),
+        // Граф прогона без снимка — по типу прогона, как у исполнителя воркфлоу (workflowDeps в index.ts).
+        ...(task ? { fallback: runFallback(deps.resolveRun(task.runId)) } : {})
+      })
+    } catch (e) {
+      prepared?.discard()
+      throw e
+    }
+    try {
+      prepared?.commit()
+    } catch (e) {
+      // Запуск уже закрыт — ошибкой done не отвечаем (повтор ничего не даст); без снимка показ читается из worktree.
+      console.error(`[orca] снимок показа ${id} не встал на место:`, (e as Error).message)
+    }
+    return finished
   },
   'worker.ask': async (r, deps, store, stream) => {
     const dispatchId = str(r.params.dispatch) ?? r.dispatchId

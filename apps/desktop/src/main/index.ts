@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -11,7 +11,9 @@ import { AssistantChatCache, assistantTranscriptPath, assistantChatAvailable, ch
 import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
-import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
+import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
+import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
+import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
@@ -81,6 +83,15 @@ let quitting = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
 let confirmingQuit = false
 
+// Схема страниц показа (`preview-protocol.ts`) — только ДО ready, иначе Chromium считает её не-standard: относительные
+// `./style.css` не разрешаются, а `fetch` к ней запрещён. `bypassCSP` и `corsEnabled` не включаем: CSP ответа и
+// ACAO задаёт сам обработчик.
+protocol.registerSchemesAsPrivileged([
+  { scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+])
+/** Токены `orca-preview://` → корень показа; выдаёт `showcase:previewUrl`, живут до выхода из приложения. */
+const previewTokens = new PreviewTokens()
+
 const SOCKET_PATH = defaultSocketPath({ env: process.env, platform: process.platform, homedir: homedir() })
 const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
@@ -103,8 +114,20 @@ function createWindow(): BrowserWindow {
     setPtyWindow(win)
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isExternalWebUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
+  })
+  // Фрейм показа не уходит со своего снимка (sandbox навигацию самого фрейма не запрещает), а окно — со страницы приложения.
+  win.webContents.on('will-frame-navigate', (e) => {
+    const nav = { url: e.url, isMainFrame: e.isMainFrame, appUrl: created.webContents.getURL() }
+    if (allowFrameNavigation(nav)) return
+    e.preventDefault()
+    if (nav.isMainFrame && isExternalWebUrl(nav.url)) shell.openExternal(nav.url)
+  })
+  // Esc при фокусе внутри фрейма показа DOM родителя не видит (фрейм другого origin) — сообщаем renderer'у, а он
+  // закрывает просмотрщик, только если фокус действительно во фрейме (иначе Esc уже пришёл обычным keydown).
+  win.webContents.on('before-input-event', (_e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') created.webContents.send('showcase:escape')
   })
   const source = rendererSource({
     isPackaged: app.isPackaged,
@@ -269,6 +292,11 @@ function collectTaskStats(projectId: string, taskId: string): Promise<TaskStats>
 
 function collectGlobalTaskStats(projectId: string, runId: string): Promise<GlobalTaskStats> {
   return globalTaskStats({ ...statsDeps(projectId), runId })
+}
+
+/** Снимки показа проекта (`<userData>/showcase`, `showcase-snapshot.ts`): пишет `worker.done`, читают IPC `showcase:*`. */
+function showcaseSnapshots(projectId: string): ShowcaseSnapshots {
+  return { root: showcaseSnapshotsRoot(app.getPath('userData')), projectId }
 }
 
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
@@ -526,6 +554,8 @@ function removeGlobalTask(p: { id: string; store: TaskStore; root: string }, run
   const result = store.deleteGlobalTask(runId, { cascade })
   // Картинки задачи принадлежат ей: без задачи они никому не нужны (файлы лежат вне worktree и репозитория).
   removeRunImagesDir(runImagesRoot(app.getPath('userData')), p.id, runId)
+  // Снимки показа подзадач — тоже: смотреть их больше негде (карточки и запросы удалены вместе с задачей).
+  removeShowcaseDir(showcaseSnapshotsRoot(app.getPath('userData')), p.id, runId)
   ptyIds.forEach((id) => killPty(id))
   // Worktree ветки фичи больше некому убрать; сама ветка остаётся — в ней может быть работа. Грязный — не трогаем.
   if (run?.git?.worktree) removeRunWorktree(p.root, run.git.worktree)
@@ -764,7 +794,8 @@ function registerIpc(): void {
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  // Картинки глобальных задач проекта (userData/run-images) удаляет сам ProjectManager.remove — общий путь с сокетом.
+  // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
+  // ProjectManager.remove — общий путь с сокетом.
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
@@ -940,15 +971,30 @@ function registerIpc(): void {
   handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
   // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
-  // Показ человеку: файлы из worktree задачи активного проекта, белый список расширений — main/showcase.ts.
-  handle('showcase:read', (_e, taskId: unknown, path: unknown) => readShowcaseFile(showcaseRoot(resolveProject().store, taskId), path))
-  handle('showcase:open', async (_e, taskId: unknown, path: unknown) => {
-    const err = await shell.openPath(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+  // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
+  // расширений — main/showcase.ts.
+  const source = (taskId: unknown, dispatchId: unknown): string => {
+    const p = resolveProject()
+    return showcaseSource(p.store, taskId, dispatchId, showcaseSnapshots(p.id))
+  }
+  handle('showcase:read', (_e, taskId: unknown, path: unknown, dispatchId: unknown) => readShowcaseFile(source(taskId, dispatchId), path))
+  handle('showcase:open', async (_e, taskId: unknown, path: unknown, dispatchId: unknown) => {
+    const err = await shell.openPath(resolveShowcasePath(source(taskId, dispatchId), path))
     if (err) throw new Error(err)
   })
-  handle('showcase:reveal', (_e, taskId: unknown, path: unknown) =>
-    shell.showItemInFolder(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+  handle('showcase:reveal', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
+    shell.showItemInFolder(resolveShowcasePath(source(taskId, dispatchId), path))
   )
+  // Страница показа для изолированного фрейма: токен протокола orca-preview:// на корень показа (preview-protocol.ts).
+  handle('showcase:previewUrl', (_e, dispatchId: unknown, path: unknown, opts: unknown) => {
+    const p = resolveProject()
+    return showcasePreviewUrl(p.store, previewTokens, dispatchId, path, opts, showcaseSnapshots(p.id))
+  })
+  // База для картинок описания показа (`showcase.text`): токен без сети на тот же корень.
+  handle('showcase:previewBase', (_e, dispatchId: unknown) => {
+    const p = resolveProject()
+    return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
+  })
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
@@ -971,6 +1017,7 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   app.setAppUserModelId('orca-board')
+  protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
@@ -1050,6 +1097,7 @@ app.whenReady().then(() => {
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),
+        snapshotShowcase: (dispatchId, files, text) => snapshotDispatchShowcase(p.store, showcaseSnapshots(p.id), dispatchId, files, text),
         agents: () => projectAgents(p.id),
         resolveRun: (runId) => projects.resolveRun(p.id, runId),
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),
