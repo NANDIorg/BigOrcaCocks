@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync,
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PROJECT_FILES_DIR_LIMIT, PROJECT_FILES_ERROR_CODES, type ProjectFilesListing } from '../shared/ipc'
-import { listProjectDir, resolveProjectPath, splitSafeSegments } from './project-files'
+import { listProjectDir, resolveProjectPath, splitSafeSegments, PROJECT_FILES_IGNORE_INPUT_LIMIT } from './project-files'
 import { gitCheckIgnore } from './git'
 import { OrcaError } from './i18n'
 import ru from './strings/ru'
@@ -277,6 +277,172 @@ describe('тексты ошибок', () => {
     for (const code of PROJECT_FILES_ERROR_CODES) {
       assert.ok(code in ru, `ru: ${code}`)
       assert.ok(code in en, `en: ${code}`)
+    }
+  })
+})
+
+// ---------- QA интеграции вкладки «Файлы»: сложные раскладки и то, что нашли при прогоне на живых данных ----------
+
+/** Полный обход через `listProjectDir`, как раскроет дерево человек: пути файлов и симлинков, папки. */
+async function walkTree(root: string, dir = ''): Promise<{ files: string[]; dirs: string[] }> {
+  const files: string[] = []
+  const dirs: string[] = []
+  for (const e of (await listProjectDir(root, dir)).entries) {
+    const p = dir ? `${dir}/${e.name}` : e.name
+    if (e.kind !== 'dir') {
+      files.push(p)
+      continue
+    }
+    dirs.push(p)
+    const sub = await walkTree(root, p)
+    files.push(...sub.files)
+    dirs.push(...sub.dirs)
+  }
+  return { files, dirs }
+}
+
+describe('QA: дерево и git', () => {
+  it('полный обход совпадает с `git ls-files --cached --others --exclude-standard`: те же файлы, пустые папки видны', async () => {
+    write(repo, '.gitignore', 'node_modules/\nout/\n*.log\n!keep.log\n/root-only.txt\n')
+    write(repo, 'root-only.txt')
+    write(repo, 'sub/root-only.txt')
+    write(repo, 'sub/.gitignore', 'gen/\n*.tmp\n!important.tmp\n')
+    write(repo, 'sub/gen/a.ts')
+    write(repo, 'sub/a.tmp')
+    write(repo, 'sub/important.tmp')
+    write(repo, 'sub/deep/er/still/file.md')
+    write(repo, 'sub/deep/gen/kept.txt')
+    write(repo, 'node_modules/pkg/index.js')
+    write(repo, 'apps/web/node_modules/pkg/index.js')
+    write(repo, 'apps/web/src/main.tsx')
+    write(repo, 'out/bundle.js')
+    write(repo, 'keep.log')
+    write(repo, 'drop.log')
+    write(repo, '.git/info/exclude', 'private/\n')
+    write(repo, 'private/notes.txt')
+    write(repo, 'Документы проекта/план работ.md')
+    write(repo, 'Документы проекта/вложенная папка/ещё файл.txt')
+    write(repo, '.env.local')
+    write(repo, 'tracked.log')
+    git(repo, 'add', '-f', 'tracked.log')
+    git(repo, 'commit', '-qm', 'tracked')
+    mkdirSync(path.join(repo, 'empty-dir/nested-empty'), { recursive: true })
+    symlinkSync('README.md', path.join(repo, 'link-to-readme'))
+    write(repo, '.DS_Store')
+
+    const expected = git(repo, '-c', 'core.quotepath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard')
+      .split('\0')
+      .filter((f) => f && !/(^|\/)\.DS_Store$/.test(f))
+      .sort()
+    const tree = await walkTree(repo)
+    assert.deepEqual([...tree.files].sort(), expected)
+    // git о пустых папках не знает, а дерево показывает то, что лежит на диске.
+    assert.ok(tree.dirs.includes('empty-dir'))
+    assert.ok(tree.dirs.includes('empty-dir/nested-empty'))
+    assert.deepEqual((await listProjectDir(repo, 'empty-dir/nested-empty')).entries, [])
+    // Игнорируемые папки не видны на любой глубине.
+    assert.ok(!tree.dirs.some((d) => d.split('/').includes('node_modules') || d === 'out' || d === 'private' || d === 'sub/gen'))
+  })
+
+  it('игнорируемую папку, запрошенную напрямую (устаревшее состояние renderer), main не раскрывает: список пуст', async () => {
+    write(repo, 'node_modules/pkg/index.js')
+    write(repo, 'apps/web/node_modules/x/y.js')
+    assert.deepEqual((await listProjectDir(repo, 'node_modules')).entries, [])
+    assert.deepEqual((await listProjectDir(repo, 'node_modules/pkg')).entries, [])
+    assert.deepEqual((await listProjectDir(repo, 'apps/web/node_modules')).entries, [])
+  })
+
+  it('без .gitignore node_modules виден, а папка больше лимита обрезается: первые записи по порядку и truncated', async () => {
+    const plain = path.join(tmp, 'nm-plain')
+    execFileSync('git', ['init', '-q', '-b', 'master', plain])
+    for (let i = 0; i < PROJECT_FILES_DIR_LIMIT + 50; i += 1) mkdirSync(path.join(plain, 'node_modules', `pkg${String(i).padStart(5, '0')}`), { recursive: true })
+    write(plain, 'src/a.ts')
+    const root = await listProjectDir(plain, '')
+    assert.deepEqual(names(root), ['node_modules', 'src'])
+    const nm = await listProjectDir(plain, 'node_modules')
+    assert.equal(nm.entries.length, PROJECT_FILES_DIR_LIMIT)
+    assert.equal(nm.truncated, true)
+    assert.equal(nm.entries[0].name, 'pkg00000')
+    assert.equal(nm.entries[PROJECT_FILES_DIR_LIMIT - 1].name, `pkg${String(PROJECT_FILES_DIR_LIMIT - 1).padStart(5, '0')}`)
+  })
+
+  it(`больше ${PROJECT_FILES_IGNORE_INPUT_LIMIT} записей в папке: на вход check-ignore идёт не больше предела, ответ обрезан до ${PROJECT_FILES_DIR_LIMIT}`, async () => {
+    const huge = path.join(repo, 'huge')
+    mkdirSync(huge)
+    for (let i = 0; i <= PROJECT_FILES_IGNORE_INPUT_LIMIT; i += 1) writeFileSync(path.join(huge, `h${String(i).padStart(6, '0')}`), '')
+    const l = await listProjectDir(repo, 'huge')
+    assert.equal(l.truncated, true)
+    assert.equal(l.entries.length, PROJECT_FILES_DIR_LIMIT)
+    assert.equal(l.entries[0].name, 'h000000')
+  })
+})
+
+describe('QA: симлинки', () => {
+  it('петля симлинков: полный обход завершается, list по петле — files.readFailed (ELOOP), а не зависание', async () => {
+    symlinkSync('loop-b', path.join(repo, 'loop-a'))
+    symlinkSync('loop-a', path.join(repo, 'loop-b'))
+    symlinkSync('.', path.join(repo, 'self'))
+    symlinkSync('..', path.join(repo, 'src', 'up'))
+    const tree = await walkTree(repo)
+    for (const n of ['loop-a', 'loop-b', 'self', 'src/up']) assert.ok(tree.files.includes(n), n)
+    await assert.rejects(listProjectDir(repo, 'loop-a'), (e: unknown) => {
+      assert.ok(e instanceof OrcaError && e.key === 'files.readFailed', String(e))
+      assert.match(e.message, /ELOOP/)
+      return true
+    })
+    // Симлинк на корень раскрыть можно, но он не уводит за корень и не ведёт в .git.
+    assert.ok(names(await listProjectDir(repo, 'self')).includes('README.md'))
+  })
+
+  it('корень проекта, заданный через симлинк, читается; пути внутри проверяются по realpath', async () => {
+    const viaLink = path.join(tmp, 'root-via-link')
+    symlinkSync(repo, viaLink)
+    assert.ok(names(await listProjectDir(viaLink, '')).includes('src'))
+    assert.deepEqual(names(await listProjectDir(viaLink, 'src')), ['index.ts'])
+    symlinkSync(tmp, path.join(repo, 'to-tmp'))
+    await rejectsWith(listProjectDir(viaLink, 'to-tmp'), 'files.outside')
+  })
+})
+
+describe('QA: странные имена', () => {
+  it('кавычки, перевод строки, скобки, `*`, `#`, `!`: игнор по -z-выводу git совпадает точно, видимые имена целы', async () => {
+    write(repo, '.gitignore', '*.log\n')
+    const odd = ['a"b', "it's", 'нов\nстрока', '[br]acket', '*star', '#hash', '!bang', '-dash', ' lead', 'x  y', '日本語', '🙂']
+    for (const n of odd) {
+      write(repo, `${n}.txt`)
+      write(repo, `${n}.log`)
+    }
+    const got = names(await listProjectDir(repo, ''))
+    for (const n of odd) {
+      assert.ok(got.includes(`${n}.txt`), `${JSON.stringify(n)}.txt должен быть виден`)
+      assert.ok(!got.includes(`${n}.log`), `${JSON.stringify(n)}.log должен быть скрыт`)
+    }
+  })
+
+  it('имя, начинающееся с pathspec-магии (`:!x`, `:^x`, `:(icase)x`), не отключает фильтр игнора всей папки', {
+    todo: 'дефект QA: git check-ignore принимает такие имена за pathspec и выходит с 128, листинг молча падает в фолбэк без фильтра; лечится префиксом `./` у путей'
+  }, async () => {
+    write(repo, '.gitignore', '*.log\nout/\n')
+    write(repo, ':!excl.txt')
+    write(repo, ':^caret.txt')
+    write(repo, 'debug.log')
+    write(repo, 'out/main.js')
+    const got = names(await listProjectDir(repo, ''))
+    assert.ok(got.includes(':!excl.txt'))
+    assert.ok(got.includes(':^caret.txt'))
+    assert.ok(!got.includes('debug.log'), 'debug.log игнорируется git')
+    assert.ok(!got.includes('out'), 'out/ игнорируется git')
+  })
+
+  it('всё, что отдал list, можно раскрыть и показать в папке (имя с `\\` на unix — обычный символ)', {
+    skip: process.platform === 'win32',
+    todo: 'дефект QA: splitSafeSegments отклоняет `\\` и на unix, а list такие имена отдаёт — строка есть, раскрыть её и показать в папке нельзя (files.badPath)'
+  }, async () => {
+    write(repo, 'back\\slash dir/inner.txt')
+    write(repo, 'we\\ird.txt')
+    for (const e of (await listProjectDir(repo, '')).entries) {
+      await resolveProjectPath(repo, e.name, false)
+      if (e.kind === 'dir') await listProjectDir(repo, e.name)
     }
   })
 })
