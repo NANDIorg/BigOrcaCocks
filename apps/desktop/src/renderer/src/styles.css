@@ -1939,7 +1939,48 @@ button.wf-count:hover { text-decoration: underline; }
 .wf-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .wf-roles { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; border: 0; min-width: 0; }
 .wf-roles legend { padding: 0; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
-.wf-roles-hint { flex-basis: 100%; font-size: 11.5px; color: var(--muted); }
+/* «Кто выполняет» у «Работы» и краткая карточка роли у gate/decision/ask (WorkflowRoleFields.tsx). Колонка 280–300 px:
+   у текста в строке min-width: 0 и ellipsis, иначе длинное название распирает сетку (как было с .roles-item). */
+.wf-role-field { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.wf-seg--full { display: flex; align-self: stretch; }
+.wf-seg--full button { flex: 1 1 0; min-width: 0; white-space: normal; text-align: center; line-height: 1.25; padding: 6px 8px; }
+.wf-role-list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wf-role { display: grid; grid-template-columns: 16px 20px minmax(0, 1fr); gap: 4px 10px; align-items: start; padding: 8px 10px; background: var(--frame); border: 1px solid transparent; border-radius: 10px; cursor: pointer; min-width: 0; }
+.wf-role > input { margin: 2px 0 0; width: auto; accent-color: var(--accent); }
+.wf-role:hover { background: var(--card); }
+.wf-role.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--frame)); }
+.wf-role:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.wf-role.off > svg { opacity: .55; }
+.wf-role--static { grid-template-columns: 20px minmax(0, 1fr); cursor: default; }
+.wf-role--static:hover { background: var(--frame); }
+fieldset:disabled .wf-role { cursor: default; opacity: .7; }
+fieldset:disabled .wf-role:hover { background: var(--frame); }
+fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accent) 13%, var(--frame)); }
+.wf-role-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wf-role-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.wf-role-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.wf-role-note { margin-left: auto; font-size: 11px; color: var(--col-input); white-space: nowrap; }
+.wf-role-sub { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.wf-role-sub > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.wf-role-by { align-self: flex-start; }
+.wf-role-desc { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.wf-role-desc.none { font-style: italic; }
+.wf-role-group { border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wf-role-group > summary { cursor: pointer; padding: 8px 2px 2px; font-size: 12px; color: var(--muted); border-radius: 6px; }
+.wf-role-group > summary:hover { color: var(--text); }
+.wf-role-group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wf-role-group[open] > summary { margin-bottom: 6px; }
+.wf-role-group > .hint { margin-bottom: 6px; }
+.wf-role-orphans { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wf-role-orphan { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; font-size: 12px; color: var(--col-input); background: color-mix(in srgb, var(--col-input) 9%, var(--frame)); border: 1px solid color-mix(in srgb, var(--col-input) 40%, transparent); min-width: 0; }
+.wf-role-orphan > svg { width: 14px; height: 14px; flex-shrink: 0; }
+.wf-role-orphan > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.wf-role-pool { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
+.wf-role-pool-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border-radius: 8px; background: var(--frame); font-size: 12.5px; }
+.wf-role-pool-item.off > svg { opacity: .55; }
+.wf-role-pool-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-role-pool-warn { display: inline-flex; color: var(--col-input); }
+.wf-role-pool-warn svg { width: 13px; height: 13px; }
 .wf-port-field > span { font-weight: 600; }
 .wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
 .wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span, .wf-port-field.wf-port--error > span { color: var(--wf-reject); }
