@@ -154,6 +154,10 @@ const api: OrcaApi = {
     previewBase: (dispatchId) => ipcRenderer.invoke('showcase:previewBase', dispatchId),
     onFrameEscape: (cb) => on('showcase:escape', cb)
   },
+  files: {
+    list: (projectId, dir) => ipcRenderer.invoke('files:list', projectId, dir),
+    reveal: (projectId, path) => ipcRenderer.invoke('files:reveal', projectId, path)
+  },
   rules: {
     list: () => ipcRenderer.invoke('rules:list'),
     save: (name, text) => ipcRenderer.invoke('rules:save', name, text)
