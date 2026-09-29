@@ -47,11 +47,12 @@ import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
+import { FilesView } from './FilesView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
 import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
-type Tab = 'board' | 'terminals' | 'stats' | 'info'
+type Tab = 'board' | 'terminals' | 'files' | 'stats' | 'info'
 
 interface OpenTerminal {
   ptyId: string
@@ -82,7 +83,7 @@ interface ProjectView {
   globalId: string | null
 }
 
-const TABS: Tab[] = ['board', 'terminals', 'stats', 'info']
+const TABS: Tab[] = ['board', 'terminals', 'files', 'stats', 'info']
 const tabKey = (projectId: string): string => `orca.tab.${projectId}`
 const globalKey = (projectId: string): string => `orca.global.${projectId}`
 
@@ -892,6 +893,7 @@ export function App(): React.JSX.Element {
               {t('shell.tab.terminals')}
               {projectTerminals.length > 0 && <span className="tab-badge">{projectTerminals.length}</span>}
             </button>
+            <button className={`tab ${tab === 'files' ? 'active' : ''}`} onClick={() => setTab('files')}>{t('shell.tab.files')}</button>
             <button className={`tab ${tab === 'stats' ? 'active' : ''}`} onClick={() => setTab('stats')}>{t('shell.tab.stats')}</button>
             <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>{t('shell.tab.info')}</button>
           </div>
@@ -978,6 +980,8 @@ export function App(): React.JSX.Element {
               />
             </GlobalTaskView>
           )}
+          {tab === 'files' && !active && <div className="empty">{t('shell.projects.none')}</div>}
+          {tab === 'files' && active && <FilesView key={active.id} projectId={active.id} name={active.name} root={active.root} />}
           {tab === 'stats' && !active && <div className="empty">{t('shell.projects.none')}</div>}
           {tab === 'stats' && active && <StatsView key={active.id} projectId={active.id} columns={columns} />}
           {tab === 'info' && !active && <div className="empty">{t('shell.projects.none')}</div>}
