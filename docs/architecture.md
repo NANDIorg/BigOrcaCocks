@@ -1370,8 +1370,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `projectId` явный, а не «активный проект» (как у `projects:branches`, `stats:project`): между вызовом и обработкой человек может переключить проект.
   Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.rootMissing`,
   `files.readFailed`; неизвестный `projectId` — обычная ошибка «project not found». `files:open` и `files:read` нет намеренно: запуск произвольного файла
-  системой опасен (политика `shared/showcase.ts`), `.md` открываются в «Документах», предпросмотра нет. В контрактной версии оба канала — заглушки
-  (пустой список и no-op), реализация — `main/project-files.ts`;
+  системой опасен (политика `shared/showcase.ts`), `.md` открываются в «Документах», предпросмотра нет. Реализация — `main/project-files.ts`:
+  `listProjectDir` — async `readdir` одной папки (синхронный заморозил бы PTY и сокет), без кэша и watcher'а; путь режет `splitSafeSegments`
+  (только `/`, без `''`/`.`/`..`, `\`, `:` на win32; сегмент `.git` в любом регистре — `files.hidden`), `realpath` сверяется с корнем (`isInside`,
+  симлинк на `.git` — тоже `files.hidden`); симлинки в списке не разворачиваются (`kind: 'symlink'`), сокеты/FIFO пропускаются; игнор — одна
+  `gitCheckIgnore` (`main/git.ts`, `git check-ignore -z --stdin`, cwd — сама папка, чтобы подмодуль проверял свой репозиторий) на папку, не больше
+  20 000 записей на вход; без git-фильтра (не репозиторий, «dubious ownership», нет git) скрыт только `node_modules`. `files:reveal` проверяет путь
+  теми же правилами (`resolveProjectPath(…, followLast = false)`) и зовёт `shell.showItemInFolder`; `files.readFailed` несёт код fs (`EACCES`), без абсолютного пути;
   `showcase:read(taskId, path, dispatchId?)` → `ShowcaseFileData {mime, bytes: Uint8Array}` (только картинки и `.md`, ≤ 10 МБ; HTML — только
   `previewUrl`), `showcase:open(taskId, path, dispatchId?)`, `showcase:reveal(taskId, path, dispatchId?)` — файлы показа задачи активного проекта:
   корень выбирает `showcaseSource` (`main/showcase.ts`: снимок запуска `<userData>/showcase/…`, если снят и на диске → worktree задачи → worktree
@@ -2344,6 +2349,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | Пути картинок к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; до 8 путей в стартовом промпте (`CMD_LINE_LIMIT`) | `saveReturnImages` — `src/main/attachments.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
+| Каталог файлов (вкладка «Файлы») | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
@@ -2695,6 +2701,12 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
   снимка не грузятся. `net.fetch('file://…')` в Electron 38 игнорирует `Range` (видео не перематывается) — файл читается потоком сам.
   Chromium нормализует `..` и `%2e%2e` до обработчика, поэтому проверка сегментов в `resolvePreviewRequest` — вторая линия, а главная —
   realpath внутри корня токена.
+
+- **`git check-ignore` (вкладка «Файлы», `gitCheckIgnore` в `main/git.ts`).** Код выхода `1` значит «ничего не игнорируется», а не ошибку —
+  `execFile` отдаёт его как исключение, ответ пустой; `128` — не репозиторий или «dubious ownership», тогда фильтра нет. Папки передаются с `/`
+  на конце: шаблон `node_modules/` без слэша на путь не срабатывает. Без `--no-index` отслеживаемые файлы игнорируемыми не считаются, даже если
+  подпадают под правило (`git add -f`), — они видимы, как в `git status`. Пути — через stdin с `-z`: в argv тысячи имён упираются в лимит
+  командной строки Windows, а `-z` снимает кавычки `core.quotepath` у кириллицы.
 
 ## Открытые вопросы
 

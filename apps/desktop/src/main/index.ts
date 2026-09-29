@@ -22,6 +22,7 @@ import {
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, readRule, writeRule } from './rules'
+import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
@@ -33,7 +34,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus, ProjectFilesListing } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -995,14 +996,11 @@ function registerIpc(): void {
     const p = resolveProject()
     return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
   })
-  // Вкладка «Файлы»: заглушка контрактной версии, реальная реализация — main/project-files.ts.
-  // Проект уже сверяется: неизвестный id — обычная ошибка «project not found».
-  handle('files:list', (_e, projectId: unknown, dir: unknown): ProjectFilesListing => {
-    projectRoot(String(projectId))
-    return { dir: typeof dir === 'string' ? dir : '', entries: [], truncated: false }
-  })
-  handle('files:reveal', (_e, projectId: unknown) => {
-    projectRoot(String(projectId))
+  // Вкладка «Файлы» (main/project-files.ts): корень — явного projectId, неизвестный id — обычная ошибка «project not found».
+  handle('files:list', (_e, projectId: unknown, dir: unknown) => listProjectDir(projectRoot(String(projectId)), dir ?? ''))
+  // Только показать в Finder/Проводнике, не openPath: запуск произвольного файла опасен. Симлинк — сам симлинк.
+  handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {
+    shell.showItemInFolder(await resolveProjectPath(projectRoot(String(projectId)), path, false))
   })
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
