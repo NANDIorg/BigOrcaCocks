@@ -373,6 +373,14 @@ export default {
   'showcase.kind.markdown': 'Markdown',
   'showcase.kind.pdf': 'PDF',
   'showcase.kind.none': 'Файл',
+  'showcase.groupsTitle': 'Показ · {subtasks}',
+  'showcase.subtasks': { one: '{count} подзадача', few: '{count} подзадачи', many: '{count} подзадач' },
+  'showcase.collapseSub': 'Свернуть подзадачу «{title}»',
+  'showcase.expandSub': 'Развернуть подзадачу «{title}»',
+  'showcase.viewSubTitle': 'Смотреть файлы подзадачи «{title}»',
+  'showcase.state.done': 'Готово',
+  'showcase.state.review': 'На проверке',
+  'showcase.state.work': 'В работе',
 
   // просмотрщик показа (ShowcaseViewer.tsx, PreviewFrame.tsx)
   'showcase.viewer.stale': 'Приложение запущено со старой версией main/preload, где ещё нет просмотра показа. Перезапустите приложение.',
@@ -424,8 +432,11 @@ export default {
   'showcase.viewer.pdf': 'PDF открывается в приложении системы',
   'showcase.viewer.pdfText': 'Просмотр PDF внутри приложения пока не поддерживается.',
   'showcase.viewer.unsupported': 'Этот тип файла приложение не открывает',
+  'showcase.viewer.linkOutside': 'Файла «{path}» нет среди файлов показа этой подзадачи',
 
   // markdown (Markdown.tsx)
   'markdown.copy': 'Копировать',
-  'markdown.copied': 'Скопировано'
+  'markdown.copied': 'Скопировано',
+  'markdown.imageOff': 'картинка не показана',
+  'markdown.imageOffAlt': 'картинка «{alt}» не показана'
 } satisfies AreaDict

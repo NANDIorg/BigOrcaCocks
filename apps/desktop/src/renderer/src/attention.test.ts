@@ -152,6 +152,30 @@ test('approval со сданным показом — «показ» с файл
   assert.equal(items[1].showcaseFiles, undefined)
 })
 
+test('ответ с показом (`done --answer-file … --show …`) — «ответ» с файлами показа запуска, сдавшего ответ', () => {
+  const items = buildAttention(input({
+    tasks: [task('a', 'needs_input'), task('b', 'needs_input')],
+    requests: [request('r1', 'a', 'answer', { dispatchId: 'd1' }), request('r2', 'b', 'answer', { dispatchId: 'd2' })],
+    dispatches: [
+      dispatch('d1', 'a', { outcome: 'done', answer: 'текст', showcase: { files: ['shots/1.png'] } }),
+      dispatch('d2', 'b', { outcome: 'done', answer: 'текст' })
+    ]
+  }))
+  assert.deepEqual(items.map((i) => [i.id, i.kind, i.showcaseFiles]), [['req:r1', 'answer', ['shots/1.png']], ['req:r2', 'answer', undefined]])
+})
+
+test('approval с showcaseDispatchIds — файлы всех показов', () => {
+  const items = buildAttention(input({
+    tasks: [task('a', 'review')],
+    requests: [request('r1', 'a', 'approval', { showcaseDispatchId: 'd2', showcaseDispatchIds: ['d1', 'd2'] })],
+    dispatches: [
+      dispatch('d1', 'a', { outcome: 'done', showcase: { files: ['A.html'] } }),
+      dispatch('d2', 'a', { outcome: 'done', showcase: { files: ['B.png'] } })
+    ]
+  }))
+  assert.deepEqual(items[0].showcaseFiles, ['A.html', 'B.png'])
+})
+
 test('порядок: сбои, вопросы, показ, ответы, ревью; внутри вида — старые сверху', () => {
   const items = buildAttention(input({
     tasks: [task('a', 'needs_input'), task('b', 'review'), task('c', 'in_progress'), task('d', 'in_progress'), task('e', 'review')],

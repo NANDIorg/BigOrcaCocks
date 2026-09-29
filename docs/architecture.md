@@ -1227,6 +1227,12 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   `showcase:read` (`blob:`). Во все вызовы `showcase:*` уходит `dispatchId` — main берёт снимок запуска. Старый preload без `previewUrl` —
   `showcasePreviewApi` бросает `ShowcaseStaleError`, старый main — «No handler registered»; оба → состояние «перезапустите приложение»,
   картинки и md работают. CSP окна: `img-src 'self' blob: orca-preview:`, `frame-src orca-preview:`.
+  Места показа: какие запуски у запроса — `requestShowcases` (approval: `showcaseDispatchIds`, фоллбэк — `showcaseDispatchId`; answer —
+  `dispatchId`), вывод — `RequestShowcaseBlock`: один показ — `ShowcaseBlock`, approval прогона — `ShowcaseGroupsBlock` (блок на подзадачу
+  с полосой состояния по колонке, по три записи до «Ещё N»). Кроме Инбокса и ленты — окно «Подтвердить» (`AcceptGlobalModal`, решение
+  в просмотрщике без «Вернуть…») и вкладка «Итог и цель» на «Проверке» (`GlobalOverview`, без решения). Markdown показа —
+  `Markdown` с `assets {path, base?}`: хук DOMPurify переписывает относительные `img[src]` на `base` из `previewUrl` (`markdownAssets.ts`,
+  `..` за корень — отказ), внешние и `data:` заменяет подписью, относительные ссылки — `data-showcase-href` → файл в просмотрщике.
 
 ## Реестр терминалов (`src/main/pty.ts`)
 

@@ -1,6 +1,6 @@
 import { isPendingRequest, type ColumnKind, type Dispatch, type HumanRequest, type Question, type RequestResolution, type Task } from '@orca-board/core'
 import { t, type TKey } from './i18n'
-import { requestShowcase } from './showcase'
+import { requestShowcases } from './showcase'
 
 // Лента «Ждут вас» на экране глобальной задачи (AttentionFeed.tsx): всё, что ждёт человека, одним списком.
 // Здесь — только решения без React и IPC: что попадает в ленту, в каком порядке и без дублей.
@@ -37,7 +37,7 @@ export interface AttentionItem {
   /** Последний запуск задачи: сводка ответа, файлы ревью, исход сбоя. */
   dispatch?: Dispatch
   failure?: AttentionFailure
-  /** Показ approval: подписи файлов на карточке ленты. */
+  /** Показ approval или ответа: подписи файлов на карточке ленты. */
   showcaseFiles?: string[]
 }
 
@@ -101,7 +101,10 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
     // пока его не показывает.
     if (r.taskId === undefined || r.kind === 'decision') continue
     const d = r.dispatchId ? dispatchById.get(r.dispatchId) : undefined
-    const showcase = requestShowcase(r, dispatches)
+    // Показ approval и ответа (`done --answer-file … --show …`): файлы всех показов запроса.
+    const shows = requestShowcases(r, dispatches)
+    const files = shows.flatMap((x) => x.showcase.files)
+    const showcase = shows.length > 0
     const kind: AttentionKind = r.kind === 'escalation' ? 'failure' : r.kind === 'approval' ? (showcase ? 'showcase' : 'approval') : r.kind
     items.push({
       id: `req:${r.id}`,
@@ -113,7 +116,7 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
       request: r,
       ...(d ? { dispatch: d } : {}),
       ...(kind === 'failure' && failureOf(d) ? { failure: failureOf(d) } : {}),
-      ...(showcase && showcase.files.length > 0 ? { showcaseFiles: showcase.files } : {})
+      ...(files.length > 0 ? { showcaseFiles: files } : {})
     })
   }
 

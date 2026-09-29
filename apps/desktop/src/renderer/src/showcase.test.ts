@@ -4,7 +4,8 @@ import type { Dispatch, HumanRequest } from '@orca-board/core'
 import { showcaseMarkdown } from '../../shared/showcase'
 import type { OrcaApi } from '../../shared/ipc'
 import {
-  showcaseStaleMessage, bodyWithoutShowcase, latestShowcase, requestShowcase, requestShowcaseTaskId, showcaseApi,
+  showcaseStaleMessage, bodyWithoutShowcase, bodyWithoutShowcases, latestShowcase, requestShowcase, requestShowcases, requestShowcaseGroups,
+  requestShowcaseTaskId, showcaseTaskState, showcaseApi,
   showcaseErrorText, showcaseFiles, isPreviewUrl, showcasePreviewApi, ShowcaseStaleError, showcaseFailure, onShowcaseFrameEscape,
   showcaseGroup, showcaseOrder, stepShowcase, showcaseIndex, clampShowcasePos, showcaseEntries, thumbsShown, hiddenFiles,
   fitFrame, scalePercent, SHOWCASE_VIEWPORTS, INLINE_VIEWPORTS, type ShowcaseGroup
@@ -87,6 +88,58 @@ test('requestShowcaseTaskId: у approval задачи — она сама; у ap
   assert.equal(requestShowcaseTaskId({ ...runLevel, showcaseDispatchId: 'gone' }, dispatches), undefined)
   assert.equal(requestShowcaseTaskId({ ...runLevel, showcaseDispatchId: undefined }, dispatches), undefined)
   assert.equal(requestShowcaseTaskId(runLevel, undefined), undefined)
+})
+
+test('requestShowcases: approval прогона — по showcaseDispatchIds, с названием и состоянием подзадачи', () => {
+  const a = { text: 'макеты', files: ['design/a.html'] }
+  const b = { files: ['shots/1.png', 'shots/2.png'] }
+  const dispatches = [dispatch('d1', { taskId: 'ta', showcase: a }), dispatch('d2', { taskId: 'tb', showcase: b }), dispatch('d3', { taskId: 'tc' })]
+  const tasks = [{ id: 'ta', title: 'Экран настроек', status: 'done' }, { id: 'tb', title: 'Иконки', status: 'review' }]
+  const kindOf = (status: string) => (status === 'done' ? 'done' : status === 'review' ? 'review' : undefined)
+  const { taskId: _taskId, ...runLevel } = approval({ showcaseDispatchId: 'd2', showcaseDispatchIds: ['d1', 'd2', 'd3', 'gone', 'd1'] })
+  assert.deepEqual(requestShowcases(runLevel, dispatches, tasks, kindOf), [
+    { dispatchId: 'd1', taskId: 'ta', showcase: a, title: 'Экран настроек', state: 'done' },
+    { dispatchId: 'd2', taskId: 'tb', showcase: b, title: 'Иконки', state: 'review' }
+  ], 'без показа, пропавший и повтор — пропускаются, порядок — как в запросе')
+  // Подзадачи ещё нет в снимке — заголовок её id, состояния нет.
+  assert.deepEqual(requestShowcases(runLevel, dispatches).map((x) => [x.title, x.state]), [['ta', undefined], ['tb', undefined]])
+  assert.deepEqual(requestShowcaseGroups(requestShowcases(runLevel, dispatches, tasks)).map((g) => [g.title, g.dispatchId, g.files.length]), [
+    ['Экран настроек', 'd1', 1], ['Иконки', 'd2', 2]
+  ])
+  assert.equal(requestShowcaseTaskId(runLevel, dispatches), 'ta', 'approval прогона — задача первого показа')
+})
+
+test('requestShowcases: старый запрос — только showcaseDispatchId; approval задачи — без заголовка; answer — по dispatchId', () => {
+  const s = { files: ['a.png'] }
+  const dispatches = [dispatch('d1', { showcase: s }), dispatch('d2', { showcase: { files: ['b.md'] } }), dispatch('d3')]
+  assert.deepEqual(requestShowcases(approval({ showcaseDispatchId: 'd1' }), dispatches), [{ dispatchId: 'd1', taskId: 't1', showcase: s }])
+  const { taskId: _t, ...oldRunLevel } = approval({ showcaseDispatchId: 'd1' })
+  assert.deepEqual(requestShowcases(oldRunLevel, dispatches).map((x) => [x.dispatchId, x.taskId, x.title]), [['d1', 't1', 't1']])
+  const answer = approval({ kind: 'answer', dispatchId: 'd2', showcaseDispatchId: 'd1' })
+  assert.deepEqual(requestShowcases(answer, dispatches).map((x) => x.dispatchId), ['d2'], 'answer — показ запуска, сдавшего ответ')
+  assert.deepEqual(requestShowcases(approval({ kind: 'answer', dispatchId: 'd3' }), dispatches), [], 'ответ без --show')
+  assert.deepEqual(requestShowcases(approval({ kind: 'question', dispatchId: 'd1' }), dispatches), [])
+  assert.deepEqual(requestShowcases(approval({ showcaseDispatchId: 'd1' }), undefined), [])
+  assert.equal(requestShowcase(answer, dispatches), undefined, 'requestShowcase — только approval')
+})
+
+test('состояние подзадачи блока показа — по виду колонки', () => {
+  assert.equal(showcaseTaskState('done'), 'done')
+  assert.equal(showcaseTaskState('review'), 'review')
+  assert.equal(showcaseTaskState('in_progress'), 'work')
+  assert.equal(showcaseTaskState('custom'), 'work')
+  assert.equal(showcaseTaskState(undefined), undefined)
+})
+
+test('из body approval прогона вычитаются разделы показа всех подзадач вместе с заголовками', () => {
+  const a = { text: 'макеты', files: ['a.html'] }
+  const b = { files: ['b.png'] }
+  const body = ['Проверьте', `### Экран\n\n${showcaseMarkdown(a)}`, `### Иконки\n\n${showcaseMarkdown(b)}`, 'Ветка: `feature/x`'].join('\n\n')
+  assert.equal(bodyWithoutShowcases(body, [{ showcase: a, title: 'Экран' }, { showcase: b, title: 'Иконки' }]), 'Проверьте\n\nВетка: `feature/x`')
+  // Заголовок не совпал (подзадачу переименовали) — вычитается хотя бы раздел, заголовок остаётся.
+  assert.equal(bodyWithoutShowcases(body, [{ showcase: b, title: 'Другое' }]), ['Проверьте', `### Экран\n\n${showcaseMarkdown(a)}`, '### Иконки', 'Ветка: `feature/x`'].join('\n\n'))
+  assert.equal(bodyWithoutShowcases(body, []), body)
+  assert.equal(bodyWithoutShowcases(undefined, [{ showcase: a }]), undefined)
 })
 
 const group = (dispatchId: string, files: string[], title?: string): ShowcaseGroup =>

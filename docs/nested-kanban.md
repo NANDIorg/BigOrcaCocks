@@ -252,6 +252,10 @@ needs_input — **вычисляемая** колонка: там карточк
   без событий. Не на проверке — ошибка «глобальная задача … не на проверке». У прогона с воркфлоу (`workflowScope: 'run'`)
   это решение по approval ноды `human` (`docs/workflow.md`), а `decision` — поле «Решение / что делать дальше»: renderer
   открывает для такого прогона окно с этим полем (`AcceptGlobalModal`), оно уходит в `stage_started` следующего этапа.
+  В окне — показ подзадач ждущего approval (`showcaseDispatchIds`, `requestShowcases` в `renderer/src/showcase.ts`): блок на подзадачу с
+  полосой её состояния, превью и просмотрщиком; в просмотрщике — то же поле решения и «Подтвердить» (вернуть оттуда нельзя — это отдельная
+  кнопка экрана задачи). Файлы читаются из снимков запусков, поэтому видны и после мержа подзадач. Тот же показ, без поля решения, — на
+  вкладке «Итог и цель» под «Что сделал» (`GlobalOverview`, проп `approval` = `runApprovalRequest`).
 - **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows, images?)` → `ptyId` координатора
   (`returnToWork` в `apps/desktop/src/main/worker.ts`; шаги 1–2 — `returnGlobalTaskToWork` в `coordinator-resume.ts`):
   0. С `images` (байты, лимиты `IMAGE_ATTACHMENT_LIMITS`) main сначала пишет файлы в cwd координатора —

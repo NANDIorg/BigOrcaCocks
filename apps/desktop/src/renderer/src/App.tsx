@@ -942,6 +942,7 @@ export function App(): React.JSX.Element {
               tasks={subtasks}
               columns={columns}
               dispatches={snap.dispatches}
+              approval={runApprovalRequest(snap.requests, openGlobal.id)}
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
@@ -1050,6 +1051,7 @@ export function App(): React.JSX.Element {
           tasks={tasks}
           runs={snap.runs}
           dispatches={snap.dispatches}
+          columns={columns}
           workflowOf={(runId) => workflowForRun(runId, snap.runs, active, taskTypes)}
           focus={inboxFocus}
           onClose={() => setShowInbox(false)}
@@ -1193,6 +1195,9 @@ export function App(): React.JSX.Element {
           key={acceptingGlobal.id}
           global={acceptingGlobal}
           request={runApprovalRequest(snap.requests, acceptingGlobal.id)}
+          tasks={tasks.filter((t) => t.runId === acceptingGlobal.id)}
+          columns={columns}
+          dispatches={snap.dispatches}
           onClose={() => setAcceptGlobalId(null)}
           onSubmit={(decision) => submitAcceptGlobal(acceptingGlobal.id, decision)}
         />
