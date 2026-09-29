@@ -1344,7 +1344,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
   `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
   `projects:gitFetch(id)` (`git fetch --all --prune`) и `projects:gitPull(id)` (`git pull --ff-only` текущей ветки) → `ProjectGitResult {output, branch: ProjectBranchInfo}`,
-  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking); все четыре — опциональные методы `OrcaApi.projects`
+  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking),
+  `projects:createInitialCommit(id, mode: InitialCommitMode)` → `ProjectBranchInfo` (начальный коммит в репозитории без коммитов, только по согласию человека:
+  `empty` — пустой коммит через plumbing, индекс и рабочее дерево не трогаются; `snapshot` — `git add -A` + commit;
+  идемпотентен: коммиты уже есть — возвращает актуальный `ProjectBranchInfo` без изменений; ошибки — `git.notRepo`, `git.opFailed`);
+  у `ProjectBranchInfo` необязательное поле `unborn: true` — HEAD без коммитов (свежий `git init`). Запуск координатора или воркера в таком репозитории
+  отказывает `OrcaError` с кодом `git.noCommits` (не сырым текстом `git rev-parse`); renderer узнаёт его по `ipcErrorCode(e) === 'git.noCommits'` и предлагает
+  создать начальный коммит. `git.noCommits` не входит в `PROJECT_GIT_ERROR_CODES` (тот список — для меню веток). Все пять — опциональные методы `OrcaApi.projects`
   (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
   `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
   воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
