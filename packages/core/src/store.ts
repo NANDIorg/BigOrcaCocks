@@ -27,6 +27,7 @@ import {
 import type { RunTypeInput, TaskTypeSnapshot } from './task-types.ts'
 import type { RunGit } from './run-branch.ts'
 import { assertImageBudget, type RunImage } from './attachments.ts'
+import { forkBranches, runPositionAt, runPositions, type RunPosition } from './run-lanes.ts'
 
 /**
  * Версия формата файла доски. Растёт, когда снапшот меняется так, что старая версия приложения его не поймёт
@@ -149,6 +150,29 @@ export interface RunStageOptions extends RunWorkflowFallback {
    * `Run.stageHistory` этой ноды (`StageChange.decision`). Текст для следующего этапа — отдельно, в `decision`.
    */
   chosen?: StageDecision
+  /**
+   * На какой ноде вынесено решение (закрыт этап, решила проверка или человек, отработал мерж/git). Нужно, когда граф идёт
+   * по нескольким путям разветвления: двигается только позиция на этой ноде. Нет — основная позиция (`Run.stage`), как
+   * всегда. Прогон уже не стоит на ноде — ошибка «граф ушёл дальше» (решение опоздало).
+   */
+  nodeId?: string
+}
+
+/**
+ * Действие одной позиции прогона после перехода: внутри разветвления переход даёт по действию на путь (вход в `fork`,
+ * повтор эффектов после рестарта), без путей — одно. `lane` — путь (`RunLane.id`); нет — основная позиция.
+ */
+export interface RunAction {
+  nodeId: string
+  lane?: string
+  action: WfAction
+}
+
+/** Итог перехода прогона: `actions` — эффекты для main по порядку; `action` — первый из них (прежняя форма результата). */
+export interface RunStepResult {
+  run: Run
+  action: WfAction
+  actions: RunAction[]
 }
 
 /** Где стоит глобальная задача на графе и что для этого нужно знать координатору (`TaskStore.runStage`). */
@@ -178,6 +202,12 @@ export interface RunStageInfo {
   tasks: string[]
   /** Когда закрылась последняя из них (`Run.stageTasksDoneAt`); нет — этап ещё работает. */
   tasksDoneAt?: number
+  /** Путь разветвления (`RunLane.id`), в котором стоит этап; нет — основная позиция прогона. */
+  lane?: string
+  /** Название пути (`WfForkBranch.label`, без него — id пути). */
+  laneTitle?: string
+  /** Путь пришёл в `join` и ждёт остальные. */
+  arrived?: boolean
 }
 
 /** Необязательная часть `finishDispatch`: показ человеку и запасной граф прогона (как у `advanceStage`). */
@@ -718,6 +748,11 @@ export class TaskStore {
      * `ask`). Подзадачу этапа «Работа» store привязывает сам: без этого поля и без `gateFor`.
      */
     stageOf?: { nodeId: string; visit: number }
+    /**
+     * Этап «Работа», к которому координатор относит подзадачу (`task create --stage`): id ноды. Нет — текущий этап
+     * глобальной задачи. Этап не открыт — ошибка (`assertStageAcceptsTasks`).
+     */
+    stage?: string
     /** Нет — normal; в воркфлоу глобальной задачи — роль этапа «Работа». */
     priority?: TaskPriority
   }): Task {
@@ -778,19 +813,21 @@ export class TaskStore {
    */
   private bindToStage(
     run: Run,
-    input: { roleId?: string; gateFor?: unknown; stageOf?: { nodeId: string; visit: number } }
+    input: { roleId?: string; gateFor?: unknown; stageOf?: { nodeId: string; visit: number }; stage?: string }
   ): { roleId?: string; stageOf?: { nodeId: string; visit: number } } {
     const roleId = input.roleId
     if (run.workflowScope !== 'run') {
       if (input.stageOf) throw new Error('stageOf: у прогона старого формата воркфлоу идёт по подзадачам, этапов прогона нет')
+      if (input.stage !== undefined) throw new Error(`этап «${input.stage}»: у прогона старого формата воркфлоу идёт по подзадачам, этапов прогона нет`)
       return { ...(roleId !== undefined ? { roleId } : {}) }
     }
     if (input.stageOf) {
       if (!run.workflow?.nodes.some((n) => n.id === input.stageOf!.nodeId)) throw new Error(`в воркфлоу глобальной задачи ${run.id} нет ноды «${input.stageOf.nodeId}»`)
       return { ...(roleId !== undefined ? { roleId } : {}), stageOf: input.stageOf }
     }
+    if (input.stage !== undefined && !run.stage) throw new Error(`этап «${input.stage}»: граф глобальной задачи ${run.id} ещё не начат — дождись stage_started`)
     if (input.gateFor || !run.stage) return { ...(roleId !== undefined ? { roleId } : {}) }
-    const node = this.assertStageAcceptsTasks(run.id)!
+    const node = this.assertStageAcceptsTasks(run.id, input.stage)!
     const where = `«${wfNodeTitle(node)}»`
     const stageOf = { nodeId: node.id, visit: run.stage.visits[node.id] ?? 1 }
     const allowed = wfWorkRoleIds(node)
@@ -812,13 +849,17 @@ export class TaskStore {
 
   /**
    * Глобальная задача с воркфлоу прогона сейчас на этапе «Работа» — только на нём создаются подзадачи (`bindToStage`).
-   * Иначе ошибка с подсказкой ждать `stage_started`. Граф не начат, прогон старого формата и «Входящие» не проверяются
+   * Иначе ошибка с подсказкой ждать `stage_started`. `nodeId` — какой этап (`task create --stage`): позиция прогона на этой
+   * ноде должна быть, иначе ошибка; нет — основная позиция. Граф не начат, прогон старого формата и «Входящие» не проверяются
    * (undefined): нужна main, чтобы сообщить об этапе раньше выбора роли (`task create` без `--role`).
    */
-  assertStageAcceptsTasks(runId: string): Extract<WfNode, { type: 'work' }> | undefined {
+  assertStageAcceptsTasks(runId: string, nodeId?: string): Extract<WfNode, { type: 'work' }> | undefined {
     const run = this.runs.get(runId)
     if (!run || run.workflowScope !== 'run' || !run.stage) return undefined
-    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === run.stage!.nodeId)
+    if (nodeId !== undefined && !runPositionAt(run, nodeId)) {
+      throw new Error(`этап «${nodeId}» глобальной задачи ${run.id} сейчас не открыт — открытые этапы и их id: orca-board workflow show`)
+    }
+    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === (nodeId ?? run.stage!.nodeId))
     if (node?.type !== 'work') {
       const where = node ? `«${wfNodeTitle(node)}»` : `«${run.stage.nodeId}»`
       throw new Error(`подзадачи создаются только на этапе «Работа»: глобальная задача ${run.id} сейчас на этапе ${where} — дождись stage_started`)
@@ -828,13 +869,14 @@ export class TaskStore {
 
   /**
    * Роль подзадачи, которую можно не передавать: одна роль ноды «Работа», на которой стоит глобальная задача
-   * (`bindToStage` берёт её сам). Нет такой (этап не «Работа», ролей нет или несколько, прогон старого движка) —
+   * (`bindToStage` берёт её сам); `nodeId` — этап, как у `assertStageAcceptsTasks`. Нет такой (этап не «Работа», ролей нет или несколько, прогон старого движка) —
    * undefined, роль тогда выбирает вызывающий. Нужна main: `orca-board task create` без `--role` требует роль.
    */
-  stageDefaultRole(runId: string): string | undefined {
+  stageDefaultRole(runId: string, nodeId?: string): string | undefined {
     const run = this.runs.get(runId)
     if (!run || run.workflowScope !== 'run' || !run.stage) return undefined
-    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === run.stage!.nodeId)
+    if (nodeId !== undefined && !runPositionAt(run, nodeId)) return undefined
+    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === (nodeId ?? run.stage!.nodeId))
     if (node?.type !== 'work') return undefined
     const allowed = wfWorkRoleIds(node)
     return allowed.length === 1 ? allowed[0] : undefined
@@ -1217,12 +1259,35 @@ export class TaskStore {
    * координатора: то же, что в `stage_started`, но тексты целиком. `tasks` — подзадачи текущего захода этапа.
    * Нет позиции (граф не начат, прогон старого формата) — undefined.
    */
-  runStage(runId: string, fallback: RunWorkflowFallback = {}): RunStageInfo | undefined {
+  runStage(runId: string, fallback: RunWorkflowFallback = {}, nodeId?: string): RunStageInfo | undefined {
     const run = this.mustRun(runId)
     if (run.workflowScope !== 'run' || !run.stage) return undefined
-    const node = this.runWorkflow(run.id, fallback).nodes.find((n) => n.id === run.stage!.nodeId)
+    const position = runPositionAt(run, nodeId)
+    return position ? this.stageInfo(run, this.runWorkflow(run.id, fallback), position) : undefined
+  }
+
+  /**
+   * Все активные позиции прогона (`runPositions`) с деталями этапа, как `runStage`: без разветвления — не больше одной,
+   * внутри него — по позиции на путь. Граф не начат или прогон старого формата — пусто.
+   */
+  runStages(runId: string, fallback: RunWorkflowFallback = {}): RunStageInfo[] {
+    const run = this.mustRun(runId)
+    if (run.workflowScope !== 'run' || !run.stage) return []
+    const wf = this.runWorkflow(run.id, fallback)
+    return runPositions(run).flatMap((p) => {
+      const info = this.stageInfo(run, wf, p)
+      return info ? [info] : []
+    })
+  }
+
+  /** Детали этапа одной позиции прогона (`runStage`, `runStages`); нет ноды в графе — undefined. */
+  private stageInfo(run: Run, wf: Workflow, position: RunPosition): RunStageInfo | undefined {
+    const node = wf.nodes.find((n) => n.id === position.nodeId)
     if (!node) return undefined
-    const visit = run.stage.visits[node.id] ?? 1
+    const visit = position.visit
+    const lane = position.lane !== undefined ? run.lanes?.find((l) => l.id === position.lane) : undefined
+    const fork = lane ? wf.nodes.find((n) => n.id === lane.forkId) : undefined
+    const laneTitle = lane && fork?.type === 'fork' ? forkBranches(fork).find((b) => b.id === lane.branchId)?.label : undefined
     const stage = wfWorkStage({ version: WORKFLOW_VERSION, nodes: [node], edges: [] }, node.id)
     const decision = node.type === 'decision'
       ? {
@@ -1243,20 +1308,38 @@ export class TaskStore {
       ...(stage?.instructions ? { instructions: stage.instructions } : {}),
       ...(stage?.showcase ? { showcase: stage.showcase } : {}),
       ...decision,
-      ...run.stageInput,
-      tasks: this.stageTasks(run).map((t) => t.id),
-      ...(run.stageTasksDoneAt !== undefined ? { tasksDoneAt: run.stageTasksDoneAt } : {})
+      ...position.input,
+      tasks: this.stageTasks(run, position.nodeId).map((t) => t.id),
+      ...(position.tasksDoneAt !== undefined ? { tasksDoneAt: position.tasksDoneAt } : {}),
+      ...(position.lane !== undefined ? { lane: position.lane, laneTitle: laneTitle ?? lane?.branchId ?? position.lane, arrived: position.arrived === true } : {})
     }
   }
 
-  /** Подзадачи текущего захода в текущий этап глобальной задачи (задачи прошлых заходов — не в счёт). */
-  private stageTasks(run: Run): Task[] {
+  /**
+   * Подзадачи текущего захода в этап глобальной задачи (задачи прошлых заходов — не в счёт): этап — нода `nodeId`
+   * (позиция пути), нет — основная позиция `Run.stage`.
+   */
+  private stageTasks(run: Run, nodeId = run.stage?.nodeId): Task[] {
     const stage = run.stage
-    if (!stage) return []
-    const visit = stage.visits[stage.nodeId] ?? 1
+    if (!stage || nodeId === undefined) return []
+    const visit = stage.visits[nodeId] ?? 1
     return [...this.tasks.values()].filter(
-      (t) => t.runId === run.id && !t.gateFor && t.stageOf?.nodeId === stage.nodeId && t.stageOf.visit === visit
+      (t) => t.runId === run.id && !t.gateFor && t.stageOf?.nodeId === nodeId && t.stageOf.visit === visit
     )
+  }
+
+  /**
+   * Решение по ноде `nodeId` (`RunStageOptions.nodeId`) ещё актуально: прогон стоит на ней. Нет `nodeId` — основная
+   * позиция, проверять нечего. Иначе ошибка: граф ушёл дальше, решение опоздало.
+   */
+  private assertAtNode(run: Run, nodeId: string | undefined, what: string): void {
+    if (nodeId === undefined || runPositionAt(run, nodeId)) return
+    throw new Error(`${what}: глобальная задача ${run.id} уже не стоит на ноде «${nodeId}» — граф ушёл дальше`)
+  }
+
+  /** Результат перехода одной позиции (прогон без разветвления): одно действие. */
+  private stepResult(run: Run, action: WfAction): RunStepResult {
+    return { run, action, actions: [{ nodeId: action.nodeId, action }] }
   }
 
   /**
@@ -1296,13 +1379,13 @@ export class TaskStore {
    * текущей ноды: так исполнитель повторяет эффект после рестарта. `opts.commit` — коммит ветки прогона на входе
    * (`StageChange.commit`).
    */
-  enterRunStage(runId: string, opts: RunStageOptions = {}): { run: Run; action: WfAction } {
+  enterRunStage(runId: string, opts: RunStageOptions = {}): RunStepResult {
     const run = this.mustRunScope(runId)
     const wf = this.runWorkflow(runId, opts)
-    if (run.stage) return { run, action: runStageAction(wf, run.stage, this.stageCtx(opts)) }
+    if (run.stage) return this.stepResult(run, runStageAction(wf, run.stage, this.stageCtx(opts)))
     const action = this.moveRunStage(run, wf, undefined, 'next', opts)
     this.commit()
-    return { run, action }
+    return this.stepResult(run, action)
   }
 
   /**
@@ -1314,9 +1397,10 @@ export class TaskStore {
    * `decision` — решение человека, `answers` — ответы этапа «Вопрос человеку»: они уходят координатору на следующую «Работу».
    * Этап «Работа» закрывает не этот метод, а `finishStage`.
    */
-  advanceRunStage(runId: string, outcome: WfPort, opts: RunStageOptions = {}): { run: Run; action: WfAction } {
+  advanceRunStage(runId: string, outcome: WfPort, opts: RunStageOptions = {}): RunStepResult {
     const run = this.mustRunScope(runId)
     if (!run.stage) throw new Error(`граф глобальной задачи ${runId} ещё не начат — сначала enterRunStage`)
+    this.assertAtNode(run, opts.nodeId, 'переход по графу')
     if (run.closedAt !== undefined && this.runWorkflow(runId, opts).nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end') {
       throw new Error(`граф глобальной задачи ${runId} уже дошёл до конца`)
     }
@@ -1324,7 +1408,7 @@ export class TaskStore {
     if (opts.chosen) checkChosen(wf, run.stage, outcome, opts.chosen)
     const action = this.moveRunStage(run, wf, run.stage, outcome, opts)
     this.commit()
-    return { run, action }
+    return this.stepResult(run, action)
   }
 
   /**
@@ -1333,8 +1417,9 @@ export class TaskStore {
    * сводка для следующих нод (проверка, человек): пишется в историю этапа и в `Run.summary` («Что сделал»).
    * Ошибки — с подсказкой, что делать координатору.
    */
-  finishStage(runId: string, opts: RunStageOptions & { summary?: string } = {}): { run: Run; action: WfAction } {
+  finishStage(runId: string, opts: RunStageOptions & { summary?: string } = {}): RunStepResult {
     const run = this.mustRunScope(runId)
+    this.assertAtNode(run, opts.nodeId, 'stage finish')
     const wf = this.runWorkflow(runId, opts)
     const node = run.stage ? wf.nodes.find((n) => n.id === run.stage!.nodeId) : undefined
     if (!run.stage || node?.type !== 'work') {
@@ -1354,7 +1439,7 @@ export class TaskStore {
     }
     const action = this.moveRunStage(run, wf, run.stage, 'next', opts)
     this.commit()
-    return { run, action }
+    return this.stepResult(run, action)
   }
 
   /**
@@ -1366,14 +1451,14 @@ export class TaskStore {
   settleIdleStages(
     isAlive: (ptyId: string) => boolean,
     fallback: (run: Run) => RunStageOptions = () => ({})
-  ): Array<{ runId: string; action: WfAction }> {
-    const settled: Array<{ runId: string; action: WfAction }> = []
+  ): Array<{ runId: string; action: WfAction; actions: RunAction[] }> {
+    const settled: Array<{ runId: string; action: WfAction; actions: RunAction[] }> = []
     for (const run of [...this.runs.values()]) {
       if (run.workflowScope !== 'run' || run.stageTasksDoneAt === undefined || run.closedAt !== undefined) continue
       if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) continue
       const opts = fallback(run)
       const action = this.moveRunStage(run, this.runWorkflow(run.id, opts), run.stage, 'next', opts)
-      settled.push({ runId: run.id, action })
+      settled.push({ runId: run.id, action, actions: [{ nodeId: action.nodeId, action }] })
     }
     if (settled.length > 0) this.commit()
     return settled
@@ -1477,12 +1562,13 @@ export class TaskStore {
   /**
    * Исполнитель не смог выполнить эффект этапа глобальной задачи (проверка или вопрос не создались, слияние в
    * защищённую ветку, git упал не конфликтом): позиция остаётся, координатору и человеку — `workflow_blocked` с
-   * причиной и `runId` (без `taskId`).
+   * причиной и `runId` (без `taskId`). `nodeId` — нода, эффект которой не выполнился (позиция пути); нет — `Run.stage`.
    */
-  blockRunStage(runId: string, reason: string): OrcaEvent {
+  blockRunStage(runId: string, reason: string, nodeId?: string): OrcaEvent {
     const run = this.mustRunScope(runId)
+    const at = nodeId ?? run.stage?.nodeId
     const event = this.pushEvent('workflow_blocked', {
-      runId, ...(run.stage ? { nodeId: run.stage.nodeId } : {}), reason: short(reason)
+      runId, ...(at !== undefined ? { nodeId: at } : {}), reason: short(reason)
     })
     this.commit()
     return event

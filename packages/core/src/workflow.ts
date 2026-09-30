@@ -4,6 +4,7 @@
 // значения импортируются с расширением .ts — тесты гоняются node --test без бандлера.
 import type { BoardColumn, Role, Task } from './types'
 import { isTaskRole } from './prompts.ts'
+import { forkBranchIds, forkBranches, laneId, laneRegions } from './run-lanes.ts'
 
 /**
  * Версия формата графа. Меняется при несовместимой правке типов ниже, вместе с `migrateWorkflow`.
@@ -40,6 +41,21 @@ export const WF_DECISION_OPTION_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/
 /** Сколько вариантов у ноды `decision`: меньше двух — не развилка, больше восьми не помещается на порты ноды. */
 export const WF_DECISION_MIN_OPTIONS = 2
 export const WF_DECISION_MAX_OPTIONS = 8
+
+/**
+ * Путь ноды `fork` («Разветвление»). `id` — порт (`WfEdge.outcome`) и часть id пути прогона (`RunLane.id` =
+ * `<fork>:<id>`), поэтому по той же маске, что id варианта `decision` (`WF_DECISION_OPTION_ID`), и после создания не
+ * меняется. `label` — название пути для человека и координатора (`laneTitle` в событиях); в сохранённом графе
+ * обязательно (`forkBranchNoLabel`), необязательно в типе — граф мог прийти в обход валидации (читать через `forkBranches`).
+ */
+export interface WfForkBranch {
+  id: string
+  label?: string
+}
+
+/** Сколько путей у ноды `fork`: один путь — не разветвление, больше четырёх координатор и холст не удержат. */
+export const WF_FORK_MIN_BRANCHES = 2
+export const WF_FORK_MAX_BRANCHES = 4
 
 /**
  * Операции ноды `git` (v1). Только то, что укладывается в модель «один worktree на ветку задачи»
@@ -154,6 +170,18 @@ export type WfNode = WfNodeBase &
      * (`renderGitTemplate`). В графе глобальной задачи доступны только `commit` и `push`.
      */
     | WfGitParams & { type: 'git' }
+    /**
+     * Разветвление: граф глобальной задачи уходит сразу во все `branches` — пути идут параллельно, у каждого своя
+     * позиция (`Run.lanes`), а `Run.stage` стоит на этой ноде до слияния. Порты — id путей (`wfPorts`), по ребру на
+     * путь. Пути сходятся в парный `join`; из области пути выйти можно только в него, войти — только через порт `fork`
+     * (`laneRegions`, валидация). Только граф глобальной задачи, без вложенности. Контракт — docs/workflow.md, «Разветвление».
+     */
+    | { type: 'fork'; branches: WfForkBranch[] }
+    /**
+     * Слияние путей разветвления `forkId`: ждёт, пока придут все пути, и идёт дальше по `next`. Парный `fork` указан
+     * явно — рантайму не нужно вычислять, чьё это слияние, а удалённый `fork` даёт понятную ошибку (`joinNoFork`).
+     */
+    | { type: 'join'; forkId: string }
     /** Конец. `merged` — для отображения: задача пришла сюда со слитой веткой. */
     | { type: 'end'; merged?: boolean }
   )
@@ -185,9 +213,9 @@ export interface WfSubflow {
 }
 
 /**
- * Порты по типу ноды: для каждого исхода из списка должно быть ровно одно исходящее ребро. У `decision` порты свои у
- * каждой ноды (id вариантов) — здесь пусто, читать порты ноды нужно через `wfPorts`. Ключ `decision` всё равно нужен:
- * по ключам этой таблицы валидация узнаёт известные типы.
+ * Порты по типу ноды: для каждого исхода из списка должно быть ровно одно исходящее ребро. У `decision` и `fork` порты
+ * свои у каждой ноды (id вариантов и id путей) — здесь пусто, читать порты ноды нужно через `wfPorts`. Ключи всё равно
+ * нужны: по ключам этой таблицы валидация узнаёт известные типы.
  */
 export const WF_PORTS: Record<WfNodeType, WfOutcome[]> = {
   start: ['next'],
@@ -199,6 +227,8 @@ export const WF_PORTS: Record<WfNodeType, WfOutcome[]> = {
   condition: ['yes', 'no'],
   merge: ['ok', 'conflict'],
   git: ['ok', 'error'],
+  fork: [],
+  join: ['next'],
   end: []
 }
 
@@ -212,11 +242,17 @@ const NODE_TYPE_TITLES: Record<WfNodeType, string> = {
   condition: 'Условие',
   merge: 'Мерж',
   git: 'Git',
+  fork: 'Разветвление',
+  join: 'Слияние',
   end: 'Конец'
 }
 
-/** Порты ноды: id вариантов у `decision`, у остальных типов — `WF_PORTS`. Варианты не массив (граф в обход валидации) — портов нет. */
+/**
+ * Порты ноды: id вариантов у `decision`, id путей у `fork`, у остальных типов — `WF_PORTS`. Варианты (пути) не массив
+ * (граф в обход валидации) — портов нет.
+ */
 export function wfPorts(node: WfNode): WfPort[] {
+  if (node.type === 'fork') return forkBranchIds(node)
   if (node.type === 'decision') {
     const raw: unknown = node.options
     // Битые варианты (не объект, id не строка) портов не дают — о них скажет валидация, а не исключение.
@@ -836,6 +872,25 @@ export const WF_ISSUE_TEXTS = {
   decisionOptionNoLabel: 'нода «{node}»: у варианта «{option}» нет названия',
   decisionSameTarget: 'нода «{node}»: все варианты ведут в одну ноду — решение ничего не меняет',
   decisionDuplicateLabel: 'нода «{node}»: у вариантов одинаковое название «{label}» — агент и человек их не различат',
+  forkBranchesNotList: 'нода «{node}»: пути должны быть списком с id и названием',
+  forkTooFewBranches: 'нода «{node}»: путей {count}, нужно не меньше {min}',
+  forkTooManyBranches: 'нода «{node}»: путей {count}, можно не больше {max}',
+  forkBranchBadId: 'нода «{node}»: id пути «{branch}» недопустим — строчная латиница, цифры, «_» и «-», до 32 символов',
+  forkBranchDuplicateId: 'нода «{node}»: id пути «{branch}» повторяется',
+  forkBranchNoLabel: 'нода «{node}»: у пути «{branch}» нет названия',
+  joinNoFork: 'нода «{node}»: слияние не привязано к разветвлению — ноды «Разветвление» «{fork}» в графе нет',
+  joinEnteredOutside: 'нода «{node}»: в слияние ведёт переход из «{from}», а она не лежит ни в одном пути разветвления «{fork}»',
+  forkNoJoin: 'нода «{node}»: у разветвления нет слияния — пути никогда не сойдутся',
+  forkManyJoins: 'нода «{node}»: у разветвления {count} слияния, должно быть одно',
+  forkSharedNode: 'нода «{node}»: лежит сразу в путях «{lane}» и «{other}» разветвления «{fork}» — пути не должны пересекаться',
+  forkBranchLeaks: 'нода «{node}»: путь «{lane}» разветвления «{fork}» уходит в «{to}» — из пути можно выйти только в слияние',
+  forkBranchEntered: 'нода «{node}»: в путь «{lane}» разветвления «{fork}» ведёт переход из «{from}» — войти в путь можно только через разветвление',
+  forkNested: 'нода «{node}»: разветвление внутри пути «{lane}» разветвления «{fork}» — вложенные разветвления не поддерживаются',
+  forkEndInBranch: 'нода «{node}»: путь «{lane}» разветвления «{fork}» ведёт в конец «{to}» — соседние пути остались бы без слияния, ставьте конец после слияния',
+  forkMergeInBranch: 'нода «{node}»: мерж в базовую ветку внутри пути «{lane}» разветвления «{fork}» — опубликовалась бы недоделанная ветка, ставьте мерж после слияния',
+  forkEmptyBranch: 'нода «{node}»: путь «{lane}» сразу ведёт в слияние — в нём ничего не делается',
+  forkBranchNoWork: 'нода «{node}»: в пути «{lane}» нет ноды «Работа» — подзадачи в нём никто не создаст',
+  forkPushInBranch: 'нода «{node}»: push внутри пути «{lane}» разветвления «{fork}» — опубликуется ветка, в которой соседний путь ещё не готов',
   gitBadOperation: 'нода «{node}»: неизвестная git-операция «{operation}»',
   gitFieldNotString: 'нода «{node}»: поле «{field}» должно быть строкой',
   gitNoBranch: 'нода «{node}»: для операции {operation} не задано имя ветки',
@@ -855,6 +910,7 @@ export const WF_ISSUE_TEXTS = {
   subflowNoWork: 'от старта не достижима ни одна нода «Работа» — воркер подзадачи никогда не запустится',
   subflowAskNotAllowed: 'нода «{node}»: «Вопрос человеку» недоступен в пути подзадачи — вопросы задаются этапом глобальной задачи',
   subflowDecisionNotAllowed: 'нода «{node}»: «Решение ИИ» недоступно в пути подзадачи — развилка ставится в графе глобальной задачи',
+  subflowForkNotAllowed: 'нода «{node}»: «Разветвление» и «Слияние» недоступны в пути подзадачи — параллельные пути ставятся в графе глобальной задачи',
   subflowNoMerge: 'нода «{node}»: путь от старта приходит в конец, минуя «Мерж» — коммиты подзадачи не попадут в ветку глобальной задачи',
   subflowDoubleReview: 'нода «{node}»: проверка есть и в пути подзадачи, и дальше в графе — ветка будет проверена дважды; если хватает проверки каждой подзадачи, внешнюю можно убрать',
   templateNoId: 'шаблон: пустой id',
@@ -862,7 +918,8 @@ export const WF_ISSUE_TEXTS = {
   templateNotString: 'шаблон «{template}»: поле «{field}» должно быть строкой',
   templateBadUpdatedAt: 'шаблон «{template}»: время обновления должно быть числом',
   templateBadNode: 'шаблон «{template}»: нода шаблона должна быть объектом с известным типом',
-  templateNodeStart: 'шаблон «{template}»: ноду «Старт» шаблоном сделать нельзя — в графе она одна и создаётся вместе с ним'
+  templateNodeStart: 'шаблон «{template}»: ноду «Старт» шаблоном сделать нельзя — в графе она одна и создаётся вместе с ним',
+  templateNodeFork: 'шаблон «{template}»: «Разветвление» и «Слияние» шаблоном сделать нельзя — они работают только парой со своими переходами'
 } as const
 
 /** Префикс сообщения о проблеме внутри пути подзадачи; `{node}` — название ноды «Работа», которой принадлежит путь. */
@@ -1155,6 +1212,15 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       }
     }
     if (n.type === 'git') validateGitNode(n, at, errors, warnings)
+    if ((n.type === 'fork' || n.type === 'join') && sub) {
+      // Параллельные пути — позиции глобальной задачи: у подзадачи позиция одна.
+      errors.push(at(n, 'subflowForkNotAllowed'))
+    } else if (n.type === 'fork') {
+      validateForkNode(n, at, errors)
+    } else if (n.type === 'join') {
+      const fork = typeof n.forkId === 'string' ? nodes.get(n.forkId) : undefined
+      if (fork?.type !== 'fork') errors.push(at(n, 'joinNoFork', { fork: typeof n.forkId === 'string' && n.forkId ? n.forkId : '—' }))
+    }
     if (n.type === 'condition') {
       const t = n.test
       if (t.kind === 'attempts') {
@@ -1170,6 +1236,9 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       }
     }
   }
+
+  // 6б. Скобки разветвлений: области путей не пересекаются, выход — только в слияние, вход — только через fork.
+  if (!sub) validateForkRegions({ nodes: [...nodes.values()], edges }, nodes, fromStart, title, at, errors, warnings)
 
   // 7. Хотя бы одна работа на пути от старта.
   if (start && ![...fromStart].some((id) => nodes.get(id)!.type === 'work')) {
@@ -1245,16 +1314,126 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
   return { errors, warnings }
 }
 
-/** Как назвать порт в тексте проблемы: у `decision` — метка варианта (id человек не видит), у остальных — сам исход. */
+/** Как назвать порт в тексте проблемы: у `decision` — метка варианта, у `fork` — название пути (id человек не видит), у остальных — сам исход. */
 function portLabel(n: WfNode, port: WfPort): string {
+  if (n.type === 'fork') return forkBranches(n).find((b) => b.id === port)?.label ?? port
   if (n.type !== 'decision' || !Array.isArray(n.options)) return port
   const label = n.options.find((o) => o?.id === port)?.label
   return typeof label === 'string' && label.trim() ? label.trim() : port
 }
 
-/** Параметры проблемы о порте: метка для текста, у `decision` ещё `optionId` — инспектор подсвечивает по нему вариант. */
+/**
+ * Параметры проблемы о порте: метка для текста, у `decision` ещё `optionId`, у `fork` — `branchId`: инспектор
+ * подсвечивает по ним вариант или путь.
+ */
 function portParams(n: WfNode, port: WfPort): Record<string, string> {
+  if (n.type === 'fork') return { port: portLabel(n, port), branchId: port }
   return n.type === 'decision' ? { port: portLabel(n, port), optionId: port } : { port }
+}
+
+/** Проверка списка путей ноды `fork`: как варианты `decision` — 2–4 объекта с уникальным id по маске и названием. */
+function validateForkNode(
+  n: Extract<WfNode, { type: 'fork' }>,
+  at: (n: WfNode, code: WfIssueCode, params?: Record<string, string | number>) => WfIssue,
+  errors: WfIssue[]
+): void {
+  const raw: unknown = n.branches
+  if (!Array.isArray(raw) || raw.some((b) => b === null || typeof b !== 'object' || Array.isArray(b))) {
+    errors.push(at(n, 'forkBranchesNotList'))
+    return
+  }
+  const branches = raw as Array<Partial<Record<keyof WfForkBranch, unknown>>>
+  if (branches.length < WF_FORK_MIN_BRANCHES) {
+    errors.push(at(n, 'forkTooFewBranches', { count: branches.length, min: WF_FORK_MIN_BRANCHES }))
+  } else if (branches.length > WF_FORK_MAX_BRANCHES) {
+    errors.push(at(n, 'forkTooManyBranches', { count: branches.length, max: WF_FORK_MAX_BRANCHES }))
+  }
+  const ids = new Set<string>()
+  const duplicates = new Set<string>()
+  for (const b of branches) {
+    const id = typeof b.id === 'string' ? b.id : String(b.id)
+    if (typeof b.id !== 'string' || !WF_DECISION_OPTION_ID.test(b.id)) errors.push(at(n, 'forkBranchBadId', { branch: id }))
+    else if (ids.has(id)) {
+      if (!duplicates.has(id)) errors.push(at(n, 'forkBranchDuplicateId', { branch: id }))
+      duplicates.add(id)
+    }
+    ids.add(id)
+    if (typeof b.label !== 'string' || !b.label.trim()) errors.push(at(n, 'forkBranchNoLabel', { branch: id }))
+  }
+}
+
+/**
+ * «Скобки» каждого `fork` графа глобальной задачи по областям путей (`laneRegions`): у разветвления ровно одно
+ * слияние; ноды путей не пересекаются; из пути выходят только в слияние (не в конец, не на `fork`, не на ноду вне
+ * разветвления или другого пути); войти в путь можно только через порт `fork` (в том числе `reject` после слияния не
+ * ведёт внутрь пути); внутри пути нет `fork` (вложенность) и `merge`. Предупреждения — пустой путь, путь без «Работы»,
+ * `push` в пути. Так у каждой ноды разветвления ровно один путь-владелец, и id ноды однозначно называет путь.
+ */
+function validateForkRegions(
+  graph: Pick<Workflow, 'nodes' | 'edges'>,
+  nodes: ReadonlyMap<string, WfNode>,
+  fromStart: ReadonlySet<string>,
+  title: (n: WfNode) => string,
+  at: (n: WfNode, code: WfIssueCode, params?: Record<string, string | number>, edgeId?: string) => WfIssue,
+  errors: WfIssue[],
+  warnings: WfIssue[]
+): void {
+  for (const fork of nodes.values()) {
+    if (fork.type !== 'fork') continue
+    const regions = laneRegions(graph, fork.id)
+    if (!regions) continue
+    if (regions.joins.length === 0) {
+      errors.push(at(fork, 'forkNoJoin'))
+      continue
+    }
+    if (regions.joins.length > 1) {
+      errors.push(at(fork, 'forkManyJoins', { count: regions.joins.length }))
+      continue
+    }
+    const joinId = regions.joins[0]
+    const names = new Map(forkBranches(fork).map((b) => [b.id, b.label ?? b.id]))
+    const where = (branchId: string): Record<string, string> => ({ lane: names.get(branchId) ?? branchId, fork: title(fork) })
+    /** Нода → путь-владелец (первый, кто до неё дошёл). */
+    const owner = new Map<string, string>()
+    for (const lane of regions.lanes) {
+      if (lane.entry === undefined) continue // нет ребра порта — это `missingOutcome`
+      if (lane.entry === joinId) {
+        warnings.push(at(fork, 'forkEmptyBranch', where(lane.branchId)))
+        continue
+      }
+      for (const id of lane.nodes) {
+        const node = nodes.get(id)!
+        const prev = owner.get(id)
+        if (prev !== undefined) {
+          errors.push(at(node, 'forkSharedNode', { ...where(prev), other: names.get(lane.branchId) ?? lane.branchId }))
+          continue
+        }
+        owner.set(id, lane.branchId)
+        if (node.type === 'fork') errors.push(at(node, 'forkNested', where(lane.branchId)))
+        if (node.type === 'merge') errors.push(at(node, 'forkMergeInBranch', where(lane.branchId)))
+        if (node.type === 'git' && node.operation === 'push') warnings.push(at(node, 'forkPushInBranch', where(lane.branchId)))
+      }
+      if (!lane.nodes.some((id) => nodes.get(id)!.type === 'work')) warnings.push(at(fork, 'forkBranchNoWork', where(lane.branchId)))
+    }
+    for (const e of graph.edges) {
+      if (e.from === fork.id) continue
+      const from = nodes.get(e.from)!
+      const to = nodes.get(e.to)!
+      const fromLane = owner.get(e.from)
+      const toLane = owner.get(e.to)
+      if (fromLane !== undefined && e.to !== joinId && toLane === undefined) {
+        // Нода вне пути (`LaneRegion.leaked`): конец, ноды после слияния или до разветвления.
+        errors.push(at(from, to.type === 'end' ? 'forkEndInBranch' : 'forkBranchLeaks', { ...where(fromLane), to: title(to) }, e.id))
+      } else if (!fromStart.has(e.from)) {
+        // Недостижимая нода не исполнится — о ней уже предупреждает `unreachable`.
+        continue
+      } else if (toLane !== undefined && fromLane === undefined) {
+        errors.push(at(to, 'forkBranchEntered', { ...where(toLane), from: title(from) }, e.id))
+      } else if (e.to === joinId && fromLane === undefined) {
+        errors.push(at(to, 'joinEnteredOutside', { from: title(from), fork: title(fork) }, e.id))
+      }
+    }
+  }
 }
 
 /**
@@ -1418,8 +1597,32 @@ export type WfAction =
    */
   | { type: 'git'; nodeId: string; operation: WfGitOperation; branch?: string; base?: string; message?: string; remote?: string }
   | { type: 'done'; nodeId: string; merged: boolean }
+  /**
+   * Только воркфлоу глобальной задачи: вход в `fork` — граф идёт сразу по всем путям. `branches` — первый шаг каждого
+   * пути в порядке `node.branches` (условия пройдены насквозь), его действие исполняется как обычное. Позиции путей
+   * (`Run.lanes`) заводит store, `Run.stage` остаётся на `fork` до слияния.
+   */
+  | { type: 'fork'; nodeId: string; branches: WfBranchStep[] }
+  /**
+   * Только воркфлоу глобальной задачи: путь пришёл в `join` и ждёт остальные пути разветвления `forkId`. Эффекта нет:
+   * когда пришли все, store закрывает разветвление и идёт от `join` по `next` (барьер — в store, функции здесь чистые).
+   */
+  | { type: 'join'; nodeId: string; forkId: string }
   /** Идти дальше нельзя: задача стоит в `nodeId`, нужен человек или координатор. */
   | { type: 'blocked'; nodeId: string; reason: string }
+
+/**
+ * Первый шаг пути разветвления (`WfAction` `fork`). `stage.nodeId` — где встаёт путь; `blocked` (у порта нет ребра,
+ * вложенный `fork`) — путь остался на самой ноде `fork`. `stage.visits` у всех путей и у `fork` одинаковые: счётчики
+ * заходов на весь прогон общие (ноды разных путей не пересекаются).
+ */
+export interface WfBranchStep {
+  /** Id пути прогона: `<fork>:<branchId>` (`RunLane.id`). */
+  laneId: string
+  branchId: string
+  stage: WfStage
+  action: WfAction
+}
 
 export interface WfContext {
   /** Роль рабочей задачи — для условия `role`. Воркфлоу глобальной задачи (`scope: 'run'`) роли не имеет. */
@@ -1476,6 +1679,13 @@ export function stageAction(wf: Workflow, stage: WfStage, ctx: WfContext): WfAct
       return gitAction(node)
     case 'end':
       return { type: 'done', nodeId: node.id, merged: node.merged ?? false }
+    case 'fork': {
+      if (ctx.scope !== 'run') return runOnlyBlocked(node, ctx)
+      const step = forkStep(wf, node, stage, ctx)
+      return typeof step === 'string' ? { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: ${step}` } : step.action
+    }
+    case 'join':
+      return joinAction(wf, node, ctx)
     default:
       // start и condition не бывают позицией задачи: nextStage проходит их сразу.
       return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}» не может быть этапом задачи` }
@@ -1513,6 +1723,43 @@ function decisionAction(node: Extract<WfNode, { type: 'decision' }>, ctx: WfCont
   return { type: 'create_decision', nodeId: node.id, roleId }
 }
 
+/** `fork`/`join` вне графа глобальной задачи: пути подзадачи и граф по подзадачам параллельных позиций не имеют. */
+function runOnlyBlocked(node: Extract<WfNode, { type: 'fork' | 'join' }>, ctx: WfContext): WfAction {
+  const what = `«${NODE_TYPE_TITLES[node.type]}»`
+  const reason = ctx.scope === 'subtask' ? `${what} недоступно в пути подзадачи` : `${what} работает только в воркфлоу глобальной задачи`
+  return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: ${reason}` }
+}
+
+/** Действие ноды `join`: путь ждёт остальные. Парного `fork` нет (граф в обход валидации) — `blocked`. */
+function joinAction(wf: Workflow, node: Extract<WfNode, { type: 'join' }>, ctx: WfContext): WfAction {
+  if (ctx.scope !== 'run') return runOnlyBlocked(node, ctx)
+  const forkId = typeof node.forkId === 'string' ? node.forkId : ''
+  if (!wf.nodes.some((n) => n.id === forkId && n.type === 'fork')) {
+    return { type: 'blocked', nodeId: node.id, reason: `нода «${wfNodeTitle(node)}»: не указано разветвление, пути которого она сводит` }
+  }
+  return { type: 'join', nodeId: node.id, forkId }
+}
+
+/**
+ * Вход в `fork` (`stage` — уже на нём, заход посчитан): первый шаг каждого пути от его порта, как обычный `nextStage`
+ * (условия насквозь), без права встать на другой `fork` — вложенность запрещена. Счётчики заходов путей сливаются в
+ * общие. Строка — у ноды нет ни одного пути (граф в обход валидации).
+ */
+function forkStep(wf: Workflow, fork: Extract<WfNode, { type: 'fork' }>, stage: WfStage, ctx: WfContext): WfStep | string {
+  const ids = forkBranchIds(fork)
+  if (ids.length === 0) return 'у разветвления нет путей'
+  const visits = { ...stage.visits }
+  const steps = ids.map((branchId) => {
+    const step = walk(wf, { nodeId: fork.id, visits: { ...visits } }, branchId, ctx, false)
+    Object.assign(visits, step.stage.visits)
+    return { branchId, step }
+  })
+  const branches: WfBranchStep[] = steps.map(({ branchId, step }) => ({
+    laneId: laneId(fork.id, branchId), branchId, stage: { nodeId: step.stage.nodeId, visits: { ...visits } }, action: step.action
+  }))
+  return { stage: { nodeId: fork.id, visits }, action: { type: 'fork', nodeId: fork.id, branches } }
+}
+
 /**
  * Действие ноды `git`. Граф с неполной нодой (сохранён старым кодом или правкой файла в обход валидации) —
  * `blocked`: это ошибка настройки, а не исход `error`, который описывает отказ самой git-операции.
@@ -1546,6 +1793,15 @@ function gitAction(node: Extract<WfNode, { type: 'git' }>): WfAction {
  * задача остаётся на прежнем этапе.
  */
 export function nextStage(wf: Workflow, stage: WfStage, outcome: WfPort, ctx: WfContext): WfStep {
+  return walk(wf, stage, outcome, ctx, true)
+}
+
+/**
+ * Шаг `nextStage`. В графе глобальной задачи цель-`fork` раскрывается в пути (`forkStep`): задача встаёт на `fork`, а
+ * действие `fork` несёт первые шаги путей. `forkAllowed: false` — шаг внутри пути: встать на `fork` значит вложить
+ * разветвление, это `blocked` без движения.
+ */
+function walk(wf: Workflow, stage: WfStage, outcome: WfPort, ctx: WfContext, forkAllowed: boolean): WfStep {
   const blocked = (reason: string): WfStep => ({ stage, action: { type: 'blocked', nodeId: stage.nodeId, reason } })
   const byId = new Map(wf.nodes.map((n) => [n.id, n]))
   const from = byId.get(stage.nodeId)
@@ -1561,6 +1817,11 @@ export function nextStage(wf: Workflow, stage: WfStage, outcome: WfPort, ctx: Wf
     const to = byId.get(edge.to)
     if (!to) return blocked(`нода «${wfNodeTitle(current)}»: переход ${out} ведёт в несуществующую ноду «${edge.to}»`)
     visits[to.id] = (visits[to.id] ?? 0) + 1
+    if (to.type === 'fork' && ctx.scope === 'run') {
+      if (!forkAllowed) return blocked(`нода «${wfNodeTitle(to)}»: разветвление внутри пути другого разветвления не поддерживается`)
+      const step = forkStep(wf, to, { nodeId: to.id, visits }, ctx)
+      return typeof step === 'string' ? blocked(`нода «${wfNodeTitle(to)}»: ${step}`) : step
+    }
     if (to.type !== 'condition') {
       const next: WfStage = { nodeId: to.id, visits }
       return { stage: next, action: stageAction(wf, next, ctx) }
@@ -1666,6 +1927,10 @@ export interface WfStageInfo {
   question?: string
   /** Варианты ноды `decision` в порядке редактора; их id — ключи `next`. */
   options?: WfDecisionOption[]
+  /** Пути ноды `fork` в порядке редактора (название — id, если его нет); их id — ключи `next`. */
+  branches?: WfForkBranch[]
+  /** Нода `join`: какое разветвление она сводит. */
+  forkId?: string
   /** Исход (у `decision` — id варианта) → «название (id)» ноды, куда он ведёт. */
   next: Partial<Record<WfPort, string>>
 }
@@ -1712,6 +1977,8 @@ export function describeWorkflow(wf: Workflow): WfStageInfo[] {
       if (stage?.showcase) info.showcase = stage.showcase
     }
     if (n.type === 'condition') info.condition = conditionText(n.test, byId)
+    if (n.type === 'fork') info.branches = forkBranches(n)
+    if (n.type === 'join' && typeof n.forkId === 'string' && n.forkId) info.forkId = n.forkId
     if (n.type === 'git') {
       const a = gitAction(n)
       if (a.type === 'git') {

@@ -67,5 +67,10 @@ export const WF_NODE_HELP: Readonly<Record<WfNodeType, WfNodeHelp>> = {
       'config.wf.help.git.fieldOperation', 'config.wf.help.git.fieldMessage', 'config.wf.help.git.fieldRemote'
     ])
   },
+  get fork() {
+    // Порты — пути самой ноды (`wfPorts`), у типа их нет: смысл исхода — название пути.
+    return help('fork', [], ['config.wf.help.fork.fieldBranches'])
+  },
+  get join() { return help('join', ['next'], ['config.wf.help.join.fieldFork']) },
   get end() { return help('end', [], ['config.wf.help.end.fieldMerged', 'config.wf.help.end.fieldColumn']) }
 }

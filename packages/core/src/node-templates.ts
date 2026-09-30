@@ -12,7 +12,7 @@ export type WfTemplateNode = DistributiveOmit<WfNode, 'id' | 'x' | 'y'>
 
 /**
  * Именованная настроенная нода: тип, роли, инструкции, показ и (у `work`) путь подзадачи. Шаблоном может быть любая
- * нода, кроме `start`. Версий нет: вставка — копия, `updatedAt` нужен редактору, чтобы подсказать «шаблон изменился».
+ * нода, кроме `start`, `fork` и `join`. Версий нет: вставка — копия, `updatedAt` нужен редактору, чтобы подсказать «шаблон изменился».
  */
 export interface WfNodeTemplate {
   id: string
@@ -78,6 +78,11 @@ export function validateNodeTemplate(
   }
   if (node.type === 'start') {
     errors.push(known('templateNodeStart', { template: name }))
+    return { errors, warnings }
+  }
+  if (node.type === 'fork' || node.type === 'join') {
+    // Пара fork/join держится на рёбрах и ссылке `forkId`: поштучная вставка копии дала бы непарную ноду.
+    errors.push(known('templateNodeFork', { template: name }))
     return { errors, warnings }
   }
 

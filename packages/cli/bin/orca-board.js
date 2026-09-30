@@ -73,7 +73,11 @@ const HELP = `orca-board — управление доской агентов
                                           tasks — подзадачи захода, tasksDoneAt — когда они закрылись), history —
                                           последние 50 переходов (нода, заход, исход; у «Решения ИИ» — decision:
                                           выбранный вариант, обоснование, кто решил); scope: task — прежний
-                                          воркфлоу по подзадачам (после worker_done: проверки, человек, мерж)
+                                          воркфлоу по подзадачам (после worker_done: проверки, человек, мерж).
+                                          Внутри разветвления (нода fork — пути идут параллельно) — lanes: этапы
+                                          всех путей (как stage, плюс lane — id пути, laneTitle — его название,
+                                          arrived — путь пришёл в слияние и ждёт остальные); stage — первый из них;
+                                          у fork в stages — branches (пути), у join — forkId, в history — lane
   task list [--run <id>]                  все задачи проекта; с --run — только подзадачи глобальной задачи
                                           (у каждой — priority: urgent|high|normal|low);
                                           у задачи в воркфлоу — stage (этап: nodeId и число заходов visits),
@@ -83,6 +87,9 @@ const HELP = `orca-board — управление доской агентов
               воркфлоу глобальной задачи: подзадачи создаются только на этапе «Работа» (после stage_started; на другом
               этапе — ошибка «дождись stage_started»); роль — из ролей этапа (у этапа роли не заданы — любая рабочая
               роль типа), чужая — ошибка; у этапа одна роль — --role можно не указывать
+              [--stage <id этапа>]   этап «Работа», к которому относится подзадача (nodeId из stage_started или
+                                          workflow show); обязателен, когда открыто несколько этапов сразу (пути
+                                          разветвления), при одном открытом этапе не нужен
               [--answer-for human|coordinator]   задача-ответ: результат — ответ в markdown, не код;
                                           human — ответ читает человек, coordinator — ты сам
               [--priority urgent|high|normal|low]   приоритет, по умолчанию normal
@@ -100,10 +107,12 @@ const HELP = `orca-board — управление доской агентов
                                           сам (до Ctrl+C / SIGTERM); --follow важнее --wait
   runs list                               прогоны координатора
   runs close [--run <id>]                 закрыть прогон
-  stage finish [--run <id>] [--summary "..." | --summary-file summary.md]
+  stage finish [--run <id>] [--stage <id этапа>] [--summary "..." | --summary-file summary.md]
                                           воркфлоу глобальной задачи: закрыть этап «Работа» — граф идёт дальше (проверка,
                                           человек, мерж…). Все подзадачи этапа должны быть в done (stage_tasks_done),
-                                          иначе ошибка. --summary — сводка этапа для следующих этапов и человека
+                                          иначе ошибка. --summary — сводка этапа для следующих этапов и человека;
+                                          --stage — какой этап закрыть (nodeId), обязателен, когда открыто несколько
+                                          этапов сразу (пути разветвления): закрывается один, остальные идут дальше
   runs finish [--run <id>] [--summary "..." | --summary-file summary.md]
                                           прогоны старого формата (воркфлоу по подзадачам): координатор закончил работу
                                           (после run_done; если все подзадачи в done — закрывает прогон сам); --summary —
@@ -300,6 +309,10 @@ if (params.global === true) {
 }
 if (params.run === true) {
   console.error('ошибка: --run требует id прогона')
+  process.exit(1)
+}
+if ((method === 'task.create' || method === 'stage.finish') && params.stage === true) {
+  console.error('ошибка: --stage требует id этапа (nodeId из stage_started или workflow show)')
   process.exit(1)
 }
 // Файлы читает CLI (он в cwd воркера), серверу уходит текст: ответ задачи-ответа, контекст вопроса.

@@ -108,6 +108,12 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
       return { ...pos, type, operation: 'commit', message: '' }
     case 'end':
       return { ...pos, type, merged: false }
+    case 'fork':
+      // Два пути с id по маске `WF_DECISION_OPTION_ID`; названия правятся в инспекторе.
+      return { ...pos, type, branches: [1, 2].map((n) => ({ id: `path_${n}`, label: t('config.wf.fork.branchLabel', { n }) })) }
+    case 'join':
+      // Парное разветвление выбирается в инспекторе: пустое подсветит валидация (`joinNoFork`).
+      return { ...pos, type, forkId: wf.nodes.find((n) => n.type === 'fork')?.id ?? '' }
     default:
       return { ...pos, type }
   }
