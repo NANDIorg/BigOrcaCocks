@@ -947,7 +947,7 @@ Git: ветка и worktree прогона **одни на все пути**. С
 в опциях — на какой ноде вынесено решение; прогон на ней не стоит — ошибка «граф ушёл дальше». `runStage(runId,
 fallback?, nodeId?)` — одна позиция, `runStages(runId, fallback?)` — все (у пути `lane`, `laneTitle`, `arrived`);
 `assertStageAcceptsTasks(runId, nodeId?)`, `stageDefaultRole(runId, nodeId?)`, `createTask({stage?})` — этап по id;
-`blockRunStage(runId, reason, nodeId?)`. Для прогона без путей всё ведёт себя как раньше: в снимке нет `lanes`, в payload —
+`blockRunStage(runId, reason, nodeId?)`. Для прогона без путей всё ведёт себя как раньше: в снимке нет `lanes`, в payload нет
 `lane` (тест «регрессия: прогон без fork» в `workflow-lanes.test.ts`).
 
 **Движок main** (`workflow-run.ts`) исполняет **список** действий перехода (`RunStepResult.actions`), по одному на позицию:
