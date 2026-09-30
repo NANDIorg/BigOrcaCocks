@@ -1,12 +1,11 @@
 import type React from 'react'
+import { useState } from 'react'
 import { useT } from './i18n'
+import { ImageLightbox } from './ImageLightbox'
+import { viewerItems, type ViewerThumb } from './imageViewer'
 
 /** Одна миниатюра: `url` нет — ещё грузится (или `failed`). */
-export interface ImageThumb {
-  key: string
-  url?: string
-  failed?: boolean
-}
+export type ImageThumb = ViewerThumb
 
 interface Props {
   items: ImageThumb[]
@@ -14,48 +13,68 @@ interface Props {
   reading?: number
   /** Убрать картинку; нет — миниатюры только для просмотра. */
   onRemove?(key: string): void
-  /** Клик или Enter по миниатюре — увеличить; нет — миниатюра не кликабельна. */
-  onOpen?(index: number): void
   disabled?: boolean
+  /** Тесное место (карточка запроса, лента): 48 px вместо 72. */
+  compact?: boolean
 }
 
 /**
- * Ряд миниатюр картинок с кнопкой удаления и (по желанию) открытием. Общий для вставки (`CoordinatorModal`,
- * `GlobalTaskModal`) и просмотра сохранённых картинок задачи.
+ * Ряд миниатюр приложенных картинок: клик открывает картинку на весь экран (`ImageLightbox`), «×» убирает.
+ * Общий для всех мест с вложениями: вставка в цель координатора и глобальную задачу, сохранённые картинки задачи
+ * (`RunImageGallery`), поля замечаний (`ImageAttachField`). Открытую картинку помним по ключу — просмотр
+ * переживает удаление соседней.
  */
-export function ImageAttachments({ items, reading = 0, onRemove, onOpen, disabled = false }: Props): React.JSX.Element | null {
+export function ImageAttachments({ items, reading = 0, onRemove, disabled = false, compact = false }: Props): React.JSX.Element | null {
   const t = useT()
+  const [openKey, setOpenKey] = useState<string | null>(null)
   if (items.length === 0 && reading === 0) return null
+  const viewer = viewerItems(items, openKey)
   return (
-    <div className="coord-images">
+    <div className={compact ? 'attach-images compact' : 'attach-images'}>
       {items.map((img, i) => (
-        <div key={img.key} className="coord-image">
-          {img.url && onOpen ? (
-            <button type="button" className="coord-image-open" title={t('common.image.open', { n: i + 1 })} aria-label={t('common.image.open', { n: i + 1 })} onClick={() => onOpen(i)}>
-              <img src={img.url} alt={t('common.image.alt', { n: i + 1 })} />
+        <div key={img.key} className="attach-image">
+          {img.url && !img.failed ? (
+            <button
+              type="button"
+              className="attach-image-open"
+              title={t('common.image.open', { n: i + 1 })}
+              aria-label={t('common.image.open', { n: i + 1 })}
+              onClick={(e) => {
+                // Карточка запроса кликабельна целиком — клик по миниатюре не должен её выбирать.
+                e.stopPropagation()
+                setOpenKey(img.key)
+              }}
+            >
+              <img src={img.url} alt={t('common.image.alt', { n: i + 1 })} decoding="async" />
             </button>
-          ) : img.url ? (
-            <img src={img.url} alt={t('common.image.alt', { n: i + 1 })} />
           ) : (
-            <div className="coord-image-loading" role="img" aria-label={t('common.image.alt', { n: i + 1 })} title={img.failed ? t('common.image.loadFailed') : undefined}>
+            <div className="attach-image-loading" role="img" aria-label={t('common.image.alt', { n: i + 1 })} title={img.failed ? t('common.image.loadFailed') : undefined}>
               {img.failed ? '!' : '…'}
             </div>
           )}
           {onRemove && (
             <button
               type="button"
-              className="coord-image-remove"
+              className="attach-image-remove"
               title={t('common.image.remove')}
               aria-label={t('common.image.removeN', { n: i + 1 })}
               disabled={disabled}
-              onClick={() => onRemove(img.key)}
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemove(img.key)
+              }}
             >
               ×
             </button>
           )}
         </div>
       ))}
-      {reading > 0 && <div className="coord-image coord-image-loading">…</div>}
+      {reading > 0 && (
+        <div className="attach-image">
+          <div className="attach-image-loading">…</div>
+        </div>
+      )}
+      {viewer && <ImageLightbox urls={viewer.urls} index={viewer.index} onIndex={(j) => setOpenKey(viewer.keys[j] ?? null)} onClose={() => setOpenKey(null)} />}
     </div>
   )
 }
