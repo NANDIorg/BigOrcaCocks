@@ -10,6 +10,7 @@ import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams, singleOption } from './request-params'
 import { settingsPatchFromParams } from './settings-params'
+import { withoutExtraArgs } from './launch-extra-args'
 import { runnableWorkflow, type Project, type PermissionMode } from './projects'
 import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
 
@@ -742,9 +743,11 @@ const handlers: Record<string, Handler> = {
     return { source: 'type', typeId: id, typeTitle: title, custom, stages: describeWorkflow(workflow) }
   },
   'events.list': (_r, _d, store) => store.listEvents(),
-  'agents.list': (_r, deps) => deps.agents(),
+  // `supportsExtraArgs` — признак для renderer (IPC `agents:list`), в ответ сокета не идёт: контракт прежний.
+  'agents.list': (_r, deps) => deps.agents().map(({ supportsExtraArgs: _supportsExtraArgs, ...agent }) => agent),
   // Роли типа глобальной задачи (--run, координатору — его прогон) с признаком, включён ли их агент в проекте:
   // координатору видно, какие роли можно назначать. Без прогона — типа --type или типа проекта по умолчанию.
+  // Флагов запуска роли (`extraArgs`) в ответе нет, как и в любом ответе сокета (`okLine`).
   'roles.list': (r, deps, store) => {
     const enabled = new Set(deps.agents().filter((a) => a.enabled).map((a) => a.id))
     return typeOf(r, deps, store).roles.map((role) => ({ ...role, agentEnabled: enabled.has(role.agent) }))
@@ -1010,7 +1013,25 @@ const handlers: Record<string, Handler> = {
 const appHandlers: Record<string, (req: Request, deps: SocketDeps) => unknown> = {
   'projects.list': (_r, deps) => deps.projects(),
   'settings.get': (_r, deps) => deps.settings(),
-  'settings.set': (r, deps) => deps.setSettings(settingsPatchFromParams(r.params))
+  'settings.set': (r, deps) => {
+    const patch = settingsPatchFromParams(r.params)
+    // Смена агента ассистента — как `roles.update --agent`: другой процесс со следующего диалога,
+    // без --yes агент (в том числе сам ассистент) не переключает её молча.
+    const agent = patch.assistant?.agent
+    if (agent !== undefined && r.params.yes !== true) {
+      const current = deps.settings().assistant.agent
+      if (agent !== current) requireYes(r, `нужно подтверждение: смена агента ассистента с «${current}» на «${agent}» — модель и effort сбросятся, если не заданы тем же вызовом; действует с нового диалога`)
+    }
+    return deps.setSettings(patch)
+  }
+}
+
+/**
+ * Строка успешного ответа. Флаги запуска (`extraArgs` ролей, ассистента и снимков типа в прогонах) вырезаются из
+ * любого ответа: их видит и меняет только человек в UI (`withoutExtraArgs`).
+ */
+function okLine(id: unknown, result: unknown): string {
+  return JSON.stringify({ id, ok: true, result }, withoutExtraArgs)
 }
 
 export function startSocketServer(path: string, socketDeps: SocketDeps): Server {
@@ -1035,7 +1056,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
         new Promise((resolve) => {
           if (!open()) return resolve(false)
           try {
-            sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n', (err) => resolve(!err))
+            sock.write(okLine(req.id, result) + '\n', (err) => resolve(!err))
           } catch {
             resolve(false)
           }
@@ -1044,7 +1065,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
     try {
       if (appHandler) {
         const result = await appHandler({ ...req, params: req.params ?? {} }, socketDeps)
-        sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
+        sock.write(okLine(req.id, result) + '\n')
         return
       }
       if (!handler) throw new Error(`неизвестная команда: ${req.method}`)
@@ -1053,7 +1074,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       const source = req.dispatchId ? 'worker' : 'cli'
       const result = await withStatusSource(source, () => handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream))
       if (result === STREAM) return
-      sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
+      sock.write(okLine(req.id, result) + '\n')
     } catch (e) {
       sock.write(JSON.stringify({ id: req.id, ok: false, error: (e as Error).message }) + '\n')
     }

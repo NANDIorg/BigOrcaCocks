@@ -3,10 +3,11 @@ import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
+  TaskStore, isAgentKind, DEFAULT_ASSISTANT_SETTINGS, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
+  buildTaskTypeFile, serializeTaskTypeFile, taskTypeFileName, type TaskTypeFileMeta,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfMigrationNote, type WfValidationContext,
   type WfNodeTemplate, type WfTemplateNode,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
@@ -14,7 +15,7 @@ import {
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
 import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
-import { PROJECTS_FILE_VERSION, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
+import { PROJECTS_FILE_VERSION, libraryDefaultTypeId, migrateAssistant, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
 import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
 import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
@@ -23,6 +24,8 @@ import type {
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 import { runImagesRoot, removeRunImagesDir } from './run-images'
+import { loadedAssistantSettings, mergedAssistantSettings } from './assistant'
+import { extraArgsProblem } from './launch-extra-args'
 import { removeShowcaseDir, showcaseSnapshotsRoot } from './showcase-snapshot'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -158,7 +161,8 @@ function isAppLanguage(v: unknown): v is AppLanguage {
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   keepInBackground: true,
   notifications: DEFAULT_NOTIFICATION_SETTINGS,
-  updates: DEFAULT_UPDATE_SETTINGS
+  updates: DEFAULT_UPDATE_SETTINGS,
+  assistant: DEFAULT_ASSISTANT_SETTINGS
 }
 
 const UPDATE_SETTING_KEYS = Object.keys(DEFAULT_UPDATE_SETTINGS) as (keyof UpdateSettings)[]
@@ -186,6 +190,7 @@ export class ProjectManager {
   private stores = new Map<string, TaskStore>()
   private listeners = new Set<(projectId: string, store: TaskStore) => void>()
   private eventListeners = new Set<(projectId: string, events: OrcaEvent[]) => void>()
+  private openListeners = new Set<(projectId: string) => void>()
   private dataListeners = new Set<() => void>()
   private seenEvents = new Map<string, number>()
   private warnings: StateWarning[] = []
@@ -248,11 +253,15 @@ export class ProjectManager {
       const settingsSet = isObject(raw.settings) && Object.keys(raw.settings).length > 0
       const onboarding = loadedOnboarding(raw.onboarding, data.projects.length > 0 || settingsSet)
       data.onboarding = onboarding.value
+      // После онбординга: `settings.assistant`, записанный миграцией, — не признак того, что человек что-то настраивал.
+      const assistant = migrateAssistant(data)
+      data.taskTypes = assistant.taskTypes
+      if (assistant.settings) data.settings = assistant.settings
       return {
         data,
         ...(changed ? { legacyText: text } : {}),
         ...(migratedTypes.changed && !changed ? { workflowText: text } : {}),
-        ...(onboarding.changed ? { dirty: true } : {})
+        ...(onboarding.changed || assistant.changed ? { dirty: true } : {})
       }
     } catch (e) {
       // JSON разобрался, но содержимое не годится для нормализации — то же, что битый файл.
@@ -446,10 +455,7 @@ export class ProjectManager {
    * тип библиотеки (она не бывает пустой: последний тип не удаляется, пустая при загрузке засевается).
    */
   defaultTaskTypeId(): string {
-    const types = this.data.taskTypes ?? []
-    const id = this.data.defaultTaskTypeId
-    if (id && types.some((t) => t.id === id)) return id
-    return (types.find((t) => t.id === GENERAL_TASK_TYPE_ID) ?? types[0])?.id ?? GENERAL_TASK_TYPE_ID
+    return libraryDefaultTypeId(this.data.taskTypes ?? [], this.data.defaultTaskTypeId)
   }
 
   setDefaultTaskType(id: string): TaskTypesState {
@@ -574,13 +580,22 @@ export class ProjectManager {
     return saved.settings.roles!.find((r) => r.id === id)!
   }
 
-  /** Правка роли типа: title/agent/model/effort/description — только переданные поля (`undefined` не затирает прежнее). */
+  /**
+   * Правка роли типа: title/agent/model/effort/description — только переданные поля (`undefined` не затирает прежнее).
+   * Флаги запуска (`extraArgs`) отсюда не задаются — это путь CLI, а флаги меняет только человек в UI. Смена агента
+   * их сбрасывает: флаги одного агента другому не подходят, и агент не должен унаследовать их молча.
+   */
   updateRole(typeId: string, roleId: string, patch: Partial<{ title: string; agent: string; model: string; effort: string; description: string }>): Role {
     const t = this.requireType(typeId)
     const roles = t.settings.roles ?? DEFAULT_ROLES
     if (!roles.some((r) => r.id === roleId)) throw new OrcaError('type.noRole', { title: t.title, role: roleId })
     const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
-    const saved = this.patchTaskType(typeId, { roles: roles.map((r) => (r.id === roleId ? { ...r, ...defined } : r)) })
+    const patched = (r: Role): Role => {
+      const { extraArgs, ...rest } = r
+      const next = { ...rest, ...defined } as Role
+      return extraArgs !== undefined && next.agent === r.agent ? { ...next, extraArgs } : next
+    }
+    const saved = this.patchTaskType(typeId, { roles: roles.map((r) => (r.id === roleId ? patched(r) : r)) })
     return saved.settings.roles!.find((r) => r.id === roleId)!
   }
 
@@ -613,6 +628,18 @@ export class ProjectManager {
     const own = t.settings.workflow
     if (own && own.version > WORKFLOW_VERSION) throw futureWorkflowError(own.version)
     return { typeId: t.id, title: t.title, workflow: own ? clone(own) : resolveTaskType(t).workflow, custom: own !== undefined }
+  }
+
+  /**
+   * Текст файла экспорта типа и имя по умолчанию (формат — core/task-type-file.ts). Берётся сохранённый тип, а не
+   * черновики редакторов. Граф не валидируется — бэкап сломанного типа тоже нужен, — но граф будущей версии
+   * отвергается (`taskTypeWorkflow`): файл формата 1 не должен уносить граф, которого это приложение не понимает.
+   * `meta` передаёт вызывающий код: версия приложения и время — не дело менеджера.
+   */
+  exportTaskType(id: string, meta: TaskTypeFileMeta): { fileName: string; text: string } {
+    const t = this.requireType(id)
+    this.taskTypeWorkflow(id)
+    return { fileName: taskTypeFileName(t.title), text: serializeTaskTypeFile(buildTaskTypeFile(t, meta)) }
   }
 
   // ---------- библиотека шаблонов нод ----------
@@ -775,7 +802,8 @@ export class ProjectManager {
       keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground,
       ...(isAppLanguage(s.language) ? { language: s.language } : {}),
       notifications: normalizeNotificationSettings(s.notifications),
-      updates: normalizeUpdateSettings(s.updates)
+      updates: normalizeUpdateSettings(s.updates),
+      assistant: loadedAssistantSettings(s.assistant)
     }
   }
 
@@ -804,6 +832,7 @@ export class ProjectManager {
       }
       next.updates = merged
     }
+    if (patch.assistant !== undefined) next.assistant = mergedAssistantSettings(this.settings().assistant, patch.assistant)
     this.data.settings = next
     this.save()
     return this.settings()
@@ -906,6 +935,9 @@ export class ProjectManager {
       // После запуска приложения ни одного координатора в живых нет: вопросы, которые ждали их, — человеку.
       for (const run of created.listRuns()) created.escalateOpenQuestions(run.id)
       s = created
+      // Доска открыта впервые за запуск: подписчики (добор прерванных этапов в index.ts) — после того, как store
+      // уже в `stores`, иначе их повторный `store(id)` открыл бы доску второй раз.
+      this.openListeners.forEach((fn) => fn(id))
     }
     return s
   }
@@ -948,6 +980,12 @@ export class ProjectManager {
     return () => this.eventListeners.delete(fn)
   }
 
+  /** Доска проекта загружена с диска — один раз за запуск приложения (store открывается лениво, при первом обращении). */
+  onStoreOpened(fn: (projectId: string) => void): () => void {
+    this.openListeners.add(fn)
+    return () => this.openListeners.delete(fn)
+  }
+
   /**
    * Изменилось что-то в данных приложения/проектов (`projects.json`: настройки, список и группы проектов,
    * библиотека типов задач и её роли, шаблоны нод) — независимо от того, пришла ли правка из IPC (renderer)
@@ -977,9 +1015,13 @@ function validateAgentRules(text: unknown): string | undefined {
 
 /**
  * Роли: непустые уникальные id, непустые названия, известный агент; назначение, модель, effort, системный промпт —
- * строки или отсутствуют. Пустое назначение системной роли заменяется назначением по умолчанию.
+ * строки или отсутствуют; флаги запуска (`extraArgs`) — строка, которую разбирает `parseExtraArgs`.
+ * Пустое назначение системной роли заменяется назначением по умолчанию.
+ * Результат собирается из известных полей: новое поле роли без правки здесь молча теряется при сохранении и загрузке.
+ * `lenient` — чтение projects.json (`loadedRoles`): негодные флаги отбрасываются, а не роняют роль — её настраивали
+ * руками, и копии у неё нет; запуск всё равно разбирает флаги заново (`launchExtraArgs`).
  */
-function validateRoles(roles: Role[]): Role[] {
+function validateRoles(roles: Role[], lenient = false): Role[] {
   if (!Array.isArray(roles) || roles.length === 0) throw new OrcaError('role.noneLeft')
   const seen = new Set<string>()
   return withDefaultDescriptions(roles.map((r, i) => {
@@ -997,11 +1039,30 @@ function validateRoles(roles: Role[]): Role[] {
     // Назначение и промпт хранятся как введены (многострочные, без trim — иначе автосохранение съедало бы ввод); из одних пробелов — поля нет.
     const description = r.description?.trim() ? r.description : undefined
     const systemPrompt = r.systemPrompt?.trim() ? r.systemPrompt : undefined
+    const extraArgs = validRoleExtraArgs(r, lenient)
     return {
       id: r.id, title: r.title.trim(), ...(description ? { description } : {}), agent: r.agent,
-      ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(systemPrompt ? { systemPrompt } : {})
+      ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(systemPrompt ? { systemPrompt } : {}),
+      ...(extraArgs ? { extraArgs } : {})
     }
   }))
+}
+
+/**
+ * Флаги запуска роли: строка как введена (без trim, как промпт), из одних пробелов — поля нет. Не строка или
+ * не разбирается `parseExtraArgs` — ошибка; при загрузке файла (`lenient`) такое поле молча отбрасывается.
+ */
+function validRoleExtraArgs(r: Role, lenient: boolean): string | undefined {
+  if (r.extraArgs === undefined) return undefined
+  if (typeof r.extraArgs !== 'string') {
+    if (lenient) return undefined
+    throw new OrcaError('role.extraArgsNotString', { id: r.id })
+  }
+  if (!r.extraArgs.trim()) return undefined
+  const reason = extraArgsProblem(r.extraArgs)
+  if (!reason) return r.extraArgs
+  if (lenient) return undefined
+  throw new OrcaError('role.extraArgsInvalid', { id: r.id, reason })
 }
 
 /**
@@ -1269,16 +1330,17 @@ function loadedWorkflowNotes(v: unknown): WfMigrationNote[] {
 /**
  * Роли типа из projects.json: целиком по `validateRoles`, а если список не проходит — по одной (битые и
  * повторные id выпадают, остальные остаются). Не осталось ни одной — поля нет, тип берёт роли по умолчанию.
+ * Негодные флаги запуска роль не роняют — отбрасывается только поле (`validateRoles`, `lenient`).
  */
 function loadedRoles(v: unknown): Role[] | undefined {
   if (!Array.isArray(v)) return undefined
   try {
-    return validateRoles(v as Role[])
+    return validateRoles(v as Role[], true)
   } catch {
     const seen = new Set<string>()
     const roles = v.flatMap((r: Role) => {
       try {
-        const [role] = validateRoles([r])
+        const [role] = validateRoles([r], true)
         if (seen.has(role.id)) return []
         seen.add(role.id)
         return [role]

@@ -24,7 +24,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, feedbackImages?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, stageOf?, gateFor?, statusHistory?, stageHistory? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, feedbackImages?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, stageBlock?, stageOf?, gateFor?, statusHistory?, stageHistory? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль типа задачи прогона (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -85,6 +85,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     задача с `stage`, но без `stageHistory`, восстанавливается из событий `stage_changed` по `taskId` (лог не
     обрезается; `by: 'app'`), а если лога нет или он не доходит до текущего этапа — добавляется запись
     `migrated: true` на текущую ноду с `at = updatedAt`.
+  - **Остановка этапа** (`stageBlock?: TaskStageBlock` = `{ nodeId, reason, at }`) — последний `workflow_blocked` задачи:
+    эффект ноды не выполнен (мерж упал не конфликтом, воркер или проверка не запустились, переход дал `blocked`).
+    Ставят `blockStage` и `blocked` из `advanceStage`/`enterWork` (`markStageBlocked` в `store.ts`), `reason` —
+    целиком (в событии он урезан `short()`). Снимают любой переход `advanceStage`, `enterWork`, `reopenTask` и
+    `startDispatch`. Зачем хранить: причина видна человеку не только в одноразовом уведомлении, а main отличает
+    остановленный этап (о нём уже сообщили) от эффекта, прерванного рестартом. Поле необязательное — снапшот старой
+    версии читается как «не остановлена», миграции формата нет; задачи, застрявшие на `merge` до появления поля,
+    метки не имеют.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
   - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
@@ -95,9 +103,15 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
-  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `assistant`, `developer`, `reviewer`, `qa`
+  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»);
+  `extraArgs?` — флаги пользователя к команде запуска агента: строка, как её ввёл человек (не тримится; пусто или одни
+  пробелы — поля нет), в argv её разбирает `parseExtraArgs` (см. «Агенты» → «Флаги пользователя»), применяется со
+  следующего запуска; меняется только в UI. `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
   (с заполненным `description`; пустое назначение системной роли — в т.ч. у ролей, созданных до появления поля, —
-  подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`);
+  подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`). Ассистент ролью не является:
+  его настройки — `AssistantSettings { agent, model?, effort?, systemPrompt?, extraArgs? }` (`packages/core/src/types.ts`;
+  `extraArgs` — те же флаги пользователя, что у роли; дефолт
+  `DEFAULT_ASSISTANT_SETTINGS = { agent: 'claude' }`) в `AppSettings.assistant`, см. «Ассистент»;
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
 - `BoardColumn { id, title, color, kind }`. `kind` — системный (`backlog`, `ready`, `in_progress`,
   `needs_input`, `review`, `done`) либо `custom`. По `kind` store делает автоматические переходы,
@@ -141,7 +155,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     человек «посмотреть глазами»), «Бэкенд» (ревьюер на `opus`, ревью → прогон тестов ролью `qa`), «Фронтенд и бэкенд»
     (`fullstack`: роли `frontend` / `backend`, человек только для задач `frontend`), «Мобильная разработка» (`mobile`:
     ревью → человек), «QA: автотесты» (`autotests`: `autotester`), «Документация» (`docs`: `writer`, ревью человеком).
-    У всех `coordinator` и `assistant` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы
+    У всех `coordinator` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы
     собраны `pipelineWorkflow`. main кладёт заготовки в библиотеку **один раз** (`seededTaskTypes`, флаг
     `taskTypesSeeded` в projects.json), дальше это обычные типы: правятся целиком, переименовываются и удаляются, как
     созданные человеком; удалённая не возвращается после рестарта, новая версия приложения их не перетирает.
@@ -154,6 +168,33 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `'snapshot'`) → тип проекта по умолчанию → `general` → первый тип библиотеки (`'default'`). `types` — вся
     библиотека; заготовка `general` из кода — только при пустом списке (старый main у renderer).
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
+  - **Файл экспорта типа** (`packages/core/src/task-type-file.ts`, без node-импортов) — один JSON со **снимком
+    эффективных настроек** типа, теми значениями, с которыми пойдёт глобальная задача. Файл самодостаточен: его можно
+    читать, хранить в git и передать коллеге, не зная встроенных значений приложения.
+    `TaskTypeFile {format, formatVersion, exportedAt, appVersion, type: {title, description?, settings}}`:
+    - `format` — метка `TASK_TYPE_FILE_FORMAT` (`orca-board.task-type`): отличает файл типа от файла графа (экспорт
+      воркфлоу) и от чужого JSON. `formatVersion` — версия **формата файла** (`TASK_TYPE_FILE_VERSION = 1`), не графа:
+      поднимается при несовместимой правке формата. У графа внутри своя версия (`workflow.version`), она сохраняется
+      как есть, и при загрузке такой граф подхватит `migrateWorkflow`.
+    - `exportedAt` (ISO 8601) и `appVersion` — `TaskTypeFileMeta`, их передаёт вызывающий код: функция чистая.
+    - `type.title`, `type.description` — как хранятся (после `trim`), без перевода заготовок: в файле данные, а не
+      подписи интерфейса. Пустого описания в файле нет.
+    - `type.settings` — `roles`, `workflow` и `permissionMode` есть **всегда**, раскрыты через `resolveTaskType`
+      (нет своих — `DEFAULT_ROLES`, `defaultWorkflow(roles)`, `auto`); `agentRules` — только непустые. Тип без своего
+      графа после загрузки файла получит зафиксированный граф — осознанная плата за самодостаточность.
+    - В графе сохраняются позиции нод и `node.column` (мягкая ссылка: неизвестную колонку исполнитель пропускает);
+      `node.templateId` **снимается** у всех нод, включая путь подзадачи `work.subflow`, — это ссылка на локальную
+      библиотеку шаблонов. Граф не валидируется: файл сломанного типа — тоже бэкап.
+    - **Не входит:** `id` типа, `workflowNotes`, признак «по умолчанию» и связи с проектами, шаблоны нод, состояние
+      агентов, прогоны и их снимки. Роли с выключенным на этой машине агентом остаются как есть.
+    - `file.type` по форме — `TaskTypeInput` без `id`: загрузка файла сводится к сохранению типа с обычной валидацией.
+    - `buildTaskTypeFile(type, meta)` строит файл из глубоких копий (правка файла не меняет тип),
+      `serializeTaskTypeFile(file)` — текст (UTF-8, отступ 2 пробела, `\n` в конце), `taskTypeFileName(title)` — имя
+      `task-type-<название>.json`: `\ / : * ? " < > |`, управляющие символы и пробелы заменяются на `-`, края (`-`, `.`)
+      срезаются, название — не длиннее 60 символов и не длиннее 200 байт UTF-8 (действует то, что строже; символ на
+      границе не рвётся), кириллица остаётся, пустое название — `task-type.json`. Лимит в байтах — потому что предел
+      имени на ext4 и других ФС Linux — 255 байт, а запись идёт через `<имя>.tmp`: 60 эмодзи дали бы 259 байт и
+      `ENAMETOOLONG`. Префикс уводит от зарезервированных имён Windows (`CON`, `NUL`…).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files, snapshot?, auto?}` — показ человеку с «Работы» (`docs/workflow.md`; `snapshot {at, files, bytes}` и `auto` выставляет только main, не сокет);
@@ -196,9 +237,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   правила агентов, режим разрешений) и `WorkflowDeps.run(runId)` (роли и граф типа для исполнителя воркфлоу) собираются
   из `projects.resolveRun`. Две глобальные задачи одного проекта разных типов стартуют воркеров с разными агентами,
   моделями и промптами и идут разными графами.
-- **Дефолтные роли**: `coordinator`, `assistant`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
-  `coordinator` и `assistant` — служебные (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
-  их нет, в редакторе ролей они в группе «Системная».
+- **Дефолтные роли**: `coordinator`, `developer`, `reviewer`, `qa` — все на `claude`, модель пустая, `description` заполнен.
+  `coordinator` — служебная (`SERVICE_ROLE_IDS`, `isTaskRole` в `packages/core/src/prompts.ts`): в «Новой задаче»
+  её нет, в редакторе ролей она в группе «Системная». Id `assistant` тоже остаётся в `SERVICE_ROLE_IDS`, хотя ролью типа
+  ассистент больше не бывает: id зарезервирован, задача с ролью `assistant` отвергается, роль из старых данных не станет рабочей.
 - **Удаление системных ролей**: любую роль, в том числе из `DEFAULT_ROLES`, можно удалить, кроме последней
   (`validateRoles`). Удалённая роль не возвращается сама: `?? DEFAULT_ROLES` срабатывает только у проекта без поля
   `roles`, а сохранённый массив всегда непустой. Редактор ролей (`RolesEditor.tsx`, логика — `renderer/src/roleRemoval.ts`)
@@ -213,6 +255,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются);
   `description` и `systemPrompt` — строки или отсутствуют, хранятся как введены (без trim), из одних пробелов → удаляются;
   у системных ролей (id из `DEFAULT_ROLES`) пустое `description` заменяется назначением по умолчанию.
+  `extraArgs` (флаги запуска) — строка, хранится как введена (без trim), из одних пробелов → удаляется; не строка —
+  `role.extraArgsNotString`, не разбирается `parseExtraArgs` (незакрытая кавычка, `--`, первый токен не флаг,
+  управляющий символ, лимиты) — `role.extraArgsInvalid` с причиной `extraArgs.<код>` (`extraArgsReason` в
+  `src/main/launch-extra-args.ts`; текст — на языке интерфейса, в сокет — по-русски). При **чтении** `projects.json`
+  (`loadedRoles` → `validateRoles(…, lenient)`) негодные флаги отбрасываются, а роль остаётся: иначе испорченная руками
+  строка уносила бы роль целиком. Флаги меняются только в UI (`taskTypes:save`): `addRole`/`updateRole` (путь CLI) их
+  не принимают, а `updateRole` со сменой агента их сбрасывает — флаги одного агента другому не подходят. Тесты —
+  `launch-extra-args.test.ts`.
 - **Валидация колонок** (`validateColumns`): хотя бы одна; непустые уникальные `id` и `title`;
   каждый системный `kind` ровно один раз (удалить или продублировать системную колонку нельзя),
   остальные — `custom`; пустой `color` → первый из `COLUMN_COLORS`. Порядок массива = порядок на доске.
@@ -224,15 +274,20 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   чтобы на доске не осталось задач с несуществующим статусом.
 - **Воркер** (`worker.ts`, `startWorker`): роль ищется по `task.roleId` в `ctx.roles` (нет → ошибка `missingRoleMessage`),
   агент — `getAgent(role.agent)`, модель и усилие — `role.model` / `role.effort` уходят в `invoke(..., { model, effort })`.
+  Флаги запуска роли разбирает `roleLaunchExtraArgs(role, 'worker.cannotStart')` (`launch-extra-args.ts`) и отдаёт в
+  `invoke(..., { extraArgs })` — **до** worktree, правки задачи и dispatch: негодная строка (правили `projects.json`
+  руками, старый снимок типа в прогоне) даёт «воркер не запустится: роль «id»: флаги запуска: …», задача в работу не уходит.
+  Разбор повторяется при каждом запуске и сохранению не доверяет. Флаги действуют со **следующего** запуска —
+  идущие агенты не меняются (как `systemPrompt`). В `Dispatch`, события и payload флаги не попадают.
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет в типе задачи (удалили в «Настройки → Типы задач») — ошибка «координатор не запустится: …» до создания прогона.
+  Так же, до `createRun`, разбираются флаги запуска роли (`roleLaunchExtraArgs(role, 'coordinator.cannotStart')`):
+  с негодной строкой карточка глобальной задачи не создаётся; годные уходят в `invoke(..., { extraArgs })`.
   Текст «роли нет» один для всех мест (`missingRoleMessage` в `agents.ts`): тип задачи по названию, роли типа,
   `orca-board roles list` для агента и «Настройки → Типы задач» (для системной роли — «Вернуть системные роли») для человека.
-- **Ассистент** (`startAssistant`): роли и режим разрешений — из типа библиотеки по умолчанию
-  (`resolveTaskType(taskType(defaultTaskTypeId()))`), не из проекта;
-  роль `assistant`, без неё — агент, модель и effort роли `coordinator` (без её инструкций, `assistantRole`),
-  нет и её — `claude` без модели. См. «Ассистент».
+- **Ассистент** (`startAssistant`): не роль типа — агент, модель, effort, инструкции и флаги запуска из
+  `AppSettings.assistant`, режим разрешений всегда `auto`; от проекта и типа задачи не зависит. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
   при старте воркера и координатора к служебной инструкции Orca (`skills/worker.md` / `coordinator.md`)
   дописывается блок `# Инструкции роли «<title>»` с текстом роли (trim по краям, внутри — как есть).
@@ -255,8 +310,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   Хранится как введено (без trim, как `systemPrompt`); из одних пробелов → поле удаляется; не строка → ошибка
   `правила агентов должны быть строкой`. Правила типа прогона передаются в `WorkerEnvContext.agentRules`
   (`ctx(projectId, runId?)` в `src/main/index.ts`) и применяются при следующем запуске агента. Ассистент их не получает
-  (`AssistantContext` без `agentRules`: он один на приложение и не работает в репозитории проекта); свой `systemPrompt`
-  роли `assistant` — получает, как раньше. Меняются: сокет `rules.get` / `rules.set` (тип — `--type`, иначе тип
+  (`AssistantContext` без `agentRules`: он один на приложение и не работает в репозитории проекта); свои инструкции
+  (`AppSettings.assistant.systemPrompt`) — получает. Меняются: сокет `rules.get` / `rules.set` (тип — `--type`, иначе тип
   прогона, иначе тип проекта по умолчанию), CLI `orca-board rules get|set`, в UI — «Настройки → Типы задач → Правила
   доски».
 - **Воркфлоу типа задачи** (`TaskType.settings.workflow?: Workflow`, модель и валидация — `packages/core/src/workflow.ts`):
@@ -296,7 +351,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `task.create` по сокету и `tasks:create` из UI идут через `pickRole`; `--agent` в `task.create`
   отвергается с подсказкой про `--role`. `worker.start` (сокет и UI) заново проверяет роль задачи
   и её агента: роль могли удалить, агента — выключить.
-- **Сокет**: `roles.list` → роли плюс `agentEnabled` (включён ли агент роли в проекте);
+- **Сокет**: `roles.list` → роли плюс `agentEnabled` (включён ли агент роли в проекте), без `extraArgs` (см.
+  «Протокол сокета»);
   `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?, priority?}` → `store.editTask`
   (без `--title`/`--spec`/`--priority` — ошибка; см. «Редактирование задачи»). `task.create` и `global.add-task`
   принимают `priority` (значение проверяет store; `--priority` без значения — ошибка сокета). Так же
@@ -415,8 +471,10 @@ Store хранит позицию и решает, куда задача пер�
   `stage` входит в граф из старта (`startStage`, только исход `next`). Задачи-ответы и задачи-гейты (`gateFor`) —
   ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}` и запись в
   `Task.stageHistory` (то же самое в `enterWork`);
-  `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
-  гейта удалена). Эффекты `action` выполнит main.
+  `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` и `Task.stageBlock` (этап при этом может и
+  смениться: роль гейта удалена). Любой вызов снимает прежний `stageBlock`; при смене ноды ждущий `approval` задачи с
+  другим `nodeId` отменяется (устаревший запрос повёл бы граф не с того этапа), задача выходит из `needs_input`
+  (то же в `enterWork`). Эффекты `action` выполнит main.
 - **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
   задача не на ноде `work` или `ask` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
   складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` и `ask` —
@@ -428,7 +486,11 @@ Store хранит позицию и решает, куда задача пер�
 - **`ask(input, {coordinatorAlive?, forceHuman?})`** — `forceHuman` (задача на ноде `ask`): вопрос сразу человеку, в
   `Question.nodeId` и `HumanRequest.nodeId` — нода этапа `task.stage.nodeId`.
 - **`blockStage(taskId, reason)`** — эффект этапа не выполнился (воркер не стартовал, мерж упал не конфликтом):
-  `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
+  `workflow_blocked {taskId, runId, nodeId?, reason}` и `Task.stageBlock` с причиной целиком, этап не меняется.
+- **`stageActionOf(taskId, {roleIds?, workflow?})` → `WfAction | undefined`** — действие ноды, на которой стоит подзадача
+  (`stageAction` по `taskWorkflow`, контекст как у `advanceStage`: на пути «Работы» `scope: 'subtask'`, у старого движка
+  без `scope`). Позицию не меняет, событий не шлёт: main повторяет по нему эффект остановленного или прерванного этапа.
+  undefined — у задачи нет своего этапа (ответ, проверка, не вошла в граф, подзадача прогона вне пути).
 - **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
   задача в `needs_input`; ждущий approval той же задачи не дублируется. Решение — `resolveRequest` с `accept` /
   `reject` (`text` при reject → `task.feedback`, `resolution.images` → `task.feedbackImages`), `request_resolved {kind: 'approval', action, nodeId, decision?, images?}`
@@ -486,8 +548,15 @@ Store хранит позицию и решает, куда задача пер�
   подсвечен. Что в полях: тип (`changeNodeType`: id, позиция, название,
   колонка, роль и инструкция сохраняются, рёбра портов, которых у нового типа нет, удаляются), название, роль
   (select из ролей для задач — `stageRoles`, без `coordinator`/`assistant`; у «Вопроса человеку» роль обязательна (`askNoRole`), у гейта тоже,
-  роль не из типа — пунктом «(нет в типе задачи)»; у **«Работы»** — мультивыбор `roleIds` (`wfWorkRoleIds`): ничего не отмечено — роли
-  подзадач выберет координатор из рабочих ролей типа), инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
+  роль не из типа — пунктом «(нет в типе задачи)»; пункт — «Название · Агент», под select — краткая карточка роли `RoleBrief`),
+  у **«Работы»** — `WorkRolesField` (`WorkflowRoleFields.tsx`, логика — `stageRoles.ts`): переключатель «Координатор выбирает сам»
+  (`roleIds` пуст; перечень рабочих ролей и предупреждения о роли без описания и с выключенным агентом) / «Только выбранные роли»
+  (строки ролей: логотип, название, «Агент · модель», точка состояния агента, описание в две строки). Роли проверок — gate-роли
+  верхнего графа (`checkRoleNodes`, как `bindToStage` в store) — отдельной свёрнутой группой; «сироты» выбора (роли нет в типе или
+  она служебная) показаны с кнопкой «Убрать» и не выбрасываются молча. В пути подзадачи — «Роль подзадачи не меняется» / «Сменить
+  роль на…» с radio: роль воркера одна, при двух ролях из файла — предупреждение. Состояние агента — по `agents` (для типа —
+  `libraryAgents`, проброс `TaskTypePane` → `TaskTypeWorkflow` → `WorkflowInspector`); не передан — `unknown` без предупреждений),
+  инструкция гейта/человека/работы, у «Вопроса человеку» (`ask`) — обязательное «О чём спросить человека» (пустое подсветит
   валидация, поэтому `patchNode` не удаляет пустую строку), у работы — «Показать человеку»
   (`showcase.what`) и флажок «Показ обязателен» (`showcase.required`), условие (заходы в ноду ≥ N; «роль рабочей задачи» не предлагается —
   у глобальной задачи роли нет, `conditionRoleRun`; условие по роли из файла остаётся видно отключённым пунктом), «слито» у конца, колонка доски (не у старта, условия и `ask`: `hasColumn`). На каждый порт — select «куда ведёт»
@@ -721,8 +790,9 @@ orca-board decision escalate --reason "..."        # не может выбра�
 
 При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`, `ORCA_PROJECT`,
 а в `PATH` — папка с `orca-board`. Команда запуска берётся из реестра по агенту роли задачи:
-`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort})` → `{command, args}`
-(`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + ответы на вопросы + раздел
+`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort, sessionId, extraArgs})` → `{command, args}`
+(`worker.ts`; `extraArgs` — флаги запуска роли, разобранные `roleLaunchExtraArgs`; так же у координатора, у ассистента —
+из `assistantLaunch`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + ответы на вопросы + раздел
 «Этап» (инструкция и показ ноды «Работа», `store.taskWorkStage`) + замечания ревью.
 
 Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
@@ -842,9 +912,24 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Один на всё приложение**: ассистент не принадлежит проекту и работает со всеми проектами через
   `orca-board --project <id>`; без флага CLI берёт активный в UI проект. Файлового доступа к репозиториям
   нет (`--add-dir` не передаётся) — только CLI.
-- **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext` без `projectId`): роли и режим
-  разрешений — из настроек по умолчанию (`projects.defaults()`), агент роли `assistant` (fallback см. «Роли и колонки»),
-  system prompt — `skills/assistant.md` + инструкции роли (`withRoleInstructions`; правил проекта `agentRules` нет), стартовое сообщение —
+- **Свои настройки** — `AppSettings.assistant: AssistantSettings { agent, model?, effort?, systemPrompt?, extraArgs? }` (`shared/ipc.ts`,
+  тип — `packages/core/src/types.ts`), хранятся в `settings.assistant` файла `projects.json`, каналы — те же `app:getSettings` /
+  `app:setSettings`. Ассистент не роль типа задачи: он один на приложение и к типу не относится. `settings()` нормализует
+  (`loadedAssistantSettings` в `src/main/assistant.ts`: неизвестный агент → `claude`, не-строки и пустые строки выпадают,
+  флаги запуска, которые не разбирает `parseExtraArgs`, — тоже),
+  `setSettings({ assistant })` мержит по полям (`mergedAssistantSettings`): пустая строка очищает поле, промпт и флаги
+  запуска хранятся как введены, смена агента без `model`/`effort`/`extraArgs` в патче сбрасывает их (модель и флаги одного
+  агента другому не подходят), неизвестный агент или не-строка — `OrcaError` `assistant.*`, негодные флаги —
+  `assistant.extraArgsInvalid` с причиной. Патч без `extraArgs` (старый renderer, CLI `settings set` — флага для них нет)
+  флаги не трогает. Режима разрешений в настройках нет — всегда `auto`
+  (`ASSISTANT_PERMISSION_MODE`): ассистенту нужен только `orca-board`, он и так разрешён. Настройки применяются к
+  **следующему** запуску («Новый диалог» / `assistant:reset`), живой ассистент не перезапускается. Тесты — `assistant-settings.test.ts`. В UI — раздел «Настройки → Ассистент» (см. «Настройки»).
+- **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext { socketPath, settings }`): `openAssistant` берёт
+  `projects.settings().assistant` и **до** закрытия старого терминала проверяет агента (`assertAgentUsable(agentInfos(undefined), …)`:
+  неизвестный или неустановленный — `OrcaError`, панель показывает его, старый ассистент при «Новом диалоге» не теряется).
+  Что запускать, собирает чистая `assistantLaunch(settings, builtin, language)` (`src/main/assistant.ts`): агент, модель, effort,
+  флаги запуска (`extraArgs` — уже argv; негодная строка — `assistant.extraArgsInvalid` до старта терминала),
+  system prompt — `skills/assistant.md` + блок `# Инструкции роли «Ассистент»` (`ASSISTANT_TITLE`, `agentSystemPrompt`; правил проекта `agentRules` нет), стартовое сообщение —
   `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — нейтральный
   `userData/assistant` (создаётся при запуске), не репозиторий; `orca-board` без вопросов
   (`--allowedTools Bash(orca-board:*)` у claude), на Windows — `win32Launch`, как у координатора.
@@ -877,7 +962,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   после явного «да» — `task delete`, `global delete`, закрыть без мержа, `worker stop`; после действия — одна строка
   с проектом и id; долгих ожиданий (`check --wait/--follow`) нет.
 - **Настройки** — ассистент читает и правит все настройки приложения и проекта (то, что человек меняет в
-  «Настройки» и «О проекте») теми же командами `orca-board`, что и CLI: `settings get/set`, `types
+  «Настройки» и «О проекте») теми же командами `orca-board`, что и CLI. Свои настройки — тоже: поле `assistant` в
+  `settings get`, правка — `settings set --assistant-agent/--assistant-model/--assistant-effort/--assistant-prompt`
+  (смена агента — с `--yes`, действует с нового диалога); в `roles list` ассистента нет, `roles update`/`rules set`
+  с `--role assistant` отвечают «нет роли». Остальное: `settings get/set`, `types
   create/rename/set-default/duplicate/delete`, `roles add/update/remove`, `types perm get/set`,
   `node-templates list/delete`, `projects set-active/remove`, `project agents set`, `project columns set`,
   `project types set`, `project rules get/set` — таблица методов сокета в «Протокол сокета» → «Настройки»,
@@ -928,7 +1016,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
-- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, reservedFlags?, invoke}`. Из него выводятся
   `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, статический список моделей
   (`modelHints(agent)` оставлен deprecated-обёрткой над `models` для старого UI)
   и `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
@@ -942,11 +1030,70 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `model`/`model_reasoning_effort` — из `~/.codex/config.toml`, дефолтная модель в списке помечена «(по умолчанию)».
     Нет кэша — в списке только модель из `config.toml`. Чтение обоих файлов кэшируется на 60 с, `refresh` сбрасывает.
   - остальные — `models = []`, в UI модель вводится свободным текстом.
-- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?})`: модель — флагом агента;
+- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?, extraArgs?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
   `sessionId` — uuid сессии для статистики: `worker.ts` генерирует его (`agentSessionId`) только агентам с
   `acceptsSessionId` (сейчас claude → `--session-id <uuid>`), ассистенту не передаётся.
+- **Флаги пользователя** (`Role.extraArgs`, `AssistantSettings.extraArgs` → `AgentInvokeOptions.extraArgs`,
+  `packages/core/src/launch-args.ts`). Человек дописывает свои флаги к команде запуска; хранится строка, как введена.
+  - **Порядок: argv = [флаги пользователя] + [флаги приложения] + [промпт]**, вставка — внутри `invoke` каждого агента
+    (а не в `worker.ts`), чтобы превью команды в UI совпадало с реальным запуском. claude:
+    `claude <extra> --permission-mode … --allowedTools … [--model …] [--effort …] [--session-id …] --append-system-prompt <system> <prompt>`;
+    codex: `codex <extra> [-m …] [-c model_reasoning_effort=…] [--] <промпт>` (`--` ставится только при флагах
+    пользователя — закрывает variadic `--image <FILE>...`, см. «Грабли разработки»); opencode, gemini, cursor, amp, copilot — `<extra>`
+    сразу после команды; goose — `goose run <extra> --interactive --text <промпт>` (после подкоманды `run`); shell —
+    `$SHELL <extra>`. Без `extraArgs` (нет поля или `[]`) argv прежний — это держит таблица в `agents.test.ts`.
+    Почему «перед»: variadic-флаг в конце съел бы позиционный промпт (см. «Грабли разработки»), а у одиночных опций
+    побеждает последняя — флаги приложения случайно не сломать.
+    **Проверено на живых агентах** (claude 2.1.285, codex 0.156.1; запуск в PTY с argv, который строит `invoke`):
+    - claude, `--model haiku` в флагах и модель роли `opus` → сессия на Opus: побеждает последний флаг, то есть
+      приложения; `--model=haiku` — так же. Если модель роли не задана, приложение `--model` не ставит, и побеждает
+      флаг пользователя.
+    - claude, повторный `--allowedTools` (`--allowedTools Bash(python3:*)`, `=`-форма, несколько значений,
+      `--allowed-tools`) **сливается** с `--allowedTools Bash(orca-board:*)` приложения, а не перезаписывает: `orca-board`
+      идёт без вопросов, разрешение пользователя тоже действует. Склеивать значения в `invoke` не нужно.
+    - claude, variadic `--add-dir <dir>` в флагах: промпт доходит, папка добавлена (без флага чтение из неё требует
+      разрешения). Работает, потому что после флагов пользователя всегда идут флаги приложения.
+    - claude, `--dangerously-skip-permissions` **перекрывает** `--permission-mode` типа (при `auto` и `acceptEdits`
+      сессия в «bypass permissions on»): это отдельный флаг, правило «побеждает последний» на него не действует —
+      отсюда предупреждение `permission` в UI.
+    - claude, `-c`/`--continue` вместе с приложением `--session-id` — claude сразу завершается с ошибкой
+      «--session-id can only be used with --continue or --resume if --fork-session is also specified»; повторный
+      `--session-id` в флагах запускается. Оба случая — предупреждение `session`, не блокировка.
+    - codex, `-s workspace-write -a never` — в сессии `approval_policy: never`, `sandbox: workspace-write`; `--search`
+      принимается (влияние на набор инструментов по rollout не видно). Значения `--ask-for-approval` в 0.156.1 —
+      только `on-request` и `never`: опечатка даёт ошибку CLI в терминале роли, не приложения.
+    - goose (`run <extra> --interactive …`) и остальные агенты на машине не установлены — только тест порядка argv.
+  - **Разбор** — чистая `parseExtraArgs(text) → { ok: true, args } | { ok: false, error, detail? }`, без shell и одинаково
+    на всех платформах. Разделители — пробелы, табы, переводы строк вне кавычек. `'…'` — буквально; `"…"` — внутри только
+    `\"` → `"` и `\\` → `\`, прочие `\` буквальны; **вне кавычек `\` буквален** (иначе ломается `C:\Users\me`). Кавычки
+    склеиваются с соседним текстом (`--dir="a b"` → `--dir=a b`), `""` — пустой аргумент. Раскрытий нет: `$VAR`, `~`, `*`,
+    `;`, `|`, `&&`, `>` остаются как есть. Пусто или одни пробелы — `args: []`.
+  - **Ошибки** (`ExtraArgsError`; `detail` — кавычка, токен, код символа или фактическое число): `quote` — незакрытая
+    кавычка; `separator` — токен `--` (всё после него, включая флаги приложения, стало бы позиционным); `notFlag` — первый
+    токен не начинается с `-` (была бы подкоманда: `codex exec`, `claude mcp`) — в поле только флаги, не команда целиком;
+    `control` — управляющий символ, включая NUL (таб и перевод строки внутри кавычек — часть значения); `length` — строка
+    длиннее `EXTRA_ARGS_MAX_LENGTH` (2000: на Windows флаги делят с промптом лимит командной строки cmd.exe); `count` —
+    больше `EXTRA_ARGS_MAX_COUNT` (64) аргументов.
+  - **Зарезервированные флаги** — `AgentSpec.reservedFlags: { flags, reason, valuePrefix? }[]` рядом с `invoke`: флаги,
+    которыми управляет приложение. `reservedFlagsIn(agent, args) → { flag, reason }[]` находит их во флагах пользователя;
+    это **только предупреждение в UI, запуск не блокируется** (у человека могут быть причины, но молчаливое
+    переопределение хуже). Причины (`ReservedFlagReason`): `model`, `effort` (задаются полями роли), `permission` (режим
+    разрешений типа задачи), `session` (ломает привязку статистики к транскрипту), `print` (неинтерактивный режим —
+    терминал завершится), `systemPrompt` (инструкции роли). claude (сверено с `--help` 2.1.285): `--model`; `--effort`;
+    `--permission-mode`, `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`; `--session-id`,
+    `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--from-pr`, `--teleport`, `--no-session-persistence`;
+    `--print`/`-p`; `--append-system-prompt`, `--system-prompt` и их `-file`-варианты. codex (`--help` 0.156.1):
+    `--model`/`-m`, `-c`/`--config` со значением `model=…` или `model_reasoning_effort=…` (`valuePrefix`; прочие `-c`
+    свободны); sandbox и approval приложение codex не задаёт — они не зарезервированы. opencode, cursor — `--model`,
+    gemini — `-m` (то, что ставит сам `invoke`). Узнаются `--flag=значение`, слитное `-mзначение` и связка коротких (`-pc`);
+    значение чужого флага от флага не отличается — лишнее предупреждение дешевле таблицы арности всех флагов.
+    Про `model` и `effort` UI предупреждает, только когда поле исполнителя заполнено (`FIELD_OF` в
+    `renderer/src/extraArgsHints.ts`): тогда приложение ставит свой флаг после флагов пользователя и побеждает. При пустом
+    поле своего флага нет — флаг пользователя действует, конфликта нет. Остальные причины от полей не зависят.
+  - **`AgentInfo.supportsExtraArgs?: true`** — признак «main умеет сохранять и применять флаги». Старый main молча стёр бы
+    незнакомое поле при сохранении, поэтому renderer без признака поле не даёт править и просит перезапустить приложение.
 - **Дефолты и модели агента** (`agentConfig` в `src/main/agents.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
   всегда (`[]` / `{}`). codex: `config.toml` читается построчно, только ключи верхнего уровня до первой секции `[..]`;
   разбор кэша — чистая `parseCodexModelsCache(text, defaultModel?)` в core (`visibility: "hide"` пропускаются,
@@ -966,7 +1113,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   агент проверяется не сам по себе, а через роль — `pickRole` при `task.create`/`tasks:create`
   и повторная проверка роли задачи при `worker.start` (см. «Роли и колонки»). `pickAgent` удалён.
 - **Сокет `agents.list`** → `[{id, title, installed, enabled, version?, models, defaults}]` в порядке реестра;
-  IPC `agents:list(refresh?)` — то же для активного проекта.
+  IPC `agents:list(refresh?)` — то же для активного проекта плюс `supportsExtraArgs: true` (ставит `agentInfos`): этот
+  main сохраняет и применяет флаги запуска, по признаку renderer открывает поле флагов (у старого main признака нет).
+  В ответ сокета признак не идёт — контракт CLI прежний.
 - **Логотипы** (`renderer/src/AgentLogo.tsx`): `<AgentLogo agent size?>` — inline SVG 24×24 с `fill="currentColor"`,
   окрашенный в брендовый цвет из таблицы `COLORS` (claude `#d97757`, codex `#10a37f`, gemini `#4e8df5`,
   amp `#ff5543`, goose `#f6b93b`, shell серый; монохромные cursor/copilot/opencode — белый). Неизвестный id
@@ -1065,7 +1214,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   или «⧗ ждёт N задач», полный список в подсказке; считаются только незакрытые), `● терминал`. Ниже — `Завершено: …` в `done`,
   `Обновлено: …` при сортировке «по обновлению», `↩ feedback` вне колонки `review`. Вместо кнопки действия — **пунктирная
   строка сути** (`cardEssence`: «? вопрос…», «✎ Ответ готов», «◉ Показ: 3 файла», «Ждёт ревью: N файлов», «✕ Упал» /
-  «✕ Вышел без done» / «✕ Молчит»; символ — вторичный сигнал, слово — основной) и ссылка «в ленте ↑», если `Board` получил
+  «✕ Вышел без done» / «✕ Молчит»; в «Ревью» на остановленном этапе (мерж упал или прерван) — «⏸ Этап остановлен» с причиной в подсказке
+  вместо «Ждёт ревью»: `CardStateInput.stalled`, его считает `stalledCardReason` из `taskReview.ts` тем же правилом, что лента; символ — вторичный
+  сигнал, слово — основной) и ссылка «в ленте ↑», если `Board` получил
   `onRevealInFeed(taskId)` (нет — ссылки нет, строка остаётся). Кнопки «Запустить» (только если `kind` `ready`/`backlog` или
   последний dispatch `unknown`/`failed`, и нет живого терминала), «Переместить в…» и «Удалить» (с `confirm`) — поверх
   правого верхнего угла, видны при наведении/фокусе, на touch — всегда. Клик по карточке → `onSelect` + `onOpenTask` (модалка).
@@ -1204,6 +1355,17 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     его же зовёт шаг «Язык» мастера.
   - «Уведомления» (`settings/NotificationsSection.tsx`) — фильтр ролей строится по ролям всех типов библиотеки
     (`libraryRoles`, без повторов по id).
+  - «Ассистент» (`settings/AssistantSection.tsx`, после «Обновлений», перед «Типами задач») — `AppSettings.assistant`: агент
+    (все установленные — `libraryAgents`), модель, effort, превью команды (режим разрешений — `auto`) и вкладки «Инструкции
+    ассистента» / «Встроенная инструкция» (`skills/assistant.md`) / «Стартовое сообщение». Поля — те же части, что у панели роли
+    типа (`RoleParts.tsx`: `ExecutorFields`, `InstructionTabs`, `commandPreview`; вид инструкции передаётся явно, а не из id роли).
+    Автосохранение (`useAutoSave`) шлёт черновик целиком (`assistantSavePatch`: пустое поле — пустой строкой, main его очищает);
+    негодные флаги запуска в патч не попадают — вместо них уходят последние отправленные (`assistantForSave`, у ролей типа —
+    `rolesForSave`; см. «IPC» → флаги запуска), в поле остаётся введённое с ошибкой под ним;
+    логика без React — `assistantSettings.ts` (тест рядом). Подсказка под заголовком: действует с нового диалога (↻ в панели).
+    Старый main без `settings.assistant` — `common.staleApp` вместо редактора (`assistantView`), запись без поля в ответе —
+    `droppedPatch`. `App` держит `AppSettings` в состоянии (загрузка при старте, `app:changed`, `onAppSettings` из «Настроек»):
+    подпись терминала ассистента берёт агента оттуда (`assistantAgentOf`). В редакторе ролей типа ассистента нет.
   - Группа «Типы задач» — каждый тип отдельным пунктом меню (`type:<id>` в `orca.settingsSection`; старые
     `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
     библиотеки, без деления на встроенные и свои, внизу «Новый тип» (`taskTypes:save` без id, пустые настройки =
@@ -1211,7 +1373,14 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «по умолчанию»,
     «Доступен в N проектах · по умолчанию в K»), действия у любого типа одинаковые: «По умолчанию»
     (`taskTypes:setDefault`), «Дублировать» (`taskTypes:duplicate`, открывает копию), «Переименовать» (форма в шапке:
-    название и описание), «Удалить» (`taskTypes:delete`; у последнего типа выключена). Подтверждение — панель под
+    название и описание), «Удалить» (`taskTypes:delete`; у последнего типа выключена). «Экспорт» (после «Дублировать»,
+    `taskTypes:export`) сохраняет тип целиком в один JSON-файл через диалог «Сохранить как»: название, описание и
+    раскрытые настройки — роли с промптами, граф, режим разрешений, правила доски (формат — `core/task-type-file.ts`).
+    В файл идёт **сохранённая** версия типа, а не черновики редакторов: `exportType` в `useTaskTypes` сначала ждёт
+    очередь автосохранений, список не перечитывает (тип не меняется). Renderer получает только путь: строка под шапкой
+    `taskType.exported` (путь и напоминание проверить файл на внутренние данные; сбрасывается при смене типа), отмена
+    диалога — молча, ошибка записи — в блоке ошибки шапки, кнопки на время вызова выключены. Preload без
+    `taskTypes.export` (`taskTypeExportApi`) или main без хендлера — «перезапустите приложение». Подтверждение удаления — панель под
     шапкой, не `confirm()`: заголовок, последствия и надпись кнопки — `typeRemovalConfirm` (какой тип станет типом по
     умолчанию, проекты перейдут на тип библиотеки по умолчанию, задачи доработают по снимку, тип не вернётся после
     перезапуска). Ниже вкладки (`orca.settingsTypeTab`): «Роли», «Воркфлоу» (`settings/TaskTypeWorkflow.tsx` —
@@ -1382,9 +1551,21 @@ SVG используется в rail и мастере первого запус
   `updates:getState` → `UpdateState`, `updates:check`, `updates:download`, `updates:install({when: 'now'|'idle'|'quit'})`,
   `updates:cancelPending` (все, кроме `getState`, возвращают состояние после действия), `updates:getJustUpdated` → версия или `null`
   (см. «Обновление»); `projects:list` → `{active, projects, groups: ProjectGroup[]}`, `projects:setActive`, `projects:remove`,
-  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?}` (текущая ветка корня проекта: `git symbolic-ref`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
+  `projects:inProgressCounts`, `projects:branch(id)` → `ProjectBranchInfo {isGitRepo, branch, detached, sha?, unborn?}` (текущая ветка корня проекта: `git symbolic-ref`, без коммитов — `unborn: true`, detached — `branch: null` + короткий `sha`, не репозиторий, git недоступен или проект не найден — `isGitRepo: false`; не бросает), `projects:branches(id)` → `ProjectBranchList {isGitRepo, current: ProjectBranchInfo, local: {name, current, busy}[], remote: string[] (`origin/x`, без `HEAD`), upstream?: {name, ahead, behind, gone}, dirty}` (git корня без сети; не репозиторий — `isGitRepo: false`, не бросает; неизвестный проект — ошибка),
   `projects:gitFetch(id)` (`git fetch --all --prune`) и `projects:gitPull(id)` (`git pull --ff-only` текущей ветки) → `ProjectGitResult {output, branch: ProjectBranchInfo}`,
-  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking); все четыре — опциональные методы `OrcaApi.projects`
+  `projects:checkoutBranch(id, branch)` → `ProjectBranchInfo` (`branch` — локальная или `origin/x`: создаётся локальная `x` с tracking),
+  `projects:createInitialCommit(id, mode: InitialCommitMode)` → `ProjectBranchInfo` (начальный коммит в репозитории без коммитов, только по согласию человека:
+  `empty` — пустой коммит через plumbing (`hash-object -t tree --stdin` → `commit-tree` → `update-ref HEAD <c> ""`: пустое старое значение — гонка с
+  коммитом человека не перетирает его), индекс и рабочее дерево не трогаются; `snapshot` — `git add -A` + commit с таймаутом 120 с;
+  автор — `user.name`/`user.email` человека, если заданы оба, иначе `orca-board <orca@local>`; сообщение «chore: начальный коммит (orca-board)»;
+  идёт в очереди git корня (`serial` в `main/git.ts`); неизвестный `mode` main читает как `empty`;
+  идемпотентен: коммиты уже есть — возвращает актуальный `ProjectBranchInfo` без изменений; ошибки — `git.notRepo`, `git.opFailed` (хук, подпись — со stderr git));
+  у `ProjectBranchInfo` необязательное поле `unborn: true` — HEAD без коммитов (свежий `git init`). Запуск координатора или воркера в таком репозитории
+  отказывает `OrcaError` с кодом `git.noCommits` (не сырым текстом `git rev-parse`); renderer узнаёт его по `ipcErrorCode(e) === 'git.noCommits'` и предлагает
+  создать начальный коммит: окно `InitialCommitDialog.tsx` (логика — `initialCommit.ts`; режим по умолчанию — `snapshot`, если `projects:branches` вернул `dirty`,
+  иначе `empty`; наличие `.gitignore` — из `files:list` корня), после успеха упавший запуск повторяется. Точки входа — `launchGlobalCoordinator`, `launchTask`
+  (`App.tsx`; повтор задачи идёт через `startTask`), `CoordinatorModal`, а также меню веток при `unborn`. Из меню веток повторять нечего:
+  `willRetry` = `retry !== undefined`, и окно не обещает «запуск повторится автоматически» (`retryHint` в `initialCommit.ts`). `git.noCommits` не входит в `PROJECT_GIT_ERROR_CODES` (тот список — для меню веток). Все пять — опциональные методы `OrcaApi.projects`
   (renderer проверяет наличие и показывает «перезапустите приложение»). Ожидаемые отказы — `OrcaError` с кодом из `PROJECT_GIT_ERROR_CODES` (`shared/ipc.ts`):
   `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
   воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
@@ -1411,7 +1592,13 @@ SVG используется в rail и мастере первого запус
   неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}` (у типа может быть `workflowNotes` — предупреждения автомиграции графа), `taskTypes:save(input)` → `TaskType`
   (`input.workflowNotes` необязателен: не передан — прежние остаются, пока граф не менялся; передан — сохраняется, `[]` закрывает),
-  `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
+  `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`,
+  `taskTypes:export(id)` → `TaskTypeExportResult {path} | null` — диалог «Сохранить как» (`pickExportFile`: `dialog.showSaveDialog`,
+  родитель — окно, если есть; путь по умолчанию — «Загрузки» + `taskTypeFileName`, фильтр `json`) и запись файла типа
+  `writeFileAtomic`; закрыли диалог — `null`, ничего не пишется. Путь выбирает только человек в диалоге: renderer получает
+  путь готового файла, текст файла к нему не идёт, а общего канала «записать текст по пути» нет. Ошибки — `OrcaError`:
+  `type.notFound`, `workflow.future` (обе — до диалога), `type.exportFailed` (`{path, reason}` — запись не удалась). Поток без
+  Electron — `exportTaskTypeToFile(deps, id)` в `main/task-type-export.ts` (`deps`: `export`, `chooseFile`, `write`)
   (см. «Проекты → Типы задач»); `nodeTemplates:list` → `WfNodeTemplate[]`, `nodeTemplates:save(input: NodeTemplateInput {id?, title, description?, node})` → `WfNodeTemplate`,
   `nodeTemplates:delete(id)` → оставшиеся `WfNodeTemplate[]` (библиотека шаблонов нод — `projects.json → nodeTemplates`, глобальная; `updatedAt` ставит main; ошибки — `OrcaError`
   `nodeTemplate.notSaved|notFound|notObject|emptyId|emptyTitle`, битые записи файла при загрузке пропускаются с `StateWarning {kind: 'skipped'}`; см. `docs/workflow.md` → «Шаблоны нод»);
@@ -1455,6 +1642,19 @@ SVG используется в rail и мастере первого запус
   ошибка по-русски; см. «Статистика задачи»).
 - Ошибки `invoke`: обёртка `handle()` переводит `OrcaError` на язык интерфейса и кладёт код в имя —
   `OrcaError[<ключ>]: <текст>` (renderer: `ipcErrorMessage` / `ipcErrorCode`, см. «Язык интерфейса» → «main»).
+- Флаги запуска агента (`extraArgs`) новых каналов не заводят: поле роли едет в `taskTypes:save` (роль — объектом
+  целиком), поле ассистента — в `app:setSettings({assistant: {extraArgs}})`, читаются через `taskTypes:list` и
+  `app:getSettings`. Негодная строка — ошибка сохранения `OrcaError[role.extraArgsInvalid]` /
+  `OrcaError[assistant.extraArgsInvalid]` с причиной на языке интерфейса. Renderer негодную строку в main не отправляет:
+  оба канала пишут запись целиком, и отказ унёс бы правку соседнего поля (агент, модель, effort, название, инструкции).
+  Перед отправкой `useAutoSave(…, prepare)` заменяет негодные флаги последними отправленными — `withSavableExtraArgs` в
+  `renderer/src/roleEdit.ts` (`rolesForSave`, `assistantForSave`): годные уходят как введены, пустые очищают поле, прежние
+  подставляются только годные и того же агента, иначе поля нет. Черновик и поле ввода не меняются, под полем — причина
+  и «флаги не сохранятся, пока ошибка не исправлена; остальные поля сохраняются» (`checkExtraArgs`). Main остаётся
+  судьёй и негодное отвергает. `agents:list` отдаёт `supportsExtraArgs: true`:
+  старый main молча стёр бы незнакомое поле при сохранении, поэтому без признака renderer поле флагов не даёт править
+  и просит перезапустить приложение. Новый main со старым renderer безопасен: патч ассистента без `extraArgs` флаги
+  не трогает, а роли renderer сохраняет объектами целиком.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню).
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `app:menuAction` (`AppMenuAction`: `settings` / `checkUpdates` / `addProject`, подписка `app.onMenuAction?`),
@@ -1475,6 +1675,11 @@ SVG используется в rail и мастере первого запус
 Методы уровня приложения (`appHandlers` в `src/main/socket.ts`: `projects.list`, `settings.get`, `settings.set`)
 выполняются до `SocketDeps.resolve(projectId)`: работают без проектов и игнорируют `projectId`, даже чужой или удалённый.
 События помечаются `consumedBy` (= `runId` прогона, иначе `coordinator`), повторно `check` их не отдаёт.
+Флаги запуска (`extraArgs` роли, ассистента и снимка типа в прогоне) сокет не отдаёт и не принимает: поле вырезается
+из **любого** успешного ответа при сериализации (`okLine` в `socket.ts` → `withoutExtraArgs`), а параметров для него
+нет ни у `roles.add`/`roles.update`, ни у `settings.set`. Ответы читают агенты, а во флагах бывают пути и токены; без
+флагов ответ тот же, что раньше, — контракт не менялся. Тест — «флаги запуска (extraArgs) — только в UI» в
+`socket-settings.test.ts`.
 
 | Метод | Параметры | Результат |
 |---|---|---|
@@ -1490,7 +1695,7 @@ SVG используется в rail и мастере первого запус
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?, options?}]}]` (`resolveTaskType`, `describeWorkflow`; `options` — id вариантов ноды `decision`, прямо из графа) |
-| `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
+| `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]` без `extraArgs`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
 | `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка. Есть `showcase.files` — до `finishDispatch` main снимает их (`ProjectDeps.snapshotShowcase` → `main/showcase-snapshot.ts`): папки раскрываются, HTML — с ассетами; файла нет, тип не из белого списка, симлинк наружу, больше лимита — ошибка, запуск не закрыт |
@@ -1530,15 +1735,15 @@ SVG используется в rail и мастере первого запус
 
 | Метод | Параметры | Результат | Подтверждение |
 |---|---|---|---|
-| `settings.get` | — (уровень приложения) | `AppSettings` целиком |  |
-| `settings.set` | любой поднабор: `language`, `keep-in-background`, `notifications-enabled`, `notify-role` (`id=on\|off`, повторяемый), `notify-event` (`kind=on\|off`, повторяемый), `quiet-hours` (`ЧЧ:ММ-ЧЧ:ММ` или `false` — выключить), `sound`, `show-preview`, `auto-check`, `auto-download`, `install-when-idle` | `AppSettings` после мержа (`ProjectManager.setSettings`; смена языка сразу зовёт `setMainLocale`, `refreshTray`, `updater.settingsChanged()` — как `app:setSettings` в IPC) |  |
+| `settings.get` | — (уровень приложения) | `AppSettings` целиком (у `assistant` — без `extraArgs`) |  |
+| `settings.set` | любой поднабор: `language`, `keep-in-background`, `notifications-enabled`, `notify-role` (`id=on\|off`, повторяемый), `notify-event` (`kind=on\|off`, повторяемый), `quiet-hours` (`ЧЧ:ММ-ЧЧ:ММ` или `false` — выключить), `sound`, `show-preview`, `auto-check`, `auto-download`, `install-when-idle`; ассистент — `assistant-agent` (`isAgentKind`), `assistant-model`, `assistant-effort`, `assistant-prompt` (строки, `""` — очистить; → `AppSettingsPatch.assistant`, мерж — `mergedAssistantSettings`), `yes?` | `AppSettings` после мержа (`ProjectManager.setSettings`; смена языка сразу зовёт `setMainLocale`, `refreshTray`, `updater.settingsChanged()` — как `app:setSettings` в IPC). Разбор флагов — `settingsPatchFromParams` (`src/main/settings-params.ts`) | да для смены `assistant-agent` на другой — без `yes` ошибка с текущим и новым агентом (как `roles.update --agent`); модель и effort при смене сбрасываются, если не заданы тем же вызовом |
 | `types.create` | `title`, `description?` | новый `TaskType` (`ProjectManager.saveTaskType({..., settings: {}})` — роли и правила по умолчанию, как «Создать тип» в UI) |  |
 | `types.rename` | `type`, `title?`, `description?` (хотя бы одно) | `TaskType` (`renameTaskType`) |  |
 | `types.set-default` | `type` | `TaskTypesState` |  |
 | `types.duplicate` | `type` | новый `TaskType` (копия) |  |
 | `types.delete` | `type`, `yes?` | `TaskTypesState`; последний тип библиотеки — ошибка (`deleteTaskType`) | да — без `yes` ошибка с числом проектов, где тип используется (`taskTypeUsage`), и признаком, что это тип библиотеки по умолчанию |
 | `roles.add` | `type`, `title`, `agent`, `model?`, `effort?`, `description?` | новая `Role` (`addRole`, `id` — `role_<hex>`); `agent` проверяет `validateRoles` |  |
-| `roles.update` | `type`, `role`, любое из `title`/`agent`/`model`/`effort`/`description`, `yes?` | `Role` (`updateRole`) | да для смены `agent` — без `yes` ошибка с текущим и новым агентом (другой процесс запуска задач роли) |
+| `roles.update` | `type`, `role`, любое из `title`/`agent`/`model`/`effort`/`description`, `yes?` | `Role` (`updateRole`); смена `agent` сбрасывает флаги запуска роли | да для смены `agent` — без `yes` ошибка с текущим и новым агентом (другой процесс запуска задач роли) |
 | `roles.remove` | `type`, `role`, `yes?` | `TaskType` без роли (`removeRole`); последняя роль типа — ошибка | да — без `yes` ошибка с числом задач проекта на роли (`store.listTasks`) и этапами воркфлоу типа, где она занята (`nodesUsingRole` в `socket.ts`) |
 | `types.perm.get` | `type` | `{typeId, permissionMode}` (`ProjectManager.permissionMode`) |  |
 | `types.perm.set` | `type`, `mode` (`auto\|bypassPermissions\|acceptEdits`), `yes?` | `{typeId, permissionMode}` (`patchTaskType`) | да для `bypassPermissions` — агент работает без запросов на разрешение |
@@ -1570,6 +1775,12 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 спрашивает только про опасные. `bypassPermissions` — вообще без вопросов, `acceptEdits` —
 только правки файлов без вопросов, остальной Bash спросит в терминале приложения.
 
+Флаги запуска роли (`Role.extraArgs`) режим типа **не заменяют**: `--permission-mode` приложение ставит после них, и
+у одиночной опции побеждает последняя. Но запретить обход флаги не могут — они выполняются с правами человека
+(`--dangerously-skip-permissions`, `--mcp-config`, `--settings`, у codex `-s danger-full-access`); UI о таких флагах только
+предупреждает (`reservedFlagsIn`). Поэтому флаги задаёт только человек в UI: ни CLI, ни сокет их не принимают и не
+отдают — иначе агент, читающий недоверенный текст задач, мог бы сам расширить себе права.
+
 ## Ветка глобальной задачи (`src/main/run-branch.ts`, чистая часть — `packages/core/src/run-branch.ts`)
 
 У каждой глобальной задачи — своя ветка и свой worktree; подзадачи ответвляются от неё и сливаются в неё, ветка корня
@@ -1587,6 +1798,12 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
   иначе upstream новой ветки стал бы базой, и голый `git push` отказал бы или ушёл в неё. Ветку **не** заводит:
   «Входящим» и прогону, где воркеры уже запускались без неё (`startedWithoutBranch`: половина фичи уже в корне) —
   такие работают по-старому.
+- **Нужен коммит.** Новую ветку `ensureRunBranch` заводит только в репозитории с коммитом (`assertHasCommits` в `git.ts`):
+  на свежем `git init` (unborn HEAD) — `OrcaError('git.noCommits', {branch})`, без `setRunGit`, worktree и ветки.
+  `startCoordinator` делает ту же проверку **до** `store.createRun` (если это не повторный запуск), чтобы не создать и
+  не закрыть пустую карточку; renderer узнаёт ошибку по `ipcErrorCode(e) === 'git.noCommits'`. База — `headBase`
+  (`git.ts`): текущая ветка корня, detached HEAD — хеш; её же берёт `gitCreateBranch` ноды «Git». Worktree подзадачи
+  создаёт `addTaskWorktree` (`git.ts`) — тоже с проверкой коммита.
 - **Координатор** запускается в worktree ветки (`cwd`), туда же — `.orca-attachments`. **Воркер**: `orca/<taskId>`
   ответвляется от `Run.git.branch` (без неё — от HEAD корня).
 - **`mergeTarget`** — куда сливать: `{cwd: worktree фичи, branch}` или, без ветки («Входящие», старые прогоны),
@@ -1633,18 +1850,30 @@ GitHub PR по [Git Flow](git-flow.md)).
   `orca-board`, `git merge --no-ff` в `target` (`mergeTarget`; без него — текущая ветка корня) (если в ветке есть коммиты), `git worktree remove
   --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
   удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
-  месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
+  месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Конфликт — только при незаслитых путях в индексе
+  (`MergeError.conflict` из `mergeBranch`); прочие отказы git (lock, грязная цель, таймаут) — исключение → `workflow_blocked`.
+  Повтор идемпотентен: нет папки worktree — без коммита хвостов, нет ветки или она слита — только уборка. У `merge`,
+  `commit`, `worktree remove` таймаут 120 с (`MUTATE_TIMEOUT_MS`), у всех вызовов `git()` — `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`. Store не трогает.
+  **Цель должна существовать** (`assertMergeTarget`): до коммита хвостов и удаления worktree проверяется, что `target.branch` —
+  локальная ветка (`HEAD` — корень в detached HEAD с коммитом). Нет — отказ без удаления: `git.noCommits` (в корне нет
+  коммитов) или `git.mergeTargetMissing`; ветка задачи и её коммиты на месте. Так же в `acceptReview` задачи-ответа.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
   проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
-  `mergeTaskBranch`, конфликт — ошибка). На другом этапе — ошибка «принимать нечего».
+  `mergeTaskBranch`, конфликт — ошибка). На остановленном этапе (`merge`/`git`/`end`, в том числе прерванном рестартом) —
+  повтор эффекта (`store.stageActionOf` → `execute`; снова встал — `OrcaError('review.stageBlocked')`); на «Работе» с потерянным
+  `worker_done` — переход `next`; при живом воркере — `OrcaError('review.notReviewable')`. Таблица — `docs/workflow.md` →
+  «Принять и Вернуть по этапам».
+- **Добор после запуска** — `resumeStuckStages` (`workflow.ts`) при первом открытии доски (`ProjectManager.onStoreOpened` →
+  `resumeProjectStages` в `index.ts`): прерванные эффекты подзадач без `Task.stageBlock` повторяются, потерянный `worker_done`
+  доделывается, `gate`/`human` без проверки/запроса получают их. Идемпотентен, остановленные задачи не трогает.
 - **Проверка ветки глобальной задачи** (`Task.gateFor.runId`, воркфлоу scope `run`): `review accept|reject --task <id проверки>` — свой id проверяющего,
   прогон приложение находит по `gateFor`. Единственный путь — `reviewDecision` в `index.ts` → `runGateDecision` (`workflow-run.ts`; `reviewAccept`/`reviewReject` из `workflow.ts`
   для такой задачи бросают ошибку). Решение принимается, только пока прогон стоит на ноде `gate` этой проверки и она последняя у ноды (`gatePending`); иначе ошибка
   «уже не актуальна». Переход делает `store.advanceRunStage` (замечания `reject` — в `feedback`, комментарий `accept` — в `decision`) и тут же — эффекты новой ноды.
   Задачу-проверку закрывает `orca-board done` проверяющего (`settleGate`), а если она уже сдана — само решение. `done` без решения — `workflow_blocked` по прогону (`blockRunStage`, без `taskId`).
 - **`review reject --feedback` / «Вернуть»** — `reviewReject`: на ноде проверки — `feedback` и исход `reject`
-  (дефолт — снова в работу, воркер стартует сразу); иначе `store.rejectReview` (ready с замечаниями, у ответа —
+  (дефолт — снова в работу, воркер стартует сразу); на остановленном этапе — `feedback` и `store.enterWork` → воркер; иначе `store.rejectReview` (ready с замечаниями, у ответа —
   «Уточнить»). `task.feedback` добавляется в промпт при следующем старте. В UI к замечаниям можно приложить картинки (IPC `review:reject`,
   4-й аргумент): их пути — `task.feedbackImages` (у проверки ветки — `stage_started.images`), см. «Изображения при возврате в работу».
 - **approval** из Инбокса / `request resolve --accept|--reject` — `resolveHumanRequest` → `store.resolveRequest` →
@@ -1707,7 +1936,7 @@ UI работает с активным проектом; воркеры и ко
 
 **Формат `projects.json`** (`version: 2`, `PROJECTS_FILE_VERSION` в `src/main/task-types-migration.ts`):
 `{ version, projects: Project[], activeId, groups?: ProjectGroup[], taskTypes?: TaskType[], defaultTaskTypeId?, settings?: Partial<AppSettings>, lastRunVersion?, onboarding? }`
-(`settings` — глобальные настройки приложения, см. «Фоновый режим»; `lastRunVersion` — версия приложения последнего
+(`settings` — глобальные настройки приложения, см. «Фоновый режим», `settings.assistant` — см. «Ассистент»; `lastRunVersion` — версия приложения последнего
 запуска, см. «Безопасность состояния»; `onboarding` — статус мастера первого запуска, см. «Мастер первого запуска»).
 - `groups?: ProjectGroup[]` — группы проектов для левого меню (`shared/ipc.ts`), порядок массива = порядок в меню; у проекта
   `groupId` ссылается на `groups[].id`, нет или указывает на несуществующую группу — проект без группы. Поле опциональное,
@@ -1755,9 +1984,16 @@ UI работает с активным проектом; воркеры и ко
   `deleteTaskType(id)` — любой тип, в том числе заготовку; ссылки проектов остаются висячими и при чтении пропускаются,
   удалённый тип библиотеки по умолчанию сбрасывается. Последний тип — ошибка «…последний в библиотеке…».
 - `defaultTaskTypeId()` — тип библиотеки по умолчанию: заданный и существующий, иначе `general`, а если удалён и он —
-  первый тип библиотеки. Предвыбран при добавлении проекта, даёт роли и режим разрешений ассистенту.
+  первый тип библиотеки (правило — чистая `libraryDefaultTypeId` в `task-types-migration.ts`, её же зовёт миграция ассистента).
+  Предвыбран при добавлении проекта. Ассистенту больше ничего не даёт — его настройки в `AppSettings.assistant`.
 - `taskTypeWorkflow(typeId)` → `{typeId, title, workflow, custom}`: свой граф или дефолтный по ролям; граф будущей
   версии — ошибка «обновите приложение».
+- `exportTaskType(id, meta)` → `{fileName, text}`: текст файла экспорта типа (`serializeTaskTypeFile(buildTaskTypeFile(…))`,
+  формат — «Модель → Типы задач → Файл экспорта типа») и имя по умолчанию `taskTypeFileName(title)`. Берётся сохранённый
+  тип из `projects.json`, а не черновики редакторов. `meta` (`appVersion`, `exportedAt`) передаёт вызывающий код. Граф не
+  валидируется (бэкап сломанного типа тоже нужен), но граф будущей версии — `workflow.future` через `taskTypeWorkflow`;
+  неизвестный id — `type.notFound`. Библиотеку не меняет и на диск не пишет: диалог и запись — в обработчике
+  `taskTypes:export` (раздел «IPC»).
 
 **Типы проекта и прогонов**:
 - `projectTaskTypes(id)` — доступные (висячие id пропускаются; не осталось ни одного — тип по умолчанию);
@@ -2406,7 +2642,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Доп. папки агентов | `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`… | `%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, `~/.local/bin`… | `extraPathDirs()` — `src/main/agents.ts` |
 | Поиск бинарника | имя как есть | сначала расширения из `PATHEXT` (`claude.cmd`, `codex.exe`), потом имя как есть — рядом с `claude.cmd` npm кладёт sh-скрипт без расширения | `binSuffixes()`, `findBin()` — `src/main/agents.ts` |
 | Версия агента | `execFileSync(bin)` | `.cmd`/`.bat` (`isCmdScript()`) — через `shell: true` | `readVersion()` — `src/main/agents.ts` |
-| Запуск агента | argv напрямую | `win32Launch()`: см. ниже | `src/main/worker.ts` (`startWorker`, `startCoordinator`) |
+| Запуск агента | argv напрямую | `win32Launch()`: см. ниже | `src/main/win32-launch.ts`; вызывает `src/main/worker.ts` (`startWorker`, `startCoordinator`, `startAssistant`) |
 | Подготовка worktree | `$SHELL -c "<setup>; exec <agent>"` | отдельный шаг `cmd.exe /d /s /c` перед агентом | `win32Setup()` — `src/main/worker.ts`; `spawnPty({ before })` — `src/main/pty.ts` |
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
@@ -2415,13 +2651,15 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
 | Каталог файлов (вкладка «Файлы») | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
+| Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `renderer/src/styles.css` |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
 `node`/Node из Electron прямо из `Resources/cli` без сборки и без `node_modules`, поэтому импортировать
 `@orca-board/core` (TypeScript) не может. Функция в core — чистая, без node-импортов (её тянет и renderer),
 окружение передаёт вызывающий. Менять обе копии синхронно.
 
-**Запуск агента на Windows** (`win32Launch()`, `src/main/worker.ts`). Промпт и system prompt длинные и
+**Запуск агента на Windows** (`win32Launch()`, `src/main/win32-launch.ts` — без electron: собранное приложение и поиск
+бинарника передаёт `worker.ts`, сборка командной строки проверяется `win32-launch.test.ts` на любой платформе). Промпт и system prompt длинные и
 многострочные, поэтому по возможности идут через argv node-pty (CreateProcess, лимит 32767, переводы строк
 сохраняются), а не через командную строку cmd.exe:
 1. `<bin>.exe` или файл без расширения — напрямую.
@@ -2432,6 +2670,12 @@ electron (`net.fetch` учитывает системный прокси). `macU
    кавычки по правилам MSVCRT, затем `^` перед метасимволами cmd, для `.cmd`-шима — дважды (он ещё раз
    разбирает `%*`); переводы строк заменяются пробелом. Строка длиннее `CMD_LINE_LIMIT` (8000) — ошибка
    запуска, иначе cmd молча обрезал бы её.
+
+Флаги пользователя (`extraArgs`) — обычные элементы `args`: в ветках 1–2 идут в argv как есть (пробелы, `\`, `&`
+в значении ничего не ломают), в ветке 3 каждый экранирует `cmdQuoteArg()`, и они входят в лимит строки вместе с
+промптом — отсюда предел `EXTRA_ARGS_MAX_LENGTH` (2000) на строку флагов. Разбор строки флагов (`parseExtraArgs`) от
+платформы не зависит: вне кавычек `\` буквален, иначе сломался бы путь `C:\Users\me`. На живой Windows запуск с
+флагами не проверялся — держат юнит-тесты сборки командной строки.
 
 **CLI без Node.** В собранном приложении main кладёт в env агентов `ORCA_NODE=process.execPath`
 (`baseEnv()` в `worker.ts` — воркеры и координатор; `pty:spawn` в `index.ts` — терминалы пользователя). `orca-board.cmd` при заданном `ORCA_NODE` ставит
@@ -2538,7 +2782,43 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 Зелёный CI не подтверждает ручную проверку приложения: скачивание сборок, smoke-тесты
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
+**Миграция ассистента из ролей типов** (`migrateAssistant` в `task-types-migration.ts`, чистая функция; `load()` вызывает её
+последней, после онбординга — записанный ею `settings.assistant` не считается признаком «человек что-то настраивал»). Раньше
+ассистент был ролью `assistant` типа, но запускался только по типу библиотеки по умолчанию. Ни одной роли `assistant` в типах —
+ничего не делается (новые пользователи: заготовки без неё). Иначе: `settings.assistant` ещё не задан — берётся тем же правилом,
+что при старом запуске (`assistantFromRoles` в core: роль `assistant` типа по умолчанию → её agent/model/effort/systemPrompt, нет —
+agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_SETTINGS`); уже задан (откат версии и «Вернуть системные
+роли» старым renderer) — побеждает. Затем роль `assistant` удаляется из **всех** типов; тип без ролей теряет поле `roles`
+(возьмёт `DEFAULT_ROLES`). Роли `assistant` не-дефолтных типов не переносятся — на запуск они не влияли, остаются в бэкапе версии
+(`backupOnVersionChange`). Файл перезаписывается (`dirty`), `PROJECTS_FILE_VERSION` не меняется: повторная загрузка ничего не
+меняет, старое приложение читает `settings.assistant` как неизвестный ключ (сохраняет его) и запускает ассистента агентом
+координатора. Файл до типов (v1) проходит тот же путь: `migrateProjectsFile` переносит роли проекта в тип, `migrateAssistant`
+вычищает. Снимки типов в прогонах (`Run.taskType.roles`) не мигрируются — `resolveRunType` отфильтровывает `assistant` в ветке
+снимка. Тесты — `assistant-settings.test.ts`.
+
 ## Грабли разработки
+
+- **Колонка «Ревью» ≠ этап проверки.** После `done` задача встаёт в «Ревью» синхронно, а `stage` двигает исполнитель; на
+  `merge`/`git`/`end` задача тоже в «Ревью». Мерж упал (`blockStage`) или приложение вышло посреди эффекта — задача висела в
+  «Ревью» на «Мерже»: кнопки «Принять»/«Вернуть» видны, а `decide()` отвечал «принимать или возвращать нечего», причина жила только
+  в одноразовом событии, повтора не было. Теперь причина хранится (`Task.stageBlock`), «Принять» повторяет эффект, «Вернуть» —
+  в работу, прерванное добирает `resumeStuckStages`. Ключевая проверка — карточка «ждёт ревью» у задачи на ноде `merge`
+  (`workflow.test.ts`, «остановленный этап подзадачи»). Отдельно: `mergeBranch` считал конфликтом **любую** ошибку `git merge`
+  (lock, грязная цель) — различайте по незаслитым путям, а не по тексту git. Правило «Ревью или остановка» живёт в
+  `reviewStateOf` (`renderer/src/taskReview.ts`) и нужно **четырём** местам: лента, счётчик ревью, `TaskModal` и карточка на
+  доске (`cardState.ts`). Карточку при первом исправлении пропустили: в ленте было «Этап остановлен», а на самой карточке
+  в «Ревью» оставалось «Ждёт ревью: N файла» (нашла интеграционная проверка в `pnpm dev`, тест — `attention.test.ts`,
+  «карточка на доске»). Новый вид «Ревью» добавляй сразу во все четыре.
+
+- Ассистент — не роль типа задачи: он запускается по `AppSettings.assistant` (`openAssistant` → `assistantLaunch`), роль
+  `assistant` в типах вычищает миграция `migrateAssistant`. Не возвращай его в `DEFAULT_ROLES` и заготовки типов и не бери
+  его настройки из типа по умолчанию: раньше так и было, и правка роли ассистента в не-дефолтном типе молча ни на что не влияла.
+- Роли этапа «Работы» были голыми чекбоксами из `stageRoles(roles)`: роль, удалённая из типа, или служебная роль в `roleIds`
+  (из файла) не показывалась нигде, но оставалась в данных и молча уходила движку. А в пути подзадачи чекбоксы позволяли
+  отметить несколько ролей, хотя движок меняет роль воркера только при ровно одной. Теперь выбор показывается по
+  `wfWorkRoleIds(node)` от **всех** ролей типа: невидимые роли — блоком «сирот» с «Убрать», путь подзадачи — radio
+  (`WorkflowRoleFields.tsx`). Режим «Только выбранные» при пустом выборе хранится в `useState` компонента с `key` по ноде:
+  в данных пустой список — это «координатор», и без своего состояния режим прыгал бы назад после первой правки.
 
 - Упакованное приложение, запущенное из окружения `pnpm dev` (терминал агента наследует `ELECTRON_RENDERER_URL`),
   грузило чужой dev-сервер `http://localhost:5173` вместо своего `out/renderer`: main слепо доверял переменной. Это ещё
@@ -2658,6 +2938,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
   (`useAutoSave`, 300 мс): колбэк, захваченный при вводе, собрал бы тип из старой версии и затёр правку
   соседнего раздела, сделанную за это время. Собирай запись из последней сохранённой версии и сериализуй записи
   (`update` в `settings/useTaskTypes.ts`).
+- **Автосохранение записи целиком не должно отправлять поле, которое main отвергнет.** Пока в поле флагов запуска был
+  негодный текст (незакрытая кавычка), `taskTypes:save` и `app:setSettings` отвергали запись целиком — правка соседнего
+  поля молча пропадала, а в логе main копились «Error occurred in handler». Поле с проверкой при вводе перед отправкой
+  заменяй последним отправленным годным значением (`prepare` у `useAutoSave`, `withSavableExtraArgs`), введённое оставляй
+  в черновике с ошибкой под полем.
 - **Всё, что читается из `projects.json`, проверяй той же валидацией, что при сохранении.** Во времена шаблонов
   проектов загрузка проверяла только id/название/объект настроек: руками испорченный шаблон без колонки backlog
   давал проект без backlog, а применение шаблона успевало записать правила и сохранить файл до ошибки колонок.
@@ -2776,6 +3061,45 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 - **Путь из renderer и имена записей (`splitSafeSegments`, `main/project-files.ts`).** Всё, что отдаёт `files:list`, должно проходить обратно
   через `files:list`/`files:reveal`. Отказ по символу, который ОС разрешает в имени, делает строку дерева видимой, но нераскрываемой:
   так было с `\` на unix. Запрещённые символы — только там, где они разделители или спецсинтаксис (`\` и `:` на win32).
+- **Unborn HEAD (репозиторий без коммитов).** Запуск координатора на свежем `git init` падал сырым
+  `ambiguous argument 'HEAD'`: `currentBranch` звал `rev-parse --abbrev-ref HEAD`. На unborn HEAD падают (128)
+  `rev-parse HEAD`, `--abbrev-ref HEAD`, `log`, `diff HEAD`, `diff a...b`, `rev-list`, `merge-base`, `merge --no-ff`;
+  работают `symbolic-ref --short -q HEAD` (имя ветки), `status`, `ls-files`, `for-each-ref`, `worktree list`. Имя ветки
+  читай через `symbolic-ref` (`currentBranch`, `projectBranchInfo`), наличие коммита — `rev-parse --verify --quiet
+  HEAD^{commit}` (`hasCommits`, код 1 — нет). Ловушки: `worktree add -b X <путь>` **без базы** успешно создаёт пустую
+  ветку-сироту без файлов проекта — ветки заводи только после `assertHasCommits`; `commit --allow-empty` при staged-файлах
+  коммитит их; ошибки `reviewInfo` при отсутствующей базе глотать нельзя — `commits=[]` пропускает мерж, и
+  `removeWorktree` удаляет ветку с работой воркера (поэтому `assertMergeTarget` в `review.ts`).
+- **`<select>` с `background: transparent` на Windows даёт белый нечитаемый список, на macOS этого не видно.** На macOS попап select —
+  меню ОС, на Windows/Linux его рисует Chromium: фон берёт из computed background select, а без `color-scheme` — в светлой схеме.
+  Список «Agent» в ролях (`.roles-agent select`) был белым со светлым текстом опций. Теперь `color-scheme: dark` на `:root`, фон и цвет
+  опций выпадающих select заданы явно (у списков `multiple` фон опции перекрыл бы подсветку выбранных — поэтому `:not([multiple]):not([size])`), а у select нет прозрачного фона (`inherit` от обёртки) — это проверяет `nativeControls.test.ts`.
+- **Новое поле роли молча теряется, если не добавить его в `validateRoles`.** Функция собирает результат из известных
+  полей — и при сохранении (`taskTypes:save`), и при чтении `projects.json` (`loadedRoles`). Поле, которое туда не
+  дописали, «успешно» сохраняется и исчезает после перезагрузки. Так же устроен белый список ассистента
+  (`ASSISTANT_TEXT_FIELDS` в `assistant.ts`). Добавляешь поле — правь обе функции и пиши тест «save → новый
+  `ProjectManager` на тот же файл» (`launch-extra-args.test.ts`).
+- **`loadedRoles` выбрасывает роль, не прошедшую `validateRoles`.** Строгая проверка нового поля при чтении файла
+  уносит роль целиком вместе с её промптом и моделью, а задачи на ней перестают запускаться («роли нет в типе»).
+  Поле, которое человек может испортить руками, при чтении отбрасывай само (`validateRoles(…, lenient)` — так сделано
+  с `extraArgs`), а проверку повторяй там, где оно используется (`launchExtraArgs` при запуске агента).
+- **Ответ сокета с ролью, типом, настройками или прогоном несёт всё, что лежит в объекте.** `roles.*`, `types.*`,
+  `settings.*`, `runs.list` (снимок `Run.taskType`) отдают объекты целиком, и их читают агенты. Поле, которое агентам
+  видеть нельзя (флаги запуска: пути, токены), вырезай на выходе сокета (`okLine`), а не в одном методе: следующий
+  метод, вернувший роль, снова бы его раскрыл.
+- **Variadic-флаги съедают позиционный промпт.** У claude `--add-dir <directories...>`, `--allowedTools <tools...>`,
+  `--mcp-config <configs...>` (и другие `<x...>` в `--help`) забирают все следующие значения до очередного флага. Если
+  такой флаг стоит прямо перед позиционным промптом (claude, cursor, amp передают задание последним аргументом), промпт
+  уходит в значение флага, и агент стартует без задания. Поэтому флаги пользователя (`extraArgs`) вставляются **перед**
+  флагами приложения, а перед промптом всегда стоит флаг с одним значением (`--append-system-prompt <system>`) — это
+  верно только для claude. У **codex** `--image <FILE>...` тоже variadic, а `-m` и `-c` приложение ставит не всегда:
+  `codex --image a.png <промпт>` уходил в сессию как «Codex could not read the local image at `<промпт>`» — агент
+  стартовал без задания (проверено на 0.156.1). Поэтому `invoke` codex ставит `--` перед промптом, если есть флаги
+  пользователя; `--` в самих `extraArgs` по-прежнему запрещён (сделал бы позиционными флаги приложения), а тут он
+  стоит после всех флагов приложения. У **cursor** и **amp** промпт тоже идёт сразу за флагами пользователя, но
+  variadic-опции и поддержка `--` у них не проверены (агенты не установлены), поэтому argv не менялся: флаг пользователя
+  с `...` в `--help` этих агентов ставь не последним. Добавляешь в `invoke` новый флаг — не ставь variadic последним
+  перед промптом.
 
 ## Открытые вопросы
 

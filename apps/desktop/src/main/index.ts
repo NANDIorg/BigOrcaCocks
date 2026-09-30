@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { assistantCwd } from './assistant'
@@ -14,7 +14,7 @@ import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
-import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
+import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
   settleIdleRunStages, startRunWorkflow,
@@ -23,18 +23,20 @@ import {
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
-import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
+import { exportTaskTypeToFile } from './task-type-export'
+import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -456,6 +458,23 @@ function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
 }
 
 /**
+ * Доска проекта открыта впервые за запуск: подзадачи, чей эффект (мерж, git, конец) или переход после `done` прервал
+ * выход приложения, доводятся до ожидания (`resumeStuckStages`). В `setImmediate`: store открывается посреди чужого вызова
+ * (IPC, сокет), а мерж синхронный и долгий — пусть тот вызов сначала закончится.
+ */
+function resumeProjectStages(projectId: string): void {
+  setImmediate(() => {
+    if (!projects.get(projectId)) return
+    try {
+      resumeStuckStages(workflowDeps(projectId))
+    } catch (e) {
+      // Проект могли удалить между открытием и тиком; исключение из setImmediate уронило бы main.
+      console.error(`[orca] воркфлоу: не удалось добрать прерванные этапы (${projectId}):`, (e as Error).message)
+    }
+  })
+}
+
+/**
  * Решение по задаче на этапе проверки (`review accept|reject`, «Принять»/«Вернуть» на карточке проверки): проверка ветки
  * глобальной задачи — исход ноды `gate` (`workflow-run.ts`), остальное — прежний движок (`workflow.ts`). Задачу-решатель
  * развилки `runGateDecision` отвергает: её ветку выбирают `decision choose` или человек по запросу `decision`.
@@ -532,20 +551,22 @@ const assistantChatStatus = new Map<string, AssistantChatStatus>()
 
 /**
  * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
- * старый закрывается) запускается новый. Роли, агент и режим разрешений — из настроек по умолчанию:
- * ассистент не принадлежит ни одному проекту.
+ * старый закрывается) запускается новый. Агент, модель и инструкции — из `AppSettings.assistant`:
+ * ассистент не принадлежит ни одному проекту и типу задачи. Агент проверяется до запуска: неустановленный дал бы
+ * молча мёртвый терминал, а ошибка `OrcaError` видна в панели ассистента.
  */
 function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: string } {
-  if (assistantPty && isAlive(assistantPty)) {
-    if (!reset) return { ptyId: assistantPty }
-    killPty(assistantPty)
-  }
+  const alive = assistantPty && isAlive(assistantPty) ? assistantPty : null
+  if (alive && !reset) return { ptyId: alive }
+  const settings = projects.settings().assistant
+  // До закрытия старого: «Новый диалог» с неустановленным агентом не должен оставить человека без ассистента.
+  // Проекта нет — «включён ли агент в проекте» не проверяется, только установлен ли он.
+  assertAgentUsable(agentInfos(undefined), settings.agent)
+  if (alive) killPty(alive)
   assistantPty = null
   assistantSessionId = undefined
-  // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
-  const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
   const { ptyId, sessionId } = startAssistant(
-    { socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title },
+    { socketPath: SOCKET_PATH, settings },
     cols,
     rows,
     (id) => {
@@ -762,6 +783,20 @@ async function pickRepoFolder(): Promise<string | null> {
 }
 
 /**
+ * Диалог «Сохранить как» для файла экспорта типа; отмена — null. Перезапись существующего файла подтверждает сам
+ * диалог. Окна нет — диалог без родителя (как `showMessageBox` при выходе).
+ */
+async function pickExportFile(defaultName: string): Promise<string | null> {
+  const opts = {
+    title: mt('dialog.exportType'),
+    defaultPath: join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  return res.canceled || !res.filePath ? null : res.filePath
+}
+
+/**
  * `ipcMain.handle` для вызовов renderer: всё, что они меняют на доске, сделал человек в UI — так переходы
  * попадают в историю статусов с `human` (`withStatusSource`, действует до первого await обработчика).
  */
@@ -842,6 +877,11 @@ function registerIpc(): void {
     const root = projectRoot(id)
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
+  // Начальный коммит — только по кнопке человека после `git.noCommits`; неизвестный режим от renderer — пустой коммит,
+  // он не забирает файлы человека в историю.
+  handle('projects:createInitialCommit', (_e, id: string, mode: InitialCommitMode) =>
+    createInitialCommit(projectRoot(id), mode === 'snapshot' ? 'snapshot' : 'empty')
+  )
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
   // ProjectManager.remove — общий путь с сокетом.
@@ -864,6 +904,11 @@ function registerIpc(): void {
   handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
   handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
+  handle('taskTypes:export', (_e, id: string) => exportTaskTypeToFile({
+    export: (typeId) => projects.exportTaskType(typeId, { appVersion: app.getVersion(), exportedAt: new Date().toISOString() }),
+    chooseFile: pickExportFile,
+    write: writeFileAtomic
+  }, id))
   handle('nodeTemplates:list', () => projects.nodeTemplates())
   handle('nodeTemplates:save', (_e, input: NodeTemplateInput) => projects.saveNodeTemplate(input))
   handle('nodeTemplates:delete', (_e, id: string) => projects.deleteNodeTemplate(id))
@@ -1099,6 +1144,7 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
+  projects.onStoreOpened(resumeProjectStages)
   // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
   // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
   projects.onDataChange(() => {

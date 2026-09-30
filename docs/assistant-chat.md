@@ -26,6 +26,7 @@ PTY с агентом (`skills/assistant.md`, `src/main/worker.ts` → `startAss
 | Свёрнуто в фон при закрытии окна | `GeneralSection.tsx` | `AppSettings.keepInBackground` | нет | `settings set --keep-in-background` |
 | Уведомления: глобальный выключатель, роли, виды событий, тихие часы, звук, превью | `NotificationsSection.tsx` | `AppSettings.notifications` (`NotificationSettings`, `shared/notifications.ts`) | нет | `settings set --notifications-enabled`, `--notify-role <id>=on\|off`, `--notify-event <kind>=on\|off`, `--quiet-hours <from>-<to>`, `--sound`, `--show-preview` |
 | Автообновление: проверять, скачивать, ставить при простое | `UpdatesSection.tsx` | `AppSettings.updates` (`UpdateSettings`) | нет | `settings set --auto-check --auto-download --install-when-idle` |
+| Ассистент: агент, модель, effort, инструкции (режим разрешений — всегда `auto`, не настраивается) | раздел «Ассистент» в «Настройках» | `AppSettings.assistant` (`AssistantSettings`; раньше — роль `assistant` типа задачи, перенесена миграцией `migrateAssistant`) | `settings get` (поле `assistant`) | `settings set --assistant-agent <id> --assistant-model <id> --assistant-effort <уровень> --assistant-prompt "..."` (**опасно** при смене агента — нужен `--yes`); действует с нового диалога |
 | Мастер первого запуска: пройти заново | `GeneralSection.tsx` (кнопка) | `OnboardingState` (не в `AppSettings`) | нет | не нужно ассистенту — чисто UI-действие |
 
 ### Библиотека типов задач (`Настройки → Типы задач`, `settings/TaskTypePane.tsx`, IPC `taskTypes.*`)
@@ -82,7 +83,7 @@ PTY с агентом (`skills/assistant.md`, `src/main/worker.ts` → `startAss
 | Метод (план) | CLI (план) | Параметры | Результат | Подтверждение |
 |---|---|---|---|---|
 | `settings.get` | `settings get` | — | `AppSettings` целиком (то же, что `app.getSettings()` в IPC) | нет |
-| `settings.set` | `settings set --language ru\|en --keep-in-background --notifications-enabled --notify-role <id>=on\|off --notify-event <kind>=on\|off --quiet-hours <from>-<to> --sound --show-preview --auto-check --auto-download --install-when-idle` | любой поднабор флагов — как `AppSettingsPatch`, мержится по полям | `AppSettings` после мержа | нет — это не деструктивная правка |
+| `settings.set` | `settings set --language ru\|en --keep-in-background --notifications-enabled --notify-role <id>=on\|off --notify-event <kind>=on\|off --quiet-hours <from>-<to> --sound --show-preview --auto-check --auto-download --install-when-idle --assistant-agent <id> --assistant-model <id> --assistant-effort <уровень> --assistant-prompt "..." [--yes]` | любой поднабор флагов — как `AppSettingsPatch`, мержится по полям; `""` у `--assistant-model/-effort/-prompt` очищает поле | `AppSettings` после мержа | **да** для смены `--assistant-agent` на другой агент (другой процесс ассистента; модель и effort сбрасываются, если не заданы тем же вызовом), остальное — нет |
 | `types.create` | `types create --title "..." [--description "..."]` | `title` обязателен | `TaskType` (роли и правила — дефолтные, как «Создать тип» в UI) | нет |
 | `types.rename` | `types rename --type <id> [--title "..."] [--description "..."]` | хотя бы одно поле | `TaskType` | нет |
 | `types.set-default` | `types set-default --type <id>` | `type` обязателен, должен быть в библиотеке | `TaskTypesState` | нет |
@@ -119,7 +120,7 @@ tool-вызовы), но снизу остаётся тот же PTY с инте
 ### Источник сообщений
 
 - **Основной — транскрипт агента**, а не разбор ANSI из PTY. Claude Code (агент `claude`, единственный
-  агент с ролью `assistant` сейчас, см. `DEFAULT_ROLES`) пишет сессию в
+  агент ассистента по умолчанию, `DEFAULT_ASSISTANT_SETTINGS`; агент меняется в `AppSettings.assistant`) пишет сессию в
   `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl` — то же, что уже разбирает
   `apps/desktop/src/main/transcripts.ts` (`parseClaudeLine`) для статистики. У ассистента `cwd` —
   `userData/assistant` (см. «Ассистент» в `docs/architecture.md`), устойчивый и без git, поэтому найти файл
@@ -130,7 +131,7 @@ tool-вызовы), но снизу остаётся тот же PTY с инте
   инструмента (сворачивается в один блок с вызовом). Это те же данные, что видны в PTY, но структурированные
   и без ANSI/спиннеров.
 - **Фолбэк — вывод PTY как есть**, когда транскрипт недоступен: агент без транскрипта (не Claude Code —
-  сейчас у роли `assistant` только `claude`, но контракт должен переживать добавление другого агента),
+  ассистенту в настройках можно выбрать и другого агента, контракт это переживает),
   файл сессии не нашёлся (первые секунды после старта, до первой строки), или транскрипт сломан/недоступен
   (права, диск). В этом случае панель показывает **терминал**, а не чат (переключатель ниже) — не пытаемся
   парсить чат из ANSI.
@@ -205,7 +206,7 @@ Tool-вызовы **всегда свёрнуты** (одна строка «в�
 
 ### Агенты без транскрипта
 
-Роль `assistant` сейчас жёстко на `claude` (`DEFAULT_ROLES`), но контракт не должен завязываться на это:
+Агент ассистента по умолчанию — `claude` (`DEFAULT_ASSISTANT_SETTINGS`), но в `AppSettings.assistant` его можно сменить, поэтому контракт на это не завязывается:
 - `assistantChat.available` возвращает `false` для любого PTY, у которого нет парсера транскрипта
   (сейчас — все, кроме `agent === 'claude'`; список парсеров — как `parseClaudeLine`/`parseCodexLine` в
   `transcripts.ts`, но для чата нужен не расход токенов, а сообщения, поэтому это **отдельный** парсер,

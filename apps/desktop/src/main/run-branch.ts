@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { globalTaskTitle, runBranchName, type RunGit, type Task, type TaskStore } from '@orca-board/core'
-import { currentBranch, mergeBranch, removeWorktreeKeepBranch } from './git'
+import { assertHasCommits, currentBranch, headBase, mergeBranch, removeWorktreeKeepBranch } from './git'
 import { OrcaError } from './i18n'
 
 // Ветка глобальной задачи (docs/architecture.md → «Ветка глобальной задачи»). Раньше подзадачи ответвлялись от HEAD
@@ -34,12 +34,6 @@ function branchExists(repoRoot: string, branch: string): boolean {
   } catch {
     return false
   }
-}
-
-/** Текущая ветка корня; detached HEAD — коммит, иначе ветвиться было бы не от чего. */
-function headRef(repoRoot: string): string {
-  const branch = currentBranch(repoRoot)
-  return branch === 'HEAD' ? git(repoRoot, ['rev-parse', 'HEAD']) : branch
 }
 
 /**
@@ -80,7 +74,9 @@ export function ensureRunBranch(store: TaskStore, repoRoot: string, runId: strin
   if (run.git) return ensureWorktree(store, repoRoot, run.id, run.git)
   if (startedWithoutBranch(store, run.id)) return undefined
   const branch = runBranchName({ id: run.id, title: globalTaskTitle(run) })
-  const base = headRef(repoRoot)
+  // Без коммитов ветвиться не от чего: `git.noCommits` вместо сырого «unknown revision» от git.
+  assertHasCommits(repoRoot)
+  const base = headBase(repoRoot)
   const worktree = runWorktreePath(repoRoot, run.id)
   try {
     git(repoRoot, ['worktree', 'add', '--no-track', '-b', branch, worktree, base])

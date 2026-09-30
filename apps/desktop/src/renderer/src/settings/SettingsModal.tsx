@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import { DEFAULT_ROLES, type AgentInfo, type Role, type TaskType } from '@orca-board/core'
+import { DEFAULT_ROLES, type AgentInfo, type AssistantSettings, type Role, type TaskType } from '@orca-board/core'
 import type { AppSettings, AppSettingsPatch, Project } from '../../../shared/ipc'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
@@ -11,19 +11,22 @@ import {
 import { GeneralSection } from './GeneralSection'
 import { NotificationsSection } from './NotificationsSection'
 import { UpdatesSection } from './UpdatesSection'
+import { AssistantSection } from './AssistantSection'
 import { NodeTemplatesSection } from './NodeTemplatesSection'
 import { useNodeTemplates } from './useNodeTemplates'
 import { TaskTypePane } from './TaskTypePane'
 import { useTaskTypes } from './useTaskTypes'
 import { useT } from '../i18n'
 import { saveAppSettings } from '../appSettingsSave'
+import { assistantSavePatch } from '../assistantSettings'
+import { extraArgsSupported } from '../extraArgsHints'
 import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
 import { settingsKeyAction } from '../settingsFullscreen'
 
-/** Раздел меню: общий, уведомления, обновления, свои ноды или тип задачи (`type:<id>`). */
-type Section = 'general' | 'notifications' | 'updates' | 'nodes' | `type:${string}`
+/** Раздел меню: общий, уведомления, обновления, ассистент, свои ноды или тип задачи (`type:<id>`). */
+type Section = 'general' | 'notifications' | 'updates' | 'assistant' | 'nodes' | `type:${string}`
 
 const TAB_KEY = 'orca.settingsTypeTab'
 const TYPE = 'type:'
@@ -41,7 +44,7 @@ function stored(key: string): string | null {
 /** Запомненный раздел. Старые разделы шаблонов (`tpl:<id>`) и «Для новых проектов» ведут в типы задач. */
 function initialSection(): Section {
   const v = stored(SETTINGS_SECTION_KEY)
-  if (v === 'general' || v === 'notifications' || v === 'updates' || v === 'nodes') return v
+  if (v === 'general' || v === 'notifications' || v === 'updates' || v === 'assistant' || v === 'nodes') return v
   if (v?.startsWith(TYPE)) return v as Section
   if (v?.startsWith(OLD_TPL)) return `${TYPE}${v.slice(OLD_TPL.length)}`
   return v ? `${TYPE}` : 'general'
@@ -63,6 +66,8 @@ interface Props {
   updates: UpdatesController
   /** Типы изменились: перечитать проекты в приложении (роли типа по умолчанию, выбор типов в «О проекте»). */
   onProjectsChanged(): Promise<void>
+  /** Настройки приложения записаны: App держит их для подписи терминала ассистента. */
+  onAppSettings?(settings: AppSettings): void
   /** «Пройти заново» в «Общие»: закрыть настройки и открыть мастер первого запуска. */
   onRunOnboarding(): void
   onClose(): void
@@ -72,7 +77,7 @@ interface Props {
  * «Настройки» (шестерёнка в rail): общие настройки приложения и библиотека типов задач (taskTypes:*).
  * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
  */
-export function SettingsModal({ sectionRequest, agents, updates, onProjectsChanged, onRunOnboarding, onClose }: Props): React.JSX.Element {
+export function SettingsModal({ sectionRequest, agents, updates, onProjectsChanged, onAppSettings, onRunOnboarding, onClose }: Props): React.JSX.Element {
   const t = useT()
   const [section, setSection] = useState<Section>(initialSection)
   const [tab, setTab] = useState<TaskTypeTab>(initialTab)
@@ -138,8 +143,20 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
 
   async function saveApp(patch: AppSettingsPatch): Promise<void> {
     const res = await saveAppSettings(window.orca.app, patch)
-    if (res.settings) setAppSettings(res.settings)
+    if (res.settings) applySettings(res.settings)
     setAppError(res.error)
+  }
+
+  function applySettings(next: AppSettings): void {
+    setAppSettings(next)
+    onAppSettings?.(next)
+  }
+
+  /** Ассистент сохраняется автосохранением редактора: сбой бросаем — его покажет сам редактор. */
+  async function saveAssistant(assistant: AssistantSettings): Promise<void> {
+    const res = await saveAppSettings(window.orca.app, { assistant: assistantSavePatch(assistant, extraArgsSupported(agents)) })
+    if (res.settings) applySettings(res.settings)
+    if (res.error) throw new Error(res.error)
   }
 
   async function createType(): Promise<void> {
@@ -176,6 +193,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
     count: updateState?.availableVersion ? versionLabel(updateState.availableVersion) : undefined,
     tone: updateState?.status === 'available' || updateState?.status === 'ready' ? 'warn' : undefined
   }
+  const assistantNav: NavEntry<Section> = { id: 'assistant', label: t('settings.nav.assistant'), icon: Icon.assistant }
   const nodesNav: NavEntry<Section> = {
     id: 'nodes', label: t('settings.nav.nodeTemplates'), icon: Icon.star,
     count: nodeTemplates.templates ? String(nodeTemplates.templates.length) : undefined
@@ -237,6 +255,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
               <NavItem item={general} current={section} onGo={go} />
               <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
               <NavItem item={updatesNav} current={section} onGo={go} />
+              <NavItem item={assistantNav} current={section} onGo={go} />
               <div className="about-nav-group">{t('settings.nav.taskTypes')}</div>
               {types.stale || (!state && types.error) ? (
                 <NavItem item={{ id: `${TYPE}`, label: t('settings.nav.taskTypes'), icon: Icon.layers }} current={navCurrent} onGo={go} />
@@ -265,6 +284,8 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
                   />
                 ) : section === 'updates' ? (
                   <UpdatesSection settings={appSettings} updates={updates} error={appError} onChange={(p) => void saveApp({ updates: p })} />
+                ) : section === 'assistant' ? (
+                  <AssistantSection settings={appSettings} agents={agents} error={appError} onSave={saveAssistant} />
                 ) : section === 'nodes' ? (
                   <NodeTemplatesSection library={nodeTemplates} />
                 ) : (

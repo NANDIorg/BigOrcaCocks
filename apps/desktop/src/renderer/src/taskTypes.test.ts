@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { DEFAULT_ROLES, presetTaskType, type Role, type TaskType } from '@orca-board/core'
 import type { TaskTypesState } from '../../shared/ipc'
 import {
-  availableTypes, globalTypeTitle, isStaleTaskTypesError, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId,
+  availableTypes, globalTypeTitle, isStaleTaskTypesError, loadTaskTypes, projectDefaultTypeId,
   rolesForRun, rolesWithDisabledAgent, taskTypesApi, workflowForRun
 } from './taskTypes'
 
@@ -64,11 +64,6 @@ test('rolesForRun — старый main без типов: встроенные 
   const runs = [{ id: 'r_docs', typeId: 'docs' }]
   assert.deepEqual(rolesForRun('r_docs', runs, {}, null), DEFAULT_ROLES)
   assert.deepEqual(rolesForRun(undefined, [], null, null), DEFAULT_ROLES)
-})
-
-test('libraryDefaultRoles — роли типа библиотеки по умолчанию (ассистент)', () => {
-  assert.deepEqual(ids(libraryDefaultRoles(STATE)), ['coordinator', 'developer', 'qa'])
-  assert.deepEqual(libraryDefaultRoles({ taskTypes: [], defaultTaskTypeId: 'нет' }).map((r) => r.id), ids(presetTaskType('general')!.settings.roles ?? DEFAULT_ROLES))
 })
 
 test('globalTypeTitle — из библиотеки, тип удалён — из снимка, «Входящие» и старый main — без бейджа', () => {

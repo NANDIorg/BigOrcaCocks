@@ -3,16 +3,95 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { mt, OrcaError } from './i18n'
-import type { ProjectBranchInfo, ProjectBranchList, ProjectBranchUpstream, ProjectGitResult, ProjectLocalBranch } from '../shared/ipc'
+import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBranchUpstream, ProjectGitResult, ProjectLocalBranch } from '../shared/ipc'
 
 // git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
 // сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim()
+function git(cwd: string, args: string[], timeoutMs?: number): string {
+  return execFileSync('git', args, {
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+    env: gitEnv(),
+    ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGKILL' as const } : {})
+  }).trim()
 }
 
+/**
+ * Окружение git в main: терминала нет, поэтому ни пароля (`GIT_TERMINAL_PROMPT=0`), ни редактора сообщения
+ * (`GIT_EDITOR=true` — merge/commit без `-m` не повиснут в ожидании vim).
+ */
+function gitEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' }
+}
+
+/**
+ * Сколько ждать git, который меняет репозиторий (merge, commit, worktree remove). git в main синхронный: хук,
+ * подпись коммита (gpg-agent ждёт пин-код) или чужая блокировка файлов иначе вешают приложение насовсем.
+ * Таймаут — обычная ошибка: мерж подзадачи встаёт с причиной (`Task.stageBlock`), «Принять» его повторит.
+ */
+const MUTATE_TIMEOUT_MS = 120_000
+
+/** Текст ошибки git из execFileSync: stdout+stderr или «не ответил за N с» по таймауту. */
+function gitFailure(e: unknown, timeoutMs: number): string {
+  const err = e as { stdout?: string; stderr?: string; message?: string; code?: string }
+  if (err.code === 'ETIMEDOUT') return `git не ответил за ${Math.round(timeoutMs / 1000)} с`
+  return `${err.stdout?.toString() ?? ''}${err.stderr?.toString() ?? ''}`.trim() || err.message || 'неизвестная ошибка'
+}
+
+/**
+ * Текущая ветка корня; detached HEAD — `'HEAD'` (так его узнают `headBase` и вызывающие). `symbolic-ref`, а не
+ * `rev-parse --abbrev-ref HEAD`: последний в репозитории без коммитов (unborn HEAD) падает с кодом 128, а
+ * `symbolic-ref` отдаёт имя ветки. Код 1 — HEAD не на ветке; другой (128 — не репозиторий) пробрасывается.
+ */
 export function currentBranch(repoRoot: string): string {
-  return git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  try {
+    return git(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD'])
+  } catch (e) {
+    if ((e as { status?: number }).status === 1) return 'HEAD'
+    throw e
+  }
+}
+
+/** В репозитории есть хотя бы один коммит (HEAD не unborn). Не репозиторий — исключение git. */
+export function hasCommits(repoRoot: string): boolean {
+  try {
+    git(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+    return true
+  } catch (e) {
+    if ((e as { status?: number }).status === 1) return false
+    throw e
+  }
+}
+
+/**
+ * Orca ветвит работу от коммита: в репозитории без коммитов (свежий `git init`) `worktree add -b` без базы создаёт
+ * пустую ветку-сироту без файлов проекта, а с базой падает сырым «invalid reference». Отказываем понятной ошибкой.
+ */
+export function assertHasCommits(repoRoot: string): void {
+  if (!hasCommits(repoRoot)) throw new OrcaError('git.noCommits', { branch: currentBranch(repoRoot) })
+}
+
+/**
+ * Точка отсчёта новой ветки от HEAD корня — его текущая ветка (туда сольёт `merge`). Detached HEAD — хеш коммита:
+ * слово `HEAD` в worktree означало бы уже его собственный HEAD. Коммитов нет — сначала `assertHasCommits`.
+ */
+export function headBase(repoRoot: string): string {
+  const branch = currentBranch(repoRoot)
+  return branch === 'HEAD' ? git(repoRoot, ['rev-parse', 'HEAD']) : branch
+}
+
+/**
+ * Worktree задачи на ветке `branch`: ветка есть — worktree на неё; нет — новая ветка от `base` (ветка глобальной
+ * задачи), без `base` — от HEAD корня. Новая ветка требует коммит в репозитории: иначе получилась бы сирота.
+ */
+export function addTaskWorktree(repoRoot: string, worktree: string, branch: string, base?: string): void {
+  if (localBranchExists(repoRoot, branch)) {
+    git(repoRoot, ['worktree', 'add', worktree, branch])
+    return
+  }
+  assertHasCommits(repoRoot)
+  git(repoRoot, ['worktree', 'add', '-b', branch, worktree, ...(base ? [base] : [])])
 }
 
 /** Состояние HEAD корня проекта для UI; см. `ProjectBranchInfo` в `shared/ipc.ts`. */
@@ -24,7 +103,17 @@ export function projectBranchInfo(repoRoot: string): ProjectBranchInfo {
   }
   try {
     // symbolic-ref, а не `rev-parse --abbrev-ref`: в репозитории без коммитов последний падает, а этот отдаёт имя ветки.
-    return { isGitRepo: true, branch: git(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD']), detached: false }
+    const branch = git(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD'])
+    // Сбой самой проверки коммитов (не код 1) — не повод для `unborn`: `projectBranchInfo` не бросает, а UI не должен
+    // предлагать начальный коммит по ошибке.
+    const unborn = (() => {
+      try {
+        return !hasCommits(repoRoot)
+      } catch {
+        return false
+      }
+    })()
+    return unborn ? { isGitRepo: true, branch, detached: false, unborn: true } : { isGitRepo: true, branch, detached: false }
   } catch {
     // код 1 у symbolic-ref — HEAD не на ветке (detached)
     try {
@@ -68,35 +157,53 @@ export function reviewInfo(repoRoot: string, worktree: string, branch: string, b
 /** Незакоммиченное в worktree — коммитим от имени orca, чтобы не потерять при мерже. */
 export function commitWorktree(worktree: string, message: string): void {
   if (git(worktree, ['status', '--porcelain']) === '') return
-  git(worktree, ['add', '-A'])
-  execFileSync('git', ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message], {
-    cwd: worktree,
-    stdio: 'pipe',
-    encoding: 'utf8'
-  })
+  git(worktree, ['add', '-A'], MUTATE_TIMEOUT_MS)
+  try {
+    git(worktree, ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message], MUTATE_TIMEOUT_MS)
+  } catch (e) {
+    throw new Error(`коммит хвостов worktree не удался: ${gitFailure(e, MUTATE_TIMEOUT_MS)}`)
+  }
+}
+
+/**
+ * `git merge` не удался. `conflict` — git начал слияние и упёрся в конфликтующие файлы: его разрешают в ветке задачи
+ * и сливают снова. Иначе git до слияния не дошёл (занят `index.lock`, незакоммиченное в цели, нет ветки, таймаут):
+ * это не конфликт, повтор после устранения причины сольёт как есть.
+ */
+export class MergeError extends Error {
+  constructor(message: string, readonly conflict: boolean) {
+    super(message)
+  }
 }
 
 /**
  * Слить ветку задачи в ветку, выбранную в каталоге `cwd`: worktree глобальной задачи или корень (`mergeTarget`).
- * Бросает с текстом конфликта.
+ * Не слилось — `MergeError` с текстом git и признаком конфликта; начатое слияние отменяется (`merge --abort`).
  */
 export function mergeBranch(cwd: string, branch: string, message: string): void {
   try {
-    execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd, stdio: 'pipe', encoding: 'utf8' })
+    git(cwd, ['merge', '--no-ff', '-m', message, branch], MUTATE_TIMEOUT_MS)
   } catch (e) {
-    const err = e as { stdout?: string; stderr?: string }
+    const text = gitFailure(e, MUTATE_TIMEOUT_MS)
+    // Конфликт — по незаслитым путям в индексе, а не по тексту: его язык зависит от локали git.
+    let conflict = false
     try {
-      execFileSync('git', ['merge', '--abort'], { cwd, stdio: 'pipe', encoding: 'utf8' })
+      conflict = git(cwd, ['diff', '--name-only', '--diff-filter=U']) !== ''
+    } catch {
+      /* индекс недоступен — это не конфликт */
+    }
+    try {
+      git(cwd, ['merge', '--abort'], MUTATE_TIMEOUT_MS)
     } catch {
       /* нечего отменять */
     }
-    throw new Error(`мерж не удался:\n${err.stdout?.toString() ?? ''}${err.stderr?.toString() ?? ''}`.trim())
+    throw new MergeError(`мерж не удался:\n${text}`, conflict)
   }
 }
 
 /** Убрать только worktree, ветку оставить: работа не слита, но и не потеряна (воркфлоу закончился без мержа). */
 export function removeWorktreeKeepBranch(repoRoot: string, worktree: string): void {
-  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
+  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree], MUTATE_TIMEOUT_MS)
 }
 
 /**
@@ -108,7 +215,9 @@ export function removeWorktree(repoRoot: string, worktree: string, branch: strin
     removeWorktreeKeepBranch(repoRoot, worktree)
     return
   }
-  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
+  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree], MUTATE_TIMEOUT_MS)
+  // Папку убрали руками — запись worktree осталась, и `branch -D` отказал бы («ветка выгружена в …»).
+  else git(repoRoot, ['worktree', 'prune'], MUTATE_TIMEOUT_MS)
   try {
     git(repoRoot, ['branch', '-D', branch])
   } catch {
@@ -157,7 +266,7 @@ function opGit(cwd: string, args: string[], timeoutMs?: number): string {
 }
 
 /** Ветка существует локально. */
-function localBranchExists(repoRoot: string, branch: string): boolean {
+export function localBranchExists(repoRoot: string, branch: string): boolean {
   try {
     execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: repoRoot, stdio: 'pipe' })
     return true
@@ -183,15 +292,6 @@ function worktreeBranch(worktree: string): string | undefined {
   } catch {
     return undefined
   }
-}
-
-/**
- * Точка отсчёта новой ветки по умолчанию — текущая ветка корня репозитория (та, куда сольёт `merge`). Detached HEAD
- * корня — хеш коммита: слово `HEAD` в worktree означало бы уже его собственный HEAD.
- */
-function defaultBase(repoRoot: string): string {
-  const branch = currentBranch(repoRoot)
-  return branch === 'HEAD' ? opGit(repoRoot, ['rev-parse', 'HEAD']) : branch
 }
 
 /** `git switch`/`checkout` с грязным деревом может унести правки на другую ветку — поэтому требуем чистоту. */
@@ -229,7 +329,10 @@ export function gitCreateBranch(repoRoot: string, worktree: string, branch: stri
     opGit(worktree, ['checkout', '-q', '--no-track', '-b', branch, ...(base ? [base] : [])])
     return
   }
-  const start = base ?? defaultBase(repoRoot)
+  if (!base && !hasCommits(repoRoot)) {
+    throw new GitOpError(`в репозитории нет ни одного коммита — не от чего создавать «${branch}»: создайте начальный коммит`)
+  }
+  const start = base ?? headBase(repoRoot)
   verify(start)
   opGit(repoRoot, ['worktree', 'add', '-q', '--no-track', '-b', branch, worktree, start])
 }
@@ -287,22 +390,37 @@ const NET_TIMEOUT_MS = 120_000
 const LOCAL_TIMEOUT_MS = 30_000
 const OUTPUT_LIMIT = 4000
 
-/** Асинхронно, а не `execFileSync`: `fetch` идёт до двух минут, синхронный вызов заморозил бы окно и терминалы. */
-async function runGit(cwd: string, args: string[], timeoutMs = LOCAL_TIMEOUT_MS): Promise<{ stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await execFileAsync('git', args, {
-      cwd,
-      encoding: 'utf8',
-      timeout: timeoutMs,
-      killSignal: 'SIGKILL',
-      maxBuffer: 16 * 1024 * 1024,
-      // GIT_TERMINAL_PROMPT=0 — без запроса пароля в терминале, которого у main нет; NO_COLOR/GIT_PAGER — чистый вывод для UI.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', NO_COLOR: '1', GIT_PAGER: 'cat' }
-    })
-    return { stdout, stderr }
-  } catch (e) {
-    throw opFailed(args, e, timeoutMs)
+/**
+ * Асинхронно, а не `execFileSync`: `fetch` идёт до двух минут, синхронный вызов заморозил бы окно и терминалы.
+ * `input` — stdin команды (`hash-object --stdin`); без него stdin не закрывается, как было всегда.
+ */
+async function runGit(cwd: string, args: string[], timeoutMs = LOCAL_TIMEOUT_MS, input?: string): Promise<{ stdout: string; stderr: string }> {
+  const options = {
+    cwd,
+    encoding: 'utf8' as const,
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL' as const,
+    maxBuffer: 16 * 1024 * 1024,
+    // GIT_TERMINAL_PROMPT=0 — без запроса пароля в терминале, которого у main нет; NO_COLOR/GIT_PAGER — чистый вывод для UI.
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', NO_COLOR: '1', GIT_PAGER: 'cat' }
   }
+  if (input === undefined) {
+    try {
+      const { stdout, stderr } = await execFileAsync('git', args, options)
+      return { stdout, stderr }
+    } catch (e) {
+      throw opFailed(args, e, timeoutMs)
+    }
+  }
+  return new Promise((resolvePromise, reject) => {
+    const child = execFile('git', args, options, (err, stdout, stderr) => {
+      if (err) reject(opFailed(args, Object.assign(err, { stderr }), timeoutMs))
+      else resolvePromise({ stdout, stderr })
+    })
+    // git может выйти, не дочитав stdin, — EPIPE не должен ронять main; итог сообщит колбэк.
+    child.stdin?.on('error', () => undefined)
+    child.stdin?.end(input)
+  })
 }
 
 const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g
@@ -458,6 +576,45 @@ export function checkoutProjectBranch(root: string, branch: string, liveAgents: 
     // Завершающий `--` — имя ветки не должно читаться как путь файла; имя, начинающееся с «-», сюда не дойдёт: такой ветки нет.
     if (track) await runGit(root, ['checkout', '-q', '--track', '-b', local, track, '--'])
     else await runGit(root, ['checkout', '-q', local, '--'])
+    return projectBranchInfo(root)
+  })
+}
+
+const INITIAL_COMMIT_MESSAGE = 'chore: начальный коммит (orca-board)'
+
+/**
+ * Автор начального коммита: `user.name`/`user.email` человека, если заданы оба, иначе orca-board, как в `commitWorktree`.
+ * Без этого на машине без настроенной идентичности git отказал бы «Please tell me who you are».
+ * `config --get` с кодом 1 — ключ не задан.
+ */
+async function identityArgs(root: string): Promise<string[]> {
+  const get = (key: string): Promise<string> =>
+    runGit(root, ['config', '--get', key]).then((r) => r.stdout.trim(), () => '')
+  const [name, email] = await Promise.all([get('user.name'), get('user.email')])
+  return name && email ? [] : ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local']
+}
+
+/**
+ * Начальный коммит в репозитории без коммитов (unborn HEAD) — только по согласию человека (IPC `projects:createInitialCommit`).
+ * Идемпотентно: коммиты уже есть (человек успел сам) — ничего не делает. `empty` — plumbing: пустое дерево → `commit-tree` →
+ * `update-ref HEAD <c> ""`; пустой старый ref значит «HEAD ещё не должен существовать», так гонка с человеком не перетрёт его
+ * коммит. Индекс и рабочее дерево не трогаются; `commit --allow-empty` не годится — он забирает staged-файлы. Хеш пустого
+ * дерева не хардкодим: в SHA-256-репозитории он другой. `snapshot` — `add -A` + `commit` с сетевым таймаутом: без
+ * `.gitignore` в коммит может попасть `node_modules`.
+ */
+export function createInitialCommit(root: string, mode: InitialCommitMode): Promise<ProjectBranchInfo> {
+  return serial(root, async () => {
+    assertRepo(root)
+    if (hasCommits(root)) return projectBranchInfo(root)
+    const identity = await identityArgs(root)
+    if (mode === 'snapshot') {
+      await runGit(root, ['add', '-A'], NET_TIMEOUT_MS)
+      await runGit(root, [...identity, 'commit', '-q', '--allow-empty', '-m', INITIAL_COMMIT_MESSAGE], NET_TIMEOUT_MS)
+    } else {
+      const tree = (await runGit(root, ['hash-object', '-t', 'tree', '-w', '--stdin'], LOCAL_TIMEOUT_MS, '')).stdout.trim()
+      const commit = (await runGit(root, [...identity, 'commit-tree', tree, '-m', INITIAL_COMMIT_MESSAGE])).stdout.trim()
+      await runGit(root, ['update-ref', '-m', INITIAL_COMMIT_MESSAGE, 'HEAD', commit, ''])
+    }
     return projectBranchInfo(root)
   })
 }

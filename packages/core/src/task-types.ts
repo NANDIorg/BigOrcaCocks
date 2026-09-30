@@ -7,6 +7,7 @@ import type { Role, Run } from './types'
 import type { WfMigrationNote, Workflow } from './workflow'
 import { DEFAULT_ROLES } from './types.ts'
 import { defaultWorkflow, pipelineWorkflow } from './workflow.ts'
+import { ASSISTANT_ROLE_ID } from './prompts.ts'
 
 /** Режим разрешений Claude Code; тот же список, что `PermissionMode` в apps/desktop/src/shared/ipc.ts. */
 export type TaskTypePermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -113,8 +114,8 @@ function role(id: string, patch: Partial<Role> = {}): Role {
   return { ...baseRole(id), ...patch }
 }
 
-/** Служебные роли: у всех заготовок одинаковые, из DEFAULT_ROLES. */
-const serviceRoles = (): Role[] => [baseRole('coordinator'), baseRole('assistant')]
+/** Служебные роли: у всех заготовок одинаковые, из DEFAULT_ROLES. Ассистент — не роль типа (`AppSettings.assistant`). */
+const serviceRoles = (): Role[] => [baseRole('coordinator')]
 
 /** Общее для всех рабочих ролей: как сдавать работу. */
 const DONE_REPORT = 'В сводке `done` перечисли, что изменил и какие проверки запускал с результатом; что не проверял — так и напиши.'
@@ -249,7 +250,6 @@ function fullstackType(): TaskType {
         role('coordinator', {
           systemPrompt: 'Декомпозируй по слоям: одна задача — одна роль (frontend или backend). Контракт API — отдельная задача, от которой зависят задачи обеих сторон.'
         }),
-        baseRole('assistant'),
         { id: 'frontend', title: 'Фронтендер', agent: 'claude', description: 'Пишет клиентскую часть: компоненты, экраны, стили.', systemPrompt: `${FRONTEND_PROMPT}\n\n${DONE_REPORT}` },
         { id: 'backend', title: 'Бэкендер', agent: 'claude', description: 'Пишет серверную часть: API, данные, миграции.', systemPrompt: `${BACKEND_PROMPT}\n\n${DONE_REPORT}` },
         reviewer(),
@@ -406,7 +406,8 @@ export function resolveRunType(
     if (own) return { ...resolveTaskType(own), source: 'type' }
     if (run.taskType) {
       const snap = run.taskType
-      const roles = copy(snap.roles)
+      // Снимки прогонов до переноса ассистента в настройки приложения ещё несут роль assistant — ролью типа она не бывает.
+      const roles = copy(snap.roles.filter((r) => r.id !== ASSISTANT_ROLE_ID))
       return {
         typeId: run.typeId,
         title: snap.title,

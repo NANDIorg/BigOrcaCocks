@@ -15,6 +15,7 @@ import {
 import { BoardCard } from './BoardCard'
 import { splitByStage, stageGroups } from './runStage'
 import { cardStageLabel, stageHold } from './subtaskPath'
+import { stalledCardReason } from './taskReview'
 import { MoveMenu, type MoveTarget } from './MoveMenu'
 import { onFocusBoard, onRevealOnBoard, scrollBehavior } from './feedLink'
 import { Icon } from './icons'
@@ -152,13 +153,15 @@ export function Board(props: Props): React.JSX.Element {
   const info = new Map<string, CardInfo>()
   for (const task of tasks) {
     const kind = kindOf(task.status)
+    const stalled = stalledCardReason(task, kind, stageRun, stageWorkflow)
     const input: CardStateInput = {
       kind,
       task,
       dispatch: lastDispatch.get(task.id),
       questions: openQ.get(task.id) ?? [],
       running: runningTaskIds.has(task.id),
-      waitingDeps: kind === 'backlog' ? pendingDeps(task, (dep) => byId.get(dep)?.status, kindOf) : 0
+      waitingDeps: kind === 'backlog' ? pendingDeps(task, (dep) => byId.get(dep)?.status, kindOf) : 0,
+      ...(stalled !== undefined ? { stalled } : {})
     }
     const state = cardState(input)
     const waits = waitingTaskIds.has(task.id)

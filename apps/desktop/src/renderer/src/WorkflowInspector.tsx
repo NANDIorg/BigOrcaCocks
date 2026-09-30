@@ -1,5 +1,5 @@
 import type React from 'react'
-import { wfNodeTitle, wfPorts, type BoardColumn, type Role, type WfIssue, type WfNode, type WfPort, type WfValidation, type Workflow } from '@orca-board/core'
+import { wfNodeTitle, wfPorts, type AgentInfo, type BoardColumn, type Role, type WfIssue, type WfNode, type WfPort, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import { issueTargets, removeSelected, wfPortClass, wfPortLabel, type WfSelection } from './workflowEdit'
 import type { WfScope } from './workflowNav'
@@ -27,6 +27,8 @@ interface Props {
   scope?: WfScope
   /** Открыть путь подзадачи ноды «Работа» (только из графа типа). Нет — кнопки «Открыть» нет. */
   onOpenPath?(nodeId: string): void
+  /** Агенты для состояния ролей в «Кто выполняет»; нет (старый main) — состояние неизвестно, без предупреждений. */
+  agents?: readonly AgentInfo[]
   /** Библиотека своих нод: карточка «Своя нода» (сохранить, обновить из шаблона). Нет — карточки нет. */
   library?: NodeTemplatesHook
 }
@@ -44,7 +46,7 @@ function cardIssueText(issue: WfIssue): string {
  * select «куда ведёт», поэтому весь граф можно собрать с клавиатуры, не трогая холст; без выделения — список нод.
  * Поля карточек — WorkflowNodeFields.tsx, путь подзадачи — WorkflowSubflowCard.tsx.
  */
-export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues, scope = 'run', onOpenPath, library }: Props): React.JSX.Element {
+export function WorkflowInspector({ workflow, selection, onChange, onSelect, roles, columns, issues, scope = 'run', onOpenPath, agents, library }: Props): React.JSX.Element {
   const t = useT()
   const targets = issueTargets(issues)
   const node = selection?.kind === 'node' ? workflow.nodes.find((n) => n.id === selection.id) : undefined
@@ -77,7 +79,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
         </WfCard>
         {cards.includes('who') && (
           <WfCard id="who" title={t(whoTitle(node.type))} issue={byCard.get('who')}>
-            <WhoFields node={node} workflow={workflow} onChange={onChange} scope={scope} roles={taskRoles} invalid={byCard.get('who')?.level === 'error'} />
+            <WhoFields node={node} workflow={workflow} onChange={onChange} scope={scope} roles={taskRoles} allRoles={roles} agents={agents} invalid={byCard.get('who')?.level === 'error'} />
           </WfCard>
         )}
         {cards.includes('what') && (

@@ -48,6 +48,7 @@ const api: OrcaApi = {
     gitFetch: (id) => ipcRenderer.invoke('projects:gitFetch', id),
     gitPull: (id) => ipcRenderer.invoke('projects:gitPull', id),
     checkoutBranch: (id, branch) => ipcRenderer.invoke('projects:checkoutBranch', id, branch),
+    createInitialCommit: (id, mode) => ipcRenderer.invoke('projects:createInitialCommit', id, mode),
     add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
     detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
     setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
@@ -68,7 +69,8 @@ const api: OrcaApi = {
     save: (input) => ipcRenderer.invoke('taskTypes:save', input),
     delete: (id) => ipcRenderer.invoke('taskTypes:delete', id),
     duplicate: (id) => ipcRenderer.invoke('taskTypes:duplicate', id),
-    setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id)
+    setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id),
+    export: (id) => ipcRenderer.invoke('taskTypes:export', id)
   },
   nodeTemplates: {
     list: () => ipcRenderer.invoke('nodeTemplates:list'),

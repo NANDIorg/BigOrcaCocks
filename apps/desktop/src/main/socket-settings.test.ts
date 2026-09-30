@@ -8,7 +8,7 @@ import { connect, type Server } from 'node:net'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_COLUMNS, type AgentInfo, type BoardColumn, type Role, type TaskType, type WfNodeTemplate } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, type AgentInfo, type BoardColumn, type Role, type TaskType, type WfNodeTemplate } from '@orca-board/core'
 import { ProjectManager } from './projects'
 import { PROJECTS_FILE_VERSION } from './task-types-migration'
 import { readRule, writeRule } from './rules'
@@ -61,7 +61,7 @@ async function currentTypes(): Promise<TaskType[]> {
 /** Реестр агентов проекта: `enabled` — по `Project.enabledAgents` (нет ключа — все установленные), как `agentInfos` в main. */
 function agentInfos(): AgentInfo[] {
   const enabled = projects.get(PID)?.enabledAgents
-  return AGENT_IDS.map((id) => ({ id, title: id, installed: true, enabled: enabled ? enabled.includes(id) : true, models: [], defaults: {} }))
+  return AGENT_IDS.map((id) => ({ id, title: id, installed: true, enabled: enabled ? enabled.includes(id) : true, models: [], defaults: {}, supportsExtraArgs: true }))
 }
 
 beforeEach(async () => {
@@ -187,6 +187,51 @@ describe('settings get/set', () => {
   })
 })
 
+describe('settings: ассистент', () => {
+  interface Assistant { agent: string; model?: string; effort?: string; systemPrompt?: string }
+
+  it('get отдаёт assistant; set --assistant-model/-effort/-prompt мержит по полям, "" очищает', async () => {
+    const got = await ok<{ assistant: Assistant }>('settings.get')
+    assert.deepEqual(got.assistant, { agent: 'claude' })
+    const set = await ok<{ assistant: Assistant; keepInBackground: boolean }>('settings.set', {
+      'assistant-model': 'opus', 'assistant-effort': 'high', 'assistant-prompt': 'Отвечай коротко.'
+    })
+    assert.deepEqual(set.assistant, { agent: 'claude', model: 'opus', effort: 'high', systemPrompt: 'Отвечай коротко.' })
+    const cleared = await ok<{ assistant: Assistant }>('settings.set', { 'assistant-prompt': '', 'assistant-effort': '' })
+    assert.deepEqual(cleared.assistant, { agent: 'claude', model: 'opus' })
+    assert.deepEqual(projects.settings().assistant, cleared.assistant, 'сохранено в ProjectManager')
+  })
+
+  it('смена --assistant-agent требует --yes; с --yes модель и effort сбрасываются, если не заданы тем же вызовом', async () => {
+    await ok('settings.set', { 'assistant-model': 'opus', 'assistant-effort': 'high' })
+    const refused = await call('settings.set', { 'assistant-agent': 'codex' })
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /нужно подтверждение.*агента ассистента с «claude» на «codex».*--yes/)
+    assert.equal(projects.settings().assistant.agent, 'claude', 'без --yes ничего не записано')
+    const changed = await ok<{ assistant: Assistant }>('settings.set', { 'assistant-agent': 'codex', yes: true })
+    assert.deepEqual(changed.assistant, { agent: 'codex' })
+    const withModel = await ok<{ assistant: Assistant }>('settings.set', { 'assistant-agent': 'claude', 'assistant-model': 'sonnet', yes: true })
+    assert.deepEqual(withModel.assistant, { agent: 'claude', model: 'sonnet' })
+    // Тот же агент — не смена, подтверждение не нужно.
+    assert.equal((await ok<{ assistant: Assistant }>('settings.set', { 'assistant-agent': 'claude' })).assistant.model, 'sonnet')
+  })
+
+  it('ошибки: неизвестный агент, флаг без значения', async () => {
+    assert.match((await call('settings.set', { 'assistant-agent': 'nope', yes: true })).error ?? '', /--assistant-agent: неизвестный агент «nope»/)
+    assert.match((await call('settings.set', { 'assistant-model': true })).error ?? '', /--assistant-model требует значения/)
+  })
+
+  it('ассистент — не роль типа: нет в roles list, roles update/rules set --role assistant — ошибка «нет роли»', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    const roles = await ok<Role[]>('roles.list', { type: typeId })
+    assert.ok(roles.length > 0)
+    assert.ok(!roles.some((r) => r.id === 'assistant'), roles.map((r) => r.id).join(','))
+    const upd = await call('roles.update', { type: typeId, role: 'assistant', model: 'opus' })
+    assert.equal(upd.ok, false)
+    assert.equal((await call('rules.set', { type: typeId, role: 'assistant', text: 'x' })).ok, false)
+  })
+})
+
 describe('types.*', () => {
   it('create/rename/set-default/duplicate', async () => {
     const created = await ok<TaskType>('types.create', { title: 'Дизайн', description: 'UI/UX' })
@@ -291,6 +336,74 @@ describe('roles.*', () => {
     for (const r of defaults) await ok('roles.remove', { type: created.id, role: r.id, yes: true })
     assert.deepEqual(projects.taskType(created.id)!.settings.roles?.map((r) => r.id), [custom.id])
     assert.match((await call('roles.remove', { type: created.id, role: custom.id, yes: true })).error ?? '', /нужна хотя бы одна роль/)
+  })
+})
+
+describe('флаги запуска (extraArgs) — только в UI', () => {
+  const FLAGS = '--mcp-config /Users/me/secret.json'
+  /** Роли типа с флагами у developer — как сохраняет UI (`taskTypes:save`). */
+  function setFlags(typeId: string): void {
+    const roles = projects.taskType(typeId)!.settings.roles ?? DEFAULT_ROLES
+    projects.patchTaskType(typeId, { roles: roles.map((r) => (r.id === 'developer' ? { ...r, extraArgs: FLAGS } : r)) })
+  }
+
+  it('roles.list не отдаёт extraArgs, остальные поля роли на месте', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    const before = await ok<Array<Role & { agentEnabled: boolean }>>('roles.list', { type: typeId })
+    setFlags(typeId)
+    assert.equal(projects.taskType(typeId)!.settings.roles!.find((r) => r.id === 'developer')?.extraArgs, FLAGS)
+    const after = await ok<Array<Role & { agentEnabled: boolean }>>('roles.list', { type: typeId })
+    assert.deepEqual(after, before, 'ответ тот же, что без флагов: контракт не изменился')
+    assert.ok(after.every((r) => !('extraArgs' in r)))
+  })
+
+  it('ни один ответ с ролями, типами, настройками и прогонами флагов не содержит', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    setFlags(typeId)
+    projects.setSettings({ assistant: { extraArgs: FLAGS } })
+    projects.store(PID).createRun('цель', undefined, projects.runType(PID, typeId))
+    assert.equal(projects.store(PID).listRuns()[0].taskType?.roles.find((r) => r.id === 'developer')?.extraArgs, FLAGS, 'в снимке типа флаги есть')
+    const replies = [
+      await ok('roles.list', { type: typeId }),
+      await ok('roles.update', { type: typeId, role: 'developer', title: 'Сеньор' }),
+      await ok('roles.add', { type: typeId, title: 'Дизайнер', agent: 'claude' }),
+      await ok('types.list'),
+      await ok('types.duplicate', { type: typeId }),
+      await ok('rules.set', { type: typeId, role: 'developer', text: 'промпт' }),
+      await ok('settings.get'),
+      await ok('settings.set', { 'assistant-model': 'opus' }),
+      await ok('runs.list')
+    ]
+    for (const r of replies) assert.doesNotMatch(JSON.stringify(r), /extraArgs|secret\.json/)
+    assert.equal(projects.taskType(typeId)!.settings.roles!.find((r) => r.id === 'developer')?.extraArgs, FLAGS, 'сами флаги не тронуты')
+    assert.equal(projects.settings().assistant.extraArgs, FLAGS)
+  })
+
+  it('agents.list: признак supportsExtraArgs — только для renderer, в ответ сокета не идёт', async () => {
+    assert.ok(agentInfos().every((a) => a.supportsExtraArgs === true), 'main ставит признак каждому агенту')
+    const reply = await ok<AgentInfo[]>('agents.list')
+    assert.deepEqual(reply, agentInfos().map(({ supportsExtraArgs: _flag, ...a }) => a))
+    assert.ok(reply.every((a) => !('supportsExtraArgs' in a)))
+  })
+
+  it('CLI флаги не задаёт: extra-args в roles.add/update и settings.set молча не применяется', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    const role = await ok<Role>('roles.add', { type: typeId, title: 'Дизайнер', agent: 'claude', 'extra-args': '--x', extraArgs: '--x' })
+    await ok('roles.update', { type: typeId, role: role.id, title: 'UI', 'extra-args': '--x', extraArgs: '--x' })
+    assert.equal('extraArgs' in projects.taskType(typeId)!.settings.roles!.find((r) => r.id === role.id)!, false)
+    await ok('settings.set', { 'assistant-model': 'opus', 'assistant-extra-args': '--x', extraArgs: '--x' })
+    assert.equal('extraArgs' in projects.settings().assistant, false)
+  })
+
+  it('смена агента через CLI сбрасывает флаги роли и ассистента', async () => {
+    const typeId = projects.projectDefaultTypeId(PID)
+    setFlags(typeId)
+    projects.setSettings({ assistant: { extraArgs: FLAGS } })
+    const current = projects.taskType(typeId)!.settings.roles!.find((r) => r.id === 'developer')!.agent
+    await ok('roles.update', { type: typeId, role: 'developer', agent: current === 'codex' ? 'claude' : 'codex', yes: true })
+    assert.equal('extraArgs' in projects.taskType(typeId)!.settings.roles!.find((r) => r.id === 'developer')!, false)
+    await ok('settings.set', { 'assistant-agent': 'codex', yes: true })
+    assert.equal('extraArgs' in projects.settings().assistant, false)
   })
 })
 

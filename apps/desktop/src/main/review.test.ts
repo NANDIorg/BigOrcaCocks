@@ -6,7 +6,8 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, WORKFLOW_VERSION, type HumanRequest, type Workflow } from '@orca-board/core'
-import { acceptReview, resolveHumanRequest } from './review'
+import { acceptReview, mergeTaskBranch, resolveHumanRequest } from './review'
+import { OrcaError } from './i18n'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -88,6 +89,65 @@ describe('acceptReview задачи-ответа', () => {
   })
 })
 
+describe('mergeTaskBranch: повтор после сбоя и ошибки git, которые не конфликт', () => {
+  /** Рабочая задача с коммитом в своей ветке orca/<id>. */
+  function workBranch(id: string, file = 'feature.ts') {
+    const branch = `orca/${id}`
+    const worktree = path.join(tmp, id)
+    git(repo, 'worktree', 'add', '-q', '-b', branch, worktree)
+    writeFileSync(path.join(worktree, file), 'из ветки\n')
+    git(worktree, 'add', '-A')
+    git(worktree, 'commit', '-qm', 'работа')
+    return { title: 'Фича', worktree, branch }
+  }
+
+  it('папки worktree нет (убрали руками, прошлая попытка) — без ENOENT: закоммиченное слито, ветка убрана', () => {
+    const t = workBranch('t1')
+    rmSync(t.worktree, { recursive: true, force: true })
+    assert.deepEqual(mergeTaskBranch(repo, t), { ok: true })
+    assert.equal(existsSync(path.join(repo, 'feature.ts')), true)
+    assert.equal(branchExists(t.branch), false)
+  })
+
+  it('ветку уже слили и удалили (сбой после мержа) — повтор ничего не делает и не падает', () => {
+    const t = workBranch('t2')
+    assert.deepEqual(mergeTaskBranch(repo, t), { ok: true })
+    const head = git(repo, 'rev-parse', 'HEAD')
+    assert.deepEqual(mergeTaskBranch(repo, t), { ok: true })
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), head)
+  })
+
+  it('занятый index.lock в цели — исключение с текстом git, не conflict; ветка на месте', () => {
+    const t = workBranch('t3')
+    const lock = path.join(repo, '.git', 'index.lock')
+    writeFileSync(lock, '')
+    // Текст зависит от версии git («Unable to create …index.lock» / «Unable to write index») — важно, что это исключение.
+    assert.throws(() => mergeTaskBranch(repo, t), /мерж не удался:\n.*(index|lock)/)
+    rmSync(lock)
+    assert.equal(branchExists(t.branch), true)
+    assert.equal(existsSync(t.worktree), true)
+    assert.deepEqual(mergeTaskBranch(repo, t), { ok: true }, 'причину убрали — повтор сливает')
+    assert.equal(existsSync(path.join(repo, 'feature.ts')), true)
+  })
+
+  it('незакоммиченное в цели мешает мержу — исключение, не conflict', () => {
+    const t = workBranch('t4', 'README.md')
+    writeFileSync(path.join(repo, 'README.md'), 'правка в master без коммита\n')
+    assert.throws(() => mergeTaskBranch(repo, t), /мерж не удался/)
+    assert.equal(branchExists(t.branch), true)
+  })
+
+  it('настоящий конфликт — conflict с текстом, слияние отменено', () => {
+    const t = workBranch('t5', 'README.md')
+    writeFileSync(path.join(repo, 'README.md'), 'из master\n')
+    git(repo, 'commit', '-qam', 'master')
+    const result = mergeTaskBranch(repo, t)
+    assert.equal(result.ok, false)
+    assert.equal(!result.ok && result.conflict, true)
+    assert.equal(git(repo, 'status', '--porcelain'), '', 'merge --abort вернул цель в чистое состояние')
+  })
+})
+
 describe('resolveHumanRequest', () => {
   const answerRequest = (store: TaskStore, taskId: string) => store.pendingRequests().find((r) => r.taskId === taskId && r.kind === 'answer')!
   const noStart = (): never => assert.fail('воркер не должен стартовать')
@@ -158,5 +218,42 @@ describe('resolveHumanRequest', () => {
     assert.equal(out.request.status, 'resolved')
     assert.deepEqual(seen.map((r) => [r.id, r.resolution?.optionId]), [[req.id, 'no']])
     assert.equal(out.worker, undefined)
+  })
+})
+
+describe('мерж в репозиторий без коммитов', () => {
+  it('mergeTaskBranch на unborn-корне бросает git.noCommits до коммита и удаления: ветка и её коммиты на месте', () => {
+    const empty = path.join(tmp, 'empty')
+    execFileSync('git', ['init', '-q', '-b', 'main', empty])
+    // Ветка воркера без базы — как было до фикса: `worktree add -b` в unborn-корне даёт сироту, воркер в ней коммитит.
+    const worktree = path.join(tmp, 'wt')
+    git(empty, 'worktree', 'add', '-q', '-b', 'orca/t1', worktree)
+    writeFileSync(path.join(worktree, 'work.txt'), 'работа\n')
+    git(worktree, 'add', '-A')
+    git(worktree, 'commit', '-qm', 'работа воркера')
+    writeFileSync(path.join(worktree, 'tail.txt'), 'хвост\n')
+    const sha = git(empty, 'rev-parse', 'orca/t1')
+
+    assert.throws(
+      () => mergeTaskBranch(empty, { title: 'T', worktree, branch: 'orca/t1' }),
+      (e: unknown) => e instanceof OrcaError && e.key === 'git.noCommits'
+    )
+    assert.equal(git(empty, 'rev-parse', 'orca/t1'), sha, 'ветка воркера не удалена и не сдвинута')
+    assert.equal(existsSync(worktree), true)
+    assert.equal(git(worktree, 'status', '--porcelain'), '?? tail.txt', 'хвосты не закоммичены')
+  })
+
+  it('пропавшая целевая ветка — git.mergeTargetMissing, ничего не удалено', () => {
+    const worktree = path.join(tmp, 'wt')
+    git(repo, 'worktree', 'add', '-q', '-b', 'orca/t2', worktree)
+    writeFileSync(path.join(worktree, 'work.txt'), 'работа\n')
+    git(worktree, 'add', '-A')
+    git(worktree, 'commit', '-qm', 'работа')
+    assert.throws(
+      () => mergeTaskBranch(repo, { title: 'T', worktree, branch: 'orca/t2' }, { cwd: repo, branch: 'feature/gone' }),
+      (e: unknown) => e instanceof OrcaError && e.key === 'git.mergeTargetMissing'
+    )
+    assert.equal(branchExists('orca/t2'), true)
+    assert.equal(existsSync(worktree), true)
   })
 })

@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentInfo, TaskType } from '@orca-board/core'
 import type { Project, TaskTypesState } from '../../../shared/ipc'
 import { RolesEditor } from '../RolesEditor'
@@ -63,13 +63,19 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Итог «Экспорта»: куда сохранён файл. */
+  const [notice, setNotice] = useState<string | null>(null)
   const [sectionError, setSectionError] = useState<string | null>(null)
+  /** Тип на экране сейчас: диалог «Сохранить как» может закрыться уже после переключения на другой тип. */
+  const shownId = useRef(type.id)
+  shownId.current = type.id
 
-  // Ошибки и форма переименования относятся к одному типу.
+  // Ошибки, строка экспорта и форма переименования относятся к одному типу.
   useEffect(() => {
     setRenaming(false)
     setConfirming(false)
     setError(null)
+    setNotice(null)
     setSectionError(null)
   }, [type.id])
   useEffect(() => setSectionError(null), [tab])
@@ -92,6 +98,14 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
   }
 
   const duplicate = (): Promise<void> => act(async () => onSelect((await api.duplicate(type.id)).id))
+  const exportType = (): Promise<void> =>
+    act(async () => {
+      const id = type.id
+      setNotice(null)
+      const saved = await api.exportType(id)
+      // Отмена диалога — молча.
+      if (saved && shownId.current === id) setNotice(t('config.taskType.exported', { path: saved.path }))
+    })
   const makeDefault = (): Promise<void> => act(() => api.setDefault(type.id))
   const removal = typeRemovalConfirm(type, state, usage)
   const remove = (): Promise<void> =>
@@ -136,6 +150,7 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
             roles={s.roles}
             columns={typeColumnChoices(projects)}
             readOnly={false}
+            agents={typeAgents}
             library={nodeTemplates}
             notes={type.workflowNotes}
             onDismissNotes={() => api.patch(type.id, { workflowNotes: [] })}
@@ -176,6 +191,9 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
             </button>
           )}
           <button type="button" className="btn-sm" disabled={busy} onClick={() => void duplicate()}>{t('config.taskType.duplicate')}</button>
+          <button type="button" className="btn-sm" disabled={busy} onClick={() => void exportType()} title={t('config.taskType.exportTitle')}>
+            <Icon.download /> {t('config.taskType.export')}
+          </button>
           <button type="button" className="btn-sm" disabled={busy || renaming} onClick={() => setRenaming(true)}>
             <Icon.edit /> {t('config.taskType.rename')}
           </button>
@@ -212,7 +230,8 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
           })}
         />
       )}
-      {error && <div className="editor-error">{error}</div>}
+      {error && <div className="editor-error tpl-status" role="alert">{error}</div>}
+      {notice && <div className="tpl-status tpl-notice" role="status">{notice}</div>}
 
       <div className="about-banner">
         {t('config.taskType.banner.before')} <b>{t('config.taskType.banner.bold')}</b>{t('config.taskType.banner.after')}
