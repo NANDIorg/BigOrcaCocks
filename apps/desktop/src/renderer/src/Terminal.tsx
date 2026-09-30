@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { t } from './i18n'
+import { appearance } from './appearance'
 
 interface Props {
   ptyId: string
@@ -19,17 +20,25 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
   useEffect(() => {
     const el = ref.current
     if (!el) return
+    const terminalTheme = () => {
+      const colors = appearance.getSnapshot().theme.colors
+      return { background: colors['term-bg'], foreground: colors['term-text'], cursor: colors['term-cursor'], selectionBackground: `${colors['term-cursor']}40` }
+    }
     const term = new XTerm({
       fontFamily: 'ui-monospace, Menlo, monospace',
       fontSize: 12,
-      cursorBlink: true,
-      theme: { background: '#1b1c21' },
+      cursorBlink: !appearance.getSnapshot().reducedMotion,
+      theme: terminalTheme(),
       scrollback: 5000
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
     fitRef.current = { term, fit }
+    const offTheme = appearance.subscribe(() => {
+      term.options.theme = terminalTheme()
+      term.options.cursorBlink = !appearance.getSnapshot().reducedMotion
+    })
 
     const doFit = (): void => {
       if (el.offsetWidth === 0 || el.offsetHeight === 0) return
@@ -53,6 +62,7 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
       onInput.dispose()
       offData()
       offExit()
+      offTheme()
       term.dispose()
       fitRef.current = null
     }

@@ -153,6 +153,11 @@ describe('вспомогательные', () => {
     assert.equal(versionLabel('0.4.2'), 'v0.4.2')
     assert.equal(versionLabel('v0.4.2'), 'v0.4.2')
   })
+  it('строки версии используют кодовое имя серии для текущей и следующей версии', () => {
+    assert.equal(versionLabel('1.0.1'), 'v1.0.1 · Orca')
+    assert.equal(versionLabel('v1.1.2'), 'v1.1.2 · Sea Lion')
+    assert.equal(versionLabel('v1.1.2', false), 'v1.1.2')
+  })
 
   it('pendingText: quit, idle и ничего', () => {
     assert.equal(pendingText(null), undefined)

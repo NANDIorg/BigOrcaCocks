@@ -1,13 +1,16 @@
-import { app, BrowserWindow, ipcMain, Menu, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
+import { getAppTheme } from '../shared/theme'
+import { mainWindowChrome } from './window-chrome'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
-import { assistantCwd } from './assistant'
-import { AssistantChatCache, assistantTranscriptPath, assistantChatAvailable, chatSnapshot, drainChatUpdates, chatInputBytes } from './assistant-chat'
+import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
+import { createAssistantConversation } from './assistant-conversation'
+import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
@@ -36,14 +39,15 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus, InitialCommitMode } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
-import { OrcaError, ipcError, mt, setMainLocale } from './i18n'
+import { OrcaError, ipcError, mt, setMainLocale, mainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
 import { rendererSource } from './renderer-source'
-import { applicationMenuTemplate, MenuActionQueue, PROJECT_URL } from './app-menu'
+import { applicationMenuTemplate, MenuActionQueue } from './app-menu'
+import { refreshAboutWindow, showAboutWindow } from './about-window'
 import type { AppMenuAction } from '../shared/ipc'
 import appIconPath from '../../build/icon.png?asset'
 
@@ -104,13 +108,16 @@ const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
 function createWindow(): BrowserWindow {
   menuActions.disconnect()
+  const chrome = mainWindowChrome(process.platform)
   win = new BrowserWindow({
     width: 1500,
     height: 940,
     title: 'orca-board',
     icon: appIconPath,
-    backgroundColor: '#26282e',
+    backgroundColor: getAppTheme(projects.settings().appearance?.theme).colors.page,
+    ...chrome,
     webPreferences: {
+      ...chrome.webPreferences,
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true
@@ -173,24 +180,25 @@ function navigateFromMenu(action: AppMenuAction): void {
   if (ready) window.webContents.send('app:menuAction', ready)
 }
 
-/** Меню и нативное «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
+/** Меню и «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
 function refreshApplicationMenu(): void {
-  app.setAboutPanelOptions({
-    applicationName: 'orca-board',
-    applicationVersion: app.getVersion(),
-    version: '',
-    credits: `${mt('menu.aboutCredits')}\n\nnandi\n${PROJECT_URL}`,
-    authors: ['nandi'],
-    website: PROJECT_URL,
-    iconPath: appIconPath
-  })
+  refreshAboutWindow(projects.settings().appearance)
   Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, {
     navigate: navigateFromMenu,
-    about: () => app.showAboutPanel(),
+    about: () => { showAboutWindow({ parent: showWindow(), iconPath: appIconPath, version: app.getVersion(), appearance: projects.settings().appearance }) },
     open: () => { showWindow() },
     quit: () => { void requestQuit() },
     openExternal: (url) => { void shell.openExternal(url) }
   })))
+}
+
+/** Фон при запуске/восстановлении и native controls согласованы с выбранной темой. */
+function syncMainAppearance(): void {
+  const settings = projects.settings().appearance
+  const theme = getAppTheme(settings?.theme)
+  if (nativeTheme.themeSource !== theme.colorScheme) nativeTheme.themeSource = theme.colorScheme
+  if (win && !win.isDestroyed()) win.setBackgroundColor(theme.colors.page)
+  refreshAboutWindow(settings)
 }
 
 /** Незавершённые dispatch'и по всем загруженным проектам (для трея). */
@@ -205,6 +213,7 @@ function liveWorkerCount(): number {
 
 function quitNow(): void {
   quitting = true
+  assistantSession.dispose()
   killAll()
   // Обновление скачано и установка при выходе не снята — её установщик сам завершит приложение.
   if (updater.installOnQuit()) return
@@ -540,66 +549,25 @@ function runFinished(store: TaskStore, runId: string): boolean {
   return store.runWorkflow(runId).nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end'
 }
 
-/** Живой терминал ассистента: один на всё приложение, повторное открытие — тот же PTY при любом активном проекте. */
-let assistantPty: string | null = null
-/** sessionId транскрипта текущего ассистента (чат-режим панели, `docs/assistant-chat.md`); нет — агент без парсера. */
-let assistantSessionId: string | undefined
-/** Кэш разбора транскрипта в сообщения чата — переживает между тиками `watchAssistantChat`. */
-const assistantChatCache = new AssistantChatCache()
-/** Статус чата на прошлом тике — чтобы слать `onMessage` только при смене, не на каждый тик. */
-const assistantChatStatus = new Map<string, AssistantChatStatus>()
-
-/**
- * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
- * старый закрывается) запускается новый. Агент, модель и инструкции — из `AppSettings.assistant`:
- * ассистент не принадлежит ни одному проекту и типу задачи. Агент проверяется до запуска: неустановленный дал бы
- * молча мёртвый терминал, а ошибка `OrcaError` видна в панели ассистента.
- */
-function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: string } {
-  const alive = assistantPty && isAlive(assistantPty) ? assistantPty : null
-  if (alive && !reset) return { ptyId: alive }
-  const settings = projects.settings().assistant
-  // До закрытия старого: «Новый диалог» с неустановленным агентом не должен оставить человека без ассистента.
-  // Проекта нет — «включён ли агент в проекте» не проверяется, только установлен ли он.
-  assertAgentUsable(agentInfos(undefined), settings.agent)
-  if (alive) killPty(alive)
-  assistantPty = null
-  assistantSessionId = undefined
-  const { ptyId, sessionId } = startAssistant(
-    { socketPath: SOCKET_PATH, settings },
-    cols,
-    rows,
-    (id) => {
-      if (assistantPty === id) {
-        assistantPty = null
-        assistantSessionId = undefined
-      }
-      assistantChatStatus.delete(id)
-    }
-  )
-  assistantPty = ptyId
-  assistantSessionId = sessionId
-  return { ptyId }
-}
-
-/** Раз в секунду: тянет хвост транскрипта живого ассистента и шлёт панели новые/изменённые сообщения чата. */
-function watchAssistantChat(): void {
-  setInterval(() => {
-    void tickAssistantChat()
-  }, 1000)
-}
-
-async function tickAssistantChat(): Promise<void> {
-  const ptyId = assistantPty
-  const sessionId = assistantSessionId
-  if (!ptyId || !sessionId || !win || win.isDestroyed()) return
-  const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), sessionId)
-  const state = await assistantChatCache.read(filePath)
-  if (!state) return
-  const updates = drainChatUpdates(ptyId, state, assistantChatStatus.get(ptyId))
-  assistantChatStatus.set(ptyId, state.status)
-  for (const u of updates) win.webContents.send(`assistantChat:message:${ptyId}`, u)
-}
+/** Чат живёт независимо от окна и выбранного проекта. Amp/Shell используют отдельный PTY. */
+const assistantSession = new AssistantSession({
+  settings: () => projects.settings().assistant,
+  assertUsable: (agent) => assertAgentUsable(agentInfos(undefined), agent),
+  isAlive,
+  killTerminal: killPty,
+  startTerminal: (settings, cols, rows, onExit) => startAssistant({ socketPath: SOCKET_PATH, settings }, cols, rows, onExit).ptyId,
+  create: (settings, onUpdate) => {
+    const launch = assistantLaunch(settings, BUILTIN_PROMPTS.assistant, mainLocale())
+    const cwd = assistantCwd(app.getPath('userData'))
+    mkdirSync(cwd, { recursive: true })
+    return createAssistantConversation({
+      agent: launch.agent, system: launch.system, model: launch.model, effort: launch.effort, extraArgs: launch.extraArgs, cwd,
+      env: assistantEnv({ socketPath: SOCKET_PATH, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
+      onUpdate
+    })
+  },
+  onUpdate: (update) => { if (win && !win.isDestroyed()) win.webContents.send(`assistantChat:message:${update.ptyId}`, update) }
+})
 
 /**
  * Удаление глобальной задачи (IPC и сокет): при живом координаторе — ошибка; store отвергает подзадачи
@@ -1031,27 +999,13 @@ function registerIpc(): void {
     if (!text && valid.length === 0) throw new OrcaError('coordinator.noObjective')
     return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
   })
-  handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
-  handle('assistant:reset', (_e, cols: number, rows: number) => openAssistant(cols, rows, true))
-  handle('assistantChat:available', (_e, ptyId: string) => {
-    if (assistantPty !== ptyId) return false
-    return assistantChatAvailable(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
-  })
-  handle('assistantChat:getMessages', async (_e, ptyId: string) => {
-    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
-    if (!assistantSessionId) return chatSnapshot(ptyId, undefined)
-    const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
-    return chatSnapshot(ptyId, await assistantChatCache.read(filePath))
-  })
-  handle('assistantChat:send', (_e, ptyId: string, text: unknown) => {
-    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
-    const value = typeof text === 'string' ? text : ''
-    if (!value.trim()) throw new OrcaError('assistantChat.emptyText')
-    writePty(ptyId, chatInputBytes(value))
-    setTimeout(() => {
-      if (isAlive(ptyId)) writePty(ptyId, '\r')
-    }, SUBMIT_DELAY_MS)
-  })
+  handle('assistant:open', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, false))
+  handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
+  handle('assistantChat:available', (_e, id: string) => assistantSession.available(id))
+  handle('assistantChat:getMessages', (_e, id: string) => assistantSession.snapshot(id))
+  handle('assistantChat:send', (_e, id: string, text: unknown) => assistantSession.send(id, text))
+  handle('assistantChat:interrupt', (_e, id: string) => assistantSession.interrupt(id))
+  handle('assistantChat:respond', (_e, id: string, requestId: string, answer: InteractionAnswer) => assistantSession.respond(id, requestId, answer))
   handle('docs:list', () => {
     if (!projects.active()) return []
     const p = resolveProject()
@@ -1122,6 +1076,7 @@ app.whenReady().then(() => {
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
+  syncMainAppearance()
   setMainLocale(projects.settings().language)
   refreshApplicationMenu()
   projects.markRun(app.getVersion())
@@ -1148,6 +1103,7 @@ app.whenReady().then(() => {
   // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
   // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
   projects.onDataChange(() => {
+    syncMainAppearance()
     if (win && !win.isDestroyed()) win.webContents.send('app:changed')
   })
   const { support, backend } = createPlatformUpdater({
@@ -1172,6 +1128,7 @@ app.whenReady().then(() => {
         quitting = false
       },
       quit: () => {
+        assistantSession.dispose()
         killAll()
         app.quit()
       },
@@ -1269,7 +1226,6 @@ app.whenReady().then(() => {
   })
   watchStuck()
   watchFinishedCoordinators()
-  watchAssistantChat()
   createTray({
     open: () => showWindow(),
     quit: () => void requestQuit(),

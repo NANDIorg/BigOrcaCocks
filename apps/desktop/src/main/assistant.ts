@@ -29,7 +29,7 @@ export function assistantEnv(input: AssistantEnvInput): Record<string, string> {
 }
 
 /**
- * cwd ассистента: нейтральная папка `userData`, не репозиторий (у ассистента нет файлового доступа к проектам).
+ * cwd ассистента: нейтральная папка `userData`, не репозиторий. Это стартовая папка, а не системная песочница.
  * Вынесена сюда (не только `worker.ts`), потому что чат-режим (`assistant-chat.ts`) ищет транскрипт агента по
  * тому же cwd — `claudeDirsFor(cwd)` в `transcripts.ts`.
  */

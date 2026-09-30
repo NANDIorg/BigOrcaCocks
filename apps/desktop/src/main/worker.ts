@@ -319,11 +319,10 @@ export interface AssistantContext {
  * Ассистент доски: интерактивный агент из настроек приложения (`AppSettings.assistant`).
  * Один на всё приложение: работает со всеми проектами через orca-board --project (без флага — активный в UI).
  * cwd — нейтральный userData/assistant, а не репозиторий: файлового доступа к проектам у ассистента нет.
- * Прогон не создаётся и ORCA_RUN_ID нет (skills/assistant.md). Установлен ли агент, проверяет вызывающий (`openAssistant`).
+ * Прогон не создаётся и ORCA_RUN_ID нет (skills/assistant.md). Установлен ли агент, проверяет вызывающий (`AssistantSession`).
  *
- * `sessionId` — как у воркера/координатора (`agentSessionId`): агент, принимающий `--session-id`, пишет
- * транскрипт в файл с этим именем, поэтому чат-режим панели (`assistant-chat.ts`) находит его без сканирования
- * папки — по фиксированному пути. У агентов без этой опции `sessionId` нет, и чат недоступен (только терминал).
+ * Amp/Shell остаются PTY с отдельной кнопкой вкладки терминалов. Остальные агенты идут через
+ * assistant-conversation.ts; этот запуск не используется новым двусторонним чатом.
  */
 export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onExit?: (id: string, code: number) => void): { ptyId: string; sessionId?: string } {
   const l = assistantLaunch(ctx.settings, BUILTIN_PROMPTS.assistant, mainLocale())

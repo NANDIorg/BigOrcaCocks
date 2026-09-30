@@ -1,3 +1,4 @@
+import { motionScrollBehavior } from './appearance'
 import type React from 'react'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { BoardColumn, Task } from '@orca-board/core'
@@ -286,7 +287,7 @@ export function DocsModal({ projectName, tasks, columns, initialDoc, onClose }: 
   function jumpTo(hash: string): void {
     const root = articleRef.current
     const el = root && findDocHeading(root, hash)
-    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    if (el) el.scrollIntoView({ block: 'start', behavior: motionScrollBehavior() })
     else setDocError({ title: t('config.docs.err.noSection', { hash }) })
   }
 
@@ -567,7 +568,7 @@ export function DocsModal({ projectName, tasks, columns, initialDoc, onClose }: 
               now={now}
               alsoTasks={others.filter((g) => g.source !== 'project').map((g) => g.title)}
               onJump={(id) => {
-                document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+                document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: motionScrollBehavior() })
                 setSpy((s) => ({ ...s, active: id }))
               }}
             />

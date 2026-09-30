@@ -129,7 +129,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.notes.outputs.version }}
+      version: ${{ steps.metadata.outputs.version }}
+      title: ${{ steps.metadata.outputs.title }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -139,6 +140,9 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: node scripts/check-git-flow.mjs
+      - name: Проверить морское кодовое имя и сформировать заголовок
+        id: metadata
+        run: node scripts/check-release-codenames.mjs --github-output
       - name: Выпускается только коммит из master
         run: git merge-base --is-ancestor HEAD origin/master
       - name: Описание выпуска из релизного PR
@@ -174,6 +178,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -253,6 +258,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_TITLE: ${{ needs.validate.outputs.title }}
         shell: bash
         run: |
           set -euo pipefail
@@ -290,11 +296,11 @@ jobs:
             --jq '.[] | select(.tag_name == env.RELEASE_TAG) | {id, draft}' | jq -s . > ../releases.json
           count=$(jq length ../releases.json)
           if [ "$count" -eq 0 ]; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "orca-board $RELEASE_VERSION" --notes-file RELEASE_NOTES.md
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES.md
           else
             test "$count" -eq 1
             test "$(jq -r '.[0].draft' ../releases.json)" = true
-            gh release edit "$RELEASE_TAG" --draft=true --title "orca-board $RELEASE_VERSION" --notes-file RELEASE_NOTES.md
+            gh release edit "$RELEASE_TAG" --draft=true --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES.md
           fi
           gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
           # Проверяем ответ GitHub после загрузки, а не только файлы на runner.

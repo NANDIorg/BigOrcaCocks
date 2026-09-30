@@ -1,3 +1,4 @@
+export { motionScrollBehavior as scrollBehavior } from './appearance'
 /**
  * Связка ленты «Ждут вас» и доски подзадач. Лента и доска — соседи на экране глобальной задачи, друг друга не
  * импортируют и общего родителя с колбэками не имеют (доска приходит в `GlobalTaskView` как `children`), поэтому
@@ -39,8 +40,3 @@ export const focusFeed = (): void => send('focusFeed')
 export const onFocusFeed = (handler: () => void): (() => void) => listen('focusFeed', handler)
 export const focusBoard = (): void => send('focusBoard')
 export const onFocusBoard = (handler: () => void): (() => void) => listen('focusBoard', handler)
-
-/** Плавная прокрутка к найденному — если человек не просил убрать анимацию. */
-export function scrollBehavior(): ScrollBehavior {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
-}

@@ -1,170 +1,146 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Логика чат-режима панели ассистента (без React/IPC).
-import { describe, it } from 'node:test'
+import { it } from 'node:test'
 import assert from 'node:assert/strict'
-import type { AssistantChatMessage, AssistantChatUpdate, OrcaApi } from '../../shared/ipc'
-import {
-  applyChatUpdate, checkChatSupport, chatStateFromSnapshot, emptyChatState, groupMessages, isAssistantViewMode,
-  isStuckThinking, readAssistantViewMode, speakerOf, writeAssistantViewMode, STUCK_THINKING_MS
-} from './assistantChat'
-
-function msg(id: string, role: AssistantChatMessage['role'], text = '', at = 0): AssistantChatMessage {
-  return { id, role, text, at }
+import type { AssistantChatSnapshot, AssistantChatUpdate, OrcaApi } from '../../shared/ipc'
+import { applyChatUpdate, chatStateFromSnapshot, groupMessages, isAssistantThinking, subscribeAssistantChat, toolActivityDetail } from './assistantChat'
+const snapshot: AssistantChatSnapshot = { ptyId: 's1', protocolVersion: 2, revision: 2, agent: 'claude', transport: 'chat', messages: [{ id: 'm1', role: 'agent', text: 'новый текст', at: 1 }], status: 'thinking', interactions: [] }
+it('разрешение появляется один раз и исчезает после ответа; история сохраняется', () => {
+  const initial = chatStateFromSnapshot(snapshot)
+  const request = { ptyId: 's1', revision: 3, interaction: { id: 'r1', kind: 'permission' as const, title: 'Bash' } }
+  const waiting = applyChatUpdate(initial, request)
+  assert.equal(waiting.interactions.length, 1)
+  assert.equal(applyChatUpdate(waiting, request), waiting)
+  const answered = applyChatUpdate(waiting, { ptyId: 's1', revision: 4, resolvedRequestId: 'r1' })
+  assert.equal(answered.interactions.length, 0)
+  assert.equal(answered.messages, initial.messages)
+})
+it('старый фрагмент и событие чужой сессии не заменяют свежий текст', () => {
+  const state = chatStateFromSnapshot(snapshot)
+  assert.equal(applyChatUpdate(state, { ptyId: 's1', revision: 1, message: { ...snapshot.messages[0], text: 'старый' } }), state)
+  assert.equal(applyChatUpdate(state, { ptyId: 's2', revision: 9, status: 'done' }), state)
+})
+it('ошибка и прерывание сохраняют уже полученные сообщения', () => {
+  const state = chatStateFromSnapshot(snapshot)
+  const failed = applyChatUpdate(state, { ptyId: 's1', revision: 3, status: 'error', error: 'auth failed' })
+  assert.equal(failed.error, 'auth failed')
+  const stopped = applyChatUpdate(failed, { ptyId: 's1', revision: 4, status: 'interrupted' })
+  assert.equal(stopped.error, undefined)
+  assert.equal(stopped.messages, state.messages)
+})
+function fixture() {
+  let listener: ((event: AssistantChatUpdate) => void) | undefined
+  let resolveSnapshot!: (value: AssistantChatSnapshot) => void
+  let unsubscribed = false
+  const pending = new Promise<AssistantChatSnapshot>((resolve) => { resolveSnapshot = resolve })
+  const api = { assistantChat: { getMessages: () => pending, onMessage: (_id: string, cb: (event: AssistantChatUpdate) => void) => { listener = cb; return () => { unsubscribed = true } }, interrupt: async () => {}, respond: async () => {}, send: async () => {}, available: async () => true } } satisfies Pick<OrcaApi, 'assistantChat'>
+  return { api, emit: (event: AssistantChatUpdate) => listener?.(event), resolveSnapshot, unsubscribed: () => unsubscribed }
 }
-
-/** Подставляет localStorage на время теста — как в `boardView.test.ts`. */
-function withStorage(store: Map<string, string> | 'broken', fn: () => void): void {
-  const g = globalThis as { localStorage?: unknown }
-  const prev = g.localStorage
-  g.localStorage =
-    store === 'broken'
-      ? { getItem: () => { throw new Error('нет доступа') }, setItem: () => { throw new Error('нет доступа') } }
-      : { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) }
-  try {
-    fn()
-  } finally {
-    g.localStorage = prev
+it('подписка перед снимком сохраняет новые события и отбрасывает включённые в снимок', async () => {
+  const f = fixture()
+  const states: ReturnType<typeof chatStateFromSnapshot>[] = []
+  const connection = subscribeAssistantChat(f.api, 's1', (state) => states.push(state), (error) => assert.fail(error))
+  f.emit({ ptyId: 's1', revision: 1, message: { ...snapshot.messages[0], text: 'старый текст' } })
+  f.emit({ ptyId: 's1', revision: 3, message: { id: 'm2', role: 'human', text: 'ещё', at: 2 } })
+  f.resolveSnapshot(snapshot)
+  await connection.ready
+  assert.deepEqual(states.at(-1)?.messages.map((message) => message.text), ['новый текст', 'ещё'])
+  connection.dispose()
+  assert.equal(f.unsubscribed(), true)
+})
+it('закрытая подписка не публикует поздний снимок или событие', async () => {
+  const f = fixture()
+  let publications = 0
+  const connection = subscribeAssistantChat(f.api, 's1', () => publications++, () => publications++)
+  connection.dispose()
+  f.resolveSnapshot(snapshot)
+  await connection.ready
+  f.emit({ ptyId: 's1', revision: 9, status: 'done' })
+  assert.equal(publications, 0)
+})
+it('старый main не принимается за полноценный чат без разрешений', async () => {
+  const f = fixture()
+  let error = ''
+  const connection = subscribeAssistantChat(f.api, 's1', () => assert.fail('старый снимок принят'), (value) => { error = value })
+  f.resolveSnapshot({ ptyId: 's1', messages: [], status: 'done' })
+  await connection.ready
+  assert.equal(error, 'stale')
+  connection.dispose()
+})
+it('между репликами виден вызов команды, но его результат не становится сообщением', () => {
+  const messages: AssistantChatSnapshot['messages'] = [
+    { id: 'h1', role: 'human', text: 'Покажи проекты', at: 1 },
+    { id: 'a1', role: 'agent', text: 'Посмотрю доски.', at: 2 },
+    { id: 't1', role: 'tool', text: '[{"id":"project-1","spec":"служебные данные"}]', at: 3, toolCalls: [{ name: 'Команда', input: 'orca-board projects list', status: 'ok' }] },
+    { id: 't2', role: 'tool', text: '[]', at: 4 },
+    { id: 'a2', role: 'agent', text: 'У вас три проекта.', at: 5 }
+  ]
+  assert.deepEqual(groupMessages(messages).map((group) => ({ speaker: group.speaker, ids: group.messages.map((message) => message.id) })), [
+    { speaker: 'human', ids: ['h1'] }, { speaker: 'assistant', ids: ['a1', 't1', 'a2'] }
+  ])
+  const activity = groupMessages(messages)[1].messages[1]
+  assert.equal(activity.text, '')
+  assert.equal(activity.toolCalls?.[0].input, 'orca-board projects list')
+  assert.equal(messages[2].text, '[{"id":"project-1","spec":"служебные данные"}]')
+  assert.equal(messages.length, 5, 'данные протокола сохраняются для разрешений и состояния сессии')
+})
+it('пустые заготовки ответа и служебные сообщения не создают баблы', () => {
+  assert.deepEqual(groupMessages([{ id: 'a1', role: 'agent', text: '  ', at: 1 }, { id: 't1', role: 'tool', text: 'готово', at: 2 }]), [])
+  assert.equal(groupMessages([{ id: 'a1', role: 'agent', text: '', hasImage: true, at: 1 }]).length, 1)
+})
+it('индикатор ожидания исчезает с первым текстом ответа, до завершения запроса', () => {
+  let state = chatStateFromSnapshot({ ...snapshot, messages: [{ id: 'h1', role: 'human', text: 'Покажи проекты', at: 1 }] })
+  assert.equal(isAssistantThinking(state), true)
+  state = applyChatUpdate(state, { ptyId: 's1', revision: 3, message: { id: 't1', role: 'tool', text: '[{"id":"project-1"}]', at: 2 } })
+  assert.equal(isAssistantThinking(state), true, 'результат команды не является ответом пользователю')
+  state = applyChatUpdate(state, { ptyId: 's1', revision: 4, message: { id: 'a1', role: 'agent', text: '', at: 3 } })
+  assert.equal(isAssistantThinking(state), true)
+  state = applyChatUpdate(state, { ptyId: 's1', revision: 5, message: { id: 'a1', role: 'agent', text: 'У вас', at: 3 } })
+  assert.equal(state.status, 'thinking')
+  assert.equal(isAssistantThinking(state), false)
+  state = applyChatUpdate(state, { ptyId: 's1', revision: 6, message: { id: 't2', role: 'tool', text: '[]', at: 4 } })
+  assert.equal(isAssistantThinking(state), false, 'скрытые результаты не возвращают индикатор после ответа')
+})
+it('новый вопрос снова показывает ожидание, даже если в истории уже есть ответ', () => {
+  const state = chatStateFromSnapshot({ ...snapshot, messages: [
+    { id: 'h1', role: 'human', text: 'Первый вопрос', at: 1 },
+    { id: 'a1', role: 'agent', text: 'Первый ответ', at: 2 },
+    { id: 'h2', role: 'human', text: 'Второй вопрос', at: 3 }
+  ] })
+  assert.equal(isAssistantThinking(state), true)
+  for (const status of ['waiting', 'done', 'interrupted', 'error', 'starting'] as const) {
+    assert.equal(isAssistantThinking({ ...state, status }), false)
   }
-}
-
-describe('readAssistantViewMode/writeAssistantViewMode', () => {
-  it('нет localStorage — по умолчанию чат, запись не падает', () => {
-    assert.equal(readAssistantViewMode(), 'chat')
-    writeAssistantViewMode('terminal')
-  })
-
-  it('сохранённое значение переживает чтение', () => {
-    const store = new Map<string, string>()
-    withStorage(store, () => {
-      assert.equal(readAssistantViewMode(), 'chat')
-      writeAssistantViewMode('terminal')
-      assert.equal(readAssistantViewMode(), 'terminal')
-      writeAssistantViewMode('chat')
-      assert.equal(readAssistantViewMode(), 'chat')
-    })
-  })
-
-  it('мусор в хранилище — как будто выбора не было', () => {
-    withStorage(new Map([['orca.assistant.viewMode', 'что-то']]), () => {
-      assert.equal(readAssistantViewMode(), 'chat')
-    })
-  })
-
-  it('сломанный localStorage — тоже дефолт', () => {
-    withStorage('broken', () => {
-      assert.equal(readAssistantViewMode(), 'chat')
-      writeAssistantViewMode('terminal')
-    })
-  })
+  assert.equal(isAssistantThinking({ ...state, interactions: [{ id: 'r1', kind: 'permission', title: 'Команда' }] }), false)
 })
-
-describe('isAssistantViewMode', () => {
-  it('только chat/terminal', () => {
-    assert.equal(isAssistantViewMode('chat'), true)
-    assert.equal(isAssistantViewMode('terminal'), true)
-    assert.equal(isAssistantViewMode('other'), false)
-    assert.equal(isAssistantViewMode(undefined), false)
-  })
+it('один вызов обновляет статус на месте и не открывает найденные данные', () => {
+  const initial = chatStateFromSnapshot({ ...snapshot, messages: [{ id: 'h1', role: 'human', text: 'Проекты', at: 1 }] })
+  const tool = { id: 't1', role: 'tool' as const, text: '', at: 2, toolCalls: [{ id: 'exec-1', name: 'Команда', input: 'orca-board projects list', status: 'running' as const }] }
+  const running = applyChatUpdate(initial, { ptyId: 's1', revision: 3, message: tool })
+  assert.equal(groupMessages(running.messages)[1].messages[0].toolCalls?.[0].status, 'running')
+  const finished = applyChatUpdate(running, { ptyId: 's1', revision: 4, message: { ...tool, text: '[{"root":"/private/project"}]', toolCalls: [{ ...tool.toolCalls[0], status: 'ok' }] } })
+  const activity = groupMessages(finished.messages)[1].messages
+  assert.equal(activity.length, 1)
+  assert.equal(activity[0].id, 't1')
+  assert.equal(activity[0].toolCalls?.[0].status, 'ok')
+  assert.equal(activity[0].text, '')
 })
-
-describe('checkChatSupport', () => {
-  const api = (available: unknown): Partial<OrcaApi> => ({ assistantChat: { available } } as unknown as Partial<OrcaApi>)
-
-  it('доступен — available() → true', async () => {
-    assert.equal(await checkChatSupport(api(async () => true), 'p1'), 'available')
-  })
-
-  it('API есть, но транскрипта нет — unavailable', async () => {
-    assert.equal(await checkChatSupport(api(async () => false), 'p1'), 'unavailable')
-  })
-
-  it('старый preload/main — stale', async () => {
-    assert.equal(await checkChatSupport(undefined, 'p1'), 'stale')
-    assert.equal(await checkChatSupport({}, 'p1'), 'stale')
-    assert.equal(await checkChatSupport(api('не функция'), 'p1'), 'stale')
-  })
-
-  it('новый preload, старый main — invoke падает → stale', async () => {
-    const noHandler = async (): Promise<boolean> => {
-      throw new Error("Error invoking remote method 'assistantChat:available': Error: No handler registered for 'assistantChat:available'")
-    }
-    assert.equal(await checkChatSupport(api(noHandler), 'p1'), 'stale')
-  })
+it('активное действие заменяет общее ожидание, после него ожидается текст ответа', () => {
+  const initial = chatStateFromSnapshot({ ...snapshot, messages: [{ id: 'h1', role: 'human', text: 'Проекты', at: 1 }] })
+  const tool = { id: 't1', role: 'tool' as const, text: '', at: 2, toolCalls: [{ name: 'Команда', input: 'orca-board projects list', status: 'running' as const }] }
+  const running = applyChatUpdate(initial, { ptyId: 's1', revision: 3, message: tool })
+  assert.equal(isAssistantThinking(running), false)
+  const finished = applyChatUpdate(running, { ptyId: 's1', revision: 4, message: { ...tool, toolCalls: [{ ...tool.toolCalls[0], status: 'ok' }] } })
+  assert.equal(isAssistantThinking(finished), true)
+  const answered = applyChatUpdate(finished, { ptyId: 's1', revision: 5, message: { id: 'a1', role: 'agent', text: 'Три проекта', at: 3 } })
+  assert.equal(isAssistantThinking(answered), false)
 })
-
-describe('chatStateFromSnapshot/emptyChatState', () => {
-  it('снимок → состояние ленты; пустое — done без сообщений', () => {
-    assert.deepEqual(emptyChatState(), { messages: [], status: 'done' })
-    const snap = { ptyId: 'p1', messages: [msg('1', 'human', 'привет')], status: 'thinking' as const }
-    assert.deepEqual(chatStateFromSnapshot(snap), { messages: snap.messages, status: 'thinking' })
-  })
-})
-
-describe('applyChatUpdate', () => {
-  it('новое сообщение — добавляется в конец', () => {
-    const state = { messages: [msg('1', 'human', 'привет')], status: 'thinking' as const }
-    const next = applyChatUpdate(state, { ptyId: 'p1', message: msg('2', 'agent', 'да, слушаю') })
-    assert.deepEqual(next.messages.map((m) => m.id), ['1', '2'])
-    assert.equal(next.status, 'thinking')
-  })
-
-  it('знакомый id — заменяется на месте, не дублируется', () => {
-    const state = { messages: [msg('1', 'human'), msg('2', 'tool', '')], status: 'thinking' as const }
-    const updated: AssistantChatMessage = { id: '2', role: 'tool', text: 'готово', at: 5 }
-    const next = applyChatUpdate(state, { ptyId: 'p1', message: updated })
-    assert.equal(next.messages.length, 2)
-    assert.deepEqual(next.messages[1], updated)
-  })
-
-  it('смена статуса не трогает сообщения; тот же статус — тот же объект состояния', () => {
-    const state = { messages: [msg('1', 'human')], status: 'thinking' as const }
-    const next = applyChatUpdate(state, { ptyId: 'p1', status: 'done' })
-    assert.equal(next.status, 'done')
-    assert.equal(next.messages, state.messages)
-    const same = applyChatUpdate(next, { ptyId: 'p1', status: 'done' } as AssistantChatUpdate)
-    assert.equal(same, next)
-  })
-})
-
-describe('speakerOf/groupMessages', () => {
-  it('human — отдельный собеседник, agent и tool — один и тот же (ассистент)', () => {
-    assert.equal(speakerOf('human'), 'human')
-    assert.equal(speakerOf('agent'), 'assistant')
-    assert.equal(speakerOf('tool'), 'assistant')
-  })
-
-  it('подряд идущие реплики одного собеседника — одна группа; смена — новая', () => {
-    const messages = [
-      msg('1', 'human', 'сделай X'),
-      msg('2', 'tool', ''),
-      msg('3', 'agent', 'готово'),
-      msg('4', 'human', 'спасибо')
-    ]
-    const groups = groupMessages(messages)
-    assert.deepEqual(groups.map((g) => [g.speaker, g.messages.map((m) => m.id)]), [
-      ['human', ['1']],
-      ['assistant', ['2', '3']],
-      ['human', ['4']]
-    ])
-  })
-
-  it('пустая лента — нет групп', () => {
-    assert.deepEqual(groupMessages([]), [])
-  })
-})
-
-describe('isStuckThinking', () => {
-  it('не thinking — никогда не зависла', () => {
-    assert.equal(isStuckThinking('done', 0, 1_000_000), false)
-    assert.equal(isStuckThinking('error', 0, 1_000_000), false)
-  })
-
-  it('thinking без сообщений — не с чем сравнить, не зависла', () => {
-    assert.equal(isStuckThinking('thinking', undefined, 1_000_000), false)
-  })
-
-  it('thinking и порог не превышен — не зависла; превышен — зависла', () => {
-    const at = 1000
-    assert.equal(isStuckThinking('thinking', at, at + STUCK_THINKING_MS - 1), false)
-    assert.equal(isStuckThinking('thinking', at, at + STUCK_THINKING_MS + 1), true)
-  })
+it('краткое описание действия показывает команду или цель, но не весь JSON аргументов', () => {
+  assert.equal(toolActivityDetail('orca-board projects list'), 'orca-board projects list')
+  assert.equal(toolActivityDetail('{"command":"orca-board projects list","output":"СЛУЖЕБНЫЙ ВЫВОД"}'), 'orca-board projects list')
+  assert.equal(toolActivityDetail('{"file_path":"README.md","content":"ПОЛНОЕ СОДЕРЖИМОЕ"}'), 'README.md')
+  assert.equal(toolActivityDetail('{"pattern":"TODO","path":"src"}'), 'TODO · src')
+  assert.equal(toolActivityDetail('[{"path":"src/first.ts"},{"path":"src/second.ts"}]'), 'src/first.ts · src/second.ts')
+  assert.equal(toolActivityDetail('{"content":"ПОЛНОЕ СОДЕРЖИМОЕ"}'), '')
+  assert.equal(toolActivityDetail('{"command":"обрезанный JSON'), '')
+  assert.equal(toolActivityDetail('"List projects"'), 'List projects')
+  assert.ok(toolActivityDetail('a'.repeat(1000)).length <= 180)
 })

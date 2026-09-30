@@ -30,22 +30,22 @@
 .doc-md ul:has(> li > input[type="checkbox"]) { padding-left: 4px; }
 .doc-md li > input[type="checkbox"] { appearance: none; width: 14px; height: 14px; margin: 0 10px 0 0; border-radius: 4px; border: 1.5px solid var(--chip); vertical-align: -2px; display: inline-grid; place-items: center; }
 .doc-md li > input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
-.doc-md li > input[type="checkbox"]:checked::after { content: "✓"; color: #fff; font-size: 10px; line-height: 1; }
+.doc-md li > input[type="checkbox"]:checked::after { content: "✓"; color: var(--on-accent); font-size: 10px; line-height: 1; }
 
 /* Инлайн-код */
-.doc-md code { font: 13px var(--doc-mono); padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.07); color: var(--text); }
+.doc-md code { font: 13px var(--doc-mono); padding: 1px 6px; border-radius: 6px; background: color-mix(in srgb, var(--overlay-ink) 7.000000000000001%, transparent); color: var(--text); }
 
 /* Ссылки: на другой .md — открывается в «Документах» (▤ перед), внешняя — в браузере (↗ после),
    #якорь — прокрутка внутри документа */
-.doc-md a { color: color-mix(in srgb, var(--accent) 70%, #fff); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); cursor: pointer; }
+.doc-md a { color: color-mix(in srgb, var(--accent) 70%, var(--text)); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); cursor: pointer; }
 .doc-md a:hover { border-bottom-color: var(--accent); }
 .doc-md a[data-doc-href]::before { content: "▤ "; font-size: 11px; color: var(--muted); }
 .doc-md a[target="_blank"]::after { content: " ↗"; font-size: 11px; color: var(--muted); }
 .doc-md a:not([href]):not([data-doc-href]):not([data-doc-anchor]) { color: inherit; border-bottom: 1px dotted var(--muted); cursor: default; }
 
 /* Блок кода: шапка с языком и «Копировать» */
-.doc-md .doc-code { border-radius: 10px; background: color-mix(in srgb, var(--page) 80%, #000); border: 1px solid rgba(255,255,255,.05); overflow: hidden; }
-.doc-md .doc-code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid rgba(255,255,255,.05); font: 11px var(--doc-mono); color: var(--muted); }
+.doc-md .doc-code { border-radius: 10px; background: var(--code-bg); border: 1px solid var(--line); overflow: hidden; }
+.doc-md .doc-code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid color-mix(in srgb, var(--overlay-ink) 5%, transparent); font: 11px var(--doc-mono); color: var(--muted); }
 .doc-md .doc-copy { border: 0; background: transparent; color: var(--muted); font: 11px var(--doc-mono); padding: 3px 8px; border-radius: 6px; cursor: pointer; }
 .doc-md .doc-copy:hover { background: var(--side-2); color: var(--text); }
 .doc-md pre { margin: 0; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 var(--doc-mono); color: color-mix(in srgb, var(--text) 90%, var(--muted)); }
@@ -57,12 +57,12 @@
 .doc-md blockquote strong:first-child { color: var(--col-input); }
 
 /* Таблица в рамке с шапкой */
-.doc-md .doc-table { overflow-x: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; margin-bottom: 16px; }
+.doc-md .doc-table { overflow-x: auto; border: 1px solid color-mix(in srgb, var(--overlay-ink) 8%, transparent); border-radius: 10px; margin-bottom: 16px; }
 .doc-md table { border-collapse: collapse; width: 100%; font-size: 13.5px; line-height: 1.55; }
 .doc-md th, .doc-md td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
-.doc-md th { background: rgba(255,255,255,.04); font-weight: 600; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.doc-md th { background: color-mix(in srgb, var(--overlay-ink) 4%, transparent); font-weight: 600; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .doc-md tr:last-child td { border-bottom: 0; }
-.doc-md tbody tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+.doc-md tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--overlay-ink) 1.5%, transparent); }
 .doc-md td code, .doc-md th code { font-size: 12px; }
 .doc-md th[align="center"], .doc-md td[align="center"] { text-align: center; }
 .doc-md th[align="right"], .doc-md td[align="right"] { text-align: right; }

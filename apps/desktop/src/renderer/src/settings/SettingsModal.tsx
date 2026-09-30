@@ -9,6 +9,7 @@ import {
   SETTINGS_SECTION_KEY, TASK_TYPE_TABS, libraryRoles, settingsTypeSection, pickTaskTypeId, taskTypeUsage, type TaskTypeTab
 } from '../taskTypeEdit'
 import { GeneralSection } from './GeneralSection'
+import { AppearanceSection } from './AppearanceSection'
 import { NotificationsSection } from './NotificationsSection'
 import { UpdatesSection } from './UpdatesSection'
 import { AssistantSection } from './AssistantSection'
@@ -23,10 +24,9 @@ import { extraArgsSupported } from '../extraArgsHints'
 import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
-import { settingsKeyAction } from '../settingsFullscreen'
 
-/** Раздел меню: общий, уведомления, обновления, ассистент, свои ноды или тип задачи (`type:<id>`). */
-type Section = 'general' | 'notifications' | 'updates' | 'assistant' | 'nodes' | `type:${string}`
+/** Раздел меню: общие настройки, внешний вид, уведомления, обновления, ассистент, свои ноды или тип задачи (`type:<id>`). */
+type Section = 'general' | 'appearance' | 'notifications' | 'updates' | 'assistant' | 'nodes' | `type:${string}`
 
 const TAB_KEY = 'orca.settingsTypeTab'
 const TYPE = 'type:'
@@ -44,7 +44,7 @@ function stored(key: string): string | null {
 /** Запомненный раздел. Старые разделы шаблонов (`tpl:<id>`) и «Для новых проектов» ведут в типы задач. */
 function initialSection(): Section {
   const v = stored(SETTINGS_SECTION_KEY)
-  if (v === 'general' || v === 'notifications' || v === 'updates' || v === 'assistant' || v === 'nodes') return v
+  if (v === 'general' || v === 'appearance' || v === 'notifications' || v === 'updates' || v === 'assistant' || v === 'nodes') return v
   if (v?.startsWith(TYPE)) return v as Section
   if (v?.startsWith(OLD_TPL)) return `${TYPE}${v.slice(OLD_TPL.length)}`
   return v ? `${TYPE}` : 'general'
@@ -57,7 +57,7 @@ function initialTab(): TaskTypeTab {
 
 interface Props {
   /** Системное меню ведёт прямо в обновления, даже если настройки уже открыты на другом разделе. */
-  sectionRequest?: { section: 'updates'; nonce: number }
+  sectionRequest?: { section: 'updates' | 'assistant'; nonce: number }
   /** Агенты реестра; у типа своих агентов нет — в выборе все установленные. */
   agents: AgentInfo[]
   /** Заново просканировать PATH. */
@@ -88,8 +88,6 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
-  /** «На весь экран»: не запоминается — каждое открытие начинается с обычного размера. */
-  const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => {
     if (sectionRequest) go(sectionRequest.section)
@@ -108,17 +106,14 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
     })
   }, [])
 
-  // Esc закрывает окно; на весь экран — сначала сворачивает. Слушатель во всплытии, а не в захвате: формы внутри
-  // (переименование типа, холст воркфлоу) гасят свой Escape раньше, и он не должен сворачивать окно.
+  // Вложенные формы и холст гасят свой Escape раньше: настройки закрываются только свободным нажатием.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const action = settingsKeyAction(e.key, fullscreen)
-      if (action === 'exitFullscreen') setFullscreen(false)
-      else if (action === 'close') onClose()
+      if (e.key === 'Escape' && !e.isComposing) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, fullscreen])
+  }, [onClose])
 
   function go(s: Section): void {
     setSection(s)
@@ -182,6 +177,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   // ---------- меню ----------
 
   const general: NavEntry<Section> = { id: 'general', label: t('settings.nav.general'), icon: Icon.gear }
+  const appearanceNav: NavEntry<Section> = { id: 'appearance', label: t('settings.nav.appearance'), icon: Icon.palette }
   const notifyOn = appSettings?.notifications.enabled
   const notifications: NavEntry<Section> = {
     id: 'notifications', label: t('settings.nav.notifications'), icon: Icon.bell,
@@ -190,7 +186,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   const updateState = updates.state
   const updatesNav: NavEntry<Section> = {
     id: 'updates', label: t('settings.nav.updates'), icon: Icon.download,
-    count: updateState?.availableVersion ? versionLabel(updateState.availableVersion) : undefined,
+    count: updateState?.availableVersion ? versionLabel(updateState.availableVersion, false) : undefined,
     tone: updateState?.status === 'available' || updateState?.status === 'ready' ? 'warn' : undefined
   }
   const assistantNav: NavEntry<Section> = { id: 'assistant', label: t('settings.nav.assistant'), icon: Icon.assistant }
@@ -232,18 +228,9 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className={`settings-modal${fullscreen ? ' fullscreen' : ''}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('settings.title')}>
+      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('settings.title')}>
         <div className="settings-head">
           <h3>{t('settings.title')}</h3>
-          <button
-            className="icon-btn task-modal-close"
-            title={t(fullscreen ? 'settings.exitFullscreen' : 'settings.fullscreen')}
-            aria-label={t(fullscreen ? 'settings.exitFullscreen' : 'settings.fullscreen')}
-            aria-pressed={fullscreen}
-            onClick={() => setFullscreen((v) => !v)}
-          >
-            {fullscreen ? <Icon.minimize /> : <Icon.maximize />}
-          </button>
           <button className="icon-btn task-modal-close" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}>
             <Icon.close />
           </button>
@@ -253,6 +240,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
           <div className="about">
             <nav className="about-nav" aria-label={t('settings.nav.aria')}>
               <NavItem item={general} current={section} onGo={go} />
+              <NavItem item={appearanceNav} current={section} onGo={go} />
               <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
               <NavItem item={updatesNav} current={section} onGo={go} />
               <NavItem item={assistantNav} current={section} onGo={go} />
@@ -275,6 +263,8 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
               <section className="about-sec">
                 {section === 'general' ? (
                   <GeneralSection settings={appSettings} error={appError} onChange={(p) => void saveApp(p)} onRunOnboarding={onRunOnboarding} />
+                ) : section === 'appearance' ? (
+                  <AppearanceSection settings={appSettings} error={appError} onChange={saveApp} />
                 ) : section === 'notifications' ? (
                   <NotificationsSection
                     settings={appSettings}
