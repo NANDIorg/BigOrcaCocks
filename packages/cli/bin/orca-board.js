@@ -120,11 +120,14 @@ const HELP = `orca-board — управление доской агентов
   review accept --task <id> [--decision "..."]  задача на этапе проверки — исход accept, дальше по воркфлоу
                                           (обычно мерж и done); вне воркфлоу — слить ветку, задача → done;
                                           задача-проверка ветки глобальной задачи (ты — проверяющий) — свой --task:
-                                          приложение само находит прогон и двигает его граф
+                                          приложение само находит прогон и двигает его граф; задача, остановленная
+                                          на мерже/git/конце (workflow_blocked) или с потерянным done, — повтор
+                                          этапа (снова встал — ошибка с причиной); воркер ещё работает — ошибка
   review reject --task <id> --feedback "..."   задача на этапе проверки — исход reject (обычно снова в работу,
                                           воркер стартует сам); вне воркфлоу — ready с замечаниями; у задачи-проверки
                                           ветки глобальной задачи — граф идёт назад, замечания получит координатор
-                                          в stage_started (feedback)
+                                          в stage_started (feedback); остановленная на мерже/git/конце — снова
+                                          в работу с замечаниями
   task reopen --task <id> [--feedback "..."] [--start]   задача (done/review/backlog/…) → ready, feedback — по
                                           желанию; ждёт решения по ответу — это «Уточнить» (feedback обязателен);
                                           --start — сразу запустить воркера
@@ -148,7 +151,11 @@ const HELP = `orca-board — управление доской агентов
        [--show-file showcase.md] [--show <путь>]...
                                           у задачи-ответа ответ (markdown) обязателен.
                                           --show-file / --show — показ человеку: описание (markdown) и файлы
-                                          из ветки задачи (путь от корня репозитория, флаг на каждый файл)
+                                          из ветки задачи (путь от корня репозитория, флаг на каждый файл).
+                                          --show — файл или папка: папку приложение раскроет в страницы,
+                                          картинки, markdown и PDF, ассеты страниц (css, js, шрифты) возьмёт
+                                          само. Файлы снимаются при done: нет файла, тип не показывается или
+                                          показ больше лимита — done отвечает ошибкой
   ask --question "..." [--option "метка|пояснение"]... [--recommend <id|метка>] [--context-file why.md] [--no-wait]
                                           блокируется до ответа; --option повторяется, запятые в метке
                                           допустимы (старое --options a,b тоже работает); id варианта — его номер.
@@ -167,7 +174,7 @@ const HELP = `orca-board — управление доской агентов
   types create --project <id> --title "..." [--description "..."]
                                           новый тип: роли и правила — по умолчанию (как «Создать тип» в UI)
   types rename --project <id> --type <id> [--title "..."] [--description "..."]   хотя бы одно поле
-  types set-default --project <id> --type <id>   тип библиотеки по умолчанию (новые проекты, ассистент)
+  types set-default --project <id> --type <id>   тип библиотеки по умолчанию (новые проекты)
   types duplicate --project <id> --type <id>      копия типа под новым id
   types delete --project <id> --type <id> --yes   удалить тип; без --yes — отказ с числом проектов, где он
                                           используется, и является ли он библиотечным умолчанием; последний
@@ -185,15 +192,24 @@ const HELP = `orca-board — управление доской агентов
   node-templates list --project <id>      библиотека шаблонов нод воркфлоу
   node-templates delete --project <id> --template <id> --yes
 
-  settings get                            настройки приложения целиком (язык, уведомления, автообновление);
+  settings get                            настройки приложения целиком (язык, уведомления, автообновление,
+                                          assistant — агент, модель, effort, инструкции ассистента);
                                           уровня приложения — --project не нужен
   settings set [--language ru|en] [--keep-in-background] [--notifications-enabled]
                [--notify-role <id роли>=on|off]... [--notify-event <вид>=on|off]... [--quiet-hours ЧЧ:ММ-ЧЧ:ММ]
                [--sound] [--show-preview] [--auto-check] [--auto-download] [--install-when-idle]
+               [--assistant-agent <id>] [--assistant-model <id>] [--assistant-effort <уровень>]
+               [--assistant-prompt "..."] [--yes]
                                           любой поднабор флагов; включить boolean-флаг — сам флаг, выключить —
                                           --no-<флаг> (--no-sound и т.п.); --no-quiet-hours выключает тихие
                                           часы; вид уведомления — question, answerReady, workerDone,
-                                          escalation, runDone
+                                          escalation, runDone.
+                                          --assistant-*: настройки ассистента (он не роль типа задачи — в roles
+                                          list его нет, roles update/rules set --role assistant отвечают «нет
+                                          роли»); --assistant-agent — id из agents list, смена агента требует
+                                          --yes и сбрасывает модель и effort, если они не заданы тем же вызовом;
+                                          --assistant-prompt — инструкции ассистента; пустая строка "" очищает
+                                          model/effort/prompt; действует с нового диалога ассистента
 
   projects set-active --project <id>      сделать проект активным (его берут команды без --project)
   projects remove --project <id> --yes    убрать проект из списка; без --yes — отказ с числом живых воркеров

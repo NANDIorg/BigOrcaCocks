@@ -5,6 +5,7 @@ import type { TaskTypeDetection } from '../../shared/ipc'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
 import { builtinText } from './defaultTitles'
+import { useModalFocus } from './useModalFocus'
 
 interface Props {
   detection: TaskTypeDetection
@@ -24,6 +25,8 @@ interface Props {
  */
 export function ProjectTypeModal({ detection, types, defaultTypeId, selected: initial, onClose, onSubmit }: Props): React.JSX.Element {
   const t = useT()
+  const surface = useRef<HTMLDivElement>(null)
+  useModalFocus(surface)
   const [selected, setSelected] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,7 +65,7 @@ export function ProjectTypeModal({ detection, types, defaultTypeId, selected: in
 
   return (
     <div className="modal-backdrop" onClick={close}>
-      <div className="modal project-type-modal" role="dialog" aria-modal="true" aria-label={t('config.projectType.title')} onClick={(e) => e.stopPropagation()}>
+      <div ref={surface} className="modal project-type-modal" role="dialog" aria-modal="true" aria-label={t('config.projectType.title')} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
         <h3>{t('config.projectType.title')}</h3>
         <p className="muted modal-sub" title={detection.path}>{detection.path}</p>
         <span className="muted project-type-hint">
@@ -78,6 +81,7 @@ export function ProjectTypeModal({ detection, types, defaultTypeId, selected: in
               aria-checked={type.id === selected}
               className={`project-type-card${type.id === selected ? ' selected' : ''}`}
               autoFocus={type.id === initial}
+              data-modal-autofocus={type.id === initial ? true : undefined}
               disabled={busy}
               onClick={() => setSelected(type.id)}
               onDoubleClick={() => void submit(type.id)}

@@ -1,6 +1,6 @@
 // Только type-импорты: модуль тестируется node --test без бандлера.
 import type { AgentSpec } from './agents'
-import type { Question, Role, StageDecision, Task } from './types'
+import type { AssistantSettings, Question, Role, StageDecision, Task } from './types'
 import type { WfDecisionOption, WfWorkStage } from './workflow'
 import { returnImagesSection } from './attachments.ts'
 
@@ -19,7 +19,10 @@ export const COORDINATOR_ROLE_ID = 'coordinator'
 /** Роль, которой запускается ассистент доски. */
 export const ASSISTANT_ROLE_ID = 'assistant'
 
-/** Служебные роли: запускают агента вне задач (координатор, ассистент), задачам не назначаются. */
+/**
+ * Служебные роли: задачам не назначаются. Ассистент ролью типа больше не бывает (`AppSettings.assistant`), но id
+ * остаётся зарезервированным: роль из старых данных не станет рабочей, задача с ролью assistant отвергается.
+ */
 export const SERVICE_ROLE_IDS: readonly string[] = [COORDINATOR_ROLE_ID, ASSISTANT_ROLE_ID]
 
 /** Роль можно назначить задаче: не служебная. */
@@ -35,17 +38,19 @@ export function builtinPromptKind(roleId: string): BuiltinPromptKind {
 }
 
 /**
- * Роль запуска ассистента: роль assistant; в проектах, созданных до неё, — агент, модель и effort роли
- * coordinator (без её инструкций — они координаторские); нет и её — undefined (claude без модели).
+ * Настройки ассистента из ролей типа — так он запускался, пока был ролью типа (миграция `settings.assistant`):
+ * роль assistant; нет её — агент, модель и effort роли coordinator (без её инструкций — они координаторские);
+ * нет и её — undefined (вызывающий возьмёт `DEFAULT_ASSISTANT_SETTINGS`).
  */
-export function assistantRole(roles: readonly Role[]): Role | undefined {
+export function assistantFromRoles(roles: readonly Role[]): AssistantSettings | undefined {
   const own = roles.find((r) => r.id === ASSISTANT_ROLE_ID)
-  if (own) return own
-  const c = roles.find((r) => r.id === COORDINATOR_ROLE_ID)
-  if (!c) return undefined
+  const src = own ?? roles.find((r) => r.id === COORDINATOR_ROLE_ID)
+  if (!src) return undefined
   return {
-    id: ASSISTANT_ROLE_ID, title: 'Ассистент', agent: c.agent,
-    ...(c.model ? { model: c.model } : {}), ...(c.effort ? { effort: c.effort } : {})
+    agent: src.agent,
+    ...(src.model ? { model: src.model } : {}),
+    ...(src.effort ? { effort: src.effort } : {}),
+    ...(own?.systemPrompt ? { systemPrompt: own.systemPrompt } : {})
   }
 }
 
@@ -95,6 +100,22 @@ function askStageSection(stage: WfWorkStage, answered: boolean): string[] {
 }
 
 /**
+ * Как готовить файлы показа: человек смотрит их в приложении, HTML — в изолированном фрейме без сети
+ * (`orca-preview://`), файлы снимаются при `done` (папки раскрываются, у страниц подтягиваются ассеты). Без этих правил
+ * агент ссылается на CDN и абсолютные пути — страница у человека выходит без стилей. Правила общие для любого проекта:
+ * ни путей, ни стека репозитория. Те же пункты — в `skills/worker.md`.
+ */
+const SHOWCASE_RULES = [
+  'Человек смотрит показ прямо в приложении: HTML, markdown, картинки (PNG, JPG, WebP, GIF, AVIF, SVG) и PDF.',
+  '',
+  '- HTML открывается в изолированном фрейме без сети, поэтому страница должна быть **автономной**: стили, скрипты, картинки и шрифты — файлами рядом, относительными путями (`./style.css`), без CDN, внешних шрифтов и абсолютных путей, если в задаче не сказано иначе. Один вариант — одна страница.',
+  '- `--show` принимает файл или **папку**: папку с вариантами и их ассетами сдавай целиком — в список попадут страницы, картинки, markdown и PDF, а стили, скрипты и шрифты страниц войдут в показ сами. Скрытые файлы и `node_modules` не берутся.',
+  '- Markdown-файл показа и описание из `--show-file` могут вставлять картинки из ветки относительными путями (`![Вариант A](design/a.png)`): они попадут в показ сами. В описании путь — от корня репозитория, в markdown-файле — от этого файла. Картинки из интернета в показе не видны.',
+  '- Результат, который нельзя открыть в браузере (приложение, сборка, архив, исполняемый файл), файлом не показывается: сдай скриншоты и опиши в показе, что сделано и как проверить.',
+  '- Файлы снимаются в момент done: файла нет, тип не показывается или показ слишком большой — done ответит ошибкой с причиной; исправь и повтори.'
+]
+
+/**
  * Раздел об этапе «Работа» или «Вопрос человеку»: что сделать (`instructions` ноды) и что сдать на показ человеку
  * (`showcase`). Нечего сказать — пусто: промпт задач без настроек этапа не меняется (у `ask` раздел есть всегда).
  * Флаги `done` для показа — те же, что подсказывает ошибка `finishDispatch`.
@@ -116,6 +137,7 @@ function stageSection(stage: WfWorkStage | undefined, answered = false): string[
       '`orca-board done --summary "..." --show-file <описание.md> --show <путь> --show <путь>`.'
     )
     if (stage.showcase.required) parts.push('Без показа done не пройдёт.')
+    parts.push('', ...SHOWCASE_RULES)
   }
   return parts
 }

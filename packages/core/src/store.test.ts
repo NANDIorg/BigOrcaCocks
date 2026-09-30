@@ -562,6 +562,42 @@ describe('показ человеку: finishDispatch и решение approval
     assert.throws(() => s.finishDispatch(d.id, 'x', [], undefined, { showcase: { files: ['a/../../x.png'] } }), /выходить из репозитория/)
   })
 
+  it('снимок показа и auto от main сохраняются в Dispatch.showcase; без показа — не записываются', () => {
+    const { s, d } = showcaseRun(false)
+    const snapshot = { at: 5, files: 3, bytes: 1024 }
+    s.finishDispatch(d.id, 'готово', [], undefined, { showcase: { files: ['design/a.html'] }, snapshot, auto: true })
+    assert.deepEqual(s.getDispatch(d.id)!.showcase, { files: ['design/a.html'], snapshot, auto: true })
+    const plain = store()
+    const t = plain.createTask({ title: 'B' })
+    const d2 = plain.startDispatch(t.id, 'pty')
+    assert.equal(plain.finishDispatch(d2.id, 'ok', [], undefined, { snapshot, auto: true }).showcase, undefined)
+  })
+
+  it('снапшот без snapshot/auto/showcaseDispatchIds (старая версия) грузится как есть', () => {
+    const p = memory()
+    const s = store(p)
+    const t = s.createTask({ title: 'A' })
+    const d = s.startDispatch(t.id, 'pty')
+    s.finishDispatch(d.id, 'готово', [], undefined, { showcase: { text: '# A', files: ['a.png'] } })
+    const r = s.requestApproval(t.id, { nodeId: 'pick', title: 'A', showcaseDispatchId: d.id })
+    const reloaded = store(memory(p.data!))
+    assert.deepEqual(reloaded.getDispatch(d.id)!.showcase, { text: '# A', files: ['a.png'] })
+    const req = reloaded.getRequest(r.id)!
+    assert.equal(req.showcaseDispatchId, d.id)
+    assert.equal('showcaseDispatchIds' in req, false)
+  })
+
+  it('approval прогона: showcaseDispatchIds сохраняются рядом с showcaseDispatchId, пустой список — поля нет', () => {
+    const p = memory()
+    const s = store(p)
+    const run = s.createGlobalTask({ title: 'Фича', workflow: defaultWorkflow([{ id: 'developer' }]) })
+    const r = s.requestRunApproval(run.id, { nodeId: 'check', title: 'Проверка', showcaseDispatchId: 'd2', showcaseDispatchIds: ['d1', 'd2'] })
+    assert.deepEqual([r.showcaseDispatchId, r.showcaseDispatchIds], ['d2', ['d1', 'd2']])
+    assert.deepEqual(store(memory(p.data!)).getRequest(r.id)!.showcaseDispatchIds, ['d1', 'd2'])
+    const run2 = s.createGlobalTask({ title: 'Фича 2', workflow: defaultWorkflow([{ id: 'developer' }]) })
+    assert.equal('showcaseDispatchIds' in s.requestRunApproval(run2.id, { nodeId: 'check', title: 'П', showcaseDispatchIds: [] }), false)
+  })
+
   it('approval: текст решения — decision в request_resolved, длинный обрезан; без текста поля нет', () => {
     const s = store()
     const t = s.createTask({ title: 'A' })
@@ -927,5 +963,176 @@ describe('нода decision: позиция, решение в истории', 
     assert.equal(action.type, 'blocked')
     assert.equal(s.getRun(run.id)!.stage!.nodeId, 'need_design')
     assert.match(String(events(s, 'workflow_blocked').at(-1)!.payload.reason), /нет перехода для maybe/)
+  })
+})
+
+describe('остановка этапа: Task.stageBlock и stageActionOf', () => {
+  const opts = { roleIds: ['developer', 'reviewer'] }
+  /** Подзадача прогона с воркфлоу прогона на пути ноды «Работа» (`subflow`; нет — путь по умолчанию). */
+  function onPath(subflow?: WfSubflow) {
+    const s = store()
+    const wf = defaultWorkflow([{ id: 'developer' }])
+    if (subflow) Object.assign(wf.nodes.find((n) => n.id === 'work')!, { subflow })
+    const run = s.createRun('цель', undefined, wf)
+    s.setRunPty(run.id, 'pty_c', 'claude')
+    s.enterRunStage(run.id, opts)
+    const task = s.createTask({ title: 'Подзадача', runId: run.id, roleId: 'developer' })
+    return { s, task }
+  }
+  /** Задача старого движка (граф по подзадачам): работа → ревью (агент) → мерж → конец. */
+  function legacy() {
+    const s = store()
+    const run = s.createRun('старый', undefined, legacyDefaultWorkflow([{ id: 'reviewer' }]))
+    return { s, task: s.createTask({ title: 'A', runId: run.id, roleId: 'developer' }) }
+  }
+  /** Путь с git-нодой после мержа: работа → проверка → мерж → push → конец. */
+  function gitPath(): WfSubflow {
+    return {
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'work', type: 'work', x: 0, y: 0 },
+        { id: 'rev', type: 'gate', roleId: 'reviewer', x: 0, y: 0 },
+        { id: 'merge', type: 'merge', x: 0, y: 0 },
+        { id: 'push', type: 'git', operation: 'push', remote: 'origin', x: 0, y: 0 },
+        { id: 'end', type: 'end', merged: true, x: 0, y: 0 }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'work' },
+        { id: 'e2', from: 'work', outcome: 'next', to: 'rev' },
+        { id: 'e3', from: 'rev', outcome: 'accept', to: 'merge' },
+        { id: 'e4', from: 'rev', outcome: 'reject', to: 'work' },
+        { id: 'e5', from: 'merge', outcome: 'ok', to: 'push' },
+        { id: 'e6', from: 'push', outcome: 'ok', to: 'end' }
+      ]
+    }
+  }
+
+  it('blockStage: метка с нодой и причиной целиком (событие — урезанное), updatedAt сдвинут; переживает рестарт', () => {
+    const p = memory()
+    const s = store(p)
+    const t = s.createTask({ title: 'A' })
+    s.enterWork(t.id)
+    s.advanceStage(t.id, 'next')
+    const before = s.getTask(t.id)!.updatedAt
+    const reason = `мерж не выполнен: ${'x'.repeat(1000)}`
+    s.blockStage(t.id, reason)
+    const task = s.getTask(t.id)!
+    assert.equal(task.stageBlock!.nodeId, task.stage!.nodeId)
+    assert.equal(task.stageBlock!.reason, reason)
+    assert.ok(task.stageBlock!.at >= before && task.updatedAt === task.stageBlock!.at)
+    const e = s.listEvents().filter((x) => x.type === 'workflow_blocked').at(-1)!
+    assert.ok(String(e.payload.reason).length < reason.length, 'в событии причина урезана')
+    assert.deepEqual(store(p).getTask(t.id)!.stageBlock, task.stageBlock)
+  })
+
+  it('advanceStage снимает метку; blocked из перехода ставит её сам', () => {
+    const { s, task } = onPath()
+    s.advanceStage(task.id, 'next', opts)
+    s.advanceStage(task.id, 'next', opts)
+    s.blockStage(task.id, 'мерж упал')
+    assert.equal(s.getTask(task.id)!.stageBlock!.nodeId, 'merge')
+    s.advanceStage(task.id, 'ok', opts)
+    assert.equal(s.getTask(task.id)!.stageBlock, undefined)
+
+    // Путь с «Вопросом человеку» — переход даёт blocked, причина остаётся в метке.
+    const ask = gitPath()
+    ask.nodes.push({ id: 'q', type: 'ask', roleId: 'developer', instructions: 'вопрос', x: 0, y: 0 })
+    ask.edges = ask.edges.map((e) => (e.id === 'e2' ? { ...e, to: 'q' } : e))
+    ask.edges.push({ id: 'eq', from: 'q', outcome: 'next', to: 'rev' })
+    const q = onPath(ask)
+    q.s.advanceStage(q.task.id, 'next', opts)
+    q.s.advanceStage(q.task.id, 'next', opts)
+    assert.equal(q.s.getTask(q.task.id)!.stageBlock!.nodeId, 'q')
+    assert.match(q.s.getTask(q.task.id)!.stageBlock!.reason, /Вопрос человеку/)
+  })
+
+  it('enterWork, reopenTask и новый запуск воркера снимают метку', () => {
+    const { s, task } = legacy()
+    s.enterWork(task.id)
+    s.advanceStage(task.id, 'next')
+    s.advanceStage(task.id, 'accept')
+    s.blockStage(task.id, 'мерж упал')
+    assert.deepEqual(s.enterWork(task.id), { type: 'start_worker', nodeId: 'work' })
+    assert.equal(s.getTask(task.id)!.stageBlock, undefined)
+
+    s.blockStage(task.id, 'воркер не запустился')
+    s.reopenTask(task.id)
+    assert.equal(s.getTask(task.id)!.stageBlock, undefined)
+
+    s.blockStage(task.id, 'воркер не запустился')
+    s.startDispatch(task.id, 'pty')
+    assert.equal(s.getTask(task.id)!.stageBlock, undefined)
+  })
+
+  it('stageActionOf на пути: merge, git, end, gate, human; позиция и события не меняются', () => {
+    const { s, task } = onPath(gitPath())
+    assert.equal(s.stageActionOf(task.id, opts), undefined, 'до входа в путь этапа нет')
+    s.advanceStage(task.id, 'next', opts)
+    assert.deepEqual(s.stageActionOf(task.id, opts), { type: 'start_worker', nodeId: 'work' })
+    s.advanceStage(task.id, 'next', opts)
+    assert.deepEqual(s.stageActionOf(task.id, opts), { type: 'create_gate', nodeId: 'rev', roleId: 'reviewer' })
+    s.advanceStage(task.id, 'accept', opts)
+    const events = s.listEvents().length
+    assert.deepEqual(s.stageActionOf(task.id, opts), { type: 'merge', nodeId: 'merge' })
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'merge')
+    assert.equal(s.listEvents().length, events)
+    s.advanceStage(task.id, 'ok', opts)
+    assert.deepEqual(s.stageActionOf(task.id, opts), { type: 'git', nodeId: 'push', operation: 'push', remote: 'origin' })
+    s.advanceStage(task.id, 'ok', opts)
+    assert.deepEqual(s.stageActionOf(task.id, opts), { type: 'done', nodeId: 'end', merged: true })
+
+    const def = onPath()
+    def.s.advanceStage(def.task.id, 'next', opts)
+    def.s.advanceStage(def.task.id, 'next', opts)
+    def.s.advanceStage(def.task.id, 'conflict', opts)
+    assert.deepEqual(def.s.stageActionOf(def.task.id, opts), { type: 'request_human', nodeId: 'conflict' })
+  })
+
+  it('stageActionOf старого движка: работа, ревью, мерж, конец; без этапа — undefined', () => {
+    const { s, task } = legacy()
+    assert.equal(s.stageActionOf(task.id), undefined)
+    s.enterWork(task.id)
+    assert.deepEqual(s.stageActionOf(task.id), { type: 'start_worker', nodeId: 'work' })
+    s.advanceStage(task.id, 'next')
+    assert.deepEqual(s.stageActionOf(task.id), { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' })
+    s.advanceStage(task.id, 'accept')
+    assert.deepEqual(s.stageActionOf(task.id), { type: 'merge', nodeId: 'merge' })
+    s.advanceStage(task.id, 'ok')
+    assert.deepEqual(s.stageActionOf(task.id), { type: 'done', nodeId: 'end', merged: true })
+
+    const answer = s.createTask({ title: 'Ответ', answerFor: 'human' })
+    assert.equal(s.stageActionOf(answer.id), undefined)
+    assert.throws(() => s.stageActionOf('task_nope'), /task_nope/)
+  })
+
+  it('смена ноды отменяет ждущий approval прошлой ноды: advanceStage и enterWork', () => {
+    const { s, task } = onPath()
+    s.advanceStage(task.id, 'next', opts)
+    s.advanceStage(task.id, 'next', opts)
+    s.advanceStage(task.id, 'conflict', opts)
+    const r = s.requestApproval(task.id, { nodeId: 'conflict', title: 'Конфликт мержа' })
+    assert.equal(s.getTask(task.id)!.status, 'needs_input')
+    s.advanceStage(task.id, 'accept', opts)
+    assert.equal(s.getRequest(r.id)!.status, 'cancelled')
+    assert.notEqual(s.getTask(task.id)!.status, 'needs_input', 'ждать человека больше нечего')
+
+    const old = store()
+    const run = old.createRun('старый', undefined, legacyDefaultWorkflow([]))
+    const t = old.createTask({ title: 'A', runId: run.id })
+    old.enterWork(t.id)
+    old.advanceStage(t.id, 'next')
+    const review = old.requestApproval(t.id, { nodeId: 'review', title: 'Ревью человеком' })
+    old.enterWork(t.id)
+    assert.equal(old.getRequest(review.id)!.status, 'cancelled')
+    assert.equal(old.getTask(t.id)!.stage!.nodeId, 'work')
+  })
+
+  it('approval текущей ноды переход не трогает', () => {
+    const { s, task } = legacy()
+    s.enterWork(task.id)
+    const r = s.requestApproval(task.id, { nodeId: 'review', title: 'заранее' })
+    s.advanceStage(task.id, 'next')
+    assert.equal(s.getTask(task.id)!.stage!.nodeId, 'review')
+    assert.equal(s.getRequest(r.id)!.status, 'pending')
   })
 })

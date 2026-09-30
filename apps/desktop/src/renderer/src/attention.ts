@@ -1,6 +1,7 @@
 import { isPendingRequest, type ColumnKind, type Dispatch, type HumanRequest, type Question, type RequestResolution, type Task } from '@orca-board/core'
 import { t, type TKey } from './i18n'
-import { requestShowcase } from './showcase'
+import { requestShowcases } from './showcase'
+import { reviewStateOf, stalledReason, type StageNodeInfo } from './taskReview'
 
 // Лента «Ждут вас» на экране глобальной задачи (AttentionFeed.tsx): всё, что ждёт человека, одним списком.
 // Здесь — только решения без React и IPC: что попадает в ленту, в каком порядке и без дублей.
@@ -8,9 +9,11 @@ import { requestShowcase } from './showcase'
 /**
  * Что ждёт человека. `failure` — упавший, вышедший без `done` или молчащий воркер (и эскалация-запрос), `question` —
  * вопрос воркера, `approval` / `showcase` — этап воркфлоу «человек» (со сданным показом — `showcase`),
- * `answer` — готовый ответ задачи-ответа, `review` — задача ждёт ревью в колонке «Ревью».
+ * `answer` — готовый ответ задачи-ответа, `review` — задача ждёт ревью в колонке «Ревью» на ноде проверки (или без этапа),
+ * `stalled` — задача в «Ревью», а её этап (`merge`, `git`, `end`, `work`) остановлен: ревьюить нечего, нужно повторить этап
+ * или вернуть задачу в работу (`reviewStateOf`, taskReview.ts).
  */
-export type AttentionKind = 'failure' | 'question' | 'showcase' | 'approval' | 'answer' | 'review'
+export type AttentionKind = 'failure' | 'question' | 'showcase' | 'approval' | 'answer' | 'stalled' | 'review'
 
 /** Почему воркер в сбое: `failed` — упал, `unknown` — вышел без `done`, `stuck` — молчит. */
 export type AttentionFailure = 'failed' | 'unknown' | 'stuck'
@@ -37,8 +40,10 @@ export interface AttentionItem {
   /** Последний запуск задачи: сводка ответа, файлы ревью, исход сбоя. */
   dispatch?: Dispatch
   failure?: AttentionFailure
-  /** Показ approval: подписи файлов на карточке ленты. */
+  /** Показ approval или ответа: подписи файлов на карточке ленты. */
   showcaseFiles?: string[]
+  /** Остановленный этап (`stalled`): нода, если её удалось найти в графе, — от неё подпись «Повторить мерж». */
+  stageNode?: StageNodeInfo
 }
 
 export interface AttentionInput {
@@ -54,10 +59,15 @@ export interface AttentionInput {
   kindOf(status: string): ColumnKind | undefined
   /** Задачи с открытым терминалом: у них сбой прошлого запуска уже не актуален. */
   running?: ReadonlySet<string>
+  /**
+   * Нода этапа задачи (`stageNodeOf`, taskReview.ts): по ней задача в «Ревью» — ревью или остановленный этап. Нет функции
+   * или ноды (старый main, граф ещё не пришёл) — остановку видно только по `Task.stageBlock`.
+   */
+  stageNode?(task: Task): StageNodeInfo | undefined
 }
 
-/** Порядок видов: сначала сбои и вопросы, затем показ / решение, готовые ответы и ревью. */
-const KIND_RANK: Record<AttentionKind, number> = { failure: 0, question: 1, showcase: 2, approval: 2, answer: 3, review: 4 }
+/** Порядок видов: сначала сбои и вопросы, затем показ / решение, готовые ответы, остановленные этапы и ревью. */
+export const KIND_RANK: Record<AttentionKind, number> = { failure: 0, question: 1, showcase: 2, approval: 2, answer: 3, stalled: 4, review: 5 }
 
 /** Исход последнего запуска → вид сбоя (`undefined` — запуск в порядке или идёт). */
 export function failureOf(d: Dispatch | undefined): AttentionFailure | undefined {
@@ -80,7 +90,7 @@ const FAILURE_TITLE: Record<AttentionFailure, TKey> = {
  * задачи. Порядок — по виду (`KIND_RANK`), внутри вида — старые сверху (дольше всех ждут).
  */
 export function buildAttention(input: AttentionInput): AttentionItem[] {
-  const { tasks, requests, questions, dispatches, runId, kindOf, running } = input
+  const { tasks, requests, questions, dispatches, runId, kindOf, running, stageNode } = input
   const taskById = new Map(tasks.map((t) => [t.id, t]))
   const lastDispatch = new Map<string, Dispatch>()
   dispatches.forEach((d) => lastDispatch.set(d.taskId, d))
@@ -101,7 +111,10 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
     // пока его не показывает.
     if (r.taskId === undefined || r.kind === 'decision') continue
     const d = r.dispatchId ? dispatchById.get(r.dispatchId) : undefined
-    const showcase = requestShowcase(r, dispatches)
+    // Показ approval и ответа (`done --answer-file … --show …`): файлы всех показов запроса.
+    const shows = requestShowcases(r, dispatches)
+    const files = shows.flatMap((x) => x.showcase.files)
+    const showcase = shows.length > 0
     const kind: AttentionKind = r.kind === 'escalation' ? 'failure' : r.kind === 'approval' ? (showcase ? 'showcase' : 'approval') : r.kind
     items.push({
       id: `req:${r.id}`,
@@ -113,7 +126,7 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
       request: r,
       ...(d ? { dispatch: d } : {}),
       ...(kind === 'failure' && failureOf(d) ? { failure: failureOf(d) } : {}),
-      ...(showcase && showcase.files.length > 0 ? { showcaseFiles: showcase.files } : {})
+      ...(files.length > 0 ? { showcaseFiles: files } : {})
     })
   }
 
@@ -137,7 +150,11 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
     if (task.answerFor === 'human' && (kind === 'needs_input' || kind === 'review') && d?.outcome === 'done' && d.answer !== undefined && !hasPending(task.id, 'answer')) {
       items.push({ id: `ans:${task.id}`, kind: 'answer', source: 'task', taskId: task.id, at: d.endedAt ?? task.updatedAt, title: d.summary || t('shell.attention.answerReady'), dispatch: d })
     }
-    if (kind === 'review' && !task.answerFor && !task.gateFor && !hasPending(task.id)) {
+    const node = kind === 'review' && task.stage ? stageNode?.(task) : undefined
+    const review = reviewStateOf(task, kind, hasPending(task.id), node)
+    if (review === 'stalled') {
+      items.push({ id: `stall:${task.id}`, kind: 'stalled', source: 'task', taskId: task.id, at: task.stageBlock?.at ?? task.updatedAt, title: stalledReason(task, node), ...(d ? { dispatch: d } : {}), ...(node ? { stageNode: node } : {}) })
+    } else if (review === 'review') {
       const files = d?.files?.length ?? 0
       items.push({ id: `rev:${task.id}`, kind: 'review', source: 'task', taskId: task.id, at: d?.endedAt ?? task.updatedAt, title: files > 0 ? t('shell.attention.reviewFiles', { count: files }) : t('shell.attention.review'), ...(d ? { dispatch: d } : {}) })
     }
@@ -181,12 +198,13 @@ export function attentionLabel(item: Pick<AttentionItem, 'kind' | 'failure' | 'q
     case 'showcase': return t('shell.attention.label.showcase')
     case 'approval': return t('shell.attention.label.approval')
     case 'answer': return t('shell.attention.answerReady')
+    case 'stalled': return t('shell.attention.stalled')
     case 'review': return t('shell.attention.review')
   }
 }
 
 /** Глиф вида пункта: только украшение (подпись всегда есть текстом). */
-export const ATTENTION_GLYPH: Record<AttentionKind, string> = { failure: '✕', question: '?', showcase: '◉', approval: '✋', answer: '✎', review: '◎' }
+export const ATTENTION_GLYPH: Record<AttentionKind, string> = { failure: '✕', question: '?', showcase: '◉', approval: '✋', answer: '✎', stalled: '⏸', review: '◎' }
 
 /** Цвет кромки вида пункта: токены `styles.css`. */
 export const ATTENTION_COLOR: Record<AttentionKind, string> = {
@@ -195,11 +213,12 @@ export const ATTENTION_COLOR: Record<AttentionKind, string> = {
   showcase: 'var(--col-review)',
   approval: 'var(--col-review)',
   answer: 'var(--col-input)',
+  stalled: 'var(--col-progress)',
   review: 'var(--col-review)'
 }
 
 /** Порядок видов в сводке: сбои — первыми, как в ленте. */
-const SUMMARY_KINDS: AttentionKind[] = ['failure', 'question', 'showcase', 'approval', 'answer', 'review']
+const SUMMARY_KINDS: AttentionKind[] = ['failure', 'question', 'showcase', 'approval', 'answer', 'stalled', 'review']
 
 /** Сводка свёрнутой ленты: «1 вопрос · 1 показ · 1 ответ · 1 сбой» (сбои — первыми, как в ленте). */
 export function attentionSummary(items: readonly AttentionItem[]): string {

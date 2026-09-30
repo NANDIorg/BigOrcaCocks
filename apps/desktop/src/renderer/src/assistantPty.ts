@@ -1,4 +1,4 @@
-// Какой PTY показывать в панели ассистента. Логика вынесена из App.tsx, чтобы её проверял node:test.
+// Какой id сессии использовать в панели ассистента (чат или отдельный PTY). Логика вынесена из App.tsx, чтобы её проверял node:test.
 
 /** Терминал из реестра (terminals:list / terminals:changed) — только поля, нужные для выбора. */
 export interface AssistantCandidate {
@@ -17,7 +17,7 @@ export interface AssistantTerminal {
 }
 
 export interface AssistantPick {
-  /** Все терминалы ассистента: панель держит их смонтированными, чтобы не терять вывод. */
+  /** Все терминалы ассистента: Amp/Shell могут открываться во вкладке терминалов. */
   terminals: AssistantTerminal[]
   /** Видимый в панели; null — ассистента нет, его надо запустить. */
   ptyId: string | null

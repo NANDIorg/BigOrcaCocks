@@ -1,9 +1,10 @@
+import { motionScrollBehavior } from './appearance'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { globalTaskTitle, type Dispatch, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
+import { globalTaskTitle, type BoardColumn, type Dispatch, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
 import { RequestCard, requestKindTitle, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
-import { requestShowcase, requestShowcaseTaskId } from './showcase'
+import { requestShowcases } from './showcase'
 import { requestStageLabel, wfNodeTitles } from './cardState'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
@@ -16,8 +17,10 @@ interface Props {
   requests: HumanRequest[]
   tasks: Task[]
   runs: Run[]
-  /** Запуски воркеров: показ человеку у approval (`showcaseDispatchId`). */
+  /** Запуски воркеров: показ человеку у approval (`showcaseDispatchIds`) и answer (`dispatchId`). */
   dispatches: Dispatch[]
+  /** Колонки проекта: состояние подзадач в показе approval прогона (цвет полосы); нет — без состояния. */
+  columns?: BoardColumn[]
   /** Граф воркфлоу прогона (`workflowForRun`) — для метки этапа у вопросов с этапа «Вопрос человеку»; нет — метки нет. */
   workflowOf?(runId: string): Workflow | undefined
   /** Открыть на этом запросе (клик по уведомлению); nonce — чтобы повторный клик по тому же сработал. */
@@ -42,8 +45,9 @@ function typingTarget(t: EventTarget | null): boolean {
  * возвращает карточку с текстом ошибки. Панель остаётся смонтированной и когда закрыта — черновики
  * ответов в карточках не теряются. Клавиши: j/k, 1–9, A, C, R, Enter — в поле, Esc.
  */
-export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
+export function InboxPanel({ open, requests, tasks, runs, dispatches, columns, workflowOf, focus, onClose, onOpenTerminal }: Props): React.JSX.Element {
   const t = useT()
+  const kindOf = (status: string): BoardColumn['kind'] | undefined => columns?.find((c) => c.id === status)?.kind
   const pending = pendingRequests(requests)
   /** Отправленные, но ещё не подтверждённые снимком: карточка скрыта, но смонтирована (черновик, откат). */
   const [sent, setSent] = useState<Set<string>>(() => new Set())
@@ -101,7 +105,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
       const node = id ? nodes.current.get(id) : undefined
       if (node) {
         node.focus({ preventScroll: true })
-        node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        node.scrollIntoView({ block: 'nearest', behavior: motionScrollBehavior() })
       } else panelRef.current?.focus()
     }, 0)
   }
@@ -216,8 +220,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, workflowOf
                   else cards.current.delete(r.id)
                 }}
                 request={r}
-                showcase={requestShowcase(r, dispatches)}
-                showcaseTaskId={requestShowcaseTaskId(r, dispatches)}
+                showcases={requestShowcases(r, dispatches, tasks, kindOf)}
                 where={where(r)}
                 stage={stageOf(r)}
                 active={open && current?.id === r.id}

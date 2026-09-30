@@ -1,13 +1,14 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  DEFAULT_COLUMNS, STORE_FORMAT_VERSION, assistantRole, globalBoardColumns, globalStoredColumns, toGlobalTasks,
+  DEFAULT_COLUMNS, STORE_FORMAT_VERSION, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
   type TaskPriority, type ImageAttachmentInput
 } from '@orca-board/core'
-import type { GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
+import type { AppSettings, GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
 import { attentionTaskIds, buildAttention } from './attention'
+import { stageNodeOf, taskReviewState } from './taskReview'
 import { revealInFeed } from './feedLink'
 import { wfNodeTitles } from './cardState'
 import { runStageLabel } from './runStage'
@@ -37,9 +38,13 @@ import { ProjectTypeModal } from './ProjectTypeModal'
 import { OnboardingModal, type OnboardingMode } from './OnboardingModal'
 import { loadOnboarding, shouldShowOnboarding } from './onboarding'
 import { BranchMenu } from './BranchMenu'
+import { InitialCommitDialog } from './InitialCommitDialog'
+import { isNoCommitsError } from './initialCommit'
 import { branchBadge } from './projectBranch'
 import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
+import type { AppMenuAction } from '../../shared/ipc'
+import appLogo from '../../../build/icon.svg'
 import { ProjectList } from './ProjectList'
 import { groupsFromList } from './projectGroups'
 import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest } from './globalReview'
@@ -47,11 +52,13 @@ import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
 import { StatsView } from './StatsView'
+import { FilesView } from './FilesView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
-import { availableTypes, globalTypeTitle, libraryDefaultRoles, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
+import { assistantAgentOf } from './assistantSettings'
+import { availableTypes, globalTypeTitle, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
-type Tab = 'board' | 'terminals' | 'stats' | 'info'
+type Tab = 'board' | 'terminals' | 'files' | 'stats' | 'info'
 
 interface OpenTerminal {
   ptyId: string
@@ -82,7 +89,7 @@ interface ProjectView {
   globalId: string | null
 }
 
-const TABS: Tab[] = ['board', 'terminals', 'stats', 'info']
+const TABS: Tab[] = ['board', 'terminals', 'files', 'stats', 'info']
 const tabKey = (projectId: string): string => `orca.tab.${projectId}`
 const globalKey = (projectId: string): string => `orca.global.${projectId}`
 
@@ -167,15 +174,36 @@ export function App(): React.JSX.Element {
   /** Глобальная задача, из которой вернулись на общую доску, — её карточке возвращается фокус. */
   const [lastGlobal, setLastGlobal] = useState<string | undefined>()
   const [showCoord, setShowCoord] = useState(false)
+  /**
+   * Запуск упал с `git.noCommits` (репозиторий без коммитов): окно «Создать начальный коммит». `retry` — тот же запуск,
+   * его повторяем после коммита. Без `retry` — окно открыто из меню веток, повторять нечего.
+   */
+  const [initialCommit, setInitialCommit] = useState<{ projectId: string; retry?: () => void } | null>(null)
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsSectionRequest, setSettingsSectionRequest] = useState<{ section: 'updates' | 'assistant'; nonce: number }>()
   /** Мастер первого запуска: `first` — при старте (статус pending), `rerun` — «Пройти заново» из настроек. */
   const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
   const [showDocs, setShowDocs] = useState(false)
+  /** .md, открытый из вкладки «Файлы»; кнопка rail открывает «Документы» без него. */
+  const [docsInitialPath, setDocsInitialPath] = useState<string | null>(null)
   /** Обновление приложения: плашка в сайдбаре, «Настройки → Обновления», тост после старта. */
   const updates = useUpdates()
+  const menuActionRef = useRef<(action: AppMenuAction) => void>(() => {})
+  menuActionRef.current = (action) => {
+    if (action === 'addProject') {
+      void addProject()
+      return
+    }
+    setShowDocs(false)
+    if (action === 'checkUpdates') {
+      setSettingsSectionRequest((prev) => ({ section: 'updates', nonce: (prev?.nonce ?? 0) + 1 }))
+      updates.check()
+    } else setSettingsSectionRequest(undefined)
+    setShowSettings(true)
+  }
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -192,6 +220,8 @@ export function App(): React.JSX.Element {
   /** Хвост вывода из terminals:list по ptyId — начальное содержимое xterm после перезагрузки окна. */
   const [tails, setTails] = useState<Record<string, string>>({})
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  /** Настройки приложения: агент ассистента для подписи его терминала. null — ещё не загружены или сбой чтения. */
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   /** Инбокс — панель запросов к человеку (⌘J, бейдж «Входящие» в шапке, клик по уведомлению). */
   const [showInbox, setShowInbox] = useState(false)
   /** Запрос, на котором открыть Инбокс (уведомление); nonce — повторный клик по тому же уведомлению. */
@@ -285,14 +315,20 @@ export function App(): React.JSX.Element {
       if (shouldShowOnboarding(state)) setOnboarding((cur) => cur ?? 'first')
     })
     window.orca.app.info().then((i) => setSocketPath(i.socketPath))
+    window.orca.app.getSettings().then(setAppSettings, () => undefined)
     void refreshProjects()
     // Настройки/проекты/типы/роли/шаблоны нод меняются и из CLI/ассистента через сокет (не только из этого
     // окна) — перечитываем то же, что после своих IPC-правок, плюс язык (у него нет своего IPC-сеттера здесь).
     // Опционален: старый preload без onChanged — правки из сокета видны после перезапуска, как раньше.
     const offAppChanged = window.orca.app.onChanged?.(() => {
       void refreshProjects()
-      window.orca.app.getSettings().then((s) => setLocale(settingsLocale(s)), () => undefined)
+      window.orca.app.getSettings().then((s) => {
+        setLocale(settingsLocale(s))
+        setAppSettings(s)
+      }, () => undefined)
     })
+    // Старый preload в HMR не знает про меню: остальные способы открыть настройки продолжают работать.
+    const offMenuAction = window.orca.app.onMenuAction?.((action) => menuActionRef.current(action))
     const offBoard = window.orca.board.onChange(({ projectId, snapshot }) => {
       setActive((cur) => {
         if (cur?.id === projectId) setSnap(snapshot)
@@ -338,6 +374,7 @@ export function App(): React.JSX.Element {
     window.addEventListener('keydown', onKey, true)
     return () => {
       offAppChanged?.()
+      offMenuAction?.()
       offBoard()
       offTerminals()
       offFocus()
@@ -390,7 +427,8 @@ export function App(): React.JSX.Element {
   const feedItems = openGlobal
     ? buildAttention({
         tasks: subtasks, requests: snap.requests ?? [], questions: snap.questions, dispatches: snap.dispatches,
-        runId: openGlobal.id, running: runningTaskIds, kindOf: (status) => kindById.get(status)
+        runId: openGlobal.id, running: runningTaskIds, kindOf: (status) => kindById.get(status),
+        stageNode: (task) => stageNodeOf(task, openGlobal, workflowForRun(openGlobal.id, snap.runs, active, taskTypes))
       })
     : []
   /** Роли задач прогона — по типу его глобальной задачи; нет прогона — тип проекта по умолчанию. */
@@ -401,10 +439,13 @@ export function App(): React.JSX.Element {
   for (const t of projectTerminals) {
     if (t.role === 'coordinator' && t.runId && !exited.has(t.ptyId)) coordinatorPtys.set(t.runId, t.ptyId)
   }
-  // Что ждёт человека, считается в GlobalTask.waiting (pending-запросы); здесь — только ревью кода.
+  // Что ждёт человека, считается в GlobalTask.waiting (pending-запросы); здесь — только ревью кода. Задача в «Ревью» на
+  // остановленном этапе (мерж упал) ревью не ждёт — её не считаем (`taskReviewState`, как лента «Ждут вас»).
   const attention = new Map<string, GlobalTaskAttention>()
   for (const t of tasks) {
-    if (!t.runId || kindById.get(t.status) !== 'review' || t.answerFor) continue
+    if (!t.runId || kindById.get(t.status) !== 'review') continue
+    const run = globals.find((g) => g.id === t.runId)
+    if (taskReviewState(t, 'review', snap.requests ?? [], run, workflowForRun(t.runId, snap.runs, active, taskTypes)) !== 'review') continue
     attention.set(t.runId, { review: (attention.get(t.runId)?.review ?? 0) + 1 })
   }
   const requests = snap.requests ?? []
@@ -412,8 +453,8 @@ export function App(): React.JSX.Element {
   const statsSnapshot: StatsSnapshot = { tasks, runs: snap.runs, dispatches: snap.dispatches, requests, questions: snap.questions, columns }
 
   // ---------- ассистент ----------
-  /** Терминалы ассистента: по реестру (роль) плюс только что запущенный, которого там ещё нет. */
-  const { terminals: assistantTerminals, ptyId: assistantPty } = pickAssistant(
+  /** Id чата из open/reset либо отдельного терминала Amp/Shell из реестра. */
+  const { ptyId: assistantPty } = pickAssistant(
     terminals.map((t) => ({ ptyId: t.ptyId, role: t.role, projectId: t.projectId, tail: tails[t.ptyId] })),
     launchedAssistant,
     killedRef.current,
@@ -426,7 +467,7 @@ export function App(): React.JSX.Element {
     setAssistantState({ busy: true, error: null })
     try {
       const { ptyId } = reset ? await window.orca.assistant.reset(80, 30) : await window.orca.assistant.open(80, 30)
-      // Старый PTY main закрыл сам; из списка его убираем сразу, чтобы не висел «завершившимся».
+      // Старую сессию main закрыл сам; терминальный вариант сразу убираем из вкладок.
       if (old && old !== ptyId && reset) {
         killedRef.current.add(old)
         dropTerminal(old)
@@ -496,10 +537,19 @@ export function App(): React.JSX.Element {
       ? t('shell.app.coordinatorContinue', { count: g.progress.total })
       : t('shell.app.coordinatorSplit')
     if (!confirm(t('shell.app.confirmCoordinator', { title: g.title, note }))) return
+    await launchGlobalCoordinator(g, projectId)
+  }
+
+  /** Запуск без подтверждения: его же повторяет окно начального коммита. */
+  async function launchGlobalCoordinator(g: GlobalTask, projectId: string | undefined): Promise<void> {
     try {
       const ptyId = await window.orca.globalTasks.startCoordinator(g.id, 120, 30)
       showTerminal(ptyId, projectId)
     } catch (e) {
+      if (projectId && isNoCommitsError(e)) {
+        setInitialCommit({ projectId, retry: () => void launchGlobalCoordinator(g, projectId) })
+        return
+      }
       alert(t('shell.app.coordinatorError', { error: ipcErrorMessage(e) }))
     }
   }
@@ -680,12 +730,29 @@ export function App(): React.JSX.Element {
     showTerminal(ptyId, projectId)
   }
 
-  /** Запуск из UI (кнопка «Запустить»): в отличие от CLI-запуска, сразу показываем терминал. */
-  async function startTask(task: Task): Promise<void> {
+  /**
+   * Запуск из UI (кнопка «Запустить»): в отличие от CLI-запуска, сразу показываем терминал. Репозиторий без коммитов —
+   * окно начального коммита, после него запуск повторится; прочие ошибки — вызывающему (TaskModal показывает их у себя).
+   */
+  async function launchTask(task: Task): Promise<void> {
     const projectId = active?.id
-    const res = await window.orca.worker.start(task.id, 120, 30)
-    if (projectId === activeIdRef.current) setSelected(task)
-    showTerminal(res.ptyId, projectId)
+    try {
+      const res = await window.orca.worker.start(task.id, 120, 30)
+      if (projectId === activeIdRef.current) setSelected(task)
+      showTerminal(res.ptyId, projectId)
+    } catch (e) {
+      if (!projectId || !isNoCommitsError(e)) throw e
+      setInitialCommit({ projectId, retry: () => void startTask(task) })
+    }
+  }
+
+  /** Запуск с доски и из ленты: там ошибку показать негде — сообщение, как у координатора. */
+  async function startTask(task: Task): Promise<void> {
+    try {
+      await launchTask(task)
+    } catch (e) {
+      alert(t('shell.app.workerError', { error: ipcErrorMessage(e) }))
+    }
   }
 
   /**
@@ -785,9 +852,9 @@ export function App(): React.JSX.Element {
       return { name: global?.title ?? t('shell.term.coordinatorName'), role: role?.title ?? t('shell.term.coordinatorRole'), agent: role?.agent ?? 'claude' }
     }
     if (term.role === 'assistant') {
-      // Ассистент приложения запущен с ролями типа библиотеки по умолчанию; у старого main — проекта.
-      const role = assistantRole(taskTypes && !term.projectId ? libraryDefaultRoles(taskTypes) : rolesOf(undefined))
-      return { name: t('shell.term.assistantName'), role: role?.title ?? t('shell.term.assistantRole'), agent: role?.agent ?? 'claude' }
+      // Ассистент — настройки приложения (AppSettings.assistant), не роль типа. Подпись — по текущим настройкам:
+      // после смены агента до «Нового диалога» она опережает живой терминал, это и подсказка, что он устарел.
+      return { name: t('shell.term.assistantName'), role: t('shell.term.assistantRole'), agent: assistantAgentOf(appSettings) }
     }
     if (term.role === 'shell') return { name: term.label, role: t('shell.term.shellRole'), agent: 'shell' }
     const task = term.projectId === active?.id ? tasks.find((x) => x.id === term.taskId) : undefined
@@ -802,13 +869,24 @@ export function App(): React.JSX.Element {
         <button
           className={`icon ${showSettings ? 'active' : ''}`}
           title={!showProjects && needsAttention(updates.state) ? t('shell.update.railHint') : t('shell.rail.settings')}
-          onClick={() => setShowSettings(true)}
+          onClick={() => {
+            setSettingsSectionRequest(undefined)
+            setShowSettings(true)
+          }}
         >
           <Icon.gear />
           {/* Сайдбар скрыт — плашки обновления не видно, поэтому точка на шестерёнке. */}
           {!showProjects && needsAttention(updates.state) && <span className="rail-dot" />}
         </button>
-        <button className={`icon ${showDocs ? 'active' : ''}`} title={t('shell.rail.docs')} onClick={() => setShowDocs(true)} disabled={!active}>
+        <button
+          className={`icon ${showDocs ? 'active' : ''}`}
+          title={t('shell.rail.docs')}
+          onClick={() => {
+            setDocsInitialPath(null)
+            setShowDocs(true)
+          }}
+          disabled={!active}
+        >
           <Icon.doc />
         </button>
         <button
@@ -823,7 +901,7 @@ export function App(): React.JSX.Element {
           <Icon.assistant />
         </button>
         <div className="grow" />
-        <div className="avatar">🐋</div>
+        <img className="avatar" src={appLogo} alt="orca-board" width={40} height={40} />
       </aside>
 
       {showProjects && (
@@ -848,34 +926,40 @@ export function App(): React.JSX.Element {
             <div className="head-title">
               <h1>{active?.name ?? 'orca-board'}</h1>
               {badge && active && (
-                <BranchMenu projectId={active.id} badge={badge} onBranchChanged={projectBranch.update} />
+                <BranchMenu
+                  projectId={active.id}
+                  badge={badge}
+                  onBranchChanged={projectBranch.update}
+                  onInitialCommit={() => setInitialCommit({ projectId: active.id })}
+                />
               )}
             </div>
             <button
-              className={`inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
+              className={`btn-primary ghost head-action inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
               onClick={() => {
                 setShowInbox((v) => !v)
                 setShowAssistant(false)
               }}
               disabled={!active}
               title={t('shell.head.inboxHint')}
+              aria-expanded={showInbox}
             >
               {t('shell.head.inbox')}{inboxCount > 0 && <><span className="dot" /> {inboxCount}</>}
             </button>
-            <button className="round-btn" title={t('shell.head.newShell')} onClick={openShell} disabled={!active}><Icon.terminal /></button>
+            <button className="btn-primary ghost head-action head-action-icon" title={t('shell.head.newShell')} onClick={openShell} disabled={!active}><Icon.terminal /></button>
             {/* Создание через координатора доступно вне глобальной задачи; её координатор — в GlobalTaskView.
                 Контекст задачи сохраняется и при переходе к терминалам. */}
             {!openGlobal && (
-              <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active} title={t('shell.head.coordinatorHint')}>
+              <button className="btn-primary ghost head-action" onClick={() => setShowCoord(true)} disabled={!active} title={t('shell.head.coordinatorHint')}>
                 <Icon.users /> {t('shell.head.coordinator')}
               </button>
             )}
             {openGlobal ? (
-              <button className="btn-primary" onClick={() => setShowNew(true)} disabled={!active}>
+              <button className="btn-primary head-action" onClick={() => setShowNew(true)} disabled={!active}>
                 <Icon.plus /> {t('shell.head.newSubtask')}
               </button>
             ) : (
-              <button className="btn-primary" onClick={() => setGlobalModal({ mode: 'create' })} disabled={!active}>
+              <button className="btn-primary head-action" onClick={() => setGlobalModal({ mode: 'create' })} disabled={!active}>
                 <Icon.plus /> {t('shell.head.newTask')}
               </button>
             )}
@@ -892,6 +976,7 @@ export function App(): React.JSX.Element {
               {t('shell.tab.terminals')}
               {projectTerminals.length > 0 && <span className="tab-badge">{projectTerminals.length}</span>}
             </button>
+            <button className={`tab ${tab === 'files' ? 'active' : ''}`} onClick={() => setTab('files')}>{t('shell.tab.files')}</button>
             <button className={`tab ${tab === 'stats' ? 'active' : ''}`} onClick={() => setTab('stats')}>{t('shell.tab.stats')}</button>
             <button className={`tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>{t('shell.tab.info')}</button>
           </div>
@@ -942,6 +1027,7 @@ export function App(): React.JSX.Element {
               tasks={subtasks}
               columns={columns}
               dispatches={snap.dispatches}
+              approval={runApprovalRequest(snap.requests, openGlobal.id)}
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
@@ -976,6 +1062,19 @@ export function App(): React.JSX.Element {
                 onReject={(id, fb, images) => window.orca.review.reject(id, fb, images)}
               />
             </GlobalTaskView>
+          )}
+          {tab === 'files' && !active && <div className="empty">{t('shell.projects.none')}</div>}
+          {tab === 'files' && active && (
+            <FilesView
+              key={active.id}
+              projectId={active.id}
+              name={active.name}
+              root={active.root}
+              onOpenDoc={(path) => {
+                setDocsInitialPath(path)
+                setShowDocs(true)
+              }}
+            />
           )}
           {tab === 'stats' && !active && <div className="empty">{t('shell.projects.none')}</div>}
           {tab === 'stats' && active && <StatsView key={active.id} projectId={active.id} columns={columns} />}
@@ -1050,6 +1149,7 @@ export function App(): React.JSX.Element {
           tasks={tasks}
           runs={snap.runs}
           dispatches={snap.dispatches}
+          columns={columns}
           workflowOf={(runId) => workflowForRun(runId, snap.runs, active, taskTypes)}
           focus={inboxFocus}
           onClose={() => setShowInbox(false)}
@@ -1059,11 +1159,12 @@ export function App(): React.JSX.Element {
       {active && (
         <AssistantPanel
           open={showAssistant}
-          terminals={assistantTerminals}
+          suspended={showSettings}
           activePty={assistantPty}
           status={assistantState}
           onClose={closeAssistant}
           onReset={() => void launchAssistant(true)}
+          onSettings={() => { setSettingsSectionRequest({ section: 'assistant', nonce: Date.now() }); setShowSettings(true) }}
           onOpenInTerminals={() => {
             if (!assistantPty) return
             setShowAssistant(false)
@@ -1073,10 +1174,12 @@ export function App(): React.JSX.Element {
       )}
       {showSettings && (
         <SettingsModal
+          sectionRequest={settingsSectionRequest}
           agents={agents}
           updates={updates}
           onRefreshAgents={() => refreshAgents(true)}
           onProjectsChanged={refreshProjects}
+          onAppSettings={setAppSettings}
           onRunOnboarding={() => {
             setShowSettings(false)
             refreshTaskTypes()
@@ -1088,7 +1191,16 @@ export function App(): React.JSX.Element {
           }}
         />
       )}
-      {showDocs && active && <DocsModal key={active.id} projectName={active.name} tasks={tasks} columns={columns} onClose={() => setShowDocs(false)} />}
+      {showDocs && active && (
+        <DocsModal
+          key={active.id}
+          projectName={active.name}
+          tasks={tasks}
+          columns={columns}
+          initialDoc={docsInitialPath ? { source: 'project', path: docsInitialPath } : undefined}
+          onClose={() => setShowDocs(false)}
+        />
+      )}
       {showCoord && active && (
         <CoordinatorModal
           onClose={() => setShowCoord(false)}
@@ -1098,6 +1210,7 @@ export function App(): React.JSX.Element {
             setShowCoord(false)
             showTerminal(ptyId, projectId)
           }}
+          onNoCommits={(retry) => setInitialCommit({ projectId: active.id, retry })}
         />
       )}
       {openTask && active && (
@@ -1117,7 +1230,7 @@ export function App(): React.JSX.Element {
           running={runningTaskIds.has(openTask.id)}
           onClose={() => setOpenTaskId(null)}
           onUpdate={(id, patch) => window.orca.tasks.update(id, patch)}
-          onStart={startTask}
+          onStart={launchTask}
           onOpenTerminal={openTerminalForTask}
           onRemove={(id) => window.orca.tasks.remove(id)}
           onResolveRequest={resolveRequest}
@@ -1193,8 +1306,25 @@ export function App(): React.JSX.Element {
           key={acceptingGlobal.id}
           global={acceptingGlobal}
           request={runApprovalRequest(snap.requests, acceptingGlobal.id)}
+          tasks={tasks.filter((t) => t.runId === acceptingGlobal.id)}
+          columns={columns}
+          dispatches={snap.dispatches}
           onClose={() => setAcceptGlobalId(null)}
           onSubmit={(decision) => submitAcceptGlobal(acceptingGlobal.id, decision)}
+        />
+      )}
+      {initialCommit && (
+        <InitialCommitDialog
+          key={initialCommit.projectId}
+          projectId={initialCommit.projectId}
+          projectName={projects.find((p) => p.id === initialCommit.projectId)?.name ?? ''}
+          willRetry={initialCommit.retry !== undefined}
+          onClose={() => setInitialCommit(null)}
+          onCommitted={(branch) => {
+            setInitialCommit(null)
+            if (initialCommit.projectId === activeIdRef.current) projectBranch.update(branch)
+            initialCommit.retry?.()
+          }}
         />
       )}
       <UpdateToast />

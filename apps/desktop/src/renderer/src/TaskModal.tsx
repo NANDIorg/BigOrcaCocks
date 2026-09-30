@@ -12,7 +12,7 @@ import { AnswerBlock } from './AnswerBlock'
 import { RequestCard, REQUEST_KIND_TITLE } from './RequestCard'
 import { Markdown } from './Markdown'
 import { ShowcaseBlock } from './ShowcaseBlock'
-import { latestShowcase, requestShowcase } from './showcase'
+import { latestShowcase, requestShowcases } from './showcase'
 import { Icon } from './icons'
 import { formatDuration, taskDuration, taskTicking } from './duration'
 import { useNow } from './useNow'
@@ -21,6 +21,7 @@ import { PriorityOptions } from './Priority'
 import { StatusHistoryBlock } from './StatusHistoryBlock'
 import { SubtaskPathBlock } from './SubtaskPathBlock'
 import { pathNodeTitles, pathSummary } from './subtaskPath'
+import { stageNodeOf, stalledReason, stalledRetryLabel, taskReviewState } from './taskReview'
 import { TaskStatsBlock } from './TaskStatsBlock'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { answerForTitle, formatTaskDate as formatDate, outcomeLabel, resolutionText } from './taskModalText'
@@ -93,8 +94,11 @@ export function TaskModal(props: Props): React.JSX.Element {
   const answerPending = pending.some((r) => r.kind === 'answer')
   /** Последний показ задачи; если его уже выводит ждущий approval — второй раз не нужен. */
   const showcased = latestShowcase(dispatches, task.id)
-  const showcaseInRequest = pending.some((r) => r.showcaseDispatchId === showcased?.id && requestShowcase(r, dispatches))
+  const showcaseInRequest = pending.some((r) => requestShowcases(r, dispatches).some((x) => x.dispatchId === showcased?.id))
   const editable = kind !== 'in_progress'
+  /** Ревью или остановленный этап — тем же правилом, что лента «Ждут вас» (taskReview.ts). */
+  const stageNode = stageNodeOf(task, stageRun, workflow)
+  const reviewState = taskReviewState(task, kind, requests, stageRun, workflow)
   const canStart =
     (kind === 'ready' || kind === 'backlog' || last?.outcome === 'unknown' || last?.outcome === 'failed') && !running
 
@@ -204,7 +208,7 @@ export function TaskModal(props: Props): React.JSX.Element {
                 <RequestCard
                   key={r.id}
                   request={r}
-                  showcase={requestShowcase(r, dispatches)}
+                  showcases={requestShowcases(r, dispatches)}
                   onResolve={(res, images) => onResolveRequest(r, res, images)}
                   onOpenTerminal={(taskId) => {
                     onOpenTerminal(taskId)
@@ -251,7 +255,7 @@ export function TaskModal(props: Props): React.JSX.Element {
             <div className="meta-row">
               <span className="meta-key">{t('board.task.column')}</span>
               <span className="meta-val">
-                {column ? <span className="chip" style={{ borderColor: column.color, color: column.color }}>{column.title}</span> : task.status}
+                {column ? <span className="chip" style={{ borderColor: column.color }}>{column.title}</span> : task.status}
               </span>
             </div>
             <div className="meta-row">
@@ -340,12 +344,13 @@ export function TaskModal(props: Props): React.JSX.Element {
             </section>
           )}
 
-          {kind === 'review' && !task.answerFor && (
+          {reviewState && (
             <section className="task-modal-section">
-              <h4>{t('board.task.review')}</h4>
+              <h4>{t(reviewState === 'stalled' ? 'board.task.stalled' : 'board.task.review')}</h4>
               <ReviewBlock
                 taskId={task.id}
                 summary={last?.summary}
+                {...(reviewState === 'stalled' ? { stalled: { reason: stalledReason(task, stageNode), retryLabel: stalledRetryLabel(stageNode, task.stage?.nodeId) } } : {})}
                 onAccept={async () => {
                   await onAccept(task.id)
                   onClose()
@@ -414,7 +419,7 @@ export function TaskModal(props: Props): React.JSX.Element {
           {showcased?.showcase && !showcaseInRequest && (
             <section className="task-modal-section">
               <h4>{t('board.showcase.title')} <span className="muted">· {t('board.task.showcaseRun', { at: formatDate(showcased.startedAt) })}</span></h4>
-              <ShowcaseBlock taskId={task.id} showcase={showcased.showcase} bare />
+              <ShowcaseBlock taskId={task.id} dispatchId={showcased.id} showcase={showcased.showcase} bare />
             </section>
           )}
 

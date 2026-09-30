@@ -10,3 +10,4 @@ release/
 .orca-worktrees/
 .orca-attachments/
 /review/
+.superdesign/

@@ -32,17 +32,17 @@ const LOGOS: Record<AgentKind, string> = {
   shell: inner(shell)
 }
 
-/** Брендовые цвета; у монохромных логотипов — белый. */
+/** Брендовые цвета; монохромные логотипы адаптируются к светлой и тёмной поверхности. */
 const COLORS: Record<AgentKind, string> = {
   claude: '#d97757',
   codex: '#10a37f',
   gemini: '#4e8df5',
-  cursor: '#fff',
-  copilot: '#fff',
+  cursor: 'var(--overlay-ink)',
+  copilot: 'var(--overlay-ink)',
   amp: '#ff5543',
-  opencode: '#fff',
+  opencode: 'var(--overlay-ink)',
   goose: '#f6b93b',
-  shell: '#9ea1ad'
+  shell: 'var(--muted)'
 }
 
 interface Props {

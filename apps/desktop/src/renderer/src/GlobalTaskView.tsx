@@ -56,6 +56,8 @@ interface Props {
   columns: BoardColumn[]
   /** Запуски воркеров: сводка последнего запуска сделанной подзадачи — фоллбэк «Что сделал». */
   dispatches: Dispatch[]
+  /** Ждущий approval ноды `human` прогона (`runApprovalRequest`): его показ — во вкладке «Итог и цель» на «Проверке». */
+  approval?: HumanRequest
   /** Снимок проекта для вкладки «Статистика»: когда её перечитывать и запасной расчёт при старом main. */
   statsSnapshot: StatsSnapshot
   onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
@@ -266,6 +268,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
             tasks={tasks}
             columns={columns}
             dispatches={dispatches}
+            approval={props.approval}
             onAccept={props.onAccept}
             onReturn={props.onReturn}
             onStartCoordinator={props.onStartCoordinator}

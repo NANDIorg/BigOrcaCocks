@@ -26,16 +26,19 @@ export interface Role {
    * (skills/worker.md или coordinator.md) при каждом запуске агента этой роли. Пусто — поля нет, поведение прежнее.
    */
   systemPrompt?: string
+  /**
+   * Флаги пользователя к команде запуска агента — строка, как её ввёл человек (не тримится, как `systemPrompt`).
+   * В argv её разбирает `parseExtraArgs` (без shell), токены уходят в `AgentInvokeOptions.extraArgs`.
+   * Пусто или одни пробелы — поля нет. Применяется со следующего запуска: идущие агенты не меняются.
+   * Меняется только в UI — агентам через CLI и сокет поле не отдаётся и не принимается (флаги обходят режим прав).
+   */
+  extraArgs?: string
 }
 
 export const DEFAULT_ROLES: Role[] = [
   {
     id: 'coordinator', title: 'Координатор', agent: 'claude',
     description: 'Декомпозирует цель прогона на задачи и управляет воркерами. Задачам не назначается.'
-  },
-  {
-    id: 'assistant', title: 'Ассистент', agent: 'claude',
-    description: 'Ассистент доски: выполняет просьбы человека (создать, перенести, закрыть, перезапустить) через orca-board. Задачам не назначается.'
   },
   {
     id: 'developer', title: 'Программист', agent: 'claude',
@@ -52,6 +55,33 @@ export const DEFAULT_ROLES: Role[] = [
 ]
 
 export const DEFAULT_ROLE_ID = 'developer'
+
+// ---------- ассистент ----------
+
+/**
+ * Настройки ассистента доски (`AppSettings.assistant`). Ассистент один на приложение и к типу задачи не относится,
+ * поэтому живёт в настройках приложения, а не ролью типа. Режима разрешений здесь нет: ассистент всегда `auto`
+ * (ему нужен только `orca-board`, он разрешён и так).
+ */
+export interface AssistantSettings {
+  agent: AgentKind
+  /** Модель агента; пусто — по умолчанию агента. */
+  model?: string
+  /** Уровень рассуждений (см. effortOptions); пусто — по умолчанию агента. */
+  effort?: string
+  /** Инструкции человека: дописываются к skills/assistant.md блоком «# Инструкции роли «Ассистент»». */
+  systemPrompt?: string
+  /**
+   * Флаги пользователя к команде запуска ассистента — строка, как её ввёл человек; разбор — `parseExtraArgs`.
+   * Пусто или одни пробелы — поля нет. Применяется со следующего запуска. Меняется только в UI (см. `Role.extraArgs`).
+   */
+  extraArgs?: string
+}
+
+export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { agent: 'claude' }
+
+/** Заголовок блока инструкций ассистента в системном промпте; не редактируется. */
+export const ASSISTANT_TITLE = 'Ассистент'
 
 /** Назначение системной роли (id из DEFAULT_ROLES) по умолчанию; у пользовательских ролей его нет. */
 export function defaultRoleDescription(id: string): string | undefined {
@@ -472,13 +502,33 @@ export const ANSWER_AUDIENCES: AnswerAudience[] = ['human', 'coordinator']
 export const MAX_ANSWER_LENGTH = 200_000
 
 /**
+ * Снимок файлов показа, который main снял при `done` в `<userData>/showcase/…` (docs/workflow.md → «Показ
+ * человеку»): просмотр не зависит от того, жив ли worktree задачи после мержа.
+ */
+export interface ShowcaseSnapshot {
+  /** Когда снят (мс). */
+  at: number
+  /** Всего файлов в снимке — точки входа вместе с ассетами страниц (css, js, шрифты). */
+  files: number
+  bytes: number
+}
+
+/**
  * Показ человеку, который воркер сдал с `done` (нода «Работа» с `showcase`, workflow.ts): `text` — markdown
- * с описанием, `files` — пути файлов в ветке задачи от корня worktree (макеты, скриншоты). Сами файлы не
- * копируются: их читает main из worktree задачи.
+ * с описанием, `files` — пути файлов в ветке задачи от корня worktree (макеты, скриншоты).
  */
 export interface DispatchShowcase {
   text?: string
+  /** Точки входа для человека — то, что показывается списком. */
   files: string[]
+  /**
+   * Есть — файлы читаются из снимка (main снял его при `done`); нет — показ старой версии, читается из worktree
+   * задачи. Выставляет только main (`FinishDispatchOptions.snapshot`): агент через сокет его не передаёт, иначе
+   * мог бы выдать «снимок есть» без снимка.
+   */
+  snapshot?: ShowcaseSnapshot
+  /** Файлы найдены приложением, а не перечислены воркером. Как и `snapshot`, выставляет только main. */
+  auto?: boolean
 }
 
 /** Предел длины текста показа (символов): он хранится в снапшоте доски, как ответ. */
@@ -486,6 +536,15 @@ export const MAX_SHOWCASE_LENGTH = MAX_ANSWER_LENGTH
 
 /** Сколько файлов можно сдать на показ. */
 export const MAX_SHOWCASE_FILES = 50
+
+/** Сколько файлов может быть в снимке показа — с ассетами страниц (`ShowcaseSnapshot.files`). */
+export const MAX_SHOWCASE_SNAPSHOT_FILES = 300
+
+/** Предел размера снимка показа целиком (байт). */
+export const MAX_SHOWCASE_SNAPSHOT_BYTES = 50 * 1024 * 1024
+
+/** Предел одного файла снимка (байт): больше — `done` отказывает с подсказкой. */
+export const MAX_SHOWCASE_SNAPSHOT_FILE_BYTES = 25 * 1024 * 1024
 
 /**
  * Показ из `done` в сохраняемый вид: текст без пустоты, пути без пробелов по краям, без повторов, `\` → `/`.
@@ -595,6 +654,15 @@ export interface Task {
    */
   stage?: WfStage
   /**
+   * Последняя остановка воркфлоу на этапе `stage` (`TaskStore.blockStage`, `blocked` из перехода): эффект ноды
+   * не выполнен (мерж упал не конфликтом, воркер не запустился, граф не пускает дальше), а причина живёт не только
+   * в одноразовом событии `workflow_blocked` — её видит человек в карточке, и по ней main отличает остановку от
+   * прерванного рестартом эффекта (такой задачу добирать не нужно: он уже сообщил о ней). `reason` — целиком, без
+   * урезания. Снимается любым движением этапа (`advanceStage`, `enterWork`), `reopenTask` и новым запуском воркера.
+   * Поле необязательное: снапшот старой версии читается как «не остановлена», миграция формата не нужна.
+   */
+  stageBlock?: TaskStageBlock
+  /**
    * Задача-проверка: на какой ноде `gate` она создана и что проверяет — ветку рабочей задачи (`taskId`, движок
    * подзадач) или ветку глобальной задачи целиком (`runId`, воркфлоу прогона). Ровно одно из двух.
    */
@@ -617,6 +685,13 @@ export interface Task {
    * `STATUS_HISTORY_LIMIT`. Нет у задач вне воркфлоу (ответ, гейт) и у снапшота от кода до истории этапов.
    */
   stageHistory?: StageChange[]
+}
+
+/** Остановка воркфлоу задачи (`Task.stageBlock`): на какой ноде, почему и когда (мс). */
+export interface TaskStageBlock {
+  nodeId: string
+  reason: string
+  at: number
 }
 
 export type DispatchOutcome = 'done' | 'failed' | 'unknown'
@@ -776,9 +851,14 @@ export interface HumanRequest {
   nodeId?: string
   /**
    * Dispatch, чей показ (`Dispatch.showcase`) выведен в approval: renderer берёт из него файлы и читает их
-   * из worktree задачи (IPC `showcase:*`). Отдельно от `dispatchId`: тот — «кто спросил / упал».
+   * через IPC `showcase:*` (из снимка или worktree задачи). Отдельно от `dispatchId`: тот — «кто спросил / упал».
    */
   showcaseDispatchId?: string
+  /**
+   * Approval прогона: запуски подзадач с показом, по одному на подзадачу, в порядке подзадач. `showcaseDispatchId`
+   * при этом — последний из них: его читают старый renderer и старые запросы.
+   */
+  showcaseDispatchIds?: string[]
   /** Только kind=decision: почему решает человек — уходит в `StageDecision.fallback` решения. */
   fallback?: StageDecisionFallback
   /** Только kind=decision: комментарий агента, передавшего решение (`StageDecision.agentNote`); он же в `body`. */

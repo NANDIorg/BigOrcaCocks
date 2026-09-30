@@ -1,5 +1,9 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AssistantSettings, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
+import type { WindowChromeMode } from './window-chrome'
+import type { AppearanceSettings } from './appearance'
+import type { ConversationStatus, ConversationMessage, ConversationToolCall, ConversationInteraction, InteractionAnswer } from './assistant-conversation'
+export type { ConversationInteraction, InteractionAnswer } from './assistant-conversation'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -42,10 +46,17 @@ export interface AppSettings {
   keepInBackground: boolean
   /** Язык интерфейса; не выбран — русский (язык системы не угадываем, см. `settingsLocale`). */
   language?: AppLanguage
+  /** Тема и движение; поле отсутствует у старого main. */
+  appearance?: AppearanceSettings
   /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
   notifications: NotificationSettings
   /** Автообновление приложения (docs/architecture.md → «Обновление»). */
   updates: UpdateSettings
+  /**
+   * Ассистент доски: агент, модель, effort, инструкции. Не роль типа задачи — ассистент один на приложение.
+   * Применяется к следующему запуску («Новый диалог»), живой ассистент не перезапускается.
+   */
+  assistant: AssistantSettings
 }
 
 /** Настройки автообновления. Дефолты — `DEFAULT_UPDATE_SETTINGS`. */
@@ -63,12 +74,18 @@ export interface UpdateSettings {
 
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = { autoCheck: true, autoDownload: true, installWhenIdle: false }
 
-/** Патч настроек приложения: notifications и updates мержатся по полям. */
+/** Патч настроек приложения: notifications, updates и assistant мержатся по полям. */
 export interface AppSettingsPatch {
   keepInBackground?: boolean
   language?: AppLanguage
+  appearance?: Partial<AppearanceSettings>
   notifications?: NotificationSettingsPatch
   updates?: Partial<UpdateSettings>
+  /**
+   * Пустая строка в model/effort/systemPrompt/extraArgs очищает поле; смена агента без model/effort/extraArgs
+   * сбрасывает их. `extraArgs` — строка как введена, невалидную (`parseExtraArgs`) main отвергает.
+   */
+  assistant?: Partial<AssistantSettings>
 }
 
 /** Способ обновления на этой платформе. */
@@ -229,7 +246,15 @@ export interface ProjectBranchInfo {
   detached: boolean
   /** Короткий sha HEAD; только при `detached`. */
   sha?: string
+  /** HEAD без коммитов. */
+  unborn?: true
 }
+
+/**
+ * Режим `projects:createInitialCommit`: `empty` — пустой коммит через plumbing, индекс и рабочее дерево не трогаются;
+ * `snapshot` — `git add -A` и коммит текущего состояния рабочего дерева.
+ */
+export type InitialCommitMode = 'empty' | 'snapshot'
 
 /** Локальная ветка в `ProjectBranchList.local`. */
 export interface ProjectLocalBranch {
@@ -307,6 +332,39 @@ export const PROJECT_GIT_ERROR_CODES = [
 ] as const
 export type ProjectGitErrorCode = (typeof PROJECT_GIT_ERROR_CODES)[number]
 
+/** Вид записи во вкладке «Файлы»: симлинк показывается как есть, без перехода по нему. */
+export type ProjectFileKind = 'dir' | 'file' | 'symlink'
+
+/** Запись папки проекта во вкладке «Файлы». Пути renderer собирает сам: `dir + '/' + name`. */
+export interface ProjectFileEntry {
+  name: string
+  kind: ProjectFileKind
+}
+
+export interface ProjectFilesListing {
+  /** Папка от корня проекта через `/`; '' — корень (эхо запроса: renderer отбрасывает устаревшие ответы). */
+  dir: string
+  /** Отсортировано main: папки, затем файлы и симлинки, по имени. */
+  entries: ProjectFileEntry[]
+  /** Записей в папке больше `PROJECT_FILES_DIR_LIMIT` — показаны первые. */
+  truncated: boolean
+}
+
+/** Сколько записей одной папки отдаёт `files:list`: огромная папка не должна подвешивать IPC и дерево. */
+export const PROJECT_FILES_DIR_LIMIT = 5000
+
+/** Ожидаемые отказы `files:*` — у каждого свой текст в renderer (образец — `PROJECT_GIT_ERROR_CODES`). */
+export const PROJECT_FILES_ERROR_CODES = [
+  'files.badPath', // не строка, NUL, абсолютный, `..`/`.`/пустой сегмент, `\`, `:` на win32
+  'files.outside', // путь (по realpath) вне корня проекта
+  'files.hidden', // `.git`
+  'files.notFound', // папки/файла уже нет (удалили после последнего чтения)
+  'files.notDir', // list на файле
+  'files.rootMissing', // корня проекта нет на диске
+  'files.readFailed' // прочее: доступ, ввод-вывод, слишком длинный путь; параметры path, error
+] as const
+export type ProjectFilesErrorCode = (typeof PROJECT_FILES_ERROR_CODES)[number]
+
 /**
  * Проект в renderer. Свои у проекта только колонки, агенты и типы задач; роли, воркфлоу, правила агентов
  * и разрешения — у типа задачи (`TaskType`, «Настройки → Типы задач»).
@@ -343,6 +401,11 @@ export interface TaskTypeInput {
    * передан (пустой список — «закрыть») — сохраняется как есть.
    */
   workflowNotes?: WfMigrationNote[]
+}
+
+/** Итог «Экспорта типа»: куда сохранён файл. Диалог закрыли — вместо результата null. */
+export interface TaskTypeExportResult {
+  path: string
 }
 
 /** Создать (без `id`) или целиком заменить шаблон ноды; `updatedAt` ставит main. */
@@ -423,6 +486,21 @@ export interface ShowcaseFileData {
   bytes: Uint8Array
 }
 
+/** Адрес страницы показа для изолированного фрейма (`showcase:previewUrl`). */
+export interface ShowcasePreviewUrl {
+  /** `orca-preview://<токен>/<путь>` — renderer ставит его в `src`, только проверив схему. */
+  url: string
+  mime: string
+  /** `orca-preview://<токен>/` — корень снимка: к нему разрешаются относительные картинки markdown. */
+  base: string
+}
+
+/** Параметры `showcase:previewUrl`. */
+export interface ShowcasePreviewOptions {
+  /** Разрешить странице интернет-ресурсы (CDN, шрифты). По умолчанию сеть закрыта; выбор не запоминается. */
+  network?: boolean
+}
+
 /** Группа документов: проект (`source: 'project'`) или worktree задачи в работе (`source` — id задачи). */
 export interface DocGroup {
   source: string
@@ -474,14 +552,21 @@ export interface OnboardingCompleteInput {
 }
 
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
+/** Команды системного меню; навигация выполняется в существующем интерфейсе. */
+export type AppMenuAction = 'settings' | 'checkUpdates' | 'addProject'
+
 export interface OrcaApi {
   app: {
+    /** Режим рамки этого окна; нет в старом preload. Read-only, без IPC управления окном. */
+    readonly windowChrome?: WindowChromeMode
     info(): Promise<{ socketPath: string; active: Project | null; projects: Project[] }>
     getSettings(): Promise<AppSettings>
     /** Мерж патча в глобальные настройки; возвращает итоговые. */
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
+    /** Опционально для старого preload; подписка также сообщает main, что интерфейс готов к команде. */
+    onMenuAction?(cb: (action: AppMenuAction) => void): () => void
     /**
      * Что-то в общих данных приложения изменилось: настройки, список/группы проектов, библиотека типов задач
      * и её роли, шаблоны нод — независимо от источника (это же окно через IPC, или CLI/ассистент через сокет).
@@ -562,6 +647,13 @@ export interface OrcaApi {
      */
     checkoutBranch?(id: string, branch: string): Promise<ProjectBranchInfo>
     /**
+     * Создать начальный коммит в репозитории корня без коммитов (unborn HEAD): канал `projects:createInitialCommit`.
+     * Вызывается только по согласию человека после ошибки запуска `git.noCommits`. Идемпотентен: коммиты уже есть —
+     * возвращает актуальное состояние HEAD без изменений. Ошибки — `git.notRepo`, `git.opFailed`.
+     * Нет у старого main/preload — «перезапустите приложение».
+     */
+    createInitialCommit?(id: string, mode: InitialCommitMode): Promise<ProjectBranchInfo>
+    /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из
      * `detectTaskType`) — без диалога. Уже добавленный возвращается как есть.
@@ -623,6 +715,8 @@ export interface OrcaApi {
     /** Копия типа под новым id. */
     duplicate(id: string): Promise<TaskType>
     setDefault(id: string): Promise<TaskTypesState>
+    /** Диалог «Сохранить как» и запись файла типа целиком (формат — core/task-type-file.ts); закрыли диалог — null. */
+    export(id: string): Promise<TaskTypeExportResult | null>
   }
   /**
    * Библиотека шаблонов нод (docs/architecture.md → «Шаблоны нод»): глобальная, общая для всех типов задач. Вставка
@@ -796,24 +890,13 @@ export interface OrcaApi {
     /** Закрыть терминал ассистента (если жив) и запустить новый — чистый контекст. */
     reset(cols: number, rows: number): Promise<{ ptyId: string }>
   }
-  /**
-   * Чат-режим панели ассистента поверх PTY (`docs/assistant-chat.md` → «3. Контракт чат-режима»): читает
-   * транскрипт агента ассистента (`main/assistant-chat.ts`) и пишет в тот же PTY, что и `assistant.open/reset`, —
-   * другим протоколом, а не отдельным «безтерминальным» каналом с агентом.
-   */
+  /** Двусторонний чат ассистента; Amp/Shell открываются отдельным терминалом. */
   assistantChat: {
-    /** Можно ли показать чат для этого PTY: транскрипт найден и агент поддерживает разбор (сейчас — только claude). */
     available(ptyId: string): Promise<boolean>
-    /** Сообщения с начала сессии (последние `ASSISTANT_CHAT_MESSAGE_LIMIT`, не всё тело файла) и текущий статус. */
     getMessages(ptyId: string): Promise<AssistantChatSnapshot>
-    /**
-     * Отправить сообщение из чата: `pty.write(ptyId, chatInputBytes(text))` (многострочный текст — через bracketed
-     * paste), затем отдельной записью `\r` с паузой `SUBMIT_DELAY_MS` — иначе TUI агента принимает Enter за часть
-     * вставки и не отправляет сообщение (те же грабли, что у `answerNudge`). Тот же путь, что ввод в терминале;
-     * транскрипт допишет сам агент. Пустой текст или чужой `ptyId` — ошибка.
-     */
     send(ptyId: string, text: string): Promise<void>
-    /** Новое/изменённое сообщение или смена статуса этого PTY. */
+    interrupt(ptyId: string): Promise<void>
+    respond(ptyId: string, requestId: string, answer: InteractionAnswer): Promise<void>
     onMessage(ptyId: string, cb: (u: AssistantChatUpdate) => void): () => void
   }
   /** .md-файлы активного проекта и worktree его задач в работе. Путь — только относительный, внутри источника. */
@@ -827,17 +910,49 @@ export interface OrcaApi {
     reveal(source: string, path: string): Promise<void>
   }
   /**
-   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId`) из worktree задачи `taskId`
-   * активного проекта. `path` — как в `showcase.files` (от корня репозитория). Путь вне worktree, симлинк наружу,
-   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), нет worktree — ошибка.
+   * Файлы показа человеку (`Dispatch.showcase`, `HumanRequest.showcaseDispatchId(s)`) задачи `taskId` активного
+   * проекта. `path` — как в `showcase.files` (от корня репозитория). `dispatchId` — чей показ: со снимком
+   * (`showcase.snapshot`) файлы читаются из него, без — из worktree задачи. Путь вне корня, симлинк наружу,
+   * расширение не из `SHOWCASE_FILE_TYPES` (`shared/showcase.ts`), запуск чужой задачи, нет ни снимка, ни worktree — ошибка.
    */
   showcase: {
-    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. */
-    read(taskId: string, path: string): Promise<ShowcaseFileData>
+    /** Байты для превью: только `preview: 'image' | 'markdown'`, не больше `SHOWCASE_READ_MAX_BYTES`. HTML — только `previewUrl`. */
+    read(taskId: string, path: string, dispatchId?: string): Promise<ShowcaseFileData>
     /** Открыть файл приложением системы по умолчанию (HTML — в браузере). */
-    open(taskId: string, path: string): Promise<void>
+    open(taskId: string, path: string, dispatchId?: string): Promise<void>
     /** Показать файл в Finder/Проводнике. */
-    reveal(taskId: string, path: string): Promise<void>
+    reveal(taskId: string, path: string, dispatchId?: string): Promise<void>
+    /**
+     * Адрес страницы показа для `<iframe sandbox="allow-scripts">`: HTML, картинки и SVG из снимка запуска `dispatchId`;
+     * у markdown — ради `base` (относительные картинки). PDF — отказ (пока только «Открыть»). Появился позже остальных: в старом preload метода нет — проверяй перед вызовом.
+     */
+    previewUrl(dispatchId: string, path: string, opts?: ShowcasePreviewOptions): Promise<ShowcasePreviewUrl>
+    /**
+     * База `orca-preview://<токен>/` для относительных картинок описания показа (`showcase.text`) запуска `dispatchId`:
+     * пути в описании — от корня репозитория, картинки снимаются при `done`. Всегда без сети. `null` — ни снимка, ни
+     * worktree. Для `Markdown` — `assets: { path: 'showcase.md', base }` (описание — как файл в корне). Появился позже
+     * `previewUrl`: в старом preload метода нет — проверяй перед вызовом.
+     */
+    previewBase(dispatchId: string): Promise<string | null>
+    /**
+     * Esc нажат, пока фокус может быть во фрейме показа (событие `showcase:escape` из `before-input-event` окна): DOM
+     * родителя keydown из фрейма другого origin не получает. Приходит на каждый Esc — закрывай просмотрщик, только
+     * если `document.activeElement` — фрейм, и делай закрытие идемпотентным: при фокусе в самом окне придёт ещё и обычный
+     * keydown. В старом preload метода нет — проверяй перед подпиской.
+     */
+    onFrameEscape(cb: () => void): () => void
+  }
+  /**
+   * Вкладка «Файлы»: дерево корня проекта `projectId`, только чтение. `projectId` явный, а не «активный проект»:
+   * пока запрос идёт в main, человек может переключить проект, и ответ был бы про чужой репозиторий. Коды отказов —
+   * `PROJECT_FILES_ERROR_CODES`. `files:open` нет намеренно: запуск произвольного файла системой опасен (политика
+   * `shared/showcase.ts`); `.md` открываются в «Документах». Появился позже остальных: в старом preload нет — проверяй перед вызовом.
+   */
+  files: {
+    /** Содержимое одной папки корня проекта `projectId`; `dir` опущен или '' — корень. Игнорируемое git'ом и `.git` не отдаётся. */
+    list(projectId: string, dir?: string): Promise<ProjectFilesListing>
+    /** Показать запись (файл, папку, симлинк — сам симлинк) в Finder/Проводнике. Ничего не открывает и не запускает. */
+    reveal(projectId: string, path: string): Promise<void>
   }
   /** Правила активного проекта: CLAUDE.md и AGENTS.md в его корне (не в worktree задач). */
   rules: {
@@ -883,44 +998,29 @@ export interface OrcaApi {
 // Модель сообщений канала `assistantChat` (`OrcaApi` выше) — панель ассистента как чат поверх того же PTY.
 // Разбор транскрипта в эти типы — `main/assistant-chat.ts`, IPC — `registerIpc` в `main/index.ts`,
 // мост — `preload/index.ts`. Настройки приложения/проекта из `docs/assistant-chat.md` → «1–2» в этот канал
-// не входят: их вносит отдельная задача (`settings`/`types`/`roles`/`node-templates`/`project rules`).
+// не входят: они остаются в общих методах `settings`/`types`/`roles`/`node-templates`/`project rules`.
 
-/** Кто написал сообщение чата ассистента. */
-export type AssistantChatRole = 'human' | 'agent' | 'tool'
+/** Нормализованный поток ассистента. Старый парсер транскриптов использует эти же типы. */
+export type AssistantChatRole = ConversationMessage['role']
+export type AssistantChatStatus = ConversationStatus
+export type AssistantChatToolCall = ConversationToolCall
+export interface AssistantChatMessage extends ConversationMessage { hasImage?: boolean }
 
-/** «Думает» — агент начал отвечать, но последняя запись ещё не финальный текст (см. «докрутить» в UI). */
-export type AssistantChatStatus = 'thinking' | 'done' | 'error'
-
-/** Tool-вызов агента, свёрнутый в одну строку чата (агент вызывает `orca-board` через Bash). */
-export interface AssistantChatToolCall {
-  /** Имя инструмента (`Bash` и т.п.). */
-  name: string
-  /** Краткое представление аргументов для свёрнутой строки — не весь JSON вызова. */
-  input: string
-  status: 'running' | 'ok' | 'error'
-}
-
-/** Одно сообщение чата ассистента — разобранная запись транскрипта агента или вывод PTY (фолбэк). */
-export interface AssistantChatMessage {
-  /** Стабильный id (id записи транскрипта/строки) — не пересчитывается между чтениями. */
-  id: string
-  role: AssistantChatRole
-  /** Текст сообщения; для `role: 'tool'` — краткий текст результата. */
-  text: string
-  /** Tool-вызовы этого сообщения, всегда свёрнутые. */
-  toolCalls?: AssistantChatToolCall[]
-  /** Картинка, вставленная в терминал вместе с текстом (сама не передаётся) — подпись к ней рисует renderer. */
-  hasImage?: boolean
-  /** Мс, из транскрипта. */
-  at: number
-}
-
-/** Снимок чата PTY ассистента: `assistantChat.getMessages` (план). */
 export interface AssistantChatSnapshot {
   ptyId: string
   messages: AssistantChatMessage[]
   status: AssistantChatStatus
+  protocolVersion?: 2
+  revision?: number
+  agent?: AgentKind
+  transport?: 'chat' | 'terminal'
+  interactions?: ConversationInteraction[]
+  error?: string
 }
 
-/** Событие подписки `assistantChat.onMessage` (план): новое/изменённое сообщение или смена статуса. */
-export type AssistantChatUpdate = { ptyId: string; message: AssistantChatMessage } | { ptyId: string; status: AssistantChatStatus }
+export type AssistantChatUpdate = { ptyId: string; revision?: number } & (
+  | { message: AssistantChatMessage }
+  | { status: AssistantChatStatus; error?: string }
+  | { interaction: ConversationInteraction }
+  | { resolvedRequestId: string }
+)

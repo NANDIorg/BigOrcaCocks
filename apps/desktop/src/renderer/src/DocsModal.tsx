@@ -1,3 +1,4 @@
+import { motionScrollBehavior } from './appearance'
 import type React from 'react'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { BoardColumn, Task } from '@orca-board/core'
@@ -62,6 +63,8 @@ export interface DocsModalProps {
   projectName: string
   tasks: Task[]
   columns: BoardColumn[]
+  /** Открыть сразу этот документ (вкладка «Файлы» → «Открыть в “Документах”»); без него — стартовый экран. */
+  initialDoc?: DocRef
   onClose(): void
 }
 
@@ -70,7 +73,7 @@ export interface DocsModalProps {
  * дерево .md проекта и worktree задач в работе | документ с историей и поиском | оглавление.
  * Относительные ссылки на .md открываются здесь же, http(s) — во внешнем браузере.
  */
-export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalProps): React.JSX.Element {
+export function DocsModal({ projectName, tasks, columns, initialDoc, onClose }: DocsModalProps): React.JSX.Element {
   const t = useT()
   const [groups, setGroups] = useState<DocGroup[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -213,6 +216,17 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
     void refresh()
   }, [refresh])
 
+  // Документ из «Файлов» открывается один раз после первой загрузки списка: папки верхнего уровня уже раскрыты,
+  // `go` раскроет предков. Путь проверяет `docs:read` — отказ (удалён, велик) показывается ошибкой над стартовым экраном.
+  const initialOpened = useRef(false)
+  const goRef = useRef(go)
+  goRef.current = go
+  useEffect(() => {
+    if (!initialDoc || initialOpened.current || (groups === null && listError === null)) return
+    initialOpened.current = true
+    void goRef.current(initialDoc)
+  }, [initialDoc, groups, listError])
+
   // Вернулись в окно (агент мог дописать файлы) — список и открытый документ перечитываются.
   const reloadRef = useRef(reload)
   reloadRef.current = reload
@@ -273,7 +287,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
   function jumpTo(hash: string): void {
     const root = articleRef.current
     const el = root && findDocHeading(root, hash)
-    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    if (el) el.scrollIntoView({ block: 'start', behavior: motionScrollBehavior() })
     else setDocError({ title: t('config.docs.err.noSection', { hash }) })
   }
 
@@ -554,7 +568,7 @@ export function DocsModal({ projectName, tasks, columns, onClose }: DocsModalPro
               now={now}
               alsoTasks={others.filter((g) => g.source !== 'project').map((g) => g.title)}
               onJump={(id) => {
-                document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+                document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: motionScrollBehavior() })
                 setSpy((s) => ({ ...s, active: id }))
               }}
             />

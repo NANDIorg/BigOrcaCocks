@@ -3,13 +3,14 @@ import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
-  type TaskPriority,
+  type TaskPriority, type Dispatch, type ShowcaseSnapshot, normalizeShowcase,
   type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams, singleOption } from './request-params'
 import { settingsPatchFromParams } from './settings-params'
+import { withoutExtraArgs } from './launch-extra-args'
 import { runnableWorkflow, type Project, type PermissionMode } from './projects'
 import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
 
@@ -53,6 +54,13 @@ export interface ProjectDeps {
   startCoordinator(objective: string, runId?: string, typeId?: string): string
   /** Удалить глобальную задачу: живой координатор — ошибка, терминалы подзадач закрываются. */
   deleteGlobalTask(runId: string, cascade: boolean): { deleted: string; tasks: string[] }
+  /**
+   * Снимок показа для `worker.done` (`showcase-snapshot.ts`): файлы `--show` из worktree задачи запуска — во временную
+   * папку в userData. Ошибка — текст агенту, запуск не закрывается. `files` — точки входа после раскрытия папок;
+   * `commit` ставит снимок на место после `finishDispatch`, `discard` убирает, если тот отказал. Нет метода — показ
+   * сохраняется без снимка (читается из worktree), как до снимков.
+   */
+  snapshotShowcase?(dispatchId: string, files: readonly string[], text?: string): { files: string[]; snapshot: ShowcaseSnapshot; commit(): void; discard(): void } | undefined
   /** Агенты реестра с признаками «установлен»/«включён» для этого проекта. */
   agents(): AgentInfo[]
   /** Тип прогона целиком (`resolveRunType`): роли, правила, разрешения, граф и откуда он взят. */
@@ -557,11 +565,34 @@ const handlers: Record<string, Handler> = {
     // CLI читает --answer-file и --show-file сам и присылает текст в answer и showcase.text.
     const dispatch = store.getDispatch(id)
     const task = dispatch ? store.getTask(dispatch.taskId) : undefined
-    return store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer), {
-      ...showcaseParam(r.params.showcase),
-      // Граф прогона без снимка — по типу прогона, как у исполнителя воркфлоу (workflowDeps в index.ts).
-      ...(task ? { fallback: runFallback(deps.resolveRun(task.runId)) } : {})
-    })
+    const { showcase } = showcaseParam(r.params.showcase)
+    // Снимок файлов показа — до закрытия запуска: нет файла, чужой тип, больше лимита — ошибка агенту, dispatch
+    // остаётся открытым. Пути сначала проверяет core (абсолютные, `..`), потом main смотрит на диск. Картинки
+    // описания (`text`) тоже снимаются — best-effort: одно описание без картинок снимка не даёт.
+    const normalized = normalizeShowcase(showcase)
+    const declared = normalized?.files ?? []
+    const prepared = (declared.length > 0 || normalized?.text) && deps.snapshotShowcase
+      ? deps.snapshotShowcase(id, declared, normalized?.text)
+      : undefined
+    let finished: Dispatch
+    try {
+      finished = store.finishDispatch(id, str(r.params.summary) ?? '', list(r.params.files), str(r.params.answer), {
+        ...(showcase ? { showcase: prepared ? { ...showcase, files: prepared.files } : showcase } : {}),
+        ...(prepared ? { snapshot: prepared.snapshot } : {}),
+        // Граф прогона без снимка — по типу прогона, как у исполнителя воркфлоу (workflowDeps в index.ts).
+        ...(task ? { fallback: runFallback(deps.resolveRun(task.runId)) } : {})
+      })
+    } catch (e) {
+      prepared?.discard()
+      throw e
+    }
+    try {
+      prepared?.commit()
+    } catch (e) {
+      // Запуск уже закрыт — ошибкой done не отвечаем (повтор ничего не даст); без снимка показ читается из worktree.
+      console.error(`[orca] снимок показа ${id} не встал на место:`, (e as Error).message)
+    }
+    return finished
   },
   'worker.ask': async (r, deps, store, stream) => {
     const dispatchId = str(r.params.dispatch) ?? r.dispatchId
@@ -712,9 +743,11 @@ const handlers: Record<string, Handler> = {
     return { source: 'type', typeId: id, typeTitle: title, custom, stages: describeWorkflow(workflow) }
   },
   'events.list': (_r, _d, store) => store.listEvents(),
-  'agents.list': (_r, deps) => deps.agents(),
+  // `supportsExtraArgs` — признак для renderer (IPC `agents:list`), в ответ сокета не идёт: контракт прежний.
+  'agents.list': (_r, deps) => deps.agents().map(({ supportsExtraArgs: _supportsExtraArgs, ...agent }) => agent),
   // Роли типа глобальной задачи (--run, координатору — его прогон) с признаком, включён ли их агент в проекте:
   // координатору видно, какие роли можно назначать. Без прогона — типа --type или типа проекта по умолчанию.
+  // Флагов запуска роли (`extraArgs`) в ответе нет, как и в любом ответе сокета (`okLine`).
   'roles.list': (r, deps, store) => {
     const enabled = new Set(deps.agents().filter((a) => a.enabled).map((a) => a.id))
     return typeOf(r, deps, store).roles.map((role) => ({ ...role, agentEnabled: enabled.has(role.agent) }))
@@ -980,7 +1013,25 @@ const handlers: Record<string, Handler> = {
 const appHandlers: Record<string, (req: Request, deps: SocketDeps) => unknown> = {
   'projects.list': (_r, deps) => deps.projects(),
   'settings.get': (_r, deps) => deps.settings(),
-  'settings.set': (r, deps) => deps.setSettings(settingsPatchFromParams(r.params))
+  'settings.set': (r, deps) => {
+    const patch = settingsPatchFromParams(r.params)
+    // Смена агента ассистента — как `roles.update --agent`: другой процесс со следующего диалога,
+    // без --yes агент (в том числе сам ассистент) не переключает её молча.
+    const agent = patch.assistant?.agent
+    if (agent !== undefined && r.params.yes !== true) {
+      const current = deps.settings().assistant.agent
+      if (agent !== current) requireYes(r, `нужно подтверждение: смена агента ассистента с «${current}» на «${agent}» — модель и effort сбросятся, если не заданы тем же вызовом; действует с нового диалога`)
+    }
+    return deps.setSettings(patch)
+  }
+}
+
+/**
+ * Строка успешного ответа. Флаги запуска (`extraArgs` ролей, ассистента и снимков типа в прогонах) вырезаются из
+ * любого ответа: их видит и меняет только человек в UI (`withoutExtraArgs`).
+ */
+function okLine(id: unknown, result: unknown): string {
+  return JSON.stringify({ id, ok: true, result }, withoutExtraArgs)
 }
 
 export function startSocketServer(path: string, socketDeps: SocketDeps): Server {
@@ -1005,7 +1056,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
         new Promise((resolve) => {
           if (!open()) return resolve(false)
           try {
-            sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n', (err) => resolve(!err))
+            sock.write(okLine(req.id, result) + '\n', (err) => resolve(!err))
           } catch {
             resolve(false)
           }
@@ -1014,7 +1065,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
     try {
       if (appHandler) {
         const result = await appHandler({ ...req, params: req.params ?? {} }, socketDeps)
-        sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
+        sock.write(okLine(req.id, result) + '\n')
         return
       }
       if (!handler) throw new Error(`неизвестная команда: ${req.method}`)
@@ -1023,7 +1074,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       const source = req.dispatchId ? 'worker' : 'cli'
       const result = await withStatusSource(source, () => handler({ ...req, params: req.params ?? {} }, deps, deps.store, stream))
       if (result === STREAM) return
-      sock.write(JSON.stringify({ id: req.id, ok: true, result }) + '\n')
+      sock.write(okLine(req.id, result) + '\n')
     } catch (e) {
       sock.write(JSON.stringify({ id: req.id, ok: false, error: (e as Error).message }) + '\n')
     }

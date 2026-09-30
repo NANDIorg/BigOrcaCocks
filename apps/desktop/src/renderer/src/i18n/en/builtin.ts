@@ -11,8 +11,6 @@ export default {
 
   'role.coordinator': 'Coordinator',
   'role.coordinator.desc': 'Breaks the run goal into tasks and manages the workers. Not assigned to tasks.',
-  'role.assistant': 'Assistant',
-  'role.assistant.desc': 'Board assistant: does what the human asks (create, move, close, restart) through orca-board. Not assigned to tasks.',
   'role.developer': 'Developer',
   'role.developer.desc': 'Writes and changes code: features, fixes, refactoring.',
   'role.reviewer': 'Reviewer',

@@ -1,18 +1,23 @@
-import { app, BrowserWindow, ipcMain, net, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { existsSync, mkdirSync } from 'node:fs'
+import { getAppTheme } from '../shared/theme'
+import { mainWindowChrome } from './window-chrome'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
-import { assistantCwd } from './assistant'
-import { AssistantChatCache, assistantTranscriptPath, assistantChatAvailable, chatSnapshot, drainChatUpdates, chatInputBytes } from './assistant-chat'
+import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
+import { createAssistantConversation } from './assistant-conversation'
+import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
 import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
-import { readShowcaseFile, resolveShowcasePath, showcaseRoot } from './showcase'
-import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
+import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
+import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
+import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
+import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
   settleIdleRunStages, startRunWorkflow,
@@ -20,24 +25,31 @@ import {
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, readRule, writeRule } from './rules'
-import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
+import { listProjectDir, resolveProjectPath } from './project-files'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
+import { exportTaskTypeToFile } from './task-type-export'
+import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
-import { OrcaError, ipcError, mt, setMainLocale } from './i18n'
+import { OrcaError, ipcError, mt, setMainLocale, mainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
 import { rendererSource } from './renderer-source'
+import { applicationMenuTemplate, MenuActionQueue } from './app-menu'
+import { refreshAboutWindow, showAboutWindow } from './about-window'
+import type { AppMenuAction } from '../shared/ipc'
+import appIconPath from '../../build/icon.png?asset'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -80,17 +92,32 @@ const runBranchSync = new RunBranchSync({ isAlive })
 let quitting = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
 let confirmingQuit = false
+const menuActions = new MenuActionQueue()
+
+// Схема страниц показа (`preview-protocol.ts`) — только ДО ready, иначе Chromium считает её не-standard: относительные
+// `./style.css` не разрешаются, а `fetch` к ней запрещён. `bypassCSP` и `corsEnabled` не включаем: CSP ответа и
+// ACAO задаёт сам обработчик.
+protocol.registerSchemesAsPrivileged([
+  { scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+])
+/** Токены `orca-preview://` → корень показа; выдаёт `showcase:previewUrl`, живут до выхода из приложения. */
+const previewTokens = new PreviewTokens()
 
 const SOCKET_PATH = defaultSocketPath({ env: process.env, platform: process.platform, homedir: homedir() })
 const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
 function createWindow(): BrowserWindow {
+  menuActions.disconnect()
+  const chrome = mainWindowChrome(process.platform)
   win = new BrowserWindow({
     width: 1500,
     height: 940,
     title: 'orca-board',
-    backgroundColor: '#26282e',
+    icon: appIconPath,
+    backgroundColor: getAppTheme(projects.settings().appearance?.theme).colors.page,
+    ...chrome,
     webPreferences: {
+      ...chrome.webPreferences,
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true
@@ -99,12 +126,32 @@ function createWindow(): BrowserWindow {
   setPtyWindow(win)
   const created = win
   win.on('closed', () => {
-    if (win === created) win = null
+    if (win === created) {
+      win = null
+      menuActions.clear()
+    }
     setPtyWindow(win)
   })
+  win.webContents.on('did-start-loading', () => {
+    // Загрузка показа в iframe не размонтирует App: его подписка на меню остаётся действующей.
+    if (created.webContents.isLoadingMainFrame()) menuActions.disconnect()
+  })
+  win.webContents.on('render-process-gone', () => menuActions.disconnect())
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isExternalWebUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
+  })
+  // Фрейм показа не уходит со своего снимка (sandbox навигацию самого фрейма не запрещает), а окно — со страницы приложения.
+  win.webContents.on('will-frame-navigate', (e) => {
+    const nav = { url: e.url, isMainFrame: e.isMainFrame, appUrl: created.webContents.getURL() }
+    if (allowFrameNavigation(nav)) return
+    e.preventDefault()
+    if (nav.isMainFrame && isExternalWebUrl(nav.url)) shell.openExternal(nav.url)
+  })
+  // Esc при фокусе внутри фрейма показа DOM родителя не видит (фрейм другого origin) — сообщаем renderer'у, а он
+  // закрывает просмотрщик, только если фокус действительно во фрейме (иначе Esc уже пришёл обычным keydown).
+  win.webContents.on('before-input-event', (_e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') created.webContents.send('showcase:escape')
   })
   const source = rendererSource({
     isPackaged: app.isPackaged,
@@ -127,6 +174,33 @@ function showWindow(): BrowserWindow {
   return createWindow()
 }
 
+function navigateFromMenu(action: AppMenuAction): void {
+  const window = showWindow()
+  const ready = menuActions.request(action)
+  if (ready) window.webContents.send('app:menuAction', ready)
+}
+
+/** Меню и «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
+function refreshApplicationMenu(): void {
+  refreshAboutWindow(projects.settings().appearance)
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, {
+    navigate: navigateFromMenu,
+    about: () => { showAboutWindow({ parent: showWindow(), iconPath: appIconPath, version: app.getVersion(), appearance: projects.settings().appearance }) },
+    open: () => { showWindow() },
+    quit: () => { void requestQuit() },
+    openExternal: (url) => { void shell.openExternal(url) }
+  })))
+}
+
+/** Фон при запуске/восстановлении и native controls согласованы с выбранной темой. */
+function syncMainAppearance(): void {
+  const settings = projects.settings().appearance
+  const theme = getAppTheme(settings?.theme)
+  if (nativeTheme.themeSource !== theme.colorScheme) nativeTheme.themeSource = theme.colorScheme
+  if (win && !win.isDestroyed()) win.setBackgroundColor(theme.colors.page)
+  refreshAboutWindow(settings)
+}
+
 /** Незавершённые dispatch'и по всем загруженным проектам (для трея). */
 function activeDispatchCount(): number {
   return projects.loadedStores().reduce((n, [, store]) => n + store.activeDispatches().length, 0)
@@ -139,6 +213,7 @@ function liveWorkerCount(): number {
 
 function quitNow(): void {
   quitting = true
+  assistantSession.dispose()
   killAll()
   // Обновление скачано и установка при выходе не снята — её установщик сам завершит приложение.
   if (updater.installOnQuit()) return
@@ -271,6 +346,11 @@ function collectGlobalTaskStats(projectId: string, runId: string): Promise<Globa
   return globalTaskStats({ ...statsDeps(projectId), runId })
 }
 
+/** Снимки показа проекта (`<userData>/showcase`, `showcase-snapshot.ts`): пишет `worker.done`, читают IPC `showcase:*`. */
+function showcaseSnapshots(projectId: string): ShowcaseSnapshots {
+  return { root: showcaseSnapshotsRoot(app.getPath('userData')), projectId }
+}
+
 function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
   const p = projectId ? projects.get(projectId) : projects.active()
   if (!p) throw projectId ? new Error(`project not found: ${projectId}`) : new OrcaError('projects.none')
@@ -387,6 +467,23 @@ function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
 }
 
 /**
+ * Доска проекта открыта впервые за запуск: подзадачи, чей эффект (мерж, git, конец) или переход после `done` прервал
+ * выход приложения, доводятся до ожидания (`resumeStuckStages`). В `setImmediate`: store открывается посреди чужого вызова
+ * (IPC, сокет), а мерж синхронный и долгий — пусть тот вызов сначала закончится.
+ */
+function resumeProjectStages(projectId: string): void {
+  setImmediate(() => {
+    if (!projects.get(projectId)) return
+    try {
+      resumeStuckStages(workflowDeps(projectId))
+    } catch (e) {
+      // Проект могли удалить между открытием и тиком; исключение из setImmediate уронило бы main.
+      console.error(`[orca] воркфлоу: не удалось добрать прерванные этапы (${projectId}):`, (e as Error).message)
+    }
+  })
+}
+
+/**
  * Решение по задаче на этапе проверки (`review accept|reject`, «Принять»/«Вернуть» на карточке проверки): проверка ветки
  * глобальной задачи — исход ноды `gate` (`workflow-run.ts`), остальное — прежний движок (`workflow.ts`). Задачу-решатель
  * развилки `runGateDecision` отвергает: её ветку выбирают `decision choose` или человек по запросу `decision`.
@@ -452,64 +549,25 @@ function runFinished(store: TaskStore, runId: string): boolean {
   return store.runWorkflow(runId).nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end'
 }
 
-/** Живой терминал ассистента: один на всё приложение, повторное открытие — тот же PTY при любом активном проекте. */
-let assistantPty: string | null = null
-/** sessionId транскрипта текущего ассистента (чат-режим панели, `docs/assistant-chat.md`); нет — агент без парсера. */
-let assistantSessionId: string | undefined
-/** Кэш разбора транскрипта в сообщения чата — переживает между тиками `watchAssistantChat`. */
-const assistantChatCache = new AssistantChatCache()
-/** Статус чата на прошлом тике — чтобы слать `onMessage` только при смене, не на каждый тик. */
-const assistantChatStatus = new Map<string, AssistantChatStatus>()
-
-/**
- * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
- * старый закрывается) запускается новый. Роли, агент и режим разрешений — из настроек по умолчанию:
- * ассистент не принадлежит ни одному проекту.
- */
-function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: string } {
-  if (assistantPty && isAlive(assistantPty)) {
-    if (!reset) return { ptyId: assistantPty }
-    killPty(assistantPty)
-  }
-  assistantPty = null
-  assistantSessionId = undefined
-  // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
-  const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
-  const { ptyId, sessionId } = startAssistant(
-    { socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title },
-    cols,
-    rows,
-    (id) => {
-      if (assistantPty === id) {
-        assistantPty = null
-        assistantSessionId = undefined
-      }
-      assistantChatStatus.delete(id)
-    }
-  )
-  assistantPty = ptyId
-  assistantSessionId = sessionId
-  return { ptyId }
-}
-
-/** Раз в секунду: тянет хвост транскрипта живого ассистента и шлёт панели новые/изменённые сообщения чата. */
-function watchAssistantChat(): void {
-  setInterval(() => {
-    void tickAssistantChat()
-  }, 1000)
-}
-
-async function tickAssistantChat(): Promise<void> {
-  const ptyId = assistantPty
-  const sessionId = assistantSessionId
-  if (!ptyId || !sessionId || !win || win.isDestroyed()) return
-  const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), sessionId)
-  const state = await assistantChatCache.read(filePath)
-  if (!state) return
-  const updates = drainChatUpdates(ptyId, state, assistantChatStatus.get(ptyId))
-  assistantChatStatus.set(ptyId, state.status)
-  for (const u of updates) win.webContents.send(`assistantChat:message:${ptyId}`, u)
-}
+/** Чат живёт независимо от окна и выбранного проекта. Amp/Shell используют отдельный PTY. */
+const assistantSession = new AssistantSession({
+  settings: () => projects.settings().assistant,
+  assertUsable: (agent) => assertAgentUsable(agentInfos(undefined), agent),
+  isAlive,
+  killTerminal: killPty,
+  startTerminal: (settings, cols, rows, onExit) => startAssistant({ socketPath: SOCKET_PATH, settings }, cols, rows, onExit).ptyId,
+  create: (settings, onUpdate) => {
+    const launch = assistantLaunch(settings, BUILTIN_PROMPTS.assistant, mainLocale())
+    const cwd = assistantCwd(app.getPath('userData'))
+    mkdirSync(cwd, { recursive: true })
+    return createAssistantConversation({
+      agent: launch.agent, system: launch.system, model: launch.model, effort: launch.effort, extraArgs: launch.extraArgs, cwd,
+      env: assistantEnv({ socketPath: SOCKET_PATH, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
+      onUpdate
+    })
+  },
+  onUpdate: (update) => { if (win && !win.isDestroyed()) win.webContents.send(`assistantChat:message:${update.ptyId}`, update) }
+})
 
 /**
  * Удаление глобальной задачи (IPC и сокет): при живом координаторе — ошибка; store отвергает подзадачи
@@ -526,6 +584,8 @@ function removeGlobalTask(p: { id: string; store: TaskStore; root: string }, run
   const result = store.deleteGlobalTask(runId, { cascade })
   // Картинки задачи принадлежат ей: без задачи они никому не нужны (файлы лежат вне worktree и репозитория).
   removeRunImagesDir(runImagesRoot(app.getPath('userData')), p.id, runId)
+  // Снимки показа подзадач — тоже: смотреть их больше негде (карточки и запросы удалены вместе с задачей).
+  removeShowcaseDir(showcaseSnapshotsRoot(app.getPath('userData')), p.id, runId)
   ptyIds.forEach((id) => killPty(id))
   // Worktree ветки фичи больше некому убрать; сама ветка остаётся — в ней может быть работа. Грязный — не трогаем.
   if (run?.git?.worktree) removeRunWorktree(p.root, run.git.worktree)
@@ -691,6 +751,20 @@ async function pickRepoFolder(): Promise<string | null> {
 }
 
 /**
+ * Диалог «Сохранить как» для файла экспорта типа; отмена — null. Перезапись существующего файла подтверждает сам
+ * диалог. Окна нет — диалог без родителя (как `showMessageBox` при выходе).
+ */
+async function pickExportFile(defaultName: string): Promise<string | null> {
+  const opts = {
+    title: mt('dialog.exportType'),
+    defaultPath: join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  return res.canceled || !res.filePath ? null : res.filePath
+}
+
+/**
  * `ipcMain.handle` для вызовов renderer: всё, что они меняют на доске, сделал человек в UI — так переходы
  * попадают в историю статусов с `human` (`withStatusSource`, действует до первого await обработчика).
  */
@@ -723,11 +797,19 @@ function liveAgentCount(projectId: string): number {
 }
 
 function registerIpc(): void {
+  ipcMain.on('app:menuReady', (event, ready: unknown) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    if (ready === true) {
+      const pending = menuActions.connect()
+      if (pending) win.webContents.send('app:menuAction', pending)
+    } else if (ready === false) menuActions.disconnect()
+  })
   handle('app:getSettings', () => projects.settings())
   handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
     const settings = projects.setSettings(patch ?? {})
     // Язык меняется без перезапуска: трей пересобирается сразу, диалоги и уведомления берут его при показе.
     setMainLocale(settings.language)
+    refreshApplicationMenu()
     refreshTray()
     updater.settingsChanged()
     return settings
@@ -763,8 +845,14 @@ function registerIpc(): void {
     const root = projectRoot(id)
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
+  // Начальный коммит — только по кнопке человека после `git.noCommits`; неизвестный режим от renderer — пустой коммит,
+  // он не забирает файлы человека в историю.
+  handle('projects:createInitialCommit', (_e, id: string, mode: InitialCommitMode) =>
+    createInitialCommit(projectRoot(id), mode === 'snapshot' ? 'snapshot' : 'empty')
+  )
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  // Картинки глобальных задач проекта (userData/run-images) удаляет сам ProjectManager.remove — общий путь с сокетом.
+  // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
+  // ProjectManager.remove — общий путь с сокетом.
   handle('projects:remove', (_e, id: string) => projects.remove(id))
   handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
   handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
@@ -784,6 +872,11 @@ function registerIpc(): void {
   handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
   handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
+  handle('taskTypes:export', (_e, id: string) => exportTaskTypeToFile({
+    export: (typeId) => projects.exportTaskType(typeId, { appVersion: app.getVersion(), exportedAt: new Date().toISOString() }),
+    chooseFile: pickExportFile,
+    write: writeFileAtomic
+  }, id))
   handle('nodeTemplates:list', () => projects.nodeTemplates())
   handle('nodeTemplates:save', (_e, input: NodeTemplateInput) => projects.saveNodeTemplate(input))
   handle('nodeTemplates:delete', (_e, id: string) => projects.deleteNodeTemplate(id))
@@ -906,27 +999,13 @@ function registerIpc(): void {
     if (!text && valid.length === 0) throw new OrcaError('coordinator.noObjective')
     return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
   })
-  handle('assistant:open', (_e, cols: number, rows: number) => openAssistant(cols, rows, false))
-  handle('assistant:reset', (_e, cols: number, rows: number) => openAssistant(cols, rows, true))
-  handle('assistantChat:available', (_e, ptyId: string) => {
-    if (assistantPty !== ptyId) return false
-    return assistantChatAvailable(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
-  })
-  handle('assistantChat:getMessages', async (_e, ptyId: string) => {
-    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
-    if (!assistantSessionId) return chatSnapshot(ptyId, undefined)
-    const filePath = assistantTranscriptPath(transcriptEnv(), assistantCwd(app.getPath('userData')), assistantSessionId)
-    return chatSnapshot(ptyId, await assistantChatCache.read(filePath))
-  })
-  handle('assistantChat:send', (_e, ptyId: string, text: unknown) => {
-    if (assistantPty !== ptyId) throw new OrcaError('assistantChat.unknownPty')
-    const value = typeof text === 'string' ? text : ''
-    if (!value.trim()) throw new OrcaError('assistantChat.emptyText')
-    writePty(ptyId, chatInputBytes(value))
-    setTimeout(() => {
-      if (isAlive(ptyId)) writePty(ptyId, '\r')
-    }, SUBMIT_DELAY_MS)
-  })
+  handle('assistant:open', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, false))
+  handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
+  handle('assistantChat:available', (_e, id: string) => assistantSession.available(id))
+  handle('assistantChat:getMessages', (_e, id: string) => assistantSession.snapshot(id))
+  handle('assistantChat:send', (_e, id: string, text: unknown) => assistantSession.send(id, text))
+  handle('assistantChat:interrupt', (_e, id: string) => assistantSession.interrupt(id))
+  handle('assistantChat:respond', (_e, id: string, requestId: string, answer: InteractionAnswer) => assistantSession.respond(id, requestId, answer))
   handle('docs:list', () => {
     if (!projects.active()) return []
     const p = resolveProject()
@@ -940,15 +1019,36 @@ function registerIpc(): void {
   handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
   // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
-  // Показ человеку: файлы из worktree задачи активного проекта, белый список расширений — main/showcase.ts.
-  handle('showcase:read', (_e, taskId: unknown, path: unknown) => readShowcaseFile(showcaseRoot(resolveProject().store, taskId), path))
-  handle('showcase:open', async (_e, taskId: unknown, path: unknown) => {
-    const err = await shell.openPath(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+  // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
+  // расширений — main/showcase.ts.
+  const source = (taskId: unknown, dispatchId: unknown): string => {
+    const p = resolveProject()
+    return showcaseSource(p.store, taskId, dispatchId, showcaseSnapshots(p.id))
+  }
+  handle('showcase:read', (_e, taskId: unknown, path: unknown, dispatchId: unknown) => readShowcaseFile(source(taskId, dispatchId), path))
+  handle('showcase:open', async (_e, taskId: unknown, path: unknown, dispatchId: unknown) => {
+    const err = await shell.openPath(resolveShowcasePath(source(taskId, dispatchId), path))
     if (err) throw new Error(err)
   })
-  handle('showcase:reveal', (_e, taskId: unknown, path: unknown) =>
-    shell.showItemInFolder(resolveShowcasePath(showcaseRoot(resolveProject().store, taskId), path))
+  handle('showcase:reveal', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
+    shell.showItemInFolder(resolveShowcasePath(source(taskId, dispatchId), path))
   )
+  // Страница показа для изолированного фрейма: токен протокола orca-preview:// на корень показа (preview-protocol.ts).
+  handle('showcase:previewUrl', (_e, dispatchId: unknown, path: unknown, opts: unknown) => {
+    const p = resolveProject()
+    return showcasePreviewUrl(p.store, previewTokens, dispatchId, path, opts, showcaseSnapshots(p.id))
+  })
+  // База для картинок описания показа (`showcase.text`): токен без сети на тот же корень.
+  handle('showcase:previewBase', (_e, dispatchId: unknown) => {
+    const p = resolveProject()
+    return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
+  })
+  // Вкладка «Файлы» (main/project-files.ts): корень — явного projectId, неизвестный id — обычная ошибка «project not found».
+  handle('files:list', (_e, projectId: unknown, dir: unknown) => listProjectDir(projectRoot(String(projectId)), dir ?? ''))
+  // Только показать в Finder/Проводнике, не openPath: запуск произвольного файла опасен. Симлинк — сам симлинк.
+  handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {
+    shell.showItemInFolder(await resolveProjectPath(projectRoot(String(projectId)), path, false))
+  })
   // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
   handle('rules:list', () => listRules(resolveProject().root))
   handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
@@ -971,10 +1071,14 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   app.setAppUserModelId('orca-board')
+  if (process.platform === 'darwin') app.dock?.setIcon(appIconPath)
+  protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
+  syncMainAppearance()
   setMainLocale(projects.settings().language)
+  refreshApplicationMenu()
   projects.markRun(app.getVersion())
   if (process.env.ORCA_REPO) {
     try {
@@ -995,9 +1099,11 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
+  projects.onStoreOpened(resumeProjectStages)
   // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
   // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
   projects.onDataChange(() => {
+    syncMainAppearance()
     if (win && !win.isDestroyed()) win.webContents.send('app:changed')
   })
   const { support, backend } = createPlatformUpdater({
@@ -1022,6 +1128,7 @@ app.whenReady().then(() => {
         quitting = false
       },
       quit: () => {
+        assistantSession.dispose()
         killAll()
         app.quit()
       },
@@ -1050,6 +1157,7 @@ app.whenReady().then(() => {
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
         startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
         deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),
+        snapshotShowcase: (dispatchId, files, text) => snapshotDispatchShowcase(p.store, showcaseSnapshots(p.id), dispatchId, files, text),
         agents: () => projectAgents(p.id),
         resolveRun: (runId) => projects.resolveRun(p.id, runId),
         taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),
@@ -1110,6 +1218,7 @@ app.whenReady().then(() => {
     setSettings: (patch) => {
       const settings = projects.setSettings(patch)
       setMainLocale(settings.language)
+      refreshApplicationMenu()
       refreshTray()
       updater.settingsChanged()
       return settings
@@ -1117,7 +1226,6 @@ app.whenReady().then(() => {
   })
   watchStuck()
   watchFinishedCoordinators()
-  watchAssistantChat()
   createTray({
     open: () => showWindow(),
     quit: () => void requestQuit(),

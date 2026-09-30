@@ -22,6 +22,28 @@ export interface AgentInvokeOptions {
    * для статистики. Учитывают только агенты с `acceptsSessionId`.
    */
   sessionId?: string
+  /**
+   * Флаги пользователя — уже разобранные `parseExtraArgs` токены `Role.extraArgs` / `AssistantSettings.extraArgs`.
+   * Ставятся сразу после команды (у goose — после подкоманды `run`), перед флагами приложения и промптом:
+   * variadic-флаг пользователя в конце съел бы позиционный промпт, а у одиночных опций побеждает последняя —
+   * так флаги приложения случайно не сломать. Нет поля или [] — argv прежний.
+   */
+  extraArgs?: readonly string[]
+}
+
+/** Почему флаг лучше не задавать вручную: им управляет приложение или он ломает запуск (`AgentSpec.reservedFlags`). */
+export type ReservedFlagReason = 'model' | 'effort' | 'permission' | 'session' | 'print' | 'systemPrompt'
+
+/** Правило реестра: какие флаги агента зарезервированы и почему. */
+export interface ReservedFlagRule {
+  /** Все написания флага: длинное и короткое (`--model`, `-m`). */
+  flags: readonly string[]
+  reason: ReservedFlagReason
+  /**
+   * Флаг зарезервирован только со значением, которое начинается так (codex: `-c model_reasoning_effort=`);
+   * с другим значением он свободен.
+   */
+  valuePrefix?: string
 }
 
 /** Подсказка модели для UI: значение для CLI и необязательная подпись. */
@@ -62,6 +84,12 @@ export interface AgentSpec {
   lingersAfterAnswer?: boolean
   /** Агент принимает id сессии от приложения (`AgentInvokeOptions.sessionId`); остальным main его не генерирует. */
   acceptsSessionId?: boolean
+  /**
+   * Флаги, которыми управляет само приложение (модель, режим прав, сессия…) или которые ломают интерактивный запуск.
+   * В `extraArgs` они не запрещены — UI только предупреждает (`reservedFlagsIn`): у человека могут быть причины.
+   * Лежит рядом с `invoke`, чтобы список не расходился с флагами, которые тот ставит.
+   */
+  reservedFlags?: readonly ReservedFlagRule[]
   /** Как передать системную инструкцию (system) и задание (prompt). */
   invoke(system: string, prompt: string, opts: AgentInvokeOptions): AgentInvocation
 }
@@ -74,6 +102,11 @@ function combine(system: string, prompt: string): string {
 /** Флаг со значением (модель, effort) для аргументов CLI; пустое значение — без флага. */
 function modelFlag(flag: string, model?: string): string[] {
   return model ? [flag, model] : []
+}
+
+/** Флаги пользователя для вставки в argv; нет — пусто. */
+function extra(opts: AgentInvokeOptions): readonly string[] {
+  return opts.extraArgs ?? []
 }
 
 export const AGENTS = [
@@ -101,10 +134,23 @@ export const AGENTS = [
     ],
     effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'],
     acceptsSessionId: true,
+    // Сверено с `claude --help` 2.1.285.
+    reservedFlags: [
+      { flags: ['--model'], reason: 'model' },
+      { flags: ['--effort'], reason: 'effort' },
+      { flags: ['--permission-mode', '--dangerously-skip-permissions', '--allow-dangerously-skip-permissions'], reason: 'permission' },
+      {
+        flags: ['--session-id', '--resume', '-r', '--continue', '-c', '--fork-session', '--from-pr', '--teleport', '--no-session-persistence'],
+        reason: 'session'
+      },
+      { flags: ['--print', '-p'], reason: 'print' },
+      { flags: ['--append-system-prompt', '--system-prompt', '--append-system-prompt-file', '--system-prompt-file'], reason: 'systemPrompt' }
+    ],
     // Режим разрешений проекта + orca-board всегда без вопросов.
     invoke: (system, prompt, opts) => ({
       command: 'claude',
       args: [
+        ...extra(opts),
         '--permission-mode', opts.permissionMode,
         '--allowedTools', 'Bash(orca-board:*)',
         ...modelFlag('--model', opts.model),
@@ -122,11 +168,22 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: ['low', 'medium', 'high'],
     lingersAfterAnswer: true,
+    // Сверено с `codex --help` 0.156.1. Sandbox и approval приложение не задаёт — они не зарезервированы.
+    reservedFlags: [
+      { flags: ['--model', '-m'], reason: 'model' },
+      { flags: ['--config', '-c'], reason: 'model', valuePrefix: 'model=' },
+      { flags: ['--config', '-c'], reason: 'effort', valuePrefix: 'model_reasoning_effort=' }
+    ],
     invoke: (system, prompt, opts) => ({
       command: 'codex',
       args: [
+        ...extra(opts),
         ...modelFlag('-m', opts.model),
         ...(opts.effort ? ['-c', `model_reasoning_effort=${opts.effort}`] : []),
+        // У codex `--image <FILE>...` variadic (codex 0.156.1): без `-m`/`-c` после флагов пользователя он забрал бы
+        // промпт как имя файла, и агент стартовал бы без задания. `--` закрывает флаги; ставим его только при флагах
+        // пользователя — без них argv прежний. Промпт с ведущим `-` он заодно не даёт принять за флаг.
+        ...(extra(opts).length ? ['--'] : []),
         combine(system, prompt)
       ]
     })
@@ -137,9 +194,10 @@ export const AGENTS = [
     bin: 'opencode',
     versionArgs: ['--version'],
     effortOptions: [],
+    reservedFlags: [{ flags: ['--model'], reason: 'model' }],
     invoke: (system, prompt, opts) => ({
       command: 'opencode',
-      args: [...modelFlag('--model', opts.model), '--prompt', combine(system, prompt)]
+      args: [...extra(opts), ...modelFlag('--model', opts.model), '--prompt', combine(system, prompt)]
     })
   },
   {
@@ -149,9 +207,10 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: [],
     // Интерактивный режим с начальным промптом.
+    reservedFlags: [{ flags: ['-m'], reason: 'model' }],
     invoke: (system, prompt, opts) => ({
       command: 'gemini',
-      args: [...modelFlag('-m', opts.model), '-i', combine(system, prompt)]
+      args: [...extra(opts), ...modelFlag('-m', opts.model), '-i', combine(system, prompt)]
     })
   },
   {
@@ -160,9 +219,10 @@ export const AGENTS = [
     bin: 'cursor-agent',
     versionArgs: ['--version'],
     effortOptions: [],
+    reservedFlags: [{ flags: ['--model'], reason: 'model' }],
     invoke: (system, prompt, opts) => ({
       command: 'cursor-agent',
-      args: [...modelFlag('--model', opts.model), combine(system, prompt)]
+      args: [...extra(opts), ...modelFlag('--model', opts.model), combine(system, prompt)]
     })
   },
   {
@@ -172,7 +232,7 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: [],
     // Модель не выбирается из CLI — игнорируем.
-    invoke: (system, prompt) => ({ command: 'amp', args: [combine(system, prompt)] })
+    invoke: (system, prompt, opts) => ({ command: 'amp', args: [...extra(opts), combine(system, prompt)] })
   },
   {
     id: 'copilot',
@@ -181,7 +241,7 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: [],
     // Модель не выбирается из CLI — игнорируем.
-    invoke: (system, prompt) => ({ command: 'copilot', args: ['-i', combine(system, prompt)] })
+    invoke: (system, prompt, opts) => ({ command: 'copilot', args: [...extra(opts), '-i', combine(system, prompt)] })
   },
   {
     id: 'goose',
@@ -189,10 +249,10 @@ export const AGENTS = [
     bin: 'goose',
     versionArgs: ['--version'],
     effortOptions: [],
-    // Модель задаётся конфигом goose, из CLI — игнорируем.
-    invoke: (system, prompt) => ({
+    // Модель задаётся конфигом goose, из CLI — игнорируем. Флаги пользователя — после подкоманды `run`.
+    invoke: (system, prompt, opts) => ({
       command: 'goose',
-      args: ['run', '--interactive', '--text', combine(system, prompt)]
+      args: ['run', ...extra(opts), '--interactive', '--text', combine(system, prompt)]
     })
   },
   {
@@ -201,7 +261,7 @@ export const AGENTS = [
     // Реальная команда — $SHELL пользователя, но для проверки «установлен» ищем sh: он есть всегда.
     bin: 'sh',
     effortOptions: [],
-    invoke: (_system, _prompt, opts) => ({ command: opts.shell, args: [] })
+    invoke: (_system, _prompt, opts) => ({ command: opts.shell, args: [...extra(opts)] })
   }
 ] as const satisfies readonly AgentSpec[]
 
@@ -232,6 +292,11 @@ export interface AgentInfo {
    * Всегда заполнен: у агента без конфига — {}.
    */
   defaults: { model?: string; effort?: string }
+  /**
+   * Main умеет сохранять и применять `extraArgs` роли и ассистента. Старый main молча стирает незнакомое поле
+   * при сохранении, поэтому без признака renderer поле флагов не даёт править и просит перезапустить приложение.
+   */
+  supportsExtraArgs?: true
 }
 
 export function getAgent(id: string): AgentSpec | undefined {

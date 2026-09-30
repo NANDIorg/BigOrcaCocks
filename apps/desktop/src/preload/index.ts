@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { OrcaApi } from '../shared/ipc'
+import { windowChromeMode } from '../shared/window-chrome'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const handler = (_e: unknown, payload: T): void => cb(payload)
@@ -9,10 +10,19 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: OrcaApi = {
   app: {
+    windowChrome: windowChromeMode(process.platform, process.argv),
     info: () => ipcRenderer.invoke('app:info'),
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
     testNotification: () => ipcRenderer.invoke('app:testNotification'),
+    onMenuAction: (cb) => {
+      const off = on('app:menuAction', cb)
+      ipcRenderer.send('app:menuReady', true)
+      return () => {
+        off()
+        ipcRenderer.send('app:menuReady', false)
+      }
+    },
     onChanged: (cb) => {
       const handler = (): void => cb()
       ipcRenderer.on('app:changed', handler)
@@ -40,6 +50,7 @@ const api: OrcaApi = {
     gitFetch: (id) => ipcRenderer.invoke('projects:gitFetch', id),
     gitPull: (id) => ipcRenderer.invoke('projects:gitPull', id),
     checkoutBranch: (id, branch) => ipcRenderer.invoke('projects:checkoutBranch', id, branch),
+    createInitialCommit: (id, mode) => ipcRenderer.invoke('projects:createInitialCommit', id, mode),
     add: (typeId, path) => ipcRenderer.invoke('projects:add', typeId, path),
     detectTaskType: (path) => ipcRenderer.invoke('projects:detectTaskType', path),
     setTaskTypes: (id, input) => ipcRenderer.invoke('projects:setTaskTypes', id, input),
@@ -60,7 +71,8 @@ const api: OrcaApi = {
     save: (input) => ipcRenderer.invoke('taskTypes:save', input),
     delete: (id) => ipcRenderer.invoke('taskTypes:delete', id),
     duplicate: (id) => ipcRenderer.invoke('taskTypes:duplicate', id),
-    setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id)
+    setDefault: (id) => ipcRenderer.invoke('taskTypes:setDefault', id),
+    export: (id) => ipcRenderer.invoke('taskTypes:export', id)
   },
   nodeTemplates: {
     list: () => ipcRenderer.invoke('nodeTemplates:list'),
@@ -138,6 +150,8 @@ const api: OrcaApi = {
     available: (ptyId) => ipcRenderer.invoke('assistantChat:available', ptyId),
     getMessages: (ptyId) => ipcRenderer.invoke('assistantChat:getMessages', ptyId),
     send: (ptyId, text) => ipcRenderer.invoke('assistantChat:send', ptyId, text),
+    interrupt: (ptyId) => ipcRenderer.invoke('assistantChat:interrupt', ptyId),
+    respond: (ptyId, requestId, answer) => ipcRenderer.invoke('assistantChat:respond', ptyId, requestId, answer),
     onMessage: (ptyId, cb) => on(`assistantChat:message:${ptyId}`, cb)
   },
   docs: {
@@ -147,9 +161,16 @@ const api: OrcaApi = {
     reveal: (source, path) => ipcRenderer.invoke('docs:reveal', source, path)
   },
   showcase: {
-    read: (taskId, path) => ipcRenderer.invoke('showcase:read', taskId, path),
-    open: (taskId, path) => ipcRenderer.invoke('showcase:open', taskId, path),
-    reveal: (taskId, path) => ipcRenderer.invoke('showcase:reveal', taskId, path)
+    read: (taskId, path, dispatchId) => ipcRenderer.invoke('showcase:read', taskId, path, dispatchId),
+    open: (taskId, path, dispatchId) => ipcRenderer.invoke('showcase:open', taskId, path, dispatchId),
+    reveal: (taskId, path, dispatchId) => ipcRenderer.invoke('showcase:reveal', taskId, path, dispatchId),
+    previewUrl: (dispatchId, path, opts) => ipcRenderer.invoke('showcase:previewUrl', dispatchId, path, opts),
+    previewBase: (dispatchId) => ipcRenderer.invoke('showcase:previewBase', dispatchId),
+    onFrameEscape: (cb) => on('showcase:escape', cb)
+  },
+  files: {
+    list: (projectId, dir) => ipcRenderer.invoke('files:list', projectId, dir),
+    reveal: (projectId, path) => ipcRenderer.invoke('files:reveal', projectId, path)
   },
   rules: {
     list: () => ipcRenderer.invoke('rules:list'),

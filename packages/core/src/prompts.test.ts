@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  builtinPromptKind, assistantRole, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION,
+  builtinPromptKind, assistantFromRoles, isTaskRole, promptChannel, workerTaskPrompt, resumeCoordinatorObjective, COORDINATOR_RESUME_SECTION,
   COORDINATOR_RETURN_HEADING, COORDINATOR_STAGE_HEADING, runGateTaskSpec, runGateTaskTitle, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec, runDecisionTaskTitle, type CoordinatorStage
 } from './prompts.ts'
 import { getAgent } from './agents.ts'
@@ -28,17 +28,20 @@ describe('служебные роли', () => {
   })
 })
 
-describe('assistantRole', () => {
+describe('assistantFromRoles', () => {
   const coordinator = { id: 'coordinator', title: 'К', agent: 'codex' as const, model: 'm', effort: 'high', systemPrompt: 'только координатору' }
-  it('своя роль assistant — как есть', () => {
-    const own = { id: 'assistant', title: 'А', agent: 'gemini' as const, systemPrompt: 'p' }
-    assert.equal(assistantRole([coordinator, own]), own)
+  it('роль assistant — её агент, модель, effort и инструкции; название и назначение не переносятся', () => {
+    const own = { id: 'assistant', title: 'А', description: 'd', agent: 'gemini' as const, model: 'g', effort: 'low', systemPrompt: 'p' }
+    assert.deepEqual(assistantFromRoles([coordinator, own]), { agent: 'gemini', model: 'g', effort: 'low', systemPrompt: 'p' })
   })
-  it('старый проект без assistant — агент, модель и effort координатора, без его инструкций', () => {
-    assert.deepEqual(assistantRole([coordinator]), { id: 'assistant', title: 'Ассистент', agent: 'codex', model: 'm', effort: 'high' })
+  it('роль assistant без модели — только агент', () => {
+    assert.deepEqual(assistantFromRoles([coordinator, { id: 'assistant', title: 'А', agent: 'claude' }]), { agent: 'claude' })
   })
-  it('нет ни assistant, ни coordinator — undefined (claude по умолчанию)', () => {
-    assert.equal(assistantRole([{ id: 'developer', title: 'D', agent: 'claude' }]), undefined)
+  it('нет assistant — агент, модель и effort координатора, без его инструкций', () => {
+    assert.deepEqual(assistantFromRoles([coordinator]), { agent: 'codex', model: 'm', effort: 'high' })
+  })
+  it('нет ни assistant, ни coordinator — undefined', () => {
+    assert.equal(assistantFromRoles([{ id: 'developer', title: 'D', agent: 'claude' }]), undefined)
   })
 })
 
@@ -62,6 +65,20 @@ describe('workerTaskPrompt', () => {
     assert.match(text, /orca-board done --summary "\.\.\." --show-file <описание\.md> --show <путь>/)
     assert.match(text, /Без показа done не пройдёт\./)
     assert.ok(text.indexOf('# Этап:') < text.indexOf('# Замечания после ревью'))
+  })
+
+  it('раздел показа: автономный HTML, --show папкой, скриншоты вместо того, что не открыть в браузере, ошибка done', () => {
+    const text = workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'w', title: 'Дизайн', showcase: { what: 'макеты' } })
+    const section = text.slice(text.indexOf('## Результат для показа человеку'))
+    assert.match(section, /прямо в приложении: HTML, markdown, картинки[^\n]*и PDF/)
+    assert.match(section, /изолированном фрейме без сети[^\n]*\*\*автономной\*\*[^\n]*относительными путями[^\n]*без CDN, внешних шрифтов/)
+    assert.match(section, /Один вариант — одна страница/)
+    assert.match(section, /`--show` принимает файл или \*\*папку\*\*[^\n]*войдут в показ сами/)
+    assert.match(section, /нельзя открыть в браузере[^\n]*сдай скриншоты/)
+    assert.match(section, /done ответит ошибкой с причиной; исправь и повтори/)
+    assert.match(section, /Markdown-файл показа и описание из `--show-file` могут вставлять картинки[^\n]*попадут в показ сами[^\n]*от корня репозитория/)
+    // Правила — только у этапа с показом; без показа промпт не меняется.
+    assert.doesNotMatch(workerTaskPrompt({ title: 'T', spec: 'S' }, undefined, [], { nodeId: 'w', title: 'Работа', instructions: 'I' }), /автономной/)
   })
 
   it('необязательный показ — без «(обязательно)»; у задачи-ответа этапа нет', () => {
@@ -604,6 +621,12 @@ describe('события после ответа человека в инстр�
     assert.match(worker, /«Результат для показа человеку»/)
     assert.match(worker, /orca-board done --summary "\.\.\." --show-file <описание\.md> --show <путь> --show <путь>/)
     assert.match(worker, /без него `done` не пройдёт/)
+    // Те же правила подготовки, что в промпте этапа (SHOWCASE_RULES): автономный HTML, папка, скриншоты, ошибка done.
+    assert.match(worker, /изолированном\s+фрейме без сети — страница должна быть \*\*автономной\*\*[\s\S]*без CDN и внешних шрифтов/)
+    assert.match(worker, /`--show` принимает и \*\*папку\*\*/)
+    assert.match(worker, /Markdown-файл показа и описание из `--show-file` могут вставлять картинки[\s\S]*попадут в показ сами[\s\S]*от корня репозитория/)
+    assert.match(worker, /нельзя открыть в браузере[\s\S]*скриншоты и описание/)
+    assert.match(worker, /`done` ответит ошибкой, исправь и повтори/)
     // Заголовок в skill совпадает с разделом промпта этапа (workerTaskPrompt).
     assert.match(workerTaskPrompt({ title: 't', spec: 's' }, undefined, [], { nodeId: 'w', title: 'Дизайн', showcase: { what: 'макеты' } }), /## Результат для показа человеку/)
   })
@@ -624,7 +647,7 @@ describe('команды в инструкциях и документации �
   )
   const flags = new Set([...helpText.matchAll(/--([a-z][a-z-]*)/g)].map((m) => m[1]))
 
-  for (const file of ['skills/coordinator.md', 'skills/worker.md', 'skills/assistant.md', 'docs/human-requests.md', 'docs/architecture.md', 'docs/nested-kanban.md', 'docs/workflow.md']) {
+  for (const file of ['README.md', 'skills/coordinator.md', 'skills/worker.md', 'skills/assistant.md', 'docs/human-requests.md', 'docs/architecture.md', 'docs/nested-kanban.md', 'docs/workflow.md']) {
     it(file, () => {
       const text = read(file)
       const uses = [...text.matchAll(/orca-board ([a-z][a-z-]*(?: [a-z][a-z-]*)?)([^`\n]*)/g)]
@@ -656,6 +679,15 @@ describe('skill ассистента: все проекты пользовате
     assert.match(text, /orca-board rules set --project <id> --type <id>/)
     assert.match(text, /defaultTypeId/)
     assert.doesNotMatch(text, /templateId/)
+  })
+  it('свои настройки — settings get/set --assistant-*, не роль типа; смена агента — после «да»', () => {
+    assert.match(text, /orca-board settings set --assistant-model <id>/)
+    assert.match(text, /--assistant-agent <id>/)
+    assert.match(text, /в\s+`roles list` тебя нет/)
+    assert.match(text, /с нового диалога/)
+    const confirm = text.slice(text.indexOf('## Подтверждение'))
+    assert.match(confirm, /settings set --assistant-agent <id>/)
+    assert.doesNotMatch(text, /`coordinator` и `assistant` задачам не назначай/)
   })
   it('нет запрета --project и привязки к ORCA_PROJECT', () => {
     assert.doesNotMatch(text, /--project` не указывай/)

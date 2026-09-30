@@ -47,18 +47,18 @@ describe('заготовки типов', () => {
   })
 
   for (const t of presetTaskTypes()) {
-    it(`«${t.title}»: роли с уникальными id, coordinator и assistant из DEFAULT_ROLES, есть рабочая роль`, () => {
+    it(`«${t.title}»: роли с уникальными id, coordinator из DEFAULT_ROLES, без assistant, есть рабочая роль`, () => {
       const roles = t.settings.roles ?? []
       const ids = roles.map((r) => r.id)
       assert.equal(new Set(ids).size, ids.length, `повтор id ролей: ${ids.join(', ')}`)
       for (const r of roles) assert.ok(r.title.trim() && r.id.trim(), `пустой id или название у ${r.id}`)
-      for (const service of ['coordinator', 'assistant']) {
-        const own = roles.find((r) => r.id === service)
-        const base = DEFAULT_ROLES.find((r) => r.id === service)!
-        assert.ok(own, `нет роли ${service}`)
-        assert.equal(own.agent, base.agent)
-        assert.equal(own.description, base.description)
-      }
+      const own = roles.find((r) => r.id === 'coordinator')
+      const base = DEFAULT_ROLES.find((r) => r.id === 'coordinator')!
+      assert.ok(own, 'нет роли coordinator')
+      assert.equal(own.agent, base.agent)
+      assert.equal(own.description, base.description)
+      // Ассистент — настройки приложения (AppSettings.assistant), а не роль типа.
+      assert.ok(!ids.includes('assistant'), 'роль assistant в заготовке')
       assert.ok(roles.some((r) => r.id !== 'coordinator' && r.id !== 'assistant'), 'нет рабочих ролей')
     })
   }
@@ -135,6 +135,15 @@ describe('resolveTaskType и снимок', () => {
     assert.deepEqual(input.snapshot, snap)
     assert.deepEqual(input.workflow, docsType().settings.workflow)
   })
+
+  it('снимок несёт флаги запуска роли (extraArgs) как введены', () => {
+    const t = docsType()
+    t.settings.roles![1] = { ...t.settings.roles![1], extraArgs: '  --search -s "workspace write" ' }
+    const snap = snapshotTaskType(t)
+    assert.equal(snap.roles[1].extraArgs, '  --search -s "workspace write" ')
+    assert.equal(snap.roles[0].extraArgs, undefined)
+    assert.equal(runTypeInput(t).snapshot.roles[1].extraArgs, '  --search -s "workspace write" ')
+  })
 })
 
 describe('resolveRunType: какой тип у прогона', () => {
@@ -161,6 +170,14 @@ describe('resolveRunType: какой тип у прогона', () => {
     assert.equal(r.agentRules, 'Пиши по-русски.')
     assert.equal(r.permissionMode, 'acceptEdits')
     assert.deepEqual(r.workflow, defaultWorkflow(r.roles))
+  })
+
+  it('снимок прогона до переноса ассистента в настройки — роль assistant отфильтрована', () => {
+    const snap = snapshotTaskType(docsType())
+    const old = { ...snap, roles: [snap.roles[0], { id: 'assistant', title: 'Ассистент', agent: 'claude' as const }, ...snap.roles.slice(1)] }
+    const r = resolveRunType({ typeId: 'type_docs', taskType: old }, presetTaskTypes(), 'backend')
+    assert.equal(r.source, 'snapshot')
+    assert.deepEqual(r.roles.map((x) => x.id), ['coordinator', 'writer'])
   })
 
   it('нет typeId («Входящие», старый прогон) или нет прогона — тип проекта по умолчанию', () => {
@@ -199,7 +216,7 @@ describe('resolveRunType: какой тип у прогона', () => {
 
   it('правленный тип из библиотеки важнее заготовки из кода', () => {
     const lib = library()
-    lib[0].settings.roles![2].model = 'opus'
+    lib[0].settings.roles!.find((x) => x.id === 'developer')!.model = 'opus'
     const r = resolveRunType({}, lib, undefined)
     assert.equal(r.roles.find((x) => x.id === 'developer')?.model, 'opus')
   })

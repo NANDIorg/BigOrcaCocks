@@ -1,5 +1,5 @@
 import type React from 'react'
-import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, Task } from '@orca-board/core'
+import type { BoardColumn, ColumnKind, Dispatch, GlobalTask, HumanRequest, Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { GlobalDuration, relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
@@ -9,6 +9,8 @@ import { launchChecklist, showsLaunchHint, showsSummary } from './globalScreen'
 import { priorityTitle, taskPriorityOf } from './taskPriority'
 import { Markdown } from './Markdown'
 import { RunImageGallery } from './RunImageGallery'
+import { RequestShowcaseBlock } from './ShowcaseBlock'
+import { requestShowcases } from './showcase'
 import { useT } from './i18n'
 
 interface Props {
@@ -22,6 +24,11 @@ interface Props {
   tasks: Task[]
   columns: BoardColumn[]
   dispatches: Dispatch[]
+  /**
+   * Ждущий approval ноды `human` прогона (`runApprovalRequest`): на «Проверке» под сводкой — его показ по подзадачам.
+   * Решать — «Подтвердить» / «Вернуть в работу» здесь же (диалог «Подтвердить» показывает тот же показ с полем решения).
+   */
+  approval?: HumanRequest
   onAccept(): void
   onReturn(): void
   onStartCoordinator(): void
@@ -34,7 +41,7 @@ interface Props {
  * «Перед запуском». Уточнения после проверки — везде, где они были.
  */
 export function GlobalOverview(props: Props): React.JSX.Element {
-  const { global, statusKind, coordinatorPty, typeTitle, tasks, columns, dispatches, onAccept, onReturn, onStartCoordinator, onOpenTask } = props
+  const { global, statusKind, coordinatorPty, typeTitle, tasks, columns, dispatches, approval, onAccept, onReturn, onStartCoordinator, onOpenTask } = props
   const t = useT()
   const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
   const summary = showsSummary(statusKind, global.inbox)
@@ -69,6 +76,7 @@ export function GlobalOverview(props: Props): React.JSX.Element {
     </section>
   )
   const returnsBox = <GlobalReturns global={global} />
+  const showcases = approval ? requestShowcases(approval, dispatches, tasks, (status) => columns.find((c) => c.id === status)?.kind) : []
 
   const summaryBox = (
     <>
@@ -86,6 +94,7 @@ export function GlobalOverview(props: Props): React.JSX.Element {
           </div>
         )}
       </GlobalDoneReportBlock>
+      {showcases.length > 0 && <RequestShowcaseBlock items={showcases} />}
       {returnsBox}
     </>
   )

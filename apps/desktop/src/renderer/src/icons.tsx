@@ -4,6 +4,10 @@ import type { WfNodeType } from '@orca-board/core'
 const base = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
 
 export const Icon = {
+  copy: (): React.JSX.Element => <svg {...base}><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>,
+  send: (): React.JSX.Element => <svg {...base}><path d="M12 19V5M6 11l6-6 6 6" /></svg>,
+  stop: (): React.JSX.Element => <svg {...base}><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" /></svg>,
+  palette: (): React.JSX.Element => <svg {...base}><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4l-.4-.4a1.5 1.5 0 0 1 1.1-2.6H17a4 4 0 0 0 4-4c0-4.2-4-7.6-9-7.6z" /><circle cx="7.5" cy="11" r=".8" /><circle cx="10" cy="7.5" r=".8" /><circle cx="15" cy="7.5" r=".8" /></svg>,
   menu: (): React.JSX.Element => <svg {...base}><path d="M4 7h16M4 12h16M4 17h16" /></svg>,
   board: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16M15 4v16" /></svg>,
   layers: (): React.JSX.Element => <svg {...base}><path d="M12 3l9 5-9 5-9-5 9-5z" /><path d="M3 13l9 5 9-5" /></svg>,
@@ -30,6 +34,7 @@ export const Icon = {
   question: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.5M12 17h.01" /></svg>,
   eye: (): React.JSX.Element => <svg {...base}><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>,
   done: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" /></svg>,
+  warn: (): React.JSX.Element => <svg {...base}><path d="M12 4l9 16H3z" /><path d="M12 10v4M12 17h.01" /></svg>,
   info: (): React.JSX.Element => <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5h.01" /></svg>,
   cpu: (): React.JSX.Element => <svg {...base}><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" /></svg>,
   columns: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="5" height="16" rx="1.5" /><rect x="10" y="4" width="5" height="11" rx="1.5" /><rect x="17" y="4" width="4" height="7" rx="1.5" /></svg>,
@@ -46,7 +51,15 @@ export const Icon = {
   image: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-8 8" /></svg>,
   chevron: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M9 6l6 6-6 6" /></svg>,
   up: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 15l6-6 6 6" /></svg>,
-  down: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 9l6 6 6-6" /></svg>
+  down: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M6 9l6 6 6-6" /></svg>,
+  chevronLeft: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M15 6l-6 6 6 6" /></svg>,
+  code: (): React.JSX.Element => <svg {...base} width={16} height={16}><path d="M8 7l-5 5 5 5M16 7l5 5-5 5" /></svg>,
+  lock: (): React.JSX.Element => <svg {...base} width={13} height={13}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>,
+  desktop: (): React.JSX.Element => <svg {...base} width={16} height={16}><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>,
+  tablet: (): React.JSX.Element => <svg {...base} width={16} height={16}><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M11 18h2" /></svg>,
+  phone: (): React.JSX.Element => <svg {...base} width={16} height={16}><rect x="7" y="3" width="10" height="18" rx="2" /><path d="M11 18h2" /></svg>,
+  sidebar: (): React.JSX.Element => <svg {...base} width={18} height={18}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>,
+  expand: (): React.JSX.Element => <svg {...base} width={14} height={14}><path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6" /></svg>
 }
 
 /** Иконки нод воркфлоу (WorkflowCanvas, инспектор) — по типу ноды. */
