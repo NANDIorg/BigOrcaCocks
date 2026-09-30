@@ -45,6 +45,8 @@ interface Props {
   onAccept(): void
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением. */
   onReturn(): void
+  /** Сколько approval прогона ждут решения (`runApprovalRequests`): больше одного — вместо кнопок решения подсказка. */
+  approvals?: number
 }
 
 /**
@@ -57,7 +59,7 @@ interface Props {
 export function GlobalTaskHeader(props: Props): React.JSX.Element {
   const { global, statusKind, columns, coordinatorPty, typeTitle, onBack, onEdit, onStartCoordinator, onAccept, onReturn } = props
   const t = useT()
-  const actions = headerActions(global, statusKind, coordinatorPty !== undefined, props.attentionCount)
+  const actions = headerActions(global, statusKind, coordinatorPty !== undefined, props.attentionCount, props.approvals)
   const steps = columns ? statusSteps(columns, global.status) : []
   const backRef = useRef<HTMLButtonElement>(null)
 
@@ -81,6 +83,11 @@ export function GlobalTaskHeader(props: Props): React.JSX.Element {
           {primary?.kind === 'accept' && (
             <button type="button" className="btn-sm gt-cta ok" onClick={onAccept} title={t('global.action.acceptTitle')}>
               ✓ {primary.label}
+            </button>
+          )}
+          {actions.approvalsInInbox !== undefined && (
+            <button type="button" className="btn-sm gt-cta" onClick={focusFeed} title={t('global.action.manyApprovalsTitle')}>
+              {t('global.action.manyApprovals', { count: actions.approvalsInInbox })} <kbd className="rq-kbd">G</kbd>
             </button>
           )}
           {actions.returnToWork && (

@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { defaultWorkflow, type Task, type Workflow } from '@orca-board/core'
-import { runStageLabel, splitByStage, stageGroups, taskStageKey } from './runStage'
+import { activeStageNodes, laneTitle, runStageLabel, runStagePositions, splitByStage, stageGroups, taskStageKey } from './runStage'
 import { wfNodeTitles } from './cardState'
 import { setLocale } from './i18n'
+import { runGraphWithFork } from './workflowFixture'
 
 /** Дефолтный граф глобальной задачи: «Реализация» → «Ревью» (gate) → «Проверка человеком» → конец. */
 const wf: Workflow = defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
@@ -104,4 +105,75 @@ test('splitByStage: карточки колонки идут группами в
     ['Реализация · 0/1', ['a']], ['Реализация · 2-й заход · 0/1', ['b']]
   ])
   assert.deepEqual(splitByStage([b, a], null), [{ items: [b, a] }])
+})
+
+// --- Разветвление: несколько этапов сразу ---
+
+const forkWf = runGraphWithFork()
+const forked = (lanes: Array<[string, string, number?]>, visits: Record<string, number> = {}) => ({
+  workflowScope: 'run' as const,
+  stage: { nodeId: 'split', visits: { split: 1, ...visits } },
+  lanes: lanes.map(([branch, node, arrivedAt]) => ({ id: `split:${branch}`, forkId: 'split', branchId: branch, nodeId: node, ...(arrivedAt !== undefined ? { arrivedAt } : {}) }))
+})
+
+test('runStageLabel: внутри разветвления — этапы всех путей через « · », подсказка называет пути', () => {
+  const l = runStageLabel(forked([['backend', 'be'], ['frontend', 'fe']]), forkWf)
+  assert.equal(l?.text, 'API impl · UI impl')
+  assert.equal(l?.kind, 'stage')
+  assert.match(l!.title, /параллельными путями \(2\)/)
+  assert.match(l!.title, /Backend: этап «API impl»/)
+  assert.match(l!.title, /Frontend: этап «UI impl»/)
+})
+
+test('runStageLabel: путь в слиянии в подписи не виден, но назван в подсказке; заход — у своего пути', () => {
+  const l = runStageLabel(forked([['backend', 'join', 300], ['frontend', 'fe']], { fe: 2 }), forkWf)
+  assert.equal(l?.text, 'UI impl · 2-й заход')
+  assert.match(l!.title, /Backend: пришёл в слияние/)
+  const all = runStageLabel(forked([['backend', 'join', 300], ['frontend', 'join', 310]]), forkWf)
+  assert.equal(all?.text, 'Assemble', 'пришли все — название слияния')
+})
+
+test('runStageLabel: все пути на проверке — вид «гейт»; на английском — переведено', () => {
+  const gated: Workflow = {
+    ...forkWf,
+    nodes: forkWf.nodes.map((n) => (n.id === 'fe_mock' ? { id: 'fe_mock', type: 'gate', title: 'UI review', roleId: 'reviewer', x: n.x, y: n.y } : n))
+  }
+  assert.equal(runStageLabel(forked([['backend', 'be_review'], ['frontend', 'fe_mock']]), gated)?.kind, 'gate')
+  assert.equal(runStageLabel(forked([['backend', 'be_review'], ['frontend', 'fe']]), gated)?.kind, 'stage')
+  setLocale('en')
+  try {
+    assert.match(runStageLabel(forked([['backend', 'be'], ['frontend', 'fe']]), forkWf)!.title, /parallel paths \(2\)[\s\S]*Backend: stage “API impl”/)
+  } finally {
+    setLocale('ru')
+  }
+})
+
+test('runStagePositions / activeStageNodes: без путей — одна позиция stage, с путями — по пути, пришедшие не активны', () => {
+  assert.deepEqual(runStagePositions({ stage: { nodeId: 'impl', visits: { impl: 2 } } }), [{ nodeId: 'impl', visit: 2, arrived: false }])
+  assert.deepEqual(runStagePositions({}), [])
+  const g = forked([['backend', 'join', 300], ['frontend', 'fe']], { fe: 2 })
+  assert.deepEqual(runStagePositions(g).map((p) => [p.nodeId, p.lane, p.visit, p.arrived]), [
+    ['join', 'split:backend', 1, true], ['fe', 'split:frontend', 2, false]
+  ])
+  assert.deepEqual(activeStageNodes(g).map((p) => p.nodeId), ['fe'])
+})
+
+test('laneTitle: подпись пути из fork графа; нет графа или пути — id пути без fork', () => {
+  assert.equal(laneTitle(forkWf, 'split:frontend'), 'Frontend')
+  assert.equal(laneTitle(undefined, 'split:frontend'), 'frontend')
+  assert.equal(laneTitle(forkWf, 'gone:x'), 'x')
+  assert.equal(laneTitle(forkWf, 'weird'), 'weird')
+})
+
+test('stageGroups: два этапа путей одновременно — две группы подзадач по nodeId#заход', () => {
+  const tasks = [
+    { stageOf: { nodeId: 'be', visit: 1 }, createdAt: 10, status: 'done' },
+    { stageOf: { nodeId: 'fe', visit: 1 }, createdAt: 11, status: 'todo' },
+    { stageOf: { nodeId: 'be', visit: 1 }, createdAt: 12, status: 'todo' },
+    { stageOf: { nodeId: 'fe', visit: 1 }, createdAt: 13, status: 'todo' }
+  ]
+  const groups = stageGroups(tasks, wfNodeTitles(forkWf), (s) => s === 'done')!
+  assert.deepEqual([...groups.values()].map((g) => g.label), ['API impl · 1/2', 'UI impl · 0/2'])
+  const split = splitByStage(tasks, groups)
+  assert.deepEqual(split.map((s) => s.items.length), [2, 2])
 })

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { defaultWorkflow, type BoardColumn, type StageChange, type StatusChange } from '@orca-board/core'
 import { dayLabel, DECISION_EXCERPT_LIMIT, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
 import { setLocale } from './i18n'
+import { runGraphWithFork } from './workflowFixture'
 
 /** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
 function inEnglish(fn: () => void): void {
@@ -311,4 +312,26 @@ test('globalTimeline: этапы на английском', () => {
     assert.equal(e.detail, 'pass 3')
     assert.equal(e.sub, 'sent back for rework · branch at entry: abc1234')
   })
+})
+
+test('globalTimeline: вход в этап внутри разветвления подписан путём; без пути — подписи нет', () => {
+  const workflow = runGraphWithFork()
+  const stageHistory: StageChange[] = [
+    { nodeId: 'split', from: 'analysis', outcome: 'next', at: 200 },
+    { nodeId: 'be', from: 'split', outcome: 'backend', lane: 'split:backend', at: 201 },
+    { nodeId: 'fe', from: 'split', outcome: 'frontend', lane: 'split:frontend', at: 202 },
+    { nodeId: 'be', from: 'be_review', outcome: 'reject', lane: 'split:backend', at: 300, visit: 2 }
+  ]
+  const stages = globalTimeline({ stageHistory, workflow }, [], 1000).filter((e) => e.kind === 'stage')
+  const sub = (at: number): string | undefined => stages.find((e) => e.at === at)?.sub
+  assert.equal(sub(200), undefined)
+  assert.equal(sub(201), 'путь «Backend»')
+  assert.equal(sub(202), 'путь «Frontend»')
+  assert.equal(sub(300), 'путь «Backend» · возврат на доработку')
+  inEnglish(() => {
+    const en = globalTimeline({ stageHistory, workflow }, [], 1000).find((e) => e.at === 202)
+    assert.equal(en?.sub, 'path “Frontend”')
+  })
+  // Графа нет (типы не загрузились) — путь назван id из записи.
+  assert.equal(globalTimeline({ stageHistory }, [], 1000).find((e) => e.at === 202)?.sub, 'путь «frontend»')
 })

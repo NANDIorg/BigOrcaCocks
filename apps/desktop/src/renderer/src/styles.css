@@ -842,6 +842,7 @@ button:disabled { opacity: .45; cursor: default; }
 .g-returns-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .g-modal-review { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .g-return-hint { font-size: 12px; margin-top: -6px; }
+.g-accept-many { font-size: 12.5px; }
 /* «В репозитории нет коммитов» (InitialCommitDialog): поверх модалки координатора, варианты — кнопка и подсказка */
 .modal-backdrop.initial-commit-backdrop { z-index: 50; }
 .initial-commit-text { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
@@ -2366,6 +2367,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-node.is-todo :is(.wf-progress-title, .wf-progress-sub, .wf-progress-icon) { opacity: .55; }
 .wf-progress-node.is-done .wf-progress-box { stroke: color-mix(in srgb, var(--col-done) 60%, transparent); }
 .wf-progress-node.is-current .wf-progress-box { stroke: var(--accent); stroke-width: 2.4; fill: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+/* Слияние, куда пришла часть путей разветвления: «ждёт остальные» — пунктир цвета «сейчас», без пульса. */
+.wf-progress-node.is-waiting .wf-progress-box { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 3; fill: color-mix(in srgb, var(--accent) 6%, var(--card)); }
+.wf-progress-node.is-waiting .wf-progress-halo { animation: none; opacity: .3; }
 .wf-progress-halo {
   fill: none; stroke: var(--accent); stroke-width: 2; opacity: .5; transform-box: fill-box; transform-origin: center;
   animation: wf-progress-pulse 1.8s ease-out infinite;
@@ -2399,6 +2403,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-legend i { display: inline-block; width: 16px; height: 10px; border-radius: 3px; border: 1.5px solid var(--chip); }
 .wf-progress-legend i.is-done { border-color: var(--col-done); }
 .wf-progress-legend i.is-current { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.wf-progress-legend i.is-waiting { border-color: var(--accent); border-style: dashed; }
 .wf-progress-legend i.is-todo { border-style: dashed; }
 .wf-progress-legend i.is-accept, .wf-progress-legend i.is-return { border: 0; height: 3px; border-radius: 2px; background: var(--wf-accept); }
 .wf-progress-legend i.is-return { background: var(--wf-reject); }
@@ -2407,6 +2412,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-panel-head h3 { margin: 0; flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
 .wf-progress-state { flex-shrink: 0; }
 .wf-progress-state.is-current { color: var(--accent); border-color: var(--accent); }
+.wf-progress-state.is-waiting { color: var(--accent); border-color: var(--accent); border-style: dashed; }
 .wf-progress-state.is-done { color: var(--col-done); border-color: color-mix(in srgb, var(--col-done) 55%, transparent); }
 .wf-progress-kv { margin-top: 10px; font-size: 12.5px; }
 .wf-progress-sec { margin: 14px 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
@@ -2417,6 +2423,14 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-visits li.is-now { border-left-color: var(--accent); }
 .wf-progress-visit-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; }
 .wf-progress-visit-head .muted { font-variant-numeric: tabular-nums; }
+.wf-progress-lane { font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Пути разветвления в панели `fork`/`join`: где стоит каждый. */
+.wf-progress-lanes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wf-progress-lanes li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 6px 10px; border-radius: 10px; background: var(--card);
+  border-left: 3px solid var(--accent); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere;
+}
+.wf-progress-lanes li.is-arrived { border-left-color: var(--col-done); }
 .wf-progress-visit-sub { margin-top: 2px; font-size: 12px; }
 .wf-progress-ret { color: var(--wf-reject); }
 .wf-progress-quote {

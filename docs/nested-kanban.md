@@ -452,7 +452,7 @@ CLI этой команды нет: координатор тип не меня�
 | CLI | Метод сокета | Параметры | Результат |
 |---|---|---|---|
 | `global list` | `global.list` | — | `GlobalTask[]` + `coordinatorAlive` |
-| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` |
+| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` (внутри разветвления — `lanes`: где стоит каждый путь) |
 | `global create [--title] [--description] [--status <col>] [--priority …]` | `global.create` | `title?`, `description?`, `status?`, `priority?` | `GlobalTask` |
 | `global update --global <id> [--title] [--description] [--priority …]` | `global.update` | `global`, `title?`, `description?`, `priority?` | `GlobalTask` |
 | `global move --global <id> --status <col>` | `global.move` | `global`, `status` | `GlobalTask` |
@@ -497,6 +497,8 @@ CLI этой команды нет: координатор тип не меня�
   этапа. «Вернуть в работу…» — то же окно замечаний, но с другой подсказкой (`returnHint(…, true)`: граф вернётся по переходу «Вернуть», а не перезапуском
   координатора; терминал не закрывается, и если main не открыл терминал — `returnToWork` вернул пустой `ptyId` — App его не показывает). Где стоит граф —
   чип «Этап: …» на карточке и в шапке (`runStageLabel`), входы в этапы — в «Истории», подзадачи в колонках доски — группами по этапам (`stageGroups`).
+  Внутри разветвления (`GlobalTask.lanes`) чип перечисляет этапы путей («Бэкенд · Фронтенд»), а если решения ждут несколько approval путей,
+  «Подтвердить»/«Вернуть» скрыты — каждый путь решается во «Входящих» (`docs/workflow.md`, «Renderer» → «Разветвление»).
   Запрос не в «Проверке» (нода `human` с другой колонкой) виден в Инбоксе и на карточке в «Нужен ответ» (`RequestCard`, `where` — «прогон › нода»).
 
 ## Проверки

@@ -3,6 +3,7 @@ import { t, type TKey } from './i18n'
 import { builtinText, nodeTitle } from './defaultTitles'
 import { stageLabel, type StageLabel } from './cardState'
 import { STATUS_HISTORY_COLLAPSED, STATUS_SOURCE_TITLES } from './statusHistory'
+import { activeStageNodes } from './runStage'
 
 // Путь подзадачи (`work.subflow`, docs/workflow.md → «Путь подзадачи»): у подзадачи этапа «Работа» своя позиция `Task.stage` —
 // на ноде пути, а не на графе прогона. Чистые функции без React: пилюля шага пути на карточке, «держит этап прогона» и история
@@ -100,17 +101,18 @@ export interface StageHold {
 /**
  * Подзадача держит этап прогона: этап «Работа» закрывается, когда все подзадачи текущего захода дошли до `end` пути, а эта
  * стоит на `gate` (ждёт проверки ветки) или `human` (ждёт человека) своего пути. Задачи прошлых заходов, закрытые задачи, ответы и
- * проверки этап не держат; граф прогона стоит не на её этапе — тоже. Нет графа или позиции (старый main) — null.
+ * проверки этап не держат; граф прогона стоит не на её этапе — тоже. Внутри разветвления этап подзадачи ищется среди
+ * позиций всех путей (`lanes`): на двух «Работах» сразу держать можно обе. Нет графа или позиции (старый main) — null.
  */
 export function stageHold(
   task: Pick<Task, 'stage' | 'status'> & PathTask,
-  run: Partial<Pick<GlobalTask, 'stage' | 'workflowScope'>> | undefined,
+  run: Partial<Pick<GlobalTask, 'stage' | 'workflowScope' | 'lanes'>> | undefined,
   workflow: Workflow | undefined,
   isDone: (status: string) => boolean
 ): StageHold | null {
-  const at = run?.stage
-  if (run?.workflowScope !== 'run' || !at || !task.stageOf || isDone(task.status)) return null
-  if (at.nodeId !== task.stageOf.nodeId || (at.visits?.[at.nodeId] ?? 1) !== task.stageOf.visit) return null
+  const of = task.stageOf
+  if (run?.workflowScope !== 'run' || !of || isDone(task.status)) return null
+  if (!activeStageNodes(run).some((p) => p.nodeId === of.nodeId && p.visit === of.visit)) return null
   const step = currentStep(task, workflow)
   if (!step || (step.node.type !== 'gate' && step.node.type !== 'human')) return null
   const reason: StageHoldReason = step.node.type === 'gate' ? 'review' : 'human'

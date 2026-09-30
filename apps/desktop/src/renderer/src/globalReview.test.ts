@@ -10,8 +10,10 @@ import {
   returnHint,
   returnsNewestFirst,
   reviewErrorMessage,
-  runApprovalRequest
+  runApprovalRequest,
+  runApprovalRequests
 } from './globalReview'
+import { headerActions } from './globalScreen'
 import type { HumanRequest } from '@orca-board/core'
 import { setLocale } from './i18n'
 
@@ -153,4 +155,27 @@ test('английский интерфейс: подсказка возврат
     assert.match(staleReviewMessage(), /Restart the app/)
     assert.match(returnHint(false, true), /The graph goes back by the “Send back” edge/)
   })
+})
+
+test('globalTaskActions: несколько ждущих approval прогона с воркфлоу — кнопок решения нет, подсказка про «Входящие»', () => {
+  const run = { workflowScope: 'run' as const }
+  assert.deepEqual(globalTaskActions(run, 'review', false, 2), { startCoordinator: false, accept: false, returnToWork: false, approvalsInInbox: 2 })
+  assert.deepEqual(globalTaskActions(run, 'review', false, 1), { startCoordinator: false, accept: true, returnToWork: true }, 'один approval — как раньше')
+  assert.deepEqual(globalTaskActions(run, 'review', false), { startCoordinator: false, accept: true, returnToWork: true })
+  assert.deepEqual(globalTaskActions({}, 'review', false, 2), { startCoordinator: false, accept: true, returnToWork: true }, 'прогон без воркфлоу — прежняя «Проверка»')
+  assert.equal(globalTaskActions(run, 'in_progress', false, 2).approvalsInInbox, undefined, 'не на «Проверке» — как обычно')
+  assert.deepEqual(headerActions(run, 'review', false, 2, 2), { returnToWork: false, quietStart: false, approvalsInInbox: 2 })
+  assert.deepEqual(headerActions(run, 'review', false, undefined, 1).primary, { kind: 'accept', label: 'Подтвердить' })
+})
+
+test('runApprovalRequests: все ждущие approval прогона по нодам путей, старые первыми; первый — runApprovalRequest', () => {
+  const list = [
+    request('fe', { nodeId: 'fe_mock', createdAt: 20 }),
+    request('be', { nodeId: 'be_ok', createdAt: 10 }),
+    request('task', { taskId: 't1', createdAt: 5 }),
+    request('other', { runId: 'run_2', createdAt: 1 })
+  ]
+  assert.deepEqual(runApprovalRequests(list, 'run_1').map((x) => x.id), ['be', 'fe'])
+  assert.equal(runApprovalRequest(list, 'run_1')?.id, 'be')
+  assert.deepEqual(runApprovalRequests(undefined, 'run_1'), [])
 })

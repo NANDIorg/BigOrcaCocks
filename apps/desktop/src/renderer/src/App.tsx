@@ -47,7 +47,7 @@ import type { AppMenuAction } from '../../shared/ipc'
 import appLogo from '../../../build/icon.svg'
 import { ProjectList } from './ProjectList'
 import { groupsFromList } from './projectGroups'
-import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest } from './globalReview'
+import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest, runApprovalRequests } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
@@ -1028,6 +1028,7 @@ export function App(): React.JSX.Element {
               columns={columns}
               dispatches={snap.dispatches}
               approval={runApprovalRequest(snap.requests, openGlobal.id)}
+              approvals={runApprovalRequests(snap.requests, openGlobal.id).length}
               onResolveRequest={resolveRequest}
               onOpenTask={(taskId) => setOpenTaskId(taskId)}
               onOpenTerminal={openTerminalForTask}
@@ -1286,6 +1287,7 @@ export function App(): React.JSX.Element {
           priorityEditable={runsKnowPriority(snap.runs)}
           statusKind={editingGlobal ? globalKindById.get(editingGlobal.status) : undefined}
           live={editingGlobal ? coordinatorPtys.has(editingGlobal.id) : false}
+          approvals={editingGlobal ? runApprovalRequests(snap.requests, editingGlobal.id).length : 0}
           onAccept={editingGlobal ? () => { setGlobalModal(null); void acceptGlobalTask(editingGlobal) } : undefined}
           onReturn={editingGlobal ? () => { setGlobalModal(null); setReturnGlobalId(editingGlobal.id) } : undefined}
           onClose={() => setGlobalModal(null)}
@@ -1297,6 +1299,7 @@ export function App(): React.JSX.Element {
           key={returningGlobal.id}
           global={returningGlobal}
           closesCoordinator={coordinatorPtys.has(returningGlobal.id)}
+          approvals={runApprovalRequests(snap.requests, returningGlobal.id).length}
           onClose={() => setReturnGlobalId(null)}
           onSubmit={(text, images) => returnGlobalTask(returningGlobal.id, text, images)}
         />
@@ -1306,6 +1309,7 @@ export function App(): React.JSX.Element {
           key={acceptingGlobal.id}
           global={acceptingGlobal}
           request={runApprovalRequest(snap.requests, acceptingGlobal.id)}
+          approvals={runApprovalRequests(snap.requests, acceptingGlobal.id).length}
           tasks={tasks.filter((t) => t.runId === acceptingGlobal.id)}
           columns={columns}
           dispatches={snap.dispatches}
