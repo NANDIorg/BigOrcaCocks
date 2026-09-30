@@ -8,7 +8,7 @@ import { agentTitle } from '../defaultTitles'
 import { ExecutorFields, InstructionTabs, commandPreview, effortsOf, useBuiltinPrompts } from '../RoleParts'
 import { roleAgentState } from '../stageRoles'
 import {
-  assistantAgentPatch, assistantAgents, assistantModelPatch, assistantView, withAssistantPatch
+  assistantAgentPatch, assistantAgents, assistantForSave, assistantModelPatch, assistantView, withAssistantPatch
 } from '../assistantSettings'
 
 /** Режим разрешений ассистента — фиксированный (`ASSISTANT_PERMISSION_MODE` в main): в превью команды — как есть. */
@@ -50,8 +50,8 @@ function AssistantEditor({ initial, agents: all, onSave }: {
 }): React.JSX.Element {
   const t = useT()
   // Ключ постоянный: черновик берётся при открытии раздела, внешние правки (CLI) видны при следующем открытии —
-  // как у редактора ролей типа.
-  const { draft: s, error, update } = useAutoSave<AssistantSettings>('assistant', initial, onSave)
+  // как у редактора ролей типа. Негодные флаги запуска в main не уходят (`assistantForSave`).
+  const { draft: s, error, update } = useAutoSave<AssistantSettings>('assistant', initial, onSave, assistantForSave)
   const builtin = useBuiltinPrompts()
   const agents = assistantAgents(all)
   const enabled = agents.filter((a) => a.enabled)

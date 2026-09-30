@@ -1,4 +1,4 @@
-import type { AgentKind, Role } from '@orca-board/core'
+import { parseExtraArgs, type AgentKind, type Role } from '@orca-board/core'
 
 // Правки роли из RolesEditor без React — чтобы тестировать node --test (projectTemplates.test.ts).
 
@@ -34,4 +34,29 @@ export function modelChangePatch(effort: string | undefined, model: string, effo
  */
 export function duplicatedRole(role: Role, id: string, title: string): Role {
   return { ...role, id, title }
+}
+
+/** Исполнитель с флагами запуска: роль или настройки ассистента. */
+interface WithExtraArgs {
+  agent: AgentKind
+  extraArgs?: string
+}
+
+/**
+ * Исполнитель для отправки в main: годные флаги (`parseExtraArgs`) уходят как введены, пустые очищают поле.
+ * Негодные main отверг бы вместе со всей записью, и правка соседнего поля пропала бы — вместо них уходят последние
+ * отправленные (`saved`), если они годные и того же агента, иначе поля нет. Остальные поля — как в черновике;
+ * сам черновик (и поле ввода) не меняется.
+ */
+export function withSavableExtraArgs<T extends WithExtraArgs>(draft: T, saved: WithExtraArgs | undefined): T {
+  if (parseExtraArgs(draft.extraArgs ?? '').ok) return draft
+  const next = { ...draft }
+  if (saved?.agent === draft.agent && saved.extraArgs && parseExtraArgs(saved.extraArgs).ok) next.extraArgs = saved.extraArgs
+  else delete next.extraArgs
+  return next
+}
+
+/** Роли для `taskTypes:save` из черновика: `withSavableExtraArgs` для каждой, прежняя роль ищется по id. */
+export function rolesForSave(draft: readonly Role[], saved: readonly Role[]): Role[] {
+  return draft.map((r) => withSavableExtraArgs(r, saved.find((x) => x.id === r.id)))
 }

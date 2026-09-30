@@ -16,7 +16,7 @@ import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
 import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
-import { agentChangePatch, duplicatedRole, modelChangePatch, withPatch } from './roleEdit'
+import { agentChangePatch, duplicatedRole, modelChangePatch, rolesForSave, withPatch } from './roleEdit'
 import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
 import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
@@ -62,7 +62,8 @@ export function RolesEditor({
   storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, ofTaskType = false, onSave
 }: Props): React.JSX.Element {
   const t = useT()
-  const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
+  // Негодные флаги запуска в main не уходят (`rolesForSave`): он отверг бы тип целиком вместе с правками соседних полей.
+  const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave, rolesForSave)
   /** Состав и порядок ролей в просмотре заблокированы. */
   const locked = readOnly
   const update: typeof save = locked ? () => undefined : save
