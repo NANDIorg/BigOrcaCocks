@@ -41,9 +41,10 @@ export function assistantModelPatch(s: AssistantSettings, model: string, efforts
 
 /**
  * Патч для `app:setSettings` из черновика целиком: пустое поле уходит пустой строкой — main его очищает
- * (`mergedAssistantSettings`), а не оставляет прежнее значение.
+ * (`mergedAssistantSettings`), а не оставляет прежнее значение. `extraArgs` в патче пока нет: отсутствующее поле
+ * main не трогает, так что флаги этим сохранением не затираются.
  */
-export function assistantSavePatch(s: AssistantSettings): Required<AssistantSettings> {
+export function assistantSavePatch(s: AssistantSettings): Required<Omit<AssistantSettings, 'extraArgs'>> {
   return { agent: s.agent, model: s.model ?? '', effort: s.effort ?? '', systemPrompt: s.systemPrompt ?? '' }
 }
 
