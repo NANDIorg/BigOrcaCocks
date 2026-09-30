@@ -72,15 +72,16 @@ function hasVisibleContent(message: AssistantChatMessage): boolean {
   return Boolean(message.text.trim() || message.hasImage)
 }
 
-/** Служебный вывод остаётся в модели протокола, но не становится репликой чата. */
+/** Лента получает только описание вызова: найденные данные остаются в модели протокола. */
 export function groupMessages(messages: AssistantChatMessage[]): MessageGroup[] {
   const groups: MessageGroup[] = []
   for (const message of messages) {
-    if (message.role === 'tool' || !hasVisibleContent(message)) continue
+    if (message.role === 'tool' ? !message.toolCalls?.length : !hasVisibleContent(message)) continue
+    const visible = message.role === 'tool' ? { ...message, text: '', hasImage: false } : message
     const speaker = message.role === 'human' ? 'human' : 'assistant'
     const last = groups.at(-1)
-    if (last?.speaker === speaker) last.messages.push(message)
-    else groups.push({ speaker, messages: [message] })
+    if (last?.speaker === speaker) last.messages.push(visible)
+    else groups.push({ speaker, messages: [visible] })
   }
   return groups
 }
@@ -91,7 +92,30 @@ export function isAssistantThinking(state: Pick<ChatState, 'messages' | 'status'
   for (let index = state.messages.length - 1; index >= 0; index--) {
     const message = state.messages[index]
     if (message.role === 'human') break
+    if (message.role === 'tool' && message.toolCalls?.some((call) => call.status === 'running')) return false
     if (message.role === 'agent' && hasVisibleContent(message)) return false
   }
   return true
+}
+
+/** В превью могут быть аргументы записи файла; в строку действия берём только его цель. */
+export function toolActivityDetail(input: string): string {
+  const fields = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  const text = (value: unknown): string => typeof value === 'string' ? value : ''
+  let parts: string[]
+  try {
+    const value: unknown = JSON.parse(input)
+    if (typeof value === 'string') parts = [value]
+    else if (Array.isArray(value)) parts = value.slice(0, 3).map((item) => text(fields(item).path) || text(fields(item).file_path))
+    else {
+      const data = fields(value)
+      const description = text(data.description) || text(data.command)
+      parts = description ? [description] : [text(data.pattern) || text(data.query) || text(data.url), text(data.file_path) || text(data.path)]
+    }
+  } catch {
+    // Обрезанный JSON не раскрываем как текст; main уже отдаёт обычные команды/пути без JSON.
+    parts = /^\s*[\[{]/u.test(input) ? [] : [input]
+  }
+  const detail = parts.filter(Boolean).join(' · ').replace(/\s+/gu, ' ').trim()
+  return detail.length > 180 ? `${detail.slice(0, 179)}…` : detail
 }

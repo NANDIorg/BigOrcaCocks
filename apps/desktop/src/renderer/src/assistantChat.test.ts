@@ -1,7 +1,7 @@
 import { it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AssistantChatSnapshot, AssistantChatUpdate, OrcaApi } from '../../shared/ipc'
-import { applyChatUpdate, chatStateFromSnapshot, groupMessages, isAssistantThinking, subscribeAssistantChat } from './assistantChat'
+import { applyChatUpdate, chatStateFromSnapshot, groupMessages, isAssistantThinking, subscribeAssistantChat, toolActivityDetail } from './assistantChat'
 const snapshot: AssistantChatSnapshot = { ptyId: 's1', protocolVersion: 2, revision: 2, agent: 'claude', transport: 'chat', messages: [{ id: 'm1', role: 'agent', text: 'новый текст', at: 1 }], status: 'thinking', interactions: [] }
 it('разрешение появляется один раз и исчезает после ответа; история сохраняется', () => {
   const initial = chatStateFromSnapshot(snapshot)
@@ -65,7 +65,7 @@ it('старый main не принимается за полноценный ч
   assert.equal(error, 'stale')
   connection.dispose()
 })
-it('результаты команд не попадают в видимые сообщения между репликами ассистента', () => {
+it('между репликами виден вызов команды, но его результат не становится сообщением', () => {
   const messages: AssistantChatSnapshot['messages'] = [
     { id: 'h1', role: 'human', text: 'Покажи проекты', at: 1 },
     { id: 'a1', role: 'agent', text: 'Посмотрю доски.', at: 2 },
@@ -74,8 +74,12 @@ it('результаты команд не попадают в видимые с
     { id: 'a2', role: 'agent', text: 'У вас три проекта.', at: 5 }
   ]
   assert.deepEqual(groupMessages(messages).map((group) => ({ speaker: group.speaker, ids: group.messages.map((message) => message.id) })), [
-    { speaker: 'human', ids: ['h1'] }, { speaker: 'assistant', ids: ['a1', 'a2'] }
+    { speaker: 'human', ids: ['h1'] }, { speaker: 'assistant', ids: ['a1', 't1', 'a2'] }
   ])
+  const activity = groupMessages(messages)[1].messages[1]
+  assert.equal(activity.text, '')
+  assert.equal(activity.toolCalls?.[0].input, 'orca-board projects list')
+  assert.equal(messages[2].text, '[{"id":"project-1","spec":"служебные данные"}]')
   assert.equal(messages.length, 5, 'данные протокола сохраняются для разрешений и состояния сессии')
 })
 it('пустые заготовки ответа и служебные сообщения не создают баблы', () => {
@@ -106,4 +110,37 @@ it('новый вопрос снова показывает ожидание, д
     assert.equal(isAssistantThinking({ ...state, status }), false)
   }
   assert.equal(isAssistantThinking({ ...state, interactions: [{ id: 'r1', kind: 'permission', title: 'Команда' }] }), false)
+})
+it('один вызов обновляет статус на месте и не открывает найденные данные', () => {
+  const initial = chatStateFromSnapshot({ ...snapshot, messages: [{ id: 'h1', role: 'human', text: 'Проекты', at: 1 }] })
+  const tool = { id: 't1', role: 'tool' as const, text: '', at: 2, toolCalls: [{ id: 'exec-1', name: 'Команда', input: 'orca-board projects list', status: 'running' as const }] }
+  const running = applyChatUpdate(initial, { ptyId: 's1', revision: 3, message: tool })
+  assert.equal(groupMessages(running.messages)[1].messages[0].toolCalls?.[0].status, 'running')
+  const finished = applyChatUpdate(running, { ptyId: 's1', revision: 4, message: { ...tool, text: '[{"root":"/private/project"}]', toolCalls: [{ ...tool.toolCalls[0], status: 'ok' }] } })
+  const activity = groupMessages(finished.messages)[1].messages
+  assert.equal(activity.length, 1)
+  assert.equal(activity[0].id, 't1')
+  assert.equal(activity[0].toolCalls?.[0].status, 'ok')
+  assert.equal(activity[0].text, '')
+})
+it('активное действие заменяет общее ожидание, после него ожидается текст ответа', () => {
+  const initial = chatStateFromSnapshot({ ...snapshot, messages: [{ id: 'h1', role: 'human', text: 'Проекты', at: 1 }] })
+  const tool = { id: 't1', role: 'tool' as const, text: '', at: 2, toolCalls: [{ name: 'Команда', input: 'orca-board projects list', status: 'running' as const }] }
+  const running = applyChatUpdate(initial, { ptyId: 's1', revision: 3, message: tool })
+  assert.equal(isAssistantThinking(running), false)
+  const finished = applyChatUpdate(running, { ptyId: 's1', revision: 4, message: { ...tool, toolCalls: [{ ...tool.toolCalls[0], status: 'ok' }] } })
+  assert.equal(isAssistantThinking(finished), true)
+  const answered = applyChatUpdate(finished, { ptyId: 's1', revision: 5, message: { id: 'a1', role: 'agent', text: 'Три проекта', at: 3 } })
+  assert.equal(isAssistantThinking(answered), false)
+})
+it('краткое описание действия показывает команду или цель, но не весь JSON аргументов', () => {
+  assert.equal(toolActivityDetail('orca-board projects list'), 'orca-board projects list')
+  assert.equal(toolActivityDetail('{"command":"orca-board projects list","output":"СЛУЖЕБНЫЙ ВЫВОД"}'), 'orca-board projects list')
+  assert.equal(toolActivityDetail('{"file_path":"README.md","content":"ПОЛНОЕ СОДЕРЖИМОЕ"}'), 'README.md')
+  assert.equal(toolActivityDetail('{"pattern":"TODO","path":"src"}'), 'TODO · src')
+  assert.equal(toolActivityDetail('[{"path":"src/first.ts"},{"path":"src/second.ts"}]'), 'src/first.ts · src/second.ts')
+  assert.equal(toolActivityDetail('{"content":"ПОЛНОЕ СОДЕРЖИМОЕ"}'), '')
+  assert.equal(toolActivityDetail('{"command":"обрезанный JSON'), '')
+  assert.equal(toolActivityDetail('"List projects"'), 'List projects')
+  assert.ok(toolActivityDetail('a'.repeat(1000)).length <= 180)
 })

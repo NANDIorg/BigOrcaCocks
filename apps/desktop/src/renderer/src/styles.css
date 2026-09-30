@@ -1336,6 +1336,17 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .chat-copy { display: inline-flex; gap: 5px; align-items: center; align-self: flex-start; padding: 2px 0; color: var(--muted); background: transparent; border: 0; cursor: pointer; font-size: 10px; }
 .chat-copy svg { width: 12px; height: 12px; }
 .chat-copy:hover { color: var(--text); }
+.chat-activities { display: flex; flex-direction: column; gap: 4px; padding: 3px 0; animation: chat-message-in .2s ease-out both; }
+.chat-activity { display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 7px 10px; color: var(--muted); }
+.chat-activity-icon { display: grid; place-items: center; width: 18px; flex-shrink: 0; }
+.chat-activity-icon svg { width: 14px; height: 14px; }
+.chat-activity-running .chat-activity-icon, .chat-activity-ok .chat-activity-icon { color: var(--accent); }
+.chat-activity-error .chat-activity-icon, .chat-activity-error .chat-activity-status { color: var(--danger); }
+.chat-activity-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.chat-activity-name { font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
+.chat-activity-running .chat-activity-name { color: var(--text); }
+.chat-activity-detail { font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.chat-activity-status { font-size: 10px; flex-shrink: 0; }
 .chat-request-tool pre { border-top: 1px solid var(--line); padding: 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; font: 11px/1.6 ui-monospace, Menlo, monospace; user-select: text; }
 .chat-thinking { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; min-height: 22px; }
 .chat-thinking-text { color: transparent; background: linear-gradient(105deg, var(--muted) 36%, var(--text) 50%, var(--muted) 64%); background-size: 300% 100%; background-position: 100% 0; background-clip: text; animation: chat-thinking-shimmer 2.8s linear infinite; }

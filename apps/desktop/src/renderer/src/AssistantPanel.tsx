@@ -1,12 +1,13 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AssistantChatMessage } from '../../shared/ipc'
+import type { ConversationToolCall } from '../../shared/assistant-conversation'
 import { AgentLogo } from './AgentLogo'
 import { agentTitle } from './defaultTitles'
 import { Markdown } from './Markdown'
 import { Icon } from './icons'
 import { AssistantInteraction } from './AssistantInteraction'
-import { emptyChatState, groupMessages, isAssistantThinking, subscribeAssistantChat, type ChatState } from './assistantChat'
+import { emptyChatState, groupMessages, isAssistantThinking, subscribeAssistantChat, toolActivityDetail, type ChatState } from './assistantChat'
 import { ipcErrorMessage } from './ipcError'
 import { useModalFocus } from './useModalFocus'
 import { useT, type TFunction, type TKey } from './i18n'
@@ -22,12 +23,22 @@ interface Props {
   onOpenInTerminals(): void
 }
 
+function ChatToolActivity({ call, t }: { call: ConversationToolCall; t: TFunction }): React.JSX.Element {
+  const detail = toolActivityDetail(call.input)
+  return <div className={`chat-activity chat-activity-${call.status}`}>
+    <span className="chat-activity-icon" aria-hidden="true">{call.status === 'running' ? <span className="update-spin"><Icon.spinner /></span> : call.status === 'ok' ? <Icon.check /> : call.status === 'cancelled' ? <Icon.stop /> : <Icon.info />}</span>
+    <div className="chat-activity-main"><span className="chat-activity-name">{call.name || t('shell.assistant.activity')}</span>{detail && <span className="chat-activity-detail" title={detail}>{detail}</span>}</div>
+    <span className="chat-activity-status">{t(`shell.assistant.tool.${call.status}` as TKey)}</span>
+  </div>
+}
+
 function ChatMessageRow({ message, t }: { message: AssistantChatMessage; t: TFunction }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState(false)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1800); return () => clearTimeout(timer) }, [copied])
+  if (message.role === 'tool') return <div className="chat-activities">{message.toolCalls?.map((call, index) => <ChatToolActivity key={call.id ?? index} call={call} t={t} />)}</div>
   return (
     <article className={`chat-msg chat-msg-${message.role}`}>
       {message.text && (message.role === 'human' ? <div className="chat-human-text">{message.text}</div> : <Markdown text={message.text} />)}
