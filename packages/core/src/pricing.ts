@@ -10,7 +10,7 @@ function openai(exact: string, input: number, cached: number, output: number, wr
 }
 
 /**
- * $ за миллион токенов, Standard-tier API OpenAI: https://developers.openai.com/api/docs/pricing, проверено 2026-09-25.
+ * $ за миллион токенов, Standard-tier API OpenAI: https://developers.openai.com/api/docs/pricing, проверено 2026-10-01.
  * Codex CLI пишет в rollout и `input_tokens` (включая кэш), и `cached_input_tokens`: кэшированная часть идёт по
  * `cacheRead`, остальное — по `input` (`parseCodexLine` в `apps/desktop/src/main/transcripts.ts`).
  * Не учтено: надбавка длинного контекста (запрос свыше ~272K входных токенов — вход ×2, выход ×1,5): в rollout
@@ -21,6 +21,7 @@ function openai(exact: string, input: number, cached: number, output: number, wr
  */
 const OPENAI_PRICES: ModelPrice[] = [
   openai('gpt-6-astra', 10, 1, 50, 12.5),
+  openai('gpt-6.1-sol', 2, 0.1, 10, 2.5),
   openai('gpt-6-sol', 2, 0.2, 10, 2.5),
   openai('gpt-6-luna', 0.1, 0.01, 0.5, 0.125),
   openai('gpt-5.6-sol', 4, 0.4, 20, 5),
