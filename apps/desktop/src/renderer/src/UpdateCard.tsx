@@ -1,7 +1,6 @@
 import type React from 'react'
 import { useId, useMemo, useState } from 'react'
 import appLogo from '../../../build/icon.svg'
-import type { UpdateInfo } from '../../shared/ipc'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { useT } from './i18n'
@@ -10,15 +9,12 @@ import { bannerView, cardRelease, cardStatus, isReleaseUrl, pendingText, release
 import type { UpdatesController } from './useUpdates'
 
 /** Полная карточка версии в настройках. Заметки раскрываются здесь же, источник состояния — общий обновлятор. */
-export function UpdateCard({ updates, currentRelease = __ORCA_CURRENT_RELEASE__ }: {
-  updates: UpdatesController
-  currentRelease?: Pick<UpdateInfo, 'version' | 'releaseNotes'>
-}): React.JSX.Element {
+export function UpdateCard({ updates }: { updates: UpdatesController }): React.JSX.Element {
   const t = useT()
   const { state } = updates
   const [expandedVersion, setExpandedVersion] = useState<string | null>(null)
   const notesId = useId()
-  const release = cardRelease(state, currentRelease)
+  const release = cardRelease(state, __ORCA_CURRENT_RELEASE__)
   const notes = release?.releaseNotes ?? ''
   const summary = useMemo(() => releaseSummary(notes), [notes])
   const status = cardStatus(state, updates.checking)

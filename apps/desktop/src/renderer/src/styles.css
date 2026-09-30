@@ -2617,7 +2617,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .updates-card-buttons svg { width: 16px; height: 16px; flex: none; }
 .updates-notes-toggle { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; color: var(--muted); padding: 8px 0; font-size: 12px; }
 .updates-notes-toggle:hover { color: var(--text); }
-.updates-notes-toggle:focus-visible, .updates-release-link:focus-visible, .updates-preview button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.updates-notes-toggle:focus-visible, .updates-release-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
 .updates-card-notes { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; overflow-wrap: anywhere; }
 .updates-card-notes .markdown { font-size: 13px; line-height: 1.7; }
 .updates-card-notes .markdown > :first-child { margin-top: 0; }
@@ -2638,10 +2638,6 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .updates-portable-note > svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--muted); }
 .updates-portable-note b { font-size: 13px; font-weight: 500; }
 .updates-portable-note p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.updates-preview { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 14px; font-size: 11px; color: var(--muted); }
-.updates-preview > div { display: flex; gap: 4px; flex-wrap: wrap; }
-.updates-preview button { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 5px 8px; font-size: 11px; }
-.updates-preview button:hover, .updates-preview button[aria-pressed='true'] { background: var(--side-2); color: var(--text); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 @media (max-width: 720px) { .updates-card { padding: 18px; } .updates-card-heading h3 { font-size: 21px; } }
 [data-motion='reduced'] .updates-card .update-spin { animation: none; }
 .rail .icon { position: relative; }

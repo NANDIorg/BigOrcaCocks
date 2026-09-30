@@ -118,22 +118,6 @@ export default {
   'updates.card.unknownSize': 'Finding download size…',
   'updates.card.downloadHint': 'Keep working. Orca will let you know when everything is ready.',
   'updates.card.downloadExternal': 'Download from GitHub',
-  'updates.preview.title': 'Update demo · sample data',
-  'updates.preview.available': 'New version',
-  'updates.preview.downloading': 'Downloading',
-  'updates.preview.ready': 'Installation',
-  'updates.preview.idle': 'Current version',
-  'updates.preview.notes':
-    'A tidier workspace: a refreshed Windows window, clearer updates, and easier attachment previews.\n\n' +
-    '## What’s new\n' +
-    '- **Windows window.** The title bar blends into the interface; the menu opens from the sidebar.\n' +
-    '- **Updates.** A version card, release summary, and clear download progress.\n' +
-    '- **Attachments.** Image thumbnails and full-size previews right on the board.\n\n' +
-    '## Improvements\n' +
-    '- Settings share a consistent look across all themes.\n' +
-    '- Update actions stay next to the release notes.\n\n' +
-    '## Fixes\n' +
-    '- Improved window drag areas and clicks on interface controls.',
   'updates.current': 'Current version',
   'updates.check': 'Check now',
   'updates.unavailable': 'Updates aren’t available in this build.',
