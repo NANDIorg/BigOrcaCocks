@@ -6,6 +6,7 @@ export default {
   closeEsc: 'Close (Esc)',
   toggle: 'Open / close',
 
+  'rail.menu': 'Application menu',
   'rail.projects': 'Projects',
   'rail.settings': 'Settings',
   'rail.docs': 'Documents',

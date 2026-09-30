@@ -565,6 +565,10 @@ export interface OrcaApi {
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
+    /** Нативное меню окна без системной строки; опционально для старого preload. */
+    showMenu?(): Promise<void>
+    /** Текущее состояние и переходы fullscreen; WCO Windows сохраняет visible даже без caption-кнопок. */
+    onWindowFullscreen?(cb: (fullscreen: boolean) => void): () => void
     /** Опционально для старого preload; подписка также сообщает main, что интерфейс готов к команде. */
     onMenuAction?(cb: (action: AppMenuAction) => void): () => void
     /**

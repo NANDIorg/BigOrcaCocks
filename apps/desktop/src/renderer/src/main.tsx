@@ -15,7 +15,7 @@ if (import.meta.hot) import.meta.hot.dispose(() => appearance.dispose())
 
 // До первого рендера; старый main/preload сохраняет обычную компоновку.
 const overlay = (navigator as Navigator & { windowControlsOverlay?: WindowControlsOverlay }).windowControlsOverlay
-const disposeWindowChrome = initWindowChrome(window.orca?.app?.windowChrome, document.documentElement, overlay)
+const disposeWindowChrome = initWindowChrome(window.orca?.app?.windowChrome, document.documentElement, overlay, window.orca?.app?.onWindowFullscreen)
 if (import.meta.hot) import.meta.hot.dispose(disposeWindowChrome)
 
 // Язык — до первого рендера (кэш или русский), затем из настроек main. Старый preload без app — не падаем.

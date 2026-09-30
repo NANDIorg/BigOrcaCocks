@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
-import { mainWindowChrome } from './window-chrome'
+import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
@@ -84,6 +84,7 @@ if (!gotSingleInstanceLock) app.exit(0)
 else app.on('second-instance', () => { if (app.isReady()) showWindow() })
 
 let win: BrowserWindow | null = null
+let windowFullscreen = false
 let projects: ProjectManager
 let updater: Updater
 /** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
@@ -108,7 +109,8 @@ const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
 function createWindow(): BrowserWindow {
   menuActions.disconnect()
-  const chrome = mainWindowChrome(process.platform)
+  windowFullscreen = false
+  const chrome = mainWindowChrome(process.platform, projects.settings().appearance?.theme)
   win = new BrowserWindow({
     width: 1500,
     height: 940,
@@ -124,6 +126,11 @@ function createWindow(): BrowserWindow {
     }
   })
   setPtyWindow(win)
+  // Windows WCO сам не обнуляет заданную height в fullscreen; иначе renderer оставляет пустой резерв.
+  if (process.platform === 'win32') {
+    win.on('enter-full-screen', () => setWindowFullscreen(true))
+    win.on('leave-full-screen', () => setWindowFullscreen(false))
+  }
   const created = win
   win.on('closed', () => {
     if (win === created) {
@@ -192,12 +199,22 @@ function refreshApplicationMenu(): void {
   })))
 }
 
+/** Событие Windows приходит раньше смены isFullScreen; сохраняем явное состояние для темы и renderer. */
+function setWindowFullscreen(fullscreen: boolean): void {
+  windowFullscreen = fullscreen
+  syncMainAppearance()
+  win?.webContents.send('app:windowFullscreen', fullscreen)
+}
+
 /** Фон при запуске/восстановлении и native controls согласованы с выбранной темой. */
 function syncMainAppearance(): void {
   const settings = projects.settings().appearance
   const theme = getAppTheme(settings?.theme)
   if (nativeTheme.themeSource !== theme.colorScheme) nativeTheme.themeSource = theme.colorScheme
-  if (win && !win.isDestroyed()) win.setBackgroundColor(theme.colors.page)
+  if (win && !win.isDestroyed()) {
+    win.setBackgroundColor(theme.colors.page)
+    if (process.platform === 'win32') win.setTitleBarOverlay(windowsTitleBarOverlay(settings?.theme, windowFullscreen))
+  }
   refreshAboutWindow(settings)
 }
 
@@ -797,6 +814,14 @@ function liveAgentCount(projectId: string): number {
 }
 
 function registerIpc(): void {
+  ipcMain.on('app:windowFullscreenReady', (event) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    event.sender.send('app:windowFullscreen', windowFullscreen)
+  })
+  handle('app:showMenu', (event) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    Menu.getApplicationMenu()?.popup({ window: win })
+  })
   ipcMain.on('app:menuReady', (event, ready: unknown) => {
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
     if (ready === true) {

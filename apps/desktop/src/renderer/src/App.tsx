@@ -18,6 +18,7 @@ import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
 import { TaskModal } from './TaskModal'
 import { Icon } from './icons'
+import { WindowMenu } from './WindowMenu'
 import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
 import { AboutProject } from './about/AboutProject'
@@ -865,6 +866,7 @@ export function App(): React.JSX.Element {
   return (
     <div className={`app ${showProjects ? '' : 'no-sidebar'}`}>
       <aside className="rail">
+        <WindowMenu />
         <button className={`icon ${showProjects ? 'active' : ''}`} title={t('shell.rail.projects')} onClick={toggleProjects}><Icon.folder /></button>
         <button
           className={`icon ${showSettings ? 'active' : ''}`}
