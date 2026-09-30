@@ -1,16 +1,17 @@
-import { wfPorts, type WfEdge, type WfIssue, type WfIssueCode, type WfNode, type WfNodeType, type WfValidation } from '@orca-board/core'
+import { laneRegions, wfPorts, type WfEdge, type WfIssue, type WfIssueCode, type WfNode, type WfNodeType, type WfValidation, type Workflow } from '@orca-board/core'
 
 // Раскладка редактора воркфлоу (макет A, docs/design/workflow-editor/variant-a.html): группы палитры и поиск по ней,
 // к какой карточке инспектора относится проблема валидации, список «Проблемы» по нодам. Только вид: граф здесь не
 // меняется — правки живут в workflowEdit.ts / workflowForm.ts.
 
-export type WfPaletteGroupId = 'agent' | 'human' | 'app' | 'bound'
+export type WfPaletteGroupId = 'agent' | 'human' | 'app' | 'parallel' | 'bound'
 
 /** Группы палитры по тому, кто выполняет этап. Порядок групп и типов в них — порядок на экране. */
 export const WF_PALETTE_GROUPS: readonly { id: WfPaletteGroupId; types: readonly WfNodeType[] }[] = [
   { id: 'agent', types: ['work', 'ask', 'gate', 'decision'] },
   { id: 'human', types: ['human'] },
   { id: 'app', types: ['condition', 'merge', 'git'] },
+  { id: 'parallel', types: ['fork', 'join'] },
   { id: 'bound', types: ['start', 'end'] }
 ]
 
@@ -92,6 +93,15 @@ const CARD_OF_CODE: Partial<Record<WfIssueCode, WfCardId>> = {
   gitUnknownPlaceholder: 'what',
   gitParamIgnored: 'what',
   gitRunOperation: 'what',
+  forkBranchesNotList: 'what',
+  forkTooFewBranches: 'what',
+  forkTooManyBranches: 'what',
+  forkBranchBadId: 'what',
+  forkBranchDuplicateId: 'what',
+  forkBranchNoLabel: 'what',
+  forkNoJoin: 'what',
+  forkManyJoins: 'what',
+  joinNoFork: 'what',
 
   subflowInvalid: 'path',
   subflowOnNonWork: 'path',
@@ -113,8 +123,21 @@ const CARD_OF_CODE: Partial<Record<WfIssueCode, WfCardId>> = {
   noHumanBeforeEnd: 'out',
   mergeAgain: 'out',
   decisionSameTarget: 'out',
+  joinEnteredOutside: 'out',
+  forkSharedNode: 'out',
+  forkBranchLeaks: 'out',
+  forkBranchEntered: 'out',
+  forkEndInBranch: 'out',
+  forkEmptyBranch: 'out',
+  forkBranchNoWork: 'out',
 
-  templateIdNotString: 'tpl'
+  subflowForkNotAllowed: 'main',
+  forkNested: 'main',
+  forkMergeInBranch: 'main',
+  forkPushInBranch: 'what',
+
+  templateIdNotString: 'tpl',
+  templateNodeFork: 'tpl'
 }
 
 /** Карточка проблемы. Проблема внутри пути подзадачи (на графе типа она ложится на ноду «Работа») — «Путь подзадачи». */
@@ -211,6 +234,22 @@ export function groupProblems(issues: WfValidation): WfProblemGroup[] {
   }
   const all = [...groups.values()]
   return [...all.filter((g) => g.level === 'error'), ...all.filter((g) => g.level === 'warning')]
+}
+
+// ---------- пути разветвления на холсте ----------
+
+/**
+ * Какие ноды подсветить как пути разветвления: выделено разветвление или его слияние — ноды каждого пути и номер пути
+ * по порядку портов (для подписи). Иначе — пусто: области путей видны только по запросу, чтобы не шуметь.
+ */
+export function laneHighlight(wf: Pick<Workflow, 'nodes' | 'edges'>, selectedNodeId: string | undefined): Map<string, number> {
+  const res = new Map<string, number>()
+  const sel = selectedNodeId === undefined ? undefined : wf.nodes.find((n) => n.id === selectedNodeId)
+  const forkId = sel?.type === 'fork' ? sel.id : sel?.type === 'join' ? sel.forkId : undefined
+  const regions = forkId ? laneRegions(wf, forkId) : undefined
+  if (!regions) return res
+  regions.lanes.forEach((lane, i) => lane.nodes.forEach((id) => { if (!res.has(id)) res.set(id, i) }))
+  return res
 }
 
 // ---------- миниатюра пути подзадачи ----------

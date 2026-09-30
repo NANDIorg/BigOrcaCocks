@@ -2,9 +2,9 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, forkBranches, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority, type Dispatch, type ShowcaseSnapshot, normalizeShowcase,
-  type RequestResolution, type Run, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
+  type RequestResolution, type Run, type RunStageInfo, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
@@ -35,8 +35,9 @@ export interface ProjectDeps {
   /**
    * `stage finish`: закрыть этап «Работа» прогона и выполнить эффекты следующей ноды (`finishRunStage` в workflow-run.ts).
    * Только через него: store делает лишь переход, а проверку, запрос человеку, мерж и конец создаёт движок прогона.
+   * `nodeId` — какой этап закрыть (`--stage`, пути разветвления); нет — единственный открытый.
    */
-  finishStage(runId: string, summary?: string): { run: Run; action: WfAction }
+  finishStage(runId: string, summary?: string, nodeId?: string): { run: Run; action: WfAction }
   /**
    * `decision choose`: агент выбрал вариант ноды «Решение ИИ» — граф идёт по ребру варианта, решение с `by: 'agent'`
    * пишется в историю (`runDecision` в workflow-run.ts). `option` — как ввёл агент (id или метка): сопоставляет с
@@ -260,14 +261,17 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
   if (r.params.agent !== undefined) throw new Error('--agent больше не поддерживается, укажи --role (orca-board roles list)')
   // Воркфлоу прогона: подзадачи — только на этапе «Работа». Проверка идёт раньше выбора роли, иначе вне этапа
   // координатор увидел бы «--role обязателен», а не «дождись stage_started».
-  const stage = runId !== undefined ? store.assertStageAcceptsTasks(runId) : undefined
+  // --stage — какой этап «Работа» (пути разветвления); при одном открытом этапе не нужен, при нескольких store
+  // отвечает ошибкой со списком этапов.
+  const stageId = stageParam(r)
+  const stage = runId !== undefined ? store.assertStageAcceptsTasks(runId, stageId) : undefined
   const stageRoles = stage ? wfWorkRoleIds(stage) : []
   if (stage && stageRoles.length > 1 && str(r.params.role) === undefined) {
     throw new Error(`--role обязателен: этап «${wfNodeTitle(stage)}» ведут роли ${stageRoles.join(', ')}`)
   }
   // Роли — типа глобальной задачи; у «Входящих» (runId нет) — типа проекта по умолчанию.
   // Без --role на этапе «Работа» с единственной ролью берётся она (`stageDefaultRole`).
-  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role) ?? (runId !== undefined ? store.stageDefaultRole(runId) : undefined))
+  const role = pickRole(deps.resolveRun(runId), deps.agents(), str(r.params.role) ?? (runId !== undefined ? store.stageDefaultRole(runId, stageId) : undefined))
   // --answer-for human|coordinator — задача-ответ; значение проверяет store.
   const answerFor = r.params['answer-for'] ?? r.params.answerFor
   if (answerFor === true) throw new Error('--answer-for требует значения: human или coordinator')
@@ -279,9 +283,16 @@ function createTask(r: Request, deps: ProjectDeps, store: TaskStore, runId: stri
     roleId: role.id,
     agent: role.agent,
     runId,
+    ...(stageId !== undefined ? { stage: stageId } : {}),
     ...(answerFor !== undefined ? { answerFor: answerFor as AnswerAudience } : {}),
     ...(priority !== undefined ? { priority: priority as TaskPriority } : {})
   })
+}
+
+/** --stage: id ноды «Работа» (`task create`, `stage finish`); флаг без значения — ошибка, нет флага — undefined. */
+function stageParam(r: Request): string | undefined {
+  if (r.params.stage === true || r.params.stage === '') throw new Error('--stage требует id этапа (nodeId из stage_started или workflow show)')
+  return str(r.params.stage)
 }
 
 /** --type: id типа задачи; флаг без значения — ошибка, нет флага — undefined. */
@@ -325,6 +336,11 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
     const n = nodes.get(id)
     return n?.type === 'decision' && Array.isArray(n.options) ? { options: n.options.map((o) => o.id) } : {}
   }
+  // Пути «Разветвления» — id портов, как варианты у «Решения ИИ»: видно, что этапы типа идут параллельно.
+  const branches = (id: string): { branches?: string[] } => {
+    const n = nodes.get(id)
+    return n?.type === 'fork' ? { branches: forkBranches(n).map((b) => b.id) } : {}
+  }
   return {
     id: t.id,
     title: t.title,
@@ -339,7 +355,7 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
       agentEnabled: enabled.has(role.agent)
     })),
     stages: describeWorkflow(resolved.workflow).map((s) => ({
-      id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}), ...options(s.id)
+      id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}), ...options(s.id), ...branches(s.id)
     }))
   }
 }
@@ -364,7 +380,7 @@ const WORKFLOW_HISTORY_LIMIT = 50
  * Запись истории этапов в `workflow show --run`: путь по графу и решения «Решения ИИ». Без `commit` и `summary` —
  * сводки координатор получает в `stage_started`, а полная история — в `global get`.
  */
-function historyEntry(h: StageChange): Pick<StageChange, 'nodeId' | 'title' | 'visit' | 'at' | 'outcome' | 'from' | 'decision'> {
+function historyEntry(h: StageChange): Pick<StageChange, 'nodeId' | 'title' | 'visit' | 'at' | 'outcome' | 'from' | 'decision' | 'lane'> {
   return {
     nodeId: h.nodeId,
     ...(h.title !== undefined ? { title: h.title } : {}),
@@ -372,8 +388,17 @@ function historyEntry(h: StageChange): Pick<StageChange, 'nodeId' | 'title' | 'v
     at: h.at,
     ...(h.outcome !== undefined ? { outcome: h.outcome } : {}),
     ...(h.from !== undefined ? { from: h.from } : {}),
-    ...(h.decision ? { decision: h.decision } : {})
+    ...(h.decision ? { decision: h.decision } : {}),
+    ...(h.lane !== undefined ? { lane: h.lane } : {})
   }
+}
+
+/**
+ * `stage` в `workflow show --run` при разветвлении: первая открытая «Работа» пути (её ждёт координатор), иначе первый
+ * путь, ещё не пришедший в слияние, иначе первый путь. Без разветвления — единственная позиция, как раньше.
+ */
+function primaryStage(stages: RunStageInfo[]): RunStageInfo | undefined {
+  return stages.find((s) => s.type === 'work' && !s.arrived) ?? stages.find((s) => !s.arrived) ?? stages[0]
 }
 
 /**
@@ -726,7 +751,10 @@ const handlers: Record<string, Handler> = {
       const wf = store.runWorkflow(runId, fallback)
       // Воркфлоу глобальной задачи (`scope: 'run'`): граф ведёт её саму, `stage` — где она сейчас (нода, заход, роли,
       // инструкции, подзадачи захода). Старый формат (`scope: 'task'`) идёт по подзадачам, позиции у прогона нет.
-      const stage = store.runStage(runId, fallback)
+      // Разветвление (`Run.lanes`): позиций несколько — все в `lanes`, в `stage` — та, что нужнее координатору
+      // (`primaryStage`); у прогона без путей ответ прежний, без `lanes`.
+      const lanes = store.getRun(runId)?.lanes?.length ? store.runStages(runId, fallback) : undefined
+      const stage = lanes ? primaryStage(lanes) : store.runStage(runId, fallback)
       return {
         source: run.workflow ? 'run' : 'type',
         scope: run.workflowScope === 'run' ? 'run' : 'task',
@@ -734,6 +762,7 @@ const handlers: Record<string, Handler> = {
         typeId: type.typeId,
         typeTitle: type.title,
         ...(stage ? { stage } : {}),
+        ...(lanes ? { lanes } : {}),
         stages: describeWorkflow(wf),
         // Путь глобальной задачи по графу с решениями «Решения ИИ»; у старого формата позиции и истории нет.
         ...(run.workflowScope === 'run' ? { history: (run.stageHistory ?? []).slice(-WORKFLOW_HISTORY_LIMIT).map(historyEntry) } : {})
@@ -936,12 +965,19 @@ const handlers: Record<string, Handler> = {
     const id = str(r.params.run)
     if (!id) throw new Error('--run обязателен')
     if (r.params.summary === true) throw new Error('--summary требует текста сводки')
-    const from = store.getRun(id)?.stage?.nodeId
-    const { run, action } = deps.finishStage(id, str(r.params.summary))
+    const stageId = stageParam(r)
+    const before = store.getRun(id)
+    // Какой этап закрывается: --stage, внутри разветвления без флага — единственная открытая «Работа» пути (несколько —
+    // store ответит ошибкой со списком), иначе основная позиция, как раньше.
+    const open = before?.lanes?.length ? store.runStages(id).filter((s) => s.type === 'work' && !s.arrived) : []
+    const from = stageId ?? (open.length === 1 ? open[0].nodeId : before?.stage?.nodeId)
+    const { run, action } = deps.finishStage(id, str(r.params.summary), stageId)
     return {
       run: id,
       finished: from,
       stage: run.stage ? { nodeId: run.stage.nodeId, visits: run.stage.visits[run.stage.nodeId] ?? 1 } : undefined,
+      // Прогон ещё в разветвлении: где стоят пути — координатору видно, закрылся ли только этот этап.
+      ...(run.lanes?.length ? { lanes: run.lanes.map((l) => ({ nodeId: l.nodeId, lane: l.id, arrived: l.arrivedAt !== undefined })) } : {}),
       // Что приложение делает дальше: координатору важно лишь, ждать ли ему следующий stage_started или run_done.
       next: { type: action.type, nodeId: action.nodeId, ...(action.type === 'blocked' ? { reason: action.reason } : {}) }
     }

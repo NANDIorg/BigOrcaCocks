@@ -60,6 +60,8 @@ export default {
   'node.condition': 'Condition',
   'node.merge': 'Merge',
   'node.end': 'End',
+  'node.fork': 'Fork',
+  'node.join': 'Join',
 
   'global.review': 'Review',
   'global.inbox': 'Inbox',

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { validateNodeTemplate, validateWorkflow, type WfNode, type WfNodeTemplate, type Workflow } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import {
-  applyTemplate, insertTemplate, linkTemplate, nodeTemplatesApi, nodeTemplatesError, nodeTemplatesStaleMessage,
+  applyTemplate, canBeTemplate, insertTemplate, linkTemplate, nodeTemplatesApi, nodeTemplatesError, nodeTemplatesStaleMessage,
   renamedTemplateInput, templateInput, templateMisfit, templateNodeOf, templateSummary, templateSync, withTemplate
 } from './nodeTemplates'
 import { graphWithMerge } from './workflowFixture'
@@ -219,4 +219,12 @@ test('decision: шаблон вставляется в граф типа, но �
   // Шаблон другого типа поверх решения: рёбра вариантов уходят.
   const gate = applyTemplate(withEdges, 'decision', reviewerTemplate())
   assert.equal(gate.edges.some((e) => e.from === 'decision'), false)
+})
+
+test('fork и join своей нодой не сохраняются — как «Старт»; core с этим согласен', () => {
+  for (const type of ['start', 'fork', 'join'] as const) assert.equal(canBeTemplate(type), false, type)
+  for (const type of ['work', 'gate', 'decision', 'git', 'end'] as const) assert.equal(canBeTemplate(type), true, type)
+  const fork = { id: 'split', type: 'fork', x: 0, y: 0, branches: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] } as WfNode
+  const tpl: WfNodeTemplate = { id: 'tpl_x', title: 'Разветвление', updatedAt: 1, node: templateNodeOf(fork) }
+  assert.ok(validateNodeTemplate(tpl).errors.some((i) => i.code === 'templateNodeFork'))
 })

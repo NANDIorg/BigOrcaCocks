@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { defaultWorkflow, type BoardColumn, type StageChange, type StatusChange } from '@orca-board/core'
 import { dayLabel, DECISION_EXCERPT_LIMIT, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
 import { setLocale } from './i18n'
-import { graphWithFork } from './workflowFixture'
+import { runGraphWithFork } from './workflowFixture'
 
 /** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
 function inEnglish(fn: () => void): void {
@@ -315,7 +315,7 @@ test('globalTimeline: этапы на английском', () => {
 })
 
 test('globalTimeline: вход в этап внутри разветвления подписан путём; без пути — подписи нет', () => {
-  const workflow = graphWithFork()
+  const workflow = runGraphWithFork()
   const stageHistory: StageChange[] = [
     { nodeId: 'split', from: 'analysis', outcome: 'next', at: 200 },
     { nodeId: 'be', from: 'split', outcome: 'backend', lane: 'split:backend', at: 201 },

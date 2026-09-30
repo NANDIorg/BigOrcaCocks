@@ -12,7 +12,7 @@ import { IssueDot, WfCard } from './WorkflowCard'
 import { MainFields, PortSelect, WhatFields, WhoFields, hasWhatCard, hasWhoCard, whatTitle, whoTitle } from './WorkflowNodeFields'
 import { SubflowCard } from './WorkflowSubflowCard'
 import { WorkflowTemplateBlock } from './WorkflowTemplateBlock'
-import type { NodeTemplatesHook } from './nodeTemplates'
+import { canBeTemplate, type NodeTemplatesHook } from './nodeTemplates'
 
 interface Props {
   workflow: Workflow
@@ -66,7 +66,7 @@ export function WorkflowInspector({ workflow, selection, onChange, onSelect, rol
       ...(hasWhatCard(node.type) ? ['what' as const] : []),
       ...(node.type === 'work' && scope === 'run' ? ['path' as const] : []),
       ...(ports.length > 0 ? ['out' as const] : []),
-      ...(library && node.type !== 'start' ? ['tpl' as const] : [])
+      ...(library && canBeTemplate(node.type) ? ['tpl' as const] : [])
     ]
     const byCard = nodeCardIssues(issues, node.id, cards, cardIssueText)
     return (
@@ -176,8 +176,10 @@ function NodeHead({ node, scope, onRemove }: { node: WfNode; scope: WfScope; onR
   const type = node.type
   const help = WF_NODE_HELP[type]
   const ports = wfPorts(node)
-  // У фиксированных портов смысл исхода — из справки типа; у вариантов «Решения ИИ» — пояснение самого варианта.
+  // У фиксированных портов смысл исхода — из справки типа; у вариантов «Решения ИИ» — пояснение самого варианта,
+  // у путей разветвления — общая фраза (название пути уже в подписи).
   const outcomeText = (port: WfPort): string => {
+    if (node.type === 'fork') return t('config.wf.help.fork.outcome')
     if (node.type !== 'decision') return help.outcomes[port as keyof typeof help.outcomes] ?? ''
     const option = Array.isArray(node.options) ? node.options.find((o) => o.id === port) : undefined
     return option?.description?.trim() || t('config.wf.help.decision.outcome')

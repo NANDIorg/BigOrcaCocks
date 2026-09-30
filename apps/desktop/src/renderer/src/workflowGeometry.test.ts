@@ -5,7 +5,7 @@ import {
   LAYOUT_DX, LAYOUT_DY, NODE_H, NODE_W, PORT_HIT_R, PORT_STEP, autoLayout, graphBounds, nodeHeight, nodeRect, curvePoint, distanceToCurve, edgeCurve, edgeCurveOf, fitView,
   hitEdge, hitNode, hitPort, inputPoint, panBy, portPoint, screenToWorld, zoomAt
 } from './workflowGeometry'
-import { graphWithMerge } from './workflowFixture'
+import { graphWithFork, graphWithMerge } from './workflowFixture'
 
 const wf = graphWithMerge([{ id: 'reviewer' }])
 const node = (id: string) => wf.nodes.find((n) => n.id === id)!
@@ -187,4 +187,30 @@ test('авторасстановка: под высокой нодой decision 
   const [d, w] = ['d', 'w'].map((id) => l2.nodes.find((n) => n.id === id)!)
   assert.deepEqual([d.x, d.y, w.x], [2 * LAYOUT_DX, 0, 2 * LAYOUT_DX])
   assert.equal(w.y, nodeHeight(d) + LAYOUT_DY - NODE_H)
+})
+
+test('fork: высота по числу путей, порты по порядку путей; autoLayout — пути стопкой, слияние правее самого длинного пути', () => {
+  const g = graphWithFork()
+  const split = g.nodes.find((n) => n.id === 'split')!
+  assert.equal(nodeHeight(split), NODE_H)
+  const four = { ...split, branches: ['a', 'b', 'c', 'd'].map((id) => ({ id, label: id })) } as WfNode
+  assert.equal(nodeHeight(four), PORT_STEP * 5)
+  assert.ok(portPoint(four, 'a').y < portPoint(four, 'd').y)
+  // Путь «Бэкенд» длиннее: работа → проверка → слияние.
+  const longer: Workflow = {
+    ...g,
+    nodes: [...g.nodes, { id: 'check', type: 'gate', x: 0, y: 0, roleId: 'reviewer' }],
+    edges: [
+      ...g.edges.filter((e) => e.id !== 'e4'),
+      { id: 'e7', from: 'work_be', outcome: 'next', to: 'check' },
+      { id: 'e8', from: 'check', outcome: 'accept', to: 'merge_paths' },
+      { id: 'e9', from: 'check', outcome: 'reject', to: 'work_be' }
+    ]
+  }
+  const laid = autoLayout(longer)
+  const at = (id: string) => laid.nodes.find((n) => n.id === id)!
+  assert.equal(at('work_be').x, at('work_fe').x, 'первые ноды путей — один слой')
+  assert.ok(at('work_be').y < at('work_fe').y, 'пути в порядке портов сверху вниз')
+  assert.equal(at('merge_paths').x, at('check').x + LAYOUT_DX, 'слияние — за самым длинным путём')
+  assert.equal(at('end').x, at('merge_paths').x + LAYOUT_DX)
 })

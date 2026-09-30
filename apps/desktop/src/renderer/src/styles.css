@@ -1779,6 +1779,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node--human .wf-node-icon { color: var(--col-input); }
 .wf-node--merge .wf-node-icon, .wf-node--git .wf-node-icon { color: var(--accent); }
 .wf-node--decision .wf-node-icon { color: var(--col-ready); }
+.wf-node--fork .wf-node-icon, .wf-node--join .wf-node-icon { color: var(--wf-lane); }
 /* Цвет типа ноды: полоса слева на холсте и в миниатюре пути, значок в палитре и инспекторе. */
 .wf-node--start, .wf-node--end { --wf-type: var(--col-done); }
 .wf-node--work { --wf-type: var(--col-progress); }
@@ -1786,6 +1787,9 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node--ask, .wf-node--human { --wf-type: var(--col-input); }
 .wf-node--merge, .wf-node--git { --wf-type: var(--accent); }
 .wf-node--decision { --wf-type: var(--col-ready); }
+/* Разветвление и слияние — пара: общий цвет из цветов темы (своего токена в теме нет), отличный от «Решения ИИ» (там выбирают один путь, здесь идут все). */
+.wf-node--fork, .wf-node--join { --wf-type: var(--wf-lane); }
+:root { --wf-lane: color-mix(in srgb, var(--col-progress) 45%, var(--col-review)); }
 .wf-node--condition { --wf-type: var(--muted); }
 .wf-node-strip { fill: var(--wf-type, var(--muted)); }
 /* Проблема на холсте: значок «!» в углу ноды и плашка с текстом под ней — видно без наведения. */
@@ -1811,11 +1815,21 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 /* Порт варианта ноды «Решение ИИ»: id варианта — данные графа, поэтому класс общий (`--opt`), а не `--<id>`. */
 .wf-port--opt circle { stroke: var(--col-ready); }
 .wf-port--opt .wf-port-label { fill: var(--col-ready); }
+/* Порт пути «Разветвления»: как у вариантов — общий класс `--lane`, id пути — данные графа. */
+.wf-port--lane circle { stroke: var(--wf-lane); }
+.wf-port--lane .wf-port-label { fill: var(--wf-lane); }
+/* Области путей при выделенном разветвлении или слиянии: обводка ноды цветом пути, без заливки — не спорит с выделением. */
+.wf-node-lane { fill: none; stroke: var(--lane); stroke-width: 2; stroke-dasharray: 5 4; opacity: .8; pointer-events: none; }
+.wf-node--lane-0 { --lane: var(--col-progress); }
+.wf-node--lane-1 { --lane: var(--col-review); }
+.wf-node--lane-2 { --lane: var(--col-input); }
+.wf-node--lane-3 { --lane: var(--col-done); }
 
 .wf-edge { --edge: var(--muted); cursor: pointer; }
 .wf-edge--accept, .wf-edge--ok { --edge: var(--wf-accept); }
 .wf-edge--reject, .wf-edge--conflict, .wf-edge--error { --edge: var(--wf-reject); }
 .wf-edge--opt { --edge: var(--col-ready); }
+.wf-edge--lane { --edge: var(--wf-lane); }
 .wf-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.8; opacity: .75; }
 .wf-edge-arrow { fill: var(--edge); opacity: .75; }
 .wf-edge:hover .wf-edge-line, .wf-edge:hover .wf-edge-arrow { opacity: 1; }
@@ -2026,6 +2040,8 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
 .wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span, .wf-port-field.wf-port--error > span { color: var(--wf-reject); }
 .wf-port-field.wf-port--opt > span { color: var(--col-ready); overflow-wrap: anywhere; }
+.wf-port-field.wf-port--lane > span { color: var(--wf-lane); overflow-wrap: anywhere; }
+.wf-fork-join { font-size: 13px; overflow-wrap: anywhere; }
 .wf-opts { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
 .wf-opts legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
 .wf-opts > .hint { margin: 0; font-size: 11px; }
@@ -2074,6 +2090,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-help-port.wf-port--accept, .wf-help-port.wf-port--ok { color: var(--wf-accept); }
 .wf-help-port.wf-port--reject, .wf-help-port.wf-port--conflict, .wf-help-port.wf-port--error { color: var(--wf-reject); }
 .wf-help-port.wf-port--opt { color: var(--col-ready); }
+.wf-help-port.wf-port--lane { color: var(--wf-lane); }
 .wf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--col-input); }
 .wf-dot--error { background: var(--danger); }
 .wf-dot--warning { background: var(--col-input); }

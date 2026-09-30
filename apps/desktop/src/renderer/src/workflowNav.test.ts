@@ -135,12 +135,12 @@ test('крошки: «Граф типа › Реализация»', () => {
   assert.deepEqual(crumbs(named, []).map((x) => x.title), ['Граф типа'])
 })
 
-test('палитра пути без «Вопроса человеку» и «Решения ИИ», палитра графа типа — с ними', () => {
-  assert.equal(wfAddableTypes('run').includes('ask'), true)
-  assert.equal(wfAddableTypes('run').includes('decision'), true)
-  assert.equal(wfAddableTypes('subtask').includes('ask'), false)
-  assert.equal(wfAddableTypes('subtask').includes('decision'), false)
-  assert.deepEqual(wfAddableTypes('subtask'), wfAddableTypes('run').filter((t) => t !== 'ask' && t !== 'decision'))
+test('палитра пути без «Вопроса человеку», «Решения ИИ», «Разветвления» и «Слияния», палитра графа типа — с ними', () => {
+  for (const type of ['ask', 'decision', 'fork', 'join'] as const) {
+    assert.equal(wfAddableTypes('run').includes(type), true, type)
+    assert.equal(wfAddableTypes('subtask').includes(type), false, type)
+  }
+  assert.deepEqual(wfAddableTypes('subtask'), wfAddableTypes('run').filter((t) => !['ask', 'decision', 'fork', 'join'].includes(t)))
 })
 
 test('locateId: адрес проблемы `impl/rev` → путь и id внутри', () => {

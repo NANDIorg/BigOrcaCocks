@@ -4,7 +4,7 @@ import { defaultWorkflow, type Task, type Workflow } from '@orca-board/core'
 import { activeStageNodes, laneTitle, runStageLabel, runStagePositions, splitByStage, stageGroups, taskStageKey } from './runStage'
 import { wfNodeTitles } from './cardState'
 import { setLocale } from './i18n'
-import { graphWithFork } from './workflowFixture'
+import { runGraphWithFork } from './workflowFixture'
 
 /** Дефолтный граф глобальной задачи: «Реализация» → «Ревью» (gate) → «Проверка человеком» → конец. */
 const wf: Workflow = defaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
@@ -109,7 +109,7 @@ test('splitByStage: карточки колонки идут группами в
 
 // --- Разветвление: несколько этапов сразу ---
 
-const forkWf = graphWithFork()
+const forkWf = runGraphWithFork()
 const forked = (lanes: Array<[string, string, number?]>, visits: Record<string, number> = {}) => ({
   workflowScope: 'run' as const,
   stage: { nodeId: 'split', visits: { split: 1, ...visits } },

@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_DECISION_MAX_OPTIONS, WF_DECISION_OPTION_ID, nextStage, wfPorts, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_DECISION_MAX_OPTIONS, WF_FORK_MAX_BRANCHES, WF_DECISION_OPTION_ID, nextStage, wfPorts, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
 import {
   WF_TYPE_ORDER, WF_TYPE_TITLES, addDecisionOption, addRetryLimit, changeNodeType, decisionOptionId, moveDecisionOption,
-  patchDecisionOption, removeDecisionOption, resetDecisionOptions, conditionOfKind, exportWorkflowJson, hasColumn, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName
+  patchDecisionOption, removeDecisionOption, resetDecisionOptions, conditionOfKind, exportWorkflowJson, hasColumn, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName,
+  addForkBranch, addJoinFor, forkJoins, forkOptions, moveForkBranch, removeForkBranch, renameForkBranch, setJoinFork, workflowSaveError
 } from './workflowForm'
 import { setLocale } from './i18n'
-import { graphWithMerge } from './workflowFixture'
+import { graphWithFork, graphWithMerge } from './workflowFixture'
 import { connect } from './workflowEdit'
 import { legacyDefaultWorkflow } from '@orca-board/core'
 
@@ -372,4 +373,108 @@ test('импорт графа с decision: тип известен, вариан
   assert.ok('workflow' in res)
   assert.deepEqual(optionsOf(res.workflow, 'limit'), optionsOf(g, 'limit'))
   assert.deepEqual(edgesFrom(res.workflow, 'limit'), edgesFrom(g, 'limit'))
+})
+
+// ---------- разветвление и слияние ----------
+
+const forkOf = (w: Workflow) => {
+  const n = node(w, 'split')
+  assert.equal(n?.type, 'fork')
+  return n as Extract<Workflow['nodes'][number], { type: 'fork' }>
+}
+
+test('пути fork: добавить до максимума (id — один раз и по маске), переименовать, двигать, удалить вместе с ребром', () => {
+  const g = graphWithFork()
+  const added = addForkBranch(g, 'split')
+  assert.equal(added.branchId, 'path_3')
+  assert.deepEqual(forkOf(added.workflow).branches.at(-1), { id: 'path_3', label: 'Путь 3' })
+  // Переименование не трогает id — ребро пути остаётся.
+  const renamed = renameForkBranch(added.workflow, 'split', 'backend', 'API')
+  assert.deepEqual(forkOf(renamed).branches[0], { id: 'backend', label: 'API' })
+  assert.equal(portTarget(renamed, 'split', 'backend'), 'work_be')
+  // До максимума, дальше — граф как есть.
+  let full = added.workflow
+  while (forkOf(full).branches.length < WF_FORK_MAX_BRANCHES) full = addForkBranch(full, 'split').workflow
+  assert.equal(addForkBranch(full, 'split').workflow, full)
+  assert.equal(addForkBranch(full, 'split').branchId, undefined)
+  assert.equal(new Set(forkOf(full).branches.map((b) => b.id)).size, WF_FORK_MAX_BRANCHES)
+  for (const b of forkOf(full).branches) assert.match(b.id, WF_DECISION_OPTION_ID)
+  // Порядок — порядок портов.
+  const moved = moveForkBranch(g, 'split', 'frontend', -1)
+  assert.deepEqual(wfPorts(forkOf(moved)), ['frontend', 'backend'])
+  assert.equal(moveForkBranch(g, 'split', 'backend', -1), g, 'выше первого — без изменений')
+  // Удаление пути уносит его ребро; соседнее остаётся.
+  const removed = removeForkBranch(g, 'split', 'frontend')
+  assert.deepEqual(wfPorts(forkOf(removed)), ['backend'])
+  assert.equal(portTarget(removed, 'split', 'frontend'), undefined)
+  assert.equal(portTarget(removed, 'split', 'backend'), 'work_be')
+  assert.ok(validateWorkflow(removed, { roles: DEFAULT_ROLES }).errors.some((i) => i.code === 'forkTooFewBranches'))
+  // Не fork — граф как есть.
+  assert.equal(addForkBranch(g, 'work_be').workflow, g)
+  assert.equal(renameForkBranch(g, 'split', 'нет', 'x'), g)
+})
+
+test('join выбирает парный fork; слияния fork и «Добавить слияние»', () => {
+  const g = graphWithFork()
+  assert.deepEqual(forkJoins(g, 'split').map((n) => n.id), ['merge_paths'])
+  assert.deepEqual(forkOptions(g).map((o) => o.id), ['split'])
+  const unpaired = setJoinFork(g, 'merge_paths', '')
+  assert.deepEqual(forkJoins(unpaired, 'split'), [])
+  assert.ok(validateWorkflow(unpaired, { roles: DEFAULT_ROLES }).errors.some((i) => i.code === 'joinNoFork'))
+  assert.equal(setJoinFork(unpaired, 'merge_paths', 'split').nodes.find((n) => n.id === 'merge_paths')?.type, 'join')
+  assert.deepEqual(forkJoins(setJoinFork(unpaired, 'merge_paths', 'split'), 'split').map((n) => n.id), ['merge_paths'])
+  assert.equal(setJoinFork(g, 'work_be', 'split'), g, 'не join — граф как есть')
+  // Слияние уже есть — «Добавить слияние» ничего не делает.
+  assert.equal(addJoinFor(g, 'split').workflow, g)
+  // Без слияния: новое правее путей, пара — этот fork.
+  const noJoin = { ...g, nodes: g.nodes.filter((n) => n.id !== 'merge_paths'), edges: g.edges.filter((e) => e.from !== 'merge_paths' && e.to !== 'merge_paths') }
+  const res = addJoinFor(noJoin, 'split')
+  const join = res.workflow.nodes.find((n) => n.id === res.nodeId)!
+  assert.equal(join.type, 'join')
+  assert.deepEqual(join.type === 'join' && join.forkId, 'split')
+  assert.ok(join.x > 400, `правее путей: ${join.x}`)
+})
+
+test('changeNodeType: decision ↔ fork сохраняет варианты как пути и рёбра; у fork/join нет колонки', () => {
+  const g = graphWithFork()
+  const asDecision = changeNodeType(g, 'split', 'decision')
+  const d = node(asDecision, 'split')
+  assert.deepEqual(d?.type === 'decision' && d.options.map((o) => o.id), ['backend', 'frontend'])
+  assert.equal(portTarget(asDecision, 'split', 'frontend'), 'work_fe')
+  const back = changeNodeType(asDecision, 'split', 'fork')
+  assert.deepEqual(forkOf(back).branches, forkOf(g).branches)
+  assert.equal(portTarget(back, 'split', 'backend'), 'work_be')
+  // Смена на join: порты путей уходят, пара — ближайшее незакрытое разветвление (здесь его нет).
+  const toJoin = changeNodeType(g, 'work_be', 'join')
+  assert.deepEqual(toJoin.edges.filter((e) => e.from === 'work_be').map((e) => e.outcome), ['next'])
+  assert.ok(WF_TYPE_ORDER.includes('fork') && WF_TYPE_ORDER.includes('join'))
+  assert.equal(hasColumn('fork'), false)
+  assert.equal(hasColumn('join'), false)
+  assert.equal(WF_TYPE_TITLES.fork, 'Разветвление')
+  assert.equal(WF_TYPE_TITLES.join, 'Слияние')
+})
+
+test('импорт и экспорт JSON с fork/join: граф возвращается как был', () => {
+  const g = graphWithFork()
+  const res = parseWorkflowJson(exportWorkflowJson(g))
+  assert.ok(!('error' in res))
+  if ('error' in res) return
+  assert.deepEqual(res.workflow, g)
+  assert.equal(res.migration, undefined)
+  assert.deepEqual(validateWorkflow(res.workflow, { roles: DEFAULT_ROLES }).errors, [])
+})
+
+test('ошибка сохранения: старый main не знает fork/join — «перезапустите приложение», остальное — как есть', () => {
+  const old = 'воркфлоу не сохранён: нода «split»: неизвестный тип «fork»; нода «merge_paths»: неизвестный тип «join»'
+  assert.match(workflowSaveError(old), /перезапустите/)
+  setLocale('en')
+  try {
+    assert.match(workflowSaveError(old), /restart the app/)
+  } finally {
+    setLocale('ru')
+  }
+  // Тип, которого не знает и renderer, — ошибка графа, а не старый main.
+  const unknown = 'воркфлоу не сохранён: нода «x»: неизвестный тип «teleport»'
+  assert.equal(workflowSaveError(unknown), unknown)
+  assert.equal(workflowSaveError('воркфлоу не сохранён: нет ноды «Старт»'), 'воркфлоу не сохранён: нет ноды «Старт»')
 })

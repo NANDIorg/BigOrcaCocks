@@ -6,7 +6,7 @@ import {
   walkHistory, workPath
 } from './workflowProgress'
 import { setLocale } from './i18n'
-import { graphWithFork } from './workflowFixture'
+import { runGraphWithFork } from './workflowFixture'
 
 setLocale('ru')
 
@@ -286,7 +286,7 @@ test('закрытый вручную прогон: последний захо�
 
 // --- Разветвление (fork/join): несколько «сейчас», слияние ждёт, история путей перемешана по времени ---
 
-const FORK = graphWithFork()
+const FORK = runGraphWithFork()
 
 /** Вход в разветвление: основной ход на fork, затем первые записи путей (`from: fork`, исход — id пути). */
 const FH: StageChange[] = [
@@ -312,7 +312,7 @@ function forkAt(history: StageChange[], lanes: Array<[string, string, number?]>,
 
 const states = (p: ReturnType<typeof runProgress>): Record<string, string> => Object.fromEntries(Object.entries(p.nodes).map(([id, n]) => [id, n.state]))
 
-test('graphWithFork: фикстура — валидный граф глобальной задачи', () => {
+test('runGraphWithFork: фикстура — валидный граф глобальной задачи', () => {
   assert.deepEqual(validateWorkflow(FORK, { roles: [{ id: 'reviewer', title: 'Reviewer', agent: 'claude' }] }).errors, [])
 })
 
