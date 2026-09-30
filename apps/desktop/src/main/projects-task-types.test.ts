@@ -1,6 +1,6 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Типы задач в ProjectManager: библиотека (засев заготовок один раз,
 // правка и удаление любого типа, тип по умолчанию после удаления), типы проекта, тип нового прогона и роли по прогону,
-// колонки проекта. Миграция — task-types-migration.test.ts.
+// колонки проекта, экспорт типа в файл. Миграция — task-types-migration.test.ts.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -8,10 +8,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes, defaultWorkflow,
-  type BoardColumn, type Role
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes, defaultWorkflow, defaultSubflow,
+  resolveTaskType, taskTypeFileName, TASK_TYPE_FILE_FORMAT, TASK_TYPE_FILE_VERSION,
+  type BoardColumn, type Role, type TaskTypeFile, type TaskTypeFileMeta, type WfNode, type Workflow
 } from '@orca-board/core'
 import { ProjectManager } from './projects'
+import { OrcaError } from './i18n'
 import { PROJECTS_FILE_VERSION } from './task-types-migration'
 
 const PID = 'p1'
@@ -210,6 +212,135 @@ describe('библиотека типов', () => {
   })
 })
 
+const META: TaskTypeFileMeta = { appVersion: '0.9.3', exportedAt: '2026-09-30T12:34:56.000Z' }
+
+/** Файл экспорта типа, разобранный из текста — как его прочтёт импорт. */
+function exported(pm: ProjectManager, id: string): TaskTypeFile {
+  return JSON.parse(pm.exportTaskType(id, META).text) as TaskTypeFile
+}
+
+/** Раскрытый тип без того, что у копии своё: id. */
+function resolvedSettings(pm: ProjectManager, id: string): Record<string, unknown> {
+  const { typeId: _typeId, ...rest } = resolveTaskType(pm.taskType(id)!)
+  return rest
+}
+
+/** Ключ словаря у ошибки: проверяем код, а не текст на каком-то языке. */
+const orcaKey = (key: string) => (e: unknown): boolean => e instanceof OrcaError && e.key === key
+
+describe('экспорт типа', () => {
+  it('каждая заготовка: имя файла по названию, текст формата 1 с раскрытыми настройками, без id', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    for (const preset of presetTaskTypes()) {
+      const { fileName, text } = pm.exportTaskType(preset.id, META)
+      assert.equal(fileName, taskTypeFileName(preset.title), preset.id)
+      assert.match(fileName, /^task-type-.+\.json$/, preset.id)
+      assert.ok(text.endsWith('}\n'), preset.id)
+      const file = JSON.parse(text) as TaskTypeFile
+      assert.equal(file.format, TASK_TYPE_FILE_FORMAT, preset.id)
+      assert.equal(file.formatVersion, TASK_TYPE_FILE_VERSION, preset.id)
+      assert.equal(file.exportedAt, META.exportedAt)
+      assert.equal(file.appVersion, META.appVersion)
+      assert.equal('id' in file.type, false, preset.id)
+      assert.equal(file.type.title, preset.title)
+      assert.equal(file.type.description, preset.description)
+      const resolved = resolveTaskType(preset)
+      assert.deepEqual(file.type.settings.roles, resolved.roles, preset.id)
+      assert.deepEqual(file.type.settings.workflow, resolved.workflow, preset.id)
+      assert.equal(file.type.settings.permissionMode, resolved.permissionMode, preset.id)
+    }
+    assert.deepEqual(pm.taskTypes(), presetTaskTypes(), 'экспорт библиотеку не меняет')
+  })
+
+  it('совместимость с будущим импортом: saveTaskType(file.type) даёт тип с теми же раскрытыми настройками', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const empty = pm.saveTaskType({ title: 'Новый тип', settings: {} })
+    for (const src of [...presetTaskTypes(), empty]) {
+      const copy = pm.saveTaskType(exported(pm, src.id).type)
+      assert.notEqual(copy.id, src.id)
+      assert.deepEqual(resolvedSettings(pm, copy.id), resolvedSettings(pm, src.id), src.id)
+      assert.equal(copy.description, src.description, src.id)
+    }
+  })
+
+  it('тип с пустыми настройками: роли, граф и разрешения раскрыты, правил нет', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const t = pm.saveTaskType({ title: 'Новый тип', settings: {} })
+    const file = exported(pm, t.id)
+    assert.deepEqual(file.type, {
+      title: 'Новый тип',
+      settings: { permissionMode: 'auto', roles: DEFAULT_ROLES, workflow: defaultWorkflow(DEFAULT_ROLES) }
+    })
+  })
+
+  it('неизвестный id — type.notFound', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    assert.throws(() => pm.exportTaskType('ghost', META), orcaKey('type.notFound'))
+    assert.throws(() => pm.exportTaskType('ghost', META), /тип задачи не найден: ghost/)
+  })
+
+  it('граф будущей версии — workflow.future, файла нет', () => {
+    const future = { ...defaultWorkflow(DEFAULT_ROLES), version: 99 }
+    writeConfig({ taskTypesSeeded: true, taskTypes: [{ id: 'type_future', title: 'Из будущего', settings: { workflow: future } }] })
+    const pm = new ProjectManager(tmp)
+    assert.deepEqual(pm.taskType('type_future')?.settings.workflow, future, 'граф будущей версии в типе хранится как есть')
+    assert.throws(() => pm.exportTaskType('type_future', META), orcaKey('workflow.future'))
+    assert.throws(() => pm.exportTaskType('type_future', META), /версии 99.*обновите приложение/)
+  })
+
+  it('свой граф с путём подзадачи: версия, позиции и колонки как есть, ссылки на шаблоны сняты', () => {
+    writeConfig()
+    const pm = new ProjectManager(tmp)
+    const sub = defaultSubflow()
+    const workflow: Workflow = {
+      version: 2,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        {
+          id: 'work', type: 'work', x: 220, y: 40, title: 'Реализация', column: 'col_dev', templateId: 'tpl_work',
+          subflow: { nodes: sub.nodes.map((n, i): WfNode => ({ ...n, column: `col_sub_${i}`, templateId: `tpl_sub_${i}` })), edges: sub.edges }
+        },
+        { id: 'review', type: 'gate', roleId: 'reviewer', x: 440, y: 0, column: 'col_review', templateId: 'tpl_gate' },
+        { id: 'end', type: 'end', x: 660, y: 0 }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'work' },
+        { id: 'e2', from: 'work', outcome: 'next', to: 'review' },
+        { id: 'e3', from: 'review', outcome: 'accept', to: 'end' },
+        { id: 'e4', from: 'review', outcome: 'reject', to: 'work' }
+      ]
+    }
+    const t = pm.saveTaskType({ title: 'Свой: граф/путь', description: 'описание', settings: { roles: DEFAULT_ROLES, workflow, agentRules: 'правила', permissionMode: 'acceptEdits' } })
+    const { fileName, text } = pm.exportTaskType(t.id, META)
+    assert.equal(fileName, 'task-type-Свой-граф-путь.json')
+    const file = JSON.parse(text) as TaskTypeFile
+    assert.equal(file.type.description, 'описание')
+    assert.equal(file.type.settings.agentRules, 'правила')
+    assert.equal(file.type.settings.permissionMode, 'acceptEdits')
+    const withoutTemplate = (n: WfNode): WfNode => (({ templateId: _templateId, ...rest }) => rest as WfNode)(n)
+    const expected: Workflow = {
+      ...workflow,
+      nodes: workflow.nodes.map((n) => (n.type === 'work' && n.subflow
+        ? { ...withoutTemplate(n), subflow: { ...n.subflow, nodes: n.subflow.nodes.map(withoutTemplate) } } as WfNode
+        : withoutTemplate(n)))
+    }
+    assert.deepEqual(file.type.settings.workflow, expected)
+    assert.doesNotMatch(text, /templateId/)
+    assert.deepEqual(pm.taskType(t.id)?.settings.workflow, workflow, 'сам тип не изменился: шаблоны на месте')
+  })
+
+  it('роль с агентом, которого нет на машине, остаётся в файле', () => {
+    writeConfig({ enabledAgents: ['codex'] })
+    const pm = new ProjectManager(tmp)
+    const roles: Role[] = [...DEFAULT_ROLES, { ...DESIGNER, agent: 'claude', model: 'opus', systemPrompt: 'Рисуй макеты' }]
+    const t = pm.saveTaskType({ title: 'С дизайнером', settings: { roles } })
+    assert.deepEqual(exported(pm, t.id).type.settings.roles, roles)
+  })
+})
 
 describe('типы проекта', () => {
   it('add: колонки встроенные, тип по умолчанию — заданный или библиотеки; копии настроек нет', () => {

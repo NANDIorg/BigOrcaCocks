@@ -396,6 +396,11 @@ export interface TaskTypeInput {
   workflowNotes?: WfMigrationNote[]
 }
 
+/** Итог «Экспорта типа»: куда сохранён файл. Диалог закрыли — вместо результата null. */
+export interface TaskTypeExportResult {
+  path: string
+}
+
 /** Создать (без `id`) или целиком заменить шаблон ноды; `updatedAt` ставит main. */
 export interface NodeTemplateInput {
   id?: string
@@ -696,6 +701,8 @@ export interface OrcaApi {
     /** Копия типа под новым id. */
     duplicate(id: string): Promise<TaskType>
     setDefault(id: string): Promise<TaskTypesState>
+    /** Диалог «Сохранить как» и запись файла типа целиком (формат — core/task-type-file.ts); закрыли диалог — null. */
+    export(id: string): Promise<TaskTypeExportResult | null>
   }
   /**
    * Библиотека шаблонов нод (docs/architecture.md → «Шаблоны нод»): глобальная, общая для всех типов задач. Вставка

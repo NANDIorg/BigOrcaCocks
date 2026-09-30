@@ -25,6 +25,7 @@ export default {
   'dialog.update.now': 'Update now',
   'dialog.update.whenIdle': 'When agents finish',
   'dialog.pickRepo': 'Choose a git repository',
+  'dialog.exportType': 'Export task type',
 
   'notify.question': 'Question',
   'notify.workflowBlocked': 'Workflow stopped',
@@ -131,6 +132,7 @@ export default {
   'type.noRole': 'type “{title}” has no role “{role}”',
   'type.settingsNotObject': '{label}: an object is expected',
   'type.unknownPermission': '{label}: unknown permission mode: {mode}',
+  'type.exportFailed': 'could not save the task type file {path}: {reason}',
 
   'projectTypes.notObject': 'project types: an object is expected',
   'projectTypes.badIds': 'project types: typeIds must be an array of type ids',

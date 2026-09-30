@@ -22,6 +22,16 @@ export function taskTypeLibraryApi(api: Partial<OrcaApi> | undefined): OrcaApi['
   return api.taskTypes
 }
 
+/**
+ * `window.orca.taskTypes.export` или «перезапустите приложение»: раздел типов в preload уже есть, а «Экспорта» ещё
+ * нет — renderer обновился по HMR раньше preload.
+ */
+export function taskTypeExportApi(api: Partial<OrcaApi> | undefined): OrcaApi['taskTypes']['export'] {
+  const library: Partial<OrcaApi['taskTypes']> = taskTypeLibraryApi(api)
+  if (typeof library.export !== 'function') throw new Error(taskTypesStaleMessage())
+  return library.export
+}
+
 /** Есть ли у preload выбор типов проекта (`projects.setTaskTypes`). */
 export function hasProjectTaskTypes(api: Partial<OrcaApi> | undefined): boolean {
   return !!api?.taskTypes && typeof api.projects?.setTaskTypes === 'function'

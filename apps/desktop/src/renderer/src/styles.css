@@ -1106,6 +1106,9 @@ button:disabled { opacity: .45; cursor: default; }
 .tpl-actions .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
 .tpl-actions .btn-sm svg { width: 14px; height: 14px; }
 .tpl-actions .btn-sm.danger { color: var(--danger); border-color: rgba(239,107,107,.5); }
+/* Ошибка и итог «Экспорта» под шапкой: путь файла длинный и без пробелов — переносится в любом месте. */
+.tpl-status { margin: 0 0 14px; max-width: 80ch; overflow-wrap: anywhere; }
+.tpl-notice { color: var(--muted); font-size: 12px; }
 .tpl-rename {
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 14px;
   padding: 12px 14px; background: var(--side); border-radius: var(--radius);

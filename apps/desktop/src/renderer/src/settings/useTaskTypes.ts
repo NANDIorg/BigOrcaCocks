@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TaskType } from '@orca-board/core'
-import type { TaskTypeInput, TaskTypesState } from '../../../shared/ipc'
+import type { TaskTypeExportResult, TaskTypeInput, TaskTypesState } from '../../../shared/ipc'
 import { ipcErrorMessage } from '../useAutoSave'
 import {
-  patchedTaskType, renamedTaskType, taskTypeLibraryApi, taskTypesError, taskTypesStaleMessage, type TaskTypePatch
+  patchedTaskType, renamedTaskType, taskTypeExportApi, taskTypeLibraryApi, taskTypesError, taskTypesStaleMessage, type TaskTypePatch
 } from '../taskTypeEdit'
 import { t } from '../i18n'
 
@@ -28,6 +28,11 @@ export interface TaskTypesHook {
   duplicate(id: string): Promise<TaskType>
   remove(id: string): Promise<void>
   setDefault(id: string): Promise<void>
+  /**
+   * Сохранить тип целиком в файл (диалог «Сохранить как» в main). В файл идёт сохранённая версия типа, а не черновики
+   * редакторов. Диалог закрыли — null; ошибка — наружу.
+   */
+  exportType(id: string): Promise<TaskTypeExportResult | null>
 }
 
 /**
@@ -104,6 +109,16 @@ export function useTaskTypes(onChanged?: () => Promise<void>): TaskTypesHook {
       }),
     duplicate: (id) => write(() => taskTypeLibraryApi(window.orca).duplicate(id)),
     remove: (id) => write(async () => { await taskTypeLibraryApi(window.orca).delete(id) }),
-    setDefault: (id) => write(async () => { await taskTypeLibraryApi(window.orca).setDefault(id) })
+    setDefault: (id) => write(async () => { await taskTypeLibraryApi(window.orca).setDefault(id) }),
+    // Не через write(): тип не меняется, перечитывать нечего. Очередь ждём, чтобы в файл попали уже запущенные
+    // автосохранения редакторов.
+    exportType: async (id) => {
+      await queue.current
+      try {
+        return await taskTypeExportApi(window.orca)(id)
+      } catch (e) {
+        throw new Error(message(e))
+      }
+    }
   }
 }
