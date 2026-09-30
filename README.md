@@ -1,9 +1,8 @@
-<h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <img src="docs/assets/logo.svg" alt="orca-board" height="56">
-  </picture>
-</h1>
+<p align="center">
+  <img src="apps/desktop/build/icon.svg" alt="Логотип orca-board: косатка, соединённая с тремя узлами сети" width="128" height="128">
+</p>
+
+<h1 align="center">orca-board</h1>
 
 <p align="center">Оркестратор CLI-агентов с канбан-доской — по вашей подписке, без API-ключей.</p>
 
