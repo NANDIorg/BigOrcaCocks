@@ -19,6 +19,7 @@ import { useTaskTypes } from './useTaskTypes'
 import { useT } from '../i18n'
 import { saveAppSettings } from '../appSettingsSave'
 import { assistantSavePatch } from '../assistantSettings'
+import { extraArgsSupported } from '../extraArgsHints'
 import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
@@ -147,7 +148,7 @@ export function SettingsModal({ agents, updates, onProjectsChanged, onAppSetting
 
   /** Ассистент сохраняется автосохранением редактора: сбой бросаем — его покажет сам редактор. */
   async function saveAssistant(assistant: AssistantSettings): Promise<void> {
-    const res = await saveAppSettings(window.orca.app, { assistant: assistantSavePatch(assistant) })
+    const res = await saveAppSettings(window.orca.app, { assistant: assistantSavePatch(assistant, extraArgsSupported(agents)) })
     if (res.settings) applySettings(res.settings)
     if (res.error) throw new Error(res.error)
   }
