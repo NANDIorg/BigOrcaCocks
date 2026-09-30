@@ -318,7 +318,6 @@ export default {
   "assistant.permission.allow_always": "Разрешать всегда",
   "assistant.permission.reject_once": "Отклонить",
   "assistant.permission.reject_always": "Отклонять всегда",
-  "assistant.tool.cancelled": "отменено",
   "assistant.terminalTitle": "{agent} в отдельном терминале",
   "assistant.terminalDescription": "У этого агента пока нет протокола для полноценного чата. Диалог и подтверждения доступны во вкладке терминалов.",
   'assistant.title': 'Ассистент',
@@ -337,9 +336,6 @@ export default {
   'assistant.send': 'Отправить',
   'assistant.sendHint': 'Enter — отправить, Shift+Enter — перенос строки',
   'assistant.sendError': 'Не удалось отправить: {error}',
-  'assistant.tool.running': 'выполняется',
-  'assistant.tool.ok': 'готово',
-  'assistant.tool.error': 'ошибка',
 
   // Прогоны (runs.tsx)
   'runs.badge': 'Прогон: {objective}',

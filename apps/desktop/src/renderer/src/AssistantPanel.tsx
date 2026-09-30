@@ -6,7 +6,7 @@ import { agentTitle } from './defaultTitles'
 import { Markdown } from './Markdown'
 import { Icon } from './icons'
 import { AssistantInteraction } from './AssistantInteraction'
-import { emptyChatState, groupMessages, subscribeAssistantChat, type ChatState } from './assistantChat'
+import { emptyChatState, groupMessages, isAssistantThinking, subscribeAssistantChat, type ChatState } from './assistantChat'
 import { ipcErrorMessage } from './ipcError'
 import { useModalFocus } from './useModalFocus'
 import { useT, type TFunction, type TKey } from './i18n'
@@ -30,12 +30,6 @@ function ChatMessageRow({ message, t }: { message: AssistantChatMessage; t: TFun
   useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1800); return () => clearTimeout(timer) }, [copied])
   return (
     <article className={`chat-msg chat-msg-${message.role}`}>
-      {message.toolCalls?.map((call, index) => (
-        <details key={call.id ?? index} className={`chat-tool chat-tool-${call.status}`}>
-          <summary><span className="chat-tool-status">{call.status === 'running' ? <span className="update-spin"><Icon.spinner /></span> : call.status === 'ok' ? <Icon.check /> : <Icon.info />}</span><span className="chat-tool-name">{call.name}</span><span className="chat-tool-label">{t(`shell.assistant.tool.${call.status}` as TKey)}</span><Icon.down /></summary>
-          <pre>{call.input}</pre>
-        </details>
-      ))}
       {message.text && (message.role === 'human' ? <div className="chat-human-text">{message.text}</div> : <Markdown text={message.text} />)}
       {message.hasImage && <div className="muted">{t('shell.assistant.hasImage')}</div>}
       {message.text && <button className="chat-copy" type="button" aria-label={t('shell.assistant.copy')} title={t('shell.assistant.copy')} onClick={() => {
@@ -97,6 +91,8 @@ export function AssistantPanel({ open, suspended, activePty, status, onClose, on
   const working = chat.status === 'thinking' || chat.status === 'waiting'
   const canSend = Boolean(activePty) && !terminal && !loading && !status.busy && !working && chat.status !== 'starting' && chat.status !== 'error'
   const groups = groupMessages(chat.messages)
+  const starting = loading || status.busy || chat.status === 'starting'
+  const thinkingLabel = t(starting ? 'shell.assistant.starting' : 'shell.assistant.thinking')
   useLayoutEffect(() => {
     if (!open || !stickRef.current) return
     const feed = feedRef.current
@@ -160,7 +156,7 @@ export function AssistantPanel({ open, suspended, activePty, status, onClose, on
               {groups.length === 0 && !working && !failure && <div className="chat-welcome"><span className="chat-welcome-icon"><Icon.chat /></span><h2>{t('shell.assistant.welcomeTitle')}</h2><p>{t('shell.assistant.welcomeDescription')}</p><div className="chat-suggestions">{(['tasks', 'projects', 'settings'] as const).map((key) => <button type="button" key={key} onClick={() => { setDraft(t(`shell.assistant.suggestion.${key}.prompt`)); composeRef.current?.focus() }}><span>{key === 'tasks' ? <Icon.board /> : key === 'projects' ? <Icon.folder /> : <Icon.gear />}</span>{t(`shell.assistant.suggestion.${key}.label`)}<Icon.chevron /></button>)}</div></div>}
               {groups.map((group) => <div key={group.messages[0].id} className={`chat-group chat-${group.speaker}`}><div className="chat-speaker">{t(group.speaker === 'human' ? 'shell.assistant.chatYou' : 'shell.assistant.chatAgent')}</div>{group.messages.map((message) => <ChatMessageRow key={message.id} message={message} t={t} />)}</div>)}
               {chat.interactions.map((interaction) => <AssistantInteraction key={`${activePty}-${interaction.id}`} interaction={interaction} onAnswer={(answer) => window.orca.assistantChat.respond(activePty!, interaction.id, answer)} />)}
-              {(chat.status === 'thinking' || chat.status === 'starting' || loading || status.busy) && <div className="chat-thinking" role="status"><span className="chat-typing" aria-hidden="true"><i /><i /><i /></span>{t(chat.status === 'thinking' ? 'shell.assistant.thinking' : 'shell.assistant.starting')}</div>}
+              {(starting || isAssistantThinking(chat)) && <div className="chat-thinking" role="status" aria-label={thinkingLabel}><span className="chat-thinking-text" aria-hidden="true">{thinkingLabel.replace(/…$/u, '')}</span><span className="chat-typing" aria-hidden="true"><i /><i /><i /></span></div>}
               {chat.status === 'interrupted' && <div className="chat-turn-note" role="status">{t('shell.assistant.interrupted')}</div>}
             </>}
             {failure && <div className="chat-failure" role="alert"><Icon.info /><div><strong>{t('shell.assistant.errorTitle')}</strong><p>{failure}</p><button className="btn-text" type="button" disabled={status.busy} onClick={onReset}>{t('shell.assistant.retry')}</button></div></div>}

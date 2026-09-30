@@ -67,13 +67,31 @@ export function subscribeAssistantChat(
 }
 
 export interface MessageGroup { speaker: 'human' | 'assistant'; messages: AssistantChatMessage[] }
+
+function hasVisibleContent(message: AssistantChatMessage): boolean {
+  return Boolean(message.text.trim() || message.hasImage)
+}
+
+/** Служебный вывод остаётся в модели протокола, но не становится репликой чата. */
 export function groupMessages(messages: AssistantChatMessage[]): MessageGroup[] {
   const groups: MessageGroup[] = []
   for (const message of messages) {
+    if (message.role === 'tool' || !hasVisibleContent(message)) continue
     const speaker = message.role === 'human' ? 'human' : 'assistant'
     const last = groups.at(-1)
     if (last?.speaker === speaker) last.messages.push(message)
     else groups.push({ speaker, messages: [message] })
   }
   return groups
+}
+
+/** Ждём только первый видимый ответ на текущую реплику, а не конец работы CLI. */
+export function isAssistantThinking(state: Pick<ChatState, 'messages' | 'status' | 'interactions'>): boolean {
+  if (state.status !== 'thinking' || state.interactions.length > 0) return false
+  for (let index = state.messages.length - 1; index >= 0; index--) {
+    const message = state.messages[index]
+    if (message.role === 'human') break
+    if (message.role === 'agent' && hasVisibleContent(message)) return false
+  }
+  return true
 }

@@ -306,7 +306,6 @@ export default {
   "assistant.permission.allow_always": "Always allow",
   "assistant.permission.reject_once": "Decline",
   "assistant.permission.reject_always": "Always decline",
-  "assistant.tool.cancelled": "cancelled",
   "assistant.terminalTitle": "{agent} in a separate terminal",
   "assistant.terminalDescription": "This agent does not yet offer a full chat protocol. Use the terminal tab to chat and respond to permission requests.",
   'assistant.title': 'Assistant',
@@ -325,9 +324,6 @@ export default {
   'assistant.send': 'Send',
   'assistant.sendHint': 'Enter to send, Shift+Enter for a new line',
   'assistant.sendError': 'Couldn’t send: {error}',
-  'assistant.tool.running': 'running',
-  'assistant.tool.ok': 'done',
-  'assistant.tool.error': 'error',
 
   'runs.badge': 'Run: {objective}',
   'runs.badgeClosed': 'Run (closed): {objective}',

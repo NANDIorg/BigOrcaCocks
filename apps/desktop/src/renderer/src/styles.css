@@ -1302,7 +1302,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .assistant-layer.open { visibility: visible; transition-delay: 0s; }
 .assistant-layer .inbox-scrim { opacity: 0; pointer-events: none; transition: opacity .24s ease; }
 .assistant-layer.open .inbox-scrim { opacity: 1; pointer-events: auto; }
-.inbox.assistant { width: 560px; background: var(--page); pointer-events: auto; transition: transform .24s cubic-bezier(.22,1,.36,1), visibility 0s linear .24s; box-shadow: -16px 0 48px color-mix(in srgb, var(--overlay-ink) 18%, transparent); }
+.inbox.assistant { width: 560px; background: var(--page); pointer-events: auto; transition: transform .24s cubic-bezier(.22,1,.36,1), visibility 0s linear .24s; box-shadow: none; }
 .inbox.assistant.open { transition: transform .24s cubic-bezier(.22,1,.36,1); }
 .assistant-head { display: flex; align-items: center; gap: 8px; padding: 20px; border-bottom: 1px solid var(--line); background: var(--side); }
 .assistant-avatar { width: 42px; height: 42px; flex-shrink: 0; display: grid; place-items: center; border-radius: 13px; border: 1px solid var(--line); background: var(--page); }
@@ -1336,23 +1336,13 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .chat-copy { display: inline-flex; gap: 5px; align-items: center; align-self: flex-start; padding: 2px 0; color: var(--muted); background: transparent; border: 0; cursor: pointer; font-size: 10px; }
 .chat-copy svg { width: 12px; height: 12px; }
 .chat-copy:hover { color: var(--text); }
-.chat-tool { border: 1px solid var(--line); border-radius: 9px; background: var(--side); font-size: 12px; color: var(--muted); min-width: 0; }
-.chat-tool summary { display: flex; align-items: center; gap: 8px; padding: 11px 12px; cursor: pointer; list-style: none; }
-.chat-tool summary::-webkit-details-marker { display: none; }
-.chat-tool summary > svg:last-child { margin-left: auto; transition: transform .15s; }
-.chat-tool[open] summary > svg:last-child { transform: rotate(180deg); }
-.chat-tool-name { min-width: 0; overflow-wrap: anywhere; font-weight: 550; color: var(--text); }
-.chat-tool-label { margin-left: auto; font-size: 10px; white-space: nowrap; }
-.chat-tool-status { display: grid; place-items: center; flex-shrink: 0; }
-.chat-tool-status svg { width: 14px; height: 14px; }
-.chat-tool-ok .chat-tool-status { color: var(--accent); }
-.chat-tool-error .chat-tool-status { color: var(--danger); }
-.chat-tool pre, .chat-request-tool pre { border-top: 1px solid var(--line); padding: 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; font: 11px/1.6 ui-monospace, Menlo, monospace; user-select: text; }
-.chat-thinking { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; min-height: 22px; }
-.chat-typing { display: inline-flex; gap: 4px; }
-.chat-typing i { width: 4px; height: 4px; border-radius: 50%; background: var(--muted); animation: chat-typing 1.4s ease-in-out infinite; }
-.chat-typing i:nth-child(2) { animation-delay: .16s; }
-.chat-typing i:nth-child(3) { animation-delay: .32s; }
+.chat-request-tool pre { border-top: 1px solid var(--line); padding: 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; font: 11px/1.6 ui-monospace, Menlo, monospace; user-select: text; }
+.chat-thinking { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; min-height: 22px; }
+.chat-thinking-text { color: transparent; background: linear-gradient(105deg, var(--muted) 36%, var(--text) 50%, var(--muted) 64%); background-size: 300% 100%; background-position: 100% 0; background-clip: text; animation: chat-thinking-shimmer 2.8s linear infinite; }
+.chat-typing { display: inline-flex; align-items: center; gap: 3px; height: 12px; }
+.chat-typing i { width: 3px; height: 3px; border-radius: 50%; background: var(--muted); animation: chat-typing 1.2s ease-in-out infinite; }
+.chat-typing i:nth-child(2) { animation-delay: .12s; }
+.chat-typing i:nth-child(3) { animation-delay: .24s; }
 .chat-turn-note { color: var(--muted); font-size: 12px; padding: 8px 0; }
 .chat-jump { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: var(--side); white-space: nowrap; box-shadow: 0 3px 14px color-mix(in srgb, var(--overlay-ink) 12%, transparent); }
 .chat-footer { flex-shrink: 0; padding: 14px 18px 12px; border-top: 1px solid var(--line); background: var(--page); }
@@ -1392,7 +1382,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .chat-failure > svg { color: var(--danger); flex-shrink: 0; }
 .chat-failure p { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); line-height: 1.6; margin: 8px 0; user-select: text; }
 @keyframes chat-message-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-@keyframes chat-typing { 0%, 70%, 100% { opacity: .4; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-3px); } }
+@keyframes chat-typing { 0%, 40%, 100% { opacity: .5; transform: translateY(0); } 20% { opacity: 1; transform: translateY(-4px); } }
+@keyframes chat-thinking-shimmer { 0% { background-position: 100% 0; } 65%, 100% { background-position: 0% 0; } }
 @media (max-width: 600px) { .inbox.assistant { width: 100vw; max-width: 100vw; border-left: none; } .assistant-head { padding: 16px; gap: 5px; } .chat-feed { padding: 20px 16px; } }
 
 .rq-kbd {
@@ -3038,6 +3029,7 @@ html[data-window-chrome='macos'] .settings-modal { height: min(960px, calc(100dv
 html[data-motion='reduced'] *, html[data-motion='reduced'] *::before, html[data-motion='reduced'] *::after {
   animation: none !important; transition: none !important; scroll-behavior: auto !important;
 }
+html[data-motion='reduced'] .chat-thinking-text { background: none; color: var(--muted); }
 html[data-motion='reduced'] .onboarding .onboarding-illustration-scene { transform: none; }
 html[data-motion='reduced'] :is(.onboarding-packet, .onboarding-fork-signal, .onboarding-scanner-beam, .onboarding-repository-trace) { display: none; }
 html[data-motion='reduced'] .onboarding-workspace-progress span { transform: scaleX(1); opacity: .65; }
