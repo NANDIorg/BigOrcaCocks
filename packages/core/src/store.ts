@@ -1,6 +1,6 @@
 import type {
   AgentSession,
-  Dispatch, OrcaEvent, Run, Task, TaskStatus, AgentKind, EventType, Question,
+  Dispatch, OrcaEvent, Run, RunLane, Task, TaskStatus, AgentKind, EventType, Question,
   BoardColumn, ColumnKind, SystemColumnKind, AnswerAudience,
   HumanRequest, RequestOption, RequestResolution, TaskPriority, DispatchShowcase, ShowcaseSnapshot, StageChange, StageDecision,
   StageDecisionFallback
@@ -109,6 +109,25 @@ function checkChosen(wf: Workflow, stage: WfStage, outcome: WfPort, chosen: Stag
     throw new Error(`обоснование длиннее ${DECISION_REASON_LIMIT} символов — сократи --reason`)
   }
 }
+
+/**
+ * «Подтвердить» / «Вернуть в работу» на карточке глобальной задачи неоднозначно: ждут несколько approval нод `human`
+ * (пути разветвления). `code` — чтобы main и renderer узнавали ошибку не по тексту; решать — по запросу в Инбоксе.
+ */
+export class RunApprovalAmbiguousError extends Error {
+  readonly code = 'runApprovalAmbiguous'
+  /** Ждущие запросы: решаются по одному (`resolveRequest`). */
+  readonly requestIds: string[]
+
+  constructor(runId: string, requests: readonly HumanRequest[]) {
+    super(`у глобальной задачи ${runId} ждут решения ${requests.length} запроса на проверку (${requests.map((r) => `«${r.title}»`).join(', ')}) — реши каждый в Инбоксе`)
+    this.name = 'RunApprovalAmbiguousError'
+    this.requestIds = requests.map((r) => r.id)
+  }
+}
+
+/** Сколько слияний подряд может закрыть один переход (`moveRunStage`): слияние, сразу новое пустое разветвление и т. д. */
+const MAX_FORK_CLOSES = 10
 
 /**
  * Текстовое поле payload события: не длиннее `EVENT_ANSWER_LIMIT`, обрезанное помечено `<ключ>Truncated`. Полный
@@ -850,7 +869,8 @@ export class TaskStore {
   /**
    * Глобальная задача с воркфлоу прогона сейчас на этапе «Работа» — только на нём создаются подзадачи (`bindToStage`).
    * Иначе ошибка с подсказкой ждать `stage_started`. `nodeId` — какой этап (`task create --stage`): позиция прогона на этой
-   * ноде должна быть, иначе ошибка; нет — основная позиция. Граф не начат, прогон старого формата и «Входящие» не проверяются
+   * ноде должна быть, иначе ошибка; нет — единственный открытый этап (`stageNodeId`: внутри разветвления при нескольких
+   * открытых «Работах» — ошибка со списком). Граф не начат, прогон старого формата и «Входящие» не проверяются
    * (undefined): нужна main, чтобы сообщить об этапе раньше выбора роли (`task create` без `--role`).
    */
   assertStageAcceptsTasks(runId: string, nodeId?: string): Extract<WfNode, { type: 'work' }> | undefined {
@@ -859,9 +879,11 @@ export class TaskStore {
     if (nodeId !== undefined && !runPositionAt(run, nodeId)) {
       throw new Error(`этап «${nodeId}» глобальной задачи ${run.id} сейчас не открыт — открытые этапы и их id: orca-board workflow show`)
     }
-    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === (nodeId ?? run.stage!.nodeId))
+    const wf = this.runWorkflow(run.id)
+    const at = nodeId ?? this.stageNodeId(run, wf)
+    const node = wf.nodes.find((n) => n.id === at)
     if (node?.type !== 'work') {
-      const where = node ? `«${wfNodeTitle(node)}»` : `«${run.stage.nodeId}»`
+      const where = node ? `«${wfNodeTitle(node)}»` : `«${at}»`
       throw new Error(`подзадачи создаются только на этапе «Работа»: глобальная задача ${run.id} сейчас на этапе ${where} — дождись stage_started`)
     }
     return node
@@ -869,17 +891,49 @@ export class TaskStore {
 
   /**
    * Роль подзадачи, которую можно не передавать: одна роль ноды «Работа», на которой стоит глобальная задача
-   * (`bindToStage` берёт её сам); `nodeId` — этап, как у `assertStageAcceptsTasks`. Нет такой (этап не «Работа», ролей нет или несколько, прогон старого движка) —
-   * undefined, роль тогда выбирает вызывающий. Нужна main: `orca-board task create` без `--role` требует роль.
+   * (`bindToStage` берёт её сам); `nodeId` — этап, как у `assertStageAcceptsTasks`. Нет такой (этап не «Работа», ролей нет
+   * или несколько, открыто несколько этапов, прогон старого движка) — undefined, роль тогда выбирает вызывающий. Нужна
+   * main: `orca-board task create` без `--role` требует роль.
    */
   stageDefaultRole(runId: string, nodeId?: string): string | undefined {
     const run = this.runs.get(runId)
     if (!run || run.workflowScope !== 'run' || !run.stage) return undefined
     if (nodeId !== undefined && !runPositionAt(run, nodeId)) return undefined
-    const node = this.runWorkflow(run.id).nodes.find((n) => n.id === (nodeId ?? run.stage!.nodeId))
+    const wf = this.runWorkflow(run.id)
+    const open = this.openWorkStages(run, wf)
+    if (nodeId === undefined && run.lanes?.length && open.length !== 1) return undefined
+    const node = wf.nodes.find((n) => n.id === (nodeId ?? this.stageNodeId(run, wf)))
     if (node?.type !== 'work') return undefined
     const allowed = wfWorkRoleIds(node)
     return allowed.length === 1 ? allowed[0] : undefined
+  }
+
+  /**
+   * Открытые этапы «Работа» прогона: позиции (`runPositions`) на нодах `work`, кроме путей, уже пришедших в `join`.
+   * Без разветвления — не больше одного.
+   */
+  private openWorkStages(run: Run, wf: Workflow): Array<Extract<WfNode, { type: 'work' }>> {
+    return runPositions(run).flatMap((p) => {
+      if (p.arrived) return []
+      const node = wf.nodes.find((n) => n.id === p.nodeId)
+      return node?.type === 'work' ? [node] : []
+    })
+  }
+
+  /**
+   * Этап, к которому относится команда без явного этапа (`task create`, `stage finish` без `--stage`): без разветвления —
+   * `Run.stage`, как всегда; внутри него — единственная открытая «Работа» пути. Открыто несколько — ошибка со списком:
+   * какой из них, координатор должен сказать сам. Ни одной — нода `fork` (вызывающий сообщит «не на этапе «Работа»»).
+   */
+  private stageNodeId(run: Run, wf: Workflow): string {
+    const trunk = run.stage?.nodeId ?? ''
+    if (!run.lanes?.length) return trunk
+    const open = this.openWorkStages(run, wf)
+    if (open.length === 1) return open[0].id
+    if (open.length > 1) {
+      throw new Error(`--stage обязателен: открыты этапы ${open.map((n) => `«${wfNodeTitle(n)}» (${n.id})`).join(', ')}`)
+    }
+    return trunk
   }
 
   /** runId задачи неизменен: принадлежность прогону задаётся только при создании. */
@@ -1337,9 +1391,35 @@ export class TaskStore {
     throw new Error(`${what}: глобальная задача ${run.id} уже не стоит на ноде «${nodeId}» — граф ушёл дальше`)
   }
 
-  /** Результат перехода одной позиции (прогон без разветвления): одно действие. */
-  private stepResult(run: Run, action: WfAction): RunStepResult {
-    return { run, action, actions: [{ nodeId: action.nodeId, action }] }
+  /** Результат перехода: `actions` — по действию на позицию, `action` — первое из них (прежняя форма результата). */
+  private stepResult(run: Run, actions: RunAction[]): RunStepResult {
+    return { run, action: actions[0].action, actions }
+  }
+
+  /** Путь прогона, стоящий на ноде `nodeId` (`Run.lanes`); нет разветвления или пути на ноде — undefined. */
+  private laneAt(run: Run, nodeId: string | undefined): RunLane | undefined {
+    return nodeId === undefined ? undefined : run.lanes?.find((l) => l.nodeId === nodeId)
+  }
+
+  /** Название пути (`WfForkBranch.label`, без него — id пути) — для текстов ошибок и сводки слияния. */
+  private laneTitle(wf: Workflow, lane: RunLane): string {
+    const fork = wf.nodes.find((n) => n.id === lane.forkId)
+    return (fork?.type === 'fork' ? forkBranches(fork).find((b) => b.id === lane.branchId)?.label : undefined) ?? lane.branchId
+  }
+
+  /**
+   * Какую позицию двигает решение по ноде `nodeId` (`advanceRunStage`): без разветвления — основную (undefined), внутри
+   * него — путь на этой ноде. Путь уже в `join` или ноды не назвали — ошибка: угадывать путь нельзя, двинется чужой.
+   */
+  private movingLane(run: Run, wf: Workflow, nodeId: string | undefined, what: string): RunLane | undefined {
+    if (!run.lanes?.length) return undefined
+    const lane = this.laneAt(run, nodeId)
+    if (lane?.arrivedAt !== undefined) {
+      throw new Error(`${what}: путь «${this.laneTitle(wf, lane)}» глобальной задачи ${run.id} уже пришёл в слияние и ждёт остальные — решать на нём нечего`)
+    }
+    if (lane) return lane
+    const open = run.lanes.map((l) => `«${this.laneTitle(wf, l)}» (${l.nodeId})`).join(', ')
+    throw new Error(`${what}: глобальная задача ${run.id} идёт по путям разветвления — нужна нода решения, пути стоят на ${open}`)
   }
 
   /**
@@ -1347,10 +1427,15 @@ export class TaskStore {
    * у старого движка: `stage_tasks_done` координатору — один раз (`Run.stageTasksDoneAt`), не закрывая этап: координатор
    * решает, нужно ли ещё что-то, и зовёт `stage finish`. Подзадача, ушедшая из done, или новая подзадача снимает
    * метку (непрочитанные `stage_tasks_done` гасятся). Вызывается из `commit`, поэтому ловит любую смену статуса.
+   * Внутри разветвления — по каждому пути отдельно (`syncLaneTasks`).
    */
   private syncStageTasks(): void {
     for (const run of this.runs.values()) {
       if (run.workflowScope !== 'run' || !run.stage || run.closedAt !== undefined) continue
+      if (run.lanes?.length) {
+        for (const lane of run.lanes) this.syncLaneTasks(run, lane)
+        continue
+      }
       const node = run.workflow?.nodes.find((n) => n.id === run.stage!.nodeId)
       if (node?.type !== 'work') continue
       const tasks = this.stageTasks(run)
@@ -1366,66 +1451,139 @@ export class TaskStore {
     }
   }
 
-  /** Непрочитанные `stage_tasks_done` прогона гасятся: этап ожил или ушёл дальше, координатору они больше не нужны. */
-  private dropStageEvents(runId: string): void {
+  /**
+   * `syncStageTasks` для «Работы» одного пути: метка `RunLane.stageTasksDoneAt`, событие с `lane`, гасятся события только
+   * этой ноды — соседний путь свой `stage_tasks_done` не теряет.
+   */
+  private syncLaneTasks(run: Run, lane: RunLane): void {
+    if (lane.arrivedAt !== undefined) return
+    const node = run.workflow?.nodes.find((n) => n.id === lane.nodeId)
+    if (node?.type !== 'work') return
+    const tasks = this.stageTasks(run, node.id)
+    const done = tasks.length > 0 && tasks.every((t) => this.isKind(t, 'done'))
+    if (done && lane.stageTasksDoneAt === undefined) {
+      lane.stageTasksDoneAt = Date.now()
+      run.updatedAt = lane.stageTasksDoneAt
+      this.pushEvent('stage_tasks_done', { runId: run.id, nodeId: node.id, lane: lane.id })
+    } else if (!done && lane.stageTasksDoneAt !== undefined) {
+      this.dropStageEvents(run.id, node.id)
+      delete lane.stageTasksDoneAt
+    }
+  }
+
+  /**
+   * Непрочитанные `stage_tasks_done` прогона гасятся: этап ожил или ушёл дальше, координатору они больше не нужны.
+   * `nodeId` — только события этой ноды (ход одного пути разветвления не трогает соседний); нет — все события прогона.
+   */
+  private dropStageEvents(runId: string, nodeId?: string): void {
     for (const e of this.events) {
-      if (e.type === 'stage_tasks_done' && e.payload.runId === runId && !e.consumedBy) e.consumedBy = 'stage'
+      if (e.type !== 'stage_tasks_done' || e.payload.runId !== runId || e.consumedBy) continue
+      if (nodeId === undefined || e.payload.nodeId === nodeId) e.consumedBy = 'stage'
     }
   }
 
   /**
    * Первый вход глобальной задачи в граф: из старта до первой ноды с действием (обычно — «Работа»). Граф прогона
-   * фиксируется снимком (`Run.workflow`), если его не было. Граф уже начат — позицию не меняет и возвращает действие
-   * текущей ноды: так исполнитель повторяет эффект после рестарта. `opts.commit` — коммит ветки прогона на входе
-   * (`StageChange.commit`).
+   * фиксируется снимком (`Run.workflow`), если его не было. Граф уже начат — позицию не меняет и возвращает действия
+   * всех позиций (`runPositions`): так исполнитель повторяет эффекты после рестарта. Застрявшее пробует ещё раз
+   * (`retryStuck`): путь, не вышедший из `fork`, выход из `join`, слияние, когда пришли все пути. `opts.commit` — коммит
+   * ветки прогона на входе (`StageChange.commit`).
    */
   enterRunStage(runId: string, opts: RunStageOptions = {}): RunStepResult {
     const run = this.mustRunScope(runId)
     const wf = this.runWorkflow(runId, opts)
-    if (run.stage) return this.stepResult(run, runStageAction(wf, run.stage, this.stageCtx(opts)))
-    const action = this.moveRunStage(run, wf, undefined, 'next', opts)
+    if (!run.stage) {
+      const actions = this.moveRunStage(run, wf, undefined, 'next', opts)
+      this.commit()
+      return this.stepResult(run, actions)
+    }
+    const ctx = this.stageCtx(opts)
+    const stage = run.stage
+    const trunkNode = wf.nodes.find((n) => n.id === stage.nodeId)
+    if (!run.lanes?.length && trunkNode?.type !== 'join') {
+      const action = runStageAction(wf, stage, ctx)
+      return this.stepResult(run, [{ nodeId: action.nodeId, action }])
+    }
+    const actions = this.retryStuck(run, wf, opts)
     this.commit()
-    return this.stepResult(run, action)
+    return this.stepResult(run, actions)
   }
 
   /**
-   * Переход глобальной задачи по исходу текущей ноды (`nextRunStage`): меняет `Run.stage`, историю и колонку карточки,
+   * Повтор эффектов прогона внутри разветвления или на `join` (`enterRunStage`). Чистые проверки идут первыми: если
+   * переход всё ещё невозможен, возвращается `blocked` без нового события (как повтор эффекта застрявшей ноды). Пришли все
+   * пути — разветвление закрывается; путь, стоящий на `fork` (у порта не было перехода), и основная позиция на `join`
+   * (выход из слияния был заблокирован) пробуют пройти снова; остальные пути повторяют действие своей ноды.
+   */
+  private retryStuck(run: Run, wf: Workflow, opts: RunStageOptions): RunAction[] {
+    const ctx = this.stageCtx(opts)
+    const stage = run.stage!
+    if (!run.lanes?.length) {
+      const step = nextRunStage(wf, stage, 'next', ctx)
+      if (step.action.type === 'blocked') return [{ nodeId: step.action.nodeId, action: step.action }]
+      return this.moveRunStage(run, wf, stage, 'next', opts)
+    }
+    const closed = this.closeJoinedLanes(run, wf, opts)
+    if (closed) return closed
+    const actions: RunAction[] = []
+    for (const lane of [...run.lanes]) {
+      if (!run.lanes?.includes(lane)) continue
+      const at: WfStage = { nodeId: lane.nodeId, visits: stage.visits }
+      if (lane.nodeId === lane.forkId) {
+        const step = nextRunStage(wf, at, lane.branchId, ctx)
+        if (step.action.type === 'blocked') actions.push({ nodeId: step.action.nodeId, lane: lane.id, action: step.action })
+        else actions.push(...this.moveRunStage(run, wf, stage, lane.branchId, opts, lane))
+        continue
+      }
+      const action = runStageAction(wf, at, ctx)
+      actions.push({ nodeId: action.nodeId, lane: lane.id, action })
+    }
+    return actions
+  }
+
+  /**
+   * Переход глобальной задачи по исходу ноды (`nextRunStage`): меняет позицию, историю и колонку карточки,
    * шлёт `stage_changed` и событие по новой ноде — `stage_started` на «Работе», `run_done` при входе в `end`
    * (прогон закрыт, карточка — в «Сделано»), `workflow_blocked`, если дальше идти нельзя (позиция остаётся).
-   * Сами эффекты — создать проверку или вопрос, запросить человека, слить ветку — делает main по возвращённому действию.
+   * Сами эффекты — создать проверку или вопрос, запросить человека, слить ветку — делает main по возвращённым действиям.
    * `opts.feedback` — замечания проверки или человека при `reject` (пишутся в `Run.returns` и в `stage_started`),
    * `decision` — решение человека, `answers` — ответы этапа «Вопрос человеку»: они уходят координатору на следующую «Работу».
-   * Этап «Работа» закрывает не этот метод, а `finishStage`.
+   * `opts.nodeId` — нода, на которой вынесено решение: внутри разветвления двигается только путь на ней, без неё решение
+   * не принимается (`movingLane`). Этап «Работа» закрывает не этот метод, а `finishStage`.
    */
   advanceRunStage(runId: string, outcome: WfPort, opts: RunStageOptions = {}): RunStepResult {
     const run = this.mustRunScope(runId)
     if (!run.stage) throw new Error(`граф глобальной задачи ${runId} ещё не начат — сначала enterRunStage`)
     this.assertAtNode(run, opts.nodeId, 'переход по графу')
-    if (run.closedAt !== undefined && this.runWorkflow(runId, opts).nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end') {
+    const wf = this.runWorkflow(runId, opts)
+    const lane = this.movingLane(run, wf, opts.nodeId, 'переход по графу')
+    if (!lane && run.closedAt !== undefined && wf.nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end') {
       throw new Error(`граф глобальной задачи ${runId} уже дошёл до конца`)
     }
-    const wf = this.runWorkflow(runId, opts)
-    if (opts.chosen) checkChosen(wf, run.stage, outcome, opts.chosen)
-    const action = this.moveRunStage(run, wf, run.stage, outcome, opts)
+    if (opts.chosen) checkChosen(wf, lane ? { nodeId: lane.nodeId, visits: run.stage.visits } : run.stage, outcome, opts.chosen)
+    const actions = this.moveRunStage(run, wf, run.stage, outcome, opts, lane)
     this.commit()
-    return this.stepResult(run, action)
+    return this.stepResult(run, actions)
   }
 
   /**
    * Координатор закончил набор агентов на этапе «Работа» (`stage finish`): граф идёт дальше исходом `next`. Закрыть можно,
    * только когда закрыты все подзадачи текущего захода (`stage_tasks_done`), и хотя бы одна есть. `summary` —
-   * сводка для следующих нод (проверка, человек): пишется в историю этапа и в `Run.summary` («Что сделал»).
-   * Ошибки — с подсказкой, что делать координатору.
+   * сводка для следующих нод (проверка, человек): пишется в историю этапа и в `Run.summary` («Что сделал»); сводка
+   * этапа пути — только в историю, `Run.summary` из сводок путей складывается при слиянии. `opts.nodeId` — какой этап
+   * (`stage finish --stage`); нет — единственный открытый (`stageNodeId`). Ошибки — с подсказкой, что делать координатору.
    */
   finishStage(runId: string, opts: RunStageOptions & { summary?: string } = {}): RunStepResult {
     const run = this.mustRunScope(runId)
     this.assertAtNode(run, opts.nodeId, 'stage finish')
     const wf = this.runWorkflow(runId, opts)
-    const node = run.stage ? wf.nodes.find((n) => n.id === run.stage!.nodeId) : undefined
-    if (!run.stage || node?.type !== 'work') {
+    const at = run.stage ? opts.nodeId ?? this.stageNodeId(run, wf) : undefined
+    const lane = this.laneAt(run, at)
+    const node = at !== undefined ? wf.nodes.find((n) => n.id === at) : undefined
+    if (!run.stage || node?.type !== 'work' || lane?.arrivedAt !== undefined) {
       throw new Error(`stage finish: глобальная задача ${runId} сейчас не на этапе «Работа»${node ? ` (этап «${wfNodeTitle(node)}»)` : ''} — закрывать нечего, дождись stage_started`)
     }
-    const tasks = this.stageTasks(run)
+    const tasks = this.stageTasks(run, node.id)
     if (tasks.length === 0) throw new Error(`stage finish: на этапе «${wfNodeTitle(node)}» нет подзадач — создай их (task create) и дождись stage_tasks_done`)
     const open = tasks.filter((t) => !this.isKind(t, 'done'))
     if (open.length > 0) {
@@ -1435,18 +1593,19 @@ export class TaskStore {
     if (text) {
       const entry = [...(run.stageHistory ?? [])].reverse().find((h) => h.nodeId === node.id)
       if (entry) entry.summary = text
-      run.summary = { at: Date.now(), text }
+      if (!lane) run.summary = { at: Date.now(), text }
     }
-    const action = this.moveRunStage(run, wf, run.stage, 'next', opts)
+    const actions = this.moveRunStage(run, wf, run.stage, 'next', opts, lane)
     this.commit()
-    return this.stepResult(run, action)
+    return this.stepResult(run, actions)
   }
 
   /**
    * Страховка на случай, когда координатор умер (вышел, упал, приложение перезапустили), не успев вызвать `stage finish`:
-   * этапы «Работа» прогонов с закрытыми подзадачами (`stageTasksDoneAt`) закрываются без сводки — аналог `settleIdleRuns`
-   * старого движка. Живость PTY знает только main, он и вызывает. `fallback` — запасной граф и роли прогона (как у
-   * `runWorkflow`). Возвращает закрытые прогоны с действием нового этапа: эффекты — забота main.
+   * этапы «Работа» прогонов с закрытыми подзадачами (`stageTasksDoneAt`, внутри разветвления — у каждого пути свой)
+   * закрываются без сводки — аналог `settleIdleRuns` старого движка. Живость PTY знает только main, он и вызывает.
+   * `fallback` — запасной граф и роли прогона (как у `runWorkflow`). Возвращает закрытые прогоны с действиями новых
+   * этапов: эффекты — забота main.
    */
   settleIdleStages(
     isAlive: (ptyId: string) => boolean,
@@ -1454,11 +1613,21 @@ export class TaskStore {
   ): Array<{ runId: string; action: WfAction; actions: RunAction[] }> {
     const settled: Array<{ runId: string; action: WfAction; actions: RunAction[] }> = []
     for (const run of [...this.runs.values()]) {
-      if (run.workflowScope !== 'run' || run.stageTasksDoneAt === undefined || run.closedAt !== undefined) continue
+      if (run.workflowScope !== 'run' || !run.stage || run.closedAt !== undefined) continue
+      const due = runPositions(run).filter((p) => p.tasksDoneAt !== undefined && !p.arrived).map((p) => p.nodeId)
+      if (due.length === 0) continue
       if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) continue
       const opts = fallback(run)
-      const action = this.moveRunStage(run, this.runWorkflow(run.id, opts), run.stage, 'next', opts)
-      settled.push({ runId: run.id, action, actions: [{ nodeId: action.nodeId, action }] })
+      const wf = this.runWorkflow(run.id, opts)
+      const actions: RunAction[] = []
+      if (!run.lanes?.length) actions.push(...this.moveRunStage(run, wf, run.stage, 'next', opts))
+      else {
+        for (const nodeId of due) {
+          const lane = this.laneAt(run, nodeId)
+          if (lane?.stageTasksDoneAt !== undefined) actions.push(...this.moveRunStage(run, wf, run.stage, 'next', opts, lane))
+        }
+      }
+      if (actions.length > 0) settled.push({ runId: run.id, action: actions[0].action, actions })
     }
     if (settled.length > 0) this.commit()
     return settled
@@ -1470,38 +1639,63 @@ export class TaskStore {
   }
 
   /**
-   * Переход по графу без commit (общий для enter/advance/finish/settle): двигает `Run.stage`, пишет историю,
-   * колонку и события. Возвращает действие ноды, куда пришли; `blocked` без движения — позиция не меняется.
+   * Переход по графу без commit (общий для enter/advance/finish/settle): двигает основную позицию (`from`, `Run.stage`)
+   * или, если передан `lane`, только этот путь разветвления. Потом — барьер слияния: пришли все пути — разветвление
+   * закрывается и граф идёт от `join` дальше (`closeJoinedLanes`). Возвращает действия позиций, куда пришли; `blocked`
+   * без движения — позиция не меняется.
    */
-  private moveRunStage(run: Run, wf: Workflow, from: WfStage | undefined, outcome: WfPort, opts: RunStageOptions): WfAction {
+  private moveRunStage(run: Run, wf: Workflow, from: WfStage | undefined, outcome: WfPort, opts: RunStageOptions, lane?: RunLane): RunAction[] {
+    run.workflow ??= snapshotWorkflow(wf)
+    let actions = lane ? this.moveLane(run, wf, lane, outcome, opts) : this.moveTrunk(run, wf, from, outcome, opts)
+    // Цепочка «слияние → сразу новое разветвление с пустыми путями» конечна только на валидном графе: ограничиваем.
+    for (let i = 0; i < MAX_FORK_CLOSES; i += 1) {
+      const closed = this.closeJoinedLanes(run, wf, opts)
+      if (!closed) break
+      actions = closed
+    }
+    if (run.lanes?.length) this.placeRun(run, this.lanesColumn(run, wf))
+    return actions
+  }
+
+  /** Что сказали при входе в этап (`Run.stageInput`, `RunLane.stageInput`): картинки — только вместе с замечаниями. */
+  private stageInputOf(opts: RunStageOptions): NonNullable<Run['stageInput']> {
+    const feedback = opts.feedback?.trim()
+    return {
+      ...(feedback ? { feedback } : {}),
+      ...(feedback && opts.images?.length ? { images: [...opts.images] } : {}),
+      ...(opts.decision?.trim() ? { decision: opts.decision.trim() } : {}),
+      ...(opts.answers?.trim() ? { answers: opts.answers.trim() } : {})
+    }
+  }
+
+  /** Граф ушёл с ноды `fromId`: у развилки `decision` решение пишется в её запись истории, ждущий выбор человека снят. */
+  private leaveDecision(run: Run, wf: Workflow, fromId: string | undefined, opts: RunStageOptions): void {
+    if (fromId === undefined || wf.nodes.find((n) => n.id === fromId)?.type !== 'decision') return
+    // Решение — свойство захода в развилку: пишется в её запись истории, пока не добавилась запись новой ноды.
+    const entry = opts.chosen ? [...(run.stageHistory ?? [])].reverse().find((h) => h.nodeId === fromId) : undefined
+    if (entry && opts.chosen) entry.decision = { ...opts.chosen }
+    // Граф ушёл с развилки — выбирать ветку человеку больше незачем.
+    this.cancelRequests((r) => r.runId === run.id && r.kind === 'decision' && r.nodeId === fromId)
+  }
+
+  /** Ход основной позиции (`Run.stage`): без разветвления — ровно прежнее поведение; вход в `fork` заводит пути. */
+  private moveTrunk(run: Run, wf: Workflow, from: WfStage | undefined, outcome: WfPort, opts: RunStageOptions): RunAction[] {
     const ctx = this.stageCtx(opts)
     const step = from ? nextRunStage(wf, from, outcome, ctx) : startRunStage(wf, ctx)
     const now = Date.now()
-    const nodeAt = (id: string): WfNode | undefined => wf.nodes.find((n) => n.id === id)
     const fromId = from?.nodeId
     const moved = step.stage !== from && step.stage.nodeId !== ''
-    run.workflow ??= snapshotWorkflow(wf)
+    const input = this.stageInputOf(opts)
+    const forked = step.action.type === 'fork'
     if (moved) {
-      const node = nodeAt(step.stage.nodeId)
-      const feedback = opts.feedback?.trim()
-      const input = {
-        ...(feedback ? { feedback } : {}),
-        ...(feedback && opts.images?.length ? { images: [...opts.images] } : {}),
-        ...(opts.decision?.trim() ? { decision: opts.decision.trim() } : {}),
-        ...(opts.answers?.trim() ? { answers: opts.answers.trim() } : {})
-      }
+      const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
       run.stage = step.stage
-      run.stageInput = Object.keys(input).length > 0 ? input : undefined
+      // Вход в разветвление: что сказали при входе, получает каждый путь (`enterLanes`), а не основная позиция.
+      run.stageInput = !forked && Object.keys(input).length > 0 ? input : undefined
       this.dropStageEvents(run.id)
       run.stageTasksDoneAt = undefined
       run.updatedAt = now
-      if (fromId !== undefined && nodeAt(fromId)?.type === 'decision') {
-        // Решение — свойство захода в развилку: пишется в её запись истории, пока не добавилась запись новой ноды.
-        const entry = opts.chosen ? [...(run.stageHistory ?? [])].reverse().find((h) => h.nodeId === fromId) : undefined
-        if (entry && opts.chosen) entry.decision = { ...opts.chosen }
-        // Граф ушёл с развилки — выбирать ветку человеку больше незачем.
-        this.cancelRequests((r) => r.runId === run.id && r.kind === 'decision' && r.nodeId === fromId)
-      }
+      this.leaveDecision(run, wf, fromId, opts)
       recordStage(run, {
         nodeId: step.stage.nodeId, at: now, outcome, visit: step.stage.visits[step.stage.nodeId] ?? 1,
         ...(node ? { title: wfNodeTitle(node) } : {}),
@@ -1516,11 +1710,113 @@ export class TaskStore {
         ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
       })
     }
-    const action = step.action
-    const node = nodeAt(action.nodeId)
+    if (step.action.type === 'fork') return this.enterLanes(run, wf, step.action, input, opts)
+    this.applyAction(run, wf, step.action, opts)
+    return [{ nodeId: step.action.nodeId, action: step.action }]
+  }
+
+  /**
+   * Вход в `fork` (`Run.stage` уже на нём): по пути на порт (`Run.lanes`, поколение — заход в `fork`), каждый путь встаёт
+   * на свою первую ноду — запись истории и `stage_changed` с `lane`, затем действие этой ноды. Порядок — как в `branches`.
+   */
+  private enterLanes(run: Run, wf: Workflow, action: Extract<WfAction, { type: 'fork' }>, input: NonNullable<Run['stageInput']>, opts: RunStageOptions): RunAction[] {
+    const now = Date.now()
+    const forkId = action.nodeId
+    const stage = run.stage!
+    const forkVisit = stage.visits[forkId] ?? 1
+    const hasInput = Object.keys(input).length > 0
+    const lanes: RunLane[] = action.branches.map((b) => ({
+      id: b.laneId, forkId, branchId: b.branchId, forkVisit, nodeId: b.stage.nodeId,
+      ...(hasInput && b.stage.nodeId !== forkId ? { stageInput: { ...input } } : {})
+    }))
+    run.lanes = lanes
+    return action.branches.map((b, i): RunAction => {
+      const lane = lanes[i]
+      if (b.stage.nodeId !== forkId) {
+        const node = wf.nodes.find((n) => n.id === b.stage.nodeId)
+        recordStage(run, {
+          nodeId: b.stage.nodeId, at: now, outcome: b.branchId, visit: stage.visits[b.stage.nodeId] ?? 1,
+          ...(node ? { title: wfNodeTitle(node) } : {}),
+          from: forkId,
+          ...(opts.commit ? { commit: opts.commit } : {}),
+          lane: lane.id
+        })
+        this.pushEvent('stage_changed', {
+          runId: run.id, from: forkId, to: b.stage.nodeId, outcome: b.branchId,
+          ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {}),
+          lane: lane.id
+        })
+      }
+      this.applyAction(run, wf, b.action, opts, lane)
+      return { nodeId: b.action.nodeId, lane: lane.id, action: b.action }
+    })
+  }
+
+  /**
+   * Ход одного пути разветвления: двигается только `lane.nodeId`, счётчики заходов — общие (`Run.stage.visits`),
+   * `Run.stage` остаётся на `fork`. Вход пути во вложенный `fork` или в `end` — `blocked` без движения (граф в обход
+   * валидации: `forkNested`, `forkEndInBranch`). Замечания — в `lane.stageInput` и в `Run.returns` с нодой возврата.
+   */
+  private moveLane(run: Run, wf: Workflow, lane: RunLane, outcome: WfPort, opts: RunStageOptions): RunAction[] {
+    const stage = run.stage!
+    const from: WfStage = { nodeId: lane.nodeId, visits: stage.visits }
+    const step = nextRunStage(wf, from, outcome, this.stageCtx(opts))
+    let action = step.action
+    let moved = step.stage !== from && step.stage.nodeId !== ''
+    if (moved && (action.type === 'fork' || action.type === 'done')) {
+      const target = wf.nodes.find((n) => n.id === step.stage.nodeId)
+      const name = target ? wfNodeTitle(target) : step.stage.nodeId
+      const reason = action.type === 'fork'
+        ? `нода «${name}»: разветвление внутри пути другого разветвления не поддерживается`
+        : `нода «${name}»: путь «${this.laneTitle(wf, lane)}» ведёт в конец — соседние пути остались бы без слияния, ставьте конец после слияния`
+      action = { type: 'blocked', nodeId: lane.nodeId, reason }
+      moved = false
+    }
+    if (moved) {
+      const now = Date.now()
+      const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
+      const input = this.stageInputOf(opts)
+      const prev = lane.nodeId
+      lane.nodeId = step.stage.nodeId
+      stage.visits = step.stage.visits
+      if (Object.keys(input).length > 0) lane.stageInput = input
+      else delete lane.stageInput
+      this.dropStageEvents(run.id, prev)
+      delete lane.stageTasksDoneAt
+      run.updatedAt = now
+      this.leaveDecision(run, wf, prev, opts)
+      recordStage(run, {
+        nodeId: step.stage.nodeId, at: now, outcome, visit: step.stage.visits[step.stage.nodeId] ?? 1,
+        ...(node ? { title: wfNodeTitle(node) } : {}),
+        from: prev,
+        ...(opts.commit ? { commit: opts.commit } : {}),
+        lane: lane.id
+      })
+      if (outcome === 'reject' && input.feedback) {
+        run.returns = [...(run.returns ?? []), { at: now, text: input.feedback, ...(input.images ? { images: input.images } : {}), nodeId: prev }]
+      }
+      this.pushEvent('stage_changed', {
+        runId: run.id, from: prev, to: step.stage.nodeId, outcome,
+        ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {}),
+        lane: lane.id
+      })
+    }
+    this.applyAction(run, wf, action, opts, lane)
+    return [{ nodeId: action.nodeId, lane: lane.id, action }]
+  }
+
+  /**
+   * События и колонка по действию ноды, куда пришла позиция. Колонку путей ставит `moveRunStage` по всем путям сразу
+   * (`lanesColumn`), здесь — только у основной позиции. Путь в `join` получает `arrivedAt` (барьер — `closeJoinedLanes`).
+   */
+  private applyAction(run: Run, wf: Workflow, action: WfAction, opts: RunStageOptions, lane?: RunLane): void {
+    const now = Date.now()
+    const node = wf.nodes.find((n) => n.id === action.nodeId)
     switch (action.type) {
       case 'blocked':
-        this.pushEvent('workflow_blocked', { runId: run.id, nodeId: action.nodeId, reason: short(action.reason) })
+        this.pushEvent('workflow_blocked', {
+          runId: run.id, nodeId: action.nodeId, reason: short(action.reason), ...(lane ? { lane: lane.id } : {})
+        })
         break
       case 'done':
         // Граф дошёл до конца: прогон закрыт, координатор выходит. Ждать человека больше нечего.
@@ -1533,23 +1829,82 @@ export class TaskStore {
         if (!run.inbox) this.pushEvent('run_done', { runId: run.id, objective: run.objective, nodeId: action.nodeId })
         break
       case 'start_stage': {
-        this.placeRun(run, this.stageColumn(node))
-        const info = this.runStage(run.id, opts)
+        if (!lane) this.placeRun(run, this.stageColumn(node))
+        const info = this.runStage(run.id, opts, lane ? action.nodeId : undefined)
         const p = {
           runId: run.id, nodeId: action.nodeId, title: info?.title ?? action.nodeId, roleIds: action.roleIds, visit: info?.visit ?? 1,
           ...(info?.instructions ? eventText('instructions', info.instructions) : {}),
           ...(info?.feedback ? eventText('feedback', info.feedback) : {}),
           ...(info?.feedback && info.images ? { images: info.images } : {}),
           ...(info?.decision ? eventText('decision', info.decision) : {}),
-          ...(info?.answers ? eventText('answers', info.answers) : {})
+          ...(info?.answers ? eventText('answers', info.answers) : {}),
+          ...(lane ? { lane: lane.id, laneTitle: this.laneTitle(wf, lane) } : {})
         }
         this.pushEvent('stage_started', p)
         break
       }
-      default:
+      case 'join':
+        if (lane) {
+          lane.arrivedAt = now
+          break
+        }
         this.placeRun(run, this.stageColumn(node))
+        break
+      default:
+        if (!lane) this.placeRun(run, this.stageColumn(node))
     }
-    return action
+  }
+
+  /**
+   * Барьер слияния: все пути пришли в `join` — `Run.lanes` убирается, `Run.stage` встаёт на `join` и идёт дальше по `next`
+   * обычным ходом основной позиции (запись истории без `lane`). `Run.summary` складывается из сводок путей. Замечания и
+   * решения последнего пути в следующий этап не переносятся: они относились к его ноде. Не все пришли — undefined.
+   */
+  private closeJoinedLanes(run: Run, wf: Workflow, opts: RunStageOptions): RunAction[] | undefined {
+    const lanes = run.lanes
+    if (!lanes?.length || lanes.some((l) => l.arrivedAt === undefined)) return undefined
+    const summary = this.lanesSummary(run, wf, lanes)
+    if (summary) run.summary = { at: Date.now(), text: summary }
+    delete run.lanes
+    const join: WfStage = { nodeId: lanes[0].nodeId, visits: run.stage!.visits }
+    run.stage = join
+    const next: RunStageOptions = {
+      ...(opts.roleIds ? { roleIds: opts.roleIds } : {}),
+      ...(opts.workflow ? { workflow: opts.workflow } : {}),
+      ...(opts.commit ? { commit: opts.commit } : {})
+    }
+    return this.moveTrunk(run, wf, join, 'next', next)
+  }
+
+  /**
+   * Итог разветвления для «Что сделал» и approval после слияния: последняя сводка `stage finish` каждого пути этого
+   * поколения (записи истории с `lane` после входа в `fork`) — «### Путь «…»» и текст, в порядке путей. Сводок нет — undefined.
+   */
+  private lanesSummary(run: Run, wf: Workflow, lanes: RunLane[]): string | undefined {
+    const history = run.stageHistory ?? []
+    let since = 0
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      if (history[i].nodeId === lanes[0].forkId && history[i].lane === undefined) {
+        since = i + 1
+        break
+      }
+    }
+    const recent = history.slice(since)
+    const parts = lanes.flatMap((lane) => {
+      const text = [...recent].reverse().find((h) => h.lane === lane.id && h.summary)?.summary
+      return text ? [`### Путь «${this.laneTitle(wf, lane)}»\n\n${text}`] : []
+    })
+    return parts.length > 0 ? parts.join('\n\n') : undefined
+  }
+
+  /**
+   * Колонка карточки внутри разветвления: «Проверка», когда все ещё идущие пути ждут человека (`human`), иначе «В работе».
+   * `WfNode.column` путей не учитывается — у параллельных нод он может расходиться.
+   */
+  private lanesColumn(run: Run, wf: Workflow): string {
+    const active = (run.lanes ?? []).filter((l) => l.arrivedAt === undefined)
+    const human = active.length > 0 && active.every((l) => wf.nodes.find((n) => n.id === l.nodeId)?.type === 'human')
+    return this.columnId(human ? 'review' : 'in_progress')
   }
 
   /** Карточка глобальной задачи в колонку `status` (не трогая, если она там уже стоит). */
@@ -1562,13 +1917,15 @@ export class TaskStore {
   /**
    * Исполнитель не смог выполнить эффект этапа глобальной задачи (проверка или вопрос не создались, слияние в
    * защищённую ветку, git упал не конфликтом): позиция остаётся, координатору и человеку — `workflow_blocked` с
-   * причиной и `runId` (без `taskId`). `nodeId` — нода, эффект которой не выполнился (позиция пути); нет — `Run.stage`.
+   * причиной и `runId` (без `taskId`). `nodeId` — нода, эффект которой не выполнился (позиция пути — тогда и `lane`);
+   * нет — `Run.stage`.
    */
   blockRunStage(runId: string, reason: string, nodeId?: string): OrcaEvent {
     const run = this.mustRunScope(runId)
     const at = nodeId ?? run.stage?.nodeId
+    const lane = this.laneAt(run, nodeId)
     const event = this.pushEvent('workflow_blocked', {
-      runId, ...(at !== undefined ? { nodeId: at } : {}), reason: short(reason)
+      runId, ...(at !== undefined ? { nodeId: at } : {}), reason: short(reason), ...(lane ? { lane: lane.id } : {})
     })
     this.commit()
     return event
@@ -1576,7 +1933,8 @@ export class TaskStore {
 
   /**
    * Нода `human` воркфлоу глобальной задачи: approval уровня прогона («Принять» / «Вернуть») без задачи. Карточка встаёт
-   * в «Нужен ответ», пока запрос ждёт (`waiting`). Ждущий approval прогона не дублируется — возвращается он.
+   * в «Нужен ответ», пока запрос ждёт (`waiting`). Ждущий approval этой ноды не дублируется — возвращается он; approval
+   * разных нод (пути разветвления) — разные запросы.
    * Решение — `resolveRequest`; дальше граф двигает main (`advanceRunStage` с `feedback`/`decision` из решения).
    */
   requestRunApproval(
@@ -1584,7 +1942,7 @@ export class TaskStore {
     fields: { nodeId: string; title: string; body?: string; showcaseDispatchId?: string; showcaseDispatchIds?: readonly string[] }
   ): HumanRequest {
     const run = this.mustRunScope(runId)
-    const existing = this.pendingRequest((r) => r.runId === run.id && r.taskId === undefined && r.kind === 'approval')
+    const existing = this.pendingRequest((r) => r.runId === run.id && r.taskId === undefined && r.kind === 'approval' && r.nodeId === fields.nodeId)
     if (existing) return existing
     const request = this.createRequest(run, {
       kind: 'approval', title: fields.title, nodeId: fields.nodeId, ...(fields.body ? { body: fields.body } : {}),
@@ -1608,7 +1966,7 @@ export class TaskStore {
     const run = this.mustRunScope(runId)
     const existing = this.pendingRequest((r) => r.runId === run.id && r.kind === 'decision' && r.nodeId === fields.nodeId)
     if (existing) return existing
-    if (run.stage?.nodeId !== fields.nodeId) {
+    if (!runPositionAt(run, fields.nodeId)) {
       throw new Error(`глобальная задача ${runId} не стоит на ноде «${fields.nodeId}» — выбирать ветку не нужно`)
     }
     const options = fields.options.map((o) => ({ id: o.id, label: o.label, ...(o.hint?.trim() ? { hint: o.hint.trim() } : {}) }))
@@ -1904,9 +2262,16 @@ export class TaskStore {
     return this.getGlobalTask(id)
   }
 
-  /** «Подтвердить» / «Вернуть в работу» на карточке прогона с воркфлоу: решение по ждущему approval ноды `human`. */
+  /**
+   * «Подтвердить» / «Вернуть в работу» на карточке прогона с воркфлоу: решение по ждущему approval ноды `human`. Ждут
+   * несколько (пути разветвления) — `RunApprovalAmbiguousError`: с карточки не понять, чей путь решается, решать в Инбоксе.
+   */
   private resolveRunApproval(run: Run, resolution: RequestResolution): GlobalTask {
-    const request = this.pendingRequest((r) => r.runId === run.id && r.taskId === undefined && r.kind === 'approval')
+    const pending = [...this.requests.values()].filter(
+      (r) => r.runId === run.id && r.taskId === undefined && r.kind === 'approval' && r.status === 'pending'
+    )
+    if (pending.length > 1) throw new RunApprovalAmbiguousError(run.id, pending)
+    const request = pending[0]
     if (!request) {
       throw new Error(`у глобальной задачи ${run.id} нет запроса на проверку — подтвердить или вернуть можно, когда воркфлоу дошёл до ноды «Человек»`)
     }

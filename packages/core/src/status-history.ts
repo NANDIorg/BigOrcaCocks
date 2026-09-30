@@ -51,7 +51,8 @@ export function recordStatus(
 /**
  * Дописать вход задачи в этап воркфлоу (`Task.stageHistory`) и обрезать историю до `STATUS_HISTORY_LIMIT`
  * последних. В отличие от `recordStatus` одинаковые ноды подряд пишутся: возврат `work → work` — отдельный заход.
- * `by` по умолчанию — из `withStatusSource`.
+ * `by` по умолчанию — из `withStatusSource`. Переход пути разветвления передаёт `lane`: записи путей перемешаны по
+ * времени, и только по нему их можно разделить (`Run.stageHistory`).
  */
 export function recordStage(entity: { stageHistory?: StageChange[] }, change: Omit<StageChange, 'by'> & { by?: StatusSource }): void {
   const history = entity.stageHistory ?? []
