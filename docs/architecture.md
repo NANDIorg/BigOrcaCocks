@@ -95,10 +95,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
-  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
+  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»);
+  `extraArgs?` — флаги пользователя к команде запуска агента: строка, как её ввёл человек (не тримится; пусто или одни
+  пробелы — поля нет), в argv её разбирает `parseExtraArgs` (см. «Агенты» → «Флаги пользователя»), применяется со
+  следующего запуска; меняется только в UI. `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
   (с заполненным `description`; пустое назначение системной роли — в т.ч. у ролей, созданных до появления поля, —
   подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`). Ассистент ролью не является:
-  его настройки — `AssistantSettings { agent, model?, effort?, systemPrompt? }` (`packages/core/src/types.ts`, дефолт
+  его настройки — `AssistantSettings { agent, model?, effort?, systemPrompt?, extraArgs? }` (`packages/core/src/types.ts`;
+  `extraArgs` — те же флаги пользователя, что у роли; дефолт
   `DEFAULT_ASSISTANT_SETTINGS = { agent: 'claude' }`) в `AppSettings.assistant`, см. «Ассистент»;
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
 - `BoardColumn { id, title, color, kind }`. `kind` — системный (`backlog`, `ready`, `in_progress`,
@@ -950,7 +954,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
-- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, reservedFlags?, invoke}`. Из него выводятся
   `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, статический список моделей
   (`modelHints(agent)` оставлен deprecated-обёрткой над `models` для старого UI)
   и `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
@@ -964,11 +968,47 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `model`/`model_reasoning_effort` — из `~/.codex/config.toml`, дефолтная модель в списке помечена «(по умолчанию)».
     Нет кэша — в списке только модель из `config.toml`. Чтение обоих файлов кэшируется на 60 с, `refresh` сбрасывает.
   - остальные — `models = []`, в UI модель вводится свободным текстом.
-- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?})`: модель — флагом агента;
+- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?, extraArgs?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
   `sessionId` — uuid сессии для статистики: `worker.ts` генерирует его (`agentSessionId`) только агентам с
   `acceptsSessionId` (сейчас claude → `--session-id <uuid>`), ассистенту не передаётся.
+- **Флаги пользователя** (`Role.extraArgs`, `AssistantSettings.extraArgs` → `AgentInvokeOptions.extraArgs`,
+  `packages/core/src/launch-args.ts`). Человек дописывает свои флаги к команде запуска; хранится строка, как введена.
+  - **Порядок: argv = [флаги пользователя] + [флаги приложения] + [промпт]**, вставка — внутри `invoke` каждого агента
+    (а не в `worker.ts`), чтобы превью команды в UI совпадало с реальным запуском. claude:
+    `claude <extra> --permission-mode … --allowedTools … [--model …] [--effort …] [--session-id …] --append-system-prompt <system> <prompt>`;
+    codex: `codex <extra> [-m …] [-c model_reasoning_effort=…] <промпт>`; opencode, gemini, cursor, amp, copilot — `<extra>`
+    сразу после команды; goose — `goose run <extra> --interactive --text <промпт>` (после подкоманды `run`); shell —
+    `$SHELL <extra>`. Без `extraArgs` (нет поля или `[]`) argv прежний — это держит таблица в `agents.test.ts`.
+    Почему «перед»: variadic-флаг в конце съел бы позиционный промпт (см. «Грабли разработки»), а у одиночных опций
+    побеждает последняя — флаги приложения случайно не сломать.
+  - **Разбор** — чистая `parseExtraArgs(text) → { ok: true, args } | { ok: false, error, detail? }`, без shell и одинаково
+    на всех платформах. Разделители — пробелы, табы, переводы строк вне кавычек. `'…'` — буквально; `"…"` — внутри только
+    `\"` → `"` и `\\` → `\`, прочие `\` буквальны; **вне кавычек `\` буквален** (иначе ломается `C:\Users\me`). Кавычки
+    склеиваются с соседним текстом (`--dir="a b"` → `--dir=a b`), `""` — пустой аргумент. Раскрытий нет: `$VAR`, `~`, `*`,
+    `;`, `|`, `&&`, `>` остаются как есть. Пусто или одни пробелы — `args: []`.
+  - **Ошибки** (`ExtraArgsError`; `detail` — кавычка, токен, код символа или фактическое число): `quote` — незакрытая
+    кавычка; `separator` — токен `--` (всё после него, включая флаги приложения, стало бы позиционным); `notFlag` — первый
+    токен не начинается с `-` (была бы подкоманда: `codex exec`, `claude mcp`) — в поле только флаги, не команда целиком;
+    `control` — управляющий символ, включая NUL (таб и перевод строки внутри кавычек — часть значения); `length` — строка
+    длиннее `EXTRA_ARGS_MAX_LENGTH` (2000: на Windows флаги делят с промптом лимит командной строки cmd.exe); `count` —
+    больше `EXTRA_ARGS_MAX_COUNT` (64) аргументов.
+  - **Зарезервированные флаги** — `AgentSpec.reservedFlags: { flags, reason, valuePrefix? }[]` рядом с `invoke`: флаги,
+    которыми управляет приложение. `reservedFlagsIn(agent, args) → { flag, reason }[]` находит их во флагах пользователя;
+    это **только предупреждение в UI, запуск не блокируется** (у человека могут быть причины, но молчаливое
+    переопределение хуже). Причины (`ReservedFlagReason`): `model`, `effort` (задаются полями роли), `permission` (режим
+    разрешений типа задачи), `session` (ломает привязку статистики к транскрипту), `print` (неинтерактивный режим —
+    терминал завершится), `systemPrompt` (инструкции роли). claude (сверено с `--help` 2.1.285): `--model`; `--effort`;
+    `--permission-mode`, `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`; `--session-id`,
+    `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--from-pr`, `--teleport`, `--no-session-persistence`;
+    `--print`/`-p`; `--append-system-prompt`, `--system-prompt` и их `-file`-варианты. codex (`--help` 0.156.1):
+    `--model`/`-m`, `-c`/`--config` со значением `model=…` или `model_reasoning_effort=…` (`valuePrefix`; прочие `-c`
+    свободны); sandbox и approval приложение codex не задаёт — они не зарезервированы. opencode, cursor — `--model`,
+    gemini — `-m` (то, что ставит сам `invoke`). Узнаются `--flag=значение`, слитное `-mзначение` и связка коротких (`-pc`);
+    значение чужого флага от флага не отличается — лишнее предупреждение дешевле таблицы арности всех флагов.
+  - **`AgentInfo.supportsExtraArgs?: true`** — признак «main умеет сохранять и применять флаги». Старый main молча стёр бы
+    незнакомое поле при сохранении, поэтому renderer без признака поле не даёт править и просит перезапустить приложение.
 - **Дефолты и модели агента** (`agentConfig` в `src/main/agents.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
   всегда (`[]` / `{}`). codex: `config.toml` читается построчно, только ключи верхнего уровня до первой секции `[..]`;
   разбор кэша — чистая `parseCodexModelsCache(text, defaultModel?)` в core (`visibility: "hide"` пропускаются,
@@ -2824,6 +2864,13 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   меню ОС, на Windows/Linux его рисует Chromium: фон берёт из computed background select, а без `color-scheme` — в светлой схеме.
   Список «Agent» в ролях (`.roles-agent select`) был белым со светлым текстом опций. Теперь `color-scheme: dark` на `:root`, фон и цвет
   опций выпадающих select заданы явно (у списков `multiple` фон опции перекрыл бы подсветку выбранных — поэтому `:not([multiple]):not([size])`), а у select нет прозрачного фона (`inherit` от обёртки) — это проверяет `nativeControls.test.ts`.
+- **Variadic-флаги съедают позиционный промпт.** У claude `--add-dir <directories...>`, `--allowedTools <tools...>`,
+  `--mcp-config <configs...>` (и другие `<x...>` в `--help`) забирают все следующие значения до очередного флага. Если
+  такой флаг стоит прямо перед позиционным промптом (claude, cursor, amp передают задание последним аргументом), промпт
+  уходит в значение флага, и агент стартует без задания. Поэтому флаги пользователя (`extraArgs`) вставляются **перед**
+  флагами приложения, а перед промптом всегда стоит флаг с одним значением (`--append-system-prompt <system>`). Добавляешь
+  в `invoke` новый флаг — не ставь variadic последним перед промптом; разделитель `--` не поможет: он запрещён в
+  `extraArgs` и сделал бы позиционными флаги приложения.
 
 ## Открытые вопросы
 
