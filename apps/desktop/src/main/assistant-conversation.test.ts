@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, delimiter } from 'node:path'
 import type { AgentKind } from '@orca-board/core'
@@ -16,7 +17,9 @@ async function until(check: () => boolean): Promise<void> {
   }
 }
 
-function fixture(t: { after(fn: () => void): void }, mode = 'claude', agent: AgentKind = 'claude', selection: { model?: string; effort?: string } = {}): { engine: AssistantConversation; updates: ConversationUpdate[]; wire(): Record<string, unknown>[] } {
+const cleanup = new WeakMap<object, { engine: AssistantConversation; dir: string }[]>()
+
+function fixture(t: { after(fn: () => void): void }, mode = 'claude', agent: AgentKind = 'claude', selection: { model?: string; effort?: string; extraArgs?: string[] } = {}): { engine: AssistantConversation; updates: ConversationUpdate[]; wire(): Record<string, unknown>[] } {
   const dir = mkdtempSync(join(tmpdir(), 'orca-conversation-fixture-'))
   const source = readFileSync(new URL('../../test/fixtures/assistant-cli.mjs', import.meta.url), 'utf8')
   for (const name of ['claude', 'codex', 'gemini', 'opencode', 'goose', 'copilot', 'agent', 'cursor-agent']) {
@@ -33,9 +36,50 @@ function fixture(t: { after(fn: () => void): void }, mode = 'claude', agent: Age
   writeFileSync(log, '')
   const updates: ConversationUpdate[] = []
   const engine = createAssistantConversation({ agent, system: 'Use orca-board.', ...selection, cwd: dir, env: { PATH: [dir, process.env.PATH].join(delimiter), ...(process.platform === 'win32' ? { ORCA_NODE: process.execPath } : {}), ORCA_TEST_MODE: mode, ORCA_TEST_LOG: log }, onUpdate: (update) => updates.push(update) })
-  t.after(() => { engine.dispose(); rmSync(dir, { recursive: true, force: true }) })
+  let resources = cleanup.get(t)
+  if (!resources) {
+    resources = []
+    cleanup.set(t, resources)
+    t.after(async () => {
+      const errors: unknown[] = []
+      // Node останавливает цепочку after-хуков при первой ошибке. Сначала закрываем ВСЕ CLI,
+      // затем ждём удаления папок: Windows отпускает cwd после асинхронного taskkill.
+      for (const resource of cleanup.get(t) ?? []) {
+        try { resource.engine.dispose() } catch (error) { errors.push(error) }
+      }
+      const results = await Promise.allSettled((cleanup.get(t) ?? []).map(({ dir: path }) =>
+        rm(path, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })
+      ))
+      cleanup.delete(t)
+      for (const result of results) if (result.status === 'rejected') errors.push(result.reason)
+      if (errors.length) throw new AggregateError(errors, 'Не удалось завершить очистку фикстур ассистента')
+    })
+  }
+  resources.push({ engine, dir })
   return { engine, updates, wire: () => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>) }
 }
+
+for (const agent of ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'copilot', 'goose'] as const) {
+  test(`${agent}: флаги настроек доходят до CLI без shell, перед служебными флагами`, async (t) => {
+    const extraArgs = ['--config', 'path with spaces & %PATH%', '--user-switch']
+    const { engine, wire } = fixture(t, agent === 'claude' ? 'claude' : agent === 'codex' ? 'codex' : 'acp', agent, { extraArgs })
+    await engine.send('permission')
+    await until(() => engine.snapshot().status === 'waiting')
+    const args = (wire().find((frame) => frame.fixtureSpawn)?.fixtureSpawn as { argv: string[] }).argv
+    const offset = agent === 'goose' || agent === 'codex' ? 1 : 0
+    assert.deepEqual(args.slice(offset, offset + extraArgs.length), extraArgs)
+    if (agent === 'goose' || agent === 'codex') assert.equal(args[0], agent === 'codex' ? 'app-server' : 'acp')
+    else assert.equal(args[extraArgs.length], agent === 'claude' ? '--print' : agent === 'gemini' || agent === 'copilot' ? '--acp' : 'acp')
+  })
+}
+
+test('Codex: variadic-флаги не поглощают подкоманду app-server', async (t) => {
+  const { engine, wire } = fixture(t, 'codex', 'codex', { extraArgs: ['--image', 'a.png'] })
+  await engine.send('permission')
+  await until(() => engine.snapshot().status === 'waiting')
+  const args = (wire().find((frame) => frame.fixtureSpawn)?.fixtureSpawn as { argv: string[] }).argv
+  assert.deepEqual(args, ['app-server', '--image', 'a.png'])
+})
 
 test('Claude fragmented protocol emits one human and one streamed agent reply without duplicating complete blocks', async (t) => {
   const { engine } = fixture(t, 'fragmented')

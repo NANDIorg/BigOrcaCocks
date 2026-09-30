@@ -26,6 +26,13 @@ export interface Role {
    * (skills/worker.md или coordinator.md) при каждом запуске агента этой роли. Пусто — поля нет, поведение прежнее.
    */
   systemPrompt?: string
+  /**
+   * Флаги пользователя к команде запуска агента — строка, как её ввёл человек (не тримится, как `systemPrompt`).
+   * В argv её разбирает `parseExtraArgs` (без shell), токены уходят в `AgentInvokeOptions.extraArgs`.
+   * Пусто или одни пробелы — поля нет. Применяется со следующего запуска: идущие агенты не меняются.
+   * Меняется только в UI — агентам через CLI и сокет поле не отдаётся и не принимается (флаги обходят режим прав).
+   */
+  extraArgs?: string
 }
 
 export const DEFAULT_ROLES: Role[] = [
@@ -64,6 +71,11 @@ export interface AssistantSettings {
   effort?: string
   /** Инструкции человека: дописываются к skills/assistant.md блоком «# Инструкции роли «Ассистент»». */
   systemPrompt?: string
+  /**
+   * Флаги пользователя к команде запуска ассистента — строка, как её ввёл человек; разбор — `parseExtraArgs`.
+   * Пусто или одни пробелы — поля нет. Применяется со следующего запуска. Меняется только в UI (см. `Role.extraArgs`).
+   */
+  extraArgs?: string
 }
 
 export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { agent: 'claude' }
@@ -642,6 +654,15 @@ export interface Task {
    */
   stage?: WfStage
   /**
+   * Последняя остановка воркфлоу на этапе `stage` (`TaskStore.blockStage`, `blocked` из перехода): эффект ноды
+   * не выполнен (мерж упал не конфликтом, воркер не запустился, граф не пускает дальше), а причина живёт не только
+   * в одноразовом событии `workflow_blocked` — её видит человек в карточке, и по ней main отличает остановку от
+   * прерванного рестартом эффекта (такой задачу добирать не нужно: он уже сообщил о ней). `reason` — целиком, без
+   * урезания. Снимается любым движением этапа (`advanceStage`, `enterWork`), `reopenTask` и новым запуском воркера.
+   * Поле необязательное: снапшот старой версии читается как «не остановлена», миграция формата не нужна.
+   */
+  stageBlock?: TaskStageBlock
+  /**
    * Задача-проверка: на какой ноде `gate` она создана и что проверяет — ветку рабочей задачи (`taskId`, движок
    * подзадач) или ветку глобальной задачи целиком (`runId`, воркфлоу прогона). Ровно одно из двух.
    */
@@ -664,6 +685,13 @@ export interface Task {
    * `STATUS_HISTORY_LIMIT`. Нет у задач вне воркфлоу (ответ, гейт) и у снапшота от кода до истории этапов.
    */
   stageHistory?: StageChange[]
+}
+
+/** Остановка воркфлоу задачи (`Task.stageBlock`): на какой ноде, почему и когда (мс). */
+export interface TaskStageBlock {
+  nodeId: string
+  reason: string
+  at: number
 }
 
 export type DispatchOutcome = 'done' | 'failed' | 'unknown'

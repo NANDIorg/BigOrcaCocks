@@ -17,7 +17,7 @@ import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
-import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
+import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
   settleIdleRunStages, startRunWorkflow,
@@ -31,6 +31,8 @@ import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
+import { exportTaskTypeToFile } from './task-type-export'
+import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
@@ -465,6 +467,23 @@ function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
 }
 
 /**
+ * Доска проекта открыта впервые за запуск: подзадачи, чей эффект (мерж, git, конец) или переход после `done` прервал
+ * выход приложения, доводятся до ожидания (`resumeStuckStages`). В `setImmediate`: store открывается посреди чужого вызова
+ * (IPC, сокет), а мерж синхронный и долгий — пусть тот вызов сначала закончится.
+ */
+function resumeProjectStages(projectId: string): void {
+  setImmediate(() => {
+    if (!projects.get(projectId)) return
+    try {
+      resumeStuckStages(workflowDeps(projectId))
+    } catch (e) {
+      // Проект могли удалить между открытием и тиком; исключение из setImmediate уронило бы main.
+      console.error(`[orca] воркфлоу: не удалось добрать прерванные этапы (${projectId}):`, (e as Error).message)
+    }
+  })
+}
+
+/**
  * Решение по задаче на этапе проверки (`review accept|reject`, «Принять»/«Вернуть» на карточке проверки): проверка ветки
  * глобальной задачи — исход ноды `gate` (`workflow-run.ts`), остальное — прежний движок (`workflow.ts`). Задачу-решатель
  * развилки `runGateDecision` отвергает: её ветку выбирают `decision choose` или человек по запросу `decision`.
@@ -542,7 +561,7 @@ const assistantSession = new AssistantSession({
     const cwd = assistantCwd(app.getPath('userData'))
     mkdirSync(cwd, { recursive: true })
     return createAssistantConversation({
-      agent: launch.agent, system: launch.system, model: launch.model, effort: launch.effort, cwd,
+      agent: launch.agent, system: launch.system, model: launch.model, effort: launch.effort, extraArgs: launch.extraArgs, cwd,
       env: assistantEnv({ socketPath: SOCKET_PATH, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
       onUpdate
     })
@@ -732,6 +751,20 @@ async function pickRepoFolder(): Promise<string | null> {
 }
 
 /**
+ * Диалог «Сохранить как» для файла экспорта типа; отмена — null. Перезапись существующего файла подтверждает сам
+ * диалог. Окна нет — диалог без родителя (как `showMessageBox` при выходе).
+ */
+async function pickExportFile(defaultName: string): Promise<string | null> {
+  const opts = {
+    title: mt('dialog.exportType'),
+    defaultPath: join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  return res.canceled || !res.filePath ? null : res.filePath
+}
+
+/**
  * `ipcMain.handle` для вызовов renderer: всё, что они меняют на доске, сделал человек в UI — так переходы
  * попадают в историю статусов с `human` (`withStatusSource`, действует до первого await обработчика).
  */
@@ -839,6 +872,11 @@ function registerIpc(): void {
   handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
   handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
+  handle('taskTypes:export', (_e, id: string) => exportTaskTypeToFile({
+    export: (typeId) => projects.exportTaskType(typeId, { appVersion: app.getVersion(), exportedAt: new Date().toISOString() }),
+    chooseFile: pickExportFile,
+    write: writeFileAtomic
+  }, id))
   handle('nodeTemplates:list', () => projects.nodeTemplates())
   handle('nodeTemplates:save', (_e, input: NodeTemplateInput) => projects.saveNodeTemplate(input))
   handle('nodeTemplates:delete', (_e, id: string) => projects.deleteNodeTemplate(id))
@@ -1061,6 +1099,7 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
+  projects.onStoreOpened(resumeProjectStages)
   // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
   // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
   projects.onDataChange(() => {

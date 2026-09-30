@@ -79,6 +79,8 @@ export interface ConversationOptions {
   system: string
   model?: string
   effort?: string
+  /** Флаги настроек после разбора в argv, до флагов собственного протокола. */
+  extraArgs?: readonly string[]
   cwd: string
   env: Record<string, string>
   onUpdate(update: ConversationUpdate): void

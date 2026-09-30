@@ -379,6 +379,10 @@ class Conversation implements AssistantConversation {
       args = this.options.agent === 'gemini' ? ['--acp'] : this.options.agent === 'copilot' ? ['--acp', '--stdio'] : ['acp']
       if (this.options.model && (this.options.agent === 'gemini' || this.options.agent === 'cursor')) args.push('--model', this.options.model)
     }
+    // Подкоманда Codex/Goose идёт первой: variadic-флаг пользователя не должен поглотить её.
+    // Остальные служебные опции завершают argv, сохраняя выбор протокола приложения.
+    const extra = this.options.extraArgs ?? []
+    args = this.options.agent === 'goose' || this.protocol === 'codex' ? [args[0], ...extra, ...args.slice(1)] : [...extra, ...args]
     const launch = structuredLaunch(command, args, env)
     this.child = spawn(launch.command, launch.args, { cwd: this.options.cwd, env: launch.env, stdio: 'pipe', windowsHide: true, shell: false, detached: process.platform !== 'win32' })
     this.child.stdout.setEncoding('utf8')

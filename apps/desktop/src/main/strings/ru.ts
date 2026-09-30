@@ -110,6 +110,7 @@ export default {
   'dialog.update.now': 'Обновить сейчас',
   'dialog.update.whenIdle': 'Когда агенты закончат',
   'dialog.pickRepo': 'Выберите git-репозиторий',
+  'dialog.exportType': 'Экспорт типа задач',
 
   'notify.question': 'Вопрос',
   'notify.workflowBlocked': 'Воркфлоу остановлен',
@@ -156,10 +157,21 @@ export default {
   'role.modelNotString': 'роль «{id}»: модель должна быть строкой',
   'role.effortNotString': 'роль «{id}»: effort должен быть строкой',
   'role.promptNotString': 'роль «{id}»: системный промпт должен быть строкой',
+  'role.extraArgsNotString': 'роль «{id}»: флаги запуска должны быть строкой',
+  'role.extraArgsInvalid': 'роль «{id}»: флаги запуска: {reason}',
 
   'assistant.notObject': 'настройки ассистента: ожидается объект',
   'assistant.unknownAgent': 'ассистент: неизвестный агент {agent}',
   'assistant.notString': 'ассистент: поле {field} должно быть строкой',
+  'assistant.extraArgsInvalid': 'ассистент: флаги запуска: {reason}',
+
+  // Почему строку флагов запуска нельзя принять (`ExtraArgsError` в core) — параметр {reason} ошибок выше.
+  'extraArgs.quote': 'незакрытая кавычка {detail}',
+  'extraArgs.separator': 'токен «--» недопустим: всё после него, включая флаги приложения, агент принял бы за текст задания',
+  'extraArgs.notFlag': 'первым должен идти флаг (начинается с «-»), а не «{detail}»: дописываются только флаги, не команда',
+  'extraArgs.control': 'управляющий символ {detail}',
+  'extraArgs.length': 'строка слишком длинная: {detail} символов при максимуме {max}',
+  'extraArgs.count': 'слишком много аргументов: {detail} при максимуме {max}',
 
   'worker.cannotStart': 'воркер не запустится: {reason}',
   'coordinator.cannotStart': 'координатор не запустится: {reason}',
@@ -207,6 +219,7 @@ export default {
   'type.noRole': 'в типе «{title}» нет роли «{role}»',
   'type.settingsNotObject': '{label}: ожидается объект',
   'type.unknownPermission': '{label}: неизвестный режим разрешений: {mode}',
+  'type.exportFailed': 'не удалось сохранить файл типа {path}: {reason}',
 
   'projectTypes.notObject': 'типы проекта: ожидается объект',
   'projectTypes.badIds': 'типы проекта: typeIds должен быть массивом id типов',
@@ -267,6 +280,8 @@ export default {
 
   'review.noBranch': 'у задачи нет ветки',
   'review.untracked': 'новые файлы:',
+  'review.notReviewable': 'задача {id} на этапе «{node}» — принимать или возвращать нечего: воркер ещё не сдал работу или этап ждёт другого решения',
+  'review.stageBlocked': 'этап «{node}» задачи {id} снова остановлен: {reason}',
   'git.runBranchFailed': 'не удалось завести ветку «{branch}» глобальной задачи от «{base}»: {error}',
   'git.runBranchMissing': 'ветки «{branch}» глобальной задачи больше нет в репозитории — восстановите её или снимите ветку с задачи',
   'git.noCommits': 'В репозитории нет ни одного коммита (ветка «{branch}» пуста), а Orca ветвит работу от коммита. Создайте начальный коммит: кнопкой «Создать начальный коммит» в приложении или вручную `git add -A && git commit -m "init"`',

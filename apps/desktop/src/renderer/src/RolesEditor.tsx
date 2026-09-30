@@ -16,7 +16,7 @@ import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
 import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
-import { agentChangePatch, modelChangePatch, withPatch } from './roleEdit'
+import { agentChangePatch, duplicatedRole, modelChangePatch, rolesForSave, withPatch } from './roleEdit'
 import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
 import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
@@ -62,7 +62,8 @@ export function RolesEditor({
   storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, ofTaskType = false, onSave
 }: Props): React.JSX.Element {
   const t = useT()
-  const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave)
+  // Негодные флаги запуска в main не уходят (`rolesForSave`): он отверг бы тип целиком вместе с правками соседних полей.
+  const { draft: roles, error, update: save } = useAutoSave<Role[]>(storageKey, initial, onSave, rolesForSave)
   /** Состав и порядок ролей в просмотре заблокированы. */
   const locked = readOnly
   const update: typeof save = locked ? () => undefined : save
@@ -81,7 +82,7 @@ export function RolesEditor({
     save(roles.map((r, j) => (j === i ? withPatch(r, p) : r)), debounce)
   }
 
-  /** Смена агента: модель и effort сбрасываются — `agentChangePatch`. */
+  /** Смена агента: модель, effort и флаги запуска сбрасываются — `agentChangePatch`. */
   function changeAgent(i: number, agent: AgentKind): void {
     patch(i, agentChangePatch(agent))
   }
@@ -100,7 +101,7 @@ export function RolesEditor({
   }
 
   function duplicate(i: number): void {
-    const role: Role = { ...roles[i], id: newRoleId(), title: t('config.roles.copyTitle', { title: roles[i].title }) }
+    const role = duplicatedRole(roles[i], newRoleId(), t('config.roles.copyTitle', { title: roles[i].title }))
     update([...roles.slice(0, i + 1), role, ...roles.slice(i + 1)])
     setSelectedId(role.id)
   }
@@ -364,6 +365,7 @@ function RolePanel({
         onAgent={onAgent}
         onModel={onModel}
         onEffort={(effort) => onPatch({ effort })}
+        onExtraArgs={(extraArgs, debounce) => onPatch({ extraArgs }, debounce)}
       />
       </fieldset>
 

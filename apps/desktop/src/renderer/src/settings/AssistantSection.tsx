@@ -8,14 +8,14 @@ import { agentTitle } from '../defaultTitles'
 import { ExecutorFields, InstructionTabs, commandPreview, effortsOf, useBuiltinPrompts } from '../RoleParts'
 import { roleAgentState } from '../stageRoles'
 import {
-  assistantAgentPatch, assistantAgents, assistantModelPatch, assistantView, withAssistantPatch
+  assistantAgentPatch, assistantAgents, assistantForSave, assistantModelPatch, assistantView, withAssistantPatch
 } from '../assistantSettings'
 
 /** Режим разрешений ассистента — фиксированный (`ASSISTANT_PERMISSION_MODE` в main): в превью команды — как есть. */
 const PERMISSION_MODE = 'auto'
 
 /**
- * Раздел «Настройки → Ассистент»: агент, модель, effort и инструкции ассистента доски (`AppSettings.assistant`).
+ * Раздел «Настройки → Ассистент»: агент, модель, effort, флаги запуска и инструкции ассистента доски (`AppSettings.assistant`).
  * Поля — те же части, что у роли типа (`RoleParts`). Действуют на следующий диалог, идущий не перезапускается.
  */
 export function AssistantSection({ settings, agents, error, onSave }: {
@@ -50,8 +50,8 @@ function AssistantEditor({ initial, agents: all, onSave }: {
 }): React.JSX.Element {
   const t = useT()
   // Ключ постоянный: черновик берётся при открытии раздела, внешние правки (CLI) видны при следующем открытии —
-  // как у редактора ролей типа.
-  const { draft: s, error, update } = useAutoSave<AssistantSettings>('assistant', initial, onSave)
+  // как у редактора ролей типа. Негодные флаги запуска в main не уходят (`assistantForSave`).
+  const { draft: s, error, update } = useAutoSave<AssistantSettings>('assistant', initial, onSave, assistantForSave)
   const builtin = useBuiltinPrompts()
   const agents = assistantAgents(all)
   const enabled = agents.filter((a) => a.enabled)
@@ -81,6 +81,7 @@ function AssistantEditor({ initial, agents: all, onSave }: {
           onAgent={(agent) => patch(assistantAgentPatch(agent))}
           onModel={(model, debounce) => patch(assistantModelPatch(s, model, effortsOf(current, s.agent, model || undefined)), debounce)}
           onEffort={(effort) => patch({ effort })}
+          onExtraArgs={(extraArgs, debounce) => patch({ extraArgs }, debounce)}
         />
         <div className="roles-hint">{t('settings.assistant.permission')}</div>
         <InstructionTabs

@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import {
   effortOptions,
   effortOptionsFor,
@@ -13,28 +13,25 @@ import {
   type BuiltinPrompts
 } from '@orca-board/core'
 import { AgentLogo } from './AgentLogo'
-import { useT, type TFunction, type TKey } from './i18n'
+import { useT, type TKey } from './i18n'
 import { AGENT_STATE_TEXT, roleAgentState } from './stageRoles'
 import { withCode } from './about/parts'
 import { agentTitle, modelTitle } from './defaultTitles'
 import { ipcErrorMessage } from './ipcError'
+import { checkExtraArgs, extraArgsSupported } from './extraArgsHints'
+import type { Executor } from './commandPreview'
+
+export { commandPreview, type Executor } from './commandPreview'
 
 // Части панели исполнителя агента: общие для роли типа задачи (RolesEditor) и ассистента («Настройки → Ассистент»).
-
-/** Кто запускается: агент, модель и effort — поля и роли, и настроек ассистента. */
-export interface Executor {
-  agent: AgentKind
-  model?: string
-  effort?: string
-}
 
 /** Уровни effort: по модели агента, если агент известен, иначе общий список из реестра. */
 export function effortsOf(info: AgentInfo | undefined, agent: string, model: string | undefined): readonly string[] {
   return info ? effortOptionsFor(info, model) : effortOptions(agent)
 }
 
-/** Агент, модель и effort плюс превью команды запуска. */
-export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onModel, onEffort }: {
+/** Агент, модель, effort и флаги запуска плюс превью команды запуска. */
+export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onModel, onEffort, onExtraArgs }: {
   exec: Executor
   /** Все агенты: выключенный текущий показывается с пометкой. */
   agents: readonly AgentInfo[]
@@ -45,8 +42,10 @@ export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onMode
   onAgent(agent: AgentKind): void
   onModel(model: string, debounce?: boolean): void
   onEffort(effort: string | undefined): void
+  onExtraArgs(extraArgs: string, debounce?: boolean): void
 }): React.JSX.Element {
   const t = useT()
+  const argsId = useId()
   const current = agents.find((a) => a.id === exec.agent)
   const state = roleAgentState(current)
   const defaults = current?.defaults
@@ -54,6 +53,9 @@ export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onMode
   const customModel = exec.model && !models.some((m) => m.id === exec.model) ? exec.model : undefined
   const defaultModel = modelTitle(modelLabel(current, defaults?.model))
   const efforts = effortsOf(current, exec.agent, exec.model)
+  // Старый main флаги молча стёр бы при сохранении — поле недоступно, пока приложение не перезапустят.
+  const argsStale = !extraArgsSupported(agents)
+  const argsCheck = checkExtraArgs(t, exec)
   return (
     <div className="roles-sec">
       <div className="roles-sec-head"><span>{t('config.roles.executor')}</span></div>
@@ -134,6 +136,30 @@ export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onMode
           ) : (
             <div className="roles-hint roles-effort-none">{t('config.roles.effortNone')}</div>
           )}
+        </div>
+      </div>
+      <div className="roles-field roles-args">
+        <span className="roles-label">{t('config.roles.extraArgs')}</span>
+        <input
+          value={exec.extraArgs ?? ''}
+          disabled={argsStale}
+          aria-label={t('config.roles.extraArgs')}
+          aria-describedby={`${argsId}-hint${argsCheck.error ? ` ${argsId}-error` : ''}`}
+          aria-invalid={argsCheck.error ? true : undefined}
+          placeholder={t('config.roles.extraArgsPlaceholder')}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          onChange={(e) => onExtraArgs(e.target.value, true)}
+        />
+        {argsCheck.error && <div id={`${argsId}-error`} className="editor-error" role="alert">{argsCheck.error}</div>}
+        {argsCheck.warnings.length > 0 && (
+          <div className="roles-warn" role="status">
+            {argsCheck.warnings.map((w) => <div key={w.flag}>{withCode(w.text, w.flag, 'flag')}</div>)}
+          </div>
+        )}
+        <div id={`${argsId}-hint`} className="roles-hint">
+          {argsStale ? t('common.staleApp') : t('config.roles.extraArgsHint')}
         </div>
       </div>
       <pre className="roles-preview" aria-label={t('config.roles.commandAria')}>
@@ -250,29 +276,6 @@ const CHANNEL_TEXT: Record<ReturnType<typeof promptChannel>, TKey> = {
   system: 'config.roles.channel.system',
   combined: 'config.roles.channel.combined',
   none: 'config.roles.channel.none'
-}
-
-/** Аргумент для превью команды: плейсхолдеры ‹…› как есть, остальное со спецсимволами — в кавычках. */
-function shellArg(arg: string): string {
-  const flat = arg.replace(/\s*\n\s*/g, ' ')
-  if (flat.includes('‹') || !/[\s'"*()$&|;<>]/.test(flat)) return flat
-  return `'${flat.replace(/'/g, `'\\''`)}'`
-}
-
-/**
- * Строка запуска агента — из того же `invoke` реестра, что и реальный запуск; тексты — плейсхолдерами.
- * `prompt` — стартовое сообщение (или его плейсхолдер), `permissionMode` — известный режим, иначе плейсхолдер.
- */
-export function commandPreview(
-  t: TFunction, exec: Executor & { systemPrompt?: string }, kind: BuiltinPromptKind, prompt: string, permissionMode?: string
-): string {
-  const spec = getAgent(exec.agent)
-  if (!spec) return t('config.roles.agentUnknownCmd', { agent: exec.agent })
-  const system = t(exec.systemPrompt ? 'config.roles.ph.systemWithRole' : 'config.roles.ph.system', { kind })
-  const { command, args } = spec.invoke(system, prompt, {
-    permissionMode: permissionMode ?? t('config.roles.ph.permission'), shell: '$SHELL', model: exec.model, effort: exec.effort
-  })
-  return [command, ...args].map(shellArg).join(' ')
 }
 
 export type BuiltinState = { prompts: BuiltinPrompts } | { error: string } | undefined

@@ -14,7 +14,7 @@ import { isTaskRole } from './prompts.ts'
 import { trackActiveTime } from './active-time.ts'
 import { recordStage, recordStatus, withStatusSource } from './status-history.ts'
 import {
-  WORKFLOW_VERSION, decisionOptions, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction,
+  WORKFLOW_VERSION, decisionOptions, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction, stageAction,
   startRunStage, startStage, toTaskScopeWorkflow, wfNodeTitle, wfWorkRoleIds, wfWorkStage,
   type WfAction, type WfDecisionOption, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type WfShowcase, type WfStage,
   type WfWorkStage, type Workflow
@@ -1047,9 +1047,12 @@ export class TaskStore {
     const step = task.stage ? nextStage(wf, task.stage, outcome, ctx) : startStage(wf, ctx)
     const from = task.stage?.nodeId
     const moved = step.stage.nodeId !== from && step.stage.nodeId !== ''
+    // Любой переход — новая попытка идти дальше: прошлая остановка больше не актуальна.
+    this.clearStageBlock(task)
     if (moved) {
       task.stage = step.stage
       task.updatedAt = Date.now()
+      this.cancelStaleApprovals(task)
       const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
       recordStage(task, {
         nodeId: step.stage.nodeId, at: task.updatedAt, outcome, ...(node ? { title: wfNodeTitle(node) } : {}),
@@ -1060,9 +1063,7 @@ export class TaskStore {
         ...(node ? { nodeType: node.type, title: wfNodeTitle(node) } : {})
       })
     }
-    if (step.action.type === 'blocked') {
-      this.pushEvent('workflow_blocked', { taskId, runId: task.runId, nodeId: step.action.nodeId, reason: short(step.action.reason) })
-    }
+    if (step.action.type === 'blocked') this.markStageBlocked(task, step.action.nodeId, step.action.reason)
     this.commit()
     return { task, action: step.action }
   }
@@ -1087,8 +1088,9 @@ export class TaskStore {
     if (!task.stage) return this.advanceStage(taskId, 'next', opts).action
     const ctx = this.taskStageCtx(task, onPath, opts)
     const step = startStage(wf, ctx)
+    this.clearStageBlock(task)
     if (step.action.type === 'blocked') {
-      this.pushEvent('workflow_blocked', { taskId, runId: task.runId, nodeId: step.action.nodeId, reason: short(step.action.reason) })
+      this.markStageBlocked(task, step.action.nodeId, step.action.reason)
       this.commit()
       return step.action
     }
@@ -1097,6 +1099,7 @@ export class TaskStore {
     const from = task.stage.nodeId
     task.stage = { nodeId: step.stage.nodeId, visits }
     task.updatedAt = Date.now()
+    this.cancelStaleApprovals(task)
     const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
     recordStage(task, { nodeId: step.stage.nodeId, at: task.updatedAt, outcome: 'restart', from, ...(node ? { title: wfNodeTitle(node) } : {}) })
     this.pushEvent('stage_changed', {
@@ -1123,11 +1126,55 @@ export class TaskStore {
    */
   blockStage(taskId: string, reason: string): OrcaEvent {
     const task = this.mustTask(taskId)
-    const event = this.pushEvent('workflow_blocked', {
-      taskId, runId: task.runId, ...(task.stage ? { nodeId: task.stage.nodeId } : {}), reason: short(reason)
-    })
+    const event = this.markStageBlocked(task, task.stage?.nodeId, reason)
     this.commit()
     return event
+  }
+
+  /**
+   * Действие ноды, на которой стоит подзадача (`stageAction` по графу задачи, `taskWorkflow`): чтобы main повторил
+   * эффект остановленного или прерванного рестартом этапа («Принять» на «Мерже», добор после запуска). Контекст — как
+   * у `advanceStage`: на пути ноды «Работа» `scope: 'subtask'`, у старого движка без `scope`. Позицию не меняет,
+   * событий не шлёт. undefined — у задачи нет своего этапа: ответ, проверка, ещё не вошла в граф, подзадача
+   * воркфлоу прогона вне пути «Работы».
+   */
+  stageActionOf(taskId: string, fallback: RunWorkflowFallback = {}): WfAction | undefined {
+    const task = this.mustTask(taskId)
+    if (!task.stage || task.answerFor || task.gateFor) return undefined
+    const onPath = this.pathOwner(task, fallback) !== undefined
+    if (this.isRunScope(task) && !onPath) return undefined
+    return stageAction(this.taskWorkflow(task, fallback), task.stage, this.taskStageCtx(task, onPath, fallback))
+  }
+
+  /**
+   * `workflow_blocked` (причина в событии урезана) и `Task.stageBlock` с причиной целиком. Без ноды (задача ещё
+   * не вошла в граф) метку ставить не на что — только событие. Без commit.
+   */
+  private markStageBlocked(task: Task, nodeId: string | undefined, reason: string): OrcaEvent {
+    if (nodeId !== undefined) {
+      task.updatedAt = Date.now()
+      task.stageBlock = { nodeId, reason, at: task.updatedAt }
+    }
+    return this.pushEvent('workflow_blocked', {
+      taskId: task.id, runId: task.runId, ...(nodeId !== undefined ? { nodeId } : {}), reason: short(reason)
+    })
+  }
+
+  /** Снять `Task.stageBlock`: этап сдвинулся или задачу запускают заново. Без commit. */
+  private clearStageBlock(task: Task): void {
+    if (!task.stageBlock) return
+    delete task.stageBlock
+    task.updatedAt = Date.now()
+  }
+
+  /**
+   * Задача ушла на другую ноду — ждущий approval прошлой ноды устарел: «Принять» по нему повёл бы граф не с того
+   * этапа. Отменяется без события, задача выходит из «Нужен ответ» (дальше её ведёт исполнитель). Без commit.
+   */
+  private cancelStaleApprovals(task: Task): void {
+    const nodeId = task.stage?.nodeId
+    this.cancelRequests((r) => r.taskId === task.id && r.kind === 'approval' && r.nodeId !== undefined && r.nodeId !== nodeId)
+    this.settleTask(task)
   }
 
   /**
@@ -1967,6 +2014,7 @@ export class TaskStore {
     // Новый запуск начинает с чистого листа: запросы прошлых запусков (сданный ответ, эскалация, вопрос
     // умершего воркера) больше не ждут человека. Ответы на прошлые вопросы — в промпте запуска.
     this.cancelRequests((r) => r.taskId === task.id)
+    this.clearStageBlock(task)
     task.dispatchId = dispatch.id
     task.startedAt ??= Date.now()
     this.setStatus(task, this.columnId('in_progress'))
@@ -2259,6 +2307,7 @@ export class TaskStore {
       this.setStatus(task, this.columnId('ready'))
     }
     this.cancelRequests((r) => r.taskId === task.id)
+    this.clearStageBlock(task)
     this.commit()
     return task
   }
