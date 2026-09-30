@@ -1,7 +1,8 @@
-import { isPendingRequest, type ColumnKind, type GlobalTask, type GlobalTaskReturn, type HumanRequest } from '@orca-board/core'
+import { isPendingRequest, nodeLane, type ColumnKind, type GlobalTask, type GlobalTaskReturn, type HumanRequest, type Workflow } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { t } from './i18n'
 import { ipcErrorCode, ipcErrorMessage } from './ipcError'
+import { laneTitle } from './runStage'
 
 /**
  * Что можно сделать с глобальной задачей на карточке и в деталях. «Проверка» — колонка kind=review
@@ -83,9 +84,41 @@ export function runApprovalRequest(requests: readonly HumanRequest[] | undefined
   return runApprovalRequests(requests, runId)[0]
 }
 
-/** Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. */
-export function returnHint(closesCoordinator: boolean, runWorkflow = false): string {
-  if (runWorkflow) return t('global.return.hintRun')
+/**
+ * Название пути разветвления, в котором стоит нода запроса (`HumanRequest.nodeId`): «Бэкенд». Путь — по графу прогона
+ * (`nodeLane`: нода принадлежит пути, даже когда позиции путей уже сменились), без графа (типы не загрузились, старый
+ * main) — по текущим позициям путей (`GlobalTask.lanes`). Нода вне разветвления, запрос без ноды — undefined.
+ */
+export function requestLaneTitle(
+  request: Pick<HumanRequest, 'nodeId'> | undefined,
+  workflow: Pick<Workflow, 'nodes' | 'edges'> | undefined,
+  lanes?: readonly { id: string; nodeId: string }[]
+): string | undefined {
+  const nodeId = request?.nodeId
+  if (!nodeId) return undefined
+  const lane = (workflow ? nodeLane(workflow, nodeId)?.laneId : undefined) ?? lanes?.find((l) => l.nodeId === nodeId)?.id
+  return lane !== undefined ? laneTitle(workflow, lane) : undefined
+}
+
+/**
+ * Путь, который решает «Подтвердить» / «Вернуть» глобальной задачи: только когда ждущий approval прогона ровно один и
+ * его нода — внутри пути. При нескольких окна решение не отправляют (`approvalsInInbox`), без путей — прежние тексты.
+ */
+export function reviewLaneTitle(
+  requests: readonly HumanRequest[],
+  g: Pick<GlobalTask, 'id'> & Partial<Pick<GlobalTask, 'lanes'>>,
+  workflow: Pick<Workflow, 'nodes' | 'edges'> | undefined
+): string | undefined {
+  const pending = runApprovalRequests(requests, g.id)
+  return pending.length === 1 ? requestLaneTitle(pending[0], workflow, g.lanes) : undefined
+}
+
+/**
+ * Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. `lane` — возвращается один путь
+ * разветвления (`reviewLaneTitle`): соседние пути не затронуты.
+ */
+export function returnHint(closesCoordinator: boolean, runWorkflow = false, lane?: string): string {
+  if (runWorkflow) return lane !== undefined ? t('global.return.hintLane', { lane }) : t('global.return.hintRun')
   return t(closesCoordinator ? 'global.return.hintCloses' : 'global.return.hint')
 }
 

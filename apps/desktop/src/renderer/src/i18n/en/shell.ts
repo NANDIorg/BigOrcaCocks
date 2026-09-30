@@ -159,6 +159,8 @@ export default {
   'request.body.details': 'details',
   'request.recommended': 'Recommended by the asker',
   'request.stageHint': 'Asked at a workflow stage',
+  'request.lane': 'path “{name}”',
+  'request.laneHint': 'The request waits at a node inside a parallel path: the decision affects only this path',
   'request.ownAnswer': 'Your answer…',
   'request.answerPlaceholder': 'Answer…',
   'request.ownAnswerLabel': 'Your answer',

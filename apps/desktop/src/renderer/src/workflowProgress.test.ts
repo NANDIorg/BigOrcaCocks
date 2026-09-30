@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { validateWorkflow, type GlobalTask, type StageChange, type Task, type WfNode, type Workflow } from '@orca-board/core'
 import {
-  defaultProgressNode, entryEdges, isPassThrough, nodeVisits, passExits, pathProgress, progressLayout, returnReason, runProgress, subtaskPathSteps, visitTasks,
+  defaultProgressNode, entryEdges, isArrival, isPassThrough, joinMerges, nodeVisits, passExits, pathProgress, progressLayout, returnReason, runProgress, subtaskPathSteps, visitTasks,
   walkHistory, workPath
 } from './workflowProgress'
 import { setLocale } from './i18n'
@@ -470,4 +470,67 @@ test('nodeVisits: причина возврата в путь — уточнен
   assert.equal(nodeVisits(g, 'be', ['be', 'fe']).at(-1)?.reason, 'бэк: поправь API')
   assert.equal(nodeVisits(g, 'fe', ['be', 'fe']).at(-1)?.reason, 'фронт: другой цвет')
   assert.equal(nodeVisits(g, 'fe_mock', ['be', 'fe'])[0].leftReason, 'фронт: другой цвет')
+})
+
+// --- Заходы в слияние: заход — одно слияние поколения путей, приход пути — отметка ---
+
+/** Первый проход: оба пути пришли в слияние (`arrived`, номер ожидаемого слияния 1), слияние → «Human check». */
+const MERGED_1: StageChange[] = [
+  ...FH,
+  { nodeId: 'join', from: 'be_review', outcome: 'accept', lane: 'split:backend', at: 300, visit: 1, arrived: true },
+  { nodeId: 'join', from: 'fe_mock', outcome: 'accept', lane: 'split:frontend', at: 310, visit: 1, arrived: true },
+  { nodeId: 'human', from: 'join', outcome: 'next', at: 320, visit: 1 }
+]
+
+test('joinMerges: слияние — первая запись без lane после приходов; номер — visit прихода, без него — порядковый', () => {
+  assert.deepEqual(joinMerges(MERGED_1, FORK), [{ joinId: 'join', index: 6, visit: 1 }])
+  // Запись после слияния без from и приходы без поля arrived (снимок до поля) — узнаются по графу.
+  const legacy = MERGED_1.map(({ arrived: _a, visit: _v, ...h }, i) => (i === 6 ? { nodeId: 'human', at: 320 } : h))
+  assert.deepEqual(joinMerges(legacy, FORK), [{ joinId: 'join', index: 6, visit: 1 }])
+  assert.deepEqual(joinMerges(legacy), [], 'без графа и без флага приход не узнать')
+  assert.equal(isArrival({ nodeId: 'join', lane: 'split:backend', arrived: true }), true)
+  assert.equal(isArrival({ nodeId: 'be', lane: 'split:backend' }, FORK), false)
+})
+
+test('runProgress: у слияния по истории (без stage.visits) заходов столько, сколько слияний, а не приходов путей', () => {
+  const p = runProgress({ stage: { nodeId: 'human', visits: {} }, stageHistory: MERGED_1 }, FORK)
+  assert.equal(p.nodes.join.state, 'done')
+  assert.equal(p.nodes.join.visits, 1, 'два пути пришли — одно слияние, не «×2»')
+  // Второй проход через разветвление, пути снова пришли и слились.
+  const second: StageChange[] = [
+    ...MERGED_1,
+    { nodeId: 'split', from: 'human', outcome: 'reject', at: 400, visit: 2 },
+    { nodeId: 'be', from: 'split', outcome: 'backend', lane: 'split:backend', at: 401, visit: 2 },
+    { nodeId: 'fe', from: 'split', outcome: 'frontend', lane: 'split:frontend', at: 402, visit: 2 },
+    { nodeId: 'join', from: 'be', outcome: 'next', lane: 'split:backend', at: 500, visit: 2, arrived: true },
+    { nodeId: 'join', from: 'fe', outcome: 'next', lane: 'split:frontend', at: 510, visit: 2, arrived: true },
+    { nodeId: 'human', from: 'join', outcome: 'next', at: 520, visit: 2 }
+  ]
+  assert.equal(runProgress({ stage: { nodeId: 'human', visits: {} }, stageHistory: second }, FORK).nodes.join.visits, 2)
+  // Новый main: счётчик в stage.visits уже по слияниям — берётся как есть.
+  assert.equal(runProgress({ stage: { nodeId: 'human', visits: { join: 2 } }, stageHistory: second }, FORK).nodes.join.visits, 2)
+})
+
+test('nodeVisits: у слияния заход — слияние с приходами путей внутри; пока пришли не все — «ждёт»', () => {
+  const [v, ...rest] = nodeVisits({ stageHistory: MERGED_1 }, 'join', [], FORK)
+  assert.equal(rest.length, 0, 'два прихода — один заход')
+  assert.equal(v.visit, 1)
+  assert.equal(v.at, 300, 'с прихода первого пути')
+  assert.equal(v.till, 320, 'до слияния')
+  assert.equal(v.to, 'human')
+  assert.equal(v.current, false)
+  assert.deepEqual(v.arrivals, [
+    { index: 4, lane: 'split:backend', at: 300, from: 'be_review' },
+    { index: 5, lane: 'split:frontend', at: 310, from: 'fe_mock' }
+  ])
+  // Пришёл один путь: заход открыт и «сейчас» (ждёт остальные).
+  const [waiting] = nodeVisits({ stageHistory: MERGED_1.slice(0, 5) }, 'join', [], FORK)
+  assert.equal(waiting.current, true)
+  assert.equal(waiting.till, undefined)
+  assert.equal(waiting.arrivals?.length, 1)
+  // Прогон закрыли, пока путь ждал: граница — закрытие, «сейчас» нет.
+  const [closed] = nodeVisits({ stageHistory: MERGED_1.slice(0, 5), closedAt: 900 }, 'join', [], FORK)
+  assert.deepEqual([closed.current, closed.closed, closed.till], [false, true, 900])
+  // Обычная нода — прежние заходы без приходов.
+  assert.equal(nodeVisits({ stageHistory: MERGED_1 }, 'human', [], FORK)[0].arrivals, undefined)
 })

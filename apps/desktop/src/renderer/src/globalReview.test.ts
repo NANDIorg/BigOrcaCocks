@@ -8,14 +8,17 @@ import {
   globalTaskActions,
   isRunWorkflow,
   returnHint,
+  requestLaneTitle,
   returnsNewestFirst,
   reviewErrorMessage,
+  reviewLaneTitle,
   runApprovalRequest,
   runApprovalRequests
 } from './globalReview'
 import { headerActions } from './globalScreen'
 import type { HumanRequest } from '@orca-board/core'
 import { setLocale } from './i18n'
+import { runGraphWithFork } from './workflowFixture'
 
 /** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
 function inEnglish(fn: () => void): void {
@@ -178,4 +181,19 @@ test('runApprovalRequests: все ждущие approval прогона по но
   assert.deepEqual(runApprovalRequests(list, 'run_1').map((x) => x.id), ['be', 'fe'])
   assert.equal(runApprovalRequest(list, 'run_1')?.id, 'be')
   assert.deepEqual(runApprovalRequests(undefined, 'run_1'), [])
+})
+
+test('requestLaneTitle, reviewLaneTitle: путь approval — по графу, без графа — по позициям путей; при двух ждущих — нет', () => {
+  const wf = runGraphWithFork()
+  const fe = request('fe', { nodeId: 'fe_mock', createdAt: 20 })
+  assert.equal(requestLaneTitle(fe, wf), 'Frontend')
+  assert.equal(requestLaneTitle(request('h', { nodeId: 'human' }), wf), undefined, 'нода вне разветвления')
+  assert.equal(requestLaneTitle(request('x'), wf), undefined, 'запрос без ноды')
+  assert.equal(requestLaneTitle(fe, undefined, [{ id: 'split:frontend', nodeId: 'fe_mock' }]), 'frontend', 'без графа — id пути')
+  const g = { id: 'run_1', lanes: [{ id: 'split:frontend', forkId: 'split', branchId: 'frontend', nodeId: 'fe_mock' }] }
+  assert.equal(reviewLaneTitle([fe], g, wf), 'Frontend')
+  assert.equal(reviewLaneTitle([fe, request('be', { nodeId: 'be_review' })], g, wf), undefined, 'два ждущих — окно решение не отправляет')
+  assert.equal(reviewLaneTitle([], g, wf), undefined)
+  assert.match(returnHint(false, true, 'Frontend'), /^Вернётся только путь «Frontend».*Соседние пути не затронуты\.$/)
+  inEnglish(() => assert.match(returnHint(false, true, 'Frontend'), /^Only path “Frontend” goes back/))
 })

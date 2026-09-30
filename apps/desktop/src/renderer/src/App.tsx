@@ -47,7 +47,7 @@ import type { AppMenuAction } from '../../shared/ipc'
 import appLogo from '../../../build/icon.svg'
 import { ProjectList } from './ProjectList'
 import { groupsFromList } from './projectGroups'
-import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest, runApprovalRequests } from './globalReview'
+import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest, runApprovalRequests, reviewLaneTitle } from './globalReview'
 import { runsKnowPriority } from './taskPriority'
 import { InboxPanel, pendingRequests } from './InboxPanel'
 import { AssistantPanel } from './AssistantPanel'
@@ -1300,6 +1300,7 @@ export function App(): React.JSX.Element {
           global={returningGlobal}
           closesCoordinator={coordinatorPtys.has(returningGlobal.id)}
           approvals={runApprovalRequests(snap.requests, returningGlobal.id).length}
+          lane={reviewLaneTitle(snap.requests ?? [], returningGlobal, workflowForRun(returningGlobal.id, snap.runs, active, taskTypes))}
           onClose={() => setReturnGlobalId(null)}
           onSubmit={(text, images) => returnGlobalTask(returningGlobal.id, text, images)}
         />
@@ -1310,6 +1311,7 @@ export function App(): React.JSX.Element {
           global={acceptingGlobal}
           request={runApprovalRequest(snap.requests, acceptingGlobal.id)}
           approvals={runApprovalRequests(snap.requests, acceptingGlobal.id).length}
+          lane={reviewLaneTitle(snap.requests ?? [], acceptingGlobal, workflowForRun(acceptingGlobal.id, snap.runs, active, taskTypes))}
           tasks={tasks.filter((t) => t.runId === acceptingGlobal.id)}
           columns={columns}
           dispatches={snap.dispatches}

@@ -1428,6 +1428,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .rq-kind { flex-shrink: 0; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--rq, var(--muted)); font-size: 11px; }
 .rq-where { min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rq-stage { flex-shrink: 0; max-width: 45%; padding: 0 6px; border: 1px solid var(--chip); border-radius: 999px; color: var(--col-input); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Путь разветвления запроса: цвет «в работе», чтобы не спутать с меткой этапа «Вопрос человеку». */
+.rq-stage.rq-lane { color: var(--col-progress); }
 .rq-title { font-size: 14px; font-weight: 600; line-height: 1.35; white-space: pre-wrap; }
 .rq-toggle { align-self: flex-start; background: transparent; border: 0; padding: 0; color: var(--muted); font-size: 12px; }
 .rq-toggle:hover { color: var(--text); }
@@ -2352,6 +2354,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-crumbs .btn-text:hover { text-decoration: underline; }
 .wf-progress-crumbs b { font-weight: 600; overflow-wrap: anywhere; }
 .wf-progress-ro { color: var(--muted); font-size: 11.5px; }
+.wf-progress-hint { font-size: 11.5px; }
 .wf-progress-scroll { overflow-x: auto; padding: 4px 0; }
 .wf-progress-svg { display: block; width: 100%; height: auto; margin: 0 auto; overflow: visible; }
 .wf-progress-box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
@@ -2433,6 +2436,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 }
 .wf-progress-lanes li.is-arrived { border-left-color: var(--col-done); }
 .wf-progress-visit-sub { margin-top: 2px; font-size: 12px; }
+/* Приходы путей внутри захода в слияние: строки, а не карточки заходов (`.wf-progress-visits li`). */
+.wf-progress-arrivals { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.wf-progress-visits .wf-progress-arrivals li { padding: 0; border: 0; border-radius: 0; background: none; font-size: 12px; }
 .wf-progress-ret { color: var(--wf-reject); }
 .wf-progress-quote {
   margin-top: 4px; padding: 4px 10px; font-size: 12.5px; white-space: pre-wrap; border-left: 2px solid var(--wf-reject);

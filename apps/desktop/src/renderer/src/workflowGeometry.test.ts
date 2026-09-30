@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { type WfNode, type Workflow } from '@orca-board/core'
 import {
   LAYOUT_DX, LAYOUT_DY, NODE_H, NODE_W, PORT_HIT_R, PORT_STEP, autoLayout, graphBounds, nodeHeight, nodeRect, curvePoint, distanceToCurve, edgeCurve, edgeCurveOf, fitView,
-  hitEdge, hitNode, hitPort, inputPoint, panBy, portLabelMax, portPoint, screenToWorld, zoomAt
+  hitEdge, hitNode, hitPort, inputPoint, panBy, placeEdgeLabels, portLabelMax, portPoint, screenToWorld, zoomAt
 } from './workflowGeometry'
 import { graphWithFork, graphWithMerge } from './workflowFixture'
 
@@ -213,6 +213,30 @@ test('fork: высота по числу путей, порты по поряд�
   assert.ok(at('work_be').y < at('work_fe').y, 'пути в порядке портов сверху вниз')
   assert.equal(at('merge_paths').x, at('check').x + LAYOUT_DX, 'слияние — за самым длинным путём')
   assert.equal(at('end').x, at('merge_paths').x + LAYOUT_DX)
+})
+
+test('placeEdgeLabels: подписи двух петель с общей серединой разносятся вдоль кривых, не налезая на ноды и друг на друга', () => {
+  const nodes: WfNode[] = [
+    { id: 'a', type: 'work', x: 0, y: 0 },
+    { id: 'b', type: 'human', x: 300, y: 0 },
+    { id: 'c', type: 'work', x: 0, y: 200 }
+  ]
+  const loop = edgeCurve({ x: 450, y: 30 }, { x: 0, y: 30 }, 60)
+  const labels = [
+    { id: 'l1', curve: loop, width: 40, back: true },
+    { id: 'l2', curve: loop, width: 40, back: true }
+  ]
+  const at = placeEdgeLabels(labels, nodes)
+  const box = (p: { x: number; y: number }) => ({ x: p.x - 22, y: p.y - 10, w: 44, h: 12 })
+  const hit = (a: ReturnType<typeof box>, b: { x: number; y: number; w: number; h: number }): boolean =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+  const mid = curvePoint(loop, 0.5)
+  assert.deepEqual(at.l1, { x: mid.x, y: mid.y + 14 }, 'первая — в середине, под петлёй')
+  assert.ok(!hit(box(at.l1), box(at.l2)), 'вторая сдвинута')
+  for (const n of nodes) for (const p of [at.l1, at.l2]) assert.ok(!hit(box(p), nodeRect(n)), `подпись не на ноде ${n.id}`)
+  // Занятое место (плашка над нодой) тоже обходится.
+  const blocked = placeEdgeLabels([labels[0]], [], [box(at.l1)])
+  assert.notDeepEqual(blocked.l1, at.l1)
 })
 
 test('autoLayout: четыре пути разной длины — ряды один под другим, слияние посередине и правее самого длинного', () => {

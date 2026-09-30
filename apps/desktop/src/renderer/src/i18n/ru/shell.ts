@@ -166,6 +166,8 @@ export default {
   'request.body.details': 'подробности',
   'request.recommended': 'Рекомендует спросивший',
   'request.stageHint': 'Вопрос задан на этапе воркфлоу',
+  'request.lane': 'путь «{name}»',
+  'request.laneHint': 'Запрос ждёт на ноде внутри пути разветвления: решение касается только этого пути',
   'request.ownAnswer': 'Свой ответ…',
   'request.answerPlaceholder': 'Ответ…',
   'request.ownAnswerLabel': 'Свой ответ',
