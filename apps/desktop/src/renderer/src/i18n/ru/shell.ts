@@ -7,6 +7,7 @@ export default {
   toggle: 'Открыть / закрыть',
 
   // Rail и сайдбар проектов (App.tsx)
+  'rail.menu': 'Меню приложения',
   'rail.projects': 'Проекты',
   'rail.settings': 'Настройки',
   'rail.docs': 'Документы',

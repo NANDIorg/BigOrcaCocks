@@ -1,4 +1,4 @@
-// Drag-области интегрированного заголовка macOS: Chromium собирает их без учёта перекрытия по z-index, поэтому
+// Drag-области интегрированных заголовков macOS/Windows: Chromium собирает их без учёта перекрытия по z-index, поэтому
 // поверхность поверх шапки без собственного `app-region: no-drag` кликается «кусочками» (так сломались «Документы»
 // и мастер после df85313). Проверяем styles.css и разметку как текст — поведение Chromium тест не доказывает.
 import { test } from 'node:test'
@@ -8,7 +8,7 @@ import { join } from 'node:path'
 
 const dir = import.meta.dirname
 const css = readFileSync(join(dir, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
-const MAC = "html[data-window-chrome='macos']"
+const CHROME = "html:is([data-window-chrome='macos'], [data-window-chrome='windows'])"
 
 /** Правила верхнего уровня и внутри @media: селектор → тело. */
 function rules(): { selector: string; body: string }[] {
@@ -20,19 +20,19 @@ function rules(): { selector: string; body: string }[] {
 
 /** Классы из `:is(…)` селектора: запятые внутри скобок — не разделители правил, поэтому режем только тело `:is`. */
 function isClasses(selector: string): string[] {
-  const m = /:is\(([^()]*)\)/.exec(selector)
+  const m = /:is\(([^()]*)\)/.exec(selector.startsWith(CHROME) ? selector.slice(CHROME.length) : selector)
   return m ? m[1].split(',').map((s) => s.trim()) : []
 }
 
-const macRules = rules().filter((r) => r.selector.startsWith(MAC))
-const noDrag = macRules.filter((r) => /app-region:\s*no-drag/.test(r.body))
+const chromeRules = rules().filter((r) => r.selector.startsWith(CHROME))
+const noDrag = chromeRules.filter((r) => /app-region:\s*no-drag/.test(r.body))
 
 /** Явный список поверхностей вне backdrop: `html[…] :is(.modal, …) { app-region: no-drag }`. */
-const surfaceList = noDrag.find((r) => /^:is\([^()]*\)$/.test(r.selector.slice(MAC.length + 1)))
+const surfaceList = noDrag.find((r) => /^:is\([^()]*\)$/.test(r.selector.slice(CHROME.length + 1)))
 /** Контролы внутри шапок: `:is(.sidebar > .head, .main-head) :is(button, …)`. */
 const headControls = noDrag.find((r) => /\.main-head\) :is\(/.test(r.selector))
 
-test('прямые потомки backdrop на macOS — no-drag', () => {
+test('прямые потомки backdrop на macOS/Windows — no-drag', () => {
   const rule = noDrag.find((r) => /> \*$/.test(r.selector))
   assert.ok(rule, 'нет правила :is(.modal-backdrop, .inbox-full-backdrop) > * с app-region: no-drag')
   assert.deepEqual(isClasses(rule.selector).sort(), ['.inbox-full-backdrop', '.modal-backdrop'])
@@ -45,8 +45,8 @@ test('меню «Переместить в…» — в явном списке n
   }
 })
 
-test('высота .docs-modal на macOS учитывает кромку окна', () => {
-  const rule = macRules.find((r) => r.selector === `${MAC} .docs-modal`)
+test('высота .docs-modal на macOS/Windows учитывает кромку окна', () => {
+  const rule = chromeRules.find((r) => r.selector === `${CHROME} .docs-modal`)
   assert.ok(rule, 'нет macOS-правила для .docs-modal')
   assert.match(rule.body, /height:\s*calc\(100dvh - var\(--window-overlay-top\) - var\(--window-overlay-gap\)\)/)
 })

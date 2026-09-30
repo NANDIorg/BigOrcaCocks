@@ -2978,18 +2978,23 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .files-path { font: 12px ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; min-width: 0; flex: 1 1 200px; }
 .files-foot-err { margin: 0; flex-basis: 100%; }
 
-/* Верх окна на macOS — продолжение панелей; кнопки принадлежат AppKit, их DOM-копий нет. */
+/* Панели доходят до края окна; кнопки macOS/Windows нативные, их DOM-копий нет. */
 html[data-window-chrome='macos'] {
   /* Кнопки AppKit не масштабируются вместе с renderer: WCO сохраняет для них место. */
   --rail-width: max(var(--macos-rail-width), env(titlebar-area-x, 0px));
   --window-chrome-height: env(titlebar-area-height, var(--macos-chrome-height));
+}
+html[data-window-chrome='windows'] {
+  --window-chrome-height: env(titlebar-area-height, var(--windows-chrome-height));
+}
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) {
   --window-overlay-gap: 24px;
   --window-overlay-top: max(var(--window-overlay-gap), calc(var(--window-chrome-height) + 12px));
 }
-html[data-window-chrome='macos'][data-window-controls='hidden'] { --window-chrome-height: 0px; }
-html[data-window-chrome='macos'] body { background: var(--frame); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows'])[data-window-controls='hidden'] { --window-chrome-height: 0px; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) body { background: var(--frame); }
 /* Узкая кромка работает и при загрузке, и поверх модалки; ниже клики принадлежат интерфейсу. */
-html[data-window-chrome='macos'] body::before {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) body::before {
   content: ''; position: fixed; inset: 0 0 auto; height: min(8px, var(--window-chrome-height));
   z-index: 80; app-region: drag; user-select: none;
 }
@@ -2998,32 +3003,43 @@ html[data-window-chrome='macos'] .rail::before {
   content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
   app-region: drag; user-select: none;
 }
-html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
-html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
 /* Chromium не вычитает перекрытые drag-области по z-index: поверхностям нужен явный no-drag. */
-html[data-window-chrome='macos'] :is(.modal, .settings-modal, .inbox, .popup-menu, .move-menu, .lightbox) { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal, .settings-modal, .inbox, .popup-menu, .move-menu, .lightbox) { app-region: no-drag; }
 /* Любая поверхность прямо в backdrop перекрывает шапки: без no-drag Chromium оставляет под ней drag-области
    .main-head и .sidebar > .head. Пропуск в списке выше уже ломал «Документы» и мастер. Кромка ::before
    потомком не считается и остаётся drag. */
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) > * { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop) > * { app-region: no-drag; }
+
+/* Caption-кнопки справа не перекрывают действия шапки, помощника или просмотрщика. */
+html[data-window-chrome='windows'] .main-head { padding-top: max(24px, calc(var(--window-chrome-height) + 12px)); }
+html[data-window-chrome='windows'] .inbox { top: var(--window-chrome-height); }
+html[data-window-chrome='windows'] .lightbox-close { top: max(16px, calc(var(--window-chrome-height) + 12px)); }
+.window-menu-error {
+  position: fixed; top: max(24px, calc(var(--window-chrome-height) + 12px)); left: calc(var(--rail-width) + 12px);
+  max-width: min(420px, calc(100vw - var(--rail-width) - 36px)); z-index: 81; padding: 12px 16px;
+  background: var(--side); border: 1px solid var(--danger); border-radius: var(--radius); color: var(--text);
+  overflow-wrap: anywhere; app-region: no-drag;
+}
 
 /* Нативный слой выше renderer: все общие оверлеи оставляют сверху свободную область. */
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop) {
   padding: var(--window-overlay-top) var(--window-overlay-gap) var(--window-overlay-gap);
 }
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop)::before {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop)::before {
   content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
   app-region: drag; user-select: none;
 }
-html[data-window-chrome='macos'] :is(.modal, .settings-modal) {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal, .settings-modal) {
   max-width: 100%; max-height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap));
 }
-html[data-window-chrome='macos'] .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
-html[data-window-chrome='macos'] .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
 /* Высота 100vh - 48px не учитывает кромку: без ужатия шапка «Документов» уходит под drag-область. */
-html[data-window-chrome='macos'] .docs-modal { height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap)); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .docs-modal { height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap)); }
 @media (max-width: 600px) {
-  html[data-window-chrome='macos'] { --window-overlay-gap: 12px; }
+  html:is([data-window-chrome='macos'], [data-window-chrome='windows']) { --window-overlay-gap: 12px; }
 }
 
 /* Внешний вид: нативные radio обеспечивают выбор стрелками; миниатюры используют общую палитру. */

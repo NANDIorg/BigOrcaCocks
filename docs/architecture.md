@@ -1446,12 +1446,27 @@ SVG используется в rail и мастере первого запус
 Главное окно на macOS использует `titleBarStyle: hidden`, `trafficLightPosition` и WCO
 (`main/window-chrome.ts`). AppKit сохраняет системные кнопки, рамку, тень и управление окном;
 renderer рисует панели до верхнего края. Геометрия — `shared/window-chrome.ts`: панель иконок
-минимум 96px, область кнопок 52px, отступы 18px. На Windows/Linux остаётся обычная системная рамка.
-Main передаёт preload аргумент `--orca-macos-window-chrome`; read-only `app.windowChrome?`
-сообщает фактический режим этого окна, без новых каналов управления. Старый main без флага
+минимум 96px, область кнопок 52px, отступы 18px. Windows использует тот же `hidden` с настоящими
+caption-кнопками WCO справа, без traffic lights и HTML-замен управления окном. Их область — 36px;
+фон `frame` и значки `text` берутся из выбранной темы `shared/theme.ts`. `syncMainAppearance()`
+обновляет их через `setTitleBarOverlay` без пересоздания окна. `autoHideMenuBar` убирает постоянную
+строку меню; скрытая рамка Electron не поддерживает menu bar по Alt. `WindowMenu` в rail
+открывает то же нативное меню через опциональный `app.showMenu()` → `app:showMenu` → `Menu.popup`,
+сохраняя все команды и системные сочетания. Main принимает запрос только от главного фрейма
+своего окна; старый preload показывает сообщение о перезапуске. Linux оставляет системный заголовок.
+Main передаёт preload аргумент `--orca-macos-window-chrome` или `--orca-windows-window-chrome`;
+read-only `app.windowChrome?` (`macos` / `windows` / `system`)
+сообщает фактический режим этого окна, без новых каналов управления окном. Старый main без флага
 или старый preload без свойства сохраняет прежние отступы.
 `renderer/windowChrome.ts` до первого рендера устанавливает общие CSS-токены и подписывается
 на WCO `geometrychange`: в fullscreen верхний резерв убирается, после выхода восстанавливается.
+Windows явно выставляет высоту overlay 0/36 на `enter-full-screen`/`leave-full-screen`: Electron
+сам не обнуляет заданную высоту и сохраняет WCO visible=true с остаточной кромкой. Main сохраняет
+явное состояние события, поскольку `win.isFullScreen()` ещё может отражать прежний режим.
+Опциональный `app.onWindowFullscreen` слушает `app:windowFullscreen` и запрашивает текущий режим
+через `app:windowFullscreenReady`; это восстанавливает состояние после reload/HMR в fullscreen.
+Main принимает готовность только от главного фрейма своего окна. Renderer использует явный режим
+в дополнение к WCO; смена темы также сохраняет fullscreen, а dispose снимает обе подписки.
 `env(titlebar-area-height)` и `env(titlebar-area-x)` учитывают zoom Chromium: нативные кнопки
 не сжимаются вместе с renderer. Шапки и свободная кромка окна — drag-области; кнопки, меню ветки,
 вкладки, поля и поверхности оверлеев — no-drag (само перекрытие по z-index не отменяет drag).
@@ -1459,7 +1474,9 @@ Main передаёт preload аргумент `--orca-macos-window-chrome`; rea
 (кромка `::before` остаётся drag); поверхности вне backdrop (`.inbox`, `.popup-menu`, `.move-menu`,
 `.lightbox`) перечислены явно. Список сверяет `renderer/src/windowDrag.test.ts`.
 Общие backdrop мастера и модальных окон резервируют
-место для нативных кнопок; высота их содержимого ограничена оставшимся viewport. Закрытие и
+место для нативных кнопок; высота их содержимого ограничена оставшимся viewport. На Windows
+действия рабочей шапки, правая панель входящих/помощника и закрытие lightbox расположены ниже
+нативных кнопок по высоте WCO; rail сохраняет ширину 72px. Закрытие и
 фоновый режим используют существующие события окна, без HTML-копий системных кнопок.
 
 Команды навигации передаются `app:menuAction` через опциональный `app.onMenuAction`.
@@ -1475,7 +1492,7 @@ Main передаёт preload аргумент `--orca-macos-window-chrome`; rea
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
 | Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS; меню окна Windows/Linux | `main/app-menu.test.ts`, живой Electron |
-| Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные кнопки macOS; системная рамка Windows/Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
+| Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные нативные кнопки macOS/Windows; системный заголовок Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
 | Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
@@ -1573,11 +1590,11 @@ SVG-линия и траектория пакета используют оди�
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-`app.windowChrome?` — read-only метаданные preload (`system` / `macos`), не IPC-вызов.
+`app.windowChrome?` — read-only метаданные preload (`system` / `macos` / `windows`), не IPC-вызов.
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
+- `invoke`: `app:info`, `app:showMenu` (нативный popup общего меню Windows), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
   `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
@@ -1688,8 +1705,10 @@ SVG-линия и траектория пакета используют оди�
   старый main молча стёр бы незнакомое поле при сохранении, поэтому без признака renderer поле флагов не даёт править
   и просит перезапустить приложение. Новый main со старым renderer безопасен: патч ассистента без `extraArgs` флаги
   не трогает, а роли renderer сохраняет объектами целиком.
-- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню).
+- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню),
+  `app:windowFullscreenReady` (запрос текущего fullscreen главного окна после подписки).
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
+  `app:windowFullscreen` (boolean, опциональная подписка `app.onWindowFullscreen?`),
   `app:menuAction` (`AppMenuAction`: `settings` / `checkUpdates` / `addProject`, подписка `app.onMenuAction?`),
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
   группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
@@ -2666,7 +2685,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 
 | Что | macOS / unix | Windows | Где |
 |---|---|---|---|
-| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | обычная системная рамка | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts` |
+| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | `hidden` + нативные caption-кнопки справа, WCO для zoom/fullscreen, палитра через `setTitleBarOverlay`, нативный popup меню из rail | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts` |
 | Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
 | Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
 | Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |
