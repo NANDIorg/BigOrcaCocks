@@ -413,10 +413,15 @@ textarea { min-height: 96px; resize: vertical; }
 .attach-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .attach-hint { font-size: 12px; }
 .attach-images { display: flex; flex-wrap: wrap; gap: 8px; }
-.attach-image { position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--frame); }
-.attach.compact .attach-image { width: 48px; height: 48px; border-radius: 8px; }
-.attach-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.attach-image-loading { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.attach-image { position: relative; flex: none; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--frame); }
+.attach.compact .attach-image, .attach-images.compact .attach-image { width: 48px; height: 48px; border-radius: 8px; }
+.attach-image img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+/* Миниатюра-кнопка: клик открывает картинку на весь экран (ImageLightbox). */
+.attach-image-open { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.attach-image-open:hover img { filter: brightness(1.12); }
+.attach-image-open:focus-visible, .attach-image-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.attach-image-loading { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--muted); }
+.attach-images + .error-text { display: block; }
 .attach-image-remove {
   position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
   background: rgba(0,0,0,.65); color: #fff; font-size: 14px; line-height: 20px; cursor: pointer;
@@ -2922,11 +2927,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .tpl-row-actions .btn-sm svg { width: 14px; height: 14px; }
 .tpl-row-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 
-/* Картинки: миниатюра-кнопка (открывает увеличение) и оверлей просмотра */
-.coord-image-open { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
-.coord-image-open:focus-visible, .coord-image-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.coord-image > .coord-image-loading { width: 100%; height: 100%; }
-.coord-images + .error-text { display: block; }
+/* Картинки: значок на карточке задачи и просмотр на весь экран (ImageLightbox) */
 .g-chip.images { display: inline-flex; align-items: center; gap: 4px; }
 .g-chip.images svg { width: 12px; height: 12px; }
 .lightbox {
@@ -2943,6 +2944,10 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .lightbox-close { top: 16px; right: 16px; }
 .lightbox-prev { left: 16px; top: 50%; transform: translateY(-50%); }
 .lightbox-next { right: 16px; top: 50%; transform: translateY(-50%); }
+.lightbox-count {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 3px 10px; border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none;
+}
 .modal-images-hint { font-size: 12px; margin-top: -6px; }
 .modal-images-add { align-self: flex-start; }
 .g-modal-images { display: flex; flex-direction: column; gap: 8px; }
