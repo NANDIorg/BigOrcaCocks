@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useT } from './i18n'
 import { Icon } from './icons'
-import { LIGHTBOX_CLASS, viewerKeyAction } from './imageViewer'
+import { viewerKeyAction } from './imageViewer'
 
 interface Props {
   /** `blob:` URL картинок, которые уже загрузились, по порядку показа. */
@@ -64,7 +64,9 @@ export function ImageLightbox({ urls, index, onIndex, onClose }: Props): React.J
   return createPortal(
     <div
       ref={rootRef}
-      className={LIGHTBOX_CLASS}
+      // Литерал, а не LIGHTBOX_CLASS: windowDrag.test.ts ищет класс диалога в тексте разметки (защита от drag-областей
+      // шапок на macOS); совпадение с константой проверяет imageViewer.test.ts.
+      className="lightbox"
       role="dialog"
       aria-modal="true"
       aria-label={t('common.image.viewer', { n: at + 1, total: urls.length })}

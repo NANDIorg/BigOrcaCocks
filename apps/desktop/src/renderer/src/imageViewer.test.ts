@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { LIGHTBOX_CLASS, lightboxOpen, viewerItems, viewerKeyAction } from './imageViewer'
 
 const items = [
@@ -41,4 +42,9 @@ test('lightboxOpen ищет корень оверлея по его классу
   assert.equal(lightboxOpen(root(true)), true)
   assert.equal(lightboxOpen(root(false)), false)
   assert.deepEqual(seen, [`.${LIGHTBOX_CLASS}`, `.${LIGHTBOX_CLASS}`])
+})
+
+test('ImageLightbox рисует диалог с классом LIGHTBOX_CLASS (там литерал ради windowDrag.test.ts)', () => {
+  const src = readFileSync(new URL('./ImageLightbox.tsx', import.meta.url), 'utf8')
+  assert.match(src, new RegExp(`className="${LIGHTBOX_CLASS}"\\s+role="dialog"`))
 })
