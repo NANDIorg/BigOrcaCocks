@@ -1439,7 +1439,12 @@ BrowserWindow с локальным документом `about-content.ts`, в�
 список двух адресов. Подробности — [about-window.md](about-window.md).
 Авторский значок приложения (`build/icon.svg` → `build/icon.png`)
 со скруглённым квадратным фоном используется в Dock, окне и сборках; Vite копирует PNG через импорт `?asset`.
-SVG используется в rail и мастере первого запуска, импортируется как URL с учётом CSP.
+Цветной SVG используется в мастере первого запуска, меню Windows и обновлениях, импортируется как URL с учётом CSP.
+Нижний знак rail использует прозрачный `build/tray/orcaTemplate.svg` как CSS-маску 40×40px:
+`currentColor` берётся из `--muted`, как у кнопок панели, и меняется вместе с темой. `RailLogo` получает SVG
+через `?raw` и создаёт blob-URL, разрешённый действующей CSP: локальные file-URL не подходят для CSS-масок.
+При размонтировании URL освобождается; до готовности маски знак прозрачен, его место зарезервировано.
+Системные иконки и цветные брендовые поверхности сохраняют прежние ассеты.
 Рамка и системные кнопки принадлежат ОС; содержимое и фокус — модулю окна.
 Визуальный контекст — [DESIGN.md](../DESIGN.md).
 
@@ -1514,7 +1519,7 @@ Main принимает готовность только от главного 
 | Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
 | Assistant Chat | `AssistantPanel`, `AssistantInteraction`, `AssistantSession` | `shared/assistant-conversation.ts`, `docs/assistant-chat.md` | справа; Amp/Shell — отдельный терминал | протокольные fixture-тесты, session/IPC тесты; пользователь проверяет билд |
 | Tray | `main/tray.ts`, Electron Tray | `build/tray/orca-logo.svg` | template PNG 18/36 macOS; цветной ICO Windows; PNG Linux | nativeImage, упаковка; Windows проверяется на Windows |
-| Branding | `build/icon.svg` | предоставленный авторский логотип | SVG в renderer, PNG для ОС и сборок | скругление и проверка загрузки в Electron |
+| Branding | `build/icon.svg`, `build/tray/orcaTemplate.svg` | предоставленный авторский логотип | цветной SVG/PNG; монохромная CSS-маска rail в `--muted` | упаковка ассетов; ручная проверка билда |
 
 ## Общая визуальная тема (`src/shared/theme.ts`)
 

@@ -45,7 +45,7 @@ import { branchBadge } from './projectBranch'
 import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
 import type { AppMenuAction } from '../../shared/ipc'
-import appLogo from '../../../build/icon.svg'
+import { RailLogo } from './RailLogo'
 import { ProjectList } from './ProjectList'
 import { groupsFromList } from './projectGroups'
 import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest } from './globalReview'
@@ -903,7 +903,7 @@ export function App(): React.JSX.Element {
           <Icon.assistant />
         </button>
         <div className="grow" />
-        <img className="avatar" src={appLogo} alt="orca-board" width={40} height={40} />
+        <RailLogo />
       </aside>
 
       {showProjects && (

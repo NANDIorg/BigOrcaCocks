@@ -46,8 +46,10 @@ button { font: inherit; cursor: pointer; }
 .rail .icon:disabled { opacity: .4; cursor: default; }
 .rail .icon.active { color: var(--accent); }
 .rail .grow { flex: 1; }
-.rail .avatar {
-  width: 40px; height: 40px; display: block; object-fit: contain;
+.rail .app-logo {
+  width: 40px; height: 40px; flex-shrink: 0; color: var(--muted);
+  background-color: currentColor;
+  mask: linear-gradient(transparent, transparent) center / contain no-repeat;
 }
 
 /* ---------- sidebar ---------- */
