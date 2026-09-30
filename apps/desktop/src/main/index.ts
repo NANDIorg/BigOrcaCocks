@@ -28,6 +28,8 @@ import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
+import { exportTaskTypeToFile } from './task-type-export'
+import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
@@ -724,6 +726,20 @@ async function pickRepoFolder(): Promise<string | null> {
 }
 
 /**
+ * Диалог «Сохранить как» для файла экспорта типа; отмена — null. Перезапись существующего файла подтверждает сам
+ * диалог. Окна нет — диалог без родителя (как `showMessageBox` при выходе).
+ */
+async function pickExportFile(defaultName: string): Promise<string | null> {
+  const opts = {
+    title: mt('dialog.exportType'),
+    defaultPath: join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  return res.canceled || !res.filePath ? null : res.filePath
+}
+
+/**
  * `ipcMain.handle` для вызовов renderer: всё, что они меняют на доске, сделал человек в UI — так переходы
  * попадают в историю статусов с `human` (`withStatusSource`, действует до первого await обработчика).
  */
@@ -823,6 +839,11 @@ function registerIpc(): void {
   handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
   handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
+  handle('taskTypes:export', (_e, id: string) => exportTaskTypeToFile({
+    export: (typeId) => projects.exportTaskType(typeId, { appVersion: app.getVersion(), exportedAt: new Date().toISOString() }),
+    chooseFile: pickExportFile,
+    write: writeFileAtomic
+  }, id))
   handle('nodeTemplates:list', () => projects.nodeTemplates())
   handle('nodeTemplates:save', (_e, input: NodeTemplateInput) => projects.saveNodeTemplate(input))
   handle('nodeTemplates:delete', (_e, id: string) => projects.deleteNodeTemplate(id))

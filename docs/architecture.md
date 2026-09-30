@@ -156,6 +156,33 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `'snapshot'`) → тип проекта по умолчанию → `general` → первый тип библиотеки (`'default'`). `types` — вся
     библиотека; заготовка `general` из кода — только при пустом списке (старый main у renderer).
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
+  - **Файл экспорта типа** (`packages/core/src/task-type-file.ts`, без node-импортов) — один JSON со **снимком
+    эффективных настроек** типа, теми значениями, с которыми пойдёт глобальная задача. Файл самодостаточен: его можно
+    читать, хранить в git и передать коллеге, не зная встроенных значений приложения.
+    `TaskTypeFile {format, formatVersion, exportedAt, appVersion, type: {title, description?, settings}}`:
+    - `format` — метка `TASK_TYPE_FILE_FORMAT` (`orca-board.task-type`): отличает файл типа от файла графа (экспорт
+      воркфлоу) и от чужого JSON. `formatVersion` — версия **формата файла** (`TASK_TYPE_FILE_VERSION = 1`), не графа:
+      поднимается при несовместимой правке формата. У графа внутри своя версия (`workflow.version`), она сохраняется
+      как есть, и при загрузке такой граф подхватит `migrateWorkflow`.
+    - `exportedAt` (ISO 8601) и `appVersion` — `TaskTypeFileMeta`, их передаёт вызывающий код: функция чистая.
+    - `type.title`, `type.description` — как хранятся (после `trim`), без перевода заготовок: в файле данные, а не
+      подписи интерфейса. Пустого описания в файле нет.
+    - `type.settings` — `roles`, `workflow` и `permissionMode` есть **всегда**, раскрыты через `resolveTaskType`
+      (нет своих — `DEFAULT_ROLES`, `defaultWorkflow(roles)`, `auto`); `agentRules` — только непустые. Тип без своего
+      графа после загрузки файла получит зафиксированный граф — осознанная плата за самодостаточность.
+    - В графе сохраняются позиции нод и `node.column` (мягкая ссылка: неизвестную колонку исполнитель пропускает);
+      `node.templateId` **снимается** у всех нод, включая путь подзадачи `work.subflow`, — это ссылка на локальную
+      библиотеку шаблонов. Граф не валидируется: файл сломанного типа — тоже бэкап.
+    - **Не входит:** `id` типа, `workflowNotes`, признак «по умолчанию» и связи с проектами, шаблоны нод, состояние
+      агентов, прогоны и их снимки. Роли с выключенным на этой машине агентом остаются как есть.
+    - `file.type` по форме — `TaskTypeInput` без `id`: загрузка файла сводится к сохранению типа с обычной валидацией.
+    - `buildTaskTypeFile(type, meta)` строит файл из глубоких копий (правка файла не меняет тип),
+      `serializeTaskTypeFile(file)` — текст (UTF-8, отступ 2 пробела, `\n` в конце), `taskTypeFileName(title)` — имя
+      `task-type-<название>.json`: `\ / : * ? " < > |`, управляющие символы и пробелы заменяются на `-`, края (`-`, `.`)
+      срезаются, название — не длиннее 60 символов и не длиннее 200 байт UTF-8 (действует то, что строже; символ на
+      границе не рвётся), кириллица остаётся, пустое название — `task-type.json`. Лимит в байтах — потому что предел
+      имени на ext4 и других ФС Linux — 255 байт, а запись идёт через `<имя>.tmp`: 60 эмодзи дали бы 259 байт и
+      `ENAMETOOLONG`. Префикс уводит от зарезервированных имён Windows (`CON`, `NUL`…).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files, snapshot?, auto?}` — показ человеку с «Работы» (`docs/workflow.md`; `snapshot {at, files, bytes}` и `auto` выставляет только main, не сокет);
@@ -1242,7 +1269,14 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «по умолчанию»,
     «Доступен в N проектах · по умолчанию в K»), действия у любого типа одинаковые: «По умолчанию»
     (`taskTypes:setDefault`), «Дублировать» (`taskTypes:duplicate`, открывает копию), «Переименовать» (форма в шапке:
-    название и описание), «Удалить» (`taskTypes:delete`; у последнего типа выключена). Подтверждение — панель под
+    название и описание), «Удалить» (`taskTypes:delete`; у последнего типа выключена). «Экспорт» (после «Дублировать»,
+    `taskTypes:export`) сохраняет тип целиком в один JSON-файл через диалог «Сохранить как»: название, описание и
+    раскрытые настройки — роли с промптами, граф, режим разрешений, правила доски (формат — `core/task-type-file.ts`).
+    В файл идёт **сохранённая** версия типа, а не черновики редакторов: `exportType` в `useTaskTypes` сначала ждёт
+    очередь автосохранений, список не перечитывает (тип не меняется). Renderer получает только путь: строка под шапкой
+    `taskType.exported` (путь и напоминание проверить файл на внутренние данные; сбрасывается при смене типа), отмена
+    диалога — молча, ошибка записи — в блоке ошибки шапки, кнопки на время вызова выключены. Preload без
+    `taskTypes.export` (`taskTypeExportApi`) или main без хендлера — «перезапустите приложение». Подтверждение удаления — панель под
     шапкой, не `confirm()`: заголовок, последствия и надпись кнопки — `typeRemovalConfirm` (какой тип станет типом по
     умолчанию, проекты перейдут на тип библиотеки по умолчанию, задачи доработают по снимку, тип не вернётся после
     перезапуска). Ниже вкладки (`orca.settingsTypeTab`): «Роли», «Воркфлоу» (`settings/TaskTypeWorkflow.tsx` —
@@ -1414,7 +1448,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}` (у типа может быть `workflowNotes` — предупреждения автомиграции графа), `taskTypes:save(input)` → `TaskType`
   (`input.workflowNotes` необязателен: не передан — прежние остаются, пока граф не менялся; передан — сохраняется, `[]` закрывает),
-  `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
+  `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`,
+  `taskTypes:export(id)` → `TaskTypeExportResult {path} | null` — диалог «Сохранить как» (`pickExportFile`: `dialog.showSaveDialog`,
+  родитель — окно, если есть; путь по умолчанию — «Загрузки» + `taskTypeFileName`, фильтр `json`) и запись файла типа
+  `writeFileAtomic`; закрыли диалог — `null`, ничего не пишется. Путь выбирает только человек в диалоге: renderer получает
+  путь готового файла, текст файла к нему не идёт, а общего канала «записать текст по пути» нет. Ошибки — `OrcaError`:
+  `type.notFound`, `workflow.future` (обе — до диалога), `type.exportFailed` (`{path, reason}` — запись не удалась). Поток без
+  Electron — `exportTaskTypeToFile(deps, id)` в `main/task-type-export.ts` (`deps`: `export`, `chooseFile`, `write`)
   (см. «Проекты → Типы задач»); `nodeTemplates:list` → `WfNodeTemplate[]`, `nodeTemplates:save(input: NodeTemplateInput {id?, title, description?, node})` → `WfNodeTemplate`,
   `nodeTemplates:delete(id)` → оставшиеся `WfNodeTemplate[]` (библиотека шаблонов нод — `projects.json → nodeTemplates`, глобальная; `updatedAt` ставит main; ошибки — `OrcaError`
   `nodeTemplate.notSaved|notFound|notObject|emptyId|emptyTitle`, битые записи файла при загрузке пропускаются с `StateWarning {kind: 'skipped'}`; см. `docs/workflow.md` → «Шаблоны нод»);
@@ -1770,6 +1810,12 @@ UI работает с активным проектом; воркеры и ко
   Предвыбран при добавлении проекта. Ассистенту больше ничего не даёт — его настройки в `AppSettings.assistant`.
 - `taskTypeWorkflow(typeId)` → `{typeId, title, workflow, custom}`: свой граф или дефолтный по ролям; граф будущей
   версии — ошибка «обновите приложение».
+- `exportTaskType(id, meta)` → `{fileName, text}`: текст файла экспорта типа (`serializeTaskTypeFile(buildTaskTypeFile(…))`,
+  формат — «Модель → Типы задач → Файл экспорта типа») и имя по умолчанию `taskTypeFileName(title)`. Берётся сохранённый
+  тип из `projects.json`, а не черновики редакторов. `meta` (`appVersion`, `exportedAt`) передаёт вызывающий код. Граф не
+  валидируется (бэкап сломанного типа тоже нужен), но граф будущей версии — `workflow.future` через `taskTypeWorkflow`;
+  неизвестный id — `type.notFound`. Библиотеку не меняет и на диск не пишет: диалог и запись — в обработчике
+  `taskTypes:export` (раздел «IPC»).
 
 **Типы проекта и прогонов**:
 - `projectTaskTypes(id)` — доступные (висячие id пропускаются; не осталось ни одного — тип по умолчанию);

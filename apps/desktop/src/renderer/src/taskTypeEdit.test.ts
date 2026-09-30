@@ -7,7 +7,7 @@ import type { OrcaApi, Project, TaskTypesState } from '../../shared/ipc'
 import {
   taskTypesStaleMessage, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
   hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, patchedTaskType, pickTaskTypeId,
-  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, storedWorkflowNotes, taskTypeLibraryApi,
+  projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, storedWorkflowNotes, taskTypeExportApi, taskTypeLibraryApi,
   taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey
 } from './taskTypeEdit'
 import { setLocale } from './i18n'
@@ -30,6 +30,22 @@ test('старый preload без taskTypes — понятная ошибка, �
   assert.equal(taskTypesError("Error: No handler registered for 'projects:setTaskTypes'"), taskTypesStaleMessage())
   assert.equal(taskTypesError('тип задачи: пустое название'), 'тип задачи: пустое название')
   assert.equal(hasProjectTaskTypes({ projects: {} } as unknown as Partial<OrcaApi>), false)
+})
+
+test('экспорт типа: preload без taskTypes.export или main без хендлера — «перезапустите», с методом — он сам', async () => {
+  assert.throws(() => taskTypeExportApi(undefined), { message: taskTypesStaleMessage() })
+  assert.throws(() => taskTypeExportApi({} as Partial<OrcaApi>), { message: taskTypesStaleMessage() })
+  // Preload до «Экспорта»: раздел типов есть, метода ещё нет.
+  assert.throws(() => taskTypeExportApi({ taskTypes: { list: async () => state } } as unknown as Partial<OrcaApi>), { message: taskTypesStaleMessage() })
+  const calls: string[] = []
+  const api = { taskTypes: { export: async (id: string) => { calls.push(id); return { path: '/tmp/task-type-Мой.json' } } } } as unknown as Partial<OrcaApi>
+  assert.deepEqual(await taskTypeExportApi(api)('type_1'), { path: '/tmp/task-type-Мой.json' })
+  assert.deepEqual(calls, ['type_1'])
+  assert.equal(
+    taskTypesError("Error invoking remote method 'taskTypes:export': Error: No handler registered for 'taskTypes:export'"),
+    taskTypesStaleMessage()
+  )
+  assert.equal(taskTypesError("No handler registered for 'taskTypes:export'"), taskTypesStaleMessage())
 })
 
 test('у типа нет вкладок колонок и агентов — они у проекта', () => {
