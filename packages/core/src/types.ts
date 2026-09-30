@@ -305,6 +305,11 @@ export interface StageChange {
   /** Решение, с которым граф ушёл из ноды `decision`; только у записей этой ноды в `Run.stageHistory`. */
   decision?: StageDecision
   /**
+   * Путь разветвления (`RunLane.id`), в котором сделан переход; нет — основной ход графа (в том числе вход в `fork` и
+   * выход из `join`). Записи разных путей перемешаны по времени: кому важна последовательность, фильтрует по полю.
+   */
+  lane?: string
+  /**
    * Запись миграции у задачи от кода до истории этапов, которой нет в логе событий: реального перехода не
    * восстановить, это этап на момент обновления (`at` — `updatedAt`).
    */
@@ -417,7 +422,16 @@ export interface Run {
    * Описание (`objective`) не трогают: уточнения попадают в цель повторного запуска координатора
    * (`resumeCoordinatorObjective`), в том числе при ручном «Запустить координатора», если старт упал.
    */
-  returns?: Array<{ at: number; text: string; images?: string[] }>
+  returns?: Array<{
+    at: number
+    text: string
+    images?: string[]
+    /**
+     * Нода, с которой вернули (`human`/`gate` воркфлоу прогона): два пути разветвления могут вернуться в работу почти
+     * одновременно, и сопоставлять возврат с заходом по одному времени нельзя. Нет — возврат без ноды или до поля.
+     */
+    nodeId?: string
+  }>
   /**
    * Итоговая сводка координатора «что сделано и что проверить» (`runs finish --summary`, markdown) — её
    * человек видит в блоке «Что сделал» на «Проверке». Хранится одна, последняя: новый `runs finish` со
@@ -472,6 +486,30 @@ export interface Run {
    * закрыт — он решает, нужны ли ещё задачи, и вызывает `stage finish`. Как `runDoneAt` у старого движка: новая
    * подзадача этапа или подзадача, ушедшая из done, снимает метку, следующий `stage_tasks_done` придёт по её завершении.
    */
+  stageTasksDoneAt?: number
+  /**
+   * Пути разветвления, по которым граф идёт параллельно (docs/workflow.md, «Разветвление»). Есть и непусто — только пока
+   * `Run.stage` стоит на ноде `fork`; `Run.stageInput` и `Run.stageTasksDoneAt` тогда не используются — у каждого пути
+   * свои. Нет или пусто — граф идёт одной позицией, как всегда (миграция не нужна). Читать позиции — `runPositions`.
+   */
+  lanes?: RunLane[]
+}
+
+/** Путь разветвления (`Run.lanes`): параллельная позиция прогона внутри `fork` … `join`. */
+export interface RunLane {
+  /** `<forkId>:<branchId>` (`laneId`), например `split:backend`. */
+  id: string
+  forkId: string
+  branchId: string
+  /** Заход в `fork` (`Run.stage.visits[forkId]`) — поколение путей: повторный проход через `fork` не воскрешает старые. */
+  forkVisit: number
+  /** Где стоит путь; нода `join` — путь пришёл и ждёт остальные. Счётчик заходов — общий `Run.stage.visits`. */
+  nodeId: string
+  /** Когда путь пришёл в `join`, epoch ms. */
+  arrivedAt?: number
+  /** Как `Run.stageInput`, но для этапа этого пути. */
+  stageInput?: { feedback?: string; decision?: string; answers?: string; images?: string[] }
+  /** Как `Run.stageTasksDoneAt`, но для «Работы» этого пути. */
   stageTasksDoneAt?: number
 }
 

@@ -71,6 +71,21 @@ describe('orca-board CLI', () => {
     assert.equal(empty.code, 1)
   })
 
+  it('--stage у task create и stage finish уходит в params.stage; без значения — ошибка без запроса', async () => {
+    const created = await run(['task', 'create', '--title', 't', '--role', 'developer', '--stage', 'work_be'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(created.req.method, 'task.create')
+    assert.equal(created.req.params.stage, 'work_be')
+    const finished = await run(['stage', 'finish', '--stage', 'work_fe', '--summary', 'готово'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(finished.req.method, 'stage.finish')
+    assert.equal(finished.req.params.stage, 'work_fe')
+    assert.equal(finished.req.params.run, 'run_1')
+    for (const args of [['task', 'create', '--title', 't', '--stage'], ['stage', 'finish', '--stage']]) {
+      const bare = await run(args, { ORCA_RUN_ID: 'run_1' })
+      assert.equal(bare.req, null, args.join(' '))
+      assert.equal(bare.code, 1)
+    }
+  })
+
   it('stage finish: прогон из ORCA_RUN_ID, --summary и --summary-file уходят текстом; без прогона и без текста — ошибка без запроса', async () => {
     const inline = await run(['stage', 'finish', '--summary', '## Этап'], { ORCA_RUN_ID: 'run_1' })
     assert.equal(inline.req.method, 'stage.finish')
