@@ -189,12 +189,15 @@ export default {
     'Added right after the command, before the app’s own flags. Parsed without a shell: $VAR, ~, ; and | stay as typed, ' +
     'quote values that contain spaces. Don’t enter keys or tokens — flags show up in the process list and are stored ' +
     'in plain text; use environment variables. Applies from the next launch.',
-  'roles.extraArgsError.quote': 'Unclosed quote {detail} — the flags won’t be saved.',
+  'roles.extraArgsError.quote': 'Unclosed quote {detail}.',
   'roles.extraArgsError.separator': 'A bare “--” isn’t allowed: everything after it, including the app’s flags, would be read as plain arguments.',
   'roles.extraArgsError.notFlag': 'The first item must be a flag (starting with “-”), not “{detail}”: subcommands can’t be set here.',
   'roles.extraArgsError.control': 'Control character {detail} isn’t allowed in flags.',
   'roles.extraArgsError.length': 'Too long: {detail} characters, the limit is {max}.',
   'roles.extraArgsError.count': 'Too many arguments: {detail}, the limit is {max}.',
+  'roles.extraArgsQuoteBackslash':
+    'Inside double quotes \\" is a literal quote, not the end of the value: put a path ending in “\\” in single quotes or drop the trailing “\\”.',
+  'roles.extraArgsUnsaved': 'The flags won’t be saved until this is fixed: the previously saved ones stay. Other fields are saved.',
   'roles.extraArgsReserved.model': '{flag} — the model is set by the Model field: the flag conflicts with it.',
   'roles.extraArgsReserved.effort': '{flag} — effort is set by the Effort field: the flag conflicts with it.',
   'roles.extraArgsReserved.permission': '{flag} — the app controls the permission mode (task type → Permissions): the flag may bypass it.',

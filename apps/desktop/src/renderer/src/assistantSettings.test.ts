@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import type { AgentInfo, AssistantSettings } from '@orca-board/core'
 import type { AppSettings } from '../../shared/ipc'
 import {
-  assistantAgentOf, assistantAgentPatch, assistantAgents, assistantModelPatch, assistantSavePatch, assistantView, withAssistantPatch
+  assistantAgentOf, assistantAgentPatch, assistantAgents, assistantForSave, assistantModelPatch, assistantSavePatch, assistantView,
+  withAssistantPatch
 } from './assistantSettings'
 
 const agent = (id: AgentInfo['id'], installed: boolean): AgentInfo =>
@@ -45,6 +46,36 @@ test('assistantSavePatch — старому main флаги запуска не 
     assistantSavePatch({ agent: 'codex', model: 'm', extraArgs: '--search' }, false),
     { agent: 'codex', model: 'm', effort: '', systemPrompt: '' }
   )
+})
+
+test('assistantForSave — негодные флаги в патч не попадают: соседние поля уходят, флаги остаются прежние', () => {
+  const saved: AssistantSettings = { agent: 'claude', effort: 'high', extraArgs: '--verbose' }
+  // Шаги QA: флаги `--verbose "oops`, затем effort low.
+  const typed = withAssistantPatch(saved, { extraArgs: '--verbose "oops' })
+  const draft = withAssistantPatch(typed, { effort: 'low', systemPrompt: 'кратко' })
+  assert.equal(draft.extraArgs, '--verbose "oops')
+  assert.deepEqual(
+    assistantSavePatch(assistantForSave(draft, saved), true),
+    { agent: 'claude', model: '', effort: 'low', systemPrompt: 'кратко', extraArgs: '--verbose' }
+  )
+  // Прежних флагов не было — уходит пустая строка, в файле их по-прежнему нет.
+  assert.deepEqual(
+    assistantSavePatch(assistantForSave({ agent: 'claude', effort: 'low', extraArgs: 'exec' }, { agent: 'claude' }), true),
+    { agent: 'claude', model: '', effort: 'low', systemPrompt: '', extraArgs: '' }
+  )
+})
+
+test('assistantForSave — годные флаги уходят, пустые очищают, смена агента сбрасывает', () => {
+  const saved: AssistantSettings = { agent: 'claude', model: 'opus', extraArgs: '--verbose' }
+  const valid = withAssistantPatch(saved, { extraArgs: '--debug --add-dir "/a b"' })
+  assert.equal(assistantForSave(valid, saved), valid)
+  assert.equal(assistantSavePatch(assistantForSave(valid, saved), true).extraArgs, '--debug --add-dir "/a b"')
+  const cleared = withAssistantPatch(saved, { extraArgs: '' })
+  assert.equal(assistantSavePatch(assistantForSave(cleared, saved), true).extraArgs, '')
+  // Агент сменён поверх негодного текста: флаги сброшены, прежние (другого агента) не возвращаются.
+  const changed = withAssistantPatch({ ...saved, extraArgs: '--verbose "oops' }, assistantAgentPatch('codex'))
+  assert.deepEqual(assistantSavePatch(assistantForSave(changed, saved), true), { agent: 'codex', model: '', effort: '', systemPrompt: '', extraArgs: '' })
+  assert.deepEqual(assistantForSave({ ...changed, extraArgs: '--search "' }, saved), { agent: 'codex' })
 })
 
 test('assistantAgents — доступны все установленные, независимо от выключения в проекте', () => {

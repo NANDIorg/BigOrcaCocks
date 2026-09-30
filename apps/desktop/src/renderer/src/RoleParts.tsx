@@ -55,7 +55,7 @@ export function ExecutorFields({ exec, agents, enabled, preview, onAgent, onMode
   const efforts = effortsOf(current, exec.agent, exec.model)
   // Старый main флаги молча стёр бы при сохранении — поле недоступно, пока приложение не перезапустят.
   const argsStale = !extraArgsSupported(agents)
-  const argsCheck = checkExtraArgs(t, exec.agent, exec.extraArgs)
+  const argsCheck = checkExtraArgs(t, exec)
   return (
     <div className="roles-sec">
       <div className="roles-sec-head"><span>{t('config.roles.executor')}</span></div>

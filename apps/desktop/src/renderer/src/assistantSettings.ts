@@ -1,6 +1,6 @@
 import { DEFAULT_ASSISTANT_SETTINGS, type AgentInfo, type AgentKind, type AssistantSettings } from '@orca-board/core'
 import type { AppSettings } from '../../shared/ipc'
-import { agentChangePatch, modelChangePatch } from './roleEdit'
+import { agentChangePatch, modelChangePatch, withSavableExtraArgs } from './roleEdit'
 import { libraryAgents } from './taskTypeEdit'
 
 // Логика раздела «Настройки → Ассистент» без React — чтобы тестировать node --test (assistantSettings.test.ts).
@@ -50,6 +50,14 @@ export function assistantSavePatch(s: AssistantSettings, withExtraArgs: boolean)
     agent: s.agent, model: s.model ?? '', effort: s.effort ?? '', systemPrompt: s.systemPrompt ?? '',
     ...(withExtraArgs ? { extraArgs: s.extraArgs ?? '' } : {})
   }
+}
+
+/**
+ * Настройки для сохранения из черновика: негодные флаги запуска заменяются последними отправленными
+ * (`withSavableExtraArgs`) — main отверг бы патч целиком, и правка агента, модели, effort или инструкций пропала бы.
+ */
+export function assistantForSave(draft: AssistantSettings, saved: AssistantSettings): AssistantSettings {
+  return withSavableExtraArgs(draft, saved)
 }
 
 /** Агенты для выбора: у ассистента, как у типов библиотеки, доступны все установленные (`libraryAgents`). */
