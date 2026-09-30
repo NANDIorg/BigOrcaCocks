@@ -6,6 +6,8 @@
   --wf-reject: var(--danger);
   --on-status: var(--on-accent);
   --radius: 10px;
+  --rail-width: 72px;
+  --window-chrome-height: 0px;
 }
 
 * { box-sizing: border-box; }
@@ -25,11 +27,11 @@ button { font: inherit; cursor: pointer; }
 
 .app {
   display: grid;
-  grid-template-columns: 72px 260px 1fr;
+  grid-template-columns: var(--rail-width) 260px 1fr;
   height: 100%;
   background: var(--frame);
 }
-.app.no-sidebar { grid-template-columns: 72px 1fr; }
+.app.no-sidebar { grid-template-columns: var(--rail-width) 1fr; }
 
 /* ---------- icon rail ---------- */
 .rail {
@@ -139,16 +141,15 @@ button { font: inherit; cursor: pointer; }
 .main-head { padding: 24px 32px 0; border-bottom: 1px solid var(--line); }
 .main-head .row { display: flex; align-items: center; gap: 12px; }
 .main-head h1 { margin: 0; font-size: 26px; font-weight: 600; flex: 1; letter-spacing: -.01em; }
-.round-btn {
-  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--chip);
-  background: transparent; color: var(--muted); display: grid; place-items: center;
-}
-.round-btn:hover { color: var(--text); border-color: var(--text); }
 .btn-primary {
   display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 22px;
   border-radius: 9px; border: 0; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 13px;
 }
 .btn-primary:hover { background: var(--accent-hover); }
+/* Действия в шапке — одна геометрия; основной сценарий отличается только заливкой. */
+.main-head .head-action { height: 44px; border-radius: var(--radius); white-space: nowrap; flex-shrink: 0; }
+.main-head .head-action-icon { width: 44px; padding: 0; justify-content: center; }
+.main-head .head-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .tabs { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-top: 22px; }
 /* Вкладка не ломается на две строки («О проекте»): на узком окне переносится целиком. */
 .tab {
@@ -1262,10 +1263,6 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 }
 
 /* ---------- Инбокс: запросы к человеку (InboxPanel, RequestCard) ---------- */
-.inbox-badge {
-  height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--chip); background: transparent;
-  color: var(--muted); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px;
-}
 .inbox-badge:hover:not(:disabled), .inbox-badge.active { color: var(--text); border-color: var(--text); }
 .inbox-badge.has { color: var(--col-input); border-color: color-mix(in srgb, var(--col-input) 60%, transparent); }
 .inbox-badge.has:hover, .inbox-badge.has.active { border-color: var(--col-input); background: color-mix(in srgb, var(--col-input) 8%, transparent); }
@@ -1273,7 +1270,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 
 .inbox-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 20; }
 .inbox {
-  position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: calc(100vw - 72px); z-index: 21;
+  position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: calc(100vw - var(--rail-width)); z-index: 21;
   display: flex; flex-direction: column; background: var(--side); border-left: 1px solid var(--line);
   box-shadow: -24px 0 60px rgba(0,0,0,.4); outline: none;
   transform: translateX(100%); visibility: hidden; transition: transform .18s ease, visibility 0s linear .18s;
@@ -2914,3 +2911,46 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .files-foot { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; padding: 8px 16px; border-top: 1px solid var(--line); min-height: 42px; font-size: 12px; }
 .files-path { font: 12px ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; min-width: 0; flex: 1 1 200px; }
 .files-foot-err { margin: 0; flex-basis: 100%; }
+
+/* Верх окна на macOS — продолжение панелей; кнопки принадлежат AppKit, их DOM-копий нет. */
+html[data-window-chrome='macos'] {
+  /* Кнопки AppKit не масштабируются вместе с renderer: WCO сохраняет для них место. */
+  --rail-width: max(var(--macos-rail-width), env(titlebar-area-x, 0px));
+  --window-chrome-height: env(titlebar-area-height, var(--macos-chrome-height));
+  --window-overlay-gap: 24px;
+  --window-overlay-top: max(var(--window-overlay-gap), calc(var(--window-chrome-height) + 12px));
+}
+html[data-window-chrome='macos'][data-window-controls='hidden'] { --window-chrome-height: 0px; }
+html[data-window-chrome='macos'] body { background: var(--frame); }
+/* Узкая кромка работает и при загрузке, и поверх модалки; ниже клики принадлежат интерфейсу. */
+html[data-window-chrome='macos'] body::before {
+  content: ''; position: fixed; inset: 0 0 auto; height: min(8px, var(--window-chrome-height));
+  z-index: 80; app-region: drag; user-select: none;
+}
+html[data-window-chrome='macos'] .rail { position: relative; padding-top: calc(var(--window-chrome-height) + 22px); }
+html[data-window-chrome='macos'] .rail::before {
+  content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
+  app-region: drag; user-select: none;
+}
+html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
+html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
+/* Chromium не вычитает перекрытые drag-области по z-index: поверхностям нужен явный no-drag. */
+html[data-window-chrome='macos'] :is(.modal, .settings-modal, .inbox, .popup-menu, .lightbox) { app-region: no-drag; }
+
+/* Нативный слой выше renderer: все общие оверлеи оставляют сверху свободную область. */
+html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) {
+  padding: var(--window-overlay-top) var(--window-overlay-gap) var(--window-overlay-gap);
+}
+html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop)::before {
+  content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
+  app-region: drag; user-select: none;
+}
+html[data-window-chrome='macos'] :is(.modal, .settings-modal) {
+  max-width: 100%; max-height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap));
+}
+html[data-window-chrome='macos'] .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
+html[data-window-chrome='macos'] .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
+html[data-window-chrome='macos'] .settings-modal.fullscreen { height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap)); }
+@media (max-width: 600px) {
+  html[data-window-chrome='macos'] { --window-overlay-gap: 12px; }
+}

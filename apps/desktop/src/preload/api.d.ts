@@ -2,7 +2,7 @@ import type { OrcaApi } from '../shared/ipc'
 
 declare global {
   interface Window {
-    /** Включает опциональную подписку app.onMenuAction на команды системного меню. */
+    /** Включает app.onMenuAction и read-only app.windowChrome; оба опциональны для старого preload. */
     orca: OrcaApi
   }
 }

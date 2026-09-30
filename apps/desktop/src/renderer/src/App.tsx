@@ -885,30 +885,31 @@ export function App(): React.JSX.Element {
               )}
             </div>
             <button
-              className={`inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
+              className={`btn-primary ghost head-action inbox-badge ${inboxCount > 0 ? 'has' : ''} ${showInbox ? 'active' : ''}`}
               onClick={() => {
                 setShowInbox((v) => !v)
                 setShowAssistant(false)
               }}
               disabled={!active}
               title={t('shell.head.inboxHint')}
+              aria-expanded={showInbox}
             >
               {t('shell.head.inbox')}{inboxCount > 0 && <><span className="dot" /> {inboxCount}</>}
             </button>
-            <button className="round-btn" title={t('shell.head.newShell')} onClick={openShell} disabled={!active}><Icon.terminal /></button>
+            <button className="btn-primary ghost head-action head-action-icon" title={t('shell.head.newShell')} onClick={openShell} disabled={!active}><Icon.terminal /></button>
             {/* Создание через координатора доступно вне глобальной задачи; её координатор — в GlobalTaskView.
                 Контекст задачи сохраняется и при переходе к терминалам. */}
             {!openGlobal && (
-              <button className="btn-primary ghost" onClick={() => setShowCoord(true)} disabled={!active} title={t('shell.head.coordinatorHint')}>
+              <button className="btn-primary ghost head-action" onClick={() => setShowCoord(true)} disabled={!active} title={t('shell.head.coordinatorHint')}>
                 <Icon.users /> {t('shell.head.coordinator')}
               </button>
             )}
             {openGlobal ? (
-              <button className="btn-primary" onClick={() => setShowNew(true)} disabled={!active}>
+              <button className="btn-primary head-action" onClick={() => setShowNew(true)} disabled={!active}>
                 <Icon.plus /> {t('shell.head.newSubtask')}
               </button>
             ) : (
-              <button className="btn-primary" onClick={() => setGlobalModal({ mode: 'create' })} disabled={!active}>
+              <button className="btn-primary head-action" onClick={() => setGlobalModal({ mode: 'create' })} disabled={!active}>
                 <Icon.plus /> {t('shell.head.newTask')}
               </button>
             )}

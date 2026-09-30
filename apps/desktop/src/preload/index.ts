@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { OrcaApi } from '../shared/ipc'
+import { windowChromeMode } from '../shared/window-chrome'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const handler = (_e: unknown, payload: T): void => cb(payload)
@@ -9,6 +10,7 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 
 const api: OrcaApi = {
   app: {
+    windowChrome: windowChromeMode(process.platform, process.argv),
     info: () => ipcRenderer.invoke('app:info'),
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),

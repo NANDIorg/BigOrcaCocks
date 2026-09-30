@@ -1,5 +1,6 @@
 import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
+import type { WindowChromeMode } from './window-chrome'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -527,6 +528,8 @@ export type AppMenuAction = 'settings' | 'checkUpdates' | 'addProject'
 
 export interface OrcaApi {
   app: {
+    /** Режим рамки этого окна; нет в старом preload. Read-only, без IPC управления окном. */
+    readonly windowChrome?: WindowChromeMode
     info(): Promise<{ socketPath: string; active: Project | null; projects: Project[] }>
     getSettings(): Promise<AppSettings>
     /** Мерж патча в глобальные настройки; возвращает итоговые. */

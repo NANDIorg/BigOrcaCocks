@@ -9,3 +9,8 @@ declare module '*.svg' {
   const url: string
   export default url
 }
+
+/** Vite очищает подписку на геометрию окна при замене модуля в dev. */
+interface ImportMeta {
+  readonly hot?: import('vite/types/hot').ViteHotContext
+}

@@ -1353,6 +1353,22 @@ SVG используется в rail и мастере первого запус
 Рамка и системные кнопки принадлежат ОС; содержимое и фокус — модулю окна.
 Визуальный контекст — [DESIGN.md](../DESIGN.md).
 
+Главное окно на macOS использует `titleBarStyle: hidden`, `trafficLightPosition` и WCO
+(`main/window-chrome.ts`). AppKit сохраняет системные кнопки, рамку, тень и управление окном;
+renderer рисует панели до верхнего края. Геометрия — `shared/window-chrome.ts`: панель иконок
+минимум 96px, область кнопок 52px, отступы 18px. На Windows/Linux остаётся обычная системная рамка.
+Main передаёт preload аргумент `--orca-macos-window-chrome`; read-only `app.windowChrome?`
+сообщает фактический режим этого окна, без новых каналов управления. Старый main без флага
+или старый preload без свойства сохраняет прежние отступы.
+`renderer/windowChrome.ts` до первого рендера устанавливает общие CSS-токены и подписывается
+на WCO `geometrychange`: в fullscreen верхний резерв убирается, после выхода восстанавливается.
+`env(titlebar-area-height)` и `env(titlebar-area-x)` учитывают zoom Chromium: нативные кнопки
+не сжимаются вместе с renderer. Шапки и свободная кромка окна — drag-области; кнопки, меню ветки,
+вкладки, поля и поверхности оверлеев — no-drag (само перекрытие по z-index не отменяет drag).
+Общие backdrop мастера и модальных окон резервируют
+место для нативных кнопок; высота их содержимого ограничена оставшимся viewport. Закрытие и
+фоновый режим используют существующие события окна, без HTML-копий системных кнопок.
+
 Команды навигации передаются `app:menuAction` через опциональный `app.onMenuAction`.
 `MenuActionQueue` ждёт `app:menuReady` от подписавшегося React-интерфейса: при восстановлении
 закрытого окна первое нажатие не теряется. Во время загрузки запоминается последняя команда,
@@ -1366,6 +1382,7 @@ SVG используется в rail и мастере первого запус
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
 | Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS; меню окна Windows/Linux | `main/app-menu.test.ts`, живой Electron |
+| Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные кнопки macOS; системная рамка Windows/Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
 | Branding | `build/icon.svg` | предоставленный авторский логотип | SVG в renderer, PNG для ОС и сборок | скругление и проверка загрузки в Electron |
@@ -1432,6 +1449,10 @@ SVG-линия и траектория пакета используют оди�
 - Закрытие окна посреди мастера ничего не пишет: остаётся `pending`, мастер покажется при следующем запуске.
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
+
+`app.windowChrome?` — read-only метаданные preload (`system` / `macos`), не IPC-вызов.
+Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
+со старым мостом без этого свойства.
 
 - `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
@@ -2455,6 +2476,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 
 | Что | macOS / unix | Windows | Где |
 |---|---|---|---|
+| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | обычная системная рамка | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts` |
 | Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
 | Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
 | Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |
@@ -2598,6 +2620,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
 ## Грабли разработки
+
+- В интегрированном заголовке macOS `z-index` не отключает `app-region: drag` у панели под модалкой:
+  Chromium собирает drag-прямоугольники без учёта перекрытия. Поверхностям модалок, помощника,
+  инбокса и меню нужен явный `app-region: no-drag`. Кнопки AppKit не масштабируются вместе с
+  renderer: свободное место по обеим осям рассчитывается через WCO, а не только фиксированными px.
 
 - Роли этапа «Работы» были голыми чекбоксами из `stageRoles(roles)`: роль, удалённая из типа, или служебная роль в `roleIds`
   (из файла) не показывалась нигде, но оставалась в данных и молча уходила движку. А в пути подзадачи чекбоксы позволяли
