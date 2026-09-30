@@ -145,11 +145,12 @@ export function advanceRun(deps: RunWorkflowDeps, runId: string, outcome: WfPort
  * `stage finish` координатора (сокет `stage.finish`): этап «Работа» закрыт — переход по `next` и эффекты следующей ноды
  * (проверка, человек, git, мерж, конец). Единственный путь закрытия этапа: сам store эффектов не делает, поэтому сокет
  * не вызывает `store.finishStage` напрямую. Ошибки store (не все подзадачи закрыты, не «Работа») — с подсказкой, как есть.
- * Возвращает то, что сделал store: обновлённый прогон и действие новой ноды.
+ * Возвращает то, что сделал store: обновлённый прогон и действие новой ноды. `nodeId` — этап пути разветвления
+ * (`stage finish --stage`); нет — единственный открытый этап.
  */
-export function finishRunStage(deps: RunWorkflowDeps, runId: string, summary?: string): { run: Run; action: WfAction } {
+export function finishRunStage(deps: RunWorkflowDeps, runId: string, summary?: string, nodeId?: string): { run: Run; action: WfAction } {
   return withStatusSource('workflow', () => {
-    const result = deps.store.finishStage(runId, { ...stageOpts(deps, runId), ...(summary?.trim() ? { summary } : {}) })
+    const result = deps.store.finishStage(runId, { ...stageOpts(deps, runId), ...(summary?.trim() ? { summary } : {}), ...(nodeId !== undefined ? { nodeId } : {}) })
     runEffects(deps, runId, result.action)
     return result
   })

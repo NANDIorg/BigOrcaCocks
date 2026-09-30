@@ -452,7 +452,7 @@ CLI этой команды нет: координатор тип не меня�
 | CLI | Метод сокета | Параметры | Результат |
 |---|---|---|---|
 | `global list` | `global.list` | — | `GlobalTask[]` + `coordinatorAlive` |
-| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` |
+| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` (внутри разветвления — `lanes`: где стоит каждый путь) |
 | `global create [--title] [--description] [--status <col>] [--priority …]` | `global.create` | `title?`, `description?`, `status?`, `priority?` | `GlobalTask` |
 | `global update --global <id> [--title] [--description] [--priority …]` | `global.update` | `global`, `title?`, `description?`, `priority?` | `GlobalTask` |
 | `global move --global <id> --status <col>` | `global.move` | `global`, `status` | `GlobalTask` |
