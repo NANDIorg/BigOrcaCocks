@@ -74,7 +74,10 @@ export interface AppSettingsPatch {
   language?: AppLanguage
   notifications?: NotificationSettingsPatch
   updates?: Partial<UpdateSettings>
-  /** Пустая строка в model/effort/systemPrompt очищает поле; смена агента без model/effort сбрасывает их. */
+  /**
+   * Пустая строка в model/effort/systemPrompt/extraArgs очищает поле; смена агента без model/effort/extraArgs
+   * сбрасывает их. `extraArgs` — строка как введена, невалидную (`parseExtraArgs`) main отвергает.
+   */
   assistant?: Partial<AssistantSettings>
 }
 

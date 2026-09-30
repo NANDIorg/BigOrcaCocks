@@ -183,6 +183,27 @@ export default {
   'roles.effortIsDefault': '{effort} — agent default',
   'roles.effortUnsupported': 'The model doesn’t support this level',
   'roles.effortNone': 'the agent has no effort setting',
+  'roles.extraArgs': 'Launch flags',
+  'roles.extraArgsPlaceholder': '--verbose --add-dir "/path with spaces"',
+  'roles.extraArgsHint':
+    'Added right after the command, before the app’s own flags. Parsed without a shell: $VAR, ~, ; and | stay as typed, ' +
+    'quote values that contain spaces. Don’t enter keys or tokens — flags show up in the process list and are stored ' +
+    'in plain text; use environment variables. Applies from the next launch.',
+  'roles.extraArgsError.quote': 'Unclosed quote {detail}.',
+  'roles.extraArgsError.separator': 'A bare “--” isn’t allowed: everything after it, including the app’s flags, would be read as plain arguments.',
+  'roles.extraArgsError.notFlag': 'The first item must be a flag (starting with “-”), not “{detail}”: subcommands can’t be set here.',
+  'roles.extraArgsError.control': 'Control character {detail} isn’t allowed in flags.',
+  'roles.extraArgsError.length': 'Too long: {detail} characters, the limit is {max}.',
+  'roles.extraArgsError.count': 'Too many arguments: {detail}, the limit is {max}.',
+  'roles.extraArgsQuoteBackslash':
+    'Inside double quotes \\" is a literal quote, not the end of the value: put a path ending in “\\” in single quotes or drop the trailing “\\”.',
+  'roles.extraArgsUnsaved': 'The flags won’t be saved until this is fixed: the previously saved ones stay. Other fields are saved.',
+  'roles.extraArgsReserved.model': '{flag} — the model is set by the Model field: the flag conflicts with it.',
+  'roles.extraArgsReserved.effort': '{flag} — effort is set by the Effort field: the flag conflicts with it.',
+  'roles.extraArgsReserved.permission': '{flag} — the app controls the permission mode (task type → Permissions): the flag may bypass it.',
+  'roles.extraArgsReserved.session': '{flag} — the app manages the session: the flag breaks linking stats to the launch.',
+  'roles.extraArgsReserved.print': '{flag} — non-interactive mode: the agent answers once and the terminal exits.',
+  'roles.extraArgsReserved.systemPrompt': '{flag} — the app passes the system prompt (instructions below): the flag may replace them.',
   'roles.commandAria': 'Launch command',
   'roles.tabsAria': 'Instructions',
   'roles.promptPlaceholder': 'E.g.: write tests for every change. No need to copy the built-in instructions or board rules here.',
@@ -217,6 +238,7 @@ export default {
   'roles.ph.goal': '‹run goal›',
   'roles.ph.task': '‹task›',
   'roles.ph.permission': '‹permission mode›',
+  'roles.ph.extraArgsBad': '‹flags not parsed›',
   'roles.ph.taskTitle': '‹task title›',
   'roles.ph.taskSpec': '‹task description›',
 

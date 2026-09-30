@@ -26,6 +26,13 @@ export interface Role {
    * (skills/worker.md или coordinator.md) при каждом запуске агента этой роли. Пусто — поля нет, поведение прежнее.
    */
   systemPrompt?: string
+  /**
+   * Флаги пользователя к команде запуска агента — строка, как её ввёл человек (не тримится, как `systemPrompt`).
+   * В argv её разбирает `parseExtraArgs` (без shell), токены уходят в `AgentInvokeOptions.extraArgs`.
+   * Пусто или одни пробелы — поля нет. Применяется со следующего запуска: идущие агенты не меняются.
+   * Меняется только в UI — агентам через CLI и сокет поле не отдаётся и не принимается (флаги обходят режим прав).
+   */
+  extraArgs?: string
 }
 
 export const DEFAULT_ROLES: Role[] = [
@@ -64,6 +71,11 @@ export interface AssistantSettings {
   effort?: string
   /** Инструкции человека: дописываются к skills/assistant.md блоком «# Инструкции роли «Ассистент»». */
   systemPrompt?: string
+  /**
+   * Флаги пользователя к команде запуска ассистента — строка, как её ввёл человек; разбор — `parseExtraArgs`.
+   * Пусто или одни пробелы — поля нет. Применяется со следующего запуска. Меняется только в UI (см. `Role.extraArgs`).
+   */
+  extraArgs?: string
 }
 
 export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { agent: 'claude' }

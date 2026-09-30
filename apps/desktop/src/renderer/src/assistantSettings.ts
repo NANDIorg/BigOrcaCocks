@@ -1,6 +1,6 @@
 import { DEFAULT_ASSISTANT_SETTINGS, type AgentInfo, type AgentKind, type AssistantSettings } from '@orca-board/core'
 import type { AppSettings } from '../../shared/ipc'
-import { agentChangePatch, modelChangePatch } from './roleEdit'
+import { agentChangePatch, modelChangePatch, withSavableExtraArgs } from './roleEdit'
 import { libraryAgents } from './taskTypeEdit'
 
 // Логика раздела «Настройки → Ассистент» без React — чтобы тестировать node --test (assistantSettings.test.ts).
@@ -19,19 +19,20 @@ export function assistantView(settings: Pick<AppSettings, 'assistant'> | null): 
   return settings.assistant ? { kind: 'ready', assistant: settings.assistant } : { kind: 'stale' }
 }
 
-/** Настройки с правкой; пустые model/effort/systemPrompt не храним (undefined — «по умолчанию»), как `withPatch` у ролей. */
+/** Настройки с правкой; пустые model/effort/systemPrompt/extraArgs не храним (undefined — «по умолчанию»), как `withPatch` у ролей. */
 export function withAssistantPatch(s: AssistantSettings, p: Partial<AssistantSettings>): AssistantSettings {
   const next: AssistantSettings = { ...s, ...p }
   if (!next.model) delete next.model
   if (!next.effort) delete next.effort
   if (!next.systemPrompt?.trim()) delete next.systemPrompt
+  if (!next.extraArgs?.trim()) delete next.extraArgs
   return next
 }
 
-/** Смена агента: модель и effort прошлого агента сбрасываются — тем же `agentChangePatch`, что у ролей. */
+/** Смена агента: модель, effort и флаги запуска прошлого агента сбрасываются — тем же `agentChangePatch`, что у ролей. */
 export function assistantAgentPatch(agent: AgentKind): Partial<AssistantSettings> {
-  const { model, effort } = agentChangePatch(agent)
-  return { agent, model, effort }
+  const { model, effort, extraArgs } = agentChangePatch(agent)
+  return { agent, model, effort, extraArgs }
 }
 
 /** Смена модели: effort, которого нет у новой модели (`efforts`), сбрасывается. */
@@ -41,10 +42,22 @@ export function assistantModelPatch(s: AssistantSettings, model: string, efforts
 
 /**
  * Патч для `app:setSettings` из черновика целиком: пустое поле уходит пустой строкой — main его очищает
- * (`mergedAssistantSettings`), а не оставляет прежнее значение.
+ * (`mergedAssistantSettings`), а не оставляет прежнее значение. `withExtraArgs` — main умеет флаги
+ * (`extraArgsSupported`): старому main поле не отправляем вовсе.
  */
-export function assistantSavePatch(s: AssistantSettings): Required<AssistantSettings> {
-  return { agent: s.agent, model: s.model ?? '', effort: s.effort ?? '', systemPrompt: s.systemPrompt ?? '' }
+export function assistantSavePatch(s: AssistantSettings, withExtraArgs: boolean): Partial<AssistantSettings> {
+  return {
+    agent: s.agent, model: s.model ?? '', effort: s.effort ?? '', systemPrompt: s.systemPrompt ?? '',
+    ...(withExtraArgs ? { extraArgs: s.extraArgs ?? '' } : {})
+  }
+}
+
+/**
+ * Настройки для сохранения из черновика: негодные флаги запуска заменяются последними отправленными
+ * (`withSavableExtraArgs`) — main отверг бы патч целиком, и правка агента, модели, effort или инструкций пропала бы.
+ */
+export function assistantForSave(draft: AssistantSettings, saved: AssistantSettings): AssistantSettings {
+  return withSavableExtraArgs(draft, saved)
 }
 
 /** Агенты для выбора: у ассистента, как у типов библиотеки, доступны все установленные (`libraryAgents`). */

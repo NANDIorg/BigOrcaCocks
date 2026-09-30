@@ -588,6 +588,10 @@ button:disabled { opacity: .45; cursor: default; }
   font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .roles-preview .k { color: var(--accent); }
+.roles-args input { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+.roles-args input:disabled { opacity: .55; cursor: not-allowed; }
+.roles-args .editor-error { margin-top: 0; overflow-wrap: anywhere; }
+.roles-args .roles-warn { display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
 .roles-tabs { display: flex; flex-wrap: wrap; gap: 4px 20px; border-bottom: 1px solid var(--line); }
 .roles-tabs button {
   background: transparent; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;

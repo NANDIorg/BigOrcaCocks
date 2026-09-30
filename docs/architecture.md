@@ -95,10 +95,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 - `Role { id, title, description?, agent, model?, effort?, systemPrompt? }` — кто выполняет задачу: агент из реестра, модель
   и уровень рассуждений `effort` (пусто — по умолчанию у агента; `validateRoles` обрезает пробелы,
   пустая строка → поле не сохраняется); `description` — назначение роли для координатора: он видит его в `roles list`
-  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»). `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
+  и по нему выбирает `--role` (`skills/coordinator.md`); `systemPrompt` — пользовательские инструкции роли (см. «Системный промпт роли»);
+  `extraArgs?` — флаги пользователя к команде запуска агента: строка, как её ввёл человек (не тримится; пусто или одни
+  пробелы — поля нет), в argv её разбирает `parseExtraArgs` (см. «Агенты» → «Флаги пользователя»), применяется со
+  следующего запуска; меняется только в UI. `DEFAULT_ROLES`: `coordinator`, `developer`, `reviewer`, `qa`
   (с заполненным `description`; пустое назначение системной роли — в т.ч. у ролей, созданных до появления поля, —
   подставляется из дефолта: `withDefaultDescriptions` при чтении `projects.json` и в `validateRoles`). Ассистент ролью не является:
-  его настройки — `AssistantSettings { agent, model?, effort?, systemPrompt? }` (`packages/core/src/types.ts`, дефолт
+  его настройки — `AssistantSettings { agent, model?, effort?, systemPrompt?, extraArgs? }` (`packages/core/src/types.ts`;
+  `extraArgs` — те же флаги пользователя, что у роли; дефолт
   `DEFAULT_ASSISTANT_SETTINGS = { agent: 'claude' }`) в `AppSettings.assistant`, см. «Ассистент»;
   `DEFAULT_ROLE_ID = 'developer'` — его получают задачи без `roleId` при миграции старой доски.
 - `BoardColumn { id, title, color, kind }`. `kind` — системный (`backlog`, `ready`, `in_progress`,
@@ -243,6 +247,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `title`; `agent` — известный `AgentKind`; `model` и `effort` — строки или отсутствуют (пустые после trim → удаляются);
   `description` и `systemPrompt` — строки или отсутствуют, хранятся как введены (без trim), из одних пробелов → удаляются;
   у системных ролей (id из `DEFAULT_ROLES`) пустое `description` заменяется назначением по умолчанию.
+  `extraArgs` (флаги запуска) — строка, хранится как введена (без trim), из одних пробелов → удаляется; не строка —
+  `role.extraArgsNotString`, не разбирается `parseExtraArgs` (незакрытая кавычка, `--`, первый токен не флаг,
+  управляющий символ, лимиты) — `role.extraArgsInvalid` с причиной `extraArgs.<код>` (`extraArgsReason` в
+  `src/main/launch-extra-args.ts`; текст — на языке интерфейса, в сокет — по-русски). При **чтении** `projects.json`
+  (`loadedRoles` → `validateRoles(…, lenient)`) негодные флаги отбрасываются, а роль остаётся: иначе испорченная руками
+  строка уносила бы роль целиком. Флаги меняются только в UI (`taskTypes:save`): `addRole`/`updateRole` (путь CLI) их
+  не принимают, а `updateRole` со сменой агента их сбрасывает — флаги одного агента другому не подходят. Тесты —
+  `launch-extra-args.test.ts`.
 - **Валидация колонок** (`validateColumns`): хотя бы одна; непустые уникальные `id` и `title`;
   каждый системный `kind` ровно один раз (удалить или продублировать системную колонку нельзя),
   остальные — `custom`; пустой `color` → первый из `COLUMN_COLORS`. Порядок массива = порядок на доске.
@@ -254,13 +266,20 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   чтобы на доске не осталось задач с несуществующим статусом.
 - **Воркер** (`worker.ts`, `startWorker`): роль ищется по `task.roleId` в `ctx.roles` (нет → ошибка `missingRoleMessage`),
   агент — `getAgent(role.agent)`, модель и усилие — `role.model` / `role.effort` уходят в `invoke(..., { model, effort })`.
+  Флаги запуска роли разбирает `roleLaunchExtraArgs(role, 'worker.cannotStart')` (`launch-extra-args.ts`) и отдаёт в
+  `invoke(..., { extraArgs })` — **до** worktree, правки задачи и dispatch: негодная строка (правили `projects.json`
+  руками, старый снимок типа в прогоне) даёт «воркер не запустится: роль «id»: флаги запуска: …», задача в работу не уходит.
+  Разбор повторяется при каждом запуске и сохранению не доверяет. Флаги действуют со **следующего** запуска —
+  идущие агенты не меняются (как `systemPrompt`). В `Dispatch`, события и payload флаги не попадают.
   Перед стартом `task.agent` обновляется по роли: роль могли перенастроить после создания задачи.
 - **Координатор** (`startCoordinator`): запускается агентом роли `coordinator` с её моделью и усилием;
   если такой роли нет в типе задачи (удалили в «Настройки → Типы задач») — ошибка «координатор не запустится: …» до создания прогона.
+  Так же, до `createRun`, разбираются флаги запуска роли (`roleLaunchExtraArgs(role, 'coordinator.cannotStart')`):
+  с негодной строкой карточка глобальной задачи не создаётся; годные уходят в `invoke(..., { extraArgs })`.
   Текст «роли нет» один для всех мест (`missingRoleMessage` в `agents.ts`): тип задачи по названию, роли типа,
   `orca-board roles list` для агента и «Настройки → Типы задач» (для системной роли — «Вернуть системные роли») для человека.
-- **Ассистент** (`startAssistant`): не роль типа — агент, модель, effort и инструкции из `AppSettings.assistant`,
-  режим разрешений всегда `auto`; от проекта и типа задачи не зависит. См. «Ассистент».
+- **Ассистент** (`startAssistant`): не роль типа — агент, модель, effort, инструкции и флаги запуска из
+  `AppSettings.assistant`, режим разрешений всегда `auto`; от проекта и типа задачи не зависит. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
   при старте воркера и координатора к служебной инструкции Orca (`skills/worker.md` / `coordinator.md`)
   дописывается блок `# Инструкции роли «<title>»` с текстом роли (trim по краям, внутри — как есть).
@@ -324,7 +343,8 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `task.create` по сокету и `tasks:create` из UI идут через `pickRole`; `--agent` в `task.create`
   отвергается с подсказкой про `--role`. `worker.start` (сокет и UI) заново проверяет роль задачи
   и её агента: роль могли удалить, агента — выключить.
-- **Сокет**: `roles.list` → роли плюс `agentEnabled` (включён ли агент роли в проекте);
+- **Сокет**: `roles.list` → роли плюс `agentEnabled` (включён ли агент роли в проекте), без `extraArgs` (см.
+  «Протокол сокета»);
   `columns.list` → колонки в порядке показа; `task.update {task, title?, spec?, priority?}` → `store.editTask`
   (без `--title`/`--spec`/`--priority` — ошибка; см. «Редактирование задачи»). `task.create` и `global.add-task`
   принимают `priority` (значение проверяет store; `--priority` без значения — ошибка сокета). Так же
@@ -756,8 +776,9 @@ orca-board decision escalate --reason "..."        # не может выбра�
 
 При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`, `ORCA_PROJECT`,
 а в `PATH` — папка с `orca-board`. Команда запуска берётся из реестра по агенту роли задачи:
-`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort})` → `{command, args}`
-(`worker.ts`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + ответы на вопросы + раздел
+`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort, sessionId, extraArgs})` → `{command, args}`
+(`worker.ts`; `extraArgs` — флаги запуска роли, разобранные `roleLaunchExtraArgs`; так же у координатора, у ассистента —
+из `assistantLaunch`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + ответы на вопросы + раздел
 «Этап» (инструкция и показ ноды «Работа», `store.taskWorkStage`) + замечания ревью.
 
 Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
@@ -877,19 +898,23 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Один на всё приложение**: ассистент не принадлежит проекту и работает со всеми проектами через
   `orca-board --project <id>`; без флага CLI берёт активный в UI проект. Файлового доступа к репозиториям
   нет (`--add-dir` не передаётся) — только CLI.
-- **Свои настройки** — `AppSettings.assistant: AssistantSettings { agent, model?, effort?, systemPrompt? }` (`shared/ipc.ts`,
+- **Свои настройки** — `AppSettings.assistant: AssistantSettings { agent, model?, effort?, systemPrompt?, extraArgs? }` (`shared/ipc.ts`,
   тип — `packages/core/src/types.ts`), хранятся в `settings.assistant` файла `projects.json`, каналы — те же `app:getSettings` /
   `app:setSettings`. Ассистент не роль типа задачи: он один на приложение и к типу не относится. `settings()` нормализует
-  (`loadedAssistantSettings` в `src/main/assistant.ts`: неизвестный агент → `claude`, не-строки и пустые строки выпадают),
-  `setSettings({ assistant })` мержит по полям (`mergedAssistantSettings`): пустая строка очищает поле, промпт хранится как
-  введён, смена агента без `model`/`effort` в патче сбрасывает их (модель одного агента другому не подходит), неизвестный
-  агент или не-строка — `OrcaError` `assistant.*`. Режима разрешений в настройках нет — всегда `auto`
+  (`loadedAssistantSettings` в `src/main/assistant.ts`: неизвестный агент → `claude`, не-строки и пустые строки выпадают,
+  флаги запуска, которые не разбирает `parseExtraArgs`, — тоже),
+  `setSettings({ assistant })` мержит по полям (`mergedAssistantSettings`): пустая строка очищает поле, промпт и флаги
+  запуска хранятся как введены, смена агента без `model`/`effort`/`extraArgs` в патче сбрасывает их (модель и флаги одного
+  агента другому не подходят), неизвестный агент или не-строка — `OrcaError` `assistant.*`, негодные флаги —
+  `assistant.extraArgsInvalid` с причиной. Патч без `extraArgs` (старый renderer, CLI `settings set` — флага для них нет)
+  флаги не трогает. Режима разрешений в настройках нет — всегда `auto`
   (`ASSISTANT_PERMISSION_MODE`): ассистенту нужен только `orca-board`, он и так разрешён. Настройки применяются к
   **следующему** запуску («Новый диалог» / `assistant:reset`), живой ассистент не перезапускается. Тесты — `assistant-settings.test.ts`. В UI — раздел «Настройки → Ассистент» (см. «Настройки»).
 - **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext { socketPath, settings }`): `openAssistant` берёт
   `projects.settings().assistant` и **до** закрытия старого терминала проверяет агента (`assertAgentUsable(agentInfos(undefined), …)`:
   неизвестный или неустановленный — `OrcaError`, панель показывает его, старый ассистент при «Новом диалоге» не теряется).
   Что запускать, собирает чистая `assistantLaunch(settings, builtin, language)` (`src/main/assistant.ts`): агент, модель, effort,
+  флаги запуска (`extraArgs` — уже argv; негодная строка — `assistant.extraArgsInvalid` до старта терминала),
   system prompt — `skills/assistant.md` + блок `# Инструкции роли «Ассистент»` (`ASSISTANT_TITLE`, `agentSystemPrompt`; правил проекта `agentRules` нет), стартовое сообщение —
   `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — нейтральный
   `userData/assistant` (создаётся при запуске), не репозиторий; `orca-board` без вопросов
@@ -977,7 +1002,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
-- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся
+- **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, reservedFlags?, invoke}`. Из него выводятся
   `AgentKind`, `AGENT_IDS`, `AGENT_TITLES` (для UI), `DEFAULT_AGENT = 'claude'`, статический список моделей
   (`modelHints(agent)` оставлен deprecated-обёрткой над `models` для старого UI)
   и `effortOptions(agent)` (claude: `low…max` включая `xhigh`; codex: `low`/`medium`/`high`; остальные — `[]`).
@@ -991,11 +1016,70 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `model`/`model_reasoning_effort` — из `~/.codex/config.toml`, дефолтная модель в списке помечена «(по умолчанию)».
     Нет кэша — в списке только модель из `config.toml`. Чтение обоих файлов кэшируется на 60 с, `refresh` сбрасывает.
   - остальные — `models = []`, в UI модель вводится свободным текстом.
-- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?})`: модель — флагом агента;
+- **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?, extraArgs?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
   `sessionId` — uuid сессии для статистики: `worker.ts` генерирует его (`agentSessionId`) только агентам с
   `acceptsSessionId` (сейчас claude → `--session-id <uuid>`), ассистенту не передаётся.
+- **Флаги пользователя** (`Role.extraArgs`, `AssistantSettings.extraArgs` → `AgentInvokeOptions.extraArgs`,
+  `packages/core/src/launch-args.ts`). Человек дописывает свои флаги к команде запуска; хранится строка, как введена.
+  - **Порядок: argv = [флаги пользователя] + [флаги приложения] + [промпт]**, вставка — внутри `invoke` каждого агента
+    (а не в `worker.ts`), чтобы превью команды в UI совпадало с реальным запуском. claude:
+    `claude <extra> --permission-mode … --allowedTools … [--model …] [--effort …] [--session-id …] --append-system-prompt <system> <prompt>`;
+    codex: `codex <extra> [-m …] [-c model_reasoning_effort=…] [--] <промпт>` (`--` ставится только при флагах
+    пользователя — закрывает variadic `--image <FILE>...`, см. «Грабли разработки»); opencode, gemini, cursor, amp, copilot — `<extra>`
+    сразу после команды; goose — `goose run <extra> --interactive --text <промпт>` (после подкоманды `run`); shell —
+    `$SHELL <extra>`. Без `extraArgs` (нет поля или `[]`) argv прежний — это держит таблица в `agents.test.ts`.
+    Почему «перед»: variadic-флаг в конце съел бы позиционный промпт (см. «Грабли разработки»), а у одиночных опций
+    побеждает последняя — флаги приложения случайно не сломать.
+    **Проверено на живых агентах** (claude 2.1.285, codex 0.156.1; запуск в PTY с argv, который строит `invoke`):
+    - claude, `--model haiku` в флагах и модель роли `opus` → сессия на Opus: побеждает последний флаг, то есть
+      приложения; `--model=haiku` — так же. Если модель роли не задана, приложение `--model` не ставит, и побеждает
+      флаг пользователя.
+    - claude, повторный `--allowedTools` (`--allowedTools Bash(python3:*)`, `=`-форма, несколько значений,
+      `--allowed-tools`) **сливается** с `--allowedTools Bash(orca-board:*)` приложения, а не перезаписывает: `orca-board`
+      идёт без вопросов, разрешение пользователя тоже действует. Склеивать значения в `invoke` не нужно.
+    - claude, variadic `--add-dir <dir>` в флагах: промпт доходит, папка добавлена (без флага чтение из неё требует
+      разрешения). Работает, потому что после флагов пользователя всегда идут флаги приложения.
+    - claude, `--dangerously-skip-permissions` **перекрывает** `--permission-mode` типа (при `auto` и `acceptEdits`
+      сессия в «bypass permissions on»): это отдельный флаг, правило «побеждает последний» на него не действует —
+      отсюда предупреждение `permission` в UI.
+    - claude, `-c`/`--continue` вместе с приложением `--session-id` — claude сразу завершается с ошибкой
+      «--session-id can only be used with --continue or --resume if --fork-session is also specified»; повторный
+      `--session-id` в флагах запускается. Оба случая — предупреждение `session`, не блокировка.
+    - codex, `-s workspace-write -a never` — в сессии `approval_policy: never`, `sandbox: workspace-write`; `--search`
+      принимается (влияние на набор инструментов по rollout не видно). Значения `--ask-for-approval` в 0.156.1 —
+      только `on-request` и `never`: опечатка даёт ошибку CLI в терминале роли, не приложения.
+    - goose (`run <extra> --interactive …`) и остальные агенты на машине не установлены — только тест порядка argv.
+  - **Разбор** — чистая `parseExtraArgs(text) → { ok: true, args } | { ok: false, error, detail? }`, без shell и одинаково
+    на всех платформах. Разделители — пробелы, табы, переводы строк вне кавычек. `'…'` — буквально; `"…"` — внутри только
+    `\"` → `"` и `\\` → `\`, прочие `\` буквальны; **вне кавычек `\` буквален** (иначе ломается `C:\Users\me`). Кавычки
+    склеиваются с соседним текстом (`--dir="a b"` → `--dir=a b`), `""` — пустой аргумент. Раскрытий нет: `$VAR`, `~`, `*`,
+    `;`, `|`, `&&`, `>` остаются как есть. Пусто или одни пробелы — `args: []`.
+  - **Ошибки** (`ExtraArgsError`; `detail` — кавычка, токен, код символа или фактическое число): `quote` — незакрытая
+    кавычка; `separator` — токен `--` (всё после него, включая флаги приложения, стало бы позиционным); `notFlag` — первый
+    токен не начинается с `-` (была бы подкоманда: `codex exec`, `claude mcp`) — в поле только флаги, не команда целиком;
+    `control` — управляющий символ, включая NUL (таб и перевод строки внутри кавычек — часть значения); `length` — строка
+    длиннее `EXTRA_ARGS_MAX_LENGTH` (2000: на Windows флаги делят с промптом лимит командной строки cmd.exe); `count` —
+    больше `EXTRA_ARGS_MAX_COUNT` (64) аргументов.
+  - **Зарезервированные флаги** — `AgentSpec.reservedFlags: { flags, reason, valuePrefix? }[]` рядом с `invoke`: флаги,
+    которыми управляет приложение. `reservedFlagsIn(agent, args) → { flag, reason }[]` находит их во флагах пользователя;
+    это **только предупреждение в UI, запуск не блокируется** (у человека могут быть причины, но молчаливое
+    переопределение хуже). Причины (`ReservedFlagReason`): `model`, `effort` (задаются полями роли), `permission` (режим
+    разрешений типа задачи), `session` (ломает привязку статистики к транскрипту), `print` (неинтерактивный режим —
+    терминал завершится), `systemPrompt` (инструкции роли). claude (сверено с `--help` 2.1.285): `--model`; `--effort`;
+    `--permission-mode`, `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`; `--session-id`,
+    `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--from-pr`, `--teleport`, `--no-session-persistence`;
+    `--print`/`-p`; `--append-system-prompt`, `--system-prompt` и их `-file`-варианты. codex (`--help` 0.156.1):
+    `--model`/`-m`, `-c`/`--config` со значением `model=…` или `model_reasoning_effort=…` (`valuePrefix`; прочие `-c`
+    свободны); sandbox и approval приложение codex не задаёт — они не зарезервированы. opencode, cursor — `--model`,
+    gemini — `-m` (то, что ставит сам `invoke`). Узнаются `--flag=значение`, слитное `-mзначение` и связка коротких (`-pc`);
+    значение чужого флага от флага не отличается — лишнее предупреждение дешевле таблицы арности всех флагов.
+    Про `model` и `effort` UI предупреждает, только когда поле исполнителя заполнено (`FIELD_OF` в
+    `renderer/src/extraArgsHints.ts`): тогда приложение ставит свой флаг после флагов пользователя и побеждает. При пустом
+    поле своего флага нет — флаг пользователя действует, конфликта нет. Остальные причины от полей не зависят.
+  - **`AgentInfo.supportsExtraArgs?: true`** — признак «main умеет сохранять и применять флаги». Старый main молча стёр бы
+    незнакомое поле при сохранении, поэтому renderer без признака поле не даёт править и просит перезапустить приложение.
 - **Дефолты и модели агента** (`agentConfig` в `src/main/agents.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
   всегда (`[]` / `{}`). codex: `config.toml` читается построчно, только ключи верхнего уровня до первой секции `[..]`;
   разбор кэша — чистая `parseCodexModelsCache(text, defaultModel?)` в core (`visibility: "hide"` пропускаются,
@@ -1015,7 +1099,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   агент проверяется не сам по себе, а через роль — `pickRole` при `task.create`/`tasks:create`
   и повторная проверка роли задачи при `worker.start` (см. «Роли и колонки»). `pickAgent` удалён.
 - **Сокет `agents.list`** → `[{id, title, installed, enabled, version?, models, defaults}]` в порядке реестра;
-  IPC `agents:list(refresh?)` — то же для активного проекта.
+  IPC `agents:list(refresh?)` — то же для активного проекта плюс `supportsExtraArgs: true` (ставит `agentInfos`): этот
+  main сохраняет и применяет флаги запуска, по признаку renderer открывает поле флагов (у старого main признака нет).
+  В ответ сокета признак не идёт — контракт CLI прежний.
 - **Логотипы** (`renderer/src/AgentLogo.tsx`): `<AgentLogo agent size?>` — inline SVG 24×24 с `fill="currentColor"`,
   окрашенный в брендовый цвет из таблицы `COLORS` (claude `#d97757`, codex `#10a37f`, gemini `#4e8df5`,
   amp `#ff5543`, goose `#f6b93b`, shell серый; монохромные cursor/copilot/opencode — белый). Неизвестный id
@@ -1258,6 +1344,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     ассистента» / «Встроенная инструкция» (`skills/assistant.md`) / «Стартовое сообщение». Поля — те же части, что у панели роли
     типа (`RoleParts.tsx`: `ExecutorFields`, `InstructionTabs`, `commandPreview`; вид инструкции передаётся явно, а не из id роли).
     Автосохранение (`useAutoSave`) шлёт черновик целиком (`assistantSavePatch`: пустое поле — пустой строкой, main его очищает);
+    негодные флаги запуска в патч не попадают — вместо них уходят последние отправленные (`assistantForSave`, у ролей типа —
+    `rolesForSave`; см. «IPC» → флаги запуска), в поле остаётся введённое с ошибкой под ним;
     логика без React — `assistantSettings.ts` (тест рядом). Подсказка под заголовком: действует с нового диалога (↻ в панели).
     Старый main без `settings.assistant` — `common.staleApp` вместо редактора (`assistantView`), запись без поля в ответе —
     `droppedPatch`. `App` держит `AppSettings` в состоянии (загрузка при старте, `app:changed`, `onAppSettings` из «Настроек»):
@@ -1498,6 +1586,19 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ошибка по-русски; см. «Статистика задачи»).
 - Ошибки `invoke`: обёртка `handle()` переводит `OrcaError` на язык интерфейса и кладёт код в имя —
   `OrcaError[<ключ>]: <текст>` (renderer: `ipcErrorMessage` / `ipcErrorCode`, см. «Язык интерфейса» → «main»).
+- Флаги запуска агента (`extraArgs`) новых каналов не заводят: поле роли едет в `taskTypes:save` (роль — объектом
+  целиком), поле ассистента — в `app:setSettings({assistant: {extraArgs}})`, читаются через `taskTypes:list` и
+  `app:getSettings`. Негодная строка — ошибка сохранения `OrcaError[role.extraArgsInvalid]` /
+  `OrcaError[assistant.extraArgsInvalid]` с причиной на языке интерфейса. Renderer негодную строку в main не отправляет:
+  оба канала пишут запись целиком, и отказ унёс бы правку соседнего поля (агент, модель, effort, название, инструкции).
+  Перед отправкой `useAutoSave(…, prepare)` заменяет негодные флаги последними отправленными — `withSavableExtraArgs` в
+  `renderer/src/roleEdit.ts` (`rolesForSave`, `assistantForSave`): годные уходят как введены, пустые очищают поле, прежние
+  подставляются только годные и того же агента, иначе поля нет. Черновик и поле ввода не меняются, под полем — причина
+  и «флаги не сохранятся, пока ошибка не исправлена; остальные поля сохраняются» (`checkExtraArgs`). Main остаётся
+  судьёй и негодное отвергает. `agents:list` отдаёт `supportsExtraArgs: true`:
+  старый main молча стёр бы незнакомое поле при сохранении, поэтому без признака renderer поле флагов не даёт править
+  и просит перезапустить приложение. Новый main со старым renderer безопасен: патч ассистента без `extraArgs` флаги
+  не трогает, а роли renderer сохраняет объектами целиком.
 - `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
@@ -1517,6 +1618,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 Методы уровня приложения (`appHandlers` в `src/main/socket.ts`: `projects.list`, `settings.get`, `settings.set`)
 выполняются до `SocketDeps.resolve(projectId)`: работают без проектов и игнорируют `projectId`, даже чужой или удалённый.
 События помечаются `consumedBy` (= `runId` прогона, иначе `coordinator`), повторно `check` их не отдаёт.
+Флаги запуска (`extraArgs` роли, ассистента и снимка типа в прогоне) сокет не отдаёт и не принимает: поле вырезается
+из **любого** успешного ответа при сериализации (`okLine` в `socket.ts` → `withoutExtraArgs`), а параметров для него
+нет ни у `roles.add`/`roles.update`, ни у `settings.set`. Ответы читают агенты, а во флагах бывают пути и токены; без
+флагов ответ тот же, что раньше, — контракт не менялся. Тест — «флаги запуска (extraArgs) — только в UI» в
+`socket-settings.test.ts`.
 
 | Метод | Параметры | Результат |
 |---|---|---|
@@ -1532,7 +1638,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
 | `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?, options?}]}]` (`resolveTaskType`, `describeWorkflow`; `options` — id вариантов ноды `decision`, прямо из графа) |
-| `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]`; неизвестный `run` — ошибка |
+| `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]` без `extraArgs`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
 | `worker.done` | `summary`, `files?`, `answer?`, `showcase?: {text?, files}` | `Dispatch`; `finishDispatch` с запасным графом типа прогона (`runnableWorkflow`); «Работа» с `showcase.required` без показа — ошибка. Есть `showcase.files` — до `finishDispatch` main снимает их (`ProjectDeps.snapshotShowcase` → `main/showcase-snapshot.ts`): папки раскрываются, HTML — с ассетами; файла нет, тип не из белого списка, симлинк наружу, больше лимита — ошибка, запуск не закрыт |
@@ -1572,7 +1678,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 | Метод | Параметры | Результат | Подтверждение |
 |---|---|---|---|
-| `settings.get` | — (уровень приложения) | `AppSettings` целиком |  |
+| `settings.get` | — (уровень приложения) | `AppSettings` целиком (у `assistant` — без `extraArgs`) |  |
 | `settings.set` | любой поднабор: `language`, `keep-in-background`, `notifications-enabled`, `notify-role` (`id=on\|off`, повторяемый), `notify-event` (`kind=on\|off`, повторяемый), `quiet-hours` (`ЧЧ:ММ-ЧЧ:ММ` или `false` — выключить), `sound`, `show-preview`, `auto-check`, `auto-download`, `install-when-idle`; ассистент — `assistant-agent` (`isAgentKind`), `assistant-model`, `assistant-effort`, `assistant-prompt` (строки, `""` — очистить; → `AppSettingsPatch.assistant`, мерж — `mergedAssistantSettings`), `yes?` | `AppSettings` после мержа (`ProjectManager.setSettings`; смена языка сразу зовёт `setMainLocale`, `refreshTray`, `updater.settingsChanged()` — как `app:setSettings` в IPC). Разбор флагов — `settingsPatchFromParams` (`src/main/settings-params.ts`) | да для смены `assistant-agent` на другой — без `yes` ошибка с текущим и новым агентом (как `roles.update --agent`); модель и effort при смене сбрасываются, если не заданы тем же вызовом |
 | `types.create` | `title`, `description?` | новый `TaskType` (`ProjectManager.saveTaskType({..., settings: {}})` — роли и правила по умолчанию, как «Создать тип» в UI) |  |
 | `types.rename` | `type`, `title?`, `description?` (хотя бы одно) | `TaskType` (`renameTaskType`) |  |
@@ -1580,7 +1686,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 | `types.duplicate` | `type` | новый `TaskType` (копия) |  |
 | `types.delete` | `type`, `yes?` | `TaskTypesState`; последний тип библиотеки — ошибка (`deleteTaskType`) | да — без `yes` ошибка с числом проектов, где тип используется (`taskTypeUsage`), и признаком, что это тип библиотеки по умолчанию |
 | `roles.add` | `type`, `title`, `agent`, `model?`, `effort?`, `description?` | новая `Role` (`addRole`, `id` — `role_<hex>`); `agent` проверяет `validateRoles` |  |
-| `roles.update` | `type`, `role`, любое из `title`/`agent`/`model`/`effort`/`description`, `yes?` | `Role` (`updateRole`) | да для смены `agent` — без `yes` ошибка с текущим и новым агентом (другой процесс запуска задач роли) |
+| `roles.update` | `type`, `role`, любое из `title`/`agent`/`model`/`effort`/`description`, `yes?` | `Role` (`updateRole`); смена `agent` сбрасывает флаги запуска роли | да для смены `agent` — без `yes` ошибка с текущим и новым агентом (другой процесс запуска задач роли) |
 | `roles.remove` | `type`, `role`, `yes?` | `TaskType` без роли (`removeRole`); последняя роль типа — ошибка | да — без `yes` ошибка с числом задач проекта на роли (`store.listTasks`) и этапами воркфлоу типа, где она занята (`nodesUsingRole` в `socket.ts`) |
 | `types.perm.get` | `type` | `{typeId, permissionMode}` (`ProjectManager.permissionMode`) |  |
 | `types.perm.set` | `type`, `mode` (`auto\|bypassPermissions\|acceptEdits`), `yes?` | `{typeId, permissionMode}` (`patchTaskType`) | да для `bypassPermissions` — агент работает без запросов на разрешение |
@@ -1611,6 +1717,12 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 Типы задач → Разрешения»; прогон — по своему типу, `resolveRunType`), по умолчанию `auto`: Claude Code сам одобряет обычные действия и
 спрашивает только про опасные. `bypassPermissions` — вообще без вопросов, `acceptEdits` —
 только правки файлов без вопросов, остальной Bash спросит в терминале приложения.
+
+Флаги запуска роли (`Role.extraArgs`) режим типа **не заменяют**: `--permission-mode` приложение ставит после них, и
+у одиночной опции побеждает последняя. Но запретить обход флаги не могут — они выполняются с правами человека
+(`--dangerously-skip-permissions`, `--mcp-config`, `--settings`, у codex `-s danger-full-access`); UI о таких флагах только
+предупреждает (`reservedFlagsIn`). Поэтому флаги задаёт только человек в UI: ни CLI, ни сокет их не принимают и не
+отдают — иначе агент, читающий недоверенный текст задач, мог бы сам расширить себе права.
 
 ## Ветка глобальной задачи (`src/main/run-branch.ts`, чистая часть — `packages/core/src/run-branch.ts`)
 
@@ -2463,7 +2575,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Доп. папки агентов | `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`… | `%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, `~/.local/bin`… | `extraPathDirs()` — `src/main/agents.ts` |
 | Поиск бинарника | имя как есть | сначала расширения из `PATHEXT` (`claude.cmd`, `codex.exe`), потом имя как есть — рядом с `claude.cmd` npm кладёт sh-скрипт без расширения | `binSuffixes()`, `findBin()` — `src/main/agents.ts` |
 | Версия агента | `execFileSync(bin)` | `.cmd`/`.bat` (`isCmdScript()`) — через `shell: true` | `readVersion()` — `src/main/agents.ts` |
-| Запуск агента | argv напрямую | `win32Launch()`: см. ниже | `src/main/worker.ts` (`startWorker`, `startCoordinator`) |
+| Запуск агента | argv напрямую | `win32Launch()`: см. ниже | `src/main/win32-launch.ts`; вызывает `src/main/worker.ts` (`startWorker`, `startCoordinator`, `startAssistant`) |
 | Подготовка worktree | `$SHELL -c "<setup>; exec <agent>"` | отдельный шаг `cmd.exe /d /s /c` перед агентом | `win32Setup()` — `src/main/worker.ts`; `spawnPty({ before })` — `src/main/pty.ts` |
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
@@ -2478,7 +2590,8 @@ electron (`net.fetch` учитывает системный прокси). `macU
 `@orca-board/core` (TypeScript) не может. Функция в core — чистая, без node-импортов (её тянет и renderer),
 окружение передаёт вызывающий. Менять обе копии синхронно.
 
-**Запуск агента на Windows** (`win32Launch()`, `src/main/worker.ts`). Промпт и system prompt длинные и
+**Запуск агента на Windows** (`win32Launch()`, `src/main/win32-launch.ts` — без electron: собранное приложение и поиск
+бинарника передаёт `worker.ts`, сборка командной строки проверяется `win32-launch.test.ts` на любой платформе). Промпт и system prompt длинные и
 многострочные, поэтому по возможности идут через argv node-pty (CreateProcess, лимит 32767, переводы строк
 сохраняются), а не через командную строку cmd.exe:
 1. `<bin>.exe` или файл без расширения — напрямую.
@@ -2489,6 +2602,12 @@ electron (`net.fetch` учитывает системный прокси). `macU
    кавычки по правилам MSVCRT, затем `^` перед метасимволами cmd, для `.cmd`-шима — дважды (он ещё раз
    разбирает `%*`); переводы строк заменяются пробелом. Строка длиннее `CMD_LINE_LIMIT` (8000) — ошибка
    запуска, иначе cmd молча обрезал бы её.
+
+Флаги пользователя (`extraArgs`) — обычные элементы `args`: в ветках 1–2 идут в argv как есть (пробелы, `\`, `&`
+в значении ничего не ломают), в ветке 3 каждый экранирует `cmdQuoteArg()`, и они входят в лимит строки вместе с
+промптом — отсюда предел `EXTRA_ARGS_MAX_LENGTH` (2000) на строку флагов. Разбор строки флагов (`parseExtraArgs`) от
+платформы не зависит: вне кавычек `\` буквален, иначе сломался бы путь `C:\Users\me`. На живой Windows запуск с
+флагами не проверялся — держат юнит-тесты сборки командной строки.
 
 **CLI без Node.** В собранном приложении main кладёт в env агентов `ORCA_NODE=process.execPath`
 (`baseEnv()` в `worker.ts` — воркеры и координатор; `pty:spawn` в `index.ts` — терминалы пользователя). `orca-board.cmd` при заданном `ORCA_NODE` ставит
@@ -2739,6 +2858,11 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   (`useAutoSave`, 300 мс): колбэк, захваченный при вводе, собрал бы тип из старой версии и затёр правку
   соседнего раздела, сделанную за это время. Собирай запись из последней сохранённой версии и сериализуй записи
   (`update` в `settings/useTaskTypes.ts`).
+- **Автосохранение записи целиком не должно отправлять поле, которое main отвергнет.** Пока в поле флагов запуска был
+  негодный текст (незакрытая кавычка), `taskTypes:save` и `app:setSettings` отвергали запись целиком — правка соседнего
+  поля молча пропадала, а в логе main копились «Error occurred in handler». Поле с проверкой при вводе перед отправкой
+  заменяй последним отправленным годным значением (`prepare` у `useAutoSave`, `withSavableExtraArgs`), введённое оставляй
+  в черновике с ошибкой под полем.
 - **Всё, что читается из `projects.json`, проверяй той же валидацией, что при сохранении.** Во времена шаблонов
   проектов загрузка проверяла только id/название/объект настроек: руками испорченный шаблон без колонки backlog
   давал проект без backlog, а применение шаблона успевало записать правила и сохранить файл до ошибки колонок.
@@ -2870,6 +2994,32 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   меню ОС, на Windows/Linux его рисует Chromium: фон берёт из computed background select, а без `color-scheme` — в светлой схеме.
   Список «Agent» в ролях (`.roles-agent select`) был белым со светлым текстом опций. Теперь `color-scheme: dark` на `:root`, фон и цвет
   опций выпадающих select заданы явно (у списков `multiple` фон опции перекрыл бы подсветку выбранных — поэтому `:not([multiple]):not([size])`), а у select нет прозрачного фона (`inherit` от обёртки) — это проверяет `nativeControls.test.ts`.
+- **Новое поле роли молча теряется, если не добавить его в `validateRoles`.** Функция собирает результат из известных
+  полей — и при сохранении (`taskTypes:save`), и при чтении `projects.json` (`loadedRoles`). Поле, которое туда не
+  дописали, «успешно» сохраняется и исчезает после перезагрузки. Так же устроен белый список ассистента
+  (`ASSISTANT_TEXT_FIELDS` в `assistant.ts`). Добавляешь поле — правь обе функции и пиши тест «save → новый
+  `ProjectManager` на тот же файл» (`launch-extra-args.test.ts`).
+- **`loadedRoles` выбрасывает роль, не прошедшую `validateRoles`.** Строгая проверка нового поля при чтении файла
+  уносит роль целиком вместе с её промптом и моделью, а задачи на ней перестают запускаться («роли нет в типе»).
+  Поле, которое человек может испортить руками, при чтении отбрасывай само (`validateRoles(…, lenient)` — так сделано
+  с `extraArgs`), а проверку повторяй там, где оно используется (`launchExtraArgs` при запуске агента).
+- **Ответ сокета с ролью, типом, настройками или прогоном несёт всё, что лежит в объекте.** `roles.*`, `types.*`,
+  `settings.*`, `runs.list` (снимок `Run.taskType`) отдают объекты целиком, и их читают агенты. Поле, которое агентам
+  видеть нельзя (флаги запуска: пути, токены), вырезай на выходе сокета (`okLine`), а не в одном методе: следующий
+  метод, вернувший роль, снова бы его раскрыл.
+- **Variadic-флаги съедают позиционный промпт.** У claude `--add-dir <directories...>`, `--allowedTools <tools...>`,
+  `--mcp-config <configs...>` (и другие `<x...>` в `--help`) забирают все следующие значения до очередного флага. Если
+  такой флаг стоит прямо перед позиционным промптом (claude, cursor, amp передают задание последним аргументом), промпт
+  уходит в значение флага, и агент стартует без задания. Поэтому флаги пользователя (`extraArgs`) вставляются **перед**
+  флагами приложения, а перед промптом всегда стоит флаг с одним значением (`--append-system-prompt <system>`) — это
+  верно только для claude. У **codex** `--image <FILE>...` тоже variadic, а `-m` и `-c` приложение ставит не всегда:
+  `codex --image a.png <промпт>` уходил в сессию как «Codex could not read the local image at `<промпт>`» — агент
+  стартовал без задания (проверено на 0.156.1). Поэтому `invoke` codex ставит `--` перед промптом, если есть флаги
+  пользователя; `--` в самих `extraArgs` по-прежнему запрещён (сделал бы позиционными флаги приложения), а тут он
+  стоит после всех флагов приложения. У **cursor** и **amp** промпт тоже идёт сразу за флагами пользователя, но
+  variadic-опции и поддержка `--` у них не проверены (агенты не установлены), поэтому argv не менялся: флаг пользователя
+  с `...` в `--help` этих агентов ставь не последним. Добавляешь в `invoke` новый флаг — не ставь variadic последним
+  перед промптом.
 
 ## Открытые вопросы
 
