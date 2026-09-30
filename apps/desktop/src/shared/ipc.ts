@@ -545,6 +545,9 @@ export interface OnboardingCompleteInput {
 }
 
 /** Контракт между renderer и main. Реализуется в preload как window.orca. */
+/** Команды системного меню; навигация выполняется в существующем интерфейсе. */
+export type AppMenuAction = 'settings' | 'checkUpdates' | 'addProject'
+
 export interface OrcaApi {
   app: {
     info(): Promise<{ socketPath: string; active: Project | null; projects: Project[] }>
@@ -553,6 +556,8 @@ export interface OrcaApi {
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
+    /** Опционально для старого preload; подписка также сообщает main, что интерфейс готов к команде. */
+    onMenuAction?(cb: (action: AppMenuAction) => void): () => void
     /**
      * Что-то в общих данных приложения изменилось: настройки, список/группы проектов, библиотека типов задач
      * и её роли, шаблоны нод — независимо от источника (это же окно через IPC, или CLI/ассистент через сокет).

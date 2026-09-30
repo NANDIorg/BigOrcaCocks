@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -43,6 +43,9 @@ import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './bac
 import { OrcaError, ipcError, mt, setMainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
 import { rendererSource } from './renderer-source'
+import { applicationMenuTemplate, MenuActionQueue, PROJECT_URL } from './app-menu'
+import type { AppMenuAction } from '../shared/ipc'
+import appIconPath from '../../build/icon.png?asset'
 
 // Имя пакета скоупное (@orca-board/desktop) — задаём userData явно, чтобы путь был предсказуем.
 app.setName('orca-board')
@@ -85,6 +88,7 @@ const runBranchSync = new RunBranchSync({ isAlive })
 let quitting = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
 let confirmingQuit = false
+const menuActions = new MenuActionQueue()
 
 // Схема страниц показа (`preview-protocol.ts`) — только ДО ready, иначе Chromium считает её не-standard: относительные
 // `./style.css` не разрешаются, а `fetch` к ней запрещён. `bypassCSP` и `corsEnabled` не включаем: CSP ответа и
@@ -99,10 +103,12 @@ const SOCKET_PATH = defaultSocketPath({ env: process.env, platform: process.plat
 const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
 function createWindow(): BrowserWindow {
+  menuActions.disconnect()
   win = new BrowserWindow({
     width: 1500,
     height: 940,
     title: 'orca-board',
+    icon: appIconPath,
     backgroundColor: '#26282e',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -113,9 +119,17 @@ function createWindow(): BrowserWindow {
   setPtyWindow(win)
   const created = win
   win.on('closed', () => {
-    if (win === created) win = null
+    if (win === created) {
+      win = null
+      menuActions.clear()
+    }
     setPtyWindow(win)
   })
+  win.webContents.on('did-start-loading', () => {
+    // Загрузка показа в iframe не размонтирует App: его подписка на меню остаётся действующей.
+    if (created.webContents.isLoadingMainFrame()) menuActions.disconnect()
+  })
+  win.webContents.on('render-process-gone', () => menuActions.disconnect())
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalWebUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
@@ -151,6 +165,32 @@ function showWindow(): BrowserWindow {
     return win
   }
   return createWindow()
+}
+
+function navigateFromMenu(action: AppMenuAction): void {
+  const window = showWindow()
+  const ready = menuActions.request(action)
+  if (ready) window.webContents.send('app:menuAction', ready)
+}
+
+/** Меню и нативное «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
+function refreshApplicationMenu(): void {
+  app.setAboutPanelOptions({
+    applicationName: 'orca-board',
+    applicationVersion: app.getVersion(),
+    version: '',
+    credits: `${mt('menu.aboutCredits')}\n\nnandi\n${PROJECT_URL}`,
+    authors: ['nandi'],
+    website: PROJECT_URL,
+    iconPath: appIconPath
+  })
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, {
+    navigate: navigateFromMenu,
+    about: () => app.showAboutPanel(),
+    open: () => { showWindow() },
+    quit: () => { void requestQuit() },
+    openExternal: (url) => { void shell.openExternal(url) }
+  })))
 }
 
 /** Незавершённые dispatch'и по всем загруженным проектам (для трея). */
@@ -789,11 +829,19 @@ function liveAgentCount(projectId: string): number {
 }
 
 function registerIpc(): void {
+  ipcMain.on('app:menuReady', (event, ready: unknown) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    if (ready === true) {
+      const pending = menuActions.connect()
+      if (pending) win.webContents.send('app:menuAction', pending)
+    } else if (ready === false) menuActions.disconnect()
+  })
   handle('app:getSettings', () => projects.settings())
   handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
     const settings = projects.setSettings(patch ?? {})
     // Язык меняется без перезапуска: трей пересобирается сразу, диалоги и уведомления берут его при показе.
     setMainLocale(settings.language)
+    refreshApplicationMenu()
     refreshTray()
     updater.settingsChanged()
     return settings
@@ -1069,11 +1117,13 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   app.setAppUserModelId('orca-board')
+  if (process.platform === 'darwin') app.dock?.setIcon(appIconPath)
   protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
   setMainLocale(projects.settings().language)
+  refreshApplicationMenu()
   projects.markRun(app.getVersion())
   if (process.env.ORCA_REPO) {
     try {
@@ -1211,6 +1261,7 @@ app.whenReady().then(() => {
     setSettings: (patch) => {
       const settings = projects.setSettings(patch)
       setMainLocale(settings.language)
+      refreshApplicationMenu()
       refreshTray()
       updater.settingsChanged()
       return settings

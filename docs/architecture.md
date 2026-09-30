@@ -1476,7 +1476,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   На macOS клик по иконке открывает меню, на Windows/Linux клик — `showWindow()`.
 - **Вернуть окно**: `showWindow()` — существующее развернуть/показать/сфокусировать, закрытое — `createWindow()`.
   Вызывается из пункта трея, клика по трею (Windows/Linux), `app.on('activate')` (клик по Dock на macOS)
-  и клика по уведомлению.
+  и клика по уведомлению. Системное меню также содержит «Окно → Показать главное окно».
 - **Выход**: все пути (Cmd+Q, меню приложения, «Выйти» в трее, `app.quit()`) идут через `before-quit` →
   `requestQuit()`. Живых воркеров (`liveWorkerCount`: dispatch не завершён и PTY жив) нет — `quitNow()`
   (`killAll()` + `app.quit()`). Есть — диалог `warning` «N задач(а/и) в работе, агенты будут остановлены. Выйти?»
@@ -1486,6 +1486,46 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Иконка** (`tray.ts`): монохромное кольцо с плавником рисуется программно (`drawIcon`, суперсэмплинг 4×4),
   кодируется встроенным PNG-энкодером (`encodePng`, zlib + CRC32) в два представления — 16px и 32px (Retina);
   файлов в сборке нет. На macOS — template image, система красит её под тему строки меню.
+
+### Системное меню и «О приложении»
+
+`src/main/app-menu.ts` строит собственное меню вместо стандартного меню Electron.
+На macOS это нативная строка меню: `orca-board`, «Файл», «Правка», «Вид», «Окно», «Справка».
+В меню приложения — «О приложении», «Проверить обновления…», «Настройки…» (⌘,), службы,
+скрытие окон и выход. На Windows/Linux настройки и выход находятся в «Файл», «О приложении» — в справке.
+«Файл → Добавить репозиторий…» (⌘O / Ctrl+O) вызывает существующий поток `addProject`,
+а «Настройки» и «Проверить обновления» открывают тот же `SettingsModal`, что и шестерёнка.
+Проверка обновлений сразу переключает его в `UpdatesSection` и вызывает `useUpdates.check()`;
+ошибка или неподдерживаемая dev-сборка отображаются там же, без отдельного диалога.
+Редактирование, масштаб и управление окнами используют нативные роли Electron. Выход —
+свой обработчик `requestQuit`, чтобы сохранять проверку работающих агентов. Перезагрузка
+окна и инструменты разработчика доступны только в dev (`!app.isPackaged`).
+
+Справка открывает в браузере руководство (README), выпуски и создание issue **orca-board**,
+независимо от наличия активного проекта. Документы пользовательского проекта остаются в `DocsModal`.
+`refreshApplicationMenu()` пересобирает меню и `app.setAboutPanelOptions()` при старте и смене языка
+через IPC или CLI. Нативное окно «О приложении» показывает название, версию из `app.getVersion()`,
+краткое описание и сведения о проекте. Авторский значок приложения (`build/icon.svg` → `build/icon.png`)
+со скруглённым квадратным фоном используется в Dock, окне и сборках; Vite копирует PNG через импорт `?asset`.
+SVG используется в rail и мастере первого запуска, импортируется как URL с учётом CSP.
+Нативная геометрия и взаимодействия принадлежат ОС; визуальный контекст — [DESIGN.md](../DESIGN.md).
+
+Команды навигации передаются `app:menuAction` через опциональный `app.onMenuAction`.
+`MenuActionQueue` ждёт `app:menuReady` от подписавшегося React-интерфейса: при восстановлении
+закрытого окна первое нажатие не теряется. Во время загрузки запоминается последняя команда,
+после доставки — удаляется; закрытие окна очищает очередь. Main принимает готовность только от
+главного фрейма своего окна. Старый preload без подписки совместим с новым renderer.
+При загрузке iframe показа готовность меню не сбрасывается: `did-start-loading` проверяет
+`isLoadingMainFrame()`, иначе интерфейс остаётся подписанным, но main навсегда ждёт новую подписку.
+
+Владельцы изменённых системных поверхностей:
+
+| Capability | Canonical owner | Source of truth | Allowed variants | Verification |
+|---|---|---|---|---|
+| Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS; меню окна Windows/Linux | `main/app-menu.test.ts`, живой Electron |
+| About | Electron `app.showAboutPanel` | `refreshApplicationMenu`, версия пакета | нативная панель ОС | проверка метаданных и вызова в Electron |
+| Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
+| Branding | `build/icon.svg` | предоставленный авторский логотип | SVG в renderer, PNG для ОС и сборок | скругление и проверка загрузки в Electron |
 
 ## Мастер первого запуска (`src/main/projects.ts`)
 
@@ -1615,14 +1655,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   старый main молча стёр бы незнакомое поле при сохранении, поэтому без признака renderer поле флагов не даёт править
   и просит перезапустить приложение. Новый main со старым renderer безопасен: патч ассистента без `extraArgs` флаги
   не трогает, а роли renderer сохраняет объектами целиком.
-- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`.
+- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню).
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
+  `app:menuAction` (`AppMenuAction`: `settings` / `checkUpdates` / `addProject`, подписка `app.onMenuAction?`),
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
   группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
   поэтому событие приходит одинаково и от IPC, и от правки через сокет CLI/ассистентом, см. «Ассистент» → «Настройки»),
   `showcase:escape` (без payload — Esc в окне из `before-input-event`: фокус во фрейме показа, keydown до DOM родителя не доходит; `window.orca.showcase.onFrameEscape`, в старом preload нет), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
   `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
-- В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, onMessage}`;
+- В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?, onMenuAction?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, onMessage}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета
@@ -2536,9 +2577,10 @@ electron (`net.fetch` учитывает системный прокси). `macU
 - **main** (`src/main/i18n.ts`, словари `src/main/strings/ru.ts` и `en.ts`; en сверяется с ru по типу и тестом
   `main/i18n.test.ts`). Не импортирует i18n renderer (тот тянет React). Язык — модульное состояние: `setMainLocale()`
   из `AppSettings.language` при старте (`index.ts`, сразу после `ProjectManager`) и в `app:setSettings`; там же
-  `refreshTray()` — меню трея пересобирается без перезапуска, диалоги и уведомления берут язык при показе.
+  `refreshTray()` и `refreshApplicationMenu()` — меню трея и приложения пересобираются без перезапуска,
+  метаданные «О приложении» обновляются вместе с меню, диалоги и уведомления берут язык при показе.
   `mt(key, params)` — на текущем языке, `mtIn(locale, …)` — на заданном; параметр может быть вложенным сообщением
-  `{key, params}` (`MText`, переводится на тот же язык). Меню приложения своё не задаём — стандартное меню Electron.
+  `{key, params}` (`MText`, переводится на тот же язык). Системное меню своё (`app-menu.ts`), тексты — через `mt()`.
 - **Ошибки main — `OrcaError(key, params)`**: `message` всегда русский (его получают сокет и CLI, по нему проверяют
   тесты), а обёртка `handle()` в `index.ts` отдаёт в renderer `ipcError(e)` — текст на языке интерфейса и код в имени.
   Electron передаёт в renderer только `String(error)` («имя: сообщение»), поэтому код едет в имени:
@@ -2604,6 +2646,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Подготовка worktree | `$SHELL -c "<setup>; exec <agent>"` | отдельный шаг `cmd.exe /d /s /c` перед агентом | `win32Setup()` — `src/main/worker.ts`; `spawnPty({ before })` — `src/main/pty.ts` |
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
+| Системное меню | macOS: меню приложения, службы, скрытие, стандартные роли окон; значок Dock | настройки и выход в «Файл», «О приложении» в справке; значок окна | `applicationMenuTemplate()` — `src/main/app-menu.ts`; `src/main/index.ts` |
 | Пути картинок к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; до 8 путей в стартовом промпте (`CMD_LINE_LIMIT`) | `saveReturnImages` — `src/main/attachments.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
 | Каталог файлов (вкладка «Файлы») | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |

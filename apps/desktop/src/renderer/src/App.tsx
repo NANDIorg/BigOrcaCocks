@@ -43,6 +43,8 @@ import { isNoCommitsError } from './initialCommit'
 import { branchBadge } from './projectBranch'
 import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
+import type { AppMenuAction } from '../../shared/ipc'
+import appLogo from '../../../build/icon.svg'
 import { ProjectList } from './ProjectList'
 import { groupsFromList } from './projectGroups'
 import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest } from './globalReview'
@@ -180,6 +182,7 @@ export function App(): React.JSX.Element {
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsSectionRequest, setSettingsSectionRequest] = useState<{ section: 'updates'; nonce: number }>()
   /** Мастер первого запуска: `first` — при старте (статус pending), `rerun` — «Пройти заново» из настроек. */
   const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
@@ -188,6 +191,19 @@ export function App(): React.JSX.Element {
   const [docsInitialPath, setDocsInitialPath] = useState<string | null>(null)
   /** Обновление приложения: плашка в сайдбаре, «Настройки → Обновления», тост после старта. */
   const updates = useUpdates()
+  const menuActionRef = useRef<(action: AppMenuAction) => void>(() => {})
+  menuActionRef.current = (action) => {
+    if (action === 'addProject') {
+      void addProject()
+      return
+    }
+    setShowDocs(false)
+    if (action === 'checkUpdates') {
+      setSettingsSectionRequest((prev) => ({ section: 'updates', nonce: (prev?.nonce ?? 0) + 1 }))
+      updates.check()
+    } else setSettingsSectionRequest(undefined)
+    setShowSettings(true)
+  }
   /** Задача, открытая в модалке; сама задача берётся из снимка по id, чтобы показывать актуальную. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   /** Вкладка и активный терминал по projectId; для активного проекта ниже — производные tab/activePty. */
@@ -311,6 +327,8 @@ export function App(): React.JSX.Element {
         setAppSettings(s)
       }, () => undefined)
     })
+    // Старый preload в HMR не знает про меню: остальные способы открыть настройки продолжают работать.
+    const offMenuAction = window.orca.app.onMenuAction?.((action) => menuActionRef.current(action))
     const offBoard = window.orca.board.onChange(({ projectId, snapshot }) => {
       setActive((cur) => {
         if (cur?.id === projectId) setSnap(snapshot)
@@ -356,6 +374,7 @@ export function App(): React.JSX.Element {
     window.addEventListener('keydown', onKey, true)
     return () => {
       offAppChanged?.()
+      offMenuAction?.()
       offBoard()
       offTerminals()
       offFocus()
@@ -850,7 +869,10 @@ export function App(): React.JSX.Element {
         <button
           className={`icon ${showSettings ? 'active' : ''}`}
           title={!showProjects && needsAttention(updates.state) ? t('shell.update.railHint') : t('shell.rail.settings')}
-          onClick={() => setShowSettings(true)}
+          onClick={() => {
+            setSettingsSectionRequest(undefined)
+            setShowSettings(true)
+          }}
         >
           <Icon.gear />
           {/* Сайдбар скрыт — плашки обновления не видно, поэтому точка на шестерёнке. */}
@@ -879,7 +901,7 @@ export function App(): React.JSX.Element {
           <Icon.assistant />
         </button>
         <div className="grow" />
-        <div className="avatar">🐋</div>
+        <img className="avatar" src={appLogo} alt="orca-board" width={40} height={40} />
       </aside>
 
       {showProjects && (
@@ -1150,6 +1172,7 @@ export function App(): React.JSX.Element {
       )}
       {showSettings && (
         <SettingsModal
+          sectionRequest={settingsSectionRequest}
           agents={agents}
           updates={updates}
           onRefreshAgents={() => refreshAgents(true)}
