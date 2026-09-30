@@ -1,6 +1,8 @@
 import {
-  WF_DECISION_MAX_OPTIONS, WF_PORTS, WORKFLOW_VERSION, isTaskRole, migrateWorkflowReport, wfPorts, wfWorkRoleIds,
-  type Role, type WfCondition, type WfDecisionOption, type WfMigrationNote, type WfNode, type WfNodeType, type WfPort, type Workflow
+  WF_DECISION_MAX_OPTIONS, WF_FORK_MAX_BRANCHES, WF_PORTS, WORKFLOW_VERSION, isTaskRole, laneRegions, migrateWorkflowReport, wfPorts,
+  wfWorkRoleIds,
+  type Role, type WfCondition, type WfDecisionOption, type WfForkBranch, type WfMigrationNote, type WfNode, type WfNodeType, type WfPort,
+  type Workflow
 } from '@orca-board/core'
 import { NODE_H, NODE_W, nodeHeight } from './workflowGeometry'
 import { connect, makeNode, uniqueId, yesNoOptions } from './workflowEdit'
@@ -28,7 +30,7 @@ export const WF_TYPE_TITLES: Readonly<Record<WfNodeType, string>> = {
 }
 
 /** Порядок типов в select «Тип» инспектора. */
-export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'decision', 'human', 'condition', 'merge', 'git', 'end']
+export const WF_TYPE_ORDER: readonly WfNodeType[] = ['start', 'work', 'ask', 'gate', 'decision', 'human', 'condition', 'merge', 'git', 'fork', 'join', 'end']
 
 /** Роли, которые можно поставить на этап: без служебных (coordinator, assistant) — они задачам не назначаются. */
 export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[] {
@@ -40,9 +42,11 @@ export function stageRoles<R extends Pick<Role, 'id'>>(roles: readonly R[]): R[]
  * У ask колонку не задают: пока агент работает, задача в «В работе», а при вопросе store сам держит её в «Нужен ответ».
  * Git выполняется приложением синхронно и сразу передаёт ход дальше — задача на нём не стоит. У decision колонку
  * тоже не задают: пока агент решает, карточка в «В работе», а при передаче человеку её поднимает запрос в «Нужен ответ».
+ * У fork и join колонки нет: внутри разветвления колонку считает store по путям (`WfNode.column` учитывается только у
+ * линейного прогона), а слияние задача проходит насквозь, когда пришли все пути.
  */
 export function hasColumn(type: WfNodeType): boolean {
-  return type !== 'start' && type !== 'condition' && type !== 'ask' && type !== 'git' && type !== 'decision'
+  return type !== 'start' && type !== 'condition' && type !== 'ask' && type !== 'git' && type !== 'decision' && type !== 'fork' && type !== 'join'
 }
 
 /** Поля ноды, которые правит инспектор. Пустая строка у необязательного поля — «не задано» (поле удаляется). */
@@ -114,7 +118,8 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
  * Меняет тип ноды, сохраняя id, позицию, название и колонку; роль и инструкция переносятся, если у нового
  * типа они есть. Рёбра портов, которых у нового типа нет, удаляются; в старт не может вести переход —
  * входящие рёбра тоже удаляются. Новая `decision` получает варианты «Да / Нет» (`yes`/`no`) — поэтому
- * `condition ↔ decision` сохраняет оба ребра.
+ * `condition ↔ decision` сохраняет оба ребра. `decision ↔ fork` переносит варианты в пути и обратно с теми же id — рёбра
+ * остаются (у `fork` — первые `WF_FORK_MAX_BRANCHES`).
  */
 export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): Workflow {
   const cur = wf.nodes.find((n) => n.id === nodeId)
@@ -137,6 +142,11 @@ export function changeNodeType(wf: Workflow, nodeId: string, type: WfNodeType): 
     (node.type === 'gate' || node.type === 'human' || node.type === 'work' || node.type === 'ask' || node.type === 'decision')
   ) {
     node.instructions = instructions
+  }
+  if (cur.type === 'decision' && node.type === 'fork' && Array.isArray(cur.options) && cur.options.length > 0) {
+    node.branches = cur.options.slice(0, WF_FORK_MAX_BRANCHES).map((o) => ({ id: o.id, label: o.label }))
+  } else if (cur.type === 'fork' && node.type === 'decision' && Array.isArray(cur.branches) && cur.branches.length > 0) {
+    node.options = cur.branches.map((b) => ({ id: b.id, label: b.label ?? '' }))
   }
   const ports = wfPorts(node)
   return {
@@ -229,6 +239,95 @@ export function resetDecisionOptions(wf: Workflow, nodeId: string): Workflow {
   return withOptions(wf, nodeId, () => yesNoOptions())
 }
 
+// ---------- пути ноды «Разветвление» и пара «Слияния» ----------
+
+type ForkNode = Extract<WfNode, { type: 'fork' }>
+
+/** Меняет пути ноды `fork`; рёбра портов, которых больше нет, уходят вместе с путём. Не fork — граф как есть. */
+function withBranches(wf: Workflow, nodeId: string, change: (branches: WfForkBranch[], node: ForkNode) => WfForkBranch[] | undefined): Workflow {
+  const cur = wf.nodes.find((n) => n.id === nodeId)
+  if (cur?.type !== 'fork') return wf
+  const branches = change(Array.isArray(cur.branches) ? cur.branches : [], cur)
+  if (!branches) return wf
+  const node: WfNode = { ...cur, branches }
+  const ports = wfPorts(node)
+  return {
+    ...wf,
+    nodes: wf.nodes.map((n) => (n.id === nodeId ? node : n)),
+    edges: wf.edges.filter((e) => e.from !== nodeId || ports.includes(e.outcome))
+  }
+}
+
+/**
+ * «Добавить путь»: в конец, не больше `WF_FORK_MAX_BRANCHES`. id — первый свободный `path_N` (N — номер пути), название —
+ * «Путь N» на языке интерфейса. id выдаётся один раз и потом не меняется: на нём держатся ребро и позиция прогона.
+ */
+export function addForkBranch(wf: Workflow, nodeId: string): { workflow: Workflow; branchId?: string } {
+  let branchId: string | undefined
+  const workflow = withBranches(wf, nodeId, (branches) => {
+    if (branches.length >= WF_FORK_MAX_BRANCHES) return undefined
+    const n = branches.length + 1
+    branchId = uniqueId(`path_${n}`, branches.map((b) => b.id))
+    return [...branches, { id: branchId, label: t('config.wf.fork.branchLabel', { n }) }]
+  })
+  return branchId ? { workflow, branchId } : { workflow }
+}
+
+/** Правка названия пути. id не меняется; пустое название остаётся строкой — его подсветит валидация (`forkBranchNoLabel`). */
+export function renameForkBranch(wf: Workflow, nodeId: string, branchId: string, label: string): Workflow {
+  return withBranches(wf, nodeId, (branches) =>
+    branches.some((b) => b.id === branchId) ? branches.map((b) => (b.id === branchId ? { ...b, label } : b)) : undefined)
+}
+
+/** Удаляет путь вместе с ребром его порта. Меньше двух путей не запрещено здесь — это подсветит валидация. */
+export function removeForkBranch(wf: Workflow, nodeId: string, branchId: string): Workflow {
+  return withBranches(wf, nodeId, (branches) => (branches.some((b) => b.id === branchId) ? branches.filter((b) => b.id !== branchId) : undefined))
+}
+
+/** Сдвиг пути на `delta` позиций (вверх — отрицательный). Порядок путей — порядок портов и `stage_started` координатору. */
+export function moveForkBranch(wf: Workflow, nodeId: string, branchId: string, delta: number): Workflow {
+  return withBranches(wf, nodeId, (branches) => {
+    const from = branches.findIndex((b) => b.id === branchId)
+    const to = Math.max(0, Math.min(branches.length - 1, from + delta))
+    if (from < 0 || to === from) return undefined
+    const next = [...branches]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    return next
+  })
+}
+
+/** Выбор парного разветвления у `join`; пустая строка остаётся — её подсветит валидация (`joinNoFork`). */
+export function setJoinFork(wf: Workflow, nodeId: string, forkId: string): Workflow {
+  const cur = wf.nodes.find((n) => n.id === nodeId)
+  if (cur?.type !== 'join' || cur.forkId === forkId) return wf
+  return { ...wf, nodes: wf.nodes.map((n) => (n.id === nodeId ? { ...cur, forkId } : n)) }
+}
+
+/** Слияния, которые называют `forkId` своим (в порядке графа): у валидного разветвления ровно одно. */
+export function forkJoins(wf: Workflow, forkId: string): WfNode[] {
+  return wf.nodes.filter((n) => n.type === 'join' && n.forkId === forkId)
+}
+
+/**
+ * «Добавить слияние» у разветвления без него: новая нода `join` с парой `forkId` правее путей (правее самой правой ноды
+ * областей путей), по высоте — вровень с разветвлением. Слияние уже есть или это не fork — граф как есть.
+ */
+export function addJoinFor(wf: Workflow, forkId: string): { workflow: Workflow; nodeId?: string } {
+  const fork = wf.nodes.find((n) => n.id === forkId)
+  if (fork?.type !== 'fork' || forkJoins(wf, forkId).length > 0) return { workflow: wf }
+  const inLanes = new Set(laneRegions(wf, forkId)?.lanes.flatMap((l) => l.nodes) ?? [])
+  const right = Math.max(fork.x, ...wf.nodes.filter((n) => inLanes.has(n.id)).map((n) => n.x))
+  const node = makeNode(wf, 'join', right + NODE_W + 70, fork.y)
+  const join: WfNode = { ...node, type: 'join', forkId }
+  return { workflow: { ...wf, nodes: [...wf.nodes, join] }, nodeId: join.id }
+}
+
+/** Разветвления графа для select «Разветвление» у `join`. */
+export function forkOptions(wf: Workflow): { id: string; label: string }[] {
+  return wf.nodes.filter((n) => n.type === 'fork').map((n) => ({ id: n.id, label: nodeOptionLabel(n) }))
+}
+
 /** Куда ведёт порт: id целевой ноды или undefined, если перехода нет. */
 export function portTarget(wf: Workflow, nodeId: string, outcome: WfPort): string | undefined {
   return wf.edges.find((e) => e.from === nodeId && e.outcome === outcome)?.to
@@ -261,6 +360,16 @@ export function conditionOfKind(wf: Workflow, kind: 'attempts' | 'role'): WfCond
 }
 
 // ---------- импорт и экспорт ----------
+
+/**
+ * Текст ошибки сохранения графа. Граф перед сохранением проверяет сам renderer (кнопка недоступна при ошибках), поэтому
+ * отказ main «неизвестный тип» для типа, который renderer знает (`fork`, `join` после обновления по HMR), значит, что
+ * main старый — просим перезапустить приложение. Текст проблемы core — русский, узнаём его по нему (кода у списка нет).
+ */
+export function workflowSaveError(message: string): string {
+  const types = [...message.matchAll(/неизвестный тип «([^»]+)»/g)].map((m) => m[1])
+  return types.length > 0 && types.every((type) => type in WF_PORTS) ? t('config.wf.tab.staleMain') : message
+}
 
 /** JSON для кнопки «Экспорт»: читаемый, с переводом строки в конце. */
 export function exportWorkflowJson(wf: Workflow): string {

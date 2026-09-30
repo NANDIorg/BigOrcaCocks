@@ -24,7 +24,7 @@ function coreTexts(): Set<string> {
     resolved.roles.forEach((r) => { add(r.title); add(r.description) })
     resolved.workflow.nodes.forEach((n) => add(wfNodeTitle(n)))
   }
-  for (const type of ['start', 'work', 'ask', 'gate', 'human', 'condition', 'merge', 'end'] as const) {
+  for (const type of ['start', 'work', 'ask', 'gate', 'human', 'condition', 'merge', 'fork', 'join', 'end'] as const) {
     add(wfNodeTitle({ id: 'x', type, x: 0, y: 0 } as Parameters<typeof wfNodeTitle>[0]))
   }
   return out
@@ -80,4 +80,18 @@ test('проблемы воркфлоу: ru-словарь совпадает с
   assert.equal(wfIssueText({ message: 'старый core' }), 'старый core')
   const codes: WfIssueCode[] = ['noStart']
   assert.equal(wfIssueText({ code: codes[0], message: 'нет ноды «Старт»' }), 'there is no “Start” node')
+})
+
+test('разветвление: коды проблем fork/join переведены на en, названия нод без своего названия — тоже', () => {
+  const codes = Object.keys(WF_ISSUE_TEXTS).filter((c) => /fork|join/i.test(c)) as WfIssueCode[]
+  assert.ok(codes.length >= 20, `кодов: ${codes.length}`)
+  setLocale('en')
+  const params = { node: 'split', fork: 'split', lane: 'Backend', other: 'Frontend', to: 'End', from: 'Work', branch: 'a', count: 5, min: 2, max: 4, template: 'T' }
+  for (const code of codes) {
+    const text = wfIssueText({ code, params, message: WF_ISSUE_TEXTS[code] })
+    assert.ok(!text.startsWith('config.') && !/[А-Яа-яЁё]/.test(text), `${code}: «${text}»`)
+    assert.ok(!/\{\w+\}/.test(text), `${code}: не подставлен параметр — «${text}»`)
+  }
+  assert.equal(nodeTitle({ id: 'split', type: 'fork', x: 0, y: 0, branches: [] }), 'Fork')
+  assert.equal(nodeTitle({ id: 'merge_paths', type: 'join', x: 0, y: 0, forkId: 'split' }), 'Join')
 })

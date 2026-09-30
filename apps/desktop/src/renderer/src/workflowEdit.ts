@@ -1,4 +1,4 @@
-import { wfPorts, type WfDecisionOption, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
+import { forkBranches, wfPorts, type WfDecisionOption, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
 import { wfIssueText } from './defaultTitles'
 
@@ -26,28 +26,29 @@ export const WF_OUTCOME_LABELS: Readonly<Record<WfOutcome, string>> = {
  */
 export function wfOutcomeLabel(type: WfNodeType, outcome: WfPort): string {
   if (type === 'git' && outcome === 'ok') return t('config.wf.outcome.gitOk')
-  // Порт ноды `decision` — id варианта: фиксированной подписи у него нет, подпись — метка варианта в самой ноде.
+  // Порт ноды `decision` (`fork`) — id варианта (пути): фиксированной подписи у него нет, подпись — метка в самой ноде.
   return outcome in WF_OUTCOME_LABELS ? WF_OUTCOME_LABELS[outcome as WfOutcome] : outcome
 }
 
 /**
- * Подпись порта конкретной ноды: у `decision` — метка варианта (пустая — id, чтобы порт не остался без подписи),
- * у остальных — `wfOutcomeLabel` по типу.
+ * Подпись порта конкретной ноды: у `decision` — метка варианта, у `fork` — название пути (пустые — id, чтобы порт не
+ * остался без подписи), у остальных — `wfOutcomeLabel` по типу.
  */
 export function wfPortLabel(node: WfNode, port: WfPort): string {
   if (node.type === 'decision') {
     const option = Array.isArray(node.options) ? node.options.find((o) => o.id === port) : undefined
     return option?.label.trim() || port
   }
+  if (node.type === 'fork') return forkBranches(node).find((b) => b.id === port)?.label ?? port
   return wfOutcomeLabel(node.type, port)
 }
 
 /**
  * Суффикс CSS-класса порта и ребра (`wf-port--…`, `wf-edge--…`): у фиксированных портов — сам исход (цвет accept/reject),
- * у вариантов `decision` — общий `opt`: id варианта — данные графа, класс по нему был бы мусорным.
+ * у вариантов `decision` — общий `opt`, у путей `fork` — общий `lane`: id — данные графа, класс по нему был бы мусорным.
  */
 export function wfPortClass(type: WfNodeType, port: WfPort): string {
-  return type === 'decision' ? 'opt' : port
+  return type === 'decision' ? 'opt' : type === 'fork' ? 'lane' : port
 }
 
 /** «да» → «Да»: метка варианта — данные графа, а подписи исходов в словаре — со строчной буквы. */
@@ -65,13 +66,13 @@ export function yesNoOptions(): WfDecisionOption[] {
 }
 
 /** Типы нод, которые можно добавить из палитры (в порядке показа). */
-export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'decision', 'human', 'condition', 'merge', 'git', 'end', 'start']
+export const WF_ADDABLE_TYPES: readonly WfNodeType[] = ['work', 'ask', 'gate', 'decision', 'human', 'condition', 'merge', 'git', 'fork', 'join', 'end', 'start']
 
 /**
- * Типы нод, недоступные в пути подзадачи: вопросы человеку и развилки «Решение ИИ» — этапы глобальной задачи, а не
- * каждой подзадачи (валидатор: `subflowAskNotAllowed`, `subflowDecisionNotAllowed`).
+ * Типы нод, недоступные в пути подзадачи: вопросы человеку, развилки «Решение ИИ» и параллельные пути — этапы глобальной
+ * задачи, а не каждой подзадачи (валидатор: `subflowAskNotAllowed`, `subflowDecisionNotAllowed`, `subflowForkNotAllowed`).
  */
-export const WF_SUBTASK_FORBIDDEN_TYPES: readonly WfNodeType[] = ['ask', 'decision']
+export const WF_SUBTASK_FORBIDDEN_TYPES: readonly WfNodeType[] = ['ask', 'decision', 'fork', 'join']
 
 /** Палитра холста по области: в пути подзадачи (`'subtask'`) без запрещённых там типов. */
 export function wfAddableTypes(scope: 'run' | 'subtask'): readonly WfNodeType[] {
@@ -109,14 +110,25 @@ export function makeNode(wf: Workflow, type: WfNodeType, x: number, y: number): 
     case 'end':
       return { ...pos, type, merged: false }
     case 'fork':
-      // Два пути с id по маске `WF_DECISION_OPTION_ID`; названия правятся в инспекторе.
+      // Два пути с id по маске `WF_DECISION_OPTION_ID`; id выдаётся здесь один раз, названия правятся в инспекторе.
       return { ...pos, type, branches: [1, 2].map((n) => ({ id: `path_${n}`, label: t('config.wf.fork.branchLabel', { n }) })) }
     case 'join':
-      // Парное разветвление выбирается в инспекторе: пустое подсветит валидация (`joinNoFork`).
-      return { ...pos, type, forkId: wf.nodes.find((n) => n.type === 'fork')?.id ?? '' }
+      // Пара — ближайшее разветвление без слияния; нет такого — пусто, подсветит валидация (`joinNoFork`).
+      return { ...pos, type, forkId: pairFork(wf, x, y) ?? '' }
     default:
       return { ...pos, type }
   }
+}
+
+/**
+ * Разветвление для нового слияния в точке `x`/`y`: ближайшее из тех, у кого слияния ещё нет. Левее точки — в приоритете:
+ * слияние обычно ставят правее путей. Незакрытых разветвлений нет — undefined.
+ */
+export function pairFork(wf: Pick<Workflow, 'nodes'>, x: number, y: number): string | undefined {
+  const joined = new Set(wf.nodes.flatMap((n) => (n.type === 'join' ? [n.forkId] : [])))
+  const open = wf.nodes.filter((n) => n.type === 'fork' && !joined.has(n.id))
+  const dist = (n: WfNode): number => Math.hypot(n.x - x, n.y - y) + (n.x > x ? 1e6 : 0)
+  return open.sort((a, b) => dist(a) - dist(b))[0]?.id
 }
 
 export function addNode(wf: Workflow, type: WfNodeType, x: number, y: number): { workflow: Workflow; nodeId: string } {

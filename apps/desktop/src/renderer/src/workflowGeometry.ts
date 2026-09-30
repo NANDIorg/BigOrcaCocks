@@ -17,7 +17,7 @@ export interface Rect {
 
 /**
  * Размер ноды. Ширина одна на все типы, `NODE_H` — высота ноды с портами фиксированных типов (до двух): подписи исходов
- * снаружи справа. Нода `decision` с большим числом вариантов выше — см. `nodeHeight`.
+ * снаружи справа. Нода `decision` с большим числом вариантов (`fork` с тремя-четырьмя путями) выше — см. `nodeHeight`.
  */
 export const NODE_W = 150
 export const NODE_H = 60
@@ -29,7 +29,7 @@ export const PORT_HIT_R = 9
 export const LAYOUT_DX = 220
 export const LAYOUT_DY = 110
 
-/** Высота ноды: `NODE_H`, а если портов больше, чем помещается с шагом `PORT_STEP` (варианты `decision`), — выше. */
+/** Высота ноды: `NODE_H`, а если портов больше, чем помещается с шагом `PORT_STEP` (варианты `decision`, пути `fork`), — выше. */
 export function nodeHeight(node: WfNode): number {
   return Math.max(NODE_H, PORT_STEP * (wfPorts(node).length + 1))
 }
@@ -153,8 +153,10 @@ export function hitEdge(wf: Workflow, p: Point, tolerance = 6): string | undefin
 /**
  * Авторасстановка по слоям: слой ноды — длина кратчайшего пути от старта (BFS), поэтому рёбра-возвраты
  * (reject → работа) слои не сдвигают. Внутри слоя порядок — порядок обхода, то есть порядок портов
- * у родителя. Недостижимые от старта ноды — отдельным слоем справа, чтобы их было видно. Ноды слоя идут с шагом
- * `LAYOUT_DY`, под высокой нодой (много вариантов `decision`) — с тем же зазором от её низа.
+ * у родителя: пути `fork` встают стопкой один под другим. Слияние (`join`) ждёт все пути, поэтому встаёт правее самого
+ * длинного из них: до него обход доходит, только когда разложено всё, что достижимо в обход слияний. Недостижимые от
+ * старта ноды — отдельным слоем справа, чтобы их было видно. Ноды слоя идут с шагом `LAYOUT_DY`, под высокой нодой
+ * (много вариантов `decision` или путей `fork`) — с тем же зазором от её низа.
  */
 export function autoLayout(wf: Workflow): Workflow {
   const layer = new Map<string, number>()
@@ -163,6 +165,8 @@ export function autoLayout(wf: Workflow): Workflow {
   if (start) {
     layer.set(start.id, 0)
     const queue = [start.id]
+    /** Слияния, до которых дошёл обход: слой им назначается, когда очередь опустеет. */
+    const waiting: string[] = []
     while (queue.length) {
       const id = queue.shift()!
       order.push(id)
@@ -172,9 +176,22 @@ export function autoLayout(wf: Workflow): Workflow {
         .filter((e) => e.from === id)
         .sort((a, b) => ports.indexOf(a.outcome) - ports.indexOf(b.outcome))
       for (const e of out) {
-        if (layer.has(e.to) || !wf.nodes.some((n) => n.id === e.to)) continue
+        const to = wf.nodes.find((n) => n.id === e.to)
+        if (layer.has(e.to) || !to) continue
+        if (to.type === 'join') {
+          if (!waiting.includes(to.id)) waiting.push(to.id)
+          continue
+        }
         layer.set(e.to, layer.get(id)! + 1)
         queue.push(e.to)
+      }
+      if (queue.length === 0 && waiting.length > 0) {
+        for (const joinId of waiting.splice(0)) {
+          if (layer.has(joinId)) continue
+          const before = wf.edges.filter((e) => e.to === joinId && layer.has(e.from)).map((e) => layer.get(e.from)!)
+          layer.set(joinId, Math.max(...before) + 1)
+          queue.push(joinId)
+        }
       }
     }
   }

@@ -9,14 +9,14 @@ import type { WfSelection } from '../workflowEdit'
 import {
   canOpenPath, crumbs, graphAt, levelIssues, locateId, resolvePath, scopeOf, startCustomSubflow, writeGraphAt, type WfPath
 } from '../workflowNav'
-import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, type WorkflowMigrationInfo } from '../workflowForm'
+import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, workflowSaveError, type WorkflowMigrationInfo } from '../workflowForm'
 import { groupProblems, shortIssueText, type WfProblemGroup } from '../workflowEditorView'
 import { SectionHead } from '../about/parts'
 import { useLocale, useT } from '../i18n'
 import { nodeTitle, wfIssueText } from '../defaultTitles'
 import { ipcErrorMessage } from '../ipcError'
 import { storedWorkflowNotes } from '../taskTypeEdit'
-import type { NodeTemplatesHook } from '../nodeTemplates'
+import { canBeTemplate, type NodeTemplatesHook } from '../nodeTemplates'
 
 interface Props {
   /** Название типа — имя файла экспорта. */
@@ -127,7 +127,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
       setError(null)
       setNotice(message)
     } catch (e) {
-      setError(ipcErrorMessage(e))
+      setError(workflowSaveError(ipcErrorMessage(e)))
     } finally {
       setBusy(false)
     }
@@ -228,7 +228,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
   const saveBlocked = errors.length > 0 ? t('config.wf.tab.fixFirst') : !dirty ? t('config.wf.tab.noChanges') : undefined
   const selectedNode = selection?.kind === 'node' ? level.graph.nodes.find((n) => n.id === selection.id) : undefined
   // «Сохранить выбранную ноду» в палитре — к полю названия в карточке «Своя нода» инспектора.
-  const saveSelected = library && !levelReadOnly && selectedNode && selectedNode.type !== 'start'
+  const saveSelected = library && !levelReadOnly && selectedNode && canBeTemplate(selectedNode.type)
     ? (): void => {
         const card = editorRef.current?.querySelector<HTMLElement>('[data-card="tpl"]')
         card?.scrollIntoView({ block: 'nearest', behavior: motionScrollBehavior() })

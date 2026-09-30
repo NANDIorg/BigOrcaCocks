@@ -1,6 +1,6 @@
 import {
   wfPorts, stableJson, validateNodeTemplate,
-  type WfNode, type WfNodeTemplate, type WfTemplateNode, type Workflow
+  type WfNode, type WfNodeTemplate, type WfNodeType, type WfTemplateNode, type Workflow
 } from '@orca-board/core'
 import type { NodeTemplateInput, OrcaApi } from '../../shared/ipc'
 import { t } from './i18n'
@@ -48,6 +48,14 @@ export interface NodeTemplatesHook {
   /** Создать (без `id`) или заменить шаблон; ошибка — наружу, с текстом «перезапустите» для старого main. */
   save(input: NodeTemplateInput): Promise<WfNodeTemplate>
   remove(id: string): Promise<void>
+}
+
+/**
+ * Можно ли сохранить ноду этого типа как свою: не «Старт» (он в графе один и создаётся с ним) и не «Разветвление» /
+ * «Слияние» — они работают только парой со своими переходами (core: `templateNodeStart`, `templateNodeFork`).
+ */
+export function canBeTemplate(type: WfNodeType): boolean {
+  return type !== 'start' && type !== 'fork' && type !== 'join'
 }
 
 /** Нода в виде шаблона: копия без id, позиции и ссылки на шаблон — это данные самой ноды, а не её место в графе. */

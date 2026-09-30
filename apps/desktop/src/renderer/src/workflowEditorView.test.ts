@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_ROLES, defaultSubflow, validateWorkflow, type WfIssue, type WfNodeType, type Workflow } from '@orca-board/core'
+import { DEFAULT_ROLES, WF_ISSUE_TEXTS, defaultSubflow, validateWorkflow, type WfIssue, type WfNodeType, type Workflow } from '@orca-board/core'
 import { wfAddableTypes } from './workflowEdit'
 import {
   WF_PALETTE_GROUPS, filterTemplates, groupProblems, issueCard, mainPath, matchesQuery, nodeCardIssues, paletteGroups,
-  shortIssueText
+  laneHighlight, shortIssueText
 } from './workflowEditorView'
-import { graphWithMerge } from './workflowFixture'
+import { graphWithFork, graphWithMerge } from './workflowFixture'
 
 const describe = (type: WfNodeType): string[] => [type, type === 'gate' ? 'проверка ветки агентом' : '']
 
@@ -18,11 +18,14 @@ test('палитра: каждый добавляемый тип — ровно 
 
 test('палитра: пустой запрос — все группы, в пути подзадачи — без запрещённых типов', () => {
   const run = paletteGroups(wfAddableTypes('run'), '', describe)
-  assert.deepEqual(run.map((g) => g.id), ['agent', 'human', 'app', 'bound'])
+  assert.deepEqual(run.map((g) => g.id), ['agent', 'human', 'app', 'parallel', 'bound'])
+  assert.deepEqual(run.find((g) => g.id === 'parallel')?.types, ['fork', 'join'])
   const sub = paletteGroups(wfAddableTypes('subtask'), '  ', describe)
   const types = sub.flatMap((g) => g.types)
   assert.ok(!types.includes('ask'))
   assert.ok(!types.includes('decision'))
+  assert.ok(!types.includes('fork') && !types.includes('join'))
+  assert.ok(!sub.some((g) => g.id === 'parallel'), 'пустая группа в пути подзадачи уходит')
   assert.ok(types.includes('work'))
 })
 
@@ -173,4 +176,26 @@ test('основной путь: от старта по первому исхо�
   }
   assert.deepEqual(mainPath(loop).map((n) => n.id), ['s', 'w'])
   assert.deepEqual(mainPath({ nodes: [], edges: [] }), [])
+})
+
+test('проблемы разветвления: у каждого кода fork/join — своя карточка', () => {
+  const codes = Object.keys(WF_ISSUE_TEXTS).filter((c) => /fork|join/i.test(c)) as WfIssue['code'][]
+  assert.ok(codes.length >= 20, `кодов: ${codes.length}`)
+  assert.equal(issueCard({ code: 'forkTooFewBranches' }), 'what')
+  assert.equal(issueCard({ code: 'forkBranchNoLabel' }), 'what')
+  assert.equal(issueCard({ code: 'joinNoFork' }), 'what')
+  assert.equal(issueCard({ code: 'forkNoJoin' }), 'what')
+  assert.equal(issueCard({ code: 'forkBranchLeaks' }), 'out')
+  assert.equal(issueCard({ code: 'forkEndInBranch' }), 'out')
+  assert.equal(issueCard({ code: 'forkBranchNoWork' }), 'out')
+  assert.equal(issueCard({ code: 'templateNodeFork' }), 'tpl')
+  assert.equal(issueCard({ code: 'subflowForkNotAllowed' }), 'main')
+})
+
+test('подсветка путей: только при выделенном fork или его join', () => {
+  const g = graphWithFork()
+  assert.deepEqual([...laneHighlight(g, 'split')], [['work_be', 0], ['work_fe', 1]])
+  assert.deepEqual([...laneHighlight(g, 'merge_paths')], [['work_be', 0], ['work_fe', 1]])
+  assert.equal(laneHighlight(g, 'work_be').size, 0)
+  assert.equal(laneHighlight(g, undefined).size, 0)
 })
