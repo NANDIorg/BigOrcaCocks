@@ -70,10 +70,20 @@ export default {
   'role.modelNotString': 'role “{id}”: model must be a string',
   'role.effortNotString': 'role “{id}”: effort must be a string',
   'role.promptNotString': 'role “{id}”: system prompt must be a string',
+  'role.extraArgsNotString': 'role “{id}”: launch flags must be a string',
+  'role.extraArgsInvalid': 'role “{id}”: launch flags: {reason}',
 
   'assistant.notObject': 'assistant settings: an object is expected',
   'assistant.unknownAgent': 'assistant: unknown agent {agent}',
   'assistant.notString': 'assistant: field {field} must be a string',
+  'assistant.extraArgsInvalid': 'assistant: launch flags: {reason}',
+
+  'extraArgs.quote': 'unclosed quote {detail}',
+  'extraArgs.separator': 'the “--” token is not allowed: everything after it, including the app’s own flags, would be read as the task text',
+  'extraArgs.notFlag': 'the first item must be a flag (starting with “-”), not “{detail}”: only flags can be added, not a command',
+  'extraArgs.control': 'control character {detail}',
+  'extraArgs.length': 'the line is too long: {detail} characters, the maximum is {max}',
+  'extraArgs.count': 'too many arguments: {detail}, the maximum is {max}',
 
   'worker.cannotStart': 'the worker will not start: {reason}',
   'coordinator.cannotStart': 'the coordinator will not start: {reason}',
