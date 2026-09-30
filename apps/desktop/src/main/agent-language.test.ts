@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs'
 // worker.ts тянет electron и PTY — проверяем исходник: каждый запуск агента (воркер любого этапа — работа,
 // ответ, проверка, «Вопрос человеку», перезапуски; координатор и его повторный запуск; ассистент) строит
 // системный промпт через agentSystemPrompt с языком интерфейса на момент запуска.
-const source = readFileSync(new URL('./worker.ts', import.meta.url), 'utf8')
+// CRLF → LF: на Windows git выгружает исходник с `\r\n`, и регулярки по `\n` ниже не находили вызовы.
+const source = readFileSync(new URL('./worker.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
 describe('язык агентов в worker.ts', () => {
   it('все spec.invoke получают agentSystemPrompt с language: mainLocale()', () => {
