@@ -4,6 +4,7 @@ import { STATUS_SOURCE_TITLES, statusDurationLabel } from './statusHistory'
 import { t, type TKey } from './i18n'
 import { formatDateTime } from './i18n/format'
 import { agentTitle, builtinText, nodeTitle } from './defaultTitles'
+import { laneTitle } from './runStage'
 
 /**
  * Вид события ленты «История». От порядка зависит разбор записей с одинаковой меткой времени — см. `KIND_RANK`.
@@ -134,7 +135,8 @@ function decisionLine(d: Partial<StageDecision>): string | undefined {
  * Входы в этапы воркфлоу глобальной задачи (`Run.stageHistory`): «Этап «Реализация»», заход со второго, чем пришли
  * (возврат на доработку, конфликт), коммит ветки на входе и выдержка сводки, с которой этап закрыт. У ноды `decision` —
  * выбранная ветка, обоснование и комментарий агента, если решал человек. Исход-вариант следующей записи не подписываем:
- * он уже виден в решении. Название — из графа прогона, если он есть (тогда оно и переведено), иначе из записи.
+ * он уже виден в решении. Название — из графа прогона, если он есть (тогда оно и переведено), иначе из записи. Вход в этап
+ * внутри разветвления подписан путём («путь «Бэкенд»»): записи параллельных путей в ленте перемешаны по времени.
  */
 function stageEvents(g: TimelineSource): TimelineEvent[] {
   return (g.stageHistory ?? []).flatMap((h, i): TimelineEvent[] => {
@@ -149,7 +151,8 @@ function stageEvents(g: TimelineSource): TimelineEvent[] {
     // У ноды `decision` сводки нет: цитата — обоснование того, кто выбрал ветку.
     const excerpt = decision ? decisionExcerpt(decision.reason) : summaryExcerpt(h.summary)
     const note = decision?.by === 'human' ? decisionExcerpt(decision.agentNote) : undefined
-    const sub = [chosen, outcome, commit].filter(Boolean)
+    const lane = h.lane !== undefined ? t('global.timeline.stageLane', { name: laneTitle(g.workflow, h.lane) }) : undefined
+    const sub = [lane, chosen, outcome, commit].filter(Boolean)
     return [{
       key: `stage-${i}`,
       kind: 'stage',

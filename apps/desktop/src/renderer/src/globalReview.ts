@@ -21,15 +21,31 @@ export interface GlobalTaskActions {
   returnToWork: boolean
   /** Прежний координатор ещё жив: возврат закроет его терминал (main, `returnGlobalTaskToWork`). */
   returnClosesCoordinator?: boolean
+  /**
+   * Решения ждут несколько approval прогона (параллельные пути разветвления на нодах `human`): «Подтвердить» и «Вернуть»
+   * скрыты — они решают один approval прогона, и какой из них, непонятно. Каждый решается во «Входящих» по своей ноде.
+   * Число запросов; нет — кнопки как обычно.
+   */
+  approvalsInInbox?: number
 }
 
 /**
  * Доступные действия. kind — вид колонки, в которой карточка показана (с учётом «Нужен ответ»);
  * live — у задачи есть живой координатор. У «Входящих» нет координатора и они не бывают на проверке.
+ * approvals — сколько approval прогона ждут решения (`runApprovalRequests`); больше одного — только у прогона с воркфлоу
+ * внутри разветвления, тогда кнопки решения уходят во «Входящие» (`approvalsInInbox`).
  */
-export function globalTaskActions(g: { inbox?: boolean }, kind: ColumnKind | undefined, live: boolean): GlobalTaskActions {
+export function globalTaskActions(
+  g: { inbox?: boolean; workflowScope?: GlobalTask['workflowScope'] },
+  kind: ColumnKind | undefined,
+  live: boolean,
+  approvals = 0
+): GlobalTaskActions {
   if (g.inbox) return { startCoordinator: false, accept: false, returnToWork: false }
   const review = kind === 'review'
+  if (review && approvals > 1 && isRunWorkflow(g)) {
+    return { startCoordinator: false, accept: false, returnToWork: false, approvalsInInbox: approvals }
+  }
   return {
     startCoordinator: !review && !live,
     accept: review,
@@ -52,11 +68,19 @@ export function isRunWorkflow(g: Partial<Pick<GlobalTask, 'workflowScope' | 'inb
   return g.workflowScope === 'run' && g.inbox !== true
 }
 
-/** Ждущий approval уровня прогона (нода `human`, без задачи): что человек подтверждает. Нет — undefined. */
-export function runApprovalRequest(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest | undefined {
+/**
+ * Ждущие approval уровня прогона (ноды `human`, без задачи), старые первыми. Обычно один; внутри разветвления — по
+ * одному на путь, стоящий на `human` (запросы различаются `nodeId`).
+ */
+export function runApprovalRequests(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest[] {
   return (requests ?? [])
     .filter((r) => r.runId === runId && r.taskId === undefined && r.kind === 'approval' && isPendingRequest(r))
-    .sort((a, b) => a.createdAt - b.createdAt)[0]
+    .sort((a, b) => a.createdAt - b.createdAt)
+}
+
+/** Ждущий approval уровня прогона (нода `human`, без задачи): что человек подтверждает. Нет — undefined. */
+export function runApprovalRequest(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest | undefined {
+  return runApprovalRequests(requests, runId)[0]
 }
 
 /** Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. */
