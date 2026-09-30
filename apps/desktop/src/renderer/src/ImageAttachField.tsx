@@ -2,6 +2,8 @@ import type React from 'react'
 import { useRef, useState } from 'react'
 import { IMAGE_ATTACHMENT_TYPES } from '@orca-board/core'
 import { useT } from './i18n'
+// Компонент ряда миниатюр; имя `ImageAttachments` здесь занято типом состояния из imageDrafts.
+import { ImageAttachments as ImageThumbs } from './ImageAttachments'
 import {
   dragHasFiles,
   imageFilesFromClipboard,
@@ -105,26 +107,13 @@ export function ImageAttachField({ attachments, disabled = false, compact = fals
           )}
         </div>
       )}
-      {(images.length > 0 || reading) && (
-        <div className="attach-images">
-          {images.map((img, i) => (
-            <div key={img.id} className="attach-image">
-              <img src={img.url} alt={t('common.attach.image', { n: i + 1 })} />
-              <button
-                type="button"
-                className="attach-image-remove"
-                title={t('common.attach.removeImage')}
-                aria-label={t('common.attach.removeImageN', { n: i + 1 })}
-                disabled={disabled}
-                onClick={() => attachments.remove(img.id)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          {reading && <div className="attach-image attach-image-loading">…</div>}
-        </div>
-      )}
+      <ImageThumbs
+        items={images.map((img) => ({ key: String(img.id), url: img.url }))}
+        reading={reading ? 1 : 0}
+        compact={compact}
+        disabled={disabled}
+        onRemove={(key) => attachments.remove(Number(key))}
+      />
       {error && <span className="error-text">{error}</span>}
     </div>
   )
