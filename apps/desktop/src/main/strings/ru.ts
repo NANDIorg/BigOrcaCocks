@@ -27,6 +27,7 @@ export default {
   'dialog.update.now': 'Обновить сейчас',
   'dialog.update.whenIdle': 'Когда агенты закончат',
   'dialog.pickRepo': 'Выберите git-репозиторий',
+  'dialog.exportType': 'Экспорт типа задач',
 
   'notify.question': 'Вопрос',
   'notify.workflowBlocked': 'Воркфлоу остановлен',
@@ -124,6 +125,7 @@ export default {
   'type.noRole': 'в типе «{title}» нет роли «{role}»',
   'type.settingsNotObject': '{label}: ожидается объект',
   'type.unknownPermission': '{label}: неизвестный режим разрешений: {mode}',
+  'type.exportFailed': 'не удалось сохранить файл типа {path}: {reason}',
 
   'projectTypes.notObject': 'типы проекта: ожидается объект',
   'projectTypes.badIds': 'типы проекта: typeIds должен быть массивом id типов',

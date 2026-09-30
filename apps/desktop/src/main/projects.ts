@@ -7,6 +7,7 @@ import {
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
+  buildTaskTypeFile, serializeTaskTypeFile, taskTypeFileName, type TaskTypeFileMeta,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfMigrationNote, type WfValidationContext,
   type WfNodeTemplate, type WfTemplateNode,
   type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
@@ -616,6 +617,18 @@ export class ProjectManager {
     const own = t.settings.workflow
     if (own && own.version > WORKFLOW_VERSION) throw futureWorkflowError(own.version)
     return { typeId: t.id, title: t.title, workflow: own ? clone(own) : resolveTaskType(t).workflow, custom: own !== undefined }
+  }
+
+  /**
+   * Текст файла экспорта типа и имя по умолчанию (формат — core/task-type-file.ts). Берётся сохранённый тип, а не
+   * черновики редакторов. Граф не валидируется — бэкап сломанного типа тоже нужен, — но граф будущей версии
+   * отвергается (`taskTypeWorkflow`): файл формата 1 не должен уносить граф, которого это приложение не понимает.
+   * `meta` передаёт вызывающий код: версия приложения и время — не дело менеджера.
+   */
+  exportTaskType(id: string, meta: TaskTypeFileMeta): { fileName: string; text: string } {
+    const t = this.requireType(id)
+    this.taskTypeWorkflow(id)
+    return { fileName: taskTypeFileName(t.title), text: serializeTaskTypeFile(buildTaskTypeFile(t, meta)) }
   }
 
   // ---------- библиотека шаблонов нод ----------
