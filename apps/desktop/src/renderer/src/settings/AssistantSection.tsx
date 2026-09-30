@@ -15,7 +15,7 @@ import {
 const PERMISSION_MODE = 'auto'
 
 /**
- * Раздел «Настройки → Ассистент»: агент, модель, effort и инструкции ассистента доски (`AppSettings.assistant`).
+ * Раздел «Настройки → Ассистент»: агент, модель, effort, флаги запуска и инструкции ассистента доски (`AppSettings.assistant`).
  * Поля — те же части, что у роли типа (`RoleParts`). Действуют на следующий диалог, идущий не перезапускается.
  */
 export function AssistantSection({ settings, agents, error, onSave }: {
@@ -81,6 +81,7 @@ function AssistantEditor({ initial, agents: all, onSave }: {
           onAgent={(agent) => patch(assistantAgentPatch(agent))}
           onModel={(model, debounce) => patch(assistantModelPatch(s, model, effortsOf(current, s.agent, model || undefined)), debounce)}
           onEffort={(effort) => patch({ effort })}
+          onExtraArgs={(extraArgs, debounce) => patch({ extraArgs }, debounce)}
         />
         <div className="roles-hint">{t('settings.assistant.permission')}</div>
         <InstructionTabs

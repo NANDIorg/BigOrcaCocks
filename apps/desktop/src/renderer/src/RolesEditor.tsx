@@ -81,7 +81,7 @@ export function RolesEditor({
     save(roles.map((r, j) => (j === i ? withPatch(r, p) : r)), debounce)
   }
 
-  /** Смена агента: модель и effort сбрасываются — `agentChangePatch`. */
+  /** Смена агента: модель, effort и флаги запуска сбрасываются — `agentChangePatch`. */
   function changeAgent(i: number, agent: AgentKind): void {
     patch(i, agentChangePatch(agent))
   }
@@ -364,6 +364,7 @@ function RolePanel({
         onAgent={onAgent}
         onModel={onModel}
         onEffort={(effort) => onPatch({ effort })}
+        onExtraArgs={(extraArgs, debounce) => onPatch({ extraArgs }, debounce)}
       />
       </fieldset>
 

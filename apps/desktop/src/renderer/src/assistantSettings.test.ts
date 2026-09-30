@@ -17,10 +17,12 @@ test('assistantView — загрузка, старый main без assistant, н
   assert.deepEqual(assistantView({ assistant }), { kind: 'ready', assistant })
 })
 
-test('смена агента сбрасывает модель и effort; пустые поля не храним', () => {
-  const s: AssistantSettings = { agent: 'claude', model: 'opus', effort: 'high', systemPrompt: 'кратко' }
+test('смена агента сбрасывает модель, effort и флаги запуска; пустые поля не храним', () => {
+  const s: AssistantSettings = { agent: 'claude', model: 'opus', effort: 'high', systemPrompt: 'кратко', extraArgs: '--verbose' }
   assert.deepEqual(withAssistantPatch(s, assistantAgentPatch('codex')), { agent: 'codex', systemPrompt: 'кратко' })
-  assert.deepEqual(withAssistantPatch(s, { systemPrompt: '  ', model: '' }), { agent: 'claude', effort: 'high' })
+  assert.deepEqual(withAssistantPatch(s, { systemPrompt: '  ', model: '', extraArgs: ' ' }), { agent: 'claude', effort: 'high' })
+  // Флаги хранятся как введены: пробел в конце не обрезается, пока человек печатает.
+  assert.equal(withAssistantPatch(s, { extraArgs: '--debug ' }).extraArgs, '--debug ')
 })
 
 test('смена модели: effort, которого нет у новой модели, сбрасывается', () => {
@@ -30,10 +32,18 @@ test('смена модели: effort, которого нет у новой м�
 })
 
 test('assistantSavePatch — пустые поля уходят пустой строкой, чтобы main их очистил', () => {
-  assert.deepEqual(assistantSavePatch({ agent: 'claude' }), { agent: 'claude', model: '', effort: '', systemPrompt: '' })
+  assert.deepEqual(assistantSavePatch({ agent: 'claude' }, true), { agent: 'claude', model: '', effort: '', systemPrompt: '', extraArgs: '' })
   assert.deepEqual(
-    assistantSavePatch({ agent: 'codex', model: 'm', effort: 'e', systemPrompt: 'p' }),
-    { agent: 'codex', model: 'm', effort: 'e', systemPrompt: 'p' }
+    assistantSavePatch({ agent: 'codex', model: 'm', effort: 'e', systemPrompt: 'p', extraArgs: '--search' }, true),
+    { agent: 'codex', model: 'm', effort: 'e', systemPrompt: 'p', extraArgs: '--search' }
+  )
+})
+
+test('assistantSavePatch — старому main флаги запуска не отправляются', () => {
+  assert.deepEqual(assistantSavePatch({ agent: 'claude' }, false), { agent: 'claude', model: '', effort: '', systemPrompt: '' })
+  assert.deepEqual(
+    assistantSavePatch({ agent: 'codex', model: 'm', extraArgs: '--search' }, false),
+    { agent: 'codex', model: 'm', effort: '', systemPrompt: '' }
   )
 })
 
