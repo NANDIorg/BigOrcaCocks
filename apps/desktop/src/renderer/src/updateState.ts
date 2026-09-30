@@ -2,6 +2,42 @@ import type { OrcaApi, UpdateState, UpdateUnsupportedReason } from '../../shared
 import { releaseVersionLabel } from '@orca-board/core'
 import { t } from './i18n'
 import { formatPercent } from './i18n/format'
+import { marked, type Token } from 'marked'
+
+/** Анонс из первого абзаца или пункта релиза. Возвращает только текст; HTML/картинки/код не становятся анонсом. */
+export function releaseSummary(notes: string | null): string {
+  if (!notes?.trim()) return ''
+  function plain(tokens: Token[]): string {
+    return tokens.map((token) => {
+      if (token.type === 'html' || token.type === 'image' || token.type === 'code') return ''
+      if ('tokens' in token && token.tokens) return plain(token.tokens)
+      if (token.type === 'br') return ' '
+      return 'text' in token && typeof token.text === 'string' ? token.text : ''
+    }).join('')
+  }
+  for (const token of marked.lexer(notes)) {
+    const tokens = token.type === 'paragraph' ? token.tokens : token.type === 'list' ? token.items[0]?.tokens : undefined
+    if (!tokens) continue
+    const text = plain(tokens).replace(/\s+/g, ' ').trim()
+    if (!text) continue
+    if (text.length <= 190) return text
+    const start = text.slice(0, 190)
+    const space = start.lastIndexOf(' ')
+    return `${space > 120 ? start.slice(0, space) : start}…`
+  }
+  return ''
+}
+
+/** Один диапазон для ширины полосы, подписи и aria. Неизвестный размер не превращается в «0%». */
+export function updateProgress(percent: number | null): number | null {
+  return percent === null || !Number.isFinite(percent) ? null : Math.max(0, Math.min(100, Math.round(percent)))
+}
+
+/** Check invoke ждёт и автоматическое скачивание: реальные download/ready/installing важнее локального флага. */
+export function cardStatus(s: UpdateState | null, checking: boolean): UpdateState['status'] | 'loading' {
+  if (s?.status === 'downloading' || s?.status === 'ready' || s?.status === 'installing') return s.status
+  return checking ? 'checking' : s?.status ?? 'loading'
+}
 
 /**
  * Что показывать при каком состоянии обновления (`UpdateState` из main). Без React и без побочных эффектов:
@@ -99,6 +135,7 @@ export function bannerView(s: UpdateState | null): UpdateBannerView | null {
 export function canCheck(s: UpdateState | null): boolean {
   if (!s) return false
   return s.status === 'idle' || s.status === 'available' || s.status === 'error'
+    || (s.status === 'unsupported' && s.mode === 'manual-download')
 }
 
 /** Статус одной строкой для «Настройки → Обновления». */

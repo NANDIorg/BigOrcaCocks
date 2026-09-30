@@ -11,6 +11,8 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
+    // Временный просмотр обновлений включается только явно при локальной сборке; обычный билд использует main.
+    define: { __ORCA_UPDATES_PREVIEW__: JSON.stringify(process.env.ORCA_UPDATES_PREVIEW === '1') },
     plugins: [react()],
     resolve: { alias: { '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts') } }
   }

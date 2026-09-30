@@ -343,7 +343,8 @@ test('Codex resolved notification removes permission and rejects stale UI confir
   await engine.send('revoked')
   await until(() => engine.snapshot().interactions.length > 0)
   const permission = engine.snapshot().interactions[0]
-  await new Promise((resolve) => setTimeout(resolve, 100))
+  // Под нагрузкой фикстура и событие main могут прийти позже 100 мс; ждём сам результат отзыва.
+  await until(() => engine.snapshot().interactions.length === 0)
   assert.equal(engine.snapshot().interactions.length, 0)
   assert.equal(engine.snapshot().status, 'thinking')
   await assert.rejects(engine.respond(permission.id, { kind: 'option', optionId: 'accept' }), /активен|active/)

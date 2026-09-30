@@ -14,3 +14,6 @@ declare module '*.svg' {
 interface ImportMeta {
   readonly hot?: import('vite/types/hot').ViteHotContext
 }
+
+/** Только проверочная сборка с ORCA_UPDATES_PREVIEW=1 содержит демонстрацию обновлений. */
+declare const __ORCA_UPDATES_PREVIEW__: boolean

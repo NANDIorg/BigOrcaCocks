@@ -2572,6 +2572,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .update-banner.error { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
 .update-banner.manual { border-color: color-mix(in srgb, var(--col-input) 55%, transparent); }
 .update-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.update-banner-symbol { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--frame); }
+.update-banner-symbol svg { width: 17px; height: 17px; }
+.update-banner-summary { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .update-title svg { flex-shrink: 0; color: var(--accent); }
 .update-banner.error .update-title svg { color: var(--danger); }
 .update-banner.manual .update-title svg { color: var(--col-input); }
@@ -2591,7 +2594,58 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .update-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .update-notes-body { overflow-y: auto; min-height: 0; padding: 12px 14px; background: var(--frame); border-radius: 10px; }
 .update-notes .row a.btn-sm { text-decoration: none; }
-.updates-status { margin: 4px 0 0; }
+/* Версия — главный элемент карточки, действия остаются рядом с анонсом; полный markdown раскрывается ниже. */
+.updates-card { background: var(--side); border: 1px solid var(--line); border-radius: 14px; padding: 24px; margin-bottom: 24px; min-width: 0; }
+.updates-card.available, .updates-card.ready { border-color: color-mix(in srgb, var(--accent) 32%, var(--line)); }
+.updates-card-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.updates-card-icon { width: 52px; height: 52px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 10%, var(--frame)); border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); display: grid; place-items: center; flex: none; }
+.updates-card-icon svg { width: 25px; height: 25px; }
+.updates-card-icon.busy svg { animation: update-rotate 1s linear infinite; }
+.updates-card.error .updates-card-icon { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--frame)); border-color: color-mix(in srgb, var(--danger) 20%, transparent); }
+.updates-card-heading { flex: 1; min-width: 150px; }
+.updates-card-eyebrow { color: var(--muted); font-size: 12px; }
+.updates-card-heading h3 { font-size: 24px; font-weight: 600; letter-spacing: -.5px; line-height: 1.3; margin: 3px 0 0; overflow-wrap: anywhere; }
+.updates-card-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--text); background: color-mix(in srgb, var(--accent) 9%, var(--frame)); white-space: nowrap; }
+.updates-card-badge > span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.updates-card-from { color: var(--muted); font-size: 11px; margin: 14px 0 0; }
+.updates-card-summary { font-size: 14px; line-height: 1.7; margin: 8px 0 0; max-width: 66ch; overflow-wrap: anywhere; }
+.updates-card-detail { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 12px 0 0; overflow-wrap: anywhere; }
+.updates-card-detail.problem { color: var(--danger); }
+.updates-card-checked { color: var(--muted); font-size: 11px; margin: 18px 0 0; }
+.updates-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
+.updates-card-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.updates-card-buttons .btn-sm, .updates-check { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; text-decoration: none; }
+.updates-card-buttons svg { width: 16px; height: 16px; flex: none; }
+.updates-notes-toggle { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; color: var(--muted); padding: 8px 0; font-size: 12px; }
+.updates-notes-toggle:hover { color: var(--text); }
+.updates-notes-toggle:focus-visible, .updates-release-link:focus-visible, .updates-preview button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.updates-card-notes { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; overflow-wrap: anywhere; }
+.updates-card-notes .markdown { font-size: 13px; line-height: 1.7; }
+.updates-card-notes .markdown > :first-child { margin-top: 0; }
+.updates-card-notes .markdown h1, .updates-card-notes .markdown h2 { font-size: 16px; }
+.updates-card-notes .markdown h3 { font-size: 14px; }
+.updates-card-notes .markdown pre { max-width: 100%; overflow-x: auto; }
+.updates-card-notes .markdown img { max-width: 100%; height: auto; }
+.updates-release-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--accent); font-size: 12px; text-decoration: none; }
+.updates-release-link:hover { text-decoration: underline; }
+.updates-release-link svg { width: 14px; height: 14px; }
+.updates-card-download { background: var(--frame); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 20px; }
+.updates-card-progress-label { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; font-size: 12px; margin-bottom: 10px; }
+.updates-card-progress-label b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.updates-card-download .update-progress { height: 5px; background: var(--side-2); }
+.updates-card-download > p { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.updates-preferences-label { margin-bottom: 10px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.updates-portable-note { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+.updates-portable-note > svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--muted); }
+.updates-portable-note b { font-size: 13px; font-weight: 500; }
+.updates-portable-note p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.updates-preview { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 14px; font-size: 11px; color: var(--muted); }
+.updates-preview > div { display: flex; gap: 4px; flex-wrap: wrap; }
+.updates-preview button { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 5px 8px; font-size: 11px; }
+.updates-preview button:hover, .updates-preview button[aria-pressed='true'] { background: var(--side-2); color: var(--text); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+@media (max-width: 720px) { .updates-card { padding: 18px; } .updates-card-heading h3 { font-size: 21px; } }
+@media (prefers-reduced-motion: reduce) { .updates-card-icon.busy svg { animation: none; } }
+[data-motion='reduced'] .updates-card-icon.busy svg { animation: none; }
 .rail .icon { position: relative; }
 .rail-dot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--page); }
 .toast {

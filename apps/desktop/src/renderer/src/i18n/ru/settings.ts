@@ -87,7 +87,52 @@ export default {
   'notify.kind.runDoneHint': 'Все задачи прогона в «Готово».',
 
   'updates.title': 'Обновления',
-  'updates.hint': 'Новые версии приложения берутся из GitHub Releases.',
+  'updates.hint': 'Всё новое в Orca. Проверяйте, что изменилось, и обновляйтесь в удобный момент.',
+  'updates.preferences': 'Автоматические обновления',
+  'updates.checkPreferences': 'Проверка обновлений',
+  'updates.portable.title': 'Portable-версия не обновляется автоматически',
+  'updates.portable.hint': 'Orca может проверять наличие новых версий и показывать изменения. Чтобы обновиться, скачайте новый exe со страницы релиза и замените им прежний файл.',
+  'updates.card.loading': 'Загружаем сведения о версии',
+  'updates.card.idle': 'Текущая версия',
+  'updates.card.checking': 'Ищем новую версию',
+  'updates.card.available': 'Новая версия Orca',
+  'updates.card.downloading': 'Загружаем обновление',
+  'updates.card.ready': 'Можно обновляться',
+  'updates.card.installing': 'Устанавливаем обновление',
+  'updates.card.error': 'Не удалось обновить Orca',
+  'updates.card.unsupported': 'Текущая версия',
+  'updates.card.badge.available': 'Доступна',
+  'updates.card.badge.ready': 'Готово к установке',
+  'updates.card.badge.idle': 'Установлена',
+  'updates.card.from': 'Сейчас установлена {version}',
+  'updates.card.idleHint': 'Orca готова к работе. Проверьте обновления, чтобы узнать о новых возможностях.',
+  'updates.card.upToDateHint': 'У вас последняя версия Orca. Новых обновлений пока нет.',
+  'updates.card.checked': 'Проверено в {time}',
+  'updates.card.readyHint': 'Обновление скачано. Перезапустите Orca, когда будете готовы.',
+  'updates.card.installingHint': 'Orca перезапустится, когда установка завершится.',
+  'updates.card.noNotes': 'Автор релиза пока не добавил описание изменений.',
+  'updates.card.expand': 'Все изменения',
+  'updates.card.collapse': 'Свернуть описание',
+  'updates.card.downloadLabel': 'Загрузка обновления',
+  'updates.card.unknownSize': 'Определяем размер…',
+  'updates.card.downloadHint': 'Можно продолжать работу. Orca сообщит, когда всё будет готово.',
+  'updates.card.downloadExternal': 'Скачать с GitHub',
+  'updates.preview.title': 'Демо обновления · пример данных',
+  'updates.preview.available': 'Новая версия',
+  'updates.preview.downloading': 'Загрузка',
+  'updates.preview.ready': 'Установка',
+  'updates.preview.idle': 'Текущая версия',
+  'updates.preview.notes':
+    'Рабочее пространство стало аккуратнее: новое оформление окна Windows, понятные обновления и удобный просмотр вложений.\n\n' +
+    '## Что нового\n' +
+    '- **Окно Windows.** Заголовок интегрирован в интерфейс, меню открывается из боковой панели.\n' +
+    '- **Обновления.** Карточка версии, анонс изменений и наглядный прогресс загрузки.\n' +
+    '- **Вложения.** Миниатюры изображений и полноразмерный просмотр прямо на доске.\n\n' +
+    '## Улучшения\n' +
+    '- Настройки сохраняют единое оформление во всех темах.\n' +
+    '- Действия обновления остаются доступны рядом с описанием релиза.\n\n' +
+    '## Исправления\n' +
+    '- Исправлены области перетаскивания окна и клики по элементам интерфейса.',
   'updates.current': 'Текущая версия',
   'updates.check': 'Проверить сейчас',
   'updates.unavailable': 'Обновления в этой сборке недоступны.',

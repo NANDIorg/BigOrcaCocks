@@ -7,7 +7,7 @@ import { setLocale } from './i18n'
 import { formatPercent } from './i18n/format'
 import {
   bannerView, canCheck, isReleaseUrl, isStaleUpdatesError, needsAttention, pendingText, statusLine, unsupportedText,
-  updatesApi, versionLabel
+  updatesApi, versionLabel, releaseSummary, updateProgress, cardStatus
 } from './updateState'
 
 afterEach(() => setLocale('ru'))
@@ -120,10 +120,60 @@ describe('needsAttention', () => {
 })
 
 describe('canCheck', () => {
-  it('проверять можно из idle, available и error; при проверке, скачивании, установке и unsupported — нет', () => {
+  it('проверка доступна в покое и при ошибке; занятые и неподдерживаемые сборки блокируются', () => {
     for (const status of ['idle', 'available', 'error'] as const) assert.equal(canCheck(st({ status })), true, status)
     for (const status of ['checking', 'downloading', 'ready', 'installing', 'unsupported'] as const) assert.equal(canCheck(st({ status })), false, status)
     assert.equal(canCheck(null), false)
+  })
+
+  it('portable и macOS вне «Программ» позволяют вручную проверить релиз', () => {
+    assert.equal(canCheck(st({ status: 'unsupported', mode: 'manual-download', unsupportedReason: 'portable' })), true)
+    assert.equal(canCheck(st({ status: 'unsupported', mode: 'manual-download', unsupportedReason: 'not-in-applications' })), true)
+  })
+})
+
+describe('анонс релиза', () => {
+  it('берёт первый абзац без заголовка, markdown, картинок и адресов ссылок', () => {
+    assert.equal(releaseSummary('# Orca 1.1.1\n\n**Быстрее** запуск и [новые настройки](https://example.com). ![баннер](x.png)\n\n## Подробности\n- Остальное'), 'Быстрее запуск и новые настройки.')
+  })
+
+  it('если вступления нет, показывает первый пункт изменений', () => {
+    assert.equal(releaseSummary('## Исправления\n- Исправлен `терминал`.\n- Второе изменение.'), 'Исправлен терминал.')
+  })
+
+  it('пропускает HTML и блоки кода; пустое описание оставляет пустым', () => {
+    assert.equal(releaseSummary('<script>alert(1)</script>\n\n```sh\nsecret\n```\n\nНовый интерфейс.'), 'Новый интерфейс.')
+    assert.equal(releaseSummary('# Только заголовок\n\n![баннер](x.png)'), '')
+    assert.equal(releaseSummary(null), '')
+  })
+
+  it('короткий анонс не разрезает последнее слово', () => {
+    const summary = releaseSummary('Настройки стали удобнее. '.repeat(30))
+    assert.ok(summary.length <= 191)
+    assert.match(summary, /(?:Настройки|стали|удобнее\.)…$/)
+  })
+})
+
+describe('прогресс карточки', () => {
+  it('ручная проверка с автоматической загрузкой не скрывает прогресс или готовность', () => {
+    assert.equal(cardStatus(st({ status: 'downloading', percent: 42 }), true), 'downloading')
+    assert.equal(cardStatus(st({ status: 'ready' }), true), 'ready')
+    assert.equal(cardStatus(st({ status: 'installing' }), true), 'installing')
+  })
+  it('portable показывает проверку, хотя main сохраняет unsupported', () => {
+    assert.equal(cardStatus(st({ status: 'unsupported', mode: 'manual-download' }), true), 'checking')
+    assert.equal(cardStatus(st({ status: 'unsupported', mode: 'manual-download' }), false), 'unsupported')
+    assert.equal(cardStatus(null, false), 'loading')
+  })
+  it('неизвестный и некорректный прогресс не выдаёт за нулевой', () => {
+    assert.equal(updateProgress(null), null)
+    assert.equal(updateProgress(NaN), null)
+    assert.equal(updateProgress(Infinity), null)
+  })
+  it('округляет и ограничивает значения для полосы и aria-valuenow', () => {
+    assert.equal(updateProgress(42.8), 43)
+    assert.equal(updateProgress(-12), 0)
+    assert.equal(updateProgress(105), 100)
   })
 })
 
