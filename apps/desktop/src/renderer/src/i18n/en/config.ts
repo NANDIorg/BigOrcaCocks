@@ -482,6 +482,8 @@ export default {
   'wf.probs.title': 'Problems',
   'wf.probs.hint': 'click to go to the node',
   'wf.probs.edge': 'Edge “{id}”',
+  'wf.probs.edgeOf': 'Edge “{outcome}” of node “{node}”',
+  'wf.probs.forkEdge': 'Path “{outcome}” of fork “{node}”',
   'wf.probs.graph': 'Whole graph',
   'wf.probs.goNode': 'to node ›',
   'wf.probs.goEdge': 'to edge ›',

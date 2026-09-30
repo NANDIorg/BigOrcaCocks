@@ -69,6 +69,14 @@ export function nodeTitle(n: WfNode): string {
   return builtinText(wfNodeTitle(n))
 }
 
+/**
+ * Название пути разветвления для показа: подпись пути (нет — id), встроенная — на языке интерфейса, как название ноды.
+ * Пути заготовок называются как ноды («Бэкенд», «Документация»), и без перевода порт `fork` расходился бы с нодой пути.
+ */
+export function forkBranchTitle(b: { id: string; label?: string }): string {
+  return builtinText(b.label ?? b.id)
+}
+
 /** Подпись модели из реестра core или кэша Codex: «Opus (актуальный)», «gpt-5 (по умолчанию)» — на языке интерфейса. */
 export function modelTitle(label: string): string
 export function modelTitle(label: string | undefined): string | undefined

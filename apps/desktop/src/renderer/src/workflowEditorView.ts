@@ -236,6 +236,23 @@ export function groupProblems(issues: WfValidation): WfProblemGroup[] {
   return [...all.filter((g) => g.level === 'error'), ...all.filter((g) => g.level === 'warning')]
 }
 
+/**
+ * Из чего собрать заголовок группы-перехода: подпись исхода (`wfPortLabel` — «принять», вариант, название пути) и
+ * название ноды-источника (`title`). `fork` — переход это путь разветвления: заголовок «Путь «X» разветвления «Y»», а
+ * не «Переход». id перехода человеку ничего не говорит; нет перехода или источника — `undefined`, покажем id.
+ */
+export function edgeProblemTitle(
+  graph: Pick<Workflow, 'nodes' | 'edges'>,
+  edgeId: string,
+  portLabel: (node: WfNode, port: string) => string,
+  title: (node: WfNode) => string
+): { outcome: string; node: string; fork: boolean } | undefined {
+  const edge = graph.edges.find((e) => e.id === edgeId)
+  const from = edge && graph.nodes.find((n) => n.id === edge.from)
+  if (!edge || !from) return undefined
+  return { outcome: portLabel(from, edge.outcome), node: title(from), fork: from.type === 'fork' }
+}
+
 // ---------- пути разветвления на холсте ----------
 
 /**
