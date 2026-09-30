@@ -2996,7 +2996,11 @@ html[data-window-chrome='macos'] .rail::before {
 html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
 html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
 /* Chromium не вычитает перекрытые drag-области по z-index: поверхностям нужен явный no-drag. */
-html[data-window-chrome='macos'] :is(.modal, .settings-modal, .inbox, .popup-menu, .lightbox) { app-region: no-drag; }
+html[data-window-chrome='macos'] :is(.modal, .settings-modal, .inbox, .popup-menu, .move-menu, .lightbox) { app-region: no-drag; }
+/* Любая поверхность прямо в backdrop перекрывает шапки: без no-drag Chromium оставляет под ней drag-области
+   .main-head и .sidebar > .head. Пропуск в списке выше уже ломал «Документы» и мастер. Кромка ::before
+   потомком не считается и остаётся drag. */
+html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) > * { app-region: no-drag; }
 
 /* Нативный слой выше renderer: все общие оверлеи оставляют сверху свободную область. */
 html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) {
@@ -3011,6 +3015,8 @@ html[data-window-chrome='macos'] :is(.modal, .settings-modal) {
 }
 html[data-window-chrome='macos'] .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
 html[data-window-chrome='macos'] .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
+/* Высота 100vh - 48px не учитывает кромку: без ужатия шапка «Документов» уходит под drag-область. */
+html[data-window-chrome='macos'] .docs-modal { height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap)); }
 @media (max-width: 600px) {
   html[data-window-chrome='macos'] { --window-overlay-gap: 12px; }
 }
