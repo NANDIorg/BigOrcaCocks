@@ -13,8 +13,8 @@ export type PtyAlive = (ptyId: string) => boolean
  * описание (нет — название) плюс уточнения человека после проверки и список уже созданных подзадач,
  * чтобы координатор продолжил их, а не создал заново. Второй живой координатор на одной глобальной
  * задаче — ошибка. Воркфлоу прогона (`workflowScope: 'run'`): вместо «Повторного запуска» — блок «# Этап»
- * (`resumeCoordinatorObjective` со `stage`): координатор — диспетчер и продолжает с того этапа «Работа», где стоит граф.
- * На остальных этапах (проверка, человек, git…) координатору делать нечего — цель без блока: он ждёт `stage_started`.
+ * (`resumeCoordinatorObjective` со `stage`): координатор — диспетчер и продолжает с того этапа «Работа», где стоит граф;
+ * внутри разветвления — по блоку на каждую открытую «Работу» путей. На остальных этапах (проверка, человек, git…) координатору делать нечего — цель без блока: он ждёт `stage_started`.
  */
 export function resumeObjective(store: TaskStore, runId: string, alive: PtyAlive): { run: Run; objective: string } {
   const run = store.getRun(runId)
@@ -28,18 +28,22 @@ export function resumeObjective(store: TaskStore, runId: string, alive: PtyAlive
   const tasks = store.listSubtasks(runId).map((t) => ({ id: t.id, title: t.title, status: title(t.status) }))
   if (run.workflowScope === 'run') {
     // Без блока этапа «Повторный запуск» по старой схеме (`runs finish`) прогону не подходит — цель как есть.
-    const stage = workStage(store, run.id)
-    return { run, objective: stage ? resumeCoordinatorObjective(goal, tasks, [], stage) : goal }
+    const stages = workStages(store, run.id)
+    return { run, objective: stages.length > 0 ? resumeCoordinatorObjective(goal, tasks, [], stages) : goal }
   }
   return { run, objective: resumeCoordinatorObjective(goal, tasks, run.returns) }
 }
 
-/** Этап «Работа», на котором стоит граф глобальной задачи, — для блока «# Этап» цели координатора. Другая нода или нет позиции — undefined. */
-function workStage(store: TaskStore, runId: string): CoordinatorStage | undefined {
-  const stage = store.runStage(runId)
-  if (stage?.type !== 'work') return undefined
-  return {
-    title: stage.title, visit: stage.visit,
+/**
+ * Открытые этапы «Работа» глобальной задачи — для блоков «# Этап» цели координатора: у линейного прогона не больше
+ * одного, внутри разветвления — по одному на путь, стоящий на «Работе» (пришедшие в слияние не в счёт). Остальные
+ * ноды (проверка, человек, git…) координатору не нужны.
+ */
+function workStages(store: TaskStore, runId: string): CoordinatorStage[] {
+  return store.runStages(runId).filter((s) => s.type === 'work' && !s.arrived).map((stage) => ({
+    title: stage.title, visit: stage.visit, nodeId: stage.nodeId,
+    ...(stage.lane !== undefined ? { lane: stage.lane } : {}),
+    ...(stage.laneTitle ? { laneTitle: stage.laneTitle } : {}),
     ...(stage.roleIds ? { roleIds: stage.roleIds } : {}),
     ...(stage.instructions ? { instructions: stage.instructions } : {}),
     ...(stage.feedback ? { feedback: stage.feedback } : {}),
@@ -48,7 +52,7 @@ function workStage(store: TaskStore, runId: string): CoordinatorStage | undefine
     ...(stage.answers ? { answers: stage.answers } : {}),
     tasks: stage.tasks,
     tasksDone: stage.tasksDoneAt !== undefined
-  }
+  }))
 }
 
 /**

@@ -206,6 +206,23 @@ export interface RunTaskContext {
   stages?: readonly RunStageSummary[]
   /** Инструкции самой ноды (`gate`: как проверять, `ask`: что выяснить). */
   instructions?: string
+  /**
+   * Название пути разветвления, в котором стоит нода (`RunStageInfo.laneTitle`); нет — нода вне разветвления. Ветка
+   * глобальной задачи у путей общая, поэтому задача получает оговорку «работу соседних путей не оценивай», а `stages`
+   * вызывающий код передаёт только этого пути (и общие этапы до разветвления).
+   */
+  lane?: string
+}
+
+/** Оговорка для задачи внутри пути разветвления: ветка общая, в ней может быть работа соседних путей. */
+function laneSection(ctx: RunTaskContext): string[] {
+  const lane = ctx.lane?.trim()
+  if (!lane) return []
+  return [
+    '## Путь разветвления',
+    '',
+    `Нода стоит в пути «${lane}»: граф глобальной задачи идёт по нескольким путям параллельно, а ветка у них общая. В ней могут быть коммиты и изменения соседних путей — не оценивай их и не принимай за работу этого пути; речь о пути «${lane}» (сводки его этапов ниже).`
+  ]
 }
 
 function goalSection(ctx: RunTaskContext): string[] {
@@ -245,7 +262,9 @@ export function runGateTaskSpec(ctx: RunTaskContext): string {
     )
   }
   steps.push(
-    '3. Сверь результат с целью глобальной задачи и сводками этапов ниже: сделано ли то, что просили, и всё ли работает вместе.',
+    ctx.lane?.trim()
+      ? `3. Сверь работу пути «${ctx.lane.trim()}» с целью глобальной задачи и сводками этапов ниже: сделано ли то, что просили в этом пути, и работает ли оно.`
+      : '3. Сверь результат с целью глобальной задачи и сводками этапов ниже: сделано ли то, что просили, и всё ли работает вместе.',
     '4. Всё хорошо — `orca-board review accept --task "$ORCA_TASK_ID"`. Нет — `orca-board review reject --task "$ORCA_TASK_ID" --feedback "что исправить"`: замечания получит координатор, и граф вернётся на этап «Работа».',
     '5. Последней командой обязательно `orca-board done --summary "принято"` или `"отклонено: …"` — без неё проверка останется открытой.'
   )
@@ -256,6 +275,8 @@ export function runGateTaskSpec(ctx: RunTaskContext): string {
     steps.join('\n'),
     goalSection(ctx).join('\n')
   ]
+  const lane = laneSection(ctx)
+  if (lane.length > 0) parts.push(lane.join('\n'))
   const stages = stageSummariesSection(ctx.stages)
   if (stages.length > 0) parts.push(stages.join('\n'))
   const own = ctx.instructions?.trim()
@@ -278,6 +299,8 @@ export function runAskTaskSpec(ctx: RunTaskContext): string {
     `Ты — этап «Вопрос человеку» воркфлоу глобальной задачи «${ctx.title}»: выясни у человека то, чего не хватает, прежде чем работа пойдёт дальше.`,
     goalSection(ctx).join('\n')
   ]
+  const lane = laneSection(ctx)
+  if (lane.length > 0) parts.push(lane.join('\n'))
   const stages = stageSummariesSection(ctx.stages)
   if (stages.length > 0) parts.push(stages.join('\n'))
   if (ctx.branch) parts.push(`Ветка глобальной задачи: \`${ctx.branch}\`${ctx.base ? ` (от \`${ctx.base}\`)` : ''} — читать можно, менять нельзя.`)
@@ -354,6 +377,8 @@ export function runDecisionTaskSpec(ctx: RunDecisionContext): string {
     `## Варианты\n\n${options.join('\n')}`,
     goalSection(ctx).join('\n')
   ]
+  const lane = laneSection(ctx)
+  if (lane.length > 0) parts.push(lane.join('\n'))
   const stages = stageSummariesSection(ctx.stages)
   if (stages.length > 0) parts.push(stages.join('\n'))
   const path = pathSection(ctx.path)
@@ -401,6 +426,15 @@ export const COORDINATOR_STAGE_HEADING = '# Этап:'
  */
 export interface CoordinatorStage {
   title: string
+  /**
+   * Id ноды этапа — значение `--stage` у `task create` и `stage finish`. Нужен, когда открыто несколько этапов сразу
+   * (пути разветвления): без него координатор не знает, к какому этапу относить подзадачи.
+   */
+  nodeId?: string
+  /** Путь разветвления (`RunLane.id`), в котором стоит этап; нет — этап вне разветвления. */
+  lane?: string
+  /** Название пути (`RunStageInfo.laneTitle`). */
+  laneTitle?: string
   /** Какой по счёту заход в этап: возврат по reject увеличивает. */
   visit: number
   /** Роли этапа; нет или пусто — любые рабочие роли типа, выбирает координатор. */
@@ -423,23 +457,36 @@ export interface CoordinatorStage {
 /**
  * Блок «# Этап» цели координатора: где стоит граф, роли, инструкции, что сказали человек и проверка, какие подзадачи
  * уже есть и что делать дальше. Что делать — раздел «Повторный запуск» инструкции, здесь только состояние.
+ * `many` — открыто несколько этапов сразу: команды в подсказках получают `--stage <nodeId>`, иначе CLI их отвергнет.
+ * Один этап вне разветвления — текст прежний, без пути и `--stage`.
  */
 function coordinatorStageSection(
   stage: CoordinatorStage,
-  subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>
+  subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>,
+  many = false
 ): string[] {
   const roles = stage.roleIds ?? []
   const own = new Set(stage.tasks ?? [])
   const current = subtasks.filter((t) => own.has(t.id))
+  const laneTitle = stage.lane !== undefined ? (stage.laneTitle?.trim() || stage.lane) : undefined
+  const flag = many && stage.nodeId ? ` --stage ${stage.nodeId}` : ''
   const parts = [
     '',
-    `${COORDINATOR_STAGE_HEADING} ${stage.title}`,
+    `${COORDINATOR_STAGE_HEADING} ${stage.title}${laneTitle ? ` (путь «${laneTitle}»)` : ''}`,
     '',
-    `Глобальная задача стоит на этапе «Работа» «${stage.title}» (заход ${stage.visit}); ты перезапущен на нём — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции (вход — блок «${COORDINATOR_STAGE_HEADING}»).`,
+    `Глобальная задача стоит на этапе «Работа» «${stage.title}» (заход ${stage.visit}); ты перезапущен на нём — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции (вход — блок «${COORDINATOR_STAGE_HEADING}»).`
+  ]
+  if (laneTitle) {
+    parts.push(`Это путь «${laneTitle}» разветвления: соседние пути идут параллельно со своими этапами, подзадачи и сводка этого этапа — только его.`)
+  }
+  if (flag) {
+    parts.push(`Id этапа — \`${stage.nodeId}\`: открыто несколько этапов сразу, поэтому указывай \`--stage ${stage.nodeId}\` в \`task create\` и \`stage finish\` этого этапа.`)
+  }
+  parts.push(
     roles.length > 0
       ? `Роли этапа: ${roles.join(', ')} — подзадачи создавай только с ними.`
       : 'Роли этапа не заданы: роль каждой подзадачи выбирай сам из включённых рабочих ролей типа (`orca-board roles list`, по описанию).'
-  ]
+  )
   if (stage.instructions?.trim()) parts.push('', '## Инструкции этапа', '', stage.instructions.trim())
   if (stage.feedback?.trim()) {
     parts.push('', '## Замечания проверки или человека', '', stage.feedback.trim())
@@ -455,12 +502,18 @@ function coordinatorStageSection(
   parts.push(
     '',
     current.length === 0
-      ? 'Подзадач в этом заходе ещё нет: `stage_started` ты не получил — создай подзадачи по инструкциям и запусти воркеров.'
+      ? flag
+        ? `Подзадач в этом заходе ещё нет: \`stage_started\` ты не получил — создай подзадачи по инструкциям (\`orca-board task create …${flag}\`) и запусти воркеров.`
+        : 'Подзадач в этом заходе ещё нет: `stage_started` ты не получил — создай подзадачи по инструкциям и запусти воркеров.'
       : stage.tasksDone
-        ? 'Все подзадачи захода закрыты, `stage_tasks_done` уже отправлен: решай сразу — нужны ли ещё задачи, иначе `orca-board stage finish --summary "..."`.'
+        ? `Все подзадачи захода закрыты, \`stage_tasks_done\` уже отправлен: решай сразу — нужны ли ещё задачи, иначе \`orca-board stage finish${flag} --summary "..."\`.`
         : 'Есть незакрытые подзадачи: продолжи цикл (`worker start` для `ready`) и дождись `stage_tasks_done`.'
   )
   return parts
+}
+
+function isStageList(stage: CoordinatorStage | readonly CoordinatorStage[]): stage is readonly CoordinatorStage[] {
+  return Array.isArray(stage)
 }
 
 /**
@@ -471,18 +524,29 @@ function coordinatorStageSection(
  *
  * `stage` — воркфлоу глобальной задачи (`Run.workflowScope: 'run'`): координатор входит по блоку «# Этап» (граф ведёт
  * приложение, `runs finish` не нужен), замечания человека уже в `stage.feedback`, поэтому «Уточнение после проверки»
- * не добавляется. Подзадачи прошлых заходов — списком для контекста.
+ * не добавляется. Подзадачи прошлых заходов — списком для контекста. Список этапов — пути разветвления, открытые
+ * одновременно: по блоку «# Этап» на каждый и вводная про `--stage`; один этап (или список из одного) — прежний текст.
+ * Пустой список — как без `stage`.
  */
 export function resumeCoordinatorObjective(
   goal: string,
   subtasks: Array<Pick<Task, 'id' | 'title' | 'status'>>,
   returns: ReadonlyArray<{ text: string; images?: readonly string[] }> = [],
-  stage?: CoordinatorStage
+  stage?: CoordinatorStage | readonly CoordinatorStage[]
 ): string {
-  if (stage) {
-    const own = new Set(stage.tasks ?? [])
+  const stages: readonly CoordinatorStage[] = stage === undefined ? [] : isStageList(stage) ? stage : [stage]
+  if (stages.length > 0) {
+    const own = new Set(stages.flatMap((s) => s.tasks ?? []))
     const earlier = subtasks.filter((t) => !own.has(t.id))
-    const parts = [goal, ...coordinatorStageSection(stage, subtasks)]
+    const many = stages.length > 1
+    const parts = [goal]
+    if (many) {
+      parts.push(
+        '',
+        `Граф идёт по нескольким путям сразу: открыто этапов «Работа» — ${stages.length}, ниже блок «${COORDINATOR_STAGE_HEADING}» на каждый. Веди каждый этап отдельно (свои подзадачи, свой \`stage finish\`) и указывай \`--stage <id этапа>\` в \`task create\` и \`stage finish\`.`
+      )
+    }
+    parts.push(...stages.flatMap((s) => coordinatorStageSection(s, subtasks, many)))
     if (earlier.length > 0) {
       parts.push('', 'Подзадачи прошлых заходов и этапов (уже сделаны, не создавай их заново):', ...earlier.map((t) => `- ${t.id} [${t.status}] ${t.title}`))
     }
