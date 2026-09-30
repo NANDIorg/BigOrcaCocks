@@ -8,7 +8,7 @@ import { fullStamp } from './globalFormat'
 import { formatClock } from './globalTimeline'
 import { WF_TYPE_TITLES } from './workflowForm'
 import { wfPortClass, wfPortLabel } from './workflowEdit'
-import { NODE_H, NODE_W, curvePath, curvePoint, edgeCurveOf, graphBounds, nodeHeight } from './workflowGeometry'
+import { NODE_H, NODE_W, curvePath, edgeCurveOf, graphBounds, nodeHeight, placeEdgeLabels, type EdgeLabelInput, type Rect } from './workflowGeometry'
 import { pathNodeName } from './subtaskPath'
 import { laneTitle } from './runStage'
 import {
@@ -51,6 +51,12 @@ function clip(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s
 }
 
+/** Ширина подписи ребра (шрифт 10.5 px): текст исхода и «×N» через отступ. */
+function labelWidth(label: string, count: number): number {
+  const countText = count > 0 ? `×${count}` : ''
+  return Math.round((label.length + countText.length) * 5.8 + (label && countText ? 6 : 0))
+}
+
 /** Ширина плашки по тексту: в SVG нет автоширины, а измерять текст в DOM ради плашки — лишний проход. */
 function badgeWidth(text: string): number {
   return Math.round(text.length * 6.2 + 16)
@@ -79,18 +85,35 @@ export function WorkflowProgress(props: Props): React.JSX.Element {
   const { global, workflow, tasks, columns, onSelect, onOpenTask } = props
   const t = useT()
   const [pathOf, setPathOf] = useState<string | null>(null)
+  // «Вписать»: граф сжимается до ширины панели вместо прокрутки (как «Вписать» редактора, но без масштаба колесом).
+  const [fit, setFit] = useState(false)
+  // Граф шире панели: показать подсказку о прокрутке и кнопку «Вписать».
+  const [overflow, setOverflow] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Внутри разветвления «сейчас» несколько: прокрутка следует за любой их сменой.
   const current = [global.stage?.nodeId, ...(global.lanes ?? []).map((l) => l.nodeId)].join(',')
   // Широкий граф в узком окне прокручивается по горизонтали: выбранная (иначе текущая) нода не должна оказаться за краем.
+  // Прокрутка — ровно до края ноды, а не центрирование: иначе у помещающегося почти целиком графа уезжал «Старт».
   useEffect(() => {
     const box = scrollRef.current
     const el = box?.querySelector<SVGGElement>('.wf-progress-node.is-selected') ?? box?.querySelector<SVGGElement>('.wf-progress-node.is-current')
     if (!box || !el || box.scrollWidth <= box.clientWidth) return
     const r = el.getBoundingClientRect()
     const b = box.getBoundingClientRect()
-    box.scrollLeft += r.left + r.width / 2 - (b.left + b.width / 2)
-  }, [current, props.selected, pathOf])
+    const gap = 16
+    if (r.left < b.left) box.scrollLeft -= b.left - r.left + gap
+    else if (r.right > b.right) box.scrollLeft += r.right - b.right + gap
+  }, [current, props.selected, pathOf, fit])
+  useEffect(() => {
+    const box = scrollRef.current
+    if (!box || typeof ResizeObserver === 'undefined') return
+    const measure = (): void => setOverflow(box.scrollWidth > box.clientWidth + 1)
+    const ro = new ResizeObserver(measure)
+    ro.observe(box)
+    if (box.firstElementChild) ro.observe(box.firstElementChild)
+    measure()
+    return () => ro.disconnect()
+  }, [pathOf, fit])
   if (!workflow || workflow.nodes.length === 0) {
     return <p className="muted gt-stub">{t('global.graph.noWorkflow')}</p>
   }
@@ -99,7 +122,7 @@ export function WorkflowProgress(props: Props): React.JSX.Element {
   const selId = props.selected && graph.nodes.some((n) => n.id === props.selected) ? props.selected : defaultProgressNode(progress, global, graph)
   const selNode = graph.nodes.find((n) => n.id === selId)
   const currentIds = progress.currents.map((c) => c.nodeId)
-  const visits = selId ? nodeVisits(global, selId, currentIds) : []
+  const visits = selId ? nodeVisits(global, selId, currentIds, graph) : []
   const shown = visits.at(-1)
   const shownTasks = selId && shown ? visitTasks(tasks, selId, shown) : []
   const path = selId ? workPath(workflow, selId) : undefined
@@ -147,6 +170,7 @@ export function WorkflowProgress(props: Props): React.JSX.Element {
         nodes={pp?.nodes ?? {}}
         edges={pp?.edges ?? {}}
         badges={badges}
+        fit={fit}
         forwardCounts={false}
         ariaLabel={t('global.graph.pathAria', { name: nodeTitle(drill) })}
       />
@@ -176,6 +200,7 @@ export function WorkflowProgress(props: Props): React.JSX.Element {
         nodes={progress.nodes}
         edges={progress.edges}
         badges={badges}
+        fit={fit}
         selected={selId}
         onSelect={select}
         ariaLabel={aria}
@@ -200,6 +225,18 @@ export function WorkflowProgress(props: Props): React.JSX.Element {
               <b>{props.typeTitle ? t('global.graph.crumbType', { type: props.typeTitle }) : t('global.graph.crumbRoot')}</b>
             )}
           </nav>
+          {overflow && !fit && <span className="muted wf-progress-hint">{t('global.graph.scrollHint')}</span>}
+          {(overflow || fit) && (
+            <button
+              type="button"
+              className="btn-sm"
+              aria-pressed={fit}
+              title={t(fit ? 'global.graph.fitOffTitle' : 'global.graph.fitTitle')}
+              onClick={() => setFit((v) => !v)}
+            >
+              {t(fit ? 'global.graph.fitOff' : 'global.graph.fit')}
+            </button>
+          )}
           <span className="chip wf-progress-ro">{t('global.graph.readOnly')}</span>
         </div>
         <div ref={scrollRef} className="wf-progress-scroll">{canvas}</div>
@@ -250,6 +287,8 @@ interface GraphProps {
    * там он только на возвратах.
    */
   forwardCounts?: boolean
+  /** «Вписать»: граф сжимается до ширины панели без нижней границы масштаба; нет — не мельче 75 %, дальше прокрутка. */
+  fit?: boolean
   ariaLabel: string
 }
 
@@ -268,6 +307,26 @@ function ProgressGraph(props: GraphProps): React.JSX.Element {
   const vw = b.w + SIDE_PAD * 2
   const vh = b.h + TOP_PAD
   const typeOf = (id: string): WfNode['type'] => graph.nodes.find((n) => n.id === id)?.type ?? 'work'
+  // Подписи рёбер раскладываются заранее: петли возврата параллельных путей проходят рядом, и подписи в середине кривых
+  // налезали друг на друга и на ноды (`placeEdgeLabels`). Плашки над нодами тоже заняты.
+  const drawn = graph.edges.flatMap((edge) => {
+    const curve = edgeCurveOf(wf, edge)
+    if (!curve) return []
+    const from = graph.nodes.find((n) => n.id === edge.from)
+    const count = edges[edge.id] ?? 0
+    const back = curve[3].x - curve[0].x < 40
+    const label = from && edge.outcome !== 'next' ? wfPortLabel(from, edge.outcome) : ''
+    const showCount = count > 0 && (back || (count > 1 && props.forwardCounts !== false))
+    return [{ edge, curve, count, back, label: clip(label, 16), showCount }]
+  })
+  const labelInputs: EdgeLabelInput[] = drawn
+    .filter((d) => d.label || d.showCount)
+    .map((d) => ({ id: d.edge.id, curve: d.curve, back: d.back, width: labelWidth(d.label, d.showCount ? d.count : 0) }))
+  const badgeRects: Rect[] = graph.nodes.flatMap((n) => {
+    const badge = badges[n.id]
+    return badge ? [{ x: n.x + NODE_W / 2 - badgeWidth(badge.text) / 2, y: n.y - 26, w: badgeWidth(badge.text), h: 18 }] : []
+  })
+  const labelAt = placeEdgeLabels(labelInputs, graph.nodes, badgeRects)
 
   return (
     <svg
@@ -275,29 +334,22 @@ function ProgressGraph(props: GraphProps): React.JSX.Element {
       viewBox={`${vx} ${vy} ${vw} ${vh}`}
       width={vw}
       height={vh}
-      style={{ maxWidth: vw, minWidth: Math.round(vw * 0.75) }}
+      style={{ maxWidth: vw, minWidth: props.fit ? 0 : Math.round(vw * 0.75) }}
       role="group"
       aria-label={props.ariaLabel}
     >
-      {graph.edges.map((edge) => {
-        const curve = edgeCurveOf(wf, edge)
-        if (!curve) return null
-        const from = graph.nodes.find((n) => n.id === edge.from)
-        const count = edges[edge.id] ?? 0
+      {drawn.map(({ edge, curve, count, label, showCount }) => {
         const end = curve[3]
-        const back = curve[3].x - curve[0].x < 40
-        const mid = curvePoint(curve, 0.5)
-        const label = from && edge.outcome !== 'next' ? wfPortLabel(from, edge.outcome) : ''
-        const showCount = count > 0 && (back || (count > 1 && props.forwardCounts !== false))
+        const at = labelAt[edge.id]
         const cls = `wf-progress-edge wf-progress-edge--${wfPortClass(typeOf(edge.from), edge.outcome)}${count > 0 ? ' is-walked' : ''}`
         return (
           <g key={edge.id} className={cls}>
             {count > 0 && <title>{t('global.graph.edgeCount', { n: count })}</title>}
             <path d={curvePath(curve)} className="wf-progress-edge-line" />
             <polygon points={`${end.x - 9},${end.y - 5} ${end.x},${end.y} ${end.x - 9},${end.y + 5}`} className="wf-progress-edge-arrow" />
-            {(label || showCount) && (
-              <text x={mid.x} y={back ? mid.y + 14 : mid.y - 6} textAnchor="middle" className="wf-progress-edge-label">
-                {clip(label, 16)}
+            {(label || showCount) && at && (
+              <text x={at.x} y={at.y} textAnchor="middle" className="wf-progress-edge-label">
+                {label}
                 {showCount && <tspan className="wf-progress-edge-count" dx={label ? 6 : 0}>×{count}</tspan>}
               </text>
             )}
@@ -465,6 +517,9 @@ function NodePanel(props: PanelProps): React.JSX.Element {
                       {node.type !== 'end' && (v.till !== undefined ? <>–{formatClock(v.till)}</> : !v.closed && <>–{t('global.graph.now')}</>)}
                     </span>
                   </div>
+                  {v.arrivals ? (
+                    <JoinVisitSub visit={v} nameOf={nameOf} laneName={(id) => laneTitle(workflow, id)} />
+                  ) : (
                   <div className="muted wf-progress-visit-sub">
                     {v.returned
                       ? <span className="wf-progress-ret">{v.cameWith === 'restart' ? t('global.graph.restarted') : t('global.graph.returnedBy', { name: nameOf(v.from) })}</span>
@@ -476,6 +531,7 @@ function NodePanel(props: PanelProps): React.JSX.Element {
                     )}
                     {v.closed && node.type !== 'end' && <> {t('global.graph.runClosed')}</>}
                   </div>
+                  )}
                   {v.reason && <div className="wf-progress-quote">{v.reason}</div>}
                   {v.decision && <div className="wf-progress-visit-sub">{t('global.timeline.stageDecision', { label: v.decision })}</div>}
                   {v.leftReason && <div className="wf-progress-quote">{v.leftReason}</div>}
@@ -519,6 +575,32 @@ function NodePanel(props: PanelProps): React.JSX.Element {
         </button>
       )}
     </aside>
+  )
+}
+
+/**
+ * Заход в слияние: какие пути и когда пришли (приход пути — отметка, а не заход) и куда граф ушёл после слияния; пока
+ * пришли не все — «ждёт остальные пути».
+ */
+function JoinVisitSub({ visit: v, nameOf, laneName }: { visit: NodeVisit; nameOf(id: string | undefined): string; laneName(id: string): string }): React.JSX.Element {
+  const t = useT()
+  return (
+    <>
+      <ul className="wf-progress-arrivals">
+        {(v.arrivals ?? []).map((a) => (
+          <li key={a.index} className="muted">
+            {a.lane !== undefined ? t('global.graph.laneCame', { name: laneName(a.lane) }) : t('global.graph.laneCameAny')}
+            {a.from !== undefined && <> {t('global.graph.laneCameFrom', { name: nameOf(a.from) })}</>}
+            {' · '}<span title={fullStamp(a.at)}>{formatClock(a.at)}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="muted wf-progress-visit-sub">
+        {v.to !== undefined
+          ? t('global.graph.merged', { name: nameOf(v.to) })
+          : v.closed ? t('global.graph.runClosed') : t('global.graph.mergeWaiting')}
+      </div>
+    </>
   )
 }
 

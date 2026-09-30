@@ -256,6 +256,55 @@ export function graphBounds(wf: Workflow): Rect | undefined {
   return { x, y, w: Math.max(...xs) + NODE_W + 60 - x, h: bottom + NODE_H + 30 - y }
 }
 
+/** Подпись ребра для раскладки (`placeEdgeLabels`): кривая ребра, ширина текста и где подпись у петли возврата. */
+export interface EdgeLabelInput {
+  id: string
+  curve: Curve
+  /** Ширина подписи в мировых координатах (оценка по числу символов). */
+  width: number
+  /** Петля назад: подпись под кривой, иначе над ней. */
+  back: boolean
+}
+
+/** Высота строки подписи ребра и отступ базовой линии от кривой (над кривой у прямого, под — у петли). */
+const LABEL_H = 12
+const LABEL_ABOVE = 6
+const LABEL_BELOW = 14
+/** Где на кривой пробовать подпись: середина, потом ближе к концам. */
+const LABEL_TS = [0.5, 0.38, 0.62, 0.27, 0.73, 0.18, 0.82]
+
+function overlap(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+  return w > 0 && h > 0 ? w * h : 0
+}
+
+/**
+ * Точки подписей рёбер (центр по X, базовая линия по Y) без наложений: подпись идёт в середину кривой, а если там уже
+ * стоит другая подпись или нода (петли возврата двух параллельных путей проходят рядом), — сдвигается вдоль кривой.
+ * Свободного места нет — точка с наименьшим перекрытием. Порядок входа — приоритет: ранние подписи стоят в середине.
+ * `extra` — что ещё занято (плашки над нодами).
+ */
+export function placeEdgeLabels(labels: readonly EdgeLabelInput[], nodes: readonly WfNode[], extra: readonly Rect[] = []): Record<string, Point> {
+  const blocked: Rect[] = [...nodes.map(nodeRect), ...extra]
+  const out: Record<string, Point> = {}
+  for (const l of labels) {
+    let best: { p: Point; box: Rect; cost: number } | undefined
+    for (const t of LABEL_TS) {
+      const c = curvePoint(l.curve, t)
+      const p = { x: c.x, y: l.back ? c.y + LABEL_BELOW : c.y - LABEL_ABOVE }
+      const box = { x: p.x - l.width / 2 - 2, y: p.y - LABEL_H + 2, w: l.width + 4, h: LABEL_H }
+      const cost = blocked.reduce((sum, r) => sum + overlap(box, r), 0)
+      if (!best || cost < best.cost) best = { p, box, cost }
+      if (cost === 0) break
+    }
+    if (!best) continue
+    out[l.id] = best.p
+    blocked.push(best.box)
+  }
+  return out
+}
+
 /** Вид, в который целиком помещается граф, с полями `pad` экранных пикселей; крупнее 1:1 не увеличивает. */
 export function fitView(wf: Workflow, width: number, height: number, pad = 32): View {
   const b = graphBounds(wf)

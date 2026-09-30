@@ -10,6 +10,43 @@ import { runStagePositions } from './runStage'
 // стоит сразу на нескольких нодах, записи истории разных путей перемешаны по времени — последовательность внутри пути
 // восстанавливается по `StageChange.lane`.
 
+/**
+ * Запись прихода пути в слияние (`StageChange.arrived`): отметка «путь пришёл и ждёт», а не заход в `join` — заход у
+ * слияния один на поколение путей. Запись пути на ноде `join` без флага (снимок до поля, если миграция main не прошла) —
+ * тоже приход: других записей пути на `join` не бывает.
+ */
+export function isArrival(h: Pick<StageChange, 'arrived' | 'lane' | 'nodeId'>, graph?: Pick<WfSubflow, 'nodes'>): boolean {
+  if (h.arrived === true) return true
+  return h.lane !== undefined && graph?.nodes.find((n) => n.id === h.nodeId)?.type === 'join'
+}
+
+/** Слияние путей в истории (`joinMerges`). */
+export interface JoinMerge {
+  joinId: string
+  /** Индекс записи основного хода, вышедшей из слияния: своей записи у слияния нет. */
+  index: number
+  /** Номер слияния (заход в `join`): `visit` записей прихода, у записей до поля — порядковый у этой ноды. */
+  visit: number
+}
+
+/**
+ * Слияния по истории. Пока пути идут, основной ход стоит на `fork` и записей без `lane` не пишет; первая запись без
+ * `lane` после приходов путей — выход из слияния (`from: join`; у записей без `from` — тоже он).
+ */
+export function joinMerges(history: readonly StageChange[], graph?: Pick<WfSubflow, 'nodes'>): JoinMerge[] {
+  const out: JoinMerge[] = []
+  let pending: StageChange | undefined
+  history.forEach((h, index) => {
+    if (isArrival(h, graph)) pending = h
+    else if (h.lane === undefined && pending) {
+      const joinId = pending.nodeId
+      out.push({ joinId, index, visit: pending.visit ?? out.filter((m) => m.joinId === joinId).length + 1 })
+      pending = undefined
+    }
+  })
+  return out
+}
+
 /** Состояние ноды на графе: пройдена, стоит сейчас, слияние ждёт остальные пути, впереди. */
 export type ProgressNodeState = 'done' | 'current' | 'waiting' | 'todo'
 
@@ -166,8 +203,10 @@ export function runProgress(g: RunSource, workflow: Pick<Workflow, 'nodes' | 'ed
   const active = closed ? [] : positions.filter((p) => !p.arrived)
   const waiting = new Set(closed ? [] : positions.filter((p) => p.arrived).map((p) => p.nodeId))
   const currentIds = new Set(active.map((p) => p.nodeId))
+  // Заходы по истории (нет `stage.visits`): приход пути в слияние — не заход; заход в `join` — само слияние (`joinMerges`).
   const counted: Record<string, number> = {}
-  for (const h of history) counted[h.nodeId] = (counted[h.nodeId] ?? 0) + 1
+  for (const h of history) if (!isArrival(h, workflow)) counted[h.nodeId] = (counted[h.nodeId] ?? 0) + 1
+  for (const m of joinMerges(history, workflow)) counted[m.joinId] = (counted[m.joinId] ?? 0) + 1
   const nodes: Record<string, ProgressNode> = {}
   for (const n of workflow.nodes) {
     // Условие в истории не пишется: сколько раз через него прошли — по пройденным рёбрам из него.
@@ -243,6 +282,21 @@ export interface NodeVisit {
   current: boolean
   /** Путь разветвления, в котором был заход (`StageChange.lane`); нет — основной ход. */
   lane?: string
+  /**
+   * Только у слияния (`join`): заход — одно слияние, а это приходы путей в него, по времени. `at` захода — приход первого
+   * пути, `till` — само слияние (выход основного хода из `join`); пока пришли не все — «ждёт», `till` нет.
+   */
+  arrivals?: LaneArrival[]
+}
+
+/** Путь пришёл в слияние (запись `arrived`). */
+export interface LaneArrival {
+  index: number
+  /** Путь (`StageChange.lane`); нет — у старой записи без поля. */
+  lane?: string
+  at: number
+  /** Откуда пришёл: последняя нода пути. */
+  from?: string
 }
 
 type VisitSource = RunSource & Partial<Pick<GlobalTask, 'returns'>>
@@ -288,10 +342,12 @@ function prevInLane(history: readonly StageChange[], index: number): StageChange
 /**
  * Заходы в ноду по `stageHistory`, от старых к новым: когда пришли и ушли, откуда и с каким исходом, почему вернули.
  * Номер захода — `StageChange.visit`, у записей до поля — порядковый. `current` — нода «сейчас» или все ноды «сейчас»
- * (`RunProgress.currents`): у разветвления их несколько. «Ушли» считается внутри своего пути (`nextInLane`).
+ * (`RunProgress.currents`): у разветвления их несколько. «Ушли» считается внутри своего пути (`nextInLane`). У слияния —
+ * заход на слияние, приходы путей внутри него (`joinVisits`); `graph` узнаёт приход у записи без флага `arrived`.
  */
-export function nodeVisits(g: VisitSource, nodeId: string, current?: string | readonly string[]): NodeVisit[] {
+export function nodeVisits(g: VisitSource, nodeId: string, current?: string | readonly string[], graph?: Pick<WfSubflow, 'nodes'>): NodeVisit[] {
   const history = g.stageHistory ?? []
+  if (history.some((h) => h.nodeId === nodeId && isArrival(h, graph))) return joinVisits(g, nodeId, graph)
   const out: NodeVisit[] = []
   const closedAt = g.closedAt
   const isCurrent = current === undefined ? false : typeof current === 'string' ? current === nodeId : current.includes(nodeId)
@@ -325,6 +381,43 @@ export function nodeVisits(g: VisitSource, nodeId: string, current?: string | re
       ...(h.lane !== undefined ? { lane: h.lane } : {})
     })
   })
+  return out
+}
+
+/**
+ * Заходы в слияние: по одному на слияние поколения путей, а не на приход каждого пути (приходы — `arrivals`). Номер —
+ * `visit` записей прихода (номер слияния, которого ждут пути; у одного поколения общий), у записей до поля — порядковый.
+ * Слияние закрывает выход основного хода из `join` (`joinMerges`). Незакрытое — «ждёт» (`current`), пока прогон не закрыт.
+ */
+function joinVisits(g: VisitSource, nodeId: string, graph?: Pick<WfSubflow, 'nodes'>): NodeVisit[] {
+  const history = g.stageHistory ?? []
+  const merged = new Map(joinMerges(history, graph).filter((m) => m.joinId === nodeId).map((m) => [m.index, m]))
+  const out: NodeVisit[] = []
+  let open: NodeVisit | undefined
+  history.forEach((h, index) => {
+    if (h.nodeId === nodeId && isArrival(h, graph)) {
+      const from = h.from ?? prevInLane(history, index)?.nodeId
+      if (!open) {
+        open = { index, visit: h.visit ?? out.length + 1, at: h.at, closed: false, returned: false, current: false, arrivals: [] }
+        out.push(open)
+      }
+      open.arrivals?.push({ index, at: h.at, ...(h.lane !== undefined ? { lane: h.lane } : {}), ...(from !== undefined ? { from } : {}) })
+      return
+    }
+    if (open && merged.has(index)) {
+      open.till = h.at
+      open.to = h.nodeId
+      if (h.outcome !== undefined) open.leftWith = h.outcome
+      open = undefined
+    }
+  })
+  const last = out.at(-1)
+  if (last && last.till === undefined) {
+    if (g.closedAt !== undefined) {
+      last.closed = true
+      if (g.closedAt >= last.at) last.till = g.closedAt
+    } else last.current = true
+  }
   return out
 }
 
