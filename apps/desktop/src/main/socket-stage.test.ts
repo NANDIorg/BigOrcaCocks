@@ -10,7 +10,7 @@ import path from 'node:path'
 import {
   TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, legacyDefaultWorkflow, pipelineWorkflow, presetTaskType, resolveTaskType,
   runTypeInput, WORKFLOW_VERSION, type AgentInfo, type HumanRequest, type OrcaEvent, type Role, type Run, type StageChange, type StageDecision,
-  type Task, type WfStageInfo, type Workflow
+  type Task, type TaskType, type WfStageInfo, type Workflow
 } from '@orca-board/core'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { finishRunStage, handleRunWorkflowEvents, runGateDecision, type RunWorkflowDeps } from './workflow-run'
@@ -26,7 +26,9 @@ let agents: AgentInfo[]
 let typeWorkflow: Workflow
 
 /** Что вызвал сокет у движка прогона: `stage.finish` идёт через него, а не напрямую в store. */
-let finishCalls: Array<{ runId: string; summary?: string }>
+let finishCalls: Array<{ runId: string; summary?: string; nodeId?: string }>
+/** Типы проекта для `types list` (по умолчанию пусто: остальным тестам не нужны). */
+let taskTypes: TaskType[]
 
 /** Движок прогона без git и PTY: координатор всегда жив, воркеры — фейковые dispatch'и (ветка прогона задана в `startedRun`, но не существует). */
 function workflowDeps(): RunWorkflowDeps {
@@ -59,16 +61,16 @@ function fakeDeps(): ProjectDeps {
       return store.getTask(taskId)
     },
     // Как в index.ts: `finishRunStage` движка — эффекты новой ноды (задача-проверка) делает он, а не тест.
-    finishStage: (runId, summary) => {
-      finishCalls.push({ runId, ...(summary !== undefined ? { summary } : {}) })
-      return finishRunStage(workflowDeps(), runId, summary)
+    finishStage: (runId, summary, nodeId) => {
+      finishCalls.push({ runId, ...(summary !== undefined ? { summary } : {}), ...(nodeId !== undefined ? { nodeId } : {}) })
+      return finishRunStage(workflowDeps(), runId, summary, nodeId)
     },
     resolveRequest: (id, resolution) => store.resolveRequest(id, resolution),
     startCoordinator: () => 'pty_coord',
     deleteGlobalTask: () => ({ deleted: '', tasks: [] }),
     agents: () => agents,
     resolveRun: () => ({ ...resolveTaskType(presetTaskType('general')!), roles, workflow: typeWorkflow, source: 'default' }),
-    taskTypes: () => ({ taskTypes: [], defaultTypeId: 'general' }),
+    taskTypes: () => ({ taskTypes, defaultTypeId: 'general' }),
     runType: () => runTypeInput(presetTaskType('general')!),
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
@@ -116,6 +118,7 @@ function call<T = Record<string, unknown>>(method: string, params: Record<string
 
 beforeEach(async () => {
   finishCalls = []
+  taskTypes = []
   tmp = mkdtempSync(path.join(tmpdir(), 'orca-sock-stage-'))
   sockPath = process.platform === 'win32' ? `\\\\.\\pipe\\orca-sock-stage-${process.pid}-${Date.now()}` : path.join(tmp, 'orca.sock')
   store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
@@ -173,6 +176,7 @@ describe('stage finish', () => {
     const gate = store.listTasks().find((t) => t.gateFor?.runId === run.id)
     assert.deepEqual(gate?.gateFor, { runId: run.id, nodeId: 'review' }, 'эффект новой ноды сделан: задача-проверка создана без stage_changed-подписчика')
     assert.equal(events('workflow_blocked').length, 0)
+    assert.equal('lanes' in res.result, false, 'без разветвления ответ прежний — без lanes')
   })
 
   it('без подзадач и с незакрытой подзадачей — ошибка с подсказкой, этап не сдвинут', async () => {
@@ -237,6 +241,7 @@ describe('workflow show и global get по прогону', () => {
     assert.deepEqual(res.result.stage!.tasks, [task.id])
     assert.equal(res.result.stages[0].id, 'start')
     assert.equal(res.result.stages.some((x) => x.id === 'end'), true)
+    assert.equal('lanes' in res.result, false, 'без разветвления ответ прежний — без lanes')
   })
 
   it('граф не начат — scope run без stage; прогон старого формата — scope task', async () => {
@@ -437,5 +442,120 @@ describe('запросы к человеку без задачи (approval пр�
     assert.equal(store.getRequest(request.id)!.status, 'resolved')
     assert.equal((await call<HumanRequest[]>('request.list', { run: run.id })).result.length, 0)
     assert.equal((await call<HumanRequest[]>('request.list', { run: run.id, all: true })).result.length, 1)
+  })
+})
+
+/** Граф с разветвлением: «Бэкенд» и «Фронтенд» идут параллельно и сходятся в «Собрать», дальше — конец. */
+function forkWorkflow(): Workflow {
+  return {
+    version: WORKFLOW_VERSION,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'split', type: 'fork', title: 'Бэк и фронт', branches: [{ id: 'backend', label: 'Бэкенд' }, { id: 'frontend', label: 'Фронтенд' }], x: 220, y: 0 },
+      { id: 'work_be', type: 'work', title: 'Бэкенд', roleIds: ['developer'], x: 440, y: -100 },
+      { id: 'work_fe', type: 'work', title: 'Фронтенд', roleIds: ['developer'], x: 440, y: 100 },
+      { id: 'merge_paths', type: 'join', forkId: 'split', x: 660, y: 0 },
+      { id: 'end', type: 'end', x: 880, y: 0 }
+    ],
+    edges: [
+      { id: 'e_start', from: 'start', outcome: 'next', to: 'split' },
+      { id: 'e_be', from: 'split', outcome: 'backend', to: 'work_be' },
+      { id: 'e_fe', from: 'split', outcome: 'frontend', to: 'work_fe' },
+      { id: 'e_be_join', from: 'work_be', outcome: 'next', to: 'merge_paths' },
+      { id: 'e_fe_join', from: 'work_fe', outcome: 'next', to: 'merge_paths' },
+      { id: 'e_join', from: 'merge_paths', outcome: 'next', to: 'end' }
+    ]
+  }
+}
+
+interface LaneInfo { nodeId: string; type: string; lane?: string; laneTitle?: string; arrived?: boolean; tasks: string[] }
+interface ForkShowReply {
+  stage?: LaneInfo
+  lanes?: LaneInfo[]
+  stages: WfStageInfo[]
+  history?: Array<{ nodeId: string; lane?: string; from?: string; outcome?: string }>
+}
+interface ForkFinishReply extends StageReply { lanes?: Array<{ nodeId: string; lane: string; arrived: boolean }> }
+
+describe('разветвление: --stage и lanes', () => {
+  it('workflow show: lanes по путям, stage — первая открытая «Работа», у fork — branches, у join — forkId, в history — lane', async () => {
+    const run = startedRun(forkWorkflow())
+    const res = await call<ForkShowReply>('workflow.show', { run: run.id })
+    assert.equal(res.ok, true, res.error)
+    assert.deepEqual(res.result.lanes!.map((l) => [l.nodeId, l.lane, l.laneTitle, l.arrived]), [
+      ['work_be', 'split:backend', 'Бэкенд', false],
+      ['work_fe', 'split:frontend', 'Фронтенд', false]
+    ])
+    assert.equal(res.result.stage!.nodeId, 'work_be')
+    assert.equal(res.result.stage!.lane, 'split:backend')
+    assert.deepEqual(res.result.stages.find((x) => x.id === 'split')!.branches, [{ id: 'backend', label: 'Бэкенд' }, { id: 'frontend', label: 'Фронтенд' }])
+    assert.equal(res.result.stages.find((x) => x.id === 'merge_paths')!.forkId, 'split')
+    const laneEntries = res.result.history!.filter((h) => h.lane !== undefined)
+    assert.deepEqual(laneEntries.map((h) => [h.nodeId, h.lane, h.from, h.outcome]), [
+      ['work_be', 'split:backend', 'split', 'backend'],
+      ['work_fe', 'split:frontend', 'split', 'frontend']
+    ])
+    assert.equal(res.result.history!.some((h) => h.nodeId === 'split' && h.lane === undefined), true, 'вход в fork — запись без lane')
+  })
+
+  it('task create: без --stage при двух открытых этапах — ошибка со списком; --stage привязывает к этапу пути; чужой этап — ошибка', async () => {
+    const run = startedRun(forkWorkflow())
+    const missing = await call('task.create', { title: 'Без этапа', run: run.id })
+    assert.equal(missing.ok, false)
+    assert.match(missing.error!, /--stage обязателен: открыты этапы «Бэкенд» \(work_be\), «Фронтенд» \(work_fe\)/)
+    const fe = await call<Task>('task.create', { title: 'Экран', run: run.id, stage: 'work_fe' })
+    assert.equal(fe.ok, true, fe.error)
+    assert.deepEqual(fe.result.stageOf, { nodeId: 'work_fe', visit: 1 })
+    assert.equal(fe.result.roleId, 'developer', 'единственная роль этапа пути берётся без --role')
+    const closed = await call('task.create', { title: 'Мимо', run: run.id, stage: 'merge_paths' })
+    assert.equal(closed.ok, false)
+    assert.match(closed.error!, /этап «merge_paths».*сейчас не открыт.*workflow show/)
+    assert.match((await call('task.create', { title: 'Пусто', run: run.id, stage: true })).error!, /--stage требует id этапа/)
+  })
+
+  it('stage finish: --stage закрывает один путь, второй идёт дальше; последний путь без --stage — слияние и конец', async () => {
+    const run = startedRun(forkWorkflow())
+    const be = store.createTask({ title: 'API', roleId: 'developer', runId: run.id, stage: 'work_be' })
+    const fe = store.createTask({ title: 'Экран', roleId: 'developer', runId: run.id, stage: 'work_fe' })
+    done(be.id)
+    done(fe.id)
+    const ambiguous = await call('stage.finish', { run: run.id })
+    assert.equal(ambiguous.ok, false)
+    assert.match(ambiguous.error!, /--stage обязателен: открыты этапы «Бэкенд» \(work_be\), «Фронтенд» \(work_fe\)/)
+    assert.match((await call('stage.finish', { run: run.id, stage: true })).error!, /--stage требует id этапа/)
+
+    const first = await call<ForkFinishReply>('stage.finish', { run: run.id, stage: 'work_be', summary: 'API готово' })
+    assert.equal(first.ok, true, first.error)
+    assert.equal(first.result.finished, 'work_be')
+    assert.deepEqual(first.result.stage, { nodeId: 'split', visits: 1 }, 'прогон запаркован на fork')
+    assert.deepEqual(first.result.lanes, [
+      { nodeId: 'merge_paths', lane: 'split:backend', arrived: true },
+      { nodeId: 'work_fe', lane: 'split:frontend', arrived: false }
+    ])
+    assert.deepEqual(first.result.next, { type: 'join', nodeId: 'merge_paths' })
+    assert.deepEqual(finishCalls.at(-1), { runId: run.id, summary: 'API готово', nodeId: 'work_be' })
+
+    // Открыт один этап — --stage не нужен, как у линейного прогона.
+    const last = await call<ForkFinishReply>('stage.finish', { run: run.id, summary: 'экран готов' })
+    assert.equal(last.ok, true, last.error)
+    assert.equal(last.result.finished, 'work_fe')
+    assert.equal('lanes' in last.result, false, 'разветвление закрыто — lanes нет')
+    assert.deepEqual(last.result.next, { type: 'done', nodeId: 'end' })
+    assert.equal(store.getRun(run.id)!.lanes, undefined)
+  })
+
+  it('global get отдаёт lanes; types list — branches у fork', async () => {
+    const run = startedRun(forkWorkflow())
+    const g = await call<{ lanes?: Array<{ id: string; nodeId: string }> }>('global.get', { global: run.id })
+    assert.equal(g.ok, true, g.error)
+    assert.deepEqual(g.result.lanes!.map((l) => [l.id, l.nodeId]), [['split:backend', 'work_be'], ['split:frontend', 'work_fe']])
+
+    const general = presetTaskType('general')!
+    taskTypes = [{ ...general, settings: { ...general.settings, workflow: forkWorkflow() } }]
+    const types = await call<Array<{ stages: Array<{ id: string; branches?: string[] }> }>>('types.list', {})
+    assert.equal(types.ok, true, types.error)
+    const stages = types.result[0].stages
+    assert.deepEqual(stages.find((s) => s.id === 'split')!.branches, ['backend', 'frontend'])
+    assert.equal(stages.some((s) => s.id !== 'split' && 'branches' in s), false)
   })
 })
