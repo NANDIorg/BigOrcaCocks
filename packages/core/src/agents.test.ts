@@ -76,10 +76,13 @@ describe('invoke: argv агентов и флаги пользователя (ex
   /** Флаги пользователя: variadic-флаг в конце — он не должен оказаться рядом с промптом. */
   const extra = ['--search', '--add-dir', '/tmp/a b']
   const X = '<extra>'
+  /** Разделитель `--` перед промптом: ставится, только если есть флаги пользователя (codex). */
+  const D = '<--если-есть-extra>'
 
   /**
-   * Эталон argv каждого агента, записанный литералами: `X` — место флагов пользователя.
-   * Без `extraArgs` argv — тот же список без `X`, то есть ровно как до появления флагов.
+   * Эталон argv каждого агента, записанный литералами: `X` — место флагов пользователя, `D` — разделитель `--`,
+   * который появляется вместе с ними. Без `extraArgs` argv — тот же список без `X` и `D`, то есть ровно как до
+   * появления флагов.
    */
   const expected: Record<string, { command: string; min: string[]; full: string[] }> = {
     claude: {
@@ -90,7 +93,7 @@ describe('invoke: argv агентов и флаги пользователя (ex
         '--session-id', 'uuid-1', '--append-system-prompt', SYS, TASK
       ]
     },
-    codex: { command: 'codex', min: [X, BOTH], full: [X, '-m', 'M', '-c', 'model_reasoning_effort=high', BOTH] },
+    codex: { command: 'codex', min: [X, D, BOTH], full: [X, '-m', 'M', '-c', 'model_reasoning_effort=high', D, BOTH] },
     opencode: { command: 'opencode', min: [X, '--prompt', BOTH], full: [X, '--model', 'M', '--prompt', BOTH] },
     gemini: { command: 'gemini', min: [X, '-i', BOTH], full: [X, '-m', 'M', '-i', BOTH] },
     cursor: { command: 'cursor-agent', min: [X, BOTH], full: [X, '--model', 'M', BOTH] },
@@ -100,7 +103,8 @@ describe('invoke: argv агентов и флаги пользователя (ex
     goose: { command: 'goose', min: ['run', X, '--interactive', '--text', BOTH], full: ['run', X, '--interactive', '--text', BOTH] },
     shell: { command: '/bin/zsh', min: [X], full: [X] }
   }
-  const withExtra = (argv: string[], value: readonly string[]): string[] => argv.flatMap((a) => (a === X ? value : [a]))
+  const withExtra = (argv: string[], value: readonly string[]): string[] =>
+    argv.flatMap((a) => (a === X ? value : a === D ? (value.length ? ['--'] : []) : [a]))
 
   it('эталон есть для каждого агента реестра', () => {
     assert.deepEqual(Object.keys(expected), AGENTS.map((a) => a.id))
@@ -128,6 +132,19 @@ describe('invoke: argv агентов и флаги пользователя (ex
       assert.deepEqual(frozen, extra)
     })
   }
+
+  it('codex: variadic --image в флагах пользователя не съедает промпт — перед ним стоит "--"', () => {
+    // Проверено на живом codex 0.156.1: без `--` промпт уходил в `--image` как имя файла.
+    for (const opts of [min, full]) {
+      const { args } = getAgent('codex')!.invoke(SYS, TASK, { ...opts, extraArgs: ['--image', '/tmp/a.png'] })
+      assert.deepEqual(args.slice(-2), ['--', BOTH])
+      // `-m` и `-c` приложения остаются флагами, до разделителя.
+      assert.equal(args.lastIndexOf('--'), args.length - 2)
+      assert.ok(args.indexOf('--image') < args.indexOf('--'))
+    }
+    // Флагов нет — разделителя нет, argv прежний.
+    assert.deepEqual(getAgent('codex')!.invoke(SYS, TASK, min).args, [BOTH])
+  })
 
   it('promptChannel от extraArgs не зависит', () => {
     const channels = Object.fromEntries(AGENTS.map((a) => [a.id, promptChannel(a)]))

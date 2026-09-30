@@ -6,7 +6,7 @@ import { DICTS } from './i18n/dict'
 import { setLocale, t } from './i18n'
 import { checkExtraArgs, extraArgsSupported } from './extraArgsHints'
 import { commandPreview } from './commandPreview'
-import { agentChangePatch, withPatch } from './roleEdit'
+import { agentChangePatch, duplicatedRole, withPatch } from './roleEdit'
 
 afterEach(() => setLocale('ru'))
 
@@ -77,9 +77,16 @@ test('commandPreview — флаги пользователя сразу посл
 test('commandPreview — без флагов команда прежняя; неразобранные флаги заменяет пометка', () => {
   const plain = commandPreview(t, { agent: 'codex', model: 'gpt-5' }, 'worker', '‹задание›')
   assert.equal(commandPreview(t, { agent: 'codex', model: 'gpt-5', extraArgs: '  ' }, 'worker', '‹задание›'), plain)
+  // Пометка стоит на месте флагов, а разделитель `--` перед заданием (codex ставит его вместе с флагами пользователя)
+  // остаётся: превью показывает, каким был бы запуск, если бы флаги разобрались.
   assert.equal(
     commandPreview(t, { agent: 'codex', model: 'gpt-5', extraArgs: '--search "oops' }, 'worker', '‹задание›'),
-    plain.replace('codex ', 'codex ‹флаги не разобраны› ')
+    plain.replace('codex ', 'codex ‹флаги не разобраны› ').replace(' ‹skills/', ' -- ‹skills/')
+  )
+  // Разобранные флаги: variadic `--image` закрыт разделителем — как в реальном запуске.
+  assert.equal(
+    commandPreview(t, { agent: 'codex', model: 'gpt-5', extraArgs: '--image "a b.png"' }, 'worker', '‹задание›'),
+    "codex --image 'a b.png' -m gpt-5 -- ‹skills/worker.md› --- ‹задание›"
   )
 })
 
@@ -97,4 +104,15 @@ test('withPatch — флаги хранятся как введены, пуст�
 test('смена агента сбрасывает флаги запуска вместе с моделью и effort', () => {
   const r: Role = { id: 'dev', title: 'Dev', agent: 'claude', model: 'opus', effort: 'high', extraArgs: '--verbose', systemPrompt: 'p' }
   assert.deepEqual(withPatch(r, agentChangePatch('codex')), { id: 'dev', title: 'Dev', agent: 'codex', systemPrompt: 'p' })
+})
+
+test('дублирование роли переносит флаги запуска и остальные поля; оригинал не меняется', () => {
+  const r: Role = { id: 'dev', title: 'Dev', agent: 'codex', model: 'gpt-5', effort: 'low', systemPrompt: 'p', extraArgs: '--search --add-dir "/a b"' }
+  const copy = duplicatedRole(r, 'dev_2', 'Dev (копия)')
+  assert.deepEqual(copy, { ...r, id: 'dev_2', title: 'Dev (копия)' })
+  assert.equal(copy.extraArgs, '--search --add-dir "/a b"')
+  assert.equal(r.id, 'dev')
+  assert.equal(r.title, 'Dev')
+  // Роль без флагов остаётся без поля: пустой extraArgs не появляется.
+  assert.equal('extraArgs' in duplicatedRole({ id: 'a', title: 'A', agent: 'claude' }, 'b', 'B'), false)
 })

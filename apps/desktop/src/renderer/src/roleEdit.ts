@@ -27,3 +27,11 @@ export function agentChangePatch(agent: AgentKind): Partial<Role> {
 export function modelChangePatch(effort: string | undefined, model: string, efforts: readonly string[]): { model: string; effort: string | undefined } {
   return { model, effort: effort && efforts.includes(effort) ? effort : undefined }
 }
+
+/**
+ * Копия роли под новым id и названием: остальные поля, в том числе флаги запуска (`extraArgs`), переносятся как есть.
+ * Флаги у копии те же, что у оригинала, — пользователь сам решает, что менять.
+ */
+export function duplicatedRole(role: Role, id: string, title: string): Role {
+  return { ...role, id, title }
+}

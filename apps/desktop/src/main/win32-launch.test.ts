@@ -102,4 +102,53 @@ describe('win32Launch: флаги пользователя', () => {
     const args = [...Array.from({ length: 60 }, (_, i) => `--add-dir=C:\\repos\\project-${i}`), 'x'.repeat(CMD_LINE_LIMIT)]
     assert.deepEqual(win32Launch(exe, args).args, args)
   })
+
+  // Не проверено на живой Windows: разбор ниже — модель правил MSVCRT (`CommandLineToArgvW`) и cmd.exe (`^`),
+  // а не запуск настоящего cmd.exe. Она ловит регрессию схемы `cmdQuoteArg`, но не заменяет прогон на Windows.
+  it('cmdQuoteArg: типичные значения флагов проходят cmd.exe и разбор аргументов без потерь (модель)', () => {
+    /** Один слой экранирования cmd.exe: `^x` → `x`. */
+    const unescapeCmd = (line: string): string => line.replace(/\^(.)/g, '$1')
+    /** Разбор командной строки по правилам MSVCRT: `\` перед `"` парами, нечётный `\` экранирует кавычку. */
+    const argvParse = (line: string): string[] => {
+      const out: string[] = []
+      let cur = ''
+      let started = false
+      let inQuotes = false
+      for (let i = 0; i < line.length; i++) {
+        let slashes = 0
+        while (line[i] === '\\') { slashes++; i++ }
+        if (line[i] === '"') {
+          cur += '\\'.repeat(Math.floor(slashes / 2))
+          if (slashes % 2) cur += '"'
+          else inQuotes = !inQuotes
+          started = true
+        } else {
+          cur += '\\'.repeat(slashes)
+          if (slashes) started = true
+          if (i >= line.length) break
+          if (!inQuotes && (line[i] === ' ' || line[i] === '\t')) {
+            if (started) out.push(cur)
+            cur = ''
+            started = false
+          } else {
+            cur += line[i]
+            started = true
+          }
+        }
+      }
+      if (started) out.push(cur)
+      return out
+    }
+    const values = [
+      '{"model":"x","n":1}', // JSON: --settings '{"a":1}'
+      'C:\\Users\\me\\my dir\\', // путь с пробелом и завершающим слэшем
+      'a&b|c', 'say "hi"', '100%', '!x!', 'a^b', '(x)<y>', '--name=v w', 'Bash(git:*)', 'tab\there', ''
+    ]
+    for (const v of values) {
+      // Прямой запуск программы через cmd: один слой ^ снимает cmd.
+      assert.deepEqual(argvParse(unescapeCmd(cmdQuoteArg(v, false))), [v], JSON.stringify(v))
+      // Через .cmd-шим (`%*`): cmd разбирает аргументы второй раз — два слоя.
+      assert.deepEqual(argvParse(unescapeCmd(unescapeCmd(cmdQuoteArg(v, true)))), [v], JSON.stringify(v))
+    }
+  })
 })
