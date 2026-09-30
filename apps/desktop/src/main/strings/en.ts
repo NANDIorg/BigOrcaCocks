@@ -25,6 +25,7 @@ export default {
   'dialog.update.now': 'Update now',
   'dialog.update.whenIdle': 'When agents finish',
   'dialog.pickRepo': 'Choose a git repository',
+  'dialog.exportType': 'Export task type',
 
   'notify.question': 'Question',
   'notify.workflowBlocked': 'Workflow stopped',
@@ -70,10 +71,20 @@ export default {
   'role.modelNotString': 'role “{id}”: model must be a string',
   'role.effortNotString': 'role “{id}”: effort must be a string',
   'role.promptNotString': 'role “{id}”: system prompt must be a string',
+  'role.extraArgsNotString': 'role “{id}”: launch flags must be a string',
+  'role.extraArgsInvalid': 'role “{id}”: launch flags: {reason}',
 
   'assistant.notObject': 'assistant settings: an object is expected',
   'assistant.unknownAgent': 'assistant: unknown agent {agent}',
   'assistant.notString': 'assistant: field {field} must be a string',
+  'assistant.extraArgsInvalid': 'assistant: launch flags: {reason}',
+
+  'extraArgs.quote': 'unclosed quote {detail}',
+  'extraArgs.separator': 'the “--” token is not allowed: everything after it, including the app’s own flags, would be read as the task text',
+  'extraArgs.notFlag': 'the first item must be a flag (starting with “-”), not “{detail}”: only flags can be added, not a command',
+  'extraArgs.control': 'control character {detail}',
+  'extraArgs.length': 'the line is too long: {detail} characters, the maximum is {max}',
+  'extraArgs.count': 'too many arguments: {detail}, the maximum is {max}',
 
   'worker.cannotStart': 'the worker will not start: {reason}',
   'coordinator.cannotStart': 'the coordinator will not start: {reason}',
@@ -121,6 +132,7 @@ export default {
   'type.noRole': 'type “{title}” has no role “{role}”',
   'type.settingsNotObject': '{label}: an object is expected',
   'type.unknownPermission': '{label}: unknown permission mode: {mode}',
+  'type.exportFailed': 'could not save the task type file {path}: {reason}',
 
   'projectTypes.notObject': 'project types: an object is expected',
   'projectTypes.badIds': 'project types: typeIds must be an array of type ids',
@@ -185,6 +197,8 @@ export default {
   'review.stageBlocked': 'stage “{node}” of task {id} stopped again: {reason}',
   'git.runBranchFailed': 'could not create branch “{branch}” for the global task from “{base}”: {error}',
   'git.runBranchMissing': 'branch “{branch}” of the global task no longer exists in the repository — restore it or detach the branch from the task',
+  'git.noCommits': 'The repository has no commits yet (branch “{branch}” is empty), and Orca branches work off a commit. Create an initial commit: with the “Create initial commit” button in the app or manually with `git add -A && git commit -m "init"`',
+  'git.mergeTargetMissing': 'branch “{branch}” the task merges into does not exist — nothing was merged, the task branch and its commits are untouched: restore the branch and try again',
   'git.notRepo': '{path} is not a git repository',
   'git.dirtyTree': 'the project has uncommitted changes — the branch is not switched: commit or stash them first',
   'git.notFastForward': 'branch “{branch}” has diverged from {upstream}: fast-forward is not possible, combine the changes manually (merge or rebase)',

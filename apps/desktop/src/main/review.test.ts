@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, WORKFLOW_VERSION, type HumanRequest, type Workflow } from '@orca-board/core'
 import { acceptReview, mergeTaskBranch, resolveHumanRequest } from './review'
+import { OrcaError } from './i18n'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -217,5 +218,42 @@ describe('resolveHumanRequest', () => {
     assert.equal(out.request.status, 'resolved')
     assert.deepEqual(seen.map((r) => [r.id, r.resolution?.optionId]), [[req.id, 'no']])
     assert.equal(out.worker, undefined)
+  })
+})
+
+describe('мерж в репозиторий без коммитов', () => {
+  it('mergeTaskBranch на unborn-корне бросает git.noCommits до коммита и удаления: ветка и её коммиты на месте', () => {
+    const empty = path.join(tmp, 'empty')
+    execFileSync('git', ['init', '-q', '-b', 'main', empty])
+    // Ветка воркера без базы — как было до фикса: `worktree add -b` в unborn-корне даёт сироту, воркер в ней коммитит.
+    const worktree = path.join(tmp, 'wt')
+    git(empty, 'worktree', 'add', '-q', '-b', 'orca/t1', worktree)
+    writeFileSync(path.join(worktree, 'work.txt'), 'работа\n')
+    git(worktree, 'add', '-A')
+    git(worktree, 'commit', '-qm', 'работа воркера')
+    writeFileSync(path.join(worktree, 'tail.txt'), 'хвост\n')
+    const sha = git(empty, 'rev-parse', 'orca/t1')
+
+    assert.throws(
+      () => mergeTaskBranch(empty, { title: 'T', worktree, branch: 'orca/t1' }),
+      (e: unknown) => e instanceof OrcaError && e.key === 'git.noCommits'
+    )
+    assert.equal(git(empty, 'rev-parse', 'orca/t1'), sha, 'ветка воркера не удалена и не сдвинута')
+    assert.equal(existsSync(worktree), true)
+    assert.equal(git(worktree, 'status', '--porcelain'), '?? tail.txt', 'хвосты не закоммичены')
+  })
+
+  it('пропавшая целевая ветка — git.mergeTargetMissing, ничего не удалено', () => {
+    const worktree = path.join(tmp, 'wt')
+    git(repo, 'worktree', 'add', '-q', '-b', 'orca/t2', worktree)
+    writeFileSync(path.join(worktree, 'work.txt'), 'работа\n')
+    git(worktree, 'add', '-A')
+    git(worktree, 'commit', '-qm', 'работа')
+    assert.throws(
+      () => mergeTaskBranch(repo, { title: 'T', worktree, branch: 'orca/t2' }, { cwd: repo, branch: 'feature/gone' }),
+      (e: unknown) => e instanceof OrcaError && e.key === 'git.mergeTargetMissing'
+    )
+    assert.equal(branchExists('orca/t2'), true)
+    assert.equal(existsSync(worktree), true)
   })
 })

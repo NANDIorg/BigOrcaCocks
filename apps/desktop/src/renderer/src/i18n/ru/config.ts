@@ -185,6 +185,27 @@ export default {
   'roles.effortIsDefault': '{effort} — по умолчанию агента',
   'roles.effortUnsupported': 'Модель не поддерживает этот уровень',
   'roles.effortNone': 'агент не поддерживает выбор усилия',
+  'roles.extraArgs': 'Флаги запуска',
+  'roles.extraArgsPlaceholder': '--verbose --add-dir "/путь с пробелами"',
+  'roles.extraArgsHint':
+    'Дописываются сразу после команды, перед флагами приложения. Разбираются без shell: $VAR, ~, ; и | остаются как есть, ' +
+    'значения с пробелами берите в кавычки. Не вводите ключи и токены — флаги видны в списке процессов и хранятся ' +
+    'открытым текстом; используйте переменные окружения. Действуют со следующего запуска.',
+  'roles.extraArgsError.quote': 'Незакрытая кавычка {detail}.',
+  'roles.extraArgsError.separator': 'Отдельный «--» нельзя: всё после него, включая флаги приложения, агент принял бы за обычные аргументы.',
+  'roles.extraArgsError.notFlag': 'Первым должен идти флаг (начинается с «-»), а не «{detail}»: подкоманды здесь не задаются.',
+  'roles.extraArgsError.control': 'Управляющий символ {detail} во флагах недопустим.',
+  'roles.extraArgsError.length': 'Слишком длинно: {detail} символов, максимум {max}.',
+  'roles.extraArgsError.count': 'Слишком много аргументов: {detail}, максимум {max}.',
+  'roles.extraArgsQuoteBackslash':
+    'В двойных кавычках \\" — это сама кавычка, а не конец значения: путь с «\\» в конце возьмите в одинарные кавычки или уберите завершающий «\\».',
+  'roles.extraArgsUnsaved': 'Флаги не сохранятся, пока ошибка не исправлена: остаются прежние сохранённые. Остальные поля сохраняются.',
+  'roles.extraArgsReserved.model': '{flag} — модель задаётся полем «Модель»: флаг с ним конфликтует.',
+  'roles.extraArgsReserved.effort': '{flag} — усилие задаётся полем «Усилие»: флаг с ним конфликтует.',
+  'roles.extraArgsReserved.permission': '{flag} — режимом разрешений управляет приложение (у типа задачи — «Разрешения»): флаг может его обойти.',
+  'roles.extraArgsReserved.session': '{flag} — сессией управляет приложение: флаг ломает привязку статистики к запуску.',
+  'roles.extraArgsReserved.print': '{flag} — неинтерактивный режим: агент ответит один раз, и терминал завершится.',
+  'roles.extraArgsReserved.systemPrompt': '{flag} — системный промпт передаёт приложение (инструкции ниже): флаг может их заменить.',
   'roles.commandAria': 'Команда запуска',
   'roles.tabsAria': 'Инструкции',
   'roles.promptPlaceholder': 'Например: пиши тесты на каждое изменение. Встроенную инструкцию и правила доски сюда копировать не нужно.',
@@ -219,6 +240,7 @@ export default {
   'roles.ph.goal': '‹цель прогона›',
   'roles.ph.task': '‹задание›',
   'roles.ph.permission': '‹режим разрешений›',
+  'roles.ph.extraArgsBad': '‹флаги не разобраны›',
   'roles.ph.taskTitle': '‹название задачи›',
   'roles.ph.taskSpec': '‹описание задачи›',
 
@@ -264,6 +286,10 @@ export default {
   'taskType.makeDefault': 'По умолчанию',
   'taskType.makeDefaultTitle': 'Тип новых проектов и проектов, у которых свой тип по умолчанию удалён',
   'taskType.duplicate': 'Дублировать',
+  'taskType.export': 'Экспорт',
+  'taskType.exportTitle': 'Сохранить тип целиком в JSON-файл',
+  'taskType.exported':
+    'Сохранённая версия типа записана в файл {path} — в нём роли, промпты и правила как есть: проверьте, нет ли в них внутренних данных, прежде чем делиться.',
   'taskType.rename': 'Переименовать',
   'taskType.delete': 'Удалить',
   'taskType.lastTypeTitle': 'Последний тип удалить нельзя — сначала создайте другой',

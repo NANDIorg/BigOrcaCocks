@@ -9,6 +9,7 @@ import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, type Task } from '@orca-board/core'
 import { ensureRunBranch, mergeRunBranch, mergeTarget, reviewBase, RunBranchSync, runWorktreePath } from './run-branch'
 import { acceptReview, mergeTaskBranch } from './review'
+import { OrcaError } from './i18n'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -244,5 +245,19 @@ describe('mergeRunBranch: ветка глобальной задачи → её 
     const sha = git(repo, 'rev-parse', 'master')
     assert.match((mergeRunBranch(repo, { ...g, base: sha }, 'm') as { reason: string }).reason, /не ветка/)
     assert.match((mergeRunBranch(repo, { ...g, base: 'origin/nowhere' }, 'm') as { reason: string }).reason, /локальной ветки «nowhere» нет/)
+  })
+})
+
+describe('репозиторий без коммитов (unborn HEAD)', () => {
+  it('ensureRunBranch — git.noCommits: ни RunGit, ни worktree, ни ветки', () => {
+    const empty = path.join(tmp, 'empty')
+    execFileSync('git', ['init', '-q', '-b', 'main', empty])
+    writeFileSync(path.join(empty, 'a.txt'), 'a\n')
+    const store = newStore()
+    const run = store.createGlobalTask({ title: 'Фича' })
+    assert.throws(() => ensureRunBranch(store, empty, run.id), (e: unknown) => e instanceof OrcaError && e.key === 'git.noCommits' && e.message.includes('«main»'))
+    assert.equal(store.getRun(run.id)!.git, undefined)
+    assert.equal(existsSync(runWorktreePath(empty, run.id)), false)
+    assert.equal(git(empty, 'for-each-ref', 'refs/heads/'), '')
   })
 })

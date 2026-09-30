@@ -135,6 +135,15 @@ describe('resolveTaskType и снимок', () => {
     assert.deepEqual(input.snapshot, snap)
     assert.deepEqual(input.workflow, docsType().settings.workflow)
   })
+
+  it('снимок несёт флаги запуска роли (extraArgs) как введены', () => {
+    const t = docsType()
+    t.settings.roles![1] = { ...t.settings.roles![1], extraArgs: '  --search -s "workspace write" ' }
+    const snap = snapshotTaskType(t)
+    assert.equal(snap.roles[1].extraArgs, '  --search -s "workspace write" ')
+    assert.equal(snap.roles[0].extraArgs, undefined)
+    assert.equal(runTypeInput(t).snapshot.roles[1].extraArgs, '  --search -s "workspace write" ')
+  })
 })
 
 describe('resolveRunType: какой тип у прогона', () => {

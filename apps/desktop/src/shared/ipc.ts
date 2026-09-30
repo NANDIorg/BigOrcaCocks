@@ -74,7 +74,10 @@ export interface AppSettingsPatch {
   language?: AppLanguage
   notifications?: NotificationSettingsPatch
   updates?: Partial<UpdateSettings>
-  /** Пустая строка в model/effort/systemPrompt очищает поле; смена агента без model/effort сбрасывает их. */
+  /**
+   * Пустая строка в model/effort/systemPrompt/extraArgs очищает поле; смена агента без model/effort/extraArgs
+   * сбрасывает их. `extraArgs` — строка как введена, невалидную (`parseExtraArgs`) main отвергает.
+   */
   assistant?: Partial<AssistantSettings>
 }
 
@@ -236,7 +239,15 @@ export interface ProjectBranchInfo {
   detached: boolean
   /** Короткий sha HEAD; только при `detached`. */
   sha?: string
+  /** HEAD без коммитов. */
+  unborn?: true
 }
+
+/**
+ * Режим `projects:createInitialCommit`: `empty` — пустой коммит через plumbing, индекс и рабочее дерево не трогаются;
+ * `snapshot` — `git add -A` и коммит текущего состояния рабочего дерева.
+ */
+export type InitialCommitMode = 'empty' | 'snapshot'
 
 /** Локальная ветка в `ProjectBranchList.local`. */
 export interface ProjectLocalBranch {
@@ -383,6 +394,11 @@ export interface TaskTypeInput {
    * передан (пустой список — «закрыть») — сохраняется как есть.
    */
   workflowNotes?: WfMigrationNote[]
+}
+
+/** Итог «Экспорта типа»: куда сохранён файл. Диалог закрыли — вместо результата null. */
+export interface TaskTypeExportResult {
+  path: string
 }
 
 /** Создать (без `id`) или целиком заменить шаблон ноды; `updatedAt` ставит main. */
@@ -617,6 +633,13 @@ export interface OrcaApi {
      */
     checkoutBranch?(id: string, branch: string): Promise<ProjectBranchInfo>
     /**
+     * Создать начальный коммит в репозитории корня без коммитов (unborn HEAD): канал `projects:createInitialCommit`.
+     * Вызывается только по согласию человека после ошибки запуска `git.noCommits`. Идемпотентен: коммиты уже есть —
+     * возвращает актуальное состояние HEAD без изменений. Ошибки — `git.notRepo`, `git.opFailed`.
+     * Нет у старого main/preload — «перезапустите приложение».
+     */
+    createInitialCommit?(id: string, mode: InitialCommitMode): Promise<ProjectBranchInfo>
+    /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из
      * `detectTaskType`) — без диалога. Уже добавленный возвращается как есть.
@@ -678,6 +701,8 @@ export interface OrcaApi {
     /** Копия типа под новым id. */
     duplicate(id: string): Promise<TaskType>
     setDefault(id: string): Promise<TaskTypesState>
+    /** Диалог «Сохранить как» и запись файла типа целиком (формат — core/task-type-file.ts); закрыли диалог — null. */
+    export(id: string): Promise<TaskTypeExportResult | null>
   }
   /**
    * Библиотека шаблонов нод (docs/architecture.md → «Шаблоны нод»): глобальная, общая для всех типов задач. Вставка

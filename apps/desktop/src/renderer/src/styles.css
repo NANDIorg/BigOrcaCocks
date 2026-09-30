@@ -588,6 +588,10 @@ button:disabled { opacity: .45; cursor: default; }
   font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .roles-preview .k { color: var(--accent); }
+.roles-args input { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+.roles-args input:disabled { opacity: .55; cursor: not-allowed; }
+.roles-args .editor-error { margin-top: 0; overflow-wrap: anywhere; }
+.roles-args .roles-warn { display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
 .roles-tabs { display: flex; flex-wrap: wrap; gap: 4px 20px; border-bottom: 1px solid var(--line); }
 .roles-tabs button {
   background: transparent; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
@@ -864,6 +868,14 @@ button:disabled { opacity: .45; cursor: default; }
 .g-returns-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .g-modal-review { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .g-return-hint { font-size: 12px; margin-top: -6px; }
+/* «В репозитории нет коммитов» (InitialCommitDialog): поверх модалки координатора, варианты — кнопка и подсказка */
+.modal-backdrop.initial-commit-backdrop { z-index: 50; }
+.initial-commit-text { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.initial-commit-options { display: flex; flex-direction: column; gap: 12px; }
+.initial-commit-option { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.modal .initial-commit-option .btn-primary { height: auto; min-height: 40px; text-align: left; }
+.initial-commit-hint { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.initial-commit-warn { color: var(--col-input); }
 
 @media (max-width: 900px) {
   .g-board, .board { padding-left: 16px; padding-right: 16px; }
@@ -925,6 +937,7 @@ button:disabled { opacity: .45; cursor: default; }
 .branch-item-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .branch-item-mark { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .branch-note { padding: 6px 8px; border-radius: 8px; font-size: 12px; color: var(--col-input); background: color-mix(in srgb, var(--col-input) 12%, transparent); }
+.branch-unborn { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .branch-result {
   margin: 0; padding: 8px; border-radius: 8px; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap;
   overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; background: var(--frame); color: var(--muted);
@@ -1093,6 +1106,9 @@ button:disabled { opacity: .45; cursor: default; }
 .tpl-actions .btn-sm { display: inline-flex; align-items: center; gap: 6px; }
 .tpl-actions .btn-sm svg { width: 14px; height: 14px; }
 .tpl-actions .btn-sm.danger { color: var(--danger); border-color: rgba(239,107,107,.5); }
+/* Ошибка и итог «Экспорта» под шапкой: путь файла длинный и без пробелов — переносится в любом месте. */
+.tpl-status { margin: 0 0 14px; max-width: 80ch; overflow-wrap: anywhere; }
+.tpl-notice { color: var(--muted); font-size: 12px; }
 .tpl-rename {
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 14px;
   padding: 12px 14px; background: var(--side); border-radius: var(--radius);

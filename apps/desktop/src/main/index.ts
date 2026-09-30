@@ -23,18 +23,20 @@ import {
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
-import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
+import { exportTaskTypeToFile } from './task-type-export'
+import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -741,6 +743,20 @@ async function pickRepoFolder(): Promise<string | null> {
 }
 
 /**
+ * Диалог «Сохранить как» для файла экспорта типа; отмена — null. Перезапись существующего файла подтверждает сам
+ * диалог. Окна нет — диалог без родителя (как `showMessageBox` при выходе).
+ */
+async function pickExportFile(defaultName: string): Promise<string | null> {
+  const opts = {
+    title: mt('dialog.exportType'),
+    defaultPath: join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  return res.canceled || !res.filePath ? null : res.filePath
+}
+
+/**
  * `ipcMain.handle` для вызовов renderer: всё, что они меняют на доске, сделал человек в UI — так переходы
  * попадают в историю статусов с `human` (`withStatusSource`, действует до первого await обработчика).
  */
@@ -813,6 +829,11 @@ function registerIpc(): void {
     const root = projectRoot(id)
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
+  // Начальный коммит — только по кнопке человека после `git.noCommits`; неизвестный режим от renderer — пустой коммит,
+  // он не забирает файлы человека в историю.
+  handle('projects:createInitialCommit', (_e, id: string, mode: InitialCommitMode) =>
+    createInitialCommit(projectRoot(id), mode === 'snapshot' ? 'snapshot' : 'empty')
+  )
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
   // ProjectManager.remove — общий путь с сокетом.
@@ -835,6 +856,11 @@ function registerIpc(): void {
   handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
   handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
+  handle('taskTypes:export', (_e, id: string) => exportTaskTypeToFile({
+    export: (typeId) => projects.exportTaskType(typeId, { appVersion: app.getVersion(), exportedAt: new Date().toISOString() }),
+    chooseFile: pickExportFile,
+    write: writeFileAtomic
+  }, id))
   handle('nodeTemplates:list', () => projects.nodeTemplates())
   handle('nodeTemplates:save', (_e, input: NodeTemplateInput) => projects.saveNodeTemplate(input))
   handle('nodeTemplates:delete', (_e, id: string) => projects.deleteNodeTemplate(id))

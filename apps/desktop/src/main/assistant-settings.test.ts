@@ -13,6 +13,7 @@ import {
 import { libraryDefaultTypeId, migrateAssistant, PROJECTS_FILE_VERSION } from './task-types-migration'
 import { ProjectManager } from './projects'
 import { ASSISTANT_PERMISSION_MODE, assistantLaunch, loadedAssistantSettings, mergedAssistantSettings } from './assistant'
+import { ipcError, setMainLocale } from './i18n'
 
 const coordinator = (patch: Partial<Role> = {}): Role => ({ id: 'coordinator', title: 'Координатор', agent: 'claude', ...patch })
 const assistant = (patch: Partial<Role> = {}): Role => ({ id: 'assistant', title: 'Ассистент', agent: 'claude', ...patch })
@@ -190,6 +191,68 @@ describe('настройки ассистента: settings() и setSettings()',
     assert.deepEqual(loadedAssistantSettings({ agent: 'gpt', model: 5, effort: ' ', systemPrompt: 'p' }), { agent: 'claude', systemPrompt: 'p' })
     assert.deepEqual(loadedAssistantSettings('x'), DEFAULT_ASSISTANT_SETTINGS)
     assert.deepEqual(mergedAssistantSettings({ agent: 'codex', model: 'm' }, { model: ' o3 ' }), { agent: 'codex', model: 'o3' })
+  })
+})
+
+describe('флаги запуска ассистента (extraArgs)', () => {
+  let tmp: string
+  beforeEach(() => { tmp = mkdtempSync(path.join(tmpdir(), 'orca-assistant-')) })
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }))
+
+  it('сохраняются как введены (без trim), переживают перезапуск; пустая строка очищает', () => {
+    const pm = new ProjectManager(tmp)
+    const flags = '  --add-dir "../other repo"\n--verbose '
+    assert.deepEqual(pm.setSettings({ assistant: { model: 'opus', extraArgs: flags } }).assistant, { agent: 'claude', model: 'opus', extraArgs: flags })
+    assert.deepEqual(new ProjectManager(tmp).settings().assistant, { agent: 'claude', model: 'opus', extraArgs: flags })
+    assert.equal(pm.setSettings({ assistant: { effort: 'high' } }).assistant.extraArgs, flags, 'патч без extraArgs (старый renderer, CLI) флаги не трогает')
+    assert.deepEqual(pm.setSettings({ assistant: { extraArgs: ' \n ' } }).assistant, { agent: 'claude', model: 'opus', effort: 'high' })
+    assert.equal('extraArgs' in new ProjectManager(tmp).settings().assistant, false)
+  })
+
+  it('смена агента без флагов в патче сбрасывает их, с флагами — ставит; тот же агент — остаются', () => {
+    const pm = new ProjectManager(tmp)
+    pm.setSettings({ assistant: { extraArgs: '--verbose' } })
+    assert.equal(pm.setSettings({ assistant: { agent: 'claude' } }).assistant.extraArgs, '--verbose')
+    assert.deepEqual(pm.setSettings({ assistant: { agent: 'codex' } }).assistant, { agent: 'codex' })
+    assert.deepEqual(pm.setSettings({ assistant: { agent: 'claude', extraArgs: '--debug' } }).assistant, { agent: 'claude', extraArgs: '--debug' })
+  })
+
+  it('невалидная строка отвергается читаемой ошибкой (ru — сокету, язык интерфейса — в renderer), настройки не меняются', () => {
+    const pm = new ProjectManager(tmp)
+    pm.setSettings({ assistant: { extraArgs: '--verbose' } })
+    assert.throws(() => pm.setSettings({ assistant: { extraArgs: '--name "abc' } }), /ассистент: флаги запуска: незакрытая кавычка "/)
+    assert.throws(() => pm.setSettings({ assistant: { extraArgs: 'claude --verbose' } }), /ассистент: флаги запуска: первым должен идти флаг/)
+    assert.throws(() => pm.setSettings({ assistant: { extraArgs: '-a -- b' } }), /токен «--» недопустим/)
+    assert.throws(() => pm.setSettings({ assistant: { extraArgs: ['-a'] as unknown as string } }), /ассистент: поле extraArgs должно быть строкой/)
+    assert.equal(pm.settings().assistant.extraArgs, '--verbose')
+    setMainLocale('en')
+    try {
+      pm.setSettings({ assistant: { extraArgs: '--name "abc' } })
+      assert.fail('ошибки нет')
+    } catch (e) {
+      const shown = ipcError(e) as Error
+      assert.equal(shown.name, 'OrcaError[assistant.extraArgsInvalid]')
+      assert.equal(shown.message, 'assistant: launch flags: unclosed quote "')
+    } finally {
+      setMainLocale('ru')
+    }
+  })
+
+  it('испорченные флаги в файле выпадают, остальные настройки ассистента остаются', () => {
+    assert.deepEqual(loadedAssistantSettings({ agent: 'codex', model: 'm', extraArgs: '--name "abc' }), { agent: 'codex', model: 'm' })
+    assert.deepEqual(loadedAssistantSettings({ agent: 'codex', extraArgs: 5 }), { agent: 'codex' })
+    assert.deepEqual(loadedAssistantSettings({ agent: 'codex', extraArgs: ' --search ' }), { agent: 'codex', extraArgs: ' --search ' })
+    writeFileSync(path.join(tmp, 'projects.json'), JSON.stringify({
+      version: PROJECTS_FILE_VERSION, projects: [], activeId: null, settings: { assistant: { agent: 'codex', systemPrompt: 'p', extraArgs: 'exec' } }
+    }))
+    assert.deepEqual(new ProjectManager(tmp).settings().assistant, { agent: 'codex', systemPrompt: 'p' })
+  })
+
+  it('assistantLaunch: флаги разобраны в argv; нет флагов — нет поля; негодные — ошибка до запуска', () => {
+    const l = assistantLaunch({ agent: 'codex', extraArgs: '--search -c "a=b c"' }, 'СЛУЖЕБНАЯ')
+    assert.deepEqual(l.extraArgs, ['--search', '-c', 'a=b c'])
+    assert.equal('extraArgs' in assistantLaunch({ agent: 'codex', extraArgs: '  ' }, 'СЛУЖЕБНАЯ'), false)
+    assert.throws(() => assistantLaunch({ agent: 'codex', extraArgs: 'exec --full-auto' }, 'СЛУЖЕБНАЯ'), /ассистент: флаги запуска: первым должен идти флаг.*«exec»/)
   })
 })
 
