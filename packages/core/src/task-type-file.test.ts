@@ -198,8 +198,50 @@ describe('taskTypeFileName', () => {
   it('длинное название усечено до 60 символов, край после усечения тоже срезан', () => {
     assert.equal(taskTypeFileName('я'.repeat(200)), `task-type-${'я'.repeat(60)}.json`)
     assert.equal(taskTypeFileName(`${'a'.repeat(59)} ${'b'.repeat(20)}`), `task-type-${'a'.repeat(59)}.json`)
-    // Усечение по кодовым точкам: суррогатная пара не рвётся.
-    assert.equal(taskTypeFileName('😀'.repeat(100)), `task-type-${'😀'.repeat(60)}.json`)
+  })
+
+  /** Длина в байтах UTF-8 — так имя считает файловая система (ext4: не больше 255 байт). */
+  const bytes = (s: string): number => new TextEncoder().encode(s).length
+  /** Имя — валидный UTF-8: после кодирования и обратно строка та же, то есть ни один символ не разорван. */
+  const roundTrips = (s: string): boolean => new TextDecoder('utf-8', { fatal: true }).decode(new TextEncoder().encode(s)) === s
+
+  it('четырёхбайтовые символы: название усечено по байтам, имя вместе с .tmp помещается в 255 байт', () => {
+    // 60 эмодзи — 240 байт, имя с `.tmp` вышло бы в 259; по байтам остаётся 50 (200 байт). Суррогатная пара не рвётся.
+    for (const char of ['😀', '🎨']) {
+      const name = taskTypeFileName(char.repeat(100))
+      assert.equal(name, `task-type-${char.repeat(50)}.json`)
+      assert.equal(bytes(name), 215)
+      assert.ok(bytes(`${name}.tmp`) <= 255)
+      assert.ok(roundTrips(name))
+    }
+  })
+
+  it('трёхбайтовые символы (иероглифы): 60 символов — 180 байт, действует лимит по символам', () => {
+    const name = taskTypeFileName('漢'.repeat(100))
+    assert.equal(name, `task-type-${'漢'.repeat(60)}.json`)
+    assert.ok(bytes(`${name}.tmp`) <= 255)
+  })
+
+  it('кириллица в 60 символов (120 байт) по байтам не усекается', () => {
+    const title = 'Бэкенд'.repeat(10)
+    assert.equal(taskTypeFileName(title), `task-type-${title}.json`)
+    assert.equal(taskTypeFileName(`${title}хвост`), `task-type-${title}.json`)
+  })
+
+  it('смешанное название: действует то ограничение, что строже, символ на границе байтов не рвётся', () => {
+    // 49 эмодзи (196 байт) + «я» (2) = 198; следующий эмодзи (4) в 200 не помещается — отброшен целиком.
+    const mixed = taskTypeFileName(`${'🎨'.repeat(49)}я${'🎨'.repeat(30)}`)
+    assert.equal(mixed, `task-type-${'🎨'.repeat(49)}я.json`)
+    assert.ok(roundTrips(mixed))
+    // Латиница + эмодзи: 40 (40 байт) + 20 эмодзи (80) — лимит по символам (60) строже лимита по байтам.
+    assert.equal(taskTypeFileName(`${'a'.repeat(40)}${'🎨'.repeat(40)}`), `task-type-${'a'.repeat(40)}${'🎨'.repeat(20)}.json`)
+    // Край после усечения по байтам тоже срезан: 49 эмодзи + « » (дефис, 1 байт) + «я» = 199, дальше эмодзи не входит.
+    assert.equal(taskTypeFileName(`${'🎨'.repeat(49)}я ${'🎨'.repeat(30)}`), `task-type-${'🎨'.repeat(49)}я.json`)
+    for (const title of ['🎨'.repeat(100), '漢'.repeat(100), 'я'.repeat(200), `${'漢🎨я-a'.repeat(40)}`]) {
+      const name = taskTypeFileName(title)
+      assert.ok(bytes(`${name}.tmp`) <= 255, `${bytes(name)} байт: ${title.slice(0, 8)}…`)
+      assert.ok(roundTrips(name))
+    }
   })
 
   it('пустое название — task-type.json', () => {

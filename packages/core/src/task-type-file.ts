@@ -97,18 +97,45 @@ export function serializeTaskTypeFile(file: TaskTypeFile): string {
 /** Сколько символов названия типа попадает в имя файла. */
 const FILE_NAME_TITLE_LIMIT = 60
 
+/**
+ * Сколько байт UTF-8 названия типа попадает в имя файла. Предел имени файла на ext4 и большинстве ФС Linux — 255 байт,
+ * а не символов, и запись идёт через временный `<имя>.tmp` (`writeFileAtomic` в main): `task-type-` (10) + название +
+ * `.json` (5) + `.tmp` (4) должны уложиться в 255, то есть названию остаётся 236. 200 — с запасом под суффикс,
+ * который человек или ОС допишет к имени (` (1)`, `.bak`). 60 символов кириллицы (120 байт) и иероглифов (180) проходят
+ * целиком, режутся только четырёхбайтовые (эмодзи): 50 вместо 60.
+ */
+const FILE_NAME_TITLE_BYTE_LIMIT = 200
+
 /** Края названия в имени файла: дефисы от замены и точки (Windows не хранит имя с точкой на конце). */
 const FILE_NAME_EDGES = /^[-.]+|[-.]+$/g
 
 /**
+ * Длина символа (кодовой точки) в байтах UTF-8. Считается по кодовой точке, без `Buffer` и `TextEncoder`: модуль
+ * импортирует renderer, а в core нет типов ни node, ни DOM. Одиночный суррогат при записи станет U+FFFD — те же 3 байта.
+ */
+function utf8Length(char: string): number {
+  const code = char.codePointAt(0) ?? 0
+  if (code < 0x80) return 1
+  if (code < 0x800) return 2
+  return code < 0x10000 ? 3 : 4
+}
+
+/**
  * Имя файла типа: `task-type-<название>.json`. В названии запрещённые в именах файлов символы (`\ / : * ? " < > |`),
- * управляющие символы и пробелы заменяются на `-`, края (`-`, `.`) срезаются, длина — не больше 60 символов;
- * кириллица остаётся. Пустое название — `task-type.json`. Префикс заодно уводит от зарезервированных имён
- * Windows (`CON`, `NUL`…).
+ * управляющие символы и пробелы заменяются на `-`, края (`-`, `.`) срезаются, длина — не больше 60 символов и не
+ * больше 200 байт UTF-8 (действует то, что строже); кириллица остаётся. Пустое название — `task-type.json`. Префикс
+ * заодно уводит от зарезервированных имён Windows (`CON`, `NUL`…).
  */
 export function taskTypeFileName(title: string): string {
   const slug = title.replace(/[\\/:*?"<>|\u0000-\u001f\u007f-\u009f\s]+/g, '-').replace(FILE_NAME_EDGES, '')
-  // По кодовым точкам, а не по UTF-16: обрезка не разрывает суррогатную пару (эмодзи в названии).
-  const short = Array.from(slug).slice(0, FILE_NAME_TITLE_LIMIT).join('').replace(FILE_NAME_EDGES, '')
+  // По кодовым точкам, а не по UTF-16: обрезка не разрывает суррогатную пару (эмодзи в названии) и многобайтовый символ.
+  const chars: string[] = []
+  let bytes = 0
+  for (const char of Array.from(slug).slice(0, FILE_NAME_TITLE_LIMIT)) {
+    bytes += utf8Length(char)
+    if (bytes > FILE_NAME_TITLE_BYTE_LIMIT) break
+    chars.push(char)
+  }
+  const short = chars.join('').replace(FILE_NAME_EDGES, '')
   return short ? `task-type-${short}.json` : 'task-type.json'
 }

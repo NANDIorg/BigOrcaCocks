@@ -179,8 +179,10 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     - `buildTaskTypeFile(type, meta)` строит файл из глубоких копий (правка файла не меняет тип),
       `serializeTaskTypeFile(file)` — текст (UTF-8, отступ 2 пробела, `\n` в конце), `taskTypeFileName(title)` — имя
       `task-type-<название>.json`: `\ / : * ? " < > |`, управляющие символы и пробелы заменяются на `-`, края (`-`, `.`)
-      срезаются, название — не длиннее 60 символов, кириллица остаётся, пустое название — `task-type.json`. Префикс
-      уводит от зарезервированных имён Windows (`CON`, `NUL`…).
+      срезаются, название — не длиннее 60 символов и не длиннее 200 байт UTF-8 (действует то, что строже; символ на
+      границе не рвётся), кириллица остаётся, пустое название — `task-type.json`. Лимит в байтах — потому что предел
+      имени на ext4 и других ФС Linux — 255 байт, а запись идёт через `<имя>.tmp`: 60 эмодзи дали бы 259 байт и
+      `ENAMETOOLONG`. Префикс уводит от зарезервированных имён Windows (`CON`, `NUL`…).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files, snapshot?, auto?}` — показ человеку с «Работы» (`docs/workflow.md`; `snapshot {at, files, bytes}` и `auto` выставляет только main, не сокет);
