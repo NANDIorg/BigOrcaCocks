@@ -156,6 +156,31 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     `'snapshot'`) → тип проекта по умолчанию → `general` → первый тип библиотеки (`'default'`). `types` — вся
     библиотека; заготовка `general` из кода — только при пустом списке (старый main у renderer).
   - Вход для store — `runTypeInput(type)` → `RunTypeInput {typeId, snapshot, workflow?}` (`createRun`, `createGlobalTask`).
+  - **Файл экспорта типа** (`packages/core/src/task-type-file.ts`, без node-импортов) — один JSON со **снимком
+    эффективных настроек** типа, теми значениями, с которыми пойдёт глобальная задача. Файл самодостаточен: его можно
+    читать, хранить в git и передать коллеге, не зная встроенных значений приложения.
+    `TaskTypeFile {format, formatVersion, exportedAt, appVersion, type: {title, description?, settings}}`:
+    - `format` — метка `TASK_TYPE_FILE_FORMAT` (`orca-board.task-type`): отличает файл типа от файла графа (экспорт
+      воркфлоу) и от чужого JSON. `formatVersion` — версия **формата файла** (`TASK_TYPE_FILE_VERSION = 1`), не графа:
+      поднимается при несовместимой правке формата. У графа внутри своя версия (`workflow.version`), она сохраняется
+      как есть, и при загрузке такой граф подхватит `migrateWorkflow`.
+    - `exportedAt` (ISO 8601) и `appVersion` — `TaskTypeFileMeta`, их передаёт вызывающий код: функция чистая.
+    - `type.title`, `type.description` — как хранятся (после `trim`), без перевода заготовок: в файле данные, а не
+      подписи интерфейса. Пустого описания в файле нет.
+    - `type.settings` — `roles`, `workflow` и `permissionMode` есть **всегда**, раскрыты через `resolveTaskType`
+      (нет своих — `DEFAULT_ROLES`, `defaultWorkflow(roles)`, `auto`); `agentRules` — только непустые. Тип без своего
+      графа после загрузки файла получит зафиксированный граф — осознанная плата за самодостаточность.
+    - В графе сохраняются позиции нод и `node.column` (мягкая ссылка: неизвестную колонку исполнитель пропускает);
+      `node.templateId` **снимается** у всех нод, включая путь подзадачи `work.subflow`, — это ссылка на локальную
+      библиотеку шаблонов. Граф не валидируется: файл сломанного типа — тоже бэкап.
+    - **Не входит:** `id` типа, `workflowNotes`, признак «по умолчанию» и связи с проектами, шаблоны нод, состояние
+      агентов, прогоны и их снимки. Роли с выключенным на этой машине агентом остаются как есть.
+    - `file.type` по форме — `TaskTypeInput` без `id`: загрузка файла сводится к сохранению типа с обычной валидацией.
+    - `buildTaskTypeFile(type, meta)` строит файл из глубоких копий (правка файла не меняет тип),
+      `serializeTaskTypeFile(file)` — текст (UTF-8, отступ 2 пробела, `\n` в конце), `taskTypeFileName(title)` — имя
+      `task-type-<название>.json`: `\ / : * ? " < > |`, управляющие символы и пробелы заменяются на `-`, края (`-`, `.`)
+      срезаются, название — не длиннее 60 символов, кириллица остаётся, пустое название — `task-type.json`. Префикс
+      уводит от зарезервированных имён Windows (`CON`, `NUL`…).
   - Миграция проекта старого формата — `taskTypeFromLegacyProject(project, id)`: пользовательский тип «<имя проекта>»
     с его ролями, правилами и разрешениями; незаданный граф фиксируется как `defaultWorkflow(roles)`. Вызывает main.
 - `Dispatch { id, taskId, ptyId, startedAt, endedAt?, outcome?, summary?, files?, answer?, showcase?, stuckNotified?, roleId?, agent?, model?, sessionId? }` — `answer` — ответ задачи-ответа; `showcase {text?, files, snapshot?, auto?}` — показ человеку с «Работы» (`docs/workflow.md`; `snapshot {at, files, bytes}` и `auto` выставляет только main, не сокет);
