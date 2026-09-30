@@ -122,7 +122,8 @@ describe('позиции прогона', () => {
 
   it('разветвление — по позиции на путь в порядке Run.lanes; основная позиция — на fork', () => {
     const run: Source = {
-      stage: { nodeId: 'split', visits: { split: 1, be: 2, fe: 1, join: 1 } },
+      // Приход пути в join заходом не считается: счётчика join нет, пришедший путь ждёт 1-го слияния.
+      stage: { nodeId: 'split', visits: { split: 1, be: 2, fe: 1 } },
       lanes: [
         lane('backend', 'be', { stageInput: { feedback: 'API' }, stageTasksDoneAt: 7 }),
         lane('frontend', 'join', { arrivedAt: 9 })

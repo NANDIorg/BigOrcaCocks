@@ -75,8 +75,8 @@ function doneTask(s: TaskStore, runId: string, stage: string, roleId: string): s
 }
 
 /** Оба пути дошли до своих human: backend — через ревью, frontend — после «Работы». */
-function bothOnHuman() {
-  const ctx = forked()
+function bothOnHuman(p?: Persistence) {
+  const ctx = forked(p)
   const { s, run } = ctx
   doneTask(s, run.id, 'be', 'backend')
   doneTask(s, run.id, 'fe', 'frontend')
@@ -294,6 +294,102 @@ describe('разветвление: слияние (join)', () => {
   })
 })
 
+describe('разветвление: заходы в join', () => {
+  /** Оба пути пришли в слияние: сначала frontend, потом backend. */
+  function mergeOnce(ctx: ReturnType<typeof bothOnHuman>): void {
+    ctx.s.advanceRunStage(ctx.run.id, 'accept', { ...opts, nodeId: 'hum' })
+    ctx.s.advanceRunStage(ctx.run.id, 'accept', { ...opts, nodeId: 'humBe' })
+  }
+
+  it('заход в join — одно слияние, а не приход пути: после одного слияния 1, после второго прохода через fork — 2', () => {
+    const { s, run } = bothOnHuman()
+    s.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'hum' })
+    let r = s.getRun(run.id)!
+    assert.equal(r.stage!.visits.merge_paths, undefined, 'пришёл один путь — захода ещё нет')
+    assert.equal(s.runStages(run.id, opts)[1].visit, 1, 'пришедший путь ждёт первого слияния')
+    s.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'humBe' })
+    r = s.getRun(run.id)!
+    assert.equal(r.stage!.visits.merge_paths, 1)
+    // Второй проход: возврат с приёмки снова в fork, пути заново доходят до слияния.
+    s.advanceRunStage(run.id, 'reject', { ...opts, nodeId: 'check', feedback: 'ещё раз' })
+    doneTask(s, run.id, 'be', 'backend')
+    doneTask(s, run.id, 'fe', 'frontend')
+    s.finishStage(run.id, { ...opts, nodeId: 'be' })
+    s.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'rev' })
+    s.finishStage(run.id, { ...opts, nodeId: 'fe' })
+    s.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'humBe' })
+    assert.equal(s.getRun(run.id)!.stage!.visits.merge_paths, 1, 'приход первого пути второго поколения заходом не считается')
+    assert.equal(s.runStages(run.id, opts)[0].visit, 2, 'путь ждёт второго слияния')
+    s.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'hum' })
+    r = s.getRun(run.id)!
+    assert.equal(r.stage!.nodeId, 'check')
+    assert.equal(r.stage!.visits.merge_paths, 2)
+  })
+
+  it('запись прихода пути отличима от захода: arrived и номер слияния, общий у путей одного поколения', () => {
+    const ctx = bothOnHuman()
+    mergeOnce(ctx)
+    const r = ctx.s.getRun(ctx.run.id)!
+    const joins = r.stageHistory!.filter((h) => h.nodeId === 'merge_paths')
+    assert.deepEqual(joins.map((h) => [h.lane, h.arrived, h.visit]), [
+      ['split:frontend', true, 1],
+      ['split:backend', true, 1]
+    ])
+    assert.ok(r.stageHistory!.filter((h) => h.nodeId !== 'merge_paths').every((h) => !('arrived' in h)), 'у обычных переходов отметки нет')
+    const after = r.stageHistory!.at(-1)!
+    assert.deepEqual([after.nodeId, after.from, after.lane], ['check', 'merge_paths', undefined], 'выход из слияния — основной ход')
+  })
+
+  it('пустые пути (fork сразу в join) тоже не считаются заходом', () => {
+    const wf: Workflow = {
+      version: 2,
+      nodes: [
+        { id: 'start', type: 'start', ...n },
+        { id: 'split', type: 'fork', branches: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], ...n },
+        { id: 'wa', type: 'work', title: 'A', ...n },
+        { id: 'j', type: 'join', forkId: 'split', ...n },
+        { id: 'end', type: 'end', ...n }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'split' },
+        { id: 'e2', from: 'split', outcome: 'a', to: 'wa' },
+        { id: 'e3', from: 'split', outcome: 'b', to: 'j' },
+        { id: 'e4', from: 'wa', outcome: 'next', to: 'j' },
+        { id: 'e5', from: 'j', outcome: 'next', to: 'end' }
+      ]
+    }
+    const s = store()
+    const run = s.createRun('цель', undefined, wf)
+    s.enterRunStage(run.id, opts)
+    assert.equal(s.getRun(run.id)!.stage!.visits.j, undefined)
+    assert.deepEqual(s.getRun(run.id)!.stageHistory!.filter((h) => h.nodeId === 'j').map((h) => [h.arrived, h.visit]), [[true, 1]])
+    const t = s.createTask({ title: 'A', runId: run.id, roleId: 'developer' })
+    finish(s, t.id)
+    s.finishStage(run.id, opts)
+    assert.equal(s.getRun(run.id)!.stage!.visits.j, 1)
+  })
+
+  it('миграция: снимок от кода, считавшего приходы заходами, пересчитывается по истории', () => {
+    const p = memory()
+    const ctx = bothOnHuman(p)
+    mergeOnce(ctx)
+    // Как писал старый код: приходы — «1-й» и «2-й заход», без arrived, счётчик 2.
+    const saved = p.data!.runs!.find((r) => r.id === ctx.run.id)!
+    saved.stage!.visits.merge_paths = 2
+    let i = 0
+    for (const h of saved.stageHistory!) {
+      if (h.nodeId !== 'merge_paths') continue
+      delete h.arrived
+      h.visit = ++i
+    }
+    const loaded = store(p)
+    const r = loaded.getRun(ctx.run.id)!
+    assert.equal(r.stage!.visits.merge_paths, 1)
+    assert.deepEqual(r.stageHistory!.filter((h) => h.nodeId === 'merge_paths').map((h) => [h.arrived, h.visit]), [[true, 1], [true, 1]])
+    assert.equal(p.data!.runs!.find((x) => x.id === ctx.run.id)!.stage!.visits.merge_paths, 1, 'миграция сохранена')
+  })
+})
+
 describe('разветвление: human, gate и возвраты по пути', () => {
   it('два approval на разных нодах — два запроса; карточка — ошибка с кодом; решение одного двигает только свой путь', () => {
     const { s, run } = bothOnHuman()
@@ -427,6 +523,51 @@ describe('разветвление: блокировка, решения, стр
     assert.deepEqual(again.actions.map((a) => [a.nodeId, a.action.type]), [['rev', 'create_gate'], ['fe', 'start_stage']])
     loaded.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'rev' })
     assert.deepEqual(loaded.getRun(run.id)!.lanes!.map((l) => l.nodeId), ['humBe', 'fe'])
+  })
+})
+
+describe('разветвление: Run.stage на fork без lanes', () => {
+  it('потерянные пути заводятся заново от портов fork того же поколения: пути, stage_started, колонка', () => {
+    const p = memory()
+    const { run } = forked(p)
+    const saved = p.data!.runs!.find((r) => r.id === run.id)!
+    delete saved.lanes
+    const loaded = store(p)
+    const before = loaded.listEvents().length
+    const again = loaded.enterRunStage(run.id, opts)
+    assert.deepEqual(again.actions.map((a) => [a.nodeId, a.lane, a.action.type]), [
+      ['be', 'split:backend', 'start_stage'],
+      ['fe', 'split:frontend', 'start_stage']
+    ])
+    const r = loaded.getRun(run.id)!
+    assert.deepEqual(r.lanes!.map((l) => [l.id, l.forkVisit, l.nodeId]), [['split:backend', 1, 'be'], ['split:frontend', 1, 'fe']])
+    assert.equal(r.stage!.nodeId, 'split')
+    assert.equal(r.stage!.visits.split, 1, 'заход в fork не считается повторно')
+    assert.equal(r.stage!.visits.be, 2, 'первые ноды путей — новый заход')
+    const fresh = loaded.listEvents().slice(before)
+    assert.deepEqual(fresh.filter((e) => e.type === 'stage_started').map((e) => [e.payload.nodeId, e.payload.lane]), [
+      ['be', 'split:backend'], ['fe', 'split:frontend']
+    ])
+    assert.equal(p.data!.runs!.find((x) => x.id === run.id)!.lanes!.length, 2, 'пути сохранены')
+    // Повтор уже не заводит пути заново.
+    const n2 = loaded.listEvents().length
+    loaded.enterRunStage(run.id, opts)
+    assert.equal(loaded.listEvents().length, n2)
+  })
+
+  it('fork без путей в снимке графа — workflow_blocked с причиной, прогон не стоит молча', () => {
+    const p = memory()
+    const { run } = forked(p)
+    const saved = p.data!.runs!.find((r) => r.id === run.id)!
+    delete saved.lanes
+    const split = saved.workflow!.nodes.find((x) => x.id === 'split')!
+    if (split.type === 'fork') split.branches = []
+    const loaded = store(p)
+    const again = loaded.enterRunStage(run.id, opts)
+    assert.equal(again.actions[0].action.type, 'blocked')
+    const blocked = events(loaded, 'workflow_blocked').at(-1)!
+    assert.equal(blocked.payload.nodeId, 'split')
+    assert.match(String(blocked.payload.reason), /нет путей/)
   })
 })
 
