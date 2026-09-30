@@ -850,8 +850,8 @@ HELP `check` не меняются.
 
 Где что лежит: модель, валидация, переходы — `packages/core/src/workflow.ts`; области путей и позиции прогона —
 `packages/core/src/run-lanes.ts` (без node-импортов: его читает renderer); позиции путей, барьер `join` и решения по
-`nodeId` — store (`packages/core/src/store.ts`, тесты — `workflow-lanes.test.ts`). Эффекты по путям в main, `--stage` и
-`lanes` в сокете — следующие шаги фичи: до них main исполняет только первое действие (`RunStepResult.action`).
+`nodeId` — store (`packages/core/src/store.ts`, тесты — `workflow-lanes.test.ts`); эффекты по путям — движок main
+(`apps/desktop/src/main/workflow-run.ts`, тесты — «разветвление fork/join» в `workflow-run.test.ts`).
 
 **Ноды.**
 
@@ -935,6 +935,27 @@ fallback?, nodeId?)` — одна позиция, `runStages(runId, fallback?)` 
 `assertStageAcceptsTasks(runId, nodeId?)`, `stageDefaultRole(runId, nodeId?)`, `createTask({stage?})` — этап по id;
 `blockRunStage(runId, reason, nodeId?)`. Для прогона без путей всё ведёт себя как раньше: в снимке нет `lanes`, в payload —
 `lane` (тест «регрессия: прогон без fork» в `workflow-lanes.test.ts`).
+
+**Движок main** (`workflow-run.ts`) исполняет **список** действий перехода (`RunStepResult.actions`), по одному на позицию:
+
+- `runEffects` — эффекты по порядку; ошибка эффекта одного пути — `workflow_blocked` его ноды (`blockRunStage(…, nodeId)`), эффекты
+  соседних путей всё равно выполняются. «Работа» (`start_stage`) эффекта не делает, а отмечается: живого координатора нет —
+  `ensureCoordinator` **один раз** на все открытые «Работы» (его цель несёт блок «# Этап» на каждую, `workStages` в
+  `coordinator-resume.ts`); не запустился — один `workflow_blocked`, а не по пути.
+- `executeSteps` ведёт цепочку авто-шагов (`merge`, `git`) своего пути: переход по исходу — `advanceRunStage` с `nodeId` ноды,
+  где шаг выполнен, иначе внутри разветвления store не поймёт, чей путь двигать. Действие `join` — «путь ждёт», эффекта нет.
+- Позиция ноды сверяется `runPositionAt` (путь, пришедший в `join`, не в счёт), а не `Run.stage.nodeId`: при путях тот стоит на
+  `fork`. Так сверяют `currentEntry` (заход ноды для дедупликации задач), `gatePending`, `deciderCurrent`, `askDone`, решения
+  approval (`request.nodeId`; запрос без ноды — основная позиция) и `decision` — решение по ноде второго пути не считается «граф
+  ушёл дальше». Все решения идут в `advanceRun` с `nodeId` своей ноды.
+- Контекст для спек и approval — по пути (`historyFor`): сводки этапов (`taskContext`, плюс `lane` — оговорка про общую ветку),
+  пройденный путь решателя (`runPath`), «Итог этапа» approval пути — последняя сводка `stage finish` этого прохода пути, а не
+  `Run.summary`; показ и итоги подзадач — последней «Работы» этого пути (`lastWorkTasks`). У `human` после слияния — показ
+  последней «Работы» каждого пути и `Run.summary` из сводок путей.
+- `startRunWorkflow` (рестарт, «Запустить координатора») повторяет эффект каждой позиции — идемпотентно, как у линейного
+  прогона; `finishRunStage(deps, runId, summary?, nodeId?)` закрывает этап по id; `settleIdleRunStages` — по путям
+  (кандидаты — `hasIdleStage`: закрытые подзадачи у любой позиции).
+- «Подтвердить»/«Вернуть» на карточке при нескольких ждущих approval — `RunApprovalAmbiguousError` из store до решения: решать в Инбоксе.
 
 Как store ведёт пути (`moveRunStage` → `moveTrunk` / `moveLane`, барьер — `closeJoinedLanes`):
 

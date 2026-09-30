@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
-  DECISION_REASON_LIMIT, decisionOptions, globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec,
-  runDecisionTaskTitle, runGateTaskSpec, runGateTaskTitle, wfGitVars, wfNodeTitle, withStatusSource,
-  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunPathStep, type RunStageOptions, type RunTaskContext,
-  type StageDecision, type StageDecisionFallback, type Task, type TaskStore, type WfAction, type WfDecisionOption, type WfNode, type WfPort,
-  type Workflow
+  DECISION_REASON_LIMIT, decisionOptions, forkBranches, globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec,
+  runDecisionTaskTitle, runGateTaskSpec, runGateTaskTitle, runPositionAt, runPositions, wfGitVars, wfNodeTitle, withStatusSource,
+  type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunAction, type RunPathStep, type RunPosition,
+  type RunStageOptions, type RunStepResult, type RunTaskContext, type StageChange, type StageDecision, type StageDecisionFallback, type Task,
+  type TaskStore, type WfAction, type WfDecisionOption, type WfNode, type WfPort, type Workflow
 } from '@orca-board/core'
 import { gitCommit, gitPush, isBranchNameAcceptedByGit, removeWorktree } from './git'
 import type { MergeTargetOf } from './review'
@@ -20,6 +20,9 @@ import { showcaseMarkdown } from '../shared/showcase'
 // прогона в базу.
 // Подзадачи по графу прогона не ходят: каждая идёт по пути своей ноды «Работа» (`work.subflow`, по умолчанию
 // `defaultSubflow()`: воркер → мерж в ветку прогона → конец), его исполняет движок по подзадачам (`workflow.ts`, `Task.stage`).
+// Внутри разветвления (`fork` … `join`) позиций несколько (`Run.lanes`): переход store отдаёт список действий (`RunAction`),
+// эффекты исполняются по каждому, решение по ноде идёт с её `nodeId` — store двигает только путь на этой ноде. Позицию ноды
+// сверяет `runPositionAt`, а не `Run.stage` (при путях он стоит на `fork`).
 // Событие и задачу делят по `taskEngine`: здесь — только то, что он отдаёт прогону (проверки и вопросы этапов, подзадачи вне
 // этапа). Прогоны без `Run.workflowScope: 'run'` идут прежним движком (`workflow.ts`); этот модуль их не трогает.
 
@@ -84,8 +87,11 @@ function branchHead(deps: RunWorkflowDeps, run: Run): string | undefined {
   }
 }
 
-/** Что человек, проверка или решатель сказали при переходе: уходит в следующую «Работу», решение ветки — в историю. */
-type StageExtra = Pick<RunStageOptions, 'feedback' | 'images' | 'decision' | 'answers' | 'chosen'>
+/**
+ * Что человек, проверка или решатель сказали при переходе: уходит в следующую «Работу», решение ветки — в историю.
+ * `nodeId` — нода, на которой вынесено решение: внутри разветвления store двигает только путь на ней.
+ */
+type StageExtra = Pick<RunStageOptions, 'feedback' | 'images' | 'decision' | 'answers' | 'chosen' | 'nodeId'>
 
 /** Опции переходов store: роли и граф типа (запасные), коммит входа в этап и то, что человек или проверка сказали. */
 function stageOpts(deps: RunWorkflowDeps, runId: string, extra: StageExtra = {}): RunStageOptions {
@@ -113,8 +119,8 @@ export function startRunWorkflow(deps: RunWorkflowDeps, runId: string): void {
   if (run.workflowScope !== 'run') return
   withStatusSource('workflow', () => {
     try {
-      const { action } = deps.store.enterRunStage(runId, stageOpts(deps, runId))
-      executeSteps(deps, runId, action)
+      // Внутри разветвления — действие каждой позиции: повтор эффектов идемпотентен по каждому пути.
+      runEffects(deps, runId, deps.store.enterRunStage(runId, stageOpts(deps, runId)).actions)
     } catch (e) {
       deps.store.blockRunStage(runId, `воркфлоу не запустился: ${message(e)}`)
     }
@@ -122,54 +128,67 @@ export function startRunWorkflow(deps: RunWorkflowDeps, runId: string): void {
 }
 
 /**
- * Эффекты новой ноды после перехода, сделанного store. Ошибка эффекта не откатывает переход (позиция уже новая), а
- * становится `workflow_blocked`: вызывающий (сокет, IPC) не должен видеть провал перехода, которого не было.
+ * Эффекты новых нод после перехода, сделанного store: по действию на позицию (внутри разветвления — на каждый путь), по
+ * порядку. Ошибка эффекта не откатывает переход (позиция уже новая) и не мешает эффектам соседних путей, а становится
+ * `workflow_blocked` своей ноды: вызывающий (сокет, IPC) не должен видеть провал перехода, которого не было. Координатор
+ * для нескольких «Работ» сразу (вход в разветвление) запускается один раз — после эффектов всех путей.
  */
-function runEffects(deps: RunWorkflowDeps, runId: string, action: WfAction): void {
-  try {
-    executeSteps(deps, runId, action)
-  } catch (e) {
-    deps.store.blockRunStage(runId, `ошибка исполнителя воркфлоу: ${message(e)}`)
+function runEffects(deps: RunWorkflowDeps, runId: string, actions: readonly RunAction[]): void {
+  let stage: string | undefined
+  for (const a of actions) {
+    try {
+      const work = executeSteps(deps, runId, a)
+      stage ??= work
+    } catch (e) {
+      deps.store.blockRunStage(runId, `ошибка исполнителя воркфлоу: ${message(e)}`, a.nodeId)
+    }
   }
+  const run = deps.store.getRun(runId)
+  if (stage !== undefined && run) ensureCoordinator(deps, run, stage)
 }
 
-/** Исход текущей ноды прогона → переход по графу и эффекты новых нод. */
+/**
+ * Исход ноды прогона → переход по графу и эффекты новых нод. `extra.nodeId` — нода, где вынесено решение (обязательна
+ * внутри разветвления); нет — основная позиция, как раньше.
+ */
 export function advanceRun(deps: RunWorkflowDeps, runId: string, outcome: WfPort, extra: StageExtra = {}): void {
   withStatusSource('workflow', () => {
-    const { action } = deps.store.advanceRunStage(runId, outcome, stageOpts(deps, runId, extra))
-    runEffects(deps, runId, action)
+    const { actions } = deps.store.advanceRunStage(runId, outcome, stageOpts(deps, runId, extra))
+    runEffects(deps, runId, actions)
   })
 }
 
 /**
  * `stage finish` координатора (сокет `stage.finish`): этап «Работа» закрыт — переход по `next` и эффекты следующей ноды
  * (проверка, человек, git, мерж, конец). Единственный путь закрытия этапа: сам store эффектов не делает, поэтому сокет
- * не вызывает `store.finishStage` напрямую. Ошибки store (не все подзадачи закрыты, не «Работа») — с подсказкой, как есть.
- * Возвращает то, что сделал store: обновлённый прогон и действие новой ноды.
+ * не вызывает `store.finishStage` напрямую. Ошибки store (не все подзадачи закрыты, не «Работа», несколько открытых
+ * этапов без `nodeId`) — с подсказкой, как есть. `nodeId` — какой этап закрыть (`stage finish --stage`); нет —
+ * единственный открытый. Возвращает то, что сделал store: обновлённый прогон и действия новых позиций.
  */
-export function finishRunStage(deps: RunWorkflowDeps, runId: string, summary?: string): { run: Run; action: WfAction } {
+export function finishRunStage(deps: RunWorkflowDeps, runId: string, summary?: string, nodeId?: string): RunStepResult {
   return withStatusSource('workflow', () => {
-    const result = deps.store.finishStage(runId, { ...stageOpts(deps, runId), ...(summary?.trim() ? { summary } : {}) })
-    runEffects(deps, runId, result.action)
+    const result = deps.store.finishStage(runId, {
+      ...stageOpts(deps, runId), ...(summary?.trim() ? { summary } : {}), ...(nodeId !== undefined ? { nodeId } : {})
+    })
+    runEffects(deps, runId, result.actions)
     return result
   })
 }
 
 /**
  * Страховка на случай, когда координатор умер, не успев вызвать `stage finish` (раз в несколько секунд, как
- * `settleIdleRuns`): этапы с закрытыми подзадачами и мёртвым координатором закрываются без сводки, дальше — эффекты.
+ * `settleIdleRuns`): этапы с закрытыми подзадачами и мёртвым координатором закрываются без сводки (внутри разветвления —
+ * каждый путь отдельно), дальше — эффекты.
  */
 export function settleIdleRunStages(deps: RunWorkflowDeps): void {
   const settled = deps.store.settleIdleStages(deps.isAlive, (run) => stageOpts(deps, run.id))
-  for (const { runId, action } of settled) {
-    withStatusSource('workflow', () => {
-      try {
-        executeSteps(deps, runId, action)
-      } catch (e) {
-        deps.store.blockRunStage(runId, `ошибка исполнителя воркфлоу: ${message(e)}`)
-      }
-    })
-  }
+  for (const { runId, actions } of settled) withStatusSource('workflow', () => runEffects(deps, runId, actions))
+}
+
+/** Есть ли у прогона этап «Работа» с закрытыми подзадачами — кандидат для `settleIdleRunStages` (любая позиция). */
+export function hasIdleStage(run: Run): boolean {
+  return run.workflowScope === 'run' && run.closedAt === undefined &&
+    runPositions(run).some((p) => p.tasksDoneAt !== undefined && p.arrived === undefined)
 }
 
 /** Текст, который идёт в approval и в `stage_started` вместе с исходом: конфликт мержа или отказ git. */
@@ -179,115 +198,162 @@ interface Note {
 }
 
 /**
- * Выполнить действие ноды и, если ждать никого не нужно (слияние, git), пройти дальше по исходу. Любая ошибка эффекта —
- * `workflow_blocked` по `runId`, позиция остаётся.
+ * Выполнить действие позиции и, если ждать никого не нужно (слияние, git), пройти дальше по исходу — с `nodeId` этой
+ * ноды, чтобы внутри разветвления двигался только свой путь. Переход может дать несколько действий (после слияния граф
+ * сразу вошёл в новое разветвление) — они исполняются по очереди. Ошибка эффекта — `workflow_blocked` этой ноды, позиция
+ * остаётся. «Работу» не исполняет, а возвращает её ноду: координатор запускает `runEffects` один раз на все пути.
  */
-function executeSteps(deps: RunWorkflowDeps, runId: string, first: WfAction): void {
+function executeSteps(deps: RunWorkflowDeps, runId: string, first: RunAction): string | undefined {
   const { store } = deps
-  let action = first
-  let note: Note | undefined
+  const queue: Array<{ action: WfAction; note?: Note }> = [{ action: first.action }]
+  let stage: string | undefined
   for (let step = 0; step < MAX_STEPS; step += 1) {
+    const item = queue.shift()
+    if (!item) return stage
+    const { action, note } = item
     const run = store.getRun(runId)
-    if (!run) return
+    if (!run) return stage
     const node = graphOf(deps, runId).nodes.find((n) => n.id === action.nodeId)
+    const block = (reason: string): void => void store.blockRunStage(runId, reason, action.nodeId)
+    const next = (outcome: WfPort, extra: StageExtra, n?: Note): void => {
+      const { actions } = store.advanceRunStage(runId, outcome, stageOpts(deps, runId, { ...extra, nodeId: action.nodeId }))
+      queue.push(...actions.map((a) => ({ action: a.action, ...(n ? { note: n } : {}) })))
+    }
     switch (action.type) {
       case 'start_stage':
-        ensureCoordinator(deps, run)
-        return
+        stage ??= action.nodeId
+        break
       case 'create_ask':
         if (node?.type === 'ask') createAsk(deps, run, node, action.roleId)
-        return
+        break
       case 'create_gate':
         if (node?.type === 'gate') createGate(deps, run, node, action.roleId)
-        return
+        break
       case 'create_decision':
         if (node?.type === 'decision') createDecision(deps, run, node, action.roleId)
-        return
+        break
       case 'request_human':
         if (node?.type === 'human') requestHuman(deps, run, node, note)
-        return
+        break
       case 'merge': {
         const g = run.git
         if (!g) {
-          store.blockRunStage(runId, 'слияние в базу невозможно: у глобальной задачи нет ветки (глобальная задача начата до веток)')
-          return
+          block('слияние в базу невозможно: у глобальной задачи нет ветки (глобальная задача начата до веток)')
+          break
         }
         let result: ReturnType<typeof mergeRunBranch>
         try {
           result = mergeRunBranch(deps.repoRoot, g, `Merge orca run: ${globalTaskTitle(run)}`)
         } catch (e) {
-          store.blockRunStage(runId, `мерж не выполнен: ${message(e)}`)
-          return
+          block(`мерж не выполнен: ${message(e)}`)
+          break
         }
         if (result.kind === 'blocked') {
-          store.blockRunStage(runId, `нода «${node ? wfNodeTitle(node) : action.nodeId}»: ${result.reason}`)
-          return
+          block(`нода «${node ? wfNodeTitle(node) : action.nodeId}»: ${result.reason}`)
+          break
         }
-        note = result.kind === 'conflict' ? { title: 'Мерж не удался', text: result.error } : undefined
-        action = store.advanceRunStage(runId, result.kind === 'ok' ? 'ok' : 'conflict', stageOpts(deps, runId)).action
-        continue
+        next(result.kind === 'ok' ? 'ok' : 'conflict', {}, result.kind === 'conflict' ? { title: 'Мерж не удался', text: result.error } : undefined)
+        break
       }
       case 'git': {
         if (node?.type !== 'git') {
-          store.blockRunStage(runId, `нода «${action.nodeId}» не найдена в воркфлоу или это не нода «Git»`)
-          return
+          block(`нода «${action.nodeId}» не найдена в воркфлоу или это не нода «Git»`)
+          break
         }
         const result = runGitNode(deps, run, node, action)
         if (result.kind === 'blocked') {
-          store.blockRunStage(runId, result.reason)
-          return
+          block(result.reason)
+          break
         }
-        if (result.kind === 'error') {
-          note = { title: `Git-операция «${action.operation}» не удалась`, text: result.text }
-          if (!graphOf(deps, runId).edges.some((e) => e.from === node.id && e.outcome === 'error')) {
-            store.blockRunStage(runId, `нода «${wfNodeTitle(node)}»: ${result.text}; у ноды нет перехода «error» — добавьте его в воркфлоу (например, к человеку)`)
-            return
-          }
-        } else note = undefined
+        if (result.kind === 'error' && !graphOf(deps, runId).edges.some((e) => e.from === node.id && e.outcome === 'error')) {
+          block(`нода «${wfNodeTitle(node)}»: ${result.text}; у ноды нет перехода «error» — добавьте его в воркфлоу (например, к человеку)`)
+          break
+        }
         // Как замечания при reject: если `error` ведёт в «Работу», координатор увидит причину в `stage_started`.
-        action = store.advanceRunStage(runId, result.kind, stageOpts(deps, runId, result.kind === 'error' ? { feedback: result.text } : {})).action
-        continue
+        if (result.kind === 'error') next('error', { feedback: result.text }, { title: `Git-операция «${action.operation}» не удалась`, text: result.text })
+        else next('ok', {})
+        break
       }
       case 'done':
         // Граф дошёл до `end`: прогон закрыт, карточка в «Сделано», координатору ушёл `run_done` (store). Worktree
-        // ветки убирает `RunBranchSync`, когда в прогоне никто не работает.
-        return
+        // ветки убирает `RunBranchSync`, когда в прогоне никто не работает. Путь в `end` (граф в обход валидации) store
+        // сам превращает в `blocked`.
+        break
       case 'blocked':
         // Событие workflow_blocked уже отправил store.
-        return
+        break
+      case 'fork':
+        // Вход в разветвление store раскрывает сам: действия путей приходят отдельными позициями.
+        break
+      case 'join':
+        // Путь пришёл в слияние и ждёт остальные: эффекта нет, барьер — в store.
+        break
       case 'start_worker':
-        store.blockRunStage(runId, `нода «${action.nodeId}»: запуск воркера по подзадачам не относится к воркфлоу глобальной задачи`)
-        return
+        block(`нода «${action.nodeId}»: запуск воркера по подзадачам не относится к воркфлоу глобальной задачи`)
+        break
     }
   }
-  store.blockRunStage(runId, `больше ${MAX_STEPS} переходов подряд без ожидания — проверьте граф воркфлоу на цикл через мерж или git`)
+  store.blockRunStage(runId, `больше ${MAX_STEPS} переходов подряд без ожидания — проверьте граф воркфлоу на цикл через мерж или git`, first.nodeId)
+  return stage
 }
 
 // ---------- эффекты нод ----------
 
-/** «Работа»: координатор получил `stage_started` (его шлёт store); нет живого координатора — запускаем его заново. */
-function ensureCoordinator(deps: RunWorkflowDeps, run: Run): void {
+/**
+ * «Работа»: координатор получил `stage_started` (его шлёт store); нет живого координатора — запускаем его заново. Один
+ * запуск на все открытые «Работы»: его цель несёт блок «# Этап» на каждую (`resumeObjective`). `nodeId` — нода, которой
+ * достанется `workflow_blocked`, если запуск не удался.
+ */
+function ensureCoordinator(deps: RunWorkflowDeps, run: Run, nodeId?: string): void {
   if (run.coordinatorPtyId && deps.isAlive(run.coordinatorPtyId)) return
   try {
     deps.startCoordinator(run.id)
   } catch (e) {
-    deps.store.blockRunStage(run.id, `координатор не запустился: ${message(e)}. Запустить заново: orca-board global start --global ${run.id}`)
+    deps.store.blockRunStage(run.id, `координатор не запустился: ${message(e)}. Запустить заново: orca-board global start --global ${run.id}`, nodeId)
   }
 }
 
-/** Заход в текущую ноду прогона и момент входа в неё — чтобы найти задачу этого захода, а не прошлого. */
-function currentEntry(run: Run): { visit: number; at: number } {
-  const nodeId = run.stage?.nodeId
+/** Активная позиция прогона на ноде (основная или путь разветвления); путь, уже пришедший в слияние, не в счёт. */
+function positionAt(run: Run, nodeId: string | undefined): RunPosition | undefined {
+  if (nodeId === undefined) return undefined
+  const p = runPositionAt(run, nodeId)
+  return p && p.arrived === undefined ? p : undefined
+}
+
+/**
+ * Заход в ноду прогона и момент входа в неё — чтобы найти задачу этого захода, а не прошлого. Нода — позиция основного
+ * графа или пути разветвления; нет такой позиции — счётчик заходов как есть.
+ */
+function currentEntry(run: Run, nodeId: string): { visit: number; at: number } {
   const at = [...(run.stageHistory ?? [])].reverse().find((h) => h.nodeId === nodeId)?.at ?? 0
-  return { visit: nodeId ? run.stage?.visits[nodeId] ?? 1 : 1, at }
+  return { visit: positionAt(run, nodeId)?.visit ?? run.stage?.visits[nodeId] ?? 1, at }
+}
+
+/** Путь разветвления, в котором стоит нода (`RunLane`); нода вне разветвления — undefined. */
+function laneOf(run: Run, nodeId: string): { id: string; title: string } | undefined {
+  const lane = run.lanes?.find((l) => l.nodeId === nodeId)
+  if (!lane) return undefined
+  const fork = run.workflow?.nodes.find((n) => n.id === lane.forkId)
+  const title = fork?.type === 'fork' ? forkBranches(fork).find((b) => b.id === lane.branchId)?.label : undefined
+  return { id: lane.id, title: title ?? lane.branchId }
+}
+
+/**
+ * История прогона глазами ноды: вне разветвления — вся (как раньше), в пути — общие записи (до разветвления) и записи
+ * этого пути: записи соседних путей перемешаны по времени и к ноде не относятся.
+ */
+function historyFor(run: Run, nodeId: string): StageChange[] {
+  const history = run.stageHistory ?? []
+  const lane = laneOf(run, nodeId)
+  return lane ? history.filter((h) => h.lane === undefined || h.lane === lane.id) : history
 }
 
 /** Запуск воркера задачи этапа; не запустился — `workflow_blocked` прогона с командой повтора. */
-function startStageWorker(deps: RunWorkflowDeps, run: Run, task: Task, what: string): void {
+function startStageWorker(deps: RunWorkflowDeps, run: Run, task: Task, what: string, nodeId: string): void {
   try {
     deps.startWorker(task.id)
   } catch (e) {
-    deps.store.blockRunStage(run.id, `${what} ${task.id} «${task.title}» не запустилась: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`)
+    deps.store.blockRunStage(run.id, `${what} ${task.id} «${task.title}» не запустилась: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`, nodeId)
   }
 }
 
@@ -297,10 +363,14 @@ function needsStart(deps: RunWorkflowDeps, task: Task): boolean {
   return kind !== 'in_progress' && kind !== 'done' && kind !== 'review' && kind !== 'needs_input'
 }
 
-/** Что известно приложению о прогоне для спеки проверки и вопроса (`RunTaskContext`): цель, ветка с базой и сводки этапов. */
-function taskContext(deps: RunWorkflowDeps, run: Run, instructions: string | undefined): RunTaskContext {
+/**
+ * Что известно приложению о прогоне для спеки проверки и вопроса (`RunTaskContext`): цель, ветка с базой и сводки этапов.
+ * Нода в пути разветвления — сводки только общих этапов и этого пути, плюс название пути (оговорка про общую ветку).
+ */
+function taskContext(deps: RunWorkflowDeps, run: Run, nodeId: string, instructions: string | undefined): RunTaskContext {
   const nodes = graphOf(deps, run.id).nodes
-  const stages = (run.stageHistory ?? []).flatMap((h) => {
+  const lane = laneOf(run, nodeId)
+  const stages = historyFor(run, nodeId).flatMap((h) => {
     const node = nodes.find((n) => n.id === h.nodeId)
     return node && h.summary?.trim() ? [{ title: wfNodeTitle(node), summary: h.summary }] : []
   })
@@ -309,7 +379,8 @@ function taskContext(deps: RunWorkflowDeps, run: Run, instructions: string | und
     goal: run.objective,
     ...(run.git ? { branch: run.git.branch, base: run.git.base } : {}),
     ...(stages.length > 0 ? { stages } : {}),
-    ...(instructions?.trim() ? { instructions } : {})
+    ...(instructions?.trim() ? { instructions } : {}),
+    ...(lane ? { lane: lane.title } : {})
   }
 }
 
@@ -321,21 +392,21 @@ function createAsk(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { type
   const { store } = deps
   const role = deps.run(run.id).roles.find((r) => r.id === roleId)
   if (!role) {
-    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: нет роли «${roleId}» в типе задачи`)
+    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: нет роли «${roleId}» в типе задачи`, node.id)
     return
   }
-  const { visit } = currentEntry(run)
+  const { visit } = currentEntry(run, node.id)
   let task = store.listTasks().find((t) => t.runId === run.id && !t.gateFor && t.stageOf?.nodeId === node.id && t.stageOf.visit === visit)
   if (task && !needsStart(deps, task)) return
   task ??= store.createTask({
     title: runAskTaskTitle(wfNodeTitle(node), globalTaskTitle(run)),
-    spec: runAskTaskSpec(taskContext(deps, run, node.instructions)),
+    spec: runAskTaskSpec(taskContext(deps, run, node.id, node.instructions)),
     roleId: role.id,
     agent: role.agent,
     runId: run.id,
     stageOf: { nodeId: node.id, visit }
   })
-  startStageWorker(deps, run, task, 'задача-вопрос')
+  startStageWorker(deps, run, task, 'задача-вопрос', node.id)
 }
 
 /**
@@ -346,33 +417,36 @@ function createGate(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { typ
   const { store } = deps
   const role = deps.run(run.id).roles.find((r) => r.id === roleId)
   if (!role) {
-    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: нет роли «${roleId}» в типе задачи`)
+    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: нет роли «${roleId}» в типе задачи`, node.id)
     return
   }
   if (!run.git) {
-    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: у глобальной задачи нет ветки — проверять нечего (глобальная задача начата до веток)`)
+    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: у глобальной задачи нет ветки — проверять нечего (глобальная задача начата до веток)`, node.id)
     return
   }
-  const { at } = currentEntry(run)
+  const { at } = currentEntry(run, node.id)
   let gate = store.listTasks().find((t) => t.gateFor?.runId === run.id && t.gateFor.nodeId === node.id && t.createdAt >= at)
   if (gate && !needsStart(deps, gate)) return
   gate ??= store.createTask({
     title: runGateTaskTitle(wfNodeTitle(node), globalTaskTitle(run)),
-    spec: runGateTaskSpec(taskContext(deps, run, node.instructions)),
+    spec: runGateTaskSpec(taskContext(deps, run, node.id, node.instructions)),
     roleId: role.id,
     agent: role.agent,
     runId: run.id,
     gateFor: { runId: run.id, nodeId: node.id }
   })
-  startStageWorker(deps, run, gate, 'проверка')
+  startStageWorker(deps, run, gate, 'проверка', node.id)
 }
 
 type DecisionNode = Extract<WfNode, { type: 'decision' }>
 
-/** Пройденный путь по графу для задачи-решателя (последние записи `Run.stageHistory`, последняя — сама развилка). */
-function runPath(deps: RunWorkflowDeps, run: Run): RunPathStep[] {
+/**
+ * Пройденный путь по графу для задачи-решателя (последние записи `Run.stageHistory`, последняя — сама развилка). Развилка
+ * в пути разветвления — без записей соседних путей (`historyFor`).
+ */
+function runPath(deps: RunWorkflowDeps, run: Run, nodeId: string): RunPathStep[] {
   const nodes = graphOf(deps, run.id).nodes
-  return (run.stageHistory ?? []).slice(-30).map((h) => {
+  return historyFor(run, nodeId).slice(-30).map((h) => {
     const node = nodes.find((n) => n.id === h.nodeId)
     return {
       title: h.title ?? (node ? wfNodeTitle(node) : h.nodeId),
@@ -385,7 +459,7 @@ function runPath(deps: RunWorkflowDeps, run: Run): RunPathStep[] {
 
 /** Задача-решатель этого захода в развилку (`gateFor` на ноду, создана после входа в неё); нет — undefined. */
 function currentDecider(deps: RunWorkflowDeps, run: Run, nodeId: string): Task | undefined {
-  const { at } = currentEntry(run)
+  const { at } = currentEntry(run, nodeId)
   return deps.store.listTasks().filter((t) => t.gateFor?.runId === run.id && t.gateFor.nodeId === nodeId && t.createdAt >= at).at(-1)
 }
 
@@ -404,7 +478,7 @@ function createDecision(deps: RunWorkflowDeps, run: Run, node: DecisionNode, rol
   const { store } = deps
   const role = deps.run(run.id).roles.find((r) => r.id === roleId)
   if (!role) {
-    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: нет роли «${roleId}» в типе задачи`)
+    store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: нет роли «${roleId}» в типе задачи`, node.id)
     return
   }
   let decider = currentDecider(deps, run, node.id)
@@ -412,10 +486,10 @@ function createDecision(deps: RunWorkflowDeps, run: Run, node: DecisionNode, rol
   decider ??= store.createTask({
     title: runDecisionTaskTitle(wfNodeTitle(node), globalTaskTitle(run)),
     spec: runDecisionTaskSpec({
-      ...taskContext(deps, run, node.instructions),
+      ...taskContext(deps, run, node.id, node.instructions),
       question: node.question,
       options: decisionOptions(node),
-      path: runPath(deps, run)
+      path: runPath(deps, run, node.id)
     }),
     roleId: role.id,
     agent: role.agent,
@@ -445,7 +519,7 @@ function requestDecision(
 ): HumanRequest {
   const options = decisionOptions(node)
   const note = extra.agentNote?.trim()
-  const stages = taskContext(deps, run, undefined).stages ?? []
+  const stages = taskContext(deps, run, node.id, undefined).stages ?? []
   const body = [
     `**Вопрос:** ${node.question.trim()}`,
     `**Варианты:**\n${options.map((o) => `- ${o.label}${o.description?.trim() ? ` — ${o.description.trim()}` : ''}`).join('\n')}`,
@@ -462,14 +536,45 @@ function requestDecision(
   })
 }
 
-/** Подзадачи последнего закрытого захода «Работы»: их итоги и показ человек видит на следующей ноде `human`. */
-function lastWorkTasks(deps: RunWorkflowDeps, run: Run): Task[] {
+/**
+ * Подзадачи последнего закрытого захода «Работы»: их итоги и показ человек видит на следующей ноде `human`. Нода в пути
+ * разветвления — последняя «Работа» этого пути. Нода после слияния, а последняя «Работа» была в путях, — последняя
+ * «Работа» каждого пути этого разветвления: человек решает по итогам всех путей.
+ */
+function lastWorkTasks(deps: RunWorkflowDeps, run: Run, nodeId: string): Task[] {
   const nodes = graphOf(deps, run.id).nodes
-  const entry = [...(run.stageHistory ?? [])].reverse().find((h) => nodes.find((n) => n.id === h.nodeId)?.type === 'work')
-  if (!entry) return []
-  return deps.store.listTasks().filter(
-    (t) => t.runId === run.id && !t.gateFor && t.stageOf?.nodeId === entry.nodeId && t.stageOf.visit === (entry.visit ?? 1)
-  )
+  const isWork = (h: StageChange): boolean => nodes.find((n) => n.id === h.nodeId)?.type === 'work'
+  const history = historyFor(run, nodeId)
+  let last = history.length - 1
+  while (last >= 0 && !isWork(history[last])) last -= 1
+  if (last < 0) return []
+  let entries = [history[last]]
+  if (history[last].lane !== undefined && !laneOf(run, nodeId)) {
+    // Начало этого прохода через разветвление — первая запись пути после последней общей записи перед ним.
+    let since = last
+    while (since > 0 && history[since - 1].lane !== undefined) since -= 1
+    const perLane = new Map<string, StageChange>()
+    for (const h of history.slice(since, last + 1)) if (h.lane !== undefined && isWork(h)) perLane.set(h.lane, h)
+    entries = [...perLane.values()]
+  }
+  return deps.store.listTasks().filter((t) => t.runId === run.id && !t.gateFor && entries.some(
+    (e) => t.stageOf?.nodeId === e.nodeId && t.stageOf.visit === (e.visit ?? 1)
+  ))
+}
+
+/**
+ * Сводка этапа для approval ноды: вне разветвления — `Run.summary` (после слияния это сводки всех путей), в пути —
+ * последняя сводка `stage finish` этого пути: `Run.summary` там принадлежит общим этапам или соседу.
+ */
+function summaryFor(run: Run, nodeId: string): string | undefined {
+  const lane = laneOf(run, nodeId)
+  if (!lane) return run.summary?.text.trim() || undefined
+  // Только этот проход через разветвление: пока пути идут, общих записей нет — первая общая с конца и есть вход в `fork`.
+  for (const h of [...(run.stageHistory ?? [])].reverse()) {
+    if (h.lane === undefined) return undefined
+    if (h.lane === lane.id && h.summary?.trim()) return h.summary.trim()
+  }
+  return undefined
 }
 
 /**
@@ -479,13 +584,13 @@ function lastWorkTasks(deps: RunWorkflowDeps, run: Run): Task[] {
  */
 function requestHuman(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { type: 'human' }>, note?: Note): void {
   const { store } = deps
-  const tasks = lastWorkTasks(deps, run)
+  const tasks = lastWorkTasks(deps, run, node.id)
   const dispatches = tasks.flatMap((t) => {
     const d = t.dispatchId ? store.getDispatch(t.dispatchId) : undefined
     return d?.outcome === 'done' ? [{ task: t, dispatch: d }] : []
   })
   const withShowcase = dispatches.filter((x) => x.dispatch.showcase)
-  const summary = run.summary?.text.trim()
+  const summary = summaryFor(run, node.id)
   const body = [
     node.instructions?.trim(),
     note ? `**${note.title}:**\n\n\`\`\`\n${note.text}\n\`\`\`` : undefined,
@@ -541,19 +646,25 @@ function runGitNode(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { typ
 
 // ---------- решения человека и проверки ----------
 
-/** Решение approval уровня прогона (нода `human`): переход по исходу, если прогон всё ещё стоит на этой ноде. */
+/**
+ * Решение approval уровня прогона (нода `human`): переход по исходу, если прогон всё ещё стоит на этой ноде. Нода —
+ * `request.nodeId` (внутри разветвления каждый путь ждёт свой approval); запрос без ноды (старый) — основная позиция.
+ */
 function runApprovalResolved(deps: RunWorkflowDeps, request: HumanRequest): void {
   const run = deps.store.getRun(request.runId)
   const action = request.resolution?.action
   if (!run || run.workflowScope !== 'run' || !run.stage || (action !== 'accept' && action !== 'reject')) return
-  if (request.nodeId !== undefined && run.stage.nodeId !== request.nodeId) return
-  if (graphOf(deps, run.id).nodes.find((n) => n.id === run.stage!.nodeId)?.type !== 'human') return
+  const nodeId = request.nodeId ?? (run.lanes?.length ? undefined : run.stage.nodeId)
+  if (nodeId === undefined || !positionAt(run, nodeId)) return
+  if (graphOf(deps, run.id).nodes.find((n) => n.id === nodeId)?.type !== 'human') return
   const text = request.resolution?.text?.trim() || undefined
   const images = request.resolution?.images
   try {
-    advanceRun(deps, run.id, action, action === 'accept' ? (text ? { decision: text } : {}) : text ? { feedback: text, ...(images?.length ? { images } : {}) } : {})
+    advanceRun(deps, run.id, action, {
+      nodeId, ...(action === 'accept' ? (text ? { decision: text } : {}) : text ? { feedback: text, ...(images?.length ? { images } : {}) } : {})
+    })
   } catch (e) {
-    deps.store.blockRunStage(run.id, `ошибка исполнителя воркфлоу: ${message(e)}`)
+    deps.store.blockRunStage(run.id, `ошибка исполнителя воркфлоу: ${message(e)}`, nodeId)
   }
 }
 
@@ -613,6 +724,7 @@ export function returnRun(deps: RunWorkflowDeps, runId: string, text: string, im
 function decideRun(deps: RunWorkflowDeps, runId: string, decide: (runId: string) => GlobalTask): GlobalTask {
   const { store } = deps
   if (!isRunScope(store, runId)) return decide(runId)
+  // Ждут несколько approval (пути разветвления) — store откажет `RunApprovalAmbiguousError` до решения.
   const pending = store.pendingRequests(runId).find((r) => r.taskId === undefined && r.kind === 'approval')
   decide(runId)
   const request = pending ? store.getRequest(pending.id) : undefined
@@ -626,13 +738,13 @@ export function isRunGate(task: Pick<Task, 'gateFor'> | undefined): boolean {
 }
 
 /**
- * Проверка ещё должна вынести решение: прогон стоит на её ноде и это последняя проверка этой ноды (после `reject` →
- * «Работа» → новая проверка старая уже не в счёт).
+ * Проверка ещё должна вынести решение: прогон стоит на её ноде (основная позиция или путь разветвления) и это последняя
+ * проверка этой ноды (после `reject` → «Работа» → новая проверка старая уже не в счёт).
  */
 function gatePending(deps: RunWorkflowDeps, gate: Task): boolean {
   const { store } = deps
   const run = gate.gateFor?.runId !== undefined ? store.getRun(gate.gateFor.runId) : undefined
-  if (!run || !gate.gateFor || run.stage?.nodeId !== gate.gateFor.nodeId || run.closedAt !== undefined) return false
+  if (!run || !gate.gateFor || !positionAt(run, gate.gateFor.nodeId) || run.closedAt !== undefined) return false
   const latest = store.listTasks().filter((t) => t.gateFor?.runId === run.id && t.gateFor.nodeId === gate.gateFor!.nodeId).at(-1)
   return latest?.id === gate.id
 }
@@ -655,12 +767,19 @@ export function runGateDecision(deps: RunWorkflowDeps, gateTaskId: string, outco
   }
   if (!gatePending(deps, gate)) {
     const run = mustRun(deps, runId)
-    const node = run.stage ? graphOf(deps, runId).nodes.find((n) => n.id === run.stage!.nodeId) : undefined
-    const where = node ? `на этапе «${wfNodeTitle(node)}»` : 'не на этапе проверки'
+    const nodes = graphOf(deps, runId).nodes
+    const titles = runPositions(run).flatMap((p) => {
+      const node = nodes.find((n) => n.id === p.nodeId)
+      return node ? [`«${wfNodeTitle(node)}»`] : []
+    })
+    const where = titles.length > 0 ? `на ${titles.length > 1 ? 'этапах' : 'этапе'} ${titles.join(', ')}` : 'не на этапе проверки'
     throw new Error(`проверка ${gateTaskId} уже не актуальна: глобальная задача ${runId} сейчас ${where} — решение по ней принято или проверка заменена новой`)
   }
   const comment = text?.trim() || undefined
-  advanceRun(deps, runId, outcome, comment ? (outcome === 'reject' ? { feedback: comment, ...(images?.length ? { images } : {}) } : { decision: comment }) : {})
+  advanceRun(deps, runId, outcome, {
+    nodeId: gate.gateFor!.nodeId,
+    ...(comment ? (outcome === 'reject' ? { feedback: comment, ...(images?.length ? { images } : {}) } : { decision: comment }) : {})
+  })
   if (deps.store.columnKind(mustTask(deps, gateTaskId).status) === 'review') closeStageTask(deps, gate)
 }
 
@@ -690,7 +809,8 @@ function settleGate(deps: RunWorkflowDeps, gate: Task, why: 'done' | 'exit'): vo
     deps.store.blockRunStage(
       gate.gateFor!.runId!,
       `проверка ${gate.id} сдана без решения (нет review accept/reject по задаче ${gate.id}). ` +
-        `Перезапустить проверку: orca-board task reopen --task ${gate.id} --start; или решите в приложении: «Принять» / «Вернуть» у задачи ${gate.id}`
+        `Перезапустить проверку: orca-board task reopen --task ${gate.id} --start; или решите в приложении: «Принять» / «Вернуть» у задачи ${gate.id}`,
+      gate.gateFor!.nodeId
     )
   }
 }
@@ -711,13 +831,14 @@ export function isRunDecider(deps: RunWorkflowDeps, task: Task | undefined): boo
 }
 
 /**
- * Решатель ещё отвечает за развилку: граф стоит на её ноде, прогон не закрыт и это задача текущего захода (после возврата
- * в развилку старая задача уже не в счёт). Ждущий запрос человеку здесь не учитывается — его проверяют вызывающие.
+ * Решатель ещё отвечает за развилку: граф стоит на её ноде (основная позиция или путь разветвления), прогон не закрыт и
+ * это задача текущего захода (после возврата в развилку старая задача уже не в счёт). Ждущий запрос человеку здесь не
+ * учитывается — его проверяют вызывающие.
  */
 function deciderCurrent(deps: RunWorkflowDeps, task: Task): { run: Run; node: DecisionNode } | undefined {
   const node = deciderNode(deps, task)
   const run = node ? deps.store.getRun(task.gateFor!.runId!) : undefined
-  if (!node || !run || run.closedAt !== undefined || run.stage?.nodeId !== node.id) return undefined
+  if (!node || !run || run.closedAt !== undefined || !positionAt(run, node.id)) return undefined
   return currentDecider(deps, run, node.id)?.id === task.id ? { run, node } : undefined
 }
 
@@ -741,7 +862,7 @@ function optionTarget(deps: RunWorkflowDeps, runId: string, nodeId: string, opti
 
 /** Переход по выбранной ветке с решением в истории развилки; ошибки store (решение не согласовано) — как есть. */
 function applyChoice(deps: RunWorkflowDeps, runId: string, node: DecisionNode, chosen: StageDecision): void {
-  advanceRun(deps, runId, chosen.optionId, { chosen, decision: decisionText(node, chosen) })
+  advanceRun(deps, runId, chosen.optionId, { chosen, decision: decisionText(node, chosen), nodeId: node.id })
 }
 
 /** Закрыть задачу-решатель, если её воркер уже не работает (сдал `done`, не запустился); живую закроет её `done`. */
@@ -821,12 +942,12 @@ function runDecisionResolved(deps: RunWorkflowDeps, request: HumanRequest): void
   const run = deps.store.getRun(request.runId)
   const optionId = request.resolution?.optionId
   if (!run || run.workflowScope !== 'run' || !run.stage || request.taskId !== undefined || optionId === undefined) return
-  if (request.nodeId === undefined || run.stage.nodeId !== request.nodeId || run.closedAt !== undefined) return
+  if (request.nodeId === undefined || !positionAt(run, request.nodeId) || run.closedAt !== undefined) return
   const node = graphOf(deps, run.id).nodes.find((n) => n.id === request.nodeId)
   if (node?.type !== 'decision') return
   const option = decisionOptions(node).find((o) => o.id === optionId)
   if (!option) {
-    deps.store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: варианта «${optionId}» больше нет в воркфлоу — выберите ветку заново или верните граф руками`)
+    deps.store.blockRunStage(run.id, `нода «${wfNodeTitle(node)}»: варианта «${optionId}» больше нет в воркфлоу — выберите ветку заново или верните граф руками`, node.id)
     return
   }
   const decider = currentDecider(deps, run, node.id)
@@ -840,7 +961,7 @@ function runDecisionResolved(deps: RunWorkflowDeps, request: HumanRequest): void
     })
     closeIdleDecider(deps, decider)
   } catch (e) {
-    deps.store.blockRunStage(run.id, `ошибка исполнителя воркфлоу: ${message(e)}`)
+    deps.store.blockRunStage(run.id, `ошибка исполнителя воркфлоу: ${message(e)}`, node.id)
   }
 }
 
@@ -860,9 +981,10 @@ function askDone(deps: RunWorkflowDeps, task: Task, dispatchId: string | undefin
   const run = mustRun(deps, task.runId!)
   const answers = answersText(deps, task.id)
   closeStageTask(deps, task)
-  const stage = run.stage
-  if (!stage || run.closedAt !== undefined || stage.nodeId !== task.stageOf?.nodeId || (stage.visits[stage.nodeId] ?? 1) !== task.stageOf.visit) return
-  advanceRun(deps, run.id, 'next', answers ? { answers } : {})
+  const nodeId = task.stageOf?.nodeId
+  const position = positionAt(run, nodeId)
+  if (!position || run.closedAt !== undefined || position.visit !== task.stageOf?.visit) return
+  advanceRun(deps, run.id, 'next', { nodeId: position.nodeId, ...(answers ? { answers } : {}) })
 }
 
 /**
@@ -876,7 +998,7 @@ function restartAsk(deps: RunWorkflowDeps, task: Task, workerLive: boolean): voi
   try {
     deps.startWorker(task.id)
   } catch (e) {
-    deps.store.blockRunStage(task.runId, `воркер не запустился после ответа: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`)
+    deps.store.blockRunStage(task.runId, `воркер не запустился после ответа: ${message(e)}. Запустить заново: orca-board worker start --task ${task.id}`, task.stageOf?.nodeId)
   }
 }
 
@@ -924,7 +1046,7 @@ export function handleRunWorkflowEvents(deps: RunWorkflowDeps, events: readonly 
           settleGate(deps, task, 'exit')
         }
       } catch (err) {
-        deps.store.blockRunStage(task.runId!, `ошибка исполнителя воркфлоу: ${message(err)}`)
+        deps.store.blockRunStage(task.runId!, `ошибка исполнителя воркфлоу: ${message(err)}`, task.stageOf?.nodeId ?? task.gateFor?.nodeId)
       }
     }
   })

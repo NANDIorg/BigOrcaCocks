@@ -20,7 +20,7 @@ import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, typ
 import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
-  settleIdleRunStages, startRunWorkflow,
+  hasIdleStage, settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
@@ -626,7 +626,7 @@ function watchFinishedCoordinators(): void {
       for (const { ptyId } of due) killPty(ptyId)
       store.settleIdleRuns(isAlive)
       // Воркфлоу прогона: координатор умер, не закрыв этап `stage finish` — этап закрывается без сводки.
-      if (snap.runs.some((r) => r.workflowScope === 'run' && r.stageTasksDoneAt !== undefined && r.closedAt === undefined)) {
+      if (snap.runs.some(hasIdleStage)) {
         try {
           settleIdleRunStages(runWorkflowDeps(projectId))
         } catch (e) {

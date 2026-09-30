@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, pipelineWorkflow,
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, RunApprovalAmbiguousError, defaultWorkflow, pipelineWorkflow, validateWorkflow,
   type OrcaEvent, type Task, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
 import {
@@ -1269,5 +1269,284 @@ describe('нода decision: ветку выбирает агент, фоллб�
     assert.throws(() => runDecision(deps, first.id, 'no', 'x'), /уже принято/)
     runDecision(deps, second.id, 'no', 'макет не нужен')
     assert.equal(stageId(runId), 'impl')
+  })
+})
+
+describe('разветвление fork/join: эффекты по путям', () => {
+  /**
+   * start → «Бэк и фронт» (fork): backend — «API» (work) → «Ревью API» (gate) → «Приёмка API» (human) → слияние;
+   * frontend — «Сроки» (ask) → «UI» (work) → «UI готов?» (decision: ok → «Макет», redo → «UI») → «Макет» (human) → слияние.
+   * После слияния — «Приёмка» (human) → конец.
+   */
+  function lanesGraph(): Workflow {
+    return {
+      version: 2,
+      nodes: [
+        node({ id: 'start', type: 'start' }),
+        node({ id: 'split', type: 'fork', title: 'Бэк и фронт', branches: [{ id: 'backend', label: 'Бэкенд' }, { id: 'frontend', label: 'Фронтенд' }] }),
+        node({ id: 'be', type: 'work', title: 'API' }),
+        node({ id: 'rev', type: 'gate', title: 'Ревью API', roleId: 'reviewer' }),
+        node({ id: 'humBe', type: 'human', title: 'Приёмка API' }),
+        node({ id: 'fask', type: 'ask', title: 'Сроки', roleId: 'reviewer', instructions: 'Спроси про сроки' }),
+        node({ id: 'fe', type: 'work', title: 'UI' }),
+        node({
+          id: 'fdec', type: 'decision', title: 'UI готов?', roleId: 'reviewer', question: 'UI готов к показу?',
+          options: [{ id: 'ok', label: 'Готов' }, { id: 'redo', label: 'Переделать' }]
+        }),
+        node({ id: 'hum', type: 'human', title: 'Макет' }),
+        node({ id: 'merge_paths', type: 'join', forkId: 'split' }),
+        node({ id: 'check', type: 'human', title: 'Приёмка' }),
+        node({ id: 'end', type: 'end' })
+      ],
+      edges: [
+        edge('start', 'next', 'split'), edge('split', 'backend', 'be'), edge('split', 'frontend', 'fask'),
+        edge('be', 'next', 'rev'), edge('rev', 'accept', 'humBe'), edge('rev', 'reject', 'be'),
+        edge('humBe', 'accept', 'merge_paths'), edge('humBe', 'reject', 'be'),
+        edge('fask', 'next', 'fe'), edge('fe', 'next', 'fdec'), edge('fdec', 'ok', 'hum'), edge('fdec', 'redo', 'fe'),
+        edge('hum', 'accept', 'merge_paths'), edge('hum', 'reject', 'fe'),
+        edge('merge_paths', 'next', 'check'), edge('check', 'accept', 'end'), edge('check', 'reject', 'split')
+      ]
+    }
+  }
+
+  const lanesAt = (runId: string): Record<string, string> =>
+    Object.fromEntries((run(runId).lanes ?? []).map((l) => [l.branchId, l.nodeId]))
+  const stageTasksOf = (nodeId: string) => store.listTasks().filter((t) => t.stageOf?.nodeId === nodeId || t.gateFor?.nodeId === nodeId)
+  const runApprovals = (runId: string) => store.pendingRequests(runId).filter((r) => r.kind === 'approval' && r.taskId === undefined)
+  const decisionsOf = (runId: string) => store.pendingRequests(runId).filter((r) => r.kind === 'decision')
+
+  /** Подзадача текущей «Работы» с показом (`done --show`): её запуск попадает в approval следующего `human`. */
+  function showWork(runId: string, file: string): string {
+    const t = spawn(runId, file)
+    commit(t, file)
+    const before = store.listEvents().length
+    const dispatchId = task(t.id).dispatchId!
+    store.finishDispatch(dispatchId, 'сделал', [], undefined, { showcase: { files: [file] } })
+    deliver(before)
+    return dispatchId
+  }
+
+  /** Повтор эффектов, как рестарт приложения или «Запустить координатора»: ни одна служебная задача и запрос не дублируются. */
+  function restartIsIdempotent(runId: string): void {
+    const tasks = store.listTasks().length
+    const requests = store.pendingRequests(runId).length
+    const starts = started.length
+    const stageStarted = events('stage_started').length
+    startRunWorkflow(deps, runId)
+    assert.equal(store.listTasks().length, tasks, 'задачи проверки, вопроса и решателя не дублируются')
+    assert.equal(store.pendingRequests(runId).length, requests, 'запросы человеку не дублируются')
+    assert.equal(started.length, starts, 'воркеры идущих задач заново не стартуют')
+    assert.equal(events('stage_started').length, stageStarted, 'повтор при живом координаторе stage_started не шлёт')
+    assert.equal(events('workflow_blocked').length, 0)
+  }
+
+  it('граф валиден: пути с gate, human, ask и decision внутри', () => {
+    assert.deepEqual(validateWorkflow(lanesGraph(), { roles: DEFAULT_ROLES }).errors, [])
+  })
+
+  it('два пути: gate, ask, decision и human идут параллельно, рестарт не дублирует, слияние собирает итоги путей', () => {
+    const runId = newRun(lanesGraph())
+    assert.equal(stageId(runId), 'split', 'основная позиция запаркована на fork')
+    assert.deepEqual(lanesAt(runId), { backend: 'be', frontend: 'fask' })
+    assert.equal(events('stage_started').length, 1)
+    assert.equal(lastEvent('stage_started').payload.lane, 'split:backend')
+    const asker = stageTasksOf('fask')[0]
+    assert.ok(asker, 'задача-вопрос пути «Фронтенд» создана')
+    assert.equal(started.at(-1), asker.id)
+    assert.match(asker.spec, /## Путь разветвления[\s\S]*«Фронтенд»/)
+    assert.equal(coordinatorStarts.length, 0, 'координатор жив — не перезапускается')
+    restartIsIdempotent(runId)
+
+    // Бэкенд: подзадача без --stage (открыта одна «Работа»), stage finish — проверка ветки с контекстом пути.
+    const beShow = showWork(runId, 'be.html')
+    finishRunStage(deps, runId, 'API готово')
+    assert.deepEqual(lanesAt(runId), { backend: 'rev', frontend: 'fask' })
+    const gate = gateOf(runId)
+    assert.deepEqual(gate.gateFor, { runId, nodeId: 'rev' })
+    assert.match(gate.spec, /«Бэкенд»/)
+    assert.match(gate.spec, /API готово/)
+
+    // Фронтенд: человек ответил, вопрос сдан — путь идёт на «UI» с ответами; бэкенд стоит на проверке.
+    const q = store.ask({ taskId: asker.id, dispatchId: asker.dispatchId, question: 'К какому сроку?' }, { forceHuman: true })
+    store.resolveRequest(store.pendingRequests(runId).find((r) => r.questionId === q.id)!.id, { action: 'answer', text: 'к пятнице' })
+    done(asker.id, 'выяснил')
+    assert.deepEqual(lanesAt(runId), { backend: 'rev', frontend: 'fe' })
+    const feStarted = lastEvent('stage_started')
+    assert.equal(feStarted.payload.nodeId, 'fe')
+    assert.equal(feStarted.payload.lane, 'split:frontend')
+    assert.match(String(feStarted.payload.answers), /к пятнице/)
+
+    const feShow = showWork(runId, 'fe.html')
+    assert.deepEqual(task(store.getDispatch(feShow)!.taskId).stageOf, { nodeId: 'fe', visit: 1 }, 'подзадача без --stage — к единственной открытой «Работе»')
+    finishRunStage(deps, runId, 'UI готов', 'fe')
+    assert.deepEqual(lanesAt(runId), { backend: 'rev', frontend: 'fdec' })
+    const decider = stageTasksOf('fdec')[0]
+    assert.equal(isRunDecider(deps, decider), true)
+    assert.match(decider.spec, /UI готов/)
+    assert.doesNotMatch(decider.spec, /API готово/, 'сводки соседнего пути решателю не нужны')
+    assert.doesNotMatch(decider.spec, /«API»/, 'путь по графу — без записей соседнего пути')
+    restartIsIdempotent(runId)
+
+    // Решения по нодам обоих путей принимаются — ни одно не «граф ушёл дальше».
+    runGateDecision(deps, gate.id, 'accept')
+    runDecision(deps, decider.id, 'ok', 'всё на месте')
+    assert.deepEqual(lanesAt(runId), { backend: 'humBe', frontend: 'hum' })
+    const approvals = runApprovals(runId)
+    assert.deepEqual(approvals.map((r) => r.nodeId).sort(), ['hum', 'humBe'], 'human в двух путях — оба в Инбоксе')
+    const humBe = approvals.find((r) => r.nodeId === 'humBe')!
+    const hum = approvals.find((r) => r.nodeId === 'hum')!
+    assert.match(humBe.body!, /Итог этапа:\*\* API готово/)
+    assert.doesNotMatch(humBe.body!, /UI готов/)
+    assert.match(hum.body!, /Итог этапа:\*\* UI готов/)
+    assert.deepEqual(humBe.showcaseDispatchIds, [beShow], 'показ — подзадачи своего пути')
+    assert.deepEqual(hum.showcaseDispatchIds, [feShow])
+    assert.throws(() => acceptRun(deps, runId), RunApprovalAmbiguousError, 'с карточки не решить, чей путь')
+    assert.equal(runApprovals(runId).length, 2)
+    restartIsIdempotent(runId)
+
+    // Решение по ноде второго пути двигает только его: путь пришёл в слияние и ждёт.
+    resolve(hum.id, 'accept')
+    assert.deepEqual(lanesAt(runId), { backend: 'humBe', frontend: 'merge_paths' })
+    assert.equal(stageId(runId), 'split')
+    resolve(humBe.id, 'accept')
+    assert.equal(run(runId).lanes, undefined, 'пришли все пути — разветвление закрыто')
+    assert.equal(stageId(runId), 'check')
+    const final = approvalOf(runId)!
+    assert.match(final.body!, /### Путь «Бэкенд»\n\nAPI готово/)
+    assert.match(final.body!, /### Путь «Фронтенд»\n\nUI готов/)
+    assert.deepEqual(final.showcaseDispatchIds, [beShow, feShow], 'после слияния — показ последней «Работы» каждого пути')
+
+    acceptRun(deps, runId)
+    assert.ok(run(runId).closedAt)
+    assert.equal(events('run_done').length, 1)
+    assert.equal(events('workflow_blocked').length, 0)
+  })
+
+  it('«Вернуть» в одном пути: stage_started с замечаниями только этому пути, соседний ждёт человека', () => {
+    const runId = newRun(lanesGraph())
+    work(runId, 'be.md')
+    finishRunStage(deps, runId, 'API готово')
+    runGateDecision(deps, gateOf(runId).id, 'reject', 'нет тестов')
+    assert.deepEqual(lanesAt(runId), { backend: 'be', frontend: 'fask' })
+    const again = lastEvent('stage_started')
+    assert.equal(again.payload.nodeId, 'be')
+    assert.equal(again.payload.visit, 2)
+    assert.equal(again.payload.lane, 'split:backend')
+    assert.equal(again.payload.feedback, 'нет тестов')
+    assert.equal(store.runStage(runId, {}, 'fask')!.feedback, undefined, 'соседний путь замечаний не получил')
+    const tasks = store.listTasks().length
+    startRunWorkflow(deps, runId)
+    assert.equal(store.listTasks().length, tasks, 'рестарт после возврата не дублирует задачу-вопрос соседа')
+  })
+
+  it('старая проверка пути после возврата не решает; решение по ноде, где пути уже нет, — «не актуальна»', () => {
+    const runId = newRun(lanesGraph())
+    work(runId, 'be.md')
+    finishRunStage(deps, runId, 'API готово')
+    const gate = gateOf(runId)
+    runGateDecision(deps, gate.id, 'accept')
+    assert.throws(() => runGateDecision(deps, gate.id, 'reject', 'поздно'), /уже не актуальна.*«Приёмка API», «Сроки»/)
+  })
+
+  it('мёртвый координатор: вход в разветвление с двумя «Работами» запускает его один раз', () => {
+    const wf = lanesGraph()
+    wf.edges = wf.edges.map((e) => (e.from === 'split' && e.outcome === 'frontend' ? { ...e, to: 'fe' } : e))
+    wf.nodes = wf.nodes.filter((n) => n.id !== 'fask')
+    wf.edges = wf.edges.filter((e) => e.from !== 'fask')
+    wf.nodes.splice(1, 0, node({ id: 'analysis', type: 'work', title: 'Анализ' }))
+    wf.edges = wf.edges.map((e) => (e.from === 'start' ? { ...e, to: 'analysis' } : e))
+    wf.edges.push(edge('analysis', 'next', 'split'))
+    const runId = newRun(wf)
+    work(runId, 'analysis.md')
+    alive.clear()
+    finishRunStage(deps, runId, 'проанализировано')
+    assert.deepEqual(lanesAt(runId), { backend: 'be', frontend: 'fe' })
+    assert.equal(coordinatorStarts.length, 1, 'один запуск на обе «Работы»')
+    assert.deepEqual(events('stage_started').slice(-2).map((e) => e.payload.lane), ['split:backend', 'split:frontend'])
+    // Цель перезапущенного координатора — по блоку на каждую открытую «Работу».
+    alive.clear()
+    const { objective } = resumeObjective(store, runId, (p) => alive.has(p))
+    assert.match(objective, /# Этап: API \(путь «Бэкенд»\)/)
+    assert.match(objective, /# Этап: UI \(путь «Фронтенд»\)/)
+
+    // Координатор не запустился — один workflow_blocked, а не по разу на путь.
+    coordinatorFails = true
+    startRunWorkflow(deps, runId)
+    assert.equal(events('workflow_blocked').length, 1)
+    assert.match(String(lastEvent('workflow_blocked').payload.reason), /координатор не запустился/)
+  })
+
+  it('фолбэк без координатора: закрытые подзадачи пути закрывают его этап, соседний путь не трогается', () => {
+    const wf = lanesGraph()
+    const runId = newRun(wf)
+    const be = spawn(runId, 'be.md')
+    commit(be, 'be.md')
+    alive.clear()
+    done(be.id)
+    settleIdleRunStages(deps)
+    assert.deepEqual(lanesAt(runId), { backend: 'rev', frontend: 'fask' })
+    assert.equal(gateOf(runId).gateFor!.nodeId, 'rev', 'эффект нового этапа пути выполнен')
+  })
+
+  it('end внутри пути (граф в обход валидации) → workflow_blocked пути, прогон не закрыт, соседний путь идёт', () => {
+    const wf: Workflow = {
+      version: 2,
+      nodes: [
+        node({ id: 'start', type: 'start' }),
+        node({ id: 'split', type: 'fork', branches: [{ id: 'a', label: 'А' }, { id: 'b', label: 'Б' }] }),
+        node({ id: 'wa', type: 'work', title: 'Работа А' }), node({ id: 'wb', type: 'work', title: 'Работа Б' }),
+        node({ id: 'join', type: 'join', forkId: 'split' }), node({ id: 'end', type: 'end' })
+      ],
+      edges: [
+        edge('start', 'next', 'split'), edge('split', 'a', 'wa'), edge('split', 'b', 'wb'),
+        edge('wa', 'next', 'end'), edge('wb', 'next', 'join'), edge('join', 'next', 'end')
+      ]
+    }
+    assert.ok(validateWorkflow(wf, { roles: DEFAULT_ROLES }).errors.some((i) => i.code === 'forkEndInBranch'), 'валидатор такой граф не пропускает')
+    const runId = newRun(wf)
+    const a = store.createTask({ title: 'А', roleId: 'developer', runId, stage: 'wa' })
+    deps.startWorker(a.id)
+    commit(task(a.id), 'a.md')
+    done(a.id)
+    finishRunStage(deps, runId, 'А готово', 'wa')
+    const blocked = lastEvent('workflow_blocked')
+    assert.equal(blocked.payload.lane, 'split:a')
+    assert.match(String(blocked.payload.reason), /ведёт в конец/)
+    assert.equal(run(runId).closedAt, undefined)
+    assert.equal(events('run_done').length, 0)
+    assert.deepEqual(lanesAt(runId), { a: 'wa', b: 'wb' })
+
+    const b = store.createTask({ title: 'Б', roleId: 'developer', runId, stage: 'wb' })
+    deps.startWorker(b.id)
+    commit(task(b.id), 'b.md')
+    done(b.id)
+    finishRunStage(deps, runId, 'Б готово', 'wb')
+    assert.deepEqual(lanesAt(runId), { a: 'wa', b: 'join' }, 'соседний путь дошёл до слияния и ждёт')
+  })
+
+  it('merge в пути через git-ноду: авто-шаг двигает свой путь по nodeId', () => {
+    const wf: Workflow = {
+      version: 2,
+      nodes: [
+        node({ id: 'start', type: 'start' }),
+        node({ id: 'split', type: 'fork', branches: [{ id: 'a', label: 'А' }, { id: 'b', label: 'Б' }] }),
+        node({ id: 'wa', type: 'work', title: 'Работа А' }),
+        node({ id: 'ca', type: 'git', operation: 'commit', message: 'wip {title}' }),
+        node({ id: 'wb', type: 'work', title: 'Работа Б' }),
+        node({ id: 'join', type: 'join', forkId: 'split' }), node({ id: 'end', type: 'end' })
+      ],
+      edges: [
+        edge('start', 'next', 'split'), edge('split', 'a', 'wa'), edge('split', 'b', 'wb'),
+        edge('wa', 'next', 'ca'), edge('ca', 'ok', 'join'), edge('ca', 'error', 'join'), edge('wb', 'next', 'join'), edge('join', 'next', 'end')
+      ]
+    }
+    const runId = newRun(wf)
+    const a = store.createTask({ title: 'А', roleId: 'developer', runId, stage: 'wa' })
+    deps.startWorker(a.id)
+    commit(task(a.id), 'a.md')
+    done(a.id)
+    finishRunStage(deps, runId, 'А готово', 'wa')
+    assert.deepEqual(lanesAt(runId), { a: 'join', b: 'wb' }, 'git-нода пути прошла сама и путь пришёл в слияние')
+    assert.equal(events('workflow_blocked').length, 0)
   })
 })
