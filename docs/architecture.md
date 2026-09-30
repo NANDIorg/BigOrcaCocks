@@ -1439,7 +1439,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   неизвестный проект в `setProjectGroup` — обычная ошибка «project not found»;
   `taskTypes:list` → `TaskTypesState {taskTypes, defaultTaskTypeId}` (у типа может быть `workflowNotes` — предупреждения автомиграции графа), `taskTypes:save(input)` → `TaskType`
   (`input.workflowNotes` необязателен: не передан — прежние остаются, пока граф не менялся; передан — сохраняется, `[]` закрывает),
-  `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`
+  `taskTypes:delete(id)` → `TaskTypesState`, `taskTypes:duplicate(id)` → `TaskType`, `taskTypes:setDefault(id)` → `TaskTypesState`,
+  `taskTypes:export(id)` → `TaskTypeExportResult {path} | null` — диалог «Сохранить как» (`pickExportFile`: `dialog.showSaveDialog`,
+  родитель — окно, если есть; путь по умолчанию — «Загрузки» + `taskTypeFileName`, фильтр `json`) и запись файла типа
+  `writeFileAtomic`; закрыли диалог — `null`, ничего не пишется. Путь выбирает только человек в диалоге: renderer получает
+  путь готового файла, текст файла к нему не идёт, а общего канала «записать текст по пути» нет. Ошибки — `OrcaError`:
+  `type.notFound`, `workflow.future` (обе — до диалога), `type.exportFailed` (`{path, reason}` — запись не удалась). Поток без
+  Electron — `exportTaskTypeToFile(deps, id)` в `main/task-type-export.ts` (`deps`: `export`, `chooseFile`, `write`)
   (см. «Проекты → Типы задач»); `nodeTemplates:list` → `WfNodeTemplate[]`, `nodeTemplates:save(input: NodeTemplateInput {id?, title, description?, node})` → `WfNodeTemplate`,
   `nodeTemplates:delete(id)` → оставшиеся `WfNodeTemplate[]` (библиотека шаблонов нод — `projects.json → nodeTemplates`, глобальная; `updatedAt` ставит main; ошибки — `OrcaError`
   `nodeTemplate.notSaved|notFound|notObject|emptyId|emptyTitle`, битые записи файла при загрузке пропускаются с `StateWarning {kind: 'skipped'}`; см. `docs/workflow.md` → «Шаблоны нод»);
@@ -1795,6 +1801,12 @@ UI работает с активным проектом; воркеры и ко
   Предвыбран при добавлении проекта. Ассистенту больше ничего не даёт — его настройки в `AppSettings.assistant`.
 - `taskTypeWorkflow(typeId)` → `{typeId, title, workflow, custom}`: свой граф или дефолтный по ролям; граф будущей
   версии — ошибка «обновите приложение».
+- `exportTaskType(id, meta)` → `{fileName, text}`: текст файла экспорта типа (`serializeTaskTypeFile(buildTaskTypeFile(…))`,
+  формат — «Модель → Типы задач → Файл экспорта типа») и имя по умолчанию `taskTypeFileName(title)`. Берётся сохранённый
+  тип из `projects.json`, а не черновики редакторов. `meta` (`appVersion`, `exportedAt`) передаёт вызывающий код. Граф не
+  валидируется (бэкап сломанного типа тоже нужен), но граф будущей версии — `workflow.future` через `taskTypeWorkflow`;
+  неизвестный id — `type.notFound`. Библиотеку не меняет и на диск не пишет: диалог и запись — в обработчике
+  `taskTypes:export` (раздел «IPC»).
 
 **Типы проекта и прогонов**:
 - `projectTaskTypes(id)` — доступные (висячие id пропускаются; не осталось ни одного — тип по умолчанию);
