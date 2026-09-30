@@ -260,6 +260,10 @@ export default {
   'taskType.makeDefault': 'Make default',
   'taskType.makeDefaultTitle': 'Type for new projects and for projects whose own default type was deleted',
   'taskType.duplicate': 'Duplicate',
+  'taskType.export': 'Export',
+  'taskType.exportTitle': 'Save the whole type to a JSON file',
+  'taskType.exported':
+    'The saved version of the type was written to {path} — it holds roles, prompts and rules as is: check them for internal data before sharing.',
   'taskType.rename': 'Rename',
   'taskType.delete': 'Delete',
   'taskType.lastTypeTitle': 'Can’t delete the last type — create another one first',
