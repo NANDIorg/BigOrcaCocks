@@ -264,6 +264,10 @@ export default {
   'taskType.makeDefault': 'По умолчанию',
   'taskType.makeDefaultTitle': 'Тип новых проектов и проектов, у которых свой тип по умолчанию удалён',
   'taskType.duplicate': 'Дублировать',
+  'taskType.export': 'Экспорт',
+  'taskType.exportTitle': 'Сохранить тип целиком в JSON-файл',
+  'taskType.exported':
+    'Сохранённая версия типа записана в файл {path} — в нём роли, промпты и правила как есть: проверьте, нет ли в них внутренних данных, прежде чем делиться.',
   'taskType.rename': 'Переименовать',
   'taskType.delete': 'Удалить',
   'taskType.lastTypeTitle': 'Последний тип удалить нельзя — сначала создайте другой',
