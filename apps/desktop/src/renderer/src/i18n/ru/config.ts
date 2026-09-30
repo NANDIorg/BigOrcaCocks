@@ -491,6 +491,8 @@ export default {
   'wf.probs.title': 'Проблемы',
   'wf.probs.hint': 'клик — к ноде',
   'wf.probs.edge': 'Переход «{id}»',
+  'wf.probs.edgeOf': 'Переход «{outcome}» у ноды «{node}»',
+  'wf.probs.forkEdge': 'Путь «{outcome}» разветвления «{node}»',
   'wf.probs.graph': 'Весь граф',
   'wf.probs.goNode': 'к ноде ›',
   'wf.probs.goEdge': 'к переходу ›',

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { type WfNode, type Workflow } from '@orca-board/core'
 import {
   LAYOUT_DX, LAYOUT_DY, NODE_H, NODE_W, PORT_HIT_R, PORT_STEP, autoLayout, graphBounds, nodeHeight, nodeRect, curvePoint, distanceToCurve, edgeCurve, edgeCurveOf, fitView,
-  hitEdge, hitNode, hitPort, inputPoint, panBy, portPoint, screenToWorld, zoomAt
+  hitEdge, hitNode, hitPort, inputPoint, panBy, portLabelMax, portPoint, screenToWorld, zoomAt
 } from './workflowGeometry'
 import { graphWithFork, graphWithMerge } from './workflowFixture'
 
@@ -213,4 +213,66 @@ test('fork: высота по числу путей, порты по поряд�
   assert.ok(at('work_be').y < at('work_fe').y, 'пути в порядке портов сверху вниз')
   assert.equal(at('merge_paths').x, at('check').x + LAYOUT_DX, 'слияние — за самым длинным путём')
   assert.equal(at('end').x, at('merge_paths').x + LAYOUT_DX)
+})
+
+test('autoLayout: четыре пути разной длины — ряды один под другим, слияние посередине и правее самого длинного', () => {
+  const work = (id: string): WfNode => ({ id, type: 'work', x: 0, y: 0 })
+  const human = (id: string): WfNode => ({ id, type: 'human', x: 0, y: 0 })
+  const g: Workflow = {
+    version: 2,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'split', type: 'fork', x: 0, y: 0, branches: ['be', 'fe', 'qa', 'doc'].map((id) => ({ id, label: id })) },
+      work('be'), human('be_ok'), work('fe'), human('fe_ok'), work('qa'), work('doc'),
+      { id: 'join', type: 'join', x: 0, y: 0, forkId: 'split' },
+      human('check'),
+      { id: 'end', type: 'end', x: 0, y: 0 }
+    ],
+    edges: [
+      { id: 'e0', from: 'start', outcome: 'next', to: 'split' },
+      { id: 'f1', from: 'split', outcome: 'be', to: 'be' },
+      { id: 'f2', from: 'split', outcome: 'fe', to: 'fe' },
+      { id: 'f3', from: 'split', outcome: 'qa', to: 'qa' },
+      { id: 'f4', from: 'split', outcome: 'doc', to: 'doc' },
+      { id: 'b1', from: 'be', outcome: 'next', to: 'be_ok' },
+      { id: 'b2', from: 'be_ok', outcome: 'accept', to: 'join' },
+      { id: 'b3', from: 'be_ok', outcome: 'reject', to: 'be' },
+      { id: 'c1', from: 'fe', outcome: 'next', to: 'fe_ok' },
+      { id: 'c2', from: 'fe_ok', outcome: 'accept', to: 'join' },
+      { id: 'c3', from: 'fe_ok', outcome: 'reject', to: 'fe' },
+      { id: 'q1', from: 'qa', outcome: 'next', to: 'join' },
+      { id: 'd1', from: 'doc', outcome: 'next', to: 'join' },
+      { id: 'j1', from: 'join', outcome: 'next', to: 'check' },
+      { id: 'h1', from: 'check', outcome: 'accept', to: 'end' },
+      { id: 'h2', from: 'check', outcome: 'reject', to: 'split' }
+    ]
+  }
+  const laid = autoLayout(g)
+  const at = (id: string) => laid.nodes.find((n) => n.id === id)!
+  const rows = [['be', 'be_ok'], ['fe', 'fe_ok'], ['qa'], ['doc']].map((ids) => ids.map((id) => at(id).y))
+  for (const row of rows) assert.equal(new Set(row).size, 1, `путь — один ряд: ${row}`)
+  const tops = rows.map((r) => r[0])
+  for (let i = 1; i < tops.length; i++) assert.ok(tops[i] >= tops[i - 1] + LAYOUT_DY, 'следующий путь ниже предыдущего')
+  const join = at('join')
+  // Посередине с точностью до шага сетки (`snap`).
+  assert.ok(Math.abs(join.y + nodeHeight(join) / 2 - (tops[0] + tops[3] + NODE_H) / 2) <= 5, 'слияние посередине между путями')
+  assert.ok(join.y > tops[0] && join.y < tops[3], 'слияние не в верхнем ряду')
+  assert.equal(join.x, at('be_ok').x + LAYOUT_DX, 'слияние правее самого длинного пути')
+  assert.equal(at('check').y, join.y, 'после слияния — ряд слияния')
+  // Ни одна пара нод не пересекается.
+  for (const a of laid.nodes) {
+    for (const b of laid.nodes) {
+      if (a.id >= b.id || a.x !== b.x) continue
+      const [hi, lo] = a.y < b.y ? [a, b] : [b, a]
+      assert.ok(lo.y >= hi.y + nodeHeight(hi), `${a.id} и ${b.id} не налезают`)
+    }
+  }
+})
+
+test('подпись порта: у ноды с тремя и больше портами — короче', () => {
+  const split = graphWithFork().nodes.find((n) => n.id === 'split')!
+  assert.equal(portLabelMax(split), 16)
+  const four = { ...split, branches: ['a', 'b', 'c', 'd'].map((id) => ({ id, label: id })) } as WfNode
+  assert.ok(portLabelMax(four) < portLabelMax(split))
+  assert.equal(portLabelMax(node('review')), 16)
 })

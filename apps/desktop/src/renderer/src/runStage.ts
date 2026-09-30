@@ -1,6 +1,6 @@
 import { forkBranches, laneId, type GlobalTask, type Task, type WfNodeType, type Workflow } from '@orca-board/core'
 import { t, type TKey } from './i18n'
-import { nodeTitle } from './defaultTitles'
+import { forkBranchTitle, nodeTitle } from './defaultTitles'
 import type { StageLabel } from './cardState'
 
 // Воркфлоу глобальной задачи (`Run.workflowScope: 'run'`, docs/workflow.md): где стоит граф и как подзадачи привязаны к этапам.
@@ -59,7 +59,7 @@ export function laneTitle(workflow: Pick<Workflow, 'nodes'> | undefined, lane: s
   for (const n of workflow?.nodes ?? []) {
     if (n.type !== 'fork') continue
     const branch = forkBranches(n).find((b) => laneId(n.id, b.id) === lane)
-    if (branch) return branch.label ?? branch.id
+    if (branch) return forkBranchTitle(branch)
   }
   const sep = lane.indexOf(':')
   return sep >= 0 && sep < lane.length - 1 ? lane.slice(sep + 1) : lane
