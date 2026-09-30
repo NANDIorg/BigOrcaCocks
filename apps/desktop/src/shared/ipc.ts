@@ -555,6 +555,16 @@ export interface OnboardingCompleteInput {
 /** Команды системного меню; навигация выполняется в существующем интерфейсе. */
 export type AppMenuAction = 'settings' | 'checkUpdates' | 'addProject'
 
+/** Только данные меню: команды остаются в main, renderer не получает роли или внешние адреса для вызова. */
+export interface AppMenuItem {
+  id: string
+  label: string
+  hint?: string
+  disabled?: boolean
+  separatorBefore?: boolean
+  children?: AppMenuItem[]
+}
+
 export interface OrcaApi {
   app: {
     /** Режим рамки этого окна; нет в старом preload. Read-only, без IPC управления окном. */
@@ -565,8 +575,11 @@ export interface OrcaApi {
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
-    /** Нативное меню окна без системной строки; опционально для старого preload. */
-    showMenu?(): Promise<void>
+    /** Авторское меню Windows: локализованный снимок и вызов разрешённой команды; нет в старом preload. */
+    getMenu?(): Promise<AppMenuItem[]>
+    invokeMenu?(id: string): Promise<void>
+    /** Закрывает режим меню и возвращает обработку нативных сочетаний. */
+    dismissMenu?(): Promise<void>
     /** Текущее состояние и переходы fullscreen; WCO Windows сохраняет visible даже без caption-кнопок. */
     onWindowFullscreen?(cb: (fullscreen: boolean) => void): () => void
     /** Опционально для старого preload; подписка также сообщает main, что интерфейс готов к команде. */

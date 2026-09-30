@@ -46,7 +46,7 @@ import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './bac
 import { OrcaError, ipcError, mt, setMainLocale, mainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
 import { rendererSource } from './renderer-source'
-import { applicationMenuTemplate, MenuActionQueue } from './app-menu'
+import { applicationMenuTemplate, applicationMenuSnapshot, runApplicationMenuCommand, windowMenuCommands, MenuActionQueue, type AppMenuHandlers } from './app-menu'
 import { refreshAboutWindow, showAboutWindow } from './about-window'
 import type { AppMenuAction } from '../shared/ipc'
 import appIconPath from '../../build/icon.png?asset'
@@ -132,6 +132,12 @@ function createWindow(): BrowserWindow {
     win.on('leave-full-screen', () => setWindowFullscreen(false))
   }
   const created = win
+  // В авторском меню renderer сначала возвращает фокус редактору и сам вызывает команду.
+  // Blur/reload/crash возвращают нативные сочетания, даже если renderer не успел закрыть popup.
+  const restoreMenuShortcuts = (): void => {
+    if (process.platform === 'win32' && !created.webContents.isDestroyed()) created.webContents.setIgnoreMenuShortcuts(false)
+  }
+  if (process.platform === 'win32') created.on('blur', restoreMenuShortcuts)
   win.on('closed', () => {
     if (win === created) {
       win = null
@@ -141,9 +147,12 @@ function createWindow(): BrowserWindow {
   })
   win.webContents.on('did-start-loading', () => {
     // Загрузка показа в iframe не размонтирует App: его подписка на меню остаётся действующей.
-    if (created.webContents.isLoadingMainFrame()) menuActions.disconnect()
+    if (created.webContents.isLoadingMainFrame()) {
+      menuActions.disconnect()
+      restoreMenuShortcuts()
+    }
   })
-  win.webContents.on('render-process-gone', () => menuActions.disconnect())
+  win.webContents.on('render-process-gone', () => { menuActions.disconnect(); restoreMenuShortcuts() })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalWebUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
@@ -190,13 +199,17 @@ function navigateFromMenu(action: AppMenuAction): void {
 /** Меню и «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
 function refreshApplicationMenu(): void {
   refreshAboutWindow(projects.settings().appearance)
-  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, appMenuHandlers())))
+}
+
+function appMenuHandlers(): AppMenuHandlers {
+  return {
     navigate: navigateFromMenu,
     about: () => { showAboutWindow({ parent: showWindow(), iconPath: appIconPath, version: app.getVersion(), appearance: projects.settings().appearance }) },
     open: () => { showWindow() },
     quit: () => { void requestQuit() },
     openExternal: (url) => { void shell.openExternal(url) }
-  })))
+  }
 }
 
 /** Событие Windows приходит раньше смены isFullScreen; сохраняем явное состояние для темы и renderer. */
@@ -818,9 +831,20 @@ function registerIpc(): void {
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
     event.sender.send('app:windowFullscreen', windowFullscreen)
   })
-  handle('app:showMenu', (event) => {
-    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
-    Menu.getApplicationMenu()?.popup({ window: win })
+  handle('app:getMenu', (event) => {
+    if (process.platform !== 'win32' || !win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return []
+    win.webContents.setIgnoreMenuShortcuts(true)
+    return applicationMenuSnapshot(Menu.getApplicationMenu()?.items ?? [])
+  })
+  handle('app:invokeMenu', (event, id: unknown) => {
+    if (process.platform !== 'win32' || !win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    win.webContents.setIgnoreMenuShortcuts(false)
+    const menu = applicationMenuSnapshot(Menu.getApplicationMenu()?.items ?? [])
+    runApplicationMenuCommand(menu, id, windowMenuCommands(win, appMenuHandlers()))
+  })
+  handle('app:dismissMenu', (event) => {
+    if (process.platform !== 'win32' || !win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    win.webContents.setIgnoreMenuShortcuts(false)
   })
   ipcMain.on('app:menuReady', (event, ready: unknown) => {
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return

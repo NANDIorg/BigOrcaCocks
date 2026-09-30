@@ -1451,9 +1451,24 @@ caption-кнопками WCO справа, без traffic lights и HTML-зам�
 фон `frame` и значки `text` берутся из выбранной темы `shared/theme.ts`. `syncMainAppearance()`
 обновляет их через `setTitleBarOverlay` без пересоздания окна. `autoHideMenuBar` убирает постоянную
 строку меню; скрытая рамка Electron не поддерживает menu bar по Alt. `WindowMenu` в rail
-открывает то же нативное меню через опциональный `app.showMenu()` → `app:showMenu` → `Menu.popup`,
-сохраняя все команды и системные сочетания. Main принимает запрос только от главного фрейма
-своего окна; старый preload показывает сообщение о перезапуске. Linux оставляет системный заголовок.
+открывает авторскую поверхность через общий `PopupMenu` (вариант `application`), с палитрой всех четырёх тем.
+`app.getMenu?()` → `app:getMenu` возвращает локализованный снимок настоящего Electron Menu:
+`AppMenuItem {id, label, hint?, disabled?, separatorBefore?, children?[]}`. `app.invokeMenu?(id)` →
+`app:invokeMenu` проверяет id по доступным листьям актуального меню и выполняет общие продуктовые действия
+или публичные методы Electron для редактирования, масштаба и управления окном. Недоступные, скрытые,
+родительские и отсутствующие в production dev-команды не выполняются. Native Menu остаётся источником
+содержимого и сочетаний; `requestQuit` сохраняет защиту живых агентов. Main принимает оба запроса только
+на Windows от главного фрейма своего окна. Renderer сохраняет и восстанавливает фокус, caret и выделение
+до команды редактирования, включая сочетания из открытого popup. `getMenu` временно вызывает
+`setIgnoreMenuShortcuts(true)`, чтобы renderer выполнил сочетание один раз после восстановления выделения.
+`app.dismissMenu?()` → `app:dismissMenu` и `invokeMenu` возвращают нативную обработку; blur окна,
+загрузка главного фрейма и завершение процесса renderer также снимают этот режим. Уход DOM-фокуса
+из popup (например, Ctrl+K открывает помощника) закрывает меню без возврата фокуса.
+Устаревший ответ загрузки после закрытия меню игнорируется. Разделы открываются
+в одной панели: стрелки/Home/End, Enter/Space, Right — войти, Left/Esc — назад; Esc в корне, Tab,
+клик снаружи, resize/blur и внешняя прокрутка закрывают popup. Старый preload показывает сообщение
+о перезапуске. На macOS кнопки rail увеличены до 52px, иконки до 26px; нативные кнопки окна не меняются.
+Linux оставляет системный заголовок и меню.
 Main передаёт preload аргумент `--orca-macos-window-chrome` или `--orca-windows-window-chrome`;
 read-only `app.windowChrome?` (`macos` / `windows` / `system`)
 сообщает фактический режим этого окна, без новых каналов управления окном. Старый main без флага
@@ -1491,7 +1506,8 @@ Main принимает готовность только от главного 
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
-| Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS; меню окна Windows/Linux | `main/app-menu.test.ts`, живой Electron |
+| Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS/Linux, содержимое и сочетания Windows | `main/app-menu.test.ts`, живой Electron |
+| Application Popup | `WindowMenu`, общий `PopupMenu` | снимок Electron Menu, `shared/theme.ts`, `DESIGN.md` | авторские разделы Windows; плоские контекстные меню | `main/app-menu.test.ts`, `popupMenuNavigation.test.ts`; ручная проверка билда |
 | Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные нативные кнопки macOS/Windows; системный заголовок Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
@@ -1594,7 +1610,7 @@ SVG-линия и траектория пакета используют оди�
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
 
-- `invoke`: `app:info`, `app:showMenu` (нативный popup общего меню Windows), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
+- `invoke`: `app:info`, `app:getMenu` → `AppMenuItem[]`, `app:invokeMenu(id)`, `app:dismissMenu` (авторский popup Windows; снимок, разрешённый лист общего меню и возврат нативных сочетаний), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
   `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
@@ -2704,7 +2720,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 
 | Что | macOS / unix | Windows | Где |
 |---|---|---|---|
-| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | `hidden` + нативные caption-кнопки справа, WCO для zoom/fullscreen, палитра через `setTitleBarOverlay`, нативный popup меню из rail | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts` |
+| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | `hidden` + нативные caption-кнопки справа, WCO для zoom/fullscreen, палитра через `setTitleBarOverlay`, авторский popup меню из rail | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts`, `WindowMenu.tsx`, `PopupMenu.tsx` |
 | Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
 | Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
 | Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |

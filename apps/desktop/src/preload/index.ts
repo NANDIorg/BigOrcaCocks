@@ -15,7 +15,9 @@ const api: OrcaApi = {
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
     testNotification: () => ipcRenderer.invoke('app:testNotification'),
-    showMenu: () => ipcRenderer.invoke('app:showMenu'),
+    getMenu: () => ipcRenderer.invoke('app:getMenu'),
+    invokeMenu: (id) => ipcRenderer.invoke('app:invokeMenu', id),
+    dismissMenu: () => ipcRenderer.invoke('app:dismissMenu'),
     onWindowFullscreen: (cb) => {
       const off = on('app:windowFullscreen', cb)
       ipcRenderer.send('app:windowFullscreenReady')

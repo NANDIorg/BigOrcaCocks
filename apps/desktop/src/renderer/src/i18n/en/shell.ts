@@ -2,6 +2,7 @@ import type { AreaTranslation } from '../types'
 import type ru from '../ru/shell'
 
 export default {
+  'menu.back': 'Back to sections',
   cancel: 'Cancel',
   closeEsc: 'Close (Esc)',
   toggle: 'Open / close',
