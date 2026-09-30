@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join, resolve, delimiter } from 'node:path'
+import { existsSync, mkdirSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentInvocation, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { addTaskWorktree, assertHasCommits, projectBranchInfo, setupCommand, taskWorktreePath } from './git'
-import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
+import { extraPathDirs, missingRoleText } from './agents'
+import { roleLaunchExtraArgs } from './launch-extra-args'
+import { win32Launch, type Win32Launch } from './win32-launch'
 import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv, assistantCwd, assistantLaunch } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
@@ -52,97 +54,12 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-/** Метасимволы cmd.exe, перед которыми ставится ^. */
-const CMD_META = /([()\][%!^"`<>&|;, *?])/g
-
 /**
- * Аргумент для командной строки `cmd.exe /d /s /c "..."` (схема как в cross-spawn):
- * 1) кавычки по правилам MSVCRT, чтобы запускаемая программа получила аргумент целиком:
- *    `"` → `\"`, обратные слэши перед `"` и в конце строки удваиваются;
- * 2) ^ перед метасимволами cmd (& | < > ^ % ! " и т.п.), чтобы cmd не выполнил их сам.
- * .cmd/.bat-shim (npm: claude.cmd) ещё раз разбирает аргументы через cmd (`%*`) — там ^ удваивается.
- * Перевод строки cmd передать не умеет (обрывает команду) — заменяется пробелом.
+ * Запуск агента на Windows (`win32Launch`, сборка командной строки — `win32-launch.ts`): Node для JS-точки входа
+ * npm-шима в собранном приложении — Node из Electron.
  */
-function cmdQuoteArg(arg: string, doubleEscape: boolean): string {
-  const msvcrt = `"${arg
-    .replace(/\r?\n/g, ' ')
-    .replace(/(\\*)"/g, '$1$1\\"')
-    .replace(/(\\*)$/, '$1$1')}"`
-  const once = msvcrt.replace(CMD_META, '^$1')
-  return doubleEscape ? once.replace(CMD_META, '^$1') : once
-}
-
-/** Имя/путь программы для cmd.exe: только ^ перед метасимволами (включая пробелы в пути). */
-function cmdQuoteCommand(cmd: string): string {
-  return cmd.replace(CMD_META, '^$1')
-}
-
-/** Командная строка cmd.exe длиннее ~8191 символа обрезается молча — проверяем с запасом. */
-const CMD_LINE_LIMIT = 8000
-
-/**
- * Точка входа npm-шима (`claude.cmd`, `codex.cmd`), сгенерированного cmd-shim:
- * `"%_prog%"  "%dp0%\node_modules\@anthropic-ai\claude-code\cli.js" %*` (старые версии — `%~dp0\`).
- * Возвращает абсолютный путь к скрипту/программе или undefined, если шим не распознан.
- */
-function npmShimTarget(shim: string): string | undefined {
-  let text: string
-  try {
-    text = readFileSync(shim, 'utf8')
-  } catch {
-    return undefined
-  }
-  // Цель — последний путь от папки шима; `"%~dp0\node.exe"` старых шимов — это интерпретатор, не цель.
-  const rel = [...text.matchAll(/"%(?:~dp0|dp0%)\\?([^"%]+\.(?:js|cjs|mjs|exe))"/gi)]
-    .map((m) => m[1])
-    .filter((p) => !/(^|\\)node\.exe$/i.test(p))
-    .pop()
-  if (!rel) return undefined
-  const target = join(dirname(shim), rel)
-  return existsSync(target) ? target : undefined
-}
-
-/**
- * Node для JS-точки входа шима: node.exe рядом с шимом (так делает сам шим), в сборке — Node из Electron
- * (ORCA_NODE, с ELECTRON_RUN_AS_NODE=1), иначе node из PATH.
- */
-function win32Node(shim: string): { command: string; env: Record<string, string> } | undefined {
-  const local = join(dirname(shim), 'node.exe')
-  if (existsSync(local)) return { command: local, env: {} }
-  if (app.isPackaged) return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } }
-  const node = findBin('node')
-  return node ? { command: node, env: {} } : undefined
-}
-
-interface Win32Launch extends PtyCommand {
-  /** Доп. переменные окружения для агента (ELECTRON_RUN_AS_NODE при запуске через Electron). */
-  env: Record<string, string>
-}
-
-/**
- * Запуск агента на Windows. Промпт и system prompt длинные и многострочные, поэтому по возможности
- * идут через argv node-pty (CreateProcess, лимит 32767, переводы строк сохраняются), а не через cmd.exe:
- * 1) `<bin>.exe` (или файл без расширения) — напрямую;
- * 2) npm-шим `<bin>.cmd` — node с JS-точкой входа из шима напрямую (или .exe, на который указывает шим);
- * 3) шим не распознан — `cmd.exe /d /s /c "<agent> <args>"` с экранированием; строка длиннее
- *    CMD_LINE_LIMIT — ошибка (cmd молча обрезал бы её), переводы строк при этом теряются.
- */
-function win32Launch(command: string, args: string[]): Win32Launch {
-  const bin = isAbsolute(command) ? command : (findBin(command) ?? command)
-  if (!isCmdScript(bin)) return { command: bin, args, env: {} }
-  const target = npmShimTarget(bin)
-  if (target && /\.exe$/i.test(target)) return { command: target, args, env: {} }
-  const node = target ? win32Node(bin) : undefined
-  if (target && node) return { command: node.command, args: [target, ...args], env: node.env }
-  const line = [cmdQuoteCommand(bin), ...args.map((a) => cmdQuoteArg(a, true))].join(' ')
-  if (line.length > CMD_LINE_LIMIT) {
-    throw new Error(
-      `не удалось запустить ${command} на Windows: ${bin} — не стандартный npm-шим, а через cmd.exe ` +
-        `командная строка (${line.length} символов) превышает лимит ${CMD_LINE_LIMIT}. ` +
-        `Установите агента так, чтобы в PATH был ${command}.exe, или сократите описание задачи/цель.`
-    )
-  }
-  return { command: 'cmd.exe', args: `/d /s /c "${line}"`, env: {} }
+function launchOnWin32(inv: AgentInvocation): Win32Launch {
+  return win32Launch(inv.command, inv.args, { electronNode: app.isPackaged ? process.execPath : undefined })
 }
 
 /**
@@ -204,6 +121,8 @@ export function startWorker(
   if (!role) throw new OrcaError('worker.cannotStart', { reason: missingRoleText(runRoleId, { title: ctx.typeTitle, roles: ctx.roles }) })
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
+  // Флаги запуска роли разбираются до worktree и dispatch: с негодной строкой задача не должна уйти «в работу».
+  const extraArgs = roleLaunchExtraArgs(role, 'worker.cannotStart')
 
   // Ветку и worktree могла уже назначить нода воркфлоу «Git» (`create_branch`/`checkout`): работаем на них, а не
   // заводим `orca/<id>`. Нет worktree на диске (конец без мержа, удалили руками) — ставим на ту же ветку.
@@ -230,12 +149,12 @@ export function startWorker(
     ? undefined
     : store.taskWorkStage(task.id, { roleIds: ctx.roles.map((r) => r.id), ...(ctx.workflow ? { workflow: ctx.workflow } : {}) })
   const sessionId = agentSessionId(spec)
-  const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.worker, { projectRules: ctx.agentRules, role, language: mainLocale() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId })
+  const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.worker, { projectRules: ctx.agentRules, role, language: mainLocale() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: defaultShell(), model: role.model, effort: role.effort, sessionId, extraArgs })
 
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   // Worktree, который создала нода «Git» до первого запуска, тоже «свежий»: зависимостей в нём ещё нет.
   const setup = fresh || !snap.dispatches.some((d) => d.taskId === task.id) ? setupCommand(worktree) : null
-  const win32 = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : undefined
+  const win32 = process.platform === 'win32' ? launchOnWin32(inv) : undefined
   const { command, args } = win32
     ? win32
     : setup
@@ -296,6 +215,8 @@ export function startCoordinator(
   if (!role) throw new OrcaError('coordinator.cannotStart', { reason: missingRoleText('coordinator', { title: ctx.typeTitle, roles: ctx.roles }) })
   const spec = getAgent(role.agent)
   if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
+  // Флаги запуска роли — до `createRun`: с негодной строкой карточка создалась бы и тут же закрылась пустой.
+  const extraArgs = roleLaunchExtraArgs(role, 'coordinator.cannotStart')
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
   if (resume) objective = resume.objective
   // Картинки, сохранённые у задачи, идут координатору при каждом запуске (первом, повторном и «Вернуть в работу»):
@@ -326,9 +247,10 @@ export function startCoordinator(
       shell: defaultShell(),
       model: role.model,
       effort: role.effort,
-      sessionId
+      sessionId,
+      extraArgs
     })
-    const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
+    const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
     ptyId = spawnPty({
       meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
       cwd,
@@ -413,11 +335,12 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onE
     shell: defaultShell(),
     model: l.model,
     effort: l.effort,
-    sessionId
+    sessionId,
+    extraArgs: l.extraArgs
   })
   const cwd = assistantCwd(app.getPath('userData'))
   mkdirSync(cwd, { recursive: true })
-  const launch = process.platform === 'win32' ? win32Launch(inv.command, inv.args) : { ...inv, env: {} }
+  const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
   const ptyId = spawnPty(
     {
       meta: { role: 'assistant', label: 'ассистент' },

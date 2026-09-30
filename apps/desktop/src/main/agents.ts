@@ -190,7 +190,9 @@ export function agentInfos(enabledAgents: AgentKind[] | undefined, refresh = fal
       enabled: installed && (enabledAgents === undefined ? true : enabledAgents.includes(spec.id)),
       version: d?.version,
       models,
-      defaults
+      defaults,
+      // Этот main сохраняет и применяет `extraArgs` — renderer по признаку открывает поле флагов.
+      supportsExtraArgs: true
     }
   })
 }

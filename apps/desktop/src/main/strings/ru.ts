@@ -73,10 +73,21 @@ export default {
   'role.modelNotString': 'роль «{id}»: модель должна быть строкой',
   'role.effortNotString': 'роль «{id}»: effort должен быть строкой',
   'role.promptNotString': 'роль «{id}»: системный промпт должен быть строкой',
+  'role.extraArgsNotString': 'роль «{id}»: флаги запуска должны быть строкой',
+  'role.extraArgsInvalid': 'роль «{id}»: флаги запуска: {reason}',
 
   'assistant.notObject': 'настройки ассистента: ожидается объект',
   'assistant.unknownAgent': 'ассистент: неизвестный агент {agent}',
   'assistant.notString': 'ассистент: поле {field} должно быть строкой',
+  'assistant.extraArgsInvalid': 'ассистент: флаги запуска: {reason}',
+
+  // Почему строку флагов запуска нельзя принять (`ExtraArgsError` в core) — параметр {reason} ошибок выше.
+  'extraArgs.quote': 'незакрытая кавычка {detail}',
+  'extraArgs.separator': 'токен «--» недопустим: всё после него, включая флаги приложения, агент принял бы за текст задания',
+  'extraArgs.notFlag': 'первым должен идти флаг (начинается с «-»), а не «{detail}»: дописываются только флаги, не команда',
+  'extraArgs.control': 'управляющий символ {detail}',
+  'extraArgs.length': 'строка слишком длинная: {detail} символов при максимуме {max}',
+  'extraArgs.count': 'слишком много аргументов: {detail} при максимуме {max}',
 
   'worker.cannotStart': 'воркер не запустится: {reason}',
   'coordinator.cannotStart': 'координатор не запустится: {reason}',
