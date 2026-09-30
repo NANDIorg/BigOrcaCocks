@@ -181,7 +181,7 @@ export function App(): React.JSX.Element {
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
-  const [settingsSectionRequest, setSettingsSectionRequest] = useState<{ section: 'updates'; nonce: number }>()
+  const [settingsSectionRequest, setSettingsSectionRequest] = useState<{ section: 'updates' | 'assistant'; nonce: number }>()
   /** Мастер первого запуска: `first` — при старте (статус pending), `rerun` — «Пройти заново» из настроек. */
   const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): .md проекта и задач в работе. */
@@ -448,8 +448,8 @@ export function App(): React.JSX.Element {
   const statsSnapshot: StatsSnapshot = { tasks, runs: snap.runs, dispatches: snap.dispatches, requests, questions: snap.questions, columns }
 
   // ---------- ассистент ----------
-  /** Терминалы ассистента: по реестру (роль) плюс только что запущенный, которого там ещё нет. */
-  const { terminals: assistantTerminals, ptyId: assistantPty } = pickAssistant(
+  /** Id чата из open/reset либо отдельного терминала Amp/Shell из реестра. */
+  const { ptyId: assistantPty } = pickAssistant(
     terminals.map((t) => ({ ptyId: t.ptyId, role: t.role, projectId: t.projectId, tail: tails[t.ptyId] })),
     launchedAssistant,
     killedRef.current,
@@ -462,7 +462,7 @@ export function App(): React.JSX.Element {
     setAssistantState({ busy: true, error: null })
     try {
       const { ptyId } = reset ? await window.orca.assistant.reset(80, 30) : await window.orca.assistant.open(80, 30)
-      // Старый PTY main закрыл сам; из списка его убираем сразу, чтобы не висел «завершившимся».
+      // Старую сессию main закрыл сам; терминальный вариант сразу убираем из вкладок.
       if (old && old !== ptyId && reset) {
         killedRef.current.add(old)
         dropTerminal(old)
@@ -1154,11 +1154,12 @@ export function App(): React.JSX.Element {
       {active && (
         <AssistantPanel
           open={showAssistant}
-          terminals={assistantTerminals}
+          suspended={showSettings}
           activePty={assistantPty}
           status={assistantState}
           onClose={closeAssistant}
           onReset={() => void launchAssistant(true)}
+          onSettings={() => { setSettingsSectionRequest({ section: 'assistant', nonce: Date.now() }); setShowSettings(true) }}
           onOpenInTerminals={() => {
             if (!assistantPty) return
             setShowAssistant(false)

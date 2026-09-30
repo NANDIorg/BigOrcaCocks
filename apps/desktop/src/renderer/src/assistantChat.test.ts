@@ -1,170 +1,67 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Логика чат-режима панели ассистента (без React/IPC).
-import { describe, it } from 'node:test'
+import { it } from 'node:test'
 import assert from 'node:assert/strict'
-import type { AssistantChatMessage, AssistantChatUpdate, OrcaApi } from '../../shared/ipc'
-import {
-  applyChatUpdate, checkChatSupport, chatStateFromSnapshot, emptyChatState, groupMessages, isAssistantViewMode,
-  isStuckThinking, readAssistantViewMode, speakerOf, writeAssistantViewMode, STUCK_THINKING_MS
-} from './assistantChat'
-
-function msg(id: string, role: AssistantChatMessage['role'], text = '', at = 0): AssistantChatMessage {
-  return { id, role, text, at }
+import type { AssistantChatSnapshot, AssistantChatUpdate, OrcaApi } from '../../shared/ipc'
+import { applyChatUpdate, chatStateFromSnapshot, subscribeAssistantChat } from './assistantChat'
+const snapshot: AssistantChatSnapshot = { ptyId: 's1', protocolVersion: 2, revision: 2, agent: 'claude', transport: 'chat', messages: [{ id: 'm1', role: 'agent', text: 'новый текст', at: 1 }], status: 'thinking', interactions: [] }
+it('разрешение появляется один раз и исчезает после ответа; история сохраняется', () => {
+  const initial = chatStateFromSnapshot(snapshot)
+  const request = { ptyId: 's1', revision: 3, interaction: { id: 'r1', kind: 'permission' as const, title: 'Bash' } }
+  const waiting = applyChatUpdate(initial, request)
+  assert.equal(waiting.interactions.length, 1)
+  assert.equal(applyChatUpdate(waiting, request), waiting)
+  const answered = applyChatUpdate(waiting, { ptyId: 's1', revision: 4, resolvedRequestId: 'r1' })
+  assert.equal(answered.interactions.length, 0)
+  assert.equal(answered.messages, initial.messages)
+})
+it('старый фрагмент и событие чужой сессии не заменяют свежий текст', () => {
+  const state = chatStateFromSnapshot(snapshot)
+  assert.equal(applyChatUpdate(state, { ptyId: 's1', revision: 1, message: { ...snapshot.messages[0], text: 'старый' } }), state)
+  assert.equal(applyChatUpdate(state, { ptyId: 's2', revision: 9, status: 'done' }), state)
+})
+it('ошибка и прерывание сохраняют уже полученные сообщения', () => {
+  const state = chatStateFromSnapshot(snapshot)
+  const failed = applyChatUpdate(state, { ptyId: 's1', revision: 3, status: 'error', error: 'auth failed' })
+  assert.equal(failed.error, 'auth failed')
+  const stopped = applyChatUpdate(failed, { ptyId: 's1', revision: 4, status: 'interrupted' })
+  assert.equal(stopped.error, undefined)
+  assert.equal(stopped.messages, state.messages)
+})
+function fixture() {
+  let listener: ((event: AssistantChatUpdate) => void) | undefined
+  let resolveSnapshot!: (value: AssistantChatSnapshot) => void
+  let unsubscribed = false
+  const pending = new Promise<AssistantChatSnapshot>((resolve) => { resolveSnapshot = resolve })
+  const api = { assistantChat: { getMessages: () => pending, onMessage: (_id: string, cb: (event: AssistantChatUpdate) => void) => { listener = cb; return () => { unsubscribed = true } }, interrupt: async () => {}, respond: async () => {}, send: async () => {}, available: async () => true } } satisfies Pick<OrcaApi, 'assistantChat'>
+  return { api, emit: (event: AssistantChatUpdate) => listener?.(event), resolveSnapshot, unsubscribed: () => unsubscribed }
 }
-
-/** Подставляет localStorage на время теста — как в `boardView.test.ts`. */
-function withStorage(store: Map<string, string> | 'broken', fn: () => void): void {
-  const g = globalThis as { localStorage?: unknown }
-  const prev = g.localStorage
-  g.localStorage =
-    store === 'broken'
-      ? { getItem: () => { throw new Error('нет доступа') }, setItem: () => { throw new Error('нет доступа') } }
-      : { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) }
-  try {
-    fn()
-  } finally {
-    g.localStorage = prev
-  }
-}
-
-describe('readAssistantViewMode/writeAssistantViewMode', () => {
-  it('нет localStorage — по умолчанию чат, запись не падает', () => {
-    assert.equal(readAssistantViewMode(), 'chat')
-    writeAssistantViewMode('terminal')
-  })
-
-  it('сохранённое значение переживает чтение', () => {
-    const store = new Map<string, string>()
-    withStorage(store, () => {
-      assert.equal(readAssistantViewMode(), 'chat')
-      writeAssistantViewMode('terminal')
-      assert.equal(readAssistantViewMode(), 'terminal')
-      writeAssistantViewMode('chat')
-      assert.equal(readAssistantViewMode(), 'chat')
-    })
-  })
-
-  it('мусор в хранилище — как будто выбора не было', () => {
-    withStorage(new Map([['orca.assistant.viewMode', 'что-то']]), () => {
-      assert.equal(readAssistantViewMode(), 'chat')
-    })
-  })
-
-  it('сломанный localStorage — тоже дефолт', () => {
-    withStorage('broken', () => {
-      assert.equal(readAssistantViewMode(), 'chat')
-      writeAssistantViewMode('terminal')
-    })
-  })
+it('подписка перед снимком сохраняет новые события и отбрасывает включённые в снимок', async () => {
+  const f = fixture()
+  const states: ReturnType<typeof chatStateFromSnapshot>[] = []
+  const connection = subscribeAssistantChat(f.api, 's1', (state) => states.push(state), (error) => assert.fail(error))
+  f.emit({ ptyId: 's1', revision: 1, message: { ...snapshot.messages[0], text: 'старый текст' } })
+  f.emit({ ptyId: 's1', revision: 3, message: { id: 'm2', role: 'human', text: 'ещё', at: 2 } })
+  f.resolveSnapshot(snapshot)
+  await connection.ready
+  assert.deepEqual(states.at(-1)?.messages.map((message) => message.text), ['новый текст', 'ещё'])
+  connection.dispose()
+  assert.equal(f.unsubscribed(), true)
 })
-
-describe('isAssistantViewMode', () => {
-  it('только chat/terminal', () => {
-    assert.equal(isAssistantViewMode('chat'), true)
-    assert.equal(isAssistantViewMode('terminal'), true)
-    assert.equal(isAssistantViewMode('other'), false)
-    assert.equal(isAssistantViewMode(undefined), false)
-  })
+it('закрытая подписка не публикует поздний снимок или событие', async () => {
+  const f = fixture()
+  let publications = 0
+  const connection = subscribeAssistantChat(f.api, 's1', () => publications++, () => publications++)
+  connection.dispose()
+  f.resolveSnapshot(snapshot)
+  await connection.ready
+  f.emit({ ptyId: 's1', revision: 9, status: 'done' })
+  assert.equal(publications, 0)
 })
-
-describe('checkChatSupport', () => {
-  const api = (available: unknown): Partial<OrcaApi> => ({ assistantChat: { available } } as unknown as Partial<OrcaApi>)
-
-  it('доступен — available() → true', async () => {
-    assert.equal(await checkChatSupport(api(async () => true), 'p1'), 'available')
-  })
-
-  it('API есть, но транскрипта нет — unavailable', async () => {
-    assert.equal(await checkChatSupport(api(async () => false), 'p1'), 'unavailable')
-  })
-
-  it('старый preload/main — stale', async () => {
-    assert.equal(await checkChatSupport(undefined, 'p1'), 'stale')
-    assert.equal(await checkChatSupport({}, 'p1'), 'stale')
-    assert.equal(await checkChatSupport(api('не функция'), 'p1'), 'stale')
-  })
-
-  it('новый preload, старый main — invoke падает → stale', async () => {
-    const noHandler = async (): Promise<boolean> => {
-      throw new Error("Error invoking remote method 'assistantChat:available': Error: No handler registered for 'assistantChat:available'")
-    }
-    assert.equal(await checkChatSupport(api(noHandler), 'p1'), 'stale')
-  })
-})
-
-describe('chatStateFromSnapshot/emptyChatState', () => {
-  it('снимок → состояние ленты; пустое — done без сообщений', () => {
-    assert.deepEqual(emptyChatState(), { messages: [], status: 'done' })
-    const snap = { ptyId: 'p1', messages: [msg('1', 'human', 'привет')], status: 'thinking' as const }
-    assert.deepEqual(chatStateFromSnapshot(snap), { messages: snap.messages, status: 'thinking' })
-  })
-})
-
-describe('applyChatUpdate', () => {
-  it('новое сообщение — добавляется в конец', () => {
-    const state = { messages: [msg('1', 'human', 'привет')], status: 'thinking' as const }
-    const next = applyChatUpdate(state, { ptyId: 'p1', message: msg('2', 'agent', 'да, слушаю') })
-    assert.deepEqual(next.messages.map((m) => m.id), ['1', '2'])
-    assert.equal(next.status, 'thinking')
-  })
-
-  it('знакомый id — заменяется на месте, не дублируется', () => {
-    const state = { messages: [msg('1', 'human'), msg('2', 'tool', '')], status: 'thinking' as const }
-    const updated: AssistantChatMessage = { id: '2', role: 'tool', text: 'готово', at: 5 }
-    const next = applyChatUpdate(state, { ptyId: 'p1', message: updated })
-    assert.equal(next.messages.length, 2)
-    assert.deepEqual(next.messages[1], updated)
-  })
-
-  it('смена статуса не трогает сообщения; тот же статус — тот же объект состояния', () => {
-    const state = { messages: [msg('1', 'human')], status: 'thinking' as const }
-    const next = applyChatUpdate(state, { ptyId: 'p1', status: 'done' })
-    assert.equal(next.status, 'done')
-    assert.equal(next.messages, state.messages)
-    const same = applyChatUpdate(next, { ptyId: 'p1', status: 'done' } as AssistantChatUpdate)
-    assert.equal(same, next)
-  })
-})
-
-describe('speakerOf/groupMessages', () => {
-  it('human — отдельный собеседник, agent и tool — один и тот же (ассистент)', () => {
-    assert.equal(speakerOf('human'), 'human')
-    assert.equal(speakerOf('agent'), 'assistant')
-    assert.equal(speakerOf('tool'), 'assistant')
-  })
-
-  it('подряд идущие реплики одного собеседника — одна группа; смена — новая', () => {
-    const messages = [
-      msg('1', 'human', 'сделай X'),
-      msg('2', 'tool', ''),
-      msg('3', 'agent', 'готово'),
-      msg('4', 'human', 'спасибо')
-    ]
-    const groups = groupMessages(messages)
-    assert.deepEqual(groups.map((g) => [g.speaker, g.messages.map((m) => m.id)]), [
-      ['human', ['1']],
-      ['assistant', ['2', '3']],
-      ['human', ['4']]
-    ])
-  })
-
-  it('пустая лента — нет групп', () => {
-    assert.deepEqual(groupMessages([]), [])
-  })
-})
-
-describe('isStuckThinking', () => {
-  it('не thinking — никогда не зависла', () => {
-    assert.equal(isStuckThinking('done', 0, 1_000_000), false)
-    assert.equal(isStuckThinking('error', 0, 1_000_000), false)
-  })
-
-  it('thinking без сообщений — не с чем сравнить, не зависла', () => {
-    assert.equal(isStuckThinking('thinking', undefined, 1_000_000), false)
-  })
-
-  it('thinking и порог не превышен — не зависла; превышен — зависла', () => {
-    const at = 1000
-    assert.equal(isStuckThinking('thinking', at, at + STUCK_THINKING_MS - 1), false)
-    assert.equal(isStuckThinking('thinking', at, at + STUCK_THINKING_MS + 1), true)
-  })
+it('старый main не принимается за полноценный чат без разрешений', async () => {
+  const f = fixture()
+  let error = ''
+  const connection = subscribeAssistantChat(f.api, 's1', () => assert.fail('старый снимок принят'), (value) => { error = value })
+  f.resolveSnapshot({ ptyId: 's1', messages: [], status: 'done' })
+  await connection.ready
+  assert.equal(error, 'stale')
+  connection.dispose()
 })

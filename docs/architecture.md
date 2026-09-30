@@ -232,7 +232,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   если такой роли нет в типе задачи (удалили в «Настройки → Типы задач») — ошибка «координатор не запустится: …» до создания прогона.
   Текст «роли нет» один для всех мест (`missingRoleMessage` в `agents.ts`): тип задачи по названию, роли типа,
   `orca-board roles list` для агента и «Настройки → Типы задач» (для системной роли — «Вернуть системные роли») для человека.
-- **Ассистент** (`startAssistant`): не роль типа — агент, модель, effort и инструкции из `AppSettings.assistant`,
+- **Ассистент** (`assistantLaunch` / `AssistantSession`): не роль типа — агент, модель, effort и инструкции из `AppSettings.assistant`,
   режим разрешений всегда `auto`; от проекта и типа задачи не зависит. См. «Ассистент».
 - **Системный промпт роли** (`Role.systemPrompt`, `withRoleInstructions` в `packages/core/src/types.ts`):
   при старте воркера и координатора к служебной инструкции Orca (`skills/worker.md` / `coordinator.md`)
@@ -841,51 +841,16 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Пути и кроссплатформенность**: пути собираются только `path.join` (пробелы и разделители Windows не важны для промпта — путь идёт в обратных
   кавычках); до 8 путей добавляют ≈ 1 КБ к стартовому промпту (учитывай `CMD_LINE_LIMIT` в `win32Launch`).
 
-## Ассистент (`src/main/worker.ts` `startAssistant`, `src/main/index.ts` `openAssistant`, `skills/assistant.md`)
+## Ассистент (`main/assistant-session.ts`, `main/assistant-conversation.ts`, `skills/assistant.md`)
 
-Третий тип агента рядом с воркером и координатором: интерактивный агент в PTY, которому человек пишет
-естественным языком («создай задачу», «верни в работу», «перенеси», «закрой», «перезапусти воркера»),
-а он выполняет это командами `orca-board`. Код не пишет и не читает.
+Ассистент управляет доской через `orca-board`: задачи, проекты, настройки и запуск агентов. Он один на приложение и не принадлежит типу задачи или текущему проекту; явный `--project` адресует проект, без флага CLI берёт активный.
 
-- **Один на всё приложение**: ассистент не принадлежит проекту и работает со всеми проектами через
-  `orca-board --project <id>`; без флага CLI берёт активный в UI проект. Файлового доступа к репозиториям
-  нет (`--add-dir` не передаётся) — только CLI.
-- **Свои настройки** — `AppSettings.assistant: AssistantSettings { agent, model?, effort?, systemPrompt? }` (`shared/ipc.ts`,
-  тип — `packages/core/src/types.ts`), хранятся в `settings.assistant` файла `projects.json`, каналы — те же `app:getSettings` /
-  `app:setSettings`. Ассистент не роль типа задачи: он один на приложение и к типу не относится. `settings()` нормализует
-  (`loadedAssistantSettings` в `src/main/assistant.ts`: неизвестный агент → `claude`, не-строки и пустые строки выпадают),
-  `setSettings({ assistant })` мержит по полям (`mergedAssistantSettings`): пустая строка очищает поле, промпт хранится как
-  введён, смена агента без `model`/`effort` в патче сбрасывает их (модель одного агента другому не подходит), неизвестный
-  агент или не-строка — `OrcaError` `assistant.*`. Режима разрешений в настройках нет — всегда `auto`
-  (`ASSISTANT_PERMISSION_MODE`): ассистенту нужен только `orca-board`, он и так разрешён. Настройки применяются к
-  **следующему** запуску («Новый диалог» / `assistant:reset`), живой ассистент не перезапускается. Тесты — `assistant-settings.test.ts`. В UI — раздел «Настройки → Ассистент» (см. «Настройки»).
-- **Запуск** (`startAssistant(ctx, cols, rows)`, `ctx` — `AssistantContext { socketPath, settings }`): `openAssistant` берёт
-  `projects.settings().assistant` и **до** закрытия старого терминала проверяет агента (`assertAgentUsable(agentInfos(undefined), …)`:
-  неизвестный или неустановленный — `OrcaError`, панель показывает его, старый ассистент при «Новом диалоге» не теряется).
-  Что запускать, собирает чистая `assistantLaunch(settings, builtin, language)` (`src/main/assistant.ts`): агент, модель, effort,
-  system prompt — `skills/assistant.md` + блок `# Инструкции роли «Ассистент»` (`ASSISTANT_TITLE`, `agentSystemPrompt`; правил проекта `agentRules` нет), стартовое сообщение —
-  `ASSISTANT_START_PROMPT` («Поздоровайся одной строкой и жди запроса человека»). cwd — нейтральный
-  `userData/assistant` (создаётся при запуске), не репозиторий; `orca-board` без вопросов
-  (`--allowedTools Bash(orca-board:*)` у claude), на Windows — `win32Launch`, как у координатора.
-  meta PTY — `{ role: 'assistant', label: 'ассистент' }` без `projectId`.
-- **Окружение** (`assistantEnv` в `src/main/assistant.ts`, тест — `assistant.test.ts`): `ORCA_SOCKET`,
-  `PATH` с bin CLI, `ORCA_NODE` в сборке и `ORCA_ROLE=assistant`. **Нет** `ORCA_PROJECT` (проект —
-  `--project` или активный) и `ORCA_RUN_ID`: прогон не создаётся (задачи без `--run` попадают во «Входящие»,
-  глобальные задачи он называет явно через `--global`/`--run`).
-- **IPC**: `assistant:open(cols, rows) → { ptyId }` — один ассистент на приложение (`assistantPty` в `index.ts`):
-  живой PTY возвращается как есть при любом активном проекте, иначе запускается новый;
-  `assistant:reset(cols, rows) → { ptyId }` («Новый диалог») — живой закрывается (`killPty`), запускается
-  новый с чистым контекстом. В renderer — `window.orca.assistant.open/reset`.
-- **UI** (`renderer/src/AssistantPanel.tsx`, состояние — в `App.tsx`): правая выезжающая панель (как Инбокс,
-  480px, на ширине <600px — во весь экран), открывается кнопкой в rail и ⌘K / Ctrl+K (capture-обработчик
-  рядом с ⌘J, работает из xterm; открытие одной панели закрывает другую). Заголовок — «Ассистент» без имени
-  проекта. При открытии, если ассистента нет или он завершился, — `assistant.open`. Терминал остаётся
-  смонтированным (вывод не теряется при закрытии панели), при смене проекта — тот же. PTY выбирает
-  `pickAssistant` (`renderer/src/assistantPty.ts`, тест рядом): ответ open/reset, после перезагрузки окна —
-  роль `assistant` без `projectId` в `terminals:list`; со старым main (ассистент по проекту, PTY с `projectId`)
-  — ассистент активного проекта. Во вкладке «Терминалы» ассистент приложения виден в любом проекте. «Новый диалог» — `reset`,
-  старый PTY сразу убирается из списка терминалов. Esc закрывает панель, только если фокус не в xterm:
-  там Esc нужен агенту (прервать ответ). В списке «Терминалы» ассистент подписан «ассистент».
+- **Настройки** — `AppSettings.assistant {agent, model?, effort?, systemPrompt?}` в `projects.json`. Нормализация и мерж принадлежат `main/assistant.ts`; смена агента сбрасывает прежние модель/effort, если новые не заданы тем же патчем. Настройки действуют со следующего «Нового диалога». Системные инструкции, дополнительные инструкции роли и язык собирает `assistantLaunch`; собственных project rules у ассистента нет.
+- **Запуск и lifecycle** — `AssistantSession`: повторное `assistant.open` возвращает текущий id; reset проверяет CLI до закрытия старого, запускает новую сессию и отбрасывает поздние события старой. Claude использует stream-json, Codex — app-server, Gemini/Cursor/OpenCode/Copilot/Goose — ACP. Amp/Shell остаются отдельными PTY через `worker.startAssistant`. Неподдерживаемая версия протокола показывает ошибку, агент не переключается молча. `ptyId` чат-сессии — совместимое название поля, а не терминал в реестре.
+- **Окружение** — `assistantEnv`: `ORCA_SOCKET`, `PATH` с bin CLI, `ORCA_NODE` в сборке, `ORCA_ROLE=assistant`, без проектных/task/run/dispatch переменных. cwd — нейтральный `userData/assistant`; это стартовая папка, а не OS sandbox. Промпт ограничивает роль управлением доской; реальные разрешения определяет CLI. Claude сохраняет `auto` и `Bash(orca-board:*)`; app-server/ACP не получают флагов обхода разрешений.
+- **Чат** — `shared/assistant-conversation.ts` задаёт сообщения, действия, статусы и активные взаимодействия. IPC `assistantChat.getMessages/send/interrupt/respond/onMessage` переносит их; main добавляет ревизии. `renderer/assistantChat.ts` подписывается до снимка, сохраняет события во время загрузки и не откатывает текст старой ревизией. Закрытие панели или окна в фоне сохраняет сессию; фактический выход/установка обновления вызывает dispose. Старый `main/assistant-chat.ts` оставлен как совместимый парсер транскриптов, но новый чат его не опрашивает.
+- **Панель** — `AssistantPanel.tsx` и `AssistantInteraction.tsx`: правая панель 560px, на узком окне весь экран; человеческие баблы, безопасный Markdown, раскрываемые действия, вопросы и явные разрешения, кнопка остановки. Встроенного xterm нет; для Amp/Shell показана отдельная кнопка вкладки терминалов. Черновик и ручная прокрутка сохраняются при закрытии; Enter/Shift+Enter и IME обработаны явно. Фокус и inert-фон принадлежат `useModalFocus`; настройки временно получают фокус. ⌘K/Ctrl+K и Esc сохраняют привычные команды оболочки. Подробный контракт и таблица IPC — [assistant-chat.md](assistant-chat.md#3-двусторонний-чат).
+
 - **Правила поведения** — в `skills/assistant.md`: ассистент работает со **всеми** проектами пользователя.
   Сначала `projects list`; проект, названный словами, сопоставляется с `name` или папкой `root` (неоднозначно —
   кандидаты и вопрос), не назван — активный (`active: true`), и ассистент называет его в ответе. Каждая проектная
@@ -908,46 +873,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   ассистент назвал, что изменится (тот же принцип, что у `task delete`/`global delete`/`worker stop`
   выше); граф воркфлоу правится только визуально в «Настройках» — ассистент может лишь читать его
   (`workflow show`). Контракт задачи (инвентаризация настроек, откуда что берётся) — `docs/assistant-chat.md`
-  → «1–2»; чат-режим панели — следующий пункт.
-- **Чат-режим панели** (`src/main/assistant-chat.ts`, IPC `assistantChat`, контракт — `docs/assistant-chat.md`
-  → «3»): панель ассистента выглядит как чат, но под капотом остаётся тот же PTY — `assistantChat` только
-  читает и пишет в него другим протоколом, `assistant.open/reset` всё равно поднимает PTY.
-  - **Источник сообщений — транскрипт агента**, не разбор ANSI из PTY. `startAssistant` генерирует `sessionId`
-    (`agentSessionId`, как у воркера/координатора) и передаёт его агенту через `--session-id` (`acceptsSessionId`);
-    у Claude Code это фиксирует имя файла сессии, поэтому путь известен заранее (`assistantTranscriptPath`:
-    `<CLAUDE_CONFIG_DIR>/projects/<slug(userData/assistant)>/<sessionId>.jsonl`, `slug` — `claudeSlug` из
-    `transcripts.ts`) и папку проекта Claude Code сканировать не надо. Агент без `acceptsSessionId` — `sessionId`
-    нет, чат недоступен, панель остаётся терминалом (универсальный фолбэк, работает для любого агента).
-  - **Разбор** (`applyChatLine`/`ChatBuildState` в `assistant-chat.ts`, тест — `assistant-chat.test.ts`):
-    строки `type: "assistant"` — блоки одного `message.id` (Claude Code пишет по блоку на строку) дописываются
-    в одно сообщение чата: `text` → `role: 'agent'`, `tool_use` без текста в этой же реплике → `role: 'tool'`
-    (собственный текст — краткое превью результата, не голый JSON), `thinking` игнорируется. Строки
-    `type: "user"` со строковым `content` — `role: 'human'`; с `tool_result` — не новое сообщение, а обновление
-    статуса (`running` → `ok`/`error`) уже существующего `toolCalls[]` по `tool_use_id`. Статус сессии
-    (`AssistantChatSnapshot.status`) — `thinking`, пока последняя обработанная запись не текстовый ответ агента
-    без незакрытого tool-вызова, `done` — после него, `error` — сразу после `tool_result` с `is_error: true`.
-    Инкрементальное чтение — `readLines` (экспортирован из `transcripts.ts`, тот же приём, что `TranscriptCache`);
-    `AssistantChatCache` — свой кэш по (путь, размер, mtime): состояние хранит открытую реплику и ожидающие
-    результата tool-вызовы, а не расход токенов, поэтому это не `TranscriptCache`. `read(path)` сериализован
-    по пути через in-flight `Promise`: параллельный вызов (IPC `getMessages` совпал с тиком `watchAssistantChat`)
-    ждёт тот же промис, а не читает `CacheEntry` второй раз — `applyChatLine` не идемпотентен и продублировал бы
-    дописанный хвост. Картинка, вставленная в терминал вместе с текстом, — `AssistantChatMessage.hasImage`
-    (подпись к ней рисует renderer, а не текст сообщения: локаль main и renderer может различаться).
-  - **IPC**: `assistantChat:available(ptyId)` → `boolean` (нет `sessionId` или файла — `false`);
-    `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot` (последние `ASSISTANT_CHAT_MESSAGE_LIMIT`
-    сообщений, не всё тело файла); `assistantChat:send(ptyId, text)` — не пишет в транскрипт напрямую, а
-    `pty.write(ptyId, chatInputBytes(text))` — тот же путь, что ввод в терминале (агент сам допишет транскрипт,
-    чат увидит через `onMessage`); многострочный текст оборачивается в bracketed paste (`ESC[200~ … ESC[201~`),
-    иначе readline агента принял бы `\n` внутри текста за отдельные Enter. Enter — **отдельная** запись
-    `pty.write(ptyId, '\r')` через `setTimeout(SUBMIT_DELAY_MS)` (константа `index.ts`, общая с `answerNudge`),
-    с проверкой `isAlive(ptyId)` перед отложенной записью: `chatInputBytes` отдаёт только тело без `\r` — если
-    Enter уйти в PTY той же записью, что текст, TUI агента (readline в raw-режиме) примет его за часть вставки
-    и не отправит сообщение (те же грабли, что решает пауза у `answerNudge`, см. «Грабли разработки»). Чужой
-    `ptyId` или пустой текст — `OrcaError` `assistantChat.unknownPty`/`assistantChat.emptyText`. Событие
-    `assistantChat:message:<ptyId>` — `AssistantChatUpdate` (новое/изменённое сообщение или смена статуса), раз
-    в секунду по разнице с прошлым тиком (`watchAssistantChat`/`drainChatUpdates` в `index.ts`), не весь снапшот.
-    В preload — `window.orca.assistantChat.{available, getMessages, send, onMessage}`.
-
+  → разделы 1–2; двусторонний чат — раздел 3.
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
 - **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, invoke}`. Из него выводятся
@@ -1345,13 +1271,15 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   и клика по уведомлению. Системное меню также содержит «Окно → Показать главное окно».
 - **Выход**: все пути (Cmd+Q, меню приложения, «Выйти» в трее, `app.quit()`) идут через `before-quit` →
   `requestQuit()`. Живых воркеров (`liveWorkerCount`: dispatch не завершён и PTY жив) нет — `quitNow()`
-  (`killAll()` + `app.quit()`). Есть — диалог `warning` «N задач(а/и) в работе, агенты будут остановлены. Выйти?»
+  (`assistantSession.dispose()` + `killAll()` + `app.quit()`). Есть — диалог `warning` «N задач(а/и) в работе, агенты будут остановлены. Выйти?»
   с кнопками «Выйти» / «Отмена» (по умолчанию «Отмена»); родитель — окно, если оно есть. Второй диалог
   не открывается (`confirmingQuit`), после подтверждения `before-quit` не перехватывается (`quitting`).
 - **Уведомления при закрытом окне** — см. «Уведомления»: клик создаёт окно и шлёт `projects:focus` после `did-finish-load`.
-- **Иконка** (`tray.ts`): монохромное кольцо с плавником рисуется программно (`drawIcon`, суперсэмплинг 4×4),
-  кодируется встроенным PNG-энкодером (`encodePng`, zlib + CRC32) в два представления — 16px и 32px (Retina);
-  файлов в сборке нет. На macOS — template image, система красит её под тему строки меню.
+- **Иконка** (`tray.ts`): исходный прозрачный авторский SVG сохранён в `build/tray/orca-logo.svg`.
+  macOS использует производную чёрную alpha-маску `orcaTemplate.png` 18px и `orcaTemplate@2x.png` 36px,
+  явные representations 1×/2× и template image, которую ОС красит под строку меню.
+  Windows использует цветной ICO с размерами 16/20/24/32/40/48/64/256px; Linux — прозрачный PNG 32px.
+  `?asset` импорты копируют производные файлы в `out/main/chunks` при сборке. Генерации PNG в runtime нет.
 
 ### Системное меню и «О приложении»
 
@@ -1414,6 +1342,8 @@ Main передаёт preload аргумент `--orca-macos-window-chrome`; rea
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
 | Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
+| Assistant Chat | `AssistantPanel`, `AssistantInteraction`, `AssistantSession` | `shared/assistant-conversation.ts`, `docs/assistant-chat.md` | справа; Amp/Shell — отдельный терминал | протокольные fixture-тесты, session/IPC тесты; пользователь проверяет билд |
+| Tray | `main/tray.ts`, Electron Tray | `build/tray/orca-logo.svg` | template PNG 18/36 macOS; цветной ICO Windows; PNG Linux | nativeImage, упаковка; Windows проверяется на Windows |
 | Branding | `build/icon.svg` | предоставленный авторский логотип | SVG в renderer, PNG для ОС и сборок | скругление и проверка загрузки в Electron |
 
 ## Общая визуальная тема (`src/shared/theme.ts`)
@@ -1570,7 +1500,7 @@ SVG-линия и траектория пакета используют оди�
   `board:get` (snapshot с `runs`); `runs:list`, `runs:close(id)` (см. «Прогоны»);
   `globalTasks:list|get|create|update|move|remove|tasks|createTask|startCoordinator`, `globalTasks:accept(id, decision?)` → `GlobalTask` (`decision` — решение при «Подтвердить» у прогона с воркфлоу) и `globalTasks:returnToWork(id, text, cols, rows, images?)` → `ptyId` («Проверка», `docs/nested-kanban.md`; `images?: ImageAttachmentInput[]` — картинки к уточнению, см. «Изображения при возврате в работу»); `tasks:create`, `tasks:move`, `tasks:update`, `tasks:remove`; `questions:answer`; `requests:list({runId?, pending?})`, `requests:resolve(id, resolution, images?)` (`docs/human-requests.md`; `images` — картинки к «Уточнить»/«Вернуть»); `pty:spawn`;
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»);
-  `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)` (см. «Ассистент → Чат-режим панели»);
+  `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)`, `assistantChat:interrupt(ptyId)`, `assistantChat:respond(ptyId, requestId, answer)` (см. «Ассистент»);
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
   `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта для вкладки «Файлы»:
   `dir` — от корня через `/`, '' — корень, эхо запроса; папки, затем файлы и симлинки по имени; не больше `PROJECT_FILES_DIR_LIMIT` = 5000 записей, остальное — `truncated: true`;
@@ -1608,9 +1538,9 @@ SVG-линия и траектория пакета используют оди�
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
   группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
   поэтому событие приходит одинаково и от IPC, и от правки через сокет CLI/ассистентом, см. «Ассистент» → «Настройки»),
-  `showcase:escape` (без payload — Esc в окне из `before-input-event`: фокус во фрейме показа, keydown до DOM родителя не доходит; `window.orca.showcase.onFrameEscape`, в старом preload нет), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент → Чат-режим панели»).
+  `showcase:escape` (без payload — Esc в окне из `before-input-event`: фокус во фрейме показа, keydown до DOM родителя не доходит; `window.orca.showcase.onFrameEscape`, в старом preload нет), `projects:focus` (клик по уведомлению), `requests:focus {projectId, requestId}` (клик по уведомлению о запросе — открыть Инбокс на нём), `pty:data:<id>`, `pty:exit:<id>`, `assistantChat:message:<ptyId>` (`AssistantChatUpdate`, см. «Ассистент»).
   `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
-- В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?, onMenuAction?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, onMessage}`;
+- В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?, onMenuAction?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, interrupt, respond, onMessage}`;
   у `window.orca.worker` остался только `start`.
 
 ## Протокол сокета

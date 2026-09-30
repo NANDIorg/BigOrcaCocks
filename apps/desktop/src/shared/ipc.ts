@@ -2,6 +2,8 @@ import type { Task, ImageAttachmentInput, AgentKind, AssistantSettings, AgentInf
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 import type { WindowChromeMode } from './window-chrome'
 import type { AppearanceSettings } from './appearance'
+import type { ConversationStatus, ConversationMessage, ConversationToolCall, ConversationInteraction, InteractionAnswer } from './assistant-conversation'
+export type { ConversationInteraction, InteractionAnswer } from './assistant-conversation'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -878,24 +880,13 @@ export interface OrcaApi {
     /** Закрыть терминал ассистента (если жив) и запустить новый — чистый контекст. */
     reset(cols: number, rows: number): Promise<{ ptyId: string }>
   }
-  /**
-   * Чат-режим панели ассистента поверх PTY (`docs/assistant-chat.md` → «3. Контракт чат-режима»): читает
-   * транскрипт агента ассистента (`main/assistant-chat.ts`) и пишет в тот же PTY, что и `assistant.open/reset`, —
-   * другим протоколом, а не отдельным «безтерминальным» каналом с агентом.
-   */
+  /** Двусторонний чат ассистента; Amp/Shell открываются отдельным терминалом. */
   assistantChat: {
-    /** Можно ли показать чат для этого PTY: транскрипт найден и агент поддерживает разбор (сейчас — только claude). */
     available(ptyId: string): Promise<boolean>
-    /** Сообщения с начала сессии (последние `ASSISTANT_CHAT_MESSAGE_LIMIT`, не всё тело файла) и текущий статус. */
     getMessages(ptyId: string): Promise<AssistantChatSnapshot>
-    /**
-     * Отправить сообщение из чата: `pty.write(ptyId, chatInputBytes(text))` (многострочный текст — через bracketed
-     * paste), затем отдельной записью `\r` с паузой `SUBMIT_DELAY_MS` — иначе TUI агента принимает Enter за часть
-     * вставки и не отправляет сообщение (те же грабли, что у `answerNudge`). Тот же путь, что ввод в терминале;
-     * транскрипт допишет сам агент. Пустой текст или чужой `ptyId` — ошибка.
-     */
     send(ptyId: string, text: string): Promise<void>
-    /** Новое/изменённое сообщение или смена статуса этого PTY. */
+    interrupt(ptyId: string): Promise<void>
+    respond(ptyId: string, requestId: string, answer: InteractionAnswer): Promise<void>
     onMessage(ptyId: string, cb: (u: AssistantChatUpdate) => void): () => void
   }
   /** .md-файлы активного проекта и worktree его задач в работе. Путь — только относительный, внутри источника. */
@@ -997,44 +988,29 @@ export interface OrcaApi {
 // Модель сообщений канала `assistantChat` (`OrcaApi` выше) — панель ассистента как чат поверх того же PTY.
 // Разбор транскрипта в эти типы — `main/assistant-chat.ts`, IPC — `registerIpc` в `main/index.ts`,
 // мост — `preload/index.ts`. Настройки приложения/проекта из `docs/assistant-chat.md` → «1–2» в этот канал
-// не входят: их вносит отдельная задача (`settings`/`types`/`roles`/`node-templates`/`project rules`).
+// не входят: они остаются в общих методах `settings`/`types`/`roles`/`node-templates`/`project rules`.
 
-/** Кто написал сообщение чата ассистента. */
-export type AssistantChatRole = 'human' | 'agent' | 'tool'
+/** Нормализованный поток ассистента. Старый парсер транскриптов использует эти же типы. */
+export type AssistantChatRole = ConversationMessage['role']
+export type AssistantChatStatus = ConversationStatus
+export type AssistantChatToolCall = ConversationToolCall
+export interface AssistantChatMessage extends ConversationMessage { hasImage?: boolean }
 
-/** «Думает» — агент начал отвечать, но последняя запись ещё не финальный текст (см. «докрутить» в UI). */
-export type AssistantChatStatus = 'thinking' | 'done' | 'error'
-
-/** Tool-вызов агента, свёрнутый в одну строку чата (агент вызывает `orca-board` через Bash). */
-export interface AssistantChatToolCall {
-  /** Имя инструмента (`Bash` и т.п.). */
-  name: string
-  /** Краткое представление аргументов для свёрнутой строки — не весь JSON вызова. */
-  input: string
-  status: 'running' | 'ok' | 'error'
-}
-
-/** Одно сообщение чата ассистента — разобранная запись транскрипта агента или вывод PTY (фолбэк). */
-export interface AssistantChatMessage {
-  /** Стабильный id (id записи транскрипта/строки) — не пересчитывается между чтениями. */
-  id: string
-  role: AssistantChatRole
-  /** Текст сообщения; для `role: 'tool'` — краткий текст результата. */
-  text: string
-  /** Tool-вызовы этого сообщения, всегда свёрнутые. */
-  toolCalls?: AssistantChatToolCall[]
-  /** Картинка, вставленная в терминал вместе с текстом (сама не передаётся) — подпись к ней рисует renderer. */
-  hasImage?: boolean
-  /** Мс, из транскрипта. */
-  at: number
-}
-
-/** Снимок чата PTY ассистента: `assistantChat.getMessages` (план). */
 export interface AssistantChatSnapshot {
   ptyId: string
   messages: AssistantChatMessage[]
   status: AssistantChatStatus
+  protocolVersion?: 2
+  revision?: number
+  agent?: AgentKind
+  transport?: 'chat' | 'terminal'
+  interactions?: ConversationInteraction[]
+  error?: string
 }
 
-/** Событие подписки `assistantChat.onMessage` (план): новое/изменённое сообщение или смена статуса. */
-export type AssistantChatUpdate = { ptyId: string; message: AssistantChatMessage } | { ptyId: string; status: AssistantChatStatus }
+export type AssistantChatUpdate = { ptyId: string; revision?: number } & (
+  | { message: AssistantChatMessage }
+  | { status: AssistantChatStatus; error?: string }
+  | { interaction: ConversationInteraction }
+  | { resolvedRequestId: string }
+)

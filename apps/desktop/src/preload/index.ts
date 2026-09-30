@@ -149,6 +149,8 @@ const api: OrcaApi = {
     available: (ptyId) => ipcRenderer.invoke('assistantChat:available', ptyId),
     getMessages: (ptyId) => ipcRenderer.invoke('assistantChat:getMessages', ptyId),
     send: (ptyId, text) => ipcRenderer.invoke('assistantChat:send', ptyId, text),
+    interrupt: (ptyId) => ipcRenderer.invoke('assistantChat:interrupt', ptyId),
+    respond: (ptyId, requestId, answer) => ipcRenderer.invoke('assistantChat:respond', ptyId, requestId, answer),
     onMessage: (ptyId, cb) => on(`assistantChat:message:${ptyId}`, cb)
   },
   docs: {

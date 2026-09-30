@@ -4,6 +4,9 @@ import type { WfNodeType } from '@orca-board/core'
 const base = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
 
 export const Icon = {
+  copy: (): React.JSX.Element => <svg {...base}><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>,
+  send: (): React.JSX.Element => <svg {...base}><path d="M12 19V5M6 11l6-6 6 6" /></svg>,
+  stop: (): React.JSX.Element => <svg {...base}><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" /></svg>,
   palette: (): React.JSX.Element => <svg {...base}><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4l-.4-.4a1.5 1.5 0 0 1 1.1-2.6H17a4 4 0 0 0 4-4c0-4.2-4-7.6-9-7.6z" /><circle cx="7.5" cy="11" r=".8" /><circle cx="10" cy="7.5" r=".8" /><circle cx="15" cy="7.5" r=".8" /></svg>,
   menu: (): React.JSX.Element => <svg {...base}><path d="M4 7h16M4 12h16M4 17h16" /></svg>,
   board: (): React.JSX.Element => <svg {...base}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16M15 4v16" /></svg>,

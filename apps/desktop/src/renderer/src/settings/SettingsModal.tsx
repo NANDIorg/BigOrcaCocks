@@ -56,7 +56,7 @@ function initialTab(): TaskTypeTab {
 
 interface Props {
   /** Системное меню ведёт прямо в обновления, даже если настройки уже открыты на другом разделе. */
-  sectionRequest?: { section: 'updates'; nonce: number }
+  sectionRequest?: { section: 'updates' | 'assistant'; nonce: number }
   /** Агенты реестра; у типа своих агентов нет — в выборе все установленные. */
   agents: AgentInfo[]
   /** Заново просканировать PATH. */

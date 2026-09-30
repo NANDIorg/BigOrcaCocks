@@ -1,305 +1,174 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AssistantChatMessage } from '../../shared/ipc'
-import { Terminal } from './Terminal'
+import { AgentLogo } from './AgentLogo'
+import { agentTitle } from './defaultTitles'
 import { Markdown } from './Markdown'
 import { Icon } from './icons'
-import type { AssistantTerminal } from './assistantPty'
-import {
-  applyChatUpdate, checkChatSupport, chatStateFromSnapshot, emptyChatState, groupMessages, isStuckThinking,
-  readAssistantViewMode, writeAssistantViewMode, type AssistantViewMode, type ChatState, type ChatSupport
-} from './assistantChat'
+import { AssistantInteraction } from './AssistantInteraction'
+import { emptyChatState, groupMessages, subscribeAssistantChat, type ChatState } from './assistantChat'
 import { ipcErrorMessage } from './ipcError'
+import { useModalFocus } from './useModalFocus'
 import { useT, type TFunction, type TKey } from './i18n'
 
 interface Props {
   open: boolean
-  /** Терминалы ассистента (после «Новый диалог» или со старым main их бывает несколько); виден только activePty. */
-  terminals: AssistantTerminal[]
+  suspended: boolean
   activePty: string | null
-  /** Запуск идёт (assistant.open / reset) или сорвался — текст вместо терминала. */
   status: { busy: boolean; error: string | null }
   onClose(): void
   onReset(): void
+  onSettings(): void
   onOpenInTerminals(): void
 }
 
-/** Enter — отправить, Shift+Enter — перенос строки, Esc — выйти из поля (не закрывая панель). */
-function composeKeys(send: () => void): (e: React.KeyboardEvent<HTMLTextAreaElement>) => void {
-  return (e) => {
-    if (e.nativeEvent.isComposing) return
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      send()
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      e.currentTarget.blur()
-    }
-  }
-}
-
-/** Одна реплика ленты: tool-вызовы — свёрнутой строкой (имя + краткие аргументы + статус), текст — через Markdown. */
 function ChatMessageRow({ message, t }: { message: AssistantChatMessage; t: TFunction }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1800); return () => clearTimeout(timer) }, [copied])
   return (
-    <div className={`chat-msg chat-msg-${message.role}`}>
-      {message.toolCalls?.map((c, i) => (
-        <div key={i} className={`chat-tool chat-tool-${c.status}`} title={c.input}>
-          <span className="chat-tool-status">
-            {c.status === 'running' ? <span className="update-spin"><Icon.spinner /></span> : c.status === 'ok' ? <Icon.check /> : <Icon.info />}
-          </span>
-          <span className="chat-tool-name">{c.name}</span>
-          <span className="chat-tool-input">{c.input}</span>
-          <span className="chat-tool-label muted">{t(`shell.assistant.tool.${c.status}` as TKey)}</span>
-        </div>
+    <article className={`chat-msg chat-msg-${message.role}`}>
+      {message.toolCalls?.map((call, index) => (
+        <details key={call.id ?? index} className={`chat-tool chat-tool-${call.status}`}>
+          <summary><span className="chat-tool-status">{call.status === 'running' ? <span className="update-spin"><Icon.spinner /></span> : call.status === 'ok' ? <Icon.check /> : <Icon.info />}</span><span className="chat-tool-name">{call.name}</span><span className="chat-tool-label">{t(`shell.assistant.tool.${call.status}` as TKey)}</span><Icon.down /></summary>
+          <pre>{call.input}</pre>
+        </details>
       ))}
-      {message.text && <Markdown text={message.text} />}
-      {message.hasImage && <div className="chat-image muted">{t('shell.assistant.hasImage')}</div>}
-    </div>
+      {message.text && (message.role === 'human' ? <div className="chat-human-text">{message.text}</div> : <Markdown text={message.text} />)}
+      {message.hasImage && <div className="muted">{t('shell.assistant.hasImage')}</div>}
+      {message.text && <button className="chat-copy" type="button" aria-label={t('shell.assistant.copy')} title={t('shell.assistant.copy')} onClick={() => {
+        void navigator.clipboard.writeText(message.text).then(() => { if (mounted.current) { setCopied(true); setCopyError(false) } }, () => { if (mounted.current) setCopyError(true) })
+      }}>{copied ? <Icon.check /> : <Icon.copy />}<span>{t(copied ? 'shell.assistant.copied' : 'shell.assistant.copy')}</span></button>}
+      {copyError && <span className="error-text" role="alert">{t('shell.assistant.copyError')}</span>}
+    </article>
   )
 }
 
-/**
- * Ассистент доски: выезжающая справа панель. Чат (по умолчанию) — сообщения из транскрипта агента поверх того же
- * PTY (docs/assistant-chat.md), терминал (xterm) — под капотом и как фолбэк, когда чат недоступен. Переключатель
- * в шапке запоминает выбор; терминалы не размонтируются при переключении и закрытии панели — вывод и история xterm
- * сохраняются.
- * Esc закрывает панель, только если фокус не в терминале и не в поле чата: в xterm Esc нужен агенту (прервать
- * ответ), в поле чата — просто снять фокус.
- */
-export function AssistantPanel({ open, terminals, activePty, status, onClose, onReset, onOpenInTerminals }: Props): React.JSX.Element {
+/** Сессия и черновик живут при закрытой панели; встроенного терминала здесь нет. */
+export function AssistantPanel({ open, suspended, activePty, status, onClose, onReset, onSettings, onOpenInTerminals }: Props): React.JSX.Element {
   const t = useT()
-  const panelRef = useRef<HTMLElement>(null)
-  const [mode, setMode] = useState<AssistantViewMode>(readAssistantViewMode)
-  const [chatSupport, setChatSupport] = useState<ChatSupport>('checking')
+  const layerRef = useRef<HTMLDivElement>(null)
+  const composeRef = useRef<HTMLTextAreaElement>(null)
+  const feedRef = useRef<HTMLDivElement>(null)
+  const sessionRef = useRef(activePty)
+  sessionRef.current = activePty
+  const stickRef = useRef(true)
+  const actionBusy = useRef(false)
   const [chat, setChat] = useState<ChatState>(emptyChatState)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const [now, setNow] = useState(() => Date.now())
-  const feedRef = useRef<HTMLDivElement>(null)
-  const stickToBottomRef = useRef(true)
-  const composeRef = useRef<HTMLTextAreaElement>(null)
-
-  function chooseMode(next: AssistantViewMode): void {
-    setMode(next)
-    writeAssistantViewMode(next)
-  }
+  const [stopping, setStopping] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [away, setAway] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      if (document.querySelector('.modal-backdrop')) return
-      const target = e.target as HTMLElement | null
-      if (target?.closest('.xterm')) return
-      e.preventDefault()
-      onClose()
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => { queueMicrotask(() => { if (previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true }) }) }
+  }, [open])
+  useModalFocus(layerRef, !open || suspended)
+  useEffect(() => {
+    if (!open || suspended) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing) { event.preventDefault(); onClose() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
-  // Терминала ещё нет (запускается) — фокус на панель, чтобы работал Esc; xterm фокусирует себя сам (visible).
+  }, [open, suspended, onClose])
   useEffect(() => {
-    if (open && !activePty) panelRef.current?.focus()
-  }, [open, activePty])
-
-  // Доступность чата и подписка на транскрипт этого PTY: короткий повтор, пока файл сессии не появился
-  // (первые секунды после старта) или пока preload/main не подтвердят поддержку.
-  useEffect(() => {
-    setChat(emptyChatState())
-    setSendError(null)
-    setChatSupport(activePty ? 'checking' : 'unavailable')
+    setChat(emptyChatState(activePty ?? ''))
+    setDraft('')
+    setError(null)
+    setSending(false)
+    setStopping(false)
+    setLoading(Boolean(activePty))
+    stickRef.current = true
+    setAway(false)
+    actionBusy.current = false
     if (!activePty) return
-    let cancelled = false
-    let subscribed = false
-    let unsubscribe: (() => void) | undefined
-
-    async function tick(): Promise<void> {
-      const support = await checkChatSupport(window.orca, activePty!)
-      if (cancelled) return
-      setChatSupport(support)
-      if (support !== 'available' || subscribed) return
-      try {
-        const snapshot = await window.orca.assistantChat.getMessages(activePty!)
-        if (cancelled) return
-        subscribed = true
-        setChat(chatStateFromSnapshot(snapshot))
-        unsubscribe = window.orca.assistantChat.onMessage(activePty!, (u) => setChat((prev) => applyChatUpdate(prev, u)))
-      } catch {
-        // Гонка с завершением PTY — следующий тик перечитает available().
-      }
-    }
-
-    void tick()
-    const timer = setInterval(() => {
-      if (!subscribed) void tick()
-    }, 1500)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-      unsubscribe?.()
-    }
+    const connection = subscribeAssistantChat(window.orca, activePty, (state) => { setChat(state); setLoading(false) }, (failure) => { setError(failure === 'stale' ? t('shell.assistant.chatStaleApp') : ipcErrorMessage(failure)); setLoading(false) })
+    return connection.dispose
+    // Смена языка не пересоздаёт сессию и не удаляет черновик.
   }, [activePty])
-
-  // «Зависшее» ожидание пересчитывается по таймеру, а не только по новым сообщениям — иначе индикатор
-  // не появится, пока лента молчит.
-  useEffect(() => {
-    if (chat.status !== 'thinking') return
-    const id = setInterval(() => setNow(Date.now()), 5000)
-    return () => clearInterval(id)
-  }, [chat.status])
-
-  const showChat = mode === 'chat' && chatSupport === 'available'
+  const terminal = chat.transport === 'terminal'
+  const working = chat.status === 'thinking' || chat.status === 'waiting'
+  const canSend = Boolean(activePty) && !terminal && !loading && !status.busy && !working && chat.status !== 'starting' && chat.status !== 'error'
   const groups = groupMessages(chat.messages)
-  const lastAt = chat.messages.length ? chat.messages[chat.messages.length - 1].at : undefined
-  const stuck = isStuckThinking(chat.status, lastAt, now)
-
-  // Открытие панели в режиме чата и переключение Терминал→Чат — фокус сразу на поле ввода (⌘K → печатать).
-  useEffect(() => {
-    if (open && showChat) composeRef.current?.focus()
-  }, [open, showChat])
-
   useLayoutEffect(() => {
-    if (!showChat) return
-    const el = feedRef.current
-    if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [showChat, chat.messages, chat.status])
-
-  function onFeedScroll(): void {
-    const el = feedRef.current
-    if (!el) return
-    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-  }
-
+    if (!open || !stickRef.current) return
+    const feed = feedRef.current
+    if (feed) feed.scrollTop = feed.scrollHeight
+  }, [open, chat.messages, chat.interactions, chat.status])
+  useLayoutEffect(() => {
+    const compose = composeRef.current
+    if (!compose) return
+    compose.style.height = '0px'
+    compose.style.height = `${Math.min(160, Math.max(64, compose.scrollHeight))}px`
+  }, [draft, open])
   async function send(): Promise<void> {
     const text = draft.trim()
-    if (!text || !activePty || sending) return
+    const session = activePty
+    if (!session || !text || !canSend || actionBusy.current) return
+    actionBusy.current = true
+    const submitted = draft
     setSending(true)
-    setSendError(null)
-    stickToBottomRef.current = true
+    setError(null)
+    stickRef.current = true
+    setAway(false)
     try {
-      await window.orca.assistantChat.send(activePty, text)
-      setDraft('')
-    } catch (e) {
-      setSendError(t('shell.assistant.sendError', { error: ipcErrorMessage(e) }))
+      await window.orca.assistantChat.send(session, text)
+      if (sessionRef.current === session) setDraft((current) => current === submitted ? '' : current)
+    } catch (failure) {
+      if (sessionRef.current === session) setError(t('shell.assistant.sendError', { error: ipcErrorMessage(failure) }))
     } finally {
-      setSending(false)
-      composeRef.current?.focus()
+      if (sessionRef.current === session) { actionBusy.current = false; setSending(false) }
     }
   }
-
-  const chatButtonTitle =
-    chatSupport === 'stale' ? t('shell.assistant.chatStaleApp') : chatSupport === 'available' ? t('shell.assistant.mode.chatHint') : t('shell.assistant.mode.chatUnavailable')
-
+  async function stop(): Promise<void> {
+    if (!activePty || stopping) return
+    const session = activePty
+    setStopping(true)
+    setError(null)
+    try { await window.orca.assistantChat.interrupt(session) }
+    catch (failure) { if (sessionRef.current === session) setError(ipcErrorMessage(failure)) }
+    finally { if (sessionRef.current === session) setStopping(false) }
+  }
+  const failure = status.error ?? error ?? chat.error
   return (
-    <>
-      {open && <div className="inbox-scrim" onClick={onClose} />}
-      <aside ref={panelRef} tabIndex={-1} className={`inbox assistant ${open ? 'open' : ''}`} aria-label={t('shell.assistant.title')} inert={!open}>
-        <div className="inbox-head">
-          <h3>
-            <span className="assistant-title">{t('shell.assistant.title')}</span>
-          </h3>
-          <div className="assistant-modebar" role="group" aria-label={t('shell.assistant.title')}>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-pressed={mode === 'chat'}
-              disabled={chatSupport !== 'available'}
-              title={chatButtonTitle}
-              onClick={() => chooseMode('chat')}
-            >
-              <Icon.chat />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-pressed={mode === 'terminal'}
-              title={t('shell.assistant.mode.terminalHint')}
-              onClick={() => chooseMode('terminal')}
-            >
-              <Icon.terminal />
-            </button>
-          </div>
-          <kbd className="rq-kbd" title={t('shell.toggle')}>⌘K</kbd>
-          <button className="icon-btn" title={t('shell.assistant.reset')} aria-label={t('shell.assistant.resetLabel')} onClick={onReset} disabled={status.busy}>
-            <Icon.refresh />
-          </button>
-          <button className="icon-btn" title={t('shell.assistant.openInTerminals')} aria-label={t('shell.assistant.openInTerminalsLabel')} onClick={onOpenInTerminals} disabled={!activePty}>
-            <Icon.external />
-          </button>
-          <button className="icon-btn task-modal-close" title={t('shell.closeEsc')} aria-label={t('common.close')} onClick={onClose}>
-            <Icon.close />
-          </button>
-        </div>
-        {status.error && activePty && (
-          <div className="inbox-notice">
-            <span className="error-text">{status.error}</span>
-          </div>
-        )}
-        {chatSupport === 'stale' && (
-          <div className="inbox-notice">
-            <span className="error-text">{t('shell.assistant.chatStaleApp')}</span>
-          </div>
-        )}
+    <div className={`assistant-layer${open ? ' open' : ''}`} ref={layerRef} inert={!open}>
+      <div className="inbox-scrim" onClick={onClose} aria-hidden="true" />
+      <aside tabIndex={-1} className={`inbox assistant${open ? ' open' : ''}`} role="dialog" aria-modal={open && !suspended ? true : undefined} aria-label={t('shell.assistant.title')}>
+        <header className="assistant-head">
+          <div className="assistant-avatar">{chat.agent ? <AgentLogo agent={chat.agent} size={23} /> : <Icon.chat />}</div>
+          <div className="assistant-identity"><h3>{t('shell.assistant.title')}</h3><span role="status">{chat.agent ? agentTitle(chat.agent) : t('shell.assistant.chatAgent')}<span className="assistant-status-dot" />{t(`shell.assistant.status.${status.busy || loading ? 'starting' : chat.status}` as TKey)}</span></div>
+          <button className="icon-btn" type="button" title={t('shell.assistant.reset')} aria-label={t('shell.assistant.resetLabel')} disabled={status.busy} onClick={onReset}><Icon.plus /></button>
+          <button className="icon-btn" type="button" title={t('shell.assistant.settings')} aria-label={t('shell.assistant.settings')} onClick={onSettings}><Icon.gear /></button>
+          <button className="icon-btn" type="button" title={t('shell.closeEsc')} aria-label={t('common.close')} onClick={onClose}><Icon.close /></button>
+        </header>
         <div className="assistant-body">
-          {showChat && activePty && (
-            <div className="assistant-chat">
-              <div className="chat-feed" ref={feedRef} onScroll={onFeedScroll}>
-                {groups.length === 0 && chat.status !== 'thinking' && <div className="chat-empty muted">{t('shell.assistant.chatEmpty')}</div>}
-                {groups.map((g, i) => (
-                  <div key={i} className={`chat-group chat-${g.speaker}`}>
-                    <div className="chat-speaker">{t(g.speaker === 'human' ? 'shell.assistant.chatYou' : 'shell.assistant.chatAgent')}</div>
-                    {g.messages.map((m) => <ChatMessageRow key={m.id} message={m} t={t} />)}
-                  </div>
-                ))}
-                {chat.status === 'thinking' && (
-                  <div className="chat-thinking muted">
-                    <span className="update-spin"><Icon.spinner /></span>{t('shell.assistant.thinking')}
-                  </div>
-                )}
-              </div>
-              {stuck && (
-                <div className="chat-hint">
-                  <span>{t('shell.assistant.stuckHint')}</span>
-                  <button className="btn-text" onClick={() => chooseMode('terminal')}>{t('shell.assistant.mode.terminal')}</button>
-                </div>
-              )}
-              {sendError && (
-                <div className="chat-error">
-                  <span className="error-text">{sendError}</span>
-                </div>
-              )}
-              <div className="chat-compose">
-                <textarea
-                  ref={composeRef}
-                  value={draft}
-                  placeholder={t('shell.assistant.composePlaceholder')}
-                  aria-label={t('shell.assistant.composeLabel')}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={composeKeys(() => void send())}
-                />
-                <button className="btn-sm primary" disabled={sending || !draft.trim()} onClick={() => void send()} title={t('shell.assistant.sendHint')}>
-                  {sending ? '…' : t('shell.assistant.send')}
-                </button>
-              </div>
-            </div>
-          )}
-          <div className={`terms${showChat ? ' hidden' : ''}`}>
-            {terminals.map((term) => (
-              <div key={term.ptyId} className={`term ${term.ptyId === activePty ? '' : 'hidden'}`}>
-                <Terminal ptyId={term.ptyId} initialTail={term.tail} visible={open && !showChat && term.ptyId === activePty} />
-              </div>
-            ))}
+          <div className="chat-feed" ref={feedRef} onScroll={() => {
+            const feed = feedRef.current
+            if (!feed) return
+            const near = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 64
+            stickRef.current = near
+            setAway(!near)
+          }}>
+            {terminal ? <div className="chat-welcome"><span className="chat-welcome-icon"><Icon.terminal /></span><h2>{t('shell.assistant.terminalTitle', { agent: agentTitle(chat.agent ?? 'shell') })}</h2><p>{t('shell.assistant.terminalDescription')}</p><button className="btn-sm primary" type="button" onClick={onOpenInTerminals}><Icon.external />{t('shell.assistant.openInTerminals')}</button></div> : <>
+              {groups.length === 0 && !working && !failure && <div className="chat-welcome"><span className="chat-welcome-icon"><Icon.chat /></span><h2>{t('shell.assistant.welcomeTitle')}</h2><p>{t('shell.assistant.welcomeDescription')}</p><div className="chat-suggestions">{(['tasks', 'projects', 'settings'] as const).map((key) => <button type="button" key={key} onClick={() => { setDraft(t(`shell.assistant.suggestion.${key}.prompt`)); composeRef.current?.focus() }}><span>{key === 'tasks' ? <Icon.board /> : key === 'projects' ? <Icon.folder /> : <Icon.gear />}</span>{t(`shell.assistant.suggestion.${key}.label`)}<Icon.chevron /></button>)}</div></div>}
+              {groups.map((group) => <div key={group.messages[0].id} className={`chat-group chat-${group.speaker}`}><div className="chat-speaker">{t(group.speaker === 'human' ? 'shell.assistant.chatYou' : 'shell.assistant.chatAgent')}</div>{group.messages.map((message) => <ChatMessageRow key={message.id} message={message} t={t} />)}</div>)}
+              {chat.interactions.map((interaction) => <AssistantInteraction key={`${activePty}-${interaction.id}`} interaction={interaction} onAnswer={(answer) => window.orca.assistantChat.respond(activePty!, interaction.id, answer)} />)}
+              {(chat.status === 'thinking' || chat.status === 'starting' || loading || status.busy) && <div className="chat-thinking" role="status"><span className="chat-typing" aria-hidden="true"><i /><i /><i /></span>{t(chat.status === 'thinking' ? 'shell.assistant.thinking' : 'shell.assistant.starting')}</div>}
+              {chat.status === 'interrupted' && <div className="chat-turn-note" role="status">{t('shell.assistant.interrupted')}</div>}
+            </>}
+            {failure && <div className="chat-failure" role="alert"><Icon.info /><div><strong>{t('shell.assistant.errorTitle')}</strong><p>{failure}</p><button className="btn-text" type="button" disabled={status.busy} onClick={onReset}>{t('shell.assistant.retry')}</button></div></div>}
           </div>
-          {!activePty && (
-            <div className="empty">{status.error ? <span className="error-text">{status.error}</span> : t('shell.assistant.starting')}</div>
-          )}
+          {away && <button className="chat-jump btn-sm" type="button" onClick={() => { stickRef.current = true; setAway(false); const feed = feedRef.current; if (feed) feed.scrollTop = feed.scrollHeight }}><Icon.down />{t('shell.assistant.latest')}</button>}
         </div>
-        <div className="inbox-foot muted">
-          <kbd className="rq-kbd">⌘K</kbd> {t('shell.assistant.footToggle')} · <kbd className="rq-kbd">Esc</kbd> {t('shell.assistant.footEsc')}
-        </div>
+        {!terminal && <footer className="chat-footer"><div className="chat-compose"><textarea className="resize-none" ref={composeRef} data-modal-autofocus value={draft} placeholder={t('shell.assistant.composePlaceholder')} aria-label={t('shell.assistant.composeLabel')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }} /><div className="chat-compose-actions"><span>{t('shell.assistant.scope')}</span>{working ? <button className="chat-send stopping" type="button" disabled={stopping} onClick={() => void stop()} title={t('shell.assistant.stop')} aria-label={t('shell.assistant.stop')}><Icon.stop /></button> : <button className="chat-send" type="button" disabled={!canSend || sending || !draft.trim()} onClick={() => void send()} title={t('shell.assistant.sendHint')} aria-label={t('shell.assistant.send')}><Icon.send /></button>}</div></div><div className="chat-compose-hint"><span>{t('shell.assistant.enterHint')}</span><span><kbd>Esc</kbd> {t('shell.assistant.footEsc')}</span></div></footer>}
       </aside>
-    </>
+    </div>
   )
 }
