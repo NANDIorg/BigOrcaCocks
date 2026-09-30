@@ -180,6 +180,10 @@ export const AGENTS = [
         ...extra(opts),
         ...modelFlag('-m', opts.model),
         ...(opts.effort ? ['-c', `model_reasoning_effort=${opts.effort}`] : []),
+        // У codex `--image <FILE>...` variadic (codex 0.156.1): без `-m`/`-c` после флагов пользователя он забрал бы
+        // промпт как имя файла, и агент стартовал бы без задания. `--` закрывает флаги; ставим его только при флагах
+        // пользователя — без них argv прежний. Промпт с ведущим `-` он заодно не даёт принять за флаг.
+        ...(extra(opts).length ? ['--'] : []),
         combine(system, prompt)
       ]
     })

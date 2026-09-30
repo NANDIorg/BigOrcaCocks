@@ -16,7 +16,7 @@ import { AgentLogo } from './AgentLogo'
 import { Icon } from './icons'
 import { isSystemRole, missingSystemRoles, removalConsequences, removeBlocker, restoreSystemRoles } from './roleRemoval'
 import { useAutoSave } from './useAutoSave'
-import { agentChangePatch, modelChangePatch, withPatch } from './roleEdit'
+import { agentChangePatch, duplicatedRole, modelChangePatch, withPatch } from './roleEdit'
 import { useT, type TFunction, type TKey } from './i18n'
 import { withCode } from './about/parts'
 import { agentTitle, builtinText, modelTitle, roleTitle } from './defaultTitles'
@@ -100,7 +100,7 @@ export function RolesEditor({
   }
 
   function duplicate(i: number): void {
-    const role: Role = { ...roles[i], id: newRoleId(), title: t('config.roles.copyTitle', { title: roles[i].title }) }
+    const role = duplicatedRole(roles[i], newRoleId(), t('config.roles.copyTitle', { title: roles[i].title }))
     update([...roles.slice(0, i + 1), role, ...roles.slice(i + 1)])
     setSelectedId(role.id)
   }
