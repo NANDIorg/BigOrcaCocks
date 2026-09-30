@@ -12,9 +12,13 @@ describe('язык агентов в worker.ts', () => {
   it('все spec.invoke получают agentSystemPrompt с language: mainLocale()', () => {
     const calls = [...source.matchAll(/spec\.invoke\(([^\n]*)/g)].map((m) => m[1])
     assert.equal(calls.length, 3, 'воркер, координатор, ассистент')
-    for (const call of calls) {
+    // Ассистент собирает промпт в assistantLaunch (assistant.ts, проверен assistant.test.ts) — язык передаётся туда.
+    const own = calls.filter((c) => !c.startsWith('l.system,'))
+    assert.equal(own.length, 2, 'воркер, координатор')
+    for (const call of own) {
       assert.match(call, /^agentSystemPrompt\(BUILTIN_PROMPTS\.\w+, \{[^}]*language: mainLocale\(\) \}\)/)
     }
+    assert.match(source, /assistantLaunch\(ctx\.settings, BUILTIN_PROMPTS\.assistant, mainLocale\(\)\)/)
   })
 
   it('системный промпт не собирается в обход директивы', () => {

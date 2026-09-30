@@ -112,6 +112,10 @@ export default {
   'role.effortNotString': 'role “{id}”: effort must be a string',
   'role.promptNotString': 'role “{id}”: system prompt must be a string',
 
+  'assistant.notObject': 'assistant settings: an object is expected',
+  'assistant.unknownAgent': 'assistant: unknown agent {agent}',
+  'assistant.notString': 'assistant: field {field} must be a string',
+
   'worker.cannotStart': 'the worker will not start: {reason}',
   'coordinator.cannotStart': 'the coordinator will not start: {reason}',
   'coordinator.noObjective': 'no goal given',
@@ -220,6 +224,8 @@ export default {
   'review.untracked': 'new files:',
   'git.runBranchFailed': 'could not create branch “{branch}” for the global task from “{base}”: {error}',
   'git.runBranchMissing': 'branch “{branch}” of the global task no longer exists in the repository — restore it or detach the branch from the task',
+  'git.noCommits': 'The repository has no commits yet (branch “{branch}” is empty), and Orca branches work off a commit. Create an initial commit: with the “Create initial commit” button in the app or manually with `git add -A && git commit -m "init"`',
+  'git.mergeTargetMissing': 'branch “{branch}” the task merges into does not exist — nothing was merged, the task branch and its commits are untouched: restore the branch and try again',
   'git.notRepo': '{path} is not a git repository',
   'git.dirtyTree': 'the project has uncommitted changes — the branch is not switched: commit or stash them first',
   'git.notFastForward': 'branch “{branch}” has diverged from {upstream}: fast-forward is not possible, combine the changes manually (merge or rebase)',

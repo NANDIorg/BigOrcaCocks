@@ -1010,7 +1010,17 @@ const handlers: Record<string, Handler> = {
 const appHandlers: Record<string, (req: Request, deps: SocketDeps) => unknown> = {
   'projects.list': (_r, deps) => deps.projects(),
   'settings.get': (_r, deps) => deps.settings(),
-  'settings.set': (r, deps) => deps.setSettings(settingsPatchFromParams(r.params))
+  'settings.set': (r, deps) => {
+    const patch = settingsPatchFromParams(r.params)
+    // Смена агента ассистента — как `roles.update --agent`: другой процесс со следующего диалога,
+    // без --yes агент (в том числе сам ассистент) не переключает её молча.
+    const agent = patch.assistant?.agent
+    if (agent !== undefined && r.params.yes !== true) {
+      const current = deps.settings().assistant.agent
+      if (agent !== current) requireYes(r, `нужно подтверждение: смена агента ассистента с «${current}» на «${agent}» — модель и effort сбросятся, если не заданы тем же вызовом; действует с нового диалога`)
+    }
+    return deps.setSettings(patch)
+  }
 }
 
 export function startSocketServer(path: string, socketDeps: SocketDeps): Server {

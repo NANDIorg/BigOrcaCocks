@@ -4,7 +4,7 @@ import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  TaskStore, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
+  TaskStore, isAgentKind, DEFAULT_ASSISTANT_SETTINGS, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
@@ -15,7 +15,7 @@ import {
 import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
 import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
-import { PROJECTS_FILE_VERSION, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
+import { PROJECTS_FILE_VERSION, libraryDefaultTypeId, migrateAssistant, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
 import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
 import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
@@ -24,6 +24,7 @@ import type {
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 import { runImagesRoot, removeRunImagesDir } from './run-images'
+import { loadedAssistantSettings, mergedAssistantSettings } from './assistant'
 import { removeShowcaseDir, showcaseSnapshotsRoot } from './showcase-snapshot'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -160,7 +161,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   keepInBackground: true,
   appearance: { ...DEFAULT_APPEARANCE },
   notifications: DEFAULT_NOTIFICATION_SETTINGS,
-  updates: DEFAULT_UPDATE_SETTINGS
+  updates: DEFAULT_UPDATE_SETTINGS,
+  assistant: DEFAULT_ASSISTANT_SETTINGS
 }
 
 const UPDATE_SETTING_KEYS = Object.keys(DEFAULT_UPDATE_SETTINGS) as (keyof UpdateSettings)[]
@@ -250,11 +252,15 @@ export class ProjectManager {
       const settingsSet = isObject(raw.settings) && Object.keys(raw.settings).length > 0
       const onboarding = loadedOnboarding(raw.onboarding, data.projects.length > 0 || settingsSet)
       data.onboarding = onboarding.value
+      // После онбординга: `settings.assistant`, записанный миграцией, — не признак того, что человек что-то настраивал.
+      const assistant = migrateAssistant(data)
+      data.taskTypes = assistant.taskTypes
+      if (assistant.settings) data.settings = assistant.settings
       return {
         data,
         ...(changed ? { legacyText: text } : {}),
         ...(migratedTypes.changed && !changed ? { workflowText: text } : {}),
-        ...(onboarding.changed ? { dirty: true } : {})
+        ...(onboarding.changed || assistant.changed ? { dirty: true } : {})
       }
     } catch (e) {
       // JSON разобрался, но содержимое не годится для нормализации — то же, что битый файл.
@@ -448,10 +454,7 @@ export class ProjectManager {
    * тип библиотеки (она не бывает пустой: последний тип не удаляется, пустая при загрузке засевается).
    */
   defaultTaskTypeId(): string {
-    const types = this.data.taskTypes ?? []
-    const id = this.data.defaultTaskTypeId
-    if (id && types.some((t) => t.id === id)) return id
-    return (types.find((t) => t.id === GENERAL_TASK_TYPE_ID) ?? types[0])?.id ?? GENERAL_TASK_TYPE_ID
+    return libraryDefaultTypeId(this.data.taskTypes ?? [], this.data.defaultTaskTypeId)
   }
 
   setDefaultTaskType(id: string): TaskTypesState {
@@ -778,7 +781,8 @@ export class ProjectManager {
       ...(isAppLanguage(s.language) ? { language: s.language } : {}),
       appearance: normalizeAppearance(s.appearance),
       notifications: normalizeNotificationSettings(s.notifications),
-      updates: normalizeUpdateSettings(s.updates)
+      updates: normalizeUpdateSettings(s.updates),
+      assistant: loadedAssistantSettings(s.assistant)
     }
   }
 
@@ -810,6 +814,7 @@ export class ProjectManager {
       }
       next.updates = merged
     }
+    if (patch.assistant !== undefined) next.assistant = mergedAssistantSettings(this.settings().assistant, patch.assistant)
     const previous = this.data.settings
     this.data.settings = next
     // Не оставляем несохранённый выбор в памяти: следующий getSettings обязан вернуть подтверждённое состояние.

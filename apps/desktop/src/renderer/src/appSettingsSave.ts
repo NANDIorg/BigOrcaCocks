@@ -11,12 +11,15 @@ export interface AppSettingsSave {
 
 /**
  * Патч не дошёл до main: старый main не знает поля `language` и молча его отбросит (выбор не переживёт
- * перезапуск); так же с `updates`. У оформления проверяется каждое изменённое поле ответа.
+ * перезапуск); так же с `updates` и `assistant`. У оформления проверяется каждое изменённое поле ответа.
  */
-export function droppedPatch(patch: AppSettingsPatch, next: Partial<Pick<AppSettings, 'language' | 'updates' | 'appearance'>>): boolean {
-  return Boolean((patch.language && next.language !== patch.language) || (patch.updates && !next.updates) || (
-    patch.appearance && Object.entries(patch.appearance).some(([key, value]) => value !== undefined && next.appearance?.[key as keyof NonNullable<AppSettings['appearance']>] !== value)
-  ))
+export function droppedPatch(patch: AppSettingsPatch, next: Partial<Pick<AppSettings, 'language' | 'updates' | 'appearance' | 'assistant'>>): boolean {
+  return Boolean(
+    (patch.language && next.language !== patch.language) ||
+    (patch.updates && !next.updates) ||
+    (patch.assistant && !next.assistant) ||
+    (patch.appearance && Object.entries(patch.appearance).some(([key, value]) => value !== undefined && next.appearance?.[key as keyof NonNullable<AppSettings['appearance']>] !== value))
+  )
 }
 
 /**

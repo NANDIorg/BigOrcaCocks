@@ -838,6 +838,14 @@ button:disabled { opacity: .45; cursor: default; }
 .g-returns-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .g-modal-review { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .g-return-hint { font-size: 12px; margin-top: -6px; }
+/* «В репозитории нет коммитов» (InitialCommitDialog): поверх модалки координатора, варианты — кнопка и подсказка */
+.modal-backdrop.initial-commit-backdrop { z-index: 50; }
+.initial-commit-text { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.initial-commit-options { display: flex; flex-direction: column; gap: 12px; }
+.initial-commit-option { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.modal .initial-commit-option .btn-primary { height: auto; min-height: 40px; text-align: left; }
+.initial-commit-hint { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.initial-commit-warn { color: var(--col-input); }
 
 @media (max-width: 900px) {
   .g-board, .board { padding-left: 16px; padding-right: 16px; }
@@ -899,6 +907,7 @@ button:disabled { opacity: .45; cursor: default; }
 .branch-item-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .branch-item-mark { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .branch-note { padding: 6px 8px; border-radius: 8px; font-size: 12px; color: var(--col-input); background: color-mix(in srgb, var(--col-input) 12%, transparent); }
+.branch-unborn { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .branch-result {
   margin: 0; padding: 8px; border-radius: 8px; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap;
   overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; background: var(--frame); color: var(--muted);

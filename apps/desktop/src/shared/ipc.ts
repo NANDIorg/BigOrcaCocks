@@ -1,4 +1,4 @@
-import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
+import type { Task, ImageAttachmentInput, AgentKind, AssistantSettings, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 import type { WindowChromeMode } from './window-chrome'
 import type { AppearanceSettings } from './appearance'
@@ -50,6 +50,11 @@ export interface AppSettings {
   notifications: NotificationSettings
   /** Автообновление приложения (docs/architecture.md → «Обновление»). */
   updates: UpdateSettings
+  /**
+   * Ассистент доски: агент, модель, effort, инструкции. Не роль типа задачи — ассистент один на приложение.
+   * Применяется к следующему запуску («Новый диалог»), живой ассистент не перезапускается.
+   */
+  assistant: AssistantSettings
 }
 
 /** Настройки автообновления. Дефолты — `DEFAULT_UPDATE_SETTINGS`. */
@@ -67,13 +72,15 @@ export interface UpdateSettings {
 
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = { autoCheck: true, autoDownload: true, installWhenIdle: false }
 
-/** Патч настроек приложения: notifications и updates мержатся по полям. */
+/** Патч настроек приложения: notifications, updates и assistant мержатся по полям. */
 export interface AppSettingsPatch {
   keepInBackground?: boolean
   language?: AppLanguage
   appearance?: Partial<AppearanceSettings>
   notifications?: NotificationSettingsPatch
   updates?: Partial<UpdateSettings>
+  /** Пустая строка в model/effort/systemPrompt очищает поле; смена агента без model/effort сбрасывает их. */
+  assistant?: Partial<AssistantSettings>
 }
 
 /** Способ обновления на этой платформе. */
@@ -234,7 +241,15 @@ export interface ProjectBranchInfo {
   detached: boolean
   /** Короткий sha HEAD; только при `detached`. */
   sha?: string
+  /** HEAD без коммитов. */
+  unborn?: true
 }
+
+/**
+ * Режим `projects:createInitialCommit`: `empty` — пустой коммит через plumbing, индекс и рабочее дерево не трогаются;
+ * `snapshot` — `git add -A` и коммит текущего состояния рабочего дерева.
+ */
+export type InitialCommitMode = 'empty' | 'snapshot'
 
 /** Локальная ветка в `ProjectBranchList.local`. */
 export interface ProjectLocalBranch {
@@ -621,6 +636,13 @@ export interface OrcaApi {
      * Нет у старого main/preload — «перезапустите приложение».
      */
     checkoutBranch?(id: string, branch: string): Promise<ProjectBranchInfo>
+    /**
+     * Создать начальный коммит в репозитории корня без коммитов (unborn HEAD): канал `projects:createInitialCommit`.
+     * Вызывается только по согласию человека после ошибки запуска `git.noCommits`. Идемпотентен: коммиты уже есть —
+     * возвращает актуальное состояние HEAD без изменений. Ошибки — `git.notRepo`, `git.opFailed`.
+     * Нет у старого main/preload — «перезапустите приложение».
+     */
+    createInitialCommit?(id: string, mode: InitialCommitMode): Promise<ProjectBranchInfo>
     /**
      * Добавить репозиторий с типом по умолчанию `typeId` (нет — тип библиотеки по умолчанию; id заготовок типов
      * совпадают с id старых шаблонов). Без `path` — диалог выбора папки (отмена — null); с `path` (из

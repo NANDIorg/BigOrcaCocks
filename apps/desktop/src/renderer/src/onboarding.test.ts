@@ -93,9 +93,13 @@ test('saveAppSettings — старый main отбросил язык: staleApp;
   assert.equal(failed.error, 'диск полон')
 })
 
-test('droppedPatch — язык и updates', () => {
-  assert.equal(droppedPatch({ language: 'ru' }, { language: 'ru', updates: undefined as never }), false)
-  assert.equal(droppedPatch({ language: 'ru' }, { language: 'en', updates: undefined as never }), true)
-  assert.equal(droppedPatch({ updates: { autoCheck: true } }, { language: 'ru', updates: undefined as never }), true)
-  assert.equal(droppedPatch({ keepInBackground: false }, { language: 'ru', updates: undefined as never }), false)
+test('droppedPatch — язык, updates и assistant', () => {
+  const old = { language: 'ru', updates: undefined as never, assistant: undefined as never } as const
+  assert.equal(droppedPatch({ language: 'ru' }, old), false)
+  assert.equal(droppedPatch({ language: 'ru' }, { ...old, language: 'en' }), true)
+  assert.equal(droppedPatch({ updates: { autoCheck: true } }, old), true)
+  assert.equal(droppedPatch({ keepInBackground: false }, old), false)
+  // Старый main не знает assistant: ответ без поля — запись не дошла.
+  assert.equal(droppedPatch({ assistant: { agent: 'codex' } }, old), true)
+  assert.equal(droppedPatch({ assistant: { agent: 'codex' } }, { ...old, assistant: { agent: 'codex' } }), false)
 })

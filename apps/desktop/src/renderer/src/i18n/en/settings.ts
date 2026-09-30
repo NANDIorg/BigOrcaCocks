@@ -8,6 +8,7 @@ export default {
   'nav.appearance': 'Appearance',
   'nav.notifications': 'Notifications',
   'nav.updates': 'Updates',
+  'nav.assistant': 'Assistant',
   'nav.taskTypes': 'Task types',
   'nav.newType': 'New type',
   'nav.defaultType': 'default',
@@ -31,6 +32,20 @@ export default {
   'appearance.motionHint': 'Reduced motion removes decorative animations and smooth scrolling.',
   'appearance.motion.system': 'Follow system',
   'appearance.motion.reduced': 'Reduce motion',
+
+  'assistant.title': 'Assistant',
+  'assistant.hint': 'The board assistant does what you ask through orca-board. There is one for the whole app; it is not tied to task types.',
+  'assistant.nextDialog': 'Changes apply to a new conversation (↻ in the assistant panel); the current one is not restarted.',
+  'assistant.permission': 'Permission mode is always auto: the assistant only needs orca-board.',
+  'assistant.warnOff': 'Agent “{agent}” is not installed — the assistant won’t start. Pick another agent.',
+  'assistant.warnUnknown': 'Agent “{agent}” is unknown — the assistant won’t start. Pick another agent.',
+  'assistant.tab.prompt': 'Assistant instructions',
+  'assistant.tab.promptSet': 'Assistant instructions •',
+  'assistant.promptPlaceholder': 'E.g.: keep answers short; ask before closing tasks.',
+  'assistant.promptHint':
+    'Appended after the built-in instructions as a “# Instructions for role «{title}»” block, without replacing them. ' +
+    'Empty — the assistant gets only the built-in instructions.',
+  'assistant.startNote': 'No data in ‹…›: the message is fixed, you type requests in the assistant panel.',
 
   'general.title': 'General',
   'general.hint': 'App settings; apply to all projects.',

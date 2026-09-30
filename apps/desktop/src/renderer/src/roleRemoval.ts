@@ -11,12 +11,10 @@ export function isSystemRole(roleId: string): boolean {
 
 /**
  * Что перестанет работать без системной роли. Тексты сверены с кодом: координатор без роли coordinator
- * не запускается (`startCoordinator`), ассистент без assistant берёт агента coordinator (`assistantRole`),
- * `task create --role <нет в типе задачи>` — ошибка (`pickRole`), задачи старой доски без роли получают developer.
+ * не запускается (`startCoordinator`), `task create --role <нет в типе задачи>` — ошибка (`pickRole`), задачи старой доски без роли получают developer.
  */
 const SYSTEM_ROLE_LOSSES: Readonly<Record<string, readonly TKey[]>> = {
-  coordinator: ['config.roles.loss.coordinatorRun', 'config.roles.loss.coordinatorAssistant'],
-  assistant: ['config.roles.loss.assistant'],
+  coordinator: ['config.roles.loss.coordinatorRun'],
   developer: ['config.roles.loss.developerTasks', 'config.roles.loss.developerOld'],
   reviewer: ['config.roles.loss.reviewer'],
   qa: ['config.roles.loss.qa']

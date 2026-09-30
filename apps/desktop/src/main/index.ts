@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome } from './window-chrome'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { assistantCwd } from './assistant'
@@ -25,7 +25,7 @@ import {
 import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
-import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch } from './git'
+import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
 import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
@@ -36,7 +36,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, AssistantChatStatus, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -539,20 +539,22 @@ const assistantChatStatus = new Map<string, AssistantChatStatus>()
 
 /**
  * Терминал ассистента приложения: живой — возвращается как есть, иначе (или при `reset` — всегда,
- * старый закрывается) запускается новый. Роли, агент и режим разрешений — из настроек по умолчанию:
- * ассистент не принадлежит ни одному проекту.
+ * старый закрывается) запускается новый. Агент, модель и инструкции — из `AppSettings.assistant`:
+ * ассистент не принадлежит ни одному проекту и типу задачи. Агент проверяется до запуска: неустановленный дал бы
+ * молча мёртвый терминал, а ошибка `OrcaError` видна в панели ассистента.
  */
 function openAssistant(cols: number, rows: number, reset: boolean): { ptyId: string } {
-  if (assistantPty && isAlive(assistantPty)) {
-    if (!reset) return { ptyId: assistantPty }
-    killPty(assistantPty)
-  }
+  const alive = assistantPty && isAlive(assistantPty) ? assistantPty : null
+  if (alive && !reset) return { ptyId: alive }
+  const settings = projects.settings().assistant
+  // До закрытия старого: «Новый диалог» с неустановленным агентом не должен оставить человека без ассистента.
+  // Проекта нет — «включён ли агент в проекте» не проверяется, только установлен ли он.
+  assertAgentUsable(agentInfos(undefined), settings.agent)
+  if (alive) killPty(alive)
   assistantPty = null
   assistantSessionId = undefined
-  // Ассистент один на все проекты: роли и режим разрешений — из типа библиотеки по умолчанию, не из проекта.
-  const d = resolveTaskType(projects.taskType(projects.defaultTaskTypeId())!)
   const { ptyId, sessionId } = startAssistant(
-    { socketPath: SOCKET_PATH, permissionMode: d.permissionMode, roles: d.roles, typeTitle: d.title },
+    { socketPath: SOCKET_PATH, settings },
     cols,
     rows,
     (id) => {
@@ -849,6 +851,11 @@ function registerIpc(): void {
     const root = projectRoot(id)
     return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
   })
+  // Начальный коммит — только по кнопке человека после `git.noCommits`; неизвестный режим от renderer — пустой коммит,
+  // он не забирает файлы человека в историю.
+  handle('projects:createInitialCommit', (_e, id: string, mode: InitialCommitMode) =>
+    createInitialCommit(projectRoot(id), mode === 'snapshot' ? 'snapshot' : 'empty')
+  )
   handle('projects:setActive', (_e, id: string) => projects.setActive(id))
   // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
   // ProjectManager.remove — общий путь с сокетом.

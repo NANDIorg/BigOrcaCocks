@@ -115,6 +115,10 @@ export default {
   'role.effortNotString': 'роль «{id}»: effort должен быть строкой',
   'role.promptNotString': 'роль «{id}»: системный промпт должен быть строкой',
 
+  'assistant.notObject': 'настройки ассистента: ожидается объект',
+  'assistant.unknownAgent': 'ассистент: неизвестный агент {agent}',
+  'assistant.notString': 'ассистент: поле {field} должно быть строкой',
+
   'worker.cannotStart': 'воркер не запустится: {reason}',
   'coordinator.cannotStart': 'координатор не запустится: {reason}',
   'coordinator.noObjective': 'цель не задана',
@@ -223,6 +227,8 @@ export default {
   'review.untracked': 'новые файлы:',
   'git.runBranchFailed': 'не удалось завести ветку «{branch}» глобальной задачи от «{base}»: {error}',
   'git.runBranchMissing': 'ветки «{branch}» глобальной задачи больше нет в репозитории — восстановите её или снимите ветку с задачи',
+  'git.noCommits': 'В репозитории нет ни одного коммита (ветка «{branch}» пуста), а Orca ветвит работу от коммита. Создайте начальный коммит: кнопкой «Создать начальный коммит» в приложении или вручную `git add -A && git commit -m "init"`',
+  'git.mergeTargetMissing': 'ветки «{branch}», в которую сливается задача, нет — слияние не выполнено, ветка задачи и её коммиты не тронуты: восстановите ветку и повторите',
   'git.notRepo': '{path} — не git-репозиторий',
   'git.dirtyTree': 'в проекте есть незакоммиченные изменения — переключение ветки не выполняется: закоммитьте или отложите их',
   'git.notFastForward': 'ветка «{branch}» разошлась с {upstream}: fast-forward невозможен, объедините изменения вручную (merge или rebase)',

@@ -7,14 +7,17 @@ import { builtinText } from './defaultTitles'
 import { ImageAttachments } from './ImageAttachments'
 import { pasteKeys } from './imagePaste'
 import { useImageAttachments } from './useImageAttachments'
+import { isNoCommitsError } from './initialCommit'
 
 interface Props {
   onClose(): void
   /** Пустая цель приходит только вместе с изображениями — main подставит стандартную. */
   onStart(objective: string, images: ImageAttachmentInput[]): Promise<void>
+  /** Репозиторий без коммитов (`git.noCommits`): окно начального коммита; после коммита оно вызовет `retry`. */
+  onNoCommits(retry: () => void): void
 }
 
-export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element {
+export function CoordinatorModal({ onClose, onStart, onNoCommits }: Props): React.JSX.Element {
   const t = useT()
   const [objective, setObjective] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,8 +37,10 @@ export function CoordinatorModal({ onClose, onStart }: Props): React.JSX.Element
     try {
       await onStart(objective.trim(), pasted.payload())
     } catch (err) {
+      // Цель и вложения остаются в форме: после начального коммита запуск повторится с ними же.
+      if (isNoCommitsError(err)) onNoCommits(() => void start())
       // Текст и вложения остаются в форме — можно исправить и запустить снова.
-      setStartError(t('shell.app.coordinatorError', { error: ipcErrorMessage(err) }))
+      else setStartError(t('shell.app.coordinatorError', { error: ipcErrorMessage(err) }))
     } finally {
       busyRef.current = false
       setBusy(false)

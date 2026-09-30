@@ -1,6 +1,6 @@
 // Только type-импорты: модуль тестируется node --test без бандлера.
 import type { AgentSpec } from './agents'
-import type { Question, Role, StageDecision, Task } from './types'
+import type { AssistantSettings, Question, Role, StageDecision, Task } from './types'
 import type { WfDecisionOption, WfWorkStage } from './workflow'
 import { returnImagesSection } from './attachments.ts'
 
@@ -19,7 +19,10 @@ export const COORDINATOR_ROLE_ID = 'coordinator'
 /** Роль, которой запускается ассистент доски. */
 export const ASSISTANT_ROLE_ID = 'assistant'
 
-/** Служебные роли: запускают агента вне задач (координатор, ассистент), задачам не назначаются. */
+/**
+ * Служебные роли: задачам не назначаются. Ассистент ролью типа больше не бывает (`AppSettings.assistant`), но id
+ * остаётся зарезервированным: роль из старых данных не станет рабочей, задача с ролью assistant отвергается.
+ */
 export const SERVICE_ROLE_IDS: readonly string[] = [COORDINATOR_ROLE_ID, ASSISTANT_ROLE_ID]
 
 /** Роль можно назначить задаче: не служебная. */
@@ -35,17 +38,19 @@ export function builtinPromptKind(roleId: string): BuiltinPromptKind {
 }
 
 /**
- * Роль запуска ассистента: роль assistant; в проектах, созданных до неё, — агент, модель и effort роли
- * coordinator (без её инструкций — они координаторские); нет и её — undefined (claude без модели).
+ * Настройки ассистента из ролей типа — так он запускался, пока был ролью типа (миграция `settings.assistant`):
+ * роль assistant; нет её — агент, модель и effort роли coordinator (без её инструкций — они координаторские);
+ * нет и её — undefined (вызывающий возьмёт `DEFAULT_ASSISTANT_SETTINGS`).
  */
-export function assistantRole(roles: readonly Role[]): Role | undefined {
+export function assistantFromRoles(roles: readonly Role[]): AssistantSettings | undefined {
   const own = roles.find((r) => r.id === ASSISTANT_ROLE_ID)
-  if (own) return own
-  const c = roles.find((r) => r.id === COORDINATOR_ROLE_ID)
-  if (!c) return undefined
+  const src = own ?? roles.find((r) => r.id === COORDINATOR_ROLE_ID)
+  if (!src) return undefined
   return {
-    id: ASSISTANT_ROLE_ID, title: 'Ассистент', agent: c.agent,
-    ...(c.model ? { model: c.model } : {}), ...(c.effort ? { effort: c.effort } : {})
+    agent: src.agent,
+    ...(src.model ? { model: src.model } : {}),
+    ...(src.effort ? { effort: src.effort } : {}),
+    ...(own?.systemPrompt ? { systemPrompt: own.systemPrompt } : {})
   }
 }
 

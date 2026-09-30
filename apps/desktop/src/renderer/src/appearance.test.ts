@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { DEFAULT_ASSISTANT_SETTINGS } from '@orca-board/core'
 import { appearance, createAppearanceController, motionScrollBehavior } from './appearance'
 import { getAppTheme } from '../../shared/theme'
 import { droppedPatch, saveAppSettings } from './appSettingsSave'
@@ -90,7 +91,7 @@ test('старый main не может молча принять и потер�
 
 test('сбой и отброшенный патч сохраняют подтверждённую тему; успех меняет тему и JS-прокрутку', async () => {
   const previous = appearance.getSnapshot().settings
-  const settings: AppSettings = { keepInBackground: true, notifications: DEFAULT_NOTIFICATION_SETTINGS, updates: DEFAULT_UPDATE_SETTINGS, appearance: { theme: 'slate', motion: 'system' } }
+  const settings: AppSettings = { keepInBackground: true, notifications: DEFAULT_NOTIFICATION_SETTINGS, updates: DEFAULT_UPDATE_SETTINGS, assistant: DEFAULT_ASSISTANT_SETTINGS, appearance: { theme: 'slate', motion: 'system' } }
   appearance.apply(settings.appearance)
   try {
     const failed = await saveAppSettings({ setSettings: async () => { throw new Error('disk failed') } }, { appearance: { theme: 'paper' } })

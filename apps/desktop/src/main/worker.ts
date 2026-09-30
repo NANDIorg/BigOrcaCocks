@@ -1,15 +1,14 @@
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter, isAbsolute, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, assistantRole, ASSISTANT_START_PROMPT, workerTaskPrompt, type AgentSpec, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
-import { setupCommand, taskWorktreePath } from './git'
+import { addTaskWorktree, assertHasCommits, projectBranchInfo, setupCommand, taskWorktreePath } from './git'
 import { extraPathDirs, findBin, isCmdScript, missingRoleText } from './agents'
 import { OrcaError, mainLocale } from './i18n'
-import { assistantEnv, assistantCwd } from './assistant'
+import { assistantEnv, assistantCwd, assistantLaunch } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
 import { ensureRunBranch } from './run-branch'
 import { coordinatorImages } from './run-images'
@@ -213,11 +212,7 @@ export function startWorker(
   const runGit = ensureRunBranch(store, repoRoot, task.runId)
   let fresh = false
   if (!existsSync(worktree)) {
-    const branchExists = execFileSync('git', ['branch', '--list', branch], { cwd: repoRoot }).toString().trim() !== ''
-    const args = branchExists
-      ? ['worktree', 'add', worktree, branch]
-      : ['worktree', 'add', '-b', branch, worktree, ...(runGit ? [runGit.branch] : [])]
-    execFileSync('git', args, { cwd: repoRoot, stdio: 'pipe' })
+    addTaskWorktree(repoRoot, worktree, branch, runGit?.branch)
     fresh = true
   }
   // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи. Роль этапа «Вопрос
@@ -311,6 +306,8 @@ export function startCoordinator(
     if (merged.missing.length > 0) console.error(`[orca] у задачи ${runId} нет на диске сохранённых изображений: ${merged.missing.map((m) => m.id).join(', ')}`)
     images = merged.images
   }
+  // Репозиторий без коммитов — отказ до `createRun`: иначе карточка создалась бы и тут же закрылась пустой.
+  if (!resume && projectBranchInfo(repoRoot).isGitRepo) assertHasCommits(repoRoot)
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
   let root: string | undefined
@@ -387,31 +384,35 @@ export function returnToWork(
 }
 
 /**
- * Контекст ассистента: он один на приложение, поэтому без проекта — роли и режим из типа библиотеки по умолчанию.
- * Правил проекта у него нет: они относятся к агентам, работающим в репозитории проекта.
+ * Контекст ассистента: он один на приложение и к типу задачи не относится — агент, модель, effort и инструкции
+ * из `AppSettings.assistant`, режим разрешений фиксированный (`ASSISTANT_PERMISSION_MODE`). Правил проекта у него
+ * нет: они относятся к агентам, работающим в репозитории проекта.
  */
-export type AssistantContext = Omit<WorkerEnvContext, 'projectId' | 'agentRules'>
+export interface AssistantContext {
+  socketPath: string
+  settings: AssistantSettings
+}
 
 /**
- * Ассистент доски: интерактивный агент роли assistant (нет такой роли — агент роли coordinator, нет и её — claude).
+ * Ассистент доски: интерактивный агент из настроек приложения (`AppSettings.assistant`).
  * Один на всё приложение: работает со всеми проектами через orca-board --project (без флага — активный в UI).
  * cwd — нейтральный userData/assistant, а не репозиторий: файлового доступа к проектам у ассистента нет.
- * Прогон не создаётся и ORCA_RUN_ID нет (skills/assistant.md).
+ * Прогон не создаётся и ORCA_RUN_ID нет (skills/assistant.md). Установлен ли агент, проверяет вызывающий (`openAssistant`).
  *
  * `sessionId` — как у воркера/координатора (`agentSessionId`): агент, принимающий `--session-id`, пишет
  * транскрипт в файл с этим именем, поэтому чат-режим панели (`assistant-chat.ts`) находит его без сканирования
  * папки — по фиксированному пути. У агентов без этой опции `sessionId` нет, и чат недоступен (только терминал).
  */
 export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onExit?: (id: string, code: number) => void): { ptyId: string; sessionId?: string } {
-  const role = assistantRole(ctx.roles)
-  const spec = getAgent(role?.agent ?? 'claude')
-  if (!spec) throw new Error(`неизвестный агент: ${role?.agent}`)
+  const l = assistantLaunch(ctx.settings, BUILTIN_PROMPTS.assistant, mainLocale())
+  const spec = getAgent(l.agent)
+  if (!spec) throw new Error(`неизвестный агент: ${l.agent}`)
   const sessionId = agentSessionId(spec)
-  const inv = spec.invoke(agentSystemPrompt(BUILTIN_PROMPTS.assistant, { role, language: mainLocale() }), ASSISTANT_START_PROMPT, {
-    permissionMode: ctx.permissionMode,
+  const inv = spec.invoke(l.system, l.prompt, {
+    permissionMode: l.permissionMode,
     shell: defaultShell(),
-    model: role?.model,
-    effort: role?.effort,
+    model: l.model,
+    effort: l.effort,
     sessionId
   })
   const cwd = assistantCwd(app.getPath('userData'))
