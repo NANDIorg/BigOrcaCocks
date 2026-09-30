@@ -1,13 +1,14 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import {
-  DECISION_REASON_LIMIT, decisionOptions, forkBranches, globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec,
+  DECISION_REASON_LIMIT, RunApprovalAmbiguousError, decisionOptions, forkBranches, globalTaskTitle, renderGitTemplate, runAskTaskSpec, runAskTaskTitle, runDecisionTaskSpec,
   runDecisionTaskTitle, runGateTaskSpec, runGateTaskTitle, runPositionAt, runPositions, wfGitVars, wfNodeTitle, withStatusSource,
   type GlobalTask, type HumanRequest, type OrcaEvent, type Role, type Run, type RunAction, type RunPathStep, type RunPosition,
   type RunStageOptions, type RunStepResult, type RunTaskContext, type StageChange, type StageDecision, type StageDecisionFallback, type Task,
   type TaskStore, type WfAction, type WfDecisionOption, type WfNode, type WfPort, type Workflow
 } from '@orca-board/core'
 import { gitCommit, gitPush, isBranchNameAcceptedByGit, removeWorktree } from './git'
+import { OrcaError, mt } from './i18n'
 import type { MergeTargetOf } from './review'
 import { findOption } from './request-params'
 import { ensureRunBranch, mergeRunBranch } from './run-branch'
@@ -591,6 +592,8 @@ function requestHuman(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { t
   })
   const withShowcase = dispatches.filter((x) => x.dispatch.showcase)
   const summary = summaryFor(run, node.id)
+  // В пути разветвления «Принять» ведёт не к концу, а дальше по пути и в слияние; человеку важно, чей это путь.
+  const lane = laneOf(run, node.id)
   const body = [
     node.instructions?.trim(),
     note ? `**${note.title}:**\n\n\`\`\`\n${note.text}\n\`\`\`` : undefined,
@@ -601,11 +604,12 @@ function requestHuman(deps: RunWorkflowDeps, run: Run, node: Extract<WfNode, { t
         : undefined,
     ...withShowcase.map((x) => `### ${x.task.title}\n\n${showcaseMarkdown(x.dispatch.showcase!)}`),
     run.git ? `Ветка: \`${run.git.branch}\` (база \`${run.git.base}\`)` : undefined,
-    '«Принять» — дальше по воркфлоу (обычно конец или мерж), «Вернуть» — с замечаниями: координатор получит их и создаст подзадачи доработки.'
+    lane ? mt('runApproval.acceptHintLane', { lane: lane.title }) : mt('runApproval.acceptHint')
   ].filter(Boolean).join('\n\n')
   const last = withShowcase.at(-1)
+  const title = `${wfNodeTitle(node)}: ${globalTaskTitle(run)}`
   store.requestRunApproval(run.id, {
-    nodeId: node.id, title: `${wfNodeTitle(node)}: ${globalTaskTitle(run)}`, body,
+    nodeId: node.id, title: lane ? mt('runApproval.laneTitle', { lane: lane.title, title }) : title, body,
     ...(last ? { showcaseDispatchId: last.dispatch.id, showcaseDispatchIds: withShowcase.map((x) => x.dispatch.id) } : {})
   })
 }
@@ -723,13 +727,28 @@ export function returnRun(deps: RunWorkflowDeps, runId: string, text: string, im
 
 function decideRun(deps: RunWorkflowDeps, runId: string, decide: (runId: string) => GlobalTask): GlobalTask {
   const { store } = deps
-  if (!isRunScope(store, runId)) return decide(runId)
+  if (!isRunScope(store, runId)) return decideOnce(store, runId, decide)
   // Ждут несколько approval (пути разветвления) — store откажет `RunApprovalAmbiguousError` до решения.
   const pending = store.pendingRequests(runId).find((r) => r.taskId === undefined && r.kind === 'approval')
-  decide(runId)
+  decideOnce(store, runId, decide)
   const request = pending ? store.getRequest(pending.id) : undefined
   if (request) handleRunRequest(deps, request)
   return store.getGlobalTask(runId)
+}
+
+/**
+ * Решение с карточки. `RunApprovalAmbiguousError` из core — не `OrcaError`: renderer узнал бы его только по тексту.
+ * Здесь он становится `OrcaError` с кодом `global.approvalAmbiguous` (IPC передаёт код в имени ошибки, `ipcError`),
+ * а сокет и CLI получают тот же русский текст.
+ */
+function decideOnce(store: TaskStore, runId: string, decide: (runId: string) => GlobalTask): GlobalTask {
+  try {
+    return decide(runId)
+  } catch (e) {
+    if (!(e instanceof RunApprovalAmbiguousError)) throw e
+    const titles = e.requestIds.map((id) => `«${store.getRequest(id)?.title ?? id}»`).join(', ')
+    throw new OrcaError('global.approvalAmbiguous', { count: e.requestIds.length, titles })
+  }
 }
 
 /** Задача — проверка ветки глобальной задачи (`gateFor.runId`): её решение — исход ноды `gate`, а не приёмка задачи. */

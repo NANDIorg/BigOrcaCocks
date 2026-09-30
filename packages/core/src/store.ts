@@ -130,6 +130,21 @@ export class RunApprovalAmbiguousError extends Error {
 const MAX_FORK_CLOSES = 10
 
 /**
+ * Приход пути в `join` — не заход в слияние: `nextRunStage` считает заходом каждый вход в ноду, и без поправки после
+ * одного слияния двух путей у `join` было бы «×2». Заход считает `closeJoinedLanes` — один на поколение путей.
+ */
+function uncountArrival(visits: Record<string, number>, joinId: string): void {
+  const n = (visits[joinId] ?? 0) - 1
+  if (n > 0) visits[joinId] = n
+  else delete visits[joinId]
+}
+
+/** Номер слияния, которого ждёт пришедший путь: следующий заход в `join` (`StageChange.visit` записи прихода). */
+function arrivalVisit(visits: Record<string, number>, joinId: string): number {
+  return (visits[joinId] ?? 0) + 1
+}
+
+/**
  * Текстовое поле payload события: не длиннее `EVENT_ANSWER_LIMIT`, обрезанное помечено `<ключ>Truncated`. Полный
  * текст — в самом прогоне (`TaskStore.runStage`): строка события в мониторе координатора обрезается.
  */
@@ -341,13 +356,14 @@ export class TaskStore {
       const stages = this.migrateStages()
       // После migrateStages: задача, вставшая на гейт миграцией, тоже получает запись.
       const stageHistory = this.migrateStageHistory()
+      const joinVisits = this.migrateJoinVisits()
       // После статусов и запросов: от них зависит, идёт ли собственное время глобальной задачи.
       const own = this.migrateRunActiveTime()
       const started = this.migrateRunStarted()
       const runGit = this.migrateRunGit()
       const synced = this.syncRunActiveTime()
       const format = this.migrateFormatVersion(snap.formatVersion)
-      if (format || history || active || priority || runPriority || stale || requests || stages || stageHistory || migrated || own || started || runGit || synced) this.persistence?.save(this.snapshot())
+      if (format || history || active || priority || runPriority || stale || requests || stages || stageHistory || joinVisits || migrated || own || started || runGit || synced) this.persistence?.save(this.snapshot())
     }
   }
 
@@ -521,6 +537,40 @@ export class TaskStore {
    * Остальные (в бэклоге, без координатора и подзадач) остаются без поля — тип им ещё можно сменить.
    * «Входящие» не трогаем: их тип не меняется в любом случае. Возвращает true, если что-то поменялось.
    */
+  /**
+   * Код до `StageChange.arrived` считал заходом в `join` каждый приход пути: после одного слияния двух путей
+   * `Run.stage.visits[join]` было 2, а записи приходов — «1-й» и «2-й заход». Пересчёт по истории: заход — слияние
+   * (запись основной позиции с `from` = `join`, или прогон сейчас стоит на `join` без путей), записи приходов получают
+   * `arrived` и номер слияния, которого ждали. История урезается (`STATUS_HISTORY_LIMIT`) — тогда счётчик по оставшимся
+   * записям. Возвращает true, если что-то поменялось.
+   */
+  private migrateJoinVisits(): boolean {
+    let changed = false
+    for (const run of this.runs.values()) {
+      const history = run.stageHistory ?? []
+      for (const node of run.workflow?.nodes ?? []) {
+        if (node.type !== 'join') continue
+        const joinId = node.id
+        if (!history.some((h) => h.nodeId === joinId && h.lane !== undefined && !h.arrived)) continue
+        let merges = 0
+        for (const h of history) {
+          if (h.from === joinId && h.lane === undefined) merges += 1
+          if (h.nodeId === joinId && h.lane !== undefined) {
+            h.arrived = true
+            h.visit = merges + 1
+          }
+        }
+        if (run.stage?.nodeId === joinId && !run.lanes?.length) merges += 1
+        if (run.stage) {
+          if (merges > 0) run.stage.visits[joinId] = merges
+          else delete run.stage.visits[joinId]
+        }
+        changed = true
+      }
+    }
+    return changed
+  }
+
   /**
    * `Run.git` до отказа от настроек веток хранил итог автоматического push (`pushedAt`, `pushError`): push больше
    * не делается, поля убираются, чтобы не показывать устаревший статус. Возвращает true, если что-то убрано.
@@ -1500,6 +1550,11 @@ export class TaskStore {
     const ctx = this.stageCtx(opts)
     const stage = run.stage
     const trunkNode = wf.nodes.find((n) => n.id === stage.nodeId)
+    if (!run.lanes?.length && trunkNode?.type === 'fork') {
+      const actions = this.reenterFork(run, wf, opts)
+      this.commit()
+      return this.stepResult(run, actions)
+    }
     if (!run.lanes?.length && trunkNode?.type !== 'join') {
       const action = runStageAction(wf, stage, ctx)
       return this.stepResult(run, [{ nodeId: action.nodeId, action }])
@@ -1507,6 +1562,25 @@ export class TaskStore {
     const actions = this.retryStuck(run, wf, opts)
     this.commit()
     return this.stepResult(run, actions)
+  }
+
+  /**
+   * `Run.stage` стоит на `fork`, а путей нет (`Run.lanes` потеряны: ручная правка board.json, сбой записи). Без поправки
+   * повтор эффекта ничего бы не сделал — прогон стоял бы молча. Пути этого же поколения заводятся заново от портов
+   * `fork` (заход в сам `fork` не считается повторно): прогресс путей потерян в любом случае, а `workflow_blocked`
+   * оставил бы человеку только правку файла. Первые ноды путей получают новый заход — подзадачи прежнего захода не
+   * в счёт, их итог координатор увидит в истории. Не раскрыть разветвление (нет путей, вложенный `fork`) — `blocked`.
+   */
+  private reenterFork(run: Run, wf: Workflow, opts: RunStageOptions): RunAction[] {
+    const stage = run.stage!
+    const action = runStageAction(wf, stage, this.stageCtx(opts))
+    if (action.type !== 'fork') {
+      this.applyAction(run, wf, action, opts)
+      return [{ nodeId: action.nodeId, action }]
+    }
+    run.stage = { nodeId: stage.nodeId, visits: { ...(action.branches[0]?.stage.visits ?? stage.visits) } }
+    run.updatedAt = Date.now()
+    return this.settleLanes(run, wf, opts, this.enterLanes(run, wf, action, {}, opts))
   }
 
   /**
@@ -1646,7 +1720,11 @@ export class TaskStore {
    */
   private moveRunStage(run: Run, wf: Workflow, from: WfStage | undefined, outcome: WfPort, opts: RunStageOptions, lane?: RunLane): RunAction[] {
     run.workflow ??= snapshotWorkflow(wf)
-    let actions = lane ? this.moveLane(run, wf, lane, outcome, opts) : this.moveTrunk(run, wf, from, outcome, opts)
+    return this.settleLanes(run, wf, opts, lane ? this.moveLane(run, wf, lane, outcome, opts) : this.moveTrunk(run, wf, from, outcome, opts))
+  }
+
+  /** После хода позиций: слияние, если пришли все пути, и колонка карточки по путям. `actions` — действия хода. */
+  private settleLanes(run: Run, wf: Workflow, opts: RunStageOptions, actions: RunAction[]): RunAction[] {
     // Цепочка «слияние → сразу новое разветвление с пустыми путями» конечна только на валидном графе: ограничиваем.
     for (let i = 0; i < MAX_FORK_CLOSES; i += 1) {
       const closed = this.closeJoinedLanes(run, wf, opts)
@@ -1730,16 +1808,21 @@ export class TaskStore {
       ...(hasInput && b.stage.nodeId !== forkId ? { stageInput: { ...input } } : {})
     }))
     run.lanes = lanes
+    // Пустые пути (`fork` сразу в `join`) пришли уже при входе: их приход заходом в слияние не считается.
+    for (const b of action.branches) if (b.action.type === 'join') uncountArrival(stage.visits, b.action.nodeId)
     return action.branches.map((b, i): RunAction => {
       const lane = lanes[i]
       if (b.stage.nodeId !== forkId) {
         const node = wf.nodes.find((n) => n.id === b.stage.nodeId)
+        const arrived = b.action.type === 'join'
         recordStage(run, {
-          nodeId: b.stage.nodeId, at: now, outcome: b.branchId, visit: stage.visits[b.stage.nodeId] ?? 1,
+          nodeId: b.stage.nodeId, at: now, outcome: b.branchId,
+          visit: arrived ? arrivalVisit(stage.visits, b.stage.nodeId) : stage.visits[b.stage.nodeId] ?? 1,
           ...(node ? { title: wfNodeTitle(node) } : {}),
           from: forkId,
           ...(opts.commit ? { commit: opts.commit } : {}),
-          lane: lane.id
+          lane: lane.id,
+          ...(arrived ? { arrived: true as const } : {})
         })
         this.pushEvent('stage_changed', {
           runId: run.id, from: forkId, to: b.stage.nodeId, outcome: b.branchId,
@@ -1779,6 +1862,8 @@ export class TaskStore {
       const prev = lane.nodeId
       lane.nodeId = step.stage.nodeId
       stage.visits = step.stage.visits
+      const arrived = action.type === 'join'
+      if (arrived) uncountArrival(stage.visits, step.stage.nodeId)
       if (Object.keys(input).length > 0) lane.stageInput = input
       else delete lane.stageInput
       this.dropStageEvents(run.id, prev)
@@ -1786,11 +1871,13 @@ export class TaskStore {
       run.updatedAt = now
       this.leaveDecision(run, wf, prev, opts)
       recordStage(run, {
-        nodeId: step.stage.nodeId, at: now, outcome, visit: step.stage.visits[step.stage.nodeId] ?? 1,
+        nodeId: step.stage.nodeId, at: now, outcome,
+        visit: arrived ? arrivalVisit(stage.visits, step.stage.nodeId) : stage.visits[step.stage.nodeId] ?? 1,
         ...(node ? { title: wfNodeTitle(node) } : {}),
         from: prev,
         ...(opts.commit ? { commit: opts.commit } : {}),
-        lane: lane.id
+        lane: lane.id,
+        ...(arrived ? { arrived: true as const } : {})
       })
       if (outcome === 'reject' && input.feedback) {
         run.returns = [...(run.returns ?? []), { at: now, text: input.feedback, ...(input.images ? { images: input.images } : {}), nodeId: prev }]
@@ -1866,7 +1953,9 @@ export class TaskStore {
     const summary = this.lanesSummary(run, wf, lanes)
     if (summary) run.summary = { at: Date.now(), text: summary }
     delete run.lanes
-    const join: WfStage = { nodeId: lanes[0].nodeId, visits: run.stage!.visits }
+    // Слияние — один заход в `join` на поколение путей (приходы путей его не считали: `uncountArrival`).
+    const joinId = lanes[0].nodeId
+    const join: WfStage = { nodeId: joinId, visits: { ...run.stage!.visits, [joinId]: arrivalVisit(run.stage!.visits, joinId) } }
     run.stage = join
     const next: RunStageOptions = {
       ...(opts.roleIds ? { roleIds: opts.roleIds } : {}),

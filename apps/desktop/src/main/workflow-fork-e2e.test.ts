@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import {
-  DEFAULT_ROLES, DEFAULT_COLUMNS, RunApprovalAmbiguousError, TaskStore, validateWorkflow,
+  DEFAULT_ROLES, DEFAULT_COLUMNS, TaskStore, validateWorkflow,
   type AgentInfo, type GlobalTask, type HumanRequest, type OrcaEvent, type RequestResolution, type Role, type Run, type StageChange, type Task,
   type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
@@ -29,7 +29,7 @@ import { resolveHumanRequest } from './review'
 import { resumeObjective } from './coordinator-resume'
 import { ensureRunBranch, mergeTarget } from './run-branch'
 import { taskWorktreePath } from './git'
-import { OrcaError } from './i18n'
+import { OrcaError, ipcError } from './i18n'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { startSocketServer, type ProjectDeps } from './socket'
 import { NOT_NEEDED_APP_SETTINGS_DEPS, NOT_NEEDED_SETTINGS_DEPS } from './socket-test-deps'
@@ -600,6 +600,9 @@ describe('(2) fork → два пути → слияние → gate → human →
     assert.deepEqual(lanesAt(app, runId), { backend: 'be', frontend: 'humFe' })
     const macet = approvalAt(app, runId, 'humFe')
     assert.match(macet.body!, /Итог этапа:\*\* UI готов/)
+    assert.match(macet.title, /^Путь «Фронтенд»: Макет: /, 'в заголовке approval — чей путь')
+    assert.match(macet.body!, /Это нода пути «Фронтенд»\. «Принять» — путь идёт дальше и приходит в слияние/)
+    assert.doesNotMatch(macet.body!, /обычно конец или мерж/, 'внутри пути «Принять» ведёт не к концу')
     assert.equal(run(app, runId).status, app.store.columnId('in_progress'), '«Бэкенд» ещё работает — карточка не на «Проверке»')
     assert.equal(global(app, runId).status, app.store.columnId('needs_input'), 'но ждущий approval поднимает её в «Нужен ответ»')
 
@@ -644,6 +647,8 @@ describe('(2) fork → два пути → слияние → gate → human →
     assert.equal(stageId(app, runId), 'check')
     assert.equal(approvals(app, runId).length, 1)
     assert.match(approvalAt(app, runId, 'check').body!, /Итог этапа:\*\* ### Путь «Бэкенд»/)
+    assert.match(approvalAt(app, runId, 'check').body!, /«Принять» — дальше по воркфлоу \(обычно конец или мерж\)/, 'после слияния — прежняя подсказка')
+    assert.doesNotMatch(approvalAt(app, runId, 'check').title, /^Путь/)
     assert.equal(global(app, runId).status, app.store.columnId('review'))
     acceptRun(app.deps, runId)
     assert.equal(stageId(app, runId), 'end')
@@ -769,9 +774,12 @@ describe('(4) два human в путях', () => {
     const before = mark(app)
     for (const attempt of [() => acceptRun(app.deps, runId), () => returnRun(app.deps, runId, 'переделать')]) {
       assert.throws(attempt, (e: unknown) => {
-        assert.ok(e instanceof RunApprovalAmbiguousError)
-        assert.equal(e.code, 'runApprovalAmbiguous')
-        assert.deepEqual([...e.requestIds].sort(), [humBe.id, humFe.id].sort())
+        // `RunApprovalAmbiguousError` core main превращает в `OrcaError`: код доезжает по IPC, текст — русский для сокета.
+        assert.ok(e instanceof OrcaError)
+        assert.equal(e.key, 'global.approvalAmbiguous')
+        assert.equal(e.params?.count, 2)
+        assert.match(e.message, /ждут решения 2 запроса на проверку \(«Путь «Бэкенд»: Приёмка API: .*», «Путь «Фронтенд»: Макет: .*»\)/)
+        assert.equal((ipcError(e) as Error).name, 'OrcaError[global.approvalAmbiguous]')
         return true
       })
     }

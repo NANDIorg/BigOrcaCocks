@@ -465,7 +465,9 @@ Store хранит позицию и решает, куда задача пер�
 `createTask({stage?})`, `blockRunStage(runId, reason, nodeId?)` — этап по id ноды; у прогона без путей всё как раньше. Позиции путей — `Run.lanes: RunLane[]`
 (`Run.stage` тогда стоит на `fork`), запись истории пути — `StageChange.lane`, возврат — `Run.returns[].nodeId`, карточка — `GlobalTask.lanes`
 (`docs/workflow.md`, «Разветвление»: ход путей, барьер `join`, сводка путей в `Run.summary`, колонка). Несколько ждущих approval
-прогона — `resolveRunApproval` бросает `RunApprovalAmbiguousError` (`code: 'runApprovalAmbiguous'`, `requestIds`). Решение развилки `decision` — `RunStageOptions.chosen` у `advanceRunStage` → `StageChange.decision`
+прогона — `resolveRunApproval` бросает `RunApprovalAmbiguousError` (`code: 'runApprovalAmbiguous'`, `requestIds`); main (`decideRun`) отдаёт
+его в IPC как `OrcaError` `global.approvalAmbiguous`. Приход пути в `join` — запись `StageChange.arrived`, заходом не считается: `visits[join]` — число слияний
+(старые снимки пересчитывает `migrateJoinVisits`). Решение развилки `decision` — `RunStageOptions.chosen` у `advanceRunStage` → `StageChange.decision`
 в записи истории развилки (`StageDecision {optionId, label, reason?, by, fallback?, agentNote?}`), фоллбэк — запрос `kind: 'decision'` без задачи,
 решается `answer` + `optionId`; `runStage` на развилке отдаёт `question` и `options`; правила `createTask` в прогоне с `workflowScope: 'run'` (`roleIds` ноды: пусто — любая рабочая роль типа, есть — роль из списка, одна роль берётся по умолчанию (`stageDefaultRole`), чужая роль и этап не `work` —
 ошибки, `stageOf`), `stage_tasks_done` вместо `closeFinishedRuns`, `run_done` при входе в `end`, «Подтвердить»/«Вернуть» как решение approval прогона —
@@ -2882,6 +2884,10 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 
 ## Грабли разработки
 
+- **Приход пути в `join` — не заход.** `nextRunStage` поднимает `visits` на каждый вход в ноду, и без поправки после одного
+  слияния двух путей у `join` было «×2», после второго прохода через `fork` — «×4», а записи приходов выглядели заходами.
+  Заход в `join` — само слияние (`closeJoinedLanes`), приход — `StageChange.arrived` (`uncountArrival` в `store.ts`,
+  миграция `migrateJoinVisits`). Новый код, который считает заходы по `visits` или по записям истории, учитывает `arrived`.
 - **Область пути разветвления — не «всё, что достижимо от входа».** Замыкание от входа пути поглощает любую ноду, куда путь
   утёк (конец, ноды после слияния), а «доходит до `join`» ломается на пути, который до слияния вообще не доходит, и на
   `reject` после слияния внутрь пути. Чужая нода — только та, что достижима **снаружи** (от старта или после `join`, не

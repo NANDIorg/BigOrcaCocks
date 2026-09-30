@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, RunApprovalAmbiguousError, defaultWorkflow, pipelineWorkflow, validateWorkflow,
+  TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, pipelineWorkflow, validateWorkflow,
   type OrcaEvent, type Task, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
 import {
@@ -20,6 +20,7 @@ import { resolveHumanRequest } from './review'
 import { resumeObjective } from './coordinator-resume'
 import { ensureRunBranch, mergeTarget } from './run-branch'
 import { taskWorktreePath } from './git'
+import { OrcaError } from './i18n'
 import { rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 
 const git = (cwd: string, ...args: string[]): string =>
@@ -1400,7 +1401,9 @@ describe('разветвление fork/join: эффекты по путям', (
     assert.match(hum.body!, /Итог этапа:\*\* UI готов/)
     assert.deepEqual(humBe.showcaseDispatchIds, [beShow], 'показ — подзадачи своего пути')
     assert.deepEqual(hum.showcaseDispatchIds, [feShow])
-    assert.throws(() => acceptRun(deps, runId), RunApprovalAmbiguousError, 'с карточки не решить, чей путь')
+    assert.throws(() => acceptRun(deps, runId), (e: unknown) => e instanceof OrcaError && e.key === 'global.approvalAmbiguous', 'с карточки не решить, чей путь')
+    assert.match(humBe.title, /^Путь «Бэкенд»: /)
+    assert.match(hum.body!, /Это нода пути «Фронтенд»/)
     assert.equal(runApprovals(runId).length, 2)
     restartIsIdempotent(runId)
 

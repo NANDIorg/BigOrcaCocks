@@ -131,7 +131,10 @@ export interface RunPosition {
   nodeId: string
   /** Id пути (`RunLane.id`); нет — основная позиция прогона. */
   lane?: string
-  /** Заход в ноду (`Run.stage.visits[nodeId]`, счётчики общие на весь прогон); нет счётчика — 1. */
+  /**
+   * Заход в ноду (`Run.stage.visits[nodeId]`, счётчики общие на весь прогон); нет счётчика — 1. У пути, пришедшего в
+   * `join`, — номер слияния, которого он ждёт: приходы путей заходом не считаются, заход — само слияние.
+   */
   visit: number
   /** Путь пришёл в `join` и ждёт остальные (`RunLane.arrivedAt`). */
   arrived?: true
@@ -156,7 +159,8 @@ function trunk(run: RunPositionSource): RunPosition | undefined {
 
 function lanePosition(run: RunPositionSource, lane: RunLane): RunPosition {
   return {
-    nodeId: lane.nodeId, lane: lane.id, visit: run.stage?.visits[lane.nodeId] ?? 1,
+    nodeId: lane.nodeId, lane: lane.id,
+    visit: lane.arrivedAt !== undefined ? (run.stage?.visits[lane.nodeId] ?? 0) + 1 : run.stage?.visits[lane.nodeId] ?? 1,
     ...(lane.arrivedAt !== undefined ? { arrived: true as const } : {}),
     ...(lane.stageInput ? { input: lane.stageInput } : {}),
     ...(lane.stageTasksDoneAt !== undefined ? { tasksDoneAt: lane.stageTasksDoneAt } : {})
