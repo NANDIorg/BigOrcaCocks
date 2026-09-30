@@ -4,9 +4,11 @@ import { DEFAULT_ROLES, WF_ISSUE_TEXTS, defaultSubflow, validateWorkflow, type W
 import { wfAddableTypes } from './workflowEdit'
 import {
   WF_PALETTE_GROUPS, filterTemplates, groupProblems, issueCard, mainPath, matchesQuery, nodeCardIssues, paletteGroups,
-  laneHighlight, shortIssueText
+  edgeProblemTitle, laneHighlight, shortIssueText
 } from './workflowEditorView'
-import { graphWithFork, graphWithMerge } from './workflowFixture'
+import { graphWithFork, graphWithMerge, runGraphWithFork } from './workflowFixture'
+import { wfPortLabel } from './workflowEdit'
+import { nodeTitle } from './defaultTitles'
 
 const describe = (type: WfNodeType): string[] => [type, type === 'gate' ? 'проверка ветки агентом' : '']
 
@@ -198,4 +200,16 @@ test('подсветка путей: только при выделенном fo
   assert.deepEqual([...laneHighlight(g, 'merge_paths')], [['work_be', 0], ['work_fe', 1]])
   assert.equal(laneHighlight(g, 'work_be').size, 0)
   assert.equal(laneHighlight(g, undefined).size, 0)
+})
+
+test('заголовок проблемы перехода: подпись исхода и нода-источник, у пути разветвления — название пути, не id', () => {
+  const wf = runGraphWithFork()
+  const review = wf.nodes.find((n) => n.id === 'be_review')!
+  assert.deepEqual(edgeProblemTitle(wf, 'e_be_ok', wfPortLabel, nodeTitle), {
+    outcome: wfPortLabel(review, 'accept'), node: 'API review', fork: false
+  })
+  assert.notEqual(wfPortLabel(review, 'accept'), 'accept', 'исход — на языке интерфейса')
+  assert.deepEqual(edgeProblemTitle(wf, 'e_be', wfPortLabel, nodeTitle), { outcome: 'Backend', node: 'Back and front', fork: true })
+  assert.equal(edgeProblemTitle(wf, 'e_missing', wfPortLabel, nodeTitle), undefined)
+  assert.equal(edgeProblemTitle({ ...wf, edges: [{ id: 'x', from: 'gone', outcome: 'next', to: 'end' }] }, 'x', wfPortLabel, nodeTitle), undefined)
 })

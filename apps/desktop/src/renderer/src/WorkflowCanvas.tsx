@@ -3,7 +3,7 @@ import type React from 'react'
 import { forkBranches, wfPorts, wfWorkRoleIds, type WfNode, type WfNodeTemplate, type WfNodeType, type WfPort, type WfValidation, type Workflow } from '@orca-board/core'
 import { Icon, WfNodeIcon } from './icons'
 import {
-  NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, nodeHeight, panBy,
+  NODE_H, NODE_W, autoLayout, curvePath, edgeCurve, edgeCurveOf, fitView, hitEdge, hitNode, hitPort, inputPoint, nodeHeight, panBy, portLabelMax,
   portPoint, screenToWorld, snap, viewBox, zoomAt, type Point, type View
 } from './workflowGeometry'
 import {
@@ -15,7 +15,7 @@ import { WF_TYPE_TITLES } from './workflowForm'
 import { gitNodeSubtitle } from './workflowGit'
 import { laneHighlight, shortIssueText } from './workflowEditorView'
 import { useT, type TFunction } from './i18n'
-import { nodeTitle } from './defaultTitles'
+import { forkBranchTitle, nodeTitle } from './defaultTitles'
 import { insertTemplate, type NodeTemplatesHook } from './nodeTemplates'
 import { WorkflowPalette } from './WorkflowPalette'
 
@@ -265,7 +265,7 @@ export function WorkflowCanvas({
   const lanes = laneHighlight(shown, selection?.kind === 'node' ? selection.id : undefined)
   const laneFork = lanes.size > 0 && selection?.kind === 'node' ? shown.nodes.find((n) => n.id === selection.id) : undefined
   const laneForkNode = laneFork?.type === 'join' ? shown.nodes.find((n) => n.id === laneFork.forkId) : laneFork
-  const laneNames = laneForkNode?.type === 'fork' ? forkBranches(laneForkNode).map((b) => b.label ?? b.id) : []
+  const laneNames = laneForkNode?.type === 'fork' ? forkBranches(laneForkNode).map(forkBranchTitle) : []
 
   return (
     <>
@@ -380,11 +380,14 @@ export function WorkflowCanvas({
                     const p = portPoint(node, outcome)
                     const x = p.x - node.x
                     const y = p.y - node.y
+                    const label = wfPortLabel(node, outcome)
+                    const shown = clip(label, portLabelMax(node))
                     return (
                       <g key={outcome} className={`wf-port wf-port--${wfPortClass(node.type, outcome)}`}>
+                        {/* Метка варианта или пути — текст человека, может быть длинной; полная — в подсказке и инспекторе. */}
+                        {shown !== label && <title>{label}</title>}
                         <circle cx={x} cy={y} r={6} />
-                        {/* Метка варианта — текст человека, может быть длинной; полная — в инспекторе. */}
-                        <text x={x + 9} y={y - 5} className="wf-port-label">{clip(wfPortLabel(node, outcome), 16)}</text>
+                        <text x={x + 9} y={y - 5} className="wf-port-label">{shown}</text>
                       </g>
                     )
                   })}

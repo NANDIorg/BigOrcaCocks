@@ -1808,7 +1808,8 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-port { cursor: crosshair; }
 .wf-port circle { fill: var(--side); stroke: var(--muted); stroke-width: 2; }
 .wf-port:hover circle { fill: var(--muted); }
-.wf-port-label { fill: var(--muted); font-size: 10px; }
+/* Обводка цветом фона холста: подпись читается и там, где под ней проходит ребро соседнего порта. */
+.wf-port-label { fill: var(--muted); font-size: 10px; paint-order: stroke; stroke: var(--side); stroke-width: 3px; stroke-linejoin: round; }
 .wf-port--accept circle, .wf-port--ok circle { stroke: var(--wf-accept); }
 .wf-port--accept .wf-port-label, .wf-port--ok .wf-port-label { fill: var(--wf-accept); }
 .wf-port--reject circle, .wf-port--conflict circle, .wf-port--error circle { stroke: var(--wf-reject); }

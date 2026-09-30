@@ -7,7 +7,7 @@ import {
 } from '@orca-board/core'
 import { RU } from './i18n/dict'
 import { setLocale } from './i18n'
-import { agentTitle, builtinText, displayColumns, displayRoles, modelTitle, nodeTitle, wfIssueText } from './defaultTitles'
+import { agentTitle, builtinText, forkBranchTitle, displayColumns, displayRoles, modelTitle, nodeTitle, wfIssueText } from './defaultTitles'
 
 afterEach(() => setLocale('ru'))
 
@@ -94,4 +94,13 @@ test('разветвление: коды проблем fork/join перевед
   }
   assert.equal(nodeTitle({ id: 'split', type: 'fork', x: 0, y: 0, branches: [] }), 'Fork')
   assert.equal(nodeTitle({ id: 'merge_paths', type: 'join', x: 0, y: 0, forkId: 'split' }), 'Join')
+})
+
+test('название пути разветвления переводится, как название ноды: встроенное — на языке интерфейса, своё — как есть', () => {
+  assert.equal(forkBranchTitle({ id: 'be', label: 'Бэкенд' }), 'Бэкенд')
+  assert.equal(forkBranchTitle({ id: 'be' }), 'be')
+  setLocale('en')
+  assert.equal(forkBranchTitle({ id: 'be', label: 'Бэкенд' }), builtinText('Бэкенд'))
+  assert.equal(forkBranchTitle({ id: 'be', label: 'Бэкенд' }), 'Backend')
+  assert.equal(forkBranchTitle({ id: 'x', label: 'Мои тесты' }), 'Мои тесты')
 })

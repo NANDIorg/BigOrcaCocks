@@ -1,6 +1,6 @@
 import { forkBranches, wfPorts, type WfDecisionOption, type WfEdge, type WfIssue, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type Workflow } from '@orca-board/core'
 import { t } from './i18n'
-import { wfIssueText } from './defaultTitles'
+import { forkBranchTitle, wfIssueText } from './defaultTitles'
 
 // Правка графа воркфлоу в редакторе — чистые функции: на вход граф, на выход новый граф (исходный не меняется).
 // Недопустимая операция возвращает граф как есть: холст и инспектор не обязаны проверять её заранее.
@@ -39,7 +39,10 @@ export function wfPortLabel(node: WfNode, port: WfPort): string {
     const option = Array.isArray(node.options) ? node.options.find((o) => o.id === port) : undefined
     return option?.label.trim() || port
   }
-  if (node.type === 'fork') return forkBranches(node).find((b) => b.id === port)?.label ?? port
+  if (node.type === 'fork') {
+    const branch = forkBranches(node).find((b) => b.id === port)
+    return branch ? forkBranchTitle(branch) : port
+  }
   return wfOutcomeLabel(node.type, port)
 }
 
