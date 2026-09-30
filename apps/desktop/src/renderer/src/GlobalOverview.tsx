@@ -29,6 +29,8 @@ interface Props {
    * Решать — «Подтвердить» / «Вернуть в работу» здесь же (диалог «Подтвердить» показывает тот же показ с полем решения).
    */
   approval?: HumanRequest
+  /** Сколько approval прогона ждут решения: больше одного (параллельные пути) — вместо кнопок решения подсказка. */
+  approvals?: number
   onAccept(): void
   onReturn(): void
   onStartCoordinator(): void
@@ -43,7 +45,7 @@ interface Props {
 export function GlobalOverview(props: Props): React.JSX.Element {
   const { global, statusKind, coordinatorPty, typeTitle, tasks, columns, dispatches, approval, onAccept, onReturn, onStartCoordinator, onOpenTask } = props
   const t = useT()
-  const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined)
+  const actions = globalTaskActions(global, statusKind, coordinatorPty !== undefined, props.approvals)
   const summary = showsSummary(statusKind, global.inbox)
   const draft = showsLaunchHint(statusKind, global.inbox)
   const goal = global.description.trim()
@@ -81,6 +83,13 @@ export function GlobalOverview(props: Props): React.JSX.Element {
   const summaryBox = (
     <>
       <GlobalDoneReportBlock global={global} tasks={tasks} columns={columns} dispatches={dispatches} onOpenTask={onOpenTask}>
+        {actions.approvalsInInbox !== undefined && (
+          <div className="gt-decision">
+            <p className="muted gt-hint" title={t('global.action.manyApprovalsTitle')}>
+              {t('global.action.manyApprovals', { count: actions.approvalsInInbox })}. {t('global.action.manyApprovalsTitle')}
+            </p>
+          </div>
+        )}
         {(actions.accept || actions.returnToWork) && (
           <div className="gt-decision">
             {actions.accept && (

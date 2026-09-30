@@ -13,7 +13,7 @@ interface Props {
   /** Граф глобальной задачи: путь подзадачи лежит в его ноде «Работа». */
   workflow: Workflow | undefined
   /** Глобальная задача: позиция на графе нужна, чтобы сказать, держит ли подзадача этап. */
-  run: Partial<Pick<GlobalTask, 'stage' | 'workflowScope'>> | undefined
+  run: Partial<Pick<GlobalTask, 'stage' | 'workflowScope' | 'lanes'>> | undefined
   isDone: boolean
 }
 

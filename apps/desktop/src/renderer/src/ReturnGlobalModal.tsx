@@ -11,20 +11,26 @@ interface Props {
   global: GlobalTask
   /** Прежний координатор ещё жив — его терминал закроется при возврате (предупреждаем). */
   closesCoordinator?: boolean
+  /**
+   * Сколько approval прогона ждут решения. Больше одного у прогона с воркфлоу — параллельные пути: «Вернуть» идёт по
+   * переходу одной ноды `human`, и какой путь возвращать, окно не знает — отправка выключена, подсказка про «Входящие».
+   */
+  approvals?: number
   onClose(): void
   /** Возврат с уточнением: задача уходит в работу, запускается координатор. Ошибка остаётся в модалке. */
   onSubmit(text: string, images?: ImageAttachmentInput[]): Promise<void>
 }
 
 /** «Вернуть в работу…» с «Проверки»: что доделать — обязательно, это уточнение попадёт в цель координатора. */
-export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, onSubmit }: Props): React.JSX.Element {
+export function ReturnGlobalModal({ global, closesCoordinator = false, approvals = 0, onClose, onSubmit }: Props): React.JSX.Element {
   const t = useT()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busyRef = useRef(false)
   const attachments = useImageAttachments()
-  const canSubmit = !busy && text.trim() !== '' && !attachments.reading
+  const many = approvals > 1 && isRunWorkflow(global)
+  const canSubmit = !busy && text.trim() !== '' && !attachments.reading && !many
 
   const close = (): void => {
     if (!busyRef.current) onClose()
@@ -75,7 +81,9 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, 
             />
           </label>
         </ImageAttachField>
-        <span className="muted g-return-hint">{returnHint(closesCoordinator, isRunWorkflow(global))} {t('global.return.send')}</span>
+        {many
+          ? <span className="muted g-return-hint">{t('global.action.manyApprovals', { count: approvals })}. {t('global.action.manyApprovalsTitle')}</span>
+          : <span className="muted g-return-hint">{returnHint(closesCoordinator, isRunWorkflow(global))} {t('global.return.send')}</span>}
         {error && <span className="error-text">{error}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>{t('global.cancel')}</button>

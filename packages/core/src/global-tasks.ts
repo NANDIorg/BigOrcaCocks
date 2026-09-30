@@ -40,6 +40,8 @@ export interface GlobalTaskReturn {
   text: string
   /** Абсолютные пути картинок к уточнению (в cwd координатора); пишет main. */
   images?: string[]
+  /** Нода, с которой вернули (`Run.returns[].nodeId`): возвраты двух путей разветвления не путаются по времени. */
+  nodeId?: string
 }
 
 /** Сводка координатора «что сделано» (`Run.summary`, `runs finish --summary`). */

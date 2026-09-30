@@ -58,6 +58,8 @@ interface Props {
   dispatches: Dispatch[]
   /** Ждущий approval ноды `human` прогона (`runApprovalRequest`): его показ — во вкладке «Итог и цель» на «Проверке». */
   approval?: HumanRequest
+  /** Сколько approval прогона ждут решения (`runApprovalRequests`): у параллельных путей их бывает несколько. */
+  approvals?: number
   /** Снимок проекта для вкладки «Статистика»: когда её перечитывать и запасной расчёт при старом main. */
   statsSnapshot: StatsSnapshot
   onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
@@ -203,6 +205,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
         onRemove={props.onRemove}
         onAccept={props.onAccept}
         onReturn={props.onReturn}
+        approvals={props.approvals}
       />
       <AttentionFeed
         items={attention}
@@ -269,6 +272,7 @@ export function GlobalTaskView(props: Props): React.JSX.Element {
             columns={columns}
             dispatches={dispatches}
             approval={props.approval}
+            approvals={props.approvals}
             onAccept={props.onAccept}
             onReturn={props.onReturn}
             onStartCoordinator={props.onStartCoordinator}

@@ -48,7 +48,7 @@ interface Props {
    * помечает подзадачи, что держат этап прогона. Нет (локальная доска, старый main) — прежняя пилюля этапа.
    */
   stageWorkflow?: Workflow
-  stageRun?: Partial<Pick<GlobalTask, 'stage' | 'workflowScope'>>
+  stageRun?: Partial<Pick<GlobalTask, 'stage' | 'workflowScope' | 'lanes'>>
   onSelect(task: Task): void
   /** status — id колонки. */
   onMove(id: string, status: string): void
