@@ -1,3 +1,4 @@
+import { reducedMotion } from './appearance'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AppSettings, AppSettingsPatch, Project } from '../../shared/ipc'
@@ -102,7 +103,7 @@ export function OnboardingModal({ mode, projects, onAddProject, suspended, onClo
     if (finishing.current || savePending.current || addPending.current || suspended) return
     finishing.current = true
     setClosing(true)
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const reduced = reducedMotion()
     const exit = surface.current?.animate(
       [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: reduced ? 'none' : 'translateY(8px)' }],
       { duration: reduced ? 80 : 160, easing: 'ease-in', fill: 'forwards' }
@@ -130,7 +131,7 @@ export function OnboardingModal({ mode, projects, onAddProject, suspended, onClo
     if (!element) return
     element.scrollTop = 0
     if (step > 0) element.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true })
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const reduced = reducedMotion()
     const enter = element.animate([
       { opacity: 0, transform: reduced ? 'none' : `translateX(${direction.current * 14}px)` },
       { opacity: 1, transform: 'translateX(0)' }

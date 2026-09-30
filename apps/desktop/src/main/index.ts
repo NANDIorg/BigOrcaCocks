@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain, Menu, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { appColors } from '../shared/theme'
+import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome } from './window-chrome'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, resolveTaskType, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
@@ -111,7 +111,7 @@ function createWindow(): BrowserWindow {
     height: 940,
     title: 'orca-board',
     icon: appIconPath,
-    backgroundColor: appColors.page,
+    backgroundColor: getAppTheme(projects.settings().appearance?.theme).colors.page,
     ...chrome,
     webPreferences: {
       ...chrome.webPreferences,
@@ -179,14 +179,23 @@ function navigateFromMenu(action: AppMenuAction): void {
 
 /** Меню и «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
 function refreshApplicationMenu(): void {
-  refreshAboutWindow()
+  refreshAboutWindow(projects.settings().appearance)
   Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, {
     navigate: navigateFromMenu,
-    about: () => { showAboutWindow({ parent: showWindow(), iconPath: appIconPath, version: app.getVersion() }) },
+    about: () => { showAboutWindow({ parent: showWindow(), iconPath: appIconPath, version: app.getVersion(), appearance: projects.settings().appearance }) },
     open: () => { showWindow() },
     quit: () => { void requestQuit() },
     openExternal: (url) => { void shell.openExternal(url) }
   })))
+}
+
+/** Фон при запуске/восстановлении и native controls согласованы с выбранной темой. */
+function syncMainAppearance(): void {
+  const settings = projects.settings().appearance
+  const theme = getAppTheme(settings?.theme)
+  if (nativeTheme.themeSource !== theme.colorScheme) nativeTheme.themeSource = theme.colorScheme
+  if (win && !win.isDestroyed()) win.setBackgroundColor(theme.colors.page)
+  refreshAboutWindow(settings)
 }
 
 /** Незавершённые dispatch'и по всем загруженным проектам (для трея). */
@@ -1075,6 +1084,7 @@ app.whenReady().then(() => {
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
   projects = new ProjectManager(app.getPath('userData'))
+  syncMainAppearance()
   setMainLocale(projects.settings().language)
   refreshApplicationMenu()
   projects.markRun(app.getVersion())
@@ -1100,6 +1110,7 @@ app.whenReady().then(() => {
   // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
   // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
   projects.onDataChange(() => {
+    syncMainAppearance()
     if (win && !win.isDestroyed()) win.webContents.send('app:changed')
   })
   const { support, backend } = createPlatformUpdater({

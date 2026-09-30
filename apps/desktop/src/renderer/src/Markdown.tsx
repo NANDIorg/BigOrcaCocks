@@ -1,3 +1,4 @@
+import { motionScrollBehavior } from './appearance'
 import type React from 'react'
 import { useMemo } from 'react'
 import { marked, Marked } from 'marked'
@@ -127,7 +128,7 @@ function onDocClick(e: React.MouseEvent<HTMLDivElement>): void {
   if (anchor) {
     e.preventDefault()
     const heading = findDocHeading(e.currentTarget, anchor.getAttribute('data-doc-anchor') ?? '')
-    heading?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    heading?.scrollIntoView({ behavior: motionScrollBehavior(), block: 'start' })
     return
   }
   const copy = target.closest('.doc-copy')

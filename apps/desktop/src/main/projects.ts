@@ -1,3 +1,4 @@
+import { DEFAULT_APPEARANCE, mergeAppearance, normalizeAppearance } from '../shared/appearance'
 import { writeFileSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -157,6 +158,7 @@ function isAppLanguage(v: unknown): v is AppLanguage {
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   keepInBackground: true,
+  appearance: { ...DEFAULT_APPEARANCE },
   notifications: DEFAULT_NOTIFICATION_SETTINGS,
   updates: DEFAULT_UPDATE_SETTINGS
 }
@@ -265,8 +267,8 @@ export class ProjectManager {
     }
   }
 
-  private save(): void {
-    writeFileAtomic(this.file, JSON.stringify(this.data, null, 2))
+  private save(rollback?: () => void): void {
+    try { writeFileAtomic(this.file, JSON.stringify(this.data, null, 2)) } catch (error) { rollback?.(); throw error }
     this.dataListeners.forEach((fn) => fn())
   }
 
@@ -774,6 +776,7 @@ export class ProjectManager {
     return {
       keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground,
       ...(isAppLanguage(s.language) ? { language: s.language } : {}),
+      appearance: normalizeAppearance(s.appearance),
       notifications: normalizeNotificationSettings(s.notifications),
       updates: normalizeUpdateSettings(s.updates)
     }
@@ -793,6 +796,9 @@ export class ProjectManager {
     if (patch.notifications !== undefined) {
       next.notifications = mergeNotificationSettings(this.settings().notifications, patch.notifications)
     }
+    if (patch.appearance !== undefined) {
+      next.appearance = mergeAppearance(normalizeAppearance(next.appearance), patch.appearance)
+    }
     if (patch.updates !== undefined) {
       if (typeof patch.updates !== 'object' || patch.updates === null || Array.isArray(patch.updates)) throw new Error('updates: ожидается объект')
       const merged = this.settings().updates
@@ -804,8 +810,10 @@ export class ProjectManager {
       }
       next.updates = merged
     }
+    const previous = this.data.settings
     this.data.settings = next
-    this.save()
+    // Не оставляем несохранённый выбор в памяти: следующий getSettings обязан вернуть подтверждённое состояние.
+    this.save(() => { this.data.settings = previous })
     return this.settings()
   }
 

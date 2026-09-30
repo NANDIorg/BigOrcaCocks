@@ -1,11 +1,13 @@
 import { mtIn, type MainLocale } from './i18n'
 import { PROJECT_URL } from './app-menu'
-import { appColors, appFontFamily } from '../shared/theme'
+import { getAppTheme, appFontFamily } from '../shared/theme'
+import { normalizeAppearance, type AppearanceSettings } from '../shared/appearance'
 
 interface AboutContent {
   locale: MainLocale
   version: string
   iconPng: Uint8Array
+  appearance?: AppearanceSettings
 }
 
 const ISSUE_URL = `${PROJECT_URL}/issues/new`
@@ -20,12 +22,14 @@ function escapeHtml(value: string): string {
 }
 
 /** Статический документ без preload и скриптов: для двух ссылок достаточно нативного поведения HTML. */
-export function buildAboutHtml({ locale, version, iconPng }: AboutContent): string {
+export function buildAboutHtml({ locale, version, iconPng, appearance }: AboutContent): string {
+  const settings = normalizeAppearance(appearance)
+  const theme = getAppTheme(settings.theme)
   const t = (key: Parameters<typeof mtIn>[1], params?: Parameters<typeof mtIn>[2]): string => escapeHtml(mtIn(locale, key, params))
   const description = mtIn(locale, 'menu.aboutCredits').split('\n').map((line) => `<p>${escapeHtml(line)}</p>`).join('')
   const policy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'"
   return `<!doctype html>
-<html lang="${locale}">
+<html lang="${locale}" data-motion="${settings.motion}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -33,9 +37,9 @@ export function buildAboutHtml({ locale, version, iconPng }: AboutContent): stri
   <title>${t('menu.about')}</title>
   <style>
     :root {
-      ${Object.entries(appColors).map(([name, value]) => `--${name}: ${value};`).join('\n      ')}
+      ${Object.entries(theme.colors).map(([name, value]) => `--${name}: ${value};`).join('\n      ')}
       --font-sans: ${appFontFamily};
-      color-scheme: dark;
+      color-scheme: ${theme.colorScheme};
       --border: var(--chip);
       font-family: var(--font-sans);
       color: var(--text);
@@ -94,6 +98,7 @@ export function buildAboutHtml({ locale, version, iconPng }: AboutContent): stri
       .actions { grid-template-columns: 1fr; }
     }
     @media (prefers-reduced-motion: reduce) { .action { transition: none; } }
+    html[data-motion='reduced'] .action { transition: none; }
     @media (forced-colors: active) {
       :root { color: CanvasText; background: Canvas; scrollbar-color: auto; }
       .version, .description p + p, .author { color: CanvasText; }

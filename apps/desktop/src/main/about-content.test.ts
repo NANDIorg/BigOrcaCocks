@@ -1,8 +1,20 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { aboutExternalUrl, buildAboutHtml } from './about-content'
+import { getAppTheme } from '../shared/theme'
 
 describe('безопасное содержимое окна «О приложении»', () => {
+  it('адаптер окна применяет выбранную палитру и предпочтение движения', () => {
+    for (const theme of ['forest', 'paper'] as const) {
+      const html = buildAboutHtml({ locale: 'en', version: '1.0.1', iconPng: new Uint8Array(), appearance: { theme, motion: 'reduced' } })
+      const palette = getAppTheme(theme)
+      assert.ok(html.includes(`--page: ${palette.colors.page};`))
+      assert.ok(html.includes(`--text: ${palette.colors.text};`))
+      assert.ok(html.includes(`color-scheme: ${palette.colorScheme};`))
+      assert.match(html, /data-motion="reduced"/)
+    }
+  })
+
   it('открывает только две ссылки проекта, отвергая чужие адреса и схемы', () => {
     assert.equal(aboutExternalUrl('https://github.com/NANDIorg/BigOrcaCocks'), 'https://github.com/NANDIorg/BigOrcaCocks')
     assert.equal(aboutExternalUrl('https://github.com/NANDIorg/BigOrcaCocks/issues/new'), 'https://github.com/NANDIorg/BigOrcaCocks/issues/new')
@@ -32,8 +44,8 @@ describe('безопасное содержимое окна «О приложе
   it('содержимое и названия ссылок берутся на языке настроек приложения', () => {
     const ru = buildAboutHtml({ locale: 'ru', version: '2.7.4', iconPng: new Uint8Array() })
     const en = buildAboutHtml({ locale: 'en', version: '2.7.4', iconPng: new Uint8Array() })
-    assert.match(ru, /<html lang="ru">/)
-    assert.match(en, /<html lang="en">/)
+    assert.match(ru, /<html lang="ru"(?:\s|>)/)
+    assert.match(en, /<html lang="en"(?:\s|>)/)
     assert.match(ru, /Версия 2\.7\.4/)
     assert.match(en, /Version 2\.7\.4/)
     assert.match(ru, />Проект на GitHub</)

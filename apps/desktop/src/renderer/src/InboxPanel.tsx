@@ -1,3 +1,4 @@
+import { motionScrollBehavior } from './appearance'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { globalTaskTitle, type BoardColumn, type Dispatch, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
@@ -104,7 +105,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, columns, w
       const node = id ? nodes.current.get(id) : undefined
       if (node) {
         node.focus({ preventScroll: true })
-        node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        node.scrollIntoView({ block: 'nearest', behavior: motionScrollBehavior() })
       } else panelRef.current?.focus()
     }, 0)
   }

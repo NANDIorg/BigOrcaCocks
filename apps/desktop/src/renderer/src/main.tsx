@@ -2,14 +2,16 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
 import { initLocale, useLocale } from './i18n'
-import { appColors, appFontFamily } from '../../shared/theme'
+import { appFontFamily } from '../../shared/theme'
+import { appearance } from './appearance'
 import { initWindowChrome, type WindowControlsOverlay } from './windowChrome'
 import './styles.css'
 import '@xterm/xterm/css/xterm.css'
 
 // Общие токены ставим до первого рендера, чтобы стартовое окно не мигало прежней палитрой.
-for (const [name, value] of Object.entries(appColors)) document.documentElement.style.setProperty(`--${name}`, value)
 document.documentElement.style.setProperty('--font-sans', appFontFamily)
+appearance.start(window.orca?.app)
+if (import.meta.hot) import.meta.hot.dispose(() => appearance.dispose())
 
 // До первого рендера; старый main/preload сохраняет обычную компоновку.
 const overlay = (navigator as Navigator & { windowControlsOverlay?: WindowControlsOverlay }).windowControlsOverlay

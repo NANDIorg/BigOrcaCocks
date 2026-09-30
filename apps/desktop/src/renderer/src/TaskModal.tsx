@@ -251,7 +251,7 @@ export function TaskModal(props: Props): React.JSX.Element {
             <div className="meta-row">
               <span className="meta-key">{t('board.task.column')}</span>
               <span className="meta-val">
-                {column ? <span className="chip" style={{ borderColor: column.color, color: column.color }}>{column.title}</span> : task.status}
+                {column ? <span className="chip" style={{ borderColor: column.color }}>{column.title}</span> : task.status}
               </span>
             </div>
             <div className="meta-row">

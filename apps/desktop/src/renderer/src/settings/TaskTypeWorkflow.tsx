@@ -1,3 +1,4 @@
+import { motionScrollBehavior } from '../appearance'
 import type React from 'react'
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { defaultWorkflow, stableJson, validateWorkflow, type AgentInfo, type BoardColumn, type Role, type WfIssue, type WfMigrationNote, type Workflow } from '@orca-board/core'
@@ -204,7 +205,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
   const goToFirst = (list: readonly WfIssue[]): void => {
     const first = list.find((i) => i.nodeId || i.edgeId)
     if (first) selectIssue(first.nodeId, first.edgeId)
-    editorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    editorRef.current?.scrollIntoView({ block: 'nearest', behavior: motionScrollBehavior() })
   }
 
   const problems = useMemo(() => groupProblems(issues), [issues])
@@ -230,7 +231,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
   const saveSelected = library && !levelReadOnly && selectedNode && selectedNode.type !== 'start'
     ? (): void => {
         const card = editorRef.current?.querySelector<HTMLElement>('[data-card="tpl"]')
-        card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        card?.scrollIntoView({ block: 'nearest', behavior: motionScrollBehavior() })
         card?.querySelector<HTMLInputElement>('input')?.focus()
       }
     : undefined

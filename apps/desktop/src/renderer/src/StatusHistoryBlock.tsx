@@ -20,7 +20,7 @@ function formatAt(ts: number): string {
 
 function ColumnChip(props: { title: string; color?: string }): React.JSX.Element {
   const { title, color } = props
-  return <span className="chip" style={color ? { borderColor: color, color } : undefined}>{title}</span>
+  return <span className="chip" style={color ? { borderColor: color } : undefined}>{title}</span>
 }
 
 /** Блок «История статуса» карточки задачи и глобальной задачи: переходы от старых к новым. */

@@ -2,21 +2,27 @@ import { BrowserWindow, shell } from 'electron'
 import { readFileSync } from 'node:fs'
 import { aboutExternalUrl, buildAboutHtml } from './about-content'
 import { mainLocale, mt, type MainLocale } from './i18n'
-import { appColors } from '../shared/theme'
+import { getAppTheme } from '../shared/theme'
+import { normalizeAppearance, type AppearanceSettings } from '../shared/appearance'
 
 interface AboutWindowOptions {
   parent: BrowserWindow
   iconPath: string
   version: string
+  appearance?: AppearanceSettings
 }
 
 let window: BrowserWindow | null = null
 let content: AboutWindowOptions | null = null
 let displayedLocale: MainLocale | null = null
+let displayedAppearance = ''
 
 function loadContent(created: BrowserWindow, options: AboutWindowOptions): void {
   displayedLocale = mainLocale()
-  const html = buildAboutHtml({ locale: displayedLocale, version: options.version, iconPng: readFileSync(options.iconPath) })
+  const appearance = normalizeAppearance(options.appearance)
+  displayedAppearance = JSON.stringify(appearance)
+  created.setBackgroundColor(getAppTheme(appearance.theme).colors.page)
+  const html = buildAboutHtml({ locale: displayedLocale, version: options.version, iconPng: readFileSync(options.iconPath), appearance })
   created.setTitle(mt('menu.about'))
   void created.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 }
@@ -42,7 +48,7 @@ export function showAboutWindow(options: AboutWindowOptions): BrowserWindow {
     show: false,
     title: mt('menu.about'),
     icon: options.iconPath,
-    backgroundColor: appColors.page,
+    backgroundColor: getAppTheme(options.appearance?.theme).colors.page,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     resizable: false,
     maximizable: false,
@@ -93,6 +99,8 @@ export function showAboutWindow(options: AboutWindowOptions): BrowserWindow {
 }
 
 /** Меняем уже открытое содержимое вместе с языком меню, включая настройки через CLI. */
-export function refreshAboutWindow(): void {
-  if (window && !window.isDestroyed() && content && displayedLocale !== mainLocale()) loadContent(window, content)
+export function refreshAboutWindow(appearance?: AppearanceSettings): void {
+  if (!window || window.isDestroyed() || !content) return
+  content = { ...content, appearance }
+  if (displayedLocale !== mainLocale() || displayedAppearance !== JSON.stringify(normalizeAppearance(appearance))) loadContent(window, content)
 }

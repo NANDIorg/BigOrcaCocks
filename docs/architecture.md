@@ -1211,6 +1211,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     его же зовёт шаг «Настройки» мастера.
   - «Уведомления» (`settings/NotificationsSection.tsx`) — фильтр ролей строится по ролям всех типов библиотеки
     (`libraryRoles`, без повторов по id).
+  - «Внешний вид» (`settings/AppearanceSection.tsx`) — четыре темы с миниатюрами доски и выбор уменьшения
+    движения. Нативные радио-группы поддерживают клавиатуру; во время сохранения повторный выбор блокируется,
+    фокус остаётся на текущем элементе. В шапке настроек только закрытие; Escape закрывает модалку.
   - Группа «Типы задач» — каждый тип отдельным пунктом меню (`type:<id>` в `orca.settingsSection`; старые
     `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
     библиотеки, без деления на встроенные и свои, внизу «Новый тип» (`taskTypes:save` без id, пустые настройки =
@@ -1385,16 +1388,44 @@ Main передаёт preload аргумент `--orca-macos-window-chrome`; rea
 | Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные кнопки macOS; системная рамка Windows/Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
+| Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
 | Branding | `build/icon.svg` | предоставленный авторский логотип | SVG в renderer, PNG для ОС и сборок | скругление и проверка загрузки в Electron |
 
 ## Общая визуальная тема (`src/shared/theme.ts`)
 
-Тёплая графитовая палитра едина для renderer и окон main. `appColors` и `appFontFamily` —
-источник значений; `renderer/src/main.tsx` задаёт CSS-переменные до первого рендера.
+Реестр `appThemes` и `getAppTheme` задают Graphite (прежний тёплый графит по умолчанию),
+Slate, Forest и светлую Paper; `appColors` остаётся адаптером дефолта. `appFontFamily` общий.
+`renderer/src/appearance.ts` задаёт CSS-переменные до первого рендера.
 `styles.css` сохраняет правила компонентов, размеры и семантические aliases; размеры темы
 не генерируются в JavaScript. `BrowserWindow.backgroundColor`, статическое «О приложении»
-и xterm используют тот же источник. Тёмный текст на светлом акценте задаёт `--on-accent`.
+и xterm используют выбранную палитру. Текст на акценте задаёт `--on-accent`.
 Контраст основного/вторичного текста, кнопок, статусов и фокуса проверяет `theme.test.ts`.
+
+`AppSettings.appearance?: {theme, motion}` хранится в глобальных `settings` файла `projects.json`
+через существующие `app:getSettings` / `app:setSettings`. `shared/appearance.ts` нормализует старые
+или повреждённые сохранённые значения в Graphite/system без изменения версии файла. Новый патч
+проверяется строго; частичное изменение сохраняет второе поле. Ошибка атомарной записи откатывает
+настройки в памяти, а `app:changed` отправляется только после успешного сохранения.
+
+`appearance` в renderer держит стабильный snapshot для `useAppearance`, обновляется по `app:changed`
+и игнорирует запоздалые чтения после подтверждённого изменения. Кэш `orca.appearance` в localStorage
+задаёт только первый кадр; main остаётся источником истины. `saveAppSettings` применяет оформление
+только после ответа main и проверяет каждое поле патча: старый main, отбросивший поле, вызывает
+`common.staleApp`. Ошибка записи сохраняет прежнюю палитру и радиовыбор.
+
+`syncMainAppearance` задаёт фон главного окна и `nativeTheme.themeSource` (dark/light), обновляет
+открытое «О приложении». Терминал подписан на snapshot и меняет `term.options.theme` и `cursorBlink`
+без пересоздания xterm или PTY. Paper оставляет терминал тёмным с отдельными читаемыми
+`--term-text`, `--term-muted`, `--term-cursor`; подсказки, код и просмотр файлов имеют свои поверхности.
+Пользовательские цвета колонок и ANSI-цвета вывода сохраняются.
+
+`motion: system` следует `prefers-reduced-motion` в реальном времени; `reduced` включает уменьшение
+всегда. CSS получает `data-motion`, мастер использует общий helper для Web Animations,
+прокрутка ленты становится мгновенной, курсор терминала перестаёт мигать. Скрытые декоративные
+пакеты и сканирующий луч оставляют осмысленную статичную композицию. Новых каналов IPC нет.
+Явные JS-прокрутки документов, входящих и редактора воркфлоу используют общий `motionScrollBehavior`.
+Монохромные логотипы агентов адаптируются к теме; цвет пользовательской колонки остаётся в границе
+бейджа и индикаторе, подпись статуса использует читаемый нейтральный текст.
 
 Мастер наследует общую палитру через `--onboard-*`. Заголовки и тексты описывают функции,
 найденные агенты показаны компактными строками с версиями. Декоративное свечение и орбиты
@@ -1454,7 +1485,7 @@ SVG-линия и траектория пакета используют оди�
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`);
+- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
   `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
@@ -2620,6 +2651,11 @@ Workflow ID 366875950 зарегистрирован в default master, но dis
 и проверка обновления с предыдущего выпуска остаются частью релизной задачи.
 
 ## Грабли разработки
+
+- Смена светлой темы не должна переносить тёмный текст доски на тёмные терминальные панели:
+  для xterm, пустых состояний и хвоста координатора нужны отдельные терминальные токены.
+  Если атомарная запись `setSettings` падает, откатывай настройки в памяти до рассылки изменений,
+  иначе повторное чтение покажет несохранённый выбор, который исчезнет после перезапуска.
 
 - В интегрированном заголовке macOS `z-index` не отключает `app-region: drag` у панели под модалкой:
   Chromium собирает drag-прямоугольники без учёта перекрытия. Поверхностям модалок, помощника,

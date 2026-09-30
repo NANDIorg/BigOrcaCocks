@@ -1,6 +1,7 @@
 import type { Task, ImageAttachmentInput, AgentKind, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 import type { WindowChromeMode } from './window-chrome'
+import type { AppearanceSettings } from './appearance'
 
 export interface PtySpawnOptions {
   cwd?: string
@@ -43,6 +44,8 @@ export interface AppSettings {
   keepInBackground: boolean
   /** Язык интерфейса; не выбран — русский (язык системы не угадываем, см. `settingsLocale`). */
   language?: AppLanguage
+  /** Тема и движение; поле отсутствует у старого main. */
+  appearance?: AppearanceSettings
   /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
   notifications: NotificationSettings
   /** Автообновление приложения (docs/architecture.md → «Обновление»). */
@@ -68,6 +71,7 @@ export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = { autoCheck: true, autoDo
 export interface AppSettingsPatch {
   keepInBackground?: boolean
   language?: AppLanguage
+  appearance?: Partial<AppearanceSettings>
   notifications?: NotificationSettingsPatch
   updates?: Partial<UpdateSettings>
 }
