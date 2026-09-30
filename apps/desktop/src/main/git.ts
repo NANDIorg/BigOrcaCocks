@@ -7,8 +7,36 @@ import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBr
 
 // git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
 // сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim()
+function git(cwd: string, args: string[], timeoutMs?: number): string {
+  return execFileSync('git', args, {
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+    env: gitEnv(),
+    ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGKILL' as const } : {})
+  }).trim()
+}
+
+/**
+ * Окружение git в main: терминала нет, поэтому ни пароля (`GIT_TERMINAL_PROMPT=0`), ни редактора сообщения
+ * (`GIT_EDITOR=true` — merge/commit без `-m` не повиснут в ожидании vim).
+ */
+function gitEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' }
+}
+
+/**
+ * Сколько ждать git, который меняет репозиторий (merge, commit, worktree remove). git в main синхронный: хук,
+ * подпись коммита (gpg-agent ждёт пин-код) или чужая блокировка файлов иначе вешают приложение насовсем.
+ * Таймаут — обычная ошибка: мерж подзадачи встаёт с причиной (`Task.stageBlock`), «Принять» его повторит.
+ */
+const MUTATE_TIMEOUT_MS = 120_000
+
+/** Текст ошибки git из execFileSync: stdout+stderr или «не ответил за N с» по таймауту. */
+function gitFailure(e: unknown, timeoutMs: number): string {
+  const err = e as { stdout?: string; stderr?: string; message?: string; code?: string }
+  if (err.code === 'ETIMEDOUT') return `git не ответил за ${Math.round(timeoutMs / 1000)} с`
+  return `${err.stdout?.toString() ?? ''}${err.stderr?.toString() ?? ''}`.trim() || err.message || 'неизвестная ошибка'
 }
 
 /**
@@ -129,35 +157,53 @@ export function reviewInfo(repoRoot: string, worktree: string, branch: string, b
 /** Незакоммиченное в worktree — коммитим от имени orca, чтобы не потерять при мерже. */
 export function commitWorktree(worktree: string, message: string): void {
   if (git(worktree, ['status', '--porcelain']) === '') return
-  git(worktree, ['add', '-A'])
-  execFileSync('git', ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message], {
-    cwd: worktree,
-    stdio: 'pipe',
-    encoding: 'utf8'
-  })
+  git(worktree, ['add', '-A'], MUTATE_TIMEOUT_MS)
+  try {
+    git(worktree, ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message], MUTATE_TIMEOUT_MS)
+  } catch (e) {
+    throw new Error(`коммит хвостов worktree не удался: ${gitFailure(e, MUTATE_TIMEOUT_MS)}`)
+  }
+}
+
+/**
+ * `git merge` не удался. `conflict` — git начал слияние и упёрся в конфликтующие файлы: его разрешают в ветке задачи
+ * и сливают снова. Иначе git до слияния не дошёл (занят `index.lock`, незакоммиченное в цели, нет ветки, таймаут):
+ * это не конфликт, повтор после устранения причины сольёт как есть.
+ */
+export class MergeError extends Error {
+  constructor(message: string, readonly conflict: boolean) {
+    super(message)
+  }
 }
 
 /**
  * Слить ветку задачи в ветку, выбранную в каталоге `cwd`: worktree глобальной задачи или корень (`mergeTarget`).
- * Бросает с текстом конфликта.
+ * Не слилось — `MergeError` с текстом git и признаком конфликта; начатое слияние отменяется (`merge --abort`).
  */
 export function mergeBranch(cwd: string, branch: string, message: string): void {
   try {
-    execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd, stdio: 'pipe', encoding: 'utf8' })
+    git(cwd, ['merge', '--no-ff', '-m', message, branch], MUTATE_TIMEOUT_MS)
   } catch (e) {
-    const err = e as { stdout?: string; stderr?: string }
+    const text = gitFailure(e, MUTATE_TIMEOUT_MS)
+    // Конфликт — по незаслитым путям в индексе, а не по тексту: его язык зависит от локали git.
+    let conflict = false
     try {
-      execFileSync('git', ['merge', '--abort'], { cwd, stdio: 'pipe', encoding: 'utf8' })
+      conflict = git(cwd, ['diff', '--name-only', '--diff-filter=U']) !== ''
+    } catch {
+      /* индекс недоступен — это не конфликт */
+    }
+    try {
+      git(cwd, ['merge', '--abort'], MUTATE_TIMEOUT_MS)
     } catch {
       /* нечего отменять */
     }
-    throw new Error(`мерж не удался:\n${err.stdout?.toString() ?? ''}${err.stderr?.toString() ?? ''}`.trim())
+    throw new MergeError(`мерж не удался:\n${text}`, conflict)
   }
 }
 
 /** Убрать только worktree, ветку оставить: работа не слита, но и не потеряна (воркфлоу закончился без мержа). */
 export function removeWorktreeKeepBranch(repoRoot: string, worktree: string): void {
-  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
+  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree], MUTATE_TIMEOUT_MS)
 }
 
 /**
@@ -169,7 +215,9 @@ export function removeWorktree(repoRoot: string, worktree: string, branch: strin
     removeWorktreeKeepBranch(repoRoot, worktree)
     return
   }
-  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree])
+  if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree], MUTATE_TIMEOUT_MS)
+  // Папку убрали руками — запись worktree осталась, и `branch -D` отказал бы («ветка выгружена в …»).
+  else git(repoRoot, ['worktree', 'prune'], MUTATE_TIMEOUT_MS)
   try {
     git(repoRoot, ['branch', '-D', branch])
   } catch {

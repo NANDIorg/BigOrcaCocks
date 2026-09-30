@@ -21,6 +21,7 @@ import { PriorityOptions } from './Priority'
 import { StatusHistoryBlock } from './StatusHistoryBlock'
 import { SubtaskPathBlock } from './SubtaskPathBlock'
 import { pathNodeTitles, pathSummary } from './subtaskPath'
+import { stageNodeOf, stalledReason, stalledRetryLabel, taskReviewState } from './taskReview'
 import { TaskStatsBlock } from './TaskStatsBlock'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { answerForTitle, formatTaskDate as formatDate, outcomeLabel, resolutionText } from './taskModalText'
@@ -95,6 +96,9 @@ export function TaskModal(props: Props): React.JSX.Element {
   const showcased = latestShowcase(dispatches, task.id)
   const showcaseInRequest = pending.some((r) => requestShowcases(r, dispatches).some((x) => x.dispatchId === showcased?.id))
   const editable = kind !== 'in_progress'
+  /** Ревью или остановленный этап — тем же правилом, что лента «Ждут вас» (taskReview.ts). */
+  const stageNode = stageNodeOf(task, stageRun, workflow)
+  const reviewState = taskReviewState(task, kind, requests, stageRun, workflow)
   const canStart =
     (kind === 'ready' || kind === 'backlog' || last?.outcome === 'unknown' || last?.outcome === 'failed') && !running
 
@@ -340,12 +344,13 @@ export function TaskModal(props: Props): React.JSX.Element {
             </section>
           )}
 
-          {kind === 'review' && !task.answerFor && (
+          {reviewState && (
             <section className="task-modal-section">
-              <h4>{t('board.task.review')}</h4>
+              <h4>{t(reviewState === 'stalled' ? 'board.task.stalled' : 'board.task.review')}</h4>
               <ReviewBlock
                 taskId={task.id}
                 summary={last?.summary}
+                {...(reviewState === 'stalled' ? { stalled: { reason: stalledReason(task, stageNode), retryLabel: stalledRetryLabel(stageNode, task.stage?.nodeId) } } : {})}
                 onAccept={async () => {
                   await onAccept(task.id)
                   onClose()

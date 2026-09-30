@@ -5,7 +5,7 @@ import { RequestCard } from './RequestCard'
 import { requestShowcases } from './showcase'
 import { relativeTime } from './GlobalBoard'
 import { formatStamp } from './boardSort'
-import { ipcErrorMessage } from './useAutoSave'
+import { ipcErrorCode, ipcErrorMessage } from './useAutoSave'
 import { useNow } from './useNow'
 import { isTypingTarget } from './hotkeys'
 import { useT } from './i18n'
@@ -16,6 +16,7 @@ import {
   ATTENTION_COLOR, ATTENTION_GLYPH, attentionCountTitle, attentionLabel, attentionSummary, defaultCollapsed, feedItemOfTask, questionAnswerText, questionAsRequest,
   readCollapsed, writeCollapsed, type AttentionItem
 } from './attention'
+import { stalledRetryLabel } from './taskReview'
 
 /** Сколько подсвечен пункт, к которому прокрутили с доски (мс). */
 const HIGHLIGHT_MS = 2500
@@ -30,7 +31,10 @@ interface Props {
   onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
   /** Вопрос воркера без запроса — ответ уходит вопросу (`questions.answer`). */
   onAnswerQuestion(questionId: string, answer: string): Promise<void>
-  /** Ревью-действия задачи (`review.accept` / `review.reject`): у ответа — «Принять» / «Уточнить», у кода — «Принять» / «Вернуть». */
+  /**
+   * Ревью-действия задачи (`review.accept` / `review.reject`): у ответа — «Принять» / «Уточнить», у кода — «Принять» / «Вернуть»,
+   * у остановленного этапа — «Повторить мерж» (повтор этапа) / «Вернуть в работу».
+   */
   onAcceptTask(taskId: string): Promise<void>
   onRejectTask(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
   onStartTask(task: Task): void | Promise<void>
@@ -223,6 +227,8 @@ function FeedCard(props: CardProps): React.JSX.Element {
   const { item, task, runId, now, highlighted, detailOpen, onToggleDetail, onResolveRequest, onAnswerQuestion, onAcceptTask, onRejectTask, onStartTask, onOpenTask, onOpenTerminal } = props
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Подсказка к ошибке: повтор этапа отказал без кода ошибки — вероятно, main ещё старый (до повтора остановленного этапа). */
+  const [hint, setHint] = useState<string | null>(null)
   const [clarifying, setClarifying] = useState(false)
   const [text, setText] = useState('')
   const attachments = useImageAttachments()
@@ -235,11 +241,15 @@ function FeedCard(props: CardProps): React.JSX.Element {
     if (busy) return false
     setBusy(true)
     setError(null)
+    setHint(null)
     try {
       await fn()
       return true
     } catch (e) {
       setError(ipcErrorMessage(e))
+      // Старый main отвечает на «Принять» остановленного этапа обычной ошибкой без кода («принимать нечего»): её текст
+      // показываем как есть, а подсказка объясняет, что делать. Ошибки нового main узнаются по коду, подсказка им не нужна.
+      if (item.kind === 'stalled' && ipcErrorCode(e) === undefined) setHint(t('shell.feed.stalledHint'))
       return false
     } finally {
       setBusy(false)
@@ -272,7 +282,10 @@ function FeedCard(props: CardProps): React.JSX.Element {
   const accept = (): void => void run(() => (request ? onResolveRequest(request, { action: 'accept' }) : onAcceptTask(item.taskId)))
 
   const isReview = item.kind === 'review'
+  const isStalled = item.kind === 'stalled'
   const clarifyLabel = t(isReview ? 'shell.request.rejectMore' : 'shell.request.clarify')
+  const clarifyAria = t(isStalled ? 'shell.feed.returnLabel' : isReview ? 'shell.request.rejectLabel' : 'shell.request.clarifyLabel')
+  const clarifyPlaceholder = t(isStalled ? 'shell.feed.returnPlaceholder' : isReview ? 'shell.feed.rejectPlaceholder' : 'shell.feed.clarifyPlaceholder')
   const shownFiles = item.showcaseFiles ?? []
 
   return (
@@ -321,8 +334,8 @@ function FeedCard(props: CardProps): React.JSX.Element {
               autoFocus
               value={text}
               disabled={busy}
-              aria-label={t(isReview ? 'shell.request.rejectLabel' : 'shell.request.clarifyLabel')}
-              placeholder={t(isReview ? 'shell.feed.rejectPlaceholder' : 'shell.feed.clarifyPlaceholder')}
+              aria-label={clarifyAria}
+              placeholder={clarifyPlaceholder}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing) return
@@ -356,6 +369,13 @@ function FeedCard(props: CardProps): React.JSX.Element {
               </button>
             </div>
           )}
+          {isStalled && (
+            <div className="act-row">
+              <button type="button" className="btn-sm primary" disabled={busy} onClick={accept}>{busy ? '…' : stalledRetryLabel(item.stageNode, task?.stage?.nodeId)}</button>
+              <button type="button" className="btn-sm" disabled={busy} onClick={() => setClarifying(true)}>{t('shell.feed.returnToWork')}</button>
+              <button type="button" className="btn-sm" onClick={() => onOpenTask(item.taskId)}>{t('shell.feed.open')}</button>
+            </div>
+          )}
           {(item.kind === 'answer' || isReview) && (
             <div className="act-row">
               {request ? (
@@ -369,7 +389,8 @@ function FeedCard(props: CardProps): React.JSX.Element {
           )}
         </>
       )}
-      {error && <span className="error-text">{error}</span>}
+      {error && <span className="error-text" role="alert">{error}</span>}
+      {hint && <span className="muted act-hint">{hint}</span>}
     </article>
   )
 }

@@ -190,6 +190,7 @@ export class ProjectManager {
   private stores = new Map<string, TaskStore>()
   private listeners = new Set<(projectId: string, store: TaskStore) => void>()
   private eventListeners = new Set<(projectId: string, events: OrcaEvent[]) => void>()
+  private openListeners = new Set<(projectId: string) => void>()
   private dataListeners = new Set<() => void>()
   private seenEvents = new Map<string, number>()
   private warnings: StateWarning[] = []
@@ -934,6 +935,9 @@ export class ProjectManager {
       // После запуска приложения ни одного координатора в живых нет: вопросы, которые ждали их, — человеку.
       for (const run of created.listRuns()) created.escalateOpenQuestions(run.id)
       s = created
+      // Доска открыта впервые за запуск: подписчики (добор прерванных этапов в index.ts) — после того, как store
+      // уже в `stores`, иначе их повторный `store(id)` открыл бы доску второй раз.
+      this.openListeners.forEach((fn) => fn(id))
     }
     return s
   }
@@ -974,6 +978,12 @@ export class ProjectManager {
   onEvents(fn: (projectId: string, events: OrcaEvent[]) => void): () => void {
     this.eventListeners.add(fn)
     return () => this.eventListeners.delete(fn)
+  }
+
+  /** Доска проекта загружена с диска — один раз за запуск приложения (store открывается лениво, при первом обращении). */
+  onStoreOpened(fn: (projectId: string) => void): () => void {
+    this.openListeners.add(fn)
+    return () => this.openListeners.delete(fn)
   }
 
   /**

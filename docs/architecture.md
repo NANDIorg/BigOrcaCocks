@@ -24,7 +24,7 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 
 ## Модель (`packages/core/src/types.ts`)
 
-- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, feedbackImages?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, stageOf?, gateFor?, statusHistory?, stageHistory? }`.
+- `Task { id, title, spec, status, priority, deps[], runId?, roleId, agent, worktree?, branch?, dispatchId?, feedback?, feedbackImages?, answerFor?, createdAt, updatedAt, startedAt?, activeMs?, activeSince?, doneAt?, stage?, stageBlock?, stageOf?, gateFor?, statusHistory?, stageHistory? }`.
   - `status` — **id колонки доски** (`TaskStatus = string`), не фиксированный enum.
   - `roleId` — роль типа задачи прогона (см. «Роли и колонки»); агент и модель берутся из неё при старте.
     `agent` — снимок `AgentKind` на момент создания/запуска, `worker.ts` синхронизирует его с ролью.
@@ -85,6 +85,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     задача с `stage`, но без `stageHistory`, восстанавливается из событий `stage_changed` по `taskId` (лог не
     обрезается; `by: 'app'`), а если лога нет или он не доходит до текущего этапа — добавляется запись
     `migrated: true` на текущую ноду с `at = updatedAt`.
+  - **Остановка этапа** (`stageBlock?: TaskStageBlock` = `{ nodeId, reason, at }`) — последний `workflow_blocked` задачи:
+    эффект ноды не выполнен (мерж упал не конфликтом, воркер или проверка не запустились, переход дал `blocked`).
+    Ставят `blockStage` и `blocked` из `advanceStage`/`enterWork` (`markStageBlocked` в `store.ts`), `reason` —
+    целиком (в событии он урезан `short()`). Снимают любой переход `advanceStage`, `enterWork`, `reopenTask` и
+    `startDispatch`. Зачем хранить: причина видна человеку не только в одноразовом уведомлении, а main отличает
+    остановленный этап (о нём уже сообщили) от эффекта, прерванного рестартом. Поле необязательное — снапшот старой
+    версии читается как «не остановлена», миграции формата нет; задачи, застрявшие на `merge` до появления поля,
+    метки не имеют.
   - `answerFor` — задача-ответ (`human` | `coordinator`): результат — markdown в `Dispatch.answer`, а не код;
     см. «Ответы и ожидание человека» в `docs/nested-kanban.md`.
   - `priority` — `TaskPriority` (`urgent` | `high` | `normal` | `low`, `TASK_PRIORITIES` — от высшего к низшему,
@@ -463,8 +471,10 @@ Store хранит позицию и решает, куда задача пер�
   `stage` входит в граф из старта (`startStage`, только исход `next`). Задачи-ответы и задачи-гейты (`gateFor`) —
   ошибка. Сменился этап — событие `stage_changed {taskId, runId, from?, to, outcome, nodeType, title}` и запись в
   `Task.stageHistory` (то же самое в `enterWork`);
-  `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` (этап при этом может и смениться: роль
-  гейта удалена). Эффекты `action` выполнит main.
+  `action = blocked` — `workflow_blocked {taskId, runId, nodeId, reason}` и `Task.stageBlock` (этап при этом может и
+  смениться: роль гейта удалена). Любой вызов снимает прежний `stageBlock`; при смене ноды ждущий `approval` задачи с
+  другим `nodeId` отменяется (устаревший запрос повёл бы граф не с того этапа), задача выходит из `needs_input`
+  (то же в `enterWork`). Эффекты `action` выполнит main.
 - **`enterWork(taskId, {roleIds?, workflow?})`** — перед каждым запуском воркера (`runWorker`): задача без `stage` входит в граф,
   задача не на ноде `work` или `ask` (вернули вручную с ревью, переоткрыли) — снова на первый этап от старта, `visits`
   складываются (лимит повторов видит и такие возвраты), событие `stage_changed` с `outcome: 'restart'`. На `work` и `ask` —
@@ -476,7 +486,11 @@ Store хранит позицию и решает, куда задача пер�
 - **`ask(input, {coordinatorAlive?, forceHuman?})`** — `forceHuman` (задача на ноде `ask`): вопрос сразу человеку, в
   `Question.nodeId` и `HumanRequest.nodeId` — нода этапа `task.stage.nodeId`.
 - **`blockStage(taskId, reason)`** — эффект этапа не выполнился (воркер не стартовал, мерж упал не конфликтом):
-  `workflow_blocked {taskId, runId, nodeId?, reason}`, этап не меняется.
+  `workflow_blocked {taskId, runId, nodeId?, reason}` и `Task.stageBlock` с причиной целиком, этап не меняется.
+- **`stageActionOf(taskId, {roleIds?, workflow?})` → `WfAction | undefined`** — действие ноды, на которой стоит подзадача
+  (`stageAction` по `taskWorkflow`, контекст как у `advanceStage`: на пути «Работы» `scope: 'subtask'`, у старого движка
+  без `scope`). Позицию не меняет, событий не шлёт: main повторяет по нему эффект остановленного или прерванного этапа.
+  undefined — у задачи нет своего этапа (ответ, проверка, не вошла в граф, подзадача прогона вне пути).
 - **`requestApproval(taskId, {nodeId, title, body?})`** — нода `human`: запрос `approval` (`HumanRequest.nodeId`),
   задача в `needs_input`; ждущий approval той же задачи не дублируется. Решение — `resolveRequest` с `accept` /
   `reject` (`text` при reject → `task.feedback`, `resolution.images` → `task.feedbackImages`), `request_resolved {kind: 'approval', action, nodeId, decision?, images?}`
@@ -1200,7 +1214,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   или «⧗ ждёт N задач», полный список в подсказке; считаются только незакрытые), `● терминал`. Ниже — `Завершено: …` в `done`,
   `Обновлено: …` при сортировке «по обновлению», `↩ feedback` вне колонки `review`. Вместо кнопки действия — **пунктирная
   строка сути** (`cardEssence`: «? вопрос…», «✎ Ответ готов», «◉ Показ: 3 файла», «Ждёт ревью: N файлов», «✕ Упал» /
-  «✕ Вышел без done» / «✕ Молчит»; символ — вторичный сигнал, слово — основной) и ссылка «в ленте ↑», если `Board` получил
+  «✕ Вышел без done» / «✕ Молчит»; в «Ревью» на остановленном этапе (мерж упал или прерван) — «⏸ Этап остановлен» с причиной в подсказке
+  вместо «Ждёт ревью»: `CardStateInput.stalled`, его считает `stalledCardReason` из `taskReview.ts` тем же правилом, что лента; символ — вторичный
+  сигнал, слово — основной) и ссылка «в ленте ↑», если `Board` получил
   `onRevealInFeed(taskId)` (нет — ссылки нет, строка остаётся). Кнопки «Запустить» (только если `kind` `ready`/`backlog` или
   последний dispatch `unknown`/`failed`, и нет живого терминала), «Переместить в…» и «Удалить» (с `confirm`) — поверх
   правого верхнего угла, видны при наведении/фокусе, на touch — всегда. Клик по карточке → `onSelect` + `onOpenTask` (модалка).
@@ -1793,21 +1809,30 @@ GitHub PR по [Git Flow](git-flow.md)).
   `orca-board`, `git merge --no-ff` в `target` (`mergeTarget`; без него — текущая ветка корня) (если в ветке есть коммиты), `git worktree remove
   --force`, `git branch -D` (ветку `Task.branchForeign` — созданную не orca, а выбранную нодой `git` → `checkout`, — не
   удаляет: `removeWorktree(…, foreign)`). Не слилось — `{ok: false, conflict: true, error}`, `merge --abort`, ветка и worktree на
-  месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Store не трогает.
+  месте (дефолтный граф ведёт на ноду «Конфликт мержа» — запрос человеку). Конфликт — только при незаслитых путях в индексе
+  (`MergeError.conflict` из `mergeBranch`); прочие отказы git (lock, грязная цель, таймаут) — исключение → `workflow_blocked`.
+  Повтор идемпотентен: нет папки worktree — без коммита хвостов, нет ветки или она слита — только уборка. У `merge`,
+  `commit`, `worktree remove` таймаут 120 с (`MUTATE_TIMEOUT_MS`), у всех вызовов `git()` — `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`. Store не трогает.
   **Цель должна существовать** (`assertMergeTarget`): до коммита хвостов и удаления worktree проверяется, что `target.branch` —
   локальная ветка (`HEAD` — корень в detached HEAD с коммитом). Нет — отказ без удаления: `git.noCommits` (в корне нет
   коммитов) или `git.mergeTargetMissing`; ветка задачи и её коммиты на месте. Так же в `acceptReview` задачи-ответа.
 - **`review accept` / «Принять»** (сокет, IPC `review:accept`) — `reviewAccept`: задача на ноде `gate`/`human` —
   исход `accept` (на `human` — решение её запроса approval); задача-проверка — закрытие (worktree и ветка
   проверки удаляются, задача в done); задача-ответ и задача без `stage` — `acceptReview` (прежняя приёмка через
-  `mergeTaskBranch`, конфликт — ошибка). На другом этапе — ошибка «принимать нечего».
+  `mergeTaskBranch`, конфликт — ошибка). На остановленном этапе (`merge`/`git`/`end`, в том числе прерванном рестартом) —
+  повтор эффекта (`store.stageActionOf` → `execute`; снова встал — `OrcaError('review.stageBlocked')`); на «Работе» с потерянным
+  `worker_done` — переход `next`; при живом воркере — `OrcaError('review.notReviewable')`. Таблица — `docs/workflow.md` →
+  «Принять и Вернуть по этапам».
+- **Добор после запуска** — `resumeStuckStages` (`workflow.ts`) при первом открытии доски (`ProjectManager.onStoreOpened` →
+  `resumeProjectStages` в `index.ts`): прерванные эффекты подзадач без `Task.stageBlock` повторяются, потерянный `worker_done`
+  доделывается, `gate`/`human` без проверки/запроса получают их. Идемпотентен, остановленные задачи не трогает.
 - **Проверка ветки глобальной задачи** (`Task.gateFor.runId`, воркфлоу scope `run`): `review accept|reject --task <id проверки>` — свой id проверяющего,
   прогон приложение находит по `gateFor`. Единственный путь — `reviewDecision` в `index.ts` → `runGateDecision` (`workflow-run.ts`; `reviewAccept`/`reviewReject` из `workflow.ts`
   для такой задачи бросают ошибку). Решение принимается, только пока прогон стоит на ноде `gate` этой проверки и она последняя у ноды (`gatePending`); иначе ошибка
   «уже не актуальна». Переход делает `store.advanceRunStage` (замечания `reject` — в `feedback`, комментарий `accept` — в `decision`) и тут же — эффекты новой ноды.
   Задачу-проверку закрывает `orca-board done` проверяющего (`settleGate`), а если она уже сдана — само решение. `done` без решения — `workflow_blocked` по прогону (`blockRunStage`, без `taskId`).
 - **`review reject --feedback` / «Вернуть»** — `reviewReject`: на ноде проверки — `feedback` и исход `reject`
-  (дефолт — снова в работу, воркер стартует сразу); иначе `store.rejectReview` (ready с замечаниями, у ответа —
+  (дефолт — снова в работу, воркер стартует сразу); на остановленном этапе — `feedback` и `store.enterWork` → воркер; иначе `store.rejectReview` (ready с замечаниями, у ответа —
   «Уточнить»). `task.feedback` добавляется в промпт при следующем старте. В UI к замечаниям можно приложить картинки (IPC `review:reject`,
   4-й аргумент): их пути — `task.feedbackImages` (у проверки ветки — `stage_started.images`), см. «Изображения при возврате в работу».
 - **approval** из Инбокса / `request resolve --accept|--reject` — `resolveHumanRequest` → `store.resolveRequest` →
@@ -2729,6 +2754,18 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 снимка. Тесты — `assistant-settings.test.ts`.
 
 ## Грабли разработки
+
+- **Колонка «Ревью» ≠ этап проверки.** После `done` задача встаёт в «Ревью» синхронно, а `stage` двигает исполнитель; на
+  `merge`/`git`/`end` задача тоже в «Ревью». Мерж упал (`blockStage`) или приложение вышло посреди эффекта — задача висела в
+  «Ревью» на «Мерже»: кнопки «Принять»/«Вернуть» видны, а `decide()` отвечал «принимать или возвращать нечего», причина жила только
+  в одноразовом событии, повтора не было. Теперь причина хранится (`Task.stageBlock`), «Принять» повторяет эффект, «Вернуть» —
+  в работу, прерванное добирает `resumeStuckStages`. Ключевая проверка — карточка «ждёт ревью» у задачи на ноде `merge`
+  (`workflow.test.ts`, «остановленный этап подзадачи»). Отдельно: `mergeBranch` считал конфликтом **любую** ошибку `git merge`
+  (lock, грязная цель) — различайте по незаслитым путям, а не по тексту git. Правило «Ревью или остановка» живёт в
+  `reviewStateOf` (`renderer/src/taskReview.ts`) и нужно **четырём** местам: лента, счётчик ревью, `TaskModal` и карточка на
+  доске (`cardState.ts`). Карточку при первом исправлении пропустили: в ленте было «Этап остановлен», а на самой карточке
+  в «Ревью» оставалось «Ждёт ревью: N файла» (нашла интеграционная проверка в `pnpm dev`, тест — `attention.test.ts`,
+  «карточка на доске»). Новый вид «Ревью» добавляй сразу во все четыре.
 
 - Ассистент — не роль типа задачи: он запускается по `AppSettings.assistant` (`openAssistant` → `assistantLaunch`), роль
   `assistant` в типах вычищает миграция `migrateAssistant`. Не возвращай его в `DEFAULT_ROLES` и заготовки типов и не бери

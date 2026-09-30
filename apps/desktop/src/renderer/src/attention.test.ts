@@ -1,11 +1,12 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { ColumnKind, Dispatch, HumanRequest, Question, Task } from '@orca-board/core'
+import { defaultWorkflow, legacyDefaultWorkflow, type ColumnKind, type Dispatch, type HumanRequest, type Question, type Task } from '@orca-board/core'
 import {
-  ATTENTION_NARROW_LIMIT, attentionCountTitle, attentionLabel, attentionSummary, attentionTaskIds, buildAttention, defaultCollapsed, feedItemOfTask, questionAnswerText,
+  ATTENTION_NARROW_LIMIT, KIND_RANK, attentionCountTitle, attentionLabel, attentionSummary, attentionTaskIds, buildAttention, defaultCollapsed, feedItemOfTask, questionAnswerText,
   questionAsRequest, readCollapsed, writeCollapsed, type AttentionInput
 } from './attention'
 import { setLocale } from './i18n'
+import { stageNodeOf, stalledCardReason, stalledRetryLabel, taskReviewState } from './taskReview'
 
 const task = (id: string, status: string, extra: Partial<Task> = {}): Task => ({
   id, title: `Задача ${id}`, spec: '', status, roleId: 'dev', agent: 'claude', deps: [], createdAt: 1, updatedAt: 100, ...extra
@@ -301,4 +302,109 @@ test('английский интерфейс: подписи, сводка, с�
   assert.equal(attentionLabel({ kind: 'failure', failure: 'stuck' }), 'Worker is silent')
   assert.equal(attentionLabel({ kind: 'approval' }), 'Decision needed')
   assert.throws(() => questionAnswerText(question('q1', 'a'), { action: 'answer', text: ' ' }), /empty answer/)
+})
+
+// Этап остановлен (taskReview.ts): колонка «Ревью» ≠ этап проверки.
+const runScope = { workflowScope: 'run' as const }
+const runGraph = defaultWorkflow([])
+/** Подзадача пути этапа «Работа» (defaultSubflow: start → work → merge → end, conflict — human). */
+const pathTask = (id: string, nodeId: string, extra: Partial<Task> = {}): Task =>
+  task(id, 'review', { stageOf: { nodeId: 'work', visit: 1 }, stage: { nodeId, visits: {} }, ...extra })
+const pathInput = (tasks: Task[], extra: Partial<AttentionInput> = {}): AttentionInput =>
+  input({ tasks, stageNode: (t) => stageNodeOf(t, runScope, runGraph), ...extra })
+
+test('«Ревью» на ноде merge — «этап остановлен», а не ревью: без «Принять» ревью', () => {
+  const items = buildAttention(pathInput([pathTask('a', 'merge')], { dispatches: [dispatch('d1', 'a', { outcome: 'done', files: ['x.ts'] })] }))
+  assert.deepEqual(items.map((i) => [i.id, i.kind]), [['stall:a', 'stalled']])
+  assert.equal(items[0].source, 'task')
+  assert.equal(items[0].stageNode?.type, 'merge')
+  assert.match(items[0].title, /^Этап «.+» не завершён$/)
+  assert.equal(stalledRetryLabel(items[0].stageNode, 'merge'), '↻ Повторить мерж')
+})
+
+test('«Ревью» на end и work пути — тоже остановка; на human пути (конфликт) — ревью', () => {
+  const items = buildAttention(pathInput([pathTask('a', 'end'), pathTask('b', 'work'), pathTask('c', 'conflict')]))
+  assert.deepEqual(items.map((i) => [i.id, i.kind]).sort(), [['rev:c', 'review'], ['stall:a', 'stalled'], ['stall:b', 'stalled']])
+  assert.equal(stalledRetryLabel(items.find((i) => i.id === 'stall:b')?.stageNode, 'work'), '↻ Продолжить этап')
+})
+
+test('старый движок: нода gate — ревью, merge — остановка; задача без этапа — ревью', () => {
+  const legacy = legacyDefaultWorkflow([{ id: 'reviewer' }])
+  const items = buildAttention(input({
+    tasks: [task('a', 'review', { stage: { nodeId: 'review', visits: {} } }), task('b', 'review', { stage: { nodeId: 'merge', visits: {} } }), task('c', 'review')],
+    stageNode: (t) => stageNodeOf(t, undefined, legacy)
+  }))
+  assert.deepEqual(items.map((i) => [i.id, i.kind]), [['stall:b', 'stalled'], ['rev:a', 'review'], ['rev:c', 'review']])
+})
+
+test('нет графа (старый main, типы не пришли): прежнее ревью; остановку видно только по stageBlock этой ноды', () => {
+  const items = buildAttention(input({
+    tasks: [
+      task('a', 'review', { stage: { nodeId: 'merge', visits: {} } }),
+      task('b', 'review', { stage: { nodeId: 'merge', visits: {} }, stageBlock: { nodeId: 'merge', reason: 'нет ветки', at: 5 } }),
+      task('c', 'review', { stage: { nodeId: 'merge', visits: {} }, stageBlock: { nodeId: 'work', reason: 'прошлая остановка', at: 5 } })
+    ]
+  }))
+  assert.deepEqual(items.map((i) => [i.id, i.kind]), [['stall:b', 'stalled'], ['rev:a', 'review'], ['rev:c', 'review']])
+  assert.equal(items[0].stageNode, undefined)
+  assert.equal(stalledRetryLabel(undefined, 'merge'), '↻ Повторить мерж')
+})
+
+test('причина остановки (Task.stageBlock) — заголовок пункта и его время; чужая нода — общий текст', () => {
+  const reason = 'git worktree remove: Permission denied\nполный текст'
+  const items = buildAttention(pathInput([
+    pathTask('a', 'merge', { stageBlock: { nodeId: 'merge', reason, at: 77 } }),
+    pathTask('b', 'merge', { stageBlock: { nodeId: 'work', reason: 'старое', at: 5 } })
+  ]))
+  const a = items.find((i) => i.id === 'stall:a')
+  assert.equal(a?.title, reason)
+  assert.equal(a?.at, 77)
+  assert.match(items.find((i) => i.id === 'stall:b')?.title ?? '', /не завершён/)
+})
+
+test('остановленный этап с pending-запросом, ответ и проверка — не пункт «этап остановлен»', () => {
+  const items = buildAttention(pathInput(
+    [pathTask('a', 'merge'), pathTask('b', 'merge', { answerFor: 'human' }), pathTask('c', 'merge', { gateFor: { nodeId: 'g', taskId: 'x' } })],
+    { requests: [request('r1', 'a', 'approval')] }
+  ))
+  assert.deepEqual(items.map((i) => i.id), ['req:r1'])
+})
+
+test('порядок: остановка — после ответов и перед ревью; сводка и подпись', () => {
+  assert.ok(KIND_RANK.answer < KIND_RANK.stalled && KIND_RANK.stalled < KIND_RANK.review)
+  const items = buildAttention(pathInput(
+    [task('r', 'review', { updatedAt: 1 }), pathTask('s', 'merge', { updatedAt: 500 }), task('f', 'in_progress')],
+    { dispatches: [dispatch('d1', 'f', { outcome: 'failed', endedAt: 900 })] }
+  ))
+  assert.deepEqual(items.map((i) => i.kind), ['failure', 'stalled', 'review'])
+  assert.equal(attentionSummary(items), '1 сбой · 1 остановка · 1 ревью')
+  assert.equal(attentionLabel({ kind: 'stalled' }), 'Этап остановлен')
+  setLocale('en')
+  assert.equal(attentionSummary(items), '1 failure · 1 stalled · 1 review')
+  assert.equal(attentionLabel({ kind: 'stalled' }), 'Stage stalled')
+})
+
+test('карточка на доске: причина остановки — по тому же правилу, что лента (stalledCardReason)', () => {
+  const reason = 'мерж не выполнен: Unable to write index'
+  // Нода merge — остановка; причина — Task.stageBlock этой ноды, без неё — «Этап «…» не завершён».
+  assert.equal(stalledCardReason(pathTask('a', 'merge', { stageBlock: { nodeId: 'merge', reason, at: 7 } }), 'review', runScope, runGraph), reason)
+  assert.match(stalledCardReason(pathTask('a', 'merge'), 'review', runScope, runGraph) ?? '', /^Этап «.+» не завершён$/)
+  // Ревью настоящее (human пути — конфликт), не «Ревью», задача-ответ / проверка и задача без этапа — не остановка.
+  assert.equal(stalledCardReason(pathTask('a', 'conflict'), 'review', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(pathTask('a', 'merge'), 'in_progress', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(pathTask('a', 'merge', { answerFor: 'human' }), 'review', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(pathTask('a', 'merge', { gateFor: { nodeId: 'g', taskId: 'x' } }), 'review', runScope, runGraph), undefined)
+  assert.equal(stalledCardReason(task('a', 'review'), 'review', runScope, runGraph), undefined)
+  // Нет графа (старый main, типы не пришли): видно только по stageBlock той же ноды.
+  const onMerge = { stage: { nodeId: 'merge', visits: {} } }
+  assert.equal(stalledCardReason(task('a', 'review', onMerge), 'review', undefined, undefined), undefined)
+  assert.equal(stalledCardReason(task('a', 'review', { ...onMerge, stageBlock: { nodeId: 'merge', reason, at: 7 } }), 'review', undefined, undefined), reason)
+})
+
+test('счётчик ревью и карточка задачи: то же правило, что лента', () => {
+  assert.equal(taskReviewState(pathTask('a', 'merge'), 'review', [], runScope, runGraph), 'stalled')
+  assert.equal(taskReviewState(pathTask('a', 'conflict'), 'review', [], runScope, runGraph), 'review')
+  assert.equal(taskReviewState(pathTask('a', 'conflict'), 'review', [request('r', 'a', 'approval')], runScope, runGraph), undefined)
+  assert.equal(taskReviewState(task('a', 'review'), 'review', [request('r', 'a', 'approval', { status: 'resolved' })], undefined, undefined), 'review')
+  assert.equal(taskReviewState(task('a', 'in_progress'), 'in_progress', [], undefined, undefined), undefined)
 })

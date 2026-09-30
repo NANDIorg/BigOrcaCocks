@@ -14,7 +14,7 @@ import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
-import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
+import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
   settleIdleRunStages, startRunWorkflow,
@@ -414,6 +414,23 @@ function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
     if (!projects.get(projectId)) return
     handleWorkflowEvents(workflowDeps(projectId), events)
     handleRunWorkflowEvents(runWorkflowDeps(projectId), events)
+  })
+}
+
+/**
+ * Доска проекта открыта впервые за запуск: подзадачи, чей эффект (мерж, git, конец) или переход после `done` прервал
+ * выход приложения, доводятся до ожидания (`resumeStuckStages`). В `setImmediate`: store открывается посреди чужого вызова
+ * (IPC, сокет), а мерж синхронный и долгий — пусть тот вызов сначала закончится.
+ */
+function resumeProjectStages(projectId: string): void {
+  setImmediate(() => {
+    if (!projects.get(projectId)) return
+    try {
+      resumeStuckStages(workflowDeps(projectId))
+    } catch (e) {
+      // Проект могли удалить между открытием и тиком; исключение из setImmediate уронило бы main.
+      console.error(`[orca] воркфлоу: не удалось добрать прерванные этапы (${projectId}):`, (e as Error).message)
+    }
   })
 }
 
@@ -1077,6 +1094,7 @@ app.whenReady().then(() => {
   projects.onEvents(notify)
   projects.onEvents(deliverAnswers)
   projects.onEvents(runWorkflowEvents)
+  projects.onStoreOpened(resumeProjectStages)
   // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
   // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
   projects.onDataChange(() => {

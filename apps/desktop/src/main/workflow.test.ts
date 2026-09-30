@@ -10,7 +10,8 @@ import {
   TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION_TASK_SCOPE, workerTaskPrompt, defaultWorkflow, legacyDefaultWorkflow, migrateWorkflow, toTaskScopeWorkflow, validateWorkflow,
   type Role, type RunTypeInput, type Workflow, type Task, type Persistence, type StoreSnapshot
 } from '@orca-board/core'
-import { enterWork, handleWorkflowEvents, reviewAccept, reviewReject, approvalResolved, type WorkflowDeps } from './workflow'
+import { enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, approvalResolved, type WorkflowDeps } from './workflow'
+import { OrcaError } from './i18n'
 import { resolveHumanRequest } from './review'
 import { ProjectManager } from './projects'
 import { describeEvent } from './notify'
@@ -423,9 +424,11 @@ describe('мимо воркфлоу и возвраты', () => {
     assert.equal(task(gate.id).status, 'done', 'решение проверки уже не нужно')
   })
 
-  it('accept на этапе «Работа» — ошибка с названием этапа', () => {
+  it('accept и reject на этапе «Работа» при живом воркере — review.notReviewable с названием этапа', () => {
     const a = workTask('Логин')
-    assert.throws(() => reviewAccept(deps, a.id), /этапе «Работа»/)
+    assert.throws(() => reviewAccept(deps, a.id), (e: unknown) => e instanceof OrcaError && e.key === 'review.notReviewable' && /этапе «Работа»/.test(e.message))
+    assert.throws(() => reviewReject(deps, a.id, 'нет'), (e: unknown) => e instanceof OrcaError && e.key === 'review.notReviewable')
+    assert.equal(task(a.id).stage?.nodeId, 'work')
   })
 })
 
@@ -876,11 +879,151 @@ describe('сценарий: рестарт приложения посреди �
     restart()
     assert.equal(task(a.id).status, 'review')
     assert.equal(task(a.id).stage?.nodeId, 'work')
-    // Дефект (см. done задачи QA воркфлоу): «Принять» / «Вернуть» здесь недоступны — этап не проверки.
-    assert.throws(() => reviewAccept(deps, a.id), /этапе «Работа»/)
-    deps.startWorker(a.id)
-    done(a.id)
+    // «Принять» делает переход, который не успел сделать `worker_done`: дальше — проверка.
+    reviewAccept(deps, a.id)
     assert.equal(task(a.id).stage?.nodeId, 'review')
+    assert.equal(gatesOf(a.id).length, 1)
+  })
+
+  it('добор при открытии: done без обработанного worker_done доезжает до проверки сам', () => {
+    const a = workTask('Логин')
+    store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
+    restart()
+    resumeStuckStages(deps)
+    assert.equal(task(a.id).stage?.nodeId, 'review')
+    assert.equal(gatesOf(a.id).length, 1)
+    resumeStuckStages(deps)
+    assert.equal(gatesOf(a.id).length, 1, 'повторный добор проверку не дублирует')
+  })
+
+  it('добор при открытии: этап проверки без задачи-проверки (выход до createGate) — проверка создаётся один раз', () => {
+    const a = workTask('Логин')
+    store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
+    store.advanceStage(a.id, 'next', { roleIds: roles.map((r) => r.id) })
+    restart()
+    assert.equal(task(a.id).stage?.nodeId, 'review')
+    assert.equal(gatesOf(a.id).length, 0)
+    resumeStuckStages(deps)
+    resumeStuckStages(deps)
+    assert.equal(gatesOf(a.id).length, 1)
+    assert.equal(started.at(-1), gatesOf(a.id)[0].id)
+  })
+})
+
+describe('остановленный этап подзадачи: мерж не тупик', () => {
+  let disk: Persistence
+  const restart = (): void => {
+    store = new TaskStore(disk, () => DEFAULT_COLUMNS)
+    deps.store = store
+  }
+
+  beforeEach(() => {
+    disk = memory()
+    restart()
+  })
+
+  /** Задача сдала `done`, граф перешёл на «Мерж», а эффект не выполнился (приложение вышло посреди мержа). */
+  function stuckOnMerge(title: string, runId: string): Task {
+    const a = workTask(title, runId)
+    commit(a, `${title}.ts`, 'x\n')
+    store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
+    store.advanceStage(a.id, 'next')
+    restart()
+    return task(a.id)
+  }
+
+  it('(1) задача на «Мерже» после краша: «Принять» сливает ветку и закрывает задачу', () => {
+    const run = store.createRun('цель', undefined, noReview)
+    const a = stuckOnMerge('login', run.id)
+    assert.equal(a.stage?.nodeId, 'merge')
+    assert.equal(a.status, 'review', 'колонка «Ревью» — кнопки «Принять»/«Вернуть» видны')
+    assert.equal(a.stageBlock, undefined)
+
+    reviewAccept(deps, a.id)
+    assert.equal(task(a.id).status, 'done')
+    assert.equal(task(a.id).stage?.nodeId, 'end')
+    assert.equal(existsSync(path.join(repo, 'login.ts')), true, 'ветка слита')
+    assert.equal(branchExists(`orca/${a.id}`), false)
+  })
+
+  it('(2) мерж упал — stageBlock с причиной; снова упал — «Принять» сообщает причину; причину убрали — «Принять» сливает', () => {
+    const run = store.createRun('цель', undefined, noReview)
+    deps.mergeTarget = () => { throw new Error('ветки фичи нет в репозитории') }
+    const a = workTask('login', run.id)
+    commit(a, 'login.ts', 'x\n')
+    done(a.id)
+    assert.equal(task(a.id).stage?.nodeId, 'merge')
+    assert.equal(task(a.id).stageBlock?.nodeId, 'merge')
+    assert.match(task(a.id).stageBlock!.reason, /мерж не выполнен: ветки фичи нет/)
+    assert.equal(events('workflow_blocked', a.id).length, 1)
+
+    assert.throws(() => reviewAccept(deps, a.id), (e: unknown) => e instanceof OrcaError && e.key === 'review.stageBlocked' && /ветки фичи нет/.test(e.message))
+    assert.equal(task(a.id).stage?.nodeId, 'merge')
+    assert.equal(events('workflow_blocked', a.id).length, 2)
+
+    delete deps.mergeTarget
+    reviewAccept(deps, a.id)
+    assert.equal(task(a.id).status, 'done')
+    assert.equal(task(a.id).stageBlock, undefined, 'метка снята')
+    assert.equal(existsSync(path.join(repo, 'login.ts')), true)
+  })
+
+  it('(3) «Вернуть» на «Мерже» — замечания в feedback, этап «Работа», воркер запущен', () => {
+    const run = store.createRun('цель', undefined, noReview)
+    const a = stuckOnMerge('login', run.id)
+    reviewReject(deps, a.id, 'сначала почини тесты')
+    assert.equal(task(a.id).feedback, 'сначала почини тесты')
+    assert.equal(task(a.id).stage?.nodeId, 'work')
+    assert.equal(task(a.id).stage?.visits.work, 2, 'возврат считается заходом')
+    assert.equal(task(a.id).status, 'in_progress')
+    assert.equal(started.at(-1), a.id)
+    assert.equal(branchExists(`orca/${a.id}`), true, 'ветка с работой на месте')
+  })
+
+  it('(4) добор после запуска: «Мерж» без метки доезжает, с меткой — ждёт человека; повтор ничего не меняет', () => {
+    const run = store.createRun('цель', undefined, noReview)
+    const a = stuckOnMerge('a', run.id)
+    const b = workTask('b', run.id)
+    commit(b, 'b.ts', 'x\n')
+    deps.mergeTarget = (t) => { if (t.id === b.id) throw new Error('index.lock занят'); return { cwd: repo, branch: 'master' } }
+    done(b.id)
+    delete deps.mergeTarget
+    assert.equal(task(b.id).stageBlock?.nodeId, 'merge')
+    restart()
+    const blockedBefore = events('workflow_blocked').length
+
+    resumeStuckStages(deps)
+    assert.equal(task(a.id).status, 'done')
+    assert.equal(existsSync(path.join(repo, 'a.ts')), true)
+    assert.equal(task(b.id).stage?.nodeId, 'merge', 'остановленную задачу добор не трогает')
+    assert.equal(existsSync(path.join(repo, 'b.ts')), false)
+    assert.equal(events('workflow_blocked').length, blockedBefore, 'повторного уведомления нет')
+
+    const snapshot = JSON.stringify(store.snapshot())
+    resumeStuckStages(deps)
+    assert.equal(JSON.stringify(store.snapshot()), snapshot, 'идемпотентно')
+  })
+
+  it('(5) «Работа» + сданный done + «Ревью» (worker_done потерян) — добор делает переход дальше', () => {
+    const run = store.createRun('цель', undefined, noReview)
+    const a = workTask('login', run.id)
+    commit(a, 'login.ts', 'x\n')
+    store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
+    restart()
+    assert.equal(task(a.id).stage?.nodeId, 'work')
+    resumeStuckStages(deps)
+    assert.equal(task(a.id).status, 'done')
+    assert.equal(existsSync(path.join(repo, 'login.ts')), true)
+  })
+
+  it('мерж на «Мерже» без папки worktree (её убрали руками) — «Принять» сливает закоммиченное, без ENOENT', () => {
+    const run = store.createRun('цель', undefined, noReview)
+    const a = stuckOnMerge('login', run.id)
+    rmSync(a.worktree!, { recursive: true, force: true })
+    reviewAccept(deps, a.id)
+    assert.equal(task(a.id).status, 'done')
+    assert.equal(existsSync(path.join(repo, 'login.ts')), true)
+    assert.equal(branchExists(`orca/${a.id}`), false)
   })
 })
 
