@@ -849,9 +849,9 @@ HELP `check` не меняются.
 исполняется как раньше (тест «графы без fork/join … побайтно» в `workflow.test.ts`).
 
 Где что лежит: модель, валидация, переходы — `packages/core/src/workflow.ts`; области путей и позиции прогона —
-`packages/core/src/run-lanes.ts` (без node-импортов: его читает renderer). Контракт core (типы, переходы, валидация,
-сигнатуры store с `nodeId`) готов; движение позиций путей и барьер `join` в store, эффекты по путям в main, `--stage` и
-`lanes` в сокете — следующие шаги фичи: до них прогон, вошедший в `fork`, дальше не пойдёт.
+`packages/core/src/run-lanes.ts` (без node-импортов: его читает renderer); позиции путей, барьер `join` и решения по
+`nodeId` — store (`packages/core/src/store.ts`, тесты — `workflow-lanes.test.ts`). Эффекты по путям в main, `--stage` и
+`lanes` в сокете — следующие шаги фичи: до них main исполняет только первое действие (`RunStepResult.action`).
 
 **Ноды.**
 
@@ -933,7 +933,35 @@ Git: ветка и worktree прогона **одни на все пути**. С
 в опциях — на какой ноде вынесено решение; прогон на ней не стоит — ошибка «граф ушёл дальше». `runStage(runId,
 fallback?, nodeId?)` — одна позиция, `runStages(runId, fallback?)` — все (у пути `lane`, `laneTitle`, `arrived`);
 `assertStageAcceptsTasks(runId, nodeId?)`, `stageDefaultRole(runId, nodeId?)`, `createTask({stage?})` — этап по id;
-`blockRunStage(runId, reason, nodeId?)`. Для прогона без путей всё ведёт себя как раньше.
+`blockRunStage(runId, reason, nodeId?)`. Для прогона без путей всё ведёт себя как раньше: в снимке нет `lanes`, в payload —
+`lane` (тест «регрессия: прогон без fork» в `workflow-lanes.test.ts`).
+
+Как store ведёт пути (`moveRunStage` → `moveTrunk` / `moveLane`, барьер — `closeJoinedLanes`):
+
+- **Вход в `fork`** (ход основной позиции): `Run.stage` — на `fork`, `Run.lanes` — новое поколение путей (`forkVisit`),
+  `Run.stageInput` не ставится: замечания и решение, с которыми вошли (например, «Вернуть» после слияния), получает каждый
+  путь в `RunLane.stageInput`. События: `stage_changed` на `fork`, потом по пути — `stage_changed` и событие его ноды.
+- **Ход пути** — только `lane.nodeId`, счётчики — общие `Run.stage.visits`; гасятся `stage_tasks_done` только прежней ноды
+  пути (`dropStageEvents(runId, nodeId)`), метка `RunLane.stageTasksDoneAt` снимается у него одного; возврат `reject`
+  пишется в `Run.returns` с `nodeId`. Путь, который по графу в обход валидации пошёл бы во вложенный `fork` или в `end`, —
+  `workflow_blocked` с `lane` без движения.
+- **Решение по ноде**: внутри разветвления `advanceRunStage` без `nodeId` или по пути, уже пришедшему в `join`, — ошибка
+  (угадывать путь нельзя). `finishStage`, `createTask`, `assertStageAcceptsTasks` без этапа берут единственную открытую
+  «Работу»; открыто несколько — ошибка «`--stage` обязателен: открыты этапы «…» (id), …»; `stageDefaultRole` тогда — undefined.
+- **Сводки**: `stage finish` пути пишет сводку только в запись истории своей ноды; `Run.summary` при закрытии `join`
+  складывается из последних сводок путей этого поколения («### Путь «…»» и текст, в порядке путей); сводок нет — не меняется.
+- **Барьер**: путь в `join` получает `arrivedAt`; когда пришли все, `Run.lanes` удаляется, `Run.stage` встаёт на `join` и
+  идёт по `next` обычным ходом (запись без `lane`). Замечания и решение последнего пути в этап после слияния не переносятся.
+  Выход из `join` заблокирован — основная позиция остаётся на `join` без путей.
+- **Колонка** (`lanesColumn`): «Проверка», когда все ещё идущие пути стоят на `human`, иначе «В работе»; `WfNode.column`
+  у путей не учитывается.
+- **Approval**: `requestRunApproval` не дублирует запрос той же ноды, у разных нод — разные запросы. «Подтвердить» /
+  «Вернуть» на карточке при нескольких ждущих approval — `RunApprovalAmbiguousError` (`code: 'runApprovalAmbiguous'`,
+  `requestIds`): решать по запросу в Инбоксе. `requestRunDecision` сверяет позицию по ноде (`runPositionAt`).
+- **`syncStageTasks`, `settleIdleStages`** — по каждой позиции: `stage_tasks_done` с `lane`, страховка закрывает только
+  пути с закрытыми подзадачами. **`enterRunStage` на идущем графе** отдаёт действия всех позиций (путь в `join` — `join`)
+  и пробует застрявшее: слияние, если пришли все; путь, оставшийся на `fork` (у порта не было перехода); выход основной
+  позиции из `join`. Переход по-прежнему невозможен — `blocked` без нового события.
 
 **Валидация** (`validateWorkflow`, тексты — `WF_ISSUE_TEXTS`, перевод — `config.wf.issue.*`). Порты `fork` проверяет
 общий шаг (`missingOutcome` с названием пути и `branchId`), «скобки» — `laneRegions`:

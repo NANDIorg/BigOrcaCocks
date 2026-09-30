@@ -464,7 +464,8 @@ Store хранит позицию и решает, куда задача пер�
 (позиции на ней нет — ошибка «граф ушёл дальше»); `runStage(…, nodeId?)`, `assertStageAcceptsTasks(runId, nodeId?)`, `stageDefaultRole(runId, nodeId?)`,
 `createTask({stage?})`, `blockRunStage(runId, reason, nodeId?)` — этап по id ноды; у прогона без путей всё как раньше. Позиции путей — `Run.lanes: RunLane[]`
 (`Run.stage` тогда стоит на `fork`), запись истории пути — `StageChange.lane`, возврат — `Run.returns[].nodeId`, карточка — `GlobalTask.lanes`
-(`docs/workflow.md`, «Разветвление»). Решение развилки `decision` — `RunStageOptions.chosen` у `advanceRunStage` → `StageChange.decision`
+(`docs/workflow.md`, «Разветвление»: ход путей, барьер `join`, сводка путей в `Run.summary`, колонка). Несколько ждущих approval
+прогона — `resolveRunApproval` бросает `RunApprovalAmbiguousError` (`code: 'runApprovalAmbiguous'`, `requestIds`). Решение развилки `decision` — `RunStageOptions.chosen` у `advanceRunStage` → `StageChange.decision`
 в записи истории развилки (`StageDecision {optionId, label, reason?, by, fallback?, agentNote?}`), фоллбэк — запрос `kind: 'decision'` без задачи,
 решается `answer` + `optionId`; `runStage` на развилке отдаёт `question` и `options`; правила `createTask` в прогоне с `workflowScope: 'run'` (`roleIds` ноды: пусто — любая рабочая роль типа, есть — роль из списка, одна роль берётся по умолчанию (`stageDefaultRole`), чужая роль и этап не `work` —
 ошибки, `stageOf`), `stage_tasks_done` вместо `closeFinishedRuns`, `run_done` при входе в `end`, «Подтвердить»/«Вернуть» как решение approval прогона —
