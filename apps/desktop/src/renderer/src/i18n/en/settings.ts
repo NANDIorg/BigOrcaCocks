@@ -112,6 +112,7 @@ export default {
   'updates.card.installingHint': 'Orca will restart when installation is complete.',
   'updates.card.noNotes': 'The release author hasn’t added any notes yet.',
   'updates.card.expand': 'All changes',
+  'updates.card.currentNotes': 'What’s new in this version',
   'updates.card.collapse': 'Collapse notes',
   'updates.card.downloadLabel': 'Downloading the update',
   'updates.card.unknownSize': 'Finding download size…',

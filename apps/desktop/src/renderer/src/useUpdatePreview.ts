@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { UpdateState } from '../../shared/ipc'
+import type { UpdateInfo, UpdateState } from '../../shared/ipc'
 import { useT } from './i18n'
 import type { UpdatesController } from './useUpdates'
 
@@ -7,7 +7,11 @@ export const UPDATE_PREVIEW_SCENARIOS = ['available', 'downloading', 'ready', 'i
 export type UpdatePreviewScenario = (typeof UPDATE_PREVIEW_SCENARIOS)[number]
 
 /** Временная демонстрация по просьбе пользователя. Живёт только в разделе настроек, не вызывает IPC. */
-export function useUpdatePreview(): { controller: UpdatesController; select(scenario: UpdatePreviewScenario): void } | null {
+export function useUpdatePreview(): {
+  controller: UpdatesController
+  currentRelease?: Pick<UpdateInfo, 'version' | 'releaseNotes'>
+  select(scenario: UpdatePreviewScenario): void
+} | null {
   const t = useT()
   const [status, setStatus] = useState<UpdateState['status']>('available')
   const [percent, setPercent] = useState(42)
@@ -43,6 +47,7 @@ export function useUpdatePreview(): { controller: UpdatesController; select(scen
     mode: 'auto', unsupportedReason: null, error: null
   }
   return {
+    currentRelease: installed ? { version: state.currentVersion, releaseNotes: notes } : undefined,
     select: (scenario) => { setStatus(scenario); setPercent(42); setPending('quit'); setInstalled(false) },
     controller: {
       state, stale: false, error: null, checking: status === 'checking', lastCheckedAt: status === 'idle' ? Date.now() : null,

@@ -1,34 +1,38 @@
 import type React from 'react'
 import { useId, useMemo, useState } from 'react'
+import appLogo from '../../../build/icon.svg'
+import type { UpdateInfo } from '../../shared/ipc'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { useT } from './i18n'
 import { formatDateTime, formatPercent } from './i18n/format'
-import { bannerView, cardStatus, isReleaseUrl, pendingText, releaseSummary, unsupportedText, updateProgress, versionLabel } from './updateState'
+import { bannerView, cardRelease, cardStatus, isReleaseUrl, pendingText, releaseSummary, unsupportedText, updateProgress, versionLabel } from './updateState'
 import type { UpdatesController } from './useUpdates'
 
 /** Полная карточка версии в настройках. Заметки раскрываются здесь же, источник состояния — общий обновлятор. */
-export function UpdateCard({ updates }: { updates: UpdatesController }): React.JSX.Element {
+export function UpdateCard({ updates, currentRelease = __ORCA_CURRENT_RELEASE__ }: {
+  updates: UpdatesController
+  currentRelease?: Pick<UpdateInfo, 'version' | 'releaseNotes'>
+}): React.JSX.Element {
   const t = useT()
   const { state } = updates
   const [expandedVersion, setExpandedVersion] = useState<string | null>(null)
   const notesId = useId()
-  const summary = useMemo(() => releaseSummary(state?.releaseNotes ?? null), [state?.releaseNotes])
+  const release = cardRelease(state, currentRelease)
+  const notes = release?.releaseNotes ?? ''
+  const summary = useMemo(() => releaseSummary(notes), [notes])
   const status = cardStatus(state, updates.checking)
   const found = Boolean(state?.availableVersion)
   const manual = status === 'unsupported' && found && state?.mode === 'manual-download'
   const kind = manual ? 'available' : status
   const busy = kind === 'checking' || kind === 'downloading' || kind === 'installing' || kind === 'loading'
-  const positive = kind === 'ready' || kind === 'idle'
-  const StatusIcon = busy ? Icon.spinner : positive ? Icon.done : kind === 'error' || kind === 'unsupported' ? Icon.info : Icon.download
   const heading = t(`settings.updates.card.${kind}`)
-  const version = state ? versionLabel(state.availableVersion ?? state.currentVersion) : '—'
+  const version = release ? versionLabel(release.version) : '—'
   const percent = updateProgress(state?.percent ?? null)
-  const notes = found ? state?.releaseNotes?.trim() : ''
-  const expanded = Boolean(found && expandedVersion === state?.availableVersion)
+  const expanded = Boolean(release && expandedVersion === release.version)
   const view = bannerView(state)
   const primary = kind === 'checking' || kind === 'loading' ? undefined : view?.primary
-  const releaseUrl = state?.releaseUrl
+  const releaseUrl = release?.releaseUrl
   const detail = kind === 'ready'
     ? (pendingText(state?.installPending ?? null) ?? t('settings.updates.card.readyHint'))
     : kind === 'error'
@@ -46,9 +50,9 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
   return (
     <article className={`updates-card ${kind}`} aria-labelledby={`${notesId}-version`}>
       <div className="updates-card-head">
-        <div className={`updates-card-icon ${busy ? 'busy' : ''}`} aria-hidden="true"><StatusIcon /></div>
+        <div className="updates-card-icon" aria-hidden="true"><img src={appLogo} alt="" width={52} height={52} /></div>
         <div className="updates-card-heading">
-          <span className="updates-card-eyebrow" role="status">{heading}</span>
+          <span className="updates-card-eyebrow" role="status">{busy && <span className="update-spin" aria-hidden="true"><Icon.spinner /></span>}{heading}</span>
           <h3 id={`${notesId}-version`}>{version}</h3>
         </div>
         {kind === 'available' || kind === 'ready' || kind === 'idle' ? (
@@ -57,7 +61,7 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
       </div>
 
       {found && state && <p className="updates-card-from">{t('settings.updates.card.from', { version: versionLabel(state.currentVersion) })}</p>}
-      {found && <p className="updates-card-summary">{summary || t('settings.updates.card.noNotes')}</p>}
+      {(summary || found) && <p className="updates-card-summary">{summary || t('settings.updates.card.noNotes')}</p>}
       {detail && <p className={`updates-card-detail ${kind === 'error' ? 'problem' : ''}`} role={kind === 'error' ? 'alert' : undefined}>{detail}</p>}
 
       {kind === 'downloading' && (
@@ -71,11 +75,11 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
         </div>
       )}
 
-      {(notes || primary) && (
+      {(release || primary) && (
         <div className="updates-card-actions">
-          {notes && <button type="button" className="updates-notes-toggle" aria-expanded={expanded} aria-controls={notesId}
-            onClick={() => setExpandedVersion(expanded ? null : state?.availableVersion ?? null)}>
-            {expanded ? <Icon.up /> : <Icon.down />}{t(expanded ? 'settings.updates.card.collapse' : 'settings.updates.card.expand')}
+          {release && <button type="button" className="updates-notes-toggle" aria-expanded={expanded} aria-controls={notesId}
+            onClick={() => setExpandedVersion(expanded ? null : release.version)}>
+            {expanded ? <Icon.up /> : <Icon.down />}{t(expanded ? 'settings.updates.card.collapse' : found ? 'settings.updates.card.expand' : 'settings.updates.card.currentNotes')}
           </button>}
           <div className="updates-card-buttons">
             {kind === 'ready' && state?.installPending && <button type="button" className="btn-sm" onClick={updates.cancelPending}>{t('shell.update.cancel')}</button>}
@@ -91,8 +95,8 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
           </div>
         </div>
       )}
-      {notes && <div className="updates-card-notes" id={notesId} hidden={!expanded}>
-        <Markdown text={notes} />
+      {release && <div className="updates-card-notes" id={notesId} hidden={!expanded}>
+        {notes ? <Markdown text={notes} /> : <p className="updates-card-detail">{t('settings.updates.card.noNotes')}</p>}
         {isReleaseUrl(releaseUrl) && <a className="updates-release-link" href={releaseUrl} target="_blank" rel="noreferrer">{t('shell.update.notes.open')}<Icon.external /></a>}
       </div>}
       {updates.lastCheckedAt && <p className="updates-card-checked">{t('settings.updates.card.checked', { time: formatDateTime(updates.lastCheckedAt, { hour: '2-digit', minute: '2-digit' }) })}</p>}

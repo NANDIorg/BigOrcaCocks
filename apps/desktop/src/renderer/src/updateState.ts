@@ -1,8 +1,23 @@
-import type { OrcaApi, UpdateState, UpdateUnsupportedReason } from '../../shared/ipc'
+import type { OrcaApi, UpdateInfo, UpdateState, UpdateUnsupportedReason } from '../../shared/ipc'
 import { releaseVersionLabel } from '@orca-board/core'
 import { t } from './i18n'
 import { formatPercent } from './i18n/format'
 import { marked, type Token } from 'marked'
+
+/** Заметки относятся к показанной версии: найденной из main или установленной из самой сборки. */
+export function cardRelease(state: UpdateState | null, bundled: Pick<UpdateInfo, 'version' | 'releaseNotes'>): UpdateInfo | null {
+  if (!state) return null
+  const version = state.availableVersion ?? state.currentVersion
+  const tag = version.startsWith('v') ? version : `v${version}`
+  return {
+    version,
+    releaseNotes: state.availableVersion
+      ? state.releaseNotes?.trim() ?? ''
+      : version === bundled.version ? bundled.releaseNotes : '',
+    releaseUrl: (state.availableVersion ? state.releaseUrl : null)
+      ?? `https://github.com/NANDIorg/BigOrcaCocks/releases/tag/${encodeURIComponent(tag)}`
+  }
+}
 
 /** Анонс из первого абзаца или пункта релиза. Возвращает только текст; HTML/картинки/код не становятся анонсом. */
 export function releaseSummary(notes: string | null): string {

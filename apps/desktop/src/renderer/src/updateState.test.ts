@@ -2,12 +2,12 @@
 // состоянии обновления, живые агенты для выбора «Сейчас / Когда закончат» и защита от старого preload.
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import type { UpdateState } from '../../shared/ipc'
+import type { UpdateInfo, UpdateState } from '../../shared/ipc'
 import { setLocale } from './i18n'
 import { formatPercent } from './i18n/format'
 import {
   bannerView, canCheck, isReleaseUrl, isStaleUpdatesError, needsAttention, pendingText, statusLine, unsupportedText,
-  updatesApi, versionLabel, releaseSummary, updateProgress, cardStatus
+  updatesApi, versionLabel, releaseSummary, updateProgress, cardStatus, cardRelease
 } from './updateState'
 
 afterEach(() => setLocale('ru'))
@@ -20,6 +20,42 @@ const found: Partial<UpdateState> = {
   availableVersion: '0.4.2', releaseNotes: '## Что нового\n- всё', releaseUrl: 'https://github.com/NANDIorg/BigOrcaCocks/releases/tag/v0.4.2'
 }
 const st = (patch: Partial<UpdateState>): UpdateState => ({ ...base, ...patch })
+
+describe('описание версии в карточке', () => {
+  const bundled: Pick<UpdateInfo, 'version' | 'releaseNotes'> = {
+    version: base.currentVersion, releaseNotes: '# Orca 0.4.1\n\nИзменения установленной версии.'
+  }
+
+  it('текущая версия раскрывает встроенное описание без проверки сети', () => {
+    assert.deepEqual(cardRelease(base, bundled), {
+      ...bundled, releaseUrl: 'https://github.com/NANDIorg/BigOrcaCocks/releases/tag/v0.4.1'
+    })
+  })
+
+  it('portable и ошибка сети сохраняют описание установленной версии', () => {
+    for (const patch of [
+      { status: 'unsupported', mode: 'manual-download', unsupportedReason: 'portable' },
+      { status: 'error', error: 'Нет сети' }
+    ] as const) {
+      assert.equal(cardRelease(st(patch), bundled)?.releaseNotes, bundled.releaseNotes)
+    }
+  })
+
+  it('найденная версия показывает свои изменения, а не описание установленной', () => {
+    const release = cardRelease(st({ ...found, status: 'available' }), bundled)
+    assert.equal(release?.version, found.availableVersion)
+    assert.equal(release?.releaseNotes, found.releaseNotes)
+    assert.equal(release?.releaseUrl, found.releaseUrl)
+    assert.equal(cardRelease(st({ ...found, releaseNotes: null, releaseUrl: null }), bundled)?.releaseNotes, '')
+  })
+
+  it('при несовпадении версий после HMR не подставляет чужие заметки; ссылка ведёт на точную версию', () => {
+    assert.deepEqual(cardRelease(st({ currentVersion: '0.4.2' }), bundled), {
+      version: '0.4.2', releaseNotes: '', releaseUrl: 'https://github.com/NANDIorg/BigOrcaCocks/releases/tag/v0.4.2'
+    })
+    assert.equal(cardRelease(null, bundled), null)
+  })
+})
 
 describe('bannerView', () => {
   it('нет состояния, idle, checking и dev — плашки нет', () => {

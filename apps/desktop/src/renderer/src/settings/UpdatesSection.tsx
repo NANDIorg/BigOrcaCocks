@@ -59,7 +59,7 @@ export function UpdatesSection({ settings, updates, error, onChange }: {
           {UPDATE_PREVIEW_SCENARIOS.map((scenario) => <button key={scenario} type="button" aria-pressed={state?.status === scenario} onClick={() => preview.select(scenario)}>{t(`settings.updates.preview.${scenario}`)}</button>)}
         </div>
       </div>}
-      <UpdateCard updates={controller} />
+      <UpdateCard updates={controller} currentRelease={preview?.currentRelease} />
       <div className="updates-preferences-label">{t(portable ? 'settings.updates.checkPreferences' : 'settings.updates.preferences')}</div>
       <div className="about-box notif-rows">
         {portable && <div className="updates-portable-note">

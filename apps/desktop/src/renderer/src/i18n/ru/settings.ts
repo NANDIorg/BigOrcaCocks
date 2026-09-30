@@ -112,6 +112,7 @@ export default {
   'updates.card.installingHint': 'Orca перезапустится, когда установка завершится.',
   'updates.card.noNotes': 'Автор релиза пока не добавил описание изменений.',
   'updates.card.expand': 'Все изменения',
+  'updates.card.currentNotes': 'Что нового в этой версии',
   'updates.card.collapse': 'Свернуть описание',
   'updates.card.downloadLabel': 'Загрузка обновления',
   'updates.card.unknownSize': 'Определяем размер…',
