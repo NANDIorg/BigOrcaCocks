@@ -46,7 +46,7 @@ export default {
 
   'common.none': 'нет',
 
-  'menu.about': 'О приложении orca-board',
+  'menu.about': 'О приложении Orca',
   'menu.aboutCredits': 'Оркестратор CLI-агентов с канбан-доской.\nЗадачи, отдельные Git-ветки и терминалы — в одном приложении.',
   'about.version': 'Версия {version}',
   'about.links': 'Ссылки проекта',

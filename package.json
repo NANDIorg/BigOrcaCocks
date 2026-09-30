@@ -11,7 +11,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "node --test scripts/*.test.mjs && pnpm -r --if-present test",
-    "check:git-flow": "node scripts/check-git-flow.mjs",
+    "check:git-flow": "node scripts/check-git-flow.mjs && node scripts/check-release-codenames.mjs",
     "verify": "pnpm check:git-flow && pnpm typecheck && pnpm test && pnpm build"
   }
 }

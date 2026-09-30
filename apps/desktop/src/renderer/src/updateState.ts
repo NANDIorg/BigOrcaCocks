@@ -1,4 +1,5 @@
 import type { OrcaApi, UpdateState, UpdateUnsupportedReason } from '../../shared/ipc'
+import { releaseVersionLabel } from '@orca-board/core'
 import { t } from './i18n'
 import { formatPercent } from './i18n/format'
 
@@ -25,9 +26,10 @@ export interface UpdateBannerView {
   primary?: UpdateAction
 }
 
-/** `0.4.2` → `v0.4.2`. */
-export function versionLabel(version: string): string {
-  return version.startsWith('v') ? version : `v${version}`
+/** В строках версии показываем животное; компактный счётчик навигации оставляет только SemVer. */
+export function versionLabel(version: string, withCodename = true): string {
+  const label = version.startsWith('v') ? version : `v${version}`
+  return withCodename ? releaseVersionLabel(label) : label
 }
 
 /** Причина недоступности обновления по-человечески; неизвестная (новый main) — общий текст. */

@@ -46,7 +46,7 @@ export default {
 
   'common.none': 'none',
 
-  'menu.about': 'About orca-board',
+  'menu.about': 'About Orca',
   'menu.aboutCredits': 'A CLI agent orchestrator with a kanban board.\nTasks, separate Git branches and terminals in one app.',
   'about.version': 'Version {version}',
   'about.links': 'Project links',

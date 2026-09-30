@@ -185,7 +185,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   const updateState = updates.state
   const updatesNav: NavEntry<Section> = {
     id: 'updates', label: t('settings.nav.updates'), icon: Icon.download,
-    count: updateState?.availableVersion ? versionLabel(updateState.availableVersion) : undefined,
+    count: updateState?.availableVersion ? versionLabel(updateState.availableVersion, false) : undefined,
     tone: updateState?.status === 'available' || updateState?.status === 'ready' ? 'warn' : undefined
   }
   const assistantNav: NavEntry<Section> = { id: 'assistant', label: t('settings.nav.assistant'), icon: Icon.assistant }

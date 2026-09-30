@@ -4,6 +4,13 @@ import { aboutExternalUrl, buildAboutHtml } from './about-content'
 import { getAppTheme } from '../shared/theme'
 
 describe('безопасное содержимое окна «О приложении»', () => {
+  it('показывает имя Orca и кодовое имя серии рядом с реальной версией на обоих языках', () => {
+    const ru = buildAboutHtml({ locale: 'ru', version: '1.1.3', iconPng: new Uint8Array() })
+    const en = buildAboutHtml({ locale: 'en', version: '1.1.3', iconPng: new Uint8Array() })
+    assert.match(ru, /<h1 id="app-name">Orca<\/h1>/)
+    assert.match(ru, /Версия 1\.1\.3 · Sea Lion/)
+    assert.match(en, /Version 1\.1\.3 · Sea Lion/)
+  })
   it('адаптер окна применяет выбранную палитру и предпочтение движения', () => {
     for (const theme of ['forest', 'paper'] as const) {
       const html = buildAboutHtml({ locale: 'en', version: '1.0.1', iconPng: new Uint8Array(), appearance: { theme, motion: 'reduced' } })

@@ -1,4 +1,5 @@
 import { mtIn, type MainLocale } from './i18n'
+import { releaseVersionLabel } from '@orca-board/core'
 import { PROJECT_URL } from './app-menu'
 import { getAppTheme, appFontFamily } from '../shared/theme'
 import { normalizeAppearance, type AppearanceSettings } from '../shared/appearance'
@@ -111,8 +112,8 @@ export function buildAboutHtml({ locale, version, iconPng, appearance }: AboutCo
   <div class="titlebar" aria-hidden="true"></div>
   <main aria-labelledby="app-name">
     <img class="logo" src="data:image/png;base64,${Buffer.from(iconPng).toString('base64')}" alt="" width="92" height="92">
-    <h1 id="app-name">orca-board</h1>
-    <p class="version">${t('about.version', { version })}</p>
+    <h1 id="app-name">Orca</h1>
+    <p class="version">${t('about.version', { version: releaseVersionLabel(version) })}</p>
     <div class="description">${description}</div>
     <nav class="actions" aria-label="${t('about.links')}">
       <a class="action action-primary" href="${PROJECT_URL}" target="_blank" rel="noreferrer" autofocus><span>${t('about.project')}</span></a>
