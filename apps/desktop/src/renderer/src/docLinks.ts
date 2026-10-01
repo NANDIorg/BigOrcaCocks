@@ -1,4 +1,5 @@
 import type { DocFile, OrcaApi } from '../../shared/ipc'
+import { resolveMarkdownLink, type MarkdownLink } from './markdownAssets'
 import { t } from './i18n'
 import { formatFixed } from './i18n/format'
 
@@ -29,38 +30,13 @@ export function isRecent(file: DocFile, now: number): boolean {
 }
 
 /**
- * Относительная ссылка из документа `from` на другой .md — путь от корня того же источника.
- * Внешние ссылки (со схемой), якоря, абсолютные пути, не-.md и выход за корень — null.
+ * Относительная ссылка из документа `from` на любой файл того же источника (`.ts`, картинку, другой `.md`) — путь от
+ * корня источника и `#якорь`, чтобы открыть файл и прокрутить к разделу. Правила — как у ссылок markdown в «Документах»
+ * (`resolveMarkdownLink`, режим `project`): точечные файлы можно, `.git` — нет. Внешние (со схемой), только якорь,
+ * абсолютные пути, выход за корень и битое кодирование — null.
  */
-export function resolveDocLink(from: string, href: string): string | null {
-  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('/') || href.startsWith('#')) return null
-  let target: string
-  try {
-    target = decodeURIComponent(href.split(/[?#]/)[0])
-  } catch {
-    return null
-  }
-  if (!/\.md$/i.test(target)) return null
-  const parts = from.split('/').slice(0, -1)
-  for (const seg of target.split('/')) {
-    if (seg === '' || seg === '.') continue
-    if (seg === '..') {
-      if (parts.length === 0) return null
-      parts.pop()
-    } else parts.push(seg)
-  }
-  return parts.join('/')
-}
-
-/** Якорь ссылки на документ: «b.md#Раздел» → «Раздел». Нет якоря — undefined. */
-export function docLinkHash(href: string): string | undefined {
-  const i = href.indexOf('#')
-  if (i < 0) return undefined
-  try {
-    return decodeURIComponent(href.slice(i + 1)) || undefined
-  } catch {
-    return undefined
-  }
+export function resolveDocLink(from: string, href: string): MarkdownLink | null {
+  return resolveMarkdownLink({ path: from, links: 'project' }, href) ?? null
 }
 
 /** Поиск по пути без учёта регистра; пробелы разделяют слова, нужны все. */

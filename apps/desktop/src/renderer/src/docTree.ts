@@ -1,8 +1,12 @@
 import type { DocFile, DocGroup } from '../../shared/ipc'
+import { docKindOf } from '../../shared/docs-view'
 import { t } from './i18n'
 import { formatDateTime } from './i18n/format'
 
-/** Чистые функции окна «Документы»: дерево папок из путей, поиск по пути, время и подписи. */
+/**
+ * Чистые функции окна «Документы»: дерево папок из путей, поиск по пути, лимиты списков, время и подписи,
+ * раскрытые папки в localStorage.
+ */
 
 export interface DirNode {
   kind: 'dir'
@@ -269,3 +273,136 @@ export interface TaskMark {
 }
 
 export const sameDoc = (a: DocRef | null | undefined, b: DocRef): boolean => a?.source === b.source && a.path === b.path
+
+/** «Недавние» в дереве — не больше стольких строк: остальное в дереве и по ⌘P. */
+export const RECENT_LIMIT = 200
+/** Выдача поиска по пути в одной группе — не больше стольких строк, дальше «ещё N». */
+export const HIT_LIMIT = 100
+
+/** Свежие сверху, не больше `limit`. Сортирует копию: список группы — общий с деревом. */
+export function recentFiles(files: readonly DocFile[], limit = RECENT_LIMIT): DocFile[] {
+  return [...files].sort((a, b) => b.mtime - a.mtime).slice(0, limit)
+}
+
+export interface FileHit {
+  file: DocFile
+  match: PathMatch
+}
+
+/**
+ * Поиск по пути в списке группы: лучшие совпадения сверху (при равенстве — свежие), не больше `limit`.
+ * `total` — сколько совпало всего: для строки «ещё N».
+ */
+export function searchFiles(files: readonly DocFile[], query: string, limit = HIT_LIMIT): { hits: FileHit[]; total: number } {
+  const all: FileHit[] = []
+  for (const file of files) {
+    const match = matchPath(file.path, query)
+    if (match) all.push({ file, match })
+  }
+  all.sort((a, b) => b.match.score - a.match.score || b.file.mtime - a.file.mtime)
+  return { hits: all.slice(0, limit), total: all.length }
+}
+
+/** Только markdown-документы: стартовый экран не заполняется `.ts` — весь проект есть в дереве и по ⌘P. */
+export const markdownFiles = (files: readonly DocFile[]): DocFile[] => files.filter((f) => docKindOf(f.path).kind === 'markdown')
+
+/** Перечитывать список и открытый файл при возврате фокуса окну не чаще. */
+export const FOCUS_REFRESH_MS = 5000
+
+/** Пора перечитать при возврате фокуса: прошло не меньше `FOCUS_REFRESH_MS` с прошлого раза. */
+export const focusRefreshDue = (last: number, now: number): boolean => now - last >= FOCUS_REFRESH_MS
+
+/** Полный путь для «Копировать абсолютный путь»: разделитель — как у корня (на Windows корень приходит с `\`). */
+export function absolutePath(root: string, path: string): string {
+  const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/'
+  if (path === '') return root
+  return `${root.replace(/[\\/]+$/, '')}${sep}${sep === '/' ? path : path.split('/').join(sep)}`
+}
+
+/** Сколько раскрытых папок дерева проекта помним между запусками. */
+export const OPEN_DIRS_LIMIT = 200
+
+export const openDirsKey = (projectId: string): string => `orca.docs.open.${projectId}`
+
+/**
+ * Раскрытые папки для сохранения и восстановления: непустые относительные пути без дублей, родители раньше детей,
+ * не больше `OPEN_DIRS_LIMIT` — лишние, самые глубокие, отбрасываются.
+ */
+export function openDirsOrder(paths: readonly unknown[]): string[] {
+  const depth = (p: string): number => p.split('/').length
+  const valid = [...new Set(paths.filter((p): p is string => typeof p === 'string' && p !== '' && !p.startsWith('/') && !p.endsWith('/')))]
+  return valid.sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0)).slice(0, OPEN_DIRS_LIMIT)
+}
+
+/** Сохранённые раскрытые папки проекта; null — не сохраняли (тогда раскрывается верхний уровень). Битое — пусто. */
+export function readOpenDirs(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): string[] | null {
+  try {
+    const raw = storage?.getItem(openDirsKey(projectId))
+    if (raw === null || raw === undefined) return null
+    const v: unknown = JSON.parse(raw)
+    return Array.isArray(v) ? openDirsOrder(v) : []
+  } catch {
+    return []
+  }
+}
+
+export function writeOpenDirs(storage: Pick<Storage, 'setItem'> | undefined, projectId: string, open: Iterable<string>): void {
+  try {
+    storage?.setItem(openDirsKey(projectId), JSON.stringify(openDirsOrder([...open])))
+  } catch {
+    // localStorage недоступен или переполнен — раскрытые папки просто не переживут перезапуск
+  }
+}
+
+/** Видимая строка дерева «Документов» для клавиатуры: ключ, папка или файл, родитель (null — верхний уровень). */
+export interface TreeRow {
+  key: string
+  dir: boolean
+  /** Только у папок: раскрыта ли. */
+  open?: boolean
+  parent: string | null
+}
+
+/** Видимые строки дерева проекта в порядке показа: дети — только у раскрытых папок. `keyOf` строит ключи как компонент. */
+export function treeRows(nodes: readonly TreeNode[], openDirs: ReadonlySet<string>, keyOf: (node: TreeNode) => string, parent: string | null = null): TreeRow[] {
+  return nodes.flatMap((n) => {
+    const key = keyOf(n)
+    if (n.kind === 'file') return [{ key, dir: false, parent }]
+    const open = openDirs.has(key)
+    return [{ key, dir: true, open, parent }, ...(open ? treeRows(n.children, openDirs, keyOf, key) : [])]
+  })
+}
+
+export type TreeKey = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End'
+
+export function isTreeKey(key: string): key is TreeKey {
+  return key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home' || key === 'End'
+}
+
+/** Что сделать по клавише: перевести фокус на строку `focus` и/или раскрыть-свернуть папку `toggle`. */
+export interface TreeMove {
+  focus?: string
+  toggle?: string
+}
+
+/**
+ * Клавиатура дерева (WAI-ARIA tree): ↑/↓ — соседняя видимая строка, → — раскрыть папку или шаг к первому ребёнку,
+ * ← — свернуть или шаг к родителю, Home/End — первая/последняя. Фокуса нет или он на пропавшей строке — первая.
+ */
+export function navigate(rows: readonly TreeRow[], focused: string | null, key: TreeKey): TreeMove {
+  if (rows.length === 0) return {}
+  const i = focused === null ? -1 : rows.findIndex((r) => r.key === focused)
+  if (i < 0 || key === 'Home') return { focus: rows[0]!.key }
+  if (key === 'End') return { focus: rows[rows.length - 1]!.key }
+  if (key === 'ArrowUp') return { focus: rows[Math.max(i - 1, 0)]!.key }
+  if (key === 'ArrowDown') return { focus: rows[Math.min(i + 1, rows.length - 1)]!.key }
+  const row = rows[i]!
+  if (key === 'ArrowRight') {
+    if (!row.dir) return {}
+    if (!row.open) return { toggle: row.key }
+    const next = rows[i + 1]
+    return next && next.parent === row.key ? { focus: next.key } : {}
+  }
+  if (row.dir && row.open) return { toggle: row.key }
+  return row.parent === null ? {} : { focus: row.parent }
+}

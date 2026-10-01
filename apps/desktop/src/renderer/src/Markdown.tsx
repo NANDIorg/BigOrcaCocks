@@ -5,7 +5,8 @@ import { marked, Marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { assignHeadingIds, DOC_ID_PREFIX, findDocHeading, type DocHeading } from './docToc'
 import { t, useLocale } from './i18n'
-import { resolveShowcaseRef, showcaseImageSrc, type MarkdownAssets } from './markdownAssets'
+import { docKindOf } from '../../shared/docs-view'
+import { resolveMarkdownLink, showcaseImageSrc, type MarkdownAssets } from './markdownAssets'
 import './docs-markdown.css'
 
 /** Сейчас санитизируется документ, а не чат: только в документе `#якорь` становится переходом. */
@@ -18,8 +19,9 @@ let sanitizingAssets: MarkdownAssets | undefined
 // с file:// или кастомным протоколом запустил бы что угодно, а переход внутри окна увёл бы приложение.
 // Относительная ссылка на .md остаётся в data-doc-href: просмотрщик «Документы» открывает её у себя.
 // В документе `#якорь` остаётся в data-doc-anchor: Markdown по клику прокручивает к заголовку.
-// В файле показа относительная ссылка на другой файл остаётся в data-showcase-href (путь от корня показа):
-// просмотрщик по клику открывает этот файл у себя.
+// В файле показа и в «Документах» (`assets`) относительная ссылка на другой файл остаётся в data-showcase-href
+// (путь от корня показа или источника), её `#якорь` — в data-showcase-hash: просмотрщик открывает файл у себя.
+// В «Документах» (`links: 'project'`) у ссылки ещё data-file-kind: значок «документ» или «файл» перед текстом.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'IMG' && sanitizingAssets) {
     showcaseImage(node, sanitizingAssets)
@@ -32,9 +34,12 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     node.setAttribute('rel', 'noreferrer')
   } else {
     node.removeAttribute('href')
-    const target = sanitizingAssets && !/^#/.test(href) ? resolveShowcaseRef(sanitizingAssets.path, href) : undefined
-    if (target) node.setAttribute('data-showcase-href', target)
-    else if (sanitizingDoc && /^#./.test(href)) node.setAttribute('data-doc-anchor', href)
+    const target = sanitizingAssets ? resolveMarkdownLink(sanitizingAssets, href) : undefined
+    if (target) {
+      node.setAttribute('data-showcase-href', target.path)
+      if (target.hash) node.setAttribute('data-showcase-hash', target.hash)
+      if (sanitizingAssets?.links === 'project') node.setAttribute('data-file-kind', docKindOf(target.path).kind === 'markdown' ? 'doc' : 'file')
+    } else if (sanitizingDoc && /^#./.test(href)) node.setAttribute('data-doc-anchor', href)
     else if (!/^[a-z][a-z0-9+.-]*:/i.test(href) && /\.md(?:[?#]|$)/i.test(href)) node.setAttribute('data-doc-href', href)
   }
 })
@@ -112,12 +117,14 @@ export function renderDocMarkdown(text: string, assets?: MarkdownAssets): string
   return sanitize(html, true, assets)
 }
 
-/** Клик по ссылке на файл показа (`data-showcase-href`): true — обработан. */
-function onShowcaseLinkClick(e: React.MouseEvent<HTMLDivElement>, onShowcaseLink: ((path: string) => void) | undefined): boolean {
+type ShowcaseLinkHandler = (path: string, hash?: string) => void
+
+/** Клик по ссылке на файл показа или проекта (`data-showcase-href`, якорь — `data-showcase-hash`): true — обработан. */
+function onShowcaseLinkClick(e: React.MouseEvent<HTMLDivElement>, onShowcaseLink: ShowcaseLinkHandler | undefined): boolean {
   const link = (e.target as Element).closest('[data-showcase-href]')
   if (!link || !onShowcaseLink) return false
   e.preventDefault()
-  onShowcaseLink(link.getAttribute('data-showcase-href') ?? '')
+  onShowcaseLink(link.getAttribute('data-showcase-href') ?? '', link.getAttribute('data-showcase-hash') ?? undefined)
   return true
 }
 
@@ -146,11 +153,12 @@ interface MarkdownProps {
   className?: string
   variant?: 'chat' | 'doc'
   /**
-   * Файл показа (ShowcaseBlock, ShowcaseViewer): относительные картинки — из его снимка, внешние и `data:` убираются
-   * (`markdownAssets.ts`), относительные ссылки на другие файлы — `onShowcaseLink` с путём от корня показа.
+   * Файл показа (ShowcaseBlock, ShowcaseViewer) или файл в «Документах» (`links: 'project'`): относительные картинки —
+   * из снимка или корня источника, внешние и `data:` убираются (`markdownAssets.ts`), относительные ссылки на другие
+   * файлы — `onShowcaseLink` с путём от корня и `#якорем`, если он есть.
    */
   assets?: MarkdownAssets
-  onShowcaseLink?(path: string): void
+  onShowcaseLink?: ShowcaseLinkHandler
 }
 
 /**
@@ -162,10 +170,11 @@ export function Markdown({ text, className, variant = 'chat', assets, onShowcase
   const locale = useLocale()
   const assetPath = assets?.path
   const assetBase = assets?.base
+  const assetLinks = assets?.links
   const html = useMemo(() => {
-    const a = assetPath !== undefined ? { path: assetPath, ...(assetBase ? { base: assetBase } : {}) } : undefined
+    const a = assetPath !== undefined ? { path: assetPath, ...(assetBase ? { base: assetBase } : {}), ...(assetLinks ? { links: assetLinks } : {}) } : undefined
     return variant === 'doc' ? renderDocMarkdown(text, a) : renderMarkdown(text, a)
-  }, [text, variant, locale, assetPath, assetBase])
+  }, [text, variant, locale, assetPath, assetBase, assetLinks])
   if (variant === 'doc') {
     return (
       <div
