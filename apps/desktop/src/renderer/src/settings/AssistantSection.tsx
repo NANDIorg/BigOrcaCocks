@@ -1,5 +1,5 @@
 import type React from 'react'
-import { ASSISTANT_START_PROMPT, ASSISTANT_TITLE, type AgentInfo, type AssistantSettings } from '@orca-board/core'
+import { ASSISTANT_START_PROMPT, ASSISTANT_TITLE, type AgentKind, type AgentInfo, type AssistantSettings } from '@orca-board/core'
 import type { AppSettings } from '../../../shared/ipc'
 import { SectionHead } from '../about/parts'
 import { useT } from '../i18n'
@@ -16,9 +16,10 @@ const PERMISSION_MODE = 'auto'
 
 /**
  * Раздел «Настройки → Ассистент»: агент, модель, effort, флаги запуска и инструкции ассистента доски (`AppSettings.assistant`).
- * Поля — те же части, что у роли типа (`RoleParts`). Действуют на следующий диалог, идущий не перезапускается.
+ * Поля — те же части, что у роли типа (`RoleParts`). Обычно действуют на следующий диалог;
+ * отдельный выбор чат-агента для terminal handoff объясняет переход на новый диалог.
  */
-export function AssistantSection({ settings, agents, error, onSave }: {
+export function AssistantSection({ settings, agents, error, onSave, workflowHandoff, onAgentSelected }: {
   settings: AppSettings | null
   /** Агенты реестра; доступны все установленные. */
   agents: AgentInfo[]
@@ -26,6 +27,8 @@ export function AssistantSection({ settings, agents, error, onSave }: {
   error: string | null
   /** Записать настройки ассистента; бросает при сбое — ошибку покажет автосохранение. */
   onSave(assistant: AssistantSettings): Promise<void>
+  workflowHandoff?: boolean
+  onAgentSelected?(agent: AgentKind): void
 }): React.JSX.Element {
   const t = useT()
   const view = assistantView(settings)
@@ -37,16 +40,18 @@ export function AssistantSection({ settings, agents, error, onSave }: {
       ) : view.kind === 'stale' ? (
         <div className="editor-error" role="alert">{t('common.staleApp')}</div>
       ) : (
-        <AssistantEditor initial={view.assistant} agents={agents} onSave={onSave} />
+        <AssistantEditor initial={view.assistant} agents={agents} onSave={onSave} workflowHandoff={workflowHandoff} onAgentSelected={onAgentSelected} />
       )}
     </>
   )
 }
 
-function AssistantEditor({ initial, agents: all, onSave }: {
+function AssistantEditor({ initial, agents: all, onSave, workflowHandoff, onAgentSelected }: {
   initial: AssistantSettings
   agents: AgentInfo[]
   onSave(assistant: AssistantSettings): Promise<void>
+  workflowHandoff?: boolean
+  onAgentSelected?(agent: AgentKind): void
 }): React.JSX.Element {
   const t = useT()
   // Ключ постоянный: черновик берётся при открытии раздела, внешние правки (CLI) видны при следующем открытии —
@@ -65,7 +70,7 @@ function AssistantEditor({ initial, agents: all, onSave }: {
   return (
     <div className="editor roles-editor">
       <section className="roles-panel" aria-label={t('settings.assistant.title')}>
-        <div className="roles-hint">{t('settings.assistant.nextDialog')}</div>
+        <div className="roles-hint">{t(workflowHandoff ? 'settings.assistant.workflowHandoff' : 'settings.assistant.nextDialog')}</div>
         {state !== 'on' && (
           <div className="roles-warn" role="alert">
             {state === 'off'
@@ -78,7 +83,7 @@ function AssistantEditor({ initial, agents: all, onSave }: {
           agents={agents}
           enabled={enabled}
           preview={commandPreview(t, s, 'assistant', ASSISTANT_START_PROMPT, PERMISSION_MODE)}
-          onAgent={(agent) => patch(assistantAgentPatch(agent))}
+          onAgent={(agent) => { onAgentSelected?.(agent); patch(assistantAgentPatch(agent)) }}
           onModel={(model, debounce) => patch(assistantModelPatch(s, model, effortsOf(current, s.agent, model || undefined)), debounce)}
           onEffort={(effort) => patch({ effort })}
           onExtraArgs={(extraArgs, debounce) => patch({ extraArgs }, debounce)}

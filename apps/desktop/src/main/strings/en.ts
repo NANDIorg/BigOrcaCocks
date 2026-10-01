@@ -6,6 +6,7 @@ export default {
   'assistantTransport.windowsLauncher': 'CLI {command} uses an unsupported Windows launcher. Use a native executable or a standard npm shim.',
   'assistantTransport.windowsEntry': 'Windows launcher entry was not found: {entry}',
   'assistantTransport.terminalOnly': 'Agent {agent} runs in a separate terminal; structured chat is not supported.',
+  'assistantTransport.interruptedSend': 'The send was interrupted before agent acceptance. Your context is preserved.',
   'assistantTransport.invalidMessage': 'The message is empty or too long.',
   'assistantTransport.unavailable': 'The transport is unavailable.',
   'assistantTransport.busy': 'Wait for the reply or stop the current request.',
@@ -192,6 +193,10 @@ export default {
   'global.imageFileMissing': 'the file of image {imageId} was not found on disk — remove the image and attach it again',
   'global.imagesEmpty': 'no images to add',
   'global.imagesSaveFailed': 'could not save the task images: {reason}',
+  'global.approvalAmbiguous': {
+    one: '{count} review request of the global task is waiting ({titles}) — resolve it in the Inbox',
+    other: '{count} review requests of the global task are waiting ({titles}) — the card cannot tell which path to decide: resolve each one in the Inbox'
+  },
 
   'column.noneLeft': 'at least one column is required',
   'column.emptyId': 'column #{n}: empty id',
@@ -203,6 +208,9 @@ export default {
 
   'type.label': 'type “{title}”',
   'type.notFound': 'task type not found: {id}',
+  'type.snapshotFailed': 'could not preserve previous run settings from board {file}: {reason}',
+  'type.snapshotBoardShape': 'invalid board structure',
+  'type.snapshotRunShape': 'invalid run structure',
   'type.notFoundHint': 'task type not found: {id} (available: orca-board types list)',
   'type.unavailable': 'type “{title}” is not available in project “{project}” (available: orca-board types list)',
   'type.notObject': 'task type: an object is expected',
@@ -222,8 +230,15 @@ export default {
   'projectTypes.empty': 'project types: at least one available type is required',
   'projectTypes.defaultNotAvailable': 'the default type “{title}” must be among the types available to the project',
 
+  'runApproval.acceptHint': '“Accept” — continue along the workflow (usually the end or a merge), “Return” — with notes: the coordinator gets them and creates follow-up subtasks.',
+  'runApproval.acceptHintLane': 'This node is on the “{lane}” path. “Accept” — the path moves on and reaches the join: the workflow continues once all paths arrive. “Return” — with notes: the coordinator gets them and reworks only this path, the other paths are not affected.',
+  'runApproval.laneTitle': 'Path “{lane}”: {title}',
+
   'workflow.future': 'the workflow is saved in format version {version}, the app only knows {known} — update the app',
   'workflow.notSaved': 'workflow not saved: {errors}',
+  'workflow.contextInvalid': 'The workflow context has an invalid shape. Return to the editor and attach the workflow again.',
+  'workflow.conflict': 'type “{title}” changed since it was read: reload the graph and retry with the new revision',
+  'workflow.selectors': 'use only one of --type and --base-type',
 
   'nodeTemplate.notObject': 'node template: an object is expected',
   'nodeTemplate.emptyId': 'node template: empty id',
@@ -251,11 +266,14 @@ export default {
   'docs.notFound': 'file not found: {path}',
   'docs.notFile': 'not a file: {path}',
   'docs.tooBig': 'the file is larger than {mb} MB: {path}',
+  'docs.notOpenable': 'this file type cannot be opened from the app: {path}',
+  'docs.noPreview': 'no preview for this file: {path}',
   'files.badPath': 'invalid path: {path}',
   'files.outside': 'the path is outside the project: {path}',
   'files.hidden': 'the git service folder is not shown: {path}',
   'files.notFound': 'not found: {path}',
   'files.notDir': 'not a folder: {path}',
+  'files.notFile': 'not a file: {path}',
   'files.rootMissing': 'the project folder is missing on disk: {path}',
   'files.readFailed': 'could not read {path}: {error}',
 

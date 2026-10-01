@@ -160,3 +160,18 @@ test('pathNodeTitles: названия нод пути (у «Работы» бе
   assert.deepEqual(pathNodeTitles(task(), withPath), { start: 'Старт', w: 'Реализация', rev: 'Ревью кода', ok: 'Решение', m: 'Мерж', end: 'Конец' })
   assert.equal(pathNodeTitles(task({ stageOf: undefined }), withPath), undefined)
 })
+
+test('stageHold: внутри разветвления этап ищется среди позиций всех путей; путь, пришедший в слияние, этап не держит', () => {
+  const onGate = task({ stage: { nodeId: 'rev', visits: { rev: 1 } } })
+  // Прогон запаркован на fork, «Реализация» подзадачи — позиция одного из путей.
+  const forked = (arrivedAt?: number) => ({
+    workflowScope: 'run' as const,
+    stage: { nodeId: 'split', visits: { split: 1, [outerId]: 1, other: 1 } },
+    lanes: [
+      { id: 'split:a', forkId: 'split', branchId: 'a', nodeId: 'other' },
+      { id: 'split:b', forkId: 'split', branchId: 'b', nodeId: outerId, ...(arrivedAt !== undefined ? { arrivedAt } : {}) }
+    ]
+  })
+  assert.equal(stageHold(onGate, forked(), withPath, notDone)?.reason, 'review')
+  assert.equal(stageHold(onGate, forked(100), withPath, notDone), null, 'путь уже в слиянии — этапа «сейчас» нет')
+})

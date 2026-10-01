@@ -6,6 +6,7 @@ export default {
   'assistantTransport.windowsLauncher': 'CLI {command} использует неподдерживаемый Windows launcher. Укажите native executable или стандартный npm shim.',
   'assistantTransport.windowsEntry': 'Не найден файл Windows launcher: {entry}',
   'assistantTransport.terminalOnly': 'Агент {agent} работает через отдельный терминал; структурированный чат не поддерживается.',
+  'assistantTransport.interruptedSend': 'Отправка прервана до подтверждения агента. Контекст сохранён.',
   'assistantTransport.invalidMessage': 'Сообщение пустое или слишком длинное.',
   'assistantTransport.unavailable': 'Транспорт недоступен.',
   'assistantTransport.busy': 'Дождитесь ответа или остановите текущий запрос.',
@@ -196,6 +197,11 @@ export default {
   'global.imageFileMissing': 'файл изображения {imageId} не найден на диске — удалите картинку и приложите её заново',
   'global.imagesEmpty': 'нет изображений для добавления',
   'global.imagesSaveFailed': 'не удалось сохранить изображения задачи: {reason}',
+  'global.approvalAmbiguous': {
+    one: 'у глобальной задачи ждёт решения {count} запрос на проверку ({titles}) — реши его в Инбоксе',
+    few: 'у глобальной задачи ждут решения {count} запроса на проверку ({titles}) — с карточки не понять, чей путь решается: реши каждый в Инбоксе',
+    many: 'у глобальной задачи ждут решения {count} запросов на проверку ({titles}) — с карточки не понять, чей путь решается: реши каждый в Инбоксе'
+  },
 
   'column.noneLeft': 'нужна хотя бы одна колонка',
   'column.emptyId': 'колонка №{n}: пустой id',
@@ -207,6 +213,9 @@ export default {
 
   'type.label': 'тип «{title}»',
   'type.notFound': 'тип задачи не найден: {id}',
+  'type.snapshotFailed': 'не удалось сохранить прежние настройки прогонов из доски {file}: {reason}',
+  'type.snapshotBoardShape': 'некорректная форма доски',
+  'type.snapshotRunShape': 'некорректная форма прогона',
   'type.notFoundHint': 'тип задачи не найден: {id} (доступные: orca-board types list)',
   'type.unavailable': 'тип «{title}» недоступен в проекте «{project}» (доступные: orca-board types list)',
   'type.notObject': 'тип задачи: ожидается объект',
@@ -226,8 +235,15 @@ export default {
   'projectTypes.empty': 'типы проекта: нужен хотя бы один доступный тип',
   'projectTypes.defaultNotAvailable': 'тип по умолчанию «{title}» должен быть среди доступных проекту',
 
+  'runApproval.acceptHint': '«Принять» — дальше по воркфлоу (обычно конец или мерж), «Вернуть» — с замечаниями: координатор получит их и создаст подзадачи доработки.',
+  'runApproval.acceptHintLane': 'Это нода пути «{lane}». «Принять» — путь идёт дальше и приходит в слияние: воркфлоу продолжится, когда придут все пути. «Вернуть» — с замечаниями: координатор получит их и доработает только этот путь, соседние пути не затронуты.',
+  'runApproval.laneTitle': 'Путь «{lane}»: {title}',
+
   'workflow.future': 'воркфлоу сохранён в формате версии {version}, приложение знает только {known} — обновите приложение',
   'workflow.notSaved': 'воркфлоу не сохранён: {errors}',
+  'workflow.contextInvalid': 'Контекст воркфлоу имеет неверную форму. Вернитесь в редактор и передайте граф снова.',
+  'workflow.conflict': 'тип «{title}» изменён после чтения: перечитайте граф и повторите правку с новой ревизией',
+  'workflow.selectors': 'укажите только один из --type и --base-type',
 
   'nodeTemplate.notObject': 'шаблон нод: ожидается объект',
   'nodeTemplate.emptyId': 'шаблон нод: пустой id',
@@ -255,11 +271,14 @@ export default {
   'docs.notFound': 'файл не найден: {path}',
   'docs.notFile': 'не файл: {path}',
   'docs.tooBig': 'файл больше {mb} МБ: {path}',
+  'docs.notOpenable': 'такой файл нельзя открыть из приложения: {path}',
+  'docs.noPreview': 'у файла нет превью: {path}',
   'files.badPath': 'недопустимый путь: {path}',
   'files.outside': 'путь вне проекта: {path}',
   'files.hidden': 'служебная папка git не показывается: {path}',
   'files.notFound': 'не найдено: {path}',
   'files.notDir': 'не папка: {path}',
+  'files.notFile': 'не файл: {path}',
   'files.rootMissing': 'папки проекта нет на диске: {path}',
   'files.readFailed': 'не удалось прочитать {path}: {error}',
 

@@ -1,20 +1,60 @@
 import { wfPorts, type GlobalTask, type StageChange, type Task, type WfEdge, type WfNode, type WfNodeType, type WfPort, type WfSubflow, type Workflow } from '@orca-board/core'
 import { autoLayout } from './workflowGeometry'
 import { pathGraph, pathNodeName, pathOwner } from './subtaskPath'
+import { runStagePositions } from './runStage'
 
 // Прогресс графа воркфлоу на вкладке «Граф» глобальной задачи (docs/workflow.md → «Renderer»): какие ноды и переходы
 // пройдены, где граф стоит сейчас, заходы в ноду с причинами возвратов и где подзадачи этапа в своём пути. Чистые функции
 // без React: только то, что уже есть в снимке (`stage`, `stageHistory`, `returns`, `Task.stageOf` / `gateFor`). Всё
-// необязательно — старый main этих полей не отдаёт, тогда граф просто весь «впереди».
+// необязательно — старый main этих полей не отдаёт, тогда граф просто весь «впереди». Внутри разветвления (`lanes`) граф
+// стоит сразу на нескольких нодах, записи истории разных путей перемешаны по времени — последовательность внутри пути
+// восстанавливается по `StageChange.lane`.
 
-/** Состояние ноды на графе: пройдена, стоит сейчас, впереди. */
-export type ProgressNodeState = 'done' | 'current' | 'todo'
+/**
+ * Запись прихода пути в слияние (`StageChange.arrived`): отметка «путь пришёл и ждёт», а не заход в `join` — заход у
+ * слияния один на поколение путей. Запись пути на ноде `join` без флага (снимок до поля, если миграция main не прошла) —
+ * тоже приход: других записей пути на `join` не бывает.
+ */
+export function isArrival(h: Pick<StageChange, 'arrived' | 'lane' | 'nodeId'>, graph?: Pick<WfSubflow, 'nodes'>): boolean {
+  if (h.arrived === true) return true
+  return h.lane !== undefined && graph?.nodes.find((n) => n.id === h.nodeId)?.type === 'join'
+}
+
+/** Слияние путей в истории (`joinMerges`). */
+export interface JoinMerge {
+  joinId: string
+  /** Индекс записи основного хода, вышедшей из слияния: своей записи у слияния нет. */
+  index: number
+  /** Номер слияния (заход в `join`): `visit` записей прихода, у записей до поля — порядковый у этой ноды. */
+  visit: number
+}
+
+/**
+ * Слияния по истории. Пока пути идут, основной ход стоит на `fork` и записей без `lane` не пишет; первая запись без
+ * `lane` после приходов путей — выход из слияния (`from: join`; у записей без `from` — тоже он).
+ */
+export function joinMerges(history: readonly StageChange[], graph?: Pick<WfSubflow, 'nodes'>): JoinMerge[] {
+  const out: JoinMerge[] = []
+  let pending: StageChange | undefined
+  history.forEach((h, index) => {
+    if (isArrival(h, graph)) pending = h
+    else if (h.lane === undefined && pending) {
+      const joinId = pending.nodeId
+      out.push({ joinId, index, visit: pending.visit ?? out.filter((m) => m.joinId === joinId).length + 1 })
+      pending = undefined
+    }
+  })
+  return out
+}
+
+/** Состояние ноды на графе: пройдена, стоит сейчас, слияние ждёт остальные пути, впереди. */
+export type ProgressNodeState = 'done' | 'current' | 'waiting' | 'todo'
 
 /** Граф для обхода: граф прогона или путь подзадачи — у обоих одинаковые ноды и рёбра. */
 type Graph = Pick<WfSubflow, 'nodes' | 'edges'>
 
 /** Запись истории, по которой восстанавливается пройденный путь. */
-type Entry = Pick<StageChange, 'nodeId' | 'from' | 'outcome'>
+type Entry = Pick<StageChange, 'nodeId' | 'from' | 'outcome' | 'lane'>
 
 /** Ноды, на которых задача не стоит: в истории их нет, но через них граф проходит. */
 const PASS_THROUGH: readonly WfNodeType[] = ['start', 'condition']
@@ -60,16 +100,20 @@ export interface Walk {
 }
 
 /**
- * Обход истории по графу. Источник записи — `from`, иначе прошлая запись, иначе старт графа: первая запись приходит
- * из старта без `from`.
+ * Обход истории по графу. Источник записи — `from`, иначе прошлая запись того же пути (`lane`; у основного хода — прошлая
+ * основная), иначе старт графа: первая запись приходит из старта без `from`. Записи путей перемешаны по времени, поэтому
+ * «прошлая запись» считается по пути: первая запись пути без `from` идёт от ноды, где стоял основной ход (`fork`), а
+ * путь, пришедший в `join`, становится источником основного хода после слияния.
  */
 export function walkHistory(graph: Graph, history: readonly Entry[]): Walk {
   const edges: Record<string, number> = {}
   const entered = new Set<string>()
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
   const start = graph.nodes.find((n) => n.type === 'start')?.id
-  let prev: string | undefined
+  let trunk: string | undefined
+  let lanes = new Map<string, string>()
   for (const h of history) {
+    const prev = h.lane !== undefined ? lanes.get(h.lane) ?? trunk : trunk
     const source = h.from ?? prev ?? start
     if (source !== undefined && source !== h.nodeId) {
       for (const id of entryEdges(graph, source, h)) {
@@ -79,7 +123,14 @@ export function walkHistory(graph: Graph, history: readonly Entry[]): Walk {
       }
     }
     if (byId.has(h.nodeId)) entered.add(h.nodeId)
-    prev = h.nodeId
+    if (h.lane === undefined) {
+      // Основной ход: новое разветвление начинает пути заново.
+      trunk = h.nodeId
+      lanes = new Map()
+    } else {
+      lanes.set(h.lane, h.nodeId)
+      if (byId.get(h.nodeId)?.type === 'join') trunk = h.nodeId
+    }
   }
   return { edges, entered }
 }
@@ -91,14 +142,40 @@ export interface ProgressNode {
   visits: number
 }
 
+/** Нода, на которой граф стоит сейчас (без путей — одна, внутри разветвления — по одной на путь). */
+export interface ProgressCurrent {
+  nodeId: string
+  /** Заход в ноду. */
+  visit: number
+  /** Сюда вернули (reject, перезапуск этапа) — плашка «сейчас» красная. */
+  returned: boolean
+  /** Путь разветвления (`GlobalTaskLane.id`); нет — основной ход. */
+  lane?: string
+}
+
+/** Путь разветвления на графе: где стоит и пришёл ли в слияние. */
+export interface ProgressLane {
+  id: string
+  forkId: string
+  nodeId: string
+  arrived: boolean
+}
+
 /** Прогресс графа глобальной задачи. */
 export interface RunProgress {
-  /** Где граф стоит сейчас; нет — не начат или пройден (стоит на конце, задача закрыта). */
+  /**
+   * Где граф стоит сейчас — первая из `currents` (прежнее поле: одна текущая нода); нет — не начат, пройден (стоит на
+   * конце, задача закрыта) или все пути разветвления уже в слиянии.
+   */
   current?: string
-  /** Заход в текущую ноду. */
+  /** Заход в `current`. */
   currentVisit: number
-  /** В текущую ноду вернули (reject, перезапуск этапа) — плашка «сейчас» красная. */
+  /** В `current` вернули (reject, перезапуск этапа) — плашка «сейчас» красная. */
   returned: boolean
+  /** Все ноды «сейчас»: без путей — одна (`current`), внутри разветвления — по одной на путь, ещё не пришедший в слияние. */
+  currents: ProgressCurrent[]
+  /** Пути разветвления, пока граф внутри него (`GlobalTask.lanes`); без путей — пусто. */
+  lanes: ProgressLane[]
   /** Граф пройден или задача закрыта. */
   closed: boolean
   nodes: Record<string, ProgressNode>
@@ -106,44 +183,69 @@ export interface RunProgress {
   edges: Record<string, number>
 }
 
-type RunSource = Partial<Pick<GlobalTask, 'stage' | 'stageHistory' | 'closedAt'>>
+type RunSource = Partial<Pick<GlobalTask, 'stage' | 'stageHistory' | 'closedAt' | 'lanes'>>
 
 /**
- * Прогресс графа прогона: пройденные ноды и рёбра по `stageHistory`, текущая нода — `stage.nodeId`. На конце графа или у
- * закрытой задачи текущей ноды нет — всё пройденное просто пройдено.
+ * Прогресс графа прогона: пройденные ноды и рёбра по `stageHistory`, текущая нода — `stage.nodeId`, а внутри разветвления
+ * — нода каждого пути (`lanes`); путь, пришедший в `join`, делает слияние «ждёт остальные». На конце графа или у закрытой
+ * задачи текущей ноды нет — всё пройденное просто пройдено.
  */
 export function runProgress(g: RunSource, workflow: Pick<Workflow, 'nodes' | 'edges'>): RunProgress {
   const history = g.stageHistory ?? []
   const walk = walkHistory(workflow, history)
-  const stageId = g.stage?.nodeId
-  const stageNode = workflow.nodes.find((n) => n.id === stageId)
+  const has = (id: string): boolean => workflow.nodes.some((n) => n.id === id)
+  const stageNode = workflow.nodes.find((n) => n.id === g.stage?.nodeId)
+  const positions = runStagePositions(g).filter((p) => has(p.nodeId))
   if (stageNode) walk.entered.add(stageNode.id)
+  for (const p of positions) walk.entered.add(p.nodeId)
   const closed = g.closedAt !== undefined || stageNode?.type === 'end'
-  const current = !closed && stageNode ? stageNode.id : undefined
+  const lanes: ProgressLane[] = (g.lanes ?? []).map((l) => ({ id: l.id, forkId: l.forkId, nodeId: l.nodeId, arrived: l.arrivedAt !== undefined }))
+  const active = closed ? [] : positions.filter((p) => !p.arrived)
+  const waiting = new Set(closed ? [] : positions.filter((p) => p.arrived).map((p) => p.nodeId))
+  const currentIds = new Set(active.map((p) => p.nodeId))
+  // Заходы по истории (нет `stage.visits`): приход пути в слияние — не заход; заход в `join` — само слияние (`joinMerges`).
   const counted: Record<string, number> = {}
-  for (const h of history) counted[h.nodeId] = (counted[h.nodeId] ?? 0) + 1
+  for (const h of history) if (!isArrival(h, workflow)) counted[h.nodeId] = (counted[h.nodeId] ?? 0) + 1
+  for (const m of joinMerges(history, workflow)) counted[m.joinId] = (counted[m.joinId] ?? 0) + 1
   const nodes: Record<string, ProgressNode> = {}
   for (const n of workflow.nodes) {
     // Условие в истории не пишется: сколько раз через него прошли — по пройденным рёбрам из него.
     const passed = n.type === 'condition' ? passExits(workflow, walk.edges, n.id).reduce((sum, x) => sum + x.count, 0) : 0
     const visits = g.stage?.visits?.[n.id] ?? counted[n.id] ?? passed
-    const state: ProgressNodeState = n.id === current ? 'current' : walk.entered.has(n.id) ? 'done' : 'todo'
+    const state: ProgressNodeState = currentIds.has(n.id) ? 'current' : waiting.has(n.id) ? 'waiting' : walk.entered.has(n.id) ? 'done' : 'todo'
     nodes[n.id] = { state, visits: state === 'todo' ? 0 : Math.max(visits, n.type === 'start' ? 0 : 1) }
   }
-  const lastHere = current !== undefined ? [...history].reverse().find((h) => h.nodeId === current) : undefined
+  const currents = active.map((p): ProgressCurrent => {
+    // Ноды разных путей не пересекаются: последняя запись этой ноды — вход именно этого пути.
+    const lastHere = [...history].reverse().find((h) => h.nodeId === p.nodeId)
+    return {
+      nodeId: p.nodeId,
+      visit: Math.max(1, nodes[p.nodeId]?.visits ?? 1),
+      returned: lastHere?.outcome !== undefined && RETURN_OUTCOMES.includes(lastHere.outcome),
+      ...(p.lane !== undefined ? { lane: p.lane } : {})
+    }
+  })
+  const [first] = currents
   return {
-    ...(current !== undefined ? { current } : {}),
-    currentVisit: current !== undefined ? Math.max(1, nodes[current]?.visits ?? 1) : 0,
-    returned: lastHere?.outcome !== undefined && RETURN_OUTCOMES.includes(lastHere.outcome),
+    ...(first ? { current: first.nodeId } : {}),
+    currentVisit: first?.visit ?? 0,
+    returned: first?.returned ?? false,
+    currents,
+    lanes: closed ? [] : lanes,
     closed,
     nodes,
     edges: walk.edges
   }
 }
 
-/** Нода, которую панель показывает по умолчанию: текущая, иначе последняя, куда заходили, иначе старт. */
+/**
+ * Нода, которую панель показывает по умолчанию: текущая (первая из путей), иначе слияние, где ждут пути, иначе последняя,
+ * куда заходили, иначе старт.
+ */
 export function defaultProgressNode(p: RunProgress, g: RunSource, workflow: Pick<Workflow, 'nodes'>): string | undefined {
   if (p.current) return p.current
+  const waiting = p.lanes.find((l) => l.arrived)?.nodeId
+  if (waiting) return waiting
   const last = g.stageHistory?.at(-1)?.nodeId
   if (last && workflow.nodes.some((n) => n.id === last)) return last
   return workflow.nodes.find((n) => n.type === 'start')?.id ?? workflow.nodes[0]?.id
@@ -178,14 +280,36 @@ export interface NodeVisit {
   decision?: string
   /** Это текущий заход: граф стоит здесь. */
   current: boolean
+  /** Путь разветвления, в котором был заход (`StageChange.lane`); нет — основной ход. */
+  lane?: string
+  /**
+   * Только у слияния (`join`): заход — одно слияние, а это приходы путей в него, по времени. `at` захода — приход первого
+   * пути, `till` — само слияние (выход основного хода из `join`); пока пришли не все — «ждёт», `till` нет.
+   */
+  arrivals?: LaneArrival[]
+}
+
+/** Путь пришёл в слияние (запись `arrived`). */
+export interface LaneArrival {
+  index: number
+  /** Путь (`StageChange.lane`); нет — у старой записи без поля. */
+  lane?: string
+  at: number
+  /** Откуда пришёл: последняя нода пути. */
+  from?: string
 }
 
 type VisitSource = RunSource & Partial<Pick<GlobalTask, 'returns'>>
 
-/** Уточнение из `returns`, записанное вместе с переходом в момент `at`; ближайшее в пределах `RETURN_MATCH_MS`. */
-export function returnReason(returns: GlobalTask['returns'], at: number): string | undefined {
+/**
+ * Уточнение из `returns`, записанное вместе с переходом в момент `at`; ближайшее в пределах `RETURN_MATCH_MS`. `nodeId` —
+ * нода, с которой вернули: два пути разветвления могут вернуться почти одновременно, и уточнение с другой нодой
+ * (`returns[].nodeId`) не подходит. Уточнение без ноды (старый main, возврат без ноды) сопоставляется по времени.
+ */
+export function returnReason(returns: GlobalTask['returns'], at: number, nodeId?: string): string | undefined {
   let best: { text: string; d: number } | undefined
   for (const r of returns ?? []) {
+    if (nodeId !== undefined && r.nodeId !== undefined && r.nodeId !== nodeId) continue
     const d = Math.abs(r.at - at)
     if (d <= RETURN_MATCH_MS && r.text.trim() && (!best || d < best.d)) best = { text: r.text.trim(), d }
   }
@@ -193,23 +317,49 @@ export function returnReason(returns: GlobalTask['returns'], at: number): string
 }
 
 /**
- * Заходы в ноду по `stageHistory`, от старых к новым: когда пришли и ушли, откуда и с каким исходом, почему вернули.
- * Номер захода — `StageChange.visit`, у записей до поля — порядковый.
+ * Следующая запись после `index` в том же ходе графа: записи путей разветвления перемешаны по времени. У основного хода —
+ * следующая основная или первая запись, пришедшая прямо отсюда (вход пути из `fork`); у пути — следующая запись пути или
+ * основной ход, вышедший отсюда (из `join` после слияния). Без путей — просто следующая запись.
  */
-export function nodeVisits(g: VisitSource, nodeId: string, current?: string): NodeVisit[] {
+function nextInLane(history: readonly StageChange[], index: number): StageChange | undefined {
+  const h = history[index]
+  for (let i = index + 1; i < history.length; i++) {
+    const r = history[i]
+    if (r.lane === h.lane || r.from === h.nodeId) return r
+  }
+  return undefined
+}
+
+/** Прошлая запись того же хода графа: того же пути, иначе основного хода. */
+function prevInLane(history: readonly StageChange[], index: number): StageChange | undefined {
+  const lane = history[index].lane
+  for (const own of lane !== undefined ? [true, false] : [true]) {
+    for (let i = index - 1; i >= 0; i--) if (own ? history[i].lane === lane : history[i].lane === undefined) return history[i]
+  }
+  return undefined
+}
+
+/**
+ * Заходы в ноду по `stageHistory`, от старых к новым: когда пришли и ушли, откуда и с каким исходом, почему вернули.
+ * Номер захода — `StageChange.visit`, у записей до поля — порядковый. `current` — нода «сейчас» или все ноды «сейчас»
+ * (`RunProgress.currents`): у разветвления их несколько. «Ушли» считается внутри своего пути (`nextInLane`). У слияния —
+ * заход на слияние, приходы путей внутри него (`joinVisits`); `graph` узнаёт приход у записи без флага `arrived`.
+ */
+export function nodeVisits(g: VisitSource, nodeId: string, current?: string | readonly string[], graph?: Pick<WfSubflow, 'nodes'>): NodeVisit[] {
   const history = g.stageHistory ?? []
+  if (history.some((h) => h.nodeId === nodeId && isArrival(h, graph))) return joinVisits(g, nodeId, graph)
   const out: NodeVisit[] = []
   const closedAt = g.closedAt
+  const isCurrent = current === undefined ? false : typeof current === 'string' ? current === nodeId : current.includes(nodeId)
   let ordinal = 0
   history.forEach((h, index) => {
     if (h.nodeId !== nodeId) return
     ordinal++
-    const next = history[index + 1]
-    const prev = index > 0 ? history[index - 1] : undefined
-    const from = h.from ?? prev?.nodeId
+    const next = nextInLane(history, index)
+    const from = h.from ?? prevInLane(history, index)?.nodeId
     const returned = h.outcome !== undefined && RETURN_OUTCOMES.includes(h.outcome)
-    const reason = returned ? returnReason(g.returns, h.at) : undefined
-    const leftReason = next?.outcome !== undefined && RETURN_OUTCOMES.includes(next.outcome) ? returnReason(g.returns, next.at) : undefined
+    const reason = returned ? returnReason(g.returns, h.at, from) : undefined
+    const leftReason = next?.outcome !== undefined && RETURN_OUTCOMES.includes(next.outcome) ? returnReason(g.returns, next.at, nodeId) : undefined
     const decision = h.decision && typeof h.decision === 'object' ? h.decision.label || h.decision.optionId : undefined
     // Прогон закрыли посреди графа: `stage` остался, но граф здесь больше не стоит — правая граница захода — закрытие.
     const closed = !next && closedAt !== undefined
@@ -227,9 +377,47 @@ export function nodeVisits(g: VisitSource, nodeId: string, current?: string): No
       ...(leftReason ? { leftReason } : {}),
       ...(h.summary?.trim() ? { summary: h.summary.trim() } : {}),
       ...(decision ? { decision } : {}),
-      current: !next && !closed && current === nodeId
+      current: !next && !closed && isCurrent,
+      ...(h.lane !== undefined ? { lane: h.lane } : {})
     })
   })
+  return out
+}
+
+/**
+ * Заходы в слияние: по одному на слияние поколения путей, а не на приход каждого пути (приходы — `arrivals`). Номер —
+ * `visit` записей прихода (номер слияния, которого ждут пути; у одного поколения общий), у записей до поля — порядковый.
+ * Слияние закрывает выход основного хода из `join` (`joinMerges`). Незакрытое — «ждёт» (`current`), пока прогон не закрыт.
+ */
+function joinVisits(g: VisitSource, nodeId: string, graph?: Pick<WfSubflow, 'nodes'>): NodeVisit[] {
+  const history = g.stageHistory ?? []
+  const merged = new Map(joinMerges(history, graph).filter((m) => m.joinId === nodeId).map((m) => [m.index, m]))
+  const out: NodeVisit[] = []
+  let open: NodeVisit | undefined
+  history.forEach((h, index) => {
+    if (h.nodeId === nodeId && isArrival(h, graph)) {
+      const from = h.from ?? prevInLane(history, index)?.nodeId
+      if (!open) {
+        open = { index, visit: h.visit ?? out.length + 1, at: h.at, closed: false, returned: false, current: false, arrivals: [] }
+        out.push(open)
+      }
+      open.arrivals?.push({ index, at: h.at, ...(h.lane !== undefined ? { lane: h.lane } : {}), ...(from !== undefined ? { from } : {}) })
+      return
+    }
+    if (open && merged.has(index)) {
+      open.till = h.at
+      open.to = h.nodeId
+      if (h.outcome !== undefined) open.leftWith = h.outcome
+      open = undefined
+    }
+  })
+  const last = out.at(-1)
+  if (last && last.till === undefined) {
+    if (g.closedAt !== undefined) {
+      last.closed = true
+      if (g.closedAt >= last.at) last.till = g.closedAt
+    } else last.current = true
+  }
   return out
 }
 

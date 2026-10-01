@@ -1,4 +1,4 @@
-import { type AgentSession, type BoardColumn, type ColumnKind } from '@orca-board/core'
+import { type AgentSession, type BoardColumn, type ColumnKind, type GlobalTask } from '@orca-board/core'
 import { formatDuration } from './duration'
 import { globalTaskActions } from './globalReview'
 import { t } from './i18n'
@@ -205,21 +205,26 @@ export interface HeaderActions {
   returnToWork: boolean
   /** Запуск координатора без акцента: «Сделано» — решать нечего, но запуск и раньше был доступен. */
   quietStart: boolean
+  /** Решения ждут несколько approval путей разветвления — вместо кнопок подсказка про «Входящие» (`GlobalTaskActions`). */
+  approvalsInInbox?: number
 }
 
 /**
  * Что показать в шапке. «Проверка» — «Подтвердить» + «Вернуть в работу…». «Нужен ответ» — «Ответить · N», N берётся
  * из ленты «Ждут вас» (`attentionCount`), а нет её — из `GlobalTask.waiting`; нечего отвечать (запрос успели
  * закрыть) — как обычное состояние. Координатор не запущен — «Запустить координатора»; живой координатор работает сам,
- * поэтому кнопки нет — он в пилюле меты. Условия «можно ли» — `globalTaskActions`, чтобы шапка и доска не расходились.
+ * поэтому кнопки нет — он в пилюле меты. Условия «можно ли» — `globalTaskActions`, чтобы шапка и доска не расходились;
+ * `approvals` — сколько approval прогона ждут решения (несколько — у параллельных путей, кнопок решения тогда нет).
  */
 export function headerActions(
-  g: { inbox?: boolean; waiting?: number },
+  g: { inbox?: boolean; waiting?: number; workflowScope?: GlobalTask['workflowScope'] },
   kind: ColumnKind | undefined,
   live: boolean,
-  attentionCount?: number
+  attentionCount?: number,
+  approvals = 0
 ): HeaderActions {
-  const actions = globalTaskActions(g, kind, live)
+  const actions = globalTaskActions(g, kind, live, approvals)
+  if (actions.approvalsInInbox !== undefined) return { returnToWork: false, quietStart: false, approvalsInInbox: actions.approvalsInInbox }
   if (actions.accept) return { primary: { kind: 'accept', label: t('global.action.accept') }, returnToWork: actions.returnToWork, quietStart: false }
   const waiting = attentionCount ?? g.waiting ?? 0
   if (!g.inbox && kind === 'needs_input' && waiting > 0) {

@@ -40,7 +40,7 @@ interface Props {
   roles: Role[]
   /** Граф глобальной задачи и её позиция на нём — для блока «Путь подзадачи»; нет (старый main, локальная доска) — блока нет. */
   workflow?: Workflow
-  stageRun?: Partial<Pick<GlobalTask, 'stage' | 'workflowScope'>>
+  stageRun?: Partial<Pick<GlobalTask, 'stage' | 'workflowScope' | 'lanes'>>
   /** Агенты — для подписи модели роли; без них показывается сырой id модели. */
   agents?: AgentInfo[]
   dispatches: Dispatch[]

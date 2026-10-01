@@ -75,6 +75,8 @@ const api: OrcaApi = {
     onFocus: (cb) => on('projects:focus', cb)
   },
   taskTypes: {
+    patch: (id, patch) => ipcRenderer.invoke('taskTypes:patch', id, patch),
+    rename: (id, title, description) => ipcRenderer.invoke('taskTypes:rename', id, title, description),
     list: () => ipcRenderer.invoke('taskTypes:list'),
     save: (input) => ipcRenderer.invoke('taskTypes:save', input),
     delete: (id) => ipcRenderer.invoke('taskTypes:delete', id),
@@ -154,7 +156,12 @@ const api: OrcaApi = {
     open: (cols, rows) => ipcRenderer.invoke('assistant:open', cols, rows),
     reset: (cols, rows) => ipcRenderer.invoke('assistant:reset', cols, rows)
   },
+  workflowAssistant: {
+    save: (id, baseline, workflow) => ipcRenderer.invoke('workflowAssistant:save', id, baseline, workflow),
+    onSaved: (cb) => on('workflowAssistant:saved', cb)
+  },
   assistantChat: {
+    sendWithWorkflow: (id, text, context) => ipcRenderer.invoke('assistantChat:sendWithWorkflow', id, text, context),
     available: (ptyId) => ipcRenderer.invoke('assistantChat:available', ptyId),
     getMessages: (ptyId) => ipcRenderer.invoke('assistantChat:getMessages', ptyId),
     send: (ptyId, text) => ipcRenderer.invoke('assistantChat:send', ptyId, text),
@@ -165,6 +172,9 @@ const api: OrcaApi = {
   docs: {
     list: () => ipcRenderer.invoke('docs:list'),
     read: (source, path) => ipcRenderer.invoke('docs:read', source, path),
+    view: (source, path, opts) => ipcRenderer.invoke('docs:view', source, path, opts),
+    bytes: (source, path) => ipcRenderer.invoke('docs:bytes', source, path),
+    previewUrl: (source, path) => ipcRenderer.invoke('docs:previewUrl', source, path),
     open: (source, path) => ipcRenderer.invoke('docs:open', source, path),
     reveal: (source, path) => ipcRenderer.invoke('docs:reveal', source, path)
   },

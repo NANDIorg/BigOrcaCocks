@@ -375,6 +375,16 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 раздел «Ревью и мерж» и `docs/workflow.md`). Модуль без node-импортов: его импортирует renderer ради живой
 валидации в редакторе.
 
+Создание графа через ассистента — `packages/core/src/workflow-assistant.ts`: `workflowSchema()`,
+`parseWorkflowDefinition(value, allowMissingCoordinates)` и `prepareWorkflow(definition, context)`.
+Схема содержит реальные поля/порты/ограничения, безопасные стандартные роли и исполнимый пример.
+Parser проверяет неизвестный JSON рекурсивно до миграции и семантической валидации; `invalidDefinition`
+содержит message/path и при наличии nodeId/edgeId. `WorkflowPreparation {workflow?,errors,warnings}`
+не содержит workflow при ошибке формы, но содержит граф при семантической ошибке.
+Без errors пропуски координат заполняются общим `autoLayout` из `workflow-layout.ts`; заданные позиции
+и id сохраняются. `renderer/workflowGeometry.ts` сохраняет совместимые экспорты раскладки.
+Подробный публичный контракт — «Протокол сокета» ниже и [workflow.md](workflow.md#создание-и-правка-графа-через-ассистента).
+
 - **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 2` (`WORKFLOW_VERSION_TASK_SCOPE = 1` — граф по подзадачам). Ноды (`WfNode`): `start`, `work`
   (в версии 2 `roleIds?` — необязательные роли этапа, читать через `wfWorkRoleIds` (одиночный `roleId` версии 1 — список из одной роли); в версии 1 без роли — роль задачи;
   `subflow?: WfSubflow {nodes, edges}` — путь каждой подзадачи этапа, только в версии 2, без версии; нет — `defaultSubflow()`: `work → merge → end`, конфликт — `human` «Конфликт мержа»), `ask` («Вопрос человеку»: `roleId?`, `instructions` — обязательны; агент спрашивает
@@ -385,11 +395,14 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   `operation` — `create_branch` / `checkout` / `commit` / `push`, поля `branch`, `base`, `message`, `remote`; исходы `ok` / `error`;
   контракт — `docs/workflow.md`, «Нода Git»), `decision` («Решение ИИ»: `question`, `roleId`, `options: WfDecisionOption[]` (2–8, `{id, label,
   description?}`, id по маске `WF_DECISION_OPTION_ID`, неизменяемый), `instructions?`; агент задачи-решателя выбирает вариант, исход — id
-  варианта; только в графе глобальной задачи; контракт — `docs/workflow.md`, «Нода «Решение ИИ»»), `end` (`merged`). У каждой ноды
+  варианта; только в графе глобальной задачи; контракт — `docs/workflow.md`, «Нода «Решение ИИ»»), `fork` («Разветвление»: `branches:
+  WfForkBranch[]` — 2–4 пути `{id, label}`, id по той же маске, порты — id путей; граф идёт по всем путям параллельно) и `join` («Слияние»:
+  `forkId` — парный `fork`, порт `next`; ждёт все пути) — только в графе глобальной задачи, контракт — `docs/workflow.md`, «Разветвление»;
+  `end` (`merged`). У каждой ноды
   опциональные `title`, `column` и `templateId` (из какого шаблона нод вставлена копия; исполнитель не читает). Ребро `WfEdge { from, outcome, to }`,
-  `outcome: WfPort` (`string`: фиксированный `WfOutcome` или id варианта `decision`). Порты ноды — **только** `wfPorts(node)`: у `decision` — id
-  вариантов, у остальных — `WF_PORTS[type]` (work/ask: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, git: ok/error,
-  end — без выходов; `decision: []` — ключ нужен только как признак известного типа).
+  `outcome: WfPort` (`string`: фиксированный `WfOutcome`, id варианта `decision` или id пути `fork`). Порты ноды — **только** `wfPorts(node)`: у `decision` — id
+  вариантов, у `fork` — id путей, у остальных — `WF_PORTS[type]` (work/ask/join: next, gate/human: accept/reject, condition: yes/no, merge: ok/conflict, git: ok/error,
+  end — без выходов; `decision: []` и `fork: []` — ключи нужны только как признак известного типа).
 - **`defaultWorkflow(roles)`**: `start → «Реализация» (work, без роли: координатор сам выбирает роли подзадач) → [ревью gate `reviewer`, если роль есть] →
   «Проверка человеком» (human `check`) → end`, reject любой проверки — в «Реализацию». Слияния в базовую ветку нет. Лимита повторов
   нет (валидация предупреждает о бесконечном цикле). Прежний граф по подзадачам — `legacyDefaultWorkflow(roles)` (версия 1:
@@ -430,7 +443,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   недостижима ни одна `work`. Предупреждения: агент роли гейта выключен (только если передан `enabledAgents`),
   нода недостижима, возврат в `work` в обход `attempts` и `human` (решение человека цикл не делает бесконечным), путь от старта к `end`
   без ноды `human` (`noHumanBeforeEnd`), после `merge ok` путь снова приходит в `merge`. У `decision` — свои коды `decision*` и
-  `subflowDecisionNotAllowed` (таблица — `docs/workflow.md`, «Нода «Решение ИИ»»); порты вариантов проверяет общий шаг по `wfPorts`.
+  `subflowDecisionNotAllowed` (таблица — `docs/workflow.md`, «Нода «Решение ИИ»»); порты вариантов проверяет общий шаг по `wfPorts`. У `fork`/`join` —
+  коды `fork*`, `joinNoFork`, `joinEnteredOutside`, `subflowForkNotAllowed`, `templateNodeFork`: список путей и «скобки» по областям путей
+  (`laneRegions`) — таблица в `docs/workflow.md`, «Разветвление».
 - **`nextStage(wf, stage, outcome, ctx)` → `{stage, action}`** — чистая функция перехода. `stage =
   {nodeId, visits}`, `visits` считает заходы в ноды (включая условия) и нужен `attempts`. Цепочка `condition`
   проходится за один вызов; повторный заход в то же условие за вызов → `blocked` (граф мог сохранить старый
@@ -441,14 +456,20 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   после исправления причины `blocked`). Для глобальной задачи те же функции в контексте `scope: 'run'` — `startRunStage`, `nextRunStage`,
   `runStageAction`: `work` даёт `start_stage {nodeId, roleIds}` (пусто = любые рабочие роли типа; заданной, но удалённой роли — `blocked`), `ask` — `create_ask {nodeId, roleId}`,
   `decision` — `create_decision {nodeId, roleId}` (нода — реальная позиция, насквозь не проходится; вне `scope: 'run'` — `blocked`), `condition: role` — `blocked`;
-  `ctx.roleId` необязателен.
+  цель-`fork` — позиция на `fork` и `fork {nodeId, branches: WfBranchStep[]}` (первый шаг каждого пути `{laneId, branchId, stage, action}`, условия
+  насквозь, счётчики `visits` путей общие), цель-`join` — позиция на `join` и `join {nodeId, forkId}` (путь ждёт, барьер — в store); вне `scope: 'run'`
+  обе — `blocked`. `ctx.roleId` необязателен. Для графа без `fork`/`join` результат побайтно прежний (тест в `workflow.test.ts`).
+- **Пути разветвления** (`run-lanes.ts`, без node-импортов и без значений из `workflow.ts`, чтобы импорт не был циклическим): `laneId(forkId, branchId)`
+  (`<fork>:<branch>`), `forkBranchIds`/`forkBranches`, `laneRegions(wf, forkId)` → `{forkId, joinId?, joins, lanes: [{laneId, branchId, entry?, nodes,
+  leaked}]}` — области путей для валидации, store и редактора, `nodeLane(wf, nodeId)` — путь ноды; позиции прогона — `runPositions(run)` (граф не начат —
+  пусто, без путей — одна основная, внутри разветвления — по позиции на путь) и `runPositionAt(run, nodeId?)`.
 - **`gateTaskSpec(task, node)` / `gateTaskTitle`** — общий шаблон задачи-гейта: ветка, `review info`,
   проверка через `git merge --no-commit`/`--abort`, `review accept` / `review reject`, обязательный `done`,
   спека рабочей задачи как критерии. Команды сборки и тестов конкретного репозитория в шаблон не входят —
   они берутся из `node.instructions` (раздел «Как проверять») или системного промпта роли.
 - **`describeWorkflow(wf)` → `WfStageInfo[]`** — граф для `orca-board workflow show`: этапы в порядке обхода от
   старта (недостижимые — в конце) с `type`, `title`, `roleId?` (gate/ask/decision), `roleIds?` (work), `instructions?`, `condition?` (условие словами), `git?`,
-  `question?` и `options?` (decision) и `next` — исход (у `decision` — id варианта) → «название (id)» ноды.
+  `question?` и `options?` (decision), `branches?` (fork), `forkId?` (join) и `next` — исход (у `decision` — id варианта, у `fork` — id пути) → «название (id)» ноды.
 - **`runDecisionTaskSpec(ctx)` / `runDecisionTaskTitle`** (`prompts.ts`) — спека задачи-решателя: вопрос, варианты, цель, сводки этапов, путь
   по графу (`RunPathStep[]` из `Run.stageHistory`), «Как решать», ветка только для чтения и правила `DECISION_STAGE_RULES`
   (`decision choose` / `decision escalate` / `done`).
@@ -460,7 +481,15 @@ Store хранит позицию и решает, куда задача пер�
 не двигают — исход до `advanceStage` доводит main.
 
 **Воркфлоу глобальной задачи (версия 2)** — методы `enterRunStage`, `advanceRunStage`, `finishStage`, `settleIdleStages`, `blockRunStage`,
-`requestRunApproval`, `requestRunDecision`, `runStage`; решение развилки `decision` — `RunStageOptions.chosen` у `advanceRunStage` → `StageChange.decision`
+`requestRunApproval`, `requestRunDecision`, `runStage`, `runStages`. Переходы возвращают `RunStepResult {run, action, actions: RunAction[]}` — по действию
+на позицию прогона (внутри разветвления `fork`/`join` их несколько, `action` — первое); `RunStageOptions.nodeId` — нода, на которой вынесено решение
+(позиции на ней нет — ошибка «граф ушёл дальше»); `runStage(…, nodeId?)`, `assertStageAcceptsTasks(runId, nodeId?)`, `stageDefaultRole(runId, nodeId?)`,
+`createTask({stage?})`, `blockRunStage(runId, reason, nodeId?)` — этап по id ноды; у прогона без путей всё как раньше. Позиции путей — `Run.lanes: RunLane[]`
+(`Run.stage` тогда стоит на `fork`), запись истории пути — `StageChange.lane`, возврат — `Run.returns[].nodeId`, карточка — `GlobalTask.lanes`
+(`docs/workflow.md`, «Разветвление»: ход путей, барьер `join`, сводка путей в `Run.summary`, колонка). Несколько ждущих approval
+прогона — `resolveRunApproval` бросает `RunApprovalAmbiguousError` (`code: 'runApprovalAmbiguous'`, `requestIds`); main (`decideRun`) отдаёт
+его в IPC как `OrcaError` `global.approvalAmbiguous`. Приход пути в `join` — запись `StageChange.arrived`, заходом не считается: `visits[join]` — число слияний
+(старые снимки пересчитывает `migrateJoinVisits`). Решение развилки `decision` — `RunStageOptions.chosen` у `advanceRunStage` → `StageChange.decision`
 в записи истории развилки (`StageDecision {optionId, label, reason?, by, fallback?, agentNote?}`), фоллбэк — запрос `kind: 'decision'` без задачи,
 решается `answer` + `optionId`; `runStage` на развилке отдаёт `question` и `options`; правила `createTask` в прогоне с `workflowScope: 'run'` (`roleIds` ноды: пусто — любая рабочая роль типа, есть — роль из списка, одна роль берётся по умолчанию (`stageDefaultRole`), чужая роль и этап не `work` —
 ошибки, `stageOf`), `stage_tasks_done` вместо `closeFinishedRuns`, `run_done` при входе в `end`, «Подтвердить»/«Вернуть» как решение approval прогона —
@@ -522,7 +551,7 @@ Store хранит позицию и решает, куда задача пер�
 холст с панелью «Проблемы» под ним | инспектор карточками. Пока открыт редактор, окно настроек шире (`.settings-modal:has(.wf-editor)`).
 Узкий контейнер `about` (≤ 980px) — палитра лентой над холстом, инспектор справа; ≤ 760px — всё в одну колонку.
 
-- **Раскладка без правок графа** (`workflowEditorView.ts`, тест рядом): группы палитры `WF_PALETTE_GROUPS` (Агенты / Человек / Приложение /
+- **Раскладка без правок графа** (`workflowEditorView.ts`, тест рядом): группы палитры `WF_PALETTE_GROUPS` (Агенты / Человек / Приложение / Параллельно /
   Начало и конец) и поиск `paletteGroups`/`filterTemplates`/`matchesQuery`; карточка инспектора проблемы `issueCard` (по `WfIssue.code`,
   проблема пути подзадачи — «Путь подзадачи», неизвестный код — «Основное») и `nodeCardIssues`; `shortIssueText` снимает префикс
   «нода «X»: » там, где нода и так видна; `groupProblems` — «Проблемы» по нодам, группы с ошибками первыми; `mainPath` — основной путь
@@ -620,6 +649,25 @@ Store хранит позицию и решает, куда задача пер�
   `wfPorts(node)`, подпись — `wfPortLabel`, CSS-класс порта и ребра — `wf-port--opt` / `wf-edge--opt` (`wfPortClass`: id варианта — данные,
   класс по нему был бы мусорным). Высота ноды растёт с числом портов (`nodeHeight` в `workflowGeometry.ts`: шаг `PORT_STEP`), её читают
   `nodeRect`, `portPoint`, `edgeCurveOf`, `autoLayout`, `graphBounds` и поиск свободного места.
+- **Разветвление и слияние в редакторе** (контракт — `docs/workflow.md`, «Разветвление»): `fork`/`join` — своя группа палитры
+  «Параллельно» (`WF_PALETTE_GROUPS`), в select «Тип»; в пути подзадачи их нет (`WF_SUBTASK_FORBIDDEN_TYPES`), «Своей нодой» не
+  сохраняются (`canBeTemplate` в `nodeTemplates.ts`: карточки «Своя нода» и кнопки палитры нет — как у старта). Новый `fork` — пути
+  «Путь 1 / Путь 2» (id `path_1`/`path_2`, выдаются один раз), новый `join` — пара `pairFork`: ближайшее разветвление без слияния, левее
+  точки в приоритете; нет такого — пусто (`joinNoFork`). Инспектор `fork` («Пути», `ForkWhat` в `WorkflowNodeFields.tsx`): название,
+  id, вверх/вниз, удалить (вместе с ребром), «Добавить путь» до 4 — `addForkBranch` (id — первый свободный `path_N`), `renameForkBranch`,
+  `moveForkBranch`, `removeForkBranch` в `workflowForm.ts`; под списком — парное слияние, нет его — «Добавить слияние» (`addJoinFor`:
+  правее путей). Инспектор `join` («Что сводит», `JoinWhat`) — select разветвления (`setJoinFork`, `forkOptions`; уже сведённое другим
+  слиянием — с пометкой). `changeNodeType` `decision ↔ fork` переносит варианты в пути и обратно с теми же id — рёбра остаются. Колонки у
+  `fork`/`join` нет (`hasColumn`). Порты `fork` — id путей с подписью-названием (`wfPortLabel` → `forkBranchTitle`: встроенное название
+  переводится, как название ноды, — иначе в английском интерфейсе порт «Бэкенд» вёл бы в ноду «Backend»); у ноды с тремя и больше портами
+  подпись короче (`portLabelMax`), полная — в `<title>` порта, обводка цветом холста держит её читаемой поверх соседних рёбер. Класс `wf-port--lane`/`wf-edge--lane`, цвет
+  пары — `--wf-lane` (смесь цветов темы в `styles.css`). Выделены `fork` или его `join` — ноды путей обведены пунктиром цвета пути
+  (`laneHighlight` в `workflowEditorView.ts` по `laneRegions` из core), название пути — в подсказке ноды. `autoLayout`: пути — горизонтальными
+  рядами один под другим в порядке портов (по вертикали — обход в глубину: следующий путь ниже всего, что заняли предыдущие), `join` ждёт,
+  пока разложено всё достижимое в обход слияний, встаёт правее самого длинного пути и посередине между последними нодами путей. Проблемы `fork*`/`join*`
+  разложены по карточкам (`CARD_OF_CODE`: список путей и пара — «Что сделать», утечки и входы сбоку — «Куда ведёт»). Старый main не знает
+  `fork`/`join` и отвергает сохранение «неизвестный тип»; renderer, проверивший граф сам, показывает «перезапустите приложение»
+  (`workflowSaveError` в `workflowForm.ts`, используется в `TaskTypeWorkflow`).
 - **Пресет «3 отказа → человек»** (`addRetryLimit`): каждый `reject` гейта-агента, ведущий прямо в работу,
   перенаправляется в условие `attempts(работа) ≥ 3`: нет — в работу, да — нода `human` «После 3 отказов» (принять — туда
   же, куда `accept` гейта, вернуть — в работу). Первый запуск уже засчитан в `visits`, поэтому срабатывает ровно
@@ -641,10 +689,26 @@ Store хранит позицию и решает, куда задача пер�
   невалиден, и main его не примет. `validateWorkflow` по ролям типа (без колонок и агентов — они у проекта) считается
   на каждую правку: ошибки блокируют «Сохранить», предупреждения нет. Экран — три части. **Полоса статуса** (`.wf-statusbar`,
   `position: sticky`): свой/дефолтный граф, «есть несохранённые изменения», счётчики ошибок и предупреждений — кнопки к первой
-  проблеме уровня, «Отменить правки», «Сохранить» (`taskTypes:save`; недоступна — рядом текст почему), ошибки и итог сохранения.
+  проблеме уровня, «Отменить правки», «Сохранить» (`workflowAssistant:save`; недоступна — рядом текст почему), ошибки и итог сохранения.
   **«Граф этапов»** — редактор; под холстом «Проблемы» по нодам (`groupProblems`: нода, в пути — «Реализация › Ревью», её тексты),
-  клик — выделить ноду/переход. **«Файл графа»**: «Экспорт JSON» (скачивание `workflow-<тип>.json`), «Импорт JSON» (в черновик,
+  клик — выделить ноду/переход. Заголовок группы перехода — подпись исхода и нода-источник, не id ребра (`edgeProblemTitle`:
+  «Переход «принять» у ноды «X»», путь разветвления — «Путь «Бэкенд» разветвления «X»»); id — только если перехода уже нет. **«Файл графа»**: «Экспорт JSON» (скачивание `workflow-<тип>.json`), «Импорт JSON» (в черновик,
   сохранить — отдельно), «3 отказа → человек», «Сбросить к дефолтному» (поле графа удаляется из типа). Импорт и сброс пересоздают холст (`key`), чтобы граф заново вписался в окно.
+
+Действие «Изменить с ассистентом» передаёт `WorkflowAssistantContext` с корневым draft/baseline/path,
+не сохраняя тип. Отдельная baseline редактора переживает возврат из чата: грязный draft при внешней
+правке сохраняется с конфликтом, чистый принимает incoming graph и сбрасывает selection/refit.
+`workflowAssistant:save` синхронно сравнивает effective baseline и записывает только граф (null — сброс).
+Save/Reset получают от `useTaskTypes.saveWorkflow` эффективный граф и номер наблюдения из обязательного
+post-write перечита. Этот снимок имеет приоритет и при совпадении с прежней базой; ещё более поздний
+перечит сохраняет приоритет над ним. Если перечит недоступен, успешная запись подтверждает свой результат,
+пока не наблюдалась новая семантическая версия saved; старая равная копия props не отменяет подтверждение.
+«Отменить правки» при конфликте явно принимает свежий saved. Настройки и переименование сохраняются
+узкими main-патчами, чтобы отложенное автосохранение не заменило граф, обновлённый CLI.
+Restore потребляется после первого mount редактора; nonce остаётся, чтобы снятие снимка не меняло key
+живого draft. Переход на другую вкладку и обратно открывает сохранённый граф, без повторного restore.
+Кнопки «Вернуться в редактор»/«Открыть воркфлоу» адресуют точный typeId с одноразовым nonce:
+отсутствующий тип показывает ошибку, не fallback другого типа. Жизненный цикл чата — [assistant-chat.md](assistant-chat.md#передача-черновика-и-возврат).
 
 ## Прогоны (`packages/core/src/store.ts`, `src/main/worker.ts`, `src/main/socket.ts`)
 
@@ -734,11 +798,11 @@ orca-board agents list                      # [{id,title,installed,enabled,versi
 orca-board types list                       # типы задач, доступные проекту: [{id,title,description?,default?,permissionMode,roles,stages}]
 orca-board roles list [--run <id>] [--type <id>]   # роли типа прогона: [{id,title,description?,agent,model?,effort?,systemPrompt?,agentEnabled}]
 orca-board columns list                     # [{id,title,color,kind}]
-orca-board workflow show [--run <id>] [--type <id>]   # {source: run|type, scope?: run|task, run?, typeId, typeTitle, stage?: RunStageInfo, stages: WfStageInfo[], history?} — граф, (у прогона scope run) текущий этап и последние 50 переходов с решениями «Решения ИИ»
+orca-board workflow show [--run <id>] [--type <id>]   # {source: run|type, scope?: run|task, run?, typeId, typeTitle, stage?: RunStageInfo, lanes?: RunStageInfo[], stages: WfStageInfo[], history?} — граф, (у прогона scope run) текущий этап, внутри разветвления — этапы всех путей (lanes), и последние 50 переходов с решениями «Решения ИИ»
 orca-board task list [--run <id>] | task get --task <id>   # Task: у задачи в воркфлоу stage {nodeId, visits}, у проверки gateFor, statusHistory
 orca-board rules get [--type <id>] [--run <id>] [--role <id>]   # правила агентов типа: общие ({typeId,typeTitle,rules}) или роли (+ role, title)
 orca-board rules set [--type <id>] [--run <id>] [--role <id>] --text "..." | --file rules.md   # заменить; --text "" — очистить; --file читает CLI
-orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]
+orca-board task create --title ... --spec ... --role <id> [--dep <id>] [--run <id>] [--stage <id этапа>] [--answer-for human|coordinator] [--priority urgent|high|normal|low]   # --stage — этап «Работа» подзадачи, обязателен при нескольких открытых этапах (пути разветвления)
 orca-board question answer --question <id> --answer "..."
 orca-board question forward --question <id> [--note "..."]   # вопрос воркера — человеку (запрос в Инбокс, глобальная → «Нужен ответ»)
 orca-board question get --question <id>     # вопрос целиком: варианты с пояснениями, контекст, ответ
@@ -755,7 +819,7 @@ orca-board check --wait --types worker_done,question --timeout-ms 900000 [--run 
 orca-board check --follow [--types ...] [--run <id>]   # поток: строка JSON на событие, до SIGINT/SIGTERM
 orca-board runs list                        # [{...Run, tasks, done}]
 orca-board runs close [--run <id>]          # закрыть прогон вручную
-orca-board stage finish [--run <id>] [--summary "..." | --summary-file summary.md]   # воркфлоу глобальной задачи (scope run): закрыть этап «Работа», граф идёт по next; сводка этапа — Run.summary и stageHistory
+orca-board stage finish [--run <id>] [--stage <id этапа>] [--summary "..." | --summary-file summary.md]   # воркфлоу глобальной задачи (scope run): закрыть этап «Работа», граф идёт по next; сводка этапа — Run.summary и stageHistory; --stage — какой из открытых этапов (пути разветвления)
 orca-board runs finish [--run <id>] [--summary "..." | --summary-file summary.md]   # прогон старого формата: координатор закончил работу после run_done или повторного запуска без новой работы (закрыть его терминал); сводка — Run.summary. У прогона scope run до run_done — ошибка с подсказкой stage finish
 orca-board global list|get|create|update|move|delete|tasks|add-task|start   # глобальные задачи, docs/nested-kanban.md; global create [--type <id>]
 orca-board worker read --dispatch <id>
@@ -770,6 +834,25 @@ orca-board worker read --dispatch <id>
 `done --answer-file`; нет файла или `--summary` без текста — ошибка до сокета.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
 каждую строку ответа; SIGINT/SIGTERM → закрыть сокет, код 0; ошибка сервера или разрыв соединения → код 1.
+
+## CLI графа типа (уровень приложения)
+
+~~~sh
+orca-board types list --all
+orca-board workflow schema
+orca-board workflow get --type <id>
+orca-board workflow validate --type <id> --definition '<JSON>'
+orca-board workflow validate --base-type <id> --definition '<JSON>'
+orca-board workflow validate --definition '<JSON>'
+orca-board workflow set --type <id> --revision <token> --definition '<JSON>'
+orca-board workflow create --title "..." --description "..." --base-type <id> --definition '<JSON>'
+~~~
+
+Эти команды не требуют `--project` и не запускают задачи. `--file workflow.json` — альтернативный
+источник JSON у validate/set/create вместо `--definition`; оба вместе запрещены. `--type` и
+`--base-type` у validate взаимоисключающие. Create без базы использует стандартные роли/настройки.
+`workflow show` сохраняет прежнее проектное назначение: этапы и снимки прогона.
+Ответы и правила конфликтов — «Протокол сокета» ниже.
 
 ## CLI (для воркера, внутри его PTY)
 
@@ -945,9 +1028,19 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   флаги — `orca-board --help`. Опасные операции (удаление роли/типа/шаблона/проекта, `bypassPermissions`)
   ассистент **не** подтверждает сам — только явным `--yes` после того, как человек в чате сказал «да» и
   ассистент назвал, что изменится (тот же принцип, что у `task delete`/`global delete`/`worker stop`
-  выше); граф воркфлоу правится только визуально в «Настройках» — ассистент может лишь читать его
-  (`workflow show`). Контракт задачи (инвентаризация настроек, откуда что берётся) — `docs/assistant-chat.md`
-  → разделы 1–2; двусторонний чат — раздел 3.
+  выше). Граф ассистент создаёт и правит через `workflow schema/get/validate/set/create`; чтение библиотеки —
+  `types list --all`. Это app-level API без проекта: schema/context/roles → требования/корневой draft →
+  validate (исправить errors, объяснить warnings) → запись по поручению, без повторного подтверждения
+  обратимой правки. Обсуждение не сохраняет. Whole-type revision защищает от конкурирующей записи:
+  перечитать и согласовать конфликт, не повторять старый graph с новым токеном.
+  Создание из приветствия/меню нового типа заполняет composer локализованным текстом без отправки
+  и create-chip; одноразовый renderer-запрос защищён nonce и ждёт открытого чат-поля. Только явная
+  передача редактора прикладывает полный неизменяемый draft/baseline/path и назначение возврата.
+  Снятие чипа, обычное открытие через rail/⌘K и новый диалог очищают вложение, возврат и ожидающий
+  выбор агента; принятая отправка потребляет только вложение. Текст и текущая дискуссия при снятии
+  и обычном открытии сохраняются. Backend create-контекст остаётся для совместимости старых клиентов.
+  Передача редактора, скрытый контекст, terminal handoff и возврат — `docs/assistant-chat.md` →
+  «Воркфлоу через ассистента»; двусторонний чат — раздел 3.
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
 - **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, reservedFlags?, invoke}`. Из него выводятся
@@ -1061,34 +1154,47 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## UI: доска и «О проекте»
 
-- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Файлы` / `Статистика` / `О проекте`) и выбранный
+- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Статистика` / `О проекте`, список и разбор — `renderer/src/projectTabs.ts`) и выбранный
   терминал — свои у каждого проекта: `views: Record<projectId, ProjectView { tab, activePty }>`,
   запись через `updateView(projectId, patch)` (функциональный апдейтер, безопасен из обработчиков событий).
   Вкладка дублируется в `localStorage` ключом `orca.tab.<projectId>` (`storedTab` / `storeTab`,
-  ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
+  ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти. Неизвестное сохранённое значение
+  (`parseTab`), в том числе бывшая вкладка `files`, открывает «Канбан» — миграции нет.
   Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
-- **Вкладка «Файлы»** (`FilesView.tsx`, состояние — `renderer/src/fileTree.ts`, API и тексты отказов — `projectFiles.ts`):
-  ленивое дерево корня проекта `Project.root`, только чтение; визуально — строки `.docs-row` «Документов». Монтируется с
-  `key={projectId}`. Читает одну папку за запрос через `files:list(projectId, dir)`; какие папки читать, решает одна
-  чистая функция `pendingLoads` (раскрытие, «Повторить», «Обновить» и восстановление только меняют состояние): видимые
-  раскрытые папки, родители раньше детей, не больше `LOAD_CONCURRENCY` = 4 запросов сразу, папка в полёте повторно не
-  запрашивается (двойной «Обновить» не даёт двойной загрузки). Ответ применяется, только если совпали проект, эхо `dir` и
-  номер запроса. Пропавшие записи молча выпадают из раскрытых и из выделения; `files.notFound` у вложенной папки —
-  перечитывается родитель. Раскрытые папки — в `localStorage` `orca.files.open.<projectId>` (до `OPEN_LIMIT` = 200, в
-  `try/catch`). «Обновить» — кнопкой и при возврате фокуса окну (не чаще раза в 5 с); слежения за диском нет.
-  Клавиатура — WAI-ARIA tree (↑↓, ←→, Home/End, Enter/пробел — раскрыть папку), roving tabindex. Нижняя панель
-  выделенного: «Копировать путь» (относительный; полный — в подсказке) и «Показать в папке» (`files:reveal`). Отказы —
-  по `ipcErrorCode` (`config.files.err.*`), `files.readFailed` и неизвестный код — текст main; старый main/preload —
-  `filesStaleMessage()` без «Повторить». Содержимое файлов во вкладке не показывается и ничего не запускается.
-  **Открыть в «Документах»:** у выделенного `.md` в нижней панели кнопка, то же — двойной клик и Enter по строке
-  (`isOpenableDoc` в `fileTree.ts`: только обычный файл `*.md` без учёта регистра — `.markdown` и симлинки `docs:read`
-  не примет, см. `resolveDocPath` в `main/docs.ts`). `FilesView` зовёт `onOpenDoc(path)` → `App.tsx` кладёт путь в
-  `docsInitialPath` и открывает `DocsModal` с `initialDoc = {source: 'project', path}`; кнопка «Документы» в rail
-  сбрасывает его в `null`. `DocsModal` один раз после первой загрузки списка вызывает `go(initialDoc)`: путь и размер
-  проверяет `docs:read`, отказ показывается ошибкой в модалке, дерево раскрывается до файла. Без `initialDoc` модалка
-  открывается на стартовом экране, как раньше. Нового IPC нет; игнорируемые git'ом `.md` в «Файлах» не видны, поэтому
-  и отсюда не открываются.
+- **«Документы»: все файлы проекта** (`DocsModal.tsx` — окно, `DocsTree.tsx` — дерево и поиск, `DocsStart.tsx` — стартовый
+  экран, `DocsToc.tsx` — оглавление; просмотр — `DocViewer.tsx` и соседи, см. «IPC: документы»; чистая логика — `docTree.ts`,
+  `docLinks.ts`, `docView.ts`). Отдельной вкладки «Файлы» нет: единственный вход — кнопка «Документы» в rail, окно открывается
+  с `key={projectId}`. Раскладка — `docs/design/docs-files/variant-1.html` («Проводник») плюс меню «⋯» из `variant-2.html`:
+  дерево | одна панель просмотра | оглавление — **только у markdown в режиме «Документ»**, у остальных видов колонка скрыта,
+  а тип, кодировка, строки, размер и время — в строке статуса (`DocStatus`).
+  - **Дерево** строится из `docs:list` (группа `project` — все файлы, группы задач — только `.md`) функцией `buildTree`: папки
+    сверху, цепочка из одной папки схлопывается. Значок — по виду файла `docIconOf(path)` (`shared/docs-view.ts`, без IPC), цвет —
+    `data-kind` в `styles.css`; симлинк (`DocFile.link`) — значок цепочки, куда он ведёт, выясняет `docs:view`. `DocGroup.truncated` —
+    баннер `docs-trunc` и счётчик «100 000+». «Недавние» — не больше `RECENT_LIMIT` = 200 строк, выдача поиска по пути в группе —
+    не больше `HIT_LIMIT` = 100 и строка «ещё N» (`searchFiles`); ввод поиска — с задержкой 120 мс (`useDebounced` в `DocsModal`),
+    сброс — сразу. Раскрытые папки — `localStorage` `orca.docs.open.<projectId>` (`readOpenDirs`/`writeOpenDirs`, до
+    `OPEN_DIRS_LIMIT` = 200, родители раньше детей); не сохраняли — раскрыт верхний уровень. Ключи бывшей вкладки
+    `orca.files.open.<projectId>` удаляются при открытии окна. Список и открытый файл перечитываются кнопкой «Обновить» и при
+    возврате фокуса окну, но не чаще `FOCUS_REFRESH_MS` = 5 с (`focusRefreshDue`): список проекта — это `git ls-files` и `lstat`.
+  - **Просмотр.** `go(doc)` сначала читает (`loadView`: `docs:view`), и только если прочиталось — переходит (история ‹ ›,
+    прокрутка запоминается). Заглушки (`stub`) — обычный ответ. Отказы «приложение устарело», «ссылка ведёт за пределы проекта»
+    (`files.outside`) и «это не файл» показываются заглушкой на месте просмотра (`DocStub` с `failure`); «файла нет», «нет прав»
+    и прочее — баннер `docs-err` над прежним документом. Режим вида (`docModes`: Документ ⇄ Исходник, Код ⇄ Превью, у SVG Картинка ⇄
+    Код) сбрасывается при переходе, масштаб «Вписать / 100 %» — нет. «Обновить» перечитывает файл и увеличивает `reload`
+    просмотрщиков (картинка, исходник, превью); возврат фокуса — только если у файла изменились `mtime`/`size`/текст, иначе превью
+    HTML сбрасывалось бы при каждом переключении окна. ⌘F (`findInDoc`) ищет в `<article>` markdown или `<code>` кода — корень
+    приходит ref-колбэком, поэтому поиск и прокрутка к якорю ждут, пока файл догрузится.
+  - **Ссылки** из markdown: Markdown в режиме `links: 'project'` сам разрешает относительный адрес в путь источника и `#якорь`
+    (`data-showcase-href`), окно открывает файл любого вида там же. Неразрешимая ссылка на `.md` (выход за корень, `.git`)
+    остаётся в `data-doc-href` → `resolveDocLink` → ошибка «ведёт за пределы проекта». Внешние — во внешнем браузере.
+  - **Действия** с файлом: иконки в строке крошек (копировать путь, показать в папке, «Открыть» — только при `DocView.openable`)
+    и меню «⋯» (`DocActionsMenu`: ещё «Копировать абсолютный путь» — `absolutePath(Project.root, path)`, только у источника
+    «Проект»); на узком окне (≤ 820 px) остаётся только меню. «Скопировано» — короткий тост внизу панели.
+  - **Стартовый экран**: «Изменены задачами в работе» и «Недавние в проекте» — **только markdown** (`markdownFiles`), иначе их
+    заполнили бы свежие `.ts`; весь проект — в дереве и по ⌘P.
+  - **Старый main/preload** (renderer обновился по HMR): дерево работает на старом `docs:list` (только `.md`), `.md` открываются
+    через `docs:read` (`loadView` строит `DocView` сам), всё остальное — заглушка «перезапустите приложение» (`DocViewStaleError`).
 - **Меню веток у бейджа ветки** (`BranchMenu.tsx`, логика — `renderer/src/projectGit.ts`, ветка — `useProjectBranch.ts`):
   бейдж текущей ветки в шапке — кнопка; по клику поповер с «Fetch», «Pull» (у Pull — ↑ahead ↓behind текущей ветки),
   поиском и списками локальных / удалённых веток (текущая отмечена, занятая другим worktree недоступна, удалённые без
@@ -1308,6 +1414,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
     библиотеки, без деления на встроенные и свои, внизу «Новый тип» открывает общий `PopupMenu`: «Пустой тип» или
     одна из семи актуальных заготовок (`taskTypes:save` без id; пустые настройки = значения по умолчанию).
+    «Создать с ассистентом» в том же меню открывает чат с контекстом create без вставки пустого типа.
     Старый тип не заменяется, повторное название получает суффикс. Меню использует общую тему, клавиатуру и возврат фокуса;
     повторный вызов создания блокируется, ошибка отображается под кнопкой. Счётчик пункта — «по умолч.» или число проектов,
     где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «по умолчанию»,
@@ -1325,7 +1432,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     умолчанию, проекты перейдут на тип библиотеки по умолчанию, задачи доработают по снимку, тип не вернётся после
     перезапуска). Ниже вкладки (`orca.settingsTypeTab`): «Роли», «Воркфлоу» (`settings/TaskTypeWorkflow.tsx` —
     холст и инспектор, сохранение кнопкой), «Разрешения», «Правила доски». Колонок и агентов у типа нет — они у проекта.
-    Все вкладки пишут в тип `taskTypes:save` целиком. Баннер своего типа: правка действует во всех проектах, где он
+    Настройки вкладок пишутся узко через `taskTypes:patch`, переименование — `taskTypes:rename`;
+    граф — `workflowAssistant:save` с атомарной проверкой исходной базы. Баннер своего типа: правка действует во всех проектах, где он
     доступен, со следующего запуска агента; граф глобальная задача снимает при создании.
   - **Колонки в графе типа** (`TaskTypeWorkflow`): `validateWorkflow` зовётся только с ролями — без колонок и агентов,
     они у проекта, а тип общий. Выбор колонки в инспекторе — встроенные плюс колонки всех проектов (`typeColumnChoices`).
@@ -1333,9 +1441,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     проходит без смены колонки (`moveTo` в main).
   - «Вернуть системные роли» в `RolesEditor` — про роли `DEFAULT_ROLES`, удалённые из списка типа, а не про тип целиком.
   - Хук `settings/useTaskTypes.ts`: список `taskTypes:list`, после каждой записи перечитывается целиком, плюс
-    `onProjectsChanged` окна (удаление типа меняет тип проектов по умолчанию, доске нужны свежие роли типов). `taskTypes:save` заменяет тип целиком, а редакторы
-    сохраняются с задержкой, поэтому правка раздела (`patch(id, patch)` → `patchedTaskType`, null удаляет поле)
-    собирается из последней сохранённой версии типа и идёт через очередь.
+    `onProjectsChanged` окна (удаление типа меняет тип проектов по умолчанию, доске нужны свежие роли типов). `taskTypes:save` нужен для создания нового типа.
+    Отложенная правка раздела (`patch(id, patch)`, null удаляет поле), переименование и guarded Save графа
+    идут через общую очередь; main применяет их к актуальному типу, reload и onChanged завершаются до следующей записи.
   - Логика без React — `renderer/src/taskTypeEdit.ts` (тест рядом). Старый main/preload: нет `window.orca.taskTypes`
     или хендлера `taskTypes:*` → `taskTypesStaleMessage()` («перезапустите приложение») вместо списка.
 - **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» у колонок `storageKey = active.id`, в «Настройках» у типа — `typeEditorKey(t, rev)`: `type:<id>:b|u:<rev>` — у встроенного и его изменённой копии признак один (`b`), поэтому первая правка исполнителя не сбрасывает черновик посреди быстрых кликов, а после «Вернуть встроенный» `rev` растёт и редакторы берут встроенные значения. `executorOnly` — меняются только исполнитель и инструкции роли.
@@ -1530,7 +1638,7 @@ Main принимает готовность только от главного 
 | Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные нативные кнопки macOS/Windows; системный заголовок Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
-| Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
+| Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; повышенная насыщенность; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
 | Assistant Chat | `AssistantPanel`, `AssistantInteraction`, `AssistantSession` | `shared/assistant-conversation.ts`, `docs/assistant-chat.md` | справа; Amp/Shell — отдельный терминал | протокольные fixture-тесты, session/IPC тесты; пользователь проверяет билд |
 | Tray | `main/tray.ts`, Electron Tray | `build/tray/orca-logo.svg` | template PNG 18/36 macOS; цветной ICO Windows; PNG Linux | nativeImage, упаковка; Windows проверяется на Windows |
 | Branding | `build/icon.svg`, `build/tray/orcaTemplate.svg` | предоставленный авторский логотип | цветной SVG/PNG; монохромная CSS-маска rail в `--muted` | упаковка ассетов; ручная проверка билда |
@@ -1545,10 +1653,10 @@ Slate, Forest и светлую Paper; `appColors` остаётся адапте
 и xterm используют выбранную палитру. Текст на акценте задаёт `--on-accent`.
 Контраст основного/вторичного текста, кнопок, статусов и фокуса проверяет `theme.test.ts`.
 
-`AppSettings.appearance?: {theme, motion}` хранится в глобальных `settings` файла `projects.json`
+`AppSettings.appearance?: {theme, motion, highSaturation}` хранится в глобальных `settings` файла `projects.json`
 через существующие `app:getSettings` / `app:setSettings`. `shared/appearance.ts` нормализует старые
-или повреждённые сохранённые значения в Graphite/system без изменения версии файла. Новый патч
-проверяется строго; частичное изменение сохраняет второе поле. Ошибка атомарной записи откатывает
+или повреждённые сохранённые значения в Graphite/system с выключенной насыщенностью без изменения версии файла. Новый патч
+проверяется строго; частичное изменение сохраняет остальные поля. Ошибка атомарной записи откатывает
 настройки в памяти, а `app:changed` отправляется только после успешного сохранения.
 
 `appearance` в renderer держит стабильный snapshot для `useAppearance`, обновляется по `app:changed`
@@ -1562,6 +1670,13 @@ Slate, Forest и светлую Paper; `appColors` остаётся адапте
 без пересоздания xterm или PTY. Paper оставляет терминал тёмным с отдельными читаемыми
 `--term-text`, `--term-muted`, `--term-cursor`; подсказки, код и просмотр файлов имеют свои поверхности.
 Пользовательские цвета колонок и ANSI-цвета вывода сохраняются.
+
+`highSaturation: false` — значение по умолчанию и миграция старых настроек. При `true`
+`getAppTheme(theme, true)` усиливает только семантические токены акцента, статусов, приоритетов,
+прогресса и графиков; фон, текст и терминальные токены остаются исходными. Насыщенные варианты
+заданы в `shared/theme.ts` отдельно для светлых и тёмных поверхностей. Renderer передаёт
+`data-saturation=high|normal`; миниатюры тем и «О приложении» используют тот же адаптер палитры.
+Переключатель доступен в `AppearanceSection` и сохраняется через общий `saveAppSettings`.
 
 `motion: system` следует `prefers-reduced-motion` в реальном времени; `reduced` включает уменьшение
 всегда. CSS получает `data-motion`, мастер использует общий helper для Web Animations,
@@ -1625,11 +1740,32 @@ SVG-линия и траектория пакета используют оди�
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
+IPC контекста редактора использует тип из `shared/assistant-workflow.ts`:
+`{mode:'create'}` либо `{mode:'edit',typeId,title,workflow,baseline,dirty,path}`.
+Main `buildWorkflowAssistantContext` проверяет форму и исходный effective graph, допускает семантически
+невалидный draft для обсуждения, формирует безопасные роли/название/ревизию и статические инструкции.
+Renderer не передаёт произвольный system prompt; extraArgs не сериализуются.
+
+| Канал / API | Результат / действие |
+| --- | --- |
+| `assistantChat:sendWithWorkflow(ptyId,text,context)` / `assistantChat.sendWithWorkflow?` | Promise<void>; скрытый контекст в payload модели, в human history только text; contextual Codex/ACP ждут принятия, ordinary send совместим |
+| `workflowAssistant:save(typeId,baseline,workflow\|null)` | Promise<void>; синхронное сравнение effective baseline и workflow-only patch; null — сброс |
+| `workflowAssistant:saved` / `workflowAssistant.onSaved(cb)` | Только {typeId,title,revision} после успешного CLI/socket set/create; обычные Save/Reset/rename/validate не создают event |
+| `taskTypes:patch(id,patch:TaskTypePatch)` | TaskType; patch настроек/notes поверх актуального типа main |
+| `taskTypes:rename(id,title,description)` | TaskType; переименование актуального типа main |
+
+Renderer обнаруживает новые методы; старые preload/main показывают перезапуск вместо plain-send
+или замены целого типа. Очередь patch/rename/saveWorkflow ждёт write/reload/onChanged; внутренний
+`saveWorkflow` возвращает `{workflow, observation}` из post-write списка или undefined при ошибке перечита.
+IPC `workflowAssistant.save` сохраняет Promise<void>.
+Контекст снимается после принятия для той же session/nonce; ошибки сохраняют compose/attachment.
+Точные границы принятия, terminal-only и lifecycle editor — `docs/assistant-chat.md`.
+
 `app.windowChrome?` — read-only метаданные preload (`system` / `macos` / `windows`), не IPC-вызов.
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
 
-- `invoke`: `app:info`, `app:getMenu` → `AppMenuItem[]`, `app:invokeMenu(id)`, `app:dismissMenu` (авторский popup Windows; снимок, разрешённый лист общего меню и возврат нативных сочетаний), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
+- `invoke`: `app:info`, `app:getMenu` → `AppMenuItem[]`, `app:invokeMenu(id)`, `app:dismissMenu` (авторский popup Windows; снимок, разрешённый лист общего меню и возврат нативных сочетаний), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?, highSaturation?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
   `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
@@ -1697,13 +1833,13 @@ SVG-линия и траектория пакета используют оди�
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»);
   `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)`, `assistantChat:interrupt(ptyId)`, `assistantChat:respond(ptyId, requestId, answer)` (см. «Ассистент»);
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
-  `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта для вкладки «Файлы»:
+  `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта; вкладки «Файлы» больше нет — канал нужен диалогу начального коммита (`.gitignore` в корне) и тестам резолвера:
   `dir` — от корня через `/`, '' — корень, эхо запроса; папки, затем файлы и симлинки по имени; не больше `PROJECT_FILES_DIR_LIMIT` = 5000 записей, остальное — `truncated: true`;
   `.git`, `.DS_Store`, `Thumbs.db` и игнорируемое git'ом не отдаются), `files:reveal(projectId, path)` — показать запись (симлинк — сам симлинк) в Finder/Проводнике.
   `projectId` явный, а не «активный проект» (как у `projects:branches`, `stats:project`): между вызовом и обработкой человек может переключить проект.
-  Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.rootMissing`,
+  Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.notFile` (ожидался файл — для `docs:*`), `files.rootMissing`,
   `files.readFailed`; неизвестный `projectId` — обычная ошибка «project not found». `files:open` и `files:read` нет намеренно: запуск произвольного файла
-  системой опасен (политика `shared/showcase.ts`), `.md` открываются в «Документах», предпросмотра нет. Реализация — `main/project-files.ts`:
+  системой опасен (политика `shared/showcase.ts`); смотреть и открывать файлы проекта — через «Документы» (`docs:*`). Реализация — `main/project-files.ts`:
   `listProjectDir` — async `readdir` одной папки (синхронный заморозил бы PTY и сокет), без кэша и watcher'а; путь режет `splitSafeSegments`
   (только `/`, без `''`/`.`/`..`; `\` и `:` отклоняются только на win32, на unix это символы имени; сегмент `.git` в любом регистре — `files.hidden`), `realpath` сверяется с корнем (`isInside`,
   симлинк на `.git` — тоже `files.hidden`); симлинки в списке не разворачиваются (`kind: 'symlink'`), сокеты/FIFO пропускаются; игнор — одна
@@ -1753,14 +1889,52 @@ SVG-линия и траектория пакета используют оди�
 - В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?, onMenuAction?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, interrupt, respond, onMessage}`;
   у `window.orca.worker` остался только `start`.
 
+### IPC: документы (`docs:*`) — все файлы проекта
+
+Контракт окна «Документы» после переноса туда вкладки «Файлы»: дерево показывает все файлы проекта, просмотрщик —
+любой файл, только чтение. Типы — `shared/ipc.ts` (`OrcaApi['docs']`, `DocFile`, `DocGroup`, `DocView`, `DocStub`,
+`DocBytes`, `DocPreviewUrl`, `DOC_VIEW_ERROR_CODES`), классификация и лимиты — чистый модуль `shared/docs-view.ts`
+(без node/electron: его импортирует renderer; тест — `main/docs-kind.test.ts`, потому что из `shared/` тесты не запускаются).
+
+- `source` — `'project'` или id задачи в работе с worktree (иначе `docs.noTaskSource`); `path` — от корня источника через `/`.
+- `docs:list()` → `DocGroup[]`: группа `project` — **все** файлы проекта (уважая `.gitignore`, без `.git`; точечные `.env`,
+  `.github/…` видны), не больше `DOCS_LIST_LIMIT` = 100 000 (больше — `truncated: true`); симлинк на файл — `DocFile.link`.
+  Группы задач — по-прежнему только `.md`. Старый main отдаёт и в `project` только `.md` — renderer это переживает.
+- `docs:read(source, path)` → `string` — без изменений: только `.md`, ≤ 2 МБ, коды `docs.*` (`docs.notMarkdown`, `docs.tooBig`…).
+- `docs:view(source, path, opts?: {source?: boolean})` → `DocView {kind, size, mtime, mime?, text?, stub?, openable}`.
+  `kind` — `DocViewKind` (`markdown | text | image | html | pdf | binary`) по `docKindOf(path)`: полное имя (`Makefile`, `.gitignore`,
+  `.env`) → префикс имени (`.env.local`, `Dockerfile.dev`) → последнее расширение (`x.d.ts`, `a.test.ts` — по `.ts`); `unknown` main
+  уточняет по содержимому: NUL в первых `DOC_SNIFF_BYTES` = 8192 байт — `binary`, иначе `text`. Инварианты: `stub` задан ⇒ `text` нет;
+  `stub: 'pdf'` ⇔ `kind: 'pdf'`; у заглушки `kind` — предполагаемый вид; `text` (UTF-8 без BOM, ≤ `DOC_TEXT_MAX_BYTES` = 1 МиБ) есть
+  всегда у `markdown`/`text`, у `html` и SVG — только при `opts.source` (вкладка «Код»); `mime` — у `image` и `html`; `size`/`mtime` — цели симлинка.
+  `stub`: `binary`, `notUtf8` (других кодировок не угадываем), `tooBig` (текст > 1 МиБ, картинка > `DOC_IMAGE_MAX_BYTES` = 10 МиБ), `pdf` — это
+  **не ошибки**, а обычный ответ. `openable` — расширение из `SHOWCASE_FILE_TYPES` и у пути, и у цели симлинка.
+- `docs:bytes(source, path)` → `DocBytes` (= `ShowcaseFileData {mime, bytes: Uint8Array}`, подходит для `useBlobUrl`): только `kind: 'image'`,
+  ≤ 10 МиБ; не картинка — `docs.noPreview`.
+- `docs:previewUrl(source, path)` → `DocPreviewUrl` (= `ShowcasePreviewUrl {url, mime, base}`): токен протокола `orca-preview://` на корень
+  источника, **всегда без сети** — параметра `network` нет намеренно (HTML проекта — недоверенный код). `url` — страница для
+  `<iframe sandbox="allow-scripts">`, `base` — для относительных картинок markdown. Не html/markdown или путь со скрытым сегментом — `docs.noPreview`.
+- `docs:open(source, path)` — любой файл из `SHOWCASE_FILE_TYPES` (расширение проверяется и по пути, и по realpath: `a.png` → `run.sh` не
+  откроется), иначе `docs.notOpenable`. `docs:reveal(source, path)` — любой файл источника в Finder/Проводнике, симлинк — сам симлинк
+  (`resolveProjectPath(…, followLast = false)`). Старый main принимает в обоих только `.md`.
+- Ошибки пути — общий резолвер и коды `PROJECT_FILES_ERROR_CODES` (`files.badPath`, `files.outside`, `files.hidden`, `files.notFound`,
+  `files.notFile` — не обычный файл: папка, FIFO, сокет, `files.rootMissing`, `files.readFailed`); свои коды новых каналов —
+  `DOC_VIEW_ERROR_CODES`: `docs.notOpenable`, `docs.noPreview`. Тексты — `main/strings/{ru,en}.ts`; renderer узнаёт отказ по `ipcErrorCode`.
+- Совместимость: `view?`, `bytes?`, `previewUrl?` в `OrcaApi` необязательные — в старом preload их нет, а старый main отвечает
+  «No handler registered for 'docs:…'». Renderer проверяет наличие метода и в обоих случаях показывает «перезапустите приложение»,
+  а дерево и `.md` продолжают работать на `docs:list`/`docs:read`. Канал в четырёх местах: `shared/ipc.ts`, `preload/index.ts`,
+  `preload/api.d.ts` (там только `window.orca: OrcaApi` — правка не нужна), `registerIpc` в `main/index.ts`.
+
 ## Протокол сокета
 
 Транспорт — `net` Node: unix-сокет или, на Windows, именованный канал; протокол одинаковый. Одна строка JSON-запроса `{id, method, params, dispatchId?, taskId?, projectId?}`, одна строка ответа
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 `check` с `follow: true` — исключение: сервер пишет по строке `{id, ok: true, result: {event}}` на каждое
 событие, пока клиент не закроет соединение (см. «Ожидание событий без токенов»).
-Методы уровня приложения (`appHandlers` в `src/main/socket.ts`: `projects.list`, `settings.get`, `settings.set`)
+Методы уровня приложения (`appHandlers` в `src/main/socket.ts`: `projects.list`, `settings.get/set`,
+`workflow.schema/get/validate/set/create` и `types.list` только с `all: true`)
 выполняются до `SocketDeps.resolve(projectId)`: работают без проектов и игнорируют `projectId`, даже чужой или удалённый.
+Прежние `workflow.show` и `types.list` без `all` по-прежнему разрешают проект.
 События помечаются `consumedBy` (= `runId` прогона, иначе `coordinator`), повторно `check` их не отдаёт.
 Флаги запуска (`extraArgs` роли, ассистента и снимка типа в прогоне) сокет не отдаёт и не принимает: поле вырезается
 из **любого** успешного ответа при сериализации (`okLine` в `socket.ts` → `withoutExtraArgs`), а параметров для него
@@ -1770,7 +1944,7 @@ SVG-линия и траектория пакета используют оди�
 
 | Метод | Параметры | Результат |
 |---|---|---|
-| `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`); `role` проверяется по ролям типа прогона (`ProjectDeps.roles(run)`), без `run` («Входящие») — типа проекта по умолчанию. Воркфлоу глобальной задачи (`scope run`, граф идёт): сначала `store.assertStageAcceptsTasks` — вне этапа «Работа» ошибка «дождись stage_started» (раньше выбора роли, иначе координатор увидел бы «`--role` обязателен»); у этапа несколько ролей и нет `role` — ошибка со списком ролей этапа, одна роль — берётся сама (`stageDefaultRole`); роль вне списка этапа — ошибка `store.createTask`; подзадача получает `stageOf` |
+| `task.create` | `title`, `spec?`, `role`, `dep?`, `run?` | `Task` (с `runId = run`); `role` проверяется по ролям типа прогона (`ProjectDeps.roles(run)`), без `run` («Входящие») — типа проекта по умолчанию. Воркфлоу глобальной задачи (`scope run`, граф идёт): сначала `store.assertStageAcceptsTasks` — вне этапа «Работа» ошибка «дождись stage_started» (раньше выбора роли, иначе координатор увидел бы «`--role` обязателен»); у этапа несколько ролей и нет `role` — ошибка со списком ролей этапа, одна роль — берётся сама (`stageDefaultRole`); роль вне списка этапа — ошибка `store.createTask`; подзадача получает `stageOf`. `stage?` (`--stage`) — id этапа «Работа», к которому относится подзадача (`assertStageAcceptsTasks(run, stage)`, `stageDefaultRole(run, stage)`, `createTask({stage})`): обязателен, когда открыто несколько этапов «Работа» (пути разветвления) — без него ошибка со списком открытых этапов; при одном открытом — не нужен |
 | `global.create` | `title?`, `description?`, `status?`, `priority?`, `type?` | `GlobalTask` с `typeId`/`typeTitle`; тип — `ProjectDeps.runType(type)` (нет — тип проекта по умолчанию; вне `taskTypeIds` или неизвестный — ошибка с подсказкой `types list`); остальные `global.*` — `docs/nested-kanban.md` |
 | `coordinator.start` | `objective` или `global`, `type?` | `{ptyId}`; `type` — тип новой глобальной задачи, вместе с `global` — ошибка (тип не меняется) |
 | `check` | `types?`, `run?`, `consumer?`, `wait?`, `timeout-ms?`, `follow?` | `{events, timedOut}`; с `follow` — поток `{event}` |
@@ -1778,10 +1952,10 @@ SVG-линия и траектория пакета используют оди�
 | `global.*` | см. `docs/nested-kanban.md` | `GlobalTask` / `Task[]` |
 | `runs.close` | `run` (обязателен) | `Run` |
 | `runs.finish` | `run` (обязателен; прогон должен быть закрыт), `summary?` (markdown; непустая заменяет `Run.summary`) | `Run` с `finishedAt` (и `summary`). Прогон с воркфлоу глобальной задачи (`workflowScope: 'run'`) до `run_done` — ошибка: этап закрывает `stage.finish` (`store.finishRun`); после `run_done` — сигнал «закончил» |
-| `stage.finish` | `run` (обязателен; CLI подставляет `$ORCA_RUN_ID`), `summary?` (markdown) | `{run, finished, stage: {nodeId, visits}, next: {type, nodeId, reason?}}`: `store.finishStage` закрывает этап «Работа» (все подзадачи захода в done и хотя бы одна) и двигает граф исходом `next`; `next` — действие новой ноды (`WfAction`); эффекты (проверка, запрос человеку, мерж, git, конец) выполняет движок прогона: сокет зовёт `ProjectDeps.finishStage` → `finishRunStage` (`workflow-run.ts`), а не `store.finishStage` напрямую — событие `stage_changed` эффектов не запускает. Вне этапа «Работа», без подзадач, с незакрытыми, прогон старого формата — ошибка с подсказкой (текст из store доходит до CLI как есть) |
+| `stage.finish` | `run` (обязателен; CLI подставляет `$ORCA_RUN_ID`), `summary?` (markdown) | `{run, finished, stage: {nodeId, visits}, next: {type, nodeId, reason?}}`: `store.finishStage` закрывает этап «Работа» (все подзадачи захода в done и хотя бы одна) и двигает граф исходом `next`; `next` — действие новой ноды (`WfAction`); эффекты (проверка, запрос человеку, мерж, git, конец) выполняет движок прогона: сокет зовёт `ProjectDeps.finishStage` → `finishRunStage` (`workflow-run.ts`), а не `store.finishStage` напрямую — событие `stage_changed` эффектов не запускает. Вне этапа «Работа», без подзадач, с незакрытыми, прогон старого формата — ошибка с подсказкой (текст из store доходит до CLI как есть). `stage?` (`--stage`) — какой этап закрыть (`RunStageOptions.nodeId`): обязателен, когда открыто несколько этапов «Работа» (пути разветвления) — без него ошибка со списком, закрывается один; `finished` — закрытый этап (`--stage`, иначе единственная открытая «Работа»), `stage` — основная позиция (внутри разветвления — нода `fork`); пока прогон в разветвлении, в ответе ещё `lanes: [{nodeId, lane, arrived}]` (после слияния и у прогона без путей — нет) |
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
-| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?, options?}]}]` (`resolveTaskType`, `describeWorkflow`; `options` — id вариантов ноды `decision`, прямо из графа) |
+| `types.list` | `all?` | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?, options?, branches?}]}]` (`resolveTaskType`, `describeWorkflow`; `options` — id вариантов ноды `decision`, `branches` — id путей ноды `fork`, прямо из графа); с `all: true` — та же summary-форма всей библиотеки без проекта: default — умолчание библиотеки, agentEnabled отсутствует |
 | `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]` без `extraArgs`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
@@ -1792,7 +1966,12 @@ SVG-линия и траектория пакета используют оди�
 | `request.get` | `request` | `HumanRequest` (+ `answer` у вопроса); у approval прогона поля `taskId` нет |
 | `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `reject`, `restart`, `dismiss` | `{request, worker?, startError?}` |
 | `task.list` / `task.get` | `run?` / `task` | `Task[]` / `Task \| null` — со `stage` и `gateFor` |
-| `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', scope: 'run' \| 'task', run, typeId, typeTitle, stage?, stages, history?}` (`history` — только у `scope: 'run'`: последние 50 записей `Run.stageHistory` как `{nodeId, title?, visit?, at, outcome?, from?, decision?}`, без `commit` и `summary`) (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); `scope: 'run'` — граф ведёт глобальную задача, `stage` — `store.runStage` (нода, `type`, `visit`, `roleIds`, `instructions`, `feedback`/`decision`/`answers` целиком, `tasks` захода, `tasksDoneAt`; нет — граф не начат), `scope: 'task'` — старый воркфлоу по подзадачам без позиции у прогона; без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` |
+| `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', scope: 'run' \| 'task', run, typeId, typeTitle, stage?, stages, history?}` (`history` — только у `scope: 'run'`: последние 50 записей `Run.stageHistory` как `{nodeId, title?, visit?, at, outcome?, from?, decision?, lane?}`, без `commit` и `summary`) (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); `scope: 'run'` — граф ведёт глобальную задача, `stage` — `store.runStage` (нода, `type`, `visit`, `roleIds`, `instructions`, `feedback`/`decision`/`answers` целиком, `tasks` захода, `tasksDoneAt`; нет — граф не начат), `scope: 'task'` — старый воркфлоу по подзадачам без позиции у прогона; без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` (у `fork` — `branches`, у `join` — `forkId`). Внутри разветвления (`docs/workflow.md`, «Разветвление») — ещё `lanes: RunStageInfo[]` (`store.runStages`: этап каждого пути с `lane`, `laneTitle`, `arrived`), `stage` — первая открытая «Работа» из них, иначе первый путь, не пришедший в слияние (`primaryStage` в `socket.ts`), у записей `history` пути — `lane`; у прогона без путей `lanes` нет и ответ побайтно прежний |
+| `workflow.schema` | — | `WorkflowSchema {version,fields,nodeFields,edgeFields,nodeTypes,roles,rules,example}`: реальные поля/порты/ограничения и безопасные стандартные роли |
+| `workflow.get` | `type` | `WorkflowTypeContext {typeId,title,workflow,roles,custom,revision}`: эффективный граф, роли без extraArgs, SHA-256 всего сохранённого типа (включая настройки/название/notes) |
+| `workflow.validate` | `definition: unknown`, `type?` или `base-type?` | `WorkflowPreparation {workflow?,errors,warnings}` без записи; без selectors стандартные роли; форма проверяется рекурсивно до семантики; координаты заполняются только без errors |
+| `workflow.set` | `type`, `revision`, `definition` | `WorkflowSaveResult` (контекст + warnings); синхронно сверяет ревизию и меняет только workflow; stale/deleted тип не заменяется |
+| `workflow.create` | `title`, `description?`, `base-type?`, `definition` | `WorkflowSaveResult` с новым id; валидация до вставки, все настройки базы копируются server-side или используются defaults; задачи не запускаются |
 | `review.accept` | `task`, `decision?` | `Task`; на этапе проверки — исход `accept` воркфлоу (`reviewAccept`, `src/main/workflow.ts`); для задачи-проверки ветки глобальной задачи (`gateFor.runId`) — исход `accept` графа прогона (`decideRunGate`) |
 | `review.reject` | `task`, `feedback` | `Task`; на этапе проверки — исход `reject` воркфлоу (`ProjectDeps.reject` → `reviewReject`); у проверки ветки глобальной задачи — исход `reject` графа прогона, `feedback` уходит в `stage_started` |
 | `decision.choose` | `task?` (нет — `r.taskId`), `option` (строка или массив из одного), `reason` | `ProjectDeps.decide(task, option, reason)` → `{runId, nodeId, optionId, label, to}`; сокет проверяет обязательные поля, одно значение `option`, `reason` ≤ `DECISION_REASON_LIMIT` и что `r.dispatchId` (если есть) — запуск этой задачи; вариант, задачу-решатель и актуальность проверяет движок прогона. Нет `decide` у deps — ошибка «не поддерживается» |
@@ -1801,13 +1980,27 @@ SVG-линия и траектория пакета используют оди�
 | `worker.restart` | `task`, `feedback?` | `{stopped, ptyId, dispatchId, worktree, branch}` |
 | `task.reopen` | `task`, `feedback?`, `start?` | `Task`; со `start` — `{task, worker}` |
 
+Новые workflow-методы — `ProjectManager.workflowGet/workflowValidate/workflowSet/workflowCreate`;
+`workflowGet` и ответы записи
+не раскрывают private extraArgs. Одновременные `type`/`base-type` в validate — `workflow.selectors`.
+Set/create с невалидным графом возвращают верхнеуровневое `validation` с errors/warnings:
+`{id, ok:false, error:string, validation:{errors,warnings,...}}`. CLI при отказе печатает строку `error`
+в stderr, а не этот socket reply. `workflow.notSaved` —
+отказ валидации, `workflow.conflict` — устаревшая ревизия. Ошибки формы имеют `invalidDefinition`/path,
+семантические — действующие коды `WfIssue`. Warnings запись не блокируют.
+Set сохраняет остальные настройки, roles/models/permissions/rules; create без базы использует defaults.
+Библиотечная правка не меняет snapshots прежних прогонов. До записи legacy-типы тихих досок снимаются
+offline без открытия store/recovery; обнаруженная ошибка синхронной записи откатывается через
+`writeFilesAtomic`. Это не crash-atomic транзакция нескольких файлов; вторичная ошибка rollback возвращается явно.
+
 ### Настройки (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»)
 
 То, что человек меняет в «Настройки» и «О проекте» — ассистент читает и правит теми же методами, что и CLI.
 Библиотека типов задач, ролей типов и шаблонов нод общая для всех проектов (как renderer IPC `taskTypes:*`,
 `nodeTemplates:*`): методы идут через `SocketDeps.resolve(projectId)`, как остальные проектные команды, но
 меняют `ProjectManager` напрямую, а не что-то у конкретного проекта — `projectId` только выбирает, через
-какой проект агент обратился к сокету. `settings.*` — уровень приложения (таблица выше). Подтверждение
+какой проект агент обратился к сокету. Исключения app-level — `settings.*`, новые workflow-методы
+и `types.list` с all (таблица выше). Подтверждение
 опасных операций — отдельный флаг `--yes`/параметр `yes: true`, не заданный по умолчанию: без него сокет
 отвечает ошибкой с описанием последствий (аналог человеческого «да» из `skills/assistant.md`), а не выполняет
 операцию молча. Открытое окно узнаёт о правке из CLI/ассистента так же, как о своей: любая из команд ниже
@@ -2171,6 +2364,44 @@ UI работает с активным проектом; воркеры и ко
   `sandbox: false`, фрейм исполняется без ОС-песочницы; апгрейд-путь — `<webview>`/`WebContentsView` с тем же протоколом и токенами.
 
 Тесты — `preview-protocol.test.ts` (отказы, заголовки, CSP, токены, Range, навигация). Интеграцию с Electron `node:test` не покрывает.
+
+### Просмотр файлов проекта (main) — `src/main/docs.ts`, `src/main/docs-view.ts`
+
+Сторона main контракта «IPC: документы (`docs:*`)». Корень — `docRoot(source)` в `index.ts`: чистый `docSourceRoot(source, root,
+docTasks(store))` из `docs.ts` (проект или worktree задачи в работе, иначе `docs.noTaskSource`; тест — `docs.test.ts`).
+
+- **Список** (`listProjectFiles`, группа `project` в `listDocGroups`): один асинхронный процесс
+  `git ls-files -z -t --cached --others --exclude-standard` — отслеживаемые (`H`/`S`/`M`; видны и попавшие под `.gitignore`, как в
+  `git status`) и неотслеживаемые неигнорируемые (`?` → `untracked`). Затем асинхронный `lstat` пачками по `DOCS_STAT_CONCURRENCY` = 64:
+  синхронный обход на 100 000 файлов заморозил бы PTY и сокет. В список попадают обычные файлы и симлинки (`link: true`, размер и mtime
+  цели, если она — файл; цель наружу и битая видны, отказ — при открытии); симлинк на папку, подмодуль (запись-папка), FIFO и пропавшие с
+  диска файлы — нет. Шум ОС (`PROJECT_FILES_OS_NOISE`) и `.git` отсекаются. Больше `DOCS_LIST_LIMIT` — `truncated` и сначала
+  отслеживаемые, затем неотслеживаемые (`trackedFirst`, пачками с уступкой event loop; порядок git — см. «Грабли разработки»). Git не отработал (не репозиторий, «dubious ownership», git не найден) — обход `readdir` в ширину без `.git`,
+  `node_modules` (`PROJECT_FILES_FALLBACK_HIDDEN`) и шума, до `limit + 1` файла. Группы задач — прежние `.md` (`listWorktreeDocs`).
+- **Резолвер** (`resolveDocFile`): `resolveProjectPath(root, path, followLast = true)` из `project-files.ts` — `splitSafeSegments`
+  (`..`, пустые сегменты, абсолютный путь, NUL, на win32 `\` и `:`), realpath внутри корня и не в `.git`; затем `stat` цели **до**
+  `open` — папка, FIFO, сокет, устройство дают `files.notFile`, а не повисший `open`. Читается realpath, а не исходный путь (TOCTOU
+  между проверкой и чтением принят: локальный пользователь). Ошибки fs — `files.notFound` / `files.readFailed` с кодом fs, без
+  абсолютного пути (повторяется только путь, который прислал сам вызывающий).
+- **Чтение** (`viewDoc`): вид — `docKindOf` по пути, не по цели симлинка. Читается не больше лимита + 1 байт через один дескриптор
+  кусками: файл, выросший между `stat` и чтением, даёт `tooBig`, а не обрезанный текст. `sniffText`: NUL в первых
+  `DOC_SNIFF_BYTES` — `binary`, `TextDecoder('utf-8', {fatal: true})` срезает BOM и на невалидном UTF-8 даёт `notUtf8`. Файл без
+  известного расширения больше лимита — вид по первым байтам. SVG с `opts.source` больше `DOC_TEXT_MAX_BYTES` — `stub: 'tooBig'`
+  (картинка по-прежнему доступна через `docs:bytes`). `readDocBytes` — только вид `image` по пути, ≤ `DOC_IMAGE_MAX_BYTES`
+  (больше, в том числе выросший, — `docs.tooBig`).
+- **Превью** (`docsPreviewUrl`): токен `PreviewTokens.issue(root, false)` — тот же протокол и тот же реестр токенов, что у показа;
+  один корень — один токен на показ и «Документы» вместе. Отказ `docs.noPreview` — не html/markdown, путь со скрытым сегментом
+  (`previewSegments`: `.github/…`, `.env.html`) или цель симлинка другого типа: протокол такую страницу всё равно не отдал бы.
+  **Что может прочесть страница проекта:** любой файл корня с расширением из белого списка протокола (точки входа и ассеты —
+  `.json`, `.js`, `.txt`, картинки…) без точечных сегментов, поэтому ни `.env`, ни `.git`. Сети нет — вынести прочитанное наружу нечем.
+- **Открыть / показать** (`docsOpenPath`, `docsRevealPath`): `shell.openPath` — только `SHOWCASE_FILE_TYPES`, расширение проверяется
+  до файловой системы (папка `x.app` — `docs.notOpenable`, не «не файл») и ещё раз по realpath (`a.png → run.sh`). Остаточный риск:
+  HTML открывается системой в браузере — уже без песочницы фрейма; это явное действие человека над его же файлом.
+  `shell.showItemInFolder` — любой файл, симлинк — сам симлинк.
+
+Тесты — `docs.test.ts` (список на временном git-репозитории: не-`.md`, игнорируемое, `.git`, `.env`, симлинки, подмодуль, `truncated`
+с параметром лимита, фолбэк без git) и `docs-view.test.ts` (виды и заглушки, лимиты, рост файла, BOM, не UTF-8, FIFO, отказы пути
+кодами без абсолютных путей, превью без сети, белый список «Открыть»).
 
 ### Безопасность состояния
 
@@ -2756,7 +2987,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Системное меню | macOS: меню приложения, службы, скрытие, стандартные роли окон; значок Dock | настройки и выход в «Файл», «О приложении» в справке; значок окна | `applicationMenuTemplate()` — `src/main/app-menu.ts`; `src/main/index.ts` |
 | Пути картинок к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; до 8 путей в стартовом промпте (`CMD_LINE_LIMIT`) | `saveReturnImages` — `src/main/attachments.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
-| Каталог файлов (вкладка «Файлы») | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
+| Каталог файлов (`files:*`, резолвер путей `docs:*`) | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 | Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `renderer/src/styles.css` |
 
@@ -2925,6 +3156,33 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 
 ## Грабли разработки
 
+- **Приход пути в `join` — не заход.** `nextRunStage` поднимает `visits` на каждый вход в ноду, и без поправки после одного
+  слияния двух путей у `join` было «×2», после второго прохода через `fork` — «×4», а записи приходов выглядели заходами.
+  Заход в `join` — само слияние (`closeJoinedLanes`), приход — `StageChange.arrived` (`uncountArrival` в `store.ts`,
+  миграция `migrateJoinVisits`). Новый код, который считает заходы по `visits` или по записям истории, учитывает `arrived`.
+- **Область пути разветвления — не «всё, что достижимо от входа».** Замыкание от входа пути поглощает любую ноду, куда путь
+  утёк (конец, ноды после слияния), а «доходит до `join`» ломается на пути, который до слияния вообще не доходит, и на
+  `reject` после слияния внутрь пути. Чужая нода — только та, что достижима **снаружи** (от старта или после `join`, не
+  через `fork`) и сама не доходит до `join`, плюс любой `end` (`laneRegions`, `run-lanes.ts`). `run-lanes.ts` не
+  импортирует значения из `workflow.ts`: `workflow.ts` импортирует его ради валидации, и цикл модулей всплыл бы в renderer.
+
+- **Всё, что раньше было «одно на прогон», внутри разветвления — «одно на ноду».** Три места, где это легко пропустить
+  (`packages/core/src/store.ts`):
+  - **Approval `human` дедуплицируется по `(runId, nodeId)`**, а не по прогону (`requestRunApproval`). Прежний дедуп «ждущий
+    approval прогона уже есть» вернул бы второму пути запрос первого — и решение одного пути двинуло бы другой. По той же
+    причине «Подтвердить»/«Вернуть» с карточки при нескольких ждущих — `RunApprovalAmbiguousError`, а не «первый попавшийся».
+  - **Непрочитанные `stage_tasks_done` гасятся по ноде** (`dropStageEvents(runId, nodeId)` в `moveLane` и `syncLaneTasks`).
+    Гашение по всему прогону, как у линейного графа, съедало бы `stage_tasks_done` соседнего пути, пока координатор его не
+    прочитал, — этап соседа ждал бы вечно (до страховки `settleIdleStages`).
+  - **`Run.stage.visits` — один счётчик на весь прогон**, путь не заводит своих: ход пути берёт `{nodeId: lane.nodeId, visits:
+    run.stage.visits}` и пишет счётчики обратно (`moveLane`). Коллизий нет только потому, что валидатор держит области путей
+    непересекающимися (`forkSharedNode`); отдельные `visits` на путь разошлись бы с `Task.stageOf.visit` и `condition attempts`.
+- **Git-worktree ветки глобальной задачи — один на все пути разветвления** (`RunGit.worktree`, `run-branch.ts`). Слияния
+  подзадач разных путей не гоняются за index только потому, что git в main синхронный (`execFileSync`, один процесс);
+  асинхронный мерж (раздел «Ограничения» `docs/workflow.md`) потребует блокировки по ветке прогона. `gate` внутри пути видит в
+  ветке коммиты соседнего пути — отсюда раздел «Путь разветвления» в спеке проверки («работу соседних путей не оценивай»), а
+  смысловые конфликты ловит `gate` после `join`. Дифф этапа пути (`StageChange.commit..HEAD`) не изолирован.
+
 - Смена светлой темы не должна переносить тёмный текст доски на тёмные терминальные панели:
   для xterm, пустых состояний и хвоста координатора нужны отдельные терминальные токены.
   Если атомарная запись `setSettings` падает, откатывай настройки в памяти до рассылки изменений,
@@ -3089,8 +3347,10 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   (`runWorkflowEvents` в `src/main/index.ts`).
 - IPC, заменяющий объект целиком (`taskTypes:save`), плохо сочетается с автосохранением редакторов с задержкой
   (`useAutoSave`, 300 мс): колбэк, захваченный при вводе, собрал бы тип из старой версии и затёр правку
-  соседнего раздела, сделанную за это время. Собирай запись из последней сохранённой версии и сериализуй записи
-  (`update` в `settings/useTaskTypes.ts`).
+  соседнего раздела, сделанную за это время. Даже свежая renderer-копия может отстать от внешнего CLI:
+  узкий patch/rename main применяет к актуальному типу, graph save проверяет baseline атомарно.
+  Очередь `update` в `settings/useTaskTypes.ts` ждёт запись и reload; старый preload требует перезапуска,
+  fallback на whole-type save недопустим.
 - **Автосохранение записи целиком не должно отправлять поле, которое main отвергнет.** Пока в поле флагов запуска был
   негодный текст (незакрытая кавычка), `taskTypes:save` и `app:setSettings` отвергали запись целиком — правка соседнего
   поля молча пропадала, а в логе main копились «Error occurred in handler». Поле с проверкой при вводе перед отправкой
@@ -3173,6 +3433,10 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   (это делает только `runCoordinator` после запуска человеком): иначе повторный вход в «Работу» зациклил бы `ensureCoordinator`. Решение approval прогона (`requests:resolve`, «Подтвердить»,
   «Вернуть») ведёт **одна** цепочка вызовов — `handleRunRequest`, а не событие `request_resolved`: подписка на событие дублировала бы переход.
   Подзадачу закрывает нода `end` пути только после `merge`: закрыть её раньше значило бы дать `stage_tasks_done` по коду, которого ещё нет в ветке прогона.
+- **Внутри разветвления `Run.stage` стоит на `fork`, а не на ноде пути.** В `workflow-run.ts` не сверяй «прогон ещё на этой ноде» через
+  `run.stage.nodeId` — решение по ноде пути молча уйдёт как «граф ушёл дальше». Сверка — `runPositionAt` (`positionAt`), переход — с `nodeId`
+  ноды решения (`advanceRun(…, {nodeId})`), эффекты — по всему `RunStepResult.actions`, а не по `action` (первое действие): иначе второй путь
+  после входа в `fork` остался бы без проверки, вопроса или решателя.
 - **Задача-решатель ноды `decision` тоже помечена `gateFor {runId, nodeId}`** — `isRunGate` для неё истинно. В `workflow-run.ts` любую ветку «это проверка прогона»
   сначала проверяй `isRunDecider` (тип ноды по графу): иначе `done` решателя уйдёт в `settleGate` (`workflow_blocked` «сдана без решения» вместо фоллбэка к человеку), а
   «Принять» на карточке — в `runGateDecision` по несуществующему исходу `accept` (сейчас там явная ошибка «используй decision choose»).
@@ -3191,6 +3455,10 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   (`ensureRunBranch`), иначе автомерж слил бы подзадачу в ветку корня, а не прогона; роль задачи проверяется по типу прогона (`pm.resolveRun`), как в `runWorker`; «перезапуск приложения» —
   новый `ProjectManager` над тем же каталогом (доска читается из `boards/`), а не второй `store` в памяти. Не проверяй в таких тестах то, чего нет в контракте: `stage_tasks_done` несёт только
   `{runId, nodeId}` (без `visit`), в `Run.stageHistory` нет `start`.
+- Сквозной тест разветвления (`workflow-fork-e2e.test.ts`) держит настоящий сокет в том же процессе: настоящий `orca-board` запускай **асинхронно** (`execFile`), синхронный `execFileSync` повесит тест, пока сервер ждёт
+  цикл событий; окружение CLI — только `ORCA_SOCKET` и `ORCA_RUN_ID`, без `ORCA_DISPATCH_ID`/`ORCA_TASK_ID` сессии, которая тест запустила. Путь unix-сокета — в своей короткой папке (лимит ~100 символов).
+  `stage_changed` бывает и прогона, и подзадачи по её пути (есть `taskId`) — события прогона фильтруй по `payload.taskId === undefined`. Колонку карточки читай из `Run.status`: `GlobalTask.status` на «Работе»
+  с ждущим запросом — `needs_input` (`globalDisplayStatus`). После «перезапуска приложения» воркер проверки, которого убил рестарт, — в `ready`: повтор эффекта запускает ту же задачу один раз, а не создаёт новую.
 
 - **`startCoordinator` при повторном запуске сносил папку прогона целиком** (`rmSync(join(root, run.id))`) — вместе с `returns/`, где лежат картинки возвратов, а пути к ним
   живут в `Run.stageInput.images`: рестартовавший координатор получал битые пути. Теперь чистятся только `image-N.*` в корне (`clearStartImages`); картинки возвратов —
@@ -3204,7 +3472,7 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   Chromium нормализует `..` и `%2e%2e` до обработчика, поэтому проверка сегментов в `resolvePreviewRequest` — вторая линия, а главная —
   realpath внутри корня токена.
 
-- **`git check-ignore` (вкладка «Файлы», `gitCheckIgnore` в `main/git.ts`).** Код выхода `1` значит «ничего не игнорируется», а не ошибку —
+- **`git check-ignore` (`files:list`, `gitCheckIgnore` в `main/git.ts`).** Код выхода `1` значит «ничего не игнорируется», а не ошибку —
   `execFile` отдаёт его как исключение, ответ пустой; `128` — не репозиторий или «dubious ownership», тогда фильтра нет. Папки передаются с `/`
   на конце: шаблон `node_modules/` без слэша на путь не срабатывает. Без `--no-index` отслеживаемые файлы игнорируемыми не считаются, даже если
   подпадают под правило (`git add -f`), — они видимы, как в `git status`. Пути — через stdin с `-z`: в argv тысячи имён упираются в лимит
@@ -3253,6 +3521,20 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   variadic-опции и поддержка `--` у них не проверены (агенты не установлены), поэтому argv не менялся: флаг пользователя
   с `...` в `--help` этих агентов ставь не последним. Добавляешь в `invoke` новый флаг — не ставь variadic последним
   перед промптом.
+
+- `git ls-files -t --cached --others` выдаёт **сначала неотслеживаемые** (`?`), потом отслеживаемые (`H`), а не
+  вперемешку по имени. Обрезка списка «Документов» по порядку git при превышении `DOCS_LIST_LIMIT` отрезала README и
+  исходники, а `.env` и сборочный мусор оставляла. Поэтому `listProjectFiles` при обрезке берёт сначала отслеживаемые
+  (`trackedFirst` в `main/docs.ts`, тест «при обрезке отслеживаемые в приоритете»).
+
+- `Markdown.tsx` с `assets` (показ и «Документы») снимает `href` с относительных ссылок и кладёт путь в
+  `data-showcase-href` — вместе с `href` пропадал и `#якорь`: ссылка `other.md#раздел` открывала файл с начала. Якорь
+  теперь едет отдельно в `data-showcase-hash`, просмотрщик прокручивает к нему после открытия файла.
+
+- Аргумент `git add` (и любой команды с pathspec) — не имя файла, а **pathspec**: `:!имя` исключает, `:(icase)` — магия,
+  `*`, `?`, `[1]` — шаблоны. Файл с таким именем в фикстуре теста не добавится или добавит чужие. В тестах со странными
+  именами — `git --literal-pathspecs add -- …` (`main/docs-qa.test.ts`); в коде приложения пути передавай через `--` и,
+  если имя пришло от человека, тоже с `--literal-pathspecs`.
 
 ## Открытые вопросы
 

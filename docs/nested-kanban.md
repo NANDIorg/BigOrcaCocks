@@ -228,7 +228,7 @@ needs_input — **вычисляемая** колонка: там карточк
   «Движок main, промпты и skills прогона»). Старые вложения этой глобальной удаляются перед записью
   новых. Если спавн упал — существующая глобальная задача не закрывается.
 - **Воркфлоу прогона** (`workflowScope: 'run'`): вместо «Повторного запуска» цель — исходная цель и блок «# Этап: …»
-  (`resumeCoordinatorObjective` со `stage`, `workStage` в `coordinator-resume.ts`): координатор — диспетчер и продолжает с этапа «Работа», где стоит граф (на этапах, которые
+  (`resumeCoordinatorObjective` со `stage`, `workStages` в `coordinator-resume.ts`; в разветвлении — блок на каждую открытую «Работу» путей): координатор — диспетчер и продолжает с этапа «Работа», где стоит граф (на этапах, которые
   ведёт приложение, блока нет — цель как есть, он ждёт `stage_started`/`run_done`). Приложение само перезапускает мёртвого координатора на входе в «Работу» (`workflow-run.ts`).
 - **Повторный запуск без новой работы**: все подзадачи уже в done, новых координатор не создаёт —
   автозакрытия не будет (`reopenedAt`), `run_done` не придёт. Поэтому раздел «Повторный запуск»
@@ -456,7 +456,7 @@ CLI этой команды нет: координатор тип не меня�
 | CLI | Метод сокета | Параметры | Результат |
 |---|---|---|---|
 | `global list` | `global.list` | — | `GlobalTask[]` + `coordinatorAlive` |
-| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` |
+| `global get [--global <id>]` | `global.get` | `global` | `GlobalTask` + `coordinatorAlive` (внутри разветвления — `lanes`: где стоит каждый путь) |
 | `global create [--title] [--description] [--status <col>] [--priority …]` | `global.create` | `title?`, `description?`, `status?`, `priority?` | `GlobalTask` |
 | `global update --global <id> [--title] [--description] [--priority …]` | `global.update` | `global`, `title?`, `description?`, `priority?` | `GlobalTask` |
 | `global move --global <id> --status <col>` | `global.move` | `global`, `status` | `GlobalTask` |
@@ -501,6 +501,8 @@ CLI этой команды нет: координатор тип не меня�
   этапа. «Вернуть в работу…» — то же окно замечаний, но с другой подсказкой (`returnHint(…, true)`: граф вернётся по переходу «Вернуть», а не перезапуском
   координатора; терминал не закрывается, и если main не открыл терминал — `returnToWork` вернул пустой `ptyId` — App его не показывает). Где стоит граф —
   чип «Этап: …» на карточке и в шапке (`runStageLabel`), входы в этапы — в «Истории», подзадачи в колонках доски — группами по этапам (`stageGroups`).
+  Внутри разветвления (`GlobalTask.lanes`) чип перечисляет этапы путей («Бэкенд · Фронтенд»), а если решения ждут несколько approval путей,
+  «Подтвердить»/«Вернуть» скрыты — каждый путь решается во «Входящих» (`docs/workflow.md`, «Renderer» → «Разветвление»).
   Запрос не в «Проверке» (нода `human` с другой колонкой) виден в Инбоксе и на карточке в «Нужен ответ» (`RequestCard`, `where` — «прогон › нода»).
 
 ## Проверки

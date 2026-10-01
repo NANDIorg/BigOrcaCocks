@@ -308,7 +308,9 @@ describe('stage_tasks_done и stage finish', () => {
     finish(s, a.id)
     assert.deepEqual(s.settleIdleStages(() => true), [], 'координатор жив — он сам решит')
     const settled = s.settleIdleStages((pty) => pty !== 'pty_c', () => opts)
-    assert.deepEqual(settled, [{ runId: run.id, action: { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' } }])
+    const gate = { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' } as const
+    // Без разветвления действие одно: `actions` — список из него же (RunStepResult).
+    assert.deepEqual(settled, [{ runId: run.id, action: gate, actions: [{ nodeId: 'review', action: gate }] }])
     assert.equal(s.getRun(run.id)!.stage!.nodeId, 'review')
     assert.deepEqual(s.settleIdleStages(() => false), [], 'повторно не закрывается')
   })
@@ -651,5 +653,107 @@ describe('toTaskScopeWorkflow: граф типа для подзадач ста�
     assert.equal(toTaskScopeWorkflow(withMerge).nodes.filter((n) => n.type === 'merge').length, 1)
     const v1 = legacyDefaultWorkflow([])
     assert.equal(toTaskScopeWorkflow(v1), v1)
+  })
+})
+
+describe('контракт разветвления: позиции прогона и nodeId (прогон без путей — как раньше)', () => {
+  it('переходы возвращают actions — по действию на позицию; без путей одно, равное action', () => {
+    const { s, run, entered } = started()
+    assert.deepEqual(entered.actions, [{ nodeId: 'work', action: entered.action }])
+    const again = s.enterRunStage(run.id, opts)
+    assert.deepEqual(again.actions, [{ nodeId: 'work', action: again.action }])
+  })
+
+  it('runStage по nodeId и runStages: одна позиция, без полей пути; чужая нода — undefined', () => {
+    const { s, run } = started()
+    const info = s.runStage(run.id, opts)!
+    assert.deepEqual(s.runStage(run.id, opts, 'work'), info)
+    assert.equal(s.runStage(run.id, opts, 'review'), undefined)
+    assert.deepEqual(s.runStages(run.id, opts), [info])
+    assert.equal('lane' in info || 'laneTitle' in info || 'arrived' in info, false)
+    assert.deepEqual(s.runStages(s.createRun('не начат', undefined, defaultWorkflow([])).id), [])
+  })
+
+  it('решение по ноде, на которой прогон уже не стоит, — ошибка «граф ушёл дальше», позиция не меняется', () => {
+    const { s, run } = started()
+    assert.throws(() => s.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'review' }), /уже не стоит на ноде «review» — граф ушёл дальше/)
+    const a = s.createTask({ title: 'A', runId: run.id })
+    finish(s, a.id)
+    assert.throws(() => s.finishStage(run.id, { ...opts, nodeId: 'review' }), /stage finish: .* граф ушёл дальше/)
+    assert.equal(s.getRun(run.id)!.stage!.nodeId, 'work')
+    const moved = s.finishStage(run.id, { ...opts, nodeId: 'work' })
+    assert.equal(moved.run.stage!.nodeId, 'review')
+    assert.deepEqual(moved.actions, [{ nodeId: 'review', action: moved.action }])
+    const judged = s.advanceRunStage(run.id, 'accept', { ...opts, nodeId: 'review' })
+    assert.equal(judged.run.stage!.nodeId, 'check')
+  })
+
+  it('task create --stage: открытый этап — привязка к нему, не открытый — ошибка; роль этапа по nodeId', () => {
+    const wf = pipelineWorkflow([], { work: [{ id: 'impl', roleIds: ['developer'] }] })
+    const { s, run } = started(wf)
+    const t = s.createTask({ title: 'A', runId: run.id, stage: 'impl' })
+    assert.deepEqual(t.stageOf, { nodeId: 'impl', visit: 1 })
+    assert.equal(t.roleId, 'developer')
+    assert.throws(() => s.createTask({ title: 'B', runId: run.id, stage: 'check' }), /этап «check» .* сейчас не открыт/)
+    assert.equal(s.stageDefaultRole(run.id, 'impl'), 'developer')
+    assert.equal(s.stageDefaultRole(run.id, 'check'), undefined)
+    assert.throws(() => s.assertStageAcceptsTasks(run.id, 'check'), /не открыт/)
+    const legacy = s.createRun('старый движок')
+    assert.throws(() => s.createTask({ title: 'C', runId: legacy.id, stage: 'impl' }), /этапов прогона нет/)
+    const fresh = s.createRun('не начат', undefined, wf)
+    assert.throws(() => s.createTask({ title: 'D', runId: fresh.id, stage: 'impl' }), /ещё не начат/)
+  })
+
+  it('blockRunStage: workflow_blocked по переданной ноде, без неё — по Run.stage', () => {
+    const { s, run } = started()
+    assert.equal(s.blockRunStage(run.id, 'стоп').payload.nodeId, 'work')
+    assert.equal(s.blockRunStage(run.id, 'стоп', 'review').payload.nodeId, 'review')
+  })
+
+  it('позиции путей (Run.lanes): runStages — по этапу на путь с названием пути, подзадачи этапа — по ноде, GlobalTask.lanes', () => {
+    const wf: Workflow = {
+      version: 2,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'split', type: 'fork', x: 0, y: 0, branches: [{ id: 'backend', label: 'Бэкенд' }, { id: 'frontend', label: 'Фронтенд' }] },
+        { id: 'be', type: 'work', title: 'API', roleIds: ['backend'], x: 0, y: 0 },
+        { id: 'fe', type: 'work', title: 'UI', x: 0, y: 0 },
+        { id: 'join', type: 'join', forkId: 'split', x: 0, y: 0 },
+        { id: 'end', type: 'end', x: 0, y: 0 }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'split' },
+        { id: 'e2', from: 'split', outcome: 'backend', to: 'be' },
+        { id: 'e3', from: 'split', outcome: 'frontend', to: 'fe' },
+        { id: 'e4', from: 'be', outcome: 'next', to: 'join' },
+        { id: 'e5', from: 'fe', outcome: 'next', to: 'join' },
+        { id: 'e6', from: 'join', outcome: 'next', to: 'end' }
+      ]
+    }
+    const s = store()
+    const created = s.createRun('цель', undefined, wf)
+    const run = s.getRun(created.id)!
+    // Состояние, которое заводит движок путей (store T2): прогон стоит на fork, пути — на своих «Работах».
+    run.stage = { nodeId: 'split', visits: { start: 1, split: 1, be: 1, fe: 1 } }
+    run.lanes = [
+      { id: 'split:backend', forkId: 'split', branchId: 'backend', forkVisit: 1, nodeId: 'be', stageInput: { feedback: 'API' } },
+      { id: 'split:frontend', forkId: 'split', branchId: 'frontend', forkVisit: 1, nodeId: 'fe' }
+    ]
+    const task = s.createTask({ title: 'ручка', runId: run.id, stage: 'be' })
+    assert.deepEqual(task.stageOf, { nodeId: 'be', visit: 1 })
+    assert.equal(task.roleId, 'backend')
+    const stages = s.runStages(run.id, opts)
+    assert.deepEqual(stages.map((x) => [x.nodeId, x.lane, x.laneTitle, x.arrived, x.tasks, x.feedback]), [
+      ['be', 'split:backend', 'Бэкенд', false, [task.id], 'API'],
+      ['fe', 'split:frontend', 'Фронтенд', false, [], undefined]
+    ])
+    assert.equal(s.runStage(run.id, opts, 'fe')!.lane, 'split:frontend')
+    assert.equal(s.runStage(run.id, opts)!.nodeId, 'split', 'без nodeId — основная позиция на fork')
+    assert.deepEqual(s.getGlobalTask(run.id).lanes, [
+      { id: 'split:backend', forkId: 'split', branchId: 'backend', nodeId: 'be' },
+      { id: 'split:frontend', forkId: 'split', branchId: 'frontend', nodeId: 'fe' }
+    ])
+    run.lanes = []
+    assert.equal('lanes' in s.getGlobalTask(run.id), false, 'пустые пути в карточку не попадают')
   })
 })

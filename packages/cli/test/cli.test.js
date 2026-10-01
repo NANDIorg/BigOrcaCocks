@@ -41,6 +41,54 @@ describe('orca-board CLI', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('workflow: inline/file definitions становятся JSON payload, app-level команды не наследуют проект и run', async () => {
+    const definition = { version: 2, nodes: [], edges: [] }
+    const env = { ORCA_PROJECT: 'gone', ORCA_RUN_ID: 'run_old' }
+    const checked = await run(['workflow', 'validate', '--definition', JSON.stringify(definition), '--base-type', 'mine'], env)
+    assert.equal(checked.req.method, 'workflow.validate')
+    assert.deepEqual(checked.req.params, { definition, 'base-type': 'mine' })
+    assert.equal(checked.req.projectId, undefined)
+    const file = join(dir, 'workflow.json')
+    writeFileSync(file, JSON.stringify(definition))
+    const saved = await run(['workflow', 'set', '--type', 'mine', '--revision', 'rev', '--file', file, '--project', 'p_1'], env)
+    assert.equal(saved.req.method, 'workflow.set')
+    assert.deepEqual(saved.req.params, { type: 'mine', revision: 'rev', definition })
+    assert.equal(saved.req.projectId, undefined)
+    const created = await run(['workflow', 'create', '--title', 'Новый', '--description', 'Описание', '--definition', JSON.stringify(definition)], env)
+    assert.equal(created.req.method, 'workflow.create')
+    assert.deepEqual(created.req.params, { title: 'Новый', description: 'Описание', definition })
+    const own = await run(['workflow', 'get', '--type', 'mine'], env)
+    assert.deepEqual(own.req.params, { type: 'mine' })
+    assert.equal(own.req.projectId, undefined)
+    assert.equal((await run(['workflow', 'schema'], env)).req.projectId, undefined)
+    assert.equal((await run(['types', 'list', '--all'], env)).req.projectId, undefined)
+    assert.equal((await run(['types', 'list'], env)).req.projectId, 'gone')
+  })
+
+  it('workflow: недостающие параметры, конфликт источников и негодный JSON отказывают до socket', async () => {
+    for (const args of [
+      ['workflow', 'get'], ['workflow', 'get', '--type'],
+      ['workflow', 'validate'], ['workflow', 'validate', '--definition', '{broken'],
+      ['workflow', 'validate', '--definition'], ['workflow', 'validate', '--file', join(dir, 'gone.json')],
+      ['workflow', 'validate', '--definition', '{}', '--file', 'other.json'],
+      ['workflow', 'validate', '--definition', '{}', '--type', 'one', '--base-type', 'two'],
+      ['workflow', 'set', '--type', 'mine', '--definition', '{}'],
+      ['workflow', 'set', '--revision', 'rev', '--definition', '{}'],
+      ['workflow', 'create', '--definition', '{}'],
+      ['workflow', 'create', '--title', 'Новый', '--definition', '{}', '--base-type']
+    ]) {
+      const response = await run(args)
+      assert.equal(response.code, 1, args.join(' '))
+      assert.equal(response.req, null, args.join(' '))
+    }
+  })
+
+  it('HELP перечисляет все доступные инструменты графа и чтение полной библиотеки', async () => {
+    const out = await new Promise((resolve) => execFile(process.execPath, [CLI, '--help'], (_e, stdout) => resolve(stdout)))
+    for (const command of ['workflow schema', 'workflow get --type <id>', 'workflow validate', 'workflow set --type <id> --revision <token>',
+      'workflow create --title', '--definition', '--base-type', 'types list [--all]']) assert.ok(out.includes(command), command)
+  })
+
   it('старый task create наследует прогон из ORCA_RUN_ID', async () => {
     const { req } = await run(['task', 'create', '--title', 't', '--role', 'developer'], { ORCA_RUN_ID: 'run_1' })
     assert.equal(req.method, 'task.create')
@@ -69,6 +117,21 @@ describe('orca-board CLI', () => {
     const empty = await run(['runs', 'finish', '--summary'], { ORCA_RUN_ID: 'run_1' })
     assert.equal(empty.req, null)
     assert.equal(empty.code, 1)
+  })
+
+  it('--stage у task create и stage finish уходит в params.stage; без значения — ошибка без запроса', async () => {
+    const created = await run(['task', 'create', '--title', 't', '--role', 'developer', '--stage', 'work_be'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(created.req.method, 'task.create')
+    assert.equal(created.req.params.stage, 'work_be')
+    const finished = await run(['stage', 'finish', '--stage', 'work_fe', '--summary', 'готово'], { ORCA_RUN_ID: 'run_1' })
+    assert.equal(finished.req.method, 'stage.finish')
+    assert.equal(finished.req.params.stage, 'work_fe')
+    assert.equal(finished.req.params.run, 'run_1')
+    for (const args of [['task', 'create', '--title', 't', '--stage'], ['stage', 'finish', '--stage']]) {
+      const bare = await run(args, { ORCA_RUN_ID: 'run_1' })
+      assert.equal(bare.req, null, args.join(' '))
+      assert.equal(bare.code, 1)
+    }
   })
 
   it('stage finish: прогон из ORCA_RUN_ID, --summary и --summary-file уходят текстом; без прогона и без текста — ошибка без запроса', async () => {

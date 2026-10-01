@@ -2,6 +2,7 @@ import type { AreaTranslation } from '../types'
 import type ru from '../ru/settings'
 
 export default {
+  'presets.assistant': 'Create with assistant',
   title: 'Settings',
   'nav.aria': 'Settings sections',
   'nav.general': 'General',
@@ -33,12 +34,15 @@ export default {
   'appearance.theme.paper': 'Paper',
   'appearance.theme.paper.hint': 'Warm light surfaces, gentle borders, and a dark green accent.',
   'appearance.motion': 'Animations',
+  'appearance.highSaturation': 'Higher saturation',
+  'appearance.highSaturationHint': 'Richer colors for accents, statuses, priorities, and progress in every theme.',
   'appearance.motionHint': 'Reduced motion removes decorative animations and smooth scrolling.',
   'appearance.motion.system': 'Follow system',
   'appearance.motion.reduced': 'Reduce motion',
 
   'assistant.title': 'Assistant',
   'assistant.hint': 'The board assistant does what you ask through orca-board. There is one for the whole app; it is not tied to task types.',
+  'assistant.workflowHandoff': 'Choosing a chat agent will open a new conversation for your workflow. Your message text and workflow draft will be preserved.',
   'assistant.nextDialog': 'Changes apply to a new conversation (↻ in the assistant panel); the current one is not restarted.',
   'assistant.permission': 'Permission mode is always auto: the assistant only needs orca-board.',
   'assistant.warnOff': 'Agent “{agent}” is not installed — the assistant won’t start. Pick another agent.',

@@ -1,6 +1,8 @@
+import type { WorkflowAssistantContext } from '../../../shared/assistant-workflow'
+import { requestedWorkflowTypeExists, type WorkflowSectionRequest } from '../workflowAssistant'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_ROLES, presetTaskTypes, type AgentInfo, type AssistantSettings, type Role, type TaskType } from '@orca-board/core'
+import { DEFAULT_ROLES, presetTaskTypes, type AgentKind, type AgentInfo, type AssistantSettings, type Role, type TaskType } from '@orca-board/core'
 import type { AppSettings, AppSettingsPatch, Project } from '../../../shared/ipc'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
@@ -58,7 +60,10 @@ function initialTab(): TaskTypeTab {
 
 interface Props {
   /** Системное меню ведёт прямо в обновления, даже если настройки уже открыты на другом разделе. */
-  sectionRequest?: { section: 'updates' | 'assistant'; nonce: number }
+  sectionRequest?: WorkflowSectionRequest
+  onWorkflowAssistant(context: WorkflowAssistantContext): void
+  workflowHandoff: boolean
+  onWorkflowAgentSelected(agent: AgentKind): void
   /** Агенты реестра; у типа своих агентов нет — в выборе все установленные. */
   agents: AgentInfo[]
   /** Заново просканировать PATH. */
@@ -78,9 +83,11 @@ interface Props {
  * «Настройки» (шестерёнка в rail): общие настройки приложения и библиотека типов задач (taskTypes:*).
  * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
  */
-export function SettingsModal({ sectionRequest, agents, updates, onProjectsChanged, onAppSettings, onRunOnboarding, onClose }: Props): React.JSX.Element {
+export function SettingsModal({ sectionRequest, agents, updates, onProjectsChanged, onAppSettings, onRunOnboarding, onClose, onWorkflowAssistant, workflowHandoff, onWorkflowAgentSelected }: Props): React.JSX.Element {
   const t = useT()
   const [section, setSection] = useState<Section>(initialSection)
+  const [workflowRequest, setWorkflowRequest] = useState<Extract<WorkflowSectionRequest, { tab: 'workflow' }> | null>(null)
+  const handledRequest = useRef<number | null>(null)
   const [tab, setTab] = useState<TaskTypeTab>(initialTab)
   const [projectList, setProjectList] = useState<Project[]>([])
   const types = useTaskTypes(reloadProjects)
@@ -102,7 +109,13 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   }, [createBusy])
 
   useEffect(() => {
-    if (sectionRequest) go(sectionRequest.section)
+    if (!sectionRequest || handledRequest.current === sectionRequest.nonce) return
+    handledRequest.current = sectionRequest.nonce
+    go(sectionRequest.section)
+    if ('tab' in sectionRequest) {
+      goTab(sectionRequest.tab)
+      setWorkflowRequest(sectionRequest)
+    }
   }, [sectionRequest])
 
   useEffect(() => {
@@ -129,12 +142,20 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
 
   function go(s: Section): void {
     setSection(s)
+    setWorkflowRequest(null)
     storeSection(SETTINGS_SECTION_KEY, s)
   }
 
   function goTab(t: TaskTypeTab): void {
     setTab(t)
     storeSection(TAB_KEY, t)
+  }
+
+  /** Снимок применён редактором; nonce оставляем, чтобы его снятие не меняло key живого черновика. */
+  function workflowRestoreApplied(nonce: number): void {
+    setWorkflowRequest((current) => current?.nonce === nonce && current.restore
+      ? { section: current.section, tab: current.tab, nonce: current.nonce }
+      : current)
   }
 
   /** Показать тип; null — тип по умолчанию. */
@@ -191,6 +212,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   }
 
   const presetItems: PopupItem[] = [
+    { id: 'assistant', label: t('settings.presets.assistant') },
     { id: 'empty', label: t('settings.presets.empty') },
     ...presetTaskTypes().map((preset, index) => ({
       id: preset.id, label: builtinText(preset.title),
@@ -202,7 +224,8 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
 
   const state = types.state
   const usage = state ? taskTypeUsage(projectList, state) : {}
-  const currentId = state && section.startsWith(TYPE) ? pickTaskTypeId(state, section.slice(TYPE.length)) : null
+  const exactRequest = workflowRequest?.section === section ? workflowRequest : null
+  const currentId = state && section.startsWith(TYPE) ? (exactRequest ? section.slice(TYPE.length) : pickTaskTypeId(state, section.slice(TYPE.length))) : null
   const current: TaskType | undefined = state?.taskTypes.find((t) => t.id === currentId)
 
   // Роли для фильтра уведомлений: роли всех типов библиотеки; старый main без типов — встроенные.
@@ -241,12 +264,18 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   }
 
   function renderType(): React.ReactNode {
+    if (state && exactRequest && !requestedWorkflowTypeExists(state.taskTypes.map((type) => type.id), exactRequest.section.slice(TYPE.length))) {
+      return <div className="editor-error" role="alert">{t('config.taskType.notFound', { id: exactRequest.section.slice(TYPE.length) })}</div>
+    }
     if (!state || !current) {
       return types.error ? <div className="editor-error">{types.error}</div> : <div className="muted">{t('common.loading')}</div>
     }
     return (
       <TaskTypePane
         type={current}
+        workflowRequest={exactRequest ?? undefined}
+        onWorkflowRestoreApplied={workflowRestoreApplied}
+        onWorkflowAssistant={onWorkflowAssistant}
         state={state}
         usage={usage[current.id]}
         agents={agents}
@@ -316,7 +345,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
                 ) : section === 'updates' ? (
                   <UpdatesSection settings={appSettings} updates={updates} error={appError} onChange={(p) => void saveApp({ updates: p })} />
                 ) : section === 'assistant' ? (
-                  <AssistantSection settings={appSettings} agents={agents} error={appError} onSave={saveAssistant} />
+                  <AssistantSection workflowHandoff={workflowHandoff} onAgentSelected={onWorkflowAgentSelected} settings={appSettings} agents={agents} error={appError} onSave={saveAssistant} />
                 ) : section === 'nodes' ? (
                   <NodeTemplatesSection library={nodeTemplates} />
                 ) : (
@@ -330,7 +359,7 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
       {presetMenu && (
         <PopupMenu
           {...presetMenu} ariaLabel={t('settings.presets.aria')} items={presetItems}
-          onPick={(id) => { closePresetMenu(true); void createType(id === 'empty' ? undefined : id) }}
+          onPick={(id) => { closePresetMenu(id !== 'assistant'); if (id === 'assistant') onWorkflowAssistant({ mode: 'create' }); else void createType(id === 'empty' ? undefined : id) }}
           onClose={closePresetMenu}
         />
       )}

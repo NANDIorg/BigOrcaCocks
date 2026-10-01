@@ -3,7 +3,7 @@
  * Глобальная задача — это прогон (`Run`), её подзадачи — задачи с `Task.runId === run.id`.
  * Здесь — чистое представление для API и renderer: без Node и без store, только данные.
  */
-import type { BoardColumn, ColumnKind, HumanRequest, Run, StageChange, StatusChange, Task, TaskPriority } from './types'
+import type { BoardColumn, ColumnKind, HumanRequest, Run, RunLane, StageChange, StatusChange, Task, TaskPriority } from './types'
 import type { RunGit } from './run-branch'
 import type { RunImage } from './attachments'
 import type { WfStage } from './workflow'
@@ -40,6 +40,8 @@ export interface GlobalTaskReturn {
   text: string
   /** Абсолютные пути картинок к уточнению (в cwd координатора); пишет main. */
   images?: string[]
+  /** Нода, с которой вернули (`Run.returns[].nodeId`): возвраты двух путей разветвления не путаются по времени. */
+  nodeId?: string
 }
 
 /** Сводка координатора «что сделано» (`Run.summary`, `runs finish --summary`). */
@@ -65,6 +67,13 @@ export interface GlobalTaskProgress {
 }
 
 /** Карточка глобальной задачи для API и UI. */
+/** Путь разветвления на карточке (`GlobalTask.lanes`): поля `RunLane`, которые нужны UI. */
+export type GlobalTaskLane = Pick<RunLane, 'id' | 'forkId' | 'branchId' | 'nodeId' | 'arrivedAt'>
+
+function globalTaskLane(l: RunLane): GlobalTaskLane {
+  return { id: l.id, forkId: l.forkId, branchId: l.branchId, nodeId: l.nodeId, ...(l.arrivedAt !== undefined ? { arrivedAt: l.arrivedAt } : {}) }
+}
+
 export interface GlobalTask {
   id: string
   title: string
@@ -114,6 +123,11 @@ export interface GlobalTask {
   stage?: WfStage
   /** История входов в этапы (`Run.stageHistory`, копия); нет — как у `stage`. */
   stageHistory?: StageChange[]
+  /**
+   * Пути разветвления (`Run.lanes`, копия без внутренних полей): где стоит каждый путь и пришёл ли он в слияние. Есть,
+   * только пока глобальная задача внутри `fork` … `join` — `stage` тогда стоит на `fork`. Нет — граф идёт одной позицией.
+   */
+  lanes?: GlobalTaskLane[]
   progress: GlobalTaskProgress
   /**
    * Основное время — сколько сама глобальная задача была в работе (`Run.activeMs`): закрытые отрезки, мс.
@@ -333,6 +347,7 @@ export function toGlobalTask(
     ...(run.workflowScope ? { workflowScope: run.workflowScope } : {}),
     ...(run.stage ? { stage: { nodeId: run.stage.nodeId, visits: { ...run.stage.visits } } } : {}),
     ...(run.stageHistory ? { stageHistory: run.stageHistory.map((h) => ({ ...h, ...(h.decision ? { decision: { ...h.decision } } : {}) })) } : {}),
+    ...(run.lanes && run.lanes.length > 0 ? { lanes: run.lanes.map(globalTaskLane) } : {}),
     progress: globalTaskProgress(run.id, tasks, columnKind),
     ...(run.activeMs !== undefined ? { ownActiveMs: run.activeMs } : {}),
     ...(run.activeSince !== undefined ? { ownActiveSince: run.activeSince } : {}),

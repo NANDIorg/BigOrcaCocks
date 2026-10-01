@@ -2,6 +2,7 @@ import type { AreaDict } from '../types'
 
 /** Окно «Настройки»: общие, уведомления, меню разделов. */
 export default {
+  'presets.assistant': 'Создать с ассистентом',
   title: 'Настройки',
   'nav.aria': 'Разделы настроек',
   'nav.general': 'Общие',
@@ -33,12 +34,15 @@ export default {
   'appearance.theme.paper': 'Бумага',
   'appearance.theme.paper.hint': 'Светлые тёплые поверхности, мягкие границы и тёмно-зелёный акцент.',
   'appearance.motion': 'Анимации',
+  'appearance.highSaturation': 'Повышенная насыщенность',
+  'appearance.highSaturationHint': 'Более насыщенные цвета акцентов, статусов, приоритетов и прогресса в любой теме.',
   'appearance.motionHint': 'Уменьшение движения убирает декоративные анимации и плавную прокрутку.',
   'appearance.motion.system': 'Как в системе',
   'appearance.motion.reduced': 'Уменьшить движение',
 
   'assistant.title': 'Ассистент',
   'assistant.hint': 'Ассистент доски выполняет ваши просьбы через orca-board. Он один на приложение и к типам задач не относится.',
+  'assistant.workflowHandoff': 'Когда вы выберете агента с чатом, откроется новый диалог для передачи воркфлоу. Текст сообщения и черновик сохранятся.',
   'assistant.nextDialog': 'Изменения вступят в силу в новом диалоге (↻ в панели ассистента); идущий диалог не перезапускается.',
   'assistant.permission': 'Режим разрешений — всегда auto: ассистенту нужен только orca-board.',
   'assistant.warnOff': 'Агент «{agent}» не установлен — ассистент не запустится. Выберите другого агента.',

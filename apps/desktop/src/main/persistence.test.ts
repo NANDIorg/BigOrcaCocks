@@ -1,10 +1,12 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
-import { jsonPersistence, writeFileAtomic, readJsonFile, type StateWarning } from './persistence'
+import { jsonPersistence, writeFileAtomic, writeFilesAtomic, readJsonFile, type StateWarning } from './persistence'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'orca-persist-')) })
@@ -34,6 +36,43 @@ describe('writeFileAtomic', () => {
     assert.throws(() => writeFileAtomic(target, '{}'))
     assert.deepEqual(readdirSync(dir).sort(), ['a.json', 'd.json'])
     assert.equal(readFileSync(f, 'utf8'), '{"old":true}')
+  })
+})
+
+describe('writeFilesAtomic', () => {
+  it('ошибка staging последнего файла оставляет все исходные файлы и убирает подготовленные tmp', () => {
+    const board = join(dir, 'board.json')
+    const projects = join(dir, 'projects.json')
+    writeFileSync(board, '{"old":"board"}')
+    writeFileSync(projects, '{"old":"projects"}')
+    mkdirSync(`${projects}.tmp`)
+    assert.throws(() => writeFilesAtomic([{ file: board, text: '{}' }, { file: projects, text: '{}' }]))
+    assert.equal(readFileSync(board, 'utf8'), '{"old":"board"}')
+    assert.equal(readFileSync(projects, 'utf8'), '{"old":"projects"}')
+    assert.deepEqual(readdirSync(dir).sort(), ['board.json', 'projects.json', 'projects.json.tmp'])
+  })
+
+  it('ошибка rename последнего файла откатывает уже записанный файл и удаляет новый', (t) => {
+    const old = join(dir, 'old.json')
+    const added = join(dir, 'added.json')
+    const projects = join(dir, 'projects.json')
+    writeFileSync(old, ' {"old":true}\n')
+    writeFileSync(projects, '{"library":"old"}')
+    const rename = fs.renameSync
+    const stub = t.mock.method(fs, 'renameSync', (from: Parameters<typeof rename>[0], to: Parameters<typeof rename>[1]) => {
+      if (to === projects) throw new Error('simulated EIO during projects rename')
+      return rename(from, to)
+    })
+    syncBuiltinESMExports()
+    try {
+      assert.throws(() => writeFilesAtomic([{ file: old, text: '{}' }, { file: added, text: '{}' }, { file: projects, text: '{}' }]), /simulated EIO/)
+      assert.equal(readFileSync(old, 'utf8'), ' {"old":true}\n')
+      assert.equal(readFileSync(projects, 'utf8'), '{"library":"old"}')
+      assert.deepEqual(readdirSync(dir).sort(), ['old.json', 'projects.json'])
+    } finally {
+      stub.mock.restore()
+      syncBuiltinESMExports()
+    }
   })
 })
 

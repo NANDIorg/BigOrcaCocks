@@ -6,6 +6,7 @@ import { RequestCard, requestKindTitle, type RequestCardHandle } from './Request
 import { Markdown } from './Markdown'
 import { requestShowcases } from './showcase'
 import { requestStageLabel, wfNodeTitles } from './cardState'
+import { requestLaneTitle } from './globalReview'
 import { Icon } from './icons'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
@@ -71,6 +72,8 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, columns, w
 
   const stageOf = (r: HumanRequest): string | undefined =>
     r.nodeId && r.kind === 'question' ? requestStageLabel(r, wfNodeTitles(workflowOf?.(r.runId))) : undefined
+
+  const laneOf = (r: HumanRequest): string | undefined => requestLaneTitle(r, workflowOf?.(r.runId), runById.get(r.runId)?.lanes)
 
   // Выбранная карточка пропала (решена, отменена) — выбор на первую видимую.
   const current = visible.find((r) => r.id === activeId) ?? visible[0]
@@ -223,6 +226,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, columns, w
                 showcases={requestShowcases(r, dispatches, tasks, kindOf)}
                 where={where(r)}
                 stage={stageOf(r)}
+                lane={laneOf(r)}
                 active={open && current?.id === r.id}
                 onSelect={() => setActiveId(r.id)}
                 onResolve={(res, images) => resolve(r, res, images)}

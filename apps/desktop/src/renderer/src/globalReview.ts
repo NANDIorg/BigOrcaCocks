@@ -1,7 +1,8 @@
-import { isPendingRequest, type ColumnKind, type GlobalTask, type GlobalTaskReturn, type HumanRequest } from '@orca-board/core'
+import { isPendingRequest, nodeLane, type ColumnKind, type GlobalTask, type GlobalTaskReturn, type HumanRequest, type Workflow } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import { t } from './i18n'
 import { ipcErrorCode, ipcErrorMessage } from './ipcError'
+import { laneTitle } from './runStage'
 
 /**
  * Что можно сделать с глобальной задачей на карточке и в деталях. «Проверка» — колонка kind=review
@@ -21,15 +22,31 @@ export interface GlobalTaskActions {
   returnToWork: boolean
   /** Прежний координатор ещё жив: возврат закроет его терминал (main, `returnGlobalTaskToWork`). */
   returnClosesCoordinator?: boolean
+  /**
+   * Решения ждут несколько approval прогона (параллельные пути разветвления на нодах `human`): «Подтвердить» и «Вернуть»
+   * скрыты — они решают один approval прогона, и какой из них, непонятно. Каждый решается во «Входящих» по своей ноде.
+   * Число запросов; нет — кнопки как обычно.
+   */
+  approvalsInInbox?: number
 }
 
 /**
  * Доступные действия. kind — вид колонки, в которой карточка показана (с учётом «Нужен ответ»);
  * live — у задачи есть живой координатор. У «Входящих» нет координатора и они не бывают на проверке.
+ * approvals — сколько approval прогона ждут решения (`runApprovalRequests`); больше одного — только у прогона с воркфлоу
+ * внутри разветвления, тогда кнопки решения уходят во «Входящие» (`approvalsInInbox`).
  */
-export function globalTaskActions(g: { inbox?: boolean }, kind: ColumnKind | undefined, live: boolean): GlobalTaskActions {
+export function globalTaskActions(
+  g: { inbox?: boolean; workflowScope?: GlobalTask['workflowScope'] },
+  kind: ColumnKind | undefined,
+  live: boolean,
+  approvals = 0
+): GlobalTaskActions {
   if (g.inbox) return { startCoordinator: false, accept: false, returnToWork: false }
   const review = kind === 'review'
+  if (review && approvals > 1 && isRunWorkflow(g)) {
+    return { startCoordinator: false, accept: false, returnToWork: false, approvalsInInbox: approvals }
+  }
   return {
     startCoordinator: !review && !live,
     accept: review,
@@ -52,16 +69,56 @@ export function isRunWorkflow(g: Partial<Pick<GlobalTask, 'workflowScope' | 'inb
   return g.workflowScope === 'run' && g.inbox !== true
 }
 
-/** Ждущий approval уровня прогона (нода `human`, без задачи): что человек подтверждает. Нет — undefined. */
-export function runApprovalRequest(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest | undefined {
+/**
+ * Ждущие approval уровня прогона (ноды `human`, без задачи), старые первыми. Обычно один; внутри разветвления — по
+ * одному на путь, стоящий на `human` (запросы различаются `nodeId`).
+ */
+export function runApprovalRequests(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest[] {
   return (requests ?? [])
     .filter((r) => r.runId === runId && r.taskId === undefined && r.kind === 'approval' && isPendingRequest(r))
-    .sort((a, b) => a.createdAt - b.createdAt)[0]
+    .sort((a, b) => a.createdAt - b.createdAt)
 }
 
-/** Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. */
-export function returnHint(closesCoordinator: boolean, runWorkflow = false): string {
-  if (runWorkflow) return t('global.return.hintRun')
+/** Ждущий approval уровня прогона (нода `human`, без задачи): что человек подтверждает. Нет — undefined. */
+export function runApprovalRequest(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest | undefined {
+  return runApprovalRequests(requests, runId)[0]
+}
+
+/**
+ * Название пути разветвления, в котором стоит нода запроса (`HumanRequest.nodeId`): «Бэкенд». Путь — по графу прогона
+ * (`nodeLane`: нода принадлежит пути, даже когда позиции путей уже сменились), без графа (типы не загрузились, старый
+ * main) — по текущим позициям путей (`GlobalTask.lanes`). Нода вне разветвления, запрос без ноды — undefined.
+ */
+export function requestLaneTitle(
+  request: Pick<HumanRequest, 'nodeId'> | undefined,
+  workflow: Pick<Workflow, 'nodes' | 'edges'> | undefined,
+  lanes?: readonly { id: string; nodeId: string }[]
+): string | undefined {
+  const nodeId = request?.nodeId
+  if (!nodeId) return undefined
+  const lane = (workflow ? nodeLane(workflow, nodeId)?.laneId : undefined) ?? lanes?.find((l) => l.nodeId === nodeId)?.id
+  return lane !== undefined ? laneTitle(workflow, lane) : undefined
+}
+
+/**
+ * Путь, который решает «Подтвердить» / «Вернуть» глобальной задачи: только когда ждущий approval прогона ровно один и
+ * его нода — внутри пути. При нескольких окна решение не отправляют (`approvalsInInbox`), без путей — прежние тексты.
+ */
+export function reviewLaneTitle(
+  requests: readonly HumanRequest[],
+  g: Pick<GlobalTask, 'id'> & Partial<Pick<GlobalTask, 'lanes'>>,
+  workflow: Pick<Workflow, 'nodes' | 'edges'> | undefined
+): string | undefined {
+  const pending = runApprovalRequests(requests, g.id)
+  return pending.length === 1 ? requestLaneTitle(pending[0], workflow, g.lanes) : undefined
+}
+
+/**
+ * Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. `lane` — возвращается один путь
+ * разветвления (`reviewLaneTitle`): соседние пути не затронуты.
+ */
+export function returnHint(closesCoordinator: boolean, runWorkflow = false, lane?: string): string {
+  if (runWorkflow) return lane !== undefined ? t('global.return.hintLane', { lane }) : t('global.return.hintRun')
   return t(closesCoordinator ? 'global.return.hintCloses' : 'global.return.hint')
 }
 

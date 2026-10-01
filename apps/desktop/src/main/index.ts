@@ -1,3 +1,6 @@
+import type { Workflow } from '@orca-board/core'
+import { buildWorkflowAssistantContext, saveWorkflowDraft } from './assistant-workflow'
+import type { TaskTypePatch } from '../shared/ipc'
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -20,10 +23,11 @@ import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, typ
 import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
-  settleIdleRunStages, startRunWorkflow,
+  hasIdleStage, settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
-import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
+import { docSourceRoot, docTasks, listDocGroups, readDoc } from './docs'
+import { docsOpenPath, docsPreviewUrl, docsRevealPath, readDocBytes, viewDoc } from './docs-view'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
@@ -656,7 +660,7 @@ function watchFinishedCoordinators(): void {
       for (const { ptyId } of due) killPty(ptyId)
       store.settleIdleRuns(isAlive)
       // Воркфлоу прогона: координатор умер, не закрыв этап `stage finish` — этап закрывается без сводки.
-      if (snap.runs.some((r) => r.workflowScope === 'run' && r.stageTasksDoneAt !== undefined && r.closedAt === undefined)) {
+      if (snap.runs.some(hasIdleStage)) {
         try {
           settleIdleRunStages(runWorkflowDeps(projectId))
         } catch (e) {
@@ -752,25 +756,10 @@ function testNotification(): void {
   new Notification({ title: 'orca-board', body, silent: !s.sound }).show()
 }
 
-/**
- * Задачи в работе для «Документов»: у задачи есть worktree на диске и она не в колонке kind=done.
- * После принятия ревью worktree удаляется — документы задачи уже в проекте.
- */
-function docTasks(store: TaskStore): DocTask[] {
-  return store
-    .snapshot()
-    .tasks.filter((t) => t.worktree && store.columnKind(t.status) !== 'done' && existsSync(t.worktree))
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .map((t) => ({ id: t.id, title: t.title, worktree: t.worktree!, branch: t.branch }))
-}
-
 /** Корень источника документов: проект или worktree его задачи в работе. Чужие id — ошибка. */
 function docRoot(source: unknown): string {
   const p = resolveProject()
-  if (source === PROJECT_SOURCE) return p.root
-  const task = docTasks(p.store).find((t) => t.id === source)
-  if (!task) throw new OrcaError('docs.noTaskSource', { id: String(source) })
-  return task.worktree
+  return docSourceRoot(source, p.root, docTasks(p.store))
 }
 
 /** Диалог выбора репозитория для «Добавить проект»; отмена — null. */
@@ -917,6 +906,9 @@ function registerIpc(): void {
   })
   handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.setProjectTaskTypes(id, input))
   handle('taskTypes:list', () => projects.taskTypesState())
+  handle('taskTypes:patch', (_e, id: string, patch: TaskTypePatch) => projects.patchTaskType(id, patch))
+  handle('taskTypes:rename', (_e, id: string, title: string, description: string) => projects.renameTaskType(id, { title, description }))
+  handle('workflowAssistant:save', (_e, id: string, baseline: Workflow, workflow: Workflow | null) => saveWorkflowDraft(projects, id, baseline, workflow))
   handle('taskTypes:save', (_e, input: TaskTypeInput) => projects.saveTaskType(input))
   handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
@@ -1052,6 +1044,7 @@ function registerIpc(): void {
   handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
   handle('assistantChat:available', (_e, id: string) => assistantSession.available(id))
   handle('assistantChat:getMessages', (_e, id: string) => assistantSession.snapshot(id))
+  handle('assistantChat:sendWithWorkflow', (_e, id: string, text: unknown, context: unknown) => assistantSession.send(id, text, buildWorkflowAssistantContext(projects, context)))
   handle('assistantChat:send', (_e, id: string, text: unknown) => assistantSession.send(id, text))
   handle('assistantChat:interrupt', (_e, id: string) => assistantSession.interrupt(id))
   handle('assistantChat:respond', (_e, id: string, requestId: string, answer: InteractionAnswer) => assistantSession.respond(id, requestId, answer))
@@ -1061,11 +1054,19 @@ function registerIpc(): void {
     return listDocGroups(p.root, currentBranch(p.root), docTasks(p.store))
   })
   handle('docs:read', (_e, source: unknown, path: unknown) => readDoc(docRoot(source), path))
+  // Любой файл источника (main/docs-view.ts): бинарь, не UTF-8, большой и PDF — `stub`, не ошибка.
+  handle('docs:view', (_e, source: unknown, path: unknown, opts: unknown) => viewDoc(docRoot(source), path, opts))
+  handle('docs:bytes', (_e, source: unknown, path: unknown) => readDocBytes(docRoot(source), path))
+  // Токен протокола показа на корень источника — всегда без сети: HTML проекта — недоверенный код.
+  handle('docs:previewUrl', (_e, source: unknown, path: unknown) => docsPreviewUrl(previewTokens, docRoot(source), path))
+  // Открыть приложением системы — только белый список показа (по пути и по цели симлинка); показать в папке — любой файл.
   handle('docs:open', async (_e, source: unknown, path: unknown) => {
-    const err = await shell.openPath(resolveDocPath(docRoot(source), path))
+    const err = await shell.openPath(await docsOpenPath(docRoot(source), path))
     if (err) throw new Error(err)
   })
-  handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  handle('docs:reveal', async (_e, source: unknown, path: unknown) => {
+    shell.showItemInFolder(await docsRevealPath(docRoot(source), path))
+  })
   // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
   // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
@@ -1092,7 +1093,7 @@ function registerIpc(): void {
     const p = resolveProject()
     return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
   })
-  // Вкладка «Файлы» (main/project-files.ts): корень — явного projectId, неизвестный id — обычная ошибка «project not found».
+  // Одна папка проекта (main/project-files.ts) для диалога начального коммита; вкладки «Файлы» нет. Корень — явного projectId, неизвестный id — обычная ошибка «project not found».
   handle('files:list', (_e, projectId: unknown, dir: unknown) => listProjectDir(projectRoot(String(projectId)), dir ?? ''))
   // Только показать в Finder/Проводнике, не openPath: запуск произвольного файла опасен. Симлинк — сам симлинк.
   handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {
@@ -1155,6 +1156,9 @@ app.whenReady().then(() => {
     syncMainAppearance()
     if (win && !win.isDestroyed()) win.webContents.send('app:changed')
   })
+  projects.onWorkflowSaved((saved) => {
+    if (win && !win.isDestroyed()) win.webContents.send('workflowAssistant:saved', saved)
+  })
   const { support, backend } = createPlatformUpdater({
     version: app.getVersion(),
     isPackaged: app.isPackaged,
@@ -1191,6 +1195,11 @@ app.whenReady().then(() => {
   updater.start()
   registerIpc()
   startSocketServer(SOCKET_PATH, {
+    libraryTaskTypes: () => ({ taskTypes: projects.taskTypes(), defaultTypeId: projects.defaultTaskTypeId() }),
+    workflowGet: (id) => projects.workflowGet(id),
+    workflowValidate: (definition, selection) => projects.workflowValidate(definition, selection),
+    workflowSet: (id, revision, definition) => projects.workflowSet(id, revision, definition),
+    workflowCreate: (input) => projects.workflowCreate(input),
     resolve: (projectId) => {
       const p = resolveProject(projectId)
       return {
@@ -1200,7 +1209,7 @@ app.whenReady().then(() => {
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId, decision) => void reviewDecision(p.id, taskId, 'accept', decision),
         reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),
-        finishStage: (runId, summary) => finishRunStage(runWorkflowDeps(p.id), runId, summary),
+        finishStage: (runId, summary, nodeId) => finishRunStage(runWorkflowDeps(p.id), runId, summary, nodeId),
         decide: (taskId, option, reason) => runDecision(runWorkflowDeps(p.id), taskId, option, reason),
         escalateDecision: (taskId, reason) => escalateDecision(runWorkflowDeps(p.id), taskId, reason),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),

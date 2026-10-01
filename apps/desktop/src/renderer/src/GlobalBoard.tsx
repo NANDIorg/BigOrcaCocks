@@ -5,7 +5,7 @@ import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, type GlobalTimePart } from './duration'
 import { useNow } from './useNow'
-import { globalTaskActions } from './globalReview'
+import { globalTaskActions, runApprovalRequests } from './globalReview'
 import type { StageLabel } from './cardState'
 import { PriorityBadge } from './Priority'
 import { useT } from './i18n'
@@ -198,7 +198,8 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                 {items.map((g) => {
                   const live = liveCoordinators.has(g.id)
                   const att = attention.get(g.id)
-                  const actions = globalTaskActions(g, column.kind, live)
+                  const approvals = column.kind === 'review' ? runApprovalRequests(requests, g.id) : []
+                  const actions = globalTaskActions(g, column.kind, live, approvals.length)
                   const stage = column.kind === 'done' ? null : stageLabel?.(g) ?? null
                   // Первый (самый старый) запрос — прямо на карточке; остальные — во Входящих.
                   const request = column.kind === 'needs_input' ? pendingRequestsOf(requests, { runId: g.id }).sort((a, b) => a.createdAt - b.createdAt)[0] : undefined
@@ -278,6 +279,13 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         </div>
                       )}
                       <GlobalProgress global={g} />
+                      {actions.approvalsInInbox !== undefined && approvals[0] && (
+                        <div className="g-card-review" onClick={(e) => e.stopPropagation()}>
+                          <button type="button" className="btn-sm" title={t('global.action.manyApprovalsTitle')} onClick={() => onOpenInbox(approvals[0].id)}>
+                            {t('global.action.manyApprovals', { count: actions.approvalsInInbox })} ›
+                          </button>
+                        </div>
+                      )}
                       {(actions.accept || actions.returnToWork) && (
                         <div className="g-card-review" onClick={(e) => e.stopPropagation()}>
                           {actions.accept && (

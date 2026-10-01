@@ -1,4 +1,6 @@
-import { wfPorts, type WfEdge, type WfNode, type WfPort, type Workflow } from '@orca-board/core'
+import { wfPorts, NODE_H, PORT_STEP, nodeHeight, type WfEdge, type WfNode, type WfPort, type Workflow } from '@orca-board/core'
+// Совместимые экспорты: геометрия редактора и создаваемые ассистентом графы используют общую раскладку core.
+export { autoLayout, NODE_H, PORT_STEP, LAYOUT_DX, LAYOUT_DY, nodeHeight } from '@orca-board/core'
 
 // Геометрия нодового редактора воркфлоу. Координаты — мировые (те же, что `WfNode.x/y`), холст переводит
 // в них экранные через `screenToWorld`. Логика вынесена из WorkflowCanvas.tsx, чтобы её можно было тестировать.
@@ -17,21 +19,19 @@ export interface Rect {
 
 /**
  * Размер ноды. Ширина одна на все типы, `NODE_H` — высота ноды с портами фиксированных типов (до двух): подписи исходов
- * снаружи справа. Нода `decision` с большим числом вариантов выше — см. `nodeHeight`.
+ * снаружи справа. Нода `decision` с большим числом вариантов (`fork` с тремя-четырьмя путями) выше — см. `nodeHeight`.
  */
 export const NODE_W = 150
-export const NODE_H = 60
-/** Шаг портов по высоте: не меньше двух `PORT_HIT_R`, иначе соседние порты не попасть курсором. */
-export const PORT_STEP = 20
 /** Радиус порта при попадании курсором — больше нарисованного кружка, чтобы не целиться в пиксель. */
 export const PORT_HIT_R = 9
-/** Шаг авторасстановки: по X — между слоями, по Y — между нодами слоя. Совпадает с шагом defaultWorkflow. */
-export const LAYOUT_DX = 220
-export const LAYOUT_DY = 110
 
-/** Высота ноды: `NODE_H`, а если портов больше, чем помещается с шагом `PORT_STEP` (варианты `decision`), — выше. */
-export function nodeHeight(node: WfNode): number {
-  return Math.max(NODE_H, PORT_STEP * (wfPorts(node).length + 1))
+/**
+ * Сколько символов подписи порта видно на холсте. Подпись стоит снаружи справа над портом; у ноды с тремя и больше
+ * портами (пути `fork`, варианты `decision`) рёбра верхних портов уходят вниз прямо через подписи нижних — короткая
+ * подпись там не перекрывается рёбрами. Полная — в подсказке порта и в инспекторе.
+ */
+export function portLabelMax(node: WfNode): number {
+  return wfPorts(node).length > 2 ? 10 : 16
 }
 
 export function nodeRect(node: WfNode): Rect {
@@ -150,52 +150,6 @@ export function hitEdge(wf: Workflow, p: Point, tolerance = 6): string | undefin
   return best?.id
 }
 
-/**
- * Авторасстановка по слоям: слой ноды — длина кратчайшего пути от старта (BFS), поэтому рёбра-возвраты
- * (reject → работа) слои не сдвигают. Внутри слоя порядок — порядок обхода, то есть порядок портов
- * у родителя. Недостижимые от старта ноды — отдельным слоем справа, чтобы их было видно. Ноды слоя идут с шагом
- * `LAYOUT_DY`, под высокой нодой (много вариантов `decision`) — с тем же зазором от её низа.
- */
-export function autoLayout(wf: Workflow): Workflow {
-  const layer = new Map<string, number>()
-  const order: string[] = []
-  const start = wf.nodes.find((n) => n.type === 'start')
-  if (start) {
-    layer.set(start.id, 0)
-    const queue = [start.id]
-    while (queue.length) {
-      const id = queue.shift()!
-      order.push(id)
-      const node = wf.nodes.find((n) => n.id === id)!
-      const ports = wfPorts(node)
-      const out = wf.edges
-        .filter((e) => e.from === id)
-        .sort((a, b) => ports.indexOf(a.outcome) - ports.indexOf(b.outcome))
-      for (const e of out) {
-        if (layer.has(e.to) || !wf.nodes.some((n) => n.id === e.to)) continue
-        layer.set(e.to, layer.get(id)! + 1)
-        queue.push(e.to)
-      }
-    }
-  }
-  const lastLayer = order.length ? Math.max(...layer.values()) + 1 : 0
-  for (const n of wf.nodes) {
-    if (layer.has(n.id)) continue
-    layer.set(n.id, lastLayer)
-    order.push(n.id)
-  }
-  const gap = LAYOUT_DY - NODE_H
-  const nextY = new Map<number, number>()
-  const pos = new Map<string, Point>()
-  for (const id of order) {
-    const l = layer.get(id)!
-    const y = nextY.get(l) ?? 0
-    nextY.set(l, y + Math.max(LAYOUT_DY, nodeHeight(wf.nodes.find((n) => n.id === id)!) + gap))
-    pos.set(id, { x: l * LAYOUT_DX, y })
-  }
-  return { ...wf, nodes: wf.nodes.map((n) => ({ ...n, ...pos.get(n.id)! })) }
-}
-
 // ---------- вид холста ----------
 
 /** Вид холста: мировая точка в левом верхнем углу и масштаб (экранных пикселей на мировую единицу). */
@@ -237,6 +191,55 @@ export function graphBounds(wf: Workflow): Rect | undefined {
   const y = Math.min(...wf.nodes.map((n) => n.y))
   const bottom = Math.max(...wf.nodes.map((n) => n.y + nodeHeight(n)))
   return { x, y, w: Math.max(...xs) + NODE_W + 60 - x, h: bottom + NODE_H + 30 - y }
+}
+
+/** Подпись ребра для раскладки (`placeEdgeLabels`): кривая ребра, ширина текста и где подпись у петли возврата. */
+export interface EdgeLabelInput {
+  id: string
+  curve: Curve
+  /** Ширина подписи в мировых координатах (оценка по числу символов). */
+  width: number
+  /** Петля назад: подпись под кривой, иначе над ней. */
+  back: boolean
+}
+
+/** Высота строки подписи ребра и отступ базовой линии от кривой (над кривой у прямого, под — у петли). */
+const LABEL_H = 12
+const LABEL_ABOVE = 6
+const LABEL_BELOW = 14
+/** Где на кривой пробовать подпись: середина, потом ближе к концам. */
+const LABEL_TS = [0.5, 0.38, 0.62, 0.27, 0.73, 0.18, 0.82]
+
+function overlap(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+  return w > 0 && h > 0 ? w * h : 0
+}
+
+/**
+ * Точки подписей рёбер (центр по X, базовая линия по Y) без наложений: подпись идёт в середину кривой, а если там уже
+ * стоит другая подпись или нода (петли возврата двух параллельных путей проходят рядом), — сдвигается вдоль кривой.
+ * Свободного места нет — точка с наименьшим перекрытием. Порядок входа — приоритет: ранние подписи стоят в середине.
+ * `extra` — что ещё занято (плашки над нодами).
+ */
+export function placeEdgeLabels(labels: readonly EdgeLabelInput[], nodes: readonly WfNode[], extra: readonly Rect[] = []): Record<string, Point> {
+  const blocked: Rect[] = [...nodes.map(nodeRect), ...extra]
+  const out: Record<string, Point> = {}
+  for (const l of labels) {
+    let best: { p: Point; box: Rect; cost: number } | undefined
+    for (const t of LABEL_TS) {
+      const c = curvePoint(l.curve, t)
+      const p = { x: c.x, y: l.back ? c.y + LABEL_BELOW : c.y - LABEL_ABOVE }
+      const box = { x: p.x - l.width / 2 - 2, y: p.y - LABEL_H + 2, w: l.width + 4, h: LABEL_H }
+      const cost = blocked.reduce((sum, r) => sum + overlap(box, r), 0)
+      if (!best || cost < best.cost) best = { p, box, cost }
+      if (cost === 0) break
+    }
+    if (!best) continue
+    out[l.id] = best.p
+    blocked.push(best.box)
+  }
+  return out
 }
 
 /** Вид, в который целиком помещается граф, с полями `pad` экранных пикселей; крупнее 1:1 не увеличивает. */

@@ -1,6 +1,6 @@
-// Картинки и ссылки markdown из показа человеку (Markdown.tsx с `assets`): `![](shots/a.png)` в `docs/README.md`
-// показывается из того же снимка, что и сам файл, по протоколу `orca-preview://<токен>/…` (IPC showcase:previewUrl
-// отдаёт `base` — корень снимка). Здесь — только решения по строке адреса, без DOM и IPC.
+// Картинки и ссылки markdown из показа человеку и из «Документов» (Markdown.tsx с `assets`): `![](shots/a.png)`
+// в `docs/README.md` показывается из того же снимка или корня, что и сам файл, по протоколу `orca-preview://<токен>/…`
+// (IPC `showcase:previewUrl` / `docs:previewUrl` отдаёт `base`). Здесь — только решения по строке адреса, без DOM и IPC.
 
 /** Контекст показа для markdown: где лежит файл и корень его снимка в протоколе. */
 export interface MarkdownAssets {
@@ -11,6 +11,18 @@ export interface MarkdownAssets {
    * картинки не показываются: приложение не грузит их со своего адреса.
    */
   base?: string
+  /**
+   * `project` — файл в «Документах»: относительные ссылки ведут на любой файл источника, включая точечные (`.env`,
+   * `.github/…`) — они в дереве как обычные; закрыт только `.git`. Без поля — показ: скрытое недоступно, как и в
+   * протоколе. Картинки в обоих режимах — без скрытого: `orca-preview://` его не отдаёт.
+   */
+  links?: 'project'
+}
+
+/** Цель относительной ссылки markdown: путь от корня показа или источника и `#якорь` (декодирован). */
+export interface MarkdownLink {
+  path: string
+  hash?: string
 }
 
 /** Схема в начале адреса: `https:`, `data:`, `javascript:`, `C:` (диск Windows) — всё это не относительный путь. */
@@ -22,6 +34,11 @@ const SCHEME = /^[a-z][a-z0-9+.-]*:/i
  * кривой. `?запрос` и `#якорь` отбрасываются, `%20` и кириллица декодируются: протокол кодирует сегменты сам.
  */
 export function resolveShowcaseRef(docPath: string, ref: string): string | undefined {
+  return resolveRef(docPath, ref, false)
+}
+
+/** `hidden` — пускать точечные сегменты (кроме `.git` в любом регистре: на macOS и Windows регистр не различается). */
+function resolveRef(docPath: string, ref: string, hidden: boolean): string | undefined {
   const raw = ref.trim().replace(/[?#].*$/, '')
   if (!raw || SCHEME.test(raw) || raw.startsWith('/') || /[\\\0]/.test(raw)) return undefined
   const out = docPath.split('/').filter(Boolean).slice(0, -1)
@@ -39,10 +56,35 @@ export function resolveShowcaseRef(docPath: string, ref: string): string | undef
       continue
     }
     // Скрытое протокол всё равно не отдаст; разделители и NUL после декодирования — подмена пути.
-    if (seg.startsWith('.') || /[\\/:\0]/.test(seg)) return undefined
+    if ((seg.startsWith('.') && (!hidden || seg.toLowerCase() === '.git')) || /[\\/:\0]/.test(seg)) return undefined
     out.push(seg)
   }
   return out.length ? out.join('/') : undefined
+}
+
+/**
+ * Куда ведёт относительная ссылка markdown: путь (`resolveShowcaseRef`, в режиме `project` — и на точечные файлы) и
+ * `#якорь`, чтобы просмотрщик открыл файл и прокрутил к разделу. Только якорь (`#раздел`) — undefined: это переход
+ * внутри документа, его обрабатывает сам Markdown.
+ */
+export function resolveMarkdownLink(assets: MarkdownAssets, href: string): MarkdownLink | undefined {
+  const ref = href.trim()
+  if (ref.startsWith('#')) return undefined
+  const path = resolveRef(assets.path, ref, assets.links === 'project')
+  if (!path) return undefined
+  const hash = linkHash(ref)
+  return hash ? { path, hash } : { path }
+}
+
+/** «a.md#Раздел» → «Раздел»; пустой или битый якорь — undefined. */
+function linkHash(ref: string): string | undefined {
+  const i = ref.indexOf('#')
+  if (i < 0) return undefined
+  try {
+    return decodeURIComponent(ref.slice(i + 1)) || undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**

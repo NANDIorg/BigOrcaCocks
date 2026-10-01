@@ -21,6 +21,7 @@ interface PendingInteraction {
   answer(answer: InteractionAnswer): void
   cancel(): void
 }
+interface PromptAcceptance { turn: number; resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 interface ClaudeBlock { type: string; text: string; json: string; id?: string; name?: string; input?: unknown }
 
 const MAX_LINE = 2 * 1024 * 1024
@@ -112,6 +113,7 @@ class Conversation implements AssistantConversation {
   private turnAgentText = false
   private codexStarting = false
   private codexDeferred: JsonObject[] = []
+  private promptAcceptance?: PromptAcceptance
   private killTimer?: ReturnType<typeof setTimeout>
 
   constructor(options: ConversationOptions) {
@@ -126,7 +128,7 @@ class Conversation implements AssistantConversation {
     return copy({ id: this.id, agent: this.options.agent, messages: this.messages, status: this.state, interactions: [...this.interactions.values()].map((pending) => pending.value), ...(this.error ? { error: this.error } : {}) })
   }
 
-  async send(text: string): Promise<void> {
+  async send(text: string, context?: string): Promise<void> {
     this.assertOpen()
     if (typeof text !== 'string' || !text.trim() || text.length > 1_000_000) throw new Error(mt('assistantTransport.invalidMessage'))
     await this.ready
@@ -143,34 +145,50 @@ class Conversation implements AssistantConversation {
     this.turnAgentText = false
     this.tools.clear()
     this.setState('thinking')
+    const providerText = context ? `${context}\n\n${text}` : text
+    const human: ConversationMessage = { id: randomUUID(), role: 'human', text, at: Date.now() }
     try {
+      // Handoff ждёт acceptance; оригинальный текст уже должен предшествовать раннему ответу.
+      if (context !== undefined) this.putMessage(human)
       if (this.protocol === 'claude') {
-        this.write({ type: 'user', session_id: this.id, parent_tool_use_id: null, message: { role: 'user', content: text } })
+        this.write({ type: 'user', session_id: this.id, parent_tool_use_id: null, message: { role: 'user', content: providerText } })
       } else if (this.protocol === 'codex') {
         // turn/start подтверждает приём; ответ модели приходит отдельными notifications.
         this.codexStarting = true
         this.codexDeferred = []
-        const accepted = this.request('turn/start', { threadId: this.threadId, input: [{ type: 'text', text }], cwd: null, approvalPolicy: null, sandboxPolicy: null, model: this.options.model ?? null, effort: this.options.effort ?? null, summary: null })
         const turn = this.turnSequence
-        void accepted.then((result) => {
+        const acceptance = context !== undefined ? this.waitForPromptAcceptance(turn) : undefined
+        const accepted = this.request('turn/start', { threadId: this.threadId, input: [{ type: 'text', text: providerText }], cwd: null, approvalPolicy: null, sandboxPolicy: null, model: this.options.model ?? null, effort: this.options.effort ?? null, summary: null }, context !== undefined ? HANDSHAKE_TIMEOUT : undefined)
+        const started = accepted.then((result) => {
           if (this.closed || !this.active || turn !== this.turnSequence) return
           this.turnId = string(object(result.turn).id)
           if (!this.turnId) throw new Error(mt('assistantTransport.noTurn'))
           this.codexStarting = false
+          this.acceptPrompt(turn)
           const deferred = this.codexDeferred.splice(0)
           for (const frame of deferred) this.receive(frame)
-        }).catch((error: unknown) => this.fail(errorText(error)))
+        }).catch((error: unknown) => { if (!this.closed && turn === this.turnSequence) this.fail(errorText(error)); throw error })
+        // Только handoff ждёт ACK: обычный send сохраняет прежний early-resolve контракт.
+        void started.catch(() => undefined)
+        if (acceptance) await acceptance
       } else {
-        const prompt = this.firstPrompt && this.options.system ? `${this.options.system}\n\n${text}` : text
+        const prompt = this.firstPrompt && this.options.system ? `${this.options.system}\n\n${providerText}` : providerText
         const turn = this.turnSequence
-        // ACP ответ на prompt приходит в конце хода, send возвращается сразу после записи.
+        // ACP не имеет ACK: принятие подтверждает первая activity/permission либо успешный final response.
+        // Ошибка до этого отклоняет handoff; завершения turn и ответа человека не ждём.
+        const accepted = context !== undefined ? this.waitForPromptAcceptance(turn) : undefined
         void this.request('session/prompt', { sessionId: this.threadId, prompt: [{ type: 'text', text: prompt }] }).then((result) => {
-          if (!this.closed && turn === this.turnSequence && this.active) this.finish(string(result.stopReason) === 'cancelled' || this.cancelling ? 'interrupted' : 'done')
-        }).catch((error: unknown) => this.fail(errorText(error)))
+          if (this.closed || turn !== this.turnSequence) return
+          const cancelled = string(result.stopReason) === 'cancelled' || this.cancelling
+          if (cancelled) this.rejectPrompt(new Error(mt('assistantTransport.interruptedSend')))
+          else this.acceptPrompt(turn)
+          if (!this.closed && turn === this.turnSequence && this.active) this.finish(cancelled ? 'interrupted' : 'done')
+        }).catch((error: unknown) => { if (!this.closed && turn === this.turnSequence) this.fail(errorText(error)) })
+        if (accepted) await accepted
       }
       this.firstPrompt = false
-      this.putMessage({ id: randomUUID(), role: 'human', text, at: Date.now() })
-    } catch (error) { this.fail(errorText(error)); throw error }
+      if (context === undefined) this.putMessage(human)
+    } catch (error) { if (!this.cancelling) this.fail(errorText(error)); throw error }
   }
 
   async interrupt(): Promise<void> {
@@ -178,6 +196,7 @@ class Conversation implements AssistantConversation {
     await this.ready
     if (!this.active) return
     this.cancelling = true
+    this.rejectPrompt(new Error(mt('assistantTransport.interruptedSend')))
     this.cancelTools()
     if (this.protocol === 'claude') {
       const interrupted = this.control('interrupt', {}, HANDSHAKE_TIMEOUT)
@@ -206,9 +225,36 @@ class Conversation implements AssistantConversation {
   dispose(): void {
     if (this.closed) return
     this.closed = true
+    this.rejectPrompt(new Error(mt('assistantTransport.closed')))
     this.rejectRequests(new Error(mt('assistantTransport.closed')))
     this.interactions.clear()
     this.stopChild()
+  }
+
+  private waitForPromptAcceptance(turn: number): Promise<void> {
+    const accepted = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => this.fail(mt('assistantTransport.timeout')), HANDSHAKE_TIMEOUT)
+      this.promptAcceptance = { turn, resolve, reject, timer }
+    })
+    // Синхронная ошибка записи может возникнуть раньше await в send.
+    void accepted.catch(() => undefined)
+    return accepted
+  }
+
+  private acceptPrompt(turn: number): void {
+    const pending = this.promptAcceptance
+    if (!pending || pending.turn !== turn) return
+    this.promptAcceptance = undefined
+    clearTimeout(pending.timer)
+    pending.resolve()
+  }
+
+  private rejectPrompt(error: Error): void {
+    const pending = this.promptAcceptance
+    if (!pending) return
+    this.promptAcceptance = undefined
+    clearTimeout(pending.timer)
+    pending.reject(error)
   }
 
   private assertOpen(): void { if (this.closed) throw new Error(mt('assistantTransport.closed')) }
@@ -265,6 +311,7 @@ class Conversation implements AssistantConversation {
   private fail(message: string, flushReply = false): void {
     if (this.closed || this.failed) return
     this.failed = true
+    this.rejectPrompt(new Error(message))
     this.active = false
     this.cancelTools()
     this.clearInteractions(false)
@@ -345,6 +392,7 @@ class Conversation implements AssistantConversation {
     if (this.closed || this.cancelling || !this.active) { cancel(); return }
     const id = `${this.id}:interaction:${++this.sequence}`
     const interaction = { ...value, id }
+    this.acceptPrompt(this.turnSequence)
     this.interactions.set(id, { value: interaction, wireId, answer, cancel })
     this.emit({ type: 'interaction', interaction })
     this.setState('waiting')
@@ -651,6 +699,7 @@ class Conversation implements AssistantConversation {
   private acpUpdate(params: JsonObject): void {
     if (!this.active || params.sessionId !== this.threadId) return
     const update = object(params.update)
+    this.acceptPrompt(this.turnSequence)
     if (update.sessionUpdate === 'agent_message_chunk' && object(update.content).type === 'text') {
       const sourceId = string(update.messageId)
       if (sourceId) this.agentText(`acp:${this.turnSequence}:${sourceId}`, string(object(update.content).text), true)

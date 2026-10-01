@@ -43,12 +43,15 @@ const OPENAI_PRICES: ModelPrice[] = [
 ]
 
 /**
- * $ за миллион токенов, первые руки API Anthropic (цены проверены 2026-09-24 по справочнику Claude API).
- * Запись в кэш: 5 мин — 1,25× входа, 1 час — 2×; чтение — 0,1× (у Fable 5.1 и Opus 5.5 — отдельная цена).
+ * $ за миллион токенов, первые руки API Anthropic: https://platform.claude.com/docs/en/about-claude/pricing,
+ * проверено 2026-10-01. Запись в кэш: 5 мин — 1,25× входа, 1 час — 2×; чтение — 0,1× (Fable 5.1 и Mythos 5.1 — 0,025×,
+ * Opus 5.5 — 0,05×). Sonnet 5 $2/$10 — уже постоянная цена (подорожание до $3/$15 с 2026-09-01 отменено).
+ * Префикс `match` захватывает и следующие версии (`claude-sonnet-5` → `claude-sonnet-5-5`), поэтому у новой версии —
+ * своя строка, даже если цена та же: иначе её цену молча определит строка старшей модели.
  * Модели вне таблицы (в том числе новые id codex) не оцениваются: их токены идут в `unpricedTokens`, а не в выдуманную цену.
  */
 export const MODEL_PRICES: ModelPrice[] = [
-  { match: ['claude-fable-5-1'], input: 10, output: 50, cacheRead: 0.25, cacheWrite5m: 12.5, cacheWrite1h: 20 },
+  { match: ['claude-fable-5-1', 'claude-mythos-5-1'], input: 10, output: 50, cacheRead: 0.25, cacheWrite5m: 12.5, cacheWrite1h: 20 },
   { match: ['claude-fable-5', 'claude-mythos-5'], input: 10, output: 50, cacheRead: 1, cacheWrite5m: 12.5, cacheWrite1h: 20 },
   { match: ['claude-opus-5-5'], input: 4, output: 20, cacheRead: 0.2, cacheWrite5m: 5, cacheWrite1h: 8 },
   {
@@ -56,6 +59,7 @@ export const MODEL_PRICES: ModelPrice[] = [
     input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10
   },
   { match: ['claude-opus-4-1', 'claude-opus-4-2025'], input: 15, output: 75, cacheRead: 1.5, cacheWrite5m: 18.75, cacheWrite1h: 30 },
+  { match: ['claude-sonnet-5-5'], input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5, cacheWrite1h: 4 },
   { match: ['claude-sonnet-5'], input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5, cacheWrite1h: 4 },
   {
     match: ['claude-sonnet-4', 'claude-3-7-sonnet'],

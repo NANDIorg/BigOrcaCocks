@@ -865,6 +865,7 @@ button:disabled { opacity: .45; cursor: default; }
 .g-returns-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .g-modal-review { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .g-return-hint { font-size: 12px; margin-top: -6px; }
+.g-accept-many { font-size: 12.5px; }
 /* «В репозитории нет коммитов» (InitialCommitDialog): поверх модалки координатора, варианты — кнопка и подсказка */
 .modal-backdrop.initial-commit-backdrop { z-index: 50; }
 .initial-commit-text { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
@@ -1142,8 +1143,9 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   .about-kv dt { grid-column: 1 / -1; margin-top: 4px; }
 }
 
-/* Окно «Документы» (DocsModal.tsx), раскладка «Проводник» — docs/mockups/docs-viewer/concept-a.html:
-   дерево (DocsTree) | документ | оглавление (DocsToc). Узкое окно — оглавление прячется (container query). */
+/* Окно «Документы» (DocsModal.tsx), раскладка «Проводник» — docs/design/docs-files/variant-1.html:
+   дерево всех файлов (DocsTree) | просмотр (DocViewer, стили — docs-viewers.css) | оглавление (DocsToc, только markdown).
+   Узкое окно — оглавление прячется, действия с файлом уходят в меню «⋯» (container query). */
 .docs-modal {
   width: min(1480px, calc(100vw - 48px)); height: calc(100vh - 48px); background: var(--page); border-radius: 18px;
   overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,.5);
@@ -1190,6 +1192,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-row {
   width: 100%; border: 0; background: transparent; font: inherit; text-align: left;
   display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 7px; color: var(--subtle); white-space: nowrap; min-width: 0;
+  cursor: pointer; user-select: none;
 }
 .docs-row:hover { background: color-mix(in srgb, var(--overlay-ink) 3.5%, transparent); }
 .docs-row:focus-visible, .docs-hit:focus-visible, .docs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1221,9 +1224,39 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-hit b { color: var(--col-input); font-weight: 600; }
 .docs-tree-foot { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .docs-tree-foot kbd + kbd { margin-left: 2px; }
+/* Значок вида файла: цвет — по виду (docView.ts → DocIconName), как в макете. */
+.docs-fi { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+.docs-fi[data-kind='doc'] { color: var(--accent); }
+.docs-fi[data-kind='code'] { color: var(--col-ready); }
+.docs-fi[data-kind='config'], .docs-fi[data-kind='env'] { color: var(--col-input); }
+.docs-fi[data-kind='html'] { color: var(--col-progress); }
+.docs-fi[data-kind='image'] { color: var(--col-done); }
+.docs-fi[data-kind='pdf'] { color: var(--danger); }
+.docs-fi[data-kind='binary'] { color: var(--col-backlog); }
+.docs-row.file .docs-fi .docs-i, .docs-hit-l1 .docs-fi .docs-i { color: inherit; }
+.docs-lnk { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+.docs-lnk .docs-i { width: 12px; height: 12px; }
+.docs-row .docs-chip + .docs-tm { margin-left: 0; }
+.docs-row .docs-nm + .docs-tm, .docs-row .docs-lnk + .docs-tm { margin-left: auto; }
+/* «ещё N совпадений», «показаны последние 200» */
+.docs-more { margin: 6px 8px 2px; padding: 8px 10px; border-radius: 8px; border: 1px dashed var(--chip); color: var(--muted); font-size: 12px; line-height: 1.4; }
+/* в проекте больше DOCS_LIST_LIMIT файлов */
+.docs-trunc {
+  margin: 0 12px 6px; display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; font-size: 12px; line-height: 1.4;
+  background: color-mix(in srgb, var(--col-input) 8%, transparent); border: 1px solid color-mix(in srgb, var(--col-input) 35%, transparent); color: var(--subtle);
+}
+.docs-trunc .docs-i { color: var(--col-input); margin-top: 1px; }
+.docs-trunc b { color: var(--text); font-weight: 600; }
 
 /* центр — документ */
-.docs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.docs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+/* Обёртка просмотра только ловит клики по ссылкам: просмотрщик — прямой flex-ребёнок панели. */
+.docs-view { display: contents; }
+.docs-vsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; flex-shrink: 0; }
+.docs-toast {
+  position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 5; padding: 6px 12px; border-radius: 8px;
+  background: var(--side-2); border: 1px solid var(--line); color: var(--text); font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.35); pointer-events: none;
+}
 .docs-crumbs { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line); min-height: 48px; }
 .docs-path { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
 .docs-path .src, .docs-path .seg, .docs-path .cur { padding: 2px 6px; border-radius: 6px; }
@@ -1231,6 +1264,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-path button.seg { border: 0; background: transparent; color: inherit; font: inherit; }
 .docs-path button.seg:hover { background: var(--side-2); color: var(--text); }
 .docs-path .cur { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.docs-path .cur .docs-i { margin-right: 6px; vertical-align: -2px; color: var(--muted); }
 .docs-path .sep { color: var(--chip); }
 .docs-find { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 16px; border-bottom: 1px solid var(--line); background: var(--frame); color: var(--muted); }
 .docs-find input { flex: 0 1 320px; min-width: 0; height: 28px; border-radius: 8px; border: 1px solid var(--accent); background: var(--side-2); color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; outline: none; }
@@ -1297,6 +1331,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   .docs-grid, .docs-grid.with-toc { grid-template-columns: 230px minmax(0, 1fr); }
   .docs-keys { display: none; }
   .docs-body, .docs-start { padding: 24px 20px 48px; }
+  .docs-acts { display: none; }
 }
 
 /* ---------- Инбокс: запросы к человеку (InboxPanel, RequestCard) ---------- */
@@ -1450,6 +1485,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .rq-kind { flex-shrink: 0; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--rq, var(--muted)); font-size: 11px; }
 .rq-where { min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rq-stage { flex-shrink: 0; max-width: 45%; padding: 0 6px; border: 1px solid var(--chip); border-radius: 999px; color: var(--col-input); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Путь разветвления запроса: цвет «в работе», чтобы не спутать с меткой этапа «Вопрос человеку». */
+.rq-stage.rq-lane { color: var(--col-progress); }
 .rq-title { font-size: 14px; font-weight: 600; line-height: 1.35; white-space: pre-wrap; }
 .rq-toggle { align-self: flex-start; background: transparent; border: 0; padding: 0; color: var(--muted); font-size: 12px; }
 .rq-toggle:hover { color: var(--text); }
@@ -1801,6 +1838,7 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node--human .wf-node-icon { color: var(--col-input); }
 .wf-node--merge .wf-node-icon, .wf-node--git .wf-node-icon { color: var(--accent); }
 .wf-node--decision .wf-node-icon { color: var(--col-ready); }
+.wf-node--fork .wf-node-icon, .wf-node--join .wf-node-icon { color: var(--wf-lane); }
 /* Цвет типа ноды: полоса слева на холсте и в миниатюре пути, значок в палитре и инспекторе. */
 .wf-node--start, .wf-node--end { --wf-type: var(--col-done); }
 .wf-node--work { --wf-type: var(--col-progress); }
@@ -1808,6 +1846,9 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-node--ask, .wf-node--human { --wf-type: var(--col-input); }
 .wf-node--merge, .wf-node--git { --wf-type: var(--accent); }
 .wf-node--decision { --wf-type: var(--col-ready); }
+/* Разветвление и слияние — пара: общий цвет из цветов темы (своего токена в теме нет), отличный от «Решения ИИ» (там выбирают один путь, здесь идут все). */
+.wf-node--fork, .wf-node--join { --wf-type: var(--wf-lane); }
+:root { --wf-lane: color-mix(in srgb, var(--col-progress) 45%, var(--col-review)); }
 .wf-node--condition { --wf-type: var(--muted); }
 .wf-node-strip { fill: var(--wf-type, var(--muted)); }
 /* Проблема на холсте: значок «!» в углу ноды и плашка с текстом под ней — видно без наведения. */
@@ -1824,7 +1865,8 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 .wf-port { cursor: crosshair; }
 .wf-port circle { fill: var(--side); stroke: var(--muted); stroke-width: 2; }
 .wf-port:hover circle { fill: var(--muted); }
-.wf-port-label { fill: var(--muted); font-size: 10px; }
+/* Обводка цветом фона холста: подпись читается и там, где под ней проходит ребро соседнего порта. */
+.wf-port-label { fill: var(--muted); font-size: 10px; paint-order: stroke; stroke: var(--side); stroke-width: 3px; stroke-linejoin: round; }
 .wf-port--accept circle, .wf-port--ok circle { stroke: var(--wf-accept); }
 .wf-port--accept .wf-port-label, .wf-port--ok .wf-port-label { fill: var(--wf-accept); }
 .wf-port--reject circle, .wf-port--conflict circle, .wf-port--error circle { stroke: var(--wf-reject); }
@@ -1833,11 +1875,21 @@ button.act-task:hover { color: var(--text); text-decoration: underline; }
 /* Порт варианта ноды «Решение ИИ»: id варианта — данные графа, поэтому класс общий (`--opt`), а не `--<id>`. */
 .wf-port--opt circle { stroke: var(--col-ready); }
 .wf-port--opt .wf-port-label { fill: var(--col-ready); }
+/* Порт пути «Разветвления»: как у вариантов — общий класс `--lane`, id пути — данные графа. */
+.wf-port--lane circle { stroke: var(--wf-lane); }
+.wf-port--lane .wf-port-label { fill: var(--wf-lane); }
+/* Области путей при выделенном разветвлении или слиянии: обводка ноды цветом пути, без заливки — не спорит с выделением. */
+.wf-node-lane { fill: none; stroke: var(--lane); stroke-width: 2; stroke-dasharray: 5 4; opacity: .8; pointer-events: none; }
+.wf-node--lane-0 { --lane: var(--col-progress); }
+.wf-node--lane-1 { --lane: var(--col-review); }
+.wf-node--lane-2 { --lane: var(--col-input); }
+.wf-node--lane-3 { --lane: var(--col-done); }
 
 .wf-edge { --edge: var(--muted); cursor: pointer; }
 .wf-edge--accept, .wf-edge--ok { --edge: var(--wf-accept); }
 .wf-edge--reject, .wf-edge--conflict, .wf-edge--error { --edge: var(--wf-reject); }
 .wf-edge--opt { --edge: var(--col-ready); }
+.wf-edge--lane { --edge: var(--wf-lane); }
 .wf-edge-line { fill: none; stroke: var(--edge); stroke-width: 1.8; opacity: .75; }
 .wf-edge-arrow { fill: var(--edge); opacity: .75; }
 .wf-edge:hover .wf-edge-line, .wf-edge:hover .wf-edge-arrow { opacity: 1; }
@@ -2048,6 +2100,8 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-port-field.wf-port--accept > span, .wf-port-field.wf-port--ok > span { color: var(--wf-accept); }
 .wf-port-field.wf-port--reject > span, .wf-port-field.wf-port--conflict > span, .wf-port-field.wf-port--error > span { color: var(--wf-reject); }
 .wf-port-field.wf-port--opt > span { color: var(--col-ready); overflow-wrap: anywhere; }
+.wf-port-field.wf-port--lane > span { color: var(--wf-lane); overflow-wrap: anywhere; }
+.wf-fork-join { font-size: 13px; overflow-wrap: anywhere; }
 .wf-opts { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
 .wf-opts legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
 .wf-opts > .hint { margin: 0; font-size: 11px; }
@@ -2096,6 +2150,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-help-port.wf-port--accept, .wf-help-port.wf-port--ok { color: var(--wf-accept); }
 .wf-help-port.wf-port--reject, .wf-help-port.wf-port--conflict, .wf-help-port.wf-port--error { color: var(--wf-reject); }
 .wf-help-port.wf-port--opt { color: var(--col-ready); }
+.wf-help-port.wf-port--lane { color: var(--wf-lane); }
 .wf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--col-input); }
 .wf-dot--error { background: var(--danger); }
 .wf-dot--warning { background: var(--col-input); }
@@ -2356,6 +2411,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-crumbs .btn-text:hover { text-decoration: underline; }
 .wf-progress-crumbs b { font-weight: 600; overflow-wrap: anywhere; }
 .wf-progress-ro { color: var(--muted); font-size: 11.5px; }
+.wf-progress-hint { font-size: 11.5px; }
 .wf-progress-scroll { overflow-x: auto; padding: 4px 0; }
 .wf-progress-svg { display: block; width: 100%; height: auto; margin: 0 auto; overflow: visible; }
 .wf-progress-box { fill: var(--card); stroke: var(--chip); stroke-width: 1.2; }
@@ -2372,6 +2428,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-node.is-todo :is(.wf-progress-title, .wf-progress-sub, .wf-progress-icon) { opacity: .55; }
 .wf-progress-node.is-done .wf-progress-box { stroke: color-mix(in srgb, var(--col-done) 60%, transparent); }
 .wf-progress-node.is-current .wf-progress-box { stroke: var(--accent); stroke-width: 2.4; fill: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+/* Слияние, куда пришла часть путей разветвления: «ждёт остальные» — пунктир цвета «сейчас», без пульса. */
+.wf-progress-node.is-waiting .wf-progress-box { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 3; fill: color-mix(in srgb, var(--accent) 6%, var(--card)); }
+.wf-progress-node.is-waiting .wf-progress-halo { animation: none; opacity: .3; }
 .wf-progress-halo {
   fill: none; stroke: var(--accent); stroke-width: 2; opacity: .5; transform-box: fill-box; transform-origin: center;
   animation: wf-progress-pulse 1.8s ease-out infinite;
@@ -2405,6 +2464,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-legend i { display: inline-block; width: 16px; height: 10px; border-radius: 3px; border: 1.5px solid var(--chip); }
 .wf-progress-legend i.is-done { border-color: var(--col-done); }
 .wf-progress-legend i.is-current { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.wf-progress-legend i.is-waiting { border-color: var(--accent); border-style: dashed; }
 .wf-progress-legend i.is-todo { border-style: dashed; }
 .wf-progress-legend i.is-accept, .wf-progress-legend i.is-return { border: 0; height: 3px; border-radius: 2px; background: var(--wf-accept); }
 .wf-progress-legend i.is-return { background: var(--wf-reject); }
@@ -2413,6 +2473,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-panel-head h3 { margin: 0; flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
 .wf-progress-state { flex-shrink: 0; }
 .wf-progress-state.is-current { color: var(--accent); border-color: var(--accent); }
+.wf-progress-state.is-waiting { color: var(--accent); border-color: var(--accent); border-style: dashed; }
 .wf-progress-state.is-done { color: var(--col-done); border-color: color-mix(in srgb, var(--col-done) 55%, transparent); }
 .wf-progress-kv { margin-top: 10px; font-size: 12.5px; }
 .wf-progress-sec { margin: 14px 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
@@ -2423,7 +2484,18 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .wf-progress-visits li.is-now { border-left-color: var(--accent); }
 .wf-progress-visit-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; }
 .wf-progress-visit-head .muted { font-variant-numeric: tabular-nums; }
+.wf-progress-lane { font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Пути разветвления в панели `fork`/`join`: где стоит каждый. */
+.wf-progress-lanes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wf-progress-lanes li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 6px 10px; border-radius: 10px; background: var(--card);
+  border-left: 3px solid var(--accent); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere;
+}
+.wf-progress-lanes li.is-arrived { border-left-color: var(--col-done); }
 .wf-progress-visit-sub { margin-top: 2px; font-size: 12px; }
+/* Приходы путей внутри захода в слияние: строки, а не карточки заходов (`.wf-progress-visits li`). */
+.wf-progress-arrivals { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.wf-progress-visits .wf-progress-arrivals li { padding: 0; border: 0; border-radius: 0; background: none; font-size: 12px; }
 .wf-progress-ret { color: var(--wf-reject); }
 .wf-progress-quote {
   margin-top: 4px; padding: 4px 10px; font-size: 12.5px; white-space: pre-wrap; border-left: 2px solid var(--wf-reject);
@@ -3019,31 +3091,6 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .g-modal-images { display: flex; flex-direction: column; gap: 8px; }
 .gt-box h3.gt-images-title { margin-top: 14px; }
 
-/* ---------- вкладка «Файлы» (FilesView.tsx): строки дерева — общие .docs-row из «Документов» ---------- */
-.files-page { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--frame); }
-.files-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--line); min-width: 0; }
-.files-head > .docs-i { width: 18px; height: 18px; color: var(--muted); }
-.files-head h3 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; }
-.files-proj { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
-.files-root { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; min-width: 0; flex-shrink: 2; }
-.files-root bdi { direction: ltr; }
-.files-refresh { width: 28px; height: 28px; flex-shrink: 0; }
-.files-refresh .docs-i { width: 16px; height: 16px; }
-.files-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px 16px; font-size: 13px; }
-.files-tree { max-width: 960px; }
-.files-row { cursor: pointer; }
-.files-row:focus { outline: none; }
-.files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* Имена с диска как есть: двойные и ведущие пробелы не схлопываются, усечение «…» — от .docs-row .docs-nm. */
-.files-row .docs-nm { white-space: pre; }
-.files-note { display: flex; align-items: center; gap: 8px; min-height: 28px; padding-right: 8px; font-size: 12px; }
-.files-note-err .editor-error { margin: 0; overflow-wrap: anywhere; }
-.files-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
-.files-banner .editor-error { margin: 0; overflow-wrap: anywhere; }
-.files-foot { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; padding: 8px 16px; border-top: 1px solid var(--line); min-height: 42px; font-size: 12px; }
-.files-path { font: 12px ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; min-width: 0; flex: 1 1 200px; }
-.files-foot-err { margin: 0; flex-basis: 100%; }
-
 /* Панели доходят до края окна; кнопки macOS/Windows нативные, их DOM-копий нет. */
 html[data-window-chrome='macos'] {
   /* Кнопки AppKit не масштабируются вместе с renderer: WCO сохраняет для них место. */
@@ -3141,6 +3188,9 @@ html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .docs-moda
 .appearance-motion-options label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; min-height: 28px; font-size: 13px; }
 .appearance-motion-options input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
 .appearance-motion-options input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.appearance-saturation .switch:hover:not(:disabled) { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.appearance-saturation .switch:active:not(:disabled) { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.appearance-saturation .switch:disabled { opacity: .55; cursor: default; }
 @container about (max-width: 700px) { .appearance-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* Общий режим движения применяет предпочтение человека к новым и существующим поверхностям. */
@@ -3153,3 +3203,14 @@ html[data-motion='reduced'] :is(.onboarding-packet, .onboarding-fork-signal, .on
 html[data-motion='reduced'] .onboarding-workspace-progress span { transform: scaleX(1); opacity: .65; }
 html[data-motion='reduced'] .onboarding .onboarding-review-check path { stroke-dashoffset: 0; opacity: 1; }
 html[data-motion='reduced'] .onboarding button:active:not(:disabled) { transform: none; }
+
+
+/* Контекст графа остаётся рядом с сообщением и независимыми действиями возврата. */
+.chat-workflow-context { padding: 10px 18px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.chat-workflow-chip { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; background: var(--card); border-radius: var(--radius); }
+.chat-workflow-chip > svg { flex-shrink: 0; width: 18px; height: 18px; color: var(--accent); }
+.chat-workflow-chip > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-workflow-chip small { display: block; color: var(--muted); font-size: 12px; }
+.chat-workflow-chip .icon-btn { flex-shrink: 0; }
+.chat-workflow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-workflow-actions .btn-sm { max-width: 100%; white-space: normal; }

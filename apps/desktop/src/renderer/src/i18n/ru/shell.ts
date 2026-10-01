@@ -2,6 +2,16 @@ import type { AreaDict } from '../types'
 
 /** Оболочка: App, инбокс, лента внимания, координатор, ассистент, терминал; плашка и тост обновлений. */
 export default {
+  'assistant.suggestion.workflow.prompt': 'Помоги создать новый воркфлоу. Сначала уточни, какие этапы, роли и проверки мне нужны.',
+  'assistant.workflowCreate': 'Создать воркфлоу с ассистентом',
+  'assistant.workflowEdit': 'Воркфлоу: {title}',
+  'assistant.workflowDirty': 'Несохранённые правки',
+  'assistant.workflowDetach': 'Снять контекст воркфлоу',
+  'assistant.workflowReturn': 'Вернуться в редактор',
+  'assistant.workflowOpen': 'Открыть воркфлоу',
+  'assistant.workflowTerminal': 'Этот агент работает в терминале и не принимает контекст редактора. Выбор агента с чатом откроет новый диалог; текст и черновик сохранятся.',
+  'assistant.chooseChatAgent': 'Выбрать агента с чатом',
+  'assistant.terminalNeedsProject': 'Выберите проект, чтобы открыть терминал ассистента.',
   'menu.back': 'Назад к разделам',
   cancel: 'Отмена',
   closeEsc: 'Закрыть (Esc)',
@@ -108,7 +118,6 @@ export default {
   'tab.boardBack': 'К общей доске',
   'tab.terminals': 'Терминалы',
   'tab.stats': 'Статистика',
-  'tab.files': 'Файлы',
   'tab.info': 'О проекте',
   noSubtasks: 'Нет подзадач',
 
@@ -168,6 +177,8 @@ export default {
   'request.body.details': 'подробности',
   'request.recommended': 'Рекомендует спросивший',
   'request.stageHint': 'Вопрос задан на этапе воркфлоу',
+  'request.lane': 'путь «{name}»',
+  'request.laneHint': 'Запрос ждёт на ноде внутри пути разветвления: решение касается только этого пути',
   'request.ownAnswer': 'Свой ответ…',
   'request.answerPlaceholder': 'Ответ…',
   'request.ownAnswerLabel': 'Свой ответ',

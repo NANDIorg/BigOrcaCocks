@@ -7,7 +7,7 @@ import {
   WORKFLOW_VERSION, WORKFLOW_VERSION_TASK_SCOPE, WF_PORTS, defaultWorkflow, defaultWorkRole, legacyDefaultWorkflow, legacyPipelineWorkflow, gateTaskSpec, gateTaskTitle, migrateWorkflow, migrateWorkflowReport, nextStage, nextRunStage, startRunStage, wfNodeTitle, pipelineWorkflow,
   startStage, stageAction, runStageAction, validateWorkflow, stableJson, wfWorkStage, wfWorkRoleIds, describeWorkflow, WF_ISSUE_TEXTS,
   WF_GIT_OPERATIONS, WF_GIT_FIELD_USE, wfGitSlug, wfGitVars, renderGitTemplate, isValidGitBranchName, isValidGitRemoteName,
-  defaultSubflow, WF_SUBFLOW_PREFIX, toTaskScopeWorkflow, wfPorts, WF_DECISION_OPTION_ID
+  defaultSubflow, WF_SUBFLOW_PREFIX, toTaskScopeWorkflow, wfPorts, WF_DECISION_OPTION_ID, WF_FORK_MIN_BRANCHES, WF_FORK_MAX_BRANCHES
 } from './workflow.ts'
 import type { WfEdge, WfNode, WfSubflow, WfValidation, Workflow } from './workflow.ts'
 
@@ -1597,5 +1597,372 @@ describe('путь подзадачи (work.subflow)', () => {
     const wf = withPath(defaultSubflow())
     const task = toTaskScopeWorkflow(wf)
     assert.equal(task.nodes.some((n) => 'subflow' in n), false)
+  })
+})
+
+/**
+ * Граф с разветвлением: анализ → fork «Бэк и фронт» (бэкенд: работа → ревью агентом, фронтенд: работа → макет у
+ * человека) → join → проверка человеком → конец; «Вернуть» после слияния — на fork (оба пути заново).
+ */
+const forkGraph = (): Workflow => ({
+  version: WORKFLOW_VERSION,
+  nodes: [
+    { id: 'start', type: 'start', x: 0, y: 0 },
+    { id: 'analysis', type: 'work', title: 'Анализ', x: 0, y: 0 },
+    { id: 'split', type: 'fork', title: 'Бэк и фронт', x: 0, y: 0, branches: [{ id: 'backend', label: 'Бэкенд' }, { id: 'frontend', label: 'Фронтенд' }] },
+    { id: 'be', type: 'work', title: 'Бэкенд', roleIds: ['developer'], x: 0, y: 0 },
+    { id: 'rev', type: 'gate', title: 'Ревью API', roleId: 'reviewer', x: 0, y: 0 },
+    { id: 'fe', type: 'work', title: 'Фронтенд', x: 0, y: 0 },
+    { id: 'mock', type: 'human', title: 'Макет', x: 0, y: 0 },
+    { id: 'merge_paths', type: 'join', title: 'Собрать', forkId: 'split', x: 0, y: 0 },
+    { id: 'check', type: 'human', title: 'Проверка человеком', x: 0, y: 0 },
+    { id: 'end', type: 'end', x: 0, y: 0 }
+  ],
+  edges: [
+    { id: 'e_start', from: 'start', outcome: 'next', to: 'analysis' },
+    { id: 'e_analysis', from: 'analysis', outcome: 'next', to: 'split' },
+    { id: 'e_split_backend', from: 'split', outcome: 'backend', to: 'be' },
+    { id: 'e_split_frontend', from: 'split', outcome: 'frontend', to: 'fe' },
+    { id: 'e_be', from: 'be', outcome: 'next', to: 'rev' },
+    { id: 'e_rev_accept', from: 'rev', outcome: 'accept', to: 'merge_paths' },
+    { id: 'e_rev_reject', from: 'rev', outcome: 'reject', to: 'be' },
+    { id: 'e_fe', from: 'fe', outcome: 'next', to: 'mock' },
+    { id: 'e_mock_accept', from: 'mock', outcome: 'accept', to: 'merge_paths' },
+    { id: 'e_mock_reject', from: 'mock', outcome: 'reject', to: 'fe' },
+    { id: 'e_join', from: 'merge_paths', outcome: 'next', to: 'check' },
+    { id: 'e_check_accept', from: 'check', outcome: 'accept', to: 'end' },
+    { id: 'e_check_reject', from: 'check', outcome: 'reject', to: 'split' }
+  ]
+})
+
+/** Коды ошибок и предупреждений графа — чтобы сравнивать проблемы без текстов. */
+const codes = (wf: Workflow): { errors: string[]; warnings: string[] } => {
+  const v = validateWorkflow(wf, ctx)
+  return { errors: v.errors.map((i) => i.code ?? i.message), warnings: v.warnings.map((i) => i.code ?? i.message) }
+}
+const addNode = (wf: Workflow, n: WfNode): Workflow => ({ ...wf, nodes: [...wf.nodes, n] })
+
+describe('разветвление fork/join: модель', () => {
+  it('порты fork — id путей, join — next; названия типов и лимиты', () => {
+    const wf = forkGraph()
+    assert.deepEqual(wfPorts(node(wf, 'split')), ['backend', 'frontend'])
+    assert.deepEqual(wfPorts(node(wf, 'merge_paths')), ['next'])
+    assert.deepEqual(WF_PORTS.fork, [])
+    assert.deepEqual(WF_PORTS.join, ['next'])
+    assert.equal(wfNodeTitle({ id: 'f', type: 'fork', branches: [], x: 0, y: 0 }), 'Разветвление')
+    assert.equal(wfNodeTitle({ id: 'j', type: 'join', forkId: 'f', x: 0, y: 0 }), 'Слияние')
+    assert.equal(WF_FORK_MIN_BRANCHES, 2)
+    assert.equal(WF_FORK_MAX_BRANCHES, 4)
+    // Битые пути (не объект, id не строка) портов не дают — о них скажет валидация.
+    assert.deepEqual(wfPorts({ id: 'f', type: 'fork', branches: [null, { id: 3 }, { id: 'ok' }] as never, x: 0, y: 0 }), ['ok'])
+  })
+
+  it('describeWorkflow: у fork — пути (без названия — id), у join — forkId', () => {
+    const wf = forkGraph()
+    ;(node(wf, 'split') as { branches: unknown[] }).branches = [{ id: 'backend', label: ' Бэкенд ' }, { id: 'frontend' }]
+    const info = describeWorkflow(wf)
+    const split = info.find((i) => i.id === 'split')!
+    assert.deepEqual(split.branches, [{ id: 'backend', label: 'Бэкенд' }, { id: 'frontend', label: 'frontend' }])
+    assert.deepEqual(split.next, { backend: 'Бэкенд (be)', frontend: 'Фронтенд (fe)' })
+    assert.equal(info.find((i) => i.id === 'merge_paths')!.forkId, 'split')
+    assert.equal('branches' in info.find((i) => i.id === 'be')!, false)
+  })
+})
+
+describe('разветвление fork/join: переходы', () => {
+  const run = { roleIds: DEFAULT_ROLES.map((r) => r.id) }
+
+  it('цель-fork: прогон встаёт на fork, действие fork несёт первый шаг каждого пути; счётчики заходов общие', () => {
+    const wf = forkGraph()
+    const step = nextRunStage(wf, { nodeId: 'analysis', visits: { start: 1, analysis: 1 } }, 'next', run)
+    const visits = { start: 1, analysis: 1, split: 1, be: 1, fe: 1 }
+    assert.deepEqual(step.stage, { nodeId: 'split', visits })
+    assert.deepEqual(step.action, {
+      type: 'fork', nodeId: 'split', branches: [
+        { laneId: 'split:backend', branchId: 'backend', stage: { nodeId: 'be', visits }, action: { type: 'start_stage', nodeId: 'be', roleIds: ['developer'] } },
+        { laneId: 'split:frontend', branchId: 'frontend', stage: { nodeId: 'fe', visits }, action: { type: 'start_stage', nodeId: 'fe', roleIds: [] } }
+      ]
+    })
+  })
+
+  it('путь проходит условие насквозь, заходы в условие и дальше тоже в общих счётчиках', () => {
+    const wf = forkGraph()
+    edge(wf, 'e_split_backend').to = 'once'
+    wf.nodes.push({ id: 'once', type: 'condition', test: { kind: 'attempts', node: 'split', atLeast: 2 }, x: 0, y: 0 })
+    wf.edges.push({ id: 'e_once_yes', from: 'once', outcome: 'yes', to: 'rev' }, { id: 'e_once_no', from: 'once', outcome: 'no', to: 'be' })
+    const first = nextRunStage(wf, { nodeId: 'analysis', visits: {} }, 'next', run)
+    const branches = (first.action as Extract<typeof first.action, { type: 'fork' }>).branches
+    assert.equal(branches[0].stage.nodeId, 'be', 'первый заход в fork — условие «нет»')
+    assert.deepEqual(first.stage.visits, { split: 1, once: 1, be: 1, fe: 1 })
+    // Повторный заход (после «Вернуть» с проверки): условие «да» — путь сразу на ревью.
+    const again = nextRunStage(wf, { nodeId: 'check', visits: first.stage.visits }, 'reject', run)
+    const second = (again.action as Extract<typeof again.action, { type: 'fork' }>).branches
+    assert.deepEqual(second.map((b) => b.stage.nodeId), ['rev', 'fe'])
+    assert.deepEqual(again.stage.visits, { split: 2, once: 2, be: 1, fe: 2, rev: 1 })
+    assert.deepEqual(second[0].action, { type: 'create_gate', nodeId: 'rev', roleId: 'reviewer' })
+  })
+
+  it('цель-join: путь встаёт на join с действием join; из join — дальше по next', () => {
+    const wf = forkGraph()
+    const visits = { split: 1, be: 1, rev: 1 }
+    const arrived = nextRunStage(wf, { nodeId: 'rev', visits }, 'accept', run)
+    assert.deepEqual(arrived, { stage: { nodeId: 'merge_paths', visits: { ...visits, merge_paths: 1 } }, action: { type: 'join', nodeId: 'merge_paths', forkId: 'split' } })
+    const after = nextRunStage(wf, arrived.stage, 'next', run)
+    assert.deepEqual(after.action, { type: 'request_human', nodeId: 'check' })
+    // Порт пути, ведущий прямо в join (пустой путь), — сразу join.
+    edge(wf, 'e_split_frontend').to = 'merge_paths'
+    const fork = nextRunStage(wf, { nodeId: 'analysis', visits: {} }, 'next', run).action as Extract<ReturnType<typeof stageAction>, { type: 'fork' }>
+    assert.deepEqual(fork.branches[1].action, { type: 'join', nodeId: 'merge_paths', forkId: 'split' })
+  })
+
+  it('путь без ребра или со вложенным fork — blocked, путь остаётся на fork; fork без путей — blocked без движения', () => {
+    const wf = forkGraph()
+    wf.edges = wf.edges.filter((e) => e.id !== 'e_split_frontend')
+    const step = nextRunStage(wf, { nodeId: 'analysis', visits: {} }, 'next', run)
+    const fork = step.action as Extract<typeof step.action, { type: 'fork' }>
+    assert.equal(fork.branches[1].stage.nodeId, 'split')
+    assert.equal(fork.branches[1].action.type, 'blocked')
+    const nested = forkGraph()
+    nested.nodes.push({ id: 'inner', type: 'fork', branches: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], x: 0, y: 0 })
+    edge(nested, 'e_split_frontend').to = 'inner'
+    const inner = (nextRunStage(nested, { nodeId: 'analysis', visits: {} }, 'next', run).action as Extract<typeof step.action, { type: 'fork' }>).branches[1]
+    assert.equal(inner.stage.nodeId, 'split')
+    assert.match((inner.action as { reason: string }).reason, /разветвление внутри пути/)
+    assert.equal(inner.stage.visits.inner, undefined, 'заход во вложенный fork не считается')
+    const empty = forkGraph()
+    ;(node(empty, 'split') as { branches: unknown[] }).branches = []
+    const blocked = nextRunStage(empty, { nodeId: 'analysis', visits: {} }, 'next', run)
+    assert.equal(blocked.stage.nodeId, 'analysis')
+    assert.match((blocked.action as { reason: string }).reason, /нет путей/)
+  })
+
+  it('stageAction: fork повторяет вход в пути, join — ожидание; вне графа глобальной задачи — blocked', () => {
+    const wf = forkGraph()
+    const fork = runStageAction(wf, { nodeId: 'split', visits: { split: 1 } })
+    assert.equal(fork.type, 'fork')
+    assert.deepEqual((fork as Extract<typeof fork, { type: 'fork' }>).branches.map((b) => b.stage.nodeId), ['be', 'fe'])
+    assert.deepEqual(runStageAction(wf, { nodeId: 'merge_paths', visits: {} }), { type: 'join', nodeId: 'merge_paths', forkId: 'split' })
+    for (const scope of [undefined, 'subtask'] as const) {
+      for (const id of ['split', 'merge_paths']) {
+        const a = stageAction(wf, { nodeId: id, visits: {} }, scope ? { scope } : {})
+        assert.equal(a.type, 'blocked', `${id} ${scope}`)
+        assert.match((a as { reason: string }).reason, scope ? /недоступно в пути подзадачи/ : /только в воркфлоу глобальной задачи/)
+      }
+    }
+    // Граф по подзадачам в fork встаёт, но идти не может — как с «Решением ИИ».
+    const task = nextStage(wf, { nodeId: 'analysis', visits: {} }, 'next', {})
+    assert.equal(task.stage.nodeId, 'split')
+    assert.equal(task.action.type, 'blocked')
+    // join без парного fork (граф в обход валидации).
+    ;(node(wf, 'merge_paths') as { forkId: string }).forkId = 'nope'
+    assert.equal(runStageAction(wf, { nodeId: 'merge_paths', visits: {} }).type, 'blocked')
+  })
+
+  it('графы без fork/join: nextStage и stageAction дают побайтно то же, что код до разветвлений', async () => {
+    // Эталон снят с кода до fork/join (e4cbe47) тем же перебором: 3 графа × 3 области × все ноды × исходы × счётчики.
+    const { createHash } = await import('node:crypto')
+    const roles = ['developer', 'reviewer', 'designer']
+    const pipeline = pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer' }, { type: 'human', id: 'human' }])
+    const mixed: Workflow = {
+      version: 2,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'work', type: 'work', x: 0, y: 0, roleIds: ['developer'] },
+        { id: 'rev', type: 'gate', roleId: 'reviewer', x: 0, y: 0 },
+        { id: 'lim', type: 'condition', test: { kind: 'attempts', node: 'work', atLeast: 2 }, x: 0, y: 0 },
+        { id: 'pick', type: 'decision', question: 'q', roleId: 'developer', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], x: 0, y: 0 },
+        { id: 'ask', type: 'ask', roleId: 'designer', instructions: 'i', x: 0, y: 0 },
+        { id: 'push', type: 'git', operation: 'push', x: 0, y: 0 },
+        { id: 'merge', type: 'merge', x: 0, y: 0 },
+        { id: 'h', type: 'human', x: 0, y: 0 },
+        { id: 'end', type: 'end', x: 0, y: 0 }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', outcome: 'next', to: 'work' },
+        { id: 'e2', from: 'work', outcome: 'next', to: 'rev' },
+        { id: 'e3', from: 'rev', outcome: 'accept', to: 'pick' },
+        { id: 'e4', from: 'rev', outcome: 'reject', to: 'lim' },
+        { id: 'e5', from: 'lim', outcome: 'yes', to: 'h' },
+        { id: 'e6', from: 'lim', outcome: 'no', to: 'work' },
+        { id: 'e7', from: 'pick', outcome: 'a', to: 'ask' },
+        { id: 'e8', from: 'pick', outcome: 'b', to: 'push' },
+        { id: 'e9', from: 'ask', outcome: 'next', to: 'merge' },
+        { id: 'e10', from: 'push', outcome: 'ok', to: 'merge' },
+        { id: 'e11', from: 'push', outcome: 'error', to: 'h' },
+        { id: 'e12', from: 'merge', outcome: 'ok', to: 'end' },
+        { id: 'e13', from: 'merge', outcome: 'conflict', to: 'h' },
+        { id: 'e14', from: 'h', outcome: 'accept', to: 'end' }
+      ]
+    }
+    const legacy = legacyDefaultWorkflow([{ id: 'developer' }, { id: 'reviewer' }])
+    const out: string[] = []
+    for (const wf of [pipeline, mixed, legacy]) {
+      for (const scope of ['run', 'subtask', undefined] as const) {
+        for (const n of wf.nodes) {
+          for (const port of ['next', 'accept', 'reject', 'yes', 'no', 'ok', 'conflict', 'error', 'a', 'b']) {
+            for (const visits of [{}, { work: 1, lim: 1 }]) {
+              const c = { roleIds: roles, ...(scope ? { scope } : {}), roleId: 'developer' }
+              out.push(JSON.stringify(nextStage(wf, { nodeId: n.id, visits }, port, c)))
+              out.push(JSON.stringify(stageAction(wf, { nodeId: n.id, visits }, c)))
+            }
+          }
+        }
+      }
+    }
+    assert.equal(out.length, 2520)
+    assert.equal(createHash('sha256').update(out.join('\n')).digest('hex'), '7baaa9fa1ce77dad8727c5e944bdb2e0bf57830a8867352a9f778011438841c1')
+  })
+})
+
+describe('разветвление fork/join: валидация', () => {
+  it('корректный граф: ошибок нет, предупреждений о разветвлении нет', () => {
+    const { errors, warnings } = codes(forkGraph())
+    assert.deepEqual(errors, [])
+    assert.deepEqual(warnings.filter((c) => c.startsWith('fork') || c.startsWith('join')), [])
+  })
+
+  it('список путей: 1 путь, 5 путей, битый список, id и названия', () => {
+    const wf = forkGraph()
+    const split = node(wf, 'split') as { branches: unknown }
+    split.branches = [{ id: 'backend', label: 'Бэкенд' }]
+    assert.ok(codes(wf).errors.includes('forkTooFewBranches'))
+    split.branches = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, label: id }))
+    assert.ok(codes(wf).errors.includes('forkTooManyBranches'))
+    split.branches = 'backend'
+    assert.ok(codes(wf).errors.includes('forkBranchesNotList'))
+    split.branches = [{ id: 'Back End', label: 'x' }, { id: 'frontend', label: 'y' }, { id: 'frontend', label: 'z' }, { id: 'db', label: ' ' }]
+    const { errors } = codes(wf)
+    for (const c of ['forkBranchBadId', 'forkBranchDuplicateId', 'forkBranchNoLabel']) assert.ok(errors.includes(c), c)
+    // Порт пути без ребра — общая проверка портов, с названием пути в тексте.
+    const missing = validateWorkflow({ ...forkGraph(), edges: forkGraph().edges.filter((e) => e.id !== 'e_split_frontend') }, ctx).errors
+    const issue = missing.find((i) => i.code === 'missingOutcome')!
+    assert.equal(issue.nodeId, 'split')
+    assert.deepEqual(issue.params, { node: 'Бэк и фронт', port: 'Фронтенд', branchId: 'frontend' })
+  })
+
+  it('join без fork, fork без join, два join на один fork, вход в join не из пути', () => {
+    const wf = forkGraph()
+    ;(node(wf, 'merge_paths') as { forkId: string }).forkId = 'nope'
+    const { errors } = codes(wf)
+    assert.ok(errors.includes('joinNoFork'))
+    assert.ok(errors.includes('forkNoJoin'))
+    const many = addNode(forkGraph(), { id: 'j2', type: 'join', forkId: 'split', x: 0, y: 0 })
+    many.edges.push({ id: 'e_j2', from: 'j2', outcome: 'next', to: 'end' })
+    assert.ok(codes(many).errors.includes('forkManyJoins'))
+    const side = forkGraph()
+    edge(side, 'e_start').to = 'merge_paths'
+    assert.ok(codes(side).errors.includes('joinEnteredOutside'))
+  })
+
+  it('пути пересекаются и выход на чужой путь — forkSharedNode', () => {
+    const wf = forkGraph()
+    edge(wf, 'e_mock_accept').to = 'be'
+    const v = validateWorkflow(wf, ctx)
+    const shared = v.errors.filter((i) => i.code === 'forkSharedNode')
+    assert.deepEqual(shared.map((i) => i.nodeId).sort(), ['be', 'rev'])
+    assert.deepEqual(shared[0].params, { node: 'Бэкенд', lane: 'Бэкенд', other: 'Фронтенд', fork: 'Бэк и фронт' })
+  })
+
+  it('выход из пути: в конец, на fork, на ноду после слияния и до разветвления', () => {
+    const toEnd = forkGraph()
+    edge(toEnd, 'e_rev_accept').to = 'end'
+    const end = validateWorkflow(toEnd, ctx).errors.find((i) => i.code === 'forkEndInBranch')!
+    assert.equal(end.edgeId, 'e_rev_accept')
+    assert.equal(end.params?.lane, 'Бэкенд')
+    const toFork = forkGraph()
+    edge(toFork, 'e_rev_reject').to = 'split'
+    assert.ok(codes(toFork).errors.includes('forkBranchLeaks'))
+    const after = forkGraph()
+    edge(after, 'e_rev_accept').to = 'check'
+    const leak = validateWorkflow(after, ctx).errors.find((i) => i.code === 'forkBranchLeaks')!
+    assert.deepEqual([leak.nodeId, leak.edgeId, leak.params?.to], ['rev', 'e_rev_accept', 'Проверка человеком'])
+    const before = forkGraph()
+    edge(before, 'e_rev_reject').to = 'analysis'
+    assert.ok(codes(before).errors.includes('forkBranchLeaks'))
+  })
+
+  it('вход в путь сбоку: «Вернуть» после слияния внутрь пути и переход из-до разветвления', () => {
+    const wf = forkGraph()
+    edge(wf, 'e_check_reject').to = 'be'
+    const entered = validateWorkflow(wf, ctx).errors.find((i) => i.code === 'forkBranchEntered')!
+    assert.deepEqual([entered.nodeId, entered.edgeId], ['be', 'e_check_reject'])
+    assert.deepEqual(entered.params, { node: 'Бэкенд', lane: 'Бэкенд', fork: 'Бэк и фронт', from: 'Проверка человеком' })
+    const side = forkGraph()
+    side.nodes.push({ id: 'pick', type: 'condition', test: { kind: 'attempts', node: 'analysis', atLeast: 2 }, x: 0, y: 0 })
+    edge(side, 'e_analysis').to = 'pick'
+    side.edges.push({ id: 'e_pick_yes', from: 'pick', outcome: 'yes', to: 'fe' }, { id: 'e_pick_no', from: 'pick', outcome: 'no', to: 'split' })
+    assert.ok(codes(side).errors.includes('forkBranchEntered'))
+  })
+
+  it('внутри пути нельзя: вложенный fork, мерж в базу; push — предупреждение', () => {
+    const nested = forkGraph()
+    nested.nodes.push(
+      { id: 'inner', type: 'fork', branches: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], x: 0, y: 0 },
+      { id: 'inner_join', type: 'join', forkId: 'inner', x: 0, y: 0 }
+    )
+    edge(nested, 'e_be').to = 'inner'
+    nested.edges.push(
+      { id: 'e_inner_a', from: 'inner', outcome: 'a', to: 'inner_join' },
+      { id: 'e_inner_b', from: 'inner', outcome: 'b', to: 'inner_join' },
+      { id: 'e_inner_join', from: 'inner_join', outcome: 'next', to: 'rev' }
+    )
+    const n = validateWorkflow(nested, ctx).errors.find((i) => i.code === 'forkNested')!
+    assert.equal(n.nodeId, 'inner')
+    const merge = forkGraph()
+    merge.nodes.push({ id: 'mrg', type: 'merge', x: 0, y: 0 })
+    edge(merge, 'e_rev_accept').to = 'mrg'
+    merge.edges.push({ id: 'e_mrg_ok', from: 'mrg', outcome: 'ok', to: 'merge_paths' }, { id: 'e_mrg_conflict', from: 'mrg', outcome: 'conflict', to: 'be' })
+    assert.ok(codes(merge).errors.includes('forkMergeInBranch'))
+    const push = forkGraph()
+    push.nodes.push({ id: 'pub', type: 'git', operation: 'push', x: 0, y: 0 })
+    edge(push, 'e_rev_accept').to = 'pub'
+    push.edges.push({ id: 'e_pub_ok', from: 'pub', outcome: 'ok', to: 'merge_paths' }, { id: 'e_pub_error', from: 'pub', outcome: 'error', to: 'be' })
+    const v = codes(push)
+    assert.deepEqual(v.errors, [])
+    assert.ok(v.warnings.includes('forkPushInBranch'))
+  })
+
+  it('пустой путь и путь без «Работы» — предупреждения, не ошибки', () => {
+    const empty = forkGraph()
+    edge(empty, 'e_split_frontend').to = 'merge_paths'
+    const v = codes(empty)
+    assert.deepEqual(v.errors, [])
+    assert.ok(v.warnings.includes('forkEmptyBranch'))
+    assert.ok(!v.warnings.includes('forkBranchNoWork'), 'пустой путь — одно предупреждение')
+    const noWork = forkGraph()
+    edge(noWork, 'e_split_frontend').to = 'mock'
+    edge(noWork, 'e_mock_reject').to = 'mock_again'
+    noWork.nodes = noWork.nodes.filter((n) => n.id !== 'fe')
+    noWork.nodes.push({ id: 'mock_again', type: 'human', x: 0, y: 0 })
+    noWork.edges = noWork.edges.filter((e) => e.from !== 'fe')
+    noWork.edges.push({ id: 'e_again_accept', from: 'mock_again', outcome: 'accept', to: 'merge_paths' }, { id: 'e_again_reject', from: 'mock_again', outcome: 'reject', to: 'mock' })
+    const w = codes(noWork)
+    assert.deepEqual(w.errors, [])
+    assert.ok(w.warnings.includes('forkBranchNoWork'))
+  })
+
+  it('последовательные разветвления допустимы; fork в пути подзадачи — ошибка', () => {
+    const wf = forkGraph()
+    wf.nodes.push(
+      { id: 'split2', type: 'fork', branches: [{ id: 'docs', label: 'Доки' }, { id: 'tests', label: 'Тесты' }], x: 0, y: 0 },
+      { id: 'docs', type: 'work', x: 0, y: 0 },
+      { id: 'tests', type: 'work', x: 0, y: 0 },
+      { id: 'join2', type: 'join', forkId: 'split2', x: 0, y: 0 }
+    )
+    edge(wf, 'e_join').to = 'split2'
+    wf.edges.push(
+      { id: 'e_s2_docs', from: 'split2', outcome: 'docs', to: 'docs' },
+      { id: 'e_s2_tests', from: 'split2', outcome: 'tests', to: 'tests' },
+      { id: 'e_docs', from: 'docs', outcome: 'next', to: 'join2' },
+      { id: 'e_tests', from: 'tests', outcome: 'next', to: 'join2' },
+      { id: 'e_join2', from: 'join2', outcome: 'next', to: 'check' }
+    )
+    assert.deepEqual(codes(wf).errors, [])
+    const sub = validateWorkflow(forkGraph(), { ...ctx, scope: 'subtask' }).errors.filter((i) => i.code === 'subflowForkNotAllowed')
+    assert.deepEqual(sub.map((i) => i.nodeId).sort(), ['merge_paths', 'split'])
+    // Коды есть в таблице текстов — renderer переводит их по ключу.
+    for (const c of ['forkSharedNode', 'forkBranchLeaks', 'forkBranchEntered', 'forkNested', 'forkEndInBranch', 'forkMergeInBranch', 'subflowForkNotAllowed', 'templateNodeFork', 'forkEmptyBranch', 'forkBranchNoWork', 'forkPushInBranch']) {
+      assert.ok(c in WF_ISSUE_TEXTS, c)
+    }
   })
 })

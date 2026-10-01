@@ -2,6 +2,16 @@ import type { AreaTranslation } from '../types'
 import type ru from '../ru/shell'
 
 export default {
+  'assistant.suggestion.workflow.prompt': 'Help me create a new workflow. First ask which stages, roles, and checks I need.',
+  'assistant.workflowCreate': 'Create a workflow with the assistant',
+  'assistant.workflowEdit': 'Workflow: {title}',
+  'assistant.workflowDirty': 'Unsaved changes',
+  'assistant.workflowDetach': 'Remove workflow context',
+  'assistant.workflowReturn': 'Return to editor',
+  'assistant.workflowOpen': 'Open workflow',
+  'assistant.workflowTerminal': 'This agent runs in a terminal and cannot receive editor context. Choosing a chat agent opens a new conversation; your text and draft will be preserved.',
+  'assistant.chooseChatAgent': 'Choose a chat agent',
+  'assistant.terminalNeedsProject': 'Select a project to open the assistant terminal.',
   'menu.back': 'Back to sections',
   cancel: 'Cancel',
   closeEsc: 'Close (Esc)',
@@ -106,7 +116,6 @@ export default {
   'tab.boardBack': 'Back to the main board',
   'tab.terminals': 'Terminals',
   'tab.stats': 'Stats',
-  'tab.files': 'Files',
   'tab.info': 'Project',
   noSubtasks: 'No subtasks',
 
@@ -161,6 +170,8 @@ export default {
   'request.body.details': 'details',
   'request.recommended': 'Recommended by the asker',
   'request.stageHint': 'Asked at a workflow stage',
+  'request.lane': 'path “{name}”',
+  'request.laneHint': 'The request waits at a node inside a parallel path: the decision affects only this path',
   'request.ownAnswer': 'Your answer…',
   'request.answerPlaceholder': 'Answer…',
   'request.ownAnswerLabel': 'Your answer',

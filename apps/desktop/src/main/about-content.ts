@@ -25,7 +25,7 @@ function escapeHtml(value: string): string {
 /** Статический документ без preload и скриптов: для двух ссылок достаточно нативного поведения HTML. */
 export function buildAboutHtml({ locale, version, iconPng, appearance }: AboutContent): string {
   const settings = normalizeAppearance(appearance)
-  const theme = getAppTheme(settings.theme)
+  const theme = getAppTheme(settings.theme, settings.highSaturation)
   const t = (key: Parameters<typeof mtIn>[1], params?: Parameters<typeof mtIn>[2]): string => escapeHtml(mtIn(locale, key, params))
   const description = mtIn(locale, 'menu.aboutCredits').split('\n').map((line) => `<p>${escapeHtml(line)}</p>`).join('')
   const policy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'"
