@@ -12,6 +12,7 @@ import {
   dragHasFiles,
   filesFromClipboard,
   filesFromDrop,
+  folderError,
   limitsFor,
   modeFor,
   pasteKeys,
@@ -72,8 +73,33 @@ test('filesFromClipboard: картинка с обычным текстом — 
 })
 
 test('filesFromClipboard: пустой буфер и только текст — файлов нет, вставка стандартная', () => {
-  assert.deepEqual(filesFromClipboard(clip([])), { files: [], suppressText: false })
-  assert.deepEqual(filesFromClipboard(clip([textItem], 'текст')), { files: [], suppressText: false })
+  assert.deepEqual(filesFromClipboard(clip([])), { files: [], folders: [], suppressText: false })
+  assert.deepEqual(filesFromClipboard(clip([textItem], 'текст')), { files: [], folders: [], suppressText: false })
+})
+
+// Папка из Finder при ⌘V приходит в Electron так же, как при drop: файловый элемент без типа, `webkitGetAsEntry`
+// с `isDirectory: true`, а чтение падает NotFoundError (проверено в Electron из devDependencies).
+const folderItem = (name: string): ClipboardItemLike => ({
+  kind: 'file',
+  type: '',
+  getAsFile: () => file(name, '', 128),
+  webkitGetAsEntry: () => ({ isDirectory: true, name })
+})
+
+test('filesFromClipboard: папка — в отказы по имени, как при перетаскивании; текст-имя не вставляется', () => {
+  const a = file('a.txt', 'text/plain')
+  const pasteItem: ClipboardItemLike = { ...fileItem(a), webkitGetAsEntry: () => ({ isDirectory: false, name: 'a.txt' }) }
+  assert.deepEqual(filesFromClipboard(clip([folderItem('logs')])), { files: [], folders: ['logs'], suppressText: true })
+  assert.deepEqual(filesFromClipboard(clip([textItem, pasteItem, folderItem('logs')], 'a.txt\nlogs')), {
+    files: [a],
+    folders: ['logs'],
+    suppressText: true
+  })
+  // Та же ошибка, что при перетаскивании той же папки.
+  const dropped = filesFromDrop({ items: [{ kind: 'file', getAsFile: () => file('logs'), webkitGetAsEntry: () => ({ isDirectory: true, name: 'logs' }) }] })
+  assert.deepEqual(filesFromClipboard(clip([folderItem('logs')])).folders, dropped.folders)
+  assert.equal(folderError('logs'), `logs: ${t('common.attach.errFolder')}`)
+  inEnglish(() => assert.equal(folderError('logs'), 'logs: folders are not supported — zip it or attach the files'))
 })
 
 // ---------- Перетаскивание ----------

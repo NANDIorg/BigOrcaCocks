@@ -1007,7 +1007,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   нет ни метода, ни хендлера — `stale`, «перезапустите приложение» (у цели координатора и глобальной задачи, где картинки были и раньше, — `imagesOnly`).
 - **Renderer**: одна логика вложений на все формы — `renderer/src/attachmentDrafts.ts` (бывшие `imageDrafts.ts`, `imagePaste.ts`,
   `useImageAttachments.ts`): отбор файлов из буфера (`filesFromClipboard` — любые файловые элементы; `text/plain`, совпадающий с именами
-  файлов, как у файла из Finder/Проводника, в поле не вставляется) и перетаскивания (`filesFromDrop`: папка — отказ по `webkitGetAsEntry`),
+  файлов, как у файла из Finder/Проводника, в поле не вставляется) и перетаскивания (`filesFromDrop`); папка в обоих случаях — отказ
+  по `webkitGetAsEntry` с одной ошибкой `folderError` (в Electron он работает и при вставке, без него чтение папки падает NotFoundError),
   проверки до и после чтения (ошибка — с именем файла, лимиты считаются вместе с сохранёнными у задачи), хук `useAttachmentDrafts` (в IPC
   уходит `{mime, data, name}`). Модель чипа — `attachmentChip.ts` (бейдж расширения, обрезка имени посередине, размер через `formatBytes`,
   `openable` — `attachmentOpenable` из `shared/showcase.ts`, тот же список проверяет main). Компоненты: общее поле `AttachmentField.tsx`

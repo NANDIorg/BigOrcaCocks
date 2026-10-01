@@ -42,11 +42,19 @@ export function pasteKeys(platform: string): string {
 
 // ---------- Буфер обмена и перетаскивание ----------
 
-/** Что нужно от элемента буфера обмена (`DataTransferItem`) — чтобы тестировать без DOM. */
-export interface ClipboardItemLike {
+/**
+ * Файловый элемент буфера обмена или перетаскивания (`DataTransferItem`) — чтобы тестировать без DOM.
+ * `webkitGetAsEntry` нужен, чтобы отличить папку от файла: Chromium отдаёт папку «файлом», чтение которого падает.
+ * В Electron он работает и при вставке, не только при drop.
+ */
+export interface FileItemLike {
   kind: string
-  type: string
   getAsFile(): File | null
+  webkitGetAsEntry?(): { isDirectory: boolean; name: string } | null
+}
+
+export interface ClipboardItemLike extends FileItemLike {
+  type: string
 }
 
 export interface ClipboardLike {
@@ -54,32 +62,40 @@ export interface ClipboardLike {
   getData(format: string): string
 }
 
-/**
- * Файлы из вставки и нужно ли гасить стандартную вставку текста. Берём любые файловые элементы, не только `image/*`.
- * Файл, скопированный в Finder/Проводнике, приходит вместе с `text/plain` — своим именем (или путём): такой текст
- * в поле не вставляем. Текст рядом с картинкой, который именем файла не является (картинка из браузера с подписью),
- * вставляется как обычно. Файлов нет — `files` пуст, вставка текста стандартная.
- */
-export function filesFromClipboard(data: ClipboardLike): { files: File[]; suppressText: boolean } {
-  const files = Array.from(data.items)
-    .filter((it) => it.kind === 'file')
-    .map((it) => it.getAsFile())
-    .filter((f): f is File => f !== null)
-  if (files.length === 0) return { files, suppressText: false }
-  const text = data.getData('text/plain').trim()
-  if (!text) return { files, suppressText: true }
-  const names = new Set(files.map((f) => f.name))
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-  const onlyNames = lines.every((line) => names.has(line.split(/[\\/]/).pop() ?? line))
-  return { files, suppressText: onlyNames }
+/** Разделить файловые элементы на файлы и имена папок (папки не принимаются — их показываем ошибкой). */
+function splitFileItems(items: readonly FileItemLike[]): { files: File[]; folders: string[] } {
+  const files: File[] = []
+  const folders: string[] = []
+  for (const it of items) {
+    if (it.kind !== 'file') continue
+    const entry = it.webkitGetAsEntry?.() ?? null
+    const file = it.getAsFile()
+    if (entry?.isDirectory) folders.push(entry.name || file?.name || '')
+    else if (file) files.push(file)
+  }
+  return { files, folders }
 }
 
-/** Элемент перетаскивания: `webkitGetAsEntry` нужен, чтобы отличить папку от файла (Chromium отдаёт папку «файлом»). */
-export interface DropItemLike {
-  kind: string
-  getAsFile(): File | null
-  webkitGetAsEntry?(): { isDirectory: boolean; name: string } | null
+/**
+ * Файлы и папки из вставки и нужно ли гасить стандартную вставку текста. Берём любые файловые элементы, не только
+ * `image/*`; папки отделяем так же, как при перетаскивании (`filesFromDrop`), чтобы человек увидел одну и ту же
+ * ошибку. Файл, скопированный в Finder/Проводнике, приходит вместе с `text/plain` — своим именем (или путём): такой
+ * текст в поле не вставляем. Текст рядом с картинкой, который именем файла не является (картинка из браузера
+ * с подписью), вставляется как обычно. Файлов и папок нет — оба списка пусты, вставка текста стандартная.
+ */
+export function filesFromClipboard(data: ClipboardLike): { files: File[]; folders: string[]; suppressText: boolean } {
+  const { files, folders } = splitFileItems(Array.from(data.items))
+  if (files.length === 0 && folders.length === 0) return { files, folders, suppressText: false }
+  const text = data.getData('text/plain').trim()
+  if (!text) return { files, folders, suppressText: true }
+  const names = new Set([...files.map((f) => f.name), ...folders])
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const onlyNames = lines.every((line) => names.has(line.split(/[\\/]/).pop() ?? line))
+  return { files, folders, suppressText: onlyNames }
 }
+
+/** Элемент перетаскивания — тот же файловый элемент, что и в буфере. */
+export type DropItemLike = FileItemLike
 
 export interface DropLike {
   items?: ArrayLike<DropItemLike> | null
@@ -92,17 +108,9 @@ export interface DropLike {
  * в обработчике `drop` — после него `items` пустеют.
  */
 export function filesFromDrop(dt: DropLike | null | undefined): { files: File[]; folders: string[] } {
-  const files: File[] = []
-  const folders: string[] = []
   const items = dt?.items ? Array.from(dt.items).filter((it) => it.kind === 'file') : []
-  if (items.length === 0) return { files: dt?.files ? Array.from(dt.files) : [], folders }
-  for (const it of items) {
-    const entry = it.webkitGetAsEntry?.() ?? null
-    const file = it.getAsFile()
-    if (entry?.isDirectory) folders.push(entry.name || file?.name || '')
-    else if (file) files.push(file)
-  }
-  return { files, folders }
+  if (items.length === 0) return { files: dt?.files ? Array.from(dt.files) : [], folders: [] }
+  return splitFileItems(items)
 }
 
 /** В перетаскивании есть файлы (а не выделенный текст) — только тогда поле принимает drop. */
@@ -135,6 +143,11 @@ function shownName(name: string | undefined): string {
 
 function fail(name: string | undefined, error: string): Error {
   return new Error(t('common.attach.errNamed', { name: shownName(name), error }))
+}
+
+/** Ошибка для отвергнутой папки — одна и та же при перетаскивании и вставке. */
+export function folderError(name: string): string {
+  return t('common.attach.errNamed', { name: shownName(name), error: t('common.attach.errFolder') })
 }
 
 /** Проверка до чтения файла: пустой, слишком большой, в режиме картинок — не картинка. Ошибка — с именем файла. */
@@ -218,7 +231,7 @@ export interface AttachmentDrafts {
   reading: boolean
   /** Ошибки последнего добавления, по строке на файл (текст на языке интерфейса); сбрасывается при следующем. */
   error: string | null
-  /** Файлы из выбора, вставки или перетаскивания; `folders` — имена отвергнутых папок (`filesFromDrop`). */
+  /** Файлы из выбора, вставки или перетаскивания; `folders` — имена отвергнутых папок (`filesFromDrop`, `filesFromClipboard`). */
   add(files: readonly File[], folders?: readonly string[]): void
   /** Вешается на `onPaste` поля: файлов в буфере нет — стандартная вставка текста. */
   onPaste(e: React.ClipboardEvent): void
@@ -276,7 +289,7 @@ export function useAttachmentDrafts({ saved, locked = false, legacyImages = fals
   const add = useCallback(
     (files: readonly File[], folders: readonly string[] = []): void => {
       if (lockedRef.current || (files.length === 0 && folders.length === 0)) return
-      setErrors(folders.map((name) => t('common.attach.errNamed', { name: shownName(name), error: t('common.attach.errFolder') })))
+      setErrors(folders.map(folderError))
       if (files.length === 0) return
       setReading((n) => n + files.length)
       // По очереди: порядок вложений совпадает с порядком файлов, а проверка лимитов видит предыдущие.
@@ -292,10 +305,10 @@ export function useAttachmentDrafts({ saved, locked = false, legacyImages = fals
 
   const onPaste = useCallback(
     (e: React.ClipboardEvent): void => {
-      const { files, suppressText } = filesFromClipboard(e.clipboardData)
-      if (files.length === 0) return // обычный текст — стандартная вставка
+      const { files, folders, suppressText } = filesFromClipboard(e.clipboardData)
+      if (files.length === 0 && folders.length === 0) return // обычный текст — стандартная вставка
       if (suppressText) e.preventDefault()
-      add(files)
+      add(files, folders)
     },
     [add]
   )
