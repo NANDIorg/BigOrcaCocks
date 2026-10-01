@@ -1,6 +1,8 @@
+import type { WorkflowAssistantContext } from '../../../shared/assistant-workflow'
+import { syncWorkflowDraft, workflowAssistantError } from '../workflowAssistant'
 import { motionScrollBehavior } from '../appearance'
 import type React from 'react'
-import { Fragment, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { defaultWorkflow, stableJson, validateWorkflow, type AgentInfo, type BoardColumn, type Role, type WfIssue, type WfMigrationNote, type Workflow } from '@orca-board/core'
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
@@ -17,12 +19,15 @@ import { nodeTitle, wfIssueText } from '../defaultTitles'
 import { ipcErrorMessage } from '../ipcError'
 import { storedWorkflowNotes } from '../taskTypeEdit'
 import { canBeTemplate, type NodeTemplatesHook } from '../nodeTemplates'
+import type { WorkflowSaveSnapshot } from './useTaskTypes'
 
 interface Props {
   /** Название типа — имя файла экспорта. */
   title: string
   /** Свой граф типа; нет — дефолтный по ролям типа. */
   workflow: Workflow | undefined
+  /** Порядок перечитов библиотеки из хука; отличает свежий равный граф от старой копии props. */
+  observation?: number
   roles: Role[]
   /**
    * Колонки для выбора в нодах (встроенные и колонки проектов). По ним граф не проверяется: тип общий для досок
@@ -39,7 +44,11 @@ interface Props {
   /** «Понятно»: убрать предупреждения из типа. Нет (старый main) — кнопки нет, замечания уйдут с правкой графа. */
   onDismissNotes?(): Promise<void>
   /** null — вернуть дефолтный граф (поле удаляется из типа). Ошибка — наружу, покажем под кнопками. */
-  onSave(wf: Workflow | null): Promise<void>
+  onSave(wf: Workflow | null, baseline: Workflow): Promise<WorkflowSaveSnapshot | void>
+  autoFocusEditor?: boolean
+  restore?: Extract<WorkflowAssistantContext, { mode: 'edit' }>
+  onRestoreApplied?(): void
+  onAssistant?(draft: Workflow, baseline: Workflow, dirty: boolean, path: WfPath): void
 }
 
 /**
@@ -51,13 +60,29 @@ interface Props {
  * один — граф типа: правки пути пишутся в `work.subflow` (`writeGraphAt`), поэтому сохранение, экспорт и валидация не
  * знают про уровни. У ноды без своего пути показан образец по умолчанию — только просмотр, пока не заведут свой.
  */
-export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, agents, library, notes, onDismissNotes, onSave }: Props): React.JSX.Element {
+export function TaskTypeWorkflow({ title, workflow, observation, roles, columns, readOnly, agents, library, notes, onDismissNotes, onSave, restore, onRestoreApplied, onAssistant, autoFocusEditor }: Props): React.JSX.Element {
   const t = useT()
   const locale = useLocale()
-  const saved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
-  const [draft, setDraft] = useState<Workflow>(saved)
+  const incomingSaved = useMemo(() => workflow ?? defaultWorkflow(roles), [workflow, roles])
+  const incomingKey = useMemo(() => stableJson(incomingSaved), [incomingSaved])
+  const observedSaved = useRef({ key: incomingKey, revision: 0 })
+  const latestObservation = useRef(observation ?? 0)
+  const latestSaved = useRef(incomingSaved)
+  // Перечит имеет порядок даже при прежнем содержимом; запоздалые props не отменяют подтверждённый снимок.
+  if (observation !== undefined ? observation > latestObservation.current : observedSaved.current.key !== incomingKey) {
+    const changed = stableJson(latestSaved.current) !== incomingKey
+    observedSaved.current = { key: incomingKey, revision: observedSaved.current.revision + (changed ? 1 : 0) }
+    if (observation !== undefined) latestObservation.current = observation
+    latestSaved.current = incomingSaved
+  }
+  const savedRevision = observedSaved.current.revision
+  const saved = latestSaved.current
+  const [draft, setDraft] = useState<Workflow>(() => structuredClone(restore?.workflow ?? saved))
+  const [baseline, setBaseline] = useState<Workflow>(() => structuredClone(restore?.baseline ?? saved))
+  const [conflict, setConflict] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
   const [selection, setSelection] = useState<WfSelection>(null)
-  const [path, setPath] = useState<WfPath>([])
+  const [path, setPath] = useState<WfPath>(() => restore?.path ?? [])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -76,12 +101,30 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
   const level = graphAt(draft, at) ?? { graph: draft, isDefault: false }
   const scope = scopeOf(at)
   /** Образец пути по умолчанию нельзя править — сначала заводят свой путь. */
-  const levelReadOnly = readOnly || level.isDefault
+  const levelReadOnly = readOnly || busy || level.isDefault
   const levelIssuesShown = useMemo(() => levelIssues(issues, at), [issues, at.join('/')])
-  const dirty = stableJson(draft) !== stableJson(saved)
+  const dirty = stableJson(draft) !== stableJson(baseline)
   const custom = workflow !== undefined
   const { errors, warnings } = issues
   const stored = storedWorkflowNotes(notes, readOnly, onDismissNotes !== undefined)
+
+  useEffect(() => {
+    if (autoFocusEditor) editorRef.current?.querySelector<SVGElement>('.wf-svg')?.focus({ preventScroll: true })
+    if (restore) onRestoreApplied?.()
+  }, [])
+
+  // Сверяем и входящий граф, и завершение записи, и возврат правок к исходной базе.
+  useEffect(() => {
+    const next = syncWorkflowDraft({ draft, baseline }, saved)
+    setConflict(next.conflict)
+    if (next.replaced) {
+      setDraft(next.draft)
+      setBaseline(next.baseline)
+      setPath((current) => resolvePath(next.draft, current))
+      setSelection(null)
+      setCanvasRev((revision) => revision + 1)
+    }
+  }, [saved, draft, baseline])
 
   /** Правка графа текущего уровня: на уровне пути она записывается в `work.subflow` ноды. */
   function edit(wf: Workflow): void {
@@ -92,7 +135,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
 
   /** Правка графа типа целиком (не текущего уровня): заводит собственный путь у ноды, в которую вошли. */
   function editRoot(wf: Workflow): void {
-    if (readOnly) return
+    if (readOnly || busy) return
     setDraft(wf)
     setNotice(null)
   }
@@ -127,7 +170,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
       setError(null)
       setNotice(message)
     } catch (e) {
-      setError(workflowSaveError(ipcErrorMessage(e)))
+      setError(workflowAssistantError(workflowSaveError(ipcErrorMessage(e))))
     } finally {
       setBusy(false)
     }
@@ -135,17 +178,26 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
 
   const save = (): Promise<void> =>
     run(async () => {
-      await onSave(draft)
+      const snapshot = await onSave(draft, baseline)
+      if (snapshot && snapshot.observation >= latestObservation.current) {
+        latestSaved.current = snapshot.workflow
+        latestObservation.current = snapshot.observation
+      } else if (!snapshot && observedSaved.current.revision === savedRevision) latestSaved.current = draft
+      setBaseline(structuredClone(draft))
       setMigration(null)
     }, t('config.wf.tab.saved'))
 
   const reset = (): Promise<void> => {
-    if (!confirm(t('config.wf.tab.resetConfirm', { title }))) {
-      return Promise.resolve()
-    }
     return run(async () => {
-      await onSave(null)
-      replace(defaultWorkflow(roles), null)
+      const snapshot = await onSave(null, baseline)
+      const next = defaultWorkflow(roles)
+      if (snapshot && snapshot.observation >= latestObservation.current) {
+        latestSaved.current = snapshot.workflow
+        latestObservation.current = snapshot.observation
+      } else if (!snapshot && observedSaved.current.revision === savedRevision) latestSaved.current = next
+      setBaseline(next)
+      setConfirmReset(false)
+      replace(next, null)
     }, t('config.wf.tab.resetDone'))
   }
 
@@ -259,6 +311,13 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
       <div className="about-banner">
         {t('config.wf.tab.bannerBefore')} <b>{t('config.wf.tab.bannerStrong')}</b>{t('config.wf.tab.bannerAfter')}
       </div>
+      {confirmReset && <div className="roles-confirm" role="alertdialog" aria-label={t('config.wf.tab.reset')}>
+        <p>{t('config.wf.tab.resetConfirm', { title })}</p>
+        <div className="roles-confirm-btns">
+          <button type="button" className="btn-sm" autoFocus disabled={busy} onClick={() => setConfirmReset(false)}>{t('config.taskType.cancel')}</button>
+          <button type="button" className="btn-sm danger" disabled={busy} onClick={() => void reset()}>{t('config.wf.tab.reset')}</button>
+        </div>
+      </div>}
       <div className="wf-section">
         <div className="wf-statusbar" role="region" aria-label={t('config.wf.tab.statusAria')}>
           <div className="wf-statusbar-row">
@@ -280,7 +339,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
             {!readOnly && (
               <span className="wf-statusbar-actions">
                 {errors.length > 0 && dirty && <span id="wf-save-why" className="wf-statusbar-why">{t('config.wf.tab.fixFirst')}</span>}
-                <button type="button" className="btn-sm" disabled={!dirty || busy} onClick={() => replace(saved, null)}>
+                <button type="button" className="btn-sm" disabled={(!dirty && !conflict) || busy} onClick={() => { replace(saved, null); setBaseline(saved); setConflict(false) }}>
                   {t('config.wf.tab.revert')}
                 </button>
                 <button
@@ -296,7 +355,9 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
               </span>
             )}
           </div>
-          {error && <div className="editor-error">{error}</div>}
+          {onAssistant && <button type="button" className="btn-sm" disabled={busy || readOnly} onClick={() => onAssistant(draft, baseline, dirty, at)}><Icon.assistant /> {t('config.wf.tab.assistant')}</button>}
+          {conflict && <div className="editor-error" role="alert">{t('config.wf.tab.externalConflict')}</div>}
+          {error && <div className="editor-error" role="alert">{error}</div>}
           {notice && !error && <div className="hint wf-notice">{notice}</div>}
         </div>
 
@@ -431,7 +492,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
           <button type="button" className="btn-sm" onClick={exportJson}><Icon.download /> {t('config.wf.tab.export')}</button>
           {!readOnly && (
             <>
-              <button type="button" className="btn-sm" onClick={() => fileRef.current?.click()}>{t('config.wf.tab.import')}</button>
+              <button type="button" className="btn-sm" disabled={busy} onClick={() => fileRef.current?.click()}>{t('config.wf.tab.import')}</button>
               <input
                 ref={fileRef}
                 type="file"
@@ -448,7 +509,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
                 {t('config.wf.tab.limit')}
               </button>
               <span className="wf-grow" />
-              <button type="button" className="btn-sm danger" disabled={busy || (!custom && !dirty)} onClick={() => void reset()}>
+              <button type="button" className="btn-sm danger" disabled={busy || (!custom && !dirty)} onClick={() => setConfirmReset(true)}>
                 <Icon.refresh /> {t('config.wf.tab.reset')}
               </button>
             </>

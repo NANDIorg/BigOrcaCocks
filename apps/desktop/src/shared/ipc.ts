@@ -1,3 +1,4 @@
+import type { WorkflowAssistantContext, WorkflowAssistantSaved } from './assistant-workflow'
 import type { Task, ImageAttachmentInput, AgentKind, AssistantSettings, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 import type { WindowChromeMode } from './window-chrome'
@@ -785,6 +786,8 @@ export interface OrcaApi {
    * и дальше правятся и удаляются, как созданные человеком.
    */
   taskTypes: {
+    patch(id: string, patch: TaskTypePatch): Promise<TaskType>
+    rename(id: string, title: string, description: string): Promise<TaskType>
     list(): Promise<TaskTypesState>
     /** Создать или заменить тип; настройки валидируются (граф — по ролям типа, колонки не проверяются). */
     save(input: TaskTypeInput): Promise<TaskType>
@@ -976,9 +979,14 @@ export interface OrcaApi {
     available(ptyId: string): Promise<boolean>
     getMessages(ptyId: string): Promise<AssistantChatSnapshot>
     send(ptyId: string, text: string): Promise<void>
+    sendWithWorkflow?(ptyId: string, text: string, context: WorkflowAssistantContext): Promise<void>
     interrupt(ptyId: string): Promise<void>
     respond(ptyId: string, requestId: string, answer: InteractionAnswer): Promise<void>
     onMessage(ptyId: string, cb: (u: AssistantChatUpdate) => void): () => void
+  }
+  workflowAssistant: {
+    save(typeId: string, baseline: Workflow, workflow: Workflow | null): Promise<void>
+    onSaved(cb: (saved: WorkflowAssistantSaved) => void): () => void
   }
   /**
    * «Документы»: файлы активного проекта и `.md` worktree его задач в работе (docs/architecture.md → «IPC: документы»).
@@ -1129,3 +1137,6 @@ export type AssistantChatUpdate = { ptyId: string; revision?: number } & (
   | { interaction: ConversationInteraction }
   | { resolvedRequestId: string }
 )
+
+/** Узкая правка настроек над актуальным типом main. */
+export type TaskTypePatch = { [K in keyof TaskTypeSettings]?: TaskTypeSettings[K] | null } & { workflowNotes?: WfMigrationNote[] }

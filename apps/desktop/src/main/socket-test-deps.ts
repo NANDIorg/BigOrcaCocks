@@ -52,7 +52,14 @@ export const NOT_NEEDED_SETTINGS_DEPS: Pick<
 }
 
 /** Заглушки для `SocketDeps.settings`/`setSettings` — см. `NOT_NEEDED_SETTINGS_DEPS`. */
-export const NOT_NEEDED_APP_SETTINGS_DEPS: Pick<SocketDeps, 'settings' | 'setSettings'> = {
+export const NOT_NEEDED_APP_SETTINGS_DEPS: Pick<SocketDeps,
+  'settings' | 'setSettings' | 'libraryTaskTypes' | 'workflowGet' | 'workflowValidate' | 'workflowSet' | 'workflowCreate'
+> = {
   settings: () => { throw new Error('не нужен') },
-  setSettings: () => { throw new Error('не нужен') }
+  setSettings: () => { throw new Error('не нужен') },
+  libraryTaskTypes: () => { throw new Error('не нужен') },
+  workflowGet: () => { throw new Error('не нужен') },
+  workflowValidate: () => { throw new Error('не нужен') },
+  workflowSet: () => { throw new Error('не нужен') },
+  workflowCreate: () => { throw new Error('не нужен') }
 }

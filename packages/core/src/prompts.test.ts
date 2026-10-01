@@ -835,7 +835,7 @@ describe('команды в инструкциях и документации �
   )
   const flags = new Set([...helpText.matchAll(/--([a-z][a-z-]*)/g)].map((m) => m[1]))
 
-  for (const file of ['README.md', 'skills/coordinator.md', 'skills/worker.md', 'skills/assistant.md', 'docs/human-requests.md', 'docs/architecture.md', 'docs/nested-kanban.md', 'docs/workflow.md']) {
+  for (const file of ['README.md', 'skills/coordinator.md', 'skills/worker.md', 'skills/assistant.md', 'docs/human-requests.md', 'docs/architecture.md', 'docs/nested-kanban.md', 'docs/workflow.md', 'docs/assistant-chat.md']) {
     it(file, () => {
       const text = read(file)
       const uses = [...text.matchAll(/orca-board ([a-z][a-z-]*(?: [a-z][a-z-]*)?)([^`\n]*)/g)]
@@ -880,6 +880,46 @@ describe('skill ассистента: все проекты пользовате
   it('нет запрета --project и привязки к ORCA_PROJECT', () => {
     assert.doesNotMatch(text, /--project` не указывай/)
     assert.doesNotMatch(text, /ORCA_PROJECT/)
+  })
+})
+
+describe('skill ассистента: контракт правки воркфлоу', () => {
+  const skill = readFileSync(new URL('../../../skills/assistant.md', import.meta.url), 'utf8')
+  const heading = '## Воркфлоу с ассистентом'
+  const start = skill.indexOf(heading)
+  const end = skill.indexOf('\n## ', start + heading.length)
+  const workflow = start < 0 ? '' : skill.slice(start, end < 0 ? undefined : end)
+  const plain = workflow.replace(/[\x60*]/g, '').replace(/\s+/g, ' ')
+
+  it('schema/get и роли читаются до validate, validate — до set/create', () => {
+    const positions = ['workflow schema', 'workflow get --type <id>', 'workflow validate', 'workflow set --type <id> --revision <token>', 'workflow create --title'].map((cmd) => plain.indexOf('orca-board ' + cmd))
+    assert.ok(positions.every((at) => at >= 0), 'все шаги используют реальные команды')
+    assert.ok(positions[0] < positions[2] && positions[1] < positions[2] && positions[2] < positions[3] && positions[2] < positions[4])
+    assert.match(plain, /Роли[\s\S]*контекст[\s\S]*стандартные роли из schema/)
+    assert.match(plain, /errors[\s\S]*не сохраняй[\s\S]*warnings[\s\S]*объясни/)
+    assert.match(plain, /без выбранного проекта[\s\S]*--project[\s\S]*не нужен/)
+  })
+  it('использует корневой draft вместо saved graph и сохраняет id', () => {
+    assert.match(plain, /корневым черновиком[\s\S]*вложенные пути[\s\S]*выбранный путь/)
+    assert.match(plain, /не заменяй[\s\S]*сохранённым workflow из get/)
+    assert.match(plain, /сохраняй существующие id/)
+    assert.match(plain, /Координаты вручную не рассчитывай/)
+  })
+  it('обсуждение не пишет, поручение сохраняет без повторного разрешения', () => {
+    assert.match(plain, /Обсуждение[\s\S]*не поручение сохранения/)
+    assert.match(plain, /не требуй повторного разрешения[\s\S]*порученного обратимого изменения/)
+    assert.match(plain, /Когда человек поручил[\s\S]*сохрани[\s\S]*проверкой/)
+    assert.doesNotMatch(skill, /граф\s+воркфлоу\s+—\s+только визуально|ты можешь его прочитать[^.]*но не поправить/)
+  })
+  it('stale перечитывает/согласует без слепого retry; dangerous confirmations остаются', () => {
+    assert.match(plain, /revision[\s\S]*всего сохранённого типа/)
+    assert.match(plain, /revision устарела[\s\S]*перечитай workflow get[\s\S]*согласуй/)
+    assert.match(plain, /Не повторяй старый граф автоматически с новым токеном/)
+    assert.match(plain, /Тип удалён[\s\S]*не создавай его заново/)
+    const confirm = skill.slice(skill.indexOf('## Подтверждение')).replace(/[\x60*]/g, '').replace(/\s+/g, ' ')
+    assert.match(confirm, /после явного «да»[\s\S]*task delete[\s\S]*global delete[\s\S]*worker stop/)
+    assert.match(confirm, /types delete[\s\S]*roles remove[\s\S]*settings set --assistant-agent[\s\S]*bypassPermissions/)
+    assert.match(confirm, /--yes[\s\S]*только после его «да»[\s\S]*--yes сам не подставляй никогда/)
   })
 })
 

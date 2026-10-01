@@ -2,6 +2,8 @@ import type { AreaTranslation } from '../types'
 import type ru from '../ru/config'
 
 export default {
+  'wf.tab.assistant': 'Edit with assistant',
+  'wf.tab.externalConflict': 'The saved workflow changed. Your draft is preserved, but its baseline is outdated. Revert changes to load the new workflow.',
   'about.navAria': 'Sections',
   'about.nav.overview': 'Overview',
   'about.nav.agents': 'Agents',

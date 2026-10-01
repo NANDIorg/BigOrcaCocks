@@ -375,6 +375,16 @@ Electron main ───── node-pty ───── PTY: claude (коорди
 раздел «Ревью и мерж» и `docs/workflow.md`). Модуль без node-импортов: его импортирует renderer ради живой
 валидации в редакторе.
 
+Создание графа через ассистента — `packages/core/src/workflow-assistant.ts`: `workflowSchema()`,
+`parseWorkflowDefinition(value, allowMissingCoordinates)` и `prepareWorkflow(definition, context)`.
+Схема содержит реальные поля/порты/ограничения, безопасные стандартные роли и исполнимый пример.
+Parser проверяет неизвестный JSON рекурсивно до миграции и семантической валидации; `invalidDefinition`
+содержит message/path и при наличии nodeId/edgeId. `WorkflowPreparation {workflow?,errors,warnings}`
+не содержит workflow при ошибке формы, но содержит граф при семантической ошибке.
+Без errors пропуски координат заполняются общим `autoLayout` из `workflow-layout.ts`; заданные позиции
+и id сохраняются. `renderer/workflowGeometry.ts` сохраняет совместимые экспорты раскладки.
+Подробный публичный контракт — «Протокол сокета» ниже и [workflow.md](workflow.md#создание-и-правка-графа-через-ассистента).
+
 - **Формат** — `Workflow { version, nodes, edges }`, `WORKFLOW_VERSION = 2` (`WORKFLOW_VERSION_TASK_SCOPE = 1` — граф по подзадачам). Ноды (`WfNode`): `start`, `work`
   (в версии 2 `roleIds?` — необязательные роли этапа, читать через `wfWorkRoleIds` (одиночный `roleId` версии 1 — список из одной роли); в версии 1 без роли — роль задачи;
   `subflow?: WfSubflow {nodes, edges}` — путь каждой подзадачи этапа, только в версии 2, без версии; нет — `defaultSubflow()`: `work → merge → end`, конфликт — `human` «Конфликт мержа»), `ask` («Вопрос человеку»: `roleId?`, `instructions` — обязательны; агент спрашивает
@@ -679,11 +689,26 @@ Store хранит позицию и решает, куда задача пер�
   невалиден, и main его не примет. `validateWorkflow` по ролям типа (без колонок и агентов — они у проекта) считается
   на каждую правку: ошибки блокируют «Сохранить», предупреждения нет. Экран — три части. **Полоса статуса** (`.wf-statusbar`,
   `position: sticky`): свой/дефолтный граф, «есть несохранённые изменения», счётчики ошибок и предупреждений — кнопки к первой
-  проблеме уровня, «Отменить правки», «Сохранить» (`taskTypes:save`; недоступна — рядом текст почему), ошибки и итог сохранения.
+  проблеме уровня, «Отменить правки», «Сохранить» (`workflowAssistant:save`; недоступна — рядом текст почему), ошибки и итог сохранения.
   **«Граф этапов»** — редактор; под холстом «Проблемы» по нодам (`groupProblems`: нода, в пути — «Реализация › Ревью», её тексты),
   клик — выделить ноду/переход. Заголовок группы перехода — подпись исхода и нода-источник, не id ребра (`edgeProblemTitle`:
   «Переход «принять» у ноды «X»», путь разветвления — «Путь «Бэкенд» разветвления «X»»); id — только если перехода уже нет. **«Файл графа»**: «Экспорт JSON» (скачивание `workflow-<тип>.json`), «Импорт JSON» (в черновик,
   сохранить — отдельно), «3 отказа → человек», «Сбросить к дефолтному» (поле графа удаляется из типа). Импорт и сброс пересоздают холст (`key`), чтобы граф заново вписался в окно.
+
+Действие «Изменить с ассистентом» передаёт `WorkflowAssistantContext` с корневым draft/baseline/path,
+не сохраняя тип. Отдельная baseline редактора переживает возврат из чата: грязный draft при внешней
+правке сохраняется с конфликтом, чистый принимает incoming graph и сбрасывает selection/refit.
+`workflowAssistant:save` синхронно сравнивает effective baseline и записывает только граф (null — сброс).
+Save/Reset получают от `useTaskTypes.saveWorkflow` эффективный граф и номер наблюдения из обязательного
+post-write перечита. Этот снимок имеет приоритет и при совпадении с прежней базой; ещё более поздний
+перечит сохраняет приоритет над ним. Если перечит недоступен, успешная запись подтверждает свой результат,
+пока не наблюдалась новая семантическая версия saved; старая равная копия props не отменяет подтверждение.
+«Отменить правки» при конфликте явно принимает свежий saved. Настройки и переименование сохраняются
+узкими main-патчами, чтобы отложенное автосохранение не заменило граф, обновлённый CLI.
+Restore потребляется после первого mount редактора; nonce остаётся, чтобы снятие снимка не меняло key
+живого draft. Переход на другую вкладку и обратно открывает сохранённый граф, без повторного restore.
+Кнопки «Вернуться в редактор»/«Открыть воркфлоу» адресуют точный typeId с одноразовым nonce:
+отсутствующий тип показывает ошибку, не fallback другого типа. Жизненный цикл чата — [assistant-chat.md](assistant-chat.md#передача-черновика-и-возврат).
 
 ## Прогоны (`packages/core/src/store.ts`, `src/main/worker.ts`, `src/main/socket.ts`)
 
@@ -809,6 +834,25 @@ orca-board worker read --dispatch <id>
 `done --answer-file`; нет файла или `--summary` без текста — ошибка до сокета.
 `check --follow` (важнее `--wait`) шлёт `follow: true` и печатает `JSON.stringify(result.event)` на
 каждую строку ответа; SIGINT/SIGTERM → закрыть сокет, код 0; ошибка сервера или разрыв соединения → код 1.
+
+## CLI графа типа (уровень приложения)
+
+~~~sh
+orca-board types list --all
+orca-board workflow schema
+orca-board workflow get --type <id>
+orca-board workflow validate --type <id> --definition '<JSON>'
+orca-board workflow validate --base-type <id> --definition '<JSON>'
+orca-board workflow validate --definition '<JSON>'
+orca-board workflow set --type <id> --revision <token> --definition '<JSON>'
+orca-board workflow create --title "..." --description "..." --base-type <id> --definition '<JSON>'
+~~~
+
+Эти команды не требуют `--project` и не запускают задачи. `--file workflow.json` — альтернативный
+источник JSON у validate/set/create вместо `--definition`; оба вместе запрещены. `--type` и
+`--base-type` у validate взаимоисключающие. Create без базы использует стандартные роли/настройки.
+`workflow show` сохраняет прежнее проектное назначение: этапы и снимки прогона.
+Ответы и правила конфликтов — «Протокол сокета» ниже.
 
 ## CLI (для воркера, внутри его PTY)
 
@@ -984,9 +1028,13 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   флаги — `orca-board --help`. Опасные операции (удаление роли/типа/шаблона/проекта, `bypassPermissions`)
   ассистент **не** подтверждает сам — только явным `--yes` после того, как человек в чате сказал «да» и
   ассистент назвал, что изменится (тот же принцип, что у `task delete`/`global delete`/`worker stop`
-  выше); граф воркфлоу правится только визуально в «Настройках» — ассистент может лишь читать его
-  (`workflow show`). Контракт задачи (инвентаризация настроек, откуда что берётся) — `docs/assistant-chat.md`
-  → разделы 1–2; двусторонний чат — раздел 3.
+  выше). Граф ассистент создаёт и правит через `workflow schema/get/validate/set/create`; чтение библиотеки —
+  `types list --all`. Это app-level API без проекта: schema/context/roles → требования/корневой draft →
+  validate (исправить errors, объяснить warnings) → запись по поручению, без повторного подтверждения
+  обратимой правки. Обсуждение не сохраняет. Whole-type revision защищает от конкурирующей записи:
+  перечитать и согласовать конфликт, не повторять старый graph с новым токеном.
+  Передача редактора, скрытый контекст, terminal handoff и возврат — `docs/assistant-chat.md` →
+  «Воркфлоу через ассистента»; двусторонний чат — раздел 3.
 ## Агенты (`packages/core/src/agents.ts`, `src/main/agents.ts`)
 
 - **Реестр** `AGENTS` в core: `{id, title, bin, versionArgs?, models?, effortOptions, reservedFlags?, invoke}`. Из него выводятся
@@ -1360,6 +1408,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
     библиотеки, без деления на встроенные и свои, внизу «Новый тип» открывает общий `PopupMenu`: «Пустой тип» или
     одна из семи актуальных заготовок (`taskTypes:save` без id; пустые настройки = значения по умолчанию).
+    «Создать с ассистентом» в том же меню открывает чат с контекстом create без вставки пустого типа.
     Старый тип не заменяется, повторное название получает суффикс. Меню использует общую тему, клавиатуру и возврат фокуса;
     повторный вызов создания блокируется, ошибка отображается под кнопкой. Счётчик пункта — «по умолч.» или число проектов,
     где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «по умолчанию»,
@@ -1377,7 +1426,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     умолчанию, проекты перейдут на тип библиотеки по умолчанию, задачи доработают по снимку, тип не вернётся после
     перезапуска). Ниже вкладки (`orca.settingsTypeTab`): «Роли», «Воркфлоу» (`settings/TaskTypeWorkflow.tsx` —
     холст и инспектор, сохранение кнопкой), «Разрешения», «Правила доски». Колонок и агентов у типа нет — они у проекта.
-    Все вкладки пишут в тип `taskTypes:save` целиком. Баннер своего типа: правка действует во всех проектах, где он
+    Настройки вкладок пишутся узко через `taskTypes:patch`, переименование — `taskTypes:rename`;
+    граф — `workflowAssistant:save` с атомарной проверкой исходной базы. Баннер своего типа: правка действует во всех проектах, где он
     доступен, со следующего запуска агента; граф глобальная задача снимает при создании.
   - **Колонки в графе типа** (`TaskTypeWorkflow`): `validateWorkflow` зовётся только с ролями — без колонок и агентов,
     они у проекта, а тип общий. Выбор колонки в инспекторе — встроенные плюс колонки всех проектов (`typeColumnChoices`).
@@ -1385,9 +1435,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     проходит без смены колонки (`moveTo` в main).
   - «Вернуть системные роли» в `RolesEditor` — про роли `DEFAULT_ROLES`, удалённые из списка типа, а не про тип целиком.
   - Хук `settings/useTaskTypes.ts`: список `taskTypes:list`, после каждой записи перечитывается целиком, плюс
-    `onProjectsChanged` окна (удаление типа меняет тип проектов по умолчанию, доске нужны свежие роли типов). `taskTypes:save` заменяет тип целиком, а редакторы
-    сохраняются с задержкой, поэтому правка раздела (`patch(id, patch)` → `patchedTaskType`, null удаляет поле)
-    собирается из последней сохранённой версии типа и идёт через очередь.
+    `onProjectsChanged` окна (удаление типа меняет тип проектов по умолчанию, доске нужны свежие роли типов). `taskTypes:save` нужен для создания нового типа.
+    Отложенная правка раздела (`patch(id, patch)`, null удаляет поле), переименование и guarded Save графа
+    идут через общую очередь; main применяет их к актуальному типу, reload и onChanged завершаются до следующей записи.
   - Логика без React — `renderer/src/taskTypeEdit.ts` (тест рядом). Старый main/preload: нет `window.orca.taskTypes`
     или хендлера `taskTypes:*` → `taskTypesStaleMessage()` («перезапустите приложение») вместо списка.
 - **Редакторы ролей/колонок** (`RolesEditor`, `ColumnsEditor`) не знают о проекте: `storageKey` (ключ `useAutoSave`) + начальные `roles`/`columns` + `onSave`, `readOnly` — только просмотр. В «О проекте» у колонок `storageKey = active.id`, в «Настройках» у типа — `typeEditorKey(t, rev)`: `type:<id>:b|u:<rev>` — у встроенного и его изменённой копии признак один (`b`), поэтому первая правка исполнителя не сбрасывает черновик посреди быстрых кликов, а после «Вернуть встроенный» `rev` растёт и редакторы берут встроенные значения. `executorOnly` — меняются только исполнитель и инструкции роли.
@@ -1677,6 +1727,27 @@ SVG-линия и траектория пакета используют оди�
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
+IPC контекста редактора использует тип из `shared/assistant-workflow.ts`:
+`{mode:'create'}` либо `{mode:'edit',typeId,title,workflow,baseline,dirty,path}`.
+Main `buildWorkflowAssistantContext` проверяет форму и исходный effective graph, допускает семантически
+невалидный draft для обсуждения, формирует безопасные роли/название/ревизию и статические инструкции.
+Renderer не передаёт произвольный system prompt; extraArgs не сериализуются.
+
+| Канал / API | Результат / действие |
+| --- | --- |
+| `assistantChat:sendWithWorkflow(ptyId,text,context)` / `assistantChat.sendWithWorkflow?` | Promise<void>; скрытый контекст в payload модели, в human history только text; contextual Codex/ACP ждут принятия, ordinary send совместим |
+| `workflowAssistant:save(typeId,baseline,workflow\|null)` | Promise<void>; синхронное сравнение effective baseline и workflow-only patch; null — сброс |
+| `workflowAssistant:saved` / `workflowAssistant.onSaved(cb)` | Только {typeId,title,revision} после успешного CLI/socket set/create; обычные Save/Reset/rename/validate не создают event |
+| `taskTypes:patch(id,patch:TaskTypePatch)` | TaskType; patch настроек/notes поверх актуального типа main |
+| `taskTypes:rename(id,title,description)` | TaskType; переименование актуального типа main |
+
+Renderer обнаруживает новые методы; старые preload/main показывают перезапуск вместо plain-send
+или замены целого типа. Очередь patch/rename/saveWorkflow ждёт write/reload/onChanged; внутренний
+`saveWorkflow` возвращает `{workflow, observation}` из post-write списка или undefined при ошибке перечита.
+IPC `workflowAssistant.save` сохраняет Promise<void>.
+Контекст снимается после принятия для той же session/nonce; ошибки сохраняют compose/attachment.
+Точные границы принятия, terminal-only и lifecycle editor — `docs/assistant-chat.md`.
+
 `app.windowChrome?` — read-only метаданные preload (`system` / `macos` / `windows`), не IPC-вызов.
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
@@ -1847,8 +1918,10 @@ SVG-линия и траектория пакета используют оди�
 `{id, ok, result | error}`. `check --wait` и `ask` держат соединение открытым до события.
 `check` с `follow: true` — исключение: сервер пишет по строке `{id, ok: true, result: {event}}` на каждое
 событие, пока клиент не закроет соединение (см. «Ожидание событий без токенов»).
-Методы уровня приложения (`appHandlers` в `src/main/socket.ts`: `projects.list`, `settings.get`, `settings.set`)
+Методы уровня приложения (`appHandlers` в `src/main/socket.ts`: `projects.list`, `settings.get/set`,
+`workflow.schema/get/validate/set/create` и `types.list` только с `all: true`)
 выполняются до `SocketDeps.resolve(projectId)`: работают без проектов и игнорируют `projectId`, даже чужой или удалённый.
+Прежние `workflow.show` и `types.list` без `all` по-прежнему разрешают проект.
 События помечаются `consumedBy` (= `runId` прогона, иначе `coordinator`), повторно `check` их не отдаёт.
 Флаги запуска (`extraArgs` роли, ассистента и снимка типа в прогоне) сокет не отдаёт и не принимает: поле вырезается
 из **любого** успешного ответа при сериализации (`okLine` в `socket.ts` → `withoutExtraArgs`), а параметров для него
@@ -1869,7 +1942,7 @@ SVG-линия и траектория пакета используют оди�
 | `stage.finish` | `run` (обязателен; CLI подставляет `$ORCA_RUN_ID`), `summary?` (markdown) | `{run, finished, stage: {nodeId, visits}, next: {type, nodeId, reason?}}`: `store.finishStage` закрывает этап «Работа» (все подзадачи захода в done и хотя бы одна) и двигает граф исходом `next`; `next` — действие новой ноды (`WfAction`); эффекты (проверка, запрос человеку, мерж, git, конец) выполняет движок прогона: сокет зовёт `ProjectDeps.finishStage` → `finishRunStage` (`workflow-run.ts`), а не `store.finishStage` напрямую — событие `stage_changed` эффектов не запускает. Вне этапа «Работа», без подзадач, с незакрытыми, прогон старого формата — ошибка с подсказкой (текст из store доходит до CLI как есть). `stage?` (`--stage`) — какой этап закрыть (`RunStageOptions.nodeId`): обязателен, когда открыто несколько этапов «Работа» (пути разветвления) — без него ошибка со списком, закрывается один; `finished` — закрытый этап (`--stage`, иначе единственная открытая «Работа»), `stage` — основная позиция (внутри разветвления — нода `fork`); пока прогон в разветвлении, в ответе ещё `lanes: [{nodeId, lane, arrived}]` (после слияния и у прогона без путей — нет) |
 | `projects.list` | — (уровень приложения, `projectId` игнорируется) | `[{id, name, root, active, inProgress, defaultTypeId, defaultTypeTitle}]` (`defaultTypeId` — тип задач проекта по умолчанию, `ProjectManager.projectDefaultType`); без проектов — `[]` |
 | `agents.list` | — | `[{id, title, installed, enabled, version?, models, defaults}]` |
-| `types.list` | — | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?, options?, branches?}]}]` (`resolveTaskType`, `describeWorkflow`; `options` — id вариантов ноды `decision`, `branches` — id путей ноды `fork`, прямо из графа) |
+| `types.list` | `all?` | типы, доступные проекту (`ProjectDeps.taskTypes` → `projectTaskTypes`): `[{id, title, description?, default?: true, permissionMode, roles: [{id, title, agent, model?, agentEnabled}], stages: [{id, type, title, roleId?, roleIds?, options?, branches?}]}]` (`resolveTaskType`, `describeWorkflow`; `options` — id вариантов ноды `decision`, `branches` — id путей ноды `fork`, прямо из графа); с `all: true` — та же summary-форма всей библиотеки без проекта: default — умолчание библиотеки, agentEnabled отсутствует |
 | `roles.list` | `run?`, `type?` | роли типа (`typeOf` в `socket.ts`: `type` из доступных проекту → тип прогона `run` → тип проекта по умолчанию): `[{...Role, agentEnabled}]` без `extraArgs`; неизвестный `run` — ошибка |
 | `rules.get` | `type?`, `run?`, `role?` | тип — как у `roles.list`; без `role` — `{typeId, typeTitle, rules}` (`agentRules` типа, нет — `''`); с `role` — `{typeId, typeTitle, role, title, rules}` (= `Role.systemPrompt` роли типа) |
 | `rules.set` | `text` (строка, обязателен; `''` — очистить), `type?`, `run?`, `role?` | то же, что `rules.get`, после сохранения (`ProjectDeps.saveTaskTypeRules` → `ProjectManager.saveTaskTypeRules`); тип прогона удалён из библиотеки (`source: 'snapshot'`) — ошибка |
@@ -1881,6 +1954,11 @@ SVG-линия и траектория пакета используют оди�
 | `request.resolve` | `request` + одно из `option`/`text`, `accept` (+`decision`), `clarify`, `reject`, `restart`, `dismiss` | `{request, worker?, startError?}` |
 | `task.list` / `task.get` | `run?` / `task` | `Task[]` / `Task \| null` — со `stage` и `gateFor` |
 | `workflow.show` | `run?`, `type?` | с `run` (без `type`) — `{source: 'run' \| 'type', scope: 'run' \| 'task', run, typeId, typeTitle, stage?, stages, history?}` (`history` — только у `scope: 'run'`: последние 50 записей `Run.stageHistory` как `{nodeId, title?, visit?, at, outcome?, from?, decision?, lane?}`, без `commit` и `summary`) (снимок прогона; у прогона без снимка — граф его типа, `store.runWorkflow(run, {roleIds, workflow})`); `scope: 'run'` — граф ведёт глобальную задача, `stage` — `store.runStage` (нода, `type`, `visit`, `roleIds`, `instructions`, `feedback`/`decision`/`answers` целиком, `tasks` захода, `tasksDoneAt`; нет — граф не начат), `scope: 'task'` — старый воркфлоу по подзадачам без позиции у прогона; без — `{source: 'type', typeId, typeTitle, custom, stages}`: граф типа `type` или типа проекта по умолчанию (`ProjectDeps.workflow` → `ProjectManager.taskTypeWorkflow`); `stages` — `describeWorkflow` (у `fork` — `branches`, у `join` — `forkId`). Внутри разветвления (`docs/workflow.md`, «Разветвление») — ещё `lanes: RunStageInfo[]` (`store.runStages`: этап каждого пути с `lane`, `laneTitle`, `arrived`), `stage` — первая открытая «Работа» из них, иначе первый путь, не пришедший в слияние (`primaryStage` в `socket.ts`), у записей `history` пути — `lane`; у прогона без путей `lanes` нет и ответ побайтно прежний |
+| `workflow.schema` | — | `WorkflowSchema {version,fields,nodeFields,edgeFields,nodeTypes,roles,rules,example}`: реальные поля/порты/ограничения и безопасные стандартные роли |
+| `workflow.get` | `type` | `WorkflowTypeContext {typeId,title,workflow,roles,custom,revision}`: эффективный граф, роли без extraArgs, SHA-256 всего сохранённого типа (включая настройки/название/notes) |
+| `workflow.validate` | `definition: unknown`, `type?` или `base-type?` | `WorkflowPreparation {workflow?,errors,warnings}` без записи; без selectors стандартные роли; форма проверяется рекурсивно до семантики; координаты заполняются только без errors |
+| `workflow.set` | `type`, `revision`, `definition` | `WorkflowSaveResult` (контекст + warnings); синхронно сверяет ревизию и меняет только workflow; stale/deleted тип не заменяется |
+| `workflow.create` | `title`, `description?`, `base-type?`, `definition` | `WorkflowSaveResult` с новым id; валидация до вставки, все настройки базы копируются server-side или используются defaults; задачи не запускаются |
 | `review.accept` | `task`, `decision?` | `Task`; на этапе проверки — исход `accept` воркфлоу (`reviewAccept`, `src/main/workflow.ts`); для задачи-проверки ветки глобальной задачи (`gateFor.runId`) — исход `accept` графа прогона (`decideRunGate`) |
 | `review.reject` | `task`, `feedback` | `Task`; на этапе проверки — исход `reject` воркфлоу (`ProjectDeps.reject` → `reviewReject`); у проверки ветки глобальной задачи — исход `reject` графа прогона, `feedback` уходит в `stage_started` |
 | `decision.choose` | `task?` (нет — `r.taskId`), `option` (строка или массив из одного), `reason` | `ProjectDeps.decide(task, option, reason)` → `{runId, nodeId, optionId, label, to}`; сокет проверяет обязательные поля, одно значение `option`, `reason` ≤ `DECISION_REASON_LIMIT` и что `r.dispatchId` (если есть) — запуск этой задачи; вариант, задачу-решатель и актуальность проверяет движок прогона. Нет `decide` у deps — ошибка «не поддерживается» |
@@ -1889,13 +1967,27 @@ SVG-линия и траектория пакета используют оди�
 | `worker.restart` | `task`, `feedback?` | `{stopped, ptyId, dispatchId, worktree, branch}` |
 | `task.reopen` | `task`, `feedback?`, `start?` | `Task`; со `start` — `{task, worker}` |
 
+Новые workflow-методы — `ProjectManager.workflowGet/workflowValidate/workflowSet/workflowCreate`;
+`workflowGet` и ответы записи
+не раскрывают private extraArgs. Одновременные `type`/`base-type` в validate — `workflow.selectors`.
+Set/create с невалидным графом возвращают верхнеуровневое `validation` с errors/warnings:
+`{id, ok:false, error:string, validation:{errors,warnings,...}}`. CLI при отказе печатает строку `error`
+в stderr, а не этот socket reply. `workflow.notSaved` —
+отказ валидации, `workflow.conflict` — устаревшая ревизия. Ошибки формы имеют `invalidDefinition`/path,
+семантические — действующие коды `WfIssue`. Warnings запись не блокируют.
+Set сохраняет остальные настройки, roles/models/permissions/rules; create без базы использует defaults.
+Библиотечная правка не меняет snapshots прежних прогонов. До записи legacy-типы тихих досок снимаются
+offline без открытия store/recovery; обнаруженная ошибка синхронной записи откатывается через
+`writeFilesAtomic`. Это не crash-atomic транзакция нескольких файлов; вторичная ошибка rollback возвращается явно.
+
 ### Настройки (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»)
 
 То, что человек меняет в «Настройки» и «О проекте» — ассистент читает и правит теми же методами, что и CLI.
 Библиотека типов задач, ролей типов и шаблонов нод общая для всех проектов (как renderer IPC `taskTypes:*`,
 `nodeTemplates:*`): методы идут через `SocketDeps.resolve(projectId)`, как остальные проектные команды, но
 меняют `ProjectManager` напрямую, а не что-то у конкретного проекта — `projectId` только выбирает, через
-какой проект агент обратился к сокету. `settings.*` — уровень приложения (таблица выше). Подтверждение
+какой проект агент обратился к сокету. Исключения app-level — `settings.*`, новые workflow-методы
+и `types.list` с all (таблица выше). Подтверждение
 опасных операций — отдельный флаг `--yes`/параметр `yes: true`, не заданный по умолчанию: без него сокет
 отвечает ошибкой с описанием последствий (аналог человеческого «да» из `skills/assistant.md`), а не выполняет
 операцию молча. Открытое окно узнаёт о правке из CLI/ассистента так же, как о своей: любая из команд ниже
@@ -3242,8 +3334,10 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   (`runWorkflowEvents` в `src/main/index.ts`).
 - IPC, заменяющий объект целиком (`taskTypes:save`), плохо сочетается с автосохранением редакторов с задержкой
   (`useAutoSave`, 300 мс): колбэк, захваченный при вводе, собрал бы тип из старой версии и затёр правку
-  соседнего раздела, сделанную за это время. Собирай запись из последней сохранённой версии и сериализуй записи
-  (`update` в `settings/useTaskTypes.ts`).
+  соседнего раздела, сделанную за это время. Даже свежая renderer-копия может отстать от внешнего CLI:
+  узкий patch/rename main применяет к актуальному типу, graph save проверяет baseline атомарно.
+  Очередь `update` в `settings/useTaskTypes.ts` ждёт запись и reload; старый preload требует перезапуска,
+  fallback на whole-type save недопустим.
 - **Автосохранение записи целиком не должно отправлять поле, которое main отвергнет.** Пока в поле флагов запуска был
   негодный текст (незакрытая кавычка), `taskTypes:save` и `app:setSettings` отвергали запись целиком — правка соседнего
   поля молча пропадала, а в логе main копились «Error occurred in handler». Поле с проверкой при вводе перед отправкой

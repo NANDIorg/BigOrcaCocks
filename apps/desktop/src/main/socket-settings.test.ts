@@ -128,7 +128,12 @@ beforeEach(async () => {
     resolve: () => deps(),
     projects: () => [],
     settings: () => projects.settings(),
-    setSettings: (patch) => projects.setSettings(patch)
+    setSettings: (patch) => projects.setSettings(patch),
+    libraryTaskTypes: () => ({ taskTypes: projects.taskTypes(), defaultTypeId: projects.defaultTaskTypeId() }),
+    workflowGet: (id) => projects.workflowGet(id),
+    workflowValidate: (definition, selection) => projects.workflowValidate(definition, selection),
+    workflowSet: (id, revision, definition) => projects.workflowSet(id, revision, definition),
+    workflowCreate: (input) => projects.workflowCreate(input)
   })
   await new Promise((r) => server!.once('listening', r))
 })

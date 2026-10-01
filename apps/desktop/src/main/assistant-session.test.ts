@@ -5,14 +5,14 @@ import type { AssistantConversation, ConversationUpdate } from '../shared/assist
 import { AssistantSession } from './assistant-session'
 function fixture() {
   let settings: AssistantSettings = { agent: 'claude' }
-  const children: { disposed: boolean; emit(update: ConversationUpdate): void }[] = []
+  const children: { disposed: boolean; emit(update: ConversationUpdate): void; sent: { text: string; context?: string }[] }[] = []
   const events: unknown[] = []
   let exit: ((id: string) => void) | undefined
   let killed = ''
   const manager = new AssistantSession({ settings: () => settings, assertUsable: (agent) => { if (agent === 'gemini') throw new Error('missing CLI') }, create: (input, onUpdate) => {
     const id = `s${children.length}`
-    const child = { disposed: false, emit: onUpdate }; children.push(child)
-    return { id, snapshot: () => ({ id, agent: input.agent, messages: [], status: 'done', interactions: [] }), send: async () => {}, interrupt: async () => {}, respond: async () => {}, dispose: () => { child.disposed = true } } satisfies AssistantConversation
+    const child = { disposed: false, emit: onUpdate, sent: [] as { text: string; context?: string }[] }; children.push(child)
+    return { id, snapshot: () => ({ id, agent: input.agent, messages: [], status: 'done', interactions: [] }), send: async (text, context) => { child.sent.push({ text, context }) }, interrupt: async () => {}, respond: async () => {}, dispose: () => { child.disposed = true } } satisfies AssistantConversation
   }, startTerminal: (_settings, _cols, _rows, onExit) => { exit = onExit; return 'pty1' }, isAlive: () => true, killTerminal: (id) => { killed = id }, onUpdate: (event) => events.push(event) })
   return { manager, children, events, setSettings: (value: AssistantSettings) => { settings = value }, killed: () => killed, exit: () => exit?.('pty1') }
 }
@@ -28,4 +28,16 @@ it('отсутствующий новый агент не уничтожает �
 })
 it('Amp использует терминал; завершённый PTY исчезает, dispose закрывает собственный PTY', () => {
   const f = fixture(); f.setSettings({ agent: 'amp' }); f.manager.open(80, 30, false); assert.equal(f.children.length, 0); assert.equal(f.manager.snapshot('pty1').transport, 'terminal'); f.exit(); assert.throws(() => f.manager.snapshot('pty1')); f.manager.open(80, 30, false); f.manager.dispose(); assert.equal(f.killed(), 'pty1')
+})
+
+it('session передаёт скрытый контекст без замены текста и не отправляет в старый диалог', async () => {
+  const f = fixture()
+  f.manager.open(80, 30, false)
+  await f.manager.send('s0', 'Текст человека', 'Скрытая база')
+  assert.deepEqual(f.children[0].sent, [{ text: 'Текст человека', context: 'Скрытая база' }])
+  f.manager.open(80, 30, true)
+  assert.throws(() => f.manager.send('s0', 'Повтор', 'База'), { key: 'assistantChat.unknownPty' })
+  await f.manager.send('s1', 'Обычный текст')
+  assert.deepEqual(f.children[1].sent, [{ text: 'Обычный текст', context: undefined }])
+  f.manager.dispose()
 })

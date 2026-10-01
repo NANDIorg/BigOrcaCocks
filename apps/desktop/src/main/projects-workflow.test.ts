@@ -205,6 +205,19 @@ describe('загрузка projects.json', () => {
     assert.equal(pm.runType(PID).workflow, undefined, 'в снимок прогона будущий граф не попадает')
   })
 
+  it('будущий граф с новой формой вложенного пути сохраняется без разбора неизвестного содержимого', () => {
+    const future = { ...qaWorkflow(), version: WORKFLOW_VERSION + 1 }
+    const work = future.nodes.find((node) => node.type === 'work')!
+    Object.assign(work, { subflow: { nodes: [{ id: 'new', type: 'work', x: 0, y: 0,
+      subflow: { nodes: [], edges: [] } }], edges: [] } })
+    writeConfig({ workflow: future })
+    const pm = new ProjectManager(tmp)
+    assert.deepEqual(savedType(TID)?.settings.workflow, future)
+    assert.throws(() => pm.taskTypeWorkflow(TID), /обновите приложение/)
+    pm.renameTaskType(TID, { title: 'Переименован' })
+    assert.deepEqual(savedType(TID)?.settings.workflow, future)
+  })
+
   it('старая версия мигрируется до текущей', () => {
     writeConfig({ workflow: { ...qaWorkflow(), version: 0 } })
     assert.equal(projectWorkflow(new ProjectManager(tmp)).version, WORKFLOW_VERSION)

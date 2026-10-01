@@ -1,3 +1,5 @@
+import type { WorkflowAssistantContext, WorkflowAssistantSaved } from '../../shared/assistant-workflow'
+import { applyWorkflowAgentChoice, type WorkflowAttachment, type WorkflowSectionRequest, type WorkflowAgentChoice } from './workflowAssistant'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -178,7 +180,7 @@ export function App(): React.JSX.Element {
   const [showProjects, setShowProjects] = useState(storedShowProjects)
   /** Окно «Настройки» (шестерёнка в rail): общие настройки и дефолт для новых проектов. */
   const [showSettings, setShowSettings] = useState(false)
-  const [settingsSectionRequest, setSettingsSectionRequest] = useState<{ section: 'updates' | 'assistant'; nonce: number }>()
+  const [settingsSectionRequest, setSettingsSectionRequest] = useState<WorkflowSectionRequest>()
   /** Мастер первого запуска: `first` — при старте (статус pending), `rerun` — «Пройти заново» из настроек. */
   const [onboarding, setOnboarding] = useState<OnboardingMode | null>(null)
   /** Окно «Документы» (кнопка в rail): все файлы проекта и .md задач в работе. */
@@ -222,6 +224,36 @@ export function App(): React.JSX.Element {
   const [inboxFocus, setInboxFocus] = useState<{ requestId: string; nonce: number } | null>(null)
   /** Панель ассистента (⌘K, кнопка в rail). Ассистент один на приложение — при смене проекта тот же PTY. */
   const [showAssistant, setShowAssistant] = useState(false)
+  const workflowNonce = useRef(0)
+  const [workflowAttachment, setWorkflowAttachment] = useState<WorkflowAttachment | null>(null)
+  const [workflowReturn, setWorkflowReturn] = useState<Extract<WorkflowAssistantContext, { mode: 'edit' }> | null>(null)
+  const workflowAttachmentRef = useRef(workflowAttachment)
+  workflowAttachmentRef.current = workflowAttachment
+  const [workflowAgentChoice, setWorkflowAgentChoice] = useState<WorkflowAgentChoice | null>(null)
+  const workflowAgentChoiceRef = useRef(workflowAgentChoice)
+  function updateWorkflowAgentChoice(choice: WorkflowAgentChoice | null): void {
+    workflowAgentChoiceRef.current = choice
+    setWorkflowAgentChoice(choice)
+  }
+  const [workflowResult, setWorkflowResult] = useState<WorkflowAssistantSaved | null>(null)
+  useEffect(() => window.orca.workflowAssistant?.onSaved?.(setWorkflowResult), [])
+
+  function attachWorkflow(context: WorkflowAssistantContext): void {
+    const snapshot = structuredClone(context)
+    updateWorkflowAgentChoice(null)
+    setWorkflowAttachment({ nonce: ++workflowNonce.current, context: snapshot })
+    if (snapshot.mode === 'edit') setWorkflowReturn(snapshot)
+    setWorkflowResult(null)
+    setShowSettings(false)
+    setSettingsSectionRequest(undefined)
+    setShowInbox(false)
+    setShowAssistant(true)
+  }
+
+  function openWorkflow(typeId: string, restore?: Extract<WorkflowAssistantContext, { mode: 'edit' }>): void {
+    setSettingsSectionRequest({ section: `type:${typeId}`, tab: 'workflow', nonce: ++workflowNonce.current, restore })
+    setShowSettings(true)
+  }
   /**
    * PTY ассистента из ответа assistant.open/reset: terminals:changed может прийти позже.
    * После перезагрузки окна null — тогда ассистент находится по роли в списке терминалов (pickAssistant).
@@ -353,6 +385,7 @@ export function App(): React.JSX.Element {
     // ⌘J / Ctrl+J — Инбокс, ⌘K / Ctrl+K — ассистент; в фазе захвата, чтобы сработало и из терминала (xterm).
     // Панели выезжают на одно место, поэтому открытие одной закрывает другую.
     const onKey = (e: KeyboardEvent): void => {
+      if (e.isComposing || e.keyCode === 229) return
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
       if (e.code !== 'KeyJ' && e.code !== 'KeyK') return
       e.preventDefault()
@@ -454,6 +487,9 @@ export function App(): React.JSX.Element {
     killedRef.current,
     active?.id
   )
+
+  const workflowSessionRef = useRef(assistantPty)
+  workflowSessionRef.current = assistantPty
 
   /** Запустить (open) или перезапустить (reset) ассистента приложения. */
   async function launchAssistant(reset: boolean): Promise<void> {
@@ -888,7 +924,6 @@ export function App(): React.JSX.Element {
             setShowAssistant((v) => !v)
             setShowInbox(false)
           }}
-          disabled={!active}
         >
           <Icon.assistant />
         </button>
@@ -1135,37 +1170,68 @@ export function App(): React.JSX.Element {
           onOpenTerminal={openTerminalForTask}
         />
       )}
-      {active && (
+      {
         <AssistantPanel
           open={showAssistant}
           suspended={showSettings}
           activePty={assistantPty}
           status={assistantState}
           onClose={closeAssistant}
-          onReset={() => void launchAssistant(true)}
-          onSettings={() => { setSettingsSectionRequest({ section: 'assistant', nonce: Date.now() }); setShowSettings(true) }}
+          onReset={() => { updateWorkflowAgentChoice(null); setWorkflowAttachment(null); setWorkflowResult(null); void launchAssistant(true) }}
+          attachment={workflowAttachment}
+          returnAvailable={workflowReturn !== null}
+          result={workflowResult}
+          canOpenInTerminals={!!active}
+          onCreateWorkflow={() => attachWorkflow({ mode: 'create' })}
+          onDetachWorkflow={() => { updateWorkflowAgentChoice(null); setWorkflowAttachment(null) }}
+          onWorkflowSent={(nonce) => setWorkflowAttachment((current) => current?.nonce === nonce ? null : current)}
+          onReturnWorkflow={() => { if (workflowReturn) openWorkflow(workflowReturn.typeId, workflowReturn) }}
+          onOpenWorkflow={() => { if (workflowResult) openWorkflow(workflowResult.typeId) }}
+          onChooseChatAgent={(sessionId, agent) => {
+            const attachment = workflowAttachmentRef.current
+            if (!attachment || workflowSessionRef.current !== sessionId) return
+            updateWorkflowAgentChoice({ sessionId, sourceAgent: agent, attachmentNonce: attachment.nonce })
+            setSettingsSectionRequest({ section: 'assistant', nonce: Date.now() })
+            setShowSettings(true)
+          }}
+          onSettings={() => { updateWorkflowAgentChoice(null); setSettingsSectionRequest({ section: 'assistant', nonce: Date.now() }); setShowSettings(true) }}
           onOpenInTerminals={() => {
-            if (!assistantPty) return
+            if (!assistantPty || !active) return
             setShowAssistant(false)
             showTerminal(assistantPty, active.id)
           }}
         />
-      )}
+      }
       {showSettings && (
         <SettingsModal
           sectionRequest={settingsSectionRequest}
+          onWorkflowAssistant={attachWorkflow}
+          workflowHandoff={workflowAgentChoice !== null}
+          onWorkflowAgentSelected={(selectedAgent) => {
+            const choice = workflowAgentChoiceRef.current
+            if (choice) updateWorkflowAgentChoice({ ...choice, selectedAgent })
+          }}
           agents={agents}
           updates={updates}
           onRefreshAgents={() => refreshAgents(true)}
           onProjectsChanged={refreshProjects}
-          onAppSettings={setAppSettings}
+          onAppSettings={(next) => {
+            setAppSettings(next)
+            applyWorkflowAgentChoice(workflowAgentChoiceRef.current, assistantAgentOf(next), workflowSessionRef.current, workflowAttachmentRef.current, () => {
+              updateWorkflowAgentChoice(null)
+              void launchAssistant(true)
+            })
+          }}
           onRunOnboarding={() => {
+            updateWorkflowAgentChoice(null)
             setShowSettings(false)
             refreshTaskTypes()
             setOnboarding('rerun')
           }}
           onClose={() => {
+            updateWorkflowAgentChoice(null)
             setShowSettings(false)
+            setSettingsSectionRequest(undefined)
             refreshTaskTypes()
           }}
         />

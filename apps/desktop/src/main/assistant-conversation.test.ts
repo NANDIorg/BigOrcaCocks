@@ -19,7 +19,7 @@ async function until(check: () => boolean): Promise<void> {
 
 const cleanup = new WeakMap<object, { engine: AssistantConversation; dir: string }[]>()
 
-function fixture(t: { after(fn: () => void): void }, mode = 'claude', agent: AgentKind = 'claude', selection: { model?: string; effort?: string; extraArgs?: string[] } = {}): { engine: AssistantConversation; updates: ConversationUpdate[]; wire(): Record<string, unknown>[] } {
+function fixture(t: { after(fn: () => void): void }, mode = 'claude', agent: AgentKind = 'claude', selection: { model?: string; effort?: string; extraArgs?: string[] } = {}): { engine: AssistantConversation; updates: ConversationUpdate[]; wire(): Record<string, unknown>[]; release(): void } {
   const dir = mkdtempSync(join(tmpdir(), 'orca-conversation-fixture-'))
   const source = readFileSync(new URL('../../test/fixtures/assistant-cli.mjs', import.meta.url), 'utf8')
   for (const name of ['claude', 'codex', 'gemini', 'opencode', 'goose', 'copilot', 'agent', 'cursor-agent']) {
@@ -35,7 +35,7 @@ function fixture(t: { after(fn: () => void): void }, mode = 'claude', agent: Age
   const log = join(dir, 'wire.jsonl')
   writeFileSync(log, '')
   const updates: ConversationUpdate[] = []
-  const engine = createAssistantConversation({ agent, system: 'Use orca-board.', ...selection, cwd: dir, env: { PATH: [dir, process.env.PATH].join(delimiter), ...(process.platform === 'win32' ? { ORCA_NODE: process.execPath } : {}), ORCA_TEST_MODE: mode, ORCA_TEST_LOG: log }, onUpdate: (update) => updates.push(update) })
+  const engine = createAssistantConversation({ agent, system: 'Use orca-board.', ...selection, cwd: dir, env: { PATH: [dir, process.env.PATH].join(delimiter), ...(process.platform === 'win32' ? { ORCA_NODE: process.execPath } : {}), ORCA_TEST_MODE: mode, ORCA_TEST_LOG: log, ORCA_TEST_GATE: join(dir, 'accept') }, onUpdate: (update) => updates.push(update) })
   let resources = cleanup.get(t)
   if (!resources) {
     resources = []
@@ -56,7 +56,7 @@ function fixture(t: { after(fn: () => void): void }, mode = 'claude', agent: Age
     })
   }
   resources.push({ engine, dir })
-  return { engine, updates, wire: () => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>) }
+  return { engine, updates, release: () => writeFileSync(join(dir, 'accept'), ''), wire: () => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>) }
 }
 
 for (const agent of ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'copilot', 'goose'] as const) {
@@ -356,4 +356,111 @@ test('ACP permission retains real tool arguments when only the friendly title is
   await engine.send('permission')
   await until(() => engine.snapshot().status === 'waiting')
   assert.ok(engine.snapshot().interactions[0].tool?.input.includes('orca-board projects list'))
+})
+
+for (const agent of ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'copilot', 'goose'] as const) {
+  test(`${agent}: скрытый контекст получает провайдер, история содержит только текст человека`, async (t) => {
+    const { engine, updates, wire } = fixture(t, agent === 'claude' ? 'claude' : agent === 'codex' ? 'codex' : 'acp', agent)
+    await engine.send('Discuss workflow', 'Hidden workflow context: fixture-baseline')
+    await until(() => engine.snapshot().status === 'done' || engine.snapshot().interactions.length > 0)
+    const frames = wire()
+    const prompt = agent === 'claude' ? frames.find((f) => f.type === 'user')
+      : frames.find((f) => f.method === (agent === 'codex' ? 'turn/start' : 'session/prompt'))
+    assert.match(JSON.stringify(prompt), /fixture-baseline/)
+    if (agent !== 'claude' && agent !== 'codex') assert.match(JSON.stringify(prompt), /Use orca-board/)
+    assert.equal(engine.snapshot().messages.find((m) => m.role === 'human')?.text, 'Discuss workflow')
+    assert.deepEqual(updates.filter((u) => u.type === 'message' && u.message.role === 'human').map((u) => u.type === 'message' ? u.message.text : ''), ['Discuss workflow'])
+    const pending = engine.snapshot().interactions[0]
+    if (pending) await engine.respond(pending.id, { kind: 'option', optionId: pending.options![0].id })
+    await until(() => engine.snapshot().status === 'done')
+    await engine.send('Follow up')
+    await until(() => engine.snapshot().status === 'done' || engine.snapshot().interactions.length > 0)
+    const next = wire().filter((f) => agent === 'claude' ? f.type === 'user' : f.method === (agent === 'codex' ? 'turn/start' : 'session/prompt')).at(-1)
+    assert.equal(JSON.stringify(next).includes('fixture-baseline'), false)
+  })
+}
+
+
+test('Codex contextual send ждёт ACK, принимает permission без ожидания завершения turn', async (t) => {
+  const { engine, wire, release } = fixture(t, 'codex-hold-ack', 'codex')
+  let accepted = false
+  const sending = engine.send('Workflow request', 'Hidden workflow baseline').then(() => { accepted = true })
+  await until(() => wire().some((frame) => frame.method === 'turn/start'))
+  assert.equal(accepted, false)
+  release()
+  await sending
+  await until(() => engine.snapshot().status === 'waiting')
+  assert.equal(accepted, true)
+  assert.equal(engine.snapshot().messages.find((m) => m.role === 'human')?.text, 'Workflow request')
+})
+
+test('Codex contextual rejection отклоняет send; обычный early-resolve контракт сохранён', async (t) => {
+  const contextual = fixture(t, 'codex-reject', 'codex')
+  await assert.rejects(contextual.engine.send('Workflow request', 'Hidden workflow baseline'), /Turn rejected by configured policy/)
+  assert.equal(contextual.engine.snapshot().status, 'error')
+  const plain = fixture(t, 'codex-reject', 'codex')
+  await plain.engine.send('Plain request')
+  await until(() => plain.engine.snapshot().status === 'error')
+  assert.equal(plain.engine.snapshot().messages.find((m) => m.role === 'human')?.text, 'Plain request')
+})
+
+test('ACP contextual send принимает первую activity/permission, отклоняет error до activity', async (t) => {
+  const { engine, wire, release } = fixture(t, 'acp-hold-activity', 'gemini')
+  let accepted = false
+  const sending = engine.send('Workflow request', 'Hidden workflow baseline').then(() => { accepted = true })
+  await until(() => wire().some((frame) => frame.method === 'session/prompt'))
+  assert.equal(accepted, false)
+  release()
+  await sending
+  await until(() => engine.snapshot().status === 'waiting')
+  assert.equal(accepted, true)
+  const rejected = fixture(t, 'acp-reject', 'gemini')
+  await assert.rejects(rejected.engine.send('Workflow request', 'Hidden workflow baseline'), /Prompt rejected before activity/)
+  assert.equal(rejected.engine.snapshot().status, 'error')
+})
+
+for (const [mode, agent] of [['codex-hold-ack', 'codex'], ['acp-hold-activity', 'gemini']] as const) {
+  test(`${agent}: contextual pending dispose/interrupt завершают promise до acceptance`, async (t) => {
+    const disposed = fixture(t, mode, agent)
+    const sending = disposed.engine.send('Workflow request', 'Hidden workflow baseline')
+    const rejection = assert.rejects(sending, /closed|закрыт|прерван|interrupted/i)
+    await until(() => disposed.wire().some((f) => f.method === (agent === 'codex' ? 'turn/start' : 'session/prompt')))
+    disposed.engine.dispose()
+    await rejection
+    const stopped = fixture(t, mode, agent)
+    const pending = stopped.engine.send('Workflow request', 'Hidden workflow baseline')
+    const interruptedSend = assert.rejects(pending, /прерван|interrupted/i)
+    await until(() => stopped.wire().some((f) => f.method === (agent === 'codex' ? 'turn/start' : 'session/prompt')))
+    const interrupt = stopped.engine.interrupt()
+    if (agent === 'codex') stopped.release()
+    await interruptedSend
+    await interrupt
+    await until(() => stopped.engine.snapshot().status === 'interrupted')
+  })
+  test(`${agent}: выход до acceptance отклоняет contextual send`, async (t) => {
+    const f = fixture(t, agent === 'codex' ? 'codex-exit-before-ack' : 'acp-exit-before-activity', agent)
+    await assert.rejects(f.engine.send('Workflow request', 'Hidden workflow baseline'), /Fixture exit before acceptance/)
+    assert.equal(f.engine.snapshot().status, 'error')
+  })
+}
+
+for (const [mode, agent] of [['codex-context-early', 'codex'], ['acp-context-early', 'gemini']] as const) {
+  test(`${agent}: contextual human предшествует раннему ответу без permission`, async (t) => {
+    const { engine, updates } = fixture(t, mode, agent)
+    await engine.send('Workflow request', 'Hidden workflow baseline')
+    await until(() => engine.snapshot().status === 'done')
+    assert.deepEqual(engine.snapshot().messages.map((message) => [message.role, message.text]), [
+      ['human', 'Workflow request'], ['agent', 'Early response']
+    ])
+    assert.deepEqual(updates.filter((update) => update.type === 'message').map((update) => update.type === 'message' ? update.message.role : ''), ['human', 'agent'])
+    assert.equal(JSON.stringify(engine.snapshot().messages).includes('Hidden workflow baseline'), false)
+  })
+}
+
+test('ACP contextual permission без preceding activity принимает send до ответа человека', async (t) => {
+  const { engine } = fixture(t, 'acp', 'cursor')
+  await engine.send('question', 'Hidden workflow baseline')
+  assert.equal(engine.snapshot().status, 'waiting')
+  assert.equal(engine.snapshot().interactions[0].kind, 'question')
+  assert.equal(engine.snapshot().messages[0].text, 'question')
 })

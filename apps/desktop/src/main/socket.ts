@@ -2,16 +2,17 @@ import { createServer, type Socket, type Server } from 'node:net'
 import { existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
-  DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, forkBranches, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
+  DECISION_REASON_LIMIT, DEFAULT_ROLES, EVENT_TYPES, TASK_PRIORITIES, describeWorkflow, forkBranches, resolveTaskType, wfNodeTitle, wfWorkRoleIds, withStatusSource, workflowSchema, type TaskStore, type Workflow, type EventType, type AgentInfo, type Role, type BoardColumn, type OrcaEvent, type AnswerAudience,
   type TaskPriority, type Dispatch, type ShowcaseSnapshot, normalizeShowcase,
-  type RequestResolution, type Run, type RunStageInfo, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate
+  type RequestResolution, type Run, type RunStageInfo, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate,
+  type WorkflowTypeContext, type WorkflowPreparation, type WorkflowSaveResult, type WorkflowCreateInput, type WorkflowRoleSelection
 } from '@orca-board/core'
 import { ptyTail, isAlive } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams, singleOption } from './request-params'
 import { settingsPatchFromParams } from './settings-params'
 import { withoutExtraArgs } from './launch-extra-args'
-import { runnableWorkflow, type Project, type PermissionMode } from './projects'
+import { runnableWorkflow, WorkflowValidationError, type Project, type PermissionMode } from './projects'
 import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
 
 /**
@@ -143,6 +144,12 @@ export interface SocketDeps {
   settings(): AppSettings
   /** `settings set`. */
   setSettings(patch: AppSettingsPatch): AppSettings
+  /** Общая библиотека: types list --all не требует выбранного проекта. */
+  libraryTaskTypes(): { taskTypes: TaskType[]; defaultTypeId: string }
+  workflowGet(typeId: string): WorkflowTypeContext
+  workflowValidate(definition: unknown, selection?: WorkflowRoleSelection): WorkflowPreparation
+  workflowSet(typeId: string, revision: string, definition: unknown): WorkflowSaveResult
+  workflowCreate(input: WorkflowCreateInput): WorkflowSaveResult
 }
 
 interface Request {
@@ -328,7 +335,7 @@ function ruleRole(r: Request, type: ResolvedRunType): Role | undefined {
 }
 
 /** Тип в ответе `types list`: роли с признаком «агент включён» и этапы графа кратко. */
-function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): unknown {
+function typeSummary(t: TaskType, defaultTypeId: string, enabled?: Set<string>): unknown {
   const resolved = resolveTaskType(t)
   // Варианты «Решения ИИ» — прямо из ноды: координатору видно, что в типе есть развилка и какие у неё исходы.
   const nodes = new Map(resolved.workflow.nodes.map((n) => [n.id, n]))
@@ -352,7 +359,7 @@ function typeSummary(t: TaskType, defaultTypeId: string, enabled: Set<string>): 
       title: role.title,
       agent: role.agent,
       ...(role.model ? { model: role.model } : {}),
-      agentEnabled: enabled.has(role.agent)
+      ...(enabled ? { agentEnabled: enabled.has(role.agent) } : {})
     })),
     stages: describeWorkflow(resolved.workflow).map((s) => ({
       id: s.id, type: s.type, title: s.title, ...(s.roleId ? { roleId: s.roleId } : {}), ...(s.roleIds ? { roleIds: s.roleIds } : {}), ...options(s.id), ...branches(s.id)
@@ -1048,6 +1055,29 @@ const handlers: Record<string, Handler> = {
  */
 const appHandlers: Record<string, (req: Request, deps: SocketDeps) => unknown> = {
   'projects.list': (_r, deps) => deps.projects(),
+  'types.list': (_r, deps) => {
+    const { taskTypes, defaultTypeId } = deps.libraryTaskTypes()
+    return taskTypes.map((type) => typeSummary(type, defaultTypeId))
+  },
+  'workflow.schema': () => workflowSchema(),
+  'workflow.get': (r, deps) => deps.workflowGet(requiredTypeId(r)),
+  'workflow.validate': (r, deps) => {
+    if (!('definition' in r.params)) throw new Error('--definition или --file обязателен: JSON графа')
+    return deps.workflowValidate(r.params.definition, { typeId: optStr(r, 'type'), baseTypeId: optStr(r, 'base-type') })
+  },
+  'workflow.set': (r, deps) => {
+    const typeId = requiredTypeId(r)
+    const revision = optStr(r, 'revision')
+    if (!revision) throw new Error('--revision обязателен: ревизия из workflow get')
+    if (!('definition' in r.params)) throw new Error('--definition или --file обязателен: JSON графа')
+    return deps.workflowSet(typeId, revision, r.params.definition)
+  },
+  'workflow.create': (r, deps) => {
+    const title = optStr(r, 'title')
+    if (!title?.trim()) throw new Error('--title обязателен')
+    if (!('definition' in r.params)) throw new Error('--definition или --file обязателен: JSON графа')
+    return deps.workflowCreate({ title, description: optStr(r, 'description'), baseTypeId: optStr(r, 'base-type'), definition: r.params.definition })
+  },
   'settings.get': (_r, deps) => deps.settings(),
   'settings.set': (r, deps) => {
     const patch = settingsPatchFromParams(r.params)
@@ -1080,7 +1110,7 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       return
     }
     const handler = handlers[req.method]
-    const appHandler = appHandlers[req.method]
+    const appHandler = req.method === 'types.list' && req.params?.all !== true ? undefined : appHandlers[req.method]
     const open = (): boolean => !sock.destroyed && sock.writable
     const stream: Stream = {
       onClose: (fn) => {
@@ -1112,7 +1142,8 @@ export function startSocketServer(path: string, socketDeps: SocketDeps): Server 
       if (result === STREAM) return
       sock.write(okLine(req.id, result) + '\n')
     } catch (e) {
-      sock.write(JSON.stringify({ id: req.id, ok: false, error: (e as Error).message }) + '\n')
+      sock.write(JSON.stringify({ id: req.id, ok: false, error: (e as Error).message,
+        ...(e instanceof WorkflowValidationError ? { validation: e.validation } : {}) }, withoutExtraArgs) + '\n')
     }
   }
 

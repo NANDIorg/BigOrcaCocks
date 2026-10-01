@@ -1,5 +1,5 @@
 import readline from 'node:readline'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 
 const mode = process.env.ORCA_TEST_MODE ?? 'claude'
@@ -18,6 +18,9 @@ const write = (value) => {
       setTimeout(() => { process.stdout.write(line.slice(7)); resolve() }, 5)
     }))
   } else process.stdout.write(line)
+}
+const afterGate = (run) => {
+  const timer = setInterval(() => { if (existsSync(process.env.ORCA_TEST_GATE)) { clearInterval(timer); run() } }, 5)
 }
 const rpc = (id, result) => write({ jsonrpc: '2.0', id, result })
 const control = (id, response = {}) => write({ type: 'control_response', response: { subtype: 'success', request_id: id, response } })
@@ -80,14 +83,24 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (value.method === 'thread/start') rpc(value.id, { thread: { id: 'thread-1' } })
   else if (value.method === 'session/new') rpc(value.id, { sessionId: 'session-1' })
   else if (value.method === 'turn/start') {
+    if (mode === 'codex-exit-before-ack') { process.stderr.write('Fixture exit before acceptance'); process.exit(7) }
     if (mode === 'codex-reject') { write({ id: value.id, error: { code: -32000, message: 'Turn rejected by configured policy' } }); return }
+    const start = () => {
     currentTurn = `turn-${++seq}`
     currentPrompt = value.params.input[0].text
     rpc(value.id, { turn: { id: currentTurn, status: 'inProgress', items: [] } })
     const params = { threadId: 'thread-1', turnId: currentTurn }
+    if (mode === 'codex-context-early') {
+      write({ method: 'item/agentMessage/delta', params: { ...params, itemId: 'early-1', delta: 'Early response' } })
+      write({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: currentTurn, status: 'completed', items: [], error: null } } })
+      return
+    }
     write({ method: 'item/started', params: { ...params, item: { type: 'commandExecution', id: 'exec-1', command: 'orca-board projects list', cwd: process.cwd(), status: 'inProgress', commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null, processId: null } } })
     write({ id: 'approval-1', method: mode === 'codex-legacy' ? 'execCommandApproval' : 'item/commandExecution/requestApproval', params: mode === 'codex-legacy' ? { conversationId: 'thread-1', callId: 'exec-1', command: ['orca-board', 'projects', 'list'], cwd: process.cwd(), reason: 'Fixture permission' } : { ...params, itemId: 'exec-1', ...(currentPrompt === 'subcommand' ? { command: 'actual-command-needing-approval' } : {}), reason: 'Fixture permission', proposedExecpolicyAmendment: null } })
     if (currentPrompt === 'revoked') setTimeout(() => write({ method: 'serverRequest/resolved', params: { threadId: 'thread-1', requestId: 'approval-1' } }), 25)
+    }
+    if (mode === 'codex-hold-ack') afterGate(start)
+    else start()
   } else if (value.method === 'turn/interrupt') {
     const oldTurn = currentTurn
     rpc(value.id, {})
@@ -97,8 +110,16 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       write({ id: 'stale-approval', method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', turnId: oldTurn, itemId: 'old-tool' } })
     }, 30)
   } else if (value.method === 'session/prompt') {
+    if (mode === 'acp-exit-before-activity') { process.stderr.write('Fixture exit before acceptance'); process.exit(7) }
     currentPrompt = value.params.prompt[0].text.split('\n\n').at(-1)
     pendingPrompt = value.id
+    if (mode === 'acp-reject') { write({ jsonrpc: '2.0', id: value.id, error: { code: -32000, message: 'Prompt rejected before activity' } }); return }
+    const start = () => {
+    if (mode === 'acp-context-early') {
+      write({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Early response' } } } })
+      rpc(value.id, { stopReason: 'end_turn' })
+      return
+    }
     if (mode === 'acp-unknown-client') {
       write({ jsonrpc: '2.0', id: 'unsupported-client', method: 'terminal/create', params: { sessionId: 'session-1', command: 'sh' } })
     } else if (currentPrompt === 'question') {
@@ -108,6 +129,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       write({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: { sessionUpdate: 'tool_call', toolCallId: 'exec-1', title: 'List projects', kind: 'execute', status: 'pending', rawInput: { command: 'orca-board projects list', description: 'Friendly description' } } } })
       write({ jsonrpc: '2.0', id: 'permission-acp', method: 'session/request_permission', params: { sessionId: 'session-1', toolCall: { toolCallId: 'exec-1', title: 'List projects' }, options: [{ optionId: 'once-provider-specific', name: 'Allow once', kind: 'allow_once' }, { optionId: 'reject-provider-specific', name: 'Reject', kind: 'reject_once' }] } })
     }
+    }
+    if (mode === 'acp-hold-activity') afterGate(start)
+    else start()
   } else if (value.method === 'session/cancel') {
     write({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: { sessionUpdate: 'tool_call_update', toolCallId: 'exec-1', status: 'failed' } } })
     rpc(pendingPrompt, { stopReason: 'cancelled' })
