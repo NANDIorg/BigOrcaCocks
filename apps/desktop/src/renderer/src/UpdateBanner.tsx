@@ -1,10 +1,10 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Icon } from './icons'
 import { Markdown } from './Markdown'
 import { useT } from './i18n'
 import { formatPercent } from './i18n/format'
-import { bannerView, isReleaseUrl, versionLabel, type UpdateAction } from './updateState'
+import { bannerView, isReleaseUrl, releaseSummary, updateProgress, versionLabel, type UpdateAction } from './updateState'
 import { updatesProblem, type UpdatesController } from './useUpdates'
 
 /** «Что нового»: заметки релиза (markdown с GitHub) — только через Markdown.tsx, он санитизирует HTML. */
@@ -57,6 +57,8 @@ export function UpdateBanner({ updates }: { updates: UpdatesController }): React
   const [notesOpen, setNotesOpen] = useState(false)
   const { state } = updates
   const view = bannerView(state)
+  const summary = useMemo(() => releaseSummary(state?.releaseNotes ?? null), [state?.releaseNotes])
+  const percent = updateProgress(view?.percent ?? null)
 
   const problem = updatesProblem(updates)
   if (!view) return problem ? <div className="update-banner error" role="alert"><div className="update-detail">{problem}</div></div> : null
@@ -87,19 +89,23 @@ export function UpdateBanner({ updates }: { updates: UpdatesController }): React
   return (
     <div className={`update-banner ${view.kind}`} role="status" aria-label={t('shell.update.aria')}>
       <div className="update-title">
-        {view.kind === 'error' ? <Icon.info /> : view.kind === 'downloading' || view.kind === 'installing' ? <span className="update-spin"><Icon.spinner /></span> : <Icon.download />}
+        <span className="update-banner-symbol" aria-hidden="true">
+          {view.kind === 'error' ? <Icon.info /> : view.kind === 'downloading' || view.kind === 'installing' ? <span className="update-spin"><Icon.spinner /></span> : view.kind === 'ready' ? <Icon.done /> : <Icon.download />}
+        </span>
         <span>{view.title}</span>
-        {view.kind === 'downloading' && view.percent != null && <span className="update-percent">{formatPercent(view.percent)}</span>}
+        {view.kind === 'downloading' && percent != null && <span className="update-percent">{formatPercent(percent)}</span>}
       </div>
+      {summary && <p className="update-banner-summary">{summary}</p>}
       {view.kind === 'downloading' && (
         <div
-          className={`update-progress ${view.percent == null ? 'indeterminate' : ''}`}
+          className={`update-progress ${percent == null ? 'indeterminate' : ''}`}
           role="progressbar"
+          aria-label={t('settings.updates.card.downloadLabel')}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-valuenow={view.percent ?? undefined}
+          aria-valuenow={percent ?? undefined}
         >
-          <div style={{ width: `${view.percent ?? 40}%` }} />
+          <div style={{ width: `${percent ?? 40}%` }} />
         </div>
       )}
       {view.detail && <div className="update-detail">{view.detail}</div>}

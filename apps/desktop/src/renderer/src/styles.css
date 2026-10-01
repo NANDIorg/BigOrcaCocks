@@ -46,8 +46,10 @@ button { font: inherit; cursor: pointer; }
 .rail .icon:disabled { opacity: .4; cursor: default; }
 .rail .icon.active { color: var(--accent); }
 .rail .grow { flex: 1; }
-.rail .avatar {
-  width: 40px; height: 40px; display: block; object-fit: contain;
+.rail .app-logo {
+  width: 40px; height: 40px; flex-shrink: 0; color: var(--muted);
+  background-color: currentColor;
+  mask: linear-gradient(transparent, transparent) center / contain no-repeat;
 }
 
 /* ---------- sidebar ---------- */
@@ -131,6 +133,22 @@ button { font: inherit; cursor: pointer; }
 .popup-menu-item[aria-disabled='true'] { color: var(--muted); cursor: default; }
 .popup-menu-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .popup-menu-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
+.popup-menu-icon, .popup-menu-chevron { display: grid; place-items: center; flex: none; color: var(--muted); }
+.application-menu { padding: 8px; border-radius: 14px; max-height: calc(100dvh - 16px); }
+.application-menu-header {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 10px 10px;
+  margin-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 600;
+}
+.application-menu-header img { flex: none; }
+.application-menu .popup-menu-item { min-height: 36px; padding: 8px 10px; border-radius: 8px; }
+.application-menu .popup-menu-name { white-space: normal; overflow-wrap: anywhere; }
+.application-menu .popup-menu-item:hover:not([aria-disabled='true']), .application-menu .popup-menu-item:focus-visible {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.application-menu .popup-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.application-menu .popup-menu-item:active:not([aria-disabled='true']) { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.application-menu .popup-menu-hint { flex: none; font-family: var(--font-mono); white-space: nowrap; }
+.application-menu-loading { min-height: 64px; padding: 20px 10px; color: var(--muted); }
 .modal-backdrop.group-backdrop { z-index: 40; }
 .modal.group-modal { width: 420px; }
 .btn-primary.danger { background: var(--danger); }
@@ -2572,6 +2590,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .update-banner.error { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
 .update-banner.manual { border-color: color-mix(in srgb, var(--col-input) 55%, transparent); }
 .update-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.update-banner-symbol { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--frame); }
+.update-banner-symbol svg { width: 17px; height: 17px; }
+.update-banner-summary { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .update-title svg { flex-shrink: 0; color: var(--accent); }
 .update-banner.error .update-title svg { color: var(--danger); }
 .update-banner.manual .update-title svg { color: var(--col-input); }
@@ -2591,7 +2612,52 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .update-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .update-notes-body { overflow-y: auto; min-height: 0; padding: 12px 14px; background: var(--frame); border-radius: 10px; }
 .update-notes .row a.btn-sm { text-decoration: none; }
-.updates-status { margin: 4px 0 0; }
+/* Версия — главный элемент карточки, действия остаются рядом с анонсом; полный markdown раскрывается ниже. */
+.updates-card { background: var(--side); border: 1px solid var(--line); border-radius: 14px; padding: 24px; margin-bottom: 24px; min-width: 0; }
+.updates-card.available, .updates-card.ready { border-color: color-mix(in srgb, var(--accent) 32%, var(--line)); }
+.updates-card-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.updates-card-icon { width: 52px; height: 52px; display: grid; place-items: center; flex: none; }
+.updates-card-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.updates-card-heading { flex: 1; min-width: 150px; }
+.updates-card-eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.updates-card-eyebrow svg { width: 12px; height: 12px; }
+.updates-card-heading h3 { font-size: 24px; font-weight: 600; letter-spacing: -.5px; line-height: 1.3; margin: 3px 0 0; overflow-wrap: anywhere; }
+.updates-card-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--text); background: color-mix(in srgb, var(--accent) 9%, var(--frame)); white-space: nowrap; }
+.updates-card-badge > span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.updates-card-from { color: var(--muted); font-size: 11px; margin: 14px 0 0; }
+.updates-card-summary { font-size: 14px; line-height: 1.7; margin: 8px 0 0; max-width: 66ch; overflow-wrap: anywhere; }
+.updates-card-detail { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 12px 0 0; overflow-wrap: anywhere; }
+.updates-card-detail.problem { color: var(--danger); }
+.updates-card-checked { color: var(--muted); font-size: 11px; margin: 18px 0 0; }
+.updates-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
+.updates-card-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.updates-card-buttons .btn-sm, .updates-check { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; text-decoration: none; }
+.updates-card-buttons svg { width: 16px; height: 16px; flex: none; }
+.updates-notes-toggle { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; color: var(--muted); padding: 8px 0; font-size: 12px; }
+.updates-notes-toggle:hover { color: var(--text); }
+.updates-notes-toggle:focus-visible, .updates-release-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.updates-card-notes { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; overflow-wrap: anywhere; }
+.updates-card-notes .markdown { font-size: 13px; line-height: 1.7; }
+.updates-card-notes .markdown > :first-child { margin-top: 0; }
+.updates-card-notes .markdown h1, .updates-card-notes .markdown h2 { font-size: 16px; }
+.updates-card-notes .markdown h3 { font-size: 14px; }
+.updates-card-notes .markdown pre { max-width: 100%; overflow-x: auto; }
+.updates-card-notes .markdown img { max-width: 100%; height: auto; }
+.updates-release-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--accent); font-size: 12px; text-decoration: none; }
+.updates-release-link:hover { text-decoration: underline; }
+.updates-release-link svg { width: 14px; height: 14px; }
+.updates-card-download { background: var(--frame); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 20px; }
+.updates-card-progress-label { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; font-size: 12px; margin-bottom: 10px; }
+.updates-card-progress-label b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.updates-card-download .update-progress { height: 5px; background: var(--side-2); }
+.updates-card-download > p { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.updates-preferences-label { margin-bottom: 10px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.updates-portable-note { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+.updates-portable-note > svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--muted); }
+.updates-portable-note b { font-size: 13px; font-weight: 500; }
+.updates-portable-note p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+@media (max-width: 720px) { .updates-card { padding: 18px; } .updates-card-heading h3 { font-size: 21px; } }
+[data-motion='reduced'] .updates-card .update-spin { animation: none; }
 .rail .icon { position: relative; }
 .rail-dot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--page); }
 .toast {
@@ -2978,52 +3044,75 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .files-path { font: 12px ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; min-width: 0; flex: 1 1 200px; }
 .files-foot-err { margin: 0; flex-basis: 100%; }
 
-/* Верх окна на macOS — продолжение панелей; кнопки принадлежат AppKit, их DOM-копий нет. */
+/* Панели доходят до края окна; кнопки macOS/Windows нативные, их DOM-копий нет. */
 html[data-window-chrome='macos'] {
   /* Кнопки AppKit не масштабируются вместе с renderer: WCO сохраняет для них место. */
   --rail-width: max(var(--macos-rail-width), env(titlebar-area-x, 0px));
   --window-chrome-height: env(titlebar-area-height, var(--macos-chrome-height));
+}
+html[data-window-chrome='windows'] {
+  --window-chrome-height: env(titlebar-area-height, var(--windows-chrome-height));
+}
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) {
   --window-overlay-gap: 24px;
   --window-overlay-top: max(var(--window-overlay-gap), calc(var(--window-chrome-height) + 12px));
 }
-html[data-window-chrome='macos'][data-window-controls='hidden'] { --window-chrome-height: 0px; }
-html[data-window-chrome='macos'] body { background: var(--frame); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows'])[data-window-controls='hidden'] { --window-chrome-height: 0px; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) body { background: var(--frame); }
 /* Узкая кромка работает и при загрузке, и поверх модалки; ниже клики принадлежат интерфейсу. */
-html[data-window-chrome='macos'] body::before {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) body::before {
   content: ''; position: fixed; inset: 0 0 auto; height: min(8px, var(--window-chrome-height));
   z-index: 80; app-region: drag; user-select: none;
 }
 html[data-window-chrome='macos'] .rail { position: relative; padding-top: calc(var(--window-chrome-height) + 22px); }
+html[data-window-chrome='macos'] .rail .icon { width: 52px; height: 52px; border-radius: 14px; }
+html[data-window-chrome='macos'] .rail .icon > svg { width: 26px; height: 26px; }
+html[data-window-chrome='macos'] .rail .icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 html[data-window-chrome='macos'] .rail::before {
   content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
   app-region: drag; user-select: none;
 }
-html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
-html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
 /* Chromium не вычитает перекрытые drag-области по z-index: поверхностям нужен явный no-drag. */
-html[data-window-chrome='macos'] :is(.modal, .settings-modal, .inbox, .popup-menu, .move-menu, .lightbox) { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal, .settings-modal, .inbox, .popup-menu, .move-menu, .lightbox) { app-region: no-drag; }
 /* Любая поверхность прямо в backdrop перекрывает шапки: без no-drag Chromium оставляет под ней drag-области
    .main-head и .sidebar > .head. Пропуск в списке выше уже ломал «Документы» и мастер. Кромка ::before
    потомком не считается и остаётся drag. */
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) > * { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop) > * { app-region: no-drag; }
+
+/* Caption-кнопки справа не перекрывают действия шапки, помощника или просмотрщика. */
+html[data-window-chrome='windows'] .main-head { padding-top: max(24px, calc(var(--window-chrome-height) + 12px)); }
+html[data-window-chrome='windows'] .inbox { top: var(--window-chrome-height); }
+html[data-window-chrome='windows'] .lightbox-close { top: max(16px, calc(var(--window-chrome-height) + 12px)); }
+.window-menu-error {
+  display: flex; align-items: flex-start; gap: 12px;
+  position: fixed; top: max(24px, calc(var(--window-chrome-height) + 12px)); left: calc(var(--rail-width) + 12px);
+  max-width: min(420px, calc(100vw - var(--rail-width) - 36px)); z-index: 81; padding: 12px 16px;
+  background: var(--side); border: 1px solid var(--danger); border-radius: var(--radius); color: var(--text);
+  overflow-wrap: anywhere; app-region: no-drag;
+}
+.window-menu-error span { flex: 1; min-width: 0; }
+.window-menu-error button { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.window-menu-error button:hover, .window-menu-error button:focus-visible { background: var(--side-2); color: var(--text); }
 
 /* Нативный слой выше renderer: все общие оверлеи оставляют сверху свободную область. */
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop) {
   padding: var(--window-overlay-top) var(--window-overlay-gap) var(--window-overlay-gap);
 }
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop)::before {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop)::before {
   content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
   app-region: drag; user-select: none;
 }
-html[data-window-chrome='macos'] :is(.modal, .settings-modal) {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal, .settings-modal) {
   max-width: 100%; max-height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap));
 }
-html[data-window-chrome='macos'] .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
-html[data-window-chrome='macos'] .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
 /* Высота 100vh - 48px не учитывает кромку: без ужатия шапка «Документов» уходит под drag-область. */
-html[data-window-chrome='macos'] .docs-modal { height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap)); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .docs-modal { height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap)); }
 @media (max-width: 600px) {
-  html[data-window-chrome='macos'] { --window-overlay-gap: 12px; }
+  html:is([data-window-chrome='macos'], [data-window-chrome='windows']) { --window-overlay-gap: 12px; }
 }
 
 /* Внешний вид: нативные radio обеспечивают выбор стрелками; миниатюры используют общую палитру. */

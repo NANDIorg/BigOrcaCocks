@@ -14,3 +14,6 @@ declare module '*.svg' {
 interface ImportMeta {
   readonly hot?: import('vite/types/hot').ViteHotContext
 }
+
+/** Описание установленного релиза из docs/releases вшивается в renderer при сборке. */
+declare const __ORCA_CURRENT_RELEASE__: Pick<import('../../shared/ipc').UpdateInfo, 'version' | 'releaseNotes'>

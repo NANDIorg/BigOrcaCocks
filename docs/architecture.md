@@ -151,17 +151,23 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   типа нет — они у проекта. Шаблонов проектов (`ProjectTemplate`, `templates.ts`, `template-sections.ts`) больше нет.
   Пустое поле — `DEFAULT_ROLES`, `defaultWorkflow(roles)`, без правил, `auto` (`resolveTaskType`).
   - **Особых («системных») типов нет.** Заготовки — `presetTaskTypes()` (свежие копии; по id — `presetTaskType(id)`),
-    названия — по виду задачи: «Программирование» (`general` = `DEFAULT_ROLES` / `defaultWorkflow`), «Фронтенд» (ревью →
-    человек «посмотреть глазами»), «Бэкенд» (ревьюер на `opus`, ревью → прогон тестов ролью `qa`), «Фронтенд и бэкенд»
-    (`fullstack`: роли `frontend` / `backend`, человек только для задач `frontend`), «Мобильная разработка» (`mobile`:
-    ревью → человек), «QA: автотесты» (`autotests`: `autotester`), «Документация» (`docs`: `writer`, ревью человеком).
-    У всех `coordinator` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы
-    собраны `pipelineWorkflow`. main кладёт заготовки в библиотеку **один раз** (`seededTaskTypes`, флаг
+    предметные определения — `task-type-presets.ts`, без node-импортов. Все семь имеют подготовительную `work` (ответ координатору),
+    реализацию, независимые `gate` и финальную `human`. «Программирование» — ревью/QA; «Фронтенд» — ревью/QA/UI-ревью;
+    «Бэкенд» — безопасность и данные (ревьюер `opus`)/интеграционный QA; «Фронтенд и бэкенд» — контракт → сервер →
+    интеграция обеих ролей, ревью/сквозной QA/UI-ревью; «Мобильная разработка» — сборка QA/платформенное ревью/устройство QA;
+    «QA: автотесты» — качество/стабильность; «Документация» — проверка фактов и полного ответа, затем читатель.
+    Роли наследуют настройки `DEFAULT_ROLES`, получают предметные системные инструкции; QA в gate не меняет код и тесты.
+    Графы собраны `pipelineWorkflow`, отказ возвращает в последнюю `work`, где можно исправить результат, затем повторяются все проверки.
+    Подробности и критерии — «Дефолтный граф и заготовки типов» в `docs/workflow.md`. main кладёт заготовки в библиотеку **один раз** (`seededTaskTypes`, флаг
     `taskTypesSeeded` в projects.json), дальше это обычные типы: правятся целиком, переименовываются и удаляются, как
     созданные человеком; удалённая не возвращается после рестарта, новая версия приложения их не перетирает.
     **Id не менять**: это id бывших встроенных шаблонов проектов (по ним мигрировали старые проекты), на них ссылаются
     старые проекты и прогоны, а засев старого файла сверяет по ним сохранённые правки.
     Снимок типа (`Run.taskType`) и граф (`Run.workflow`) уже созданных глобальных задач правка и удаление типа не меняют.
+    Роли существующего типа разрешаются вживую, поэтому обновление заготовок не перезаписывает старые типы автоматически.
+    «Настройки → Новый тип» предлагает пустой тип или текущую заготовку: `presetTaskTypeInput` в renderer собирает вход без `id`,
+    с новыми ролями/графом/правилами и свободным названием на языке UI. Обычный API создания выделяет новый id; старые типы,
+    проекты и выбор по умолчанию сохраняются. Новая установка получает новые определения при первом засеве.
   - **Какой тип у прогона** — одно правило, `resolveRunType(run, types, projectDefaultTypeId)` → `ResolvedRunType`
     (`roles`, `agentRules`, `permissionMode`, `workflow`, `source`): `run.typeId` → тип из библиотеки (`source: 'type'`,
     роли «вживую» — смена модели действует со следующего запуска) → снимок `run.taskType` (тип удалён,
@@ -395,6 +401,12 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   (с `merge`, конфликтом мержа и `onlyForRoles`).
 - **`toTaskScopeWorkflow(wf)`** — граф версии 2 в граф подзадач (версия 1) для старого движка: `TaskStore.runWorkflow` берёт его у прогонов без
   `workflowScope` и «Входящих», когда графа-снимка нет и приходит граф типа (`docs/workflow.md`, «Миграция»).
+  `work.runOnly?: boolean` помечает организационные этапы глобального графа: при проекции только они обходятся по `next` к обычной работе.
+  Подготовка и серверный этап fullstack не поручаются одиночному воркеру. Непомеченные графы и снимки v1 сохраняют прежнюю семантику;
+  поле необязательно, миграция старых данных не нужна. Валидация проверяет тип, область и достижимость обычной работы без циклов пропуска.
+  Условия `attempts` не могут ссылаться на пропускаемый этап. У шаблона ноды `runOnlyNoWorkTarget` зависит от будущего графа и откладывается
+  до вставки (`TEMPLATE_IGNORED`), ошибки типа/области остаются. Шаблон сохраняет признак при копировании и JSON-сериализации.
+  Инспектор ноды позволяет снять/поставить признак, экспорт/импорт сохраняет его.
 - **Нода `git`, хелперы** (`workflow.ts`): `WF_GIT_OPERATIONS`, `WF_GIT_FIELD_USE` (обязательные/необязательные поля по операции),
   `wfGitVars(task)` + `renderGitTemplate` (подстановки `{taskId}`, `{slug}`, `{title}`), `wfGitSlug`, `isValidGitBranchName`,
   `isValidGitRemoteName`, `gitBranchTemplateValid`. Валидация и `stageAction` (неполная нода → `blocked`) используют их же, чтобы main
@@ -1294,8 +1306,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     подпись терминала ассистента берёт агента оттуда (`assistantAgentOf`). В редакторе ролей типа ассистента нет.
   - Группа «Типы задач» — каждый тип отдельным пунктом меню (`type:<id>` в `orca.settingsSection`; старые
     `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
-    библиотеки, без деления на встроенные и свои, внизу «Новый тип» (`taskTypes:save` без id, пустые настройки =
-    значения по умолчанию). Счётчик пункта — «по умолч.» или число проектов,
+    библиотеки, без деления на встроенные и свои, внизу «Новый тип» открывает общий `PopupMenu`: «Пустой тип» или
+    одна из семи актуальных заготовок (`taskTypes:save` без id; пустые настройки = значения по умолчанию).
+    Старый тип не заменяется, повторное название получает суффикс. Меню использует общую тему, клавиатуру и возврат фокуса;
+    повторный вызов создания блокируется, ошибка отображается под кнопкой. Счётчик пункта — «по умолч.» или число проектов,
     где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «по умолчанию»,
     «Доступен в N проектах · по умолчанию в K»), действия у любого типа одинаковые: «По умолчанию»
     (`taskTypes:setDefault`), «Дублировать» (`taskTypes:duplicate`, открывает копию), «Переименовать» (форма в шапке:
@@ -1439,19 +1453,54 @@ BrowserWindow с локальным документом `about-content.ts`, в�
 список двух адресов. Подробности — [about-window.md](about-window.md).
 Авторский значок приложения (`build/icon.svg` → `build/icon.png`)
 со скруглённым квадратным фоном используется в Dock, окне и сборках; Vite копирует PNG через импорт `?asset`.
-SVG используется в rail и мастере первого запуска, импортируется как URL с учётом CSP.
+Цветной SVG используется в мастере первого запуска, меню Windows и обновлениях, импортируется как URL с учётом CSP.
+Нижний знак rail использует прозрачный `build/tray/orcaTemplate.svg` как CSS-маску 40×40px:
+`currentColor` берётся из `--muted`, как у кнопок панели, и меняется вместе с темой. `RailLogo` получает SVG
+через `?raw` и создаёт blob-URL, разрешённый действующей CSP: локальные file-URL не подходят для CSS-масок.
+При размонтировании URL освобождается; до готовности маски знак прозрачен, его место зарезервировано.
+Системные иконки и цветные брендовые поверхности сохраняют прежние ассеты.
 Рамка и системные кнопки принадлежат ОС; содержимое и фокус — модулю окна.
 Визуальный контекст — [DESIGN.md](../DESIGN.md).
 
 Главное окно на macOS использует `titleBarStyle: hidden`, `trafficLightPosition` и WCO
 (`main/window-chrome.ts`). AppKit сохраняет системные кнопки, рамку, тень и управление окном;
 renderer рисует панели до верхнего края. Геометрия — `shared/window-chrome.ts`: панель иконок
-минимум 96px, область кнопок 52px, отступы 18px. На Windows/Linux остаётся обычная системная рамка.
-Main передаёт preload аргумент `--orca-macos-window-chrome`; read-only `app.windowChrome?`
-сообщает фактический режим этого окна, без новых каналов управления. Старый main без флага
+минимум 96px, область кнопок 52px, отступы 18px. Windows использует тот же `hidden` с настоящими
+caption-кнопками WCO справа, без traffic lights и HTML-замен управления окном. Их область — 36px;
+фон `frame` и значки `text` берутся из выбранной темы `shared/theme.ts`. `syncMainAppearance()`
+обновляет их через `setTitleBarOverlay` без пересоздания окна. `autoHideMenuBar` убирает постоянную
+строку меню; скрытая рамка Electron не поддерживает menu bar по Alt. `WindowMenu` в rail
+открывает авторскую поверхность через общий `PopupMenu` (вариант `application`), с палитрой всех четырёх тем.
+`app.getMenu?()` → `app:getMenu` возвращает локализованный снимок настоящего Electron Menu:
+`AppMenuItem {id, label, hint?, disabled?, separatorBefore?, children?[]}`. `app.invokeMenu?(id)` →
+`app:invokeMenu` проверяет id по доступным листьям актуального меню и выполняет общие продуктовые действия
+или публичные методы Electron для редактирования, масштаба и управления окном. Недоступные, скрытые,
+родительские и отсутствующие в production dev-команды не выполняются. Native Menu остаётся источником
+содержимого и сочетаний; `requestQuit` сохраняет защиту живых агентов. Main принимает оба запроса только
+на Windows от главного фрейма своего окна. Renderer сохраняет и восстанавливает фокус, caret и выделение
+до команды редактирования, включая сочетания из открытого popup. `getMenu` временно вызывает
+`setIgnoreMenuShortcuts(true)`, чтобы renderer выполнил сочетание один раз после восстановления выделения.
+`app.dismissMenu?()` → `app:dismissMenu` и `invokeMenu` возвращают нативную обработку; blur окна,
+загрузка главного фрейма и завершение процесса renderer также снимают этот режим. Уход DOM-фокуса
+из popup (например, Ctrl+K открывает помощника) закрывает меню без возврата фокуса.
+Устаревший ответ загрузки после закрытия меню игнорируется. Разделы открываются
+в одной панели: стрелки/Home/End, Enter/Space, Right — войти, Left/Esc — назад; Esc в корне, Tab,
+клик снаружи, resize/blur и внешняя прокрутка закрывают popup. Старый preload показывает сообщение
+о перезапуске. На macOS кнопки rail увеличены до 52px, иконки до 26px; нативные кнопки окна не меняются.
+Linux оставляет системный заголовок и меню.
+Main передаёт preload аргумент `--orca-macos-window-chrome` или `--orca-windows-window-chrome`;
+read-only `app.windowChrome?` (`macos` / `windows` / `system`)
+сообщает фактический режим этого окна, без новых каналов управления окном. Старый main без флага
 или старый preload без свойства сохраняет прежние отступы.
 `renderer/windowChrome.ts` до первого рендера устанавливает общие CSS-токены и подписывается
 на WCO `geometrychange`: в fullscreen верхний резерв убирается, после выхода восстанавливается.
+Windows явно выставляет высоту overlay 0/36 на `enter-full-screen`/`leave-full-screen`: Electron
+сам не обнуляет заданную высоту и сохраняет WCO visible=true с остаточной кромкой. Main сохраняет
+явное состояние события, поскольку `win.isFullScreen()` ещё может отражать прежний режим.
+Опциональный `app.onWindowFullscreen` слушает `app:windowFullscreen` и запрашивает текущий режим
+через `app:windowFullscreenReady`; это восстанавливает состояние после reload/HMR в fullscreen.
+Main принимает готовность только от главного фрейма своего окна. Renderer использует явный режим
+в дополнение к WCO; смена темы также сохраняет fullscreen, а dispose снимает обе подписки.
 `env(titlebar-area-height)` и `env(titlebar-area-x)` учитывают zoom Chromium: нативные кнопки
 не сжимаются вместе с renderer. Шапки и свободная кромка окна — drag-области; кнопки, меню ветки,
 вкладки, поля и поверхности оверлеев — no-drag (само перекрытие по z-index не отменяет drag).
@@ -1459,7 +1508,9 @@ Main передаёт preload аргумент `--orca-macos-window-chrome`; rea
 (кромка `::before` остаётся drag); поверхности вне backdrop (`.inbox`, `.popup-menu`, `.move-menu`,
 `.lightbox`) перечислены явно. Список сверяет `renderer/src/windowDrag.test.ts`.
 Общие backdrop мастера и модальных окон резервируют
-место для нативных кнопок; высота их содержимого ограничена оставшимся viewport. Закрытие и
+место для нативных кнопок; высота их содержимого ограничена оставшимся viewport. На Windows
+действия рабочей шапки, правая панель входящих/помощника и закрытие lightbox расположены ниже
+нативных кнопок по высоте WCO; rail сохраняет ширину 72px. Закрытие и
 фоновый режим используют существующие события окна, без HTML-копий системных кнопок.
 
 Команды навигации передаются `app:menuAction` через опциональный `app.onMenuAction`.
@@ -1474,14 +1525,15 @@ Main передаёт preload аргумент `--orca-macos-window-chrome`; rea
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
-| Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS; меню окна Windows/Linux | `main/app-menu.test.ts`, живой Electron |
-| Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные кнопки macOS; системная рамка Windows/Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
+| Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS/Linux, содержимое и сочетания Windows | `main/app-menu.test.ts`, живой Electron |
+| Application Popup | `WindowMenu`, общий `PopupMenu` | снимок Electron Menu, `shared/theme.ts`, `DESIGN.md` | авторские разделы Windows; плоские контекстные меню | `main/app-menu.test.ts`, `popupMenuNavigation.test.ts`; ручная проверка билда |
+| Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные нативные кнопки macOS/Windows; системный заголовок Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
 | Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
 | Assistant Chat | `AssistantPanel`, `AssistantInteraction`, `AssistantSession` | `shared/assistant-conversation.ts`, `docs/assistant-chat.md` | справа; Amp/Shell — отдельный терминал | протокольные fixture-тесты, session/IPC тесты; пользователь проверяет билд |
 | Tray | `main/tray.ts`, Electron Tray | `build/tray/orca-logo.svg` | template PNG 18/36 macOS; цветной ICO Windows; PNG Linux | nativeImage, упаковка; Windows проверяется на Windows |
-| Branding | `build/icon.svg` | предоставленный авторский логотип | SVG в renderer, PNG для ОС и сборок | скругление и проверка загрузки в Electron |
+| Branding | `build/icon.svg`, `build/tray/orcaTemplate.svg` | предоставленный авторский логотип | цветной SVG/PNG; монохромная CSS-маска rail в `--muted` | упаковка ассетов; ручная проверка билда |
 
 ## Общая визуальная тема (`src/shared/theme.ts`)
 
@@ -1573,11 +1625,11 @@ SVG-линия и траектория пакета используют оди�
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-`app.windowChrome?` — read-only метаданные preload (`system` / `macos`), не IPC-вызов.
+`app.windowChrome?` — read-only метаданные preload (`system` / `macos` / `windows`), не IPC-вызов.
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
+- `invoke`: `app:info`, `app:getMenu` → `AppMenuItem[]`, `app:invokeMenu(id)`, `app:dismissMenu` (авторский popup Windows; снимок, разрешённый лист общего меню и возврат нативных сочетаний), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
   `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
@@ -1688,8 +1740,10 @@ SVG-линия и траектория пакета используют оди�
   старый main молча стёр бы незнакомое поле при сохранении, поэтому без признака renderer поле флагов не даёт править
   и просит перезапустить приложение. Новый main со старым renderer безопасен: патч ассистента без `extraArgs` флаги
   не трогает, а роли renderer сохраняет объектами целиком.
-- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню).
+- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню),
+  `app:windowFullscreenReady` (запрос текущего fullscreen главного окна после подписки).
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
+  `app:windowFullscreen` (boolean, опциональная подписка `app.onWindowFullscreen?`),
   `app:menuAction` (`AppMenuAction`: `settings` / `checkUpdates` / `addProject`, подписка `app.onMenuAction?`),
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
   группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
@@ -2261,8 +2315,13 @@ Renderer вызывает канал через проверку наличия 
 транскрипта, выигрывает самый длинный (`claude-opus-5` покрывает датированные версии); `exact` — точные id моделей
 OpenAI (id целиком или со снапшотом `-YYYY-MM-DD` / `-YYYYMMDD`, регистр и префикс `openai/` не важны): префиксом
 их не сопоставить — `gpt-5` покрыл бы неизвестную `gpt-5.7-x` чужой ценой. Цены GPT (`OPENAI_PRICES` в `pricing.ts`) —
-Standard-tier со страницы developers.openai.com/api/docs/pricing; у codex токены собирает `parseCodexLine`
-(кэшированная часть входа идёт по `cacheRead`), модели без цены на странице (`codex-auto-review`, `gpt-5-codex`,
+Standard-tier со страницы developers.openai.com/api/docs/pricing. Для `gpt-6.1-sol`: $2 вход / $0,10 чтение кэша /
+$2,50 запись кэша / $10 выход за миллион, проверено 2026-10-01; датированные снапшоты получают ту же цену.
+Новая цена применяется к уже записанным
+токенам при следующем расчёте статистики, без миграции транскриптов. Отсутствие транскрипта отдельной сессии
+не связано с отсутствием цены модели: такая сессия по-прежнему учитывается временем.
+У codex токены собирает `parseCodexLine`: кэшированная часть входа идёт по `cacheRead`.
+Модели без цены на странице (`codex-auto-review`, `gpt-5-codex`,
 `gpt-5.1-codex*`…) остаются «без цены». Надбавка длинного контекста OpenAI (>272K входа: вход ×2, выход ×1,5) не
 учитывается — размер отдельного запроса из накопительного счётчика rollout не виден, стоимость таких запросов занижена. Стоимость считается по каждой
 записи с её моделью: `input·input + output·output + cacheRead·cacheRead + write5m·cacheWrite5m + write1h·cacheWrite1h`
@@ -2505,7 +2564,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 
 **UI в renderer.** Состояние — хук `useUpdates` (`renderer/src/useUpdates.ts`): `getState()` при старте + подписка `onChanged`,
 одно на приложение, передаётся плашке и «Настройкам». Что показывать при каком состоянии — чистые функции в `renderer/src/updateState.ts`
-(`bannerView`, `statusLine`, `canCheck`; тест `updateState.test.ts`), компоненты только рисуют:
+(`bannerView`, `canCheck`, `cardRelease`, `releaseSummary`, `updateProgress`; тест `updateState.test.ts`), компоненты только рисуют:
 - **Плашка** (`UpdateBanner.tsx`, низ сайдбара): «Доступна X · Что нового · Скачать» → прогресс скачивания → «X готова · Перезапустить и обновить»
   (при отложенной установке — подпись «при выходе / когда агенты закончат» и «Отменить») → ошибка с «Повторить» (`check()`);
   `unsupported` с найденной версией (portable, macOS вне «Программ») — «Скачать» ссылкой на `releaseUrl` и причина.
@@ -2513,8 +2572,22 @@ electron (`net.fetch` учитывает системный прокси). `macU
 - **Живые агенты:** «Перезапустить и обновить» просто вызывает `install({when:'now'})`. Выбор «Сейчас / Когда агенты закончат / Отмена»
   при живых воркерах делает диалог main (`confirmInstall`, считает `liveWorkerCount`) — в плашке своего вопроса нет, чтобы не спрашивать дважды.
 - **«Что нового»** (`UpdateNotesModal`): `releaseNotes` только через `Markdown.tsx`; ссылка на релиз — только `http(s)` (`isReleaseUrl`).
-- **«Настройки → Обновления»** (`settings/UpdatesSection.tsx`): версия, статус, «Проверить сейчас», переключатели `autoCheck`/`autoDownload`/`installWhenIdle`
-  (пишутся через `app:setSettings({updates})`; старый main поле отбросит — показывается `common.staleApp`).
+- **«Настройки → Обновления»** (`settings/UpdatesSection.tsx`, `UpdateCard.tsx`): карточка текущей/найденной версии с логотипом приложения,
+  кратким анонсом `releaseSummary` из первого абзаца или пункта релиза; полный текст раскрывается на месте через `Markdown.tsx`.
+  «Что нового в этой версии» доступно и у установленного релиза, без проверки сети и в portable.
+  `electron.vite.config.ts` читает `docs/releases/v<версия desktop>.md` и вшивает `{version, releaseNotes}`
+  в `__ORCA_CURRENT_RELEASE__`; отсутствующий или пустой файл останавливает сборку. `cardRelease` выбирает
+  заметки найденной версии из main или встроенный текст при точном совпадении установленной версии.
+  При несовпадении после HMR чужие заметки не подставляются; остаётся ссылка на конкретный тег GitHub.
+  Раскрытие привязано к версии, поэтому при её смене старое раскрытое описание не показывается.
+  Загрузка — полоса и нормализованный процент (`null`/NaN — неопределённый размер), готовность — кнопка `install('now')`,
+  причина ожидания и отмена отложенной установки. Portable даёт ссылку `releaseUrl` вместо установки; `canCheck` разрешает
+  ручную проверку `manual-download`. «Проверить сейчас» блокируется до ответа, даже когда main сохраняет `unsupported`.
+  После успешной ручной проверки показывается время; начальный `idle` не выдаётся за проверенную актуальность.
+  Переключатели `autoCheck`/`autoDownload`/`installWhenIdle` пишутся через `app:setSettings({updates})`;
+  старый main поле отбросит — показывается `common.staleApp`.
+  Portable явно объясняет отсутствие автоматической установки; остаётся только переключатель проверки,
+  настройки автоматической загрузки и установки скрыты по `unsupportedReason`.
 - **Тост «Обновлено до X»** (`UpdateToast`): один вызов `getJustUpdated()` при старте окна, скрывается сам через 10 с.
 - Старый preload без `window.orca.updates` (`pnpm dev` после HMR): `updatesApi()` возвращает null, вместо падения — `common.staleApp`.
 
@@ -2666,7 +2739,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 
 | Что | macOS / unix | Windows | Где |
 |---|---|---|---|
-| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | обычная системная рамка | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts` |
+| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | `hidden` + нативные caption-кнопки справа, WCO для zoom/fullscreen, палитра через `setTitleBarOverlay`, авторский popup меню из rail | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts`, `WindowMenu.tsx`, `PopupMenu.tsx` |
 | Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
 | Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
 | Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |

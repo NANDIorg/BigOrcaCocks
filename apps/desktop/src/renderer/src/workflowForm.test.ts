@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_DECISION_MAX_OPTIONS, WF_DECISION_OPTION_ID, nextStage, wfPorts, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES, WF_DECISION_MAX_OPTIONS, WF_DECISION_OPTION_ID, nextStage, pipelineWorkflow, wfPorts, validateWorkflow, type WfStage, type Workflow } from '@orca-board/core'
 import {
   WF_TYPE_ORDER, WF_TYPE_TITLES, addDecisionOption, addRetryLimit, changeNodeType, decisionOptionId, moveDecisionOption,
   patchDecisionOption, removeDecisionOption, resetDecisionOptions, conditionOfKind, exportWorkflowJson, hasColumn, parseWorkflowJson, patchNode, portTarget, setPortTarget, stageRoles, targetOptions, workflowFileName
@@ -23,6 +23,19 @@ const showcaseOf = (w: Workflow): unknown => {
   return n?.type === 'work' ? n.showcase : undefined
 }
 const ctx = { roles: DEFAULT_ROLES, columns: DEFAULT_COLUMNS }
+
+test('пропуск организационного этапа редактируется, переживает экспорт/импорт и снимается без скрытого значения', () => {
+  const original = pipelineWorkflow([], { work: [{ id: 'prep' }, { id: 'work' }] })
+  const marked = patchNode(original, 'prep', { runOnly: true })
+  const prep = node(marked, 'prep')
+  assert.ok(prep?.type === 'work')
+  assert.equal(prep.runOnly, true)
+  assert.equal('runOnly' in node(original, 'prep')!, false)
+  assert.deepEqual(parseWorkflowJson(exportWorkflowJson(marked)), { workflow: marked })
+  assert.deepEqual(validateWorkflow(marked, ctx).errors, [])
+  assert.equal('runOnly' in node(patchNode(marked, 'prep', { runOnly: false }), 'prep')!, false)
+  assert.equal('runOnly' in node(patchNode(original, 'start', { runOnly: true }), 'start')!, false)
+})
 
 test('роли для этапов — без служебных coordinator и assistant', () => {
   const ids = stageRoles(DEFAULT_ROLES).map((r) => r.id)

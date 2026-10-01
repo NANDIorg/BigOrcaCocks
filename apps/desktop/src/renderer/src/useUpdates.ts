@@ -12,6 +12,10 @@ export interface UpdatesController {
   stale: boolean
   /** Ошибка вызова (не сбой обновления — тот приходит в `state.error`). */
   error: string | null
+  /** Ручная проверка portable не меняет status в main: состояние кнопки держим до ответа invoke. */
+  checking: boolean
+  /** Только успешная ручная проверка в этой сессии; начальный idle не означает «последняя версия». */
+  lastCheckedAt: number | null
   check(): void
   download(): void
   install(when: UpdateInstallWhen): void
@@ -26,6 +30,9 @@ export function useUpdates(): UpdatesController {
   const [state, setState] = useState<UpdateState | null>(null)
   const [stale, setStale] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null)
+  const checkBusy = useRef(false)
   // События прогресса приходят чаще, чем ответы на invoke: не даём старому ответу затереть новое состояние.
   const seq = useRef(0)
 
@@ -68,11 +75,27 @@ export function useUpdates(): UpdatesController {
     [apply, fail]
   )
 
+  const check = useCallback((): void => {
+    const api = updatesApi(window.orca)
+    if (!api) { setStale(true); return }
+    if (checkBusy.current) return
+    checkBusy.current = true
+    setChecking(true)
+    setError(null)
+    api.check().then((s) => {
+      apply(s)
+      // В manual-download main подавляет сетевые ошибки: такой ответ не доказывает успешную проверку.
+      if (s.status !== 'error' && s.status !== 'unsupported') setLastCheckedAt(Date.now())
+    }, fail).finally(() => { checkBusy.current = false; setChecking(false) })
+  }, [apply, fail])
+
   return {
     state,
     stale,
     error,
-    check: () => run((a) => a.check()),
+    checking,
+    lastCheckedAt,
+    check,
     download: () => run((a) => a.download()),
     install: (when) => run((a) => a.install({ when })),
     cancelPending: () => run((a) => a.cancelPending())

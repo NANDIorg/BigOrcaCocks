@@ -9,6 +9,7 @@ import {
 } from './task-types.ts'
 import { DEFAULT_ROLES, type Role } from './types.ts'
 import { defaultWorkflow, nextRunStage, pipelineWorkflow, startRunStage, validateWorkflow } from './workflow.ts'
+import { TaskStore } from './store.ts'
 
 const writer: Role = { id: 'writer', title: 'Автор', agent: 'codex', model: 'gpt-5' }
 
@@ -28,6 +29,23 @@ function docsType(): TaskType {
 }
 
 describe('заготовки типов', () => {
+  it('«Входящие» и старый прогон без графа сразу выполняют свою задачу, без глобальной подготовки и серверного этапа fullstack', () => {
+    for (const type of presetTaskTypes()) {
+      const s = new TaskStore()
+      const role = type.settings.roles!.find((r) => !['coordinator', 'reviewer', 'qa', 'ui-review'].includes(r.id))!
+      const inbox = s.createTask({ title: 'Одна задача', roleId: role.id })
+      const fallback = { roleIds: type.settings.roles!.map((r) => r.id), workflow: type.settings.workflow }
+      const before = structuredClone(type.settings.workflow)
+      s.enterWork(inbox.id, fallback)
+      assert.equal(s.getTask(inbox.id)!.stage?.nodeId, 'work', type.id)
+      const scoped = s.runWorkflow(inbox.runId, fallback)
+      assert.deepEqual(scoped.nodes.filter((n) => n.type === 'work').map((n) => n.id), ['work'], type.id)
+      assert.deepEqual(validateWorkflow(scoped, { roles: type.settings.roles! }).errors.map((e) => e.code), ['versionOld'], type.id)
+      const legacy = s.createRun('Старый прогон без графа')
+      assert.deepEqual(s.runWorkflow(legacy.id, fallback), scoped, type.id)
+      assert.deepEqual(type.settings.workflow, before, 'глобальный граф не изменился при проекции')
+    }
+  })
   it('набор и уникальные id: id не меняются — на них ссылаются старые проекты и прогоны, по ним сверяет засев', () => {
     const types = presetTaskTypes()
     assert.deepEqual(types.map((t) => t.id), ['general', 'frontend', 'backend', 'fullstack', 'mobile', 'autotests', 'docs'])
@@ -63,25 +81,32 @@ describe('заготовки типов', () => {
     })
   }
 
-  it('«Программирование» — дефолт: DEFAULT_ROLES и defaultWorkflow', () => {
+  it('«Программирование» сохраняет стандартные роли, но выполняет независимый QA', () => {
     const general = presetTaskType(GENERAL_TASK_TYPE_ID)!
-    assert.deepEqual(general.settings.roles, DEFAULT_ROLES)
-    assert.deepEqual(general.settings.workflow, defaultWorkflow(DEFAULT_ROLES))
+    assert.deepEqual(general.settings.roles!.map((r) => [r.id, r.agent]), DEFAULT_ROLES.map((r) => [r.id, r.agent]))
+    assert.ok(general.settings.roles!.every((r) => r.systemPrompt?.trim()))
+    assert.ok(general.settings.workflow!.nodes.some((n) => n.type === 'gate' && n.roleId === 'qa'))
   })
 
-  it('«Фронтенд и бэкенд»: одна «Работа» с ролями frontend и backend; после ревью — человек', () => {
+  it('«Фронтенд и бэкенд»: контракт → сервер → интеграция обеих сторон → независимые проверки', () => {
     const wf = presetTaskType('fullstack')!.settings.workflow!
     const first = startRunStage(wf)
-    assert.deepEqual(first.action, { type: 'start_stage', nodeId: 'work', roleIds: ['frontend', 'backend'] })
-    const review = nextRunStage(wf, first.stage, 'next')
+    assert.deepEqual(first.action, { type: 'start_stage', nodeId: 'contract', roleIds: ['backend'] })
+    const api = nextRunStage(wf, first.stage, 'next')
+    assert.deepEqual(api.action, { type: 'start_stage', nodeId: 'api', roleIds: ['backend'] })
+    const integration = nextRunStage(wf, api.stage, 'next')
+    assert.deepEqual(integration.action, { type: 'start_stage', nodeId: 'work', roleIds: ['frontend', 'backend'] })
+    const review = nextRunStage(wf, integration.stage, 'next')
     assert.equal(review.stage.nodeId, 'review')
-    assert.equal(nextRunStage(wf, review.stage, 'accept').stage.nodeId, 'eyes')
+    assert.equal(nextRunStage(wf, review.stage, 'accept').action.type, 'create_gate')
     assert.equal(nextRunStage(wf, review.stage, 'reject').stage.nodeId, 'work', 'отказ — в последнюю работу')
   })
 
   it('«Бэкенд»: после ревью — прогон тестов ролью qa, затем проверка человеком', () => {
     const wf = presetTaskType('backend')!.settings.workflow!
-    const work = startRunStage(wf)
+    const analysis = startRunStage(wf)
+    assert.deepEqual(analysis.action, { type: 'start_stage', nodeId: 'contract', roleIds: ['developer'] })
+    const work = nextRunStage(wf, analysis.stage, 'next')
     assert.deepEqual(work.action, { type: 'start_stage', nodeId: 'work', roleIds: ['developer'] })
     const review = nextRunStage(wf, work.stage, 'next')
     const tests = nextRunStage(wf, review.stage, 'accept')
@@ -90,10 +115,58 @@ describe('заготовки типов', () => {
     assert.equal(nextRunStage(wf, tests.stage, 'reject').stage.nodeId, 'work')
   })
 
-  it('«Документация»: ревью делает человек, агентного гейта нет', () => {
+  it('«Документация»: источники и примеры проверяет агент, результат принимает человек', () => {
     const wf = presetTaskType('docs')!.settings.workflow!
-    assert.equal(wf.nodes.some((n) => n.type === 'gate'), false)
+    assert.ok(wf.nodes.some((n) => n.type === 'gate' && n.roleId === 'reviewer'))
     assert.ok(wf.nodes.some((n) => n.type === 'human' && n.id === 'review'))
+  })
+
+  it('все объявленные рабочие роли действительно участвуют в этапах или проверках', () => {
+    for (const type of presetTaskTypes()) {
+      const wf = type.settings.workflow!
+      const used = new Set(wf.nodes.flatMap((node) => node.type === 'work' ? node.roleIds?.length ? node.roleIds : type.settings.roles!.filter((r) => r.id !== 'coordinator').map((r) => r.id) : node.type === 'gate' ? [node.roleId] : []))
+      for (const r of type.settings.roles!) if (r.id !== 'coordinator') assert.ok(used.has(r.id), `${type.id}: роль ${r.id} никогда не запускается`)
+    }
+  })
+
+  it('доменные проверки реально исполняются до финальной приёмки', () => {
+    const expected: Record<string, string[]> = {
+      general: ['reviewer', 'qa'], frontend: ['reviewer', 'qa', 'ui-review'],
+      backend: ['reviewer', 'qa'], fullstack: ['reviewer', 'qa', 'ui-review'],
+      mobile: ['qa', 'reviewer', 'qa'], autotests: ['reviewer', 'qa'], docs: ['reviewer']
+    }
+    for (const type of presetTaskTypes()) {
+      const wf = type.settings.workflow!
+      let current = startRunStage(wf)
+      const gates: string[] = []
+      let human = false
+      for (let steps = 0; steps < wf.nodes.length; steps++) {
+        if (current.action.type === 'create_gate') gates.push(current.action.roleId)
+        else if (current.action.type === 'request_human') human = true
+        else if (current.action.type === 'done') break
+        else assert.equal(current.action.type, 'start_stage', `${type.id}: лишний обязательный этап`)
+        current = nextRunStage(wf, current.stage, current.action.type === 'start_stage' ? 'next' : 'accept')
+      }
+      assert.deepEqual(gates, expected[type.id], type.id)
+      assert.ok(human, `${type.id}: нет ручной приёмки`)
+      assert.equal(current.action.type, 'done', type.id)
+    }
+  })
+
+  it('отказ любой проверки возвращает исполнителей и заново запускает всю цепочку проверок', () => {
+    for (const type of presetTaskTypes()) {
+      const wf = type.settings.workflow!
+      for (const check of wf.nodes.filter((n) => n.type === 'gate' || n.type === 'human')) {
+        const rejected = nextRunStage(wf, { nodeId: check.id, visits: { work: 1, [check.id]: 1 } }, 'reject')
+        assert.equal(rejected.action.type, 'start_stage', `${type.id}/${check.id}`)
+        assert.equal(rejected.stage.nodeId, 'work', `${type.id}/${check.id}: возврат в неподходящую роль`)
+        assert.equal(rejected.stage.visits.work, 2)
+        const repeat = nextRunStage(wf, rejected.stage, 'next')
+        const firstGate = wf.nodes.find((n) => n.type === 'gate')
+        assert.ok(firstGate, `${type.id}: нет независимой проверки`)
+        assert.equal(repeat.stage.nodeId, firstGate.id, `${type.id}/${check.id}: старые проверки пропущены`)
+      }
+    }
   })
 
   it('каждый вызов — свежие объекты', () => {
@@ -211,7 +284,7 @@ describe('resolveRunType: какой тип у прогона', () => {
   it('пустая библиотека (старый main) — заготовка «Программирование» из кода', () => {
     const r = resolveRunType({}, [], undefined)
     assert.equal(r.typeId, GENERAL_TASK_TYPE_ID)
-    assert.deepEqual(r.roles, DEFAULT_ROLES)
+    assert.deepEqual(r.roles, presetTaskType(GENERAL_TASK_TYPE_ID)!.settings.roles)
   })
 
   it('правленный тип из библиотеки важнее заготовки из кода', () => {

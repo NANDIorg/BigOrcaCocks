@@ -108,10 +108,14 @@ describe('тип задачи в прогоне', () => {
     const s = store()
     const review = s.createRun('код', undefined, runTypeInput(presetTaskType('general')!))
     const eyes = s.createRun('доки', undefined, runTypeInput(presetTaskType('docs')!))
-    assert.deepEqual(s.enterRunStage(review.id).action, { type: 'start_stage', nodeId: 'work', roleIds: [] })
-    assert.deepEqual(s.enterRunStage(eyes.id).action, { type: 'start_stage', nodeId: 'work', roleIds: ['writer'] })
+    assert.deepEqual(s.enterRunStage(review.id).action, { type: 'start_stage', nodeId: 'analysis', roleIds: ['developer'] })
+    assert.deepEqual(s.enterRunStage(eyes.id).action, { type: 'start_stage', nodeId: 'sources', roleIds: ['writer'] })
+    assert.deepEqual(s.advanceRunStage(review.id, 'next').action, { type: 'start_stage', nodeId: 'work', roleIds: ['developer'] })
+    assert.deepEqual(s.advanceRunStage(eyes.id, 'next').action, { type: 'start_stage', nodeId: 'work', roleIds: ['writer'] })
     assert.deepEqual(s.advanceRunStage(review.id, 'next').action, { type: 'create_gate', nodeId: 'review', roleId: 'reviewer' })
-    assert.deepEqual(s.advanceRunStage(eyes.id, 'next').action, { type: 'request_human', nodeId: 'review' })
+    assert.deepEqual(s.advanceRunStage(eyes.id, 'next').action, { type: 'create_gate', nodeId: 'facts', roleId: 'reviewer' })
+    assert.deepEqual(s.advanceRunStage(review.id, 'accept').action, { type: 'create_gate', nodeId: 'tests', roleId: 'qa' })
+    assert.deepEqual(s.advanceRunStage(eyes.id, 'accept').action, { type: 'request_human', nodeId: 'review' })
   })
 
   it('прогон без снимка графа идёт по графу типа из fallback, а не по дефолтному', () => {

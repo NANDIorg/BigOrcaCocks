@@ -11,6 +11,12 @@ const tpl = (node: Record<string, unknown>, extra: Partial<WfNodeTemplate> = {})
 const codes = (list: { code?: string }[]): (string | undefined)[] => list.map((i) => i.code)
 
 describe('validateNodeTemplate', () => {
+  it('организационная работа сохраняется в библиотеку; следующий этап проверяется в реальном графе', () => {
+    const template = tpl({ type: 'work', runOnly: true, instructions: 'Изучи контекст' })
+    assert.deepEqual(validateNodeTemplate(template), { errors: [], warnings: [] })
+    assert.deepEqual(codes(validateNodeTemplate(template, { scope: 'subtask' }).errors), ['runOnlyScope'])
+    assert.deepEqual(codes(validateNodeTemplate(tpl({ type: 'work', runOnly: 'yes' })).errors), ['runOnlyInvalid'])
+  })
   it('нода любого типа, кроме «Старт», проходит без замечаний', () => {
     const nodes: Record<string, unknown>[] = [
       { type: 'work', roleIds: ['developer'], instructions: 'делай', showcase: { what: 'макеты' } },

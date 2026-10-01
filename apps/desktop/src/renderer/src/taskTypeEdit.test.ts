@@ -8,7 +8,7 @@ import {
   taskTypesStaleMessage, TASK_TYPE_TABS, allTypesInput, defaultTypeInput, typeRemovalConfirm,
   hasProjectTaskTypes, isTypeAvailable, libraryAgents, libraryRoles, patchedTaskType, pickTaskTypeId,
   projectDefaultTypeId, renamedTaskType, resolveTypeSettings, rolesWithAgentOff, storedWorkflowNotes, taskTypeExportApi, taskTypeLibraryApi,
-  taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey
+  taskTypeUsage, taskTypesError, toggledProjectTypes, typeColumnChoices, typeEditorKey, presetTaskTypeInput
 } from './taskTypeEdit'
 import { setLocale } from './i18n'
 
@@ -22,6 +22,27 @@ const own: TaskType = {
 }
 const state: TaskTypesState = { taskTypes: [general, frontend, own], defaultTaskTypeId: 'general' }
 const project = (id: string, extra: Partial<Project> = {}): Project => ({ id, root: `/${id}`, name: id, ...extra })
+
+test('актуальная заготовка создаёт новый тип, сохраняя библиотеку, настройки и выбор по умолчанию', () => {
+  const before = structuredClone(state)
+  const input = presetTaskTypeInput('frontend', state.taskTypes)
+  assert.equal('id' in input, false, 'id заготовки не должен перезаписать сохранённый тип')
+  assert.equal(input.title, 'Фронтенд (2)')
+  assert.deepEqual(input.settings, presetTaskType('frontend')!.settings)
+  assert.deepEqual(state, before)
+  input.settings.roles![1].model = 'custom'
+  input.settings.workflow!.nodes[1].title = 'changed'
+  assert.deepEqual(state, before)
+  assert.notEqual(presetTaskTypeInput('frontend', []).settings.roles![1].model, 'custom')
+})
+
+test('заготовки учитывают язык и совпадения названий; неизвестный id не создаёт пустой тип', () => {
+  setLocale('en')
+  const library = [...state.taskTypes, { ...own, title: 'Frontend (2)' }]
+  assert.equal(presetTaskTypeInput('frontend', library).title, 'Frontend (3)')
+  assert.equal(presetTaskTypeInput('mobile', []).title, 'Mobile development')
+  assert.throws(() => presetTaskTypeInput('missing', []), /Preset is unavailable/)
+})
 
 test('старый preload без taskTypes — понятная ошибка, старый main — «перезапустите»', () => {
   assert.throws(() => taskTypeLibraryApi({} as Partial<OrcaApi>), { message: taskTypesStaleMessage() })

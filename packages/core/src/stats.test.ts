@@ -63,6 +63,26 @@ describe('статистика: цены', () => {
 })
 
 describe('статистика: цены GPT (codex)', () => {
+  it('GPT-6.1 Sol: собственная цена кэша, снапшоты и ранее записанные токены входят в итог', () => {
+    assert.equal(findModelPrice('gpt-6.1-sol')?.cacheRead, 0.1)
+    assert.equal(findModelPrice('openai/GPT-6.1-SOL-2026-09-29')?.input, 2)
+    assert.equal(findModelPrice('gpt-6-sol')?.cacheRead, 0.2)
+    assert.equal(findModelPrice('gpt-6.1-sol-preview'), undefined)
+    const tokens = { input: 1e6, output: 1e6, cacheRead: 1e6, cacheWrite5m: 1e6, cacheWrite1h: 1e6 }
+    assert.equal(tokensCost('gpt-6.1-sol', tokens), 17.1)
+    const now = Date.UTC(2026, 9, 1)
+    const stats = buildProjectStats({
+      projectId: 'p', range: 'all', now, tasks: [task({ id: 't', agent: 'codex' })], runs: [], columns: DEFAULT_COLUMNS,
+      dispatches: [{ id: 'd', taskId: 't', ptyId: 'pty', agent: 'codex', startedAt: now - H, endedAt: now }],
+      usage: () => ({ records: [rec(now - 1000, 'gpt-6.1-sol', tokens.input, tokens.output, tokens)] }),
+      isAlive: () => false
+    })
+    assert.equal(stats.totals.costUsd, 17.1)
+    assert.equal(stats.totals.unpricedTokens, 0)
+    assert.deepEqual(stats.totals.unpricedModels, [])
+    assert.equal(stats.totals.sessionsWithUsage, 1)
+  })
+
   it('id модели: снапшот с датой, регистр и префикс провайдера — те же цены; сосед по префиксу — нет', () => {
     assert.equal(findModelPrice('gpt-5.5')?.output, 30)
     assert.equal(findModelPrice('gpt-5.5-2026-04-23')?.output, 30)
