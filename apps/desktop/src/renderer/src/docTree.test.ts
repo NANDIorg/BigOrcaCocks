@@ -1,8 +1,9 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  alsoIn, buildTree, chainLabel, dayTime, dirAncestors, excerpt, findAll, highlight, longTime, matchPath,
-  readingMinutes, shortTime, type TreeNode
+  absolutePath, alsoIn, buildTree, chainLabel, dayTime, dirAncestors, excerpt, findAll, focusRefreshDue, highlight, longTime,
+  markdownFiles, matchPath, OPEN_DIRS_LIMIT, openDirsOrder, readingMinutes, readOpenDirs, recentFiles, searchFiles, shortTime,
+  writeOpenDirs, type TreeNode
 } from './docTree'
 import { setLocale, translate } from './i18n'
 import type { DocFile, DocGroup } from '../../shared/ipc'
@@ -164,4 +165,67 @@ test('alsoIn — тот же путь в других группах', () => {
   assert.deepEqual(alsoIn(groups, 'project', 'docs/a.md').map((g) => g.source), ['t1'])
   assert.deepEqual(alsoIn(groups, 't1', 'docs/a.md').map((g) => g.source), ['project'])
   assert.deepEqual(alsoIn(groups, 'project', 'b.md'), [])
+})
+
+test('recentFiles — свежие сверху, не больше лимита, исходный список не меняется', () => {
+  const files = [file('a.ts', 1), file('b.md', 3), file('c.json', 2)]
+  assert.deepEqual(recentFiles(files).map((f) => f.path), ['b.md', 'c.json', 'a.ts'])
+  assert.deepEqual(recentFiles(files, 2).map((f) => f.path), ['b.md', 'c.json'])
+  assert.deepEqual(files.map((f) => f.path), ['a.ts', 'b.md', 'c.json'])
+})
+
+test('searchFiles — лучшие совпадения сверху, лимит выдачи и общее число для «ещё N»', () => {
+  const files = [file('src/app.ts', 1), file('docs/app-notes.md', 5), file('app.ts', 2), file('README.md', 9)]
+  const all = searchFiles(files, 'app')
+  assert.equal(all.total, 3)
+  assert.deepEqual(all.hits.map((h) => h.file.path), ['docs/app-notes.md', 'app.ts', 'src/app.ts'])
+  const cut = searchFiles(files, 'app', 2)
+  assert.equal(cut.total, 3)
+  assert.equal(cut.hits.length, 2)
+  assert.deepEqual(searchFiles(files, '   '), { hits: [], total: 0 })
+})
+
+test('markdownFiles — только .md и .markdown для стартового экрана', () => {
+  const files = [file('README.md'), file('a.ts'), file('docs/x.MARKDOWN'), file('.env'), file('page.html')]
+  assert.deepEqual(markdownFiles(files).map((f) => f.path), ['README.md', 'docs/x.MARKDOWN'])
+})
+
+test('absolutePath — разделитель как у корня', () => {
+  assert.equal(absolutePath('/repo', 'a/b'), '/repo/a/b')
+  assert.equal(absolutePath('/repo/', 'a'), '/repo/a')
+  assert.equal(absolutePath('C:\\repo', 'a/b'), 'C:\\repo\\a\\b')
+  assert.equal(absolutePath('/repo', ''), '/repo')
+})
+
+test('focusRefreshDue — не чаще раза в 5 секунд', () => {
+  assert.equal(focusRefreshDue(1000, 5999), false)
+  assert.equal(focusRefreshDue(1000, 6000), true)
+})
+
+test('openDirsOrder — по глубине, без дублей и мусора, лимит OPEN_DIRS_LIMIT', () => {
+  assert.deepEqual(openDirsOrder(['a/b/c', 'b', 'a/b', 'a', 'a', '', 5, null, '/abs', 'x/']), ['a', 'b', 'a/b', 'a/b/c'])
+  const many = Array.from({ length: OPEN_DIRS_LIMIT + 50 }, (_, i) => `d${String(i).padStart(3, '0')}/sub`)
+  const cut = openDirsOrder([...many, 'top'])
+  assert.equal(cut.length, OPEN_DIRS_LIMIT)
+  assert.equal(cut[0], 'top', 'мелкие папки сохраняются первыми')
+})
+
+test('readOpenDirs / writeOpenDirs — per-project, битые данные и недоступный localStorage не ломают окно', () => {
+  const mem = new Map<string, string>()
+  const storage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) }
+  assert.equal(readOpenDirs(storage, 'p1'), null, 'не сохраняли — null: окно раскроет верхний уровень')
+  writeOpenDirs(storage, 'p1', new Set(['a/b', 'a']))
+  assert.deepEqual(readOpenDirs(storage, 'p1'), ['a', 'a/b'])
+  assert.equal(mem.get('orca.docs.open.p1'), '["a","a/b"]')
+  assert.equal(readOpenDirs(storage, 'other'), null)
+  writeOpenDirs(storage, 'p1', [])
+  assert.deepEqual(readOpenDirs(storage, 'p1'), [], 'всё свернули — пустой список, а не «не сохраняли»')
+  mem.set('orca.docs.open.p1', '{bad json')
+  assert.deepEqual(readOpenDirs(storage, 'p1'), [])
+  mem.set('orca.docs.open.p1', '{"a":1}')
+  assert.deepEqual(readOpenDirs(storage, 'p1'), [])
+  const broken = { getItem: (): string => { throw new Error('denied') }, setItem: (): void => { throw new Error('quota') } }
+  assert.deepEqual(readOpenDirs(broken, 'p1'), [])
+  assert.doesNotThrow(() => writeOpenDirs(broken, 'p1', ['a']))
+  assert.equal(readOpenDirs(undefined, 'p1'), null)
 })

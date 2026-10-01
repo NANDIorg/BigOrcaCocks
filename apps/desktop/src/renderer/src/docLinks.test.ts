@@ -1,6 +1,6 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { docLinkHash, docsApi, formatSize, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, staleAppMessage } from './docLinks'
+import { docsApi, formatSize, isRecent, isStaleDocsError, matchesQuery, resolveDocLink, RECENT_MS, staleAppMessage } from './docLinks'
 import { setLocale } from './i18n'
 import type { OrcaApi } from '../../shared/ipc'
 
@@ -26,19 +26,24 @@ test('isStaleDocsError — старый main без хендлеров docs:*', 
   assert.equal(isStaleDocsError('файл вне проекта'), false)
 })
 
-test('resolveDocLink — относительные ссылки от папки текущего документа', () => {
-  assert.equal(resolveDocLink('docs/a.md', 'b.md'), 'docs/b.md')
-  assert.equal(resolveDocLink('docs/a.md', './sub/c.md#раздел'), 'docs/sub/c.md')
-  assert.equal(resolveDocLink('docs/a.md', '../README.md'), 'README.md')
-  assert.equal(resolveDocLink('README.md', 'docs/%D0%BF%D0%BB%D0%B0%D0%BD.md'), 'docs/план.md')
+test('resolveDocLink — любой файл от папки текущего документа, якорь сохраняется', () => {
+  assert.deepEqual(resolveDocLink('docs/a.md', 'b.md'), { path: 'docs/b.md' })
+  assert.deepEqual(resolveDocLink('docs/a.md', './sub/c.md#раздел'), { path: 'docs/sub/c.md', hash: 'раздел' })
+  assert.deepEqual(resolveDocLink('docs/a.md', '../README.md'), { path: 'README.md' })
+  assert.deepEqual(resolveDocLink('README.md', 'docs/%D0%BF%D0%BB%D0%B0%D0%BD.md'), { path: 'docs/план.md' })
+  assert.deepEqual(resolveDocLink('README.md', 'docs/b.md#%D0%A0%D0%BE%D0%BB%D0%B8'), { path: 'docs/b.md', hash: 'Роли' })
+  assert.deepEqual(resolveDocLink('a.md', 'src/index.ts'), { path: 'src/index.ts' })
+  assert.deepEqual(resolveDocLink('docs/a.md', '../shots/logo.png'), { path: 'shots/logo.png' })
+  assert.deepEqual(resolveDocLink('a.md', '.env.example'), { path: '.env.example' }, 'точечные файлы — в дереве как обычные')
+  assert.deepEqual(resolveDocLink('a.md', 'b.md#'), { path: 'b.md' })
 })
 
-test('resolveDocLink — внешние, якоря, абсолютные, не-.md и выход за корень не открываются', () => {
+test('resolveDocLink — внешние, якоря, абсолютные, .git и выход за корень не открываются', () => {
   assert.equal(resolveDocLink('a.md', 'https://x.dev/a.md'), null)
   assert.equal(resolveDocLink('a.md', 'file:///etc/a.md'), null)
   assert.equal(resolveDocLink('a.md', '#section'), null)
   assert.equal(resolveDocLink('a.md', '/etc/a.md'), null)
-  assert.equal(resolveDocLink('a.md', 'src/index.ts'), null)
+  assert.equal(resolveDocLink('a.md', '.git/config'), null)
   assert.equal(resolveDocLink('docs/a.md', '../../secret.md'), null)
   assert.equal(resolveDocLink('a.md', '%E0%A4%A.md'), null)
 })
@@ -55,12 +60,4 @@ test('matchesQuery — все слова, без учёта регистра', (
   assert.equal(matchesQuery(f, ''), true)
   assert.equal(matchesQuery(f, 'kanban docs'), true)
   assert.equal(matchesQuery(f, 'kanban readme'), false)
-})
-
-test('docLinkHash — якорь из ссылки на документ', () => {
-  assert.equal(docLinkHash('b.md#%D0%A0%D0%BE%D0%BB%D0%B8'), 'Роли')
-  assert.equal(docLinkHash('b.md#intro'), 'intro')
-  assert.equal(docLinkHash('b.md'), undefined)
-  assert.equal(docLinkHash('b.md#'), undefined)
-  assert.equal(docLinkHash('b.md#%E0%A4%A'), undefined)
 })

@@ -1142,8 +1142,9 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   .about-kv dt { grid-column: 1 / -1; margin-top: 4px; }
 }
 
-/* Окно «Документы» (DocsModal.tsx), раскладка «Проводник» — docs/mockups/docs-viewer/concept-a.html:
-   дерево (DocsTree) | документ | оглавление (DocsToc). Узкое окно — оглавление прячется (container query). */
+/* Окно «Документы» (DocsModal.tsx), раскладка «Проводник» — docs/design/docs-files/variant-1.html:
+   дерево всех файлов (DocsTree) | просмотр (DocViewer, стили — docs-viewers.css) | оглавление (DocsToc, только markdown).
+   Узкое окно — оглавление прячется, действия с файлом уходят в меню «⋯» (container query). */
 .docs-modal {
   width: min(1480px, calc(100vw - 48px)); height: calc(100vh - 48px); background: var(--page); border-radius: 18px;
   overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,.5);
@@ -1221,9 +1222,39 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-hit b { color: var(--col-input); font-weight: 600; }
 .docs-tree-foot { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .docs-tree-foot kbd + kbd { margin-left: 2px; }
+/* Значок вида файла: цвет — по виду (docView.ts → DocIconName), как в макете. */
+.docs-fi { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+.docs-fi[data-kind='doc'] { color: var(--accent); }
+.docs-fi[data-kind='code'] { color: var(--col-ready); }
+.docs-fi[data-kind='config'], .docs-fi[data-kind='env'] { color: var(--col-input); }
+.docs-fi[data-kind='html'] { color: var(--col-progress); }
+.docs-fi[data-kind='image'] { color: var(--col-done); }
+.docs-fi[data-kind='pdf'] { color: var(--danger); }
+.docs-fi[data-kind='binary'] { color: var(--col-backlog); }
+.docs-row.file .docs-fi .docs-i, .docs-hit-l1 .docs-fi .docs-i { color: inherit; }
+.docs-lnk { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+.docs-lnk .docs-i { width: 12px; height: 12px; }
+.docs-row .docs-chip + .docs-tm { margin-left: 0; }
+.docs-row .docs-nm + .docs-tm, .docs-row .docs-lnk + .docs-tm { margin-left: auto; }
+/* «ещё N совпадений», «показаны последние 200» */
+.docs-more { margin: 6px 8px 2px; padding: 8px 10px; border-radius: 8px; border: 1px dashed var(--chip); color: var(--muted); font-size: 12px; line-height: 1.4; }
+/* в проекте больше DOCS_LIST_LIMIT файлов */
+.docs-trunc {
+  margin: 0 12px 6px; display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; font-size: 12px; line-height: 1.4;
+  background: color-mix(in srgb, var(--col-input) 8%, transparent); border: 1px solid color-mix(in srgb, var(--col-input) 35%, transparent); color: var(--subtle);
+}
+.docs-trunc .docs-i { color: var(--col-input); margin-top: 1px; }
+.docs-trunc b { color: var(--text); font-weight: 600; }
 
 /* центр — документ */
-.docs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.docs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+/* Обёртка просмотра только ловит клики по ссылкам: просмотрщик — прямой flex-ребёнок панели. */
+.docs-view { display: contents; }
+.docs-vsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; flex-shrink: 0; }
+.docs-toast {
+  position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 5; padding: 6px 12px; border-radius: 8px;
+  background: var(--side-2); border: 1px solid var(--line); color: var(--text); font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.35); pointer-events: none;
+}
 .docs-crumbs { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line); min-height: 48px; }
 .docs-path { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
 .docs-path .src, .docs-path .seg, .docs-path .cur { padding: 2px 6px; border-radius: 6px; }
@@ -1231,6 +1262,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-path button.seg { border: 0; background: transparent; color: inherit; font: inherit; }
 .docs-path button.seg:hover { background: var(--side-2); color: var(--text); }
 .docs-path .cur { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.docs-path .cur .docs-i { margin-right: 6px; vertical-align: -2px; color: var(--muted); }
 .docs-path .sep { color: var(--chip); }
 .docs-find { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 16px; border-bottom: 1px solid var(--line); background: var(--frame); color: var(--muted); }
 .docs-find input { flex: 0 1 320px; min-width: 0; height: 28px; border-radius: 8px; border: 1px solid var(--accent); background: var(--side-2); color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; outline: none; }
@@ -1297,6 +1329,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   .docs-grid, .docs-grid.with-toc { grid-template-columns: 230px minmax(0, 1fr); }
   .docs-keys { display: none; }
   .docs-body, .docs-start { padding: 24px 20px 48px; }
+  .docs-acts { display: none; }
 }
 
 /* ---------- Инбокс: запросы к человеку (InboxPanel, RequestCard) ---------- */
@@ -3018,31 +3051,6 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .modal-images-add { align-self: flex-start; }
 .g-modal-images { display: flex; flex-direction: column; gap: 8px; }
 .gt-box h3.gt-images-title { margin-top: 14px; }
-
-/* ---------- вкладка «Файлы» (FilesView.tsx): строки дерева — общие .docs-row из «Документов» ---------- */
-.files-page { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--frame); }
-.files-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--line); min-width: 0; }
-.files-head > .docs-i { width: 18px; height: 18px; color: var(--muted); }
-.files-head h3 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; }
-.files-proj { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
-.files-root { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; min-width: 0; flex-shrink: 2; }
-.files-root bdi { direction: ltr; }
-.files-refresh { width: 28px; height: 28px; flex-shrink: 0; }
-.files-refresh .docs-i { width: 16px; height: 16px; }
-.files-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px 16px; font-size: 13px; }
-.files-tree { max-width: 960px; }
-.files-row { cursor: pointer; }
-.files-row:focus { outline: none; }
-.files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* Имена с диска как есть: двойные и ведущие пробелы не схлопываются, усечение «…» — от .docs-row .docs-nm. */
-.files-row .docs-nm { white-space: pre; }
-.files-note { display: flex; align-items: center; gap: 8px; min-height: 28px; padding-right: 8px; font-size: 12px; }
-.files-note-err .editor-error { margin: 0; overflow-wrap: anywhere; }
-.files-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
-.files-banner .editor-error { margin: 0; overflow-wrap: anywhere; }
-.files-foot { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; padding: 8px 16px; border-top: 1px solid var(--line); min-height: 42px; font-size: 12px; }
-.files-path { font: 12px ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; min-width: 0; flex: 1 1 200px; }
-.files-foot-err { margin: 0; flex-basis: 100%; }
 
 /* Панели доходят до края окна; кнопки macOS/Windows нативные, их DOM-копий нет. */
 html[data-window-chrome='macos'] {
