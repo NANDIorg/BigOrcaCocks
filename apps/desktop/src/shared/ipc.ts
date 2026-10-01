@@ -333,10 +333,10 @@ export const PROJECT_GIT_ERROR_CODES = [
 ] as const
 export type ProjectGitErrorCode = (typeof PROJECT_GIT_ERROR_CODES)[number]
 
-/** Вид записи во вкладке «Файлы»: симлинк показывается как есть, без перехода по нему. */
+/** Вид записи папки проекта (`files:list`): симлинк отдаётся как есть, без перехода по нему. */
 export type ProjectFileKind = 'dir' | 'file' | 'symlink'
 
-/** Запись папки проекта во вкладке «Файлы». Пути renderer собирает сам: `dir + '/' + name`. */
+/** Запись папки проекта (`files:list`). Пути renderer собирает сам: `dir + '/' + name`. */
 export interface ProjectFileEntry {
   name: string
   kind: ProjectFileKind
@@ -1047,7 +1047,8 @@ export interface OrcaApi {
     onFrameEscape(cb: () => void): () => void
   }
   /**
-   * Вкладка «Файлы»: дерево корня проекта `projectId`, только чтение. `projectId` явный, а не «активный проект»:
+   * Папки корня проекта `projectId`, только чтение. Вкладки «Файлы» больше нет (все файлы — в «Документах», `docs:*`):
+   * `files:list` нужен диалогу начального коммита (`.gitignore` в корне). `projectId` явный, а не «активный проект»:
    * пока запрос идёт в main, человек может переключить проект, и ответ был бы про чужой репозиторий. Коды отказов —
    * `PROJECT_FILES_ERROR_CODES`. `files:open` нет намеренно: запуск произвольного файла системой опасен (политика
    * `shared/showcase.ts`); `.md` открываются в «Документах». Появился позже остальных: в старом preload нет — проверяй перед вызовом.

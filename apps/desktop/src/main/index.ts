@@ -23,7 +23,7 @@ import {
   settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
-import { listDocGroups, readDoc, PROJECT_SOURCE, type DocTask } from './docs'
+import { docSourceRoot, docTasks, listDocGroups, readDoc } from './docs'
 import { docsOpenPath, docsPreviewUrl, docsRevealPath, readDocBytes, viewDoc } from './docs-view'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
@@ -753,25 +753,10 @@ function testNotification(): void {
   new Notification({ title: 'orca-board', body, silent: !s.sound }).show()
 }
 
-/**
- * Задачи в работе для «Документов»: у задачи есть worktree на диске и она не в колонке kind=done.
- * После принятия ревью worktree удаляется — документы задачи уже в проекте.
- */
-function docTasks(store: TaskStore): DocTask[] {
-  return store
-    .snapshot()
-    .tasks.filter((t) => t.worktree && store.columnKind(t.status) !== 'done' && existsSync(t.worktree))
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .map((t) => ({ id: t.id, title: t.title, worktree: t.worktree!, branch: t.branch }))
-}
-
 /** Корень источника документов: проект или worktree его задачи в работе. Чужие id — ошибка. */
 function docRoot(source: unknown): string {
   const p = resolveProject()
-  if (source === PROJECT_SOURCE) return p.root
-  const task = docTasks(p.store).find((t) => t.id === source)
-  if (!task) throw new OrcaError('docs.noTaskSource', { id: String(source) })
-  return task.worktree
+  return docSourceRoot(source, p.root, docTasks(p.store))
 }
 
 /** Диалог выбора репозитория для «Добавить проект»; отмена — null. */
@@ -1101,7 +1086,7 @@ function registerIpc(): void {
     const p = resolveProject()
     return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
   })
-  // Вкладка «Файлы» (main/project-files.ts): корень — явного projectId, неизвестный id — обычная ошибка «project not found».
+  // Одна папка проекта (main/project-files.ts) для диалога начального коммита; вкладки «Файлы» нет. Корень — явного projectId, неизвестный id — обычная ошибка «project not found».
   handle('files:list', (_e, projectId: unknown, dir: unknown) => listProjectDir(projectRoot(String(projectId)), dir ?? ''))
   // Только показать в Finder/Проводнике, не openPath: запуск произвольного файла опасен. Симлинк — сам симлинк.
   handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {

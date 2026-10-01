@@ -5,7 +5,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DOC_MAX_BYTES, listDocGroups, listProjectFiles, listWorktreeDocs, readDoc, resolveDocPath } from './docs'
+import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
+import { DOC_MAX_BYTES, PROJECT_SOURCE, docSourceRoot, docTasks, listDocGroups, listProjectFiles, listWorktreeDocs, readDoc, resolveDocPath } from './docs'
+import { OrcaError } from './i18n'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -152,6 +154,20 @@ describe('listProjectFiles', () => {
     assert.equal((await listDocGroups(repo, 'master', []))[0].truncated, undefined)
   })
 
+  it('при обрезке отслеживаемые в приоритете: git отдаёт неотслеживаемые первыми', async () => {
+    // В репозитории 4 отслеживаемых (.gitignore, README.md, docs/plan.md, src/index.ts) и 3 неотслеживаемых.
+    write(repo, '.env', 'SECRET=1\n')
+    write(repo, 'tmp/a.log')
+    write(repo, 'tmp/b.log')
+    const cut = await listProjectFiles(repo, 3)
+    assert.equal(cut.truncated, true)
+    assert.equal(cut.files.length, 3)
+    assert.ok(cut.files.every((f) => !f.untracked))
+    const paths = (await listProjectFiles(repo, 5)).files.map((d) => d.path).sort()
+    assert.deepEqual(paths.filter((p) => !['.env', 'tmp/a.log', 'tmp/b.log'].includes(p)), ['.gitignore', 'README.md', 'docs/plan.md', 'src/index.ts'])
+    assert.equal(paths.length, 5)
+  })
+
   it('без git — обход папок без .git, node_modules и шума ОС, с лимитом', async () => {
     const plain = path.join(tmp, 'plain')
     write(plain, 'a.md')
@@ -168,6 +184,32 @@ describe('listProjectFiles', () => {
     const cut = await listProjectFiles(plain, 2)
     assert.equal(cut.truncated, true)
     assert.equal(cut.files.length, 2)
+  })
+})
+
+describe('docSourceRoot', () => {
+  const noSource = (e: unknown): boolean => e instanceof OrcaError && e.key === 'docs.noTaskSource'
+
+  it('проект, задача в работе с worktree; done, без worktree, удалённый worktree и чужой id — docs.noTaskSource', () => {
+    const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
+    const wt = path.join(tmp, 'wt')
+    mkdirSync(wt)
+    const working = store.createTask({ title: 'в работе' })
+    store.updateTask(working.id, { status: store.columnId('in_progress'), worktree: wt })
+    const done = store.createTask({ title: 'готова' })
+    store.updateTask(done.id, { status: store.columnId('done'), worktree: wt })
+    const bare = store.createTask({ title: 'без worktree' })
+    store.updateTask(bare.id, { status: store.columnId('in_progress') })
+    const gone = store.createTask({ title: 'worktree удалён' })
+    store.updateTask(gone.id, { status: store.columnId('in_progress'), worktree: path.join(tmp, 'нет') })
+
+    const tasks = docTasks(store)
+    assert.deepEqual(tasks.map((t) => t.id), [working.id])
+    assert.equal(docSourceRoot(PROJECT_SOURCE, repo, tasks), repo)
+    assert.equal(docSourceRoot(working.id, repo, tasks), wt)
+    for (const id of [done.id, bare.id, gone.id, 'task_чужая', '', 42, undefined]) {
+      assert.throws(() => docSourceRoot(id, repo, tasks), noSource, String(id))
+    }
   })
 })
 
