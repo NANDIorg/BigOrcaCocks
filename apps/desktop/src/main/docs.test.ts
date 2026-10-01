@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DOC_MAX_BYTES, listDocGroups, listProjectDocs, listWorktreeDocs, readDoc, resolveDocPath } from './docs'
+import { DOC_MAX_BYTES, listDocGroups, listProjectFiles, listWorktreeDocs, readDoc, resolveDocPath } from './docs'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -76,24 +76,103 @@ describe('resolveDocPath', () => {
   })
 })
 
-describe('listProjectDocs', () => {
-  it('отслеживаемые и неотслеживаемые .md без игнорируемых, свежие сверху', () => {
+describe('listProjectFiles', () => {
+  it('все файлы проекта, не только .md: отслеживаемые и новые, без игнорируемых и .git, свежие сверху', async () => {
     write(repo, 'notes/new.md')
     write(repo, 'UPPER.MD')
-    write(repo, 'node_modules/pkg/README.md')
+    write(repo, 'node_modules/pkg/index.js')
     write(repo, 'out/report.md')
     write(repo, 'notes/data.txt')
-    symlinkSync(path.join(repo, 'README.md'), path.join(repo, 'alias.md'))
-    const docs = listProjectDocs(repo)
-    assert.deepEqual(docs.map((d) => d.path).sort(), ['README.md', 'UPPER.MD', 'docs/plan.md', 'notes/new.md'])
-    assert.equal(docs.find((d) => d.path === 'notes/new.md')?.untracked, true)
-    assert.equal(docs.find((d) => d.path === 'README.md')?.untracked, false)
-    for (let i = 1; i < docs.length; i++) assert.ok(docs[i - 1].mtime >= docs[i].mtime)
+    write(repo, '.env', 'SECRET=1\n')
+    write(repo, '.github/workflows/ci.yml')
+    write(repo, 'img/logo.png', '\x89PNG')
+    write(repo, 'docs/.DS_Store')
+    const { files, truncated } = await listProjectFiles(repo)
+    assert.equal(truncated, false)
+    assert.deepEqual(files.map((d) => d.path).sort(), [
+      '.env', '.github/workflows/ci.yml', '.gitignore', 'README.md', 'UPPER.MD', 'docs/plan.md', 'img/logo.png',
+      'notes/data.txt', 'notes/new.md', 'src/index.ts'
+    ])
+    assert.equal(files.find((d) => d.path === 'notes/new.md')?.untracked, true)
+    assert.equal(files.find((d) => d.path === 'src/index.ts')?.untracked, false)
+    assert.ok(!files.some((d) => d.path.startsWith('.git/')))
+    for (let i = 1; i < files.length; i++) assert.ok(files[i - 1].mtime >= files[i].mtime)
+  })
+
+  it('отслеживаемый, но игнорируемый файл виден (как в git status)', async () => {
+    write(repo, 'out/keep.txt')
+    git(repo, 'add', '-f', 'out/keep.txt')
+    write(repo, 'out/skip.txt')
+    const paths = (await listProjectFiles(repo)).files.map((d) => d.path)
+    assert.ok(paths.includes('out/keep.txt'))
+    assert.ok(!paths.includes('out/skip.txt'))
+  })
+
+  it('симлинк на файл — link с размером цели; наружу и битый видны; на папку — нет', async () => {
+    write(repo, 'big.txt', 'x'.repeat(100))
+    write(tmp, 'outside.txt')
+    symlinkSync(path.join(repo, 'big.txt'), path.join(repo, 'alias.txt'))
+    symlinkSync(path.join(tmp, 'outside.txt'), path.join(repo, 'out-link.txt'))
+    symlinkSync(path.join(repo, 'nope.txt'), path.join(repo, 'broken.txt'))
+    symlinkSync(path.join(repo, 'src'), path.join(repo, 'srclink'))
+    symlinkSync(tmp, path.join(repo, 'tmplink'))
+    const files = (await listProjectFiles(repo)).files
+    const alias = files.find((d) => d.path === 'alias.txt')
+    assert.equal(alias?.link, true)
+    assert.equal(alias?.size, 100)
+    assert.equal(files.find((d) => d.path === 'out-link.txt')?.link, true)
+    assert.equal(files.find((d) => d.path === 'broken.txt')?.link, true)
+    assert.equal(files.find((d) => d.path === 'big.txt')?.link, undefined)
+    assert.ok(!files.some((d) => d.path.startsWith('srclink') || d.path.startsWith('tmplink')))
+  })
+
+  it('удалённый с диска отслеживаемый файл и подмодуль-папка не попадают', async () => {
+    rmSync(path.join(repo, 'docs/plan.md'))
+    const sub = path.join(tmp, 'sub')
+    execFileSync('git', ['init', '-q', '-b', 'master', sub])
+    write(sub, 'a.txt')
+    git(sub, 'add', '-A')
+    git(sub, 'commit', '-qm', 'sub')
+    git(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/sub')
+    const paths = (await listProjectFiles(repo)).files.map((d) => d.path)
+    assert.ok(!paths.includes('docs/plan.md'))
+    assert.ok(!paths.some((p) => p.startsWith('vendor/sub')))
+    assert.ok(paths.includes('.gitmodules'))
+  })
+
+  it('больше лимита — первые limit и truncated', async () => {
+    for (let i = 0; i < 10; i++) write(repo, `many/f${i}.txt`)
+    const full = await listProjectFiles(repo)
+    assert.equal(full.truncated, false)
+    const cut = await listProjectFiles(repo, 5)
+    assert.equal(cut.truncated, true)
+    assert.equal(cut.files.length, 5)
+    const groups = await listDocGroups(repo, 'master', [], 5)
+    assert.equal(groups[0].truncated, true)
+    assert.equal((await listDocGroups(repo, 'master', []))[0].truncated, undefined)
+  })
+
+  it('без git — обход папок без .git, node_modules и шума ОС, с лимитом', async () => {
+    const plain = path.join(tmp, 'plain')
+    write(plain, 'a.md')
+    write(plain, 'src/b.ts')
+    write(plain, 'node_modules/x/index.js')
+    write(plain, '.git/config')
+    write(plain, '.env')
+    write(plain, 'Thumbs.db')
+    symlinkSync(path.join(plain, 'src'), path.join(plain, 'srclink'))
+    const { files, truncated } = await listProjectFiles(plain)
+    assert.equal(truncated, false)
+    assert.deepEqual(files.map((d) => d.path).sort(), ['.env', 'a.md', 'src/b.ts'])
+    assert.ok(files.every((d) => !d.untracked))
+    const cut = await listProjectFiles(plain, 2)
+    assert.equal(cut.truncated, true)
+    assert.equal(cut.files.length, 2)
   })
 })
 
 describe('listWorktreeDocs', () => {
-  it('только .md, изменённые в ветке задачи: коммиты, правки и новые файлы', () => {
+  it('только .md, изменённые в ветке задачи: коммиты, правки и новые файлы', async () => {
     const wt = path.join(tmp, 'wt')
     git(repo, 'worktree', 'add', '-q', '-b', 'orca/t1', wt)
     write(wt, 'docs/committed.md')
@@ -112,7 +191,7 @@ describe('listWorktreeDocs', () => {
     assert.equal(docs.find((d) => d.path === 'fresh.md')?.untracked, true)
     assert.equal(docs.find((d) => d.path === 'docs/committed.md')?.untracked, false)
 
-    const groups = listDocGroups(repo, 'master', [
+    const groups = await listDocGroups(repo, 'master', [
       { id: 't1', title: 'Задача', worktree: wt, branch: 'orca/t1' },
       { id: 't2', title: 'Без .md', worktree: path.join(tmp, 'нет'), branch: 'orca/t2' }
     ])
@@ -122,7 +201,7 @@ describe('listWorktreeDocs', () => {
 })
 
 describe('репозиторий без коммитов', () => {
-  it('listDocGroups с unborn-корнем и unborn-worktree не падает, новые .md видны', () => {
+  it('listDocGroups с unborn-корнем и unborn-worktree не падает, новые .md видны', async () => {
     const empty = path.join(tmp, 'empty')
     execFileSync('git', ['init', '-q', '-b', 'main', empty])
     write(empty, 'notes.md')
@@ -130,7 +209,7 @@ describe('репозиторий без коммитов', () => {
     git(empty, 'add', 'staged.md')
 
     assert.deepEqual(listWorktreeDocs(empty, 'main').map((d) => d.path), ['notes.md'])
-    const groups = listDocGroups(empty, 'main', [{ id: 't1', title: 'Задача', worktree: empty, branch: 'main' }])
+    const groups = await listDocGroups(empty, 'main', [{ id: 't1', title: 'Задача', worktree: empty, branch: 'main' }])
     assert.deepEqual(groups.map((g) => g.source), ['project', 't1'])
     assert.ok(groups[0].files.some((f) => f.path === 'notes.md'))
   })

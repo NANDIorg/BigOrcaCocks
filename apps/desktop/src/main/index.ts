@@ -23,7 +23,8 @@ import {
   settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
-import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
+import { listDocGroups, readDoc, PROJECT_SOURCE, type DocTask } from './docs'
+import { docsOpenPath, docsPreviewUrl, docsRevealPath, readDocBytes, viewDoc } from './docs-view'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
@@ -1061,11 +1062,19 @@ function registerIpc(): void {
     return listDocGroups(p.root, currentBranch(p.root), docTasks(p.store))
   })
   handle('docs:read', (_e, source: unknown, path: unknown) => readDoc(docRoot(source), path))
+  // Любой файл источника (main/docs-view.ts): бинарь, не UTF-8, большой и PDF — `stub`, не ошибка.
+  handle('docs:view', (_e, source: unknown, path: unknown, opts: unknown) => viewDoc(docRoot(source), path, opts))
+  handle('docs:bytes', (_e, source: unknown, path: unknown) => readDocBytes(docRoot(source), path))
+  // Токен протокола показа на корень источника — всегда без сети: HTML проекта — недоверенный код.
+  handle('docs:previewUrl', (_e, source: unknown, path: unknown) => docsPreviewUrl(previewTokens, docRoot(source), path))
+  // Открыть приложением системы — только белый список показа (по пути и по цели симлинка); показать в папке — любой файл.
   handle('docs:open', async (_e, source: unknown, path: unknown) => {
-    const err = await shell.openPath(resolveDocPath(docRoot(source), path))
+    const err = await shell.openPath(await docsOpenPath(docRoot(source), path))
     if (err) throw new Error(err)
   })
-  handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  handle('docs:reveal', async (_e, source: unknown, path: unknown) => {
+    shell.showItemInFolder(await docsRevealPath(docRoot(source), path))
+  })
   // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
   // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
