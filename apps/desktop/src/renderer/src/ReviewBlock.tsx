@@ -5,7 +5,7 @@ import type { ReviewInfo } from '../../shared/ipc'
 import { useT } from './i18n'
 import { ipcErrorCode, ipcErrorMessage } from './ipcError'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageDrafts'
+import { useAttachmentDrafts } from './attachmentDrafts'
 
 interface Props {
   taskId: string
@@ -29,7 +29,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject, stalled }: Pr
   const [feedback, setFeedback] = useState('')
   const [mode, setMode] = useState<'view' | 'reject'>('view')
   const [busy, setBusy] = useState(false)
-  const attachments = useImageAttachments()
+  const attachments = useAttachmentDrafts()
 
   useEffect(() => {
     window.orca.review.info(taskId).then(setInfo).catch((e: unknown) => setError(ipcErrorMessage(e)))

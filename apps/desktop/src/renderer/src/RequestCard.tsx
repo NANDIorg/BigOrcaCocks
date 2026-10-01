@@ -7,7 +7,7 @@ import { bodyWithoutShowcases, type RequestShowcase } from './showcase'
 import { ipcErrorMessage } from './useAutoSave'
 import { t as tr, useT, type TKey } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageDrafts'
+import { useAttachmentDrafts } from './attachmentDrafts'
 
 /** Подпись вида запроса на текущем языке. */
 export function requestKindTitle(kind: HumanRequestKind): string {
@@ -118,7 +118,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const clarifyRef = useRef<HTMLTextAreaElement>(null)
   // Картинки — только у режима замечаний («Уточнить» ответа, «Вернуть» этапа): к «Принять» и ответу на вопрос они не относятся.
-  const attachments = useImageAttachments()
+  const attachments = useAttachmentDrafts()
   const hints = active && !compact
   const t = useT()
 

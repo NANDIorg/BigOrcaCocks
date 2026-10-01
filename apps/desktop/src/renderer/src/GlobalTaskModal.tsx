@@ -18,9 +18,8 @@ import { useT } from './i18n'
 import { agentTitle, builtinText } from './defaultTitles'
 import { ImageAttachments } from './ImageAttachments'
 import { RunImageGallery } from './RunImageGallery'
-import { IMAGE_ACCEPT, imageUsage, pasteKeys } from './imagePaste'
+import { acceptFor, pasteKeys, useAttachmentDrafts, usageOf } from './attachmentDrafts'
 import { canSaveGlobal, imagesEditable } from './runImages'
-import { useImageAttachments } from './useImageAttachments'
 import { lightboxOpen } from './imageViewer'
 
 interface Props {
@@ -92,7 +91,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
   const savedImages = (global?.images ?? []).filter((i) => !removedImages.includes(i.id))
   // Создание — всегда можно; правка — пока задача не начата (то же правило, что у смены типа), иначе только просмотр.
   const canEditImages = !global || imagesEditable(global, statusKind)
-  const attach = useImageAttachments({ saved: imageUsage(savedImages), locked: busy || !canEditImages })
+  const attach = useAttachmentDrafts({ saved: usageOf(savedImages), locked: busy || !canEditImages, legacyImages: true })
   const actions = global ? globalTaskActions(global, statusKind, live, props.approvals) : undefined
   const selectedType = editing ? undefined
     : types?.find((ty) => ty.id === pickedTypeId) ?? types?.find((ty) => ty.id === defaultTypeId) ?? types?.[0]
@@ -135,7 +134,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
         // Только явный выбор человека: у прогона без typeId подставленный по умолчанию тип не должен записаться сам.
         ...(editTypes && pickedTypeId !== null ? { typeId: pickedTypeId } : {}),
         ...(priorityEditable ? { priority } : {}),
-        ...(canEditImages && attach.images.length > 0 ? { images: attach.payload() } : {}),
+        ...(canEditImages && attach.items.length > 0 ? { images: attach.payload() } : {}),
         ...(editing && removedImages.length > 0 ? { removeImageIds: removedImages } : {})
       })
     } catch (e) {
@@ -194,7 +193,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             placeholder={t('global.modal.descriptionPlaceholder')}
           />
         </label>
-        {(canEditImages || savedImages.length > 0 || attach.images.length > 0) && (
+        {(canEditImages || savedImages.length > 0 || attach.items.length > 0) && (
           <div className="g-modal-images" role="group" aria-label={t('global.modal.images')}>
             {savedImages.length > 0 && global && (
               <RunImageGallery
@@ -206,8 +205,8 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
               />
             )}
             <ImageAttachments
-              items={attach.images.map((img) => ({ key: String(img.id), url: img.url }))}
-              reading={attach.reading}
+              items={attach.items.map((it) => ({ key: String(it.id), url: it.url }))}
+              reading={attach.reading ? 1 : 0}
               disabled={busy}
               onRemove={(key) => attach.remove(Number(key))}
             />
@@ -216,11 +215,11 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
                 <input
                   ref={fileInput}
                   type="file"
-                  accept={IMAGE_ACCEPT}
+                  accept={acceptFor(attach.mode)}
                   multiple
                   hidden
                   onChange={(e) => {
-                    attach.addFiles(e.target.files ?? [])
+                    attach.add([...(e.target.files ?? [])])
                     e.target.value = '' // тот же файл можно выбрать повторно
                   }}
                 />
@@ -293,7 +292,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             </select>
           </label>
         )}
-        {(attach.error ?? error) && <span className="error-text">{attach.error ?? error}</span>}
+        {(attach.error ?? error) && <span className="error-text" style={{ whiteSpace: 'pre-line' }}>{attach.error ?? error}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>{t('global.cancel')}</button>
           <button className="btn-primary" disabled={!canSave} onClick={() => void save()}>
