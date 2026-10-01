@@ -2,7 +2,7 @@
 import type { AgentSpec } from './agents'
 import type { AssistantSettings, Question, Role, StageDecision, Task } from './types'
 import type { WfDecisionOption, WfWorkStage } from './workflow'
-import { returnImagesSection } from './attachments.ts'
+import { attachmentsSection } from './attachments.ts'
 
 /**
  * Какую служебную инструкцию Orca получает агент: `coordinator` — при запуске координатора
@@ -155,7 +155,7 @@ export function workerTaskPrompt(
   stage?: WfWorkStage
 ): string {
   if (!task.answerFor) {
-    const images = returnImagesSection(task.feedbackImages, 'worker')
+    const images = attachmentsSection(task.feedbackImages, 'worker')
     const feedback = task.feedback ? `\n\n# Замечания после ревью\n\n${task.feedback}${images ? `\n\n${images}` : ''}` : ''
     return [`# Задача: ${task.title}`, '', task.spec || '(описание не задано)', ...answersSection(answers), ...stageSection(stage, answers.some((q) => q.answer !== undefined)), feedback].join('\n')
   }
@@ -174,7 +174,7 @@ export function workerTaskPrompt(
   if (task.feedback) {
     if (previousAnswer) parts.push('', '# Прошлый ответ', '', previousAnswer)
     parts.push('', '# Уточнение к прошлому ответу', '', task.feedback)
-    const images = returnImagesSection(task.feedbackImages, 'worker')
+    const images = attachmentsSection(task.feedbackImages, 'worker')
     if (images) parts.push('', images)
     parts.push('', 'Дай новый полный ответ с учётом уточнения.')
   }
@@ -490,7 +490,7 @@ function coordinatorStageSection(
   if (stage.instructions?.trim()) parts.push('', '## Инструкции этапа', '', stage.instructions.trim())
   if (stage.feedback?.trim()) {
     parts.push('', '## Замечания проверки или человека', '', stage.feedback.trim())
-    const images = returnImagesSection(stage.images, 'coordinator')
+    const images = attachmentsSection(stage.images, 'coordinator')
     if (images) parts.push('', images)
     parts.push('', 'Это возврат в этап: создай подзадачи-исправления по замечаниям.')
   }
@@ -560,7 +560,7 @@ export function resumeCoordinatorObjective(
       `${COORDINATOR_RETURN_HEADING}: человек проверил результат и вернул задачу в работу — действуй по разделу «${COORDINATOR_RESUME_SECTION}» инструкции:`,
       last.text
     )
-    const images = returnImagesSection(last.images, 'coordinator')
+    const images = attachmentsSection(last.images, 'coordinator')
     if (images) parts.push('', images)
     const earlier = returns.slice(0, -1)
     if (earlier.length > 0) parts.push('', 'Прошлые уточнения (уже учтены в прошлых запусках):', ...earlier.map((r) => `- ${r.text}`))
