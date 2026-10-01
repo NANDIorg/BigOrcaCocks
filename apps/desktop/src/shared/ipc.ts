@@ -3,6 +3,7 @@ import type { NotificationSettings, NotificationSettingsPatch } from './notifica
 import type { WindowChromeMode } from './window-chrome'
 import type { AppearanceSettings } from './appearance'
 import type { ConversationStatus, ConversationMessage, ConversationToolCall, ConversationInteraction, InteractionAnswer } from './assistant-conversation'
+import type { DocViewKind } from './docs-view'
 export type { ConversationInteraction, InteractionAnswer } from './assistant-conversation'
 
 export interface PtySpawnOptions {
@@ -332,10 +333,10 @@ export const PROJECT_GIT_ERROR_CODES = [
 ] as const
 export type ProjectGitErrorCode = (typeof PROJECT_GIT_ERROR_CODES)[number]
 
-/** Вид записи во вкладке «Файлы»: симлинк показывается как есть, без перехода по нему. */
+/** Вид записи папки проекта (`files:list`): симлинк отдаётся как есть, без перехода по нему. */
 export type ProjectFileKind = 'dir' | 'file' | 'symlink'
 
-/** Запись папки проекта во вкладке «Файлы». Пути renderer собирает сам: `dir + '/' + name`. */
+/** Запись папки проекта (`files:list`). Пути renderer собирает сам: `dir + '/' + name`. */
 export interface ProjectFileEntry {
   name: string
   kind: ProjectFileKind
@@ -360,6 +361,7 @@ export const PROJECT_FILES_ERROR_CODES = [
   'files.hidden', // `.git`
   'files.notFound', // папки/файла уже нет (удалили после последнего чтения)
   'files.notDir', // list на файле
+  'files.notFile', // ожидался файл, а это папка, FIFO, сокет, устройство (`docs:view/bytes/previewUrl/open`)
   'files.rootMissing', // корня проекта нет на диске
   'files.readFailed' // прочее: доступ, ввод-вывод, слишком длинный путь; параметры path, error
 ] as const
@@ -470,7 +472,10 @@ export interface RuleFile {
   eol: 'lf' | 'crlf'
 }
 
-/** Markdown-файл в просмотрщике «Документы». */
+/**
+ * Файл в просмотрщике «Документы»: в группе `project` — любой файл проекта, в группах задач — `.md`. Старый main
+ * отдаёт и в `project` только `.md`: renderer не должен на это полагаться ни в ту, ни в другую сторону.
+ */
 export interface DocFile {
   /** Относительно корня источника (проекта или worktree задачи), через `/`. */
   path: string
@@ -478,6 +483,8 @@ export interface DocFile {
   mtime: number
   /** Не отслеживается git'ом — новый файл. */
   untracked: boolean
+  /** Симлинк на файл (цель может быть вне корня или битой — это выяснится при `docs:view`). Нет поля — не симлинк. */
+  link?: boolean
 }
 
 /** Файл показа для превью (`showcase:read`): mime по расширению и содержимое. */
@@ -507,7 +514,64 @@ export interface DocGroup {
   title: string
   branch?: string
   files: DocFile[]
+  /** Только `project`: файлов больше `DOCS_LIST_LIMIT` (`shared/docs-view.ts`) — отданы первые. */
+  truncated?: boolean
 }
+
+/**
+ * Почему содержимое файла не показывается (`DocView.stub`) — это обычный ответ `docs:view`, не ошибка: `binary` —
+ * NUL в первых `DOC_SNIFF_BYTES` или бинарное расширение; `notUtf8` — невалидный UTF-8 (других кодировок не угадываем);
+ * `tooBig` — больше `DOC_TEXT_MAX_BYTES` (текст) или `DOC_IMAGE_MAX_BYTES` (картинка); `pdf` — PDF только «Открыть».
+ */
+export type DocStub = 'binary' | 'notUtf8' | 'tooBig' | 'pdf'
+
+/**
+ * Ответ `docs:view`: как показать файл и, для текстовых видов, его содержимое. Инварианты:
+ * - `kind` — вид по `docKindOf(path)`; `unknown` main уточняет по содержимому до `text` или `binary`. У заглушки это
+ *   предполагаемый вид (`.ts` с NUL — `kind: 'text'`, `stub: 'binary'`), по нему renderer выбирает иконку и текст;
+ * - `stub` задан ⇒ `text` нет. `stub: 'pdf'` ⇔ `kind: 'pdf'`;
+ * - `text` без `stub` есть всегда у `markdown` и `text`; у `html` и SVG (`kind: 'image'`) — только при `opts.source`;
+ *   у прочих картинок не бывает (байты — `docs:bytes`). Это UTF-8 без BOM, не больше `DOC_TEXT_MAX_BYTES`, переводы
+ *   строк как в файле;
+ * - `mime` есть у `image` и `html`;
+ * - `size` и `mtime` — цели симлинка; `mtime` — мс эпохи.
+ */
+export interface DocView {
+  kind: DocViewKind
+  size: number
+  mtime: number
+  mime?: string
+  text?: string
+  stub?: DocStub
+  /**
+   * Кнопка «Открыть» приложением системы разрешена: расширение из `SHOWCASE_FILE_TYPES` и у пути, и у цели симлинка
+   * (`a.png` → `run.sh` не откроется). Иначе `docs:open` отказывает `docs.notOpenable`.
+   */
+  openable: boolean
+}
+
+/** Параметры `docs:view`. */
+export interface DocViewOptions {
+  /** Вернуть исходный текст `html` и SVG для вкладки «Код» (у `markdown` и `text` текст есть и так). */
+  source?: boolean
+}
+
+/** Байты картинки (`docs:bytes`): тот же вид, что у показа, — подходит для `useBlobUrl`. */
+export type DocBytes = ShowcaseFileData
+
+/** Адрес для изолированного фрейма (`docs:previewUrl`): `url` — HTML-страница, `base` — корень для картинок markdown. */
+export type DocPreviewUrl = ShowcasePreviewUrl
+
+/**
+ * Отказы новых каналов `docs:*`, которых нет у `files:*`. Ошибки пути (`files.badPath`, `files.outside`, `files.hidden`,
+ * `files.notFound`, `files.notFile`, `files.rootMissing`, `files.readFailed`) — из `PROJECT_FILES_ERROR_CODES`: резолвер
+ * общий. Коды `docs.notMarkdown`, `docs.tooBig` и прежние остаются только за `docs:read`.
+ */
+export const DOC_VIEW_ERROR_CODES = [
+  'docs.notOpenable', // `docs:open`: расширение (пути или цели симлинка) не из `SHOWCASE_FILE_TYPES`
+  'docs.noPreview' // `docs:previewUrl` не для html/markdown или путь со скрытым сегментом (`.env`, `.github/…`); `docs:bytes` не для картинки
+] as const
+export type DocViewErrorCode = (typeof DOC_VIEW_ERROR_CODES)[number]
 
 /** Фильтр списка запросов к человеку активного проекта. */
 export interface RequestListOptions {
@@ -555,6 +619,16 @@ export interface OnboardingCompleteInput {
 /** Команды системного меню; навигация выполняется в существующем интерфейсе. */
 export type AppMenuAction = 'settings' | 'checkUpdates' | 'addProject'
 
+/** Только данные меню: команды остаются в main, renderer не получает роли или внешние адреса для вызова. */
+export interface AppMenuItem {
+  id: string
+  label: string
+  hint?: string
+  disabled?: boolean
+  separatorBefore?: boolean
+  children?: AppMenuItem[]
+}
+
 export interface OrcaApi {
   app: {
     /** Режим рамки этого окна; нет в старом preload. Read-only, без IPC управления окном. */
@@ -565,6 +639,13 @@ export interface OrcaApi {
     setSettings(patch: AppSettingsPatch): Promise<AppSettings>
     /** Показать тестовое уведомление в обход фильтров (кроме звука и превью). */
     testNotification(): Promise<void>
+    /** Авторское меню Windows: локализованный снимок и вызов разрешённой команды; нет в старом preload. */
+    getMenu?(): Promise<AppMenuItem[]>
+    invokeMenu?(id: string): Promise<void>
+    /** Закрывает режим меню и возвращает обработку нативных сочетаний. */
+    dismissMenu?(): Promise<void>
+    /** Текущее состояние и переходы fullscreen; WCO Windows сохраняет visible даже без caption-кнопок. */
+    onWindowFullscreen?(cb: (fullscreen: boolean) => void): () => void
     /** Опционально для старого preload; подписка также сообщает main, что интерфейс готов к команде. */
     onMenuAction?(cb: (action: AppMenuAction) => void): () => void
     /**
@@ -899,14 +980,37 @@ export interface OrcaApi {
     respond(ptyId: string, requestId: string, answer: InteractionAnswer): Promise<void>
     onMessage(ptyId: string, cb: (u: AssistantChatUpdate) => void): () => void
   }
-  /** .md-файлы активного проекта и worktree его задач в работе. Путь — только относительный, внутри источника. */
+  /**
+   * «Документы»: файлы активного проекта и `.md` worktree его задач в работе (docs/architecture.md → «IPC: документы»).
+   * `source` — `'project'` или id задачи в работе (иначе `docs.noTaskSource`); путь — только относительный, через `/`,
+   * внутри источника, без `.git`. Отказы пути — `PROJECT_FILES_ERROR_CODES`, новых каналов — `DOC_VIEW_ERROR_CODES`;
+   * узнавать по `ipcErrorCode`, не по тексту.
+   */
   docs: {
+    /** Группа `project` — все файлы проекта (уважая `.gitignore`), группы задач — только `.md`. Старый main и в `project` отдаёт только `.md`. */
     list(): Promise<DocGroup[]>
-    /** Содержимое .md (не больше 2 МБ); путь вне источника, симлинк наружу, не-.md — ошибка. */
+    /** Содержимое .md (не больше 2 МБ); путь вне источника, симлинк наружу, не-.md — ошибка. Для любых файлов — `view`. */
     read(source: string, path: string): Promise<string>
-    /** Открыть файл в приложении системы по умолчанию. */
+    /**
+     * Как показать файл и его текст (`DocView`). Бинарь, не UTF-8, слишком большой и PDF — не ошибка, а `stub`.
+     * Не файл (папка, FIFO) — `files.notFile`. Появился позже остальных: нет в старом preload, а старый main отвечает
+     * «No handler registered for 'docs:view'» — проверяй наличие и показывай «перезапустите приложение».
+     */
+    view?(source: string, path: string, opts?: DocViewOptions): Promise<DocView>
+    /** Байты картинки (`kind: 'image'`) не больше `DOC_IMAGE_MAX_BYTES`; не картинка — `docs.noPreview`. Совместимость — как у `view`. */
+    bytes?(source: string, path: string): Promise<DocBytes>
+    /**
+     * Адрес `orca-preview://` на корень источника, **всегда без сети** (параметра нет намеренно: HTML проекта —
+     * недоверенный код). `url` — страница для `<iframe sandbox="allow-scripts">` (HTML), `base` — для относительных
+     * картинок markdown. Не html/markdown или путь со скрытым сегментом — `docs.noPreview`. Совместимость — как у `view`.
+     */
+    previewUrl?(source: string, path: string): Promise<DocPreviewUrl>
+    /**
+     * Открыть файл приложением системы по умолчанию: только расширения `SHOWCASE_FILE_TYPES`, проверка и по пути, и по
+     * цели симлинка; иначе `docs.notOpenable` (`.sh`, `.app`, `.command` не запускаются никогда). Старый main открывает только `.md`.
+     */
     open(source: string, path: string): Promise<void>
-    /** Показать файл в Finder/Проводнике. */
+    /** Показать любой файл источника в Finder/Проводнике; симлинк — сам симлинк, не цель. Ничего не запускает. Старый main — только `.md`. */
     reveal(source: string, path: string): Promise<void>
   }
   /**
@@ -943,7 +1047,8 @@ export interface OrcaApi {
     onFrameEscape(cb: () => void): () => void
   }
   /**
-   * Вкладка «Файлы»: дерево корня проекта `projectId`, только чтение. `projectId` явный, а не «активный проект»:
+   * Папки корня проекта `projectId`, только чтение. Вкладки «Файлы» больше нет (все файлы — в «Документах», `docs:*`):
+   * `files:list` нужен диалогу начального коммита (`.gitignore` в корне). `projectId` явный, а не «активный проект»:
    * пока запрос идёт в main, человек может переключить проект, и ответ был бы про чужой репозиторий. Коды отказов —
    * `PROJECT_FILES_ERROR_CODES`. `files:open` нет намеренно: запуск произвольного файла системой опасен (политика
    * `shared/showcase.ts`); `.md` открываются в «Документах». Появился позже остальных: в старом preload нет — проверяй перед вызовом.

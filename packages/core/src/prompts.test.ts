@@ -9,6 +9,65 @@ import {
 import { getAgent } from './agents.ts'
 import { returnImagesSection } from './attachments.ts'
 import { withRoleInstructions, withAgentRules, agentSystemPrompt, agentLanguageDirective, AGENT_LANGUAGE_HEADING } from './types.ts'
+import { presetTaskType, presetTaskTypes } from './task-types.ts'
+
+describe('инструкции предметных заготовок', () => {
+  const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
+  const coordinator = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
+
+  it('роль и правила попадают в системный промпт вместе со штатным протоколом воркера', () => {
+    for (const type of presetTaskTypes()) for (const role of type.settings.roles!) {
+      const system = agentSystemPrompt(role.id === 'coordinator' ? coordinator : worker, { projectRules: type.settings.agentRules, role })
+      assert.ok(role.systemPrompt?.trim(), `${type.id}/${role.id}: нет предметных инструкций`)
+      assert.ok(system.includes(role.systemPrompt!.trim()), `${type.id}/${role.id}: потеряны инструкции роли`)
+      assert.ok(system.includes(type.settings.agentRules!), `${type.id}/${role.id}: потеряны общие правила`)
+      if (role.id !== 'coordinator') assert.ok(system.includes('orca-board done --summary'))
+    }
+  })
+
+  it('QA проверяет без правок, ограничения проекта и реальные результаты сохраняются', () => {
+    for (const type of presetTaskTypes()) {
+      const rules = type.settings.agentRules!
+      assert.match(rules, /Требования задачи и проекта важнее/)
+      assert.match(rules, /ручную проверку человеку/)
+      const qa = type.settings.roles!.find((r) => r.id === 'qa')
+      if (qa) {
+        assert.match(qa.systemPrompt!, /код, тесты и настройки не меняй/)
+        assert.match(qa.systemPrompt!, /не проверено и почему/)
+        assert.match(qa.systemPrompt!, /необходимого доступа или решения нет, запроси/)
+      }
+    }
+    assert.match(worker, /QA: проверяемые код, тесты и настройки не меняй/)
+    assert.match(worker, /Пустой diff не означает отсутствие результата/)
+    assert.match(worker, /не запускай бесконечно заведомо невозможную проверку/)
+  })
+
+  it('подготовка — ответ координатору; критерии и полные ответы переживают смену этапа и перезапуск', () => {
+    assert.match(coordinator, /Подготовительный этап[\s\S]*--answer-for coordinator/)
+    assert.match(coordinator, /после перезапуска восстанови их через[\s\S]*orca-board task answer --task <id>/)
+    assert.match(coordinator, /Включи критерии, ограничения, источники и id задач-ответов/)
+    assert.match(presetTaskType('docs')!.settings.roles!.find((r) => r.id === 'reviewer')!.systemPrompt!, /ответ без файлов/)
+    const docs = presetTaskType('docs')!
+    const lastWork = docs.settings.workflow!.nodes.find((n) => n.id === 'work')!
+    assert.match(lastWork.instructions!, /--answer-for coordinator/)
+    assert.match(lastWork.instructions!, /полный итог в сводку этого этапа/)
+    assert.match(docs.settings.roles!.find((r) => r.id === 'coordinator')!.systemPrompt!, /--answer-for human создал бы лишнюю приёмку/)
+    assert.match(coordinator, /человек примет ответ дважды/)
+  })
+
+  it('специализации задают разные риски; TMS, вторая платформа и публикация не навязываются', () => {
+    const prompt = (id: string, roleId: string): string => presetTaskType(id)!.settings.roles!.find((r) => r.id === roleId)!.systemPrompt!
+    assert.match(prompt('frontend', 'developer'), /гонки и отмену запросов/)
+    assert.match(prompt('frontend', 'developer'), /клавиатуру, видимый фокус/)
+    assert.match(prompt('backend', 'developer'), /транзакции, конкурентные запросы/)
+    assert.match(prompt('backend', 'developer'), /не на рабочих данных/)
+    assert.match(prompt('mobile', 'developer'), /фон\/возврат, восстановление состояния/)
+    assert.match(prompt('mobile', 'developer'), /Не добавляй вторую платформу/)
+    assert.match(prompt('autotests', 'autotester'), /TMS\/id тест-кейса и тикет указывай, если проект их использует/)
+    assert.match(prompt('autotests', 'autotester'), /красный воспроизводитель допустим только как явная цель/)
+    assert.match(prompt('docs', 'writer'), /актуальными исходниками\/контрактами/)
+  })
+})
 
 describe('builtinPromptKind', () => {
   it('координаторская инструкция только у роли coordinator', () => {

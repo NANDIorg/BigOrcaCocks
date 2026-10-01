@@ -21,6 +21,7 @@ import { RunImageGallery } from './RunImageGallery'
 import { IMAGE_ACCEPT, imageUsage, pasteKeys } from './imagePaste'
 import { canSaveGlobal, imagesEditable } from './runImages'
 import { useImageAttachments } from './useImageAttachments'
+import { lightboxOpen } from './imageViewer'
 
 interface Props {
   /** Правка существующей; без неё — создание новой. */
@@ -109,7 +110,8 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
+      // Esc поверх открытой картинки закрывает только её (ImageLightbox слушает тот же window).
+      if (e.key === 'Escape' && !lightboxOpen()) {
         e.stopPropagation()
         close()
       }

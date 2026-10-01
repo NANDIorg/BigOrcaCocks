@@ -1,4 +1,4 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Вкладка «Файлы» на настоящем git-репозитории во временной папке.
+// Запуск: pnpm --filter @orca-board/desktop test. Папка проекта (`files:*`) и `resolveProjectPath` на настоящем git-репозитории во временной папке.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -284,7 +284,7 @@ describe('тексты ошибок', () => {
   })
 })
 
-// ---------- QA интеграции вкладки «Файлы»: сложные раскладки и то, что нашли при прогоне на живых данных ----------
+// ---------- QA `files:list` (бывшая вкладка «Файлы»): сложные раскладки и то, что нашли при прогоне на живых данных ----------
 
 /** Полный обход через `listProjectDir`, как раскроет дерево человек: пути файлов и симлинков, папки. */
 async function walkTree(root: string, dir = ''): Promise<{ files: string[]; dirs: string[] }> {

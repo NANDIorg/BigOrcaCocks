@@ -46,8 +46,10 @@ button { font: inherit; cursor: pointer; }
 .rail .icon:disabled { opacity: .4; cursor: default; }
 .rail .icon.active { color: var(--accent); }
 .rail .grow { flex: 1; }
-.rail .avatar {
-  width: 40px; height: 40px; display: block; object-fit: contain;
+.rail .app-logo {
+  width: 40px; height: 40px; flex-shrink: 0; color: var(--muted);
+  background-color: currentColor;
+  mask: linear-gradient(transparent, transparent) center / contain no-repeat;
 }
 
 /* ---------- sidebar ---------- */
@@ -131,6 +133,22 @@ button { font: inherit; cursor: pointer; }
 .popup-menu-item[aria-disabled='true'] { color: var(--muted); cursor: default; }
 .popup-menu-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .popup-menu-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
+.popup-menu-icon, .popup-menu-chevron { display: grid; place-items: center; flex: none; color: var(--muted); }
+.application-menu { padding: 8px; border-radius: 14px; max-height: calc(100dvh - 16px); }
+.application-menu-header {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 10px 10px;
+  margin-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 600;
+}
+.application-menu-header img { flex: none; }
+.application-menu .popup-menu-item { min-height: 36px; padding: 8px 10px; border-radius: 8px; }
+.application-menu .popup-menu-name { white-space: normal; overflow-wrap: anywhere; }
+.application-menu .popup-menu-item:hover:not([aria-disabled='true']), .application-menu .popup-menu-item:focus-visible {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.application-menu .popup-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.application-menu .popup-menu-item:active:not([aria-disabled='true']) { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.application-menu .popup-menu-hint { flex: none; font-family: var(--font-mono); white-space: nowrap; }
+.application-menu-loading { min-height: 64px; padding: 20px 10px; color: var(--muted); }
 .modal-backdrop.group-backdrop { z-index: 40; }
 .modal.group-modal { width: 420px; }
 .btn-primary.danger { background: var(--danger); }
@@ -413,10 +431,15 @@ textarea { min-height: 96px; resize: vertical; }
 .attach-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .attach-hint { font-size: 12px; }
 .attach-images { display: flex; flex-wrap: wrap; gap: 8px; }
-.attach-image { position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--frame); }
-.attach.compact .attach-image { width: 48px; height: 48px; border-radius: 8px; }
-.attach-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.attach-image-loading { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.attach-image { position: relative; flex: none; width: 72px; height: 72px; border-radius: 10px; overflow: hidden; background: var(--frame); }
+.attach.compact .attach-image, .attach-images.compact .attach-image { width: 48px; height: 48px; border-radius: 8px; }
+.attach-image img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+/* Миниатюра-кнопка: клик открывает картинку на весь экран (ImageLightbox). */
+.attach-image-open { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.attach-image-open:hover img { filter: brightness(1.12); }
+.attach-image-open:focus-visible, .attach-image-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.attach-image-loading { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--muted); }
+.attach-images + .error-text { display: block; }
 .attach-image-remove {
   position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
   background: rgba(0,0,0,.65); color: #fff; font-size: 14px; line-height: 20px; cursor: pointer;
@@ -1120,8 +1143,9 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   .about-kv dt { grid-column: 1 / -1; margin-top: 4px; }
 }
 
-/* Окно «Документы» (DocsModal.tsx), раскладка «Проводник» — docs/mockups/docs-viewer/concept-a.html:
-   дерево (DocsTree) | документ | оглавление (DocsToc). Узкое окно — оглавление прячется (container query). */
+/* Окно «Документы» (DocsModal.tsx), раскладка «Проводник» — docs/design/docs-files/variant-1.html:
+   дерево всех файлов (DocsTree) | просмотр (DocViewer, стили — docs-viewers.css) | оглавление (DocsToc, только markdown).
+   Узкое окно — оглавление прячется, действия с файлом уходят в меню «⋯» (container query). */
 .docs-modal {
   width: min(1480px, calc(100vw - 48px)); height: calc(100vh - 48px); background: var(--page); border-radius: 18px;
   overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,.5);
@@ -1168,6 +1192,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-row {
   width: 100%; border: 0; background: transparent; font: inherit; text-align: left;
   display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 7px; color: var(--subtle); white-space: nowrap; min-width: 0;
+  cursor: pointer; user-select: none;
 }
 .docs-row:hover { background: color-mix(in srgb, var(--overlay-ink) 3.5%, transparent); }
 .docs-row:focus-visible, .docs-hit:focus-visible, .docs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1199,9 +1224,39 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-hit b { color: var(--col-input); font-weight: 600; }
 .docs-tree-foot { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .docs-tree-foot kbd + kbd { margin-left: 2px; }
+/* Значок вида файла: цвет — по виду (docView.ts → DocIconName), как в макете. */
+.docs-fi { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+.docs-fi[data-kind='doc'] { color: var(--accent); }
+.docs-fi[data-kind='code'] { color: var(--col-ready); }
+.docs-fi[data-kind='config'], .docs-fi[data-kind='env'] { color: var(--col-input); }
+.docs-fi[data-kind='html'] { color: var(--col-progress); }
+.docs-fi[data-kind='image'] { color: var(--col-done); }
+.docs-fi[data-kind='pdf'] { color: var(--danger); }
+.docs-fi[data-kind='binary'] { color: var(--col-backlog); }
+.docs-row.file .docs-fi .docs-i, .docs-hit-l1 .docs-fi .docs-i { color: inherit; }
+.docs-lnk { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+.docs-lnk .docs-i { width: 12px; height: 12px; }
+.docs-row .docs-chip + .docs-tm { margin-left: 0; }
+.docs-row .docs-nm + .docs-tm, .docs-row .docs-lnk + .docs-tm { margin-left: auto; }
+/* «ещё N совпадений», «показаны последние 200» */
+.docs-more { margin: 6px 8px 2px; padding: 8px 10px; border-radius: 8px; border: 1px dashed var(--chip); color: var(--muted); font-size: 12px; line-height: 1.4; }
+/* в проекте больше DOCS_LIST_LIMIT файлов */
+.docs-trunc {
+  margin: 0 12px 6px; display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; font-size: 12px; line-height: 1.4;
+  background: color-mix(in srgb, var(--col-input) 8%, transparent); border: 1px solid color-mix(in srgb, var(--col-input) 35%, transparent); color: var(--subtle);
+}
+.docs-trunc .docs-i { color: var(--col-input); margin-top: 1px; }
+.docs-trunc b { color: var(--text); font-weight: 600; }
 
 /* центр — документ */
-.docs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.docs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+/* Обёртка просмотра только ловит клики по ссылкам: просмотрщик — прямой flex-ребёнок панели. */
+.docs-view { display: contents; }
+.docs-vsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; flex-shrink: 0; }
+.docs-toast {
+  position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 5; padding: 6px 12px; border-radius: 8px;
+  background: var(--side-2); border: 1px solid var(--line); color: var(--text); font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.35); pointer-events: none;
+}
 .docs-crumbs { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line); min-height: 48px; }
 .docs-path { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
 .docs-path .src, .docs-path .seg, .docs-path .cur { padding: 2px 6px; border-radius: 6px; }
@@ -1209,6 +1264,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-path button.seg { border: 0; background: transparent; color: inherit; font: inherit; }
 .docs-path button.seg:hover { background: var(--side-2); color: var(--text); }
 .docs-path .cur { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.docs-path .cur .docs-i { margin-right: 6px; vertical-align: -2px; color: var(--muted); }
 .docs-path .sep { color: var(--chip); }
 .docs-find { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 16px; border-bottom: 1px solid var(--line); background: var(--frame); color: var(--muted); }
 .docs-find input { flex: 0 1 320px; min-width: 0; height: 28px; border-radius: 8px; border: 1px solid var(--accent); background: var(--side-2); color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; outline: none; }
@@ -1275,6 +1331,7 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
   .docs-grid, .docs-grid.with-toc { grid-template-columns: 230px minmax(0, 1fr); }
   .docs-keys { display: none; }
   .docs-body, .docs-start { padding: 24px 20px 48px; }
+  .docs-acts { display: none; }
 }
 
 /* ---------- Инбокс: запросы к человеку (InboxPanel, RequestCard) ---------- */
@@ -2605,6 +2662,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .update-banner.error { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
 .update-banner.manual { border-color: color-mix(in srgb, var(--col-input) 55%, transparent); }
 .update-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.update-banner-symbol { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--frame); }
+.update-banner-symbol svg { width: 17px; height: 17px; }
+.update-banner-summary { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .update-title svg { flex-shrink: 0; color: var(--accent); }
 .update-banner.error .update-title svg { color: var(--danger); }
 .update-banner.manual .update-title svg { color: var(--col-input); }
@@ -2624,7 +2684,52 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .update-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .update-notes-body { overflow-y: auto; min-height: 0; padding: 12px 14px; background: var(--frame); border-radius: 10px; }
 .update-notes .row a.btn-sm { text-decoration: none; }
-.updates-status { margin: 4px 0 0; }
+/* Версия — главный элемент карточки, действия остаются рядом с анонсом; полный markdown раскрывается ниже. */
+.updates-card { background: var(--side); border: 1px solid var(--line); border-radius: 14px; padding: 24px; margin-bottom: 24px; min-width: 0; }
+.updates-card.available, .updates-card.ready { border-color: color-mix(in srgb, var(--accent) 32%, var(--line)); }
+.updates-card-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.updates-card-icon { width: 52px; height: 52px; display: grid; place-items: center; flex: none; }
+.updates-card-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.updates-card-heading { flex: 1; min-width: 150px; }
+.updates-card-eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.updates-card-eyebrow svg { width: 12px; height: 12px; }
+.updates-card-heading h3 { font-size: 24px; font-weight: 600; letter-spacing: -.5px; line-height: 1.3; margin: 3px 0 0; overflow-wrap: anywhere; }
+.updates-card-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--text); background: color-mix(in srgb, var(--accent) 9%, var(--frame)); white-space: nowrap; }
+.updates-card-badge > span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.updates-card-from { color: var(--muted); font-size: 11px; margin: 14px 0 0; }
+.updates-card-summary { font-size: 14px; line-height: 1.7; margin: 8px 0 0; max-width: 66ch; overflow-wrap: anywhere; }
+.updates-card-detail { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 12px 0 0; overflow-wrap: anywhere; }
+.updates-card-detail.problem { color: var(--danger); }
+.updates-card-checked { color: var(--muted); font-size: 11px; margin: 18px 0 0; }
+.updates-card-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
+.updates-card-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.updates-card-buttons .btn-sm, .updates-check { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; text-decoration: none; }
+.updates-card-buttons svg { width: 16px; height: 16px; flex: none; }
+.updates-notes-toggle { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; color: var(--muted); padding: 8px 0; font-size: 12px; }
+.updates-notes-toggle:hover { color: var(--text); }
+.updates-notes-toggle:focus-visible, .updates-release-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.updates-card-notes { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; overflow-wrap: anywhere; }
+.updates-card-notes .markdown { font-size: 13px; line-height: 1.7; }
+.updates-card-notes .markdown > :first-child { margin-top: 0; }
+.updates-card-notes .markdown h1, .updates-card-notes .markdown h2 { font-size: 16px; }
+.updates-card-notes .markdown h3 { font-size: 14px; }
+.updates-card-notes .markdown pre { max-width: 100%; overflow-x: auto; }
+.updates-card-notes .markdown img { max-width: 100%; height: auto; }
+.updates-release-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--accent); font-size: 12px; text-decoration: none; }
+.updates-release-link:hover { text-decoration: underline; }
+.updates-release-link svg { width: 14px; height: 14px; }
+.updates-card-download { background: var(--frame); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 20px; }
+.updates-card-progress-label { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; font-size: 12px; margin-bottom: 10px; }
+.updates-card-progress-label b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.updates-card-download .update-progress { height: 5px; background: var(--side-2); }
+.updates-card-download > p { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.updates-preferences-label { margin-bottom: 10px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.updates-portable-note { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+.updates-portable-note > svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--muted); }
+.updates-portable-note b { font-size: 13px; font-weight: 500; }
+.updates-portable-note p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+@media (max-width: 720px) { .updates-card { padding: 18px; } .updates-card-heading h3 { font-size: 21px; } }
+[data-motion='reduced'] .updates-card .update-spin { animation: none; }
 .rail .icon { position: relative; }
 .rail-dot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--page); }
 .toast {
@@ -2960,11 +3065,7 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .tpl-row-actions .btn-sm svg { width: 14px; height: 14px; }
 .tpl-row-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 
-/* Картинки: миниатюра-кнопка (открывает увеличение) и оверлей просмотра */
-.coord-image-open { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
-.coord-image-open:focus-visible, .coord-image-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.coord-image > .coord-image-loading { width: 100%; height: 100%; }
-.coord-images + .error-text { display: block; }
+/* Картинки: значок на карточке задачи и просмотр на весь экран (ImageLightbox) */
 .g-chip.images { display: inline-flex; align-items: center; gap: 4px; }
 .g-chip.images svg { width: 12px; height: 12px; }
 .lightbox {
@@ -2981,76 +3082,84 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 .lightbox-close { top: 16px; right: 16px; }
 .lightbox-prev { left: 16px; top: 50%; transform: translateY(-50%); }
 .lightbox-next { right: 16px; top: 50%; transform: translateY(-50%); }
+.lightbox-count {
+  position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); padding: 2px 10px; border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none;
+}
 .modal-images-hint { font-size: 12px; margin-top: -6px; }
 .modal-images-add { align-self: flex-start; }
 .g-modal-images { display: flex; flex-direction: column; gap: 8px; }
 .gt-box h3.gt-images-title { margin-top: 14px; }
 
-/* ---------- вкладка «Файлы» (FilesView.tsx): строки дерева — общие .docs-row из «Документов» ---------- */
-.files-page { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--frame); }
-.files-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--line); min-width: 0; }
-.files-head > .docs-i { width: 18px; height: 18px; color: var(--muted); }
-.files-head h3 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; }
-.files-proj { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
-.files-root { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; min-width: 0; flex-shrink: 2; }
-.files-root bdi { direction: ltr; }
-.files-refresh { width: 28px; height: 28px; flex-shrink: 0; }
-.files-refresh .docs-i { width: 16px; height: 16px; }
-.files-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px 16px; font-size: 13px; }
-.files-tree { max-width: 960px; }
-.files-row { cursor: pointer; }
-.files-row:focus { outline: none; }
-.files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* Имена с диска как есть: двойные и ведущие пробелы не схлопываются, усечение «…» — от .docs-row .docs-nm. */
-.files-row .docs-nm { white-space: pre; }
-.files-note { display: flex; align-items: center; gap: 8px; min-height: 28px; padding-right: 8px; font-size: 12px; }
-.files-note-err .editor-error { margin: 0; overflow-wrap: anywhere; }
-.files-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
-.files-banner .editor-error { margin: 0; overflow-wrap: anywhere; }
-.files-foot { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; padding: 8px 16px; border-top: 1px solid var(--line); min-height: 42px; font-size: 12px; }
-.files-path { font: 12px ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; min-width: 0; flex: 1 1 200px; }
-.files-foot-err { margin: 0; flex-basis: 100%; }
-
-/* Верх окна на macOS — продолжение панелей; кнопки принадлежат AppKit, их DOM-копий нет. */
+/* Панели доходят до края окна; кнопки macOS/Windows нативные, их DOM-копий нет. */
 html[data-window-chrome='macos'] {
   /* Кнопки AppKit не масштабируются вместе с renderer: WCO сохраняет для них место. */
   --rail-width: max(var(--macos-rail-width), env(titlebar-area-x, 0px));
   --window-chrome-height: env(titlebar-area-height, var(--macos-chrome-height));
+}
+html[data-window-chrome='windows'] {
+  --window-chrome-height: env(titlebar-area-height, var(--windows-chrome-height));
+}
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) {
   --window-overlay-gap: 24px;
   --window-overlay-top: max(var(--window-overlay-gap), calc(var(--window-chrome-height) + 12px));
 }
-html[data-window-chrome='macos'][data-window-controls='hidden'] { --window-chrome-height: 0px; }
-html[data-window-chrome='macos'] body { background: var(--frame); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows'])[data-window-controls='hidden'] { --window-chrome-height: 0px; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) body { background: var(--frame); }
 /* Узкая кромка работает и при загрузке, и поверх модалки; ниже клики принадлежат интерфейсу. */
-html[data-window-chrome='macos'] body::before {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) body::before {
   content: ''; position: fixed; inset: 0 0 auto; height: min(8px, var(--window-chrome-height));
   z-index: 80; app-region: drag; user-select: none;
 }
 html[data-window-chrome='macos'] .rail { position: relative; padding-top: calc(var(--window-chrome-height) + 22px); }
+html[data-window-chrome='macos'] .rail .icon { width: 52px; height: 52px; border-radius: 14px; }
+html[data-window-chrome='macos'] .rail .icon > svg { width: 26px; height: 26px; }
+html[data-window-chrome='macos'] .rail .icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 html[data-window-chrome='macos'] .rail::before {
   content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
   app-region: drag; user-select: none;
 }
-html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
-html[data-window-chrome='macos'] :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.sidebar > .head, .main-head) { app-region: drag; user-select: none; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.sidebar > .head, .main-head) :is(button, a, input, select, textarea, label, summary, [role='button'], [contenteditable], .branch-menu, .branch-pop, .tabs) { app-region: no-drag; }
 /* Chromium не вычитает перекрытые drag-области по z-index: поверхностям нужен явный no-drag. */
-html[data-window-chrome='macos'] :is(.modal, .settings-modal, .inbox, .popup-menu, .lightbox) { app-region: no-drag; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal, .settings-modal, .inbox, .popup-menu, .move-menu, .lightbox) { app-region: no-drag; }
+/* Любая поверхность прямо в backdrop перекрывает шапки: без no-drag Chromium оставляет под ней drag-области
+   .main-head и .sidebar > .head. Пропуск в списке выше уже ломал «Документы» и мастер. Кромка ::before
+   потомком не считается и остаётся drag. */
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop) > * { app-region: no-drag; }
+
+/* Caption-кнопки справа не перекрывают действия шапки, помощника или просмотрщика. */
+html[data-window-chrome='windows'] .main-head { padding-top: max(24px, calc(var(--window-chrome-height) + 12px)); }
+html[data-window-chrome='windows'] .inbox { top: var(--window-chrome-height); }
+html[data-window-chrome='windows'] .lightbox-close { top: max(16px, calc(var(--window-chrome-height) + 12px)); }
+.window-menu-error {
+  display: flex; align-items: flex-start; gap: 12px;
+  position: fixed; top: max(24px, calc(var(--window-chrome-height) + 12px)); left: calc(var(--rail-width) + 12px);
+  max-width: min(420px, calc(100vw - var(--rail-width) - 36px)); z-index: 81; padding: 12px 16px;
+  background: var(--side); border: 1px solid var(--danger); border-radius: var(--radius); color: var(--text);
+  overflow-wrap: anywhere; app-region: no-drag;
+}
+.window-menu-error span { flex: 1; min-width: 0; }
+.window-menu-error button { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.window-menu-error button:hover, .window-menu-error button:focus-visible { background: var(--side-2); color: var(--text); }
 
 /* Нативный слой выше renderer: все общие оверлеи оставляют сверху свободную область. */
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop) {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop) {
   padding: var(--window-overlay-top) var(--window-overlay-gap) var(--window-overlay-gap);
 }
-html[data-window-chrome='macos'] :is(.modal-backdrop, .inbox-full-backdrop)::before {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal-backdrop, .inbox-full-backdrop)::before {
   content: ''; position: absolute; inset: 0 0 auto; height: var(--window-chrome-height);
   app-region: drag; user-select: none;
 }
-html[data-window-chrome='macos'] :is(.modal, .settings-modal) {
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) :is(.modal, .settings-modal) {
   max-width: 100%; max-height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap));
 }
-html[data-window-chrome='macos'] .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
-html[data-window-chrome='macos'] .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .modal:where(:not(.task-modal, .sv-modal, .inbox-full, .docs-modal)) { overflow-y: auto; }
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .settings-modal { height: min(960px, calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap))); }
+/* Высота 100vh - 48px не учитывает кромку: без ужатия шапка «Документов» уходит под drag-область. */
+html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .docs-modal { height: calc(100dvh - var(--window-overlay-top) - var(--window-overlay-gap)); }
 @media (max-width: 600px) {
-  html[data-window-chrome='macos'] { --window-overlay-gap: 12px; }
+  html:is([data-window-chrome='macos'], [data-window-chrome='windows']) { --window-overlay-gap: 12px; }
 }
 
 /* Внешний вид: нативные radio обеспечивают выбор стрелками; миниатюры используют общую палитру. */

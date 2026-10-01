@@ -15,6 +15,14 @@ const api: OrcaApi = {
     getSettings: () => ipcRenderer.invoke('app:getSettings'),
     setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
     testNotification: () => ipcRenderer.invoke('app:testNotification'),
+    getMenu: () => ipcRenderer.invoke('app:getMenu'),
+    invokeMenu: (id) => ipcRenderer.invoke('app:invokeMenu', id),
+    dismissMenu: () => ipcRenderer.invoke('app:dismissMenu'),
+    onWindowFullscreen: (cb) => {
+      const off = on('app:windowFullscreen', cb)
+      ipcRenderer.send('app:windowFullscreenReady')
+      return off
+    },
     onMenuAction: (cb) => {
       const off = on('app:menuAction', cb)
       ipcRenderer.send('app:menuReady', true)
@@ -157,6 +165,9 @@ const api: OrcaApi = {
   docs: {
     list: () => ipcRenderer.invoke('docs:list'),
     read: (source, path) => ipcRenderer.invoke('docs:read', source, path),
+    view: (source, path, opts) => ipcRenderer.invoke('docs:view', source, path, opts),
+    bytes: (source, path) => ipcRenderer.invoke('docs:bytes', source, path),
+    previewUrl: (source, path) => ipcRenderer.invoke('docs:previewUrl', source, path),
     open: (source, path) => ipcRenderer.invoke('docs:open', source, path),
     reveal: (source, path) => ipcRenderer.invoke('docs:reveal', source, path)
   },

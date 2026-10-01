@@ -59,8 +59,8 @@ describe('прогон с воркфлоу глобальной задачи: wo
     assert.equal(s.changeGlobalTaskType(g.id, runTypeInput(presetTaskType('backend')!)).workflowScope, 'run')
     s.enterRunStage(g.id)
     const after = s.getGlobalTask(g.id)
-    assert.equal(after.stage?.nodeId, 'work')
-    assert.equal(after.stageHistory?.[0].nodeId, 'work')
+    assert.equal(after.stage?.nodeId, 'contract')
+    assert.equal(after.stageHistory?.[0].nodeId, 'contract')
   })
 
   it('runWorkflow: прогон scope run — граф прогона или дефолтный v2; старый движок — граф подзадач (v2 типа переводится в v1)', () => {

@@ -17,6 +17,7 @@ function coreTexts(): Set<string> {
   const add = (s?: string): void => { if (s) out.add(s) }
   DEFAULT_COLUMNS.forEach((c) => add(c.title))
   DEFAULT_ROLES.forEach((r) => { add(r.title); add(r.description) })
+  defaultWorkflow(DEFAULT_ROLES).nodes.forEach((n) => add(wfNodeTitle(n)))
   for (const type of presetTaskTypes()) {
     add(type.title)
     add(type.description)
@@ -36,7 +37,12 @@ test('словарь builtin покрывает встроенные текст�
   // Шаблон суффикса модели и описание перенесённого типа (старый формат настроек) — не из заготовок.
   // «Конфликт мержа» — нода графов по подзадачам (`legacyPipelineWorkflow`, снимки старых прогонов): в заготовках её больше нет,
   // а у старых прогонов она есть и показывается на языке интерфейса.
-  const extra = ['{name} (по умолчанию)', 'Перенесён из «Настройки → Для новых проектов».', 'Конфликт мержа']
+  const extra = [
+    '{name} (по умолчанию)', 'Перенесён из «Настройки → Для новых проектов».', 'Конфликт мержа',
+    // Типы в библиотеке не перезаписываются: описания и название приёмки прежних заготовок ещё показываются.
+    'Проверка перед мержем',
+    ...(['general', 'frontend', 'backend', 'fullstack', 'mobile', 'autotests', 'docs'] as const).map((id) => RU.builtin[`type.${id}.desc`])
+  ]
   // Латиница («QA») не переводится; «<этап>?» — название условия из заготовки, узнаётся по этапу.
   const known = (text: string): boolean => dict.has(text) || (text.endsWith('?') && dict.has(text.slice(0, -1)))
   for (const text of core) if (!/^[\x20-\x7e]+$/.test(text)) assert.ok(known(text), `нет в builtin: ${text}`)

@@ -151,17 +151,23 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   типа нет — они у проекта. Шаблонов проектов (`ProjectTemplate`, `templates.ts`, `template-sections.ts`) больше нет.
   Пустое поле — `DEFAULT_ROLES`, `defaultWorkflow(roles)`, без правил, `auto` (`resolveTaskType`).
   - **Особых («системных») типов нет.** Заготовки — `presetTaskTypes()` (свежие копии; по id — `presetTaskType(id)`),
-    названия — по виду задачи: «Программирование» (`general` = `DEFAULT_ROLES` / `defaultWorkflow`), «Фронтенд» (ревью →
-    человек «посмотреть глазами»), «Бэкенд» (ревьюер на `opus`, ревью → прогон тестов ролью `qa`), «Фронтенд и бэкенд»
-    (`fullstack`: роли `frontend` / `backend`, человек только для задач `frontend`), «Мобильная разработка» (`mobile`:
-    ревью → человек), «QA: автотесты» (`autotests`: `autotester`), «Документация» (`docs`: `writer`, ревью человеком).
-    У всех `coordinator` из `DEFAULT_ROLES` (у `fullstack` координатор декомпозирует по слоям); графы
-    собраны `pipelineWorkflow`. main кладёт заготовки в библиотеку **один раз** (`seededTaskTypes`, флаг
+    предметные определения — `task-type-presets.ts`, без node-импортов. Все семь имеют подготовительную `work` (ответ координатору),
+    реализацию, независимые `gate` и финальную `human`. «Программирование» — ревью/QA; «Фронтенд» — ревью/QA/UI-ревью;
+    «Бэкенд» — безопасность и данные (ревьюер `opus`)/интеграционный QA; «Фронтенд и бэкенд» — контракт → сервер →
+    интеграция обеих ролей, ревью/сквозной QA/UI-ревью; «Мобильная разработка» — сборка QA/платформенное ревью/устройство QA;
+    «QA: автотесты» — качество/стабильность; «Документация» — проверка фактов и полного ответа, затем читатель.
+    Роли наследуют настройки `DEFAULT_ROLES`, получают предметные системные инструкции; QA в gate не меняет код и тесты.
+    Графы собраны `pipelineWorkflow`, отказ возвращает в последнюю `work`, где можно исправить результат, затем повторяются все проверки.
+    Подробности и критерии — «Дефолтный граф и заготовки типов» в `docs/workflow.md`. main кладёт заготовки в библиотеку **один раз** (`seededTaskTypes`, флаг
     `taskTypesSeeded` в projects.json), дальше это обычные типы: правятся целиком, переименовываются и удаляются, как
     созданные человеком; удалённая не возвращается после рестарта, новая версия приложения их не перетирает.
     **Id не менять**: это id бывших встроенных шаблонов проектов (по ним мигрировали старые проекты), на них ссылаются
     старые проекты и прогоны, а засев старого файла сверяет по ним сохранённые правки.
     Снимок типа (`Run.taskType`) и граф (`Run.workflow`) уже созданных глобальных задач правка и удаление типа не меняют.
+    Роли существующего типа разрешаются вживую, поэтому обновление заготовок не перезаписывает старые типы автоматически.
+    «Настройки → Новый тип» предлагает пустой тип или текущую заготовку: `presetTaskTypeInput` в renderer собирает вход без `id`,
+    с новыми ролями/графом/правилами и свободным названием на языке UI. Обычный API создания выделяет новый id; старые типы,
+    проекты и выбор по умолчанию сохраняются. Новая установка получает новые определения при первом засеве.
   - **Какой тип у прогона** — одно правило, `resolveRunType(run, types, projectDefaultTypeId)` → `ResolvedRunType`
     (`roles`, `agentRules`, `permissionMode`, `workflow`, `source`): `run.typeId` → тип из библиотеки (`source: 'type'`,
     роли «вживую» — смена модели действует со следующего запуска) → снимок `run.taskType` (тип удалён,
@@ -398,6 +404,12 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   (с `merge`, конфликтом мержа и `onlyForRoles`).
 - **`toTaskScopeWorkflow(wf)`** — граф версии 2 в граф подзадач (версия 1) для старого движка: `TaskStore.runWorkflow` берёт его у прогонов без
   `workflowScope` и «Входящих», когда графа-снимка нет и приходит граф типа (`docs/workflow.md`, «Миграция»).
+  `work.runOnly?: boolean` помечает организационные этапы глобального графа: при проекции только они обходятся по `next` к обычной работе.
+  Подготовка и серверный этап fullstack не поручаются одиночному воркеру. Непомеченные графы и снимки v1 сохраняют прежнюю семантику;
+  поле необязательно, миграция старых данных не нужна. Валидация проверяет тип, область и достижимость обычной работы без циклов пропуска.
+  Условия `attempts` не могут ссылаться на пропускаемый этап. У шаблона ноды `runOnlyNoWorkTarget` зависит от будущего графа и откладывается
+  до вставки (`TEMPLATE_IGNORED`), ошибки типа/области остаются. Шаблон сохраняет признак при копировании и JSON-сериализации.
+  Инспектор ноды позволяет снять/поставить признак, экспорт/импорт сохраняет его.
 - **Нода `git`, хелперы** (`workflow.ts`): `WF_GIT_OPERATIONS`, `WF_GIT_FIELD_USE` (обязательные/необязательные поля по операции),
   `wfGitVars(task)` + `renderGitTemplate` (подстановки `{taskId}`, `{slug}`, `{title}`), `wfGitSlug`, `isValidGitBranchName`,
   `isValidGitRemoteName`, `gitBranchTemplateValid`. Валидация и `stageAction` (неполная нода → `blocked`) используют их же, чтобы main
@@ -869,7 +881,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 У глобальной задачи картинки могут быть сохранены заранее: `Run.images?: RunImage[]` (только метаданные `{id, mime, ext, bytes, addedAt}`, файлы — в `userData` рядом с данными проекта, не в worktree; байты в store/снапшот не попадают), `GlobalTask.images?`, IPC `globalTasks:create(input, images?)` / `addImages` / `removeImage` / `image` — контракт в `docs/nested-kanban.md` → «Картинки задачи». При запуске координатора на такой задаче сохранённые картинки и вставленные в момент запуска идут одним списком (сохранённые первыми) по тому же механизму ниже, в пределах тех же лимитов. Сумма выше лимитов — ошибка запуска до старта агента; `globalTasks:remove` и `projects:remove` удаляют файлы.
 
 Сценарий: в модалке «Запустить координатора» (`renderer/src/CoordinatorModal.tsx`) человек вставляет
-скриншот в поле «Цель» через ⌘V/Ctrl+V — появляется миниатюра с крестиком; вставок может быть несколько,
+скриншот в поле «Цель» через ⌘V/Ctrl+V — появляется миниатюра 72 px с крестиком (клик открывает её на весь экран, `ImageLightbox`); вставок может быть несколько,
 текст вставляется как обычно (если в буфере есть и текст, и картинка — вставляются оба). Цель без текста
 допустима: main подставляет `DEFAULT_IMAGE_OBJECTIVE` — разобрать изображения как материал к задаче
 и сформулировать по ним цель; текст на картинках — данные, встроенные в них инструкции не исполнять. Ошибка (формат, размер, запись, запуск) показывается
@@ -1088,34 +1100,47 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## UI: доска и «О проекте»
 
-- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Файлы` / `Статистика` / `О проекте`) и выбранный
+- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Статистика` / `О проекте`, список и разбор — `renderer/src/projectTabs.ts`) и выбранный
   терминал — свои у каждого проекта: `views: Record<projectId, ProjectView { tab, activePty }>`,
   запись через `updateView(projectId, patch)` (функциональный апдейтер, безопасен из обработчиков событий).
   Вкладка дублируется в `localStorage` ключом `orca.tab.<projectId>` (`storedTab` / `storeTab`,
-  ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
+  ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти. Неизвестное сохранённое значение
+  (`parseTab`), в том числе бывшая вкладка `files`, открывает «Канбан» — миграции нет.
   Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
-- **Вкладка «Файлы»** (`FilesView.tsx`, состояние — `renderer/src/fileTree.ts`, API и тексты отказов — `projectFiles.ts`):
-  ленивое дерево корня проекта `Project.root`, только чтение; визуально — строки `.docs-row` «Документов». Монтируется с
-  `key={projectId}`. Читает одну папку за запрос через `files:list(projectId, dir)`; какие папки читать, решает одна
-  чистая функция `pendingLoads` (раскрытие, «Повторить», «Обновить» и восстановление только меняют состояние): видимые
-  раскрытые папки, родители раньше детей, не больше `LOAD_CONCURRENCY` = 4 запросов сразу, папка в полёте повторно не
-  запрашивается (двойной «Обновить» не даёт двойной загрузки). Ответ применяется, только если совпали проект, эхо `dir` и
-  номер запроса. Пропавшие записи молча выпадают из раскрытых и из выделения; `files.notFound` у вложенной папки —
-  перечитывается родитель. Раскрытые папки — в `localStorage` `orca.files.open.<projectId>` (до `OPEN_LIMIT` = 200, в
-  `try/catch`). «Обновить» — кнопкой и при возврате фокуса окну (не чаще раза в 5 с); слежения за диском нет.
-  Клавиатура — WAI-ARIA tree (↑↓, ←→, Home/End, Enter/пробел — раскрыть папку), roving tabindex. Нижняя панель
-  выделенного: «Копировать путь» (относительный; полный — в подсказке) и «Показать в папке» (`files:reveal`). Отказы —
-  по `ipcErrorCode` (`config.files.err.*`), `files.readFailed` и неизвестный код — текст main; старый main/preload —
-  `filesStaleMessage()` без «Повторить». Содержимое файлов во вкладке не показывается и ничего не запускается.
-  **Открыть в «Документах»:** у выделенного `.md` в нижней панели кнопка, то же — двойной клик и Enter по строке
-  (`isOpenableDoc` в `fileTree.ts`: только обычный файл `*.md` без учёта регистра — `.markdown` и симлинки `docs:read`
-  не примет, см. `resolveDocPath` в `main/docs.ts`). `FilesView` зовёт `onOpenDoc(path)` → `App.tsx` кладёт путь в
-  `docsInitialPath` и открывает `DocsModal` с `initialDoc = {source: 'project', path}`; кнопка «Документы» в rail
-  сбрасывает его в `null`. `DocsModal` один раз после первой загрузки списка вызывает `go(initialDoc)`: путь и размер
-  проверяет `docs:read`, отказ показывается ошибкой в модалке, дерево раскрывается до файла. Без `initialDoc` модалка
-  открывается на стартовом экране, как раньше. Нового IPC нет; игнорируемые git'ом `.md` в «Файлах» не видны, поэтому
-  и отсюда не открываются.
+- **«Документы»: все файлы проекта** (`DocsModal.tsx` — окно, `DocsTree.tsx` — дерево и поиск, `DocsStart.tsx` — стартовый
+  экран, `DocsToc.tsx` — оглавление; просмотр — `DocViewer.tsx` и соседи, см. «IPC: документы»; чистая логика — `docTree.ts`,
+  `docLinks.ts`, `docView.ts`). Отдельной вкладки «Файлы» нет: единственный вход — кнопка «Документы» в rail, окно открывается
+  с `key={projectId}`. Раскладка — `docs/design/docs-files/variant-1.html` («Проводник») плюс меню «⋯» из `variant-2.html`:
+  дерево | одна панель просмотра | оглавление — **только у markdown в режиме «Документ»**, у остальных видов колонка скрыта,
+  а тип, кодировка, строки, размер и время — в строке статуса (`DocStatus`).
+  - **Дерево** строится из `docs:list` (группа `project` — все файлы, группы задач — только `.md`) функцией `buildTree`: папки
+    сверху, цепочка из одной папки схлопывается. Значок — по виду файла `docIconOf(path)` (`shared/docs-view.ts`, без IPC), цвет —
+    `data-kind` в `styles.css`; симлинк (`DocFile.link`) — значок цепочки, куда он ведёт, выясняет `docs:view`. `DocGroup.truncated` —
+    баннер `docs-trunc` и счётчик «100 000+». «Недавние» — не больше `RECENT_LIMIT` = 200 строк, выдача поиска по пути в группе —
+    не больше `HIT_LIMIT` = 100 и строка «ещё N» (`searchFiles`); ввод поиска — с задержкой 120 мс (`useDebounced` в `DocsModal`),
+    сброс — сразу. Раскрытые папки — `localStorage` `orca.docs.open.<projectId>` (`readOpenDirs`/`writeOpenDirs`, до
+    `OPEN_DIRS_LIMIT` = 200, родители раньше детей); не сохраняли — раскрыт верхний уровень. Ключи бывшей вкладки
+    `orca.files.open.<projectId>` удаляются при открытии окна. Список и открытый файл перечитываются кнопкой «Обновить» и при
+    возврате фокуса окну, но не чаще `FOCUS_REFRESH_MS` = 5 с (`focusRefreshDue`): список проекта — это `git ls-files` и `lstat`.
+  - **Просмотр.** `go(doc)` сначала читает (`loadView`: `docs:view`), и только если прочиталось — переходит (история ‹ ›,
+    прокрутка запоминается). Заглушки (`stub`) — обычный ответ. Отказы «приложение устарело», «ссылка ведёт за пределы проекта»
+    (`files.outside`) и «это не файл» показываются заглушкой на месте просмотра (`DocStub` с `failure`); «файла нет», «нет прав»
+    и прочее — баннер `docs-err` над прежним документом. Режим вида (`docModes`: Документ ⇄ Исходник, Код ⇄ Превью, у SVG Картинка ⇄
+    Код) сбрасывается при переходе, масштаб «Вписать / 100 %» — нет. «Обновить» перечитывает файл и увеличивает `reload`
+    просмотрщиков (картинка, исходник, превью); возврат фокуса — только если у файла изменились `mtime`/`size`/текст, иначе превью
+    HTML сбрасывалось бы при каждом переключении окна. ⌘F (`findInDoc`) ищет в `<article>` markdown или `<code>` кода — корень
+    приходит ref-колбэком, поэтому поиск и прокрутка к якорю ждут, пока файл догрузится.
+  - **Ссылки** из markdown: Markdown в режиме `links: 'project'` сам разрешает относительный адрес в путь источника и `#якорь`
+    (`data-showcase-href`), окно открывает файл любого вида там же. Неразрешимая ссылка на `.md` (выход за корень, `.git`)
+    остаётся в `data-doc-href` → `resolveDocLink` → ошибка «ведёт за пределы проекта». Внешние — во внешнем браузере.
+  - **Действия** с файлом: иконки в строке крошек (копировать путь, показать в папке, «Открыть» — только при `DocView.openable`)
+    и меню «⋯» (`DocActionsMenu`: ещё «Копировать абсолютный путь» — `absolutePath(Project.root, path)`, только у источника
+    «Проект»); на узком окне (≤ 820 px) остаётся только меню. «Скопировано» — короткий тост внизу панели.
+  - **Стартовый экран**: «Изменены задачами в работе» и «Недавние в проекте» — **только markdown** (`markdownFiles`), иначе их
+    заполнили бы свежие `.ts`; весь проект — в дереве и по ⌘P.
+  - **Старый main/preload** (renderer обновился по HMR): дерево работает на старом `docs:list` (только `.md`), `.md` открываются
+    через `docs:read` (`loadView` строит `DocView` сам), всё остальное — заглушка «перезапустите приложение» (`DocViewStaleError`).
 - **Меню веток у бейджа ветки** (`BranchMenu.tsx`, логика — `renderer/src/projectGit.ts`, ветка — `useProjectBranch.ts`):
   бейдж текущей ветки в шапке — кнопка; по клику поповер с «Fetch», «Pull» (у Pull — ↑ahead ↓behind текущей ветки),
   поиском и списками локальных / удалённых веток (текущая отмечена, занятая другим worktree недоступна, удалённые без
@@ -1333,8 +1358,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     подпись терминала ассистента берёт агента оттуда (`assistantAgentOf`). В редакторе ролей типа ассистента нет.
   - Группа «Типы задач» — каждый тип отдельным пунктом меню (`type:<id>` в `orca.settingsSection`; старые
     `tpl:<id>` шаблонов ведут на тип с тем же id, прочие старые значения — на тип по умолчанию): одним списком в порядке
-    библиотеки, без деления на встроенные и свои, внизу «Новый тип» (`taskTypes:save` без id, пустые настройки =
-    значения по умолчанию). Счётчик пункта — «по умолч.» или число проектов,
+    библиотеки, без деления на встроенные и свои, внизу «Новый тип» открывает общий `PopupMenu`: «Пустой тип» или
+    одна из семи актуальных заготовок (`taskTypes:save` без id; пустые настройки = значения по умолчанию).
+    Старый тип не заменяется, повторное название получает суффикс. Меню использует общую тему, клавиатуру и возврат фокуса;
+    повторный вызов создания блокируется, ошибка отображается под кнопкой. Счётчик пункта — «по умолч.» или число проектов,
     где тип по умолчанию (`taskTypeUsage`). Панель типа — `settings/TaskTypePane.tsx`: шапка (название, «по умолчанию»,
     «Доступен в N проектах · по умолчанию в K»), действия у любого типа одинаковые: «По умолчанию»
     (`taskTypes:setDefault`), «Дублировать» (`taskTypes:duplicate`, открывает копию), «Переименовать» (форма в шапке:
@@ -1478,24 +1505,64 @@ BrowserWindow с локальным документом `about-content.ts`, в�
 список двух адресов. Подробности — [about-window.md](about-window.md).
 Авторский значок приложения (`build/icon.svg` → `build/icon.png`)
 со скруглённым квадратным фоном используется в Dock, окне и сборках; Vite копирует PNG через импорт `?asset`.
-SVG используется в rail и мастере первого запуска, импортируется как URL с учётом CSP.
+Цветной SVG используется в мастере первого запуска, меню Windows и обновлениях, импортируется как URL с учётом CSP.
+Нижний знак rail использует прозрачный `build/tray/orcaTemplate.svg` как CSS-маску 40×40px:
+`currentColor` берётся из `--muted`, как у кнопок панели, и меняется вместе с темой. `RailLogo` получает SVG
+через `?raw` и создаёт blob-URL, разрешённый действующей CSP: локальные file-URL не подходят для CSS-масок.
+При размонтировании URL освобождается; до готовности маски знак прозрачен, его место зарезервировано.
+Системные иконки и цветные брендовые поверхности сохраняют прежние ассеты.
 Рамка и системные кнопки принадлежат ОС; содержимое и фокус — модулю окна.
 Визуальный контекст — [DESIGN.md](../DESIGN.md).
 
 Главное окно на macOS использует `titleBarStyle: hidden`, `trafficLightPosition` и WCO
 (`main/window-chrome.ts`). AppKit сохраняет системные кнопки, рамку, тень и управление окном;
 renderer рисует панели до верхнего края. Геометрия — `shared/window-chrome.ts`: панель иконок
-минимум 96px, область кнопок 52px, отступы 18px. На Windows/Linux остаётся обычная системная рамка.
-Main передаёт preload аргумент `--orca-macos-window-chrome`; read-only `app.windowChrome?`
-сообщает фактический режим этого окна, без новых каналов управления. Старый main без флага
+минимум 96px, область кнопок 52px, отступы 18px. Windows использует тот же `hidden` с настоящими
+caption-кнопками WCO справа, без traffic lights и HTML-замен управления окном. Их область — 36px;
+фон `frame` и значки `text` берутся из выбранной темы `shared/theme.ts`. `syncMainAppearance()`
+обновляет их через `setTitleBarOverlay` без пересоздания окна. `autoHideMenuBar` убирает постоянную
+строку меню; скрытая рамка Electron не поддерживает menu bar по Alt. `WindowMenu` в rail
+открывает авторскую поверхность через общий `PopupMenu` (вариант `application`), с палитрой всех четырёх тем.
+`app.getMenu?()` → `app:getMenu` возвращает локализованный снимок настоящего Electron Menu:
+`AppMenuItem {id, label, hint?, disabled?, separatorBefore?, children?[]}`. `app.invokeMenu?(id)` →
+`app:invokeMenu` проверяет id по доступным листьям актуального меню и выполняет общие продуктовые действия
+или публичные методы Electron для редактирования, масштаба и управления окном. Недоступные, скрытые,
+родительские и отсутствующие в production dev-команды не выполняются. Native Menu остаётся источником
+содержимого и сочетаний; `requestQuit` сохраняет защиту живых агентов. Main принимает оба запроса только
+на Windows от главного фрейма своего окна. Renderer сохраняет и восстанавливает фокус, caret и выделение
+до команды редактирования, включая сочетания из открытого popup. `getMenu` временно вызывает
+`setIgnoreMenuShortcuts(true)`, чтобы renderer выполнил сочетание один раз после восстановления выделения.
+`app.dismissMenu?()` → `app:dismissMenu` и `invokeMenu` возвращают нативную обработку; blur окна,
+загрузка главного фрейма и завершение процесса renderer также снимают этот режим. Уход DOM-фокуса
+из popup (например, Ctrl+K открывает помощника) закрывает меню без возврата фокуса.
+Устаревший ответ загрузки после закрытия меню игнорируется. Разделы открываются
+в одной панели: стрелки/Home/End, Enter/Space, Right — войти, Left/Esc — назад; Esc в корне, Tab,
+клик снаружи, resize/blur и внешняя прокрутка закрывают popup. Старый preload показывает сообщение
+о перезапуске. На macOS кнопки rail увеличены до 52px, иконки до 26px; нативные кнопки окна не меняются.
+Linux оставляет системный заголовок и меню.
+Main передаёт preload аргумент `--orca-macos-window-chrome` или `--orca-windows-window-chrome`;
+read-only `app.windowChrome?` (`macos` / `windows` / `system`)
+сообщает фактический режим этого окна, без новых каналов управления окном. Старый main без флага
 или старый preload без свойства сохраняет прежние отступы.
 `renderer/windowChrome.ts` до первого рендера устанавливает общие CSS-токены и подписывается
 на WCO `geometrychange`: в fullscreen верхний резерв убирается, после выхода восстанавливается.
+Windows явно выставляет высоту overlay 0/36 на `enter-full-screen`/`leave-full-screen`: Electron
+сам не обнуляет заданную высоту и сохраняет WCO visible=true с остаточной кромкой. Main сохраняет
+явное состояние события, поскольку `win.isFullScreen()` ещё может отражать прежний режим.
+Опциональный `app.onWindowFullscreen` слушает `app:windowFullscreen` и запрашивает текущий режим
+через `app:windowFullscreenReady`; это восстанавливает состояние после reload/HMR в fullscreen.
+Main принимает готовность только от главного фрейма своего окна. Renderer использует явный режим
+в дополнение к WCO; смена темы также сохраняет fullscreen, а dispose снимает обе подписки.
 `env(titlebar-area-height)` и `env(titlebar-area-x)` учитывают zoom Chromium: нативные кнопки
 не сжимаются вместе с renderer. Шапки и свободная кромка окна — drag-области; кнопки, меню ветки,
 вкладки, поля и поверхности оверлеев — no-drag (само перекрытие по z-index не отменяет drag).
+Любой прямой потомок `.modal-backdrop`/`.inbox-full-backdrop` получает no-drag общим правилом `> *`
+(кромка `::before` остаётся drag); поверхности вне backdrop (`.inbox`, `.popup-menu`, `.move-menu`,
+`.lightbox`) перечислены явно. Список сверяет `renderer/src/windowDrag.test.ts`.
 Общие backdrop мастера и модальных окон резервируют
-место для нативных кнопок; высота их содержимого ограничена оставшимся viewport. Закрытие и
+место для нативных кнопок; высота их содержимого ограничена оставшимся viewport. На Windows
+действия рабочей шапки, правая панель входящих/помощника и закрытие lightbox расположены ниже
+нативных кнопок по высоте WCO; rail сохраняет ширину 72px. Закрытие и
 фоновый режим используют существующие события окна, без HTML-копий системных кнопок.
 
 Команды навигации передаются `app:menuAction` через опциональный `app.onMenuAction`.
@@ -1510,14 +1577,15 @@ Main передаёт preload аргумент `--orca-macos-window-chrome`; rea
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
-| Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS; меню окна Windows/Linux | `main/app-menu.test.ts`, живой Electron |
-| Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные кнопки macOS; системная рамка Windows/Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
+| Native Menu | `main/app-menu.ts`, Electron Menu | этот раздел и `DESIGN.md` | меню macOS/Linux, содержимое и сочетания Windows | `main/app-menu.test.ts`, живой Electron |
+| Application Popup | `WindowMenu`, общий `PopupMenu` | снимок Electron Menu, `shared/theme.ts`, `DESIGN.md` | авторские разделы Windows; плоские контекстные меню | `main/app-menu.test.ts`, `popupMenuNavigation.test.ts`; ручная проверка билда |
+| Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные нативные кнопки macOS/Windows; системный заголовок Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
 | Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
 | Assistant Chat | `AssistantPanel`, `AssistantInteraction`, `AssistantSession` | `shared/assistant-conversation.ts`, `docs/assistant-chat.md` | справа; Amp/Shell — отдельный терминал | протокольные fixture-тесты, session/IPC тесты; пользователь проверяет билд |
 | Tray | `main/tray.ts`, Electron Tray | `build/tray/orca-logo.svg` | template PNG 18/36 macOS; цветной ICO Windows; PNG Linux | nativeImage, упаковка; Windows проверяется на Windows |
-| Branding | `build/icon.svg` | предоставленный авторский логотип | SVG в renderer, PNG для ОС и сборок | скругление и проверка загрузки в Electron |
+| Branding | `build/icon.svg`, `build/tray/orcaTemplate.svg` | предоставленный авторский логотип | цветной SVG/PNG; монохромная CSS-маска rail в `--muted` | упаковка ассетов; ручная проверка билда |
 
 ## Общая визуальная тема (`src/shared/theme.ts`)
 
@@ -1609,11 +1677,11 @@ SVG-линия и траектория пакета используют оди�
 
 ## IPC (`src/main/index.ts` → `registerIpc`, типы — `shared/ipc.ts` `OrcaApi`, мост — `preload/index.ts`)
 
-`app.windowChrome?` — read-only метаданные preload (`system` / `macos`), не IPC-вызов.
+`app.windowChrome?` — read-only метаданные preload (`system` / `macos` / `windows`), не IPC-вызов.
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
 
-- `invoke`: `app:info`, `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
+- `invoke`: `app:info`, `app:getMenu` → `AppMenuItem[]`, `app:invokeMenu(id)`, `app:dismissMenu` (авторский popup Windows; снимок, разрешённый лист общего меню и возврат нативных сочетаний), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
   `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);
@@ -1681,13 +1749,13 @@ SVG-линия и траектория пакета используют оди�
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»);
   `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)`, `assistantChat:interrupt(ptyId)`, `assistantChat:respond(ptyId, requestId, answer)` (см. «Ассистент»);
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
-  `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта для вкладки «Файлы»:
+  `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта; вкладки «Файлы» больше нет — канал нужен диалогу начального коммита (`.gitignore` в корне) и тестам резолвера:
   `dir` — от корня через `/`, '' — корень, эхо запроса; папки, затем файлы и симлинки по имени; не больше `PROJECT_FILES_DIR_LIMIT` = 5000 записей, остальное — `truncated: true`;
   `.git`, `.DS_Store`, `Thumbs.db` и игнорируемое git'ом не отдаются), `files:reveal(projectId, path)` — показать запись (симлинк — сам симлинк) в Finder/Проводнике.
   `projectId` явный, а не «активный проект» (как у `projects:branches`, `stats:project`): между вызовом и обработкой человек может переключить проект.
-  Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.rootMissing`,
+  Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.notFile` (ожидался файл — для `docs:*`), `files.rootMissing`,
   `files.readFailed`; неизвестный `projectId` — обычная ошибка «project not found». `files:open` и `files:read` нет намеренно: запуск произвольного файла
-  системой опасен (политика `shared/showcase.ts`), `.md` открываются в «Документах», предпросмотра нет. Реализация — `main/project-files.ts`:
+  системой опасен (политика `shared/showcase.ts`); смотреть и открывать файлы проекта — через «Документы» (`docs:*`). Реализация — `main/project-files.ts`:
   `listProjectDir` — async `readdir` одной папки (синхронный заморозил бы PTY и сокет), без кэша и watcher'а; путь режет `splitSafeSegments`
   (только `/`, без `''`/`.`/`..`; `\` и `:` отклоняются только на win32, на unix это символы имени; сегмент `.git` в любом регистре — `files.hidden`), `realpath` сверяется с корнем (`isInside`,
   симлинк на `.git` — тоже `files.hidden`); симлинки в списке не разворачиваются (`kind: 'symlink'`), сокеты/FIFO пропускаются; игнор — одна
@@ -1724,8 +1792,10 @@ SVG-линия и траектория пакета используют оди�
   старый main молча стёр бы незнакомое поле при сохранении, поэтому без признака renderer поле флагов не даёт править
   и просит перезапустить приложение. Новый main со старым renderer безопасен: патч ассистента без `extraArgs` флаги
   не трогает, а роли renderer сохраняет объектами целиком.
-- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню).
+- `send` (renderer → main, без ответа): `pty:write`, `pty:resize`, `pty:kill`, `app:menuReady(boolean)` (подписка / отписка интерфейса на команды меню),
+  `app:windowFullscreenReady` (запрос текущего fullscreen главного окна после подписки).
 - События main → renderer: `board:changed {projectId, snapshot}`, `terminals:changed` (полный список `TerminalInfo[]`),
+  `app:windowFullscreen` (boolean, опциональная подписка `app.onWindowFullscreen?`),
   `app:menuAction` (`AppMenuAction`: `settings` / `checkUpdates` / `addProject`, подписка `app.onMenuAction?`),
   `updates:changed` (полный `UpdateState`), `app:changed` (без payload — что-то в `projects.json` изменилось: настройки, проекты и
   группы, библиотека типов задач и роли, шаблоны нод; шлётся из `ProjectManager.onDataChange`, единственная точка — `save()`,
@@ -1734,6 +1804,42 @@ SVG-линия и траектория пакета используют оди�
   `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
 - В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?, onMenuAction?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, interrupt, respond, onMessage}`;
   у `window.orca.worker` остался только `start`.
+
+### IPC: документы (`docs:*`) — все файлы проекта
+
+Контракт окна «Документы» после переноса туда вкладки «Файлы»: дерево показывает все файлы проекта, просмотрщик —
+любой файл, только чтение. Типы — `shared/ipc.ts` (`OrcaApi['docs']`, `DocFile`, `DocGroup`, `DocView`, `DocStub`,
+`DocBytes`, `DocPreviewUrl`, `DOC_VIEW_ERROR_CODES`), классификация и лимиты — чистый модуль `shared/docs-view.ts`
+(без node/electron: его импортирует renderer; тест — `main/docs-kind.test.ts`, потому что из `shared/` тесты не запускаются).
+
+- `source` — `'project'` или id задачи в работе с worktree (иначе `docs.noTaskSource`); `path` — от корня источника через `/`.
+- `docs:list()` → `DocGroup[]`: группа `project` — **все** файлы проекта (уважая `.gitignore`, без `.git`; точечные `.env`,
+  `.github/…` видны), не больше `DOCS_LIST_LIMIT` = 100 000 (больше — `truncated: true`); симлинк на файл — `DocFile.link`.
+  Группы задач — по-прежнему только `.md`. Старый main отдаёт и в `project` только `.md` — renderer это переживает.
+- `docs:read(source, path)` → `string` — без изменений: только `.md`, ≤ 2 МБ, коды `docs.*` (`docs.notMarkdown`, `docs.tooBig`…).
+- `docs:view(source, path, opts?: {source?: boolean})` → `DocView {kind, size, mtime, mime?, text?, stub?, openable}`.
+  `kind` — `DocViewKind` (`markdown | text | image | html | pdf | binary`) по `docKindOf(path)`: полное имя (`Makefile`, `.gitignore`,
+  `.env`) → префикс имени (`.env.local`, `Dockerfile.dev`) → последнее расширение (`x.d.ts`, `a.test.ts` — по `.ts`); `unknown` main
+  уточняет по содержимому: NUL в первых `DOC_SNIFF_BYTES` = 8192 байт — `binary`, иначе `text`. Инварианты: `stub` задан ⇒ `text` нет;
+  `stub: 'pdf'` ⇔ `kind: 'pdf'`; у заглушки `kind` — предполагаемый вид; `text` (UTF-8 без BOM, ≤ `DOC_TEXT_MAX_BYTES` = 1 МиБ) есть
+  всегда у `markdown`/`text`, у `html` и SVG — только при `opts.source` (вкладка «Код»); `mime` — у `image` и `html`; `size`/`mtime` — цели симлинка.
+  `stub`: `binary`, `notUtf8` (других кодировок не угадываем), `tooBig` (текст > 1 МиБ, картинка > `DOC_IMAGE_MAX_BYTES` = 10 МиБ), `pdf` — это
+  **не ошибки**, а обычный ответ. `openable` — расширение из `SHOWCASE_FILE_TYPES` и у пути, и у цели симлинка.
+- `docs:bytes(source, path)` → `DocBytes` (= `ShowcaseFileData {mime, bytes: Uint8Array}`, подходит для `useBlobUrl`): только `kind: 'image'`,
+  ≤ 10 МиБ; не картинка — `docs.noPreview`.
+- `docs:previewUrl(source, path)` → `DocPreviewUrl` (= `ShowcasePreviewUrl {url, mime, base}`): токен протокола `orca-preview://` на корень
+  источника, **всегда без сети** — параметра `network` нет намеренно (HTML проекта — недоверенный код). `url` — страница для
+  `<iframe sandbox="allow-scripts">`, `base` — для относительных картинок markdown. Не html/markdown или путь со скрытым сегментом — `docs.noPreview`.
+- `docs:open(source, path)` — любой файл из `SHOWCASE_FILE_TYPES` (расширение проверяется и по пути, и по realpath: `a.png` → `run.sh` не
+  откроется), иначе `docs.notOpenable`. `docs:reveal(source, path)` — любой файл источника в Finder/Проводнике, симлинк — сам симлинк
+  (`resolveProjectPath(…, followLast = false)`). Старый main принимает в обоих только `.md`.
+- Ошибки пути — общий резолвер и коды `PROJECT_FILES_ERROR_CODES` (`files.badPath`, `files.outside`, `files.hidden`, `files.notFound`,
+  `files.notFile` — не обычный файл: папка, FIFO, сокет, `files.rootMissing`, `files.readFailed`); свои коды новых каналов —
+  `DOC_VIEW_ERROR_CODES`: `docs.notOpenable`, `docs.noPreview`. Тексты — `main/strings/{ru,en}.ts`; renderer узнаёт отказ по `ipcErrorCode`.
+- Совместимость: `view?`, `bytes?`, `previewUrl?` в `OrcaApi` необязательные — в старом preload их нет, а старый main отвечает
+  «No handler registered for 'docs:…'». Renderer проверяет наличие метода и в обоих случаях показывает «перезапустите приложение»,
+  а дерево и `.md` продолжают работать на `docs:list`/`docs:read`. Канал в четырёх местах: `shared/ipc.ts`, `preload/index.ts`,
+  `preload/api.d.ts` (там только `window.orca: OrcaApi` — правка не нужна), `registerIpc` в `main/index.ts`.
 
 ## Протокол сокета
 
@@ -2154,6 +2260,44 @@ UI работает с активным проектом; воркеры и ко
 
 Тесты — `preview-protocol.test.ts` (отказы, заголовки, CSP, токены, Range, навигация). Интеграцию с Electron `node:test` не покрывает.
 
+### Просмотр файлов проекта (main) — `src/main/docs.ts`, `src/main/docs-view.ts`
+
+Сторона main контракта «IPC: документы (`docs:*`)». Корень — `docRoot(source)` в `index.ts`: чистый `docSourceRoot(source, root,
+docTasks(store))` из `docs.ts` (проект или worktree задачи в работе, иначе `docs.noTaskSource`; тест — `docs.test.ts`).
+
+- **Список** (`listProjectFiles`, группа `project` в `listDocGroups`): один асинхронный процесс
+  `git ls-files -z -t --cached --others --exclude-standard` — отслеживаемые (`H`/`S`/`M`; видны и попавшие под `.gitignore`, как в
+  `git status`) и неотслеживаемые неигнорируемые (`?` → `untracked`). Затем асинхронный `lstat` пачками по `DOCS_STAT_CONCURRENCY` = 64:
+  синхронный обход на 100 000 файлов заморозил бы PTY и сокет. В список попадают обычные файлы и симлинки (`link: true`, размер и mtime
+  цели, если она — файл; цель наружу и битая видны, отказ — при открытии); симлинк на папку, подмодуль (запись-папка), FIFO и пропавшие с
+  диска файлы — нет. Шум ОС (`PROJECT_FILES_OS_NOISE`) и `.git` отсекаются. Больше `DOCS_LIST_LIMIT` — `truncated` и сначала
+  отслеживаемые, затем неотслеживаемые (`trackedFirst`, пачками с уступкой event loop; порядок git — см. «Грабли разработки»). Git не отработал (не репозиторий, «dubious ownership», git не найден) — обход `readdir` в ширину без `.git`,
+  `node_modules` (`PROJECT_FILES_FALLBACK_HIDDEN`) и шума, до `limit + 1` файла. Группы задач — прежние `.md` (`listWorktreeDocs`).
+- **Резолвер** (`resolveDocFile`): `resolveProjectPath(root, path, followLast = true)` из `project-files.ts` — `splitSafeSegments`
+  (`..`, пустые сегменты, абсолютный путь, NUL, на win32 `\` и `:`), realpath внутри корня и не в `.git`; затем `stat` цели **до**
+  `open` — папка, FIFO, сокет, устройство дают `files.notFile`, а не повисший `open`. Читается realpath, а не исходный путь (TOCTOU
+  между проверкой и чтением принят: локальный пользователь). Ошибки fs — `files.notFound` / `files.readFailed` с кодом fs, без
+  абсолютного пути (повторяется только путь, который прислал сам вызывающий).
+- **Чтение** (`viewDoc`): вид — `docKindOf` по пути, не по цели симлинка. Читается не больше лимита + 1 байт через один дескриптор
+  кусками: файл, выросший между `stat` и чтением, даёт `tooBig`, а не обрезанный текст. `sniffText`: NUL в первых
+  `DOC_SNIFF_BYTES` — `binary`, `TextDecoder('utf-8', {fatal: true})` срезает BOM и на невалидном UTF-8 даёт `notUtf8`. Файл без
+  известного расширения больше лимита — вид по первым байтам. SVG с `opts.source` больше `DOC_TEXT_MAX_BYTES` — `stub: 'tooBig'`
+  (картинка по-прежнему доступна через `docs:bytes`). `readDocBytes` — только вид `image` по пути, ≤ `DOC_IMAGE_MAX_BYTES`
+  (больше, в том числе выросший, — `docs.tooBig`).
+- **Превью** (`docsPreviewUrl`): токен `PreviewTokens.issue(root, false)` — тот же протокол и тот же реестр токенов, что у показа;
+  один корень — один токен на показ и «Документы» вместе. Отказ `docs.noPreview` — не html/markdown, путь со скрытым сегментом
+  (`previewSegments`: `.github/…`, `.env.html`) или цель симлинка другого типа: протокол такую страницу всё равно не отдал бы.
+  **Что может прочесть страница проекта:** любой файл корня с расширением из белого списка протокола (точки входа и ассеты —
+  `.json`, `.js`, `.txt`, картинки…) без точечных сегментов, поэтому ни `.env`, ни `.git`. Сети нет — вынести прочитанное наружу нечем.
+- **Открыть / показать** (`docsOpenPath`, `docsRevealPath`): `shell.openPath` — только `SHOWCASE_FILE_TYPES`, расширение проверяется
+  до файловой системы (папка `x.app` — `docs.notOpenable`, не «не файл») и ещё раз по realpath (`a.png → run.sh`). Остаточный риск:
+  HTML открывается системой в браузере — уже без песочницы фрейма; это явное действие человека над его же файлом.
+  `shell.showItemInFolder` — любой файл, симлинк — сам симлинк.
+
+Тесты — `docs.test.ts` (список на временном git-репозитории: не-`.md`, игнорируемое, `.git`, `.env`, симлинки, подмодуль, `truncated`
+с параметром лимита, фолбэк без git) и `docs-view.test.ts` (виды и заглушки, лимиты, рост файла, BOM, не UTF-8, FIFO, отказы пути
+кодами без абсолютных путей, превью без сети, белый список «Открыть»).
+
 ### Безопасность состояния
 
 Файлы состояния (`projects.json`, `boards/<id>.json`) — единственная копия работы человека, поэтому:
@@ -2297,8 +2441,13 @@ Renderer вызывает канал через проверку наличия 
 транскрипта, выигрывает самый длинный (`claude-opus-5` покрывает датированные версии); `exact` — точные id моделей
 OpenAI (id целиком или со снапшотом `-YYYY-MM-DD` / `-YYYYMMDD`, регистр и префикс `openai/` не важны): префиксом
 их не сопоставить — `gpt-5` покрыл бы неизвестную `gpt-5.7-x` чужой ценой. Цены GPT (`OPENAI_PRICES` в `pricing.ts`) —
-Standard-tier со страницы developers.openai.com/api/docs/pricing; у codex токены собирает `parseCodexLine`
-(кэшированная часть входа идёт по `cacheRead`), модели без цены на странице (`codex-auto-review`, `gpt-5-codex`,
+Standard-tier со страницы developers.openai.com/api/docs/pricing. Для `gpt-6.1-sol`: $2 вход / $0,10 чтение кэша /
+$2,50 запись кэша / $10 выход за миллион, проверено 2026-10-01; датированные снапшоты получают ту же цену.
+Новая цена применяется к уже записанным
+токенам при следующем расчёте статистики, без миграции транскриптов. Отсутствие транскрипта отдельной сессии
+не связано с отсутствием цены модели: такая сессия по-прежнему учитывается временем.
+У codex токены собирает `parseCodexLine`: кэшированная часть входа идёт по `cacheRead`.
+Модели без цены на странице (`codex-auto-review`, `gpt-5-codex`,
 `gpt-5.1-codex*`…) остаются «без цены». Надбавка длинного контекста OpenAI (>272K входа: вход ×2, выход ×1,5) не
 учитывается — размер отдельного запроса из накопительного счётчика rollout не виден, стоимость таких запросов занижена. Стоимость считается по каждой
 записи с её моделью: `input·input + output·output + cacheRead·cacheRead + write5m·cacheWrite5m + write1h·cacheWrite1h`
@@ -2541,7 +2690,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 
 **UI в renderer.** Состояние — хук `useUpdates` (`renderer/src/useUpdates.ts`): `getState()` при старте + подписка `onChanged`,
 одно на приложение, передаётся плашке и «Настройкам». Что показывать при каком состоянии — чистые функции в `renderer/src/updateState.ts`
-(`bannerView`, `statusLine`, `canCheck`; тест `updateState.test.ts`), компоненты только рисуют:
+(`bannerView`, `canCheck`, `cardRelease`, `releaseSummary`, `updateProgress`; тест `updateState.test.ts`), компоненты только рисуют:
 - **Плашка** (`UpdateBanner.tsx`, низ сайдбара): «Доступна X · Что нового · Скачать» → прогресс скачивания → «X готова · Перезапустить и обновить»
   (при отложенной установке — подпись «при выходе / когда агенты закончат» и «Отменить») → ошибка с «Повторить» (`check()`);
   `unsupported` с найденной версией (portable, macOS вне «Программ») — «Скачать» ссылкой на `releaseUrl` и причина.
@@ -2549,8 +2698,22 @@ electron (`net.fetch` учитывает системный прокси). `macU
 - **Живые агенты:** «Перезапустить и обновить» просто вызывает `install({when:'now'})`. Выбор «Сейчас / Когда агенты закончат / Отмена»
   при живых воркерах делает диалог main (`confirmInstall`, считает `liveWorkerCount`) — в плашке своего вопроса нет, чтобы не спрашивать дважды.
 - **«Что нового»** (`UpdateNotesModal`): `releaseNotes` только через `Markdown.tsx`; ссылка на релиз — только `http(s)` (`isReleaseUrl`).
-- **«Настройки → Обновления»** (`settings/UpdatesSection.tsx`): версия, статус, «Проверить сейчас», переключатели `autoCheck`/`autoDownload`/`installWhenIdle`
-  (пишутся через `app:setSettings({updates})`; старый main поле отбросит — показывается `common.staleApp`).
+- **«Настройки → Обновления»** (`settings/UpdatesSection.tsx`, `UpdateCard.tsx`): карточка текущей/найденной версии с логотипом приложения,
+  кратким анонсом `releaseSummary` из первого абзаца или пункта релиза; полный текст раскрывается на месте через `Markdown.tsx`.
+  «Что нового в этой версии» доступно и у установленного релиза, без проверки сети и в portable.
+  `electron.vite.config.ts` читает `docs/releases/v<версия desktop>.md` и вшивает `{version, releaseNotes}`
+  в `__ORCA_CURRENT_RELEASE__`; отсутствующий или пустой файл останавливает сборку. `cardRelease` выбирает
+  заметки найденной версии из main или встроенный текст при точном совпадении установленной версии.
+  При несовпадении после HMR чужие заметки не подставляются; остаётся ссылка на конкретный тег GitHub.
+  Раскрытие привязано к версии, поэтому при её смене старое раскрытое описание не показывается.
+  Загрузка — полоса и нормализованный процент (`null`/NaN — неопределённый размер), готовность — кнопка `install('now')`,
+  причина ожидания и отмена отложенной установки. Portable даёт ссылку `releaseUrl` вместо установки; `canCheck` разрешает
+  ручную проверку `manual-download`. «Проверить сейчас» блокируется до ответа, даже когда main сохраняет `unsupported`.
+  После успешной ручной проверки показывается время; начальный `idle` не выдаётся за проверенную актуальность.
+  Переключатели `autoCheck`/`autoDownload`/`installWhenIdle` пишутся через `app:setSettings({updates})`;
+  старый main поле отбросит — показывается `common.staleApp`.
+  Portable явно объясняет отсутствие автоматической установки; остаётся только переключатель проверки,
+  настройки автоматической загрузки и установки скрыты по `unsupportedReason`.
 - **Тост «Обновлено до X»** (`UpdateToast`): один вызов `getJustUpdated()` при старте окна, скрывается сам через 10 с.
 - Старый preload без `window.orca.updates` (`pnpm dev` после HMR): `updatesApi()` возвращает null, вместо падения — `common.staleApp`.
 
@@ -2702,7 +2865,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 
 | Что | macOS / unix | Windows | Где |
 |---|---|---|---|
-| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | обычная системная рамка | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts` |
+| Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | `hidden` + нативные caption-кнопки справа, WCO для zoom/fullscreen, палитра через `setTitleBarOverlay`, авторский popup меню из rail | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts`, `WindowMenu.tsx`, `PopupMenu.tsx` |
 | Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
 | Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
 | Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |
@@ -2719,7 +2882,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Системное меню | macOS: меню приложения, службы, скрытие, стандартные роли окон; значок Dock | настройки и выход в «Файл», «О приложении» в справке; значок окна | `applicationMenuTemplate()` — `src/main/app-menu.ts`; `src/main/index.ts` |
 | Пути картинок к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; до 8 путей в стартовом промпте (`CMD_LINE_LIMIT`) | `saveReturnImages` — `src/main/attachments.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
-| Каталог файлов (вкладка «Файлы») | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
+| Каталог файлов (`files:*`, резолвер путей `docs:*`) | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 | Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `renderer/src/styles.css` |
 
@@ -2924,6 +3087,10 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   Chromium собирает drag-прямоугольники без учёта перекрытия. Поверхностям модалок, помощника,
   инбокса и меню нужен явный `app-region: no-drag`. Кнопки AppKit не масштабируются вместе с
   renderer: свободное место по обеим осям рассчитывается через WCO, а не только фиксированными px.
+  Пример (регресс df85313): `.docs-modal` и мастер `.onboarding` не попали в список no-drag, а
+  `.docs-modal` без ужатия высоты (`100vh - 48px`) залезал под 52-пиксельную кромку — кнопки «Обновить»
+  и «Закрыть» кликались «кусочками», остальное утаскивало окно. Теперь no-drag получает любой прямой
+  потомок backdrop, высота `.docs-modal` ограничена как у `.settings-modal`.
 
 - **Колонка «Ревью» ≠ этап проверки.** После `done` задача встаёт в «Ревью» синхронно, а `stage` двигает исполнитель; на
   `merge`/`git`/`end` задача тоже в «Ревью». Мерж упал (`blockStage`) или приложение вышло посреди эффекта — задача висела в
@@ -2956,6 +3123,18 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   и модуль `imageAttachments.ts`. На macOS и Windows файловая система регистр не различает: `import './ImageAttachments'`
   нашёл `.ts` вместо `.tsx`, typecheck упал с TS1149/TS1261, а сборка у пользователей подхватила бы не тот файл. Модуль
   переименован в `imageDrafts.ts`. Не заводи файлы, чьи имена совпадают без учёта регистра, — даже с разным расширением.
+
+- Те же два PR разошлись и в `styles.css`: один переименовал `.coord-image*` в `.attach-*` и удалил старые правила, другой
+  рендерил в `ImageAttachments.tsx` классы `coord-image*`, считая их базовые правила существующими. После merge у классов
+  не осталось ни одного правила — скриншоты рисовались в натуральную величину и вылезали за карточку «Цель» и модалку
+  «Запустить координатора», «×» стал обычной кнопкой. Признак: компонент рендерит класс без правила, а typecheck и тесты
+  зелёные. Теперь одно семейство `attach-*`, страж — `renderer/src/imageStyles.test.ts` (у классов миниатюр и лайтбокса
+  есть правила, у `.attach-image` — `width` и `height`).
+
+- Несколько слушателей `keydown` на одном `window` в capture-фазе вызываются в порядке регистрации, и `stopPropagation`
+  одного не останавливает остальные того же `window`. Модалка (`GlobalTaskModal`, `ReturnGlobalModal`) регистрируется
+  раньше открытого над ней `ImageLightbox`, поэтому Esc закрывал и просмотр, и модалку. Оверлей над модалкой модалка
+  должна распознавать сама: `lightboxOpen()` из `imageViewer.ts` (как `.sv-host` в `AcceptGlobalModal`).
 
 - Orca сливал подзадачи в **текущую ветку корня**, а root был открыт на `master`: две фичи ушли прямо в `master` и
   перемешались (правило «открой в Orca worktree фичи» в CLAUDE.md и `git-flow.md` агенты не могли выполнить — ветку корня
@@ -3186,7 +3365,7 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   Chromium нормализует `..` и `%2e%2e` до обработчика, поэтому проверка сегментов в `resolvePreviewRequest` — вторая линия, а главная —
   realpath внутри корня токена.
 
-- **`git check-ignore` (вкладка «Файлы», `gitCheckIgnore` в `main/git.ts`).** Код выхода `1` значит «ничего не игнорируется», а не ошибку —
+- **`git check-ignore` (`files:list`, `gitCheckIgnore` в `main/git.ts`).** Код выхода `1` значит «ничего не игнорируется», а не ошибку —
   `execFile` отдаёт его как исключение, ответ пустой; `128` — не репозиторий или «dubious ownership», тогда фильтра нет. Папки передаются с `/`
   на конце: шаблон `node_modules/` без слэша на путь не срабатывает. Без `--no-index` отслеживаемые файлы игнорируемыми не считаются, даже если
   подпадают под правило (`git add -f`), — они видимы, как в `git status`. Пути — через stdin с `-z`: в argv тысячи имён упираются в лимит
@@ -3235,6 +3414,20 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   variadic-опции и поддержка `--` у них не проверены (агенты не установлены), поэтому argv не менялся: флаг пользователя
   с `...` в `--help` этих агентов ставь не последним. Добавляешь в `invoke` новый флаг — не ставь variadic последним
   перед промптом.
+
+- `git ls-files -t --cached --others` выдаёт **сначала неотслеживаемые** (`?`), потом отслеживаемые (`H`), а не
+  вперемешку по имени. Обрезка списка «Документов» по порядку git при превышении `DOCS_LIST_LIMIT` отрезала README и
+  исходники, а `.env` и сборочный мусор оставляла. Поэтому `listProjectFiles` при обрезке берёт сначала отслеживаемые
+  (`trackedFirst` в `main/docs.ts`, тест «при обрезке отслеживаемые в приоритете»).
+
+- `Markdown.tsx` с `assets` (показ и «Документы») снимает `href` с относительных ссылок и кладёт путь в
+  `data-showcase-href` — вместе с `href` пропадал и `#якорь`: ссылка `other.md#раздел` открывала файл с начала. Якорь
+  теперь едет отдельно в `data-showcase-hash`, просмотрщик прокручивает к нему после открытия файла.
+
+- Аргумент `git add` (и любой команды с pathspec) — не имя файла, а **pathspec**: `:!имя` исключает, `:(icase)` — магия,
+  `*`, `?`, `[1]` — шаблоны. Файл с таким именем в фикстуре теста не добавится или добавит чужие. В тестах со странными
+  именами — `git --literal-pathspecs add -- …` (`main/docs-qa.test.ts`); в коде приложения пути передавай через `--` и,
+  если имя пришло от человека, тоже с `--literal-pathspecs`.
 
 ## Открытые вопросы
 

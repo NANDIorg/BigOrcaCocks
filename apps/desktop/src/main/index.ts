@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
-import { mainWindowChrome } from './window-chrome'
+import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
 import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
@@ -23,7 +23,8 @@ import {
   hasIdleStage, settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
-import { listDocGroups, readDoc, resolveDocPath, PROJECT_SOURCE, type DocTask } from './docs'
+import { docSourceRoot, docTasks, listDocGroups, readDoc } from './docs'
+import { docsOpenPath, docsPreviewUrl, docsRevealPath, readDocBytes, viewDoc } from './docs-view'
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
@@ -46,7 +47,7 @@ import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './bac
 import { OrcaError, ipcError, mt, setMainLocale, mainLocale } from './i18n'
 import { columnTitle } from './defaultTitles'
 import { rendererSource } from './renderer-source'
-import { applicationMenuTemplate, MenuActionQueue } from './app-menu'
+import { applicationMenuTemplate, applicationMenuSnapshot, runApplicationMenuCommand, windowMenuCommands, MenuActionQueue, type AppMenuHandlers } from './app-menu'
 import { refreshAboutWindow, showAboutWindow } from './about-window'
 import type { AppMenuAction } from '../shared/ipc'
 import appIconPath from '../../build/icon.png?asset'
@@ -84,6 +85,7 @@ if (!gotSingleInstanceLock) app.exit(0)
 else app.on('second-instance', () => { if (app.isReady()) showWindow() })
 
 let win: BrowserWindow | null = null
+let windowFullscreen = false
 let projects: ProjectManager
 let updater: Updater
 /** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
@@ -108,7 +110,8 @@ const STUCK_MS = Number(process.env.ORCA_STUCK_MINUTES ?? 10) * 60_000
 
 function createWindow(): BrowserWindow {
   menuActions.disconnect()
-  const chrome = mainWindowChrome(process.platform)
+  windowFullscreen = false
+  const chrome = mainWindowChrome(process.platform, projects.settings().appearance?.theme)
   win = new BrowserWindow({
     width: 1500,
     height: 940,
@@ -124,7 +127,18 @@ function createWindow(): BrowserWindow {
     }
   })
   setPtyWindow(win)
+  // Windows WCO сам не обнуляет заданную height в fullscreen; иначе renderer оставляет пустой резерв.
+  if (process.platform === 'win32') {
+    win.on('enter-full-screen', () => setWindowFullscreen(true))
+    win.on('leave-full-screen', () => setWindowFullscreen(false))
+  }
   const created = win
+  // В авторском меню renderer сначала возвращает фокус редактору и сам вызывает команду.
+  // Blur/reload/crash возвращают нативные сочетания, даже если renderer не успел закрыть popup.
+  const restoreMenuShortcuts = (): void => {
+    if (process.platform === 'win32' && !created.webContents.isDestroyed()) created.webContents.setIgnoreMenuShortcuts(false)
+  }
+  if (process.platform === 'win32') created.on('blur', restoreMenuShortcuts)
   win.on('closed', () => {
     if (win === created) {
       win = null
@@ -134,9 +148,12 @@ function createWindow(): BrowserWindow {
   })
   win.webContents.on('did-start-loading', () => {
     // Загрузка показа в iframe не размонтирует App: его подписка на меню остаётся действующей.
-    if (created.webContents.isLoadingMainFrame()) menuActions.disconnect()
+    if (created.webContents.isLoadingMainFrame()) {
+      menuActions.disconnect()
+      restoreMenuShortcuts()
+    }
   })
-  win.webContents.on('render-process-gone', () => menuActions.disconnect())
+  win.webContents.on('render-process-gone', () => { menuActions.disconnect(); restoreMenuShortcuts() })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalWebUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
@@ -183,13 +200,24 @@ function navigateFromMenu(action: AppMenuAction): void {
 /** Меню и «О приложении» переводятся вместе с треем, в том числе при правке настроек через CLI. */
 function refreshApplicationMenu(): void {
   refreshAboutWindow(projects.settings().appearance)
-  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate(process.platform, !app.isPackaged, appMenuHandlers())))
+}
+
+function appMenuHandlers(): AppMenuHandlers {
+  return {
     navigate: navigateFromMenu,
     about: () => { showAboutWindow({ parent: showWindow(), iconPath: appIconPath, version: app.getVersion(), appearance: projects.settings().appearance }) },
     open: () => { showWindow() },
     quit: () => { void requestQuit() },
     openExternal: (url) => { void shell.openExternal(url) }
-  })))
+  }
+}
+
+/** Событие Windows приходит раньше смены isFullScreen; сохраняем явное состояние для темы и renderer. */
+function setWindowFullscreen(fullscreen: boolean): void {
+  windowFullscreen = fullscreen
+  syncMainAppearance()
+  win?.webContents.send('app:windowFullscreen', fullscreen)
 }
 
 /** Фон при запуске/восстановлении и native controls согласованы с выбранной темой. */
@@ -197,7 +225,10 @@ function syncMainAppearance(): void {
   const settings = projects.settings().appearance
   const theme = getAppTheme(settings?.theme)
   if (nativeTheme.themeSource !== theme.colorScheme) nativeTheme.themeSource = theme.colorScheme
-  if (win && !win.isDestroyed()) win.setBackgroundColor(theme.colors.page)
+  if (win && !win.isDestroyed()) {
+    win.setBackgroundColor(theme.colors.page)
+    if (process.platform === 'win32') win.setTitleBarOverlay(windowsTitleBarOverlay(settings?.theme, windowFullscreen))
+  }
   refreshAboutWindow(settings)
 }
 
@@ -722,25 +753,10 @@ function testNotification(): void {
   new Notification({ title: 'orca-board', body, silent: !s.sound }).show()
 }
 
-/**
- * Задачи в работе для «Документов»: у задачи есть worktree на диске и она не в колонке kind=done.
- * После принятия ревью worktree удаляется — документы задачи уже в проекте.
- */
-function docTasks(store: TaskStore): DocTask[] {
-  return store
-    .snapshot()
-    .tasks.filter((t) => t.worktree && store.columnKind(t.status) !== 'done' && existsSync(t.worktree))
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .map((t) => ({ id: t.id, title: t.title, worktree: t.worktree!, branch: t.branch }))
-}
-
 /** Корень источника документов: проект или worktree его задачи в работе. Чужие id — ошибка. */
 function docRoot(source: unknown): string {
   const p = resolveProject()
-  if (source === PROJECT_SOURCE) return p.root
-  const task = docTasks(p.store).find((t) => t.id === source)
-  if (!task) throw new OrcaError('docs.noTaskSource', { id: String(source) })
-  return task.worktree
+  return docSourceRoot(source, p.root, docTasks(p.store))
 }
 
 /** Диалог выбора репозитория для «Добавить проект»; отмена — null. */
@@ -797,6 +813,25 @@ function liveAgentCount(projectId: string): number {
 }
 
 function registerIpc(): void {
+  ipcMain.on('app:windowFullscreenReady', (event) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    event.sender.send('app:windowFullscreen', windowFullscreen)
+  })
+  handle('app:getMenu', (event) => {
+    if (process.platform !== 'win32' || !win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return []
+    win.webContents.setIgnoreMenuShortcuts(true)
+    return applicationMenuSnapshot(Menu.getApplicationMenu()?.items ?? [])
+  })
+  handle('app:invokeMenu', (event, id: unknown) => {
+    if (process.platform !== 'win32' || !win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    win.webContents.setIgnoreMenuShortcuts(false)
+    const menu = applicationMenuSnapshot(Menu.getApplicationMenu()?.items ?? [])
+    runApplicationMenuCommand(menu, id, windowMenuCommands(win, appMenuHandlers()))
+  })
+  handle('app:dismissMenu', (event) => {
+    if (process.platform !== 'win32' || !win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    win.webContents.setIgnoreMenuShortcuts(false)
+  })
   ipcMain.on('app:menuReady', (event, ready: unknown) => {
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
     if (ready === true) {
@@ -1012,11 +1047,19 @@ function registerIpc(): void {
     return listDocGroups(p.root, currentBranch(p.root), docTasks(p.store))
   })
   handle('docs:read', (_e, source: unknown, path: unknown) => readDoc(docRoot(source), path))
+  // Любой файл источника (main/docs-view.ts): бинарь, не UTF-8, большой и PDF — `stub`, не ошибка.
+  handle('docs:view', (_e, source: unknown, path: unknown, opts: unknown) => viewDoc(docRoot(source), path, opts))
+  handle('docs:bytes', (_e, source: unknown, path: unknown) => readDocBytes(docRoot(source), path))
+  // Токен протокола показа на корень источника — всегда без сети: HTML проекта — недоверенный код.
+  handle('docs:previewUrl', (_e, source: unknown, path: unknown) => docsPreviewUrl(previewTokens, docRoot(source), path))
+  // Открыть приложением системы — только белый список показа (по пути и по цели симлинка); показать в папке — любой файл.
   handle('docs:open', async (_e, source: unknown, path: unknown) => {
-    const err = await shell.openPath(resolveDocPath(docRoot(source), path))
+    const err = await shell.openPath(await docsOpenPath(docRoot(source), path))
     if (err) throw new Error(err)
   })
-  handle('docs:reveal', (_e, source: unknown, path: unknown) => shell.showItemInFolder(resolveDocPath(docRoot(source), path)))
+  handle('docs:reveal', async (_e, source: unknown, path: unknown) => {
+    shell.showItemInFolder(await docsRevealPath(docRoot(source), path))
+  })
   // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
   // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
@@ -1043,7 +1086,7 @@ function registerIpc(): void {
     const p = resolveProject()
     return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
   })
-  // Вкладка «Файлы» (main/project-files.ts): корень — явного projectId, неизвестный id — обычная ошибка «project not found».
+  // Одна папка проекта (main/project-files.ts) для диалога начального коммита; вкладки «Файлы» нет. Корень — явного projectId, неизвестный id — обычная ошибка «project not found».
   handle('files:list', (_e, projectId: unknown, dir: unknown) => listProjectDir(projectRoot(String(projectId)), dir ?? ''))
   // Только показать в Finder/Проводнике, не openPath: запуск произвольного файла опасен. Симлинк — сам симлинк.
   handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {

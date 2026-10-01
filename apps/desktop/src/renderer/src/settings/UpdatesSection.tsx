@@ -2,7 +2,9 @@ import type React from 'react'
 import { DEFAULT_UPDATE_SETTINGS, type AppSettings, type UpdateSettings } from '../../../shared/ipc'
 import { SectionHead, Switch } from '../about/parts'
 import { useT } from '../i18n'
-import { canCheck, statusLine, versionLabel } from '../updateState'
+import { Icon } from '../icons'
+import { UpdateCard } from '../UpdateCard'
+import { canCheck } from '../updateState'
 import { updatesProblem, type UpdatesController } from '../useUpdates'
 
 /** Строка «подпись + пояснение + переключатель». */
@@ -19,7 +21,7 @@ function SwitchRow({ title, hint, on, disabled, onChange }: {
         <b>{title}</b>
         <span className="hint">{hint}</span>
       </div>
-      <Switch on={on} disabled={disabled} onChange={onChange} />
+      <Switch title={title} on={on} disabled={disabled} onChange={onChange} />
     </div>
   )
 }
@@ -36,26 +38,24 @@ export function UpdatesSection({ settings, updates, error, onChange }: {
 }): React.JSX.Element {
   const t = useT()
   const { state } = updates
+  const portable = state?.unsupportedReason === 'portable'
   // Старый main не знает `updates` — показываем дефолты, выключенными.
   const s = settings?.updates ?? DEFAULT_UPDATE_SETTINGS
   const problem = updatesProblem(updates) ?? error
   return (
     <>
       <SectionHead title={t('settings.updates.title')} hint={t('settings.updates.hint')}>
-        <button type="button" className="btn-sm" disabled={!canCheck(state)} onClick={updates.check}>
-          {t('settings.updates.check')}
+        <button type="button" className="btn-sm updates-check" disabled={updates.checking || !canCheck(state)} onClick={updates.check}>
+          <Icon.refresh />{t('settings.updates.check')}
         </button>
       </SectionHead>
-      <div className="about-box">
-        <div className="row-act">
-          <div className="row-act-text">
-            <b>{t('settings.updates.current')}</b>
-            <span className="hint">{state ? versionLabel(state.currentVersion) : t('common.loading')}</span>
-          </div>
-        </div>
-        {state && <p className="hint updates-status">{statusLine(state)}</p>}
-      </div>
+      <UpdateCard updates={updates} />
+      <div className="updates-preferences-label">{t(portable ? 'settings.updates.checkPreferences' : 'settings.updates.preferences')}</div>
       <div className="about-box notif-rows">
+        {portable && <div className="updates-portable-note">
+          <Icon.info />
+          <div><b>{t('settings.updates.portable.title')}</b><p>{t('settings.updates.portable.hint')}</p></div>
+        </div>}
         <SwitchRow
           title={t('settings.updates.autoCheck')}
           hint={t('settings.updates.autoCheckHint')}
@@ -63,20 +63,20 @@ export function UpdatesSection({ settings, updates, error, onChange }: {
           disabled={!settings?.updates}
           onChange={(on) => onChange({ autoCheck: on })}
         />
-        <SwitchRow
+        {!portable && <SwitchRow
           title={t('settings.updates.autoDownload')}
           hint={t('settings.updates.autoDownloadHint')}
           on={s.autoDownload}
           disabled={!settings?.updates}
           onChange={(on) => onChange({ autoDownload: on })}
-        />
-        <SwitchRow
+        />}
+        {!portable && <SwitchRow
           title={t('settings.updates.installWhenIdle')}
           hint={t('settings.updates.installWhenIdleHint')}
           on={s.installWhenIdle}
           disabled={!settings?.updates}
           onChange={(on) => onChange({ installWhenIdle: on })}
-        />
+        />}
       </div>
       {problem && <div className="editor-error">{problem}</div>}
     </>

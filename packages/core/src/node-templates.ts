@@ -30,7 +30,7 @@ const SAMPLE_ID = 'template'
  * `attempts` и «человек после показа» зависят от графа, в который шаблон попадёт. Все варианты `decision` в образце
  * ведут в конец — куда они поведут на самом деле, решает граф.
  */
-const TEMPLATE_IGNORED: readonly WfIssueCode[] = ['attemptsNoNode', 'showcaseUnseen', 'noHumanBeforeEnd', 'unreachable', 'endlessLoop', 'subflowDoubleReview', 'decisionSameTarget']
+const TEMPLATE_IGNORED: readonly WfIssueCode[] = ['attemptsNoNode', 'runOnlyNoWorkTarget', 'showcaseUnseen', 'noHumanBeforeEnd', 'unreachable', 'endlessLoop', 'subflowDoubleReview', 'decisionSameTarget']
 
 /** Роли, которые называет нода (и её путь подзадачи): проверка ролей против типа — при вставке. */
 function referencedRoles(node: WfTemplateNode): string[] {

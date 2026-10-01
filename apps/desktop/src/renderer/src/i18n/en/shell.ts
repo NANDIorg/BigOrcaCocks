@@ -2,10 +2,12 @@ import type { AreaTranslation } from '../types'
 import type ru from '../ru/shell'
 
 export default {
+  'menu.back': 'Back to sections',
   cancel: 'Cancel',
   closeEsc: 'Close (Esc)',
   toggle: 'Open / close',
 
+  'rail.menu': 'Application menu',
   'rail.projects': 'Projects',
   'rail.settings': 'Settings',
   'rail.docs': 'Documents',
@@ -104,7 +106,6 @@ export default {
   'tab.boardBack': 'Back to the main board',
   'tab.terminals': 'Terminals',
   'tab.stats': 'Stats',
-  'tab.files': 'Files',
   'tab.info': 'Project',
   noSubtasks: 'No subtasks',
 

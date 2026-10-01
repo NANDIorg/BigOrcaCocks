@@ -1,12 +1,24 @@
 import {
-  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID,
+  DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, presetTaskType,
   type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type WfMigrationNote, type Workflow
 } from '@orca-board/core'
 import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState } from '../../shared/ipc'
 import { t } from './i18n'
+import { builtinText } from './defaultTitles'
 
 // Логика «Настройки → Типы задач» (settings/TaskTypePane.tsx) и «О проекте → Типы задач»
 // (about/TaskTypesSection.tsx): без React, чтобы тестировать node --test.
+
+/** Обновлённая заготовка — новый тип без id; сохранённые типы и их живые роли не перезаписываются. */
+export function presetTaskTypeInput(id: string, library: readonly TaskType[]): TaskTypeInput {
+  const preset = presetTaskType(id)
+  if (!preset) throw new Error(t('settings.presetUnavailable'))
+  const base = builtinText(preset.title)
+  const names = new Set(library.map((type) => builtinText(type.title)))
+  let title = base
+  for (let n = 2; names.has(title); n++) title = `${base} (${n})`
+  return { title, description: preset.description, settings: preset.settings }
+}
 
 /**
  * Renderer приходит по HMR, а main и preload остаются старыми до перезапуска: у старого preload нет
