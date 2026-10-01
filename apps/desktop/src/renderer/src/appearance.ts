@@ -31,7 +31,7 @@ export function createAppearanceController(options: { root?: AppearanceSurface; 
   const sources = new Set<() => void>()
 
   function publish(): void {
-    const theme = getAppTheme(settings.theme)
+    const theme = getAppTheme(settings.theme, settings.highSaturation)
     const reducedMotion = settings.motion === 'reduced' || options.media?.matches === true
     snapshot = { settings, theme, reducedMotion }
     if (options.root) {
@@ -39,6 +39,7 @@ export function createAppearanceController(options: { root?: AppearanceSurface; 
       options.root.style.setProperty('color-scheme', theme.colorScheme)
       options.root.dataset.theme = settings.theme
       options.root.dataset.motion = reducedMotion ? 'reduced' : 'full'
+      options.root.dataset.saturation = settings.highSaturation ? 'high' : 'normal'
     }
     for (const listener of listeners) listener()
   }

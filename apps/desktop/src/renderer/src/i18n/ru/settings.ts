@@ -34,6 +34,8 @@ export default {
   'appearance.theme.paper': 'Бумага',
   'appearance.theme.paper.hint': 'Светлые тёплые поверхности, мягкие границы и тёмно-зелёный акцент.',
   'appearance.motion': 'Анимации',
+  'appearance.highSaturation': 'Повышенная насыщенность',
+  'appearance.highSaturationHint': 'Более насыщенные цвета акцентов, статусов, приоритетов и прогресса в любой теме.',
   'appearance.motionHint': 'Уменьшение движения убирает декоративные анимации и плавную прокрутку.',
   'appearance.motion.system': 'Как в системе',
   'appearance.motion.reduced': 'Уменьшить движение',
