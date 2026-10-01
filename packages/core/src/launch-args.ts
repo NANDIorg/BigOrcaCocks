@@ -117,7 +117,9 @@ export function reservedFlagsIn(agent: string, args: readonly string[]): Reserve
       for (const flag of rule.flags) {
         const attached = attachedValue(token, flag)
         if (attached === undefined) continue
-        if (rule.valuePrefix !== undefined && !(attached || args[i + 1] || '').startsWith(rule.valuePrefix)) continue
+        // Codex принимает пробелы вокруг `=` в -c: сравниваем ключ настройки, а не её оформление.
+        const value = (attached || args[i + 1] || '').trimStart().replace(/\s*=\s*/, '=')
+        if (rule.valuePrefix !== undefined && !value.startsWith(rule.valuePrefix)) continue
         const shown = rule.valuePrefix === undefined ? flag : `${flag} ${rule.valuePrefix}`
         if (!found.some((f) => f.flag === shown)) found.push({ flag: shown, reason: rule.reason })
       }

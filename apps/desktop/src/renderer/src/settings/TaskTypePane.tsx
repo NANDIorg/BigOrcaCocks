@@ -140,6 +140,7 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
               roles={s.roles}
               agents={typeAgents}
               workflow={s.workflow}
+              permissionMode={s.permissionMode}
               ofTaskType
               onSave={(next) => api.patch(type.id, { roles: next })}
             />

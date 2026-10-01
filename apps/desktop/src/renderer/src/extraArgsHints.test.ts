@@ -139,7 +139,18 @@ test('commandPreview — без флагов команда прежняя; не
   // Разобранные флаги: variadic `--image` закрыт разделителем — как в реальном запуске.
   assert.equal(
     commandPreview(t, { agent: 'codex', model: 'gpt-5', extraArgs: '--image "a b.png"' }, 'worker', '‹задание›'),
-    "codex --image 'a b.png' -m gpt-5 -- ‹skills/worker.md› --- ‹задание›"
+    `codex --image 'a b.png' -c 'sandbox_mode="workspace-write"' -c 'approval_policy="on-request"' -m gpt-5 -- ‹skills/worker.md› --- ‹задание›`
+  )
+})
+
+test('commandPreview — полный доступ типа задачи виден в аргументах Codex и Claude', () => {
+  assert.equal(
+    commandPreview(t, { agent: 'codex' }, 'worker', '‹задание›', 'bypassPermissions'),
+    `codex -c 'sandbox_mode="danger-full-access"' -c 'approval_policy="never"' ‹skills/worker.md› --- ‹задание›`
+  )
+  assert.match(
+    commandPreview(t, { agent: 'claude' }, 'worker', '‹задание›', 'bypassPermissions'),
+    /--permission-mode bypassPermissions/
   )
 })
 

@@ -15,6 +15,18 @@ describe('инструкции предметных заготовок', () => {
   const worker = readFileSync(new URL('../../../skills/worker.md', import.meta.url), 'utf8')
   const coordinator = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
 
+  it('координатор и воркер используют режим типа: полный доступ передаётся и Codex, и Claude', () => {
+    for (const skill of [worker, coordinator]) {
+      assert.match(skill, /режим разрешений из типа задачи/i)
+      const opts = { permissionMode: 'bypassPermissions', shell: '/bin/sh' }
+      const codex = getAgent('codex')!.invoke(skill, 'задание', opts).args
+      assert.ok(codex.includes('sandbox_mode="danger-full-access"'))
+      assert.ok(codex.includes('approval_policy="never"'))
+      const claude = getAgent('claude')!.invoke(skill, 'задание', opts).args
+      assert.equal(claude[claude.indexOf('--permission-mode') + 1], 'bypassPermissions')
+    }
+  })
+
   it('роль и правила попадают в системный промпт вместе со штатным протоколом воркера', () => {
     for (const type of presetTaskTypes()) for (const role of type.settings.roles!) {
       const system = agentSystemPrompt(role.id === 'coordinator' ? coordinator : worker, { projectRules: type.settings.agentRules, role })

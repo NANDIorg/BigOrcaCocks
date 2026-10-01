@@ -10,7 +10,7 @@ import { defaultWorkflow } from './workflow.ts'
 import { makeTaskTypePresets } from './task-type-presets.ts'
 import { ASSISTANT_ROLE_ID } from './prompts.ts'
 
-/** Режим разрешений Claude Code; тот же список, что `PermissionMode` в apps/desktop/src/shared/ipc.ts. */
+/** Режим разрешений типа задачи; адаптер CLI переводит его в свои настройки. Список совпадает с `PermissionMode` в desktop. */
 export type TaskTypePermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
 /**

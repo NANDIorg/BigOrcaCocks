@@ -217,7 +217,7 @@ export interface SubtaskInput {
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
 
 export const PERMISSION_MODES: Record<PermissionMode, string> = {
-  auto: 'Авто — Claude сам решает, опасное спросит',
+  auto: 'Авто — агент работает самостоятельно, при необходимости спросит',
   bypassPermissions: 'Без подтверждений — полностью автономно',
   acceptEdits: 'Только правки файлов — остальное спросит в терминале'
 }

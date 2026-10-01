@@ -9,7 +9,7 @@ export interface AgentInvocation {
 }
 
 export interface AgentInvokeOptions {
-  /** Режим разрешений Claude Code (auto | bypassPermissions | acceptEdits). */
+  /** Режим разрешений типа задачи; адаптер переводит его в настройки своего CLI. */
   permissionMode: string
   /** Оболочка пользователя ($SHELL), для агента shell. */
   shell: string
@@ -168,16 +168,23 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: ['low', 'medium', 'high'],
     lingersAfterAnswer: true,
-    // Сверено с `codex --help` 0.156.1. Sandbox и approval приложение не задаёт — они не зарезервированы.
+    // Сверено с `codex --help` 0.159.0; --full-auto остаётся в списке для старых версий CLI.
     reservedFlags: [
       { flags: ['--model', '-m'], reason: 'model' },
       { flags: ['--config', '-c'], reason: 'model', valuePrefix: 'model=' },
-      { flags: ['--config', '-c'], reason: 'effort', valuePrefix: 'model_reasoning_effort=' }
+      { flags: ['--config', '-c'], reason: 'effort', valuePrefix: 'model_reasoning_effort=' },
+      { flags: ['--config', '-c'], reason: 'permission', valuePrefix: 'sandbox_mode=' },
+      { flags: ['--config', '-c'], reason: 'permission', valuePrefix: 'approval_policy=' },
+      { flags: ['--sandbox', '-s', '--ask-for-approval', '-a', '--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '--approve-for-me'], reason: 'permission' }
     ],
     invoke: (system, prompt, opts) => ({
       command: 'codex',
       args: [
         ...extra(opts),
+        // `-c` повторяемый: прямые -s/-a роли сохраняются без ошибки о дублировании. Полный доступ требует
+        // обеих настроек. У Codex нет режима «только правки»: auto и acceptEdits используют рабочую песочницу.
+        '-c', `sandbox_mode="${opts.permissionMode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write'}"`,
+        '-c', `approval_policy="${opts.permissionMode === 'bypassPermissions' ? 'never' : 'on-request'}"`,
         ...modelFlag('-m', opts.model),
         ...(opts.effort ? ['-c', `model_reasoning_effort=${opts.effort}`] : []),
         // У codex `--image <FILE>...` variadic (codex 0.156.1): без `-m`/`-c` после флагов пользователя он забрал бы

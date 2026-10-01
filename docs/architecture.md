@@ -1059,6 +1059,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   - остальные — `models = []`, в UI модель вводится свободным текстом.
 - **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?, extraArgs?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
+  `permissionMode` — claude `--permission-mode`, codex `-c sandbox_mode=… -c approval_policy=…` (таблица ниже в «Разрешения агентов»);
   пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
   `sessionId` — uuid сессии для статистики: `worker.ts` генерирует его (`agentSessionId`) только агентам с
   `acceptsSessionId` (сейчас claude → `--session-id <uuid>`), ассистенту не передаётся.
@@ -1067,10 +1068,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   - **Порядок: argv = [флаги пользователя] + [флаги приложения] + [промпт]**, вставка — внутри `invoke` каждого агента
     (а не в `worker.ts`), чтобы превью команды в UI совпадало с реальным запуском. claude:
     `claude <extra> --permission-mode … --allowedTools … [--model …] [--effort …] [--session-id …] --append-system-prompt <system> <prompt>`;
-    codex: `codex <extra> [-m …] [-c model_reasoning_effort=…] [--] <промпт>` (`--` ставится только при флагах
+    codex: `codex <extra> -c sandbox_mode=… -c approval_policy=… [-m …] [-c model_reasoning_effort=…] [--] <промпт>` (`--` ставится только при флагах
     пользователя — закрывает variadic `--image <FILE>...`, см. «Грабли разработки»); opencode, gemini, cursor, amp, copilot — `<extra>`
     сразу после команды; goose — `goose run <extra> --interactive --text <промпт>` (после подкоманды `run`); shell —
-    `$SHELL <extra>`. Без `extraArgs` (нет поля или `[]`) argv прежний — это держит таблица в `agents.test.ts`.
+    `$SHELL <extra>`. Нет `extraArgs` или `[]` — одинаковый argv; порядок держит таблица в `agents.test.ts`.
     Почему «перед»: variadic-флаг в конце съел бы позиционный промпт (см. «Грабли разработки»), а у одиночных опций
     побеждает последняя — флаги приложения случайно не сломать.
     **Проверено на живых агентах** (claude 2.1.285, codex 0.156.1; запуск в PTY с argv, который строит `invoke`):
@@ -2047,19 +2048,33 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 ждущий запрос `answer` → как `rejectReview`: «Уточнить» (`answer_clarified`, feedback обязателен); иначе feedback (если передан)
 и колонка `kind=ready`; прочие ждущие запросы задачи отменяются. `start: true` — после этого `startWorker`.
 
-## Разрешения Claude Code
+## Разрешения агентов
 
-Координатор и воркеры запускаются с `--permission-mode <режим типа задачи>` и
-`--allowedTools "Bash(orca-board:*)"`. Режим хранится в типе задачи (`TaskType.settings.permissionMode`, «Настройки →
-Типы задач → Разрешения»; прогон — по своему типу, `resolveRunType`), по умолчанию `auto`: Claude Code сам одобряет обычные действия и
-спрашивает только про опасные. `bypassPermissions` — вообще без вопросов, `acceptEdits` —
-только правки файлов без вопросов, остальной Bash спросит в терминале приложения.
+Режим хранится в типе задачи (`TaskType.settings.permissionMode`, «Настройки → Типы задач → Разрешения»;
+прогон — по своему типу, `resolveRunType`), по умолчанию `auto`. Координатор и все воркеры, включая этапы проверки
+и принятия решений, передают его в общий адаптер `AgentSpec.invoke`. Изменение действует на новые терминалы.
 
-Флаги запуска роли (`Role.extraArgs`) режим типа **не заменяют**: `--permission-mode` приложение ставит после них, и
-у одиночной опции побеждает последняя. Но запретить обход флаги не могут — они выполняются с правами человека
-(`--dangerously-skip-permissions`, `--mcp-config`, `--settings`, у codex `-s danger-full-access`); UI о таких флагах только
-предупреждает (`reservedFlagsIn`). Поэтому флаги задаёт только человек в UI: ни CLI, ни сокет их не принимают и не
-отдают — иначе агент, читающий недоверенный текст задач, мог бы сам расширить себе права.
+| Режим типа | Claude Code (`--permission-mode`) | Codex (`-c sandbox_mode=…`, `-c approval_policy=…`) |
+| --- | --- | --- |
+| `auto` | `auto`: обычные действия сам, опасные — с подтверждением | `workspace-write`, `on-request`: работа в песочнице, при необходимости запрос дополнительных прав |
+| `bypassPermissions` | `bypassPermissions`: без запросов разрешений | `danger-full-access`, `never`: доступ к файлам и сети без песочницы и запросов разрешений |
+| `acceptEdits` | `acceptEdits`: правки без вопросов, остальные действия — с подтверждением | `workspace-write`, `on-request`: у Codex нет отдельного режима подтверждения только команд |
+
+Claude Code дополнительно получает `--allowedTools "Bash(orca-board:*)"`: CLI доски разрешён всегда.
+У Codex отдельного исключения для `orca-board` нет; действуют его sandbox и approval. Остальные CLI пока используют
+собственные настройки разрешений. Полный доступ Codex требует **обеих** настроек; прежний адаптер полностью
+игнорировал `permissionMode`, поэтому режим типа на него не влиял.
+
+Codex получает настройки через повторяемый `-c`, а не через `-s`/`-a`: если такие флаги уже есть в `Role.extraArgs`,
+повтор приводит к ошибке CLI (проверено на 0.159.0). Переопределения `-c sandbox_mode=…` и `-c approval_policy=…`
+приложения стоят после флагов пользователя. Прямые `--sandbox`/`--ask-for-approval` и пресеты CLI могут изменить
+режим запуска; UI предупреждает о них через `reservedFlagsIn`, включая короткие формы, обход sandbox и настройки `-c`.
+У Claude повторный `--permission-mode` приложения побеждает, но `--dangerously-skip-permissions` обходит режим.
+
+Флаги задаёт только человек в UI: ни CLI, ни сокет их не принимают и не отдают — иначе агент, читающий недоверенный
+текст задач, мог бы сам расширить себе права. Управляемые политиками ограничения Codex (`requirements.toml`) сохраняются.
+Официальные источники: [sandbox и approvals](https://learn.chatgpt.com/docs/sandboxing),
+[аргументы CLI](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
 
 ## Ветка глобальной задачи (`src/main/run-branch.ts`, чистая часть — `packages/core/src/run-branch.ts`)
 

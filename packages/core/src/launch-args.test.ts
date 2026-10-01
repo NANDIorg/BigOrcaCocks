@@ -127,7 +127,7 @@ describe('reservedFlagsIn', () => {
 
   it('свободные флаги не отмечаются; похожие по префиксу — тоже', () => {
     assert.deepEqual(reservedFlagsIn('claude', ['--add-dir', '/tmp', '--mcp-config', 'a.json', '--verbose', '--model-x', '--fallback-model', 'm']), [])
-    assert.deepEqual(reservedFlagsIn('codex', ['-s', 'workspace-write', '-a', 'never', '--search', '--dangerously-bypass-approvals-and-sandbox']), [])
+    assert.deepEqual(reservedFlagsIn('codex', ['--search', '--add-dir', '/tmp', '-c', 'model_provider=x']), [])
     assert.deepEqual(reservedFlagsIn('claude', []), [])
   })
 
@@ -137,7 +137,7 @@ describe('reservedFlagsIn', () => {
     assert.deepEqual(reservedFlagsIn('codex', ['-mgpt-5']), [{ flag: '-m', reason: 'model' }])
   })
 
-  it('codex: -c зарезервирован только для модели и effort', () => {
+  it('codex: -c зарезервирован для модели, effort и разрешений', () => {
     assert.deepEqual(reservedFlagsIn('codex', ['-m', 'gpt-5', '-c', 'model_reasoning_effort=high']), [
       { flag: '-m', reason: 'model' },
       { flag: '-c model_reasoning_effort=', reason: 'effort' }
@@ -146,7 +146,27 @@ describe('reservedFlagsIn', () => {
       { flag: '--config model=', reason: 'model' },
       { flag: '--config model_reasoning_effort=', reason: 'effort' }
     ])
-    assert.deepEqual(reservedFlagsIn('codex', ['-c', 'sandbox_mode=read-only', '-c', 'model_provider=x', '-c']), [])
+    assert.deepEqual(reservedFlagsIn('codex', ['-c', 'sandbox_mode=read-only', '--config=approval_policy=never', '-c', 'model_provider=x', '-c']), [
+      { flag: '-c sandbox_mode=', reason: 'permission' },
+      { flag: '--config approval_policy=', reason: 'permission' }
+    ])
+  })
+
+  it('codex: ручные sandbox/approval и обход режима типа дают предупреждение', () => {
+    for (const flag of ['--sandbox', '-s', '--ask-for-approval', '-a', '--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '--approve-for-me']) {
+      assert.deepEqual(reservedFlagsIn('codex', [flag]), [{ flag, reason: 'permission' }])
+    }
+    assert.deepEqual(reservedFlagsIn('codex', ['-sdanger-full-access', '--ask-for-approval=never']), [
+      { flag: '-s', reason: 'permission' },
+      { flag: '--ask-for-approval', reason: 'permission' }
+    ])
+  })
+
+  it('codex: пробелы около = в настройках разрешений не скрывают предупреждение', () => {
+    assert.deepEqual(reservedFlagsIn('codex', ['-c', 'sandbox_mode = read-only', '--config', ' approval_policy = never']), [
+      { flag: '-c sandbox_mode=', reason: 'permission' },
+      { flag: '--config approval_policy=', reason: 'permission' }
+    ])
   })
 
   it('флаг одного агента у другого не зарезервирован; неизвестный агент и агент без списка — []', () => {
