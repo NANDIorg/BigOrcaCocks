@@ -174,7 +174,7 @@ export function workerTaskPrompt(
   if (task.feedback) {
     if (previousAnswer) parts.push('', '# Прошлый ответ', '', previousAnswer)
     parts.push('', '# Уточнение к прошлому ответу', '', task.feedback)
-    const images = attachmentsSection(task.feedbackImages, 'worker')
+    const images = attachmentsSection(task.feedbackImages, 'worker', 'clarification')
     if (images) parts.push('', images)
     parts.push('', 'Дай новый полный ответ с учётом уточнения.')
   }

@@ -10,7 +10,7 @@ import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
 import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type Attachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
-import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
+import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, pruneLaunchTempFiles, type WorkerEnvContext } from './worker'
 import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
 import { createAssistantConversation } from './assistant-conversation'
 import { AssistantSession } from './assistant-session'
@@ -974,7 +974,7 @@ function registerIpc(): void {
     const p = resolveProject()
     shell.showItemInFolder(revealTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
   })
-  // Открыть приложением системы — только белый список (`attachmentOpenable`: картинки, Markdown, PDF), не HTML и не программы.
+  // Открыть приложением системы — только белый список (`attachmentOpenable`: картинки, Markdown, PDF), не HTML, SVG и не программы.
   handle('globalTasks:openAttachment', async (_e, id: string, imageId: string) => {
     const p = resolveProject()
     const err = await shell.openPath(openTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
@@ -1136,6 +1136,8 @@ app.whenReady().then(() => {
   protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
+  // До первого запуска агентов: system prompt прошлых запусков на Windows (`win32Launch`) больше никто не читает.
+  pruneLaunchTempFiles()
   projects = new ProjectManager(app.getPath('userData'))
   syncMainAppearance()
   setMainLocale(projects.settings().language)

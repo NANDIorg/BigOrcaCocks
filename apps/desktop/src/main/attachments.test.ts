@@ -7,10 +7,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, ATTACHMENT_LIMITS, DEFAULT_ATTACHMENT_OBJECTIVE, coordinatorPrompt, getAgent, workerTaskPrompt, validateAttachments, presetTaskType, runTypeInput, type ImageAttachmentInput } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, ATTACHMENT_LIMITS, DEFAULT_ATTACHMENT_OBJECTIVE, coordinatorPrompt, getAgent, agentSystemPrompt, presetTaskTypes, resolveTaskType, workerTaskPrompt, validateAttachments, presetTaskType, runTypeInput, type ImageAttachmentInput } from '@orca-board/core'
 import { OrcaError } from './i18n'
 import { resumeObjective } from './coordinator-resume'
-import { CMD_LINE_LIMIT, win32Launch } from './win32-launch'
+import { ARGV_LINE_MARGIN, CMD_LINE_LIMIT, CREATE_PROCESS_LIMIT, argvCommandLine, win32Launch } from './win32-launch'
 import {
   ATTACHMENTS_DIR, attachmentCapabilities, clearStartImages, coordinatorImagesPlace, coordinatorObjective, discardReturnImages, hasImageInput, imagesReferenced, pruneAttachments,
   rejectWithImages, resolveWithImages, returnRunWithImages, saveReturnImages, stripResolutionImages, withReturnImages, workerImagesPlace,
@@ -423,19 +423,55 @@ describe('цель координатора и рукопожатие', () => {
 })
 
 describe('Windows: стартовый промпт координатора с 8 файлами', () => {
-  it('8 путей максимальной длины укладываются в CMD_LINE_LIMIT через npm-шим (cmd.exe)', () => {
+  // Длинный, но реальный cwd координатора: профиль, папка проектов и worktree ветки глобальной задачи.
+  const cwd = 'C:\\Users\\very.long.user.name.2026\\Documents\\projects\\some-long-repository-name\\.orca-worktrees\\run_mqx1y2z3abcd'
+  const paths = Array.from({ length: ATTACHMENT_LIMITS.maxCount }, (_, i) =>
+    `${cwd}\\${ATTACHMENTS_DIR}\\run_mqx1y2z3abcd\\file-${i + 1}-${'x'.repeat(40)}.${'e'.repeat(10)}`)
+  const prompt = coordinatorPrompt(DEFAULT_ATTACHMENT_OBJECTIVE, paths)
+  const skill = readFileSync(new URL('../../../../skills/coordinator.md', import.meta.url), 'utf8')
+
+  /**
+   * argv claude координатора, как в `startCoordinator` (worker.ts): настоящий skill, правила типа и роль coordinator
+   * из пресета, директива языка, модель/effort роли и session id. Берётся самый длинный пресет и язык — худший случай.
+   */
+  function longestCoordinatorArgs(): string[] {
+    const all = presetTaskTypes().flatMap((t) => {
+      const r = resolveTaskType(t)
+      const role = r.roles.find((x) => x.id === 'coordinator')!
+      return (['ru', 'en'] as const).map((language) =>
+        getAgent('claude')!.invoke(agentSystemPrompt(skill, { projectRules: r.agentRules, role, language }), prompt, {
+          permissionMode: 'auto', shell: 'cmd.exe', model: role.model, effort: role.effort, sessionId: '00000000-0000-4000-8000-000000000000'
+        }).args)
+    })
+    return all.reduce((a, b) => (b.join(' ').length > a.join(' ').length ? b : a))
+  }
+
+  it('8 путей максимальной длины и реальный system prompt: через npm-шим влезают в CreateProcess с запасом ≥ 2 КБ', () => {
+    assert.ok(paths[0].length >= 170, `путь ${paths[0].length} знаков`)
+    const cli = path.join(tmp, 'cli.js')
+    writeFileSync(cli, '')
+    const shim = path.join(tmp, 'claude.cmd')
+    writeFileSync(shim, '@ECHO off\r\n"%_prog%"  "%dp0%\\cli.js" %*\r\n')
+    const node = 'C:\\Users\\very.long.user.name.2026\\AppData\\Local\\Programs\\Orca Board\\Orca Board.exe'
+    const args = longestCoordinatorArgs()
+    // Без подмены реальный argv в лимит не влезает: system prompt координатора ~30 тыс. знаков.
+    assert.ok(argvCommandLine(node, [cli, ...args]).length > CREATE_PROCESS_LIMIT - ARGV_LINE_MARGIN)
+    const sys = path.join(tmp, 'system-prompts', '00000000-0000-4000-8000-000000000000.md')
+    mkdirSync(path.dirname(sys))
+    const launch = win32Launch(shim, args, { electronNode: node, systemPromptFile: () => sys })
+    assert.deepEqual(launch.tempFiles, [sys])
+    const line = argvCommandLine(launch.command, launch.args as string[])
+    assert.ok(CREATE_PROCESS_LIMIT - line.length >= 2048, `строка ${line.length} из ${CREATE_PROCESS_LIMIT}`)
+    assert.equal(readFileSync(sys, 'utf8'), args[args.length - 2])
+    assert.equal((launch.args as string[]).at(-1), prompt)
+  })
+
+  it('через нераспознанный шим (cmd.exe) — тоже: system prompt в файле, строка в CMD_LINE_LIMIT', () => {
     const shim = path.join(tmp, 'claude.cmd')
     writeFileSync(shim, '@echo off\r\n')
-    // Длинный, но реальный cwd координатора: профиль, папка проектов и worktree ветки глобальной задачи.
-    const cwd = 'C:\\Users\\very.long.user.name.2026\\Documents\\projects\\some-long-repository-name\\.orca-worktrees\\run_mqx1y2z3abcd'
-    const slug = 'x'.repeat(40)
-    const paths = Array.from({ length: ATTACHMENT_LIMITS.maxCount }, (_, i) =>
-      `${cwd}\\${ATTACHMENTS_DIR}\\run_mqx1y2z3abcd\\file-${i + 1}-${slug}.${'e'.repeat(10)}`)
-    assert.ok(paths[0].length >= 170, `путь ${paths[0].length} знаков`)
-    const prompt = coordinatorPrompt(DEFAULT_ATTACHMENT_OBJECTIVE, paths)
-    const inv = getAgent('claude')!.invoke('SYSTEM', prompt, { permissionMode: 'auto', shell: 'cmd.exe' })
-    const launch = win32Launch(shim, inv.args)
+    const launch = win32Launch(shim, longestCoordinatorArgs(), { systemPromptFile: () => path.join(tmp, 'sys.md') })
     assert.equal(launch.command, 'cmd.exe')
-    assert.ok(typeof launch.args === 'string' && launch.args.length <= CMD_LINE_LIMIT, `строка ${String(launch.args.length)} из ${CMD_LINE_LIMIT}`)
+    assert.ok(typeof launch.args === 'string' && launch.args.length <= CMD_LINE_LIMIT + '/d /s /c ""'.length, `строка ${String(launch.args.length)} из ${CMD_LINE_LIMIT}`)
+    assert.deepEqual(launch.tempFiles, [path.join(tmp, 'sys.md')])
   })
 })

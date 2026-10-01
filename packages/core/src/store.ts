@@ -2247,11 +2247,11 @@ export class TaskStore {
    */
   addRunImages(id: string, images: RunImage[]): GlobalTask {
     const run = this.mustRun(id)
-    if (images.length === 0) throw new Error('нет изображений для добавления')
+    if (images.length === 0) throw new Error('нет вложений для добавления')
     this.assertRunImagesEditable(run)
     const ids = new Set((run.images ?? []).map((i) => i.id))
     for (const img of images) {
-      if (ids.has(img.id)) throw new Error(`изображение с id ${img.id} у задачи уже есть`)
+      if (ids.has(img.id)) throw new Error(`вложение с id ${img.id} у задачи уже есть`)
       ids.add(img.id)
     }
     assertAttachmentBudget(run.images ?? [], images)
@@ -2261,12 +2261,12 @@ export class TaskStore {
     return this.getGlobalTask(id)
   }
 
-  /** Убрать картинку из задачи (метаданные; файл удаляет main). Правило то же, что у `addRunImages`. Последняя — поле `images` исчезает. */
+  /** Убрать вложение из задачи (метаданные; файл удаляет main). Правило то же, что у `addRunImages`. Последняя — поле `images` исчезает. */
   removeRunImage(id: string, imageId: string): GlobalTask {
     const run = this.mustRun(id)
     this.assertRunImagesEditable(run)
     const rest = (run.images ?? []).filter((i) => i.id !== imageId)
-    if (rest.length === (run.images ?? []).length) throw new Error(`у глобальной задачи ${id} нет изображения ${imageId}`)
+    if (rest.length === (run.images ?? []).length) throw new Error(`у глобальной задачи ${id} нет вложения ${imageId}`)
     if (rest.length > 0) run.images = rest
     else delete run.images
     run.updatedAt = Date.now()
@@ -2274,12 +2274,12 @@ export class TaskStore {
     return this.getGlobalTask(id)
   }
 
-  /** Картинки задачи правятся, пока тип задачи можно сменить (`runTypeLockReason`): до начала работы. */
+  /** Вложения задачи правятся, пока тип задачи можно сменить (`runTypeLockReason`): до начала работы. */
   private assertRunImagesEditable(run: Run): void {
     const subtasks = [...this.tasks.values()].filter((t) => t.runId === run.id).length
     const statusKind = run.status === undefined ? undefined : this.columnKind(run.status)
     const reason = runTypeLockReason({ ...run, subtasks, statusKind })
-    if (reason) throw new Error(`изображения глобальной задачи «${globalTaskTitle(run)}» (${run.id}) нельзя менять: ${reason}`)
+    if (reason) throw new Error(`вложения глобальной задачи «${globalTaskTitle(run)}» (${run.id}) нельзя менять: ${reason}`)
   }
 
   /**

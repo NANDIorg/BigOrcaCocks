@@ -373,11 +373,16 @@ function retellForWorkers(where: string): string[] {
  * «Вернуть в работу» глобальной задачи). `paths` — абсолютные пути в cwd читателя. Пусто — пустая строка,
  * чтобы вызывающий код мог дописывать результат без проверок и вывод без вложений не менялся.
  * Воркер видит файлы в своём worktree; координатор — в своём cwd, а воркерам они недоступны.
+ * `to` — к чему приложены: заголовок блока стоит под «# Замечаниями после ревью» или под «# Уточнением к прошлому ответу».
  */
-export function attachmentsSection(paths: readonly string[] | undefined, audience: ReturnImagesAudience): string {
+export function attachmentsSection(
+  paths: readonly string[] | undefined,
+  audience: ReturnImagesAudience,
+  to: 'feedback' | 'clarification' = 'feedback'
+): string {
   if (!paths || paths.length === 0) return ''
   const lines = [
-    `К замечаниям приложены файлы (${paths.length}) — материал к ним, пути абсолютные:`,
+    `${to === 'clarification' ? 'К уточнению' : 'К замечаниям'} приложены файлы (${paths.length}) — материал к ${to === 'clarification' ? 'нему' : 'ним'}, пути абсолютные:`,
     ...paths.map((p) => `- \`${p}\``),
     ...READ_FILES
   ]

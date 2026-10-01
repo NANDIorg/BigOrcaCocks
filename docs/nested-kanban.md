@@ -439,7 +439,7 @@ CLI этой команды нет: координатор тип не меня�
   `GlobalTaskModal` и полях замечаний, `RunImageGallery`): картинка — миниатюра 72 px (в тесных местах 48 px) со встроенным `ImageLightbox`,
   файл — карточка той же высоты: бейдж расширения, имя с обрезкой посередине и размер (`attachmentChip.ts`; в тесном виде — одна строка без размера).
   У сохранённых файлов — «Показать в папке» (`revealAttachment`) и «Открыть» (`openAttachment`, только `attachmentOpenable` из `shared/showcase.ts`:
-  картинки, Markdown, PDF, без HTML); у черновика формы файла на диске ещё нет — только «×». Превью (`globalTasks.image`) берётся только у картинок.
+  картинки, Markdown, PDF, без HTML и SVG); у черновика формы файла на диске ещё нет — только «×». Превью (`globalTasks.image`) берётся только у картинок.
   Миниатюра картинки:
   клик по миниатюре открывает картинку на весь экран, закрытие — Esc, клик по фону, «×», ←/→ — между картинками, счётчик «n из N».
   Лайтбокс рисуется порталом в `body` и, пока открыт, забирает клавиатуру; модалки со своим Esc проверяют `lightboxOpen()`
@@ -460,7 +460,7 @@ CLI этой команды нет: координатор тип не меня�
 | `removeImage(id, imageId)` | `globalTasks:removeImage` | `GlobalTask` | нет задачи или картинки; задачу править нельзя |
 | `image(id, imageId)` | `globalTasks:image` | `{mime, data: Uint8Array}` | нет задачи, картинки или файла; вложение — не картинка (`global.notAnImage`) |
 | `revealAttachment(id, imageId)` | `globalTasks:revealAttachment` | — (показывает файл в папке системы) | нет задачи, вложения или файла (`global.imageFileMissing`) |
-| `openAttachment(id, imageId)` | `globalTasks:openAttachment` | — (открывает файл приложением системы, `shell.openPath`) | расширение не из белого списка `attachmentOpenable` — картинки, Markdown, PDF, без HTML (`global.attachmentNotOpenable`); нет задачи, вложения или файла |
+| `openAttachment(id, imageId)` | `globalTasks:openAttachment` | — (открывает файл приложением системы, `shell.openPath`) | расширение не из белого списка `attachmentOpenable` — картинки, Markdown, PDF, без HTML и SVG (`global.attachmentNotOpenable`); нет задачи, вложения или файла |
 | `changeType(id, typeId)` | `globalTasks:changeType` | `GlobalTask` | тип не найден или недоступен проекту; тип сменить нельзя (`runTypeLockReason`, см. «Смена типа») |
 | `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |

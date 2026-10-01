@@ -895,7 +895,7 @@ export interface OrcaApi {
     revealAttachment(id: string, imageId: string): Promise<void>
     /**
      * Открыть вложение задачи приложением системы (`shell.openPath`) — только расширения из белого списка
-     * (`attachmentOpenable` в `shared/showcase.ts`: картинки, Markdown, PDF; без HTML). Остальное —
+     * (`attachmentOpenable` в `shared/showcase.ts`: картинки, Markdown, PDF; без HTML и SVG). Остальное —
      * `global.attachmentNotOpenable`: исполняемый файл приложение не запускает. Старый main — «No handler registered».
      */
     openAttachment(id: string, imageId: string): Promise<void>
