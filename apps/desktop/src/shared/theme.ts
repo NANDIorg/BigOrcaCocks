@@ -93,8 +93,28 @@ export function isAppTheme(value: unknown): value is AppTheme {
   return APP_THEMES.some(theme => theme === value)
 }
 
-export function getAppTheme(value: unknown): ThemeDefinition {
-  return appThemes[isAppTheme(value) ? value : DEFAULT_APP_THEME]
+/** Усиливаем только семантические цвета; поверхности, текст, логотип и терминал сохраняют исходные оттенки. */
+const saturatedStatusColors = {
+  'col-ready': '#80bfff', 'col-progress': '#ffb45c', 'col-input': '#f4d35e',
+  'col-review': '#d0a3ff', 'col-done': '#72d99d', danger: '#ff9b92',
+  'wf-accept': '#72d99d', s1: '#80bfff', s2: '#72d99d', s3: '#ffb45c', s4: '#d0a3ff', s5: '#f4d35e'
+} as const satisfies Partial<ThemeColors>
+
+const saturatedColors: Record<AppTheme, Partial<ThemeColors>> = {
+  graphite: { ...saturatedStatusColors, accent: '#79dfad', 'accent-2': '#59cb95', 'accent-hover': '#a0edc7' },
+  slate: { ...saturatedStatusColors, accent: '#80c6ff', 'accent-2': '#65b4ed', 'accent-hover': '#addbff' },
+  forest: { ...saturatedStatusColors, accent: '#c2e66b', 'accent-2': '#aed04f', 'accent-hover': '#d5ee9a' },
+  paper: {
+    accent: '#276443', 'accent-2': '#185337', 'accent-hover': '#185337',
+    'col-ready': '#245d96', 'col-progress': '#995006', 'col-input': '#805b07',
+    'col-review': '#814095', 'col-done': '#17683c', danger: '#b32c21',
+    'wf-accept': '#17683c', s1: '#245d96', s2: '#17683c', s3: '#995006', s4: '#814095', s5: '#805b07'
+  }
+}
+
+export function getAppTheme(value: unknown, highSaturation = false): ThemeDefinition {
+  const theme = appThemes[isAppTheme(value) ? value : DEFAULT_APP_THEME]
+  return highSaturation ? { ...theme, colors: { ...theme.colors, ...saturatedColors[theme.id] } } : theme
 }
 
 /** Дефолтный адаптер для старых потребителей; выбранная тема всегда берётся через getAppTheme. */

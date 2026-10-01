@@ -13,28 +13,30 @@ function configTest(run: (directory: string) => void): void {
 }
 
 test('старые настройки и повреждённое оформление загружаются с прежней графитовой темой', () => configTest(directory => {
-  for (const appearance of [undefined, null, 'dark', { theme: 'missing', motion: 42 }]) {
+  for (const appearance of [undefined, null, 'dark', { theme: 'missing', motion: 42, highSaturation: 'true' }]) {
     writeFileSync(join(directory, 'projects.json'), JSON.stringify({ version: PROJECTS_FILE_VERSION, projects: [], settings: { appearance } }))
-    assert.deepEqual(new ProjectManager(directory).settings().appearance, { theme: 'graphite', motion: 'system' })
+    assert.deepEqual(new ProjectManager(directory).settings().appearance, { theme: 'graphite', motion: 'system', highSaturation: false })
   }
 }))
 
 test('тема переживает перезапуск; частичный патч движения сохраняет тему и остальные настройки', () => configTest(directory => {
   const manager = new ProjectManager(directory)
-  manager.setSettings({ language: 'en', keepInBackground: false, appearance: { theme: 'slate' } })
+  manager.setSettings({ language: 'en', keepInBackground: false, appearance: { theme: 'slate', highSaturation: true } })
   manager.setSettings({ appearance: { motion: 'reduced' } })
   const restored = new ProjectManager(directory).settings()
-  assert.deepEqual(restored.appearance, { theme: 'slate', motion: 'reduced' })
+  assert.deepEqual(restored.appearance, { theme: 'slate', motion: 'reduced', highSaturation: true })
   assert.equal(restored.language, 'en')
   assert.equal(restored.keepInBackground, false)
+  manager.setSettings({ appearance: { highSaturation: false } })
+  assert.deepEqual(new ProjectManager(directory).settings().appearance, { theme: 'slate', motion: 'reduced', highSaturation: false })
 }))
 
 test('некорректный патч оформления отклоняется целиком и не перезаписывает сохранённые настройки', () => configTest(directory => {
   const manager = new ProjectManager(directory)
   manager.setSettings({ appearance: { theme: 'forest' } })
-  for (const appearance of [null, [], 'dark', { theme: 'missing' }, { motion: true }, { theme: 'slate', motion: 'missing' }]) {
+  for (const appearance of [null, [], 'dark', { theme: 'missing' }, { motion: true }, { theme: 'slate', motion: 'missing' }, { highSaturation: 'true' }, { highSaturation: 1 }, { highSaturation: null }, { theme: 'paper', highSaturation: 'false' }]) {
     assert.throws(() => manager.setSettings({ keepInBackground: false, appearance } as AppSettingsPatch))
-    assert.deepEqual(new ProjectManager(directory).settings().appearance, { theme: 'forest', motion: 'system' })
+    assert.deepEqual(new ProjectManager(directory).settings().appearance, { theme: 'forest', motion: 'system', highSaturation: false })
     assert.equal(manager.settings().keepInBackground, true)
   }
 }))

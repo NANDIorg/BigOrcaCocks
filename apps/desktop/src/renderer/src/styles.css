@@ -3188,6 +3188,9 @@ html:is([data-window-chrome='macos'], [data-window-chrome='windows']) .docs-moda
 .appearance-motion-options label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; min-height: 28px; font-size: 13px; }
 .appearance-motion-options input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
 .appearance-motion-options input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.appearance-saturation .switch:hover:not(:disabled) { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.appearance-saturation .switch:active:not(:disabled) { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.appearance-saturation .switch:disabled { opacity: .55; cursor: default; }
 @container about (max-width: 700px) { .appearance-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* Общий режим движения применяет предпочтение человека к новым и существующим поверхностям. */
