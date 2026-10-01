@@ -15,7 +15,7 @@ import * as assistantChat from './assistantChat'
 import type { TestContext } from 'node:test'
 import { t } from './i18n'
 import { ipcErrorMessage } from './ipcError'
-import { componentHarness, jsxHandler } from '../../../test/react-handler-harness'
+import { componentHarness, jsxHandler, namedHandler } from '../../../test/react-handler-harness'
 import { assistantAgentOf } from './assistantSettings'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -66,6 +66,26 @@ function fixture(onSave: (workflow: core.Workflow | null, baseline: core.Workflo
 function titled(graph: core.Workflow, title: string): core.Workflow { const next = structuredClone(graph); next.nodes[0].title = title; return next }
 function deferred() { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done }); return { promise, resolve } }
 const tick = async () => { await new Promise<void>((resolve) => setImmediate(resolve)) }
+
+test('реальная кнопка ассистента остаётся видимой и отключается для readOnly и pending Save', async () => {
+  const pending = deferred()
+  const harness = workflowHarness()
+  const graph = core.defaultWorkflow(core.DEFAULT_ROLES)
+  const base = { title: 'Workflow', workflow: graph, roles: core.DEFAULT_ROLES, columns: [], onSave: () => pending.promise, onAssistant: () => {} }
+  const button = () => harness.find((node) => node.type === 'button' && Array.isArray(node.props.children) && node.props.children.includes(t('config.wf.tab.assistant')))
+  harness.flush({ ...base, readOnly: true })
+  assert.equal(button().props.disabled, true)
+  harness.flush({ ...base, readOnly: false })
+  assert.equal(button().props.disabled, false)
+  ;(harness.find((node) => node.type === 'canvas').props.onChange as (value: core.Workflow) => void)(titled(graph, 'Dirty draft'))
+  harness.flush()
+  ;(harness.find((node) => node.type === 'button' && node.props.children === t('config.wf.tab.save')).props.onClick as () => void)()
+  harness.flush()
+  assert.equal(button().props.disabled, true)
+  pending.resolve(); await tick(); harness.flush()
+  assert.equal(button().props.disabled, false)
+  harness.dispose()
+})
 
 test('реальный late Save handler пересверяет B, пришедший до завершения onSave', async () => {
   const write = deferred()
@@ -182,7 +202,87 @@ for (const sourceAgent of ['amp', 'shell'] as const) {
   })
 }
 
-async function panelFixture(context: TestContext, transport: 'chat' | 'terminal' = 'chat') {
+/** Граница состояния App: сами переходы берутся из production callbacks, не дублируются здесь. */
+function workflowEntryFixture() {
+  const source = new URL('./App.tsx', import.meta.url)
+  const graph = core.defaultWorkflow(core.DEFAULT_ROLES)
+  const initial: Extract<WorkflowAssistantContext, { mode: 'edit' }> = { mode: 'edit', typeId: 'mine', title: 'Workflow', workflow: graph, baseline: structuredClone(graph), dirty: true, path: ['nested'] }
+  let attachment: WorkflowAttachment | null = { nonce: 7, context: initial }
+  let destination: typeof initial | null = initial
+  let choice: WorkflowAgentChoice | null = { sessionId: 'panel-session', attachmentNonce: 7, sourceAgent: 'shell' }
+  let request: { nonce: number; text: string } | null = null
+  let shown = false
+  let settings = true
+  let reset = 0
+  let inserted = 0
+  const attachmentRef = { current: attachment as WorkflowAttachment | null }
+  const bindings: Record<string, unknown> = {
+    t, structuredClone, workflowNonce: { current: 7 }, workflowAttachmentRef: attachmentRef,
+    updateWorkflowAgentChoice: (next: WorkflowAgentChoice | null) => { choice = next },
+    setWorkflowAttachment: (next: WorkflowAttachment | null | ((value: WorkflowAttachment | null) => WorkflowAttachment | null)) => { attachment = typeof next === 'function' ? next(attachment) : next; attachmentRef.current = attachment },
+    setWorkflowReturn: (next: typeof destination) => { destination = next },
+    setWorkflowComposerRequest: (next: typeof request | ((value: typeof request) => typeof request)) => { request = typeof next === 'function' ? next(request) : next },
+    setWorkflowResult: () => {}, setSettingsSectionRequest: () => {},
+    setShowSettings: (next: boolean) => { settings = next }, setShowInbox: () => {},
+    setShowAssistant: (next: boolean | ((value: boolean) => boolean)) => { shown = typeof next === 'function' ? next(shown) : next },
+    launchAssistant: () => { reset++ }
+  }
+  for (const name of ['clearWorkflowContext', 'requestWorkflowCreation', 'toggleAssistant']) bindings[name] = (...args: unknown[]) => namedHandler(source, name, bindings)(...args)
+  const attach = (context: WorkflowAssistantContext) => namedHandler(source, 'attachWorkflow', bindings)(context)
+  bindings.attachWorkflow = attach
+  return { initial, attachment: () => attachment, destination: () => destination, choice: () => choice, request: () => request,
+    shown: () => shown, settings: () => settings, reset: () => reset, inserted: () => inserted,
+    create: () => jsxHandler(source, 'AssistantPanel', 'onCreateWorkflow', bindings)(),
+    settingsCreate: () => jsxHandler(new URL('./settings/SettingsModal.tsx', import.meta.url), 'PopupMenu', 'onPick', {
+      closePresetMenu: () => {}, onWorkflowAssistant: attach, createType: () => { inserted++ }
+    })('assistant'),
+    attach, detach: () => jsxHandler(source, 'AssistantPanel', 'onDetachWorkflow', bindings)(),
+    consume: (nonce: number) => jsxHandler(source, 'AssistantPanel', 'onWorkflowSent', bindings)(nonce),
+    newDialog: () => jsxHandler(source, 'AssistantPanel', 'onReset', bindings)(),
+    rail: () => jsxHandler(source, 'button', 'onClick', bindings, { attribute: 'title', expression: "{t('shell.rail.assistant')}" })(),
+    hotkey: () => namedHandler(source, 'onKey', bindings)({ code: 'KeyK', metaKey: true, preventDefault: () => {}, stopPropagation: () => {} }) }
+}
+
+for (const entry of ['create', 'settingsCreate'] as const) {
+  test(`реальный App ${entry} заполняет composer без контекста, возврата, отправки и пустого типа`, () => {
+    const f = workflowEntryFixture()
+    f[entry]()
+    assert.equal(f.attachment(), null)
+    assert.equal(f.destination(), null)
+    assert.equal(f.choice(), null)
+    assert.equal(f.request()?.text, t('shell.assistant.suggestion.workflow.prompt'))
+    assert.equal(f.shown(), true)
+    assert.equal(f.settings(), false)
+    assert.equal(f.reset(), 0)
+    assert.equal(f.inserted(), 0)
+  })
+}
+
+test('реальный App edit передаёт независимый полный снимок и сохраняет возврат после принятой отправки', () => {
+  const f = workflowEntryFixture()
+  f.attach(f.initial)
+  assert.deepEqual(f.attachment()?.context, f.initial)
+  assert.notEqual(f.attachment()?.context, f.initial)
+  const nonce = f.attachment()!.nonce
+  f.consume(nonce)
+  assert.equal(f.attachment(), null)
+  assert.deepEqual(f.destination(), f.initial)
+  f.initial.workflow.nodes[0].title = 'Later edit'
+  assert.notEqual(f.destination()?.workflow.nodes[0].title, 'Later edit')
+})
+
+for (const entry of ['detach', 'rail', 'hotkey', 'newDialog'] as const) {
+  test(`реальный App ${entry} очищает вложение, возврат и ожидающий выбор агента`, () => {
+    const f = workflowEntryFixture()
+    f[entry]()
+    assert.equal(f.attachment(), null)
+    assert.equal(f.destination(), null)
+    assert.equal(f.choice(), null)
+    assert.equal(f.reset(), entry === 'newDialog' ? 1 : 0)
+  })
+}
+
+async function panelFixture(context: TestContext, transport: 'chat' | 'terminal' = 'chat', discussion = false, snapshotReady?: Promise<void>) {
   const pending = deferred()
   let reject!: (error: Error) => void
   const sending = new Promise<void>((resolve, failure) => { pending.promise.then(resolve); reject = failure })
@@ -193,9 +293,21 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
   let settings = 0
   let attachment: WorkflowAttachment | null = { nonce: 7, context: { mode: 'create' } }
   let session = 'panel-session'
+  let composerRequest: { nonce: number; text: string } | null = null
+  const applied: number[] = []
+  let focuses = 0
+  let open = false
+  let entry: ReturnType<typeof workflowEntryFixture> | undefined
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window')
-  Object.defineProperty(globalThis, 'window', { configurable: true, value: { orca: { assistantChat: {
-    getMessages: async (ptyId: string) => ({ protocolVersion: 2, ptyId, revision: 1, transport, agent: transport === 'terminal' ? 'shell' : 'codex', messages: [], interactions: [], status: 'done' }),
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const previousElement = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement')
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { activeElement: null } })
+  Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: class {} })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { addEventListener: () => {}, removeEventListener: () => {}, orca: { assistantChat: {
+    getMessages: async (ptyId: string) => {
+      await snapshotReady
+      return { protocolVersion: 2, ptyId, revision: 1, transport, agent: transport === 'terminal' ? 'shell' : 'codex', messages: discussion ? [{ id: 'human', role: 'human', text: 'Existing discussion', at: 1 }] : [], interactions: [], status: 'done' }
+    },
     onMessage: () => () => {}, interrupt: async () => {}, respond: async () => {},
     send: async (_session: string, text: string) => { plain.push(text) },
     sendWithWorkflow: (session: string, text: string, context: unknown) => { contextual.push({ session, text, context }); return sending }
@@ -206,22 +318,142 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
     './AssistantInteraction': { AssistantInteraction: 'interaction' }, './assistantChat': assistantChat,
     './ipcError': { ipcErrorMessage }, './useModalFocus': { useModalFocus: () => {} }, './i18n': { useT: () => t }
   })
-  context.after(() => { harness.dispose(); if (previous) Object.defineProperty(globalThis, 'window', previous); else Reflect.deleteProperty(globalThis, 'window') })
+  context.after(() => {
+    harness.dispose()
+    if (previous) Object.defineProperty(globalThis, 'window', previous); else Reflect.deleteProperty(globalThis, 'window')
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument); else Reflect.deleteProperty(globalThis, 'document')
+    if (previousElement) Object.defineProperty(globalThis, 'HTMLElement', previousElement); else Reflect.deleteProperty(globalThis, 'HTMLElement')
+  })
   const noop = () => {}
-  const flush = () => harness.flush({ open: false, suspended: false, activePty: session, status: { busy: false, error: null },
+  const flush = () => harness.flush({ open, suspended: false, activePty: session, status: { busy: false, error: null },
     onClose: noop, onReset: noop, onSettings: () => { settings++ },
     onChooseChatAgent: (session: string, agent: string) => { choices.push(`${session}:${agent}`) },
-    onOpenInTerminals: noop, canOpenInTerminals: true, attachment, returnAvailable: true, result: null,
-    onCreateWorkflow: noop, onDetachWorkflow: noop, onWorkflowSent: (nonce: number) => { consumed.push(nonce); attachment = null },
+    onOpenInTerminals: noop, canOpenInTerminals: true, attachment: entry ? entry.attachment() : attachment, returnAvailable: entry ? entry.destination() !== null : true, result: null,
+    composerRequest, onComposerRequestApplied: (nonce: number) => { applied.push(nonce) },
+    onCreateWorkflow: () => { attachment = null; composerRequest = { nonce: 20, text: t('shell.assistant.suggestion.workflow.prompt') }; flush() }, onDetachWorkflow: () => { entry?.detach(); flush() }, onWorkflowSent: (nonce: number) => { consumed.push(nonce); attachment = null },
     onReturnWorkflow: noop, onOpenWorkflow: noop })
   const textarea = () => harness.find((node) => node.type === 'textarea')
+  const focusRef = () => { if (transport === 'chat') (textarea().props.ref as { current: unknown }).current = { focus: () => { focuses++ }, style: {}, scrollHeight: 64 } }
   const edit = (text: string) => { (textarea().props.onChange as (event: { target: { value: string } }) => void)({ target: { value: text } }); flush() }
   const send = () => { (harness.find((node) => node.props.className === 'chat-send').props.onClick as () => void)(); flush() }
-  flush(); await tick(); flush()
-  return { harness, flush, edit, send, text: () => textarea().props.value, contextual, plain, consumed, choices,
+  flush(); await tick(); flush(); focusRef()
+  return { harness, flush, edit, send, applied,
+    connect: (next: ReturnType<typeof workflowEntryFixture>) => { entry = next; flush() },
+    open: (next: boolean) => { open = next; flush() }, focuses: () => focuses,
+    prefill: (next: { nonce: number; text: string }) => { composerRequest = next; flush() },
+    detach: () => { attachment = null; flush() },
+    chat: () => { transport = 'chat'; session = 'chat-session'; flush() }, text: () => textarea().props.value, contextual, plain, consumed, choices,
     settings: () => settings, attachment: () => attachment, accept: pending.resolve, reject,
     replace: (next: WorkflowAttachment, nextSession = session) => { attachment = next; session = nextSession; flush() } }
 }
+
+test('реальная welcome suggestion заполняет поле, фокусирует его и не отправляет', async (context) => {
+  const f = await panelFixture(context)
+  f.open(true)
+  const focusBefore = f.focuses()
+  const create = f.harness.find((node) => node.type === 'button' && Array.isArray(node.props.children) && node.props.children.includes(t('shell.assistant.workflowCreate')))
+  ;(create.props.onClick as () => void)(); f.flush()
+  assert.equal(f.text(), t('shell.assistant.suggestion.workflow.prompt'))
+  assert.ok(f.focuses() > focusBefore)
+  assert.equal(f.attachment(), null)
+  assert.deepEqual(f.contextual, [])
+  assert.deepEqual(f.plain, [])
+})
+
+test('загрузка истории не задерживает предложение создания и не стирает введённые требования', async (context) => {
+  const snapshot = deferred()
+  const f = await panelFixture(context, 'chat', false, snapshot.promise)
+  f.open(true)
+  const focusBefore = f.focuses()
+  const create = f.harness.find((node) => node.type === 'button' && Array.isArray(node.props.children) && node.props.children.includes(t('shell.assistant.workflowCreate')))
+  ;(create.props.onClick as () => void)(); f.flush()
+  const immediately = f.text()
+  const focusedImmediately = f.focuses()
+  f.edit('My stages and checks')
+  snapshot.resolve(); await tick(); f.flush()
+  assert.equal(f.text(), 'My stages and checks')
+  assert.equal(immediately, t('shell.assistant.suggestion.workflow.prompt'))
+  assert.deepEqual(f.applied, [20])
+  assert.ok(focusedImmediately > focusBefore)
+  assert.deepEqual(f.contextual, [])
+  assert.deepEqual(f.plain, [])
+})
+
+test('реальный composer применяет запрос один раз и сохраняет последующие пользовательские правки', async (context) => {
+  const f = await panelFixture(context)
+  f.detach(); f.open(true)
+  f.prefill({ nonce: 20, text: 'Create a workflow' })
+  assert.equal(f.text(), 'Create a workflow')
+  f.edit('My requirements'); f.open(true); f.open(false); f.open(true); f.flush()
+  f.prefill({ nonce: 20, text: 'Create a workflow' })
+  assert.equal(f.text(), 'My requirements')
+  assert.deepEqual(f.applied, [20])
+  f.prefill({ nonce: 21, text: 'Create another workflow' })
+  assert.equal(f.text(), 'Create another workflow')
+  f.edit('Latest requirements')
+  f.prefill({ nonce: 20, text: 'Stale creation' })
+  assert.equal(f.text(), 'Latest requirements')
+  assert.deepEqual(f.applied, [20, 21])
+})
+
+test('реальный composer держит terminal prefill до появления чат-агента без create chip', async (context) => {
+  const f = await panelFixture(context, 'terminal')
+  f.detach(); f.open(true)
+  f.prefill({ nonce: 20, text: 'Create a workflow' })
+  assert.deepEqual(f.applied, [])
+  f.chat(); await tick(); f.flush()
+  assert.equal(f.text(), 'Create a workflow')
+  assert.deepEqual(f.applied, [20])
+  assert.equal(f.attachment(), null)
+  assert.deepEqual(f.contextual, [])
+  assert.deepEqual(f.plain, [])
+})
+
+test('закрытая панель сохраняет поздний terminal prefill до следующего открытия', async (context) => {
+  const f = await panelFixture(context, 'terminal')
+  f.detach(); f.prefill({ nonce: 20, text: 'Deferred creation' })
+  f.chat(); await tick(); f.flush()
+  assert.deepEqual(f.applied, [])
+  assert.equal(f.text(), '')
+  f.open(true)
+  assert.equal(f.text(), 'Deferred creation')
+  assert.deepEqual(f.applied, [20])
+})
+
+test('реальная кнопка X удаляет чип и возврат, сохраняя текст и текущую дискуссию', async (context) => {
+  const app = workflowEntryFixture()
+  const f = await panelFixture(context, 'chat', true)
+  f.connect(app); f.edit('Keep my draft')
+  const message = () => f.harness.find((node) => typeof node.type === 'function' && (node.props.message as { text?: string } | undefined)?.text === 'Existing discussion').props.message
+  const before = message()
+  const detach = f.harness.find((node) => node.type === 'button' && node.props.title === t('shell.assistant.workflowDetach'))
+  ;(detach.props.onClick as () => void)(); f.flush()
+  assert.equal(f.text(), 'Keep my draft')
+  assert.equal(message(), before)
+  assert.equal(app.destination(), null)
+  assert.equal(app.choice(), null)
+  assert.throws(() => f.harness.find((node) => node.props.className === 'chat-workflow-chip'))
+  assert.throws(() => f.harness.find((node) => node.type === 'button' && node.props.children === t('shell.assistant.workflowReturn')))
+  app.rail(); f.flush()
+  assert.equal(f.text(), 'Keep my draft')
+  assert.equal(message(), before)
+})
+
+test('реальный App поздний composer ACK не снимает новый запрос', () => {
+  const f = workflowEntryFixture()
+  f.create(); const previous = f.request()!.nonce
+  f.create(); const next = f.request()!.nonce
+  assert.notEqual(next, previous)
+  // Callback вызывается так же, как effect Panel после изменения props.
+  const current = { value: f.request() }
+  const ack = jsxHandler(new URL('./App.tsx', import.meta.url), 'AssistantPanel', 'onComposerRequestApplied', {
+    setWorkflowComposerRequest: (update: (request: typeof current.value) => typeof current.value) => { current.value = update(current.value) }
+  })
+  ack(previous)
+  assert.equal(current.value?.nonce, next)
+  ack(next)
+  assert.equal(current.value, null)
+})
 
 test('реальный Panel send сохраняет compose и nonce до acceptance и при rejection', async (context) => {
   const f = await panelFixture(context)

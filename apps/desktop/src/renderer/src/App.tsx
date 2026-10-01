@@ -1,5 +1,5 @@
 import type { WorkflowAssistantContext, WorkflowAssistantSaved } from '../../shared/assistant-workflow'
-import { applyWorkflowAgentChoice, type WorkflowAttachment, type WorkflowSectionRequest, type WorkflowAgentChoice } from './workflowAssistant'
+import { applyWorkflowAgentChoice, type WorkflowAttachment, type WorkflowSectionRequest, type WorkflowAgentChoice, type WorkflowComposerRequest } from './workflowAssistant'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -226,6 +226,7 @@ export function App(): React.JSX.Element {
   const [showAssistant, setShowAssistant] = useState(false)
   const workflowNonce = useRef(0)
   const [workflowAttachment, setWorkflowAttachment] = useState<WorkflowAttachment | null>(null)
+  const [workflowComposerRequest, setWorkflowComposerRequest] = useState<WorkflowComposerRequest | null>(null)
   const [workflowReturn, setWorkflowReturn] = useState<Extract<WorkflowAssistantContext, { mode: 'edit' }> | null>(null)
   const workflowAttachmentRef = useRef(workflowAttachment)
   workflowAttachmentRef.current = workflowAttachment
@@ -238,11 +239,36 @@ export function App(): React.JSX.Element {
   const [workflowResult, setWorkflowResult] = useState<WorkflowAssistantSaved | null>(null)
   useEffect(() => window.orca.workflowAssistant?.onSaved?.(setWorkflowResult), [])
 
-  function attachWorkflow(context: WorkflowAssistantContext): void {
-    const snapshot = structuredClone(context)
+  function clearWorkflowContext(): void {
     updateWorkflowAgentChoice(null)
+    workflowAttachmentRef.current = null
+    setWorkflowAttachment(null)
+    setWorkflowReturn(null)
+    setWorkflowComposerRequest(null)
+  }
+
+  function toggleAssistant(): void {
+    clearWorkflowContext()
+    setShowAssistant((visible) => !visible)
+    setShowInbox(false)
+  }
+
+  function requestWorkflowCreation(): void {
+    clearWorkflowContext()
+    setWorkflowComposerRequest({ nonce: ++workflowNonce.current, text: t('shell.assistant.suggestion.workflow.prompt') })
+    setWorkflowResult(null)
+    setShowSettings(false)
+    setSettingsSectionRequest(undefined)
+    setShowInbox(false)
+    setShowAssistant(true)
+  }
+
+  function attachWorkflow(context: WorkflowAssistantContext): void {
+    if (context.mode === 'create') { requestWorkflowCreation(); return }
+    clearWorkflowContext()
+    const snapshot = structuredClone(context)
     setWorkflowAttachment({ nonce: ++workflowNonce.current, context: snapshot })
-    if (snapshot.mode === 'edit') setWorkflowReturn(snapshot)
+    setWorkflowReturn(snapshot)
     setWorkflowResult(null)
     setShowSettings(false)
     setSettingsSectionRequest(undefined)
@@ -394,8 +420,7 @@ export function App(): React.JSX.Element {
         setShowInbox((v) => !v)
         setShowAssistant(false)
       } else {
-        setShowAssistant((v) => !v)
-        setShowInbox(false)
+        toggleAssistant()
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -921,8 +946,7 @@ export function App(): React.JSX.Element {
           className={`icon ${showAssistant ? 'active' : ''}`}
           title={t('shell.rail.assistant')}
           onClick={() => {
-            setShowAssistant((v) => !v)
-            setShowInbox(false)
+            toggleAssistant()
           }}
         >
           <Icon.assistant />
@@ -1177,13 +1201,15 @@ export function App(): React.JSX.Element {
           activePty={assistantPty}
           status={assistantState}
           onClose={closeAssistant}
-          onReset={() => { updateWorkflowAgentChoice(null); setWorkflowAttachment(null); setWorkflowResult(null); void launchAssistant(true) }}
+          onReset={() => { clearWorkflowContext(); setWorkflowResult(null); void launchAssistant(true) }}
           attachment={workflowAttachment}
           returnAvailable={workflowReturn !== null}
           result={workflowResult}
           canOpenInTerminals={!!active}
-          onCreateWorkflow={() => attachWorkflow({ mode: 'create' })}
-          onDetachWorkflow={() => { updateWorkflowAgentChoice(null); setWorkflowAttachment(null) }}
+          composerRequest={workflowComposerRequest}
+          onComposerRequestApplied={(nonce) => setWorkflowComposerRequest((current) => current?.nonce === nonce ? null : current)}
+          onCreateWorkflow={() => requestWorkflowCreation()}
+          onDetachWorkflow={() => clearWorkflowContext()}
           onWorkflowSent={(nonce) => setWorkflowAttachment((current) => current?.nonce === nonce ? null : current)}
           onReturnWorkflow={() => { if (workflowReturn) openWorkflow(workflowReturn.typeId, workflowReturn) }}
           onOpenWorkflow={() => { if (workflowResult) openWorkflow(workflowResult.typeId) }}

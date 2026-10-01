@@ -1,5 +1,5 @@
 import type { WorkflowAssistantSaved } from '../../shared/assistant-workflow'
-import { consumeWorkflowAttachment, settledWorkflowDraft, sendWorkflowApi, workflowAssistantError, type WorkflowAttachment } from './workflowAssistant'
+import { consumeWorkflowAttachment, settledWorkflowDraft, sendWorkflowApi, workflowAssistantError, type WorkflowAttachment, type WorkflowComposerRequest } from './workflowAssistant'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AssistantChatMessage } from '../../shared/ipc'
@@ -28,6 +28,8 @@ interface Props {
   attachment: WorkflowAttachment | null
   returnAvailable: boolean
   result: WorkflowAssistantSaved | null
+  composerRequest: WorkflowComposerRequest | null
+  onComposerRequestApplied(nonce: number): void
   onCreateWorkflow(): void
   onDetachWorkflow(): void
   onWorkflowSent(nonce: number): void
@@ -64,7 +66,7 @@ function ChatMessageRow({ message, t }: { message: AssistantChatMessage; t: TFun
 }
 
 /** Сессия и черновик живут при закрытой панели; встроенного терминала здесь нет. */
-export function AssistantPanel({ open, suspended, activePty, status, onClose, onReset, onSettings, onChooseChatAgent, onOpenInTerminals, canOpenInTerminals, attachment, returnAvailable, result, onCreateWorkflow, onDetachWorkflow, onWorkflowSent, onReturnWorkflow, onOpenWorkflow }: Props): React.JSX.Element {
+export function AssistantPanel({ open, suspended, activePty, status, onClose, onReset, onSettings, onChooseChatAgent, onOpenInTerminals, canOpenInTerminals, attachment, returnAvailable, result, composerRequest, onComposerRequestApplied, onCreateWorkflow, onDetachWorkflow, onWorkflowSent, onReturnWorkflow, onOpenWorkflow }: Props): React.JSX.Element {
   const t = useT()
   const layerRef = useRef<HTMLDivElement>(null)
   const composeRef = useRef<HTMLTextAreaElement>(null)
@@ -75,6 +77,7 @@ export function AssistantPanel({ open, suspended, activePty, status, onClose, on
   attachmentRef.current = attachment
   const stickRef = useRef(true)
   const actionBusy = useRef(false)
+  const appliedComposerNonce = useRef(0)
   const [chat, setChat] = useState<ChatState>(emptyChatState)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -115,6 +118,14 @@ export function AssistantPanel({ open, suspended, activePty, status, onClose, on
     if (open && !suspended && attachment) composeRef.current?.focus({ preventScroll: true })
   }, [open, suspended, attachment?.nonce])
   const terminal = chat.transport === 'terminal'
+  useEffect(() => {
+    // Видимое поле уже принимает ввод: загрузка истории не должна откладывать заполнение.
+    if (!open || !composerRequest || terminal || suspended || composerRequest.nonce <= appliedComposerNonce.current) return
+    appliedComposerNonce.current = composerRequest.nonce
+    setDraft(composerRequest.text)
+    composeRef.current?.focus({ preventScroll: true })
+    onComposerRequestApplied(composerRequest.nonce)
+  }, [open, composerRequest, terminal, suspended, onComposerRequestApplied])
   const working = chat.status === 'thinking' || chat.status === 'waiting'
   const canSend = Boolean(activePty) && !terminal && !loading && !status.busy && !working && chat.status !== 'starting' && chat.status !== 'error'
   const groups = groupMessages(chat.messages)

@@ -2,6 +2,7 @@ import type { AreaDict } from '../types'
 
 /** Оболочка: App, инбокс, лента внимания, координатор, ассистент, терминал; плашка и тост обновлений. */
 export default {
+  'assistant.suggestion.workflow.prompt': 'Помоги создать новый воркфлоу. Сначала уточни, какие этапы, роли и проверки мне нужны.',
   'assistant.workflowCreate': 'Создать воркфлоу с ассистентом',
   'assistant.workflowEdit': 'Воркфлоу: {title}',
   'assistant.workflowDirty': 'Несохранённые правки',

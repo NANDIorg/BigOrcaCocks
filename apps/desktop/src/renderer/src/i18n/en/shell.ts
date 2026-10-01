@@ -2,6 +2,7 @@ import type { AreaTranslation } from '../types'
 import type ru from '../ru/shell'
 
 export default {
+  'assistant.suggestion.workflow.prompt': 'Help me create a new workflow. First ask which stages, roles, and checks I need.',
   'assistant.workflowCreate': 'Create a workflow with the assistant',
   'assistant.workflowEdit': 'Workflow: {title}',
   'assistant.workflowDirty': 'Unsaved changes',

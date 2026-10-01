@@ -82,11 +82,12 @@ export function componentHarness(source: URL, exportName: string, imports: Recor
 }
 
 /** Извлекает фактический JSX callback, сохраняя его closure через заданные зависимости. */
-export function jsxHandler(source: URL, component: string, event: string, bindings: Record<string, unknown>): (...values: unknown[]) => unknown {
+export function jsxHandler(source: URL, component: string, event: string, bindings: Record<string, unknown>, where?: { attribute: string; expression: string }): (...values: unknown[]) => unknown {
   const file = ts.createSourceFile(source.pathname, readFileSync(source, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   let handler: ts.Expression | undefined
   const visit = (node: ts.Node): void => {
-    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(file) === component) {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(file) === component
+      && (!where || node.attributes.properties.some((attribute) => ts.isJsxAttribute(attribute) && attribute.name.getText(file) === where.attribute && attribute.initializer?.getText(file) === where.expression))) {
       for (const attribute of node.attributes.properties) {
         if (ts.isJsxAttribute(attribute) && attribute.name.getText(file) === event && attribute.initializer && ts.isJsxExpression(attribute.initializer)) handler = attribute.initializer.expression
       }
@@ -95,6 +96,23 @@ export function jsxHandler(source: URL, component: string, event: string, bindin
   }
   visit(file)
   if (!handler || !ts.isArrowFunction(handler)) throw new Error(`Не найден callback ${component}.${event}`)
+  const output = ts.transpileModule(`module.exports = ${handler.getText(file)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+  const module = { exports: undefined as unknown }
+  new Function(...Object.keys(bindings), 'module', output)(...Object.values(bindings), module)
+  return module.exports as (...values: unknown[]) => unknown
+}
+
+/** Выполняет настоящий именованный обработчик с явно заданными зависимостями замыкания. */
+export function namedHandler(source: URL, name: string, bindings: Record<string, unknown>): (...values: unknown[]) => unknown {
+  const file = ts.createSourceFile(source.pathname, readFileSync(source, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let handler: ts.FunctionDeclaration | ts.Expression | undefined
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) handler = node
+    if (ts.isVariableDeclaration(node) && node.name.getText(file) === name && node.initializer) handler = node.initializer
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  if (!handler) throw new Error(`Не найден обработчик ${name}`)
   const output = ts.transpileModule(`module.exports = ${handler.getText(file)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: undefined as unknown }
   new Function(...Object.keys(bindings), 'module', output)(...Object.values(bindings), module)

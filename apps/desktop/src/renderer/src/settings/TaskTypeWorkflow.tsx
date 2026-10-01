@@ -336,8 +336,9 @@ export function TaskTypeWorkflow({ title, workflow, observation, roles, columns,
             )}
             {errors.length === 0 && warnings.length === 0 && <span className="wf-count">{t('config.wf.tab.clean')}</span>}
             <span className="wf-grow" />
-            {!readOnly && (
-              <span className="wf-statusbar-actions">
+            <span className="wf-statusbar-actions">
+              {onAssistant && <button type="button" className="btn-sm" disabled={busy || readOnly} onClick={() => onAssistant(draft, baseline, dirty, at)}><Icon.assistant /> {t('config.wf.tab.assistant')}</button>}
+              {!readOnly && <>
                 {errors.length > 0 && dirty && <span id="wf-save-why" className="wf-statusbar-why">{t('config.wf.tab.fixFirst')}</span>}
                 <button type="button" className="btn-sm" disabled={(!dirty && !conflict) || busy} onClick={() => { replace(saved, null); setBaseline(saved); setConflict(false) }}>
                   {t('config.wf.tab.revert')}
@@ -352,10 +353,9 @@ export function TaskTypeWorkflow({ title, workflow, observation, roles, columns,
                 >
                   {t('config.wf.tab.save')}
                 </button>
-              </span>
-            )}
+              </>}
+            </span>
           </div>
-          {onAssistant && <button type="button" className="btn-sm" disabled={busy || readOnly} onClick={() => onAssistant(draft, baseline, dirty, at)}><Icon.assistant /> {t('config.wf.tab.assistant')}</button>}
           {conflict && <div className="editor-error" role="alert">{t('config.wf.tab.externalConflict')}</div>}
           {error && <div className="editor-error" role="alert">{error}</div>}
           {notice && !error && <div className="hint wf-notice">{notice}</div>}

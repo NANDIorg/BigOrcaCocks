@@ -5,6 +5,7 @@ import type { OrcaApi } from '../../shared/ipc'
 import type { WorkflowAssistantContext } from '../../shared/assistant-workflow'
 
 export interface WorkflowDraft { draft: Workflow; baseline: Workflow }
+export interface WorkflowComposerRequest { nonce: number; text: string }
 export interface WorkflowAttachment { nonce: number; context: WorkflowAssistantContext }
 export type WorkflowSectionRequest = { section: 'updates' | 'assistant'; nonce: number }
   | { section: `type:${string}`; nonce: number; tab: 'workflow'; restore?: Extract<WorkflowAssistantContext, { mode: 'edit' }> }
